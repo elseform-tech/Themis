@@ -1,7 +1,7 @@
 /* The subagents card in a chat turn: one row per subagent (board 25), folded to one
    result line each once they all ended (board 27). */
 .themis-subagents {
-  display: flex; flex-direction: column; overflow: hidden;
+  display: flex; flex-direction: column; flex: none; overflow: hidden;
   border: 1px solid var(--themis-border-subtle); border-radius: var(--themis-radius-card);
   background: var(--themis-sidebar-bg);
 }

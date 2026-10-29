@@ -105,7 +105,11 @@ pub fn tool_approves_itself(name: &str) -> bool {
     // `set_goal` only sets the calling chat's goal and `ask_user` only adds a
     // question to it; their deny rules apply inside. Web and browser tools
     // approve per site, and only they know the site (the browser's current page).
-    matches!(name, "manage_automations" | "set_goal" | "ask_user") || is_site_tool(name)
+    // The subagent tools change nothing themselves: each subagent's own actions
+    // are approved as they happen.
+    matches!(name, "manage_automations" | "set_goal" | "ask_user")
+        || crate::skills::SUBAGENT_TOOLS.contains(&name)
+        || is_site_tool(name)
 }
 
 /// Tools whose approval identity is a site: the action's `command` holds the

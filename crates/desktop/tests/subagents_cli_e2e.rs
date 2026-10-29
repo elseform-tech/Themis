@@ -539,3 +539,62 @@ async fn settings_change_only_their_fields_and_refuse_a_stale_page() {
     .unwrap();
     app.serving.abort();
 }
+
+/// Sends `task` in Custom mode and waits until the run is over.
+fn run_custom(data: &Path, thread: &str, task: &str) {
+    call(
+        data,
+        "set_thread_approval_mode",
+        json!({"threadId": thread, "mode": "custom"}),
+    );
+    call(
+        data,
+        "send_message",
+        json!({"threadId": thread, "text": task}),
+    );
+    until("the run never finished", || !running(data, thread));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn starting_subagents_needs_no_prompt_but_a_deny_rule_still_holds() {
+    let respond = |body: &Value| {
+        if is_subagent(body) {
+            return reply("Nothing to report.");
+        }
+        match tool_results(body) {
+            0 => tools(&[(
+                "s1",
+                "spawn_subagents",
+                json!({"subagents": [{"name": "Quick", "brief": "Say hello."}]}),
+            )]),
+            _ if mentions(body, NOTE) => reply("Quick reported back."),
+            _ if mentions(body, "approval denied") => reply("Subagents are not allowed here."),
+            _ => reply("Waiting."),
+        }
+    };
+    // Custom mode with no rules: no approval prompt holds the spawn up.
+    let app1 = app(None, respond).await;
+    let (data, thread) = (app1.data.path().to_owned(), app1.thread.clone());
+    tokio::task::spawn_blocking(move || run_custom(&data, &thread, "say hello"))
+        .await
+        .unwrap();
+    let all = bodies(&app1.llm).await;
+    assert!(all
+        .iter()
+        .any(|body| !is_subagent(body) && mentions(body, NOTE)));
+    app1.serving.abort();
+    // A project rule that denies the tool refuses it.
+    let app2 = app(
+        Some(r#"{"approval": {"rules": [{"tool": "spawn_subagents", "action": "deny"}]}}"#),
+        respond,
+    )
+    .await;
+    let (data, thread) = (app2.data.path().to_owned(), app2.thread.clone());
+    tokio::task::spawn_blocking(move || run_custom(&data, &thread, "say hello"))
+        .await
+        .unwrap();
+    let all = bodies(&app2.llm).await;
+    assert!(all.iter().all(|body| !is_subagent(body)), "no subagent ran");
+    assert!(all.iter().any(|body| mentions(body, "approval denied")));
+    app2.serving.abort();
+}

@@ -20,10 +20,11 @@ export function clock(seconds: number): string {
   return `${Math.floor(whole / 60)}:${String(whole % 60).padStart(2, "0")}`;
 }
 
-/** The first line of a result, without list or heading marks. */
+/** The first line of a result that says something (not one that only introduces a list),
+ *  without Markdown marks. */
 export function firstLine(text: string): string {
-  const line = text.split("\n").map(part => part.trim()).find(Boolean) ?? "";
-  return line.replace(/^([#>*-]+|\d+\.)\s*/, "").replace(/\*\*/g, "");
+  const lines = text.split("\n").map(part => part.replace(/^([#>*-]+|\d+\.)\s*/, "").replace(/\*\*|`/g, "").trim()).filter(Boolean);
+  return lines.find(line => !line.endsWith(":")) ?? lines[0] ?? "";
 }
 
 /** How long it has run: its final time once ended, else the time since it started. */

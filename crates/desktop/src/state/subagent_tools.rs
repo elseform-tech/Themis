@@ -194,6 +194,27 @@ impl SubagentTool {
 #[async_trait]
 impl ToolRuntime for SubagentTool {
     async fn execute(&self, args: Value) -> Result<Value, ToolCallError> {
+        // No prompt (the dispatcher leaves these tools to approve themselves), but a deny
+        // rule someone wrote still holds, in YOLO too.
+        let action = themis_core::tools::ToolAction {
+            display: None,
+            command: Vec::new(),
+            tool: self.name().to_owned(),
+            summary: self.name().to_owned(),
+            risk: themis_core::tools::RiskLevel::Read,
+        };
+        let policy = &self.kit.config.approval;
+        let decision = if self.kit.mode == themis_core::configuration::ApprovalMode::Yolo {
+            policy.yolo_decision(&action)
+        } else {
+            policy.decision(&action)
+        };
+        if decision == themis_core::configuration::PolicyAction::Deny {
+            return Err(error(format!(
+                "approval denied for '{}': the approval rules deny it",
+                self.name()
+            )));
+        }
         match self.kind {
             Kind::Spawn => self.spawn(&args),
             Kind::Wait => self.wait(&args).await,

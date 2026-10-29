@@ -74,7 +74,8 @@ describe("subagent card", () => {
     expect(subagentLine(agent(), "approval", [approval()])).toBe("Approval needed: cargo test");
     expect(subagentLine(agent(), "lost", [])).toBe("Ended when Themis closed");
     expect(subagentLine(agent({ status: "failed", result: "quota exceeded" }), "failed", [])).toBe("Failed: quota exceeded");
-    expect(firstLine("\n**Bugs** in `a.rs`:\n1. one")).toBe("Bugs in `a.rs`:");
+    expect(firstLine("\n**Bugs** in `a.rs`:\n1. `average` adds 1")).toBe("average adds 1");
+    expect(firstLine("Findings:")).toBe("Findings:");
     expect(clock(112)).toBe("1:52");
   });
 
