@@ -117,6 +117,7 @@ full tour.
 | `tool:browser_devtools` | tour | `crates/core/src/browser/tools/devtools.rs` | Only with Developer mode on: read the console. Off: the tool is not offered. |
 | `tool:set_goal` | tour | `crates/desktop/src/state/goal_tool.rs` | `/goal` sets the goal; the goal bar shows it. |
 | `tool:ask_user` | tour | `crates/desktop/src/state/question_tool.rs` | The separator question appears on the composer after any approval, answered inline. |
+| `tool:spawn_subagents` | tour | `crates/desktop/src/state/subagent_tools.rs` | Ask for a review of two separate areas: two read-only subagents start, both results reach the reply, and the turn ends only after both. |
 | `tool:attach_file` | tour | `crates/desktop/src/state/media_tool.rs` | The screenshot is attached to the reply. |
 | `tool:list_plugins` | tour | `crates/desktop/src/state/integration_tools.rs` | Goal lists plugins. |
 | `tool:save_skill` | tour | `crates/desktop/src/state/integration_tools.rs` | `tour-note` appears in Integrations › Skills. |
@@ -163,6 +164,7 @@ full tour.
 | `config:browser` | tour | `crates/core/src/configuration.rs` | Set by Settings › Browser; the file shows the change. |
 | `config:web` | tour | `crates/core/src/configuration.rs` | Set by Settings › Web; the file shows the change. |
 | `config:skills` | tour | `crates/core/src/skills.rs` | A skill under a configured path is found. |
+| `config:subagents` | tour | `crates/core/src/configuration.rs` | With `"enabled": false` in the project's `.themis/config.jsonc` the agent offers no subagents. |
 | `config:instructions` | tour | `crates/core/src/configuration.rs` | A listed file's rule is followed. |
 | `config:providers` | tour | `crates/core/src/providers.rs` | A configured provider lists in Settings › Models. |
 | `config:models` | tour | `crates/core/src/providers/catalog.rs` | A `reasoning_effort` override is the default effort. |

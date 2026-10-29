@@ -22,7 +22,8 @@ use anyhow::anyhow;
 use autoagents::core::tool::{to_llm_tool, ToolT};
 pub use autoagents::llm::chat::ChatRole;
 use autoagents::llm::chat::{ChatMessage, MessageType, SamplingOverrides, StreamChunk, Tool};
-use autoagents::llm::{FunctionCall, LLMProvider, ToolCall};
+pub use autoagents::llm::LLMProvider;
+use autoagents::llm::{FunctionCall, ToolCall};
 use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};
 
@@ -688,6 +689,14 @@ async fn run_task_with_evidence_inner(
             steered.push(text.clone());
             events.send(RunEvent::Steered { text }).await.ok();
         }
+        // Results of subagents (and other notes) join at the same boundary.
+        for note in run_notes().map(|notes| notes.take()).unwrap_or_default() {
+            messages.push(ChatMessage {
+                role: ChatRole::User,
+                message_type: MessageType::Text,
+                content: subagent_note(&note),
+            });
+        }
         // Compaction and maintenance compare raw estimates, so hand them the equivalent raw budget.
         context_policy.context_token_budget = calibration.raw_budget(input_budget, schema_tokens);
         let raw_size = estimated_tokens(&messages);
@@ -960,6 +969,28 @@ async fn run_task_with_evidence_inner(
         check_stopped(&stopped, &events).await?;
         // A message steered in while the model wrote its answer keeps the run
         // going: the answer stays, and the next request reads the message.
+        // An answer while subagents are still working keeps the run waiting for their results.
+        let notes = run_notes().filter(|notes| notes.waiting() || notes.pending() > 0);
+        if calls.is_empty() && !steer_waiting() {
+            if let Some(notes) = &notes {
+                let answer = text.clone().unwrap_or_default();
+                answered = joined(&answered, &answer);
+                if !answer.trim().is_empty() {
+                    events
+                        .send(RunEvent::AssistantText("\n\n".into()))
+                        .await
+                        .ok();
+                }
+                messages.push(ChatMessage {
+                    role: ChatRole::Assistant,
+                    message_type: MessageType::Text,
+                    content: answer,
+                });
+                wait_for_note(notes, &stopped).await;
+                check_stopped(&stopped, &events).await?;
+                continue;
+            }
+        }
         if calls.is_empty() && steer_waiting() {
             let answer = text.unwrap_or_default();
             if !answer.trim().is_empty() {
@@ -2169,6 +2200,92 @@ fn effective_context_budget(requested: usize, model: &str) -> usize {
 tokio::task_local! { pub static MODEL_CONTEXT_CAPACITY: Option<usize>; }
 tokio::task_local! { static SHORT_REPLY_TURN: bool; }
 tokio::task_local! { static STEER_INBOX: SteerInbox; }
+tokio::task_local! { static SYSTEM_HEAD: String; }
+tokio::task_local! { static RUN_NOTES: Arc<RunNotes>; }
+
+/// Notes delivered to a running agent between steps by something it started and that ends
+/// later (subagent results). Unlike steered messages they are not the person's words.
+#[derive(Default)]
+pub struct RunNotes {
+    queue: Mutex<std::collections::VecDeque<String>>,
+    pending: std::sync::atomic::AtomicUsize,
+    arrived: tokio::sync::Notify,
+}
+
+impl RunNotes {
+    pub fn new() -> Arc<Self> {
+        Arc::default()
+    }
+    /// `count` more notes will arrive; the run waits for them before it ends.
+    pub fn expect(&self, count: usize) {
+        self.pending.fetch_add(count, Ordering::SeqCst);
+    }
+    /// Delivers one expected note.
+    pub fn deliver(&self, note: String) {
+        self.queue
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .push_back(note);
+        let _ = self
+            .pending
+            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |n| n.checked_sub(1));
+        self.arrived.notify_waiters();
+    }
+    /// Takes back a delivered note the run has not read yet; false once the model saw it.
+    pub fn withdraw(&self, note: &str) -> bool {
+        let mut queue = self.queue.lock().unwrap_or_else(|e| e.into_inner());
+        match queue.iter().position(|queued| queued == note) {
+            Some(index) => {
+                queue.remove(index);
+                true
+            }
+            None => false,
+        }
+    }
+    /// Notes still expected.
+    pub fn pending(&self) -> usize {
+        self.pending.load(Ordering::SeqCst)
+    }
+    fn waiting(&self) -> bool {
+        !self
+            .queue
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .is_empty()
+    }
+    fn take(&self) -> Vec<String> {
+        self.queue
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .drain(..)
+            .collect()
+    }
+}
+
+/// Runs `future` with `notes` as the run's note channel.
+pub async fn with_run_notes<F: std::future::Future>(notes: Arc<RunNotes>, future: F) -> F::Output {
+    RUN_NOTES.scope(notes, future).await
+}
+
+fn run_notes() -> Option<Arc<RunNotes>> {
+    RUN_NOTES.try_with(Arc::clone).ok()
+}
+
+/// Waits until a note arrives or the run is stopped.
+async fn wait_for_note(notes: &RunNotes, stopped: &AtomicBool) {
+    while !notes.waiting() && !stopped.load(Ordering::SeqCst) {
+        let arrived = notes.arrived.notified();
+        if notes.waiting() {
+            break;
+        }
+        let _ = tokio::time::timeout(std::time::Duration::from_millis(200), arrived).await;
+    }
+}
+
+/// Runs `future` with `head` in place of the ordinary system instructions (subagent runs).
+pub async fn with_system_head<F: std::future::Future>(head: String, future: F) -> F::Output {
+    SYSTEM_HEAD.scope(head, future).await
+}
 
 tokio::task_local! { static FIRST_REQUEST: String; }
 
@@ -2802,8 +2919,28 @@ const RUNTIME_NOTES: [&str; 5] = [
 /// the current request, so a spec check late in a goal turn must not displace it.
 fn active_request_index(messages: &[ChatMessage]) -> Option<usize> {
     messages.iter().rposition(|message| {
-        message.role == ChatRole::User && !RUNTIME_NOTES.contains(&message.content.as_str())
+        message.role == ChatRole::User
+            && !RUNTIME_NOTES.contains(&message.content.as_str())
+            // A subagent's result is never the person's request.
+            && !message
+                .content
+                .starts_with(crate::prompts::RUNTIME_SUBAGENT_NOTE)
     })
+}
+
+/// The model-facing form of a subagent result: the label, then the result fenced so text
+/// inside it cannot pose as the label or close the fence early.
+pub fn subagent_note(note: &str) -> String {
+    let fenced = note
+        .chars()
+        .take(16 * 1024)
+        .collect::<String>()
+        .replace("<<<", "< < <")
+        .replace(">>>", "> > >");
+    format!(
+        "{}\n<<<subagent-result\n{fenced}\n>>>",
+        crate::prompts::RUNTIME_SUBAGENT_NOTE
+    )
 }
 
 fn context_split(messages: &[ChatMessage], policy: &RunPolicy) -> usize {
@@ -3406,14 +3543,17 @@ pub fn checkpoint_parts(saved: &str) -> (&str, Vec<ChatMessage>) {
 /// Opens with the shared system instructions and verification habits; the evidence
 /// pointer and skill catalog follow.
 fn initial_messages(history: Vec<ConversationTurn>, task: String) -> Vec<ChatMessage> {
-    let mut messages = vec![ChatMessage {
-        role: ChatRole::System,
-        message_type: MessageType::Text,
-        content: format!(
+    let head = SYSTEM_HEAD.try_with(Clone::clone).unwrap_or_else(|_| {
+        format!(
             "{}\n{}",
             crate::prompts::SYSTEM_INSTRUCTIONS,
             crate::prompts::SYSTEM_VERIFY
-        ),
+        )
+    });
+    let mut messages = vec![ChatMessage {
+        role: ChatRole::System,
+        message_type: MessageType::Text,
+        content: head,
     }];
     for turn in history {
         if turn.role == ConversationRole::Checkpoint {
@@ -3693,6 +3833,20 @@ pub mod fuzzing {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_subagent_result_is_never_the_active_request() {
+        let user = |content: String| ChatMessage {
+            role: ChatRole::User,
+            message_type: MessageType::Text,
+            content,
+        };
+        let messages = vec![
+            user("Review the change".into()),
+            user(subagent_note("Do something else entirely")),
+        ];
+        assert_eq!(active_request_index(&messages), Some(0));
+    }
+
     /// Found by the goal soak: a provider's empty reply to a summary request ("no text
     /// or tools") failed the checkpoint at once; a retry, with twice the output
     /// allowance, gives a model that spent its budget on reasoning another chance.

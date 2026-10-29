@@ -27,6 +27,26 @@ pub const SYSTEM_EVIDENCE_CAUTION: &str =
 /// Skill catalog appended to the system message; `{{skills}}` is the metadata JSON.
 pub const SYSTEM_SKILL_CATALOG: &str = include_str!("../builtins/prompts/system-skill-catalog.md");
 
+// Subagents.
+/// System message head of a subagent run, instead of the ordinary system instructions.
+pub const SUBAGENT_SYSTEM: &str = include_str!("../builtins/prompts/subagent-system.md");
+/// Added to a read-only subagent's system message.
+pub const SUBAGENT_READ_ONLY_NOTE: &str =
+    include_str!("../builtins/prompts/subagent-read-only-note.md");
+/// Explains the optional `status` field every subagent tool call accepts.
+pub const SUBAGENT_STATUS_FIELD: &str =
+    include_str!("../builtins/prompts/subagent-status-field.md");
+/// Description of the `spawn_subagents` tool.
+pub const SPAWN_SUBAGENTS_TOOL: &str = include_str!("../builtins/prompts/spawn-subagents-tool.md");
+/// Description of the `wait_subagents` tool.
+pub const WAIT_SUBAGENTS_TOOL: &str = include_str!("../builtins/prompts/wait-subagents-tool.md");
+/// Description of the `steer_subagent` tool.
+pub const STEER_SUBAGENT_TOOL: &str = include_str!("../builtins/prompts/steer-subagent-tool.md");
+/// Description of the `stop_subagent` tool.
+pub const STOP_SUBAGENT_TOOL: &str = include_str!("../builtins/prompts/stop-subagent-tool.md");
+/// A subagent's result, delivered to the main agent; `{{name}}`, `{{id}}`, `{{status}}`, `{{result}}`.
+pub const SUBAGENT_RESULT_NOTE: &str = include_str!("../builtins/prompts/subagent-result-note.md");
+
 // Desktop run setup.
 /// Current run workspace preamble before the skill catalog; `{{workspace}}`.
 pub const DESKTOP_RUN_WORKSPACE: &str =
@@ -182,6 +202,9 @@ pub const RUNTIME_REPEAT_IN_CONTEXT: &str =
 pub const RUNTIME_HANDOFF: &str = include_str!("../builtins/prompts/runtime-handoff.md");
 /// Header before a message the user sent while the agent was working.
 pub const RUNTIME_STEERED: &str = include_str!("../builtins/prompts/runtime-steered.md");
+/// Header before a subagent's result delivered between steps: data, not the person's words.
+pub const RUNTIME_SUBAGENT_NOTE: &str =
+    include_str!("../builtins/prompts/runtime-subagent-note.md");
 /// Sent once before a run that read two or more steered messages ends, listing them.
 pub const RUNTIME_STEERS_CHECK: &str = include_str!("../builtins/prompts/runtime-steers-check.md");
 /// Error for a call left out of a batch too large for the context; `{{calls}}`, `{{runnable}}`.

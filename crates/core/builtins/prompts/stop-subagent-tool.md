@@ -1,0 +1,1 @@
+Stop one running subagent. Its partial result arrives as a note, like any other ending.

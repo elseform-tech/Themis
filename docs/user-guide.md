@@ -126,6 +126,30 @@ another option or write your own.
   which ones and what it recommended. Questions stay with the chat across restarts;
   from the CLI, `themis call list_questions` and `answer_question` do the same.
 
+### Subagents
+
+For work that splits into independent parts, such as reviewing several areas or
+searching a large codebase, the agent can start subagents. Each one works on its
+own brief while the agent carries on, and its result reaches the agent before its
+next step. The agent's turn ends only after every subagent it started has
+reported back.
+
+- **Read-only.** Subagents read, list and search files and run shell commands, but
+  do not change the project. Where the OS sandbox is available their commands may
+  write only temporary folders; without it nothing confines them beyond your
+  approval rules.
+- **Approvals.** A subagent's approval names it. **Allow in this chat** on its
+  request covers only that subagent; your chat's existing grants and deny rules
+  apply to it as usual.
+- **Stop.** Stop on the chat stops its subagents too. The agent can stop one
+  subagent; that subagent's partial result still reaches it.
+- **Limits.** At most three run at once by default (`subagents.max_parallel`);
+  more wait their turn. Each has 40 model requests (`subagents.max_turns`).
+  `subagents.model` picks a different model for them, and `subagents.enabled:
+  false` turns them off; see [configuration](configuration.md).
+- Each subagent's steps are saved beside the chat and removed with it. From the
+  CLI, `themis call list_subagents '{"threadId": "…"}'` lists a chat's subagents.
+
 ### Goals
 
 A goal is one sentence the agent keeps working toward, turn after turn, until it

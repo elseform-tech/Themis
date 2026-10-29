@@ -1322,6 +1322,8 @@ fn import_hooks(value: &Value, spec: &mut PluginSpec) -> anyhow::Result<()> {
             "PostToolUse" => "AfterTool",
             "Stop" => "RunEnd",
             "PreCompact" => "BeforeCompaction",
+            "SubagentStart" => "SubagentStart",
+            "SubagentStop" => "SubagentEnd",
             _ => {
                 spec.unsupported.push(format!("Hook event {event}"));
                 continue;

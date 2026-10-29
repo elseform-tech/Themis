@@ -599,6 +599,8 @@ pub struct SandboxPlan {
     /// Whether `protected` starts with the app-data folder.
     has_app_data: bool,
     secrets: Vec<PathBuf>,
+    /// A subagent's read-only copy: in-process file tools may write only `writable`.
+    read_only: bool,
     #[cfg(target_os = "linux")]
     landlock: OnceLock<Result<Arc<landlock::Ruleset>, String>>,
 }
@@ -781,6 +783,35 @@ impl SandboxPlan {
             protected,
             has_app_data: inputs.app_data.is_some(),
             secrets,
+            read_only: false,
+            #[cfg(target_os = "linux")]
+            landlock: OnceLock::new(),
+        }
+    }
+
+    /// The same plan for a read-only subagent: only the temporary folders stay writable, so
+    /// commands can read the project and run tools that write scratch files, but cannot
+    /// change the project. Network, secrets and protected folders are unchanged.
+    pub fn read_only(&self) -> Self {
+        let mut writable = Vec::new();
+        for dir in temp_dirs() {
+            push_unique(&mut writable, dir);
+        }
+        Self {
+            enforcement: self.enforcement.clone(),
+            reason: self.reason.clone(),
+            open: self.open,
+            network: self.network,
+            network_enforced: self.network_enforced,
+            allow_keychain: self.allow_keychain,
+            landlock_abi: self.landlock_abi,
+            configured_writable: Vec::new(),
+            home: self.home.clone(),
+            writable,
+            protected: self.protected.clone(),
+            has_app_data: self.has_app_data,
+            secrets: self.secrets.clone(),
+            read_only: true,
             #[cfg(target_os = "linux")]
             landlock: OnceLock::new(),
         }
@@ -1060,6 +1091,7 @@ impl SandboxPlan {
         Some(FileGuard {
             no_write,
             no_read: self.secrets.clone(),
+            only_write: self.read_only.then(|| self.writable.clone()),
         })
     }
 }
@@ -1146,6 +1178,8 @@ pub struct BackendInfo {
 pub struct FileGuard {
     no_write: Vec<PathBuf>,
     no_read: Vec<PathBuf>,
+    /// Set for a read-only plan: writes outside these folders are refused.
+    only_write: Option<Vec<PathBuf>>,
 }
 
 impl FileGuard {
@@ -1179,6 +1213,19 @@ impl FileGuard {
                 "'{}' holds Themis settings or permissions; the sandbox does not let agents change it. Edit it yourself if needed",
                 path.display()
             ));
+        }
+        if let Some(allowed) = &self.only_write {
+            // Only the resolved path counts, and `..` is never followed, so a path cannot
+            // start inside an allowed folder and step out of it.
+            let climbs = path
+                .components()
+                .any(|part| part == std::path::Component::ParentDir);
+            if climbs || !allowed.iter().any(|folder| resolved.starts_with(folder)) {
+                return Err(format!(
+                    "'{}' is outside the folders this read-only run may write",
+                    path.display()
+                ));
+            }
         }
         Ok(())
     }

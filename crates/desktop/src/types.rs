@@ -267,6 +267,37 @@ pub enum ThreadEvent {
         id: String,
         answer: String,
     },
+    /// The agent started a subagent for one part of the task.
+    SubagentStarted {
+        id: String,
+        name: String,
+        brief: String,
+        model: String,
+        /// Whether an OS sandbox confines its shell commands.
+        confined: bool,
+    },
+    /// What a running subagent is doing now. Live only.
+    SubagentStatus {
+        id: String,
+        text: String,
+        tool_calls: usize,
+    },
+    /// A subagent ended: `finished`, `stopped`, `failed` or `turn_limit`, with its result
+    /// (or what it had so far).
+    SubagentEnded {
+        id: String,
+        status: String,
+        result: String,
+        tool_calls: usize,
+        seconds: u64,
+    },
+}
+
+/// Which subagent raised an approval (`ApprovalRequest.subagent`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SubagentLabel {
+    pub id: String,
+    pub name: String,
 }
 
 /// A question the agent asked the user (`questions/<chat id>.json`).
@@ -453,6 +484,9 @@ pub struct ApprovalRequest {
     /// of the joined `summary`, which can be spoofed by argument contents.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub command: Option<themis_core::tools::CommandDisplay>,
+    /// Set when a subagent, not the main agent, asks.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub subagent: Option<SubagentLabel>,
 }
 
 /// What a site grant covers (`GrantSite` in types.ts).
@@ -1403,6 +1437,7 @@ mod tests {
             grant_site: None,
             grantable: true,
             command: None,
+            subagent: None,
         };
         assert_eq!(
             to_value(&request),

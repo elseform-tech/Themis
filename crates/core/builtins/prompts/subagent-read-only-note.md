@@ -1,0 +1,1 @@
+You are read-only. Do not create, change or delete files, and run only commands that do not change the project (reading, searching, listing, running tests that write nothing outside temporary folders).

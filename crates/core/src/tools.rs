@@ -1615,7 +1615,7 @@ fn bounded_read_result(args: &Value, mut result: Value) -> Result<Value, ToolCal
 /// Unknown tool names and malformed args fall back to a capped
 /// ``call `<name>` with <args>`` rendering so the approval UI always shows
 /// something meaningful.
-fn summarize_fs_call(name: &str, args: &Value) -> String {
+pub fn summarize_fs_call(name: &str, args: &Value) -> String {
     fn field<'a>(args: &'a Value, key: &str) -> Option<&'a str> {
         args.get(key).and_then(Value::as_str)
     }
@@ -2900,6 +2900,7 @@ pub fn boxed_tools_for_chat(
             background,
             cancel,
             sandbox: None,
+            no_escalation: false,
         },
     )
 }
@@ -2917,6 +2918,8 @@ pub struct ToolOptions {
     /// its file guard for the in-process file tools. In Custom mode a command
     /// the sandbox blocked asks to run outside it; in YOLO it never asks.
     pub sandbox: Option<Arc<SandboxPlan>>,
+    /// Never ask to run a blocked command outside the sandbox (subagents).
+    pub no_escalation: bool,
 }
 
 /// The coding toolset for one run (see [`boxed_tools`]).
@@ -2930,6 +2933,7 @@ pub fn boxed_tools_for_run(
         background,
         cancel,
         sandbox,
+        no_escalation,
     } = options;
     let guard = sandbox
         .as_ref()
@@ -3026,8 +3030,8 @@ pub fn boxed_tools_for_run(
     let mut git =
         GitTool::new(canonical.clone(), approvals.clone()).with_unrestricted_commands(yolo);
     if let Some(plan) = sandbox {
-        shell = shell.with_sandbox(Arc::clone(&plan), !yolo);
-        git = git.with_sandbox(plan, !yolo);
+        shell = shell.with_sandbox(Arc::clone(&plan), !yolo && !no_escalation);
+        git = git.with_sandbox(plan, !yolo && !no_escalation);
     }
     tools.push(Box::new(shell));
     tools.push(Box::new(background::BackgroundTool::new(background)));

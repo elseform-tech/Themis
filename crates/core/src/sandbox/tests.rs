@@ -255,6 +255,69 @@ fn plan_writable_protected_and_secret_lists() {
 }
 
 #[test]
+fn a_read_only_plan_keeps_walls_but_writes_only_temp_folders() {
+    let fx = fixture();
+    let configured = config(r#"{"writable_paths":["~/cache"]}"#);
+    let plan = plan_with(
+        Enforcement::Active(Backend::Seatbelt),
+        &configured,
+        &fx.root,
+        &fx.app_data,
+        &fx.home,
+    )
+    .read_only();
+    assert!(!plan.writable().contains(&fx.root));
+    assert!(!plan.writable().contains(&fx.home.join("cache")));
+    assert!(plan
+        .writable()
+        .contains(&resolve_existing(&std::env::temp_dir())));
+    assert_eq!(plan.protected()[0], fx.app_data);
+    assert!(plan.secrets().contains(&fx.home.join(".ssh")));
+    assert_eq!(plan.status().state, "on");
+    assert!(!plan.open());
+    // In-process file tools are held to the same folders.
+    let guard = plan.file_guard(false).unwrap();
+    assert!(guard.check_write(&fx.root.join("src/main.rs")).is_err());
+    assert!(guard
+        .check_write(&std::env::temp_dir().join("scratch.txt"))
+        .is_ok());
+    // Stepping out of a temp folder is refused, however the path is spelled.
+    let escape = std::env::temp_dir()
+        .join("..")
+        .join(fx.root.strip_prefix("/").unwrap_or(&fx.root));
+    assert!(guard.check_write(&escape.join("src/main.rs")).is_err());
+    #[cfg(unix)]
+    {
+        let link = tempfile::tempdir().unwrap();
+        let alias = link.path().join("project");
+        std::os::unix::fs::symlink(&fx.root, &alias).unwrap();
+        assert!(guard.check_write(&alias.join("src/main.rs")).is_err());
+    }
+    assert!(guard.check_read(&fx.root.join("src/main.rs")).is_ok());
+
+    // A YOLO run's subagent keeps YOLO's reach for reads, and says so in its status.
+    let open = SandboxPlan::with_enforcement(
+        PlanInputs {
+            config: &configured,
+            project_root: &fx.root,
+            app_data: Some(&fx.app_data),
+            home: Some(&fx.home),
+            open: Some(YoloSandbox::default()),
+        },
+        Enforcement::Active(Backend::Seatbelt),
+        "test".into(),
+    )
+    .read_only();
+    assert!(open.open());
+    assert!(!open.writable().contains(&PathBuf::from("/")));
+    assert!(!open.writable().contains(&fx.root));
+    assert_eq!(
+        open.status().secret_paths.is_empty(),
+        open.secrets().is_empty()
+    );
+}
+
+#[test]
 fn file_guard_protects_app_data_secrets_and_yolo_project_config() {
     let fx = fixture();
     let plan = plan_with(
