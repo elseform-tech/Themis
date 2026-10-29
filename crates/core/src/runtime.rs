@@ -693,7 +693,7 @@ async fn run_task_with_evidence_inner(
             messages.push(ChatMessage {
                 role: ChatRole::User,
                 message_type: MessageType::Text,
-                content: note,
+                content: subagent_note(&note),
             });
         }
         // Compaction and maintenance compare raw estimates, so hand them the equivalent raw budget.
@@ -2907,8 +2907,28 @@ const RUNTIME_NOTES: [&str; 5] = [
 /// the current request, so a spec check late in a goal turn must not displace it.
 fn active_request_index(messages: &[ChatMessage]) -> Option<usize> {
     messages.iter().rposition(|message| {
-        message.role == ChatRole::User && !RUNTIME_NOTES.contains(&message.content.as_str())
+        message.role == ChatRole::User
+            && !RUNTIME_NOTES.contains(&message.content.as_str())
+            // A subagent's result is never the person's request.
+            && !message
+                .content
+                .starts_with(crate::prompts::RUNTIME_SUBAGENT_NOTE)
     })
+}
+
+/// The model-facing form of a subagent result: the label, then the result fenced so text
+/// inside it cannot pose as the label or close the fence early.
+pub fn subagent_note(note: &str) -> String {
+    let fenced = note
+        .chars()
+        .take(16 * 1024)
+        .collect::<String>()
+        .replace("<<<", "< < <")
+        .replace(">>>", "> > >");
+    format!(
+        "{}\n<<<subagent-result\n{fenced}\n>>>",
+        crate::prompts::RUNTIME_SUBAGENT_NOTE
+    )
 }
 
 fn context_split(messages: &[ChatMessage], policy: &RunPolicy) -> usize {

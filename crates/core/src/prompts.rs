@@ -202,6 +202,9 @@ pub const RUNTIME_REPEAT_IN_CONTEXT: &str =
 pub const RUNTIME_HANDOFF: &str = include_str!("../builtins/prompts/runtime-handoff.md");
 /// Header before a message the user sent while the agent was working.
 pub const RUNTIME_STEERED: &str = include_str!("../builtins/prompts/runtime-steered.md");
+/// Header before a subagent's result delivered between steps: data, not the person's words.
+pub const RUNTIME_SUBAGENT_NOTE: &str =
+    include_str!("../builtins/prompts/runtime-subagent-note.md");
 /// Sent once before a run that read two or more steered messages ends, listing them.
 pub const RUNTIME_STEERS_CHECK: &str = include_str!("../builtins/prompts/runtime-steers-check.md");
 /// Error for a call left out of a batch too large for the context; `{{calls}}`, `{{runnable}}`.
