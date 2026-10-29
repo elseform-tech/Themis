@@ -3,7 +3,7 @@ import { useEffect, useRef } from "react";
 import type React from "react";
 import type { ApprovalDecision, ApprovalRequest, RiskLevel } from "../../lib/types";
 import { UNSANDBOXED_TOOL } from "../../lib/types";
-import { singleKeyShortcutAllowed } from "../../lib/keyboard";
+import { isBareCharacterKey } from "../../lib/keyboard";
 import { SafeText, TokenChip, TokenList } from "./CommandTokens";
 import { Badge, type BadgeTone } from "../primitives/Badge";
 import { Button } from "../primitives/Button";
@@ -91,7 +91,11 @@ export function ApprovalBox({ request, label, open, onDecide, next, onFold }: Ap
   // missed click must never approve or deny an action.
   function onKeyDown(event: React.KeyboardEvent) {
     if (event.repeat || Date.now() - openedAt.current < SHORTCUT_DELAY_MS) return;
-    if (!singleKeyShortcutAllowed(event.nativeEvent)) return;
+    // The box sits inside the composer, so the composer-wide "this is typing" rule does not
+    // apply here: only a text field inside the box would make a digit typing.
+    const target = event.target as Element;
+    if (event.nativeEvent.isComposing || !isBareCharacterKey(event.nativeEvent)) return;
+    if (target.closest("input, textarea, select, [contenteditable]:not([contenteditable='false']), [role='textbox']")) return;
     // Numbering is stable: 1 Allow once, 2 Allow in this chat, 3 Deny. Requests that
     // cannot be allowed for the chat offer only 1 and 3, so a held 2 never denies.
     const decision = event.key === "1" ? "once" : event.key === "2" && grantable ? "chat" : event.key === "3" ? "deny" : null;

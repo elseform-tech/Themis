@@ -145,6 +145,18 @@ describe("ApprovalBox", () => {
     expect(onDecide).not.toHaveBeenCalled();
   });
 
+  it("decides with 1–3 inside the composer, where the box lives", () => {
+    // Seen live: the composer-wide typing guard swallowed every digit once the box moved
+    // into the composer stack.
+    vi.useFakeTimers({ toFake: ["Date"] });
+    const onDecide = vi.fn();
+    render(<div className="themis-thread-composer"><ApprovalBox open request={REQUEST} onDecide={onDecide} /></div>);
+    vi.advanceTimersByTime(600);
+    fireEvent.keyDown(box(), { key: "1" });
+    expect(onDecide).toHaveBeenCalledWith("once");
+    vi.useRealTimers();
+  });
+
   it("takes focus when clicked, so 1–3 decide right after a click", () => {
     setup();
     box().focus();
