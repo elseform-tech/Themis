@@ -330,7 +330,41 @@ export type ThreadEvent =
   | { kind: 'goal_note'; outcome: GoalNoteKind; reason: string }
   /** The agent asked the user a question, or updated one still open (same id). */
   | { kind: 'question_asked'; question: Question }
-  | { kind: 'question_answered'; id: string; answer: string };
+  | { kind: 'question_answered'; id: string; answer: string }
+  /** The agent started a read-only subagent for one part of its task. */
+  | { kind: 'subagent_started'; id: string; name: string; brief: string; model: string; confined: boolean }
+  /** What a running subagent is doing now (live only). */
+  | { kind: 'subagent_status'; id: string; text: string; tool_calls: number }
+  | { kind: 'subagent_ended'; id: string; status: SubagentEnding; result: string; tool_calls: number; seconds: number };
+
+export type SubagentEnding = 'finished' | 'stopped' | 'failed' | 'incomplete';
+
+/** One subagent on its chat card. */
+export interface SubagentEntry {
+  id: string;
+  name: string;
+  brief: string;
+  model: string;
+  confined: boolean;
+  status: 'running' | SubagentEnding;
+  /** Its own status line, or its latest action. */
+  text: string;
+  result?: string;
+  toolCalls: number;
+  /** Seconds it ran, once ended. */
+  seconds?: number;
+  /** When it started, for live elapsed time (live events only). */
+  startedAt?: number;
+}
+
+/** Settings › Subagents (the `subagents` block of the user runtime.jsonc). */
+export interface SubagentSettings {
+  enabled: boolean;
+  max_parallel: number;
+  max_turns: number;
+  model?: string | null;
+  allow_writes: boolean;
+}
 
 /** A question the agent asked without stopping its work. */
 export interface Question {
@@ -499,6 +533,8 @@ export interface PersistedMessage {
   goalNote?: { outcome: GoalNoteKind; reason: string };
   /** A question the agent asked the user. */
   question?: Question;
+  /** Subagents started together in this run, shown as one card. */
+  subagents?: SubagentEntry[];
 }
 
 export type HistoryItem =
@@ -532,6 +568,8 @@ export interface ApprovalRequest {
     /** Set when the sandbox blocked this command and the request asks to run it outside the sandbox: why (untrusted text). */
     sandbox_blocked?: string;
   };
+  /** Set when a subagent, not the main agent, asks. */
+  subagent?: { id: string; name: string };
 }
 
 /** Tool name of a request to run a sandbox-blocked command outside the sandbox. */

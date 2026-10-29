@@ -1,0 +1,88 @@
+/* The subagents card in a chat turn: one row per subagent (board 25), folded to one
+   result line each once they all ended (board 27). */
+.themis-subagents {
+  display: flex; flex-direction: column; overflow: hidden;
+  border: 1px solid var(--themis-border-subtle); border-radius: var(--themis-radius-card);
+  background: var(--themis-sidebar-bg);
+}
+.themis-subagents-head { display: flex; align-items: center; gap: 10px; padding: 12px 16px; }
+.themis-subagents-head strong { flex: 1; font-weight: 600; }
+.themis-subagents-meta { font-size: .75rem; color: var(--themis-text-3); }
+.themis-subagents-glyph { width: 16px; height: 16px; fill: none; stroke: var(--themis-info); stroke-width: 1.8; stroke-linecap: round; flex: none; }
+
+.themis-subagent-row {
+  display: flex; align-items: center; gap: 12px; width: 100%; padding: 14px 16px;
+  border: 0; border-top: 1px solid var(--themis-border-subtle); background: transparent;
+  font: inherit; color: var(--themis-text); text-align: left; cursor: pointer;
+}
+.themis-subagent-row:hover { background: var(--themis-nav-hover-bg); }
+.themis-subagent-row:focus-visible { outline: 2px solid var(--themis-accent); outline-offset: -2px; }
+.themis-subagent-row.is-approval { background: color-mix(in srgb, var(--themis-warning) 7%, transparent); }
+.themis-subagent-row.is-folded { gap: 10px; padding: 10px 16px; align-items: baseline; }
+
+.themis-subagent-icon {
+  flex: none; width: 28px; height: 28px; border-radius: 14px; display: grid; place-items: center;
+  background: var(--themis-raised);
+}
+.themis-subagent-icon svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.9; stroke-linecap: round; stroke-linejoin: round; overflow: visible; }
+.themis-subagent-icon.is-running { background: color-mix(in srgb, var(--themis-info) 18%, transparent); }
+.themis-subagent-icon.is-finished { background: color-mix(in srgb, var(--themis-success) 16%, transparent); }
+.themis-subagent-icon.is-attention { background: color-mix(in srgb, var(--themis-warning) 18%, transparent); color: var(--themis-warning); }
+.themis-subagent-icon.is-scheduled { background: color-mix(in srgb, var(--themis-warning) 14%, transparent); }
+.themis-subagent-icon.is-ended { color: var(--themis-text-2); }
+.themis-subagent-icon.is-ended rect { fill: currentColor; stroke: none; }
+.themis-subagents-head > .themis-subagent-icon { width: 16px; height: 16px; background: none; }
+
+.themis-subagent-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.themis-subagent-title { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
+.themis-subagent-name { flex: none; font-weight: 600; }
+.themis-subagent-brief, .themis-subagent-now {
+  min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: .8125rem;
+}
+.themis-subagent-brief { color: var(--themis-text-2); }
+.themis-subagent-now { color: var(--themis-text-2); }
+.themis-subagent-row.is-running .themis-subagent-now { color: var(--themis-text); }
+.themis-subagent-row.is-approval .themis-subagent-now { color: var(--themis-warning); }
+.themis-subagent-row.is-failed .themis-subagent-now { color: var(--themis-danger); }
+.themis-subagent-row.is-folded .themis-subagent-name { width: 112px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.themis-subagent-row.is-folded .themis-subagent-now { flex: 1; }
+
+.themis-subagent-stats {
+  flex: none; display: flex; flex-direction: column; align-items: flex-end; gap: 2px;
+  font-size: .75rem; color: var(--themis-text-3);
+}
+
+/* Workspace › Tasks detail of one subagent (board 26). */
+.themis-subagent-detail { display: flex; flex-direction: column; min-height: 0; }
+.themis-subagent-detail-head {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 4px 0 14px;
+  border-bottom: 1px solid var(--themis-border-subtle);
+}
+.themis-subagent-back {
+  width: 36px; height: 36px; border: 0; border-radius: 18px; background: transparent; display: grid; place-items: center;
+  color: var(--themis-text-2); cursor: pointer;
+}
+.themis-subagent-back:hover { background: var(--themis-nav-hover-bg); color: var(--themis-text); }
+.themis-subagent-back svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; }
+.themis-subagent-detail-title { flex: 1; min-width: 180px; display: flex; flex-direction: column; gap: 2px; }
+.themis-subagent-detail-name { display: flex; align-items: center; gap: 8px; }
+.themis-subagent-detail-name strong { font-size: 1rem; font-weight: 600; }
+.themis-subagent-detail-meta { font-size: .75rem; color: var(--themis-text-3); }
+.themis-subagent-stop {
+  height: 36px; padding: 0 14px; border: 1px solid color-mix(in srgb, var(--themis-danger) 40%, transparent);
+  border-radius: 18px; background: transparent; color: var(--themis-danger); font: inherit; font-size: .8125rem; cursor: pointer;
+}
+.themis-subagent-stop:disabled { opacity: .5; cursor: not-allowed; }
+.themis-subagent-steps { display: flex; flex-direction: column; gap: 14px; padding: 16px 0; overflow-y: auto; }
+.themis-subagent-brief-box { padding: 12px 14px; border-radius: 16px; background: var(--themis-canvas); }
+.themis-subagent-brief-box summary { cursor: pointer; font-size: .75rem; font-weight: 500; color: var(--themis-text-2); }
+.themis-subagent-brief-box p { margin: 10px 0 0; font-size: .8125rem; line-height: 1.6; color: var(--themis-text-2); white-space: pre-wrap; }
+.themis-subagent-step-text { font-size: .875rem; line-height: 1.7; }
+.themis-subagent-calls { align-self: flex-start; max-width: 100%; }
+.themis-subagent-calls summary {
+  display: inline-flex; height: 32px; align-items: center; padding: 0 12px; border-radius: 16px; background: var(--themis-raised);
+  font-size: .8125rem; color: var(--themis-text-2); cursor: pointer;
+}
+.themis-subagent-calls ul { margin: 8px 0 0; padding: 0 0 0 20px; list-style: none; display: flex; flex-direction: column; gap: 4px; }
+.themis-subagent-calls li { font-family: ui-monospace, SFMono-Regular, monospace; font-size: .75rem; color: var(--themis-text-2); overflow-wrap: anywhere; }
+.themis-subagent-ending { margin: 0; font-size: .8125rem; color: var(--themis-text-2); }

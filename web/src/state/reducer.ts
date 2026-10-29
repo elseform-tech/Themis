@@ -2,6 +2,7 @@
 // safe to load in node-based unit tests.
 import type {
   AttachedMedia,
+  SubagentEntry,
   BrowserRecording,
   ChangedFile,
   ContextBudget,
@@ -134,6 +135,8 @@ export interface AppState {
   diffPanelOpen: boolean;
   /** A file to show in the Workspace changes view, e.g. from an edited-files list. */
   diffFocus: { path: string; at: number } | null;
+  /** The subagent Workspace › Tasks shows in detail. */
+  subagentFocus: string | null;
   /** Asks the open (or next opened) Workspace panel to show a tab. */
   workspaceTabRequest: { tab: WorkspaceTab; at: number } | null;
   /** Each chat's built-in browser: who drives it and any recording (live only). */
@@ -203,7 +206,8 @@ export type AppAction =
   | { type: "toast/dismiss"; id: string }
   | { type: "ui/view"; view: MainView; settings?: { section: string; key?: string } }
   | { type: "ui/settings-section"; section: string }
-  | { type: "ui/diff-panel"; open: boolean; focus?: string; tab?: WorkspaceTab }
+  | { type: "ui/diff-panel"; open: boolean; focus?: string; tab?: WorkspaceTab; subagent?: string }
+  | { type: "ui/subagent-focus"; id: string | null }
   | { type: "browser/opens-workspace"; value: boolean }
   | { type: "ui/tab-request-consumed" }
   | { type: "tasks/loaded"; threadId: string; tasks: ThreadTasks }
@@ -273,6 +277,7 @@ export const initialState: AppState = {
   toasts: [],
   diffPanelOpen: false,
   diffFocus: null,
+  subagentFocus: null,
   workspaceTabRequest: null,
   browsers: {},
   tasks: {},
@@ -358,6 +363,14 @@ function userMessage(text: string, runId: string | undefined, attachments?: stri
     ...(attachments?.length ? { attachments } : {}),
     ...(goalTurn === undefined ? {} : { goalTurn }),
   };
+}
+
+function updateSubagent(state: AppState, threadId: string, id: string, change: (agent: SubagentEntry) => SubagentEntry): AppState {
+  const rows = state.messages[threadId] ?? [];
+  const updated = rows.map(row => row.subagents?.some(agent => agent.id === id)
+    ? { ...row, subagents: row.subagents.map(agent => agent.id === id ? change(agent) : agent) }
+    : row);
+  return { ...state, messages: { ...state.messages, [threadId]: updated } };
 }
 
 function appendMessage(
@@ -506,6 +519,21 @@ export function applyThreadEvent(
       const updated = rows.map(row => row.question?.id === event.id ? { ...row, question: { ...row.question, answer: event.answer } } : row);
       return { ...state, messages: { ...state.messages, [threadId]: updated } };
     }
+    case "subagent_started": {
+      const entry: SubagentEntry = { id: event.id, name: event.name, brief: event.brief, model: event.model, confined: event.confined, status: "running", text: "", toolCalls: 0, startedAt: measureDuration ? Date.now() : undefined };
+      const rows = state.messages[threadId] ?? [];
+      const last = rows[rows.length - 1];
+      // Subagents started together share one card; a later spawn gets its own.
+      if (last?.subagents && last.runId === runId) {
+        const updated = [...rows.slice(0, -1), { ...last, subagents: [...last.subagents, entry] }];
+        return { ...state, messages: { ...state.messages, [threadId]: updated } };
+      }
+      return appendMessage(state, threadId, { id: `subagents-${event.id}`, role: "system", text: "", runId, subagents: [entry] });
+    }
+    case "subagent_status":
+      return updateSubagent(state, threadId, event.id, agent => ({ ...agent, text: event.text || agent.text, toolCalls: event.tool_calls }));
+    case "subagent_ended":
+      return updateSubagent(state, threadId, event.id, agent => ({ ...agent, status: event.status, result: event.result, toolCalls: event.tool_calls, seconds: event.seconds }));
     case "context_budget": {
       const rows = state.messages[threadId] ?? [];
       const last = rows[rows.length - 1];

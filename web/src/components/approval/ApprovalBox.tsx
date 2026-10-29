@@ -106,7 +106,9 @@ export function ApprovalBox({ request, label, open, onDecide, next, onFold }: Ap
   }
 
   if (!open) return null;
-  const title = outside ? "Run outside the sandbox?" : "Approval needed";
+  // A subagent's request names it, so the person knows which agent asks.
+  const asker = request.subagent ? `${request.subagent.name} (subagent)` : null;
+  const title = outside ? "Run outside the sandbox?" : asker ? `${asker} ${request.command ? "wants to run a command" : "needs approval"}` : "Approval needed";
   return (
     <section className="themis-approval-box" aria-label={title} tabIndex={-1} onKeyDown={onKeyDown}>
       <div className="themis-approval-head">

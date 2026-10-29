@@ -219,3 +219,11 @@
 .themis-settings-state.is-warn::before { background: var(--themis-warning); }
 .themis-key-name { display: grid; gap: 2px; min-width: 0; }
 .themis-key-name code { font-size: .85rem; }
+.themis-subagent-counts { display: inline-flex; padding: 3px; border-radius: 20px; background: var(--themis-canvas); }
+.themis-subagent-counts button {
+  width: 40px; height: 34px; border: 0; border-radius: 17px; background: transparent;
+  font: inherit; color: var(--themis-text-2); cursor: pointer;
+}
+.themis-subagent-counts button[aria-checked="true"] { background: var(--themis-raised); color: var(--themis-text); }
+.themis-subagent-counts button:disabled { opacity: .5; cursor: not-allowed; }
+.themis-subagent-counts button:focus-visible { outline: 2px solid var(--themis-accent); outline-offset: 1px; }
