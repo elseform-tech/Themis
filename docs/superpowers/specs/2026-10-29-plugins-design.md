@@ -43,7 +43,8 @@ affect plugins, have their own design: `2026-10-29-subagents-design.md`.
 | Step | Plugins that fully work | Share |
 |---|---|---|
 | Today | 105 | 33% |
-| Importer fixes (P1, P2) | 220 | 70% |
+| Importer fixes part 1 (P1, measured) | 156 | 50% |
+| + part 2 (P2) | about 220 | about 70% |
 | + `commands/` as skills (P3) | 239 | 76% |
 | + hook events and mapping (P4) | 254 | 81% |
 | + subagent profiles (subagents design, step 4) | up to 283 | up to 90% |
@@ -66,22 +67,26 @@ affect plugins, have their own design: `2026-10-29-subagents-design.md`.
   - The check also reports official entries that `plugin-groups.json` doesn't cover (P5).
 - **Symlinks** (18 plugins fail today):
   - Follow a link whose target, after canonicalising, stays inside the plugin root and isn't a
-    loop. Reject every other link.
-  - Discovery still rejects symlinks inside skill packages; this change is for marketplace
-    plugins only.
-  - On Windows, Git may check a symlink out as a small text file. Such files keep their text
-    content and are reported as "Link not followed".
-- **Files over 1 MiB** (18): skip the file and record "File too large: <path>" instead of failing
-  the plugin. The plugin totals stay: 8 MiB and 1,000 files.
+    folder already being read. Report every other link as "Link not followed: <path>".
+  - Skill discovery keeps rejecting symlinks; this change is for plugin packages only.
+- **Files over 1 MiB** (18): skip the file with the notice "File too large: <path>" instead of
+  failing the plugin.
+- **Plugins over the totals** (8 MiB, 1,000 files), usually a whole library or server repository:
+  import only the plugin's own folders (`.claude-plugin`, `.mcp.json`, `SKILL.md`, `skills`,
+  `commands`, `agents`, `hooks`, `scripts`, `assets` and declared paths) and report the plugin
+  as partial.
 - **Duplicate skill ids** (10):
-  - When a plugin's skills collide on id, the colliding skills get ids derived from their folder
-    path (`skills/a/review` → `a-review`).
-  - The id each skill path receives is stored in the registry and reused on every update, so
-    saved `[[skill:ID]]` prompts keep working even if the collision later disappears.
-  - Plugins that import today never collided, so none of their ids change.
-- **Paths in `plugin.json`:** read the `skills` paths it declares (33), external MCP config files
-  (18) and external hook config files (5). Each path must resolve inside the plugin root and
-  passes the same escape checks.
+  - The cause is the importer counting every `SKILL.md` as a skill. That includes copies made
+    for other tools (netlify ships `codex/skills/…`) and reference files inside a skill folder
+    (vercel's `upstream/SKILL.md`).
+  - Plugins whose skills don't collide keep today's rule, so their ids never change.
+  - When ids collide, only Claude's layout counts: a root `SKILL.md`, `skills/<name>/SKILL.md`
+    and declared skill folders.
+  - Ids that still collide come from the folder path (`extra/review` → `extra-review`).
+  - A plugin with nothing in Claude's layout keeps all its skills.
+  - No ids need storing in the registry, because ids that import today stay the same.
+- **Duplicate MCP servers:** a server defined identically in `plugin.json` and `.mcp.json`
+  imports once (CodSpeed, Leadfeeder).
 - **Harmless notes no longer make a plugin "partial":** unused skill frontmatter, Claude
   tool-name notes and binary files left out of the text store (images, fonts). That's 55
   plugins. The notes stay listed in the detail view.
@@ -291,7 +296,7 @@ P1 through P4 each re-run the catalog check and record the numbers in the PR.
 
 - **Core:**
   - Unit and property tests for symlink containment (including loops), the literal-value
-    validator, sticky duplicate ids, the `commands/` converter, matcher mapping and manifest
+    validator, skill-id selection, the `commands/` converter, matcher mapping and manifest
     path resolution.
   - A fuzz target for the `marketplace.json` and `plugin.json` parsers, per `docs/fuzzing.md`.
 - **Shared server/CLI end-to-end:**
