@@ -72,6 +72,23 @@ function capabilitySummary(spec: PluginSpec) {
     .filter(([count]) => Number(count) > 0).map(([count, label]) => `${count} ${label}${count === 1 ? "" : "s"}`).join(" · ");
 }
 const compatibilityLabels = { supported: "Compatible", partial: "Partially supported", unsupported: "Unsupported" };
+/** One Discover entry: a catalog plugin of one source (`key` is `source/name`). */
+type CatalogEntry = { key: string; market: string; name: string; description?: string; icon?: string; source?: unknown; author?: { name?: string } | string; group: string };
+type Scan = { revision: string; status: string; completed: number; total: number; catalog: { plugins: Array<Omit<CatalogEntry, "key" | "market" | "group">> }; checks: Record<string, ImportPreview>; errors: Record<string, string>; groups?: Record<string, string>; error?: string };
+const groupOrder = ["Coding", "Cloud & deploy", "Data & databases", "Monitoring", "Security", "Work apps", "Design", "Other"];
+const groupKey = "themis.discover.group";
+// The last Discover group is a per-viewer convenience: storage may be unavailable.
+function readGroup() { try { return localStorage.getItem(groupKey) ?? "All"; } catch { return "All"; } }
+function saveGroup(group: string) { try { localStorage.setItem(groupKey, group); } catch { /* not remembered */ } }
+const publisher = (entry: CatalogEntry) => typeof entry.author === "string" ? entry.author : entry.author?.name ?? "";
+/** What installing adds, in plain words: "Connects to airtable · 8 skills". */
+function addsSummary(spec: PluginSpec) {
+  const servers = Object.keys(spec.mcp);
+  const connections = servers.length === 1 ? `Connects to ${servers[0]}` : servers.length ? `${servers.length} connections` : "";
+  const count = (n: number, label: string) => n ? `${n} ${label}${n === 1 ? "" : "s"}` : "";
+  return [connections, count(spec.skills.length, "skill"), count(spec.hooks.length, "hook")].filter(Boolean).join(" · ");
+}
+const rank = (status?: string) => status === "supported" ? 0 : status === "partial" ? 1 : 2;
 function compatibilityReasons(spec: PluginSpec) {
   return [...new Set([...(spec.import_issues ?? []).map(issue => [issue.field || issue.name, issue.reason, issue.remedy].filter(Boolean).join(": ")), ...spec.unsupported.map(feature => feature === "lspServers" ? "Language servers aren’t supported yet." : `Unsupported: ${feature}`)])];
 }
@@ -111,7 +128,8 @@ export function Plugins() {
   const [catalogLoading, setCatalogLoading] = useState(false);
   const [scanProgress, setScanProgress] = useState("");
   const [scanPercent, setScanPercent] = useState<number>();
-  const [scanRevision, setScanRevision] = useState("");
+  const [revisions, setRevisions] = useState<Record<string, string>>({});
+  const [group, setGroup] = useState(readGroup);
   const [busy, setBusy] = useState(false);
   const [file, setFile] = useState("");
   const [mcpTools, setMcpTools] = useState<Array<{ name: string; description: string }> | null>();
@@ -121,7 +139,7 @@ export function Plugins() {
   const setSearch = publicView ? setCatalogSearch : setInstalledSearch;
   const originFilter = publicView ? catalogOrigin : installedOrigin;
   const setOriginFilter = publicView ? setCatalogOrigin : setInstalledOrigin;
-  const [catalog, setCatalog] = useState<Array<{ name: string; description?: string; icon?: string; source?: unknown }>>([]), [market, setMarket] = useState("");
+  const [catalog, setCatalog] = useState<CatalogEntry[]>([]);
   const load = useCallback(async () => {
     if (root !== activeRoot.current) return;
     const request = ++loadRequest.current;
@@ -190,35 +208,46 @@ export function Plugins() {
     setBusy(false); setMcpTools(undefined); setPanel({ item });
     setFile(item.kind === "plugin" ? "" : item.id);
   }
-  async function browse(selected: string, refresh = false) {
+  // Every source is checked at once; each one's plugins appear as soon as its check is ready.
+  async function browse(refresh = false, sources = markets.map(source => source.name)) {
     const request = ++catalogRequest.current;
     previewRequest.current++;
-    setPanel(null); setBusy(false); setInstalling(""); setScanRevision(""); setScanProgress("Checking marketplace…"); setScanPercent(undefined);
-    setMarket(selected); setCatalog([]); inspection.current.clear(); setChecks({}); setChecking({}); setCheckErrors({}); setCatalogLoading(true);
-    try {
+    setPanel(null); setBusy(false); setInstalling(""); setRevisions({}); setScanProgress("Checking marketplaces…"); setScanPercent(undefined);
+    setCatalog([]); inspection.current.clear(); setChecks({}); setChecking({}); setCheckErrors({}); setCatalogLoading(true);
+    const current = () => request === catalogRequest.current && root === activeRoot.current;
+    const progress: Record<string, [number, number]> = {};
+    const scanOne = async (name: string) => {
       let rescan = refresh;
-      while (request === catalogRequest.current && root === activeRoot.current) {
-        const value = await pluginAction<{ revision: string; status: string; completed: number; total: number; catalog: { plugins: typeof catalog }; checks: Record<string, ImportPreview>; errors: Record<string, string>; error?: string }>({ action: "scan_marketplace", name: selected, refresh: rescan });
+      while (current()) {
+        const value = await pluginAction<Scan>({ action: "scan_marketplace", name, refresh: rescan });
         rescan = false;
-        if (request !== catalogRequest.current || root !== activeRoot.current) return;
+        if (!current()) return;
         if (value.status === "failed") throw new Error(value.error || "Marketplace check failed. Refresh to retry.");
         if (value.status === "ready") {
-          setCatalog(value.catalog.plugins); setChecks(value.checks); setCheckErrors(value.errors); setScanRevision(value.revision);
-          break;
+          const entries = value.catalog.plugins.map(entry => ({ ...entry, key: `${name}/${entry.name}`, market: name, group: value.groups?.[entry.name] ?? "Other" }));
+          const keyed = <T,>(record: Record<string, T>) => Object.fromEntries(Object.entries(record).map(([plugin, item]) => [`${name}/${plugin}`, item]));
+          setCatalog(existing => [...existing.filter(entry => entry.market !== name), ...entries]);
+          setChecks(existing => ({ ...existing, ...keyed(value.checks) })); setCheckErrors(existing => ({ ...existing, ...keyed(value.errors) }));
+          setRevisions(existing => ({ ...existing, [name]: value.revision }));
+          return;
         }
-        setScanPercent(value.total ? Math.min(100, Math.floor(value.completed / value.total * 100)) : undefined);
-        setScanProgress(value.total ? `Checking marketplace… ${value.completed}/${value.total}` : "Checking marketplace…");
+        progress[name] = [value.completed, value.total];
+        const [completed, total] = Object.values(progress).reduce(([a, b], [c, d]) => [a + c, b + d], [0, 0]);
+        setScanPercent(total ? Math.min(100, Math.floor(completed / total * 100)) : undefined);
+        setScanProgress(total ? `Checking marketplaces… ${completed}/${total}` : "Checking marketplaces…");
         await new Promise(resolve => setTimeout(resolve, 1000));
       }
-    } catch (error) { if (request === catalogRequest.current) toast(dispatch, integrationError(error), "danger"); }
-    finally { if (request === catalogRequest.current) setCatalogLoading(false); }
+    };
+    await Promise.all(sources.map(name => scanOne(name).catch(error => { if (current()) toast(dispatch, `${name}: ${integrationError(error)}`, "danger"); })));
+    if (current()) setCatalogLoading(false);
   }
-  const inspect = useCallback((key: string): Promise<ImportPreview> => {
+  const inspect = useCallback((entry: CatalogEntry): Promise<ImportPreview> => {
+    const key = entry.key;
     const existing = inspection.current.get(key);
     if (existing) return existing;
     const generation = catalogRequest.current;
     setChecking(current => ({ ...current, [key]: true }));
-    const pending = pluginAction<ImportPreview>({ action: "inspect_marketplace", marketplace: market, name: key, projectRoot: root });
+    const pending = pluginAction<ImportPreview>({ action: "inspect_marketplace", marketplace: entry.market, name: entry.name, projectRoot: root });
     inspection.current.set(key, pending);
     void pending.then(value => {
       if (generation === catalogRequest.current && root === activeRoot.current) setChecks(current => ({ ...current, [key]: value }));
@@ -228,23 +257,24 @@ export function Plugins() {
       if (generation === catalogRequest.current && root === activeRoot.current) setChecking(current => ({ ...current, [key]: false }));
     });
     return pending;
-  }, [market, root]);
-  async function preview(name: string, icon?: string, install = false) {
-    const marketplace = market;
+  }, [root]);
+  async function preview(entry: CatalogEntry, install = false) {
+    const { market: marketplace, name, icon } = entry;
+    const scan = revisions[marketplace];
     const spec = { ...emptySpec(), name, icon };
     const plugin: Plugin = { scope: "global", revision: "preview", enabled: false, source: marketplace, spec };
-    const previewItem: Item = { key: `preview:${marketplace}:${name}`, name, id: name, kind: "plugin", enabled: false, plugin };
-    if (install) { previewRequest.current++; setInstalling(name); } else { open(previewItem); setPanel({ item: previewItem, marketplace, scan: scanRevision }); }
+    const previewItem: Item = { key: `preview:${entry.key}`, name, id: name, kind: "plugin", enabled: false, plugin };
+    if (install) { previewRequest.current++; setInstalling(entry.key); } else { open(previewItem); setPanel({ item: previewItem, marketplace, scan }); }
     const request = previewRequest.current;
     setBusy(true);
     try {
-      const checked = await inspect(name);
+      const checked = await inspect(entry);
       const value = checked.spec;
       if (request !== previewRequest.current || root !== activeRoot.current) return;
-      setChecks(current => ({ ...current, [name]: checked }));
+      setChecks(current => ({ ...current, [entry.key]: checked }));
       if (install && checked.report.status === "supported") {
-        await action({ action: "install", name, marketplace, scope: "global", allowPartial: false, expectedScan: scanRevision }).then(() => toast(dispatch, `${name} installed.`, "success")).catch(() => {});
-      } else setPanel({ marketplace, install, scan: scanRevision, report: checked.report, item: { ...previewItem, plugin: { ...plugin, spec: { ...value, icon: value.icon ?? icon } } } });
+        await action({ action: "install", name, marketplace, scope: "global", allowPartial: false, expectedScan: scan }).then(() => toast(dispatch, `${name} installed.`, "success")).catch(() => {});
+      } else setPanel({ marketplace, install, scan, report: checked.report, item: { ...previewItem, plugin: { ...plugin, spec: { ...value, icon: value.icon ?? icon } } } });
       setFile("");
     } catch (error) { if (request === previewRequest.current) toast(dispatch, integrationError(error), "danger"); } finally { if (request === previewRequest.current) { setBusy(false); setInstalling(""); } }
   }
@@ -264,43 +294,50 @@ export function Plugins() {
   const marketplaceIsPublic = (name: string) => publicSource(markets.find(source => source.name === name)?.source);
   const isPublic = (plugin: Plugin) => publicSource(plugin.spec.origin?.location) || marketplaceIsPublic(plugin.source ?? plugin.spec.origin?.location ?? "");
   const matchesOrigin = (publicItem: boolean) => originFilter === "all" || (publicItem ? "public" : "personal") === originFilter;
-  const catalogInstalled = (name: string) => plugins.some(plugin => plugin.scope === "global" && plugin.source === market && plugin.spec.name === name);
+  const catalogInstalled = (entry: Pick<CatalogEntry, "market" | "name">) => plugins.some(plugin => plugin.scope === "global" && plugin.source === entry.market && plugin.spec.name === entry.name);
   const rows = items(plugins, category).filter(row => matchesOrigin(isPublic(row.plugin)) && (installedStatus === "all" || (row.enabled ? "enabled" : "disabled") === installedStatus)).filter(row => matches([row.name, pluginDisplayName(row.plugin), row.plugin.source, row.plugin.spec.origin?.location, row.plugin.spec.description, ...row.plugin.spec.skills.map(skill => skill.description)]));
   const matchesStatus = (key: string, installed: boolean) => catalogStatus === "installed" ? installed : catalogStatus === "all" || (catalogStatus === "available" ? ["supported", "partial"].includes(checks[key]?.report.status) : (checks[key]?.report.status ?? (checkErrors[key] ? "failed" : "unchecked")) === catalogStatus);
-  const catalogRows = catalog.filter(entry => matchesOrigin(marketplaceIsPublic(market)) && matchesStatus(entry.name, catalogInstalled(entry.name))).filter(entry => matches([entry.name, entry.description, JSON.stringify(entry.source), market, markets.find(source => source.name === market)?.source]));
+  const sourceRows = catalog.filter(entry => (catalogOrigin === "all" || entry.market === catalogOrigin) && matchesStatus(entry.key, catalogInstalled(entry))).filter(entry => matches([entry.name, entry.description, publisher(entry), entry.market]));
+  const groupCounts = groupOrder.map(name => [name, sourceRows.filter(entry => entry.group === name).length] as const).filter(([, count]) => count > 0);
+  const shownGroup = group === "All" || groupCounts.some(([name]) => name === group) ? group : "All";
+  const catalogRows = sourceRows.filter(entry => shownGroup === "All" || entry.group === shownGroup).sort((a, b) => rank(checks[a.key]?.report.status) - rank(checks[b.key]?.report.status) || a.name.localeCompare(b.name));
+  const pickGroup = (name: string) => { setGroup(name); saveGroup(name); };
   const resultCount = publicView ? catalogRows.length : rows.length;
-  const filtered = !!search.trim() || originFilter !== "all" || (publicView ? catalogStatus !== "available" : installedStatus !== "all");
+  const filtered = !!search.trim() || originFilter !== "all" || (publicView ? catalogStatus !== "available" || shownGroup !== "All" : installedStatus !== "all");
   const reason = (key: string) => {
     const checked = checks[key];
     const reasons = checkErrors[key] ? [`${integrationError(checkErrors[key])} Refresh to retry.`] : checked ? compatibilityReasons(checked.spec) : [];
     if (!reasons.length && checked?.report.status === "unsupported") reasons.push("No installable skills, connections or hooks.");
-    return <CompatibilityWarning reasons={reasons} />;
+    const label = checkErrors[key] ? "Check failed" : checked?.report.status === "unsupported" ? "Unsupported" : "Some parts skipped";
+    return <CompatibilityWarning reasons={reasons} label={label} />;
   };
-  const badge = (key: string) => <span className={`themis-compatibility-badge ${checks[key]?.report.status ?? (checkErrors[key] ? "failed" : "unchecked")}`} title={checkErrors[key] ? `${integrationError(checkErrors[key])} Refresh to retry.` : checks[key] ? "Import format checked; runtime not tested" : "Compatibility check pending"} aria-live="polite">{checks[key] ? compatibilityLabels[checks[key].report.status] : checking[key] ? <><span className="themis-install-spinner" aria-hidden="true" />Checking…</> : checkErrors[key] ? "Check failed" : "Not checked"}</span>;
+  // Checked entries say what's wrong in their warning; only pending checks need a badge.
+  const badge = (key: string) => checks[key] || checkErrors[key] ? null : <span className="themis-compatibility-badge unchecked" title="Compatibility check pending" aria-live="polite">{checking[key] ? <><span className="themis-install-spinner" aria-hidden="true" />Checking…</> : "Not checked"}</span>;
   const text = item ? markdown(item.plugin, file) : "";
   const server = item?.kind === "mcp" ? item.plugin.spec.mcp[item.id] : undefined;
   const hook = item?.kind === "hook" ? item.plugin.spec.hooks.find(hook => hook.name === item.id) : undefined;
   return <div className="themis-integrations">
     <h2>Integrations</h2>
     <nav className="themis-integrations-tabs" aria-label="Integration categories">{categories.map(value => <button key={value} aria-pressed={category === value} onClick={() => { previewRequest.current++; catalogRequest.current++; setCategory(value); setPublicView(false); setPanel(null); setBusy(false); }}>{value}</button>)}</nav>
-    <div className="themis-integrations-toolbar"><div>{category === "Plugins" && <><button aria-pressed={!publicView} onClick={() => { previewRequest.current++; catalogRequest.current++; setPublicView(false); setPanel(null); setBusy(false); }}>Installed</button><button aria-pressed={publicView} onClick={() => { setPublicView(true); if (category === "Plugins" && markets[0]) void browse(markets.find(source => source.name === market)?.name ?? markets[0].name); }}>Discover</button></>}</div><div className="themis-integration-filters">
+    <div className="themis-integrations-toolbar"><div>{category === "Plugins" && <><button aria-pressed={!publicView} onClick={() => { previewRequest.current++; catalogRequest.current++; setPublicView(false); setPanel(null); setBusy(false); }}>Installed</button><button aria-pressed={publicView} onClick={() => { setPublicView(true); if (category === "Plugins") void browse(); }}>Discover</button></>}</div><div className="themis-integration-filters">
       <input className="themis-integrations-search" type="search" aria-label="Search integrations" placeholder="Search" value={search} onChange={event => setSearch(event.target.value)} />
-      {publicView && category === "Plugins" && <div className="themis-marketplace-picker"><select aria-label="Marketplace" disabled={busy || mutating} value={market} onChange={event => void browse(event.target.value)}>{markets.map(m => <option key={m.name}>{m.name}</option>)}</select><button aria-label="Add marketplace" title="Add marketplace" disabled={busy || mutating} onClick={() => { setMarketName(""); setMarketSource(""); setAddingMarket(true); }}><Icon name="plus" /></button></div>}
+      {publicView && category === "Plugins" && <div className="themis-marketplace-picker"><button aria-label="Add marketplace" title="Add marketplace" disabled={busy || mutating} onClick={() => { setMarketName(""); setMarketSource(""); setAddingMarket(true); }}><Icon name="plus" /></button></div>}
       <select aria-label="Status" value={publicView ? catalogStatus : installedStatus} onChange={event => publicView ? setCatalogStatus(event.target.value) : setInstalledStatus(event.target.value)}>
-        {publicView ? <><option value="available">Available</option><option value="all">All statuses</option><option value="installed">Installed</option><option value="supported">Compatible</option><option value="partial">Partially supported</option><option value="unsupported">Unsupported</option><option value="failed">Check failed</option><option value="unchecked">Not checked</option></> : <><option value="all">All statuses</option><option value="enabled">Enabled</option><option value="disabled">Disabled</option></>}
+        {publicView ? <><option value="available">Compatible</option><option value="all">All statuses</option><option value="installed">Installed</option><option value="supported">Fully compatible</option><option value="partial">Partially supported</option><option value="unsupported">Unsupported</option><option value="failed">Check failed</option><option value="unchecked">Not checked</option></> : <><option value="all">All statuses</option><option value="enabled">Enabled</option><option value="disabled">Disabled</option></>}
       </select>
-      <select aria-label="Source" value={originFilter} onChange={event => setOriginFilter(event.target.value)}><option value="all">All sources</option><option value="personal">Personal</option><option value="public">Public</option></select>
-      <button aria-label="Refresh" title="Refresh" disabled={busy || mutating} onClick={() => { if (category === "MCP") window.dispatchEvent(new Event("themis-mcp-reconnect")); void (publicView && category === "Plugins" ? browse(market, true) : load()).catch(error => toast(dispatch, integrationError(error), "danger")); }}>↻</button></div></div>
+      <select aria-label="Source" value={originFilter} onChange={event => setOriginFilter(event.target.value)}><option value="all">All sources</option>{publicView && category === "Plugins" ? markets.map(source => <option key={source.name} value={source.name}>{source.name}</option>) : <><option value="personal">Personal</option><option value="public">Public</option></>}</select>
+      <button aria-label="Refresh" title="Refresh" disabled={busy || mutating} onClick={() => { if (category === "MCP") window.dispatchEvent(new Event("themis-mcp-reconnect")); void (publicView && category === "Plugins" ? browse(true) : load()).catch(error => toast(dispatch, integrationError(error), "danger")); }}>↻</button></div></div>
     {category === "MCP" && !publicView && <McpFileRow onApplied={reloadAfterMcpEdit} />}
-    {(filtered || (publicView && catalogLoading)) && <div className="themis-filter-summary"><span>{publicView && catalogLoading ? "Checking catalog" : `${resultCount} result${resultCount === 1 ? "" : "s"}`}</span>{filtered && <button onClick={() => { setSearch(""); setOriginFilter("all"); if (publicView) setCatalogStatus("available"); else setInstalledStatus("all"); }}>Reset filters</button>}</div>}
+    {(filtered || (publicView && catalogLoading)) && <div className="themis-filter-summary"><span>{publicView && catalogLoading ? "Checking catalog" : `${resultCount} result${resultCount === 1 ? "" : "s"}`}</span>{filtered && <button onClick={() => { setSearch(""); setOriginFilter("all"); if (publicView) { setCatalogStatus("available"); pickGroup("All"); } else setInstalledStatus("all"); }}>Reset filters</button>}</div>}
     {publicView ? <>
-      {catalogLoading ? <div className="themis-marketplace-loading"><KnightLoading variant={readCompanionPreferences().variant} status={scanProgress} progress={scanPercent} progressLabel="Marketplace compatibility" /></div> : !catalogRows.length && <EmptyState title={(search.trim() || originFilter !== "all" || (publicView ? catalogStatus !== "available" : installedStatus !== "all")) ? "No matching integrations" : "No plugins to show"} />}
-      <ul className="themis-integrations-list themis-integration-cards">{catalogRows.map(entry => <li key={entry.name} data-check={entry.name}>
-        <div className="themis-card-heading"><PluginIcon plugin={{ ...(checks[entry.name]?.spec ?? emptySpec()), icon: checks[entry.name]?.spec.icon ?? entry.icon }} /><button className="themis-integration-name themis-integration-open" aria-label={`View ${entry.name}`} disabled={busy || mutating} onClick={() => void preview(entry.name, entry.icon)}>{entry.name}</button></div>
-        <span className="themis-integration-source">{market} · Plugin</span>{entry.description && <p className="themis-integration-description">{entry.description}</p>}
-        {checks[entry.name] && <p className="themis-integration-capabilities">{capabilitySummary(checks[entry.name].spec)}</p>}
-        {reason(entry.name)}
-        <div className="themis-card-footer">{badge(entry.name)}<button aria-live="polite" aria-busy={installing === entry.name} disabled={busy || mutating || !checks[entry.name] || catalogInstalled(entry.name) || checks[entry.name]?.report.status === "unsupported"} onClick={() => void preview(entry.name, entry.icon, true)}>{installing === entry.name ? <><span className="themis-install-spinner" aria-hidden="true" />Installing…</> : catalogInstalled(entry.name) ? "✓ Installed" : "Install"}</button></div>
+      {catalogLoading && !catalog.length ? <div className="themis-marketplace-loading"><KnightLoading variant={readCompanionPreferences().variant} status={scanProgress} progress={scanPercent} progressLabel="Marketplace compatibility" /></div> : !catalogRows.length && <EmptyState title={(search.trim() || originFilter !== "all" || (publicView ? catalogStatus !== "available" : installedStatus !== "all")) ? "No matching integrations" : "No plugins to show"} />}
+      {groupCounts.length > 1 && <nav className="themis-discover-groups" aria-label="Groups">{[["All", sourceRows.length] as const, ...groupCounts].map(([name, count]) => <button key={name} aria-pressed={shownGroup === name} onClick={() => pickGroup(name)}>{name}<span>{count}</span></button>)}</nav>}
+      <ul className="themis-integrations-list themis-integration-cards">{catalogRows.map(entry => <li key={entry.key} data-check={entry.name}>
+        <div className="themis-card-heading"><PluginIcon plugin={{ ...(checks[entry.key]?.spec ?? emptySpec()), icon: checks[entry.key]?.spec.icon ?? entry.icon }} /><button className="themis-integration-name themis-integration-open" aria-label={`View ${entry.name}`} disabled={busy || mutating} onClick={() => void preview(entry)}>{entry.name}</button></div>
+        <span className="themis-integration-source">{[publisher(entry), entry.market].filter(Boolean).join(" · ")}</span>{entry.description && <p className="themis-integration-description">{entry.description}</p>}
+        {checks[entry.key] && <p className="themis-integration-capabilities">{addsSummary(checks[entry.key].spec)}</p>}
+        {reason(entry.key)}
+        <div className="themis-card-footer">{badge(entry.key)}<button aria-live="polite" aria-busy={installing === entry.key} disabled={busy || mutating || !checks[entry.key] || catalogInstalled(entry) || checks[entry.key]?.report.status === "unsupported"} onClick={() => void preview(entry, true)}>{installing === entry.key ? <><span className="themis-install-spinner" aria-hidden="true" />Installing…</> : catalogInstalled(entry) ? "✓ Installed" : "Install"}</button></div>
       </li>)}</ul>
     </> : <>
       {!rows.length && <EmptyState title={(search.trim() || originFilter !== "all" || (publicView ? catalogStatus !== "available" : installedStatus !== "all")) ? "No matching integrations" : `No ${category.toLowerCase()} installed`} />}
@@ -330,14 +367,14 @@ export function Plugins() {
           {item && (panel?.install || item.unavailable) && <Compatibility spec={item.plugin.spec} report={panel.report} />}
         </>}
       </div>
-      {panel?.install && panel.report && panel.report.status !== "unsupported" && !catalogInstalled(panel.item.id) && <div className="themis-preview-install"><Button disabled={busy || mutating} onClick={() => void installPreview()}>{panel.report.status === "partial" ? "Install supported parts" : "Install"}</Button></div>}
+      {panel?.install && panel.report && panel.report.status !== "unsupported" && !catalogInstalled({ market: panel.marketplace ?? "", name: panel.item.id }) && <div className="themis-preview-install"><Button disabled={busy || mutating} onClick={() => void installPreview()}>{panel.report.status === "partial" ? "Install supported parts" : "Install"}</Button></div>}
       <Button variant="ghost" disabled={mutating} onClick={() => { previewRequest.current++; setBusy(false); setPanel(null); }}>Close</Button>
     </Dialog>
     <Dialog open={addingMarket} title="Add marketplace" onClose={() => { if (!busy) setAddingMarket(false); }}>
       <form className="themis-marketplace-form" onSubmit={event => {
         event.preventDefault();
         if (busy || !marketName.trim() || !marketSource.trim()) return;
-        void action({ action: "add_marketplace", name: marketName.trim(), source: marketSource.trim() }).then(async () => { setAddingMarket(false); await browse(marketName.trim()); }).catch(() => {});
+        void action({ action: "add_marketplace", name: marketName.trim(), source: marketSource.trim() }).then(async () => { const added = marketName.trim(); setAddingMarket(false); setCatalogOrigin(added); await browse(false, [...markets.map(source => source.name).filter(name => name !== added), added]); }).catch(() => {});
       }}>
         <label>Name<input value={marketName} onChange={event => setMarketName(event.target.value)} required disabled={busy || mutating} /></label>
         <label>URL or local path<input value={marketSource} onChange={event => setMarketSource(event.target.value)} required disabled={busy || mutating} /></label>

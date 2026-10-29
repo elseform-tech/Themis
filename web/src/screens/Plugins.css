@@ -8,6 +8,12 @@
 .themis-integrations-tabs { display: flex; gap: 18px; }
 .themis-integrations-tabs button { padding: 4px 0; border: 0; background: transparent; color: var(--themis-text-2); font: inherit; font-size: .8125rem; cursor: pointer; }
 .themis-integrations-tabs button[aria-pressed="true"] { color: var(--themis-text); font-weight: 600; }
+.themis-discover-groups { display: flex; flex-wrap: wrap; gap: 6px; padding: 4px 0 10px; }
+.themis-discover-groups button { display: inline-flex; align-items: center; gap: 6px; height: 30px; padding: 0 12px; border: 0; border-radius: var(--themis-radius-pill); background: var(--themis-raised); color: var(--themis-text-2); font: inherit; font-size: .8125rem; cursor: pointer; }
+.themis-discover-groups button span { color: var(--themis-text-3); font-size: .75rem; }
+.themis-discover-groups button[aria-pressed="true"] { background: var(--themis-nav-active-bg); color: var(--themis-text); font-weight: 600; }
+.themis-discover-groups button[aria-pressed="true"] span { color: inherit; opacity: .7; }
+.themis-discover-groups button:focus-visible { outline: 2px solid var(--themis-accent); outline-offset: 2px; }
 .themis-integrations-toolbar { display: flex; flex-wrap: nowrap; align-items: center; justify-content: space-between; gap: .5rem; padding: 12px 0 8px; }
 .themis-integrations-toolbar > div { display: flex; align-items: center; gap: .5rem; }
 .themis-integrations-search { width: 200px; height: 34px; padding: 0 14px; border: 0; border-radius: var(--themis-radius-pill); background: var(--themis-raised); color: var(--themis-text); font: inherit; font-size: .8125rem; }
