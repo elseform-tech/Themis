@@ -530,9 +530,16 @@ pub struct SubagentsConfig {
     /// Model for subagents; absent, the chat's model.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
+    /// Up to three more models the agent may give a subagent (for example when the person
+    /// names one); any other is refused.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub models: Vec<String>,
     /// `false` keeps every subagent read-only, whatever paths the agent asks for.
     pub allow_writes: bool,
 }
+
+/// Most models `subagents.models` may list.
+pub const MAX_SUBAGENT_MODELS: usize = 3;
 impl Default for SubagentsConfig {
     fn default() -> Self {
         Self {
@@ -540,6 +547,7 @@ impl Default for SubagentsConfig {
             max_parallel: 3,
             max_turns: 40,
             model: None,
+            models: Vec::new(),
             allow_writes: true,
         }
     }
@@ -559,6 +567,16 @@ fn check_subagents_restriction(
                 "the {origin} configuration may only set subagents.{field} to false"
             );
         }
+    }
+    if let Some(models) = layer.pointer("/subagents/models") {
+        ensure!(
+            models
+                .as_array()
+                .is_some_and(|models| models.iter().all(|model| model
+                    .as_str()
+                    .is_some_and(|model| current.models.iter().any(|known| known == model)))),
+            "the {origin} configuration may only narrow subagents.models to models already listed"
+        );
     }
     for (field, limit) in [
         ("max_parallel", current.max_parallel),
@@ -1602,6 +1620,17 @@ pub fn validate(config: &RuntimeConfig) -> Result<()> {
         (1..=1000).contains(&config.subagents.max_turns),
         "subagents.max_turns must be 1..1000"
     );
+    ensure!(
+        config.subagents.models.len() <= MAX_SUBAGENT_MODELS,
+        "subagents.models lists at most {MAX_SUBAGENT_MODELS} models"
+    );
+    for model in &config.subagents.models {
+        ensure!(
+            valid_model_id(model),
+            "subagents.models must list model ids (<provider>/<id> for a model from providers)"
+        );
+        providers::check_model_prefix(&config.providers, "subagents.models", model, false)?;
+    }
     for (name, tokens) in [
         ("section_max_tokens", config.compaction.section_max_tokens),
         ("summary_max_tokens", config.compaction.summary_max_tokens),
@@ -1810,6 +1839,7 @@ fn base_schema() -> Value {
                 "max_parallel":{"type":"integer","minimum":1,"maximum":6,"default":3,"description":"Subagents running at once per chat"},
                 "max_turns":{"type":"integer","minimum":1,"maximum":1000,"default":40,"description":"Model requests per subagent"},
                 "model":{"type":["string","null"],"minLength":1,"maxLength":256,"default":null,"description":"Model for subagents; absent, the chat's model. <provider>/<id> for one from providers"},
+                "models":{"type":"array","maxItems":3,"uniqueItems":true,"items":{"type":"string","minLength":1,"maxLength":256},"default":[],"description":"Up to three more models the agent may give a subagent; any other is refused"},
                 "allow_writes":{"type":"boolean","default":true,"description":"false keeps every subagent read-only"}
             }},
             "goal":{"type":"object","additionalProperties":false,"properties":{
@@ -2140,8 +2170,8 @@ mod tests {
     #[test]
     fn subagent_settings_resolve_and_projects_may_only_lower_them() {
         let resolved = resolve(
-            Some(r#"{"subagents":{"max_parallel":5,"model":"glm-5.3"}}"#),
-            Some(r#"{"subagents":{"max_parallel":2,"enabled":false,"allow_writes":false}}"#),
+            Some(r#"{"subagents":{"max_parallel":5,"model":"glm-5.3","models":["glm-5","beam-free"]}}"#),
+            Some(r#"{"subagents":{"max_parallel":2,"enabled":false,"allow_writes":false,"models":["glm-5"]}}"#),
             None,
         )
         .unwrap();
@@ -2150,12 +2180,14 @@ mod tests {
         assert!(!subagents.enabled && !subagents.allow_writes);
         assert_eq!(subagents.max_turns, 40);
         assert_eq!(subagents.model.as_deref(), Some("glm-5.3"));
+        assert_eq!(subagents.models, ["glm-5"]);
         assert_eq!(resolved.provenance["subagents.max_parallel"], "project");
         for project in [
             r#"{"subagents":{"max_parallel":4}}"#,
             r#"{"subagents":{"max_turns":41}}"#,
             r#"{"subagents":{"enabled":true}}"#,
             r#"{"subagents":{"allow_writes":true}}"#,
+            r#"{"subagents":{"models":["claude-opus"]}}"#,
         ] {
             assert!(resolve(None, Some(project), None).is_err(), "{project}");
         }
@@ -2164,6 +2196,8 @@ mod tests {
             r#"{"subagents":{"max_parallel":7}}"#,
             r#"{"subagents":{"max_turns":0}}"#,
             r#"{"subagents":{"model":"nope/model"}}"#,
+            r#"{"subagents":{"models":["a","b","c","d"]}}"#,
+            r#"{"subagents":{"models":["nope/model"]}}"#,
             r#"{"subagents":{"unknown":1}}"#,
         ] {
             assert!(resolve(Some(user), None, None).is_err(), "{user}");

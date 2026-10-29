@@ -238,6 +238,11 @@ const ALL: &[(&str, &str, &[&str])] = &[
     (SUBAGENT_READ_ONLY_NOTE, "subagent-read-only-note", &[]),
     (SUBAGENT_STATUS_FIELD, "subagent-status-field", &[]),
     (SPAWN_SUBAGENTS_TOOL, "spawn-subagents-tool", &[]),
+    (
+        SPAWN_SUBAGENTS_MODELS,
+        "spawn-subagents-models",
+        &["models", "default"],
+    ),
     (WAIT_SUBAGENTS_TOOL, "wait-subagents-tool", &[]),
     (STEER_SUBAGENT_TOOL, "steer-subagent-tool", &[]),
     (STOP_SUBAGENT_TOOL, "stop-subagent-tool", &[]),

@@ -37,6 +37,9 @@ pub(super) const SUBAGENTS_DIR: &str = "subagents";
 /// The tools a read-only subagent gets.
 const READ_ONLY_TOOLS: [&str; 4] = ["read_file", "list_dir", "search_file", "shell"];
 
+/// A model's provider, or why it could not start.
+type Resolved = Result<Arc<dyn LLMProvider>, String>;
+
 /// What a chat's run hands its subagents, captured when the run starts.
 pub(super) struct SubagentKit {
     pub(super) state: AppState,
@@ -65,7 +68,8 @@ pub(super) struct SubagentKit {
     pub(super) slots: Arc<tokio::sync::Semaphore>,
     /// Subagents this run started, in order.
     pub(super) started: Mutex<Vec<Arc<Subagent>>>,
-    other_llm: tokio::sync::OnceCell<Result<Arc<dyn LLMProvider>, String>>,
+    /// Providers resolved for models other than the chat's, by model.
+    other_llms: tokio::sync::Mutex<HashMap<String, Resolved>>,
 }
 
 impl SubagentKit {
@@ -113,12 +117,12 @@ impl SubagentKit {
             notes: RunNotes::new(),
             slots,
             started: Mutex::new(Vec::new()),
-            other_llm: tokio::sync::OnceCell::new(),
+            other_llms: tokio::sync::Mutex::new(HashMap::new()),
         }
     }
 
-    /// The model subagents use.
-    fn child_model(&self) -> String {
+    /// The model subagents use when none is given: `subagents.model`, else the chat's.
+    pub(super) fn default_model(&self) -> String {
         self.config
             .subagents
             .model
@@ -126,34 +130,74 @@ impl SubagentKit {
             .unwrap_or_else(|| self.model.clone())
     }
 
-    async fn child_llm(&self) -> Result<Arc<dyn LLMProvider>, String> {
-        let model = self.child_model();
+    /// The further models the agent may give a subagent (`subagents.models`), without the default.
+    pub(super) fn other_models(&self) -> Vec<String> {
+        let default = self.default_model();
+        let mut models: Vec<String> = Vec::new();
+        for model in &self.config.subagents.models {
+            if *model != default && !models.contains(model) {
+                models.push(model.clone());
+            }
+        }
+        models
+    }
+
+    /// The models a subagent tries in turn: its own, the default, the chat's.
+    fn candidates(&self, chosen: &str) -> Vec<String> {
+        let mut models = vec![chosen.to_owned()];
+        for model in [self.default_model(), self.model.clone()] {
+            if !models.contains(&model) {
+                models.push(model);
+            }
+        }
+        models
+    }
+
+    async fn llm_for(&self, model: &str) -> Result<Arc<dyn LLMProvider>, String> {
+        if let Some(reason) = self
+            .catalog
+            .iter()
+            .find(|entry| entry.id == model)
+            .and_then(|entry| entry.unavailable_reason.clone())
+        {
+            return Err(format!("{model} is unavailable: {reason}"));
+        }
         if model == self.model {
             return Ok(Arc::clone(&self.llm));
         }
-        self.other_llm
-            .get_or_init(|| async {
-                let config = Box::pin(self.state.provider_config_for(
-                    &self.config,
-                    &model,
-                    &self.thread_id,
-                ))
-                .await?;
-                themis_core::providers::resolve(&config)
-                    .await
-                    .map_err(|error| format!("failed to resolve the subagent model: {error:#}"))
-            })
-            .await
-            .clone()
+        let mut cache = self.other_llms.lock().await;
+        if let Some(found) = cache.get(model) {
+            return found.clone();
+        }
+        let resolved = match Box::pin(self.state.provider_config_for(
+            &self.config,
+            model,
+            &self.thread_id,
+        ))
+        .await
+        {
+            Ok(config) => themis_core::providers::resolve(&config)
+                .await
+                .map_err(|error| format!("{model} could not start: {error:#}")),
+            Err(error) => Err(format!("{model} could not start: {error}")),
+        };
+        cache.insert(model.to_owned(), resolved.clone());
+        resolved
     }
 
-    /// Starts one subagent; it waits for a free slot before its first step.
-    pub(super) fn start(self: &Arc<Self>, name: String, brief: String) -> Arc<Subagent> {
+    /// Starts one subagent on `model` (already checked against the allowed ones); it waits
+    /// for a free slot before its first step.
+    pub(super) fn start(
+        self: &Arc<Self>,
+        name: String,
+        brief: String,
+        model: String,
+    ) -> Arc<Subagent> {
         let agent = Arc::new(Subagent {
             id: uuid::Uuid::new_v4().simple().to_string()[..12].to_owned(),
             name,
             brief,
-            model: self.child_model(),
+            model,
             run_id: uuid::Uuid::new_v4().to_string(),
             started: Instant::now(),
             stop: Arc::new(AtomicBool::new(false)),
@@ -214,6 +258,7 @@ impl SubagentKit {
                     id: agent.id.clone(),
                     text: agent.progress().status,
                     tool_calls: agent.tool_calls.load(Ordering::SeqCst),
+                    model: agent.progress().ran_on,
                 },
             });
         })
@@ -332,27 +377,99 @@ impl SubagentKit {
     }
 
     async fn run_child(&self, agent: &Arc<Subagent>) -> Ending {
-        let llm = match self.child_llm().await {
-            Ok(llm) => llm,
-            Err(error) => return Ending::failed(error),
-        };
         let approvals = self.approvals(agent);
-        let tools = match self.tools(agent, Arc::clone(&approvals)) {
-            Ok(tools) => tools,
-            Err(error) => return Ending::failed(error),
-        };
         let hooks = self.hook_runtime(agent, Arc::clone(&approvals));
-        let (events_tx, events_rx) = tokio::sync::mpsc::channel::<RunEvent>(1024);
+        // Hook outcomes of SubagentStart/End are not part of its steps.
+        let (hook_events, mut hook_outcomes) = tokio::sync::mpsc::channel::<RunEvent>(64);
+        tokio::spawn(async move { while hook_outcomes.recv().await.is_some() {} });
         if let Err(error) = hooks
             .emit(
                 "SubagentStart",
-                json!({"name": agent.name, "brief": agent.brief}),
-                &events_tx,
+                json!({"name": agent.name, "brief": agent.brief, "model": agent.model}),
+                &hook_events,
             )
             .await
         {
             return Ending::failed(format!("A SubagentStart hook refused: {error}"));
         }
+        let candidates = self.candidates(&agent.model);
+        let mut ending = Ending::failed("No model could start".into());
+        let mut reason = String::new();
+        for (index, model) in candidates.iter().enumerate() {
+            let last = index + 1 == candidates.len();
+            let llm = match self.llm_for(model).await {
+                Ok(llm) => llm,
+                Err(error) => {
+                    reason = error;
+                    ending = Ending::failed(reason.clone());
+                    continue;
+                }
+            };
+            if index > 0 {
+                agent.ran_on(model, &reason);
+                (self.reporter())(agent);
+                let _ = self.state.inner.diagnostics.append_with_level(
+                    "subagents",
+                    "fallback",
+                    "warn",
+                    json!({"thread_id": self.thread_id, "subagent_id": agent.id,
+                        "from": agent.model, "to": model}),
+                    Some(&self.config.logging.level),
+                );
+            }
+            let (outcome, incomplete) = self
+                .attempt(agent, model, llm, Arc::clone(&approvals), &hooks)
+                .await;
+            // Its model failed before it did anything (a quota, a provider error): try the next.
+            let untouched = agent.tool_calls.load(Ordering::SeqCst) == 0;
+            if let Err(error) = &outcome {
+                if untouched && !last && !self.stopping(agent) {
+                    reason = format!("{model} failed: {}", first_line_of(&error.to_string()));
+                    continue;
+                }
+            }
+            let status = if self.stopping(agent) {
+                "stopped"
+            } else {
+                match (&outcome, incomplete) {
+                    (Ok(_), true) => "incomplete",
+                    (Ok(_), false) => "finished",
+                    (Err(_), _) => "failed",
+                }
+            };
+            ending = Ending {
+                status: status.into(),
+                result: match outcome {
+                    Ok(result) => result,
+                    Err(error) => error.to_string(),
+                },
+            };
+            break;
+        }
+        let _ = hooks
+            .emit(
+                "SubagentEnd",
+                json!({"status": ending.status, "ok": ending.status == "finished"}),
+                &hook_events,
+            )
+            .await;
+        ending
+    }
+
+    /// One run of the subagent on `model`. Returns its outcome and whether it ended incomplete.
+    async fn attempt(
+        &self,
+        agent: &Arc<Subagent>,
+        model: &str,
+        llm: Arc<dyn LLMProvider>,
+        approvals: Arc<dyn ApprovalHook>,
+        hooks: &themis_core::plugins::hooks::HookRuntime,
+    ) -> (anyhow::Result<String>, bool) {
+        let tools = match self.tools(agent, Arc::clone(&approvals)) {
+            Ok(tools) => tools,
+            Err(error) => return (Err(anyhow::anyhow!(error)), false),
+        };
+        let (events_tx, events_rx) = tokio::sync::mpsc::channel::<RunEvent>(1024);
         let pump = tokio::spawn(pump_events(
             events_rx,
             self.transcript_path(agent),
@@ -375,7 +492,6 @@ impl SubagentKit {
                 }
             }
         });
-        let model = self.child_model();
         let capacity = self
             .catalog
             .iter()
@@ -405,7 +521,7 @@ impl SubagentKit {
             Vec::new(),
             approvals,
             policy,
-            events_tx.clone(),
+            events_tx,
             Arc::clone(&agent.stop),
             format!("\n{workspace}\n"),
             None,
@@ -437,40 +553,8 @@ impl SubagentKit {
         )
         .await;
         done.store(true, Ordering::SeqCst);
-        let status = if self.stopping(agent) {
-            "stopped"
-        } else {
-            match &outcome {
-                Ok(_) => "finished",
-                Err(_) => "failed",
-            }
-        };
-        let ending = match outcome {
-            Ok(result) => Ending {
-                status: status.into(),
-                result,
-            },
-            Err(error) => Ending {
-                status: status.into(),
-                result: error.to_string(),
-            },
-        };
-        let _ = hooks
-            .emit(
-                "SubagentEnd",
-                json!({"status": ending.status, "ok": ending.status == "finished"}),
-                &events_tx,
-            )
-            .await;
-        drop(events_tx);
         let incomplete = pump.await.unwrap_or(false);
-        if incomplete && ending.status == "finished" {
-            return Ending {
-                status: "incomplete".into(),
-                result: ending.result,
-            };
-        }
-        ending
+        (outcome, incomplete)
     }
 
     async fn end(&self, agent: &Subagent, ending: Ending) {
@@ -497,6 +581,7 @@ impl SubagentKit {
             result,
             tool_calls,
             seconds,
+            model: agent.progress().ran_on,
         });
         let _ = self.state.inner.diagnostics.append_with_level(
             "subagents",
@@ -555,6 +640,9 @@ pub(super) struct Progress {
     pub(super) ended: Option<(String, String)>,
     /// The note its result was delivered as.
     pub(super) note: String,
+    /// The model it fell back to when its own could not run, and why.
+    pub(super) ran_on: Option<String>,
+    pub(super) fallback_reason: String,
 }
 
 impl Subagent {
@@ -573,6 +661,13 @@ impl Subagent {
             progress.status = status;
             progress.own_status = true;
         }
+    }
+
+    /// It runs on `model` instead of its own, for `reason`.
+    fn ran_on(&self, model: &str, reason: &str) {
+        let mut progress = self.progress.lock().unwrap_or_else(|e| e.into_inner());
+        progress.ran_on = Some(model.to_owned());
+        progress.fallback_reason = reason.to_owned();
     }
 
     /// Its latest action, shown until it gives a status line of its own.
@@ -610,6 +705,16 @@ impl Ending {
             result,
         }
     }
+}
+
+/// The first line of an error, for a fallback reason.
+fn first_line_of(text: &str) -> String {
+    text.lines()
+        .next()
+        .unwrap_or_default()
+        .chars()
+        .take(200)
+        .collect()
 }
 
 /// At most [`RESULT_LIMIT`] bytes, cut on a character boundary.
@@ -758,7 +863,7 @@ impl AppState {
                             .ended
                             .unwrap_or_else(|| ("running".into(), String::new()));
                         json!({"id": agent.id, "name": agent.name, "brief": agent.brief,
-                            "model": agent.model, "status": status, "text": progress.status,
+                            "model": agent.model, "ran_on": progress.ran_on, "status": status, "text": progress.status,
                             "result": result, "tool_calls": agent.tool_calls.load(Ordering::SeqCst),
                             "seconds": agent.started.elapsed().as_secs()})
                     })
