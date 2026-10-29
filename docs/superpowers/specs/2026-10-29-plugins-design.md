@@ -123,16 +123,22 @@ to be a `${VARIABLE}` reference, and that section is updated with this change.
   - Relative URLs with no base.
   - SSE.
 
-### P3: `commands/` as skills (39 plugins)
+### P3: `commands/` as skills (39 plugins; 53 once P1 and P2 let more plugins import)
 
-- Each `commands/<name>.md` becomes a manual-only skill named after the command. Its frontmatter
-  `description` becomes the skill description.
-- `$ARGUMENTS` maps to the text after the slash command.
-- `allowed-tools` narrows the tools for the whole run that invokes the command, the same way
-  skill tool lists already narrow runs. It never grants permissions.
-- **Refused and reported, which makes the plugin partial:**
-  - `!` shell expansion inside the command text.
-  - `@file` includes.
+- Each `commands/**/*.md`, plus command files or folders declared as `commands`, becomes a
+  manual-only skill. The id is the path with folders joined by `-`; if a skill already uses it,
+  the command gets `-command`. The description comes from the `description` frontmatter, else
+  the first line.
+- The instructions open with `skill-command-note.md`:
+  - `$ARGUMENTS` (and `$1`, `$2`, …) is the text after the command.
+  - `!`command`` lines are commands to run with the shell tool.
+  - `@path` names a file to read.
+- Shell expansion is common (14 official plugins use it for context such as `!`git status``).
+  So it works through the agent's normal tools and approvals rather than being refused. Nothing
+  runs at import.
+- `allowed-tools`, `argument-hint` and `model` are listed as notes. Tool lists don't narrow the
+  run yet, because that needs the Claude-to-Themis tool-name mapping from P4.
+- Measured result: 212 of 315 fully working (67%).
 
 ### P4: hook events, mapping and the hooks view
 
