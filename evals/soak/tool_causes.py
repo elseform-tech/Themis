@@ -108,6 +108,12 @@ def _shell_argv(summary):
     if not isinstance(arguments, dict) or not isinstance(arguments.get("command"), str):
         return None
     rest = arguments.get("args") or []
+    if isinstance(rest, str):
+        # Themis reads a list sent as a JSON string as that list (`repair_list_arguments`).
+        try:
+            rest = json.loads(rest)
+        except ValueError:
+            return None
     if not isinstance(rest, list) or not all(isinstance(item, str) for item in rest):
         return None
     return [arguments["command"], *rest]
