@@ -5,6 +5,9 @@ Date: 2026-10-29 · Branch: `codex/subagents-design` · Design only; nothing bui
 Mockups: canvas https://claude.ai/artifact/Em6B9YcQir5EFWhwUN7PEJ, row "Subagents",
 boards 25–28 (`AgentsChat`, `AgentsDetail`, `AgentsStates`, `AgentsSettings`).
 
+The UI calls them **subagents** everywhere (chat card, Tasks, approvals, Settings). UI text is
+short and has no hint lines.
+
 ## Why
 
 - Themis has no way for the agent to hand part of a task to another agent. Reviews, audits and
@@ -37,7 +40,7 @@ boards 25–28 (`AgentsChat`, `AgentsDetail`, `AgentsStates`, `AgentsSettings`).
 
 ### The tool
 
-`spawn_agents` takes a list of agents and returns when all of them have ended:
+`spawn_subagents` takes a list of agents and returns when all of them have ended:
 
 ```json
 {"agents": [
@@ -53,7 +56,7 @@ boards 25–28 (`AgentsChat`, `AgentsDetail`, `AgentsStates`, `AgentsSettings`).
   escape the project, or reach the app data or the project's `.themis/`.
 - The result is one bounded entry per agent: its final answer, or what it had so far plus why it
   ended (stopped by you, failed, denied).
-- Agents run in parallel, up to `agents.max_parallel`. Extra agents wait their turn.
+- Agents run in parallel, up to `subagents.max_parallel`. Extra agents wait their turn.
 
 ### Each agent's run
 
@@ -67,7 +70,7 @@ boards 25–28 (`AgentsChat`, `AgentsDetail`, `AgentsStates`, `AgentsSettings`).
     allow-list for that run is exactly those paths.
 - Approvals go through the parent's approval hook with the agent's name attached. "Allow in this
   chat" grants and deny rules apply as usual. YOLO keeps its written walls.
-- Its transcript is saved under the chat's app data as `agents/<agent-id>.jsonl`. The main
+- Its transcript is saved under the chat's app data as `subagents/<subagent-id>.jsonl`. The main
   agent's context gets only the result. Agents don't add to the main context or its compaction.
 
 ### Steering
@@ -85,7 +88,7 @@ boards 25–28 (`AgentsChat`, `AgentsDetail`, `AgentsStates`, `AgentsSettings`).
   `AgentEnded {status, summary, tool_calls, duration, cost}`. Each agent's tool events stream to
   its own transcript, not to the chat.
 - **The live status line** is a dedicated short status from the agent, not its last sentence.
-  - Agents get one extra tool, `agent_status`, that takes a single line of at most 80 characters
+  - Agents get one extra tool, `subagent_status`, that takes a single line of at most 80 characters
     and returns nothing to the model.
   - The prompt asks the agent to call it when it starts something new (for example "Checking
     whether the CLI path has the same bug"), not on every step.
@@ -107,33 +110,32 @@ boards 25–28 (`AgentsChat`, `AgentsDetail`, `AgentsStates`, `AgentsSettings`).
 
 ## Configuration and visibility
 
-Captured runtime configuration, new `agents` block (`crates/core/src/configuration.rs`):
+Captured runtime configuration, new `subagents` block (`crates/core/src/configuration.rs`):
 
 | Field | Default | Meaning |
 |---|---|---|
-| `agents.enabled` | `true` | Offer `spawn_agents` to the main agent |
-| `agents.max_parallel` | `3` | Agents running at once per chat |
-| `agents.model` | `null` | Model for agents; `null` uses the chat's model |
-| `agents.allow_writes` | `true` | `false` keeps every agent read-only, whatever `write_paths` the main agent asks for |
+| `subagents.enabled` | `true` | Offer `spawn_subagents` to the main agent |
+| `subagents.max_parallel` | `3` | Agents running at once per chat |
+| `subagents.model` | `null` | Model for agents; `null` uses the chat's model |
+| `subagents.allow_writes` | `true` | `false` keeps every agent read-only, whatever `write_paths` the main agent asks for |
 
 The project config may lower `max_parallel`, turn agents off or turn writes off. It cannot add
 write permissions.
 
-**Settings › Agents (board 28)** sits after Web in the Settings list. It's the third in-app
+**Settings › Subagents (board 28)** sits after Web in the Settings list. It's the third in-app
 editor after Settings › Browser and Settings › Web, built the same way: it edits only the
-`agents` block of the user `runtime.jsonc` with field-level writes that keep the rest of the file
+`subagents` block of the user `runtime.jsonc` with field-level writes that keep the rest of the file
 and its comments. It has four rows:
 
-- **Let the agent start agents:** a switch for `enabled`.
-- **Agents at once:** 1–6 (`max_parallel`).
-- **Model for agents:** "Same as the chat" or a model from the Models list (`model`).
-- **Let agents write files:** a switch for `allow_writes`. Off means agents only read.
+- **Allow subagents:** `enabled`.
+- **Maximum subagents:** 1–6 (`max_parallel`).
+- **Subagent model:** "Chat model" or a model from the Models list (`model`).
+- **Allow file writes:** `allow_writes`.
 
-A footer line says agents follow the chat's permissions and that agent profiles come from plugins
-in Integrations. The section shows the usual "Changes apply to your next run" note.
+The section has no hint text.
 
 This changes a rule the person set: when it's built, the Settings exception in AGENTS.md
-("except Settings → Browser and Settings → Web…") gains Agents, and `docs/configuration.md` and
+("except Settings → Browser and Settings → Web…") gains Subagents, and `docs/configuration.md` and
 `docs/ui-rules.md` describe the section.
 
 Diagnostics (metadata only) cover agent start and end: status, duration, tool-call count, the
@@ -143,12 +145,12 @@ write-path count and the profile name. They never include briefs, transcripts or
 
 New files in `crates/core/builtins/prompts/`, each added to the inventory test:
 
-- `agent_system.md`
-- `agent_read_only_note.md`
-- `agent_write_paths_note.md`
-- `agent_status_tool.md` (when to report a status: at the start of each new piece of work, in
+- `subagent_system.md`
+- `subagent_read_only_note.md`
+- `subagent_write_paths_note.md`
+- `subagent_status_tool.md` (when to report a status: at the start of each new piece of work, in
   one plain line)
-- `spawn_agents_tool.md` (when to delegate: independent parts, read-heavy work, and not for
+- `spawn_subagents_tool.md` (when to delegate: independent parts, read-heavy work, and not for
   single-file edits)
 
 ## Plugins
@@ -162,10 +164,10 @@ New files in `crates/core/builtins/prompts/`, each added to the inventory test:
 ## Order of work
 
 1. Read-only agents: the tool, child runs, events and the status line, the chat card, the Tasks
-   detail with Stop, named approvals, the overview row, the configuration, Settings › Agents
+   detail with Stop, named approvals, the overview row, the configuration, Settings › Subagents
    (without the writes row) and diagnostics.
 2. `write_paths`: overlap checks, the sandbox allow-list, the Changes author filter, and the
-   writes row in Settings › Agents.
+   writes row in Settings › Subagents.
 3. The steer box through the main agent.
 4. Plugin `agents/` profiles.
 
