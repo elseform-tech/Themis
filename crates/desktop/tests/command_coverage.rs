@@ -47,6 +47,8 @@ fn server_exposes_all_frontend_backend_commands() {
             "apply_mcp_config",
             // The desktop rebuilds questions from the chat's history; the CLI lists them.
             "list_questions",
+            // Subagent state for the CLI; the desktop builds its card from chat events.
+            "list_subagents",
         ])
         .collect();
     let handled: BTreeSet<_> = server

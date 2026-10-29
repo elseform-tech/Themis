@@ -21,9 +21,9 @@ const EVENT_CHANNEL_CAPACITY: usize = 1024;
 /// Logs every gated action's final outcome (`approval/decided`: allowed or denied, by a rule,
 /// a chat grant, YOLO or a person). What a person answered in a dialog is the hook's own
 /// `approval/answered` event.
-struct AuditedApprovals {
-    inner: Arc<dyn ApprovalHook>,
-    context: themis_core::diagnostics::DiagnosticContext,
+pub(super) struct AuditedApprovals {
+    pub(super) inner: Arc<dyn ApprovalHook>,
+    pub(super) context: themis_core::diagnostics::DiagnosticContext,
 }
 impl ApprovalHook for AuditedApprovals {
     fn denied_by_rule(&self, action: &themis_core::tools::ToolAction) -> bool {
@@ -103,6 +103,7 @@ impl AppState {
         };
         let wanted: Vec<&str> = std::iter::once(snapshot.model.as_str())
             .chain(summary_model.as_deref())
+            .chain(run_config.subagents.model.as_deref())
             .collect();
         let capacity_catalog = Box::pin(self.run_catalog(run_config, &wanted)).await;
         let entry = capacity_catalog
@@ -176,6 +177,7 @@ impl AppState {
         // by this run's answers, and inherited by later runs (including the
         // chat's automations).
         let grants = self.chat_grants_for(thread_id);
+        let subagent_grants = Arc::clone(&grants);
         // Management tools evaluate with this run's captured mode and policy and
         // ask the user through the raw interactive hook; chat grants are checked
         // and extended explicitly.
@@ -463,6 +465,29 @@ impl AppState {
             thread_id.to_owned(),
             check_approval,
         ));
+        // Subagents share this run's configuration, rules and grants, and its sandbox made
+        // read-only; their results reach this run as notes.
+        let run_notes = if run_configuration.subagents.enabled {
+            let kit = Arc::new(super::subagents::SubagentKit::new(
+                self.clone(),
+                Arc::clone(sink),
+                (thread_id, run_id),
+                &snapshot,
+                run_configuration.clone(),
+                capacity_catalog.clone(),
+                endpoint_override,
+                hooks.clone(),
+                Arc::clone(&llm),
+                policy,
+                &sandbox,
+                subagent_grants,
+                Arc::clone(&stopped),
+            ));
+            tools.extend(super::subagent_tools::tools(&kit));
+            Arc::clone(&kit.notes)
+        } else {
+            themis_core::runtime::RunNotes::new()
+        };
         let hook_runtime = themis_core::plugins::hooks::HookRuntime {
             hooks,
             run_id: run_id.to_owned(),
@@ -713,7 +738,7 @@ impl AppState {
                                                 }
                                                 // Boxed: the run's future is large, and the
                                                 // steer scope must not copy it on the stack.
-                                                themis_core::runtime::with_first_request(first_request, themis_core::runtime::with_end_request(end_request, themis_core::runtime::with_steer_inbox(steer_inbox, Box::pin(run_task_with_evidence(
+                                                themis_core::runtime::with_first_request(first_request, themis_core::runtime::with_end_request(end_request, themis_core::runtime::with_steer_inbox(steer_inbox, themis_core::runtime::with_run_notes(run_notes, Box::pin(run_task_with_evidence(
                                                 llm,
                                                 if yolo {
                                                     tools
@@ -730,7 +755,7 @@ impl AppState {
                                                 stopped,
                                                 skill_catalog,
                                                 Some(evidence_directory),
-                                            ))))).await
+                                            )))))).await
                                             }))
                                         },
                                     ),
@@ -778,6 +803,7 @@ impl AppState {
     /// Marks a run idle, releases its concurrency permit, and persists.
     pub(super) async fn finish_run(&self, thread_id: &str) {
         self.close_steer_inbox(thread_id);
+        self.stop_subagents(thread_id);
         // A recording the agent left running ends with its run, and so do its breakpoints,
         // request blocks and throttling.
         self.stop_agent_recording(thread_id).await;

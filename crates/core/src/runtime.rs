@@ -22,7 +22,8 @@ use anyhow::anyhow;
 use autoagents::core::tool::{to_llm_tool, ToolT};
 pub use autoagents::llm::chat::ChatRole;
 use autoagents::llm::chat::{ChatMessage, MessageType, SamplingOverrides, StreamChunk, Tool};
-use autoagents::llm::{FunctionCall, LLMProvider, ToolCall};
+pub use autoagents::llm::LLMProvider;
+use autoagents::llm::{FunctionCall, ToolCall};
 use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};
 
@@ -2229,6 +2230,17 @@ impl RunNotes {
             .pending
             .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |n| n.checked_sub(1));
         self.arrived.notify_waiters();
+    }
+    /// Takes back a delivered note the run has not read yet; false once the model saw it.
+    pub fn withdraw(&self, note: &str) -> bool {
+        let mut queue = self.queue.lock().unwrap_or_else(|e| e.into_inner());
+        match queue.iter().position(|queued| queued == note) {
+            Some(index) => {
+                queue.remove(index);
+                true
+            }
+            None => false,
+        }
     }
     /// Notes still expected.
     pub fn pending(&self) -> usize {

@@ -951,6 +951,7 @@ async fn dispatch_command(
                 .await
         ),
         "list_questions" => output!(state.list_questions(arg(&args, "threadId")?).await?),
+        "list_subagents" => output!(state.list_subagents(&arg::<String>(&args, "threadId")?)),
         "answer_question" => output!(
             state
                 .answer_question(

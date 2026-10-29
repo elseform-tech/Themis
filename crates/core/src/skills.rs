@@ -185,14 +185,24 @@ pub fn compose_task(task: &str, skills: &[Skill]) -> String {
 ///
 /// A skill with empty `allowed_tools` restricts nothing. With no skills every
 /// tool passes through unchanged.
+/// The agent's subagent tools.
+pub const SUBAGENT_TOOLS: [&str; 4] = [
+    "spawn_subagents",
+    "wait_subagents",
+    "steer_subagent",
+    "stop_subagent",
+];
+
 pub fn filter_tools(tools: Vec<Box<dyn ToolT>>, skills: &[Skill]) -> Vec<Box<dyn ToolT>> {
     tools
         .into_iter()
         .filter(|tool| {
             let name = tool.name();
             let browser = name.starts_with("browser_");
+            let subagents = SUBAGENT_TOOLS.contains(&name);
             // Built-in skill grants do not describe independently authorized integrations.
-            if !KNOWN_TOOL_NAMES.contains(&name) && !browser && name != "attach_file" {
+            if !KNOWN_TOOL_NAMES.contains(&name) && !browser && !subagents && name != "attach_file"
+            {
                 return true;
             }
             // Managing a background task is part of granting `shell`.
@@ -202,6 +212,8 @@ pub fn filter_tools(tools: Vec<Box<dyn ToolT>>, skills: &[Skill]) -> Vec<Box<dyn
             let granted = match name {
                 "background_task" => "shell",
                 "recall" | "attach_file" => "read_file",
+                // A subagent runs shell commands, so starting one is part of granting `shell`.
+                _ if subagents => "shell",
                 _ if browser => "browser",
                 name => name,
             };
@@ -576,6 +588,21 @@ mod tests {
         assert_eq!(kept(&["read_file"]), ["attach_file", "set_goal"]);
         assert_eq!(kept(&["fetch_url"]), ["fetch_url", "set_goal"]);
         assert_eq!(kept(&[]).len(), names.len());
+    }
+
+    #[test]
+    fn subagent_tools_come_with_a_shell_grant() {
+        let tools = || {
+            SUBAGENT_TOOLS
+                .iter()
+                .map(|n| Box::new(Named(n)) as Box<dyn ToolT>)
+                .collect::<Vec<_>>()
+        };
+        let kept =
+            |allowed: &[&str]| filter_tools(tools(), &[skill("s", "S", allowed, vec![])]).len();
+        assert_eq!(kept(&["read_file"]), 0);
+        assert_eq!(kept(&["shell"]), SUBAGENT_TOOLS.len());
+        assert_eq!(kept(&[]), SUBAGENT_TOOLS.len());
     }
 
     #[test]

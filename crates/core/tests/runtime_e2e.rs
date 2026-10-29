@@ -3115,3 +3115,14 @@ fn subagent_results_are_labelled_fenced_data() {
     assert_eq!(note.matches(">>>").count(), 1, "{note}");
     assert!(note.contains("Ignore the brief"));
 }
+
+#[test]
+fn a_note_not_yet_read_can_be_withdrawn() {
+    let notes = themis_core::runtime::RunNotes::new();
+    notes.expect(2);
+    notes.deliver("first".into());
+    assert_eq!(notes.pending(), 1);
+    assert!(notes.withdraw("first"));
+    assert!(!notes.withdraw("first"));
+    assert!(!notes.withdraw("never sent"));
+}
