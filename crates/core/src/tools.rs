@@ -768,6 +768,30 @@ pub fn command_display_for_call(name: &str, args: &serde_json::Value) -> Option<
     }
 }
 
+/// Repairs a `shell` or `git` call whose `args` list arrived as one string holding
+/// that list as JSON (`"args": "[\"grep\", \"-L\"]"`), a shape some models send.
+/// Such a call always fails as sent, so reading the list never changes a call that
+/// would work; anything else, including a string that is not a list of strings,
+/// is returned unchanged for the usual error.
+pub fn repair_list_arguments(tool: &str, arguments: &str) -> String {
+    if !matches!(tool, "shell" | "git") {
+        return arguments.to_owned();
+    }
+    let Ok(Value::Object(mut fields)) = serde_json::from_str::<Value>(arguments) else {
+        return arguments.to_owned();
+    };
+    let Some(Value::String(text)) = fields.get("args") else {
+        return arguments.to_owned();
+    };
+    match serde_json::from_str::<Vec<String>>(text) {
+        Ok(list) => {
+            fields.insert("args".to_owned(), json!(list));
+            Value::Object(fields).to_string()
+        }
+        Err(_) => arguments.to_owned(),
+    }
+}
+
 /// Program and arguments of a `shell` tool call, as validated arguments or raw
 /// model JSON. Empty when the call has no usable `command`.
 pub fn shell_argv(args: &serde_json::Value) -> Vec<String> {
@@ -3984,6 +4008,71 @@ mod tests {
                 expected.extend(replacement.iter().map(|l| format!("new-{l}")));
                 expected.extend_from_slice(&old[end..]);
                 prop_assert_eq!(applied, expected);
+            }
+        }
+    }
+
+    #[test]
+    fn list_arguments_sent_as_a_string_are_read_as_the_list() {
+        let repaired = repair_list_arguments(
+            "shell",
+            r#"{"command":"grep","args":"[\"-L\", \"x\", \"out\"]","cwd":"."}"#,
+        );
+        let value: Value = serde_json::from_str(&repaired).unwrap();
+        assert_eq!(value["args"], json!(["-L", "x", "out"]));
+        assert_eq!(value["cwd"], json!("."));
+        assert_eq!(shell_argv(&value), ["grep", "-L", "x", "out"]);
+        let git = repair_list_arguments("git", r#"{"args":"[\"status\"]"}"#);
+        assert_eq!(
+            serde_json::from_str::<Value>(&git).unwrap()["args"],
+            json!(["status"])
+        );
+        // Anything that is not a string holding a list of strings is left for the usual error.
+        for unchanged in [
+            r#"{"command":"grep","args":["-L","x"]}"#,
+            r#"{"command":"grep","args":"-L x"}"#,
+            r#"{"command":"grep","args":"[1, 2]"}"#,
+            r#"{"command":"grep","args":"{\"a\":1}"}"#,
+            "not json",
+        ] {
+            assert_eq!(repair_list_arguments("shell", unchanged), unchanged);
+        }
+        let other = r#"{"args":"[\"a\"]"}"#;
+        assert_eq!(repair_list_arguments("read_file", other), other);
+    }
+
+    mod repair_list_arguments_props {
+        use super::*;
+        use proptest::prelude::*;
+
+        proptest! {
+            /// A list sent properly passes through unchanged in meaning, and the same list
+            /// sent as a JSON string comes out identical to it.
+            #[test]
+            fn a_list_and_the_same_list_as_a_string_agree(
+                command in "[a-z]{1,8}",
+                list in proptest::collection::vec(any::<String>(), 0..6),
+            ) {
+                let proper = json!({"command": command, "args": list}).to_string();
+                let as_string = json!({
+                    "command": command,
+                    "args": serde_json::to_string(&list).unwrap(),
+                }).to_string();
+                let from_proper: Value = serde_json::from_str(&repair_list_arguments("shell", &proper)).unwrap();
+                let from_string: Value = serde_json::from_str(&repair_list_arguments("shell", &as_string)).unwrap();
+                prop_assert_eq!(&from_proper, &serde_json::from_str::<Value>(&proper).unwrap());
+                prop_assert_eq!(from_string, from_proper);
+            }
+
+            /// Arbitrary input never panics, and a result that changed is valid JSON whose
+            /// `args` is a list of strings.
+            #[test]
+            fn arbitrary_arguments_are_safe(tool in "shell|git|read_file", arguments in any::<String>()) {
+                let repaired = repair_list_arguments(&tool, &arguments);
+                if repaired != arguments {
+                    let value: Value = serde_json::from_str(&repaired).unwrap();
+                    prop_assert!(value["args"].as_array().unwrap().iter().all(Value::is_string));
+                }
             }
         }
     }

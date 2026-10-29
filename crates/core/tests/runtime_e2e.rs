@@ -588,6 +588,54 @@ async fn alternating_silent_shell_writes_remain_progress() {
 }
 
 #[tokio::test]
+async fn shell_args_sent_as_a_json_string_run_as_the_list() {
+    let server = MockServer::start().await;
+    common::mount_script(
+        &server,
+        vec![
+            common::tool_call_body(
+                "string-args",
+                "shell",
+                json!({"command":"sh","args":"[\"-c\", \"printf ok > a.txt\"]"}),
+            ),
+            common::final_text_body("Wrote a.txt"),
+        ],
+    )
+    .await;
+    let project = tempfile::tempdir().unwrap();
+    let llm = resolve(
+        &ProviderConfig::new(ProviderKind::Go, "test-key")
+            .with_model("test-model")
+            .with_base_url(server.uri()),
+    )
+    .await
+    .unwrap();
+    let approvals: Arc<dyn ApprovalHook> = Arc::new(AllowAllHook);
+    let (tx, mut rx) = tokio::sync::mpsc::channel(128);
+    let result = run_task_with_policy(
+        llm,
+        boxed_tools(project.path(), approvals.clone()).unwrap(),
+        "Write a.txt".into(),
+        vec![],
+        approvals,
+        RunPolicy {
+            total_turns: 4,
+            context_token_budget: 200_000,
+            recent_messages: 20,
+        },
+        tx,
+        Arc::new(AtomicBool::new(false)),
+    )
+    .await;
+    assert!(result.is_ok(), "{result:?}");
+    assert!(has_finished(&common::drain(&mut rx).await));
+    assert_eq!(
+        std::fs::read_to_string(project.path().join("a.txt")).unwrap(),
+        "ok"
+    );
+}
+
+#[tokio::test]
 async fn oversized_tool_schema_is_rejected_before_provider_request() {
     #[derive(Debug)]
     struct HugeSchema;

@@ -583,7 +583,11 @@ element per argument. If `command` contains whitespace and no executable of that
 exact name exists, the error returns the exact split (unless the first token is a
 nonexistent path, such as a path containing spaces, which gets a spelling hint instead) (`command: "python3", args:
 ["-m","http.server","8798"]`). The call is never auto-split or rerun, so approvals
-always see the argv the model sent.
+always see the argv the model sent. One shape is repaired before approval: when a
+`shell` or `git` call sends its `args` list as one string holding that list as JSON
+(`"args": "[\"-L\", \"x\"]"`), the list is read from the string, so approval,
+the transcript summary and the run all use the same argv. Any other string `args`
+is rejected as before.
 
 Unattended CLI `ask` requests deny; use explicit policy or an interactive client.
 
