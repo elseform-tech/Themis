@@ -123,6 +123,7 @@ full tour.
 | `tool:save_skill` | tour | `crates/desktop/src/state/integration_tools.rs` | `tour-note` appears in Integrations › Skills. |
 | `tool:manage_integrations` | tour | `crates/desktop/src/state/integration_tools.rs` | Ask the agent to disable then enable a plugin; Integrations agrees. |
 | `tool:manage_automations` | tour | `crates/desktop/src/state/integration_tools.rs`, `crates/desktop/src/state/automation.rs` | The daily automation appears paused in Automations and Tasks. |
+| `feature:subagents-ui` | tour | `web/src/screens/SubagentCard.tsx`, `web/src/screens/SubagentDetail.tsx` | Ask for two subagents in Custom mode: the card shows both rows live, a subagent's command asks under its name, the overview shows its approval, Tasks opens its detail with Stop, and the card folds to result lines. |
 | `feature:goal` | tour | `crates/desktop/src/state/goal.rs`, `web/src/screens/GoalBar.tsx` | Edit, pause after this turn, resume and remove from the goal bar; the goal continues across turns and ends with one summary. |
 | `feature:checkpoints` | tour | `crates/core/src/runtime.rs`, `crates/core/src/runtime/maintenance.rs` | At 32k the goal passes a checkpoint; the context meter drops and the work carries on. |
 | `feature:queue-and-steer` | tour | `crates/desktop/src/state/queue.rs`, `web/src/screens/QueueStack.tsx` | Queue, edit and remove a message; steer one in and see it handled. |
@@ -144,6 +145,7 @@ full tour.
 | `settings:General` | tour | `web/src/screens/Settings.tsx` | Toggle the reply sound; it takes effect on the next reply. |
 | `settings:Appearance` | tour | `web/src/screens/Appearance.tsx` | Preview, revert and apply a theme. |
 | `settings:Models` | tour | `web/src/screens/ModelsSettings.tsx` | Change the default model; a new chat uses it. |
+| `settings:Subagents` | tour | `web/src/screens/SubagentSettings.tsx` | Set Maximum subagents to 2; `runtime.jsonc` shows `max_parallel: 2` and the next spawn runs two at a time. |
 | `settings:Usage` | tour | `web/src/screens/UsageSettings.tsx` | Today's chats appear with their tokens. |
 | `settings:Secrets` | tour | `web/src/screens/SecretsSettings.tsx` | Add then remove a dummy secret. |
 | `settings:Permissions` | tour | `web/src/screens/PermissionsView.tsx` | The config file reads as valid; Open opens it; the default mode applies to a new chat. |
