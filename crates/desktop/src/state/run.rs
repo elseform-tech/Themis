@@ -104,6 +104,7 @@ impl AppState {
         let wanted: Vec<&str> = std::iter::once(snapshot.model.as_str())
             .chain(summary_model.as_deref())
             .chain(run_config.subagents.model.as_deref())
+            .chain(run_config.subagents.models.iter().map(String::as_str))
             .collect();
         let capacity_catalog = Box::pin(self.run_catalog(run_config, &wanted)).await;
         let entry = capacity_catalog

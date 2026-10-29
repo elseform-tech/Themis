@@ -38,6 +38,9 @@ pub const SUBAGENT_STATUS_FIELD: &str =
     include_str!("../builtins/prompts/subagent-status-field.md");
 /// Description of the `spawn_subagents` tool.
 pub const SPAWN_SUBAGENTS_TOOL: &str = include_str!("../builtins/prompts/spawn-subagents-tool.md");
+/// Appended to the spawn tool when `subagents.models` lists models the agent may pick.
+pub const SPAWN_SUBAGENTS_MODELS: &str =
+    include_str!("../builtins/prompts/spawn-subagents-models.md");
 /// Description of the `wait_subagents` tool.
 pub const WAIT_SUBAGENTS_TOOL: &str = include_str!("../builtins/prompts/wait-subagents-tool.md");
 /// Description of the `steer_subagent` tool.

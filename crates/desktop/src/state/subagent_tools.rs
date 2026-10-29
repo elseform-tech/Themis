@@ -20,15 +20,73 @@ fn error(message: impl ToString) -> ToolCallError {
 
 /// The subagent tools of one run, sharing its kit.
 pub(super) fn tools(kit: &Arc<SubagentKit>) -> Vec<Box<dyn ToolT>> {
+    let others = kit.other_models();
     [Kind::Spawn, Kind::Wait, Kind::Steer, Kind::Stop]
         .into_iter()
         .map(|kind| {
+            let description = match kind {
+                Kind::Spawn if !others.is_empty() => format!(
+                    "{}\n\n{}",
+                    themis_core::prompts::SPAWN_SUBAGENTS_TOOL,
+                    themis_core::prompts::fill(
+                        themis_core::prompts::SPAWN_SUBAGENTS_MODELS,
+                        &[
+                            ("models", &others.join(", ")),
+                            ("default", &kit.default_model()),
+                        ],
+                    )
+                ),
+                Kind::Spawn => themis_core::prompts::SPAWN_SUBAGENTS_TOOL.to_owned(),
+                Kind::Wait => themis_core::prompts::WAIT_SUBAGENTS_TOOL.to_owned(),
+                Kind::Steer => themis_core::prompts::STEER_SUBAGENT_TOOL.to_owned(),
+                Kind::Stop => themis_core::prompts::STOP_SUBAGENT_TOOL.to_owned(),
+            };
             Box::new(SubagentTool {
                 kind,
                 kit: Arc::clone(kit),
+                description,
+                models: !others.is_empty(),
             }) as Box<dyn ToolT>
         })
         .collect()
+}
+
+/// The model a subagent runs on: the default without one, else the one allowed model the
+/// request names, matched loosely ("haiku" finds `claude-haiku-4`; case, spaces and
+/// dashes do not matter). Anything else is refused with the choices.
+pub(super) fn pick_model(
+    requested: Option<&str>,
+    default: &str,
+    others: &[String],
+) -> Result<String, String> {
+    let Some(requested) = requested.map(str::trim).filter(|model| !model.is_empty()) else {
+        return Ok(default.to_owned());
+    };
+    let plain = |text: &str| {
+        text.chars()
+            .filter(char::is_ascii_alphanumeric)
+            .collect::<String>()
+            .to_ascii_lowercase()
+    };
+    let wanted = plain(requested);
+    let all: Vec<String> = std::iter::once(default.to_owned())
+        .chain(others.iter().cloned())
+        .collect();
+    if let Some(exact) = all.iter().find(|model| plain(model) == wanted) {
+        return Ok(exact.clone());
+    }
+    let close: Vec<&String> = all
+        .iter()
+        .filter(|model| !wanted.is_empty() && plain(model).contains(&wanted))
+        .collect();
+    match close.as_slice() {
+        [one] => Ok((*one).clone()),
+        _ => Err(format!(
+            "subagent model '{requested}' is not available{}: use one of {}, or leave model out for {default}",
+            if close.is_empty() { "" } else { " (it matches more than one)" },
+            all.join(", ")
+        )),
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -42,6 +100,9 @@ enum Kind {
 struct SubagentTool {
     kind: Kind,
     kit: Arc<SubagentKit>,
+    description: String,
+    /// The spawn tool offers `model` (`subagents.models` lists some).
+    models: bool,
 }
 
 impl std::fmt::Debug for SubagentTool {
@@ -52,8 +113,16 @@ impl std::fmt::Debug for SubagentTool {
     }
 }
 
+/// One subagent the model asked for.
+#[derive(Debug, PartialEq)]
+struct Brief {
+    name: String,
+    brief: String,
+    model: Option<String>,
+}
+
 /// The briefs the model asked for, named "Subagent N" when it gave no name.
-fn parse_briefs(args: &Value) -> Result<Vec<(String, String)>, ToolCallError> {
+fn parse_briefs(args: &Value) -> Result<Vec<Brief>, ToolCallError> {
     let list = args["subagents"]
         .as_array()
         .filter(|list| !list.is_empty())
@@ -77,7 +146,11 @@ fn parse_briefs(args: &Value) -> Result<Vec<(String, String)>, ToolCallError> {
                 .filter(|name| !name.is_empty())
                 .map(|name| name.chars().take(40).collect())
                 .unwrap_or_else(|| format!("Subagent {}", index + 1));
-            Ok((name, brief.chars().take(MAX_BRIEF).collect()))
+            Ok(Brief {
+                name,
+                brief: brief.chars().take(MAX_BRIEF).collect(),
+                model: item["model"].as_str().map(str::to_owned),
+            })
         })
         .collect()
 }
@@ -93,11 +166,22 @@ impl SubagentTool {
     }
 
     fn spawn(&self, args: &Value) -> Result<Value, ToolCallError> {
-        let started: Vec<Value> = parse_briefs(args)?
+        let default = self.kit.default_model();
+        let others = self.kit.other_models();
+        // Every model is checked before any subagent starts.
+        let briefs = parse_briefs(args)?
             .into_iter()
-            .map(|(name, brief)| {
-                let agent = self.kit.start(name, brief);
-                json!({"id": agent.id, "name": agent.name})
+            .map(|brief| {
+                pick_model(brief.model.as_deref(), &default, &others)
+                    .map(|model| (brief, model))
+                    .map_err(error)
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let started: Vec<Value> = briefs
+            .into_iter()
+            .map(|(brief, model)| {
+                let agent = self.kit.start(brief.name, brief.brief, model);
+                json!({"id": agent.id, "name": agent.name, "model": agent.model})
             })
             .collect();
         Ok(json!({"started": started, "running_at_once": self.kit.config.subagents.max_parallel}))
@@ -234,21 +318,22 @@ impl ToolT for SubagentTool {
         }
     }
     fn description(&self) -> &str {
-        match self.kind {
-            Kind::Spawn => themis_core::prompts::SPAWN_SUBAGENTS_TOOL,
-            Kind::Wait => themis_core::prompts::WAIT_SUBAGENTS_TOOL,
-            Kind::Steer => themis_core::prompts::STEER_SUBAGENT_TOOL,
-            Kind::Stop => themis_core::prompts::STOP_SUBAGENT_TOOL,
-        }
+        &self.description
     }
     fn args_schema(&self) -> Value {
         match self.kind {
-            Kind::Spawn => json!({"type":"object","properties":{
-                "subagents":{"type":"array","minItems":1,"maxItems":MAX_PER_CALL,"items":{"type":"object","properties":{
+            Kind::Spawn => {
+                let mut item = json!({"type":"object","properties":{
                     "name":{"type":"string","description":"A short name, for example \"Bug hunt\""},
                     "brief":{"type":"string"}
-                },"required":["brief"]}}
-            },"required":["subagents"],"additionalProperties":false}),
+                },"required":["brief"]});
+                if self.models {
+                    item["properties"]["model"] = json!({"type":"string"});
+                }
+                json!({"type":"object","properties":{
+                    "subagents":{"type":"array","minItems":1,"maxItems":MAX_PER_CALL,"items":item}
+                },"required":["subagents"],"additionalProperties":false})
+            }
             Kind::Wait => json!({"type":"object","properties":{
                 "ids":{"type":"array","items":{"type":"string"}},
                 "any":{"type":"boolean"},
@@ -340,8 +425,14 @@ mod tests {
             {"brief": "  Check docs  "}
         ]}))
         .unwrap();
-        assert_eq!(briefs[0], ("Bug hunt".into(), "Find bugs in src/".into()));
-        assert_eq!(briefs[1], ("Subagent 2".into(), "Check docs".into()));
+        assert_eq!(
+            (briefs[0].name.as_str(), briefs[0].brief.as_str()),
+            ("Bug hunt", "Find bugs in src/")
+        );
+        assert_eq!(
+            (briefs[1].name.as_str(), briefs[1].brief.as_str()),
+            ("Subagent 2", "Check docs")
+        );
         assert!(parse_briefs(&json!({"subagents": []})).is_err());
         assert!(parse_briefs(&json!({"subagents": [{"name": "x"}]})).is_err());
         let seven = vec![json!({"brief": "b"}); MAX_PER_CALL + 1];
@@ -358,6 +449,24 @@ mod tests {
             action("shell", &json!({"command": "cargo", "args": ["test"]})),
             "Run `cargo test`"
         );
+    }
+
+    #[test]
+    fn a_named_model_is_matched_to_the_allowed_ones_or_refused() {
+        let others = vec!["glm-5".to_owned(), "claude-haiku-4".to_owned()];
+        let pick = |wanted: Option<&str>| pick_model(wanted, "beam-free", &others);
+        assert_eq!(pick(None).unwrap(), "beam-free");
+        assert_eq!(pick(Some("GLM 5")).unwrap(), "glm-5");
+        assert_eq!(pick(Some("haiku")).unwrap(), "claude-haiku-4");
+        assert_eq!(pick(Some("Beam-Free")).unwrap(), "beam-free");
+        let refused = pick(Some("claude-opus")).unwrap_err();
+        assert!(
+            refused.contains("beam-free, glm-5, claude-haiku-4"),
+            "{refused}"
+        );
+        // A word in several names is not a choice.
+        let both = pick_model(Some("glm"), "beam-free", &["glm-5".into(), "glm-4".into()]);
+        assert!(both.unwrap_err().contains("more than one"));
     }
 
     #[test]

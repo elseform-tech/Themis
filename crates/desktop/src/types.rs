@@ -281,6 +281,9 @@ pub enum ThreadEvent {
         id: String,
         text: String,
         tool_calls: usize,
+        /// The model it fell back to, when its own could not run.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        model: Option<String>,
     },
     /// A subagent ended: `finished`, `stopped`, `failed` or `turn_limit`, with its result
     /// (or what it had so far).
@@ -290,6 +293,9 @@ pub enum ThreadEvent {
         result: String,
         tool_calls: usize,
         seconds: u64,
+        /// The model it fell back to, when its own could not run.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        model: Option<String>,
     },
 }
 

@@ -123,6 +123,7 @@ full tour.
 | `tool:save_skill` | tour | `crates/desktop/src/state/integration_tools.rs` | `tour-note` appears in Integrations › Skills. |
 | `tool:manage_integrations` | tour | `crates/desktop/src/state/integration_tools.rs` | Ask the agent to disable then enable a plugin; Integrations agrees. |
 | `tool:manage_automations` | tour | `crates/desktop/src/state/integration_tools.rs`, `crates/desktop/src/state/automation.rs` | The daily automation appears paused in Automations and Tasks. |
+| `feature:subagent-models` | tour | `crates/desktop/src/state/subagent_tools.rs`, `web/src/screens/SubagentSettings.tsx` | Add a model under Allowed models, then ask "use <model> for the review and the default for the docs": Tasks shows that model on one row only; a model that fails at once shows "<model> → <fallback>". |
 | `feature:subagents-ui` | tour | `web/src/screens/SubagentCard.tsx`, `web/src/screens/SubagentDetail.tsx` | Ask for two subagents in Custom mode: the stack shows two ringed circles, a subagent's command asks under its name, the overview shows its approval, a circle opens its detail in Tasks with Stop, and the rings stop when they end. |
 | `feature:goal` | tour | `crates/desktop/src/state/goal.rs`, `web/src/screens/GoalBar.tsx` | Edit, pause after this turn, resume and remove from the goal bar; the goal continues across turns and ends with one summary. |
 | `feature:checkpoints` | tour | `crates/core/src/runtime.rs`, `crates/core/src/runtime/maintenance.rs` | At 32k the goal passes a checkpoint; the context meter drops and the work carries on. |

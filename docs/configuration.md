@@ -237,6 +237,7 @@ combined, and do not grant permissions. There is no implicit instruction globbin
 | `subagents.max_parallel` | Integer 1–6, default `3`: subagents running at once per chat; more wait their turn. A project or run layer may only lower it. |
 | `subagents.max_turns` | Integer 1–1000, default `40`: model requests per subagent; reaching it ends the subagent with its partial result. A project or run layer may only lower it. |
 | `subagents.model` | Optional model id, as `goal.check_model`: the model subagents use; omitted/null uses the chat's model. Any layer. |
+| `subagents.models` | Up to 3 model ids, as `subagents.model`, default `[]`: further models the agent may give one subagent, for example when you name one ("use glm-5 for the review"). Any other model is refused. A subagent whose model cannot start, or whose first request fails, falls back to `subagents.model`, then the chat's model. A project or run layer may only narrow the list. |
 | `subagents.allow_writes` | Boolean, default `true`: `false` keeps every subagent read-only whatever paths the agent gives it. A project or run layer may only set it to `false`. (Subagents are read-only in this release; write paths come later.) |
 | `providers` | User file only; at most 16 OpenAI-compatible providers. See [Model providers](#model-providers-and-per-model-overrides) |
 | `models` | At most 256 per-model overrides keyed by model id or `<provider>/<id>`; any layer. See [Model providers](#model-providers-and-per-model-overrides) |

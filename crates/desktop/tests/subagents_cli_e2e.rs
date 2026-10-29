@@ -598,3 +598,140 @@ async fn starting_subagents_needs_no_prompt_but_a_deny_rule_still_holds() {
     assert!(all.iter().any(|body| mentions(body, "approval denied")));
     app2.serving.abort();
 }
+
+fn allow_models(data: &Path, models: &[&str]) {
+    let view = call(data, "get_subagent_settings", json!({}));
+    call(
+        data,
+        "update_subagent_settings",
+        json!({"changes": {"models": models}, "revision": view["revision"]}),
+    );
+}
+
+fn spawn_description(body: &Value) -> String {
+    body["tools"]
+        .as_array()
+        .and_then(|tools| {
+            tools
+                .iter()
+                .find(|tool| tool["function"]["name"] == "spawn_subagents")
+        })
+        .and_then(|tool| tool["function"]["description"].as_str())
+        .unwrap_or_default()
+        .to_owned()
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn the_person_names_a_model_per_subagent_from_the_allowed_ones() {
+    let app = app(None, |body| {
+        if is_subagent(body) {
+            return reply(&format!(
+                "Ran on {}.",
+                body["model"].as_str().unwrap_or("?")
+            ));
+        }
+        match tool_results(body) {
+            // A model that is not allowed is refused before anything starts.
+            0 => tools(&[(
+                "s0",
+                "spawn_subagents",
+                json!({"subagents": [{"name": "Big", "brief": "b", "model": "claude-opus"}]}),
+            )]),
+            1 => tools(&[(
+                "s1",
+                "spawn_subagents",
+                json!({"subagents": [
+                    {"name": "Review", "brief": "Review src/.", "model": "GLM 5"},
+                    {"name": "Docs", "brief": "Check docs/."}
+                ]}),
+            )]),
+            _ if mentions(body, "Ran on glm-5.") && mentions(body, "Ran on test-model.") => {
+                reply("Both done.")
+            }
+            _ => reply("Waiting."),
+        }
+    })
+    .await;
+    let (data, thread) = (app.data.path().to_owned(), app.thread.clone());
+    tokio::task::spawn_blocking({
+        let (data, thread) = (data.clone(), thread.clone());
+        move || {
+            allow_models(&data, &["glm-5"]);
+            run(&data, &thread, "use glm-5 for the review");
+        }
+    })
+    .await
+    .unwrap();
+    let all = bodies(&app.llm).await;
+    let main: Vec<&Value> = all.iter().filter(|body| !is_subagent(body)).collect();
+    assert!(
+        spawn_description(main[0]).contains("one of glm-5"),
+        "{}",
+        spawn_description(main[0])
+    );
+    assert!(main
+        .iter()
+        .any(|body| mentions(body, "subagent model 'claude-opus' is not available")));
+    let models: Vec<&str> = all
+        .iter()
+        .filter(|body| is_subagent(body))
+        .filter_map(|body| body["model"].as_str())
+        .collect();
+    assert!(
+        models.contains(&"glm-5") && models.contains(&"test-model"),
+        "{models:?}"
+    );
+    tokio::task::spawn_blocking(move || {
+        let listed = call(&data, "list_subagents", json!({"threadId": thread}));
+        let review = listed
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|agent| agent["name"] == "Review")
+            .unwrap()
+            .clone();
+        assert_eq!(review["model"], "glm-5");
+        assert!(review["ran_on"].is_null());
+    })
+    .await
+    .unwrap();
+    app.serving.abort();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_subagent_whose_model_fails_at_once_falls_back_to_the_chat_model() {
+    let app = app(None, |body| {
+        if is_subagent(body) {
+            if body["model"] == "glm-5" {
+                return ResponseTemplate::new(400)
+                    .set_body_json(json!({"error": {"message": "model glm-5 is over its quota"}}));
+            }
+            return reply("Done on the fallback.");
+        }
+        match tool_results(body) {
+            0 => tools(&[("s1", "spawn_subagents", json!({"subagents": [{"name": "Review", "brief": "Review src/.", "model": "glm-5"}]}))]),
+            _ if mentions(body, NOTE) => reply("Reported."),
+            _ => reply("Waiting."),
+        }
+    })
+    .await;
+    let (data, thread) = (app.data.path().to_owned(), app.thread.clone());
+    tokio::task::spawn_blocking(move || {
+        allow_models(&data, &["glm-5"]);
+        run(&data, &thread, "use glm-5 for the review");
+        let listed = call(&data, "list_subagents", json!({"threadId": thread}));
+        assert_eq!(listed[0]["status"], "finished", "{listed}");
+        assert_eq!(listed[0]["model"], "glm-5");
+        assert_eq!(listed[0]["ran_on"], "test-model");
+        assert!(listed[0]["result"].as_str().unwrap().contains("fallback"));
+        let events = history_kinds(&data, &thread);
+        let ended = events
+            .iter()
+            .find(|e| e["kind"] == "subagent_ended")
+            .unwrap();
+        assert_eq!(ended["model"], "test-model");
+    })
+    .await
+    .unwrap();
+    app.serving.abort();
+}

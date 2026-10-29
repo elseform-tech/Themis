@@ -334,8 +334,9 @@ export type ThreadEvent =
   /** The agent started a read-only subagent for one part of its task. */
   | { kind: 'subagent_started'; id: string; name: string; brief: string; model: string; confined: boolean }
   /** What a running subagent is doing now (live only). */
-  | { kind: 'subagent_status'; id: string; text: string; tool_calls: number }
-  | { kind: 'subagent_ended'; id: string; status: SubagentEnding; result: string; tool_calls: number; seconds: number };
+  /** `model`: the one it fell back to when its own could not run. */
+  | { kind: 'subagent_status'; id: string; text: string; tool_calls: number; model?: string }
+  | { kind: 'subagent_ended'; id: string; status: SubagentEnding; result: string; tool_calls: number; seconds: number; model?: string };
 
 export type SubagentEnding = 'finished' | 'stopped' | 'failed' | 'incomplete';
 
@@ -355,6 +356,8 @@ export interface SubagentEntry {
   seconds?: number;
   /** When it started, for live elapsed time (live events only). */
   startedAt?: number;
+  /** The model it fell back to, when `model` could not run. */
+  ranOn?: string;
 }
 
 /** Settings › Subagents (the `subagents` block of the user runtime.jsonc). */
@@ -363,6 +366,8 @@ export interface SubagentSettings {
   max_parallel: number;
   max_turns: number;
   model?: string | null;
+  /** Up to three more models the agent may give a subagent. */
+  models?: string[];
   allow_writes: boolean;
 }
 

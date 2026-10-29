@@ -54,7 +54,7 @@ export function SubagentDetail({ threadId, agent, runLive, onBack }: { threadId:
   }
   const time = elapsed(agent, now);
   const meta = [
-    agent.model,
+    agent.ranOn ? `${agent.ranOn} (${agent.model} unavailable)` : agent.model,
     "Read only",
     agent.confined ? "" : "Shell not confined",
     `${agent.toolCalls} tool ${agent.toolCalls === 1 ? "call" : "calls"}`,
