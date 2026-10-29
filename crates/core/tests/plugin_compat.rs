@@ -671,6 +671,10 @@ fn prompt_and_failure_hooks_import_and_claude_tool_names_map_to_themis_tools() {
         "hooks/hooks.json",
         &json!({"hooks": {
             "UserPromptSubmit": [{"hooks": command("echo context")}],
+            "SessionStart": [
+                {"matcher": "startup|resume|clear|compact", "hooks": command("echo style")},
+                {"matcher": "compact", "hooks": command("echo after-compact")}
+            ],
             "PostToolUseFailure": [{"matcher": "Bash", "hooks": command("echo failed")}],
             "PreToolUse": [
                 {"matcher": "Bash", "hooks": command("guard")},
@@ -719,6 +723,13 @@ fn prompt_and_failure_hooks_import_and_claude_tool_names_map_to_themis_tools() {
         notes.contains("PreToolUse: matcher NotebookEdit has no Themis tool"),
         "{notes}"
     );
-    assert!(notes.contains("PreToolUse: matcher mcp__github__create_issue has no Themis tool"));
+    assert!(
+        notes.contains("PreToolUse: matcher for MCP tools has no Themis tool"),
+        "{notes}"
+    );
     assert!(!notes.contains("Hook event UserPromptSubmit"));
+    assert!(
+        notes.contains("SessionStart: matcher compact has no Themis equivalent"),
+        "{notes}"
+    );
 }

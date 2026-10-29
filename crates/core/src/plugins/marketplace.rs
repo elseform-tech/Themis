@@ -1837,6 +1837,14 @@ fn themis_tools(claude: &str) -> Option<&'static [&'static str]> {
 fn map_tool_matcher(matcher: &str) -> (Vec<String>, Vec<String>) {
     let mut mapped: Vec<String> = Vec::new();
     let mut unmapped = Vec::new();
+    // MCP tools are named differently in Themis, and a regex group is not a list of names:
+    // either is one matcher with no Themis tool.
+    if matcher.contains("mcp__") {
+        return (mapped, vec!["for MCP tools".to_owned()]);
+    }
+    if matcher.contains(['(', ')', '[', '*', '.', '\\']) {
+        return (mapped, vec![matcher.to_owned()]);
+    }
     for name in matcher
         .split('|')
         .map(str::trim)
@@ -1872,7 +1880,9 @@ fn import_hooks(value: &Value, spec: &mut PluginSpec) -> anyhow::Result<()> {
         .context("Invalid hook configuration")?;
     for (event, groups) in events {
         let mapped = match event.as_str() {
-            "SessionStart" => "RunStart",
+            // Its output is context for the model, which only PromptSubmit delivers: it runs
+            // on every turn instead of once per session.
+            "SessionStart" => "PromptSubmit",
             "PreToolUse" => "BeforeTool",
             "PostToolUse" => "AfterTool",
             "Stop" => "RunEnd",
@@ -1895,7 +1905,22 @@ fn import_hooks(value: &Value, spec: &mut PluginSpec) -> anyhow::Result<()> {
                     spec.unsupported.push(format!("{event}: non-command hook"));
                     continue;
                 }
+                // Every Claude session starts with "startup"; the other sources have no Themis
+                // equivalent.
+                let session_matcher = (event == "SessionStart")
+                    .then(|| group["matcher"].as_str())
+                    .flatten()
+                    .filter(|matcher| !matcher.is_empty() && *matcher != "*");
+                if let Some(matcher) = session_matcher {
+                    if !matcher.split('|').any(|source| source.trim() == "startup") {
+                        spec.unsupported.push(format!(
+                            "SessionStart: matcher {matcher} has no Themis equivalent"
+                        ));
+                        continue;
+                    }
+                }
                 if !tool_event
+                    && event != "SessionStart"
                     && group["matcher"]
                         .as_str()
                         .is_some_and(|matcher| !matcher.is_empty() && matcher != "*")
@@ -1930,6 +1955,7 @@ fn import_hooks(value: &Value, spec: &mut PluginSpec) -> anyhow::Result<()> {
                         }
                         Some(mapped_tools.join("|"))
                     }
+                    _ if event == "SessionStart" => None,
                     other => other.map(str::to_owned),
                 };
                 spec.hooks.push(Hook {
@@ -1943,7 +1969,8 @@ fn import_hooks(value: &Value, spec: &mut PluginSpec) -> anyhow::Result<()> {
                     matcher,
                     failure_policy: None,
                     timeout_seconds: raw["timeout"].as_u64().unwrap_or(10).clamp(1, 60),
-                    blocking: event == "PreToolUse" || event == "SessionStart",
+                    // A broken session hook must not stop every turn.
+                    blocking: event == "PreToolUse",
                     plugin_root: None,
                     runtime_identity: None,
                 });

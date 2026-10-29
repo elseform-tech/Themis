@@ -33,7 +33,7 @@ describe("Hooks by event", () => {
     expect(events[2]).toHaveTextContent("guards · shell, background_task · Blocks on failure");
     expect(events[3]).toHaveTextContent("Only when it fails");
     // Skipped hooks: one plain line per plugin; other notes stay out.
-    expect(screen.getByRole("note")).toHaveTextContent("2 hooks skipped (guards): unsupported event (SessionEnd); NotebookEdit has no Themis tool.");
+    expect(screen.getByRole("note")).toHaveTextContent("2 hooks skipped (guards): unsupported event (SessionEnd); matcher NotebookEdit has no Themis tool.");
     fireEvent.click(screen.getByRole("switch", { name: "guard enabled" }));
     expect(toggle).toHaveBeenCalledWith(rows[0]);
   });

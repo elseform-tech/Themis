@@ -27,8 +27,7 @@ export function skipReason(note: string): string | null {
   if (event) return `unsupported event (${event[1]})`;
   if (!CLAUDE_EVENTS.test(note)) return null;
   const [name, detail = ""] = note.split(/:\s*/, 2);
-  const matcher = /^matcher (.+) has no Themis tool$/.exec(detail);
-  if (matcher) return `${matcher[1]} has no Themis tool`;
+  if (/^matcher .+ has no Themis tool$/.test(detail)) return detail;
   if (detail === "non-command hook") return "not a command";
   if (detail === "lifecycle matcher requires manual mapping") return `${name} matcher not supported`;
   if (detail === "hook options require manual mapping") return `${name} options not supported`;
