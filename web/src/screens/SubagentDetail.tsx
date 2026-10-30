@@ -82,6 +82,7 @@ export function SubagentDetail({ threadId, agent, runLive, onBack }: { threadId:
     agent.ranOn ? `${agent.ranOn} (${agent.model} unavailable)` : agent.model,
     agent.writePaths.length ? `Writes ${agent.writePaths.join(", ")}` : "Read only",
     agent.confined ? "" : "Shell not confined",
+    agent.checkPassed === undefined ? "" : agent.checkPassed ? "Check passed" : "Check failed",
     `${agent.toolCalls} tool ${agent.toolCalls === 1 ? "call" : "calls"}`,
     time === undefined ? "" : clock(time),
   ].filter(Boolean).join(" · ");

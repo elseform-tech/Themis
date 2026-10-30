@@ -125,6 +125,23 @@ struct Brief {
     brief: String,
     model: Option<String>,
     write_paths: Vec<String>,
+    done_when: String,
+    check: Option<String>,
+}
+
+/// A `check` as given: the command to run, none for `none: why`, and an outer none when it is
+/// missing.
+fn check_of(value: &Value) -> Option<Option<String>> {
+    let check = non_empty(value)?;
+    Some((!check.to_lowercase().starts_with("none")).then_some(check))
+}
+
+fn non_empty(value: &Value) -> Option<String> {
+    value
+        .as_str()
+        .map(str::trim)
+        .filter(|text| !text.is_empty())
+        .map(str::to_owned)
 }
 
 /// The briefs the model asked for, named "Subagent N" when it gave no name.
@@ -146,6 +163,16 @@ fn parse_briefs(args: &Value) -> Result<Vec<Brief>, ToolCallError> {
                 .map(str::trim)
                 .filter(|brief| !brief.is_empty())
                 .ok_or_else(|| error(format!("subagent {} needs a `brief`", index + 1)))?;
+            let done_when = item["done_when"]
+                .as_str()
+                .map(str::trim)
+                .filter(|text| !text.is_empty())
+                .ok_or_else(|| {
+                    error(format!(
+                        "subagent {} needs `done_when`: what must be true when it finishes",
+                        index + 1
+                    ))
+                })?;
             let name = item["name"]
                 .as_str()
                 .map(str::trim)
@@ -156,6 +183,14 @@ fn parse_briefs(args: &Value) -> Result<Vec<Brief>, ToolCallError> {
                 name,
                 brief: brief.chars().take(MAX_BRIEF).collect(),
                 model: item["model"].as_str().map(str::to_owned),
+                done_when: done_when.chars().take(MAX_BRIEF).collect(),
+                check: check_of(&item["check"]).ok_or_else(|| {
+                    error(format!(
+                        "subagent {} needs `check`: a shell command that exits 0 only if \
+                         `done_when` holds, or `none: why`",
+                        index + 1
+                    ))
+                })?,
                 write_paths: match &item["write_paths"] {
                     Value::Null => Vec::new(),
                     paths => paths
@@ -222,7 +257,13 @@ impl SubagentTool {
             .into_iter()
             .zip(write_paths)
             .map(|((brief, model), paths)| {
-                let agent = self.kit.start(brief.name, brief.brief, model, paths);
+                let agent = self.kit.start(
+                    brief.name,
+                    brief.brief,
+                    model,
+                    paths,
+                    (brief.done_when, brief.check),
+                );
                 json!({"id": agent.id, "name": agent.name, "model": agent.model,
                     "write_paths": agent.write_paths})
             })
@@ -317,6 +358,7 @@ impl SubagentTool {
             .chars()
             .take(MAX_BRIEF)
             .collect();
+        agent.set_bar(non_empty(&args["done_when"]), check_of(&args["check"]));
         if agent.ended() {
             self.kit.resume(&agent, message).map_err(error)?;
             return Ok(json!({"sent": true, "resumed": true,
@@ -397,8 +439,10 @@ impl ToolT for SubagentTool {
                 let mut item = json!({"type":"object","properties":{
                     "name":{"type":"string","description":"A short name, for example \"Bug hunt\""},
                     "brief":{"type":"string"},
+                    "done_when":{"type":"string","description":"What must be true when it finishes, concrete enough to check."},
+                    "check":{"type":"string","description":"A shell command that exits 0 only if that holds, or `none: why`. Run by the harness after it ends."},
                     "write_paths":{"type":"array","items":{"type":"string"},"description":"Project-relative folders (ending in /) or files it alone may change. Leave out for read-only."}
-                },"required":["brief"]});
+                },"required":["brief","done_when","check"]});
                 if self.models {
                     item["properties"]["model"] = json!({"type":"string"});
                 }
@@ -414,7 +458,8 @@ impl ToolT for SubagentTool {
                 "say":say_field()
             },"required":["say"],"additionalProperties":false}),
             Kind::Message => json!({"type":"object","properties":{
-                "id":{"type":"string"},"message":{"type":"string"},"say":say_field()
+                "id":{"type":"string"},"message":{"type":"string"},"say":say_field(),
+                "done_when":{"type":"string"},"check":{"type":"string"}
             },"required":["say","id","message"],"additionalProperties":false}),
             Kind::Stop => json!({"type":"object","properties":{
                 "id":{"type":"string"}
@@ -495,8 +540,8 @@ mod tests {
     #[test]
     fn briefs_are_read_leniently_and_bounded() {
         let briefs = parse_briefs(&json!({"subagents": [
-            {"name": "Bug hunt", "brief": "Find bugs in src/"},
-            {"brief": "  Check docs  "}
+            {"name": "Bug hunt", "brief": "Find bugs in src/", "done_when": "Done.", "check": "none: test"},
+            {"brief": "  Check docs  ", "done_when": "Done.", "check": "none: test"}
         ]}))
         .unwrap();
         assert_eq!(
@@ -509,7 +554,10 @@ mod tests {
         );
         assert!(parse_briefs(&json!({"subagents": []})).is_err());
         assert!(parse_briefs(&json!({"subagents": [{"name": "x"}]})).is_err());
-        let seven = vec![json!({"brief": "b"}); MAX_PER_CALL + 1];
+        let seven = vec![
+            json!({"brief": "b", "done_when": "Done.", "check": "none: test"});
+            MAX_PER_CALL + 1
+        ];
         assert!(parse_briefs(&json!({ "subagents": seven })).is_err());
     }
 

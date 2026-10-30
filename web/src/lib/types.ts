@@ -341,7 +341,7 @@ export type ThreadEvent =
   /** What a running subagent is doing now (live only). */
   /** `model`: the one it fell back to when its own could not run. */
   | { kind: 'subagent_status'; id: string; text: string; tool_calls: number; model?: string }
-  | { kind: 'subagent_ended'; id: string; status: SubagentEnding; result: string; tool_calls: number; seconds: number; model?: string };
+  | { kind: 'subagent_ended'; id: string; status: SubagentEnding; result: string; tool_calls: number; check_passed?: boolean; seconds: number; model?: string };
 
 export type SubagentEnding = 'finished' | 'stopped' | 'failed' | 'incomplete';
 
@@ -354,6 +354,8 @@ export interface SubagentEntry {
   confined: boolean;
   /** The project paths it may change; empty when it is read-only. */
   writePaths: string[];
+  /** Whether the check the main agent gave it passed. */
+  checkPassed?: boolean;
   status: 'running' | SubagentEnding;
   /** Its own status line, or its latest action. */
   text: string;

@@ -1,0 +1,1 @@
+[Runtime note, not from the user] You have been working for a while without a word. In at least 40 words of your own, thinking aloud, tell the person what you have been doing, what you have found and what you will do next, including anything that is not working. Don't repeat an earlier update. No tools in this reply; you carry on right after it.

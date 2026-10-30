@@ -249,8 +249,8 @@ async fn the_turn_ends_after_both_subagents_reported_back() {
                 "s1",
                 "spawn_subagents",
                 json!({"subagents": [
-                    {"name": "Notes", "brief": "Read notes.txt and say what it says."},
-                    {"name": "Files", "brief": "List the project folder."}
+                    {"name": "Notes", "brief": "Read notes.txt and say what it says.", "done_when": "It is done.", "check": "none: test"},
+                    {"name": "Files", "brief": "List the project folder.", "done_when": "It is done.", "check": "none: test"}
                 ]}),
             )]),
             _ if both => reply("Merged: hello, and one file."),
@@ -365,7 +365,7 @@ async fn a_stopped_subagent_ends_and_a_waited_result_is_not_repeated() {
             0 => tools(&[(
                 "s1",
                 "spawn_subagents",
-                json!({"subagents": [{"name": "Slow", "brief": "Look at everything."}]}),
+                json!({"subagents": [{"name": "Slow", "brief": "Look at everything.", "done_when": "It is done.", "check": "none: test"}]}),
             )]),
             1 => tools(&[("t1", "stop_subagent", json!({"id": id}))]),
             2 => tools(&[(
@@ -440,34 +440,34 @@ async fn write_paths_hold_a_subagent_to_its_own_folder() {
             0 => tools(&[(
                 "bad1",
                 "spawn_subagents",
-                json!({"subagents": [{"brief": "Escape", "write_paths": ["../up/"]}]}),
+                json!({"subagents": [{"brief": "Escape", "done_when": "It is done.", "check": "none: test", "write_paths": ["../up/"]}]}),
             )]),
             1 => tools(&[(
                 "bad2",
                 "spawn_subagents",
-                json!({"subagents": [{"brief": "Settings", "write_paths": [".themis/"]}]}),
+                json!({"subagents": [{"brief": "Settings", "done_when": "It is done.", "check": "none: test", "write_paths": [".themis/"]}]}),
             )]),
             2 => tools(&[(
                 "bad3",
                 "spawn_subagents",
                 json!({"subagents": [
-                    {"brief": "One", "write_paths": ["notes/"]},
-                    {"brief": "Two", "write_paths": ["notes/deep/file.md"]}
+                    {"brief": "One", "done_when": "It is done.", "check": "none: test", "write_paths": ["notes/"]},
+                    {"brief": "Two", "done_when": "It is done.", "check": "none: test", "write_paths": ["notes/deep/file.md"]}
                 ]}),
             )]),
             3 => tools(&[(
                 "s1",
                 "spawn_subagents",
                 json!({"subagents": [
-                    {"name": "Reader A", "brief": "Read part A"},
-                    {"name": "Reader B", "brief": "Read part B"},
-                    {"name": "Writer", "brief": "Write the summary", "write_paths": ["notes/"]}
+                    {"name": "Reader A", "brief": "Read part A", "done_when": "It is done.", "check": "none: test"},
+                    {"name": "Reader B", "brief": "Read part B", "done_when": "It is done.", "check": "none: test"},
+                    {"name": "Writer", "brief": "Write the summary", "done_when": "It is done.", "check": "none: test", "write_paths": ["notes/"]}
                 ]}),
             )]),
             4 => tools(&[(
                 "s2",
                 "spawn_subagents",
-                json!({"subagents": [{"brief": "Late", "write_paths": ["notes/late.md"]}]}),
+                json!({"subagents": [{"brief": "Late", "done_when": "It is done.", "check": "none: test", "write_paths": ["notes/late.md"]}]}),
             )]),
             5 => tools(&[("w", "wait_subagents", json!({}))]),
             _ => reply("All done."),
@@ -572,7 +572,7 @@ async fn the_main_agent_can_send_a_finished_subagent_back() {
                 0 => tools(&[(
                     "s1",
                     "spawn_subagents",
-                    json!({"say": "Starting Adder to do the sum.", "subagents": [{"name": "Adder", "brief": "Add the numbers"}]}),
+                    json!({"say": "Starting Adder to do the sum.", "subagents": [{"name": "Adder", "brief": "Add the numbers", "done_when": "It is done.", "check": "none: test"}]}),
                 )]),
                 1 => tools(&[("w1", "wait_subagents", json!({}))]),
                 2 => tools(&[("m1", "message_subagent", {
@@ -679,6 +679,113 @@ async fn the_main_agent_can_send_a_finished_subagent_back() {
     app.serving.abort();
 }
 
+/// The check the main agent gives runs after the subagent ends, and the outcome reaches it, in
+/// the report, so neither model's word decides. A failed check can be sent back and rerun.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_harness_runs_the_check_and_reports_it() {
+    let app = app(None, |body| {
+        if is_subagent(body) {
+            return if mentions(body, "Do it properly") {
+                tools(&[(
+                    "w2",
+                    "write_file",
+                    json!({"file_path": "notes/out.txt", "content": "right"}),
+                )])
+            } else {
+                reply("All done, trust me.")
+            };
+        }
+        if tool_names(body).is_empty() {
+            return reply("Let me think about that report.");
+        }
+        match tool_results(body) {
+            0 => tools(&[(
+                "s1",
+                "spawn_subagents",
+                json!({"say": "Starting it.", "subagents": [{"name": "Claimer", "brief": "Write the note",
+                    "done_when": "notes/out.txt says right", "write_paths": ["notes/"],
+                    "check": "grep -q right notes/out.txt"}]}),
+            )]),
+            1 => tools(&[("w1", "wait_subagents", json!({}))]),
+            2 => tools(&[(
+                "m1",
+                "message_subagent",
+                json!({"id": spawned_id(body).unwrap(), "message": "Do it properly", "say": "It failed."}),
+            )]),
+            3 => tools(&[("w2", "wait_subagents", json!({}))]),
+            _ => reply("Now it holds."),
+        }
+    })
+    .await;
+    run(app.data.path(), &app.thread, "Get the note written");
+    let all = bodies(&app.llm).await;
+    assert!(all
+        .iter()
+        .any(|body| is_subagent(body) && mentions(body, "Done when: notes/out.txt says right")));
+    let mains = || all.iter().filter(|body| !is_subagent(body));
+    if cfg!(unix) {
+        assert!(mains().any(|body| mentions(body, "`grep -q right notes/out.txt`: FAILED")));
+    }
+    let events = history_kinds(app.data.path(), &app.thread);
+    let ended: Vec<&Value> = events
+        .iter()
+        .filter(|event| event["kind"] == "subagent_ended")
+        .collect();
+    assert_eq!(ended[0]["check_passed"], json!(false), "{ended:?}");
+    app.serving.abort();
+}
+
+/// A subagent can't start without saying what done means.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_subagent_needs_done_when() {
+    let app = app(None, |body| match tool_results(body) {
+        0 => tools(&[(
+            "s1",
+            "spawn_subagents",
+            json!({"say": "Starting it.", "subagents": [{"brief": "Do things"}]}),
+        )]),
+        _ => reply("Understood."),
+    })
+    .await;
+    run(app.data.path(), &app.thread, "Do things");
+    assert!(bodies(&app.llm)
+        .await
+        .iter()
+        .any(|body| mentions(body, "needs `done_when`")));
+    assert!(history_kinds(app.data.path(), &app.thread).is_empty());
+    app.serving.abort();
+}
+
+/// A long quiet stretch gets one step with no tools, to say how things stand.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_long_quiet_stretch_gets_a_step_to_speak() {
+    let app = app(None, |body| {
+        if tool_names(body).is_empty() {
+            return reply("I've been reading the notes over and over, and I'll wrap up now.");
+        }
+        match tool_results(body) {
+            n if n < 11 => tools(&[(
+                "r",
+                "read_file",
+                json!({"file_path": "notes.txt", "offset": n}),
+            )]),
+            _ => reply("Done."),
+        }
+    })
+    .await;
+    run(app.data.path(), &app.thread, "Keep reading");
+    let all = bodies(&app.llm).await;
+    let quiet = all
+        .iter()
+        .filter(|body| tool_names(body).is_empty())
+        .count();
+    assert_eq!(quiet, 1, "one update after ten quiet steps");
+    assert!(all
+        .iter()
+        .any(|body| mentions(body, "working for a while without a word")));
+    app.serving.abort();
+}
+
 /// Ordinary tool calls never lose their tools for a step.
 #[tokio::test(flavor = "multi_thread")]
 async fn plain_tool_calls_are_not_nudged() {
@@ -707,7 +814,7 @@ async fn a_project_can_turn_subagent_writes_off() {
             0 => tools(&[(
                 "s1",
                 "spawn_subagents",
-                json!({"subagents": [{"brief": "Write it", "write_paths": ["notes/"]}]}),
+                json!({"subagents": [{"brief": "Write it", "done_when": "It is done.", "check": "none: test", "write_paths": ["notes/"]}]}),
             )]),
             1 => tools(&[("w", "wait_subagents", json!({}))]),
             _ => reply("All done."),
@@ -759,7 +866,7 @@ async fn the_person_can_stop_one_subagent_and_the_agent_still_hears_from_it() {
             0 => tools(&[(
                 "s1",
                 "spawn_subagents",
-                json!({"subagents": [{"name": "Slow", "brief": "Look at everything."}]}),
+                json!({"subagents": [{"name": "Slow", "brief": "Look at everything.", "done_when": "It is done.", "check": "none: test"}]}),
             )]),
             _ if mentions(body, NOTE) => reply("Slow was stopped."),
             _ => reply("Waiting for Slow."),
@@ -899,7 +1006,7 @@ async fn starting_subagents_needs_no_prompt_but_a_deny_rule_still_holds() {
             0 => tools(&[(
                 "s1",
                 "spawn_subagents",
-                json!({"subagents": [{"name": "Quick", "brief": "Say hello."}]}),
+                json!({"subagents": [{"name": "Quick", "brief": "Say hello.", "done_when": "It is done.", "check": "none: test"}]}),
             )]),
             _ if mentions(body, NOTE) => reply("Quick reported back."),
             _ if mentions(body, "approval denied") => reply("Subagents are not allowed here."),
@@ -969,14 +1076,14 @@ async fn the_person_names_a_model_per_subagent_from_the_allowed_ones() {
             0 => tools(&[(
                 "s0",
                 "spawn_subagents",
-                json!({"subagents": [{"name": "Big", "brief": "b", "model": "claude-opus"}]}),
+                json!({"subagents": [{"name": "Big", "brief": "b", "done_when": "It is done.", "check": "none: test", "model": "claude-opus"}]}),
             )]),
             1 => tools(&[(
                 "s1",
                 "spawn_subagents",
                 json!({"subagents": [
-                    {"name": "Review", "brief": "Review src/.", "model": "GLM 5"},
-                    {"name": "Docs", "brief": "Check docs/."}
+                    {"name": "Review", "brief": "Review src/.", "done_when": "It is done.", "check": "none: test", "model": "GLM 5"},
+                    {"name": "Docs", "brief": "Check docs/.", "done_when": "It is done.", "check": "none: test"}
                 ]}),
             )]),
             _ if mentions(body, "Ran on glm-5.") && mentions(body, "Ran on test-model.") => {
@@ -1043,7 +1150,7 @@ async fn a_subagent_whose_model_fails_at_once_falls_back_to_the_chat_model() {
             return reply("Done on the fallback.");
         }
         match tool_results(body) {
-            0 => tools(&[("s1", "spawn_subagents", json!({"subagents": [{"name": "Review", "brief": "Review src/.", "model": "glm-5"}]}))]),
+            0 => tools(&[("s1", "spawn_subagents", json!({"subagents": [{"name": "Review", "brief": "Review src/.", "done_when": "It is done.", "check": "none: test", "model": "glm-5"}]}))]),
             _ if mentions(body, NOTE) => reply("Reported."),
             _ => reply("Waiting."),
         }
@@ -1080,7 +1187,7 @@ async fn a_subagent_waiting_for_approval_does_not_hold_the_reply() {
             0 => tools(&[(
                 "s1",
                 "spawn_subagents",
-                json!({"subagents": [{"name": "Lister", "brief": "Number the lines of notes.txt."}]}),
+                json!({"subagents": [{"name": "Lister", "brief": "Number the lines of notes.txt.", "done_when": "It is done.", "check": "none: test"}]}),
             )]),
             _ if mentions(body, NOTE) => reply("Done."),
             _ => reply("Waiting."),

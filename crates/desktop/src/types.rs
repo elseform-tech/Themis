@@ -310,6 +310,9 @@ pub enum ThreadEvent {
         /// The model it fell back to, when its own could not run.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         model: Option<String>,
+        /// Whether the check the main agent gave it passed.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        check_passed: Option<bool>,
     },
 }
 
