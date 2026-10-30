@@ -1173,7 +1173,10 @@ pub fn write_paths_overlap(a: &str, b: &str) -> bool {
             .collect::<Vec<_>>()
     };
     let (a, b) = (parts(a), parts(b));
-    a.iter().zip(&b).all(|(left, right)| left == right)
+    // Ignoring case: on macOS and Windows `src/` and `Src/` are one folder.
+    a.iter()
+        .zip(&b)
+        .all(|(left, right)| left.eq_ignore_ascii_case(right))
 }
 
 /// What the sandbox covers, for status views.
@@ -1295,6 +1298,17 @@ impl FileGuard {
             ));
         }
         if let Some(allowed) = &self.only_write {
+            // A dangling link looks like a new file here, but a write would land at its target.
+            let dangling = path.ancestors().any(|step| {
+                step.symlink_metadata().is_ok_and(|meta| meta.is_symlink())
+                    && step.canonicalize().is_err()
+            });
+            if dangling {
+                return Err(format!(
+                    "'{}' goes through a broken link; this subagent may not write through it",
+                    path.display()
+                ));
+            }
             // Only the resolved path counts, and `..` is never followed, so a path cannot
             // start inside an allowed folder and step out of it.
             let climbs = path

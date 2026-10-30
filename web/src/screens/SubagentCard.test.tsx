@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { subagentWaitLine } from "./ThreadConversation";
 import { initialState, reducer } from "../state/reducer";
 import type { ApprovalRequest, SubagentEntry } from "../lib/types";
 import { clock, firstLine, modelNote, SubagentCard, subagentLine, subagentState } from "./SubagentCard";
@@ -190,5 +191,42 @@ describe("Settings › Subagents", () => {
     fireEvent.click(screen.getByRole("button", { name: "Remove glm-5" }));
     await act(async () => {});
     expect(tauri.updateSubagentSettings).toHaveBeenLastCalledWith({ models: [] }, "r2");
+  });
+});
+
+describe("subagents in the chat", () => {
+  const started = (id: string, name: string, brief: string, write_paths: string[] = []) => ({ kind: "subagent_started", id, name, brief, model: "m", confined: true, write_paths, at: "" }) as never;
+  const ended = (result: string) => ({ kind: "subagent_ended", id: "a1", status: "finished", result, tool_calls: 1, seconds: 2 }) as never;
+
+  it("adds only the stack to the chat: the conversation is in the subagent's detail", () => {
+    let state = reducer(reducer(initialState, envelope(started("a1", "Writer", "Write it"))), envelope(ended("Wrong")));
+    state = reducer(state, envelope({ kind: "subagent_message", id: "a1", text: "That is wrong, redo it", resumed: true } as never));
+    const rows = state.messages[thread] ?? [];
+    expect(rows.filter(row => row.subagents)).toHaveLength(1);
+    expect(rows.filter(row => !row.subagents)).toHaveLength(0);
+    expect(rows[0]!.subagents![0]!.status).toBe("running");
+  });
+
+  it("moves a subagent picked up in a later reply to that reply's stack", () => {
+    const first = reducer(reducer(initialState, envelope(started("a1", "Writer", "Write it"))), envelope(ended("Wrong")));
+    const later = envelope({ kind: "subagent_message", id: "a1", text: "Redo", resumed: true } as never) as { envelope: { run_id: string } };
+    later.envelope.run_id = "r2";
+    const state = reducer(first, later as never);
+    expect((state.messages[thread] ?? []).filter(row => row.subagents).map(row => row.runId)).toEqual(["r2"]);
+  });
+
+  it("names who the main agent waits for, whatever it said itself", () => {
+    const rows = [{ id: "s", role: "system", text: "", subagents: [agent({ name: "Writer" }), agent({ id: "a2", name: "Done", status: "finished" })] }] as never;
+    expect(subagentWaitLine("wait_subagents", rows)).toBe("Waiting for Writer…");
+    expect(subagentWaitLine("read_file", rows)).toBeNull();
+  });
+
+  it("shows the main agent's messages in the detail, folding a long one", async () => {
+    vi.mocked(tauri.getSubagentTranscript).mockResolvedValueOnce([{ kind: "subagent_message", id: "a1", text: "Redo it" } as never]);
+    render(<SubagentDetail threadId={thread} agent={agent({ brief: "x".repeat(500) })} runLive onBack={() => {}} />);
+    await act(async () => {});
+    expect(screen.getByText("Redo it")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Show more" }));
+    expect(screen.getByRole("button", { name: "Show less" })).toBeInTheDocument();
   });
 });

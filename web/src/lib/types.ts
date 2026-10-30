@@ -336,6 +336,8 @@ export type ThreadEvent =
   | { kind: 'question_answered'; id: string; answer: string }
   /** The agent started a read-only subagent for one part of its task. */
   | { kind: 'subagent_started'; id: string; name: string; brief: string; model: string; confined: boolean; write_paths?: string[]; /** RFC 3339. */ at?: string }
+  /** The main agent wrote to a subagent; `resumed` when that picked an ended one up again. */
+  | { kind: 'subagent_message'; id: string; text: string; resumed?: boolean }
   /** What a running subagent is doing now (live only). */
   /** `model`: the one it fell back to when its own could not run. */
   | { kind: 'subagent_status'; id: string; text: string; tool_calls: number; model?: string }

@@ -1202,6 +1202,26 @@ fn a_write_path_through_a_link_cant_leave_the_project() {
     assert!(normalize_write_path(&fx.root, "away/file.txt", &[]).is_err());
 }
 
+#[cfg(unix)]
+#[test]
+fn a_subagent_cant_write_through_a_broken_link_in_its_own_folder() {
+    let fx = fixture();
+    let mine = fx.root.join("mine");
+    std::fs::create_dir_all(&mine).unwrap();
+    std::os::unix::fs::symlink(fx.root.join("elsewhere.rs"), mine.join("link")).unwrap();
+    let plan = plan_with(
+        Enforcement::Active(Backend::Seatbelt),
+        &config("{}"),
+        &fx.root,
+        &fx.app_data,
+        &fx.home,
+    )
+    .confined_to(&fx.root, std::slice::from_ref(&mine));
+    let guard = plan.file_guard(false).unwrap();
+    assert!(guard.check_write(&mine.join("link")).is_err());
+    assert!(guard.check_write(&mine.join("real.rs")).is_ok());
+}
+
 #[test]
 fn write_paths_overlap_by_whole_path_parts() {
     for (a, b, overlap) in [
@@ -1209,6 +1229,7 @@ fn write_paths_overlap_by_whole_path_parts() {
         ("a/", "a/b.txt", true),
         ("a/b/", "a/", true),
         ("a/b.txt", "a/b.txt", true),
+        ("Src/", "src/a.rs", true),
         ("a/b", "a/bc", false),
         ("a/", "b/", false),
         ("tests/", "tests2/", false),

@@ -1,1 +1,0 @@
-Send a note to one running subagent, read before its next step. Use it to correct its direction, not to start new work.

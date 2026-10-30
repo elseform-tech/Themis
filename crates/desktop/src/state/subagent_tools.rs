@@ -1,4 +1,4 @@
-//! The agent's subagent tools (`spawn_subagents`, `wait_subagents`, `steer_subagent`,
+//! The agent's subagent tools (`spawn_subagents`, `wait_subagents`, `message_subagent`,
 //! `stop_subagent`), and the `status` field every subagent tool call accepts.
 
 use std::sync::Arc;
@@ -8,6 +8,11 @@ use serde_json::{json, Value};
 use themis_core::tools::{async_trait, ToolCallError, ToolRuntime, ToolT};
 
 use super::subagents::{Reporter, Subagent, SubagentKit, MAX_PER_CALL};
+
+/// The line the person sees before the call runs; the runtime shows it.
+fn say_field() -> Value {
+    json!({"type":"string","description":"At least 40 natural words for the person watching: what you are doing and why, paraphrased, never restating an earlier update."})
+}
 
 /// Longest wait one `wait_subagents` call may ask for.
 const MAX_WAIT_SECONDS: u64 = 600;
@@ -21,7 +26,7 @@ fn error(message: impl ToString) -> ToolCallError {
 /// The subagent tools of one run, sharing its kit.
 pub(super) fn tools(kit: &Arc<SubagentKit>) -> Vec<Box<dyn ToolT>> {
     let others = kit.other_models();
-    [Kind::Spawn, Kind::Wait, Kind::Steer, Kind::Stop]
+    [Kind::Spawn, Kind::Wait, Kind::Message, Kind::Stop]
         .into_iter()
         .map(|kind| {
             let description = match kind {
@@ -38,7 +43,7 @@ pub(super) fn tools(kit: &Arc<SubagentKit>) -> Vec<Box<dyn ToolT>> {
                 ),
                 Kind::Spawn => themis_core::prompts::SPAWN_SUBAGENTS_TOOL.to_owned(),
                 Kind::Wait => themis_core::prompts::WAIT_SUBAGENTS_TOOL.to_owned(),
-                Kind::Steer => themis_core::prompts::STEER_SUBAGENT_TOOL.to_owned(),
+                Kind::Message => themis_core::prompts::MESSAGE_SUBAGENT_TOOL.to_owned(),
                 Kind::Stop => themis_core::prompts::STOP_SUBAGENT_TOOL.to_owned(),
             };
             Box::new(SubagentTool {
@@ -93,7 +98,7 @@ pub(super) fn pick_model(
 enum Kind {
     Spawn,
     Wait,
-    Steer,
+    Message,
     Stop,
 }
 
@@ -179,8 +184,8 @@ impl SubagentTool {
             .as_str()
             .ok_or_else(|| error("needs `id`: the subagent's id from spawn_subagents"))?;
         self.kit
-            .find(id)
-            .ok_or_else(|| error(format!("no subagent with id '{id}' in this run")))
+            .find_in_chat(id)
+            .ok_or_else(|| error(format!("no subagent with id '{id}' in this chat")))
     }
 
     fn spawn(&self, args: &Value) -> Result<Value, ToolCallError> {
@@ -238,8 +243,8 @@ impl SubagentTool {
                 .filter_map(Value::as_str)
                 .map(|id| {
                     self.kit
-                        .find(id)
-                        .ok_or_else(|| error(format!("no subagent with id '{id}' in this run")))
+                        .find_in_chat(id)
+                        .ok_or_else(|| error(format!("no subagent with id '{id}' in this chat")))
                 })
                 .collect::<Result<_, _>>()?,
             None => self
@@ -296,21 +301,33 @@ impl SubagentTool {
         Ok(output)
     }
 
-    fn steer(&self, args: &Value) -> Result<Value, ToolCallError> {
-        let agent = self.agent(args)?;
-        let message = args["message"]
+    fn message(&self, args: &Value) -> Result<Value, ToolCallError> {
+        let id = args["id"]
+            .as_str()
+            .ok_or_else(|| error("needs `id`: the subagent's id from spawn_subagents"))?;
+        let agent = self
+            .kit
+            .find_in_chat(id)
+            .ok_or_else(|| error(format!("no subagent with id '{id}' in this chat")))?;
+        let message: String = args["message"]
             .as_str()
             .map(str::trim)
             .filter(|message| !message.is_empty())
-            .ok_or_else(|| error("steer_subagent needs `message`"))?;
+            .ok_or_else(|| error("message_subagent needs `message`"))?
+            .chars()
+            .take(MAX_BRIEF)
+            .collect();
         if agent.ended() {
-            return Err(error(format!("subagent '{}' has already ended", agent.id)));
+            self.kit.resume(&agent, message).map_err(error)?;
+            return Ok(json!({"sent": true, "resumed": true,
+                "note": "It is working again and will report back as before."}));
         }
         agent
             .inbox
             .lock()
             .unwrap_or_else(|e| e.into_inner())
-            .push_back(message.chars().take(MAX_BRIEF).collect());
+            .push_back(message.clone());
+        self.kit.show_message(&agent, &message, false);
         Ok(json!({"sent": true}))
     }
 
@@ -348,10 +365,15 @@ impl ToolRuntime for SubagentTool {
                 self.name()
             )));
         }
+        // The run's `say` line travels through its event channel, but the subagent card goes
+        // straight to the chat: give the line a moment to get there first.
+        if matches!(self.kind, Kind::Spawn) {
+            tokio::time::sleep(Duration::from_millis(150)).await;
+        }
         match self.kind {
             Kind::Spawn => self.spawn(&args),
             Kind::Wait => self.wait(&args).await,
-            Kind::Steer => self.steer(&args),
+            Kind::Message => self.message(&args),
             Kind::Stop => self.stop(&args),
         }
     }
@@ -362,7 +384,7 @@ impl ToolT for SubagentTool {
         match self.kind {
             Kind::Spawn => "spawn_subagents",
             Kind::Wait => "wait_subagents",
-            Kind::Steer => "steer_subagent",
+            Kind::Message => "message_subagent",
             Kind::Stop => "stop_subagent",
         }
     }
@@ -381,17 +403,19 @@ impl ToolT for SubagentTool {
                     item["properties"]["model"] = json!({"type":"string"});
                 }
                 json!({"type":"object","properties":{
+                    "say":say_field(),
                     "subagents":{"type":"array","minItems":1,"maxItems":MAX_PER_CALL,"items":item}
-                },"required":["subagents"],"additionalProperties":false})
+                },"required":["say","subagents"],"additionalProperties":false})
             }
             Kind::Wait => json!({"type":"object","properties":{
                 "ids":{"type":"array","items":{"type":"string"}},
                 "any":{"type":"boolean"},
-                "timeout_seconds":{"type":"integer","minimum":1,"maximum":MAX_WAIT_SECONDS}
-            },"additionalProperties":false}),
-            Kind::Steer => json!({"type":"object","properties":{
-                "id":{"type":"string"},"message":{"type":"string"}
-            },"required":["id","message"],"additionalProperties":false}),
+                "timeout_seconds":{"type":"integer","minimum":1,"maximum":MAX_WAIT_SECONDS},
+                "say":say_field()
+            },"required":["say"],"additionalProperties":false}),
+            Kind::Message => json!({"type":"object","properties":{
+                "id":{"type":"string"},"message":{"type":"string"},"say":say_field()
+            },"required":["say","id","message"],"additionalProperties":false}),
             Kind::Stop => json!({"type":"object","properties":{
                 "id":{"type":"string"}
             },"required":["id"],"additionalProperties":false}),

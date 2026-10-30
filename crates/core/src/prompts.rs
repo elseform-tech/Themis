@@ -47,8 +47,9 @@ pub const SPAWN_SUBAGENTS_MODELS: &str =
     include_str!("../builtins/prompts/spawn-subagents-models.md");
 /// Description of the `wait_subagents` tool.
 pub const WAIT_SUBAGENTS_TOOL: &str = include_str!("../builtins/prompts/wait-subagents-tool.md");
-/// Description of the `steer_subagent` tool.
-pub const STEER_SUBAGENT_TOOL: &str = include_str!("../builtins/prompts/steer-subagent-tool.md");
+/// Description of the `message_subagent` tool.
+pub const MESSAGE_SUBAGENT_TOOL: &str =
+    include_str!("../builtins/prompts/message-subagent-tool.md");
 /// Description of the `stop_subagent` tool.
 pub const STOP_SUBAGENT_TOOL: &str = include_str!("../builtins/prompts/stop-subagent-tool.md");
 /// A subagent's result, delivered to the main agent; `{{name}}`, `{{id}}`, `{{status}}`, `{{result}}`.
@@ -208,6 +209,8 @@ pub const RUNTIME_REPEAT_IN_CONTEXT: &str =
 /// Request for a closing answer when a run reaches its turn limit.
 pub const RUNTIME_HANDOFF: &str = include_str!("../builtins/prompts/runtime-handoff.md");
 /// Header before a message the user sent while the agent was working.
+pub const RUNTIME_SUBAGENT_REACTION: &str =
+    include_str!("../builtins/prompts/runtime-subagent-reaction.md");
 pub const RUNTIME_STEERED: &str = include_str!("../builtins/prompts/runtime-steered.md");
 /// Header before a subagent's result delivered between steps: data, not the person's words.
 pub const RUNTIME_SUBAGENT_NOTE: &str =

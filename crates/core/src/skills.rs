@@ -189,7 +189,7 @@ pub fn compose_task(task: &str, skills: &[Skill]) -> String {
 pub const SUBAGENT_TOOLS: [&str; 4] = [
     "spawn_subagents",
     "wait_subagents",
-    "steer_subagent",
+    "message_subagent",
     "stop_subagent",
 ];
 

@@ -15,7 +15,9 @@ use std::time::Instant;
 use serde_json::{json, Value};
 use themis_core::chat_grants::ChatGrants;
 use themis_core::configuration::{ApprovalMode, RuntimeConfig};
-use themis_core::runtime::{LLMProvider, RunEvent, RunNotes, RunPolicy, SteerInbox};
+use themis_core::runtime::{
+    ConversationRole, ConversationTurn, LLMProvider, RunEvent, RunNotes, RunPolicy, SteerInbox,
+};
 use themis_core::sandbox::SandboxPlan;
 use themis_core::tools::{Approval, ApprovalHook, ToolAction, ToolT};
 
@@ -124,6 +126,23 @@ impl SubagentKit {
         }
     }
 
+    /// The write paths of this run's running subagents, with their owners.
+    fn running_paths(&self) -> Vec<(String, String)> {
+        self.started
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .iter()
+            .filter(|agent| !agent.ended())
+            .flat_map(|agent| {
+                agent
+                    .write_paths
+                    .iter()
+                    .map(|path| (path.clone(), agent.name.clone()))
+                    .collect::<Vec<_>>()
+            })
+            .collect()
+    }
+
     /// The write paths a batch of briefs asks for, normalized and checked together: nothing
     /// outside the project or in protected folders, and no path another running subagent or
     /// another brief already owns.
@@ -132,20 +151,7 @@ impl SubagentKit {
         asked: &[Vec<String>],
     ) -> Result<Vec<Vec<String>>, String> {
         let protected = self.sandbox.protected().to_vec();
-        let mut taken: Vec<(String, String)> = self
-            .started
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .iter()
-            .filter(|agent| agent.progress().ended.is_none())
-            .flat_map(|agent| {
-                agent
-                    .write_paths
-                    .iter()
-                    .map(|path| (path.clone(), agent.name.clone()))
-                    .collect::<Vec<_>>()
-            })
-            .collect();
+        let mut taken = self.running_paths();
         let mut normalized = Vec::new();
         for (index, paths) in asked.iter().enumerate() {
             let mut own = Vec::new();
@@ -245,11 +251,13 @@ impl SubagentKit {
         let agent = Arc::new(Subagent {
             id: uuid::Uuid::new_v4().simple().to_string()[..12].to_owned(),
             name,
+            task: Mutex::new(brief.clone()),
             brief,
             model,
+            earlier: Mutex::new(Vec::new()),
             write_paths,
             run_id: uuid::Uuid::new_v4().to_string(),
-            started: Instant::now(),
+            started: Mutex::new(Instant::now()),
             stop: Arc::new(AtomicBool::new(false)),
             inbox: SteerInbox::default(),
             tool_calls: AtomicUsize::new(0),
@@ -389,6 +397,14 @@ impl SubagentKit {
         agent: &Arc<Subagent>,
         approvals: Arc<dyn ApprovalHook>,
     ) -> Result<Vec<Box<dyn ToolT>>, String> {
+        // Checked again on every start: a path may have become a link since it was given.
+        for path in &agent.write_paths {
+            themis_core::sandbox::normalize_write_path(
+                &self.work_root,
+                path,
+                self.sandbox.protected(),
+            )?;
+        }
         let owned: Vec<PathBuf> = agent
             .write_paths
             .iter()
@@ -450,7 +466,7 @@ impl SubagentKit {
         if let Err(error) = hooks
             .emit(
                 "SubagentStart",
-                json!({"name": agent.name, "brief": agent.brief, "model": agent.model}),
+                json!({"name": agent.name, "brief": agent.task.lock().unwrap_or_else(|e| e.into_inner()).clone(), "model": agent.model}),
                 &hook_events,
             )
             .await
@@ -590,8 +606,12 @@ impl SubagentKit {
         let run = themis_core::runtime::run_task_with_evidence(
             llm,
             tools,
-            agent.brief.clone(),
-            Vec::new(),
+            agent.task.lock().unwrap_or_else(|e| e.into_inner()).clone(),
+            agent
+                .earlier
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .clone(),
             approvals,
             policy,
             events_tx,
@@ -641,21 +661,27 @@ impl SubagentKit {
                 ("result", &result),
             ],
         );
+        let seconds = agent
+            .started
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .elapsed()
+            .as_secs();
+        let tool_calls = agent.tool_calls.load(Ordering::SeqCst);
+        self.publish(ThreadEvent::SubagentEnded {
+            id: agent.id.clone(),
+            status: ending.status.clone(),
+            result: result.clone(),
+            tool_calls,
+            seconds,
+            model: agent.progress().ran_on,
+        });
+        // Marked ended only now: a message picking it up again then follows this ending in the chat.
         {
             let mut progress = agent.progress.lock().unwrap_or_else(|e| e.into_inner());
             progress.ended = Some((ending.status.clone(), result.clone()));
             progress.note = note.clone();
         }
-        let seconds = agent.started.elapsed().as_secs();
-        let tool_calls = agent.tool_calls.load(Ordering::SeqCst);
-        self.publish(ThreadEvent::SubagentEnded {
-            id: agent.id.clone(),
-            status: ending.status.clone(),
-            result,
-            tool_calls,
-            seconds,
-            model: agent.progress().ran_on,
-        });
         let _ = self.state.inner.diagnostics.append_with_level(
             "subagents",
             "ended",
@@ -682,6 +708,92 @@ impl SubagentKit {
             .cloned()
     }
 
+    /// Finds a subagent of this chat, from this run or an earlier one.
+    pub(super) fn find_in_chat(&self, id: &str) -> Option<Arc<Subagent>> {
+        self.find(id).or_else(|| {
+            self.state
+                .inner
+                .subagents
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .get(&self.thread_id)
+                .and_then(|list| list.iter().find(|agent| agent.id == id).cloned())
+        })
+    }
+
+    /// Shows the main agent's message in the chat and in the subagent's own transcript.
+    pub(super) fn show_message(&self, agent: &Subagent, text: &str, resumed: bool) {
+        let event = ThreadEvent::SubagentMessage {
+            id: agent.id.clone(),
+            text: text.to_owned(),
+            resumed,
+        };
+        if let Some(path) = self.transcript_path(agent) {
+            let line = serde_json::to_string(&ThreadEventEnvelope {
+                thread_id: String::new(),
+                run_id: agent.run_id.clone(),
+                event: event.clone(),
+            });
+            if let (Ok(line), Ok(mut file)) = (
+                line,
+                std::fs::OpenOptions::new()
+                    .append(true)
+                    .create(true)
+                    .open(path),
+            ) {
+                use std::io::Write;
+                let _ = writeln!(file, "{line}");
+            }
+        }
+        self.publish(event);
+    }
+
+    /// Picks an ended subagent up again: it keeps its name, model and write paths, and reports
+    /// back as a new note. Refused when another running subagent now owns its paths.
+    pub(super) fn resume(
+        self: &Arc<Self>,
+        agent: &Arc<Subagent>,
+        message: String,
+    ) -> Result<(), String> {
+        if !agent.write_paths.is_empty() && !self.config.subagents.allow_writes {
+            return Err(format!(
+                "{} has write paths, and subagents are set to read-only now; start a new one",
+                agent.name
+            ));
+        }
+        for path in &agent.write_paths {
+            if let Some((other, owner)) = self
+                .running_paths()
+                .into_iter()
+                .find(|(other, _)| themis_core::sandbox::write_paths_overlap(other, path))
+            {
+                return Err(format!(
+                    "'{path}' overlaps '{other}', which {owner} owns now"
+                ));
+            }
+        }
+        agent.reopen(message.clone());
+        self.notes.expect(1);
+        {
+            let mut started = self.started.lock().unwrap_or_else(|e| e.into_inner());
+            if !started.iter().any(|known| known.id == agent.id) {
+                started.push(Arc::clone(agent));
+            }
+        }
+        self.show_message(agent, &message, true);
+        let _ = self.state.inner.diagnostics.append_with_level(
+            "subagents",
+            "resumed",
+            "info",
+            json!({"thread_id": self.thread_id, "run_id": self.run_id, "subagent_id": agent.id}),
+            Some(&self.config.logging.level),
+        );
+        let kit = Arc::clone(self);
+        let child = Arc::clone(agent);
+        tauri::async_runtime::spawn(async move { kit.run(child).await });
+        Ok(())
+    }
+
     /// Stops one subagent and denies the approvals it is waiting on.
     pub(super) fn stop(&self, agent: &Subagent) {
         self.state
@@ -695,10 +807,14 @@ pub(super) struct Subagent {
     pub(super) name: String,
     pub(super) brief: String,
     pub(super) model: String,
+    /// What it is working on now: its brief, or the latest message that picked it up again.
+    task: Mutex<String>,
+    /// Its earlier exchanges with the main agent, when it was picked up again.
+    earlier: Mutex<Vec<ConversationTurn>>,
     /// The project paths it may change, normalized; none when it is read-only.
     pub(super) write_paths: Vec<String>,
     pub(super) run_id: String,
-    started: Instant,
+    started: Mutex<Instant>,
     pub(super) stop: Arc<AtomicBool>,
     pub(super) inbox: SteerInbox,
     pub(super) tool_calls: AtomicUsize,
@@ -751,6 +867,28 @@ impl Subagent {
         if !progress.own_status {
             progress.status = action.chars().take(80).collect();
         }
+    }
+
+    /// Picks an ended subagent up again on `message`, with its last exchange as history.
+    fn reopen(&self, message: String) {
+        let mut progress = self.progress.lock().unwrap_or_else(|e| e.into_inner());
+        let (_, result) = progress.ended.take().unwrap_or_default();
+        progress.note.clear();
+        progress.status.clear();
+        progress.own_status = false;
+        drop(progress);
+        let mut task = self.task.lock().unwrap_or_else(|e| e.into_inner());
+        let mut earlier = self.earlier.lock().unwrap_or_else(|e| e.into_inner());
+        earlier.push(ConversationTurn {
+            role: ConversationRole::User,
+            text: std::mem::replace(&mut *task, message),
+        });
+        earlier.push(ConversationTurn {
+            role: ConversationRole::Assistant,
+            text: result,
+        });
+        self.stop.store(false, Ordering::SeqCst);
+        *self.started.lock().unwrap_or_else(|e| e.into_inner()) = Instant::now();
     }
 
     pub(super) fn ended(&self) -> bool {
@@ -940,7 +1078,7 @@ impl AppState {
                         json!({"id": agent.id, "name": agent.name, "brief": agent.brief,
                             "model": agent.model, "write_paths": agent.write_paths, "ran_on": progress.ran_on, "status": status, "text": progress.status,
                             "result": result, "tool_calls": agent.tool_calls.load(Ordering::SeqCst),
-                            "seconds": agent.started.elapsed().as_secs()})
+                            "seconds": agent.started.lock().unwrap_or_else(|e| e.into_inner()).elapsed().as_secs()})
                     })
                     .collect()
             })

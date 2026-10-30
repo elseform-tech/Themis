@@ -63,3 +63,8 @@
 .themis-subagent-calls ul { margin: 8px 0 0; padding: 0 0 0 20px; list-style: none; display: flex; flex-direction: column; gap: 4px; }
 .themis-subagent-calls li { font-family: ui-monospace, SFMono-Regular, monospace; font-size: .75rem; color: var(--themis-text-2); overflow-wrap: anywhere; }
 .themis-subagent-ending { margin: 0; font-size: .8125rem; color: var(--themis-text-2); }
+.themis-subagent-bubble { display: flex; flex-direction: column; align-items: flex-end; align-self: flex-end; gap: 4px; max-width: 80%; }
+.themis-subagent-bubble-text { padding: 10px 16px; border-radius: 18px 18px 6px 18px; background: var(--themis-user-message-bg); }
+.themis-subagent-bubble-text.is-folded { max-height: 9em; overflow: hidden; -webkit-mask-image: linear-gradient(#000 60%, transparent); mask-image: linear-gradient(#000 60%, transparent); }
+.themis-subagent-bubble-more { padding: 0; border: 0; background: transparent; color: var(--themis-text-2); font: inherit; font-size: .75rem; cursor: pointer; }
+.themis-subagent-bubble-more:hover { color: var(--themis-text); }
