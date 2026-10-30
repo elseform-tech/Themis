@@ -8,7 +8,7 @@ import * as bridge from "../lib/tauri";
 
 const dispatch = vi.fn();
 let appState: typeof initialState;
-const diff = { available: true, files: [{ path: "src/a.ts", status: "modified" as const, preexisting: false, hunks: [{ old_start: 1, old_lines: 1, new_start: 1, new_lines: 1, lines: [{ kind: "del" as const, text: "old" }, { kind: "add" as const, text: "new" }] }] }] };
+const diff = { available: true, files: [{ path: "src/a.ts", status: "modified" as const, preexisting: false, added: 0, removed: 0, hunks: [{ old_start: 1, old_lines: 1, new_start: 1, new_lines: 1, lines: [{ kind: "del" as const, text: "old" }, { kind: "add" as const, text: "new" }] }] }] };
 vi.mock("../state/store", async importOriginal => ({
   ...await importOriginal<typeof import("../state/store")>(),
   useApp: () => ({ state: appState, dispatch }),

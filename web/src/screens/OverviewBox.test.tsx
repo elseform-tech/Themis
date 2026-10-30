@@ -23,8 +23,8 @@ vi.mock("../lib/tauri", () => ({
 }));
 
 const diff = { available: true, files: [
-  { path: "notes/a.md", status: "added" as const, preexisting: false, hunks: [{ old_start: 0, old_lines: 0, new_start: 1, new_lines: 2, lines: [{ kind: "add" as const, text: "# A" }, { kind: "add" as const, text: "" }] }] },
-  { path: "src/routes.ts", status: "modified" as const, preexisting: false, hunks: [{ old_start: 1, old_lines: 2, new_start: 1, new_lines: 2, lines: [{ kind: "context" as const, text: "x" }, { kind: "del" as const, text: "old" }, { kind: "add" as const, text: "new" }] }] },
+  { path: "notes/a.md", status: "added" as const, preexisting: false, added: 2, removed: 0, hunks: [{ old_start: 0, old_lines: 0, new_start: 1, new_lines: 2, lines: [{ kind: "add" as const, text: "# A" }, { kind: "add" as const, text: "" }] }] },
+  { path: "src/routes.ts", status: "modified" as const, preexisting: false, added: 1, removed: 1, hunks: [{ old_start: 1, old_lines: 2, new_start: 1, new_lines: 2, lines: [{ kind: "context" as const, text: "x" }, { kind: "del" as const, text: "old" }, { kind: "add" as const, text: "new" }] }] },
 ] };
 const media: ChatMessage[] = [{ id: "m1", role: "assistant", text: "Here", final: true, media: [{ path: "/data/shot.png", name: "shot.png", kind: "image" }] }];
 
@@ -38,7 +38,9 @@ afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 
 describe("chat overview box", () => {
   it("adds up the changed lines and shows nothing without changes", () => {
-    expect(diffTotals(diff)).toEqual({ files: 2, added: 3, removed: 1 });
+    // From each file's own totals: a very large file's listing holds only its first lines.
+    const counted = { ...diff, files: [{ ...diff.files[0]!, added: 25000, removed: 1 }, { ...diff.files[1]!, added: 2, removed: 0 }] };
+    expect(diffTotals(counted)).toEqual({ files: 2, added: 25002, removed: 1 });
     expect(diffTotals({ available: true, files: [] })).toBeNull();
     expect(diffTotals({ available: false, reason: "not git", files: [] })).toBeNull();
   });

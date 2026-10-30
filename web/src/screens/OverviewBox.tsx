@@ -25,13 +25,7 @@ export interface Overview {
 /** Added and removed lines across the chat's changed files. */
 export function diffTotals(diff: DiffState | null | undefined): Overview["changes"] {
   if (!diff?.available || diff.files.length === 0) return null;
-  let added = 0;
-  let removed = 0;
-  for (const file of diff.files) for (const hunk of file.hunks) for (const line of hunk.lines) {
-    if (line.kind === "add") added++;
-    else if (line.kind === "del") removed++;
-  }
-  return { files: diff.files.length, added, removed };
+  return { files: diff.files.length, added: diff.files.reduce((sum, file) => sum + file.added, 0), removed: diff.files.reduce((sum, file) => sum + file.removed, 0) };
 }
 
 function browserLabel(state: BrowserState): string {
