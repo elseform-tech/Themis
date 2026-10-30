@@ -676,6 +676,8 @@ async fn run_task_with_evidence_inner(
     let mut force_compaction = false;
     let mut turn = 0;
     let mut reaction_due = false;
+    // Steps in a row that called tools and said nothing.
+    let mut quiet_steps = 0;
     // A subagent's check failed and the agent has not answered that yet.
     let mut check_failed = false;
     while turn < policy.total_turns {
@@ -705,13 +707,24 @@ async fn run_task_with_evidence_inner(
         // A subagent just reported: this step gives the main agent no tools, so it says what it
         // makes of the reply before doing anything about it, whichever model it is.
         let reacting = std::mem::take(&mut reaction_due) && !is_subagent_run();
-        if reacting {
+        // A long quiet stretch gets the same treatment: prompts alone did not keep a goal talking
+        // (6 lines in 98 tool calls).
+        let catching_up =
+            !reacting && quiet_steps >= QUIET_STEPS_BEFORE_UPDATE && !is_subagent_run();
+        if reacting || catching_up {
+            quiet_steps = 0;
             messages.push(ChatMessage {
                 role: ChatRole::User,
                 message_type: MessageType::Text,
-                content: SUBAGENT_REACTION_NOTE.to_owned(),
+                content: if reacting {
+                    SUBAGENT_REACTION_NOTE
+                } else {
+                    QUIET_UPDATE_NOTE
+                }
+                .to_owned(),
             });
         }
+        let reacting = reacting || catching_up;
         // Compaction and maintenance compare raw estimates, so hand them the equivalent raw budget.
         context_policy.context_token_budget = calibration.raw_budget(input_budget, schema_tokens);
         let raw_size = estimated_tokens(&messages);
@@ -1158,6 +1171,11 @@ async fn run_task_with_evidence_inner(
             summary_asked = false;
             check_failed = false;
         }
+        quiet_steps = if text.as_deref().is_none_or(|text| text.trim().is_empty()) {
+            quiet_steps + 1
+        } else {
+            0
+        };
         // The line a subagent tool carries is said before the tool runs, when the reply had none.
         if text.as_deref().is_none_or(|text| text.trim().is_empty()) && !is_subagent_run() {
             if let Some(line) = said_with_calls(&calls) {
@@ -1972,6 +1990,8 @@ const FILE_CHANGES: [&str; 5] = [
 
 const CUT_OFF_NOTE: &str = crate::prompts::RUNTIME_CUT_OFF;
 const SUBAGENT_REACTION_NOTE: &str = crate::prompts::RUNTIME_SUBAGENT_REACTION;
+const QUIET_UPDATE_NOTE: &str = crate::prompts::RUNTIME_QUIET_UPDATE;
+const QUIET_STEPS_BEFORE_UPDATE: u32 = 10;
 /// How a failed check reads in a subagent's report (`subagent-check-result.md` filled with it).
 const CHECK_FAILED: &str = "`: FAILED.";
 /// The main agent's tools for working with subagents.
@@ -3042,8 +3062,9 @@ fn calibration_sample(
 }
 
 /// Notes the runtime adds as user messages during a run; none is a new request.
-const RUNTIME_NOTES: [&str; 6] = [
+const RUNTIME_NOTES: [&str; 7] = [
     SUBAGENT_REACTION_NOTE,
+    QUIET_UPDATE_NOTE,
     SPEC_CHECK,
     CUT_OFF_NOTE,
     SILENT_CUT_OFF_NOTE,

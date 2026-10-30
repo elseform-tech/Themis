@@ -212,6 +212,7 @@ pub const RUNTIME_REPEAT_IN_CONTEXT: &str =
 /// Request for a closing answer when a run reaches its turn limit.
 pub const RUNTIME_HANDOFF: &str = include_str!("../builtins/prompts/runtime-handoff.md");
 /// Header before a message the user sent while the agent was working.
+pub const RUNTIME_QUIET_UPDATE: &str = include_str!("../builtins/prompts/runtime-quiet-update.md");
 pub const RUNTIME_SUBAGENT_REACTION: &str =
     include_str!("../builtins/prompts/runtime-subagent-reaction.md");
 pub const RUNTIME_STEERED: &str = include_str!("../builtins/prompts/runtime-steered.md");

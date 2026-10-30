@@ -756,6 +756,36 @@ async fn a_subagent_needs_done_when() {
     app.serving.abort();
 }
 
+/// A long quiet stretch gets one step with no tools, to say how things stand.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_long_quiet_stretch_gets_a_step_to_speak() {
+    let app = app(None, |body| {
+        if tool_names(body).is_empty() {
+            return reply("I've been reading the notes over and over, and I'll wrap up now.");
+        }
+        match tool_results(body) {
+            n if n < 11 => tools(&[(
+                "r",
+                "read_file",
+                json!({"file_path": "notes.txt", "offset": n}),
+            )]),
+            _ => reply("Done."),
+        }
+    })
+    .await;
+    run(app.data.path(), &app.thread, "Keep reading");
+    let all = bodies(&app.llm).await;
+    let quiet = all
+        .iter()
+        .filter(|body| tool_names(body).is_empty())
+        .count();
+    assert_eq!(quiet, 1, "one update after ten quiet steps");
+    assert!(all
+        .iter()
+        .any(|body| mentions(body, "working for a while without a word")));
+    app.serving.abort();
+}
+
 /// Ordinary tool calls never lose their tools for a step.
 #[tokio::test(flavor = "multi_thread")]
 async fn plain_tool_calls_are_not_nudged() {
