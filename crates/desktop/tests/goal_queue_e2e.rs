@@ -405,10 +405,7 @@ async fn a_goal_runs_turn_after_turn_until_the_check_finds_it_reached() {
         "[Goal — runtime, not from the user] Turn 2."
     ));
     assert!(mentions(turns[1], "Last check: Counter is 1; needs 2."));
-    assert!(mentions(
-        turns[1],
-        "Start your reply with one short sentence"
-    ));
+    assert!(mentions(turns[1], "Start your reply thinking aloud"));
     // Then one short turn, unchecked, tells the user the goal is reached.
     assert!(mentions(
         turns[2],
@@ -1203,6 +1200,57 @@ async fn unsendable_queued_messages_are_recorded_and_the_queue_moves_on() {
 /// Review findings: a `/goal` whose run cannot start still continues (it
 /// retries as a failed turn instead of staying "running" with no turn), and a
 /// goal check that fails does not count as a turn without progress.
+/// A model that keeps failing pauses the goal instead of retrying for ever, says why in its
+/// status, and adds no note to the chat. Takes the two retry waits (30 s and 60 s).
+#[tokio::test(flavor = "multi_thread")]
+async fn a_goal_pauses_after_its_turns_keep_failing() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .respond_with(ResponseTemplate::new(400).set_body_string("model broken"))
+        .mount(&server)
+        .await;
+    let data = tempfile::tempdir().unwrap();
+    let project = tempfile::tempdir().unwrap();
+    let state = AppState::new_for_test(data.path().join("settings.json"));
+    state.set_go_base_url_override(Some(server.uri()));
+    state
+        .set_secret("go".into(), "synthetic-test-key".into())
+        .await
+        .unwrap();
+    let thread = state
+        .create_thread(
+            project.path().to_string_lossy().into_owned(),
+            ProviderKind::Go,
+            Some("test-model".into()),
+        )
+        .await
+        .unwrap()
+        .id;
+    let (sink, mut rx) = ChannelSink::channel();
+    let sink: Arc<dyn themis_desktop::sink::EventSink> = Arc::new(sink);
+    state
+        .send_message(sink.clone(), thread.clone(), "/goal finish the work".into())
+        .await
+        .unwrap();
+    let paused = tokio::time::timeout(Duration::from_secs(240), async {
+        loop {
+            while rx.try_recv().is_ok() {}
+            if state
+                .goal_for(&thread)
+                .is_some_and(|goal| goal.status == GoalStatus::Paused)
+            {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+    })
+    .await;
+    let goal = state.goal_for(&thread).unwrap();
+    assert!(paused.is_ok(), "{goal:?}");
+    assert_eq!(goal.reason.as_deref(), Some("the model kept failing"));
+    assert_eq!(goal.failures, 0, "a resume starts counting again");
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn a_goal_whose_turn_cannot_start_retries_and_a_failed_check_is_not_a_stall() {
     let server = MockServer::start().await;
@@ -1235,7 +1283,7 @@ async fn a_goal_whose_turn_cannot_start_retries_and_a_failed_check_is_not_a_stal
         .await
         .unwrap()
         .id;
-    let (sink, mut rx) = ChannelSink::channel();
+    let (sink, _rx) = ChannelSink::channel();
     let sink: Arc<dyn themis_desktop::sink::EventSink> = Arc::new(sink);
     // No key yet: the goal's first run fails to start.
     let error = state
@@ -1243,23 +1291,19 @@ async fn a_goal_whose_turn_cannot_start_retries_and_a_failed_check_is_not_a_stal
         .await
         .unwrap_err();
     assert!(!error.is_empty());
-    let mut seen = Vec::new();
-    until(&mut rx, &mut seen, |event| {
-        matches!(
-            event,
-            ThreadEvent::GoalNote {
-                outcome: GoalNoteKind::Failed,
-                ..
-            }
-        )
+    // Counted as a failed turn and retried after a wait, with no note in the chat.
+    let counted = tokio::time::timeout(DEADLINE, async {
+        while state
+            .goal_for(&thread)
+            .is_none_or(|goal| goal.failures != 1)
+        {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
     })
     .await;
     let goal = state.goal_for(&thread).unwrap();
+    assert!(counted.is_ok(), "{goal:?}");
     assert_eq!(goal.status, GoalStatus::Running);
-    assert_eq!(
-        goal.failures, 1,
-        "counted as a failed turn, retried after a wait"
-    );
     // With the key in place, a resume starts the next turn now.
     state
         .set_secret("go".into(), "synthetic-test-key".into())

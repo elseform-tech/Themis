@@ -26,6 +26,10 @@ use crate::types::{Goal, GoalNoteKind, GoalStatus, ThreadEvent, ThreadEventEnvel
 pub(super) const GOALS_DIR: &str = "goals";
 /// Turns without progress before the next turn is told to try a different approach.
 const STALL_TURNS: u32 = 3;
+/// Failed turns in a row before the goal pauses instead of retrying.
+const FAILURES_BEFORE_PAUSE: u32 = 3;
+/// Why a goal paused after failing, shown in its bar.
+const KEPT_FAILING: &str = "the model kept failing";
 /// How often a goal out of quota tries again.
 const QUOTA_RETRY: Duration = Duration::from_secs(15 * 60);
 /// Longest wait between attempts after failed turns.
@@ -936,21 +940,22 @@ impl AppState {
                         goal.failures = goal.failures.saturating_add(1);
                     })
                     .map_or(1, |goal| goal.failures);
+                // A blip gets a quiet retry; a model that keeps failing pauses the goal, and the
+                // goal bar says why, until the person resumes it.
+                if failures >= FAILURES_BEFORE_PAUSE {
+                    self.update_goal(sink.as_ref(), &thread_id, |goal| {
+                        goal.failures = 0;
+                        set_status(goal, GoalStatus::Paused, Some(KEPT_FAILING.to_owned()));
+                    });
+                    let _ = self.inner.diagnostics.append(
+                        "goal",
+                        "paused_after_failures",
+                        "warn",
+                        json!({"thread_id": thread_id, "run_id": run_id, "failures": failures}),
+                    );
+                    return;
+                }
                 let wait = backoff(failures);
-                self.goal_note(
-                    sink.as_ref(),
-                    &thread_id,
-                    &run_id,
-                    GoalNoteKind::Failed,
-                    &format!(
-                        "The turn failed; retrying in {}.",
-                        if wait.as_secs() < 60 {
-                            format!("{} s", wait.as_secs())
-                        } else {
-                            format!("{} min", wait.as_secs() / 60)
-                        }
-                    ),
-                );
                 self.schedule_goal_turn(
                     sink,
                     thread_id,

@@ -40,8 +40,9 @@ describe("queue and goal events", () => {
     expect(goalTurnNumber(turn)).toBe(24);
     expect(goalTurnNumber("Turn 24")).toBeUndefined();
     let state = reducer(initialState, envelope({ kind: "user_message", text: turn }, ""));
+    const rowsBefore = (state.messages["t1"] ?? []).length;
     state = reducer(state, envelope({ kind: "goal_note", outcome: "not_yet", reason: "p95 is 238 ms." }));
-    expect(state.messages[thread]!.map(row => [row.goalTurn, row.goalNote?.outcome])).toEqual([[24, undefined], [undefined, "not_yet"]]);
+    expect((state.messages["t1"] ?? []).length).toBe(rowsBefore);
     const loaded = reducer(initialState, { type: "thread/history-loaded", threadId: thread, history: [
       { kind: "user", run_id: "r2", text: turn, attachments: [] },
       { kind: "event", envelope: { thread_id: thread, run_id: "r2", event: { kind: "steered", text: "Use tabs." } } },

@@ -499,7 +499,6 @@ export interface PersistedMessage {
   /** A runtime message that started goal turn N; shown as a divider, not a bubble. */
   goalTurn?: number;
   /** What the goal check concluded after a turn. */
-  goalNote?: { outcome: GoalNoteKind; reason: string };
   /** A question the agent asked the user. */
   question?: Question;
 }

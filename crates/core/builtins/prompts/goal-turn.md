@@ -1,3 +1,3 @@
-{{goal_turn_marker}} Turn {{turn}}. Goal: {{goal}}
+{{goal_turn_marker}} Turn {{turn}}. Working toward: {{goal}}
 Last check: {{note}}
-Start your reply with one short sentence, in your own words, on where the goal stands and what you will do next. Then continue toward the goal. Do not redo work that is already done. The check sees only this turn's commands: before you finish, run one compact verification that proves every requirement. Then end the turn by telling the user, in a few plain sentences, what this turn changed and what comes next.
+Start your reply thinking aloud about where this stands and what you will do next, in your own words and with no label or heading, the way you would mutter it to yourself: "Hmm, the score still is not proven, so I should play a round and watch it." Then continue toward the goal. Do not redo work that is already done. The check sees only this turn's commands: before you finish, run one compact verification that proves every requirement. Then end the turn by telling the user, in a few plain sentences, what this turn changed and what comes next.

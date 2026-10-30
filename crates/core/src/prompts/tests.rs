@@ -372,7 +372,7 @@ fn goal_prompts_are_byte_identical() {
                 ("note", note),
             ],
         ),
-        format!("{GOAL_TURN_MARKER} Turn {turn}. Goal: {goal}\nLast check: {note}\nStart your reply with one short sentence, in your own words, on where the goal stands and what you will do next. Then continue toward the goal. Do not redo work that is already done. The check sees only this turn's commands: before you finish, run one compact verification that proves every requirement. Then end the turn by telling the user, in a few plain sentences, what this turn changed and what comes next.")
+        format!("{GOAL_TURN_MARKER} Turn {turn}. Working toward: {goal}\nLast check: {note}\nStart your reply thinking aloud about where this stands and what you will do next, in your own words and with no label or heading, the way you would mutter it to yourself: \"Hmm, the score still is not proven, so I should play a round and watch it.\" Then continue toward the goal. Do not redo work that is already done. The check sees only this turn's commands: before you finish, run one compact verification that proves every requirement. Then end the turn by telling the user, in a few plain sentences, what this turn changed and what comes next.")
     );
     let reason = "check.py passes.";
     assert_eq!(
@@ -385,7 +385,7 @@ fn goal_prompts_are_byte_identical() {
                 ("reason", reason),
             ],
         ),
-        format!("{GOAL_TURN_MARKER} Turn {turn}. Goal: {goal}\nA separate check found the goal reached: {reason}\nTell the user in one or two sentences, in your own words, that the goal is reached and what shows it. Do not run tools or redo any work.")
+        format!("{GOAL_TURN_MARKER} Turn {turn}. Working toward: {goal}\nA separate check found the goal reached: {reason}\nSay in one or two sentences, in your own words and with no label or heading, that this is done and you are closing the goal, and what shows it. Do not run tools or redo any work.")
     );
     assert_eq!(
         GOAL_REACHED_OPEN_QUESTIONS,

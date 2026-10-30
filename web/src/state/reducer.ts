@@ -492,7 +492,8 @@ export function applyThreadEvent(
     case "goal_changed":
       return { ...state, goals: { ...state.goals, [threadId]: event.goal } };
     case "goal_note":
-      return appendMessage(state, threadId, { id: newId("msg"), role: "system", text: event.reason, runId, goalNote: { outcome: event.outcome, reason: event.reason } });
+      // The agent says how its goal stands; failures and pauses show in the goal bar.
+      return state;
     case "question_asked": {
       // A question asked again on its open topic updates its box where it was first asked.
       const rows = state.messages[threadId] ?? [];

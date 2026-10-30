@@ -486,9 +486,10 @@ goal runs is checked, a message's run as well as a goal turn. When the check fin
 reached, one short unchecked turn has the agent tell the user, unless the check's `told_user`
 says the checked answer already did and no question is open; that turn's message asks the
 agent to name open questions only when there are some (`goal-reached-open-questions.md`); the check's verdicts post no
-`goal_note` (only the small-window, quota and failed-turn notes remain). Apart from its model,
-the goal check, the stall nudge, quota retries (every 15 minutes) and error backoff (30 s
-doubling to 15 minutes) are fixed, not runtime configuration. App server commands:
+`goal_note` (only the small-window and quota notes remain; the chat shows none of them, and the
+goal bar shows pauses). Apart from its model, the goal check, the stall nudge, quota retries
+(every 15 minutes) and failed-turn handling (retries after 30 s and 60 s, then a pause until
+resumed) are fixed, not runtime configuration. App server commands:
 `list_queue`, `enqueue_message`, `update_queued_message`, `remove_queued_message`,
 `steer_queued_message`, `get_goal`, `set_goal`, `edit_goal`, `pause_goal`, `resume_goal`, `remove_goal`
 (also through `themis call`).
