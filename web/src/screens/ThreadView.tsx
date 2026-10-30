@@ -7,6 +7,7 @@ import type { GoModel } from "../lib/types";
 import { usesGo } from "../lib/models";
 import { yoloKeeps } from "../lib/yolo";
 import { attachFiles, getEffectivePermissions, editGoal, enqueueMessage, getGoal, getThread, getWorkspace, listDiff, listGoModels, listQueue, pauseGoal, removeGoal, removeQueuedMessage, resumeGoal, sendMessage, setProvider, setThreadEffort, setThreadApprovalMode, steerQueuedMessage, stopThread, updateQueuedMessage } from "../lib/tauri";
+import { useLiveDiff } from "../lib/useLiveDiff";
 import { describeError, isConcurrencyLimitError, newId, toast, useActiveProject, useActiveThread, useApp } from "../state/store";
 import { readSession, writeSession } from "../state/session";
 import { useNewThread } from "./actions";
@@ -110,14 +111,9 @@ export function ThreadView() {
   }, [yoloThread, project]);
   const runningNow = threadId !== undefined && (state.running[threadId] ?? false);
   const workspace = useProjectWorkspace(project?.root, runningNow, getWorkspace);
-  const diffKnown = threadId !== undefined && state.diffs[threadId] !== undefined;
   const gitProject = project?.is_git === true;
-  useEffect(() => {
-    if (threadId === undefined || diffKnown || !gitProject) return;
-    let cancelled = false;
-    listDiff(threadId).then(diff => { if (!cancelled) dispatch({ type: "diff/set", threadId, diff }); }).catch(() => {});
-    return () => { cancelled = true; };
-  }, [threadId, diffKnown, gitProject, dispatch]);
+  // The header, the overview box and Workspace › Changes all show this chat's live diff.
+  useLiveDiff(threadId, gitProject, runningNow, listDiff, (id, diff) => dispatch({ type: "diff/set", threadId: id, diff }));
   // The chat's queue and goal; events keep them current afterwards.
   useEffect(() => {
     if (threadId === undefined) return;

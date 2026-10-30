@@ -87,7 +87,7 @@ describe("WorkspacePanel", () => {
     expect(fireEvent.mouseDown(panel)).toBe(false);
     expect(fireEvent.mouseDown(split)).toBe(false);
   });
-  it("refreshes the diff live: after each completed tool call and every few seconds during a run", async () => {
+  it("refreshes the diff right after each completed tool call", async () => {
     vi.useFakeTimers();
     appState = { ...appState, running: { t1: true }, traces: { t1: [] } };
     const view = render(<WorkspacePanel projectRoot="/repo" threadId="t1" workspace={workspace} />);
@@ -95,12 +95,10 @@ describe("WorkspacePanel", () => {
     const calls = () => vi.mocked(bridge.listDiff).mock.calls.length;
     const initial = calls();
     expect(initial).toBeGreaterThan(0);
-    await act(async () => { vi.advanceTimersByTime(4000); });
-    expect(calls()).toBe(initial + 1);
     appState = { ...appState, traces: { t1: [{ id: "x", tool: "write_file", summary: "write", ok: true }] } };
     view.rerender(<WorkspacePanel projectRoot="/repo" threadId="t1" workspace={workspace} />);
     await act(async () => {});
-    expect(calls()).toBe(initial + 2);
+    expect(calls()).toBe(initial + 1);
     vi.useRealTimers();
   });
   it("shows a Tasks tab with a count and opens it when the indicator asks", async () => {
