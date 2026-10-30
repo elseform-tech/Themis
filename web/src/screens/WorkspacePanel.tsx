@@ -235,7 +235,10 @@ function FilesView({ projectRoot }: { projectRoot: string }) {
 }
 
 function BranchesView({ workspace, projectRoot }: { workspace: WorkspaceInfo | null; projectRoot: string }) {
-  const [open, setOpen] = useState<string | null>(null);
+  const [picked, setPicked] = useState<string | null>(null);
+  // A branch that has become the current one has nothing to compare with.
+  const current = workspace?.branch ?? null;
+  const open = picked === current ? null : picked;
   const [diff, setDiff] = useState<DiffState | string | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
   useEffect(() => {
@@ -244,7 +247,7 @@ function BranchesView({ workspace, projectRoot }: { workspace: WorkspaceInfo | n
     let cancelled = false;
     branchDiff(projectRoot, open).then(result => { if (!cancelled) setDiff(result); }).catch(reason => { if (!cancelled) setDiff(describeError(reason)); });
     return () => { cancelled = true; };
-  }, [open, projectRoot]);
+  }, [open, current, projectRoot]);
   if (workspace === null) return <EmptyState title="Loading branches…" />;
   if (!workspace.is_git) return <EmptyState title="Not a Git repository" />;
   if (workspace.branches.length === 0) return <EmptyState title="No branches yet" hint="Branches appear after the first commit." />;
@@ -257,7 +260,7 @@ function BranchesView({ workspace, projectRoot }: { workspace: WorkspaceInfo | n
           <li key={branch.name} className={[branch.current ? "is-current" : "", open === branch.name ? "is-open" : ""].filter(Boolean).join(" ") || undefined}>
             {branch.current
               ? <span className="themis-workspace-list-title"><BranchIcon />{branch.name}<em>current</em></span>
-              : <button type="button" className="themis-workspace-list-title" aria-expanded={open === branch.name} onClick={() => setOpen(open === branch.name ? null : branch.name)}><BranchIcon />{branch.name}</button>}
+              : <button type="button" className="themis-workspace-list-title" aria-expanded={open === branch.name} onClick={() => setPicked(open === branch.name ? null : branch.name)}><BranchIcon />{branch.name}</button>}
             <span className="themis-workspace-list-meta">{[branch.upstream, branch.track, branch.updated].filter(Boolean).join(" · ")}</span>
           </li>
         ))}

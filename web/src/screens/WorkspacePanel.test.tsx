@@ -117,6 +117,19 @@ describe("WorkspacePanel", () => {
     await act(async () => { fireEvent.click(screen.getByRole("button", { name: /^feature/ })); });
     expect(screen.queryByRole("region", { name: "Changes in feature" })).toBeNull();
   });
+  it("drops a branch's comparison when that branch becomes the current one, and rereads the others", async () => {
+    const branches = (current: string) => ({ ...workspace, is_git: true, branch: current, branches: ["main", "feature", "other"].map(name => ({ name, current: name === current, upstream: null, track: null, updated: "now" })) });
+    vi.mocked(bridge.branchDiff).mockClear();
+    vi.mocked(bridge.branchDiff).mockResolvedValue({ available: true, reason: null, files: [{ path: "new.txt", status: "added", hunks: [] }] } as never);
+    appState = { ...appState, workspaceTabRequest: { tab: "branches", at: 3 } };
+    const view = render(<WorkspacePanel projectRoot="/repo" threadId="t1" workspace={branches("main") as never} />);
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: /^other/ })); });
+    expect(bridge.branchDiff).toHaveBeenCalledTimes(1);
+    await act(async () => { view.rerender(<WorkspacePanel projectRoot="/repo" threadId="t1" workspace={branches("feature") as never} />); });
+    expect(bridge.branchDiff).toHaveBeenCalledTimes(2);
+    await act(async () => { view.rerender(<WorkspacePanel projectRoot="/repo" threadId="t1" workspace={branches("other") as never} />); });
+    expect(screen.queryByRole("region", { name: "Changes in other" })).toBeNull();
+  });
   it("shows a Tasks tab with a count and opens it when the indicator asks", async () => {
     const feed = { thread_id: "t1", run: { running: true, awaiting_approval: false }, automations: [], recent: [] };
     appState = { ...appState, tasks: { t1: feed }, workspaceTabRequest: { tab: "tasks", at: 1 } };
