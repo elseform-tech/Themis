@@ -378,3 +378,54 @@ async fn marketplace_cli_reuses_checked_contents_and_rejects_stale_install() {
     assert_eq!(installed["scope"], "global");
     task.abort();
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn marketplace_check_counts_statuses_and_a_formerly_colliding_plugin_installs() {
+    let data = tempfile::tempdir().unwrap();
+    let source = tempfile::tempdir().unwrap();
+    let root = source.path();
+    let write = |path: &str, content: &str| {
+        let path = root.join(path);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, content).unwrap();
+    };
+    let skill = |name: &str| format!("---\nname: {name}\ndescription: {name}\n---\nUse {name}.");
+    write("clean/skills/review/SKILL.md", &skill("review"));
+    // The same skill shipped for other tools used to fail the import on a duplicate id.
+    for prefix in ["", "codex/", "agent-plugin/"] {
+        write(
+            &format!("copies/{prefix}skills/forms/SKILL.md"),
+            &skill("forms"),
+        );
+    }
+    write(
+        ".claude-plugin/marketplace.json",
+        &json!({"plugins":[
+            {"name":"clean","source":"./clean"},
+            {"name":"copies","source":"./copies"},
+            {"name":"broken","source":"./missing"}
+        ]})
+        .to_string(),
+    );
+    let state = AppState::new_for_test(data.path().join("settings.json"));
+    let task = tokio::spawn(Server::bind(state, data.path()).await.unwrap().run());
+    cli(
+        data.path(),
+        &[
+            "plugin",
+            "marketplace",
+            "add",
+            "local",
+            root.to_str().unwrap(),
+        ],
+    );
+    let report = cli(data.path(), &["plugin", "marketplace", "check", "local"]);
+    assert_eq!(report["total"], 3);
+    assert_eq!(report["statuses"], json!({"failed": 1, "supported": 2}));
+    assert_eq!(report["reasons"].as_array().unwrap().len(), 1, "{report}");
+    assert_eq!(report["reasons"][0]["plugins"], 1);
+    let installed = cli(data.path(), &["plugin", "install", "copies@local"]);
+    assert_eq!(installed["spec"]["skills"].as_array().unwrap().len(), 1);
+    assert_eq!(installed["spec"]["skills"][0]["id"], "forms");
+    task.abort();
+}

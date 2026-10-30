@@ -6,7 +6,7 @@ pub mod keys;
 mod marketplace;
 pub mod oauth;
 mod scans;
-pub use scans::MarketplaceScan;
+pub use scans::{compatibility_summary, MarketplaceScan};
 
 use crate::skills::Skill;
 use anyhow::{bail, Context};
@@ -53,6 +53,10 @@ pub struct PluginSpec {
     pub executable_files: Vec<String>,
     #[serde(default)]
     pub unsupported: Vec<String>,
+    /// Harmless import notes (dropped binary or oversized resources, unused frontmatter) that
+    /// are listed but do not make a package partial.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub notices: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub import_issues: Vec<ImportComponent>,
 }

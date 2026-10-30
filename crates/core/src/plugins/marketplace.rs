@@ -54,9 +54,20 @@ impl ImportPreview {
                 "Remove the unsupported component or install only supported components".into(),
             ),
         }));
+        components.extend(spec.notices.iter().map(|reason| ImportComponent {
+            kind: "package".into(),
+            name: spec.name.clone(),
+            status: "notice".into(),
+            field: None,
+            reason: Some(reason.clone()),
+            remedy: None,
+        }));
         let status = if spec.skills.is_empty() && spec.mcp.is_empty() && spec.hooks.is_empty() {
             "unsupported"
-        } else if components.iter().any(|c| c.status != "supported") {
+        } else if components
+            .iter()
+            .any(|c| !matches!(c.status.as_str(), "supported" | "notice"))
+        {
             "partial"
         } else {
             "supported"
@@ -156,6 +167,7 @@ impl PluginStore {
                     path.parent().context("Missing skill directory")?
                 },
                 allow_partial,
+                None,
             )?
         } else {
             let bytes = fs::read(&path)?;
@@ -302,7 +314,7 @@ impl PluginStore {
             if !directory.starts_with(staging.canonicalize()?) {
                 bail!("Plugin directory escapes repository");
             }
-            let mut spec = import_directory(&directory, allow_partial)?;
+            let mut spec = import_directory(&directory, allow_partial, None)?;
             if !name.is_empty() {
                 spec.name = name.into();
             } else if directory == staging.canonicalize()?
@@ -635,15 +647,12 @@ impl PluginStore {
                     staging
                 }
             };
-            let mut spec = import_directory(&directory, allow_partial)?;
+            let mut spec = import_directory(&directory, allow_partial, Some(entry))?;
             spec.name = name.into();
             spec.package_kind = Some("plugin".into());
             for field in [
-                "skills",
                 "commands",
                 "agents",
-                "hooks",
-                "mcpServers",
                 "lspServers",
                 "dependencies",
                 "settings",
@@ -766,7 +775,13 @@ async fn run_git(args: &[&str], directory: Option<&Path>) -> anyhow::Result<()> 
     Ok(())
 }
 
-fn import_directory(root: &Path, allow_partial: bool) -> anyhow::Result<PluginSpec> {
+/// Imports a skill or plugin folder. `entry` is the marketplace entry, whose `skills`,
+/// `mcpServers` and `hooks` declarations count like the plugin manifest's.
+fn import_directory(
+    root: &Path,
+    allow_partial: bool,
+    entry: Option<&Value>,
+) -> anyhow::Result<PluginSpec> {
     let manifest_path = root.join(".claude-plugin/plugin.json");
     let manifest: Value = if manifest_path.exists() {
         serde_json::from_str(&fs::read_to_string(&manifest_path)?)?
@@ -795,13 +810,21 @@ fn import_directory(root: &Path, allow_partial: bool) -> anyhow::Result<PluginSp
         version: manifest["version"].as_str().unwrap_or_default().into(),
         ..Default::default()
     };
-    collect_files(
-        root,
-        root,
-        &mut spec.files,
-        &mut spec.executable_files,
-        &mut spec.unsupported,
-    )?;
+    if let Err(error) = collect_plugin_files(root, &mut spec, None) {
+        if error.to_string() != RESOURCE_LIMITS {
+            return Err(error);
+        }
+        // Many catalog entries point at a whole repository (a library, an MCP server's
+        // source). Keep only the plugin's own folders and the files its declarations name.
+        let keep = component_paths(&manifest, entry);
+        spec.files.clear();
+        spec.executable_files.clear();
+        spec.unsupported.clear();
+        spec.notices.clear();
+        collect_plugin_files(root, &mut spec, Some(keep))?;
+        spec.unsupported
+            .push("Large repository: only the plugin's own folders were imported".into());
+    }
     if let Some(icon) = manifest.get("icon").and_then(Value::as_str) {
         let icon = icon.strip_prefix("./").unwrap_or(icon);
         if icon.starts_with("https://") || (icon.ends_with(".svg") && spec.files.contains_key(icon))
@@ -812,82 +835,95 @@ fn import_directory(root: &Path, allow_partial: bool) -> anyhow::Result<PluginSp
                 .push("Plugin icon resource is unavailable or unsupported".into());
         }
     }
-    for (path, content) in &spec.files {
-        if path.ends_with("/SKILL.md") || path == "SKILL.md" {
-            let (metadata, instructions) = parse_skill(content)?;
-            let fallback = if path == "SKILL.md" {
-                root.file_name().and_then(|s| s.to_str()).unwrap_or("skill")
-            } else {
-                Path::new(path)
-                    .parent()
-                    .and_then(Path::file_name)
-                    .and_then(|s| s.to_str())
-                    .unwrap_or("skill")
-            };
-            let name = metadata.get("name").map(String::as_str).unwrap_or(fallback);
-            let id = if safe_name(name) { name } else { fallback };
-            spec.skill_paths.insert(id.into(), path.clone());
-            spec.skills.push(Skill {
-                id: id.into(),
-                name: name.into(),
-                description: metadata.get("description").cloned().unwrap_or_default(),
-                instructions,
-                allowed_tools: vec![],
-                scripts: vec![],
-            });
-            for key in metadata.keys().filter(|key| {
-                ![
-                    "name",
-                    "description",
-                    "license",
-                    "compatibility",
-                    "allowed-tools",
-                    "disable-model-invocation",
-                ]
-                .contains(&key.as_str())
-            }) {
-                spec.unsupported
-                    .push(format!("{path}: skill frontmatter {key}"));
-            }
-            if metadata
-                .get("disable-model-invocation")
-                .is_some_and(|value| value == "true")
-            {
-                spec.manual_skills.push(id.into());
-            }
-            if metadata.contains_key("allowed-tools") {
-                spec.unsupported.push(format!(
-                    "{path}: Claude tool names are not permission grants in Themis"
-                ));
-            }
+    let declared = |field: &str| {
+        [Some(&manifest), entry]
+            .into_iter()
+            .flatten()
+            .filter_map(|source| source.get(field))
+            .collect::<Vec<_>>()
+    };
+    let skill_roots = declared_paths(
+        &declared("skills"),
+        "skills",
+        &spec.files,
+        &mut spec.unsupported,
+    );
+    for (path, id, name, metadata, instructions) in select_skills(root, &spec.files, &skill_roots)?
+    {
+        spec.skill_paths.insert(id.clone(), path.clone());
+        spec.skills.push(Skill {
+            id: id.clone(),
+            name,
+            description: metadata.get("description").cloned().unwrap_or_default(),
+            instructions,
+            allowed_tools: vec![],
+            scripts: vec![],
+        });
+        for key in metadata.keys().filter(|key| {
+            ![
+                "name",
+                "description",
+                "license",
+                "compatibility",
+                "allowed-tools",
+                "disable-model-invocation",
+            ]
+            .contains(&key.as_str())
+        }) {
+            spec.notices
+                .push(format!("{path}: skill frontmatter {key}"));
+        }
+        if metadata
+            .get("disable-model-invocation")
+            .is_some_and(|value| value == "true")
+        {
+            spec.manual_skills.push(id);
+        }
+        if metadata.contains_key("allowed-tools") {
+            spec.notices.push(format!(
+                "{path}: Claude tool names are not permission grants in Themis"
+            ));
         }
     }
-    if let Some(raw) = spec.files.get(".mcp.json") {
-        let config: Value = serde_json::from_str(raw)?;
-        let servers = config.get("mcpServers").unwrap_or(&config);
-        import_mcp_components(servers, false, &mut spec, allow_partial)?;
-    }
-    if let Some(servers) = manifest.get("mcpServers") {
-        if servers.is_object() {
-            import_mcp_components(servers, false, &mut spec, allow_partial)?;
+    let mut mcp_files = vec![".mcp.json".to_owned()];
+    let mut hook_files = vec!["hooks/hooks.json".to_owned()];
+    for value in declared("mcpServers") {
+        if value.is_object() {
+            import_mcp_components(value, false, &mut spec, allow_partial)?;
         } else {
-            spec.unsupported
-                .push("External MCP configuration paths".into());
+            mcp_files.extend(declared_paths(
+                &[value],
+                "MCP configuration",
+                &spec.files,
+                &mut spec.unsupported,
+            ));
         }
     }
-    if let Some(raw) = spec.files.get("hooks/hooks.json") {
-        import_hooks(&serde_json::from_str::<Value>(raw)?, &mut spec)?;
-    }
-    if let Some(hooks) = manifest.get("hooks") {
-        if hooks.is_object() {
-            import_hooks(hooks, &mut spec)?;
+    for value in declared("hooks") {
+        if value.is_object() {
+            import_hooks(value, &mut spec)?;
         } else {
-            spec.unsupported
-                .push("External hook configuration paths".into());
+            hook_files.extend(declared_paths(
+                &[value],
+                "hook configuration",
+                &spec.files,
+                &mut spec.unsupported,
+            ));
+        }
+    }
+    for path in unique(mcp_files) {
+        if let Some(raw) = spec.files.get(&path) {
+            let config: Value = serde_json::from_str(raw)?;
+            let servers = config.get("mcpServers").unwrap_or(&config).clone();
+            import_mcp_components(&servers, false, &mut spec, allow_partial)?;
+        }
+    }
+    for path in unique(hook_files) {
+        if let Some(raw) = spec.files.get(&path) {
+            import_hooks(&serde_json::from_str::<Value>(raw)?, &mut spec)?;
         }
     }
     for field in [
-        "skills",
         "commands",
         "agents",
         "channels",
@@ -918,6 +954,183 @@ fn import_directory(root: &Path, allow_partial: bool) -> anyhow::Result<PluginSp
     }
     Ok(spec)
 }
+/// Text paths a manifest or marketplace entry declares for `label`, normalised and checked to
+/// stay inside the plugin. Problems are reported instead of failing the import.
+fn declared_paths(
+    values: &[&Value],
+    label: &str,
+    files: &BTreeMap<String, String>,
+    unsupported: &mut Vec<String>,
+) -> Vec<String> {
+    let mut paths = Vec::new();
+    for value in values {
+        let Some(texts) = declared_texts(value) else {
+            unsupported.push(format!("Declared {label} paths must be text"));
+            continue;
+        };
+        for text in texts {
+            let path = text.trim_start_matches("./").trim_end_matches('/');
+            if !path.is_empty() && !safe_relative(path) {
+                unsupported.push(format!(
+                    "Declared {label} path is outside the plugin: {text}"
+                ));
+            } else if !path.is_empty()
+                && !files.contains_key(path)
+                && !files
+                    .keys()
+                    .any(|file| file.starts_with(&format!("{path}/")))
+            {
+                unsupported.push(format!("Declared {label} path not found: {text}"));
+            } else {
+                paths.push(path.to_owned());
+            }
+        }
+    }
+    paths
+}
+
+/// The text paths in a `skills`, `mcpServers` or `hooks` declaration; `None` when it is
+/// neither text nor a list.
+fn declared_texts(value: &Value) -> Option<Vec<&str>> {
+    match value {
+        Value::String(text) => Some(vec![text.as_str()]),
+        Value::Array(items) => Some(items.iter().filter_map(Value::as_str).collect()),
+        _ => None,
+    }
+}
+
+/// What to keep when a plugin folder is too large: its component folders and declared paths.
+fn component_paths(manifest: &Value, entry: Option<&Value>) -> Vec<String> {
+    let declared = ["skills", "mcpServers", "hooks"]
+        .into_iter()
+        .flat_map(|field| {
+            [Some(manifest), entry]
+                .into_iter()
+                .flatten()
+                .filter_map(move |source| source.get(field))
+        })
+        .filter_map(declared_texts)
+        .flatten()
+        .map(|text| {
+            text.trim_start_matches("./")
+                .trim_end_matches('/')
+                .to_owned()
+        })
+        .filter(|path| safe_relative(path));
+    COMPONENT_PATHS
+        .iter()
+        .map(|path| (*path).to_owned())
+        .chain(declared)
+        .collect()
+}
+
+fn unique(paths: Vec<String>) -> Vec<String> {
+    let mut seen = std::collections::BTreeSet::new();
+    paths
+        .into_iter()
+        .filter(|path| seen.insert(path.clone()))
+        .collect()
+}
+
+/// One imported skill: path, id, name, frontmatter and instructions.
+type SelectedSkill = (String, String, String, BTreeMap<String, String>, String);
+
+/// Every `SKILL.md` is a skill, as before, unless that gives two skills the same id. Then only
+/// Claude's layout counts (a root `SKILL.md`, `skills/<name>/SKILL.md` and declared skill
+/// folders), so copies for other tools and reference files nested inside a skill drop out.
+/// A plugin with no skills in that layout keeps all of them. Any ids that still collide are
+/// taken from the skill's folder path.
+fn select_skills(
+    root: &Path,
+    files: &BTreeMap<String, String>,
+    declared: &[String],
+) -> anyhow::Result<Vec<SelectedSkill>> {
+    let all: Vec<&String> = files
+        .keys()
+        .filter(|path| path.as_str() == "SKILL.md" || path.ends_with("/SKILL.md"))
+        .collect();
+    if let Ok(skills) = parse_skills(root, files, &all) {
+        if !has_duplicate_ids(&skills) {
+            return Ok(skills);
+        }
+    }
+    let roots: Vec<&str> = std::iter::once("skills")
+        .chain(declared.iter().map(String::as_str))
+        .collect();
+    let claude_layout: Vec<&String> = all
+        .iter()
+        .copied()
+        .filter(|path| {
+            let folder = skill_folder(path);
+            let parent = folder.rsplit_once('/').map_or("", |(parent, _)| parent);
+            folder.is_empty() || roots.iter().any(|root| folder == *root || parent == *root)
+        })
+        .collect();
+    // A plugin that keeps its skills elsewhere keeps all of them.
+    let selected = if claude_layout.is_empty() {
+        all
+    } else {
+        claude_layout
+    };
+    let mut skills = parse_skills(root, files, &selected)?;
+    let mut counts = BTreeMap::<String, usize>::new();
+    for skill in &skills {
+        *counts.entry(skill.1.clone()).or_default() += 1;
+    }
+    for skill in &mut skills {
+        if counts[&skill.1] > 1 {
+            let derived = skill_folder(&skill.0).replace('/', "-");
+            if safe_name(&derived) {
+                skill.1 = derived;
+            }
+        }
+    }
+    Ok(skills)
+}
+
+fn skill_folder(path: &str) -> &str {
+    path.strip_suffix("SKILL.md")
+        .unwrap_or(path)
+        .trim_end_matches('/')
+}
+
+fn has_duplicate_ids(skills: &[SelectedSkill]) -> bool {
+    let mut ids = std::collections::BTreeSet::new();
+    skills.iter().any(|skill| !ids.insert(&skill.1))
+}
+
+fn parse_skills(
+    root: &Path,
+    files: &BTreeMap<String, String>,
+    paths: &[&String],
+) -> anyhow::Result<Vec<SelectedSkill>> {
+    paths
+        .iter()
+        .map(|path| {
+            let (metadata, instructions) = parse_skill(&files[*path])?;
+            let fallback = if path.as_str() == "SKILL.md" {
+                root.file_name().and_then(|s| s.to_str()).unwrap_or("skill")
+            } else {
+                Path::new(path.as_str())
+                    .parent()
+                    .and_then(Path::file_name)
+                    .and_then(|s| s.to_str())
+                    .unwrap_or("skill")
+            };
+            let name = metadata.get("name").map(String::as_str).unwrap_or(fallback);
+            let id = if safe_name(name) { name } else { fallback };
+            Ok((
+                (*path).clone(),
+                id.into(),
+                name.into(),
+                metadata,
+                instructions,
+            ))
+        })
+        .collect()
+}
+
+/// Strict walk used by skill discovery: any symlink or oversized file fails the package.
 pub(super) fn collect_files(
     root: &Path,
     directory: &Path,
@@ -925,54 +1138,166 @@ pub(super) fn collect_files(
     executable_files: &mut Vec<String>,
     unsupported: &mut Vec<String>,
 ) -> anyhow::Result<()> {
-    for entry in fs::read_dir(directory)? {
-        let entry = entry?;
-        let kind = entry.file_type()?;
-        let path = entry.path();
-        if entry.file_name() == ".git" {
-            continue;
-        }
-        if kind.is_symlink() {
-            bail!("Plugin symlinks are unsupported");
-        }
-        if kind.is_dir() {
-            if path.strip_prefix(root)?.components().count() > 32 {
+    let mut walk = FileWalk {
+        root,
+        files,
+        executable_files,
+        unsupported,
+        notices: None,
+        stack: vec![],
+        keep: None,
+    };
+    walk.directory(directory, "")
+}
+
+/// Lenient walk used for plugin packages: links that stay inside the plugin are followed,
+/// oversized and binary files are left out with a notice, and other links are reported.
+fn collect_plugin_files(
+    root: &Path,
+    spec: &mut PluginSpec,
+    keep: Option<Vec<String>>,
+) -> anyhow::Result<()> {
+    let root = root.canonicalize()?;
+    let mut walk = FileWalk {
+        root: &root,
+        files: &mut spec.files,
+        executable_files: &mut spec.executable_files,
+        unsupported: &mut spec.unsupported,
+        notices: Some(&mut spec.notices),
+        stack: vec![root.clone()],
+        keep,
+    };
+    walk.directory(&root, "")
+}
+
+const MAX_PLUGIN_FILE_BYTES: u64 = 1024 * 1024;
+const RESOURCE_LIMITS: &str = "Plugin exceeds resource limits";
+/// The folders and files a Claude plugin keeps its components in.
+const COMPONENT_PATHS: &[&str] = &[
+    ".claude-plugin",
+    ".mcp.json",
+    "SKILL.md",
+    "skills",
+    "commands",
+    "agents",
+    "hooks",
+    "scripts",
+    "assets",
+];
+
+struct FileWalk<'a> {
+    root: &'a Path,
+    files: &'a mut BTreeMap<String, String>,
+    executable_files: &'a mut Vec<String>,
+    unsupported: &'a mut Vec<String>,
+    /// `Some` selects the lenient plugin walk.
+    notices: Option<&'a mut Vec<String>>,
+    /// Canonical directories being walked, to stop symlink loops.
+    stack: Vec<PathBuf>,
+    /// When set, only these plugin-relative paths (and the folders leading to them) are read.
+    keep: Option<Vec<String>>,
+}
+
+impl FileWalk<'_> {
+    fn directory(&mut self, directory: &Path, logical: &str) -> anyhow::Result<()> {
+        let mut entries = fs::read_dir(directory)?.collect::<Result<Vec<_>, _>>()?;
+        entries.sort_by_key(|entry| entry.file_name());
+        for entry in entries {
+            if entry.file_name() == ".git" {
+                continue;
+            }
+            let name = entry.file_name().to_string_lossy().into_owned();
+            let relative = if logical.is_empty() {
+                name
+            } else {
+                format!("{logical}/{name}")
+            };
+            if !self.kept(&relative) {
+                continue;
+            }
+            if relative.split('/').count() > 32 {
                 bail!("Plugin directory nesting exceeds 32 levels");
             }
-            collect_files(root, &path, files, executable_files, unsupported)?;
-        } else if kind.is_file() {
-            if entry.metadata()?.len() > 1024 * 1024 {
-                bail!("Plugin file exceeds 1 MiB");
-            }
-            let bytes = fs::read(&path)?;
-            if !bytes.is_ascii() && std::str::from_utf8(&bytes).is_err() {
-                unsupported.push(format!(
-                    "Binary resource omitted: {}",
-                    path.strip_prefix(root)?.display()
-                ));
-            }
-            if let Ok(text) = String::from_utf8(bytes) {
-                let relative = path
-                    .strip_prefix(root)?
-                    .to_string_lossy()
-                    .replace('\\', "/");
-                #[cfg(unix)]
-                {
-                    use std::os::unix::fs::PermissionsExt;
-                    if entry.metadata()?.permissions().mode() & 0o111 != 0 {
-                        executable_files.push(relative.clone());
-                    }
+            let kind = entry.file_type()?;
+            let path = entry.path();
+            if kind.is_symlink() {
+                if self.notices.is_none() {
+                    bail!("Plugin symlinks are unsupported");
                 }
-                files.insert(relative, text);
-            }
-            if files.len() > 1000
-                || files.values().map(String::len).sum::<usize>() > 8 * 1024 * 1024
-            {
-                bail!("Plugin exceeds resource limits");
+                match self.link_target(&path) {
+                    Some(target) if target.is_dir() => {
+                        self.stack.push(target.clone());
+                        let result = self.directory(&target, &relative);
+                        self.stack.pop();
+                        result?;
+                    }
+                    Some(target) if target.is_file() => self.file(&target, relative)?,
+                    _ => self
+                        .unsupported
+                        .push(format!("Link not followed: {relative}")),
+                }
+            } else if kind.is_dir() {
+                self.directory(&path, &relative)?;
+            } else if kind.is_file() {
+                self.file(&path, relative)?;
             }
         }
+        Ok(())
     }
-    Ok(())
+
+    fn kept(&self, relative: &str) -> bool {
+        self.keep.as_ref().is_none_or(|keep| {
+            keep.iter().any(|path| {
+                relative == path
+                    || relative.starts_with(&format!("{path}/"))
+                    || path.starts_with(&format!("{relative}/"))
+            })
+        })
+    }
+
+    /// A link is followed only when its target resolves inside the plugin root and is not a
+    /// directory already being walked.
+    fn link_target(&self, link: &Path) -> Option<PathBuf> {
+        let target = link.canonicalize().ok()?;
+        (target.starts_with(self.root) && !self.stack.iter().any(|open| open == &target))
+            .then_some(target)
+    }
+
+    fn file(&mut self, path: &Path, relative: String) -> anyhow::Result<()> {
+        let metadata = fs::metadata(path)?;
+        if metadata.len() > MAX_PLUGIN_FILE_BYTES {
+            match self.notices.as_deref_mut() {
+                Some(notices) => {
+                    notices.push(format!("File too large: {relative}"));
+                    return Ok(());
+                }
+                None => bail!("Plugin file exceeds 1 MiB"),
+            }
+        }
+        let bytes = fs::read(path)?;
+        let Ok(text) = String::from_utf8(bytes) else {
+            let note = format!("Binary resource omitted: {relative}");
+            match self.notices.as_deref_mut() {
+                Some(notices) => notices.push(note),
+                None => self.unsupported.push(note),
+            }
+            return Ok(());
+        };
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            if metadata.permissions().mode() & 0o111 != 0 {
+                self.executable_files.push(relative.clone());
+            }
+        }
+        self.files.insert(relative, text);
+        if self.files.len() > 1000
+            || self.files.values().map(String::len).sum::<usize>() > 8 * 1024 * 1024
+        {
+            bail!(RESOURCE_LIMITS);
+        }
+        Ok(())
+    }
 }
 pub(super) fn parse_skill(content: &str) -> anyhow::Result<(BTreeMap<String, String>, String)> {
     let normalized = content.replace("\r\n", "\n");
@@ -1057,6 +1382,13 @@ fn import_mcp_components(
     for (name, raw) in value.as_object().context("Invalid MCP configuration")? {
         match import_mcp_server(name, raw, opencode) {
             Ok(server) => {
+                // The same server is often declared both in plugin.json and in .mcp.json.
+                let same = |existing: &McpServer| {
+                    serde_json::to_value(existing).ok() == serde_json::to_value(&server).ok()
+                };
+                if spec.mcp.get(name).is_some_and(same) {
+                    continue;
+                }
                 if spec.mcp.insert(name.clone(), server).is_some() {
                     bail!("Duplicate MCP connection '{name}'");
                 }

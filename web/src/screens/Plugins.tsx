@@ -85,6 +85,7 @@ function Compatibility({ spec, report }: { spec: PluginSpec; report?: ImportPrev
   return <div className="themis-compatibility">
     {report && <strong className={`themis-compatibility-badge ${report.status}`} title="Import format checked; runtime not tested">{compatibilityLabels[report.status]}</strong>}
     <CompatibilityWarning reasons={compatibilityReasons(spec)} />
+    {spec.notices?.length ? <details className="themis-compatibility-notes"><summary>Notes ({spec.notices.length})</summary><ul>{spec.notices.map(note => <li key={note}>{note}</li>)}</ul></details> : null}
     {(Object.keys(spec.mcp).length > 0 || spec.hooks.length > 0) && <p>Connections and hooks install disabled.</p>}
   </div>;
 }
