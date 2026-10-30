@@ -22,6 +22,95 @@ pub struct ImportPreview {
     /// Identifies a saved marketplace check of this entry, so an install can refuse a newer one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub check_revision: Option<String>,
+    /// [`package_hash`] of the checked package, kept when the saved check drops its contents.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub package_hash: Option<String>,
+}
+/// What a package contains, ignoring what people change after installing it: switches and the
+/// record of an earlier hash.
+pub(super) fn package_hash(spec: &PluginSpec) -> String {
+    use sha2::{Digest, Sha256};
+    let mut value = serde_json::to_value(spec).unwrap_or_default();
+    for server in value["mcp"]
+        .as_object_mut()
+        .into_iter()
+        .flat_map(|mcp| mcp.values_mut())
+    {
+        server["enabled"] = Value::Null;
+    }
+    for hook in value["hooks"].as_array_mut().into_iter().flatten() {
+        hook["enabled"] = Value::Null;
+    }
+    for field in [
+        "package_hash",
+        "disabled_skills",
+        "origin",
+        "icon_asset",
+        "brand",
+    ] {
+        value[field] = Value::Null;
+    }
+    format!("{:x}", Sha256::digest(value.to_string()))
+}
+/// Most bytes kept of a plugin's own icon.
+const ICON_LIMIT: usize = 256 * 1024;
+/// Whether an icon named by a manifest can be used: HTTPS, or a bundled SVG, PNG or WebP.
+fn usable_icon(icon: &str, files: &BTreeMap<String, String>, root: &Path) -> bool {
+    icon.starts_with("https://")
+        || (icon.ends_with(".svg") && files.contains_key(icon))
+        || ((icon.ends_with(".png") || icon.ends_with(".webp"))
+            && safe_relative(icon)
+            && root.join(icon).is_file())
+}
+/// The file name an icon is stored under, or `None` for anything but an SVG, PNG or WebP.
+pub(super) fn icon_asset_name(bytes: &[u8]) -> Option<String> {
+    use sha2::{Digest, Sha256};
+    if bytes.is_empty() || bytes.len() > ICON_LIMIT {
+        return None;
+    }
+    let text = std::str::from_utf8(bytes).unwrap_or_default().trim_start();
+    let extension = if bytes.starts_with(b"\x89PNG\r\n\x1a\n") {
+        "png"
+    } else if bytes.len() > 12 && &bytes[..4] == b"RIFF" && &bytes[8..12] == b"WEBP" {
+        "webp"
+    } else if text.starts_with("<svg") || (text.starts_with("<?xml") && text.contains("<svg")) {
+        "svg"
+    } else {
+        return None;
+    };
+    Some(format!("{:x}.{extension}", Sha256::digest(bytes)))
+}
+/// An HTTPS icon, bounded in size and time. Only ever called during a compatibility check, so
+/// browsing makes no network requests.
+async fn download_icon(url: &str) -> anyhow::Result<Vec<u8>> {
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(10))
+        .redirect(reqwest::redirect::Policy::custom(|attempt| {
+            if attempt.url().scheme() == "https" && attempt.previous().len() < 3 {
+                attempt.follow()
+            } else {
+                attempt.stop()
+            }
+        }))
+        .build()?;
+    let mut response = client.get(url).send().await?.error_for_status()?;
+    let mut bytes = Vec::new();
+    while let Some(chunk) = response.chunk().await? {
+        bytes.extend_from_slice(&chunk);
+        if bytes.len() > ICON_LIMIT {
+            bail!("Icon is too large");
+        }
+    }
+    Ok(bytes)
+}
+/// A definition without its switch, to tell a changed part from one only turned on or off.
+fn same_definition<T: Serialize>(old: &T, new: &T) -> bool {
+    let plain = |part: &T| {
+        let mut value = serde_json::to_value(part).unwrap_or_default();
+        value["enabled"] = Value::Null;
+        value
+    };
+    plain(old) == plain(new)
 }
 impl ImportPreview {
     pub fn from_spec(spec: PluginSpec) -> anyhow::Result<Self> {
@@ -82,6 +171,7 @@ impl ImportPreview {
                 components,
             },
             check_revision: None,
+            package_hash: None,
         }
     }
 }
@@ -430,6 +520,46 @@ impl PluginStore {
     }
     /// Reads a source's manifest without adding it: `owner/repo`, an HTTPS Git URL or a local
     /// folder. A Git source only fetches the manifest file.
+    /// Saves a plugin's own icon in the icon store and returns its name. An icon that can't be
+    /// used is left out: the plugin then gets a brand logo or a tile.
+    async fn save_icon(&self, icon: Option<&str>, directory: &Path) -> Option<String> {
+        let icon = icon?;
+        let bytes = if icon.starts_with("https://") {
+            download_icon(icon).await.ok()?
+        } else {
+            let path = directory.join(icon).canonicalize().ok()?;
+            if !path.starts_with(directory.canonicalize().ok()?)
+                || fs::metadata(&path).ok()?.len() > ICON_LIMIT as u64
+            {
+                return None;
+            }
+            fs::read(path).ok()?
+        };
+        let name = icon_asset_name(&bytes)?;
+        let path = self.global.join("plugin-icons").join(&name);
+        fs::create_dir_all(path.parent()?).ok()?;
+        if !path.exists() {
+            write_bytes(&path, &bytes, false).ok()?;
+        }
+        Some(name)
+    }
+    /// A stored icon as a data URL, for the UI to show without any network request.
+    pub fn plugin_icon(&self, name: &str) -> anyhow::Result<String> {
+        use base64::Engine;
+        let (hash, extension) = name.split_once('.').context("Invalid icon name")?;
+        let mime = match extension {
+            "svg" => "image/svg+xml",
+            "png" => "image/png",
+            "webp" => "image/webp",
+            _ => bail!("Invalid icon name"),
+        };
+        if hash.len() != 64 || !hash.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+            bail!("Invalid icon name");
+        }
+        let bytes = fs::read(self.global.join("plugin-icons").join(name))?;
+        let encoded = base64::engine::general_purpose::STANDARD.encode(bytes);
+        Ok(format!("data:{mime};base64,{encoded}"))
+    }
     pub async fn preview_source(&self, input: &str) -> anyhow::Result<SourcePreview> {
         let source = normalize_source(input)?;
         if source.starts_with("https://") {
@@ -515,7 +645,11 @@ impl PluginStore {
         }
         Ok(value)
     }
-    async fn marketplace_directory(&self, name: &str, refresh: bool) -> anyhow::Result<PathBuf> {
+    pub(super) async fn marketplace_directory(
+        &self,
+        name: &str,
+        refresh: bool,
+    ) -> anyhow::Result<PathBuf> {
         let source = self
             .marketplaces()?
             .into_iter()
@@ -585,17 +719,23 @@ impl PluginStore {
             if previous.is_some_and(|p| p.source.as_deref() != Some(marketplace)) {
                 bail!("A different plugin already uses this name; rename it first");
             }
+            spec.package_hash = Some(package_hash(&spec));
             if let Some(previous) = previous {
+                // Parts that are new or changed arrive turned off, however the old one was set.
                 for (name, server) in &mut spec.mcp {
-                    server.enabled = previous.spec.mcp.get(name).is_some_and(|s| s.enabled);
+                    server.enabled = previous
+                        .spec
+                        .mcp
+                        .get(name)
+                        .is_some_and(|old| old.enabled && same_definition(old, &*server));
                 }
                 for hook in &mut spec.hooks {
                     hook.enabled = previous
                         .spec
                         .hooks
                         .iter()
-                        .find(|h| h.name == hook.name)
-                        .is_some_and(|h| h.enabled);
+                        .find(|old| old.name == hook.name)
+                        .is_some_and(|old| old.enabled && same_definition(old, &*hook));
                 }
                 for id in &previous.spec.disabled_skills {
                     if spec.skills.iter().any(|s| &s.id == id) && !spec.disabled_skills.contains(id)
@@ -734,15 +874,15 @@ impl PluginStore {
             }
             if let Some(icon) = entry.get("icon").and_then(Value::as_str) {
                 let icon = icon.strip_prefix("./").unwrap_or(icon);
-                if icon.starts_with("https://")
-                    || (icon.ends_with(".svg") && spec.files.contains_key(icon))
-                {
+                if usable_icon(icon, &spec.files, &directory) {
                     spec.icon = Some(icon.into());
                 } else {
                     spec.unsupported
                         .push("Marketplace icon resource is unavailable or unsupported".into());
                 }
             }
+            spec.brand = super::scans::catalog_brand(marketplace, entry);
+            spec.icon_asset = self.save_icon(spec.icon.as_deref(), &directory).await;
             spec.origin = Some(PluginOrigin {
                 kind: "marketplace".into(),
                 location: marketplace.into(),
@@ -913,6 +1053,85 @@ async fn clone_repository(
     }
     Ok(())
 }
+/// The commit a remote reference points at, without downloading anything.
+pub(super) async fn git_remote_ref(url: &str, reference: Option<&str>) -> anyhow::Result<String> {
+    let reference = reference.unwrap_or("HEAD");
+    if reference.starts_with('-') || reference.chars().any(char::is_control) {
+        bail!("Invalid repository reference");
+    }
+    let mut command = tokio::process::Command::new("git");
+    command
+        .args([
+            "-c",
+            "core.hooksPath=/dev/null",
+            "ls-remote",
+            "--",
+            url,
+            reference,
+        ])
+        .env_clear();
+    for name in ["PATH", "HOME", "SYSTEMROOT"] {
+        if let Some(value) = std::env::var_os(name) {
+            command.env(name, value);
+        }
+    }
+    let output = tokio::time::timeout(
+        std::time::Duration::from_secs(30),
+        command
+            .env("GIT_TERMINAL_PROMPT", "0")
+            .kill_on_drop(true)
+            .stderr(std::process::Stdio::null())
+            .output(),
+    )
+    .await
+    .context("Repository check timed out")??;
+    if !output.status.success() {
+        bail!("Repository check failed");
+    }
+    Ok(String::from_utf8_lossy(&output.stdout)
+        .split_whitespace()
+        .next()
+        .unwrap_or_default()
+        .to_owned())
+}
+/// A bounded hash of a folder's files: names, sizes and contents, not modification times. Past
+/// the bound only names and sizes count.
+pub(super) fn tree_fingerprint(root: &Path) -> anyhow::Result<String> {
+    use sha2::{Digest, Sha256};
+    const FILES: usize = 5000;
+    const CONTENT_BYTES: u64 = 64 * 1024 * 1024;
+    let mut hash = Sha256::new();
+    let mut stack = vec![root.to_path_buf()];
+    let (mut files, mut read) = (0, 0u64);
+    while let Some(directory) = stack.pop() {
+        let mut entries = fs::read_dir(&directory)?.collect::<Result<Vec<_>, _>>()?;
+        entries.sort_by_key(|entry| entry.file_name());
+        for entry in entries {
+            if entry.file_name() == ".git" {
+                continue;
+            }
+            let path = entry.path();
+            let metadata = fs::symlink_metadata(&path)?;
+            if metadata.is_dir() {
+                stack.push(path);
+                continue;
+            }
+            files += 1;
+            if files > FILES {
+                return Ok(format!("{:x}", hash.finalize()));
+            }
+            hash.update(path.strip_prefix(root)?.to_string_lossy().as_bytes());
+            hash.update(metadata.len().to_le_bytes());
+            if metadata.is_symlink() {
+                hash.update(fs::read_link(&path)?.to_string_lossy().as_bytes());
+            } else if read + metadata.len() <= CONTENT_BYTES {
+                read += metadata.len();
+                hash.update(fs::read(&path)?);
+            }
+        }
+    }
+    Ok(format!("{:x}", hash.finalize()))
+}
 async fn run_git(args: &[&str], directory: Option<&Path>) -> anyhow::Result<()> {
     let mut command = tokio::process::Command::new("git");
     command
@@ -993,8 +1212,7 @@ fn import_directory(
     }
     if let Some(icon) = manifest.get("icon").and_then(Value::as_str) {
         let icon = icon.strip_prefix("./").unwrap_or(icon);
-        if icon.starts_with("https://") || (icon.ends_with(".svg") && spec.files.contains_key(icon))
-        {
+        if usable_icon(icon, &spec.files, root) {
             spec.icon = Some(icon.into());
         } else {
             spec.unsupported
@@ -2190,6 +2408,22 @@ fn imported_hook_name(event: &str, matcher: Option<&str>, command: &str, taken: 
 mod source_tests {
     use super::*;
     use proptest::prelude::*;
+
+    #[test]
+    fn only_bounded_svg_png_and_webp_become_icons() {
+        let png = [b"\x89PNG\r\n\x1a\n".as_slice(), &[0; 16]].concat();
+        assert!(icon_asset_name(&png).unwrap().ends_with(".png"));
+        let webp = [b"RIFF\0\0\0\0WEBP".as_slice(), &[0; 16]].concat();
+        assert!(icon_asset_name(&webp).unwrap().ends_with(".webp"));
+        assert!(icon_asset_name(b"  <svg xmlns='x'/>")
+            .unwrap()
+            .ends_with(".svg"));
+        for bad in [b"".as_slice(), b"<html></html>", b"GIF89a", b"#!/bin/sh"] {
+            assert!(icon_asset_name(bad).is_none());
+        }
+        let huge = [b"<svg>".as_slice(), &vec![b' '; ICON_LIMIT]].concat();
+        assert!(icon_asset_name(&huge).is_none());
+    }
 
     #[test]
     fn typed_sources_normalize_to_stored_ones() {

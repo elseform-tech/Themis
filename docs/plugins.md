@@ -58,7 +58,7 @@ Canonical hook events are `PromptSubmit`, `RunStart`, `BeforeTool`, `AfterTool`,
 ## Signing in to remote MCP servers (OAuth)
 
 A remote server that answers with a sign-in challenge (HTTP 401 with `WWW-Authenticate:
-Bearer`) shows **Sign in needed** in Integrations › MCP with a **Sign in** button. Themis
+Bearer`) shows **Sign in needed** in Integrations › Connections with a **Sign in** button. Themis
 follows the MCP authorization spec: it reads the server's protected-resource metadata
 (RFC 9728) to find its authorization server and that server's metadata (RFC 8414), registers
 itself as a client (dynamic client registration, RFC 7591), and opens the sign-in page in your
@@ -95,7 +95,7 @@ spaces. The model provider key stays in Settings › Models.
 
 References may also be written `${env:NAME}` or `{env:NAME}`. Claude plugins' install-time settings, `${user_config.option}`, read the secret named after the option in capitals (`${user_config.bigquery_project}` reads `BIGQUERY_PROJECT`), so they are entered in Settings › Secrets like any key. An `env` reference may carry a default, `${NAME:-value}`, used when the secret isn't saved or set; a default must be a plain value as below. A remote server's URL may contain references, including at the start (`${JFROG_URL}/mcp`); it is checked against the HTTPS rule once the references are filled in, when the server starts.
 
-Plain values are allowed where they can't be credentials: `env` values and headers whose name doesn't suggest a credential (no `key`, `token`, `secret`, `password`, `auth`, `cookie`, `session`, `private`, `cert` or similar), at most 256 printable characters, with no run of 20 or more characters mixing letters and digits and no user name or password in a URL. That covers settings such as `"FASTMCP_LOG_LEVEL": "ERROR"` and tags such as `"x-exa-source": "claude-code-plugin"`. URL queries follow the same rule for each parameter (`?client=claude-code-plugin` is fine, `?api_key=…` is refused). `${CLAUDE_PLUGIN_ROOT}` and `${PLUGIN_ROOT}` in the command, arguments or plain `env` values become the installed plugin's folder when the server starts; they are never keys. The same rules apply to imports, Integrations › MCP › Edit as mcp.json and the CLI. Defaults may also appear in URL and header references (`${LOGFIRE_MCP_URL:-https://logfire-us.pydantic.dev/mcp}`).
+Plain values are allowed where they can't be credentials: `env` values and headers whose name doesn't suggest a credential (no `key`, `token`, `secret`, `password`, `auth`, `cookie`, `session`, `private`, `cert` or similar), at most 256 printable characters, with no run of 20 or more characters mixing letters and digits and no user name or password in a URL. That covers settings such as `"FASTMCP_LOG_LEVEL": "ERROR"` and tags such as `"x-exa-source": "claude-code-plugin"`. URL queries follow the same rule for each parameter (`?client=claude-code-plugin` is fine, `?api_key=…` is refused). `${CLAUDE_PLUGIN_ROOT}` and `${PLUGIN_ROOT}` in the command, arguments or plain `env` values become the installed plugin's folder when the server starts; they are never keys. The same rules apply to imports, Integrations › Connections › Edit as mcp.json and the CLI. Defaults may also appear in URL and header references (`${LOGFIRE_MCP_URL:-https://logfire-us.pydantic.dev/mcp}`).
 
 Imported servers may also carry `description`, `note`, `_note`, `_comment`, `_meta` and `disabled`, which have no effect (imported servers start disabled), and `timeout` and `autoApprove`, which are listed as notes because Themis's own timeouts and approvals apply. A plugin's `userConfig` declaration is noted, since its settings are entered in Settings › Secrets. Preset `oauth` clients and `cwd` are still unsupported.
 
@@ -107,7 +107,7 @@ command is `npx`, `uvx`, `docker` or a program in `~/.local/bin` starts as it do
 terminal. A program that still cannot be found is named in the connection details ("'npx'
 was not found on this computer"); install it or save the command with its full path.
 
-## Edit as mcp.json (Integrations › MCP)
+## Edit as mcp.json (Integrations › Connections)
 
 **Open** writes your personal (non-marketplace) global MCP servers to one copy,
 `mcp-edit/mcp.json` in the app data folder, in the standard `mcpServers` shape that Claude
@@ -214,6 +214,18 @@ Catalog tiles reuse persisted full-marketplace checks. Scans check up to four pa
 Derived metadata and full previews are stored under app-data `compatibility-cache/<marketplace>/`, separately from the revisioned integration registry. They persist across navigation and server restarts. Interrupted work resumes on the next scan/browse/preview request, retaining completed entries. Refresh explicitly replaces the snapshot; source changes and cache schema changes invalidate it. Catalogs are limited to 2,000 uniquely named entries; individual persisted files retain the existing 32 MiB store limit. No MCP server or hook executes during scanning.
 
 A per-marketplace OS lock allows one scan at a time and blocks removal while it runs (a retryable busy error). Previews and installs don't take it: an entry's saved check is written atomically, and the catalog check goes on around it. Desktop installs include the reviewed `check_revision`: if that entry was checked again, installation stops and asks the user to reopen the plugin. The validated saved package is installed, so a later upstream edit cannot change the approved contents. Updating through the CLI explicitly refreshes the full marketplace first. Previously installed packages remain available during scans.
+
+## Icons
+
+A plugin's icon is, in order: its own icon (a bundled SVG, PNG or WebP up to 256 KiB, or an HTTPS URL); a bundled brand logo; a tile with its initial on a colour from its name. HTTPS icons are downloaded once, during the compatibility check, and browsing makes no network requests. Saved icons live in the content-named app-data `plugin-icons/` folder, so an installed plugin keeps its icon after its source is removed.
+
+Brand logos come from [Simple Icons](https://simpleicons.org) (CC0; the marks themselves remain their owners' trademarks), limited to publishers in the catalog (`web/src/lib/brandLogos.json`, `crates/core/builtins/plugin-brands.json`; a test keeps the set under 300 KiB). A logo is matched on the GitHub owner in an entry's source URL, or on `author` in the official catalog only, because `author` is just a claim; never on an MCP domain. Saving a plugin can't set either field.
+
+## Updates
+
+When the app opens, each shown source not checked in the last day is checked for upstream changes in the background (Settings › General › Check sources for updates, on by default). A Git source compares its latest commit (`git ls-remote`) and downloads again only if it moved; an entry in its own repository compares that repository's ref, unless the catalog pins a `sha`; a folder compares a bounded hash of its files, not modification times. Only entries that changed are checked again. If a source can't be reached, its saved checks stay and it is tried again next time.
+
+An installed plugin whose upstream package differs from what was installed shows the version change and Update. Updating installs the newly checked package and is always your choice. Connections and hooks that are new or changed arrive turned off; unchanged ones keep their switch. `themis plugin updates` lists them, and `themis plugin marketplace changes NAME` looks for changes now.
 
 ## Sources
 
