@@ -162,6 +162,13 @@ pub fn git_diff_head(root: &Path) -> Result<Vec<DiffFile>, String> {
     Ok(parse_diff(&String::from_utf8_lossy(&bytes)))
 }
 
+/// What a branch adds since it left the current one: `git diff HEAD...refs/heads/<branch>`.
+pub fn git_diff_branch(root: &Path, branch: &str) -> Result<Vec<DiffFile>, String> {
+    let range = format!("HEAD...refs/heads/{branch}");
+    let bytes = git_output(root, &["diff", "--no-color", "-U3", &range, "--"])?;
+    Ok(parse_diff(&String::from_utf8_lossy(&bytes)))
+}
+
 /// Runs `git diff --cached --no-color -U3` (staged changes; used when the repo
 /// has no `HEAD` yet) and parses it.
 pub fn git_diff_cached(root: &Path) -> Result<Vec<DiffFile>, String> {

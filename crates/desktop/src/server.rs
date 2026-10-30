@@ -857,6 +857,16 @@ async fn dispatch_command(
                 .await?
         ),
         "list_diff" => output!(state.list_diff(arg(&args, "threadId")?).await?),
+        "branch_diff" => output!(
+            state
+                .branch_diff(arg(&args, "projectRoot")?, arg(&args, "branch")?)
+                .await?
+        ),
+        "switch_branch" => output!(
+            state
+                .switch_branch(arg(&args, "projectRoot")?, arg(&args, "branch")?)
+                .await?
+        ),
         "get_workspace" => output!(
             state
                 .get_workspace(
