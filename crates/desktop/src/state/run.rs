@@ -584,6 +584,10 @@ impl AppState {
                             | themis_core::runtime::RunEvent::Failed { .. }
                     );
                     if terminal {
+                        // The run is over: its pages stop drawing until something needs them.
+                        if let Some(chat) = pump_state.inner.browsers.existing(&pump_thread) {
+                            chat.freeze_pages().await;
+                        }
                         let root = pump_root.clone();
                         let before = changes_before.clone();
                         let files = tokio::task::spawn_blocking(move || {
