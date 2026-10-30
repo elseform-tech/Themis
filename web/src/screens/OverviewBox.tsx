@@ -134,7 +134,7 @@ export function OverviewBox({ threadId, overview, onOpenMedia }: { threadId: str
   const { dispatch } = useApp();
   const { changes, tasks, browser, media, cost, collapsed, setCollapsed } = overview;
   const open = (tab?: WorkspaceTab) => dispatch({ type: "ui/diff-panel", open: true, ...(tab ? { tab } : {}) });
-  const taskText = tasks ? [tasks.running ? `${tasks.running} running` : "", tasks.attention ? `${tasks.attention} need you` : "", tasks.queued ? `${tasks.queued} queued` : ""].filter(Boolean).join(" · ") : "";
+  const taskText = tasks ? [tasks.running ? `${tasks.running} running` : "", tasks.attention ? `${tasks.attention} need a look` : "", tasks.queued ? `${tasks.queued} queued` : ""].filter(Boolean).join(" · ") : "";
   return (
     <section className={`themis-overview${collapsed ? " is-collapsed" : ""}`} aria-label="Chat overview">
       <div className="themis-overview-head">

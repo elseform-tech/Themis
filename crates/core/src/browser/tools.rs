@@ -70,6 +70,7 @@ pub fn browser_tools(approvals: Arc<dyn ApprovalHook>, scope: BrowserScope) -> V
         Box::new(BrowserSelect { base: base.clone() }),
         Box::new(BrowserPress { base: base.clone() }),
         Box::new(BrowserScroll { base: base.clone() }),
+        Box::new(BrowserMove { base: base.clone() }),
         Box::new(BrowserTabs { base: base.clone() }),
     ];
     tools.extend(devtools::devtools(&base));
@@ -558,6 +559,42 @@ impl ToolRuntime for BrowserScroll {
                 format!("browser_scroll {direction}"),
                 "scrolling".to_owned(),
                 |chat| async move { chat.scroll(&direction, reference.as_deref()).await },
+            )
+            .await
+    }
+}
+
+/// Arguments for `browser_move`.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, ToolInput)]
+pub struct MoveArgs {
+    #[input(description = "CSS pixels from the left of the visible page")]
+    pub x: f64,
+    #[input(description = "CSS pixels from the top of the visible page")]
+    pub y: f64,
+}
+
+#[tool(
+    name = "browser_move",
+    description = "Move the mouse to a point of the visible page without clicking: to aim in a game, where the view turns with the distance moved, or to open a hover menu.",
+    input = MoveArgs,
+)]
+struct BrowserMove {
+    base: Base,
+}
+
+#[async_trait]
+impl ToolRuntime for BrowserMove {
+    async fn execute(&self, args: Value) -> Result<Value, ToolCallError> {
+        let MoveArgs { x, y } = parse_tool_args("browser_move", args)?;
+        let label = format!("({}, {})", x.round(), y.round());
+        self.base
+            .act(
+                "browser_move",
+                RiskLevel::Network,
+                None,
+                format!("browser_move {label}"),
+                format!("moving the mouse to {label}"),
+                |chat| async move { chat.move_point(x, y).await },
             )
             .await
     }

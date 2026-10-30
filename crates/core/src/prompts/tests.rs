@@ -164,6 +164,11 @@ const ALL: &[(&str, &str, &[&str])] = &[
     (RUNTIME_SILENT_CUT_OFF, "runtime-silent-cut-off", &[]),
     (RUNTIME_EMPTY_ANSWER, "runtime-empty-answer", &[]),
     (RUNTIME_TURN_SUMMARY, "runtime-turn-summary", &[]),
+    (
+        RUNTIME_REPEATED_ACTION,
+        "runtime-repeated-action",
+        &["times"],
+    ),
     (RUNTIME_LOOP_WARNING, "runtime-loop-warning", &[]),
     (RUNTIME_REPEAT_NOTE, "runtime-repeat-note", &[]),
     (

@@ -456,6 +456,61 @@ async fn the_speaker_starts_off_and_turns_on_for_current_and_new_pages() {
     hub.close_chat("chat-sound").await;
 }
 
+/// The agent can aim without clicking, and opening the same page again reuses its tab.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_agent_moves_the_mouse_and_reopening_a_page_reuses_its_tab() {
+    let _browser = ONE_BROWSER.lock().await;
+    let data = tempfile::tempdir().unwrap();
+    let Some(hub) = hub(data.path()) else { return };
+    let site = MockServer::start().await;
+    Mock::given(path("/aim"))
+        .respond_with(ResponseTemplate::new(200).set_body_raw(
+            r#"<!doctype html><title>Aim</title><body style="margin:0;height:600px"><p id="out">still</p>
+<script>document.addEventListener('mousemove', e => { document.getElementById('out').textContent = 'moved to ' + e.clientX; });</script></body>"#,
+            "text/html",
+        ))
+        .mount(&site)
+        .await;
+    let project = tempfile::tempdir().unwrap();
+    let chat = hub.chat("chat-aim", project.path());
+    let tools = themis_core::browser::tools::browser_tools(
+        Arc::new(FnHook::new(|_: &ToolAction| Approval::AllowOnce)),
+        themis_core::browser::tools::BrowserScope {
+            permissions: themis_core::tools::site_permissions::SitePermissions::new(
+                Default::default(),
+                None,
+            ),
+            chat: Arc::clone(&chat),
+            cancel: None,
+            media: None,
+        },
+    );
+    let tool = |name: &str| tools.iter().find(|tool| tool.name() == name).unwrap();
+    let url = format!("{}/aim", site.uri());
+    tool("browser_open")
+        .execute(json!({"url": url}))
+        .await
+        .unwrap();
+    let moved = tool("browser_move")
+        .execute(json!({"x": 300, "y": 100}))
+        .await
+        .unwrap();
+    assert!(
+        moved["snapshot"].as_str().unwrap().contains("moved to 300"),
+        "{moved}"
+    );
+    assert!(tool("browser_move")
+        .execute(json!({"x": 99999, "y": 1}))
+        .await
+        .is_err());
+    let again = tool("browser_open")
+        .execute(json!({"url": url, "new_tab": true}))
+        .await
+        .unwrap();
+    // Only with more than one tab does a result say which it is.
+    assert!(again.get("tab").is_none(), "{again}");
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn the_agent_clicks_a_point_of_a_canvas_seen_in_a_screenshot() {
     let _browser = ONE_BROWSER.lock().await;
