@@ -23,8 +23,8 @@ vi.mock("../lib/tauri", () => ({
 }));
 
 const diff = { available: true, files: [
-  { path: "notes/a.md", status: "added" as const, preexisting: false, added: 0, removed: 0, hunks: [{ old_start: 0, old_lines: 0, new_start: 1, new_lines: 2, lines: [{ kind: "add" as const, text: "# A" }, { kind: "add" as const, text: "" }] }] },
-  { path: "src/routes.ts", status: "modified" as const, preexisting: false, added: 0, removed: 0, hunks: [{ old_start: 1, old_lines: 2, new_start: 1, new_lines: 2, lines: [{ kind: "context" as const, text: "x" }, { kind: "del" as const, text: "old" }, { kind: "add" as const, text: "new" }] }] },
+  { path: "notes/a.md", status: "added" as const, preexisting: false, added: 2, removed: 0, hunks: [{ old_start: 0, old_lines: 0, new_start: 1, new_lines: 2, lines: [{ kind: "add" as const, text: "# A" }, { kind: "add" as const, text: "" }] }] },
+  { path: "src/routes.ts", status: "modified" as const, preexisting: false, added: 1, removed: 1, hunks: [{ old_start: 1, old_lines: 2, new_start: 1, new_lines: 2, lines: [{ kind: "context" as const, text: "x" }, { kind: "del" as const, text: "old" }, { kind: "add" as const, text: "new" }] }] },
 ] };
 const media: ChatMessage[] = [{ id: "m1", role: "assistant", text: "Here", final: true, media: [{ path: "/data/shot.png", name: "shot.png", kind: "image" }] }];
 
