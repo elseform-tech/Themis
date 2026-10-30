@@ -656,7 +656,6 @@ impl PluginStore {
                 "lspServers",
                 "dependencies",
                 "settings",
-                "userConfig",
                 "channels",
             ] {
                 if entry.get(field).is_some() {
@@ -932,12 +931,19 @@ fn import_directory(
         "outputStyles",
         "settings",
         "dependencies",
-        "userConfig",
         "experimental",
     ] {
         if manifest.get(field).is_some() {
             spec.unsupported.push(field.into());
         }
+    }
+    if [Some(&manifest), entry]
+        .into_iter()
+        .flatten()
+        .any(|source| source.get("userConfig").is_some())
+    {
+        spec.notices
+            .push("Install settings (userConfig) are entered in Settings › Secrets".into());
     }
     for (directory, label) in [
         ("agents/", "Claude subagents"),
@@ -1382,6 +1388,20 @@ fn import_mcp_components(
     for (name, raw) in value.as_object().context("Invalid MCP configuration")? {
         match import_mcp_server(name, raw, opencode) {
             Ok(server) => {
+                for (field, note) in [
+                    (
+                        "timeout",
+                        "its timeout is not used; Themis's own timeouts apply",
+                    ),
+                    (
+                        "autoApprove",
+                        "its automatic approvals are not used; Themis approvals apply",
+                    ),
+                ] {
+                    if raw.get(field).is_some() {
+                        spec.notices.push(format!("MCP connection {name}: {note}"));
+                    }
+                }
                 // The same server is often declared both in plugin.json and in .mcp.json.
                 let same = |existing: &McpServer| {
                     serde_json::to_value(existing).ok() == serde_json::to_value(&server).ok()
@@ -1413,14 +1433,98 @@ fn import_mcp_components(
     }
     Ok(())
 }
+const LITERAL_REFUSED: &str = "Imported credentials/environment values must use ${VARIABLE} or {env:VARIABLE}; literal values are unsupported";
+
+/// A value that must name a key (an OAuth secret, a bearer token): no default allowed.
 fn environment_reference(value: &str) -> anyhow::Result<String> {
-    let name = value.strip_prefix("${").and_then(|v| v.strip_suffix('}'))
-        .or_else(|| value.strip_prefix("{env:").and_then(|v| v.strip_suffix('}')))
-        .context("Imported credentials/environment values must use ${VARIABLE} or {env:VARIABLE}; literal values are unsupported")?;
-    if name.is_empty() || !name.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_') {
-        bail!("Unsupported environment reference");
+    match crate::plugins::keys::reference(value) {
+        Some((name, None)) => Ok(name),
+        Some((_, Some(_))) => bail!("Unsupported environment reference"),
+        None if value.contains("${") || value.contains("{env:") => {
+            bail!("Unsupported environment reference")
+        }
+        None => bail!(LITERAL_REFUSED),
     }
-    Ok(name.into())
+}
+/// `env` entries: references become keys (with any default), plain non-secret values and
+/// plugin-folder paths are kept as written, and anything else is refused.
+fn import_env(server: &mut McpServer, env: &Value) -> anyhow::Result<()> {
+    for (key, value) in env
+        .as_object()
+        .context("MCP environment must be an object")?
+    {
+        let value = value
+            .as_str()
+            .context("MCP environment must contain strings")?;
+        let names_plugin_root = crate::plugins::keys::PLUGIN_ROOTS
+            .iter()
+            .any(|root| value.contains(root));
+        match crate::plugins::keys::reference(value).filter(|_| !names_plugin_root) {
+            Some((name, default)) => {
+                add_defaults(
+                    server,
+                    default.map(|d| (name.clone(), d)).into_iter().collect(),
+                )?;
+                server.env.insert(key.clone(), name);
+            }
+            None if crate::plugins::keys::safe_plugin_value(key, value) => {
+                server.env_values.insert(key.clone(), value.to_owned());
+            }
+            None => {
+                environment_reference(value)?;
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Headers: plain non-secret values are kept, `Authorization: Bearer ${NAME}` becomes the
+/// bearer key, and every other value must be a `prefix${NAME}` template.
+fn import_headers(server: &mut McpServer, headers: &Value) -> anyhow::Result<()> {
+    for (key, value) in headers
+        .as_object()
+        .context("MCP headers must be an object")?
+    {
+        let value = value
+            .as_str()
+            .context("MCP header must reference a key as ${NAME}")?;
+        if !value.contains("${") && !value.contains("{env:") {
+            if !crate::plugins::keys::safe_literal(key, value) {
+                crate::plugins::keys::header_template(value)?;
+            }
+            server.header_values.insert(key.clone(), value.to_owned());
+            continue;
+        }
+        // `{env:NAME}` (OpenCode) and `${env:NAME}` read the same as `${NAME}`.
+        let (template, defaults) = crate::plugins::keys::normalize_references(value)
+            .context("MCP header values must be an optional prefix followed by one ${NAME}")?;
+        add_defaults(server, defaults)?;
+        let bearer = template
+            .strip_prefix("Bearer ")
+            .filter(|token| token.starts_with("${"));
+        match bearer {
+            Some(token)
+                if key.eq_ignore_ascii_case("authorization") && server.bearer_env.is_none() =>
+            {
+                server.bearer_env = Some(environment_reference(token)?);
+            }
+            _ => {
+                crate::plugins::keys::header_template(&template)?;
+                server.headers.insert(key.clone(), template);
+            }
+        }
+    }
+    Ok(())
+}
+/// Defaults from `${NAME:-value}`: plain, non-secret values only.
+fn add_defaults(server: &mut McpServer, defaults: Vec<(String, String)>) -> anyhow::Result<()> {
+    for (name, default) in defaults {
+        if !crate::plugins::keys::safe_literal(&name, &default) {
+            bail!(LITERAL_REFUSED);
+        }
+        server.defaults.insert(name, default);
+    }
+    Ok(())
 }
 fn import_mcp_server(name: &str, raw: &Value, opencode: bool) -> anyhow::Result<McpServer> {
     if !safe_name(name) {
@@ -1449,6 +1553,16 @@ fn import_mcp_server(name: &str, raw: &Value, opencode: bool) -> anyhow::Result<
             "headers",
             "enabled",
             "bearer_env",
+            // Accepted without effect: descriptions and notes, Claude's own switch (imported
+            // servers start disabled), its timeout and auto-approval (Themis's apply).
+            "description",
+            "note",
+            "_note",
+            "_comment",
+            "_meta",
+            "disabled",
+            "timeout",
+            "autoApprove",
         ]
     };
     let mut compatibility_error = None;
@@ -1526,22 +1640,14 @@ fn import_mcp_server(name: &str, raw: &Value, opencode: bool) -> anyhow::Result<
         server.args = serde_json::from_value(args.clone()).context("Invalid MCP arguments")?;
     }
     if let Some(url) = raw.get("url") {
-        server.url = Some(url.as_str().context("MCP URL must be a string")?.into());
+        let url = url.as_str().context("MCP URL must be a string")?;
+        let (url, defaults) = crate::plugins::keys::normalize_references(url)
+            .context("MCP URL references must be ${NAME}")?;
+        server.url = Some(url);
+        add_defaults(&mut server, defaults)?;
     }
     if let Some(env) = raw.get(if opencode { "environment" } else { "env" }) {
-        for (key, value) in env
-            .as_object()
-            .context("MCP environment must be an object")?
-        {
-            server.env.insert(
-                key.clone(),
-                environment_reference(
-                    value
-                        .as_str()
-                        .context("MCP environment must contain strings")?,
-                )?,
-            );
-        }
+        import_env(&mut server, env)?;
     }
     if let Some(bearer) = raw.get("bearer_env") {
         server.bearer_env = Some(
@@ -1552,30 +1658,7 @@ fn import_mcp_server(name: &str, raw: &Value, opencode: bool) -> anyhow::Result<
         );
     }
     if let Some(headers) = raw.get("headers") {
-        for (key, value) in headers
-            .as_object()
-            .context("MCP headers must be an object")?
-        {
-            // `{env:NAME}` (OpenCode) reads the same as `${NAME}`.
-            let template = value
-                .as_str()
-                .context("MCP header must reference a key as ${NAME}")?
-                .replace("{env:", "${");
-            let bearer = template
-                .strip_prefix("Bearer ")
-                .filter(|token| token.starts_with("${"));
-            match bearer {
-                Some(token)
-                    if key.eq_ignore_ascii_case("authorization") && server.bearer_env.is_none() =>
-                {
-                    server.bearer_env = Some(environment_reference(token)?);
-                }
-                _ => {
-                    crate::plugins::keys::header_template(&template)?;
-                    server.headers.insert(key.clone(), template);
-                }
-            }
-        }
+        import_headers(&mut server, headers)?;
     }
     if let Some(kind) = raw.get("type").and_then(Value::as_str) {
         if (["local", "stdio"].contains(&kind) && server.command.is_none())
@@ -1626,15 +1709,33 @@ pub fn mcp_server_to_standard(server: &McpServer) -> Value {
                 json!(format!("Bearer ${{{bearer}}}")),
             );
         }
+        headers.extend(
+            server
+                .header_values
+                .iter()
+                .map(|(name, value)| (name.clone(), json!(value))),
+        );
         if !headers.is_empty() {
             entry.insert("headers".into(), Value::Object(headers));
         }
     }
-    if !server.env.is_empty() {
+    if !server.env.is_empty() || !server.env_values.is_empty() {
         let env: serde_json::Map<String, Value> = server
             .env
             .iter()
-            .map(|(key, variable)| (key.clone(), json!(format!("${{{variable}}}"))))
+            .map(|(key, variable)| {
+                let value = match server.defaults.get(variable) {
+                    Some(default) => format!("${{{variable}:-{default}}}"),
+                    None => format!("${{{variable}}}"),
+                };
+                (key.clone(), json!(value))
+            })
+            .chain(
+                server
+                    .env_values
+                    .iter()
+                    .map(|(key, value)| (key.clone(), json!(value))),
+            )
             .collect();
         entry.insert("env".into(), Value::Object(env));
     }

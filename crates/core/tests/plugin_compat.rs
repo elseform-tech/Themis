@@ -366,3 +366,201 @@ mod layouts {
         }
     }
 }
+
+fn import_mcp(servers: serde_json::Value) -> Result<ImportPreview, String> {
+    let plugin = tempfile::tempdir().unwrap();
+    let root = plugin.path();
+    manifest(root, json!({"name": "fixture"}));
+    write(
+        root,
+        ".mcp.json",
+        &json!({ "mcpServers": servers }).to_string(),
+    );
+    let global = tempfile::tempdir().unwrap();
+    PluginStore::new(global.path().into(), None)
+        .inspect_path(root, Some("fixture"))
+        .map_err(|error| format!("{error:#}"))
+}
+
+#[test]
+fn install_time_settings_become_keys() {
+    // Google's toolbox servers read `${user_config.bigquery_project}`.
+    let preview = import_mcp(json!({"bigquery": {
+        "command": "npx",
+        "args": ["-y", "@toolbox-sdk/server@1.10.0", "--prebuilt", "bigquery", "--stdio"],
+        "env": {"BIGQUERY_PROJECT": "${user_config.bigquery_project}", "BIGQUERY_LOCATION": "${user_config.bigquery_location}"}
+    }}))
+    .unwrap();
+    let server = &preview.spec.mcp["bigquery"];
+    assert_eq!(server.env["BIGQUERY_PROJECT"], "BIGQUERY_PROJECT");
+    assert_eq!(
+        server.key_names(),
+        ["BIGQUERY_LOCATION", "BIGQUERY_PROJECT"]
+    );
+    assert_eq!(preview.report.status, "supported", "{:?}", preview.report);
+}
+
+#[test]
+fn defaults_and_plain_settings_are_kept_but_secrets_must_be_keys() {
+    let preview = import_mcp(json!({"grafana": {
+        "command": "docker",
+        "args": ["run", "--rm", "-i", "grafana/mcp-grafana"],
+        "env": {
+            "GRAFANA_URL": "${GRAFANA_URL:-http://localhost:3000}",
+            "GRAFANA_TOKEN": "${env:GRAFANA_TOKEN}",
+            "FASTMCP_LOG_LEVEL": "ERROR",
+            "X_GOOG_PROXY_HEADERS": "{\"User-Agent\":\"datacloud.other\"}"
+        }
+    }}))
+    .unwrap();
+    let server = &preview.spec.mcp["grafana"];
+    assert_eq!(server.env["GRAFANA_URL"], "GRAFANA_URL");
+    assert_eq!(server.defaults["GRAFANA_URL"], "http://localhost:3000");
+    assert_eq!(server.env["GRAFANA_TOKEN"], "GRAFANA_TOKEN");
+    assert_eq!(server.env_values["FASTMCP_LOG_LEVEL"], "ERROR");
+    assert_eq!(server.key_names(), ["GRAFANA_TOKEN", "GRAFANA_URL"]);
+
+    for (name, value) in [
+        ("API_KEY", "abc"),
+        ("GITHUB_TOKEN", "x"),
+        ("DB_PASSWORD", "hunter2"),
+        ("ENDPOINT", "https://user:pass@example.com"),
+        ("NOTE", "aZ8kQ2mX9pL4vB7nR3tY6wE1"),
+        ("REGION", "[your region, e.g. us-east-1 — required]"),
+    ] {
+        let error =
+            import_mcp(json!({"local": {"command": "run", "env": {name: value}}})).unwrap_err();
+        assert!(
+            error.contains("literal values are unsupported"),
+            "{name}: {error}"
+        );
+    }
+    let error = import_mcp(
+        json!({"local": {"command": "run", "env": {"API_KEY": "${API_KEY:-sk-live-123}"}}}),
+    )
+    .unwrap_err();
+    assert!(error.contains("literal values are unsupported"), "{error}");
+}
+
+#[test]
+fn plain_headers_and_harmless_queries_are_accepted() {
+    let preview = import_mcp(json!({
+        "exa": {"type": "http", "url": "https://mcp.exa.ai/mcp?client=claude-code-plugin", "headers": {"x-exa-source": "claude-code-plugin"}},
+        "postman": {"type": "http", "url": "https://mcp.postman.com/mcp", "headers": {"X-Plugin-Version": "0.3.0", "User-Agent": "postman-factory-plugin/0.3.0"}},
+        "sourcegraph": {"type": "http", "url": "${SOURCEGRAPH_ENDPOINT}/.api/mcp/all", "headers": {"Authorization": "token ${SOURCEGRAPH_ACCESS_TOKEN}"}},
+        "dynatrace": {"url": "${env:DT_ENVIRONMENT}/platform-reserved/mcp", "headers": {"Authorization": "Bearer ${env:DT_PLATFORM_TOKEN}", "Dt-External-Source": "dynatrace-for-ai/9.0.0"}}
+    }))
+    .unwrap();
+    let spec = &preview.spec;
+    assert_eq!(
+        spec.mcp["exa"].header_values["x-exa-source"],
+        "claude-code-plugin"
+    );
+    assert_eq!(
+        spec.mcp["exa"].url.as_deref(),
+        Some("https://mcp.exa.ai/mcp?client=claude-code-plugin")
+    );
+    assert_eq!(spec.mcp["postman"].header_values.len(), 2);
+    assert_eq!(
+        spec.mcp["sourcegraph"].key_names(),
+        ["SOURCEGRAPH_ENDPOINT", "SOURCEGRAPH_ACCESS_TOKEN"]
+    );
+    assert_eq!(
+        spec.mcp["dynatrace"].url.as_deref(),
+        Some("${DT_ENVIRONMENT}/platform-reserved/mcp")
+    );
+    assert_eq!(
+        spec.mcp["dynatrace"].bearer_env.as_deref(),
+        Some("DT_PLATFORM_TOKEN")
+    );
+
+    // Credentials in a header or a query stay refused.
+    for server in [
+        json!({"type": "http", "url": "https://mediaflows.example.com/mcp", "headers": {"cld-api-key": "api_key"}}),
+        json!({"type": "http", "url": "https://example.com/mcp?api_key=abc"}),
+        json!({"type": "http", "url": "https://example.com/mcp?token=${TOKEN}"}),
+        json!({"type": "http", "url": "http://example.com/mcp"}),
+    ] {
+        assert!(import_mcp(json!({ "remote": server })).is_err(), "{server}");
+    }
+}
+
+#[test]
+fn values_round_trip_through_the_standard_shape() {
+    let preview = import_mcp(json!({
+        "grafana": {"command": "docker", "env": {"GRAFANA_URL": "${GRAFANA_URL:-http://localhost:3000}", "LOG": "info"}},
+        "exa": {"type": "http", "url": "${EXA_BASE}/mcp", "headers": {"x-exa-source": "plugin", "X-Key": "Key ${EXA_KEY}"}}
+    }))
+    .unwrap();
+    for (name, server) in &preview.spec.mcp {
+        let standard = themis_core::plugins::mcp_server_to_standard(server);
+        let again = themis_core::plugins::mcp_server_from_standard(name, &standard).unwrap();
+        assert_eq!(
+            serde_json::to_value(server).unwrap(),
+            serde_json::to_value(&again).unwrap(),
+            "{name}: {standard}"
+        );
+    }
+}
+
+#[test]
+fn the_plugin_folder_is_a_value_not_a_key() {
+    let preview = import_mcp(json!({"okf": {
+        "command": "uv",
+        "args": ["run", "--script", "${CLAUDE_PLUGIN_ROOT}/scripts/mcp_server.py"],
+        "env": {"CONFIG": "${CLAUDE_PLUGIN_ROOT}/config.json", "DATA": "${PLUGIN_ROOT}/data"}
+    }}))
+    .unwrap();
+    let server = &preview.spec.mcp["okf"];
+    assert!(server.key_names().is_empty(), "{:?}", server.key_names());
+    assert_eq!(
+        server.env_values["CONFIG"],
+        "${CLAUDE_PLUGIN_ROOT}/config.json"
+    );
+    assert_eq!(server.env_values["DATA"], "${PLUGIN_ROOT}/data");
+}
+
+#[test]
+fn url_defaults_harmless_fields_and_install_settings() {
+    let preview = import_mcp(json!({
+        "logfire": {"type": "http", "url": "${LOGFIRE_MCP_URL:-https://logfire-us.pydantic.dev/mcp}"},
+        "datadog": {"type": "http", "url": "https://${DD_MCP_DOMAIN:-not-setup}/v1/mcp?referrer_ide=claude-code-plugin"},
+        "pricing": {"command": "uvx", "args": ["awslabs.aws-pricing-mcp-server@latest"], "description": "Prices", "_note": "x", "disabled": false, "timeout": 120000, "autoApprove": ["get_price"]}
+    }))
+    .unwrap();
+    let spec = &preview.spec;
+    assert_eq!(preview.report.status, "supported", "{:?}", preview.report);
+    assert_eq!(
+        spec.mcp["logfire"].url.as_deref(),
+        Some("${LOGFIRE_MCP_URL}")
+    );
+    assert_eq!(
+        spec.mcp["logfire"].defaults["LOGFIRE_MCP_URL"],
+        "https://logfire-us.pydantic.dev/mcp"
+    );
+    assert_eq!(spec.mcp["datadog"].defaults["DD_MCP_DOMAIN"], "not-setup");
+    assert_eq!(spec.notices.len(), 2, "{:?}", spec.notices);
+
+    // A preset OAuth client (registered for another app) stays a real gap.
+    let global = tempfile::tempdir().unwrap();
+    let plugin = tempfile::tempdir().unwrap();
+    let root = plugin.path();
+    manifest(
+        root,
+        json!({"name": "fixture", "userConfig": {"project": {"type": "string"}}}),
+    );
+    write(root, "skills/chat/SKILL.md", &skill_md("chat"));
+    write(
+        root,
+        ".mcp.json",
+        &json!({"mcpServers": {"slack": {"type": "http", "url": "https://mcp.slack.com/mcp", "oauth": {"clientId": "123.456", "callbackPort": 3118}}}}).to_string(),
+    );
+    let preview = PluginStore::new(global.path().into(), None)
+        .inspect_path(root, Some("fixture"))
+        .unwrap();
+    assert_eq!(preview.report.status, "partial", "{:?}", preview.report);
+    assert!(preview
+        .spec
+        .notices
+        .contains(&"Install settings (userConfig) are entered in Settings › Secrets".to_string()));
+}
