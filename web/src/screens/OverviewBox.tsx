@@ -17,6 +17,7 @@ export interface Overview {
   media: AttachedMedia[];
   cost: { usd?: number; free: boolean } | null;
   /** Something to show: the box (and the room the chat leaves for it) appears only then. */
+  /** Whether it has anything to list; the chat keeps its room either way. */
   visible: boolean;
   collapsed: boolean;
   setCollapsed: (collapsed: boolean) => void;
@@ -25,13 +26,7 @@ export interface Overview {
 /** Added and removed lines across the chat's changed files. */
 export function diffTotals(diff: DiffState | null | undefined): Overview["changes"] {
   if (!diff?.available || diff.files.length === 0) return null;
-  let added = 0;
-  let removed = 0;
-  for (const file of diff.files) for (const hunk of file.hunks) for (const line of hunk.lines) {
-    if (line.kind === "add") added++;
-    else if (line.kind === "del") removed++;
-  }
-  return { files: diff.files.length, added, removed };
+  return { files: diff.files.length, added: diff.files.reduce((sum, file) => sum + file.added, 0), removed: diff.files.reduce((sum, file) => sum + file.removed, 0) };
 }
 
 function browserLabel(state: BrowserState): string {
@@ -81,17 +76,6 @@ export function useOverview(threadId: string, messages: ChatMessage[]): Overview
     visible: !!(changes || tasks || shownBrowser || media.length || shownCost),
     collapsed, setCollapsed,
   };
-}
-
-/** Whether the chat keeps room for the overview box: from the first time the box shows in
- *  `threadId` until the chat changes. The box comes and goes with runs; moving the whole
- *  conversation each time was jumpy, and WebKit left the last message where it was. */
-export function useOverviewRoom(threadId: string, visible: boolean): boolean {
-  const [roomFor, setRoomFor] = useState<string | null>(null);
-  useEffect(() => {
-    if (visible && threadId) setRoomFor(threadId);
-  }, [visible, threadId]);
-  return visible || (threadId !== "" && roomFor === threadId);
 }
 
 /** Frame width asked for: the box is about 200 px wide, so two device pixels per CSS pixel. */
