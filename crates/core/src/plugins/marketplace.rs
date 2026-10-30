@@ -22,6 +22,38 @@ pub struct ImportPreview {
     /// Identifies a saved marketplace check of this entry, so an install can refuse a newer one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub check_revision: Option<String>,
+    /// [`package_hash`] of the checked package, kept when the saved check drops its contents.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub package_hash: Option<String>,
+}
+/// What a package contains, ignoring what people change after installing it: switches and the
+/// record of an earlier hash.
+pub(super) fn package_hash(spec: &PluginSpec) -> String {
+    use sha2::{Digest, Sha256};
+    let mut value = serde_json::to_value(spec).unwrap_or_default();
+    for server in value["mcp"]
+        .as_object_mut()
+        .into_iter()
+        .flat_map(|mcp| mcp.values_mut())
+    {
+        server["enabled"] = Value::Null;
+    }
+    for hook in value["hooks"].as_array_mut().into_iter().flatten() {
+        hook["enabled"] = Value::Null;
+    }
+    for field in ["package_hash", "disabled_skills", "origin"] {
+        value[field] = Value::Null;
+    }
+    format!("{:x}", Sha256::digest(value.to_string()))
+}
+/// A definition without its switch, to tell a changed part from one only turned on or off.
+fn same_definition<T: Serialize>(old: &T, new: &T) -> bool {
+    let plain = |part: &T| {
+        let mut value = serde_json::to_value(part).unwrap_or_default();
+        value["enabled"] = Value::Null;
+        value
+    };
+    plain(old) == plain(new)
 }
 impl ImportPreview {
     pub fn from_spec(spec: PluginSpec) -> anyhow::Result<Self> {
@@ -82,6 +114,7 @@ impl ImportPreview {
                 components,
             },
             check_revision: None,
+            package_hash: None,
         }
     }
 }
@@ -515,7 +548,11 @@ impl PluginStore {
         }
         Ok(value)
     }
-    async fn marketplace_directory(&self, name: &str, refresh: bool) -> anyhow::Result<PathBuf> {
+    pub(super) async fn marketplace_directory(
+        &self,
+        name: &str,
+        refresh: bool,
+    ) -> anyhow::Result<PathBuf> {
         let source = self
             .marketplaces()?
             .into_iter()
@@ -585,17 +622,23 @@ impl PluginStore {
             if previous.is_some_and(|p| p.source.as_deref() != Some(marketplace)) {
                 bail!("A different plugin already uses this name; rename it first");
             }
+            spec.package_hash = Some(package_hash(&spec));
             if let Some(previous) = previous {
+                // Parts that are new or changed arrive turned off, however the old one was set.
                 for (name, server) in &mut spec.mcp {
-                    server.enabled = previous.spec.mcp.get(name).is_some_and(|s| s.enabled);
+                    server.enabled = previous
+                        .spec
+                        .mcp
+                        .get(name)
+                        .is_some_and(|old| old.enabled && same_definition(old, &*server));
                 }
                 for hook in &mut spec.hooks {
                     hook.enabled = previous
                         .spec
                         .hooks
                         .iter()
-                        .find(|h| h.name == hook.name)
-                        .is_some_and(|h| h.enabled);
+                        .find(|old| old.name == hook.name)
+                        .is_some_and(|old| old.enabled && same_definition(old, &*hook));
                 }
                 for id in &previous.spec.disabled_skills {
                     if spec.skills.iter().any(|s| &s.id == id) && !spec.disabled_skills.contains(id)
@@ -912,6 +955,85 @@ async fn clone_repository(
         run_git(&["checkout", "--detach", "FETCH_HEAD"], Some(path)).await?;
     }
     Ok(())
+}
+/// The commit a remote reference points at, without downloading anything.
+pub(super) async fn git_remote_ref(url: &str, reference: Option<&str>) -> anyhow::Result<String> {
+    let reference = reference.unwrap_or("HEAD");
+    if reference.starts_with('-') || reference.chars().any(char::is_control) {
+        bail!("Invalid repository reference");
+    }
+    let mut command = tokio::process::Command::new("git");
+    command
+        .args([
+            "-c",
+            "core.hooksPath=/dev/null",
+            "ls-remote",
+            "--",
+            url,
+            reference,
+        ])
+        .env_clear();
+    for name in ["PATH", "HOME", "SYSTEMROOT"] {
+        if let Some(value) = std::env::var_os(name) {
+            command.env(name, value);
+        }
+    }
+    let output = tokio::time::timeout(
+        std::time::Duration::from_secs(30),
+        command
+            .env("GIT_TERMINAL_PROMPT", "0")
+            .kill_on_drop(true)
+            .stderr(std::process::Stdio::null())
+            .output(),
+    )
+    .await
+    .context("Repository check timed out")??;
+    if !output.status.success() {
+        bail!("Repository check failed");
+    }
+    Ok(String::from_utf8_lossy(&output.stdout)
+        .split_whitespace()
+        .next()
+        .unwrap_or_default()
+        .to_owned())
+}
+/// A bounded hash of a folder's files: names, sizes and contents, not modification times. Past
+/// the bound only names and sizes count.
+pub(super) fn tree_fingerprint(root: &Path) -> anyhow::Result<String> {
+    use sha2::{Digest, Sha256};
+    const FILES: usize = 5000;
+    const CONTENT_BYTES: u64 = 64 * 1024 * 1024;
+    let mut hash = Sha256::new();
+    let mut stack = vec![root.to_path_buf()];
+    let (mut files, mut read) = (0, 0u64);
+    while let Some(directory) = stack.pop() {
+        let mut entries = fs::read_dir(&directory)?.collect::<Result<Vec<_>, _>>()?;
+        entries.sort_by_key(|entry| entry.file_name());
+        for entry in entries {
+            if entry.file_name() == ".git" {
+                continue;
+            }
+            let path = entry.path();
+            let metadata = fs::symlink_metadata(&path)?;
+            if metadata.is_dir() {
+                stack.push(path);
+                continue;
+            }
+            files += 1;
+            if files > FILES {
+                return Ok(format!("{:x}", hash.finalize()));
+            }
+            hash.update(path.strip_prefix(root)?.to_string_lossy().as_bytes());
+            hash.update(metadata.len().to_le_bytes());
+            if metadata.is_symlink() {
+                hash.update(fs::read_link(&path)?.to_string_lossy().as_bytes());
+            } else if read + metadata.len() <= CONTENT_BYTES {
+                read += metadata.len();
+                hash.update(fs::read(&path)?);
+            }
+        }
+    }
+    Ok(format!("{:x}", hash.finalize()))
 }
 async fn run_git(args: &[&str], directory: Option<&Path>) -> anyhow::Result<()> {
     let mut command = tokio::process::Command::new("git");

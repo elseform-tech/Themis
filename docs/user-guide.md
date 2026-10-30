@@ -492,6 +492,7 @@ Preferences persisted to `settings.json`:
 | `projects_directory` | Fixed parent folder for new projects | `~/ThemisOS/Projects` |
 | `text_size` | Conversation text size (12–18 px) | `13` |
 | `sidebar_hover` | Reveal collapsed navigation on edge hover | `true` |
+| `check_sources_for_updates` | Look for plugin updates in sources not checked today when the app opens | `true` |
 | `config_editor` | Editor Settings → Permissions opens `runtime.jsonc` with (`""` = system text editor; or `vscode`, `cursor`, `windsurf`, `antigravity`, `zed`, `sublime`, `bbedit`, `xcode`) | `""` |
 
 Appearance and model defaults each have their own reset action.

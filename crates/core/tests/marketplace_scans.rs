@@ -383,3 +383,177 @@ async fn sources_that_are_not_marketplaces_say_so_in_one_line() {
         .await
         .is_err());
 }
+
+#[tokio::test]
+async fn only_changed_entries_are_checked_again_and_the_plugin_offers_an_update() {
+    let data = tempfile::tempdir().unwrap();
+    let source = tempfile::tempdir().unwrap();
+    acme_catalog(source.path());
+    fs::create_dir_all(source.path().join("other")).unwrap();
+    fs::write(
+        source.path().join("other/SKILL.md"),
+        "---\nname: other\ndescription: Other\n---\nOther instructions",
+    )
+    .unwrap();
+    fs::write(
+        source.path().join(".claude-plugin/marketplace.json"),
+        json!({"name":"acme","plugins":[
+            {"name":"quick","source":"./quick"},
+            {"name":"other","source":"./other"}
+        ]})
+        .to_string(),
+    )
+    .unwrap();
+    let store = PluginStore::new(data.path().into(), None);
+    store
+        .add_marketplace("acme", source.path().to_str().unwrap())
+        .unwrap();
+    let first = store.wait_marketplace_scan("acme", false).await.unwrap();
+    let quick_check = first.checks["quick"].check_revision.clone();
+    let other_check = first.checks["other"].check_revision.clone();
+    store
+        .install_scanned("global", "acme", "quick", false, None)
+        .await
+        .unwrap();
+    assert!(store.plugin_updates().unwrap().is_empty(), "just installed");
+
+    // Nothing upstream changed: nothing is checked again.
+    assert_eq!(store.check_source_for_changes("acme").await.unwrap(), 0);
+    let same = store.wait_marketplace_scan("acme", false).await.unwrap();
+    assert_eq!(same.checks["quick"].check_revision, quick_check);
+    assert!(store.plugin_updates().unwrap().is_empty());
+
+    // One entry changes: only that one gets a new check, and it offers an update.
+    fs::write(
+        source.path().join("quick/SKILL.md"),
+        "---\nname: quick\ndescription: Quick\n---\nNew instructions",
+    )
+    .unwrap();
+    assert_eq!(store.check_source_for_changes("acme").await.unwrap(), 1);
+    let changed = store.wait_marketplace_scan("acme", false).await.unwrap();
+    assert_ne!(changed.checks["quick"].check_revision, quick_check);
+    assert_eq!(changed.checks["other"].check_revision, other_check);
+    assert_eq!(changed.status, "ready");
+    let updates = store.plugin_updates().unwrap();
+    assert_eq!(updates.len(), 1);
+    assert_eq!(updates[0].name, "quick");
+
+    // Updating installs the newly checked package and clears the offer.
+    let updated = store
+        .install_scanned(
+            "global",
+            "acme",
+            "quick",
+            false,
+            updates[0].check_revision.as_deref(),
+        )
+        .await
+        .unwrap();
+    assert!(updated.spec.skills[0]
+        .instructions
+        .contains("New instructions"));
+    assert!(store.plugin_updates().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn an_update_turns_off_changed_parts_and_keeps_unchanged_ones_as_they_were() {
+    let data = tempfile::tempdir().unwrap();
+    let source = tempfile::tempdir().unwrap();
+    fs::create_dir_all(source.path().join(".claude-plugin")).unwrap();
+    let plugin = source.path().join("guarded");
+    fs::create_dir_all(plugin.join("hooks")).unwrap();
+    fs::create_dir_all(plugin.join(".claude-plugin")).unwrap();
+    fs::write(
+        plugin.join(".claude-plugin/plugin.json"),
+        r#"{"name":"guarded"}"#,
+    )
+    .unwrap();
+    let hooks = |start: &str| {
+        json!({"hooks":{
+            "SessionStart":[{"hooks":[{"type":"command","command":start}]}],
+            "PostToolUse":[{"hooks":[{"type":"command","command":"exit 0"}]}]
+        }})
+        .to_string()
+    };
+    fs::write(plugin.join("hooks/hooks.json"), hooks("echo one")).unwrap();
+    fs::write(
+        source.path().join(".claude-plugin/marketplace.json"),
+        json!({"name":"acme","plugins":[{"name":"guarded","source":"./guarded"}]}).to_string(),
+    )
+    .unwrap();
+    let store = PluginStore::new(data.path().into(), None);
+    store
+        .add_marketplace("acme", source.path().to_str().unwrap())
+        .unwrap();
+    store.wait_marketplace_scan("acme", false).await.unwrap();
+    let installed = store
+        .install_scanned("global", "acme", "guarded", true, None)
+        .await
+        .unwrap();
+    for hook in &installed.spec.hooks {
+        store
+            .set_component_enabled("global", "guarded", "hook", &hook.name, true)
+            .unwrap();
+    }
+    fs::write(plugin.join("hooks/hooks.json"), hooks("echo two")).unwrap();
+    assert_eq!(store.check_source_for_changes("acme").await.unwrap(), 1);
+    let updated = store
+        .install_scanned("global", "acme", "guarded", true, None)
+        .await
+        .unwrap();
+    let hook = |command: &str| {
+        updated
+            .spec
+            .hooks
+            .iter()
+            .find(|hook| hook.command == command)
+            .unwrap()
+            .enabled
+    };
+    assert!(!hook("echo two"), "changed hook arrives off");
+    assert!(hook("exit 0"), "unchanged hook stays on");
+}
+
+#[tokio::test]
+async fn opening_the_app_checks_only_sources_not_checked_today_and_shown() {
+    let data = tempfile::tempdir().unwrap();
+    let source = tempfile::tempdir().unwrap();
+    acme_catalog(source.path());
+    let store = PluginStore::new(data.path().into(), None);
+    store
+        .add_marketplace("acme", source.path().to_str().unwrap())
+        .unwrap();
+    store.wait_marketplace_scan("acme", false).await.unwrap();
+    store
+        .install_scanned("global", "acme", "quick", false, None)
+        .await
+        .unwrap();
+    fs::write(
+        source.path().join("quick/SKILL.md"),
+        "---\nname: quick\ndescription: Quick\n---\nChanged",
+    )
+    .unwrap();
+    let settle = || tokio::time::sleep(std::time::Duration::from_millis(300));
+    // Checked moments ago: not due.
+    store.check_sources().unwrap();
+    settle().await;
+    assert!(store.plugin_updates().unwrap().is_empty());
+    let scan_file = data.path().join("compatibility-cache/acme/scan.json");
+    let mut saved: serde_json::Value =
+        serde_json::from_slice(&fs::read(&scan_file).unwrap()).unwrap();
+    saved["checked_at"] = 1.into();
+    fs::write(&scan_file, saved.to_string()).unwrap();
+    // Due but hidden: left alone.
+    store.set_marketplace_enabled("acme", false).unwrap();
+    store.check_sources().unwrap();
+    settle().await;
+    assert!(store.plugin_updates().unwrap().is_empty());
+    // Due and shown: checked in the background, and the update appears.
+    store.set_marketplace_enabled("acme", true).unwrap();
+    store.check_sources().unwrap();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while store.plugin_updates().unwrap().is_empty() {
+        assert!(std::time::Instant::now() < deadline, "no update found");
+        tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+    }
+}
