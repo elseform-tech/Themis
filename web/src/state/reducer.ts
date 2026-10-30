@@ -561,7 +561,7 @@ export function applyThreadEvent(
     case "subagent_status":
       return updateSubagent(state, threadId, event.id, agent => ({ ...agent, text: event.text || agent.text, toolCalls: event.tool_calls, ranOn: event.model ?? agent.ranOn }));
     case "subagent_ended":
-      return updateSubagent(state, threadId, event.id, agent => ({ ...agent, status: event.status, result: event.result, toolCalls: event.tool_calls, seconds: event.seconds, ranOn: event.model ?? agent.ranOn }));
+      return updateSubagent(state, threadId, event.id, agent => ({ ...agent, status: event.status, checkPassed: event.check_passed, result: event.result, toolCalls: event.tool_calls, seconds: event.seconds, ranOn: event.model ?? agent.ranOn }));
     case "context_budget": {
       const rows = state.messages[threadId] ?? [];
       const last = rows[rows.length - 1];

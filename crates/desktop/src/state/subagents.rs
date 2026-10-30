@@ -247,6 +247,7 @@ impl SubagentKit {
         brief: String,
         model: String,
         write_paths: Vec<String>,
+        (done_when, check): (String, Option<String>),
     ) -> Arc<Subagent> {
         let agent = Arc::new(Subagent {
             id: uuid::Uuid::new_v4().simple().to_string()[..12].to_owned(),
@@ -255,6 +256,7 @@ impl SubagentKit {
             brief,
             model,
             earlier: Mutex::new(Vec::new()),
+            bar: Mutex::new((done_when, check)),
             write_paths,
             run_id: uuid::Uuid::new_v4().to_string(),
             started: Mutex::new(Instant::now()),
@@ -333,6 +335,7 @@ impl SubagentKit {
         let ending = match self.wait_for_slot(&agent).await {
             Some(permit) => {
                 let ending = self.run_child(&agent).await;
+                let ending = self.run_check(&agent, ending).await;
                 drop(permit);
                 ending
             }
@@ -442,6 +445,73 @@ impl SubagentKit {
             .collect())
     }
 
+    /// Runs the subagent's `check` after it finished, through the same shell tool it had, so
+    /// its sandbox and approval rules apply, and adds the outcome to its report.
+    async fn run_check(&self, agent: &Arc<Subagent>, mut ending: Ending) -> Ending {
+        let check = agent
+            .bar
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .1
+            .clone();
+        let Some(check) = check.filter(|_| ending.status == "finished") else {
+            return ending;
+        };
+        let (program, flag) = if cfg!(windows) {
+            ("cmd", "/C")
+        } else {
+            ("sh", "-c")
+        };
+        let approvals = self.approvals(agent);
+        let outcome = match self.tools(agent, approvals) {
+            Ok(tools) => match tools.iter().find(|tool| tool.name() == "shell") {
+                Some(shell) => shell
+                    .execute(json!({"command": program, "args": [flag, &check]}))
+                    .await
+                    .map_err(|error| error.to_string()),
+                None => Err("no shell tool".to_owned()),
+            },
+            Err(error) => Err(error),
+        };
+        let (passed, output) = match outcome {
+            Ok(value) => (
+                Some(value["exit_code"].as_i64() == Some(0)),
+                [&value["stdout"], &value["stderr"]]
+                    .iter()
+                    .filter_map(|part| part.as_str())
+                    .collect::<Vec<_>>()
+                    .join("\n"),
+            ),
+            Err(error) => (None, error),
+        };
+        let words = match passed {
+            Some(true) => "passed",
+            Some(false) => "FAILED",
+            None => "could not run",
+        };
+        ending.result = format!(
+            "{}\n\n{}",
+            ending.result,
+            themis_core::prompts::fill(
+                themis_core::prompts::SUBAGENT_CHECK_RESULT,
+                &[
+                    ("command", check.as_str()),
+                    ("outcome", words),
+                    ("output", output.trim()),
+                ],
+            )
+        );
+        ending.check_passed = passed;
+        let _ = self.state.inner.diagnostics.append_with_level(
+            "subagents",
+            "check",
+            "info",
+            json!({"thread_id": self.thread_id, "subagent_id": agent.id, "passed": passed}),
+            Some(&self.config.logging.level),
+        );
+        ending
+    }
+
     fn hook_runtime(
         &self,
         agent: &Subagent,
@@ -524,6 +594,7 @@ impl SubagentKit {
                     Ok(result) => result,
                     Err(error) => error.to_string(),
                 },
+                check_passed: None,
             };
             break;
         }
@@ -606,7 +677,7 @@ impl SubagentKit {
         let run = themis_core::runtime::run_task_with_evidence(
             llm,
             tools,
-            agent.task.lock().unwrap_or_else(|e| e.into_inner()).clone(),
+            agent.task_with_bar(),
             agent
                 .earlier
                 .lock()
@@ -675,6 +746,7 @@ impl SubagentKit {
             tool_calls,
             seconds,
             model: agent.progress().ran_on,
+            check_passed: ending.check_passed,
         });
         // Marked ended only now: a message picking it up again then follows this ending in the chat.
         {
@@ -809,6 +881,8 @@ pub(super) struct Subagent {
     pub(super) model: String,
     /// What it is working on now: its brief, or the latest message that picked it up again.
     task: Mutex<String>,
+    /// What must be true when it finishes, and the command that proves it.
+    bar: Mutex<(String, Option<String>)>,
     /// Its earlier exchanges with the main agent, when it was picked up again.
     earlier: Mutex<Vec<ConversationTurn>>,
     /// The project paths it may change, normalized; none when it is read-only.
@@ -869,6 +943,30 @@ impl Subagent {
         }
     }
 
+    /// Replaces what it is held to, when the main agent gave something new.
+    pub(super) fn set_bar(&self, done_when: Option<String>, check: Option<String>) {
+        let mut bar = self.bar.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(done_when) = done_when {
+            bar.0 = done_when;
+        }
+        if check.is_some() {
+            bar.1 = check;
+        }
+    }
+
+    /// What it works on now, with what it is held to.
+    fn task_with_bar(&self) -> String {
+        let task = self.task.lock().unwrap_or_else(|e| e.into_inner()).clone();
+        let bar = self.bar.lock().unwrap_or_else(|e| e.into_inner());
+        format!(
+            "{task}\n\n{}",
+            themis_core::prompts::fill(
+                themis_core::prompts::SUBAGENT_DONE_WHEN,
+                &[("done_when", &bar.0)],
+            )
+        )
+    }
+
     /// Picks an ended subagent up again on `message`, with its last exchange as history.
     fn reopen(&self, message: String) {
         let mut progress = self.progress.lock().unwrap_or_else(|e| e.into_inner());
@@ -903,6 +1001,8 @@ impl Subagent {
 struct Ending {
     status: String,
     result: String,
+    /// Whether its `check` passed; none when it had none or it could not run.
+    check_passed: Option<bool>,
 }
 
 impl Ending {
@@ -910,12 +1010,14 @@ impl Ending {
         Self {
             status: "stopped".into(),
             result,
+            check_passed: None,
         }
     }
     fn failed(result: String) -> Self {
         Self {
             status: "failed".into(),
             result,
+            check_passed: None,
         }
     }
 }
