@@ -1,0 +1,1 @@
+This skill comes from a Claude plugin command. $ARGUMENTS (and $1, $2, …) stand for the text the person wrote after the command. Where a line shows !`command`, run that command with your shell tool to see its output. Where it names @path, read that file. Then follow the instructions below.

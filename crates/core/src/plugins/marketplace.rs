@@ -19,6 +19,41 @@ pub struct ImportReport {
 pub struct ImportPreview {
     pub spec: PluginSpec,
     pub report: ImportReport,
+    /// Identifies a saved marketplace check of this entry, so an install can refuse a newer one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub check_revision: Option<String>,
+    /// [`package_hash`] of the checked package, kept when the saved check drops its contents.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub package_hash: Option<String>,
+}
+/// What a package contains, ignoring what people change after installing it: switches and the
+/// record of an earlier hash.
+pub(super) fn package_hash(spec: &PluginSpec) -> String {
+    use sha2::{Digest, Sha256};
+    let mut value = serde_json::to_value(spec).unwrap_or_default();
+    for server in value["mcp"]
+        .as_object_mut()
+        .into_iter()
+        .flat_map(|mcp| mcp.values_mut())
+    {
+        server["enabled"] = Value::Null;
+    }
+    for hook in value["hooks"].as_array_mut().into_iter().flatten() {
+        hook["enabled"] = Value::Null;
+    }
+    for field in ["package_hash", "disabled_skills", "origin"] {
+        value[field] = Value::Null;
+    }
+    format!("{:x}", Sha256::digest(value.to_string()))
+}
+/// A definition without its switch, to tell a changed part from one only turned on or off.
+fn same_definition<T: Serialize>(old: &T, new: &T) -> bool {
+    let plain = |part: &T| {
+        let mut value = serde_json::to_value(part).unwrap_or_default();
+        value["enabled"] = Value::Null;
+        value
+    };
+    plain(old) == plain(new)
 }
 impl ImportPreview {
     pub fn from_spec(spec: PluginSpec) -> anyhow::Result<Self> {
@@ -54,9 +89,20 @@ impl ImportPreview {
                 "Remove the unsupported component or install only supported components".into(),
             ),
         }));
+        components.extend(spec.notices.iter().map(|reason| ImportComponent {
+            kind: "package".into(),
+            name: spec.name.clone(),
+            status: "notice".into(),
+            field: None,
+            reason: Some(reason.clone()),
+            remedy: None,
+        }));
         let status = if spec.skills.is_empty() && spec.mcp.is_empty() && spec.hooks.is_empty() {
             "unsupported"
-        } else if components.iter().any(|c| c.status != "supported") {
+        } else if components
+            .iter()
+            .any(|c| !matches!(c.status.as_str(), "supported" | "notice"))
+        {
             "partial"
         } else {
             "supported"
@@ -67,6 +113,8 @@ impl ImportPreview {
                 status: status.into(),
                 components,
             },
+            check_revision: None,
+            package_hash: None,
         }
     }
 }
@@ -99,6 +147,22 @@ fn unsupported_mcp(
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Marketplace {
     pub name: String,
+    pub source: String,
+    /// Whether Discover shows this source.
+    #[serde(default = "shown")]
+    pub enabled: bool,
+}
+fn shown() -> bool {
+    true
+}
+/// The source every install starts with; it can be hidden but not removed.
+pub(super) const OFFICIAL_MARKETPLACE: &str = "claude-plugins-official";
+/// What a source is, read before adding it.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SourcePreview {
+    pub name: String,
+    pub publisher: String,
+    pub plugins: usize,
     pub source: String,
 }
 #[derive(Default, Serialize, Deserialize)]
@@ -156,6 +220,7 @@ impl PluginStore {
                     path.parent().context("Missing skill directory")?
                 },
                 allow_partial,
+                None,
             )?
         } else {
             let bytes = fs::read(&path)?;
@@ -302,7 +367,7 @@ impl PluginStore {
             if !directory.starts_with(staging.canonicalize()?) {
                 bail!("Plugin directory escapes repository");
             }
-            let mut spec = import_directory(&directory, allow_partial)?;
+            let mut spec = import_directory(&directory, allow_partial, None)?;
             if !name.is_empty() {
                 spec.name = name.into();
             } else if directory == staging.canonicalize()?
@@ -365,8 +430,9 @@ impl PluginStore {
                 &path,
                 &Catalogs {
                     sources: vec![Marketplace {
-                        name: "claude-plugins-official".into(),
+                        name: OFFICIAL_MARKETPLACE.into(),
                         source: "https://github.com/anthropics/claude-plugins-official.git".into(),
+                        enabled: true,
                     }],
                 },
             )?;
@@ -377,15 +443,16 @@ impl PluginStore {
         if !safe_name(name) {
             bail!("Invalid marketplace name");
         }
-        validate_source(source)?;
+        let source = normalize_source(source)?;
         let lock = self.marketplace_lock()?;
         let mut sources = self.read_marketplaces()?;
         if sources.iter().any(|s| s.name == name) {
-            bail!("Marketplace already exists");
+            bail!("A source named {name} is already added");
         }
         sources.push(Marketplace {
             name: name.into(),
-            source: source.into(),
+            source,
+            enabled: true,
         });
         let result = write_json(
             &self.global.join("marketplaces.json"),
@@ -394,7 +461,54 @@ impl PluginStore {
         lock.unlock()?;
         result
     }
+    /// Reads a source's manifest without adding it: `owner/repo`, an HTTPS Git URL or a local
+    /// folder. A Git source only fetches the manifest file.
+    pub async fn preview_source(&self, input: &str) -> anyhow::Result<SourcePreview> {
+        let source = normalize_source(input)?;
+        if source.starts_with("https://") {
+            let staging = self
+                .global
+                .join("marketplace-cache")
+                .join(format!(".preview-{}", revision()));
+            let result = read_git_manifest(&source, &staging).await;
+            if staging.exists() {
+                let _ = fs::remove_dir_all(&staging);
+            }
+            source_preview(&source, &result?)
+        } else {
+            let directory = PathBuf::from(&source);
+            if !directory.is_dir() {
+                bail!("This folder can't be read.");
+            }
+            source_preview(&source, &directory)
+        }
+    }
+    /// Adds a source under the name in its manifest, and returns that name.
+    pub async fn add_source(&self, input: &str) -> anyhow::Result<String> {
+        let preview = self.preview_source(input).await?;
+        self.add_marketplace(&preview.name, &preview.source)?;
+        Ok(preview.name)
+    }
+    pub fn set_marketplace_enabled(&self, name: &str, enabled: bool) -> anyhow::Result<()> {
+        let lock = self.marketplace_lock()?;
+        let mut sources = self.read_marketplaces()?;
+        sources
+            .iter_mut()
+            .find(|source| source.name == name)
+            .context("Unknown marketplace")?
+            .enabled = enabled;
+        let result = write_json(
+            &self.global.join("marketplaces.json"),
+            &Catalogs { sources },
+        );
+        lock.unlock()?;
+        result
+    }
+    /// Removes a source and its saved checks. Plugins installed from it stay installed.
     pub fn remove_marketplace(&self, name: &str) -> anyhow::Result<()> {
+        if name == OFFICIAL_MARKETPLACE {
+            bail!("The official source can't be removed; turn it off instead");
+        }
         let _scan_lock = self.scan_lock(name)?;
         let lock = self.marketplace_lock()?;
         let mut sources = self.read_marketplaces()?;
@@ -434,7 +548,11 @@ impl PluginStore {
         }
         Ok(value)
     }
-    async fn marketplace_directory(&self, name: &str, refresh: bool) -> anyhow::Result<PathBuf> {
+    pub(super) async fn marketplace_directory(
+        &self,
+        name: &str,
+        refresh: bool,
+    ) -> anyhow::Result<PathBuf> {
         let source = self
             .marketplaces()?
             .into_iter()
@@ -504,17 +622,23 @@ impl PluginStore {
             if previous.is_some_and(|p| p.source.as_deref() != Some(marketplace)) {
                 bail!("A different plugin already uses this name; rename it first");
             }
+            spec.package_hash = Some(package_hash(&spec));
             if let Some(previous) = previous {
+                // Parts that are new or changed arrive turned off, however the old one was set.
                 for (name, server) in &mut spec.mcp {
-                    server.enabled = previous.spec.mcp.get(name).is_some_and(|s| s.enabled);
+                    server.enabled = previous
+                        .spec
+                        .mcp
+                        .get(name)
+                        .is_some_and(|old| old.enabled && same_definition(old, &*server));
                 }
                 for hook in &mut spec.hooks {
                     hook.enabled = previous
                         .spec
                         .hooks
                         .iter()
-                        .find(|h| h.name == hook.name)
-                        .is_some_and(|h| h.enabled);
+                        .find(|old| old.name == hook.name)
+                        .is_some_and(|old| old.enabled && same_definition(old, &*hook));
                 }
                 for id in &previous.spec.disabled_skills {
                     if spec.skills.iter().any(|s| &s.id == id) && !spec.disabled_skills.contains(id)
@@ -635,19 +759,14 @@ impl PluginStore {
                     staging
                 }
             };
-            let mut spec = import_directory(&directory, allow_partial)?;
+            let mut spec = import_directory(&directory, allow_partial, Some(entry))?;
             spec.name = name.into();
             spec.package_kind = Some("plugin".into());
             for field in [
-                "skills",
-                "commands",
                 "agents",
-                "hooks",
-                "mcpServers",
                 "lspServers",
                 "dependencies",
                 "settings",
-                "userConfig",
                 "channels",
             ] {
                 if entry.get(field).is_some() {
@@ -692,6 +811,105 @@ impl PluginStore {
     }
 }
 
+/// The stored form of what a person typed: `owner/repo` becomes a GitHub URL, and a `~` path an
+/// absolute one.
+fn normalize_source(input: &str) -> anyhow::Result<String> {
+    let input = input.trim();
+    let is_part = |part: &str| {
+        !part.is_empty()
+            && !part.starts_with('.')
+            && part
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b"_.-".contains(&b))
+    };
+    let source = match input.split_once('/') {
+        Some((owner, repo)) if is_part(owner) && is_part(repo) => {
+            format!("https://github.com/{owner}/{repo}.git")
+        }
+        _ => match input.strip_prefix("~/").zip(std::env::var_os("HOME")) {
+            Some((rest, home)) => Path::new(&home).join(rest).to_string_lossy().into_owned(),
+            None => input.to_owned(),
+        },
+    };
+    validate_source(&source)?;
+    Ok(source)
+}
+/// Fetches only `.claude-plugin/marketplace.json` into `staging`: shallow, sparse and without
+/// other file contents, so previewing a large repository stays cheap.
+async fn read_git_manifest(source: &str, staging: &Path) -> anyhow::Result<PathBuf> {
+    fs::create_dir_all(staging.parent().context("Missing cache parent")?)?;
+    let path = staging.to_str().context("Invalid cache path")?;
+    let unreachable = "This source can't be reached.";
+    run_git(
+        &[
+            "clone",
+            "--depth=1",
+            "--filter=blob:none",
+            "--no-checkout",
+            "--sparse",
+            "--",
+            source,
+            path,
+        ],
+        None,
+    )
+    .await
+    .context(unreachable)?;
+    run_git(
+        &[
+            "sparse-checkout",
+            "set",
+            "--no-cone",
+            "/.claude-plugin/marketplace.json",
+        ],
+        Some(staging),
+    )
+    .await
+    .context(unreachable)?;
+    run_git(&["checkout"], Some(staging))
+        .await
+        .context(unreachable)?;
+    Ok(staging.to_path_buf())
+}
+/// What the manifest in `directory` says about a source, or the one-line reason it isn't one.
+fn source_preview(source: &str, directory: &Path) -> anyhow::Result<SourcePreview> {
+    let path = directory.join(".claude-plugin/marketplace.json");
+    let Ok(metadata) = fs::metadata(&path) else {
+        bail!("No marketplace found in this source.");
+    };
+    if metadata.len() > 8 * 1024 * 1024 {
+        bail!("This marketplace's catalog is too large.");
+    }
+    let value: Value = serde_json::from_str(&fs::read_to_string(&path)?)
+        .ok()
+        .filter(|value: &Value| value["plugins"].is_array())
+        .context("No marketplace found in this source.")?;
+    let plugins = value["plugins"].as_array().map_or(0, Vec::len);
+    if plugins > 2000 {
+        bail!("This marketplace has more than 2,000 plugins.");
+    }
+    // Catalogs may leave out their name; the source's last path part then names them.
+    let folder = source
+        .trim_end_matches('/')
+        .trim_end_matches(".git")
+        .rsplit(['/', '\\'])
+        .next()
+        .unwrap_or_default();
+    let name = value["name"].as_str().unwrap_or(folder);
+    if !safe_name(name) {
+        bail!("This marketplace's name isn't valid.");
+    }
+    let publisher = ["owner", "author"]
+        .iter()
+        .find_map(|key| value[key]["name"].as_str().or_else(|| value[key].as_str()))
+        .unwrap_or_default();
+    Ok(SourcePreview {
+        name: name.into(),
+        publisher: publisher.into(),
+        plugins,
+        source: source.into(),
+    })
+}
 fn validate_source(source: &str) -> anyhow::Result<()> {
     if source.starts_with("https://") {
         let url = reqwest::Url::parse(source)?;
@@ -738,6 +956,85 @@ async fn clone_repository(
     }
     Ok(())
 }
+/// The commit a remote reference points at, without downloading anything.
+pub(super) async fn git_remote_ref(url: &str, reference: Option<&str>) -> anyhow::Result<String> {
+    let reference = reference.unwrap_or("HEAD");
+    if reference.starts_with('-') || reference.chars().any(char::is_control) {
+        bail!("Invalid repository reference");
+    }
+    let mut command = tokio::process::Command::new("git");
+    command
+        .args([
+            "-c",
+            "core.hooksPath=/dev/null",
+            "ls-remote",
+            "--",
+            url,
+            reference,
+        ])
+        .env_clear();
+    for name in ["PATH", "HOME", "SYSTEMROOT"] {
+        if let Some(value) = std::env::var_os(name) {
+            command.env(name, value);
+        }
+    }
+    let output = tokio::time::timeout(
+        std::time::Duration::from_secs(30),
+        command
+            .env("GIT_TERMINAL_PROMPT", "0")
+            .kill_on_drop(true)
+            .stderr(std::process::Stdio::null())
+            .output(),
+    )
+    .await
+    .context("Repository check timed out")??;
+    if !output.status.success() {
+        bail!("Repository check failed");
+    }
+    Ok(String::from_utf8_lossy(&output.stdout)
+        .split_whitespace()
+        .next()
+        .unwrap_or_default()
+        .to_owned())
+}
+/// A bounded hash of a folder's files: names, sizes and contents, not modification times. Past
+/// the bound only names and sizes count.
+pub(super) fn tree_fingerprint(root: &Path) -> anyhow::Result<String> {
+    use sha2::{Digest, Sha256};
+    const FILES: usize = 5000;
+    const CONTENT_BYTES: u64 = 64 * 1024 * 1024;
+    let mut hash = Sha256::new();
+    let mut stack = vec![root.to_path_buf()];
+    let (mut files, mut read) = (0, 0u64);
+    while let Some(directory) = stack.pop() {
+        let mut entries = fs::read_dir(&directory)?.collect::<Result<Vec<_>, _>>()?;
+        entries.sort_by_key(|entry| entry.file_name());
+        for entry in entries {
+            if entry.file_name() == ".git" {
+                continue;
+            }
+            let path = entry.path();
+            let metadata = fs::symlink_metadata(&path)?;
+            if metadata.is_dir() {
+                stack.push(path);
+                continue;
+            }
+            files += 1;
+            if files > FILES {
+                return Ok(format!("{:x}", hash.finalize()));
+            }
+            hash.update(path.strip_prefix(root)?.to_string_lossy().as_bytes());
+            hash.update(metadata.len().to_le_bytes());
+            if metadata.is_symlink() {
+                hash.update(fs::read_link(&path)?.to_string_lossy().as_bytes());
+            } else if read + metadata.len() <= CONTENT_BYTES {
+                read += metadata.len();
+                hash.update(fs::read(&path)?);
+            }
+        }
+    }
+    Ok(format!("{:x}", hash.finalize()))
+}
 async fn run_git(args: &[&str], directory: Option<&Path>) -> anyhow::Result<()> {
     let mut command = tokio::process::Command::new("git");
     command
@@ -766,7 +1063,13 @@ async fn run_git(args: &[&str], directory: Option<&Path>) -> anyhow::Result<()> 
     Ok(())
 }
 
-fn import_directory(root: &Path, allow_partial: bool) -> anyhow::Result<PluginSpec> {
+/// Imports a skill or plugin folder. `entry` is the marketplace entry, whose `skills`,
+/// `mcpServers` and `hooks` declarations count like the plugin manifest's.
+fn import_directory(
+    root: &Path,
+    allow_partial: bool,
+    entry: Option<&Value>,
+) -> anyhow::Result<PluginSpec> {
     let manifest_path = root.join(".claude-plugin/plugin.json");
     let manifest: Value = if manifest_path.exists() {
         serde_json::from_str(&fs::read_to_string(&manifest_path)?)?
@@ -795,13 +1098,21 @@ fn import_directory(root: &Path, allow_partial: bool) -> anyhow::Result<PluginSp
         version: manifest["version"].as_str().unwrap_or_default().into(),
         ..Default::default()
     };
-    collect_files(
-        root,
-        root,
-        &mut spec.files,
-        &mut spec.executable_files,
-        &mut spec.unsupported,
-    )?;
+    if let Err(error) = collect_plugin_files(root, &mut spec, None) {
+        if error.to_string() != RESOURCE_LIMITS {
+            return Err(error);
+        }
+        // Many catalog entries point at a whole repository (a library, an MCP server's
+        // source). Keep only the plugin's own folders and the files its declarations name.
+        let keep = component_paths(&manifest, entry);
+        spec.files.clear();
+        spec.executable_files.clear();
+        spec.unsupported.clear();
+        spec.notices.clear();
+        collect_plugin_files(root, &mut spec, Some(keep))?;
+        spec.unsupported
+            .push("Large repository: only the plugin's own folders were imported".into());
+    }
     if let Some(icon) = manifest.get("icon").and_then(Value::as_str) {
         let icon = icon.strip_prefix("./").unwrap_or(icon);
         if icon.starts_with("https://") || (icon.ends_with(".svg") && spec.files.contains_key(icon))
@@ -812,83 +1123,102 @@ fn import_directory(root: &Path, allow_partial: bool) -> anyhow::Result<PluginSp
                 .push("Plugin icon resource is unavailable or unsupported".into());
         }
     }
-    for (path, content) in &spec.files {
-        if path.ends_with("/SKILL.md") || path == "SKILL.md" {
-            let (metadata, instructions) = parse_skill(content)?;
-            let fallback = if path == "SKILL.md" {
-                root.file_name().and_then(|s| s.to_str()).unwrap_or("skill")
-            } else {
-                Path::new(path)
-                    .parent()
-                    .and_then(Path::file_name)
-                    .and_then(|s| s.to_str())
-                    .unwrap_or("skill")
-            };
-            let name = metadata.get("name").map(String::as_str).unwrap_or(fallback);
-            let id = if safe_name(name) { name } else { fallback };
-            spec.skill_paths.insert(id.into(), path.clone());
-            spec.skills.push(Skill {
-                id: id.into(),
-                name: name.into(),
-                description: metadata.get("description").cloned().unwrap_or_default(),
-                instructions,
-                allowed_tools: vec![],
-                scripts: vec![],
-            });
-            for key in metadata.keys().filter(|key| {
-                ![
-                    "name",
-                    "description",
-                    "license",
-                    "compatibility",
-                    "allowed-tools",
-                    "disable-model-invocation",
-                ]
-                .contains(&key.as_str())
-            }) {
-                spec.unsupported
-                    .push(format!("{path}: skill frontmatter {key}"));
-            }
-            if metadata
-                .get("disable-model-invocation")
-                .is_some_and(|value| value == "true")
-            {
-                spec.manual_skills.push(id.into());
-            }
-            if metadata.contains_key("allowed-tools") {
-                spec.unsupported.push(format!(
-                    "{path}: Claude tool names are not permission grants in Themis"
-                ));
-            }
+    let declared = |field: &str| {
+        [Some(&manifest), entry]
+            .into_iter()
+            .flatten()
+            .filter_map(|source| source.get(field))
+            .collect::<Vec<_>>()
+    };
+    let skill_roots = declared_paths(
+        &declared("skills"),
+        "skills",
+        &spec.files,
+        &mut spec.unsupported,
+    );
+    for (path, id, name, metadata, instructions) in select_skills(root, &spec.files, &skill_roots)?
+    {
+        spec.skill_paths.insert(id.clone(), path.clone());
+        spec.skills.push(Skill {
+            id: id.clone(),
+            name,
+            description: metadata.get("description").cloned().unwrap_or_default(),
+            instructions,
+            allowed_tools: vec![],
+            scripts: vec![],
+        });
+        for key in metadata.keys().filter(|key| {
+            ![
+                "name",
+                "description",
+                "license",
+                "compatibility",
+                "allowed-tools",
+                "disable-model-invocation",
+            ]
+            .contains(&key.as_str())
+        }) {
+            spec.notices
+                .push(format!("{path}: skill frontmatter {key}"));
+        }
+        if metadata
+            .get("disable-model-invocation")
+            .is_some_and(|value| value == "true")
+        {
+            spec.manual_skills.push(id);
+        }
+        if metadata.contains_key("allowed-tools") {
+            spec.notices.push(format!(
+                "{path}: Claude tool names are not permission grants in Themis"
+            ));
         }
     }
-    if let Some(raw) = spec.files.get(".mcp.json") {
-        let config: Value = serde_json::from_str(raw)?;
-        let servers = config.get("mcpServers").unwrap_or(&config);
-        import_mcp_components(servers, false, &mut spec, allow_partial)?;
-    }
-    if let Some(servers) = manifest.get("mcpServers") {
-        if servers.is_object() {
-            import_mcp_components(servers, false, &mut spec, allow_partial)?;
+    let command_roots = declared_paths(
+        &declared("commands"),
+        "commands",
+        &spec.files,
+        &mut spec.unsupported,
+    );
+    import_commands(&mut spec, &command_roots)?;
+    let mut mcp_files = vec![".mcp.json".to_owned()];
+    let mut hook_files = vec!["hooks/hooks.json".to_owned()];
+    for value in declared("mcpServers") {
+        if value.is_object() {
+            import_mcp_components(value, false, &mut spec, allow_partial)?;
         } else {
-            spec.unsupported
-                .push("External MCP configuration paths".into());
+            mcp_files.extend(declared_paths(
+                &[value],
+                "MCP configuration",
+                &spec.files,
+                &mut spec.unsupported,
+            ));
         }
     }
-    if let Some(raw) = spec.files.get("hooks/hooks.json") {
-        import_hooks(&serde_json::from_str::<Value>(raw)?, &mut spec)?;
-    }
-    if let Some(hooks) = manifest.get("hooks") {
-        if hooks.is_object() {
-            import_hooks(hooks, &mut spec)?;
+    for value in declared("hooks") {
+        if value.is_object() {
+            import_hooks(value, &mut spec)?;
         } else {
-            spec.unsupported
-                .push("External hook configuration paths".into());
+            hook_files.extend(declared_paths(
+                &[value],
+                "hook configuration",
+                &spec.files,
+                &mut spec.unsupported,
+            ));
+        }
+    }
+    for path in unique(mcp_files) {
+        if let Some(raw) = spec.files.get(&path) {
+            let config: Value = serde_json::from_str(raw)?;
+            let servers = config.get("mcpServers").unwrap_or(&config).clone();
+            import_mcp_components(&servers, false, &mut spec, allow_partial)?;
+        }
+    }
+    for path in unique(hook_files) {
+        if let Some(raw) = spec.files.get(&path) {
+            import_hooks(&serde_json::from_str::<Value>(raw)?, &mut spec)?;
         }
     }
     for field in [
-        "skills",
-        "commands",
         "agents",
         "channels",
         "defaultEnabled",
@@ -896,12 +1226,19 @@ fn import_directory(root: &Path, allow_partial: bool) -> anyhow::Result<PluginSp
         "outputStyles",
         "settings",
         "dependencies",
-        "userConfig",
         "experimental",
     ] {
         if manifest.get(field).is_some() {
             spec.unsupported.push(field.into());
         }
+    }
+    if [Some(&manifest), entry]
+        .into_iter()
+        .flatten()
+        .any(|source| source.get("userConfig").is_some())
+    {
+        spec.notices
+            .push("Install settings (userConfig) are entered in Settings › Secrets".into());
     }
     for (directory, label) in [
         ("agents/", "Claude subagents"),
@@ -912,12 +1249,259 @@ fn import_directory(root: &Path, allow_partial: bool) -> anyhow::Result<PluginSp
             spec.unsupported.push(label.into());
         }
     }
-    if spec.files.keys().any(|p| p.starts_with("commands/")) {
-        spec.unsupported
-            .push("Legacy commands/ directory (use skills/)".into());
-    }
     Ok(spec)
 }
+
+/// Claude plugin commands (`commands/**/*.md`, plus declared command files and folders)
+/// become manual-only skills named after the file, folders joined with `-`. Their
+/// instructions open with [`crate::prompts::SKILL_COMMAND_NOTE`], which explains
+/// `$ARGUMENTS`, `!`command`` and `@path`; an id taken by a skill gets `-command`.
+fn import_commands(spec: &mut PluginSpec, declared: &[String]) -> anyhow::Result<()> {
+    let roots: Vec<&str> = std::iter::once("commands")
+        .chain(declared.iter().map(String::as_str))
+        .filter(|root| !root.is_empty())
+        .collect();
+    let mut commands = BTreeMap::new();
+    for path in spec.files.keys().filter(|path| path.ends_with(".md")) {
+        let relative = roots.iter().find_map(|root| {
+            if path == root {
+                Path::new(path).file_name().and_then(|name| name.to_str())
+            } else {
+                path.strip_prefix(&format!("{root}/"))
+            }
+        });
+        if let Some(relative) = relative {
+            commands.insert(
+                path.clone(),
+                relative.trim_end_matches(".md").replace('/', "-"),
+            );
+        }
+    }
+    for (path, id) in commands {
+        let taken = |id: &str| spec.skills.iter().any(|skill| skill.id == id);
+        let id = if taken(&id) {
+            format!("{id}-command")
+        } else {
+            id
+        };
+        if !safe_name(&id) || taken(&id) {
+            spec.unsupported
+                .push(format!("{path}: command name can't be used as a skill"));
+            continue;
+        }
+        let (metadata, body) = parse_skill(&spec.files[&path])?;
+        let first_line = body
+            .lines()
+            .map(|line| line.trim().trim_start_matches('#').trim())
+            .find(|line| !line.is_empty())
+            .unwrap_or_default();
+        let description = metadata
+            .get("description")
+            .cloned()
+            .unwrap_or_else(|| first_line.chars().take(200).collect());
+        for key in metadata.keys().filter(|key| key.as_str() != "description") {
+            spec.notices.push(if key == "allowed-tools" {
+                format!("{path}: Claude tool names are not permission grants in Themis")
+            } else {
+                format!("{path}: command frontmatter {key}")
+            });
+        }
+        let name = path
+            .rsplit('/')
+            .next()
+            .unwrap_or(&id)
+            .trim_end_matches(".md")
+            .to_owned();
+        spec.skill_paths.insert(id.clone(), path.clone());
+        spec.manual_skills.push(id.clone());
+        spec.skills.push(Skill {
+            id,
+            name,
+            description,
+            instructions: format!("{}\n\n{body}", crate::prompts::SKILL_COMMAND_NOTE),
+            allowed_tools: vec![],
+            scripts: vec![],
+        });
+    }
+    Ok(())
+}
+/// Text paths a manifest or marketplace entry declares for `label`, normalised and checked to
+/// stay inside the plugin. Problems are reported instead of failing the import.
+fn declared_paths(
+    values: &[&Value],
+    label: &str,
+    files: &BTreeMap<String, String>,
+    unsupported: &mut Vec<String>,
+) -> Vec<String> {
+    let mut paths = Vec::new();
+    for value in values {
+        let Some(texts) = declared_texts(value) else {
+            unsupported.push(format!("Declared {label} paths must be text"));
+            continue;
+        };
+        for text in texts {
+            let path = text.trim_start_matches("./").trim_end_matches('/');
+            if !path.is_empty() && !safe_relative(path) {
+                unsupported.push(format!(
+                    "Declared {label} path is outside the plugin: {text}"
+                ));
+            } else if !path.is_empty()
+                && !files.contains_key(path)
+                && !files
+                    .keys()
+                    .any(|file| file.starts_with(&format!("{path}/")))
+            {
+                unsupported.push(format!("Declared {label} path not found: {text}"));
+            } else {
+                paths.push(path.to_owned());
+            }
+        }
+    }
+    paths
+}
+
+/// The text paths in a `skills`, `mcpServers` or `hooks` declaration; `None` when it is
+/// neither text nor a list.
+fn declared_texts(value: &Value) -> Option<Vec<&str>> {
+    match value {
+        Value::String(text) => Some(vec![text.as_str()]),
+        Value::Array(items) => Some(items.iter().filter_map(Value::as_str).collect()),
+        _ => None,
+    }
+}
+
+/// What to keep when a plugin folder is too large: its component folders and declared paths.
+fn component_paths(manifest: &Value, entry: Option<&Value>) -> Vec<String> {
+    let declared = ["skills", "mcpServers", "hooks"]
+        .into_iter()
+        .flat_map(|field| {
+            [Some(manifest), entry]
+                .into_iter()
+                .flatten()
+                .filter_map(move |source| source.get(field))
+        })
+        .filter_map(declared_texts)
+        .flatten()
+        .map(|text| {
+            text.trim_start_matches("./")
+                .trim_end_matches('/')
+                .to_owned()
+        })
+        .filter(|path| safe_relative(path));
+    COMPONENT_PATHS
+        .iter()
+        .map(|path| (*path).to_owned())
+        .chain(declared)
+        .collect()
+}
+
+fn unique(paths: Vec<String>) -> Vec<String> {
+    let mut seen = std::collections::BTreeSet::new();
+    paths
+        .into_iter()
+        .filter(|path| seen.insert(path.clone()))
+        .collect()
+}
+
+/// One imported skill: path, id, name, frontmatter and instructions.
+type SelectedSkill = (String, String, String, BTreeMap<String, String>, String);
+
+/// Every `SKILL.md` is a skill, as before, unless that gives two skills the same id. Then only
+/// Claude's layout counts (a root `SKILL.md`, `skills/<name>/SKILL.md` and declared skill
+/// folders), so copies for other tools and reference files nested inside a skill drop out.
+/// A plugin with no skills in that layout keeps all of them. Any ids that still collide are
+/// taken from the skill's folder path.
+fn select_skills(
+    root: &Path,
+    files: &BTreeMap<String, String>,
+    declared: &[String],
+) -> anyhow::Result<Vec<SelectedSkill>> {
+    let all: Vec<&String> = files
+        .keys()
+        .filter(|path| path.as_str() == "SKILL.md" || path.ends_with("/SKILL.md"))
+        .collect();
+    if let Ok(skills) = parse_skills(root, files, &all) {
+        if !has_duplicate_ids(&skills) {
+            return Ok(skills);
+        }
+    }
+    let roots: Vec<&str> = std::iter::once("skills")
+        .chain(declared.iter().map(String::as_str))
+        .collect();
+    let claude_layout: Vec<&String> = all
+        .iter()
+        .copied()
+        .filter(|path| {
+            let folder = skill_folder(path);
+            let parent = folder.rsplit_once('/').map_or("", |(parent, _)| parent);
+            folder.is_empty() || roots.iter().any(|root| folder == *root || parent == *root)
+        })
+        .collect();
+    // A plugin that keeps its skills elsewhere keeps all of them.
+    let selected = if claude_layout.is_empty() {
+        all
+    } else {
+        claude_layout
+    };
+    let mut skills = parse_skills(root, files, &selected)?;
+    let mut counts = BTreeMap::<String, usize>::new();
+    for skill in &skills {
+        *counts.entry(skill.1.clone()).or_default() += 1;
+    }
+    for skill in &mut skills {
+        if counts[&skill.1] > 1 {
+            let derived = skill_folder(&skill.0).replace('/', "-");
+            if safe_name(&derived) {
+                skill.1 = derived;
+            }
+        }
+    }
+    Ok(skills)
+}
+
+fn skill_folder(path: &str) -> &str {
+    path.strip_suffix("SKILL.md")
+        .unwrap_or(path)
+        .trim_end_matches('/')
+}
+
+fn has_duplicate_ids(skills: &[SelectedSkill]) -> bool {
+    let mut ids = std::collections::BTreeSet::new();
+    skills.iter().any(|skill| !ids.insert(&skill.1))
+}
+
+fn parse_skills(
+    root: &Path,
+    files: &BTreeMap<String, String>,
+    paths: &[&String],
+) -> anyhow::Result<Vec<SelectedSkill>> {
+    paths
+        .iter()
+        .map(|path| {
+            let (metadata, instructions) = parse_skill(&files[*path])?;
+            let fallback = if path.as_str() == "SKILL.md" {
+                root.file_name().and_then(|s| s.to_str()).unwrap_or("skill")
+            } else {
+                Path::new(path.as_str())
+                    .parent()
+                    .and_then(Path::file_name)
+                    .and_then(|s| s.to_str())
+                    .unwrap_or("skill")
+            };
+            let name = metadata.get("name").map(String::as_str).unwrap_or(fallback);
+            let id = if safe_name(name) { name } else { fallback };
+            Ok((
+                (*path).clone(),
+                id.into(),
+                name.into(),
+                metadata,
+                instructions,
+            ))
+        })
+        .collect()
+}
+
+/// Strict walk used by skill discovery: any symlink or oversized file fails the package.
 pub(super) fn collect_files(
     root: &Path,
     directory: &Path,
@@ -925,54 +1509,166 @@ pub(super) fn collect_files(
     executable_files: &mut Vec<String>,
     unsupported: &mut Vec<String>,
 ) -> anyhow::Result<()> {
-    for entry in fs::read_dir(directory)? {
-        let entry = entry?;
-        let kind = entry.file_type()?;
-        let path = entry.path();
-        if entry.file_name() == ".git" {
-            continue;
-        }
-        if kind.is_symlink() {
-            bail!("Plugin symlinks are unsupported");
-        }
-        if kind.is_dir() {
-            if path.strip_prefix(root)?.components().count() > 32 {
+    let mut walk = FileWalk {
+        root,
+        files,
+        executable_files,
+        unsupported,
+        notices: None,
+        stack: vec![],
+        keep: None,
+    };
+    walk.directory(directory, "")
+}
+
+/// Lenient walk used for plugin packages: links that stay inside the plugin are followed,
+/// oversized and binary files are left out with a notice, and other links are reported.
+fn collect_plugin_files(
+    root: &Path,
+    spec: &mut PluginSpec,
+    keep: Option<Vec<String>>,
+) -> anyhow::Result<()> {
+    let root = root.canonicalize()?;
+    let mut walk = FileWalk {
+        root: &root,
+        files: &mut spec.files,
+        executable_files: &mut spec.executable_files,
+        unsupported: &mut spec.unsupported,
+        notices: Some(&mut spec.notices),
+        stack: vec![root.clone()],
+        keep,
+    };
+    walk.directory(&root, "")
+}
+
+const MAX_PLUGIN_FILE_BYTES: u64 = 1024 * 1024;
+const RESOURCE_LIMITS: &str = "Plugin exceeds resource limits";
+/// The folders and files a Claude plugin keeps its components in.
+const COMPONENT_PATHS: &[&str] = &[
+    ".claude-plugin",
+    ".mcp.json",
+    "SKILL.md",
+    "skills",
+    "commands",
+    "agents",
+    "hooks",
+    "scripts",
+    "assets",
+];
+
+struct FileWalk<'a> {
+    root: &'a Path,
+    files: &'a mut BTreeMap<String, String>,
+    executable_files: &'a mut Vec<String>,
+    unsupported: &'a mut Vec<String>,
+    /// `Some` selects the lenient plugin walk.
+    notices: Option<&'a mut Vec<String>>,
+    /// Canonical directories being walked, to stop symlink loops.
+    stack: Vec<PathBuf>,
+    /// When set, only these plugin-relative paths (and the folders leading to them) are read.
+    keep: Option<Vec<String>>,
+}
+
+impl FileWalk<'_> {
+    fn directory(&mut self, directory: &Path, logical: &str) -> anyhow::Result<()> {
+        let mut entries = fs::read_dir(directory)?.collect::<Result<Vec<_>, _>>()?;
+        entries.sort_by_key(|entry| entry.file_name());
+        for entry in entries {
+            if entry.file_name() == ".git" {
+                continue;
+            }
+            let name = entry.file_name().to_string_lossy().into_owned();
+            let relative = if logical.is_empty() {
+                name
+            } else {
+                format!("{logical}/{name}")
+            };
+            if !self.kept(&relative) {
+                continue;
+            }
+            if relative.split('/').count() > 32 {
                 bail!("Plugin directory nesting exceeds 32 levels");
             }
-            collect_files(root, &path, files, executable_files, unsupported)?;
-        } else if kind.is_file() {
-            if entry.metadata()?.len() > 1024 * 1024 {
-                bail!("Plugin file exceeds 1 MiB");
-            }
-            let bytes = fs::read(&path)?;
-            if !bytes.is_ascii() && std::str::from_utf8(&bytes).is_err() {
-                unsupported.push(format!(
-                    "Binary resource omitted: {}",
-                    path.strip_prefix(root)?.display()
-                ));
-            }
-            if let Ok(text) = String::from_utf8(bytes) {
-                let relative = path
-                    .strip_prefix(root)?
-                    .to_string_lossy()
-                    .replace('\\', "/");
-                #[cfg(unix)]
-                {
-                    use std::os::unix::fs::PermissionsExt;
-                    if entry.metadata()?.permissions().mode() & 0o111 != 0 {
-                        executable_files.push(relative.clone());
-                    }
+            let kind = entry.file_type()?;
+            let path = entry.path();
+            if kind.is_symlink() {
+                if self.notices.is_none() {
+                    bail!("Plugin symlinks are unsupported");
                 }
-                files.insert(relative, text);
-            }
-            if files.len() > 1000
-                || files.values().map(String::len).sum::<usize>() > 8 * 1024 * 1024
-            {
-                bail!("Plugin exceeds resource limits");
+                match self.link_target(&path) {
+                    Some(target) if target.is_dir() => {
+                        self.stack.push(target.clone());
+                        let result = self.directory(&target, &relative);
+                        self.stack.pop();
+                        result?;
+                    }
+                    Some(target) if target.is_file() => self.file(&target, relative)?,
+                    _ => self
+                        .unsupported
+                        .push(format!("Link not followed: {relative}")),
+                }
+            } else if kind.is_dir() {
+                self.directory(&path, &relative)?;
+            } else if kind.is_file() {
+                self.file(&path, relative)?;
             }
         }
+        Ok(())
     }
-    Ok(())
+
+    fn kept(&self, relative: &str) -> bool {
+        self.keep.as_ref().is_none_or(|keep| {
+            keep.iter().any(|path| {
+                relative == path
+                    || relative.starts_with(&format!("{path}/"))
+                    || path.starts_with(&format!("{relative}/"))
+            })
+        })
+    }
+
+    /// A link is followed only when its target resolves inside the plugin root and is not a
+    /// directory already being walked.
+    fn link_target(&self, link: &Path) -> Option<PathBuf> {
+        let target = link.canonicalize().ok()?;
+        (target.starts_with(self.root) && !self.stack.iter().any(|open| open == &target))
+            .then_some(target)
+    }
+
+    fn file(&mut self, path: &Path, relative: String) -> anyhow::Result<()> {
+        let metadata = fs::metadata(path)?;
+        if metadata.len() > MAX_PLUGIN_FILE_BYTES {
+            match self.notices.as_deref_mut() {
+                Some(notices) => {
+                    notices.push(format!("File too large: {relative}"));
+                    return Ok(());
+                }
+                None => bail!("Plugin file exceeds 1 MiB"),
+            }
+        }
+        let bytes = fs::read(path)?;
+        let Ok(text) = String::from_utf8(bytes) else {
+            let note = format!("Binary resource omitted: {relative}");
+            match self.notices.as_deref_mut() {
+                Some(notices) => notices.push(note),
+                None => self.unsupported.push(note),
+            }
+            return Ok(());
+        };
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            if metadata.permissions().mode() & 0o111 != 0 {
+                self.executable_files.push(relative.clone());
+            }
+        }
+        self.files.insert(relative, text);
+        if self.files.len() > 1000
+            || self.files.values().map(String::len).sum::<usize>() > 8 * 1024 * 1024
+        {
+            bail!(RESOURCE_LIMITS);
+        }
+        Ok(())
+    }
 }
 pub(super) fn parse_skill(content: &str) -> anyhow::Result<(BTreeMap<String, String>, String)> {
     let normalized = content.replace("\r\n", "\n");
@@ -1057,6 +1753,27 @@ fn import_mcp_components(
     for (name, raw) in value.as_object().context("Invalid MCP configuration")? {
         match import_mcp_server(name, raw, opencode) {
             Ok(server) => {
+                for (field, note) in [
+                    (
+                        "timeout",
+                        "its timeout is not used; Themis's own timeouts apply",
+                    ),
+                    (
+                        "autoApprove",
+                        "its automatic approvals are not used; Themis approvals apply",
+                    ),
+                ] {
+                    if raw.get(field).is_some() {
+                        spec.notices.push(format!("MCP connection {name}: {note}"));
+                    }
+                }
+                // The same server is often declared both in plugin.json and in .mcp.json.
+                let same = |existing: &McpServer| {
+                    serde_json::to_value(existing).ok() == serde_json::to_value(&server).ok()
+                };
+                if spec.mcp.get(name).is_some_and(same) {
+                    continue;
+                }
                 if spec.mcp.insert(name.clone(), server).is_some() {
                     bail!("Duplicate MCP connection '{name}'");
                 }
@@ -1081,14 +1798,98 @@ fn import_mcp_components(
     }
     Ok(())
 }
+const LITERAL_REFUSED: &str = "Imported credentials/environment values must use ${VARIABLE} or {env:VARIABLE}; literal values are unsupported";
+
+/// A value that must name a key (an OAuth secret, a bearer token): no default allowed.
 fn environment_reference(value: &str) -> anyhow::Result<String> {
-    let name = value.strip_prefix("${").and_then(|v| v.strip_suffix('}'))
-        .or_else(|| value.strip_prefix("{env:").and_then(|v| v.strip_suffix('}')))
-        .context("Imported credentials/environment values must use ${VARIABLE} or {env:VARIABLE}; literal values are unsupported")?;
-    if name.is_empty() || !name.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_') {
-        bail!("Unsupported environment reference");
+    match crate::plugins::keys::reference(value) {
+        Some((name, None)) => Ok(name),
+        Some((_, Some(_))) => bail!("Unsupported environment reference"),
+        None if value.contains("${") || value.contains("{env:") => {
+            bail!("Unsupported environment reference")
+        }
+        None => bail!(LITERAL_REFUSED),
     }
-    Ok(name.into())
+}
+/// `env` entries: references become keys (with any default), plain non-secret values and
+/// plugin-folder paths are kept as written, and anything else is refused.
+fn import_env(server: &mut McpServer, env: &Value) -> anyhow::Result<()> {
+    for (key, value) in env
+        .as_object()
+        .context("MCP environment must be an object")?
+    {
+        let value = value
+            .as_str()
+            .context("MCP environment must contain strings")?;
+        let names_plugin_root = crate::plugins::keys::PLUGIN_ROOTS
+            .iter()
+            .any(|root| value.contains(root));
+        match crate::plugins::keys::reference(value).filter(|_| !names_plugin_root) {
+            Some((name, default)) => {
+                add_defaults(
+                    server,
+                    default.map(|d| (name.clone(), d)).into_iter().collect(),
+                )?;
+                server.env.insert(key.clone(), name);
+            }
+            None if crate::plugins::keys::safe_plugin_value(key, value) => {
+                server.env_values.insert(key.clone(), value.to_owned());
+            }
+            None => {
+                environment_reference(value)?;
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Headers: plain non-secret values are kept, `Authorization: Bearer ${NAME}` becomes the
+/// bearer key, and every other value must be a `prefix${NAME}` template.
+fn import_headers(server: &mut McpServer, headers: &Value) -> anyhow::Result<()> {
+    for (key, value) in headers
+        .as_object()
+        .context("MCP headers must be an object")?
+    {
+        let value = value
+            .as_str()
+            .context("MCP header must reference a key as ${NAME}")?;
+        if !value.contains("${") && !value.contains("{env:") {
+            if !crate::plugins::keys::safe_literal(key, value) {
+                crate::plugins::keys::header_template(value)?;
+            }
+            server.header_values.insert(key.clone(), value.to_owned());
+            continue;
+        }
+        // `{env:NAME}` (OpenCode) and `${env:NAME}` read the same as `${NAME}`.
+        let (template, defaults) = crate::plugins::keys::normalize_references(value)
+            .context("MCP header values must be an optional prefix followed by one ${NAME}")?;
+        add_defaults(server, defaults)?;
+        let bearer = template
+            .strip_prefix("Bearer ")
+            .filter(|token| token.starts_with("${"));
+        match bearer {
+            Some(token)
+                if key.eq_ignore_ascii_case("authorization") && server.bearer_env.is_none() =>
+            {
+                server.bearer_env = Some(environment_reference(token)?);
+            }
+            _ => {
+                crate::plugins::keys::header_template(&template)?;
+                server.headers.insert(key.clone(), template);
+            }
+        }
+    }
+    Ok(())
+}
+/// Defaults from `${NAME:-value}`: plain, non-secret values only.
+fn add_defaults(server: &mut McpServer, defaults: Vec<(String, String)>) -> anyhow::Result<()> {
+    for (name, default) in defaults {
+        if !crate::plugins::keys::safe_literal(&name, &default) {
+            bail!(LITERAL_REFUSED);
+        }
+        server.defaults.insert(name, default);
+    }
+    Ok(())
 }
 fn import_mcp_server(name: &str, raw: &Value, opencode: bool) -> anyhow::Result<McpServer> {
     if !safe_name(name) {
@@ -1117,6 +1918,16 @@ fn import_mcp_server(name: &str, raw: &Value, opencode: bool) -> anyhow::Result<
             "headers",
             "enabled",
             "bearer_env",
+            // Accepted without effect: descriptions and notes, Claude's own switch (imported
+            // servers start disabled), its timeout and auto-approval (Themis's apply).
+            "description",
+            "note",
+            "_note",
+            "_comment",
+            "_meta",
+            "disabled",
+            "timeout",
+            "autoApprove",
         ]
     };
     let mut compatibility_error = None;
@@ -1194,22 +2005,14 @@ fn import_mcp_server(name: &str, raw: &Value, opencode: bool) -> anyhow::Result<
         server.args = serde_json::from_value(args.clone()).context("Invalid MCP arguments")?;
     }
     if let Some(url) = raw.get("url") {
-        server.url = Some(url.as_str().context("MCP URL must be a string")?.into());
+        let url = url.as_str().context("MCP URL must be a string")?;
+        let (url, defaults) = crate::plugins::keys::normalize_references(url)
+            .context("MCP URL references must be ${NAME}")?;
+        server.url = Some(url);
+        add_defaults(&mut server, defaults)?;
     }
     if let Some(env) = raw.get(if opencode { "environment" } else { "env" }) {
-        for (key, value) in env
-            .as_object()
-            .context("MCP environment must be an object")?
-        {
-            server.env.insert(
-                key.clone(),
-                environment_reference(
-                    value
-                        .as_str()
-                        .context("MCP environment must contain strings")?,
-                )?,
-            );
-        }
+        import_env(&mut server, env)?;
     }
     if let Some(bearer) = raw.get("bearer_env") {
         server.bearer_env = Some(
@@ -1220,30 +2023,7 @@ fn import_mcp_server(name: &str, raw: &Value, opencode: bool) -> anyhow::Result<
         );
     }
     if let Some(headers) = raw.get("headers") {
-        for (key, value) in headers
-            .as_object()
-            .context("MCP headers must be an object")?
-        {
-            // `{env:NAME}` (OpenCode) reads the same as `${NAME}`.
-            let template = value
-                .as_str()
-                .context("MCP header must reference a key as ${NAME}")?
-                .replace("{env:", "${");
-            let bearer = template
-                .strip_prefix("Bearer ")
-                .filter(|token| token.starts_with("${"));
-            match bearer {
-                Some(token)
-                    if key.eq_ignore_ascii_case("authorization") && server.bearer_env.is_none() =>
-                {
-                    server.bearer_env = Some(environment_reference(token)?);
-                }
-                _ => {
-                    crate::plugins::keys::header_template(&template)?;
-                    server.headers.insert(key.clone(), template);
-                }
-            }
-        }
+        import_headers(&mut server, headers)?;
     }
     if let Some(kind) = raw.get("type").and_then(Value::as_str) {
         if (["local", "stdio"].contains(&kind) && server.command.is_none())
@@ -1294,19 +2074,92 @@ pub fn mcp_server_to_standard(server: &McpServer) -> Value {
                 json!(format!("Bearer ${{{bearer}}}")),
             );
         }
+        headers.extend(
+            server
+                .header_values
+                .iter()
+                .map(|(name, value)| (name.clone(), json!(value))),
+        );
         if !headers.is_empty() {
             entry.insert("headers".into(), Value::Object(headers));
         }
     }
-    if !server.env.is_empty() {
+    if !server.env.is_empty() || !server.env_values.is_empty() {
         let env: serde_json::Map<String, Value> = server
             .env
             .iter()
-            .map(|(key, variable)| (key.clone(), json!(format!("${{{variable}}}"))))
+            .map(|(key, variable)| {
+                let value = match server.defaults.get(variable) {
+                    Some(default) => format!("${{{variable}:-{default}}}"),
+                    None => format!("${{{variable}}}"),
+                };
+                (key.clone(), json!(value))
+            })
+            .chain(
+                server
+                    .env_values
+                    .iter()
+                    .map(|(key, value)| (key.clone(), json!(value))),
+            )
             .collect();
         entry.insert("env".into(), Value::Object(env));
     }
     Value::Object(entry)
+}
+
+/// Themis tools for a Claude tool name in a hook matcher.
+fn themis_tools(claude: &str) -> Option<&'static [&'static str]> {
+    Some(match claude {
+        "Bash" => &["shell", "background_task"],
+        "Read" => &["read_file"],
+        "Write" => &["write_file"],
+        "Edit" | "MultiEdit" => &["apply_patch", "write_file"],
+        "Grep" => &["search_file"],
+        "Glob" | "LS" => &["list_dir", "search_file"],
+        "WebFetch" => &["fetch_url"],
+        "WebSearch" => &["web_search"],
+        _ => return None,
+    })
+}
+
+/// A Claude tool matcher ("Edit|Write") as Themis tool names, and the names with no Themis
+/// tool. Themis names already in it are kept.
+fn map_tool_matcher(matcher: &str) -> (Vec<String>, Vec<String>) {
+    let mut mapped: Vec<String> = Vec::new();
+    let mut unmapped = Vec::new();
+    // MCP tools are named differently in Themis, and a regex group is not a list of names:
+    // either is one matcher with no Themis tool.
+    if matcher.contains("mcp__") {
+        return (mapped, vec!["for MCP tools".to_owned()]);
+    }
+    if matcher.contains(['(', ')', '[', '*', '.', '\\']) {
+        return (mapped, vec![matcher.to_owned()]);
+    }
+    for name in matcher
+        .split('|')
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+    {
+        let tools: Vec<&str> = match themis_tools(name) {
+            Some(tools) => tools.to_vec(),
+            None if crate::skills::known_tool_names()
+                .iter()
+                .any(|known| known == name) =>
+            {
+                vec![name]
+            }
+            None => {
+                unmapped.push(name.to_owned());
+                continue;
+            }
+        };
+        for tool in tools {
+            if !mapped.iter().any(|known| known == tool) {
+                mapped.push(tool.to_owned());
+            }
+        }
+    }
+    (mapped, unmapped)
 }
 
 fn import_hooks(value: &Value, spec: &mut PluginSpec) -> anyhow::Result<()> {
@@ -1317,25 +2170,49 @@ fn import_hooks(value: &Value, spec: &mut PluginSpec) -> anyhow::Result<()> {
         .context("Invalid hook configuration")?;
     for (event, groups) in events {
         let mapped = match event.as_str() {
-            "SessionStart" => "RunStart",
+            // Its output is context for the model, which only PromptSubmit delivers: it runs
+            // on every turn instead of once per session.
+            "SessionStart" => "PromptSubmit",
             "PreToolUse" => "BeforeTool",
             "PostToolUse" => "AfterTool",
             "Stop" => "RunEnd",
             "PreCompact" => "BeforeCompaction",
             "SubagentStart" => "SubagentStart",
             "SubagentStop" => "SubagentEnd",
+            "UserPromptSubmit" => "PromptSubmit",
+            // Fires only when the tool call failed.
+            "PostToolUseFailure" => "ToolCallFailed",
             _ => {
                 spec.unsupported.push(format!("Hook event {event}"));
                 continue;
             }
         };
+        let tool_event = matches!(
+            event.as_str(),
+            "PreToolUse" | "PostToolUse" | "PostToolUseFailure"
+        );
         for group in groups.as_array().context("Invalid hook groups")? {
             for raw in group["hooks"].as_array().context("Invalid hook list")? {
                 if raw["type"] != "command" {
                     spec.unsupported.push(format!("{event}: non-command hook"));
                     continue;
                 }
-                if !matches!(event.as_str(), "PreToolUse" | "PostToolUse")
+                // Every Claude session starts with "startup"; the other sources have no Themis
+                // equivalent.
+                let session_matcher = (event == "SessionStart")
+                    .then(|| group["matcher"].as_str())
+                    .flatten()
+                    .filter(|matcher| !matcher.is_empty() && *matcher != "*");
+                if let Some(matcher) = session_matcher {
+                    if !matcher.split('|').any(|source| source.trim() == "startup") {
+                        spec.unsupported.push(format!(
+                            "SessionStart: matcher {matcher} has no Themis equivalent"
+                        ));
+                        continue;
+                    }
+                }
+                if !tool_event
+                    && event != "SessionStart"
                     && group["matcher"]
                         .as_str()
                         .is_some_and(|matcher| !matcher.is_empty() && matcher != "*")
@@ -1354,21 +2231,36 @@ fn import_hooks(value: &Value, spec: &mut PluginSpec) -> anyhow::Result<()> {
                         .push(format!("{event}: hook options require manual mapping"));
                     continue;
                 }
+                // Claude names its tools differently: a `Bash` guard must guard `shell`.
+                let matcher = match group["matcher"]
+                    .as_str()
+                    .filter(|value| !value.is_empty() && !matches!(*value, "*" | ".*"))
+                {
+                    Some(matcher) if tool_event => {
+                        let (mapped_tools, unmapped) = map_tool_matcher(matcher);
+                        for name in &unmapped {
+                            spec.unsupported
+                                .push(format!("{event}: matcher {name} has no Themis tool"));
+                        }
+                        if mapped_tools.is_empty() {
+                            continue;
+                        }
+                        Some(mapped_tools.join("|"))
+                    }
+                    _ if event == "SessionStart" => None,
+                    other => other.map(str::to_owned),
+                };
+                let command = raw["command"].as_str().context("Missing hook command")?;
                 spec.hooks.push(Hook {
-                    name: format!("imported-{}", spec.hooks.len()),
+                    name: imported_hook_name(mapped, matcher.as_deref(), command, &spec.hooks),
                     event: mapped.into(),
-                    command: raw["command"]
-                        .as_str()
-                        .context("Missing hook command")?
-                        .into(),
+                    command: command.into(),
                     enabled: false,
-                    matcher: group["matcher"]
-                        .as_str()
-                        .filter(|value| !value.is_empty() && *value != "*")
-                        .map(str::to_owned),
+                    matcher,
                     failure_policy: None,
                     timeout_seconds: raw["timeout"].as_u64().unwrap_or(10).clamp(1, 60),
-                    blocking: event == "PreToolUse" || event == "SessionStart",
+                    // A broken session hook must not stop every turn.
+                    blocking: event == "PreToolUse",
                     plugin_root: None,
                     runtime_identity: None,
                 });
@@ -1376,4 +2268,205 @@ fn import_hooks(value: &Value, spec: &mut PluginSpec) -> anyhow::Result<()> {
         }
     }
     Ok(())
+}
+
+/// A name for an imported hook, which has none of its own: the script it runs, or else when it
+/// runs (`before-shell`), made unique within the plugin.
+fn imported_hook_name(event: &str, matcher: Option<&str>, command: &str, taken: &[Hook]) -> String {
+    const SCRIPTS: [&str; 9] = ["sh", "bash", "py", "js", "mjs", "cjs", "ts", "rb", "pl"];
+    const GENERIC: [&str; 5] = ["index", "main", "run", "hook", "hooks"];
+    let script = command
+        .split_whitespace()
+        .map(|word| word.trim_matches(|c| matches!(c, '"' | '\'' | ';')))
+        .filter_map(|word| word.rsplit(['/', '\\']).next()?.rsplit_once('.'))
+        .find(|(_, extension)| SCRIPTS.contains(extension))
+        .map(|(stem, _)| {
+            stem.to_ascii_lowercase()
+                .split(|c: char| !c.is_ascii_alphanumeric())
+                .filter(|part| !part.is_empty())
+                .collect::<Vec<_>>()
+                .join("-")
+        })
+        .filter(|stem| !stem.is_empty() && !GENERIC.contains(&stem.as_str()));
+    let tool = matcher.and_then(|matcher| matcher.split('|').next());
+    let base = script.unwrap_or_else(|| match (event, tool) {
+        ("PromptSubmit", _) => "prompt-submit".into(),
+        ("RunStart", _) => "run-start".into(),
+        ("BeforeCompaction", _) => "before-compaction".into(),
+        ("RunEnd", _) => "run-end".into(),
+        ("BeforeTool", Some(tool)) => format!("before-{tool}").replace('_', "-"),
+        ("AfterTool", Some(tool)) => format!("after-{tool}").replace('_', "-"),
+        ("ToolCallFailed", Some(tool)) => format!("{tool}-failed").replace('_', "-"),
+        ("BeforeTool", None) => "before-tool".into(),
+        ("AfterTool", None) => "after-tool".into(),
+        _ => "tool-failed".into(),
+    });
+    let mut name = base.clone();
+    let mut number = 1;
+    while taken.iter().any(|hook| hook.name == name) {
+        number += 1;
+        name = format!("{base}-{number}");
+    }
+    name
+}
+
+#[cfg(test)]
+mod source_tests {
+    use super::*;
+    use proptest::prelude::*;
+
+    #[test]
+    fn typed_sources_normalize_to_stored_ones() {
+        assert_eq!(
+            normalize_source(" acme/agent-plugins ").unwrap(),
+            "https://github.com/acme/agent-plugins.git"
+        );
+        assert_eq!(
+            normalize_source("https://example.com/a/b.git").unwrap(),
+            "https://example.com/a/b.git"
+        );
+        for bad in [
+            "",
+            "plugins",
+            "../up/here",
+            "a/b/c",
+            "http://example.com/a.git",
+        ] {
+            assert!(normalize_source(bad).is_err(), "{bad}");
+        }
+    }
+
+    proptest! {
+        /// Whatever is typed, what gets stored is an HTTPS URL without credentials, or an
+        /// absolute path. Nothing relative, and nothing that git could take as an option.
+        #[test]
+        fn stored_sources_are_https_or_absolute(input in "\\PC{0,40}") {
+            if let Ok(source) = normalize_source(&input) {
+                prop_assert!(source.starts_with("https://") || Path::new(&source).is_absolute());
+                prop_assert!(!source.starts_with('-'));
+                if source.starts_with("https://") {
+                    let url = reqwest::Url::parse(&source).unwrap();
+                    prop_assert!(url.username().is_empty() && url.password().is_none());
+                }
+            }
+        }
+    }
+
+    /// Only the manifest is fetched, however large the repository.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_git_source_fetches_only_its_manifest() {
+        let repository = tempfile::tempdir().unwrap();
+        let root = repository.path();
+        fs::create_dir_all(root.join(".claude-plugin")).unwrap();
+        fs::write(
+            root.join(".claude-plugin/marketplace.json"),
+            r#"{"name":"acme","plugins":[{"name":"one"}]}"#,
+        )
+        .unwrap();
+        fs::write(root.join("huge.bin"), "bulk").unwrap();
+        for args in [
+            vec!["init", "-q"],
+            vec!["add", "."],
+            vec![
+                "-c",
+                "user.name=t",
+                "-c",
+                "user.email=t@t",
+                "commit",
+                "-qm",
+                "x",
+            ],
+        ] {
+            assert!(std::process::Command::new("git")
+                .args(&args)
+                .current_dir(root)
+                .status()
+                .unwrap()
+                .success());
+        }
+        let out = tempfile::tempdir().unwrap();
+        let staging = out.path().join("preview");
+        let url = format!("file://{}", root.display());
+        let directory = read_git_manifest(&url, &staging).await.unwrap();
+        assert!(!directory.join("huge.bin").exists());
+        let preview = source_preview(&url, &directory).unwrap();
+        assert_eq!((preview.name.as_str(), preview.plugins), ("acme", 1));
+        let missing = read_git_manifest(&format!("{url}-missing"), &out.path().join("other"))
+            .await
+            .unwrap_err();
+        assert_eq!(missing.to_string(), "This source can't be reached.");
+    }
+}
+
+#[cfg(test)]
+mod imported_hook_name_tests {
+    use super::*;
+
+    fn named(names: &[&str]) -> Vec<Hook> {
+        names
+            .iter()
+            .map(|name| Hook {
+                name: (*name).into(),
+                event: "RunEnd".into(),
+                command: "true".into(),
+                enabled: false,
+                matcher: None,
+                failure_policy: None,
+                timeout_seconds: 10,
+                blocking: false,
+                plugin_root: None,
+                runtime_identity: None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn names_come_from_the_script_or_else_from_when_the_hook_runs() {
+        let name = |event, matcher, command| imported_hook_name(event, matcher, command, &[]);
+        assert_eq!(
+            name(
+                "BeforeTool",
+                Some("shell"),
+                r#"python3 "${CLAUDE_PLUGIN_ROOT}/hooks/Check_Secrets.py""#
+            ),
+            "check-secrets"
+        );
+        assert_eq!(
+            name(
+                "BeforeTool",
+                Some("shell|background_task"),
+                "if grep -q x; then echo y; fi"
+            ),
+            "before-shell"
+        );
+        assert_eq!(
+            name("AfterTool", Some("web_search"), "true"),
+            "after-web-search"
+        );
+        assert_eq!(name("ToolCallFailed", None, "true"), "tool-failed");
+        assert_eq!(
+            name("PromptSubmit", None, "echo 'see notes/today.txt'"),
+            "prompt-submit"
+        );
+        // A generic script name says nothing, so the event names the hook.
+        assert_eq!(
+            name("RunEnd", None, "node ${CLAUDE_PLUGIN_ROOT}/hooks/index.js"),
+            "run-end"
+        );
+    }
+
+    #[test]
+    fn names_stay_unique_and_valid_within_a_plugin() {
+        let taken = named(&["run-end", "run-end-2"]);
+        let name = imported_hook_name("RunEnd", None, "true", &taken);
+        assert_eq!(name, "run-end-3");
+        assert!(crate::plugins::safe_name(&name));
+        assert!(crate::plugins::safe_name(&imported_hook_name(
+            "BeforeTool",
+            None,
+            "./a--b.sh",
+            &[]
+        )));
+    }
 }

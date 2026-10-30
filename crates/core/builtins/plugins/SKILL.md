@@ -1,9 +1,9 @@
 ---
-name: manage-plugins
+name: plugins
 description: Discover, install, configure, create, troubleshoot, update or remove plugin bundles from local files, repositories or marketplaces.
 ---
 
-# Manage plugins
+# Plugins
 
 Create, configure and troubleshoot integrations in chat through the shared management tools. Integrations provides browsing, one-click plugin/skill installation, and basic lifecycle controls. Use shared tools for requested changes. Runtime and MCP configuration use advanced files or CLI APIs; raw configuration and logs stay out of the desktop UI.
 

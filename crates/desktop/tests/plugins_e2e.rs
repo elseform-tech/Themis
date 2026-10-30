@@ -210,7 +210,7 @@ async fn plain_cli_prompt_loads_catalog_mcp_hooks_and_refreshes_next_turn() {
             .as_array()
             .unwrap()
             .iter()
-            .find(|skill| skill["id"] == "manage-plugins")
+            .find(|skill| skill["id"] == "plugins")
             .unwrap();
         let guide = std::fs::read_to_string(project.path().join(manager["path"].as_str().unwrap()))
             .unwrap();
@@ -218,6 +218,21 @@ async fn plain_cli_prompt_loads_catalog_mcp_hooks_and_refreshes_next_turn() {
         assert!(guide.contains("one-click plugin/skill installation"));
         assert!(guide.contains("Use global scope for new installations"));
         assert!(guide.contains("raw configuration and logs stay out of the desktop UI"));
+        // `/hooks` is listed without the old `manage-` prefix, and says how to edit one hook.
+        let hooks = catalog
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|skill| skill["id"] == "hooks")
+            .unwrap();
+        let hooks_guide =
+            std::fs::read_to_string(project.path().join(hooks["path"].as_str().unwrap())).unwrap();
+        assert!(hooks_guide.contains("`save_hook`"));
+        assert!(!catalog
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|skill| skill["id"].as_str().unwrap_or("").starts_with("manage-")));
         assert!(!system.contains("raw configuration and logs stay out of the desktop UI"));
         assert!(!system.contains("PRIVATE_SKILL_BODY"));
         assert!(system.contains("GLOBAL_LEGACY_DESCRIPTION"));

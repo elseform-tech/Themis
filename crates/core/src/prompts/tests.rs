@@ -173,6 +173,9 @@ const ALL: &[(&str, &str, &[&str])] = &[
     ),
     (RUNTIME_HANDOFF, "runtime-handoff", &[]),
     (RUNTIME_STEERED, "runtime-steered", &[]),
+    (HOOK_CONTEXT_NOTE, "hook-context-note", &[]),
+    (HOOK_BLOCKED, "hook-blocked", &["hook"]),
+    (HOOK_BLOCK_REASON_NOTE, "hook-block-reason-note", &[]),
     (RUNTIME_STEERS_CHECK, "runtime-steers-check", &["messages"]),
     (
         RUNTIME_BATCH_NOT_RUN,
@@ -252,6 +255,7 @@ const ALL: &[(&str, &str, &[&str])] = &[
         "subagent-result-note",
         &["name", "id", "status", "result"],
     ),
+    (SKILL_COMMAND_NOTE, "skill-command-note", &[]),
     (EVAL_ANSWER_PROBE, "eval-answer-probe", &["question"]),
     (
         EVAL_RECALL_TASK,

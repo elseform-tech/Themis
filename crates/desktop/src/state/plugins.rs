@@ -151,10 +151,15 @@ impl AppState {
                     } else { serde_json::to_value(store.inspect_mcp_json(if name.is_empty(){"imported-mcp"}else{name}, &value.to_string())?)? }
                 },
                 "inspect_repository" => serde_json::to_value(store.inspect_repository(name,args["url"].as_str().unwrap_or_default(),args["reference"].as_str(),args["subdirectory"].as_str()).await?)?,
-                "scan_marketplace" => serde_json::to_value(store.start_marketplace_scan(name, args["refresh"].as_bool().unwrap_or(false))?)?,
+                "scan_marketplace" => {
+                    let scan = store.start_marketplace_scan(name, args["refresh"].as_bool().unwrap_or(false))?;
+                    let groups = themis_core::plugins::catalog_groups(name, &scan.catalog);
+                    let mut value = serde_json::to_value(scan)?;
+                    value["groups"] = serde_json::to_value(groups)?;
+                    value
+                }
                 "inspect_marketplace" => {
                     let marketplace = args["marketplace"].as_str().unwrap_or_default();
-                    store.wait_marketplace_scan(marketplace, false).await?;
                     serde_json::to_value(store.scanned_marketplace_preview(marketplace,name).await?)?
                 },
                 "import_path" => serde_json::to_value(store.import_path_with_options(
@@ -247,6 +252,12 @@ impl AppState {
                     serde_json::from_value(args["skill"].clone())?,
                     args["expectedRevision"].as_str(),
                 )?)?,
+                "save_hook" => serde_json::to_value(store.save_hook(
+                    scope,
+                    if name.is_empty() { "personal" } else { name },
+                    serde_json::from_value(args["hook"].clone())?,
+                    args["expectedRevision"].as_str(),
+                )?)?,
                 "delete" => {
                     store.delete(scope, name)?;
                     Value::Null
@@ -256,24 +267,45 @@ impl AppState {
                     Value::Null
                 }
                 "marketplaces" => serde_json::to_value(store.marketplaces()?)?,
+                "preview_source" => serde_json::to_value(store.preview_source(args["source"].as_str().unwrap_or_default()).await?)?,
+                "sources" => serde_json::to_value(store.sources()?)?,
+                "updates" => serde_json::to_value(store.plugin_updates()?)?,
+                "check_sources" => {
+                    if self.get_settings().await.check_sources_for_updates {
+                        store.check_sources()?;
+                    }
+                    Value::Null
+                }
+                "check_source" => json!({"rechecked": store.check_source_for_changes(name).await?}),
+                "set_marketplace_enabled" => {
+                    store.set_marketplace_enabled(name, args["enabled"].as_bool().unwrap_or(true))?;
+                    Value::Null
+                }
                 "add_marketplace" => {
-                    store.add_marketplace(name, args["source"].as_str().unwrap_or_default())?;
-                    serde_json::to_value(store.start_marketplace_scan(name, false)?)?
+                    let source = args["source"].as_str().unwrap_or_default();
+                    // The name comes from the source's manifest unless one is given.
+                    let added = if name.is_empty() {
+                        store.add_source(source).await?
+                    } else {
+                        store.add_marketplace(name, source)?;
+                        name.to_owned()
+                    };
+                    serde_json::to_value(store.start_marketplace_scan(&added, false)?)?
                 }
                 "remove_marketplace" => {
                     store.remove_marketplace(name)?;
                     Value::Null
                 }
                 "catalog" => store.wait_marketplace_scan(name, args["refresh"].as_bool().unwrap_or(false)).await?.catalog,
+                "catalog_check" => themis_core::plugins::compatibility_summary(name, &store.wait_marketplace_scan(name, args["refresh"].as_bool().unwrap_or(false)).await?),
                 "preview" => {
                     let marketplace = args["marketplace"].as_str().unwrap_or_default();
-                    store.wait_marketplace_scan(marketplace, false).await?;
                     serde_json::to_value(store.scanned_marketplace_preview(marketplace,name).await?.spec)?
                 },
                 "install" | "update" => {
                     let marketplace = args["marketplace"].as_str().unwrap_or_default();
-                    if !args["expectedScan"].is_string() { store.wait_marketplace_scan(marketplace, action == "update").await?; }
-                    serde_json::to_value(store.install_scanned(scope, marketplace, name, args["allowPartial"].as_bool().unwrap_or(false), args["expectedScan"].as_str()).await?)?
+                    if action == "update" && !args["expectedCheck"].is_string() { store.wait_marketplace_scan(marketplace, true).await?; }
+                    serde_json::to_value(store.install_scanned(scope, marketplace, name, args["allowPartial"].as_bool().unwrap_or(false), args["expectedCheck"].as_str()).await?)?
                 },
                 "test_mcp" => {
                     let spec = serde_json::from_value(args["server"].clone())?;
@@ -339,6 +371,7 @@ impl AppState {
             && matches!(
                 action,
                 "save"
+                    | "save_hook"
                     | "delete"
                     | "enable"
                     | "disable"

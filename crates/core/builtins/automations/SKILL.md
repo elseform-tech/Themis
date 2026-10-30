@@ -1,9 +1,9 @@
 ---
-name: manage-automations
+name: automations
 description: Create, configure, inspect, pause, resume, update and troubleshoot recurring agent tasks from natural-language instructions.
 ---
 
-# Manage automations
+# Automations
 
 Use `manage_automations` for list, create, update, enable, disable, complete and delete operations. Changes to this chat's own automations need no approval; the user stops them from Workspace Tasks. Automations are managed separately from Integrations but share the normal runtime's skills, tools, hooks and permissions.
 
