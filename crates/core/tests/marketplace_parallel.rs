@@ -76,7 +76,7 @@ if "clone" in sys.argv:
             "parallel",
             "plugin-8",
             false,
-            Some(&scan.revision),
+            scan.checks["plugin-8"].check_revision.as_deref(),
         )
         .await
         .unwrap();

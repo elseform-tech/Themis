@@ -66,15 +66,16 @@ async fn background_scans_share_a_persisted_snapshot_and_guard_refresh_races() {
         .install_scanned("global", "test", "good", false, Some("stale"))
         .await
         .is_err());
+    let check = done.checks["good"].check_revision.clone().unwrap();
     let installed = restarted
-        .install_scanned("global", "test", "good", false, Some(&done.revision))
+        .install_scanned("global", "test", "good", false, Some(&check))
         .await
         .unwrap();
     assert_eq!(installed.spec.skills.len(), 1);
     let refresh = restarted.start_marketplace_scan("test", true).unwrap();
     assert_ne!(refresh.revision, done.revision);
     assert!(restarted
-        .install_scanned("global", "test", "good", false, Some(&done.revision))
+        .install_scanned("global", "test", "good", false, Some(&check))
         .await
         .is_err());
     loop {
@@ -233,4 +234,152 @@ async fn failed_scan_reports_the_underlying_reason_not_just_the_component() {
         scan.errors["good"]
     );
     assert!(!scan.errors["good"].contains("synthetic-literal"));
+}
+
+/// A named catalog with two plugins.
+fn acme_catalog(root: &Path) {
+    fs::create_dir_all(root.join(".claude-plugin")).unwrap();
+    fs::create_dir_all(root.join("quick")).unwrap();
+    fs::write(
+        root.join("quick/SKILL.md"),
+        "---\nname: quick\ndescription: Quick\n---\nQuick instructions",
+    )
+    .unwrap();
+    fs::write(
+        root.join(".claude-plugin/marketplace.json"),
+        json!({"name":"acme-plugins","owner":{"name":"Acme Inc"},"plugins":[
+            {"name":"quick","source":"./quick"},
+            {"name":"another","source":"./quick"}
+        ]})
+        .to_string(),
+    )
+    .unwrap();
+}
+
+#[tokio::test]
+async fn a_checked_entry_installs_from_its_own_check_while_the_catalog_is_still_scanning() {
+    let data = tempfile::tempdir().unwrap();
+    let source = tempfile::tempdir().unwrap();
+    acme_catalog(source.path());
+    let store = PluginStore::new(data.path().into(), None);
+    store
+        .add_marketplace("test", source.path().to_str().unwrap())
+        .unwrap();
+    // Another writer holds the scan lock and has saved one finished entry, as a scan in progress
+    // does. Nothing here may wait for it.
+    let done = store.wait_marketplace_scan("test", false).await.unwrap();
+    let scan_file = data.path().join("compatibility-cache/test/scan.json");
+    let mut saved: serde_json::Value =
+        serde_json::from_slice(&fs::read(&scan_file).unwrap()).unwrap();
+    saved["status"] = "scanning".into();
+    saved["checks"].as_object_mut().unwrap().remove("another");
+    fs::write(&scan_file, saved.to_string()).unwrap();
+    let lock = fs::OpenOptions::new()
+        .write(true)
+        .open(data.path().join("compatibility-cache/test/scan.lock"))
+        .unwrap();
+    lock.lock().unwrap();
+    let check = done.checks["quick"].check_revision.clone().unwrap();
+    let installed = tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        store.install_scanned("global", "test", "quick", false, Some(&check)),
+    )
+    .await
+    .expect("must not wait for the rest of the catalog")
+    .unwrap();
+    assert_eq!(installed.spec.name, "quick");
+    // A reviewed check that has since been replaced stops the install.
+    let error = store
+        .install_scanned("global", "test", "quick", false, Some("older-check"))
+        .await
+        .unwrap_err();
+    assert!(error.to_string().contains("reopen"), "{error}");
+    lock.unlock().unwrap();
+}
+
+#[tokio::test]
+async fn a_local_source_previews_then_adds_under_its_manifest_name_and_can_be_hidden() {
+    let data = tempfile::tempdir().unwrap();
+    let source = tempfile::tempdir().unwrap();
+    acme_catalog(source.path());
+    let store = PluginStore::new(data.path().into(), None);
+    let path = source.path().to_str().unwrap();
+    let preview = store.preview_source(path).await.unwrap();
+    assert_eq!(preview.name, "acme-plugins");
+    assert_eq!(preview.publisher, "Acme Inc");
+    assert_eq!(preview.plugins, 2);
+    // Previewing adds nothing.
+    assert!(!store
+        .marketplaces()
+        .unwrap()
+        .iter()
+        .any(|m| m.name == "acme-plugins"));
+    assert_eq!(store.add_source(path).await.unwrap(), "acme-plugins");
+    assert!(store.add_source(path).await.is_err(), "added twice");
+    store
+        .set_marketplace_enabled("acme-plugins", false)
+        .unwrap();
+    let sources = store.sources().unwrap();
+    let added = sources.iter().find(|s| s.name == "acme-plugins").unwrap();
+    assert!(!added.enabled && !added.official);
+    assert!(store.sources().unwrap().iter().any(|s| s.official));
+    // Removing the source keeps what was installed from it; the official one stays.
+    store
+        .wait_marketplace_scan("acme-plugins", false)
+        .await
+        .unwrap();
+    store
+        .install_scanned("global", "acme-plugins", "quick", false, None)
+        .await
+        .unwrap();
+    store.remove_marketplace("acme-plugins").unwrap();
+    assert!(store.list().unwrap().iter().any(|p| p.spec.name == "quick"));
+    let official_error = store
+        .remove_marketplace("claude-plugins-official")
+        .unwrap_err();
+    assert!(
+        official_error.to_string().contains("can't be removed"),
+        "{official_error}"
+    );
+}
+
+#[tokio::test]
+async fn sources_that_are_not_marketplaces_say_so_in_one_line() {
+    let data = tempfile::tempdir().unwrap();
+    let store = PluginStore::new(data.path().into(), None);
+    let empty = tempfile::tempdir().unwrap();
+    let error = store
+        .preview_source(empty.path().to_str().unwrap())
+        .await
+        .unwrap_err();
+    assert_eq!(error.to_string(), "No marketplace found in this source.");
+    fs::create_dir_all(empty.path().join(".claude-plugin")).unwrap();
+    let manifest = empty.path().join(".claude-plugin/marketplace.json");
+    fs::write(&manifest, "not json").unwrap();
+    let error = store
+        .preview_source(empty.path().to_str().unwrap())
+        .await
+        .unwrap_err();
+    assert_eq!(error.to_string(), "No marketplace found in this source.");
+    let too_many: Vec<_> = (0..2001)
+        .map(|n| json!({"name": format!("p{n}")}))
+        .collect();
+    fs::write(
+        &manifest,
+        json!({"name":"big","plugins":too_many}).to_string(),
+    )
+    .unwrap();
+    let error = store
+        .preview_source(empty.path().to_str().unwrap())
+        .await
+        .unwrap_err();
+    assert_eq!(
+        error.to_string(),
+        "This marketplace has more than 2,000 plugins."
+    );
+    assert!(store.preview_source("not a source").await.is_err());
+    assert!(store
+        .preview_source("https://user:secret@example.com/a.git")
+        .await
+        .is_err());
 }

@@ -138,7 +138,8 @@ themis plugin create personal --scope local --project /path/to/project
 themis plugin show personal --scope local --project /path/to/project
 themis plugin edit personal --scope local --project /path/to/project
 themis plugin marketplace list
-themis plugin marketplace add community https://github.com/owner/repository.git
+themis plugin marketplace preview owner/repository
+themis plugin marketplace add owner/repository
 themis plugin marketplace browse claude-plugins-official
 themis plugin marketplace check claude-plugins-official
 themis plugin inspect /path/to/package --scope global
@@ -208,11 +209,15 @@ Catalog tiles reuse persisted full-marketplace checks. Scans check up to four pa
 
 ## Saved compatibility scans
 
-`scan_marketplace` starts or resumes background scanning and returns `scanning`, `ready`, or `failed`, plus completed/total counts and a scan revision. Adding a marketplace starts its scan immediately. Browsing and manual preview share the same saved result; no plugin tiles become usable until the complete catalog is classified. Individual import failures remain visible as Check failed and disabled Install actions; they do not hide otherwise usable packages. A failed catalog can be retried with Refresh.
+`scan_marketplace` starts or resumes background scanning and returns `scanning`, `ready`, or `failed`, plus completed/total counts, the catalog and the checks finished so far. Adding a marketplace starts its scan immediately. Each entry's check is saved with its own `check_revision`, so a checked plugin can be previewed and installed while the rest of its catalog is still being checked; unchecked entries show "Checking…". Browsing and manual preview share the same saved result. Individual import failures remain visible as Check failed and disable installation until refresh.
 
 Derived metadata and full previews are stored under app-data `compatibility-cache/<marketplace>/`, separately from the revisioned integration registry. They persist across navigation and server restarts. Interrupted work resumes on the next scan/browse/preview request, retaining completed entries. Refresh explicitly replaces the snapshot; source changes and cache schema changes invalidate it. Catalogs are limited to 2,000 uniquely named entries; individual persisted files retain the existing 32 MiB store limit. No MCP server or hook executes during scanning.
 
-A per-marketplace OS lock coordinates scans, preview reads, refreshes, installs and removal. Manual previews and installs wait for the active writer instead of failing at the completion boundary. Repeated scan requests reuse the active job. Removal during scanning returns a retryable busy error. Desktop installs include the reviewed scan revision: if another window refreshed it, installation stops and asks the user to reopen the plugin. The validated saved package is installed, so a later upstream edit cannot change the approved contents. Updating through the CLI explicitly refreshes the full marketplace first. Previously installed packages remain available during scans.
+A per-marketplace OS lock allows one scan at a time and blocks removal while it runs (a retryable busy error). Previews and installs don't take it: an entry's saved check is written atomically, and the catalog check goes on around it. Desktop installs include the reviewed `check_revision`: if that entry was checked again, installation stops and asks the user to reopen the plugin. The validated saved package is installed, so a later upstream edit cannot change the approved contents. Updating through the CLI explicitly refreshes the full marketplace first. Previously installed packages remain available during scans.
+
+## Sources
+
+Discover › Sources lists every marketplace with its plugin count and when it was last checked, or its progress. Add marketplace takes one field: `owner/repo`, an HTTPS Git URL or a local folder. Check reads only the source's manifest (for Git, a shallow, sparse, blob-filtered clone of `.claude-plugin/marketplace.json`) and shows its name, publisher and plugin count before anything is added; Add uses the manifest's name. A source that can't be reached, isn't a marketplace or lists more than 2,000 plugins says so in one line. A switch shows or hides a source in Discover (`enabled` in `marketplaces.json`, written under the marketplace lock). Removing a source deletes its saved checks and keeps plugins installed from it; their rows show "Source removed" and they can no longer be updated. The official source can be hidden but not removed.
 
 Raising the instruction limit or changing import rules invalidates older saved marketplace checks automatically (the saved check carries a version). `themis plugin marketplace check NAME` waits for a complete check and prints how many plugins have each status (`supported`, `partial`, `unsupported`, `failed`) and how many plugins each reason affects, most common first; `marketplace refresh NAME` fetches the source again first. Existing installed packages and their revisions remain unchanged.
 
