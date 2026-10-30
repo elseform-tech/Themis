@@ -81,7 +81,7 @@ fn because_carrying_on(reason: &str) -> String {
     } else {
         format!("{first}{}", chars.as_str())
     };
-    format!("It isn't done yet because {reason}, so I'm carrying on.")
+    format!("That isn't proven yet, because {reason}, so I'm carrying on.")
 }
 
 /// `wait` plus up to a fifth more, so chats hit by the same outage don't all retry at once.
@@ -747,6 +747,14 @@ impl AppState {
             });
             return;
         }
+        // Whatever the turn just claimed, the person sees it is not the verdict.
+        self.goal_note(
+            sink.as_ref(),
+            &thread_id,
+            "",
+            GoalNoteKind::Status,
+            "I'm checking that against the goal now.",
+        );
         let (evidence, changed_files, through_seq) =
             self.turn_evidence(&thread_id, goal.checked_seq);
         let checked_goal = goal.started_at;
@@ -1274,7 +1282,7 @@ mod tests {
     fn the_reason_to_carry_on_reads_as_a_sentence() {
         assert_eq!(
             because_carrying_on("Counter is 1; needs 2."),
-            "It isn't done yet because counter is 1; needs 2, so I'm carrying on."
+            "That isn't proven yet, because counter is 1; needs 2, so I'm carrying on."
         );
         assert!(because_carrying_on("HTTP 500 remains").contains("because HTTP 500"));
         assert!(!because_carrying_on("").contains(':'));

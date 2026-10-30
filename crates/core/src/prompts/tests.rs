@@ -372,7 +372,7 @@ fn goal_prompts_are_byte_identical() {
                 ("note", note),
             ],
         ),
-        format!("{GOAL_TURN_MARKER} Turn {turn}. Working toward: {goal}\nLast check: {note}\nStart your reply thinking aloud about where this stands and what you will do next, in your own words with no label or heading, and open it differently from your earlier replies. Then continue toward the goal. Do not redo work that is already done. The check sees only this turn's commands: before you finish, run one compact verification that proves every requirement. Then end the turn by telling the user, in a few plain sentences, what this turn changed and what comes next.")
+        format!("{GOAL_TURN_MARKER} Turn {turn}. Working toward: {goal}\nLast check: {note}\nStart your reply thinking aloud about where this stands and what you will do next, in your own words with no label or heading, and open it differently from your earlier replies. Then continue toward the goal. Do not redo work that is already done. The check sees only this turn's commands: before you finish, run one compact verification that proves every requirement. Then end the turn by telling the user, in a few plain sentences, what this turn changed and what you saw happen. A separate check decides whether the goal is met, so never say it is met or verified yourself.")
     );
     let reason = "check.py passes.";
     assert_eq!(
