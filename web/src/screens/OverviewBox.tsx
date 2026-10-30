@@ -17,6 +17,7 @@ export interface Overview {
   media: AttachedMedia[];
   cost: { usd?: number; free: boolean } | null;
   /** Something to show: the box (and the room the chat leaves for it) appears only then. */
+  /** Whether it has anything to list; the chat keeps its room either way. */
   visible: boolean;
   collapsed: boolean;
   setCollapsed: (collapsed: boolean) => void;
@@ -75,17 +76,6 @@ export function useOverview(threadId: string, messages: ChatMessage[]): Overview
     visible: !!(changes || tasks || shownBrowser || media.length || shownCost),
     collapsed, setCollapsed,
   };
-}
-
-/** Whether the chat keeps room for the overview box: from the first time the box shows in
- *  `threadId` until the chat changes. The box comes and goes with runs; moving the whole
- *  conversation each time was jumpy, and WebKit left the last message where it was. */
-export function useOverviewRoom(threadId: string, visible: boolean): boolean {
-  const [roomFor, setRoomFor] = useState<string | null>(null);
-  useEffect(() => {
-    if (visible && threadId) setRoomFor(threadId);
-  }, [visible, threadId]);
-  return visible || (threadId !== "" && roomFor === threadId);
 }
 
 /** Frame width asked for: the box is about 200 px wide, so two device pixels per CSS pixel. */

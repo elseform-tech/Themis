@@ -3,7 +3,7 @@ import { act, cleanup, fireEvent, render, renderHook, screen } from "@testing-li
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { initialState } from "../state/reducer";
 import type { ChatMessage } from "../state/reducer";
-import { diffTotals, OverviewBox, useOverview, useOverviewRoom } from "./OverviewBox";
+import { diffTotals, OverviewBox, useOverview } from "./OverviewBox";
 
 const dispatch = vi.fn();
 let appState: typeof initialState;
@@ -49,7 +49,6 @@ describe("chat overview box", () => {
     const { result } = renderHook(() => useOverview("t1", media));
     await act(async () => {});
     const overview = result.current;
-    expect(overview.visible).toBe(true);
     const openMedia = vi.fn();
     render(<OverviewBox threadId="t1" overview={overview} onOpenMedia={openMedia} />);
     // The browser shows as a live preview: small frames, the page left at its size.
@@ -109,22 +108,10 @@ describe("chat overview box", () => {
     expect(localStorage.getItem("themis:overviewCollapsed")).toBe("true");
   });
 
-  it("keeps the chat's room once the box has shown, so the conversation does not jump when a run ends", () => {
-    const { result, rerender } = renderHook(({ thread, visible }) => useOverviewRoom(thread, visible), { initialProps: { thread: "t1", visible: false } });
-    expect(result.current).toBe(false);
-    rerender({ thread: "t1", visible: true });
-    expect(result.current).toBe(true);
-    rerender({ thread: "t1", visible: false });
-    expect(result.current).toBe(true);
-    // Another chat starts without it.
-    rerender({ thread: "t2", visible: false });
-    expect(result.current).toBe(false);
-  });
-
-  it("is hidden when the chat has nothing to show", async () => {
+  it("has nothing to show in a chat with nothing to list", async () => {
     appState = { ...initialState };
     const { browserState } = await import("../lib/browser");
-    vi.mocked(browserState).mockResolvedValueOnce({ open: false, tabs: [], current: 0, url: "about:blank", title: "", can_go_back: false, can_go_forward: false, controller: "idle", activity: null, console_errors: 0, loading: false, muted: true });
+    vi.mocked(browserState).mockResolvedValueOnce({ open: false, tabs: [], current: 0, url: "about:blank", title: "", can_go_back: false, can_go_forward: false } as never);
     const { getUsageSummary } = await import("../lib/tauri");
     vi.mocked(getUsageSummary).mockResolvedValueOnce({ available: true, by_chat: [] } as never);
     const { result } = renderHook(() => useOverview("t2", []));

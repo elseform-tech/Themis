@@ -194,12 +194,11 @@ function ConversationRow({
 }
 
 /** Consecutive tool calls as one folded row that says what they did ("Read 4 files ·
- *  Ran python3 check.py"); open while one of them runs. */
+ *  Ran python3 check.py"). It stays folded during a run, so the chat doesn't jump with each call. */
 function ToolGroup({ messages, activeRunId, skills, plugins }: { messages: ChatMessage[]; activeRunId: string | undefined; skills: PromptSkill[]; plugins: PromptPlugin[] }) {
-  const running = activeRunId !== undefined && messages.some(message => message.tool?.ok === undefined);
   const failed = messages.filter(message => message.tool?.ok === false).length;
   return (
-    <details className="themis-tool-group" open={running || undefined}>
+    <details className="themis-tool-group">
       <summary>
         <span className="themis-tool-chevron" aria-hidden="true">›</span>
         <span title={`${messages.length} tool call${messages.length === 1 ? "" : "s"}`}>{describeTools(messages, activeRunId !== undefined)}</span>
