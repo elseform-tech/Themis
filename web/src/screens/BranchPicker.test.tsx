@@ -10,6 +10,7 @@ describe("composer branch chip", () => {
     const onSwitch = vi.fn();
     render(<BranchPicker branch="main" branches={["main", "feature"]} busy={false} onSwitch={onSwitch} />);
     expect(screen.getByLabelText("Branch main. Switch branch")).toHaveTextContent("main");
+    expect(screen.getByLabelText("Branch main. Switch branch").querySelector(".themis-branch-chevron")).toBeInTheDocument();
     const menu = screen.getByRole("menu", { name: "Switch branch", hidden: true });
     expect(menu).toHaveTextContent("feature");
     expect(menu).not.toHaveTextContent("main");
@@ -20,6 +21,7 @@ describe("composer branch chip", () => {
     const { rerender } = render(<BranchPicker branch="main" branches={["main", "feature"]} busy onSwitch={vi.fn()} />);
     expect(screen.getByText("main")).toBeVisible();
     expect(screen.queryByRole("menu", { hidden: true })).toBeNull();
+    expect(document.querySelector(".themis-branch-chevron")).toBeNull();
     rerender(<BranchPicker branch="main" branches={["main"]} busy={false} onSwitch={vi.fn()} />);
     expect(screen.queryByRole("menu", { hidden: true })).toBeNull();
   });

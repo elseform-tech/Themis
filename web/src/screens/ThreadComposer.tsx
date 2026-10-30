@@ -231,7 +231,7 @@ export function BranchPicker({ branch, branches, busy, onSwitch }: { branch: str
   const others = branches.filter(name => name !== branch);
   if (busy || !onSwitch || others.length === 0) return <>{branchIcon}<span className="themis-composer-branch themis-composer-label">{branch}</span></>;
   return <details data-popover className="themis-branch-picker">
-    <summary aria-label={`Branch ${branch}. Switch branch`}>{branchIcon}<span className="themis-composer-branch themis-composer-label">{branch}</span></summary>
+    <summary aria-label={`Branch ${branch}. Switch branch`} title="Switch branch">{branchIcon}<span className="themis-composer-branch themis-composer-label">{branch}</span><svg className="themis-branch-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true"><path d="m6 9 6 6 6-6" /></svg></summary>
     <div className="themis-branch-menu" role="menu" aria-label="Switch branch">
       {others.map(name => <button key={name} type="button" role="menuitem" onClick={event => { event.currentTarget.closest("details")?.removeAttribute("open"); onSwitch(name); }}>{name}</button>)}
     </div>
