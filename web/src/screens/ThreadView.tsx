@@ -313,7 +313,7 @@ export function ThreadView() {
         setWorkspaceVersion(version => version + 1);
         // Git keeps uncommitted edits on a switch; say so rather than let them appear on the new branch unannounced.
         const carried = state.diffs[thread.id]?.files.length ?? 0;
-        if (carried > 0) toast(dispatch, `${carried} uncommitted ${carried === 1 ? "change" : "changes"} came along to ${branch}`);
+        if (carried > 0) toast(dispatch, `${carried} uncommitted ${carried === 1 ? "change" : "changes"} came along to ${branch}`, "info");
       }).catch(error => toast(dispatch, describeError(error), "danger")) }}
       top={<>
         <ComposerStack threadId={thread.id} goal={goal} approvals={approvals} questions={questions} traces={trace}
