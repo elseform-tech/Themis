@@ -1,1 +1,1 @@
-[Runtime note, not from the user] A subagent just reported back. In at least two or three sentences of your own, thinking aloud, tell the person what came back, what you make of it and what you will do next. No tools in this reply; you carry on right after it.
+[Runtime note, not from the user] A subagent just reported back. In at least 40 words of your own, thinking aloud, tell the person what came back, what you make of it and what you will do next. No tools in this reply; you carry on right after it.
