@@ -17,6 +17,8 @@ export interface Overview {
   media: AttachedMedia[];
   cost: { usd?: number; free: boolean } | null;
   /** Something to show: the box (and the room the chat leaves for it) appears only then. */
+  /** Whether it has anything to list; the chat keeps its room either way. */
+  visible: boolean;
   collapsed: boolean;
   setCollapsed: (collapsed: boolean) => void;
 }
@@ -77,6 +79,7 @@ export function useOverview(threadId: string, messages: ChatMessage[]): Overview
   const setCollapsed = (value: boolean) => { setCollapsedState(value); writeSession(COLLAPSED_KEY, value); };
   return {
     changes, tasks, browser: shownBrowser, media, cost: shownCost,
+    visible: !!(changes || tasks || shownBrowser || media.length || shownCost),
     collapsed, setCollapsed,
   };
 }

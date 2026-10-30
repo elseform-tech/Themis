@@ -267,9 +267,11 @@ export function ThreadView() {
   const diff = state.diffs[thread.id];
   const changedFiles = diff?.available ? diff.files.length : undefined;
   const empty = messages.length === 0 && stream === "" && !running && !sending;
-  // The overview box stands in for the Workspace while it is closed, from the chat's first
-  // message: appearing mid-run would make a long reply jump narrower.
-  const showOverview = !state.diffPanelOpen && !empty;
+  // The overview box stands in for the Workspace while it is closed. The chat keeps its room
+  // from the first message, so a long reply doesn't jump narrower when the box has something
+  // to list; with nothing to list it stays hidden.
+  const keepOverviewRoom = !state.diffPanelOpen && !empty;
+  const showOverview = keepOverviewRoom && overview.visible;
   const showNotice = budget?.compaction_soon === true && !compacting && running && !noticeDismissed[thread.id];
   const starters = [
     ...promptSkills.filter(skill => !skill.retired).slice(0, 2).map(skill => ({ label: `/ ${skill.name}`, text: `${skillToken(skill.id)} ` })),
@@ -331,7 +333,7 @@ export function ThreadView() {
 
   return (
     <div className={`themis-thread-layout${state.diffPanelOpen ? " is-reviewing" : ""}`}>
-    <div className={`themis-thread${showOverview ? ` has-overview${overview.collapsed ? " overview-collapsed" : ""}` : ""}`}>
+    <div className={`themis-thread${keepOverviewRoom ? ` has-overview${overview.collapsed ? " overview-collapsed" : ""}` : ""}`}>
       <ThreadHeader
         thread={thread}
         models={models}

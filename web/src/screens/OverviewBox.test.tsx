@@ -105,4 +105,15 @@ describe("chat overview box", () => {
     expect(screen.getByRole("button", { name: "Show overview details" })).toHaveAttribute("aria-expanded", "false");
     expect(localStorage.getItem("themis:overviewCollapsed")).toBe("true");
   });
+
+  it("has nothing to show in a chat with nothing to list", async () => {
+    appState = { ...initialState };
+    const { browserState } = await import("../lib/browser");
+    vi.mocked(browserState).mockResolvedValueOnce({ open: false, tabs: [], current: 0, url: "about:blank", title: "", can_go_back: false, can_go_forward: false } as never);
+    const { getUsageSummary } = await import("../lib/tauri");
+    vi.mocked(getUsageSummary).mockResolvedValueOnce({ available: true, by_chat: [] } as never);
+    const { result } = renderHook(() => useOverview("t2", []));
+    await act(async () => {});
+    expect(result.current.visible).toBe(false);
+  });
 });
