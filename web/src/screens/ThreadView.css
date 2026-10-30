@@ -234,3 +234,12 @@
 .themis-recording-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--themis-danger); animation: themis-recording-pulse 1.6s ease-in-out infinite; }
 @keyframes themis-recording-pulse { 0%, 100% { opacity: 1; } 50% { opacity: .35; } }
 @media (prefers-reduced-motion: reduce) { .themis-recording-dot { animation: none; } }
+
+/* Composer branch switcher. */
+.themis-composer-location > .themis-branch-picker { position: relative; min-width: 0; margin-left: 6px; }
+.themis-branch-picker > summary { display: flex; align-items: center; gap: 5px; min-width: 0; cursor: pointer; list-style: none; }
+.themis-branch-picker > summary::-webkit-details-marker { display: none; }
+.themis-branch-picker > summary:hover { color: var(--themis-text-2); }
+.themis-branch-menu { position: absolute; bottom: calc(100% + 6px); left: 0; z-index: 30; display: flex; flex-direction: column; min-width: 180px; max-width: 320px; max-height: 260px; overflow-y: auto; padding: 4px; border-radius: 12px; background: var(--themis-raised); box-shadow: 0 8px 24px rgb(0 0 0 / .35); }
+.themis-branch-menu button { padding: 7px 10px; border: 0; border-radius: 8px; background: transparent; color: var(--themis-text); font: inherit; text-align: left; cursor: pointer; overflow-wrap: anywhere; }
+.themis-branch-menu button:hover, .themis-branch-menu button:focus-visible { background: color-mix(in srgb, var(--themis-text) 8%, transparent); }

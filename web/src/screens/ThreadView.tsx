@@ -6,7 +6,7 @@ import { Button } from "../components";
 import type { GoModel } from "../lib/types";
 import { usesGo } from "../lib/models";
 import { yoloKeeps } from "../lib/yolo";
-import { attachFiles, getEffectivePermissions, editGoal, enqueueMessage, getGoal, getThread, getWorkspace, listDiff, listGoModels, listQueue, pauseGoal, removeGoal, removeQueuedMessage, resumeGoal, sendMessage, setProvider, setThreadEffort, setThreadApprovalMode, steerQueuedMessage, stopThread, updateQueuedMessage } from "../lib/tauri";
+import { attachFiles, getEffectivePermissions, editGoal, enqueueMessage, getGoal, getThread, getWorkspace, listDiff, listGoModels, listQueue, pauseGoal, removeGoal, removeQueuedMessage, resumeGoal, sendMessage, setProvider, setThreadEffort, setThreadApprovalMode, steerQueuedMessage, stopThread, updateQueuedMessage, switchBranch } from "../lib/tauri";
 import { useLiveDiff } from "../lib/useLiveDiff";
 import { describeError, isConcurrencyLimitError, newId, toast, useActiveProject, useActiveThread, useApp } from "../state/store";
 import { readSession, writeSession } from "../state/session";
@@ -110,7 +110,8 @@ export function ThreadView() {
     return () => { current = false; };
   }, [yoloThread, project]);
   const runningNow = threadId !== undefined && (state.running[threadId] ?? false);
-  const workspace = useProjectWorkspace(project?.root, runningNow, getWorkspace);
+  const [workspaceVersion, setWorkspaceVersion] = useState(0);
+  const workspace = useProjectWorkspace(project?.root, runningNow, getWorkspace, workspaceVersion);
   const gitProject = project?.is_git === true;
   // The header, the overview box and Workspace › Changes all show this chat's live diff.
   useLiveDiff(threadId, gitProject, runningNow, listDiff, (id, diff) => dispatch({ type: "diff/set", threadId: id, diff }));
@@ -308,7 +309,7 @@ export function ThreadView() {
       onOpenSettings={() => dispatch({ type: "ui/view", view: "settings", settings: { section: "Models" } })}
       budget={budget}
       compacting={compacting}
-      location={{ name: project.name, root: project.root, branch: workspace?.branch ?? null }}
+      location={{ name: project.name, root: project.root, branch: workspace?.branch ?? null, branches: workspace?.branches.map(branch => branch.name), onSwitchBranch: branch => void switchBranch(project.root, branch).then(() => setWorkspaceVersion(version => version + 1)).catch(error => toast(dispatch, describeError(error), "danger")) }}
       top={<>
         <ComposerStack threadId={thread.id} goal={goal} approvals={approvals} questions={questions} traces={trace}
           onEditGoal={async text => { try { await editGoal(thread.id, text); } catch (error) { toast(dispatch, `Could not save the goal: ${describeError(error)}`, "danger"); throw error; } }}

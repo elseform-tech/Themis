@@ -50,6 +50,26 @@ fn ensure_root_relative(path: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// The whole listing stays bounded too: once it holds MAX_LISTED_DIFF_BYTES of text, later
+/// files are listed without lines.
+pub(super) fn bound_listed_lines(files: &mut [crate::types::DiffFile]) {
+    let mut room = MAX_LISTED_DIFF_BYTES;
+    for file in files {
+        let bytes: usize = file
+            .hunks
+            .iter()
+            .flat_map(|hunk| &hunk.lines)
+            .map(|line| line.text.len() + 1)
+            .sum();
+        if bytes > room {
+            file.hunks.clear();
+            file.too_large = true;
+        } else {
+            room -= bytes;
+        }
+    }
+}
+
 impl AppState {
     /// Lists the shared project checkout diff (git repos only).
     pub async fn list_diff(&self, thread_id: String) -> Result<DiffState, String> {
@@ -104,23 +124,7 @@ impl AppState {
                 "truncated: showing {MAX_DIFF_FILES} of {total} changed files"
             ));
         }
-        // The whole listing stays bounded too: once it holds
-        // MAX_LISTED_DIFF_BYTES of text, later files are listed without lines.
-        let mut room = MAX_LISTED_DIFF_BYTES;
-        for file in &mut files {
-            let bytes: usize = file
-                .hunks
-                .iter()
-                .flat_map(|hunk| &hunk.lines)
-                .map(|line| line.text.len() + 1)
-                .sum();
-            if bytes > room {
-                file.hunks.clear();
-                file.too_large = true;
-            } else {
-                room -= bytes;
-            }
-        }
+        bound_listed_lines(&mut files);
         if hidden > 0 {
             notes.push(format!(
                 "{hidden} binary or generated file{} hidden",

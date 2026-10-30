@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { initialState } from "../state/reducer";
 import type { WorkspaceInfo } from "../lib/types";
@@ -15,6 +15,7 @@ vi.mock("../state/store", async importOriginal => ({
 }));
 vi.mock("../lib/tauri", () => ({
   listDiff: vi.fn(async () => diff),
+  branchDiff: vi.fn(),
   listProjectDir: vi.fn(async () => ({ path: "", truncated: false, entries: [{ name: "README.md", path: "README.md", is_dir: false, size: 5 }] })),
   readProjectFile: vi.fn(async () => ({ path: "README.md", content: "hello", size: 5, truncated: false, binary: false })),
   getWorkspace: vi.fn(async () => ({ ...workspace, pull_requests_unavailable: "GitHub CLI (gh) is not installed" })),
@@ -100,6 +101,21 @@ describe("WorkspacePanel", () => {
     await act(async () => {});
     expect(calls()).toBe(initial + 1);
     vi.useRealTimers();
+  });
+  it("shows what another branch adds, read-only, and nothing for the current one", async () => {
+    const info = { ...workspace, is_git: true, branch: "main", branches: [
+      { name: "main", current: true, upstream: null, track: null, updated: "now" },
+      { name: "feature", current: false, upstream: null, track: null, updated: "now" },
+    ] };
+    vi.mocked(bridge.branchDiff).mockResolvedValue({ available: true, reason: null, files: [{ path: "new.txt", status: "added", hunks: [] }] } as never);
+    appState = { ...appState, workspaceTabRequest: { tab: "branches", at: 2 } };
+    render(<WorkspacePanel projectRoot="/repo" threadId="t1" workspace={info as never} />);
+    expect(screen.queryByRole("button", { name: /^main/ })).toBeNull();
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: /^feature/ })); });
+    expect(bridge.branchDiff).toHaveBeenCalledWith("/repo", "feature");
+    expect(within(screen.getByRole("region", { name: "Changes in feature" })).getAllByText("new.txt").length).toBeGreaterThan(0);
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: /^feature/ })); });
+    expect(screen.queryByRole("region", { name: "Changes in feature" })).toBeNull();
   });
   it("shows a Tasks tab with a count and opens it when the indicator asks", async () => {
     const feed = { thread_id: "t1", run: { running: true, awaiting_approval: false }, automations: [], recent: [] };

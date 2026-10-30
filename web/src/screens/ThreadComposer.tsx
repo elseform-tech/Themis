@@ -40,7 +40,7 @@ interface ThreadComposerProps {
   yoloKeeps?: string[];
   budget?: ContextBudget;
   /** Project directory and current Git branch shown beside the composer controls. */
-  location?: { name: string; root: string; branch: string | null };
+  location?: { name: string; root: string; branch: string | null; branches?: string[]; onSwitchBranch?: (branch: string) => void };
   compacting?: boolean;
   /** Centred, larger composer for an empty conversation. */
   hero?: boolean;
@@ -217,9 +217,23 @@ export function ThreadComposer({
         {location && <div className="themis-composer-location" title={location.branch ? `${location.name} · ${location.branch}\n${location.root}` : `${location.name}\n${location.root}`} aria-label={location.branch ? `${location.name}, branch ${location.branch}` : location.name}>
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z" /></svg>
             <span className="themis-composer-label">{location.name}</span>
-            {location.branch && <><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden="true"><circle cx="6" cy="5" r="2" /><circle cx="6" cy="19" r="2" /><circle cx="18" cy="7" r="2" /><path d="M6 7v10M18 9c0 5-6 4-11 8" /></svg><span className="themis-composer-branch themis-composer-label">{location.branch}</span></>}
+            {location.branch && <BranchPicker branch={location.branch} branches={location.branches ?? []} busy={running} onSwitch={location.onSwitchBranch} />}
           </div>}
       </div>
     </>
   );
+}
+
+const branchIcon = <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden="true"><circle cx="6" cy="5" r="2" /><circle cx="6" cy="19" r="2" /><circle cx="18" cy="7" r="2" /><path d="M6 7v10M18 9c0 5-6 4-11 8" /></svg>;
+/** The checkout's branch, and the way to change it. Not while a chat is working: switching
+ *  would move files underneath it. */
+export function BranchPicker({ branch, branches, busy, onSwitch }: { branch: string; branches: string[]; busy: boolean; onSwitch?: (branch: string) => void }) {
+  const others = branches.filter(name => name !== branch);
+  if (busy || !onSwitch || others.length === 0) return <>{branchIcon}<span className="themis-composer-branch themis-composer-label">{branch}</span></>;
+  return <details data-popover className="themis-branch-picker">
+    <summary aria-label={`Branch ${branch}. Switch branch`}>{branchIcon}<span className="themis-composer-branch themis-composer-label">{branch}</span></summary>
+    <div className="themis-branch-menu" role="menu" aria-label="Switch branch">
+      {others.map(name => <button key={name} type="button" role="menuitem" onClick={event => { event.currentTarget.closest("details")?.removeAttribute("open"); onSwitch(name); }}>{name}</button>)}
+    </div>
+  </details>;
 }

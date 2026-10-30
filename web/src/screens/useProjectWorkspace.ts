@@ -8,18 +8,21 @@ export function useProjectWorkspace(
   projectRoot: string | undefined,
   running: boolean,
   load: (projectRoot: string) => Promise<WorkspaceInfo>,
+  version = 0,
 ): WorkspaceInfo | null {
   const [loaded, setLoaded] = useState<WorkspaceInfo | null>(null);
   const loadedRoot = useRef<string | null>(null);
+  const loadedVersion = useRef(version);
   useEffect(() => {
-    if (projectRoot === undefined || (running && loadedRoot.current === projectRoot)) return;
+    if (projectRoot === undefined || (running && loadedRoot.current === projectRoot && loadedVersion.current === version)) return;
     let cancelled = false;
     load(projectRoot).then(info => {
       if (cancelled) return;
       loadedRoot.current = projectRoot;
+      loadedVersion.current = version;
       setLoaded(info);
     }).catch(() => { if (!cancelled) setLoaded(null); });
     return () => { cancelled = true; };
-  }, [projectRoot, running, load]);
+  }, [projectRoot, running, load, version]);
   return loaded?.root === projectRoot ? loaded : null;
 }
