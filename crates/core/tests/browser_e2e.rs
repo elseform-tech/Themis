@@ -520,6 +520,22 @@ requestAnimationFrame(draw);
         };
         (number("frames "), number("pauses "))
     };
+    // The chat's preview of a frozen page still gets a picture of it.
+    let mut updates = chat.subscribe();
+    chat.start_preview(440).await.unwrap();
+    let framed = tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            match updates.recv().await {
+                Ok(themis_core::browser::BrowserUpdate::Frame { data, .. }) => return data,
+                Ok(_) => {}
+                Err(error) => panic!("{error}"),
+            }
+        }
+    })
+    .await
+    .expect("no frame for a frozen page");
+    assert!(!framed.is_empty());
+    chat.stop_screencast().await;
     // The action thaws the page, and drawing carries on; each round needs its own freeze.
     for round in 0..3 {
         let (before, _) = read().await;
