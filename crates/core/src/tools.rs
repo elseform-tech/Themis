@@ -805,8 +805,15 @@ pub fn shell_argv(args: &serde_json::Value) -> Vec<String> {
         .and_then(|v| v.as_str())
         .unwrap_or_default();
     let mut argv = vec![program.to_owned()];
-    if let Some(rest) = args.get("args").and_then(|v| v.as_array()) {
-        argv.extend(rest.iter().filter_map(|v| v.as_str()).map(str::to_owned));
+    // The same reading as the tool itself: rules and prompts must see what would run.
+    match args.get("args") {
+        Some(Value::Array(rest)) => {
+            argv.extend(rest.iter().filter_map(|v| v.as_str()).map(str::to_owned));
+        }
+        Some(Value::String(text)) => {
+            argv.extend(serde_json::from_str::<Vec<String>>(text).unwrap_or_default());
+        }
+        _ => {}
     }
     let argv = normalize_argv(argv);
     if argv.first().is_none_or(|program| program.trim().is_empty()) {
@@ -4004,6 +4011,17 @@ mod tests {
 
         #[test]
         fn args_sent_as_json_text_mean_the_same_list() {
+            // What rules and prompts read matches what runs.
+            assert_eq!(
+                shell_argv(&json!({"command": "rm", "args": r#"["-rf", "x"]"#})),
+                ["rm", "-rf", "x"]
+            );
+            assert_eq!(
+                shell_risk(&shell_argv(
+                    &json!({"command": "rm", "args": r#"["-rf", "x"]"#})
+                )),
+                shell_risk(&shell_argv(&json!({"command": "rm", "args": ["-rf", "x"]})))
+            );
             let list = parsed(json!(["-c", "print(1)"])).ok().unwrap().args;
             let text = parsed(json!(r#"["-c", "print(1)"]"#)).ok().unwrap().args;
             assert_eq!(list, text);
