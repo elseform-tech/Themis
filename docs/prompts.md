@@ -26,6 +26,16 @@ saying where it is used. Code that builds a prompt from several pieces keeps
 the assembly (separators, optional parts, labels chosen at run time) and takes
 only the text from these files.
 
+## Size
+
+More words don't make the model smarter, and every request pays for them. Before adding text,
+cut or merge what is there. A tool's rules belong in its description, not the system message. Add
+a rule only for a failure it fixes, and check it with an eval or a real run; if the model ignores
+it, more wording rarely helps, and a tool field or a runtime check usually does.
+
+`prompts_stay_within_their_size_limits` caps the system message's fixed pieces at 3,200 bytes and
+any one file at 2,500 bytes. Raising a limit needs a reason in the PR.
+
 ## Format
 
 - The file's bytes are the bytes sent. Files have **no trailing newline**; a
