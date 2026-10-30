@@ -1981,7 +1981,7 @@ fn said_with_calls(calls: &[ToolCall]) -> Option<String> {
         .find_map(|call| {
             let args: serde_json::Value = serde_json::from_str(&call.function.arguments).ok()?;
             let line = args["say"].as_str()?.trim();
-            (!line.is_empty()).then(|| line.chars().take(400).collect())
+            (!line.is_empty()).then(|| line.chars().take(800).collect())
         })
 }
 
@@ -8058,7 +8058,7 @@ mod tests {
         assert!(matches!(messages[0].role, ChatRole::System));
         assert!(messages[0]
             .content
-            .contains("what you are doing now, or what you found and what comes next"));
+            .contains("what you are doing now and why, or what you found and what comes next"));
         // Social messages get a reply in kind, not a recap of parked work.
         assert!(messages[0].content.contains(
             "do not recap, summarize or resume earlier or parked work unless the user asks about it"

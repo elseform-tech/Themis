@@ -11,7 +11,7 @@ use super::subagents::{Reporter, Subagent, SubagentKit, MAX_PER_CALL};
 
 /// The line the person sees before the call runs; the runtime shows it.
 fn say_field() -> Value {
-    json!({"type":"string","description":"One natural sentence for the person watching: what you are doing and why, in your own words, not repeating an earlier line."})
+    json!({"type":"string","description":"At least two or three natural sentences for the person watching: what you are doing and why, in your own words, not repeating earlier ones."})
 }
 
 /// Longest wait one `wait_subagents` call may ask for.
