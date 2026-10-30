@@ -215,6 +215,12 @@ Derived metadata and full previews are stored under app-data `compatibility-cach
 
 A per-marketplace OS lock allows one scan at a time and blocks removal while it runs (a retryable busy error). Previews and installs don't take it: an entry's saved check is written atomically, and the catalog check goes on around it. Desktop installs include the reviewed `check_revision`: if that entry was checked again, installation stops and asks the user to reopen the plugin. The validated saved package is installed, so a later upstream edit cannot change the approved contents. Updating through the CLI explicitly refreshes the full marketplace first. Previously installed packages remain available during scans.
 
+## Icons
+
+A plugin's icon is, in order: its own icon (a bundled SVG, PNG or WebP up to 256 KiB, or an HTTPS URL); a bundled brand logo; a tile with its initial on a colour from its name. HTTPS icons are downloaded once, during the compatibility check, and browsing makes no network requests. Saved icons live in the content-named app-data `plugin-icons/` folder, so an installed plugin keeps its icon after its source is removed.
+
+Brand logos come from [Simple Icons](https://simpleicons.org) (CC0; the marks themselves remain their owners' trademarks), limited to publishers in the catalog (`web/src/lib/brandLogos.json`, `crates/core/builtins/plugin-brands.json`; a test keeps the set under 300 KiB). A logo is matched on the GitHub owner in an entry's source URL, or on `author` in the official catalog only, because `author` is just a claim; never on an MCP domain. Saving a plugin can't set either field.
+
 ## Updates
 
 When the app opens, each shown source not checked in the last day is checked for upstream changes in the background (Settings › General › Check sources for updates, on by default). A Git source compares its latest commit (`git ls-remote`) and downloads again only if it moved; an entry in its own repository compares that repository's ref, unless the catalog pins a `sha`; a folder compares a bounded hash of its files, not modification times. Only entries that changed are checked again. If a source can't be reached, its saved checks stay and it is tried again next time.

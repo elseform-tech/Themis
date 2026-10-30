@@ -602,19 +602,18 @@ describe("Integration browsing and lifecycle", () => {
     expect(screen.getByRole("dialog")).toHaveTextContent("Disabled");
     expectNoConfiguration();
   });
-  it("uses source icons and replaces failed images with a glyph", async () => {
+  it("shows an icon URL nowhere: browsing makes no image requests", async () => {
     installed[0].spec.icon = "https://example.com/missing.svg";
     render(<Plugins />);
     await screen.findByRole("button", { name: "View docs" });
-    fireEvent.error(screen.getByAltText(""));
     expect(screen.queryByAltText("")).toBeNull();
-    expect(screen.getByRole("button", { name: "View docs" }).closest("li")!.querySelector("svg")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "View docs" }).closest("li")).toHaveTextContent("D");
   });
-  it("previews public bundles without installing and retains source icons", async () => {
+  it("previews public bundles without installing", async () => {
     render(<Plugins />);
     await screen.findByRole("button", { name: "View docs" });
     await act(async () => fireEvent.click(screen.getByRole("button", { name: "Discover" })));
-    expect(screen.getByAltText("")).toHaveAttribute("src", "https://example.com/icon.svg");
+    expect(screen.queryByAltText("")).toBeNull();
     await act(async () => fireEvent.click(screen.getByRole("button", { name: "View public-docs" })));
     const dialog = screen.getByRole("dialog", { name: "public-docs" });
     fireEvent.click(within(dialog).getByRole("button", { name: "View Draft" }));

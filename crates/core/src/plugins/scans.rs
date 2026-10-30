@@ -41,6 +41,62 @@ pub struct PluginUpdate {
     pub check_revision: Option<String>,
 }
 
+/// Publishers and GitHub owners that have a bundled logo.
+const PLUGIN_BRANDS: &str = include_str!("../../builtins/plugin-brands.json");
+
+/// The bundled logo of a catalog entry. A GitHub owner comes from the source URL, so any catalog
+/// may use it; `author` is a claim, so only the official catalog's is believed.
+pub fn catalog_brand(marketplace: &str, entry: &Value) -> Option<String> {
+    #[derive(Deserialize)]
+    struct Brands {
+        authors: BTreeMap<String, String>,
+        owners: BTreeMap<String, String>,
+    }
+    let brands: Brands = serde_json::from_str(PLUGIN_BRANDS).expect("bundled plugin brands");
+    let source = &entry["source"];
+    let owner = source["repo"]
+        .as_str()
+        .and_then(|repo| repo.split('/').next())
+        .map(str::to_owned)
+        .or_else(|| {
+            let url = reqwest::Url::parse(source["url"].as_str()?).ok()?;
+            (url.host_str()? == "github.com")
+                .then(|| url.path_segments()?.next().map(str::to_owned))
+                .flatten()
+        })
+        .map(|owner| owner.to_ascii_lowercase());
+    if let Some(brand) = owner.and_then(|owner| brands.owners.get(&owner)) {
+        return Some(brand.clone());
+    }
+    if marketplace != super::marketplace::OFFICIAL_MARKETPLACE {
+        return None;
+    }
+    let author = entry["author"]["name"]
+        .as_str()
+        .or_else(|| entry["author"].as_str())?;
+    let key: String = author
+        .chars()
+        .filter(char::is_ascii_alphanumeric)
+        .map(|c| c.to_ascii_lowercase())
+        .collect();
+    brands.authors.get(&key).cloned()
+}
+
+/// The bundled logo of each catalog entry that has one.
+pub fn catalog_brands(marketplace: &str, catalog: &Value) -> BTreeMap<String, String> {
+    catalog["plugins"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|entry| {
+            Some((
+                entry["name"].as_str()?.to_owned(),
+                catalog_brand(marketplace, entry)?,
+            ))
+        })
+        .collect()
+}
+
 /// How long a source's last check counts as recent when the app opens.
 const SOURCE_CHECK_INTERVAL_MS: u64 = 24 * 60 * 60 * 1000;
 
@@ -66,7 +122,7 @@ pub struct SourceStatus {
 }
 
 /// Bumped whenever import rules change, so saved checks are redone with the new rules.
-const SCAN_VERSION: u32 = 7;
+const SCAN_VERSION: u32 = 8;
 
 /// Discover groups for catalogs we sort by hand, keyed by marketplace and plugin name.
 const PLUGIN_GROUPS: &str = include_str!("../../builtins/plugin-groups.json");
@@ -648,5 +704,38 @@ impl PluginStore {
         }
         preview.spec.ensure_installable()?;
         self.install_spec(scope, marketplace, name, preview.spec)
+    }
+}
+
+#[cfg(test)]
+mod brand_tests {
+    use super::*;
+    use serde_json::json;
+
+    const OFFICIAL: &str = super::super::marketplace::OFFICIAL_MARKETPLACE;
+
+    #[test]
+    fn a_claimed_author_earns_a_logo_only_in_the_official_catalog() {
+        let claim = json!({"name":"pay","author":{"name":"Shopify"},"source":"./pay"});
+        assert_eq!(catalog_brand(OFFICIAL, &claim).as_deref(), Some("shopify"));
+        assert_eq!(catalog_brand("someone-else", &claim), None);
+    }
+
+    #[test]
+    fn a_github_owner_earns_a_logo_in_any_catalog_and_other_hosts_do_not() {
+        let repo = json!({"name":"a","source":{"source":"github","repo":"Stripe/agent"}});
+        assert_eq!(
+            catalog_brand("someone-else", &repo).as_deref(),
+            Some("stripe")
+        );
+        let url = json!({"name":"a","source":{"source":"url","url":"https://github.com/stripe/agent.git"}});
+        assert_eq!(
+            catalog_brand("someone-else", &url).as_deref(),
+            Some("stripe")
+        );
+        let lookalike = json!({"name":"a","source":{"source":"url","url":"https://evil.example/stripe/agent.git"}});
+        assert_eq!(catalog_brand("someone-else", &lookalike), None);
+        let unknown = json!({"name":"a","source":{"source":"github","repo":"nobody-here/agent"}});
+        assert_eq!(catalog_brand("someone-else", &unknown), None);
     }
 }

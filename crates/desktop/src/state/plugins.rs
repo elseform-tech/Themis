@@ -154,8 +154,10 @@ impl AppState {
                 "scan_marketplace" => {
                     let scan = store.start_marketplace_scan(name, args["refresh"].as_bool().unwrap_or(false))?;
                     let groups = themis_core::plugins::catalog_groups(name, &scan.catalog);
+                    let brands = themis_core::plugins::catalog_brands(name, &scan.catalog);
                     let mut value = serde_json::to_value(scan)?;
                     value["groups"] = serde_json::to_value(groups)?;
+                    value["brands"] = serde_json::to_value(brands)?;
                     value
                 }
                 "inspect_marketplace" => {
@@ -269,6 +271,7 @@ impl AppState {
                 "marketplaces" => serde_json::to_value(store.marketplaces()?)?,
                 "preview_source" => serde_json::to_value(store.preview_source(args["source"].as_str().unwrap_or_default()).await?)?,
                 "sources" => serde_json::to_value(store.sources()?)?,
+                "plugin_icon" => Value::String(store.plugin_icon(args["asset"].as_str().unwrap_or_default())?),
                 "updates" => serde_json::to_value(store.plugin_updates()?)?,
                 "check_sources" => {
                     if self.get_settings().await.check_sources_for_updates {
