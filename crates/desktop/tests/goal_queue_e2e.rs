@@ -1200,8 +1200,8 @@ async fn unsendable_queued_messages_are_recorded_and_the_queue_moves_on() {
 /// Review findings: a `/goal` whose run cannot start still continues (it
 /// retries as a failed turn instead of staying "running" with no turn), and a
 /// goal check that fails does not count as a turn without progress.
-/// A model that keeps failing pauses the goal instead of retrying for ever, says why in its
-/// status, and adds no note to the chat. Takes the two retry waits (30 s and 60 s).
+/// A model that keeps refusing pauses the goal instead of retrying for ever, says why in its
+/// status, and adds no note to the chat. Takes the two retry waits (30 s and 60 s, jittered).
 #[tokio::test(flavor = "multi_thread")]
 async fn a_goal_pauses_after_its_turns_keep_failing() {
     let server = MockServer::start().await;

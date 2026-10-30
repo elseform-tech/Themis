@@ -26,8 +26,10 @@ use crate::types::{Goal, GoalNoteKind, GoalStatus, ThreadEvent, ThreadEventEnvel
 pub(super) const GOALS_DIR: &str = "goals";
 /// Turns without progress before the next turn is told to try a different approach.
 const STALL_TURNS: u32 = 3;
-/// Failed turns in a row before the goal pauses instead of retrying.
-const FAILURES_BEFORE_PAUSE: u32 = 3;
+/// Failed turns in a row before the goal pauses instead of retrying: a provider's bad
+/// spell usually clears within minutes (about 15 of waiting here), other errors won't.
+const TRANSIENT_FAILURES_BEFORE_PAUSE: u32 = 6;
+const OTHER_FAILURES_BEFORE_PAUSE: u32 = 3;
 /// Why a goal paused after failing, shown in its bar.
 const KEPT_FAILING: &str = "the model kept failing";
 /// How often a goal out of quota tries again.
@@ -62,6 +64,14 @@ fn now_ms() -> i64 {
 pub(super) fn backoff(failures: u32) -> Duration {
     let seconds = 30u64.saturating_mul(1 << failures.saturating_sub(1).min(10));
     Duration::from_secs(seconds).min(MAX_BACKOFF)
+}
+
+/// `wait` plus up to a fifth more, so chats hit by the same outage don't all retry at once.
+fn jittered(wait: Duration) -> Duration {
+    use std::hash::BuildHasher;
+    let room = wait.as_millis() as u64 / 5 + 1;
+    let extra = std::collections::hash_map::RandomState::new().hash_one(wait) % room;
+    wait + Duration::from_millis(extra)
 }
 
 /// The goal note for a small context window, such as "Context window is
@@ -934,7 +944,12 @@ impl AppState {
                     reason,
                 );
             }
-            Failure::Transient | Failure::Other => {
+            failure @ (Failure::Transient | Failure::Other) => {
+                let limit = if failure == Failure::Transient {
+                    TRANSIENT_FAILURES_BEFORE_PAUSE
+                } else {
+                    OTHER_FAILURES_BEFORE_PAUSE
+                };
                 let failures = self
                     .update_goal(sink.as_ref(), &thread_id, |goal| {
                         goal.failures = goal.failures.saturating_add(1);
@@ -942,7 +957,7 @@ impl AppState {
                     .map_or(1, |goal| goal.failures);
                 // A blip gets a quiet retry; a model that keeps failing pauses the goal, and the
                 // goal bar says why, until the person resumes it.
-                if failures >= FAILURES_BEFORE_PAUSE {
+                if failures >= limit {
                     self.update_goal(sink.as_ref(), &thread_id, |goal| {
                         goal.failures = 0;
                         set_status(goal, GoalStatus::Paused, Some(KEPT_FAILING.to_owned()));
@@ -955,11 +970,10 @@ impl AppState {
                     );
                     return;
                 }
-                let wait = backoff(failures);
                 self.schedule_goal_turn(
                     sink,
                     thread_id,
-                    wait,
+                    jittered(backoff(failures)),
                     themis_core::prompts::fill(
                         themis_core::prompts::GOAL_NOTE_FAILED,
                         &[("error", &core_goal::one_line(error, 200))],
@@ -1176,6 +1190,16 @@ mod tests {
         assert!(clipped.contains("characters clipped"));
         assert!(clipped.chars().count() < OUTPUT_HEAD_CHARS + OUTPUT_TAIL_CHARS + 50);
         assert_eq!(clip_output("short"), "short");
+    }
+
+    #[test]
+    fn jitter_only_adds_up_to_a_fifth_and_varies() {
+        let wait = Duration::from_secs(30);
+        let waits: std::collections::HashSet<Duration> = (0..50).map(|_| jittered(wait)).collect();
+        assert!(waits
+            .iter()
+            .all(|got| *got >= wait && *got <= wait + wait / 5));
+        assert!(waits.len() > 1, "{waits:?}");
     }
 
     #[test]
