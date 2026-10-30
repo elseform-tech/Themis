@@ -2074,7 +2074,8 @@ fn announces_next_step(text: &str) -> bool {
         .map(str::trim)
         .rfind(|sentence| !sentence.is_empty())
         .unwrap_or_default();
-    if last.starts_with("let me know") {
+    // An offer to the person ("point me to it and I'll add it") is not a step left to take.
+    if last.starts_with("let me know") || last.contains(" you") || last.contains("point me") {
         return false;
     }
     let first = last.split_whitespace().next().unwrap_or_default();
@@ -5591,6 +5592,8 @@ mod tests {
             "Everything passes.",
             "Nothing else is left.",
             "It passes. Let me know if you want more.",
+            "If they are elsewhere, point me to the path and I'll take care of it!",
+            "I'll add it if you want.",
             "Should I send it back?",
             "Writer created both files, and I read them to confirm.",
         ] {
