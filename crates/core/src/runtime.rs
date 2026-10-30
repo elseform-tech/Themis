@@ -676,6 +676,8 @@ async fn run_task_with_evidence_inner(
     let mut force_compaction = false;
     let mut turn = 0;
     let mut reaction_due = false;
+    // A subagent's check failed and the agent has not answered that yet.
+    let mut check_failed = false;
     while turn < policy.total_turns {
         turn += 1;
         check_stopped(&stopped, &events).await?;
@@ -693,6 +695,7 @@ async fn run_task_with_evidence_inner(
         // Results of subagents (and other notes) join at the same boundary.
         for note in run_notes().map(|notes| notes.take()).unwrap_or_default() {
             reaction_due = true;
+            check_failed |= note.contains(CHECK_FAILED);
             messages.push(ChatMessage {
                 role: ChatRole::User,
                 message_type: MessageType::Text,
@@ -1112,11 +1115,13 @@ async fn run_task_with_evidence_inner(
                 && !summary_asked
                 // Only with a request to spare: the last one ends the run with what it has.
                 && turn < policy.total_turns
-                && (progress_line(text.as_deref().unwrap_or_default())
+                && (check_failed
+                    || progress_line(text.as_deref().unwrap_or_default())
                     || announces_next_step(text.as_deref().unwrap_or_default()))
                 && !nudge_off("turn_summary")
             {
                 summary_asked = true;
+                check_failed = false;
                 // The progress line is not part of the answer: the chat keeps it as one.
                 crate::context_metrics::activity("turn_summary_requests");
                 events
@@ -1151,6 +1156,7 @@ async fn run_task_with_evidence_inner(
             .any(|call| is_subagent_tool(&call.function.name))
         {
             summary_asked = false;
+            check_failed = false;
         }
         // The line a subagent tool carries is said before the tool runs, when the reply had none.
         if text.as_deref().is_none_or(|text| text.trim().is_empty()) && !is_subagent_run() {
@@ -1176,6 +1182,7 @@ async fn run_task_with_evidence_inner(
                 && result.function.arguments.contains("\"result\":")
             {
                 reaction_due = true;
+                check_failed |= result.function.arguments.contains(CHECK_FAILED);
             }
             // ponytail: exact observations only; semantic progress needs a separate audit.
             if matches!(
@@ -1965,6 +1972,8 @@ const FILE_CHANGES: [&str; 5] = [
 
 const CUT_OFF_NOTE: &str = crate::prompts::RUNTIME_CUT_OFF;
 const SUBAGENT_REACTION_NOTE: &str = crate::prompts::RUNTIME_SUBAGENT_REACTION;
+/// How a failed check reads in a subagent's report (`subagent-check-result.md` filled with it).
+const CHECK_FAILED: &str = "`: FAILED.";
 /// The main agent's tools for working with subagents.
 fn is_subagent_tool(name: &str) -> bool {
     matches!(
@@ -2069,16 +2078,14 @@ fn announces_next_step(text: &str) -> bool {
         return false;
     }
     let first = last.split_whitespace().next().unwrap_or_default();
-    [
-        "i'll ",
-        "i will ",
-        "i'm going to ",
-        "let me ",
-        "now i ",
-        "next i ",
-    ]
-    .iter()
-    .any(|start| last.starts_with(start))
+    // Raw tool-call markup in a reply is a call the model never made.
+    lower.contains("<|")
+        || ["i'll ", "i will ", "i'm going to ", "i need to "]
+            .iter()
+            .any(|words| last.contains(words))
+        || ["let me ", "now i ", "next i "]
+            .iter()
+            .any(|start| last.starts_with(start))
         || (first.len() > 4
             && first.ends_with("ing")
             && !matches!(first, "everything" | "nothing" | "something" | "anything"))
@@ -5574,6 +5581,8 @@ mod tests {
             "All good so far. I'll send it back now.",
             "Looks wrong. Let me check the file.",
             "Checking the other folder\u{2026}",
+            "Good so far. If any line fails the rule, I'll send it back to Writer.",
+            "Reading it now. <|func_arg_name|>file_path",
         ] {
             assert!(announces_next_step(reply), "{reply}");
         }
