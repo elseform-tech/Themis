@@ -815,6 +815,25 @@ pub fn shell_argv(args: &serde_json::Value) -> Vec<String> {
     argv
 }
 
+/// `args` as a list, or that list sent as JSON text, which models often do
+/// (`"args": "[\"-c\", \"print(1)\"]"`, 5 of 30 shell calls in a live goal). Other text is
+/// refused rather than guessed at, so nothing is split differently from what was meant.
+fn argv_or_json_text<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> std::result::Result<Vec<String>, D::Error> {
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum Argv {
+        List(Vec<String>),
+        Text(String),
+    }
+    match Argv::deserialize(deserializer)? {
+        Argv::List(list) => Ok(list),
+        Argv::Text(text) => serde_json::from_str(&text)
+            .map_err(|_| serde::de::Error::custom("expected a list of strings, one per argument")),
+    }
+}
+
 /// Repairs the two argv shapes models commonly send, before approval, so the
 /// person approves exactly what runs: an empty `command` with the program as
 /// the first of `args`, and the program repeated as the first argument
@@ -2292,7 +2311,7 @@ pub struct ShellArgs {
     )]
     pub command: String,
     /// Arguments passed verbatim to the program.
-    #[serde(default)]
+    #[serde(default, deserialize_with = "argv_or_json_text")]
     #[input(
         description = "Every argument as a separate string, passed verbatim, e.g. [\"-m\", \"http.server\", \"8000\"]. Do not join several arguments into one string"
     )]
@@ -3973,6 +3992,44 @@ mod tests {
             .await
             .unwrap();
         assert!(plain.get("selectors_ignored").is_none());
+    }
+
+    mod shell_args_props {
+        use super::*;
+        use proptest::prelude::*;
+
+        fn parsed(args: Value) -> Result<ShellArgs, ToolCallError> {
+            parse_tool_args("shell", json!({"command": "python3", "args": args}))
+        }
+
+        #[test]
+        fn args_sent_as_json_text_mean_the_same_list() {
+            let list = parsed(json!(["-c", "print(1)"])).ok().unwrap().args;
+            let text = parsed(json!(r#"["-c", "print(1)"]"#)).ok().unwrap().args;
+            assert_eq!(list, text);
+            assert_eq!(text, ["-c", "print(1)"]);
+            assert!(
+                parsed(json!("-c print(1)")).is_err(),
+                "never split by guessing"
+            );
+            assert!(parsed(json!(r#"{"a": 1}"#)).is_err());
+            assert!(parsed(json!([1, 2])).is_err());
+        }
+
+        proptest! {
+            /// Any list survives being sent as JSON text unchanged.
+            #[test]
+            fn any_list_survives_json_text(list in proptest::collection::vec(".*", 0..6)) {
+                let text = serde_json::to_string(&list).unwrap();
+                prop_assert_eq!(parsed(json!(text)).ok().unwrap().args, list);
+            }
+
+            /// Any text is either a list of strings or an error, never a panic.
+            #[test]
+            fn any_text_parses_or_is_refused(text in ".*") {
+                let _ = parsed(json!(text));
+            }
+        }
     }
 
     mod patch_props {
