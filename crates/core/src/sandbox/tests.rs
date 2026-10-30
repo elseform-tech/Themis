@@ -1097,3 +1097,142 @@ fn bubblewrap_open_plan_on_a_real_command() {
 fn landlock_open_plan_on_a_real_command() {
     check_real_open(Backend::Landlock);
 }
+
+#[test]
+fn a_subagent_plan_writes_only_its_paths_even_on_an_open_or_absent_sandbox() {
+    let fx = fixture();
+    let configured = config("{}");
+    let plan = plan_with(
+        Enforcement::Active(Backend::Seatbelt),
+        &configured,
+        &fx.root,
+        &fx.app_data,
+        &fx.home,
+    );
+    let mine = fx.root.join("tests");
+    std::fs::create_dir_all(&mine).unwrap();
+    let confined = plan.confined_to(&fx.root, std::slice::from_ref(&mine));
+    assert!(confined.writable().contains(&resolve_existing(&mine)));
+    assert!(!confined.writable().contains(&fx.root));
+    let guard = confined.file_guard(false).unwrap();
+    assert!(guard.check_write(&mine.join("new.rs")).is_ok());
+    assert!(guard.check_write(&fx.root.join("src.rs")).is_err());
+    assert!(guard.check_write(&mine.join("../src.rs")).is_err());
+    // With no enforcing sandbox the file tools still hold the line.
+    let absent = plan_with(
+        Enforcement::Disabled,
+        &configured,
+        &fx.root,
+        &fx.app_data,
+        &fx.home,
+    );
+    assert!(
+        absent.file_guard(false).is_none(),
+        "the main agent is unchanged"
+    );
+    let guard = absent
+        .confined_to(&fx.root, std::slice::from_ref(&mine))
+        .file_guard(false)
+        .expect("subagents keep the guard");
+    assert!(guard.check_write(&mine.join("new.rs")).is_ok());
+    assert!(guard.check_write(&fx.root.join("src.rs")).is_err());
+}
+
+#[test]
+fn a_project_in_a_temporary_folder_gets_no_write_access_from_it() {
+    let fx = fixture();
+    let configured = config("{}");
+    let temp = resolve_existing(&std::env::temp_dir());
+    let project = temp.join(format!("themis-confined-{}", std::process::id()));
+    std::fs::create_dir_all(project.join("mine")).unwrap();
+    let plan = plan_with(
+        Enforcement::Active(Backend::Seatbelt),
+        &configured,
+        &project,
+        &fx.app_data,
+        &fx.home,
+    )
+    .confined_to(&project, &[project.join("mine")]);
+    let guard = plan.file_guard(false).unwrap();
+    assert!(!plan.writable().contains(&temp));
+    assert!(guard.check_write(&project.join("mine/a.txt")).is_ok());
+    assert!(guard.check_write(&project.join("a.txt")).is_err());
+    std::fs::remove_dir_all(project).unwrap();
+}
+
+#[test]
+fn write_paths_normalize_and_refuse_what_they_must() {
+    let fx = fixture();
+    std::fs::create_dir_all(fx.root.join("crates/core")).unwrap();
+    let normal = |raw| normalize_write_path(&fx.root, raw, std::slice::from_ref(&fx.app_data));
+    assert_eq!(normal("crates/core/").unwrap(), "crates/core/");
+    assert_eq!(
+        normal("./crates/core").unwrap(),
+        "crates/core/",
+        "an existing folder"
+    );
+    assert_eq!(normal("docs/new.md").unwrap(), "docs/new.md");
+    for bad in [
+        "",
+        "  ",
+        ".",
+        "./",
+        "/etc/",
+        "../up",
+        "a/../../up",
+        "src/*.rs",
+        "src/**",
+        "a?.txt",
+        ".themis/",
+        ".THEMIS/config",
+        ".git/hooks",
+        "a\\b",
+    ] {
+        assert!(normal(bad).is_err(), "{bad:?}");
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn a_write_path_through_a_link_cant_leave_the_project() {
+    let fx = fixture();
+    let outside = tempfile::tempdir().unwrap();
+    std::os::unix::fs::symlink(outside.path(), fx.root.join("away")).unwrap();
+    assert!(normalize_write_path(&fx.root, "away/", &[]).is_err());
+    assert!(normalize_write_path(&fx.root, "away/file.txt", &[]).is_err());
+}
+
+#[test]
+fn write_paths_overlap_by_whole_path_parts() {
+    for (a, b, overlap) in [
+        ("a/", "a/", true),
+        ("a/", "a/b.txt", true),
+        ("a/b/", "a/", true),
+        ("a/b.txt", "a/b.txt", true),
+        ("a/b", "a/bc", false),
+        ("a/", "b/", false),
+        ("tests/", "tests2/", false),
+    ] {
+        assert_eq!(write_paths_overlap(a, b), overlap, "{a} {b}");
+    }
+}
+
+proptest::proptest! {
+    /// Whatever is asked for, a normalized path stays inside the project, by plain parts.
+    #[test]
+    fn normalized_write_paths_stay_inside(raw in "[a-zA-Z0-9_./*?\\\\ -]{0,24}") {
+        let fx = fixture();
+        if let Ok(path) = normalize_write_path(&fx.root, &raw, &[]) {
+            proptest::prop_assert!(!path.starts_with('/'));
+            proptest::prop_assert!(!path.split('/').any(|part| part == ".." || part == "."));
+            proptest::prop_assert!(!path.contains(['*', '?', '\\']));
+            proptest::prop_assert!(resolve_existing(&fx.root.join(&path)).starts_with(resolve_existing(&fx.root)));
+        }
+    }
+
+    #[test]
+    fn overlap_is_symmetric_and_reflexive(a in "[ab]{1,2}(/[ab]{1,2}){0,2}/?", b in "[ab]{1,2}(/[ab]{1,2}){0,2}/?") {
+        proptest::prop_assert_eq!(write_paths_overlap(&a, &b), write_paths_overlap(&b, &a));
+        proptest::prop_assert!(write_paths_overlap(&a, &a));
+    }
+}

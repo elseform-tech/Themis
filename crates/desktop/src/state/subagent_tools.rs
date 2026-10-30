@@ -119,6 +119,7 @@ struct Brief {
     name: String,
     brief: String,
     model: Option<String>,
+    write_paths: Vec<String>,
 }
 
 /// The briefs the model asked for, named "Subagent N" when it gave no name.
@@ -150,6 +151,23 @@ fn parse_briefs(args: &Value) -> Result<Vec<Brief>, ToolCallError> {
                 name,
                 brief: brief.chars().take(MAX_BRIEF).collect(),
                 model: item["model"].as_str().map(str::to_owned),
+                write_paths: match &item["write_paths"] {
+                    Value::Null => Vec::new(),
+                    paths => paths
+                        .as_array()
+                        .and_then(|paths| {
+                            paths
+                                .iter()
+                                .map(|path| path.as_str().map(str::to_owned))
+                                .collect::<Option<Vec<_>>>()
+                        })
+                        .ok_or_else(|| {
+                            error(format!(
+                                "subagent {}: `write_paths` must be a list of paths",
+                                index + 1
+                            ))
+                        })?,
+                },
             })
         })
         .collect()
@@ -177,14 +195,40 @@ impl SubagentTool {
                     .map_err(error)
             })
             .collect::<Result<Vec<_>, _>>()?;
-        let started: Vec<Value> = briefs
-            .into_iter()
-            .map(|(brief, model)| {
-                let agent = self.kit.start(brief.name, brief.brief, model);
-                json!({"id": agent.id, "name": agent.name, "model": agent.model})
+        // `subagents.allow_writes` off keeps every subagent read-only, and the agent is told.
+        let allow_writes = self.kit.config.subagents.allow_writes;
+        let asked: Vec<Vec<String>> = briefs
+            .iter()
+            .map(|(brief, _)| {
+                if allow_writes {
+                    brief.write_paths.clone()
+                } else {
+                    Vec::new()
+                }
             })
             .collect();
-        Ok(json!({"started": started, "running_at_once": self.kit.config.subagents.max_parallel}))
+        let refused_writes = !allow_writes
+            && briefs
+                .iter()
+                .any(|(brief, _)| !brief.write_paths.is_empty());
+        // Every path is checked before any subagent starts.
+        let write_paths = self.kit.check_write_paths(&asked).map_err(error)?;
+        let started: Vec<Value> = briefs
+            .into_iter()
+            .zip(write_paths)
+            .map(|((brief, model), paths)| {
+                let agent = self.kit.start(brief.name, brief.brief, model, paths);
+                json!({"id": agent.id, "name": agent.name, "model": agent.model,
+                    "write_paths": agent.write_paths})
+            })
+            .collect();
+        let mut output =
+            json!({"started": started, "running_at_once": self.kit.config.subagents.max_parallel});
+        if refused_writes {
+            output["read_only"] =
+                json!("Subagents are set to read-only here: write_paths were ignored.");
+        }
+        Ok(output)
     }
 
     async fn wait(&self, args: &Value) -> Result<Value, ToolCallError> {
@@ -330,7 +374,8 @@ impl ToolT for SubagentTool {
             Kind::Spawn => {
                 let mut item = json!({"type":"object","properties":{
                     "name":{"type":"string","description":"A short name, for example \"Bug hunt\""},
-                    "brief":{"type":"string"}
+                    "brief":{"type":"string"},
+                    "write_paths":{"type":"array","items":{"type":"string"},"description":"Project-relative folders (ending in /) or files it alone may change. Leave out for read-only."}
                 },"required":["brief"]});
                 if self.models {
                     item["properties"]["model"] = json!({"type":"string"});

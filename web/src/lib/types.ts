@@ -335,7 +335,7 @@ export type ThreadEvent =
   | { kind: 'question_asked'; question: Question }
   | { kind: 'question_answered'; id: string; answer: string }
   /** The agent started a read-only subagent for one part of its task. */
-  | { kind: 'subagent_started'; id: string; name: string; brief: string; model: string; confined: boolean; /** RFC 3339. */ at?: string }
+  | { kind: 'subagent_started'; id: string; name: string; brief: string; model: string; confined: boolean; write_paths?: string[]; /** RFC 3339. */ at?: string }
   /** What a running subagent is doing now (live only). */
   /** `model`: the one it fell back to when its own could not run. */
   | { kind: 'subagent_status'; id: string; text: string; tool_calls: number; model?: string }
@@ -350,6 +350,8 @@ export interface SubagentEntry {
   brief: string;
   model: string;
   confined: boolean;
+  /** The project paths it may change; empty when it is read-only. */
+  writePaths: string[];
   status: 'running' | SubagentEnding;
   /** Its own status line, or its latest action. */
   text: string;

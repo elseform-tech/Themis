@@ -33,6 +33,8 @@ pub const SYSTEM_SKILL_CATALOG: &str = include_str!("../builtins/prompts/system-
 /// System message head of a subagent run, instead of the ordinary system instructions.
 pub const SUBAGENT_SYSTEM: &str = include_str!("../builtins/prompts/subagent-system.md");
 /// Added to a read-only subagent's system message.
+pub const SUBAGENT_WRITE_PATHS_NOTE: &str =
+    include_str!("../builtins/prompts/subagent-write-paths-note.md");
 pub const SUBAGENT_READ_ONLY_NOTE: &str =
     include_str!("../builtins/prompts/subagent-read-only-note.md");
 /// Explains the optional `status` field every subagent tool call accepts.

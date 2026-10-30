@@ -49,6 +49,7 @@ export function SubagentSettingsSection({ onSaved }: { onSaved?: () => void } = 
           ))}
         </span>
       </div>
+      <label className="themis-settings-check">Allow file writes<Switch checked={settings.allow_writes} disabled={!settings.enabled} onChange={event => void patch({ allow_writes: event.target.checked })} /></label>
       <label className="themis-settings-control">Default model<span className="themis-settings-model-picker">
         <select aria-label="Default model" value={model} disabled={!settings.enabled} onChange={event => void patch({ model: event.target.value || null })}>
           <option value="">Chat model</option>

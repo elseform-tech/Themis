@@ -240,6 +240,11 @@ const ALL: &[(&str, &str, &[&str])] = &[
     (SUBAGENT_REVIEW, "subagent-review", &[]),
     (SUBAGENT_SYSTEM, "subagent-system", &[]),
     (SUBAGENT_READ_ONLY_NOTE, "subagent-read-only-note", &[]),
+    (
+        SUBAGENT_WRITE_PATHS_NOTE,
+        "subagent-write-paths-note",
+        &["paths"],
+    ),
     (SUBAGENT_STATUS_FIELD, "subagent-status-field", &[]),
     (SPAWN_SUBAGENTS_TOOL, "spawn-subagents-tool", &[]),
     (

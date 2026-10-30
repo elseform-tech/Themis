@@ -1,4 +1,5 @@
-//! Subagents: read-only helper runs the agent starts for independent parts of its task.
+//! Subagents: helper runs the agent starts for independent parts of its task. Read-only unless
+//! given `write_paths`, the only places they can change.
 //!
 //! A chat's run captures a [`SubagentKit`] once, like the rest of its configuration. Each
 //! subagent then runs on its own task with its own event channel (never the parent's: a
@@ -36,6 +37,8 @@ const KEPT_PER_CHAT: usize = 50;
 pub(super) const SUBAGENTS_DIR: &str = "subagents";
 /// The tools a read-only subagent gets.
 const READ_ONLY_TOOLS: [&str; 4] = ["read_file", "list_dir", "search_file", "shell"];
+/// The tools a subagent with write paths also gets; the file guard holds them to those paths.
+const WRITE_TOOLS: [&str; 3] = ["write_file", "apply_patch", "create_dir"];
 
 /// A model's provider, or why it could not start.
 type Resolved = Result<Arc<dyn LLMProvider>, String>;
@@ -121,6 +124,51 @@ impl SubagentKit {
         }
     }
 
+    /// The write paths a batch of briefs asks for, normalized and checked together: nothing
+    /// outside the project or in protected folders, and no path another running subagent or
+    /// another brief already owns.
+    pub(super) fn check_write_paths(
+        &self,
+        asked: &[Vec<String>],
+    ) -> Result<Vec<Vec<String>>, String> {
+        let protected = self.sandbox.protected().to_vec();
+        let mut taken: Vec<(String, String)> = self
+            .started
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .iter()
+            .filter(|agent| agent.progress().ended.is_none())
+            .flat_map(|agent| {
+                agent
+                    .write_paths
+                    .iter()
+                    .map(|path| (path.clone(), agent.name.clone()))
+                    .collect::<Vec<_>>()
+            })
+            .collect();
+        let mut normalized = Vec::new();
+        for (index, paths) in asked.iter().enumerate() {
+            let mut own = Vec::new();
+            for raw in paths {
+                let path =
+                    themis_core::sandbox::normalize_write_path(&self.work_root, raw, &protected)?;
+                if let Some((other, owner)) = taken
+                    .iter()
+                    .find(|(other, _)| themis_core::sandbox::write_paths_overlap(other, &path))
+                {
+                    return Err(format!("'{path}' overlaps '{other}', which {owner} owns"));
+                }
+                own.push(path);
+            }
+            taken.extend(
+                own.iter()
+                    .map(|path| (path.clone(), format!("subagent {}", index + 1))),
+            );
+            normalized.push(own);
+        }
+        Ok(normalized)
+    }
+
     /// The model subagents use when none is given: `subagents.model`, else the chat's.
     pub(super) fn default_model(&self) -> String {
         self.config
@@ -192,12 +240,14 @@ impl SubagentKit {
         name: String,
         brief: String,
         model: String,
+        write_paths: Vec<String>,
     ) -> Arc<Subagent> {
         let agent = Arc::new(Subagent {
             id: uuid::Uuid::new_v4().simple().to_string()[..12].to_owned(),
             name,
             brief,
             model,
+            write_paths,
             run_id: uuid::Uuid::new_v4().to_string(),
             started: Instant::now(),
             stop: Arc::new(AtomicBool::new(false)),
@@ -217,6 +267,7 @@ impl SubagentKit {
             brief: agent.brief.clone(),
             model: agent.model.clone(),
             confined: self.sandbox.enabled(),
+            write_paths: agent.write_paths.clone(),
             at: chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
         });
         let _ = self.state.inner.diagnostics.append_with_level(
@@ -224,7 +275,8 @@ impl SubagentKit {
             "started",
             "info",
             json!({"thread_id": self.thread_id, "run_id": self.run_id, "subagent_id": agent.id,
-                "child_run_id": agent.run_id, "confined": self.sandbox.enabled()}),
+                "child_run_id": agent.run_id, "confined": self.sandbox.enabled(),
+                "write_paths": agent.write_paths.len()}),
             Some(&self.config.logging.level),
         );
         let kit = Arc::clone(self);
@@ -337,6 +389,15 @@ impl SubagentKit {
         agent: &Arc<Subagent>,
         approvals: Arc<dyn ApprovalHook>,
     ) -> Result<Vec<Box<dyn ToolT>>, String> {
+        let owned: Vec<PathBuf> = agent
+            .write_paths
+            .iter()
+            .map(|path| self.work_root.join(path))
+            .collect();
+        // Folders exist from the start, so an OS sandbox can allow them.
+        for path in agent.write_paths.iter().filter(|path| path.ends_with('/')) {
+            let _ = std::fs::create_dir_all(self.work_root.join(path));
+        }
         let tools = themis_core::tools::boxed_tools_for_run(
             &self.work_root,
             approvals,
@@ -344,14 +405,17 @@ impl SubagentKit {
                 yolo: self.mode == ApprovalMode::Yolo,
                 background: None,
                 cancel: Some(Arc::clone(&agent.stop)),
-                sandbox: Some(Arc::clone(&self.sandbox)),
+                sandbox: Some(Arc::new(self.sandbox.confined_to(&self.work_root, &owned))),
                 no_escalation: true,
             },
         )
         .map_err(|error| format!("failed to build tools: {error:#}"))?;
         Ok(tools
             .into_iter()
-            .filter(|tool| READ_ONLY_TOOLS.contains(&tool.name()))
+            .filter(|tool| {
+                READ_ONLY_TOOLS.contains(&tool.name())
+                    || (!agent.write_paths.is_empty() && WRITE_TOOLS.contains(&tool.name()))
+            })
             .map(|tool| {
                 Box::new(super::subagent_tools::StatusField {
                     inner: tool,
@@ -498,9 +562,17 @@ impl SubagentKit {
             .iter()
             .find(|entry| entry.id == model)
             .and_then(|entry| entry.context_tokens);
+        let access = if agent.write_paths.is_empty() {
+            themis_core::prompts::SUBAGENT_READ_ONLY_NOTE.to_owned()
+        } else {
+            themis_core::prompts::fill(
+                themis_core::prompts::SUBAGENT_WRITE_PATHS_NOTE,
+                &[("paths", &agent.write_paths.join(", "))],
+            )
+        };
         let head = [
             themis_core::prompts::SUBAGENT_SYSTEM,
-            themis_core::prompts::SUBAGENT_READ_ONLY_NOTE,
+            &access,
             themis_core::prompts::SUBAGENT_STATUS_FIELD,
         ]
         .join("\n\n");
@@ -623,6 +695,8 @@ pub(super) struct Subagent {
     pub(super) name: String,
     pub(super) brief: String,
     pub(super) model: String,
+    /// The project paths it may change, normalized; none when it is read-only.
+    pub(super) write_paths: Vec<String>,
     pub(super) run_id: String,
     started: Instant,
     pub(super) stop: Arc<AtomicBool>,
@@ -864,7 +938,7 @@ impl AppState {
                             .ended
                             .unwrap_or_else(|| ("running".into(), String::new()));
                         json!({"id": agent.id, "name": agent.name, "brief": agent.brief,
-                            "model": agent.model, "ran_on": progress.ran_on, "status": status, "text": progress.status,
+                            "model": agent.model, "write_paths": agent.write_paths, "ran_on": progress.ran_on, "status": status, "text": progress.status,
                             "result": result, "tool_calls": agent.tool_calls.load(Ordering::SeqCst),
                             "seconds": agent.started.elapsed().as_secs()})
                     })
