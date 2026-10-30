@@ -841,6 +841,7 @@ mod tests {
             "browser_select" => parse_tool_args::<SelectArgs>(tool, args).map(|_| ()),
             "browser_press" => parse_tool_args::<PressArgs>(tool, args).map(|_| ()),
             "browser_scroll" => parse_tool_args::<ScrollArgs>(tool, args).map(|_| ()),
+            "browser_move" => parse_tool_args::<MoveArgs>(tool, args).map(|_| ()),
             "browser_tabs" => parse_tool_args::<TabsArgs>(tool, args).map(|_| ()),
             "browser_screenshot" => parse_tool_args::<ScreenshotArgs>(tool, args).map(|_| ()),
             "browser_record" => parse_tool_args::<RecordArgs>(tool, args).map(|_| ()),
@@ -890,7 +891,7 @@ mod tests {
             let parsed = parses(tool.name(), Value::Object(args));
             assert!(parsed.is_ok(), "{}: {parsed:?} from {schema}", tool.name());
         }
-        assert_eq!(tools.len(), 12);
+        assert_eq!(tools.len(), 13);
         let click: ClickArgs = parse_tool_args("browser_click", json!({"ref": "e4"})).unwrap();
         assert_eq!(click.reference, "e4");
         let click: ClickArgs =
