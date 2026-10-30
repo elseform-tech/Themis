@@ -8,6 +8,7 @@ import type { ImportPreview, Marketplace, McpConnections, Plugin, PluginSpec } f
 import { describeError, toast, useApp } from "../state/store";
 import "./Plugins.css";
 import { McpFileRow } from "./McpFile";
+import { HooksByEvent, skipReason } from "./HooksByEvent";
 
 function integrationError(error: unknown): string {
   return describeError(error).replace(/\nDiagnostic operation: [0-9a-f-]{36}$/, "").replace("No such file or directory (os error 2)", "Plugin files are missing.");
@@ -349,7 +350,10 @@ export function Plugins() {
         {reason(entry.key)}
         <div className="themis-card-footer"><span className="themis-integration-capabilities">{checks[entry.key] ? addsSummary(checks[entry.key].spec) : badge(entry.key)}</span><button className={catalogInstalled(entry) ? "themis-installed" : undefined} aria-live="polite" aria-busy={installing === entry.key} disabled={busy || mutating || !checks[entry.key] || catalogInstalled(entry) || checks[entry.key]?.report.status === "unsupported"} onClick={() => void preview(entry, true)}>{installing === entry.key ? <><span className="themis-install-spinner" aria-hidden="true" />Installing…</> : catalogInstalled(entry) ? "✓ Installed" : "Install"}</button></div>
       </li>)}</ul>
-    </> : <>
+    </> : category === "Hooks" ? (rows.length || plugins.some(plugin => plugin.spec.unsupported.some(note => skipReason(note) !== null))
+      ? <HooksByEvent rows={rows} plugins={plugins} sourceOf={row => pluginDisplayName(row.plugin)} disabled={row => busy || mutating || !row.plugin.enabled && isPluginPackage(row.plugin)} onToggle={row => void toggle(row as Item).catch(() => {})} onOpen={row => open(row as Item)} />
+      : <EmptyState title={search.trim() || originFilter !== "all" || installedStatus !== "all" ? "No matching integrations" : "No hooks installed"} />
+    ) : <>
       {!rows.length && <EmptyState title={(search.trim() || originFilter !== "all" || (publicView ? catalogStatus !== "available" : installedStatus !== "all")) ? "No matching integrations" : `No ${category.toLowerCase()} installed`} />}
       <ul className="themis-integrations-list themis-installed-integrations">{rows.map(row => <li key={row.key}>
         <PluginIcon plugin={row.plugin.spec} fallback={row.kind === "plugin" ? "folder" : row.kind === "mcp" ? "plug" : row.kind === "hook" ? "hook" : skillGlyph(row.id)} /><button className="themis-integration-name themis-integration-open" aria-label={`View ${row.name}`} onClick={() => open(row)}>{row.name}</button><span className="themis-integration-source">{row.kind === "plugin" ? row.plugin.spec.origin?.kind === "discovered" ? "Discovered" : row.plugin.source ?? row.plugin.spec.origin?.kind ?? "Personal" : pluginDisplayName(row.plugin)} · {row.plugin.scope === "global" ? "User" : "Project"}</span>

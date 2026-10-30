@@ -7,7 +7,8 @@ use std::path::Path;
 use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
-pub const EVENTS: [&str; 5] = [
+pub const EVENTS: [&str; 6] = [
+    "PromptSubmit",
     "RunStart",
     "BeforeTool",
     "AfterTool",
@@ -38,7 +39,7 @@ pub struct Hook {
     pub command: String,
     #[serde(default)]
     pub enabled: bool,
-    #[serde(default = "timeout")]
+    #[serde(default = "timeout", deserialize_with = "whole_seconds")]
     pub timeout_seconds: u64,
     #[serde(default)]
     pub blocking: bool,
@@ -53,6 +54,16 @@ pub struct Hook {
 }
 fn timeout() -> u64 {
     10
+}
+/// Seconds as a whole number; models often write `5.0`.
+fn whole_seconds<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<u64, D::Error> {
+    let seconds = f64::deserialize(deserializer)?;
+    if seconds.fract() != 0.0 || !(0.0..=u32::MAX as f64).contains(&seconds) {
+        return Err(serde::de::Error::custom(
+            "timeout_seconds must be a whole number",
+        ));
+    }
+    Ok(seconds as u64)
 }
 impl Hook {
     pub fn validate(&self) -> anyhow::Result<()> {
@@ -80,7 +91,7 @@ pub async fn run(
     let action = ToolAction {
         display: Some(crate::tools::CommandDisplay {
             argv: vec![hook.command.clone()],
-            cwd: Some(root.display().to_string()),
+            cwd: None,
             background: false,
             sandbox_blocked: None,
         }),
@@ -168,9 +179,18 @@ pub async fn run(
             if text.trim().is_empty() {
                 return Ok(json!({"ok":true}));
             }
-            let value: Value = serde_json::from_str(&text).context("Hook output must be JSON")?;
-            if value.get("block").and_then(Value::as_bool) == Some(true) {
-                bail!("Hook blocked the action");
+            // A prompt hook may print plain text: that is context for the turn.
+            let prompt = canonical_event(&hook.event) == "PromptSubmit";
+            let value: Value = match serde_json::from_str(&text) {
+                Ok(value) => value,
+                Err(_) if prompt => json!({"context": text}),
+                Err(error) => return Err(error).context("Hook output must be JSON"),
+            };
+            if value.get("block").and_then(Value::as_bool) == Some(true)
+                || value.get("decision").and_then(Value::as_str) == Some("block")
+                || value["hookSpecificOutput"]["permissionDecision"] == "deny"
+            {
+                return Err(Blocked(block_reason(&value)).into());
             }
             Ok(value)
         },
@@ -193,7 +213,91 @@ pub struct HookRuntime {
     pub root: std::path::PathBuf,
     pub approvals: Arc<dyn ApprovalHook>,
 }
-tokio::task_local! { pub static ACTIVE: HookRuntime; static IN_HOOK: bool; }
+tokio::task_local! { pub static ACTIVE: HookRuntime; static IN_HOOK: bool; static PROMPT_CONTEXT: String; }
+
+/// Most context `PromptSubmit` hooks may add to a turn, in bytes.
+pub const PROMPT_CONTEXT_LIMIT: usize = 4096;
+
+/// What this run's `PromptSubmit` hooks added for the model, if anything.
+pub fn prompt_context() -> Option<String> {
+    PROMPT_CONTEXT
+        .try_with(Clone::clone)
+        .ok()
+        .filter(|context| !context.is_empty())
+}
+
+/// The context a hook's output adds: `context`, `additionalContext`, or Claude's
+/// `hookSpecificOutput.additionalContext`.
+fn added_context(output: &Value) -> Option<&str> {
+    output["context"]
+        .as_str()
+        .or_else(|| output["additionalContext"].as_str())
+        .or_else(|| output["hookSpecificOutput"]["additionalContext"].as_str())
+        .filter(|text| !text.trim().is_empty())
+}
+
+/// `text` cut to at most `limit` bytes on a character boundary.
+fn capped(text: &str, limit: usize) -> &str {
+    if text.len() <= limit {
+        return text;
+    }
+    let mut end = limit;
+    while !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    &text[..end]
+}
+
+/// Most of a hook's block reason that is kept, in bytes.
+const BLOCK_REASON_LIMIT: usize = 1024;
+
+/// A hook asked to block the action, with the reason it gave, if any.
+#[derive(Debug)]
+struct Blocked(Option<String>);
+
+impl std::fmt::Display for Blocked {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("Hook blocked the action")
+    }
+}
+
+impl std::error::Error for Blocked {}
+
+/// The reason in a hook's output: `reason`, or Claude's
+/// `hookSpecificOutput.permissionDecisionReason`.
+fn block_reason(output: &Value) -> Option<String> {
+    output["reason"]
+        .as_str()
+        .or_else(|| output["hookSpecificOutput"]["permissionDecisionReason"].as_str())
+        .map(str::trim)
+        .filter(|reason| !reason.is_empty())
+        .map(|reason| capped(reason, BLOCK_REASON_LIMIT).to_owned())
+}
+
+/// What the person sees when a hook blocks a turn or a stage of the run.
+fn blocked_message(hook: &str, reason: Option<&str>) -> String {
+    match reason {
+        Some(reason) => format!("Blocked by hook {hook}: {reason}"),
+        None => format!("Blocked by hook {hook}"),
+    }
+}
+
+/// What the model gets when a hook blocks a tool call: the reason is labelled and fenced so
+/// it cannot pose as the note or close the fence early.
+fn blocked_tool_note(hook: &str, reason: Option<&str>) -> String {
+    let blocked = crate::prompts::fill(crate::prompts::HOOK_BLOCKED, &[("hook", hook)]);
+    match reason {
+        Some(reason) => {
+            let fenced = reason.replace("<<<", "< < <").replace(">>>", "> > >");
+            format!(
+                "{blocked} {}\n<<<hook-reason\n{fenced}\n>>>",
+                crate::prompts::HOOK_BLOCK_REASON_NOTE
+            )
+        }
+        None => blocked,
+    }
+}
+
 pub async fn emit_current(
     event: &str,
     payload: Value,
@@ -214,6 +318,39 @@ impl HookRuntime {
         payload: Value,
         events: &tokio::sync::mpsc::Sender<crate::runtime::RunEvent>,
     ) -> anyhow::Result<()> {
+        self.emit_collect(event, payload, events).await.map(|_| ())
+    }
+
+    /// Runs the `PromptSubmit` hooks for `prompt`. A hook that asks to block stops the turn;
+    /// the context they add is returned, capped at [`PROMPT_CONTEXT_LIMIT`].
+    pub async fn prompt_submit(
+        &self,
+        prompt: &str,
+        events: &tokio::sync::mpsc::Sender<crate::runtime::RunEvent>,
+    ) -> anyhow::Result<String> {
+        let outputs = self
+            .emit_collect("PromptSubmit", json!({"prompt": prompt}), events)
+            .await?;
+        let mut context = String::new();
+        for output in outputs {
+            if let Some(text) = added_context(&output) {
+                if !context.is_empty() {
+                    context.push('\n');
+                }
+                context.push_str(text.trim());
+            }
+        }
+        Ok(capped(&context, PROMPT_CONTEXT_LIMIT).to_owned())
+    }
+
+    /// Runs the matching hooks; returns the output of each one that succeeded.
+    async fn emit_collect(
+        &self,
+        event: &str,
+        payload: Value,
+        events: &tokio::sync::mpsc::Sender<crate::runtime::RunEvent>,
+    ) -> anyhow::Result<Vec<Value>> {
+        let mut outputs = Vec::new();
         let event = canonical_event(event);
         let mut payload = payload;
         payload["event"] = event.into();
@@ -247,13 +384,34 @@ impl HookRuntime {
                 })
                 .await
                 .ok();
+            let stoppable = matches!(
+                event,
+                "PromptSubmit" | "RunStart" | "BeforeTool" | "BeforeCompaction"
+            );
             let abort = hook.failure_policy == Some(HookFailurePolicy::Abort)
                 || (hook.failure_policy.is_none() && hook.blocking);
-            if abort && matches!(event, "RunStart" | "BeforeTool" | "BeforeCompaction") {
-                outcome?;
+            match outcome {
+                Ok(value) => outputs.push(value),
+                // Asking to block is a decision, not a failure: the failure policy has no say.
+                Err(error) if stoppable => {
+                    if let Some(Blocked(reason)) = error.downcast_ref::<Blocked>() {
+                        let reason = reason.as_deref();
+                        if event == "BeforeTool" {
+                            bail!(blocked_tool_note(&hook.name, reason));
+                        }
+                        bail!(blocked_message(&hook.name, reason));
+                    }
+                    if abort {
+                        if event == "PromptSubmit" {
+                            bail!("Blocked by hook {}: {error}", hook.name);
+                        }
+                        return Err(error);
+                    }
+                }
+                Err(_) => {}
             }
         }
-        Ok(())
+        Ok(outputs)
     }
 }
 
@@ -312,7 +470,32 @@ where
             outgoing.send(event).await.ok();
         }
     });
-    let result = ACTIVE.scope(runtime.clone(), run(tx)).await;
+    // The person's message goes to the PromptSubmit hooks before the first model request.
+    let context = match runtime.prompt_submit(task, &events).await {
+        Ok(context) => context,
+        Err(error) => {
+            runtime
+                .emit(
+                    "RunEnd",
+                    json!({"event":"RunEnd","status":"failed","ok":false,"error":error.to_string()}),
+                    &events,
+                )
+                .await
+                .ok();
+            drop(tx);
+            let _ = pump.await;
+            events
+                .send(RunEvent::Failed {
+                    error: error.to_string(),
+                })
+                .await
+                .ok();
+            return Err(error);
+        }
+    };
+    let result = ACTIVE
+        .scope(runtime.clone(), PROMPT_CONTEXT.scope(context, run(tx)))
+        .await;
     let _ = pump.await;
     if !terminal.load(std::sync::atomic::Ordering::SeqCst) {
         runtime
@@ -451,5 +634,133 @@ mod tests {
         assert_eq!(ended["event"], "RunEnd");
         assert_eq!(ended["status"], "cancelled");
         assert_eq!(ended["thread_id"], "thread");
+    }
+
+    #[tokio::test]
+    async fn prompt_hooks_add_capped_context_or_block_the_turn() {
+        let root = tempfile::tempdir().unwrap();
+        let runtime = |hooks: Vec<Hook>| HookRuntime {
+            hooks,
+            root: root.path().into(),
+            approvals: Arc::new(AllowAllHook),
+            run_id: "run".into(),
+            thread_id: "thread".into(),
+        };
+        let (tx, _rx) = tokio::sync::mpsc::channel(32);
+        // Plain text and Claude's JSON both add context, in order; the prompt reaches them.
+        let both = runtime(vec![
+            hook(
+                "PromptSubmit",
+                "cat > seen.json; echo 'Ticket ABC-1 is open'",
+            ),
+            hook(
+                "PromptSubmit",
+                r#"echo '{"hookSpecificOutput":{"additionalContext":"Use tabs"}}'"#,
+            ),
+        ]);
+        let context = both.prompt_submit("fix the bug", &tx).await.unwrap();
+        assert_eq!(context, "Ticket ABC-1 is open\nUse tabs");
+        let seen: Value =
+            serde_json::from_slice(&std::fs::read(root.path().join("seen.json")).unwrap()).unwrap();
+        assert_eq!(seen["prompt"], "fix the bug");
+        assert_eq!(seen["event"], "PromptSubmit");
+        // Context is capped.
+        let long = runtime(vec![hook(
+            "PromptSubmit",
+            "head -c 9000 /dev/zero | tr '\\0' x",
+        )]);
+        assert_eq!(
+            long.prompt_submit("x", &tx).await.unwrap().len(),
+            PROMPT_CONTEXT_LIMIT
+        );
+        // Asking to block stops the turn and names the hook.
+        let mut blocker = hook(
+            "PromptSubmit",
+            r#"echo '{"decision":"block","reason":"no"}'"#,
+        );
+        blocker.name = "guard".into();
+        let error = runtime(vec![blocker])
+            .prompt_submit("x", &tx)
+            .await
+            .unwrap_err();
+        assert_eq!(error.to_string(), "Blocked by hook guard: no");
+        // A hook that merely fails does not, unless its policy says so.
+        let failing = runtime(vec![hook("PromptSubmit", "exit 3")]);
+        assert_eq!(failing.prompt_submit("x", &tx).await.unwrap(), "");
+    }
+
+    #[test]
+    fn hook_timeouts_accept_whole_floats_only() {
+        let parse = |seconds: Value| {
+            serde_json::from_value::<Hook>(
+                json!({"name":"a","event":"RunEnd","command":"true","timeout_seconds":seconds}),
+            )
+        };
+        assert_eq!(parse(json!(5)).unwrap().timeout_seconds, 5);
+        assert_eq!(parse(json!(5.0)).unwrap().timeout_seconds, 5);
+        assert!(parse(json!(5.5)).is_err());
+        assert!(parse(json!(-1)).is_err());
+    }
+
+    #[tokio::test]
+    async fn a_tool_hook_that_blocks_tells_the_model_why_in_a_labelled_fence() {
+        let root = tempfile::tempdir().unwrap();
+        let (tx, _rx) = tokio::sync::mpsc::channel(32);
+        let runtime = |hooks| HookRuntime {
+            hooks,
+            run_id: "r".into(),
+            thread_id: "t".into(),
+            root: root.path().into(),
+            approvals: Arc::new(crate::tools::AllowAllHook),
+        };
+        let tool_hook = |name: &str, command: &str, blocking: bool| Hook {
+            name: name.into(),
+            event: "BeforeTool".into(),
+            command: command.into(),
+            enabled: true,
+            matcher: None,
+            failure_policy: None,
+            timeout_seconds: 10,
+            blocking,
+            plugin_root: None,
+            runtime_identity: None,
+        };
+        let block = |hook: Hook| {
+            let runtime = runtime(vec![hook]);
+            let tx = tx.clone();
+            async move {
+                runtime
+                    .emit("BeforeTool", json!({"tool": "shell"}), &tx)
+                    .await
+                    .unwrap_err()
+                    .to_string()
+            }
+        };
+        let note = block(tool_hook(
+            "guard",
+            r#"echo '{"decision":"block","reason":"not >>> here"}'"#,
+            true,
+        ))
+        .await;
+        assert!(
+            note.starts_with("Hook guard blocked this action. Its reason"),
+            "{note}"
+        );
+        assert!(
+            note.ends_with("<<<hook-reason\nnot > > > here\n>>>"),
+            "{note}"
+        );
+        // No reason: only the plain sentence. Claude's deny form counts, whatever the policy.
+        assert_eq!(
+            block(tool_hook("guard", r#"echo '{"block":true}'"#, true)).await,
+            "Hook guard blocked this action."
+        );
+        let note = block(tool_hook(
+            "deny",
+            r#"echo '{"hookSpecificOutput":{"permissionDecision":"deny","permissionDecisionReason":"use rg"}}'"#,
+            false,
+        ))
+        .await;
+        assert!(note.contains("<<<hook-reason\nuse rg\n>>>"), "{note}");
     }
 }

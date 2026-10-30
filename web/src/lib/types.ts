@@ -97,7 +97,7 @@ export interface PluginSpec {
   name: string; description: string; version: string;
   skills: Array<{ id: string; name: string; description: string; instructions: string; allowedTools: string[]; scripts: SkillScript[] }>;
   mcp: Record<string, { command?: string | null; args: string[]; url?: string | null; env: Record<string,string>; env_values?: Record<string,string>; header_values?: Record<string,string>; defaults?: Record<string,string>; bearer_env?: string | null; enabled: boolean }>;
-  hooks: Array<{name:string;event:string;command:string;enabled:boolean;timeout_seconds:number;blocking:boolean}>;
+  hooks: Array<{name:string;event:string;command:string;enabled:boolean;timeout_seconds:number;blocking:boolean;matcher?:string|null;failure_policy?:"ignore"|"abort"|null}>;
   files: Record<string,string>; unsupported: string[]; notices?: string[];
 }
 export interface ImportPreview {

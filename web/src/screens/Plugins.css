@@ -155,3 +155,22 @@
 .themis-card-footer .themis-integration-capabilities { flex: 1; min-width: 0; margin: 0; }
 .themis-integrations .themis-card-footer button { flex-shrink: 0; min-height: 0; height: 36px; padding: 0 16px; border-radius: var(--themis-radius-pill); background: var(--themis-raised); text-decoration: none; font-weight: 500; }
 .themis-integrations .themis-card-footer button.themis-installed:disabled { opacity: 1; background: transparent; color: var(--themis-success); }
+
+/* Installed › Hooks: events in run order (board 24). */
+.themis-hook-events { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 8px; }
+.themis-hook-events > li { display: flex; flex-direction: column; border: 1px solid var(--themis-border-subtle); border-radius: var(--themis-radius-card); background: var(--themis-sidebar-bg); }
+.themis-hook-events > li.is-empty { background: transparent; }
+.themis-hook-event { display: flex; align-items: center; gap: 12px; padding: 14px 18px; }
+.themis-integrations button.themis-hook-event { width: 100%; min-height: 0; padding: 14px 18px; border-radius: var(--themis-radius-card); text-align: left; }
+.themis-hook-chevron { flex: none; color: var(--themis-text-3); transition: transform .15s ease; }
+[aria-expanded="false"] > .themis-hook-chevron { transform: rotate(-90deg); }
+.themis-hook-step { flex: none; width: 28px; height: 28px; border-radius: 14px; background: var(--themis-raised); color: var(--themis-text-2); font-size: .75rem; font-weight: 600; display: grid; place-items: center; }
+.themis-hook-title { flex: 1; font-weight: 600; }
+.is-empty .themis-hook-title { color: var(--themis-text-3); }
+.themis-hook-count { font-size: .75rem; color: var(--themis-text-3); }
+.themis-hook-row { display: flex; align-items: center; gap: 12px; margin: 0 18px; padding: 12px 0 12px 40px; border-top: 1px solid var(--themis-border-subtle); }
+.themis-hook-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.themis-integrations button.themis-hook-name { align-self: flex-start; min-height: 0; padding: 0; border: 0; background: transparent; font: inherit; font-weight: 500; color: var(--themis-text); cursor: pointer; }
+.themis-hook-name:hover { text-decoration: underline; text-underline-offset: 3px; }
+.themis-hook-meta { font-size: .75rem; color: var(--themis-text-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.themis-hook-skipped { margin: 8px 0 0; padding: 12px 18px; border-radius: 16px; background: var(--themis-surface); font-size: .8125rem; color: var(--themis-text-2); }

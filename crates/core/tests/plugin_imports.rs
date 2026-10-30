@@ -116,18 +116,20 @@ fn plugin_mentions_resolve_current_bundle_without_eager_skill_bodies() {
         .import_path("global", source.path(), Some("reviewer"))
         .unwrap();
     let (text, skills, plugins) = store
-        .resolve_prompt(
-            "Use [[plugin:g--reviewer]] and [[skill:manage-plugins]]",
-            &[],
-        )
+        .resolve_prompt("Use [[plugin:g--reviewer]] and [[skill:plugins]]", &[])
         .unwrap();
-    assert_eq!(text, "Use @reviewer and Manage plugins");
+    assert_eq!(text, "Use @reviewer and Plugins");
     assert_eq!(skills.len(), 1);
     assert_eq!(plugins.len(), 1);
     assert_eq!(plugins[0].spec.name, "reviewer");
     store.set_enabled("global", "reviewer", false).unwrap();
     assert!(store.resolve_prompt("[[plugin:g--reviewer]]", &[]).is_err());
     assert!(store.resolve_prompt("[[plugin:g--missing]]", &[]).is_err());
+    // The old command names are gone, with no aliases.
+    assert!(store
+        .resolve_prompt("[[skill:manage-plugins]]", &[])
+        .is_err());
+    assert!(store.resolve_prompt("[[skill:create-skill]]", &[]).is_err());
     assert!(store.resolve_prompt("[[plugin:invalid]]", &[]).is_err());
     assert!(store.resolve_prompt("[[plugin:g--reviewer", &[]).is_err());
 }

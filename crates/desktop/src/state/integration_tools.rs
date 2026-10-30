@@ -696,9 +696,9 @@ impl ToolT for ManagementTool {
     }
     fn description(&self) -> &str {
         match self.name {
-            "list_plugins" => "Read paginated integration metadata and configured/enabled MCP counts in the current project and user scope, without bundled contents. Use kind, offset and limit (default 25, maximum 100); follow next_offset. Enabled does not imply connected or healthy.",
+            "list_plugins" => "Read paginated integration metadata, each plugin's hook definitions and configured/enabled MCP counts in the current project and user scope, without bundled contents. Use kind, offset and limit (default 25, maximum 100); follow next_offset. Enabled does not imply connected or healthy.",
             "save_skill" => "Create or update a personal skill through the shared registry. Supply skill, plugin, scope and expectedRevision when updating.",
-            "manage_integrations" => "Manage integrations through shared validated APIs. Actions: list (paginated metadata and MCP counts; kind/offset/limit, next_offset), save, save_skill, set_component_enabled, remove_component, enable, disable, delete, marketplaces, scan_marketplace, catalog, preview, add_marketplace, remove_marketplace, install, update, import_path, import_json, import_repository, preview_repository, test_mcp, test_hook. import_path takes path; import_json takes content as a JSON string; import_repository and preview_repository take url with optional reference and subdirectory; preview_repository reads package contents without installing. Component actions take name, kind (skill/mcp/hook), id and enabled for set_component_enabled. Marketplace actions take source or marketplace as appropriate. preview takes marketplace and name to inspect supported package contents without installing; it reuses the completed marketplace scan. scan_marketplace returns saved status and starts or resumes background work; refresh requests a new scan. test_mcp takes server configuration; test_hook takes hook configuration. New integrations default to global scope, available across projects; preserve the existing scope when editing. Executable operations require approval.",
+            "manage_integrations" => "Manage integrations through shared validated APIs. Actions: list (paginated metadata and MCP counts; kind/offset/limit, next_offset), save, save_skill, save_hook, set_component_enabled, remove_component, enable, disable, delete, marketplaces, scan_marketplace, catalog, preview, add_marketplace, remove_marketplace, install, update, import_path, import_json, import_repository, preview_repository, test_mcp, test_hook. import_path takes path; import_json takes content as a JSON string; import_repository and preview_repository take url with optional reference and subdirectory; preview_repository reads package contents without installing. save_hook takes name (the plugin) and hook, and keeps the rest of the plugin; the hook is saved turned off. Component actions take name, kind (skill/mcp/hook), id and enabled for set_component_enabled. Marketplace actions take source or marketplace as appropriate. preview takes marketplace and name to inspect supported package contents without installing; it reuses the completed marketplace scan. scan_marketplace returns saved status and starts or resumes background work; refresh requests a new scan. test_mcp takes server configuration; test_hook takes hook configuration. New integrations default to global scope, available across projects; preserve the existing scope when editing. Executable operations require approval.",
             _ => "Manage this chat's recurring automations and short-interval watches. No approval is needed for automations of this chat. Actions: list, create, update, enable, disable, delete, complete. Results echo the STORED schedule_summary, interval_mins, schedule, expires_at, max_runs and next_run_at; report those exact facts to the user, never what you intended. Put fields in `input` (or at the top level). create needs name, task and exactly ONE timing: (a) interval watch: interval_mins 2-60 (every N minutes; optionally repeat \"interval\"), or (b) calendar: repeat daily|weekdays|weekly (weekdays = Monday to Friday) with time HH:MM, timezone (IANA, e.g. Europe/Berlin) and weekday 0=Monday for weekly. interval_mins and a calendar schedule cannot be mixed. A watch is temporary: it expires in 2 hours by default (set expires_in_mins up to 1440); calendar automations expire after 7 days by default (up to 10080); only the user can extend or remove an expiry. A watch also stops after max_runs (default 60) runs; set stop_when to a short plain-language goal (shown to the user), and when that goal is met call action complete (with id, optional when this chat has one automation) to end it. Optional check_command (an argv array such as [\"cat\",\"status.txt\"]) polls cheaply: it runs without the model each interval and the model starts only when its output (or exit code) changes. It is a shell command, so it follows the shell approval policy, unlike the lifecycle actions: in Custom mode the user is asked to approve that exact argv when you create or update the watch (declined means the watch is not saved; then create it without check_command and read the file yourself on each run), and it stops if the policy later denies it. Three failures in a row stop an automation. Updates merge input into the saved fields; update with interval_mins switches to an interval, with a calendar schedule switches to the calendar. Automations always continue this chat; delete removes one that is no longer wanted.",
         }
     }
@@ -756,6 +756,85 @@ mod tests {
             .find(|plugin| plugin["spec"]["name"] == "imported")
             .unwrap();
         assert_eq!(imported["spec"]["mcp"]["example"]["enabled"], true);
+    }
+
+    #[tokio::test]
+    async fn hooks_can_be_created_changed_tested_and_deleted_without_touching_the_plugin() {
+        let data = tempfile::tempdir().unwrap();
+        let project = tempfile::tempdir().unwrap();
+        let state = AppState::new_for_test(data.path().join("settings.json"));
+        let tools = state.integration_management_tools(
+            Arc::new(AllowAllHook),
+            project.path().into(),
+            "chat".into(),
+        );
+        let manager = tools
+            .iter()
+            .find(|tool| tool.name() == "manage_integrations")
+            .unwrap();
+        state
+            .plugin_action(json!({"action":"save","scope":"global","spec":{"name":"guards","files":{"notes.md":"keep me"}}}))
+            .await
+            .unwrap();
+        let hook = |command: &str| json!({"name":"guard","event":"BeforeTool","command":command,"matcher":"shell","enabled":true,"timeout_seconds":5});
+        let current = || async {
+            let plugins = state.plugin_action(json!({"action":"list"})).await.unwrap();
+            plugins
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|plugin| plugin["spec"]["name"] == "guards")
+                .unwrap()
+                .clone()
+        };
+        let save = |command: &str, revision: Value| json!({"action":"save_hook","name":"guards","hook":hook(command),"expectedRevision":revision});
+        // Create: saved off, even when asked for on; the plugin's files stay.
+        let revision = current().await["revision"].clone();
+        manager.execute(save("echo one", revision)).await.unwrap();
+        let plugin = current().await;
+        // The agent reads hooks through `list_plugins`, which has no plugin files.
+        let lister = tools
+            .iter()
+            .find(|tool| tool.name() == "list_plugins")
+            .unwrap();
+        let listed = lister.execute(json!({"kind":"hook"})).await.unwrap();
+        let spec = &listed["items"][0]["spec"];
+        assert_eq!(spec["hooks"][0]["command"], "echo one");
+        assert_eq!(spec["hooks"][0]["matcher"], "shell");
+        assert!(spec.get("files").is_none());
+        assert_eq!(plugin["spec"]["hooks"][0]["name"], "guard");
+        assert_eq!(plugin["spec"]["hooks"][0]["enabled"], false);
+        assert_eq!(plugin["spec"]["files"]["notes.md"], "keep me");
+        // Saving it unchanged keeps it on; a revision from before that save is refused.
+        let revision = plugin["revision"].clone();
+        manager.execute(json!({"action":"set_component_enabled","name":"guards","kind":"hook","id":"guard","enabled":true})).await.unwrap();
+        manager
+            .execute(save("echo one", revision.clone()))
+            .await
+            .unwrap();
+        assert_eq!(current().await["spec"]["hooks"][0]["enabled"], true);
+        assert!(manager.execute(save("echo stale", revision)).await.is_err());
+        // Changing the command turns it off.
+        let revision = current().await["revision"].clone();
+        manager.execute(save("echo two", revision)).await.unwrap();
+        let plugin = current().await;
+        assert_eq!(plugin["spec"]["hooks"].as_array().unwrap().len(), 1);
+        assert_eq!(plugin["spec"]["hooks"][0]["command"], "echo two");
+        assert_eq!(plugin["spec"]["hooks"][0]["enabled"], false);
+        // Test, then delete.
+        manager
+            .execute(json!({"action":"test_hook","hook":hook("exit 0")}))
+            .await
+            .unwrap();
+        manager
+            .execute(
+                json!({"action":"remove_component","name":"guards","kind":"hook","id":"guard"}),
+            )
+            .await
+            .unwrap();
+        let plugin = current().await;
+        assert!(plugin["spec"]["hooks"].as_array().unwrap().is_empty());
+        assert_eq!(plugin["spec"]["files"]["notes.md"], "keep me");
     }
 
     #[tokio::test]

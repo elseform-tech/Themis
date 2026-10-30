@@ -77,8 +77,8 @@ pub async fn run(client: &Client, words: &[String], directory: &Path) -> Result<
         },
         ["skill","list"]=>return client.call("list_prompt_skills",json!({"projectRoot":project})).await,
         ["skill","verify",file]=>{
-            let path=directory.join("builtins/create-skill/verify.py");std::fs::create_dir_all(path.parent().ok_or("Missing verifier directory")?).map_err(|e|e.to_string())?;
-            std::fs::write(&path,include_str!("../../../core/builtins/create-skill/scripts/verify.py")).map_err(|e|e.to_string())?;
+            let path=directory.join("builtins/skills/verify.py");std::fs::create_dir_all(path.parent().ok_or("Missing verifier directory")?).map_err(|e|e.to_string())?;
+            std::fs::write(&path,include_str!("../../../core/builtins/skills/scripts/verify.py")).map_err(|e|e.to_string())?;
             let output=std::process::Command::new("python3").arg(path).arg(file).output().map_err(|e|e.to_string())?;
             if !output.status.success(){return Err(String::from_utf8_lossy(&output.stderr).into());}return Ok(json!({"valid":true}));
         },

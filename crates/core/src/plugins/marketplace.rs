@@ -1817,6 +1817,61 @@ pub fn mcp_server_to_standard(server: &McpServer) -> Value {
     Value::Object(entry)
 }
 
+/// Themis tools for a Claude tool name in a hook matcher.
+fn themis_tools(claude: &str) -> Option<&'static [&'static str]> {
+    Some(match claude {
+        "Bash" => &["shell", "background_task"],
+        "Read" => &["read_file"],
+        "Write" => &["write_file"],
+        "Edit" | "MultiEdit" => &["apply_patch", "write_file"],
+        "Grep" => &["search_file"],
+        "Glob" | "LS" => &["list_dir", "search_file"],
+        "WebFetch" => &["fetch_url"],
+        "WebSearch" => &["web_search"],
+        _ => return None,
+    })
+}
+
+/// A Claude tool matcher ("Edit|Write") as Themis tool names, and the names with no Themis
+/// tool. Themis names already in it are kept.
+fn map_tool_matcher(matcher: &str) -> (Vec<String>, Vec<String>) {
+    let mut mapped: Vec<String> = Vec::new();
+    let mut unmapped = Vec::new();
+    // MCP tools are named differently in Themis, and a regex group is not a list of names:
+    // either is one matcher with no Themis tool.
+    if matcher.contains("mcp__") {
+        return (mapped, vec!["for MCP tools".to_owned()]);
+    }
+    if matcher.contains(['(', ')', '[', '*', '.', '\\']) {
+        return (mapped, vec![matcher.to_owned()]);
+    }
+    for name in matcher
+        .split('|')
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+    {
+        let tools: Vec<&str> = match themis_tools(name) {
+            Some(tools) => tools.to_vec(),
+            None if crate::skills::known_tool_names()
+                .iter()
+                .any(|known| known == name) =>
+            {
+                vec![name]
+            }
+            None => {
+                unmapped.push(name.to_owned());
+                continue;
+            }
+        };
+        for tool in tools {
+            if !mapped.iter().any(|known| known == tool) {
+                mapped.push(tool.to_owned());
+            }
+        }
+    }
+    (mapped, unmapped)
+}
+
 fn import_hooks(value: &Value, spec: &mut PluginSpec) -> anyhow::Result<()> {
     let events = value
         .get("hooks")
@@ -1825,23 +1880,47 @@ fn import_hooks(value: &Value, spec: &mut PluginSpec) -> anyhow::Result<()> {
         .context("Invalid hook configuration")?;
     for (event, groups) in events {
         let mapped = match event.as_str() {
-            "SessionStart" => "RunStart",
+            // Its output is context for the model, which only PromptSubmit delivers: it runs
+            // on every turn instead of once per session.
+            "SessionStart" => "PromptSubmit",
             "PreToolUse" => "BeforeTool",
             "PostToolUse" => "AfterTool",
             "Stop" => "RunEnd",
             "PreCompact" => "BeforeCompaction",
+            "UserPromptSubmit" => "PromptSubmit",
+            // Fires only when the tool call failed.
+            "PostToolUseFailure" => "ToolCallFailed",
             _ => {
                 spec.unsupported.push(format!("Hook event {event}"));
                 continue;
             }
         };
+        let tool_event = matches!(
+            event.as_str(),
+            "PreToolUse" | "PostToolUse" | "PostToolUseFailure"
+        );
         for group in groups.as_array().context("Invalid hook groups")? {
             for raw in group["hooks"].as_array().context("Invalid hook list")? {
                 if raw["type"] != "command" {
                     spec.unsupported.push(format!("{event}: non-command hook"));
                     continue;
                 }
-                if !matches!(event.as_str(), "PreToolUse" | "PostToolUse")
+                // Every Claude session starts with "startup"; the other sources have no Themis
+                // equivalent.
+                let session_matcher = (event == "SessionStart")
+                    .then(|| group["matcher"].as_str())
+                    .flatten()
+                    .filter(|matcher| !matcher.is_empty() && *matcher != "*");
+                if let Some(matcher) = session_matcher {
+                    if !matcher.split('|').any(|source| source.trim() == "startup") {
+                        spec.unsupported.push(format!(
+                            "SessionStart: matcher {matcher} has no Themis equivalent"
+                        ));
+                        continue;
+                    }
+                }
+                if !tool_event
+                    && event != "SessionStart"
                     && group["matcher"]
                         .as_str()
                         .is_some_and(|matcher| !matcher.is_empty() && matcher != "*")
@@ -1860,21 +1939,36 @@ fn import_hooks(value: &Value, spec: &mut PluginSpec) -> anyhow::Result<()> {
                         .push(format!("{event}: hook options require manual mapping"));
                     continue;
                 }
+                // Claude names its tools differently: a `Bash` guard must guard `shell`.
+                let matcher = match group["matcher"]
+                    .as_str()
+                    .filter(|value| !value.is_empty() && !matches!(*value, "*" | ".*"))
+                {
+                    Some(matcher) if tool_event => {
+                        let (mapped_tools, unmapped) = map_tool_matcher(matcher);
+                        for name in &unmapped {
+                            spec.unsupported
+                                .push(format!("{event}: matcher {name} has no Themis tool"));
+                        }
+                        if mapped_tools.is_empty() {
+                            continue;
+                        }
+                        Some(mapped_tools.join("|"))
+                    }
+                    _ if event == "SessionStart" => None,
+                    other => other.map(str::to_owned),
+                };
+                let command = raw["command"].as_str().context("Missing hook command")?;
                 spec.hooks.push(Hook {
-                    name: format!("imported-{}", spec.hooks.len()),
+                    name: imported_hook_name(mapped, matcher.as_deref(), command, &spec.hooks),
                     event: mapped.into(),
-                    command: raw["command"]
-                        .as_str()
-                        .context("Missing hook command")?
-                        .into(),
+                    command: command.into(),
                     enabled: false,
-                    matcher: group["matcher"]
-                        .as_str()
-                        .filter(|value| !value.is_empty() && *value != "*")
-                        .map(str::to_owned),
+                    matcher,
                     failure_policy: None,
                     timeout_seconds: raw["timeout"].as_u64().unwrap_or(10).clamp(1, 60),
-                    blocking: event == "PreToolUse" || event == "SessionStart",
+                    // A broken session hook must not stop every turn.
+                    blocking: event == "PreToolUse",
                     plugin_root: None,
                     runtime_identity: None,
                 });
@@ -1882,4 +1976,116 @@ fn import_hooks(value: &Value, spec: &mut PluginSpec) -> anyhow::Result<()> {
         }
     }
     Ok(())
+}
+
+/// A name for an imported hook, which has none of its own: the script it runs, or else when it
+/// runs (`before-shell`), made unique within the plugin.
+fn imported_hook_name(event: &str, matcher: Option<&str>, command: &str, taken: &[Hook]) -> String {
+    const SCRIPTS: [&str; 9] = ["sh", "bash", "py", "js", "mjs", "cjs", "ts", "rb", "pl"];
+    const GENERIC: [&str; 5] = ["index", "main", "run", "hook", "hooks"];
+    let script = command
+        .split_whitespace()
+        .map(|word| word.trim_matches(|c| matches!(c, '"' | '\'' | ';')))
+        .filter_map(|word| word.rsplit(['/', '\\']).next()?.rsplit_once('.'))
+        .find(|(_, extension)| SCRIPTS.contains(extension))
+        .map(|(stem, _)| {
+            stem.to_ascii_lowercase()
+                .split(|c: char| !c.is_ascii_alphanumeric())
+                .filter(|part| !part.is_empty())
+                .collect::<Vec<_>>()
+                .join("-")
+        })
+        .filter(|stem| !stem.is_empty() && !GENERIC.contains(&stem.as_str()));
+    let tool = matcher.and_then(|matcher| matcher.split('|').next());
+    let base = script.unwrap_or_else(|| match (event, tool) {
+        ("PromptSubmit", _) => "prompt-submit".into(),
+        ("RunStart", _) => "run-start".into(),
+        ("BeforeCompaction", _) => "before-compaction".into(),
+        ("RunEnd", _) => "run-end".into(),
+        ("BeforeTool", Some(tool)) => format!("before-{tool}").replace('_', "-"),
+        ("AfterTool", Some(tool)) => format!("after-{tool}").replace('_', "-"),
+        ("ToolCallFailed", Some(tool)) => format!("{tool}-failed").replace('_', "-"),
+        ("BeforeTool", None) => "before-tool".into(),
+        ("AfterTool", None) => "after-tool".into(),
+        _ => "tool-failed".into(),
+    });
+    let mut name = base.clone();
+    let mut number = 1;
+    while taken.iter().any(|hook| hook.name == name) {
+        number += 1;
+        name = format!("{base}-{number}");
+    }
+    name
+}
+
+#[cfg(test)]
+mod imported_hook_name_tests {
+    use super::*;
+
+    fn named(names: &[&str]) -> Vec<Hook> {
+        names
+            .iter()
+            .map(|name| Hook {
+                name: (*name).into(),
+                event: "RunEnd".into(),
+                command: "true".into(),
+                enabled: false,
+                matcher: None,
+                failure_policy: None,
+                timeout_seconds: 10,
+                blocking: false,
+                plugin_root: None,
+                runtime_identity: None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn names_come_from_the_script_or_else_from_when_the_hook_runs() {
+        let name = |event, matcher, command| imported_hook_name(event, matcher, command, &[]);
+        assert_eq!(
+            name(
+                "BeforeTool",
+                Some("shell"),
+                r#"python3 "${CLAUDE_PLUGIN_ROOT}/hooks/Check_Secrets.py""#
+            ),
+            "check-secrets"
+        );
+        assert_eq!(
+            name(
+                "BeforeTool",
+                Some("shell|background_task"),
+                "if grep -q x; then echo y; fi"
+            ),
+            "before-shell"
+        );
+        assert_eq!(
+            name("AfterTool", Some("web_search"), "true"),
+            "after-web-search"
+        );
+        assert_eq!(name("ToolCallFailed", None, "true"), "tool-failed");
+        assert_eq!(
+            name("PromptSubmit", None, "echo 'see notes/today.txt'"),
+            "prompt-submit"
+        );
+        // A generic script name says nothing, so the event names the hook.
+        assert_eq!(
+            name("RunEnd", None, "node ${CLAUDE_PLUGIN_ROOT}/hooks/index.js"),
+            "run-end"
+        );
+    }
+
+    #[test]
+    fn names_stay_unique_and_valid_within_a_plugin() {
+        let taken = named(&["run-end", "run-end-2"]);
+        let name = imported_hook_name("RunEnd", None, "true", &taken);
+        assert_eq!(name, "run-end-3");
+        assert!(crate::plugins::safe_name(&name));
+        assert!(crate::plugins::safe_name(&imported_hook_name(
+            "BeforeTool",
+            None,
+            "./a--b.sh",
+            &[]
+        )));
+    }
 }
