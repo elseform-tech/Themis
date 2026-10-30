@@ -70,6 +70,6 @@ describe("Hooks by event", () => {
     expect(skipReason("SessionStart: lifecycle matcher requires manual mapping")).toBe("SessionStart matcher not supported");
     expect(skipReason("Plugin has an LSP server")).toBeNull();
     const guards = plugin([hook("guard", "BeforeTool")]);
-    expect(hookMeta({ key: "k", id: "guard", plugin: guards, enabled: true }, "guards")).toBe("guards");
+    expect(hookMeta({ key: "k", id: "guard", plugin: guards, enabled: true }, "guards")).toBe("guards · Main and subagents");
   });
 });
