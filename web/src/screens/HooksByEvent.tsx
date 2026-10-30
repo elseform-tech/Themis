@@ -1,3 +1,4 @@
+import { useState } from "react";
 import type { Plugin } from "../lib/types";
 
 /** A hook row of the Installed list. */
@@ -57,6 +58,12 @@ export function HooksByEvent({ rows, plugins, sourceOf, disabled, onToggle, onOp
   onToggle: (row: HookRow) => void;
   onOpen: (row: HookRow) => void;
 }) {
+  const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(new Set());
+  const toggleEvent = (title: string) => setCollapsed(current => {
+    const next = new Set(current);
+    if (!next.delete(title)) next.add(title);
+    return next;
+  });
   const skipped = plugins.flatMap(plugin => {
     const reasons = plugin.spec.unsupported.map(skipReason).filter((reason): reason is string => reason !== null);
     if (!reasons.length) return [];
@@ -64,18 +71,25 @@ export function HooksByEvent({ rows, plugins, sourceOf, disabled, onToggle, onOp
     return [`${reasons.length} hook${reasons.length === 1 ? "" : "s"} skipped (${plugin.spec.name}): ${unique.join("; ")}.`];
   });
   return (
-    <>
+    <div className="themis-integrations-list">
       <ol className="themis-hook-events" aria-label="Hook events in run order">
         {HOOK_EVENTS.map((step, index) => {
           const hooks = rows.filter(row => step.events.includes(row.plugin.spec.hooks.find(hook => hook.name === row.id)?.event ?? ""));
+          const open = !collapsed.has(step.title);
+          const heading = <>
+            <span className="themis-hook-step" aria-hidden="true">{index + 1}</span>
+            <span className="themis-hook-title">{step.title}</span>
+            <span className="themis-hook-count">{hooks.length ? `${hooks.length} hook${hooks.length === 1 ? "" : "s"}` : "None"}</span>
+          </>;
           return (
             <li key={step.title} className={hooks.length ? "" : "is-empty"}>
-              <div className="themis-hook-event">
-                <span className="themis-hook-step" aria-hidden="true">{index + 1}</span>
-                <span className="themis-hook-title">{step.title}</span>
-                <span className="themis-hook-count">{hooks.length ? `${hooks.length} hook${hooks.length === 1 ? "" : "s"}` : "None"}</span>
-              </div>
-              {hooks.map(row => (
+              {hooks.length
+                ? <button type="button" className="themis-hook-event" aria-expanded={open} onClick={() => toggleEvent(step.title)}>
+                    {heading}
+                    <svg className="themis-hook-chevron" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" aria-hidden="true"><path d="m6 9 6 6 6-6" /></svg>
+                  </button>
+                : <div className="themis-hook-event">{heading}</div>}
+              {open && hooks.map(row => (
                 <div key={row.key} className="themis-hook-row">
                   <span className="themis-hook-text">
                     <button type="button" className="themis-hook-name" aria-label={`View ${row.id}`} onClick={() => onOpen(row)}>{row.id}</button>
@@ -89,6 +103,6 @@ export function HooksByEvent({ rows, plugins, sourceOf, disabled, onToggle, onOp
         })}
       </ol>
       {skipped.map(line => <p key={line} className="themis-hook-skipped" role="note">{line}</p>)}
-    </>
+    </div>
   );
 }

@@ -36,6 +36,26 @@ describe("Hooks by event", () => {
     expect(screen.getByRole("note")).toHaveTextContent("2 hooks skipped (guards): unsupported event (SessionEnd); matcher NotebookEdit has no Themis tool.");
     fireEvent.click(screen.getByRole("switch", { name: "guard enabled" }));
     expect(toggle).toHaveBeenCalledWith(rows[0]);
+    // The screen clips everything but this list, so events and skipped lines must scroll in it.
+    const scroller = document.querySelector(".themis-integrations-list")!;
+    expect(scroller).toContainElement(screen.getByRole("list", { name: "Hook events in run order" }));
+    expect(scroller).toContainElement(screen.getByRole("note"));
+  });
+
+  it("collapses an event with hooks; an empty event has nothing to collapse", () => {
+    const guards = plugin([hook("guard", "BeforeTool"), hook("ticket-context", "PromptSubmit")]);
+    const rows = guards.spec.hooks.map(item => ({ key: item.name, id: item.name, plugin: guards, enabled: true }));
+    render(<HooksByEvent rows={rows} plugins={[guards]} sourceOf={() => "guards"} disabled={() => false} onToggle={() => {}} onOpen={() => {}} />);
+    const before = screen.getByRole("button", { name: /Before a tool runs/ });
+    expect(before).toHaveAttribute("aria-expanded", "true");
+    fireEvent.click(before);
+    expect(before).toHaveAttribute("aria-expanded", "false");
+    expect(before).toHaveTextContent("1 hook");
+    expect(screen.queryByRole("switch", { name: "guard enabled" })).toBeNull();
+    expect(screen.getByRole("switch", { name: "ticket-context enabled" })).toBeInTheDocument();
+    fireEvent.click(before);
+    expect(screen.getByRole("switch", { name: "guard enabled" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Run starts/ })).toBeNull();
   });
 
   it("words import notes plainly and ignores ones that are not about hooks", () => {
