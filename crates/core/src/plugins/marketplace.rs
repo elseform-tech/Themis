@@ -651,7 +651,6 @@ impl PluginStore {
             spec.name = name.into();
             spec.package_kind = Some("plugin".into());
             for field in [
-                "commands",
                 "agents",
                 "lspServers",
                 "dependencies",
@@ -884,6 +883,13 @@ fn import_directory(
             ));
         }
     }
+    let command_roots = declared_paths(
+        &declared("commands"),
+        "commands",
+        &spec.files,
+        &mut spec.unsupported,
+    );
+    import_commands(&mut spec, &command_roots)?;
     let mut mcp_files = vec![".mcp.json".to_owned()];
     let mut hook_files = vec!["hooks/hooks.json".to_owned()];
     for value in declared("mcpServers") {
@@ -923,7 +929,6 @@ fn import_directory(
         }
     }
     for field in [
-        "commands",
         "agents",
         "channels",
         "defaultEnabled",
@@ -954,11 +959,81 @@ fn import_directory(
             spec.unsupported.push(label.into());
         }
     }
-    if spec.files.keys().any(|p| p.starts_with("commands/")) {
-        spec.unsupported
-            .push("Legacy commands/ directory (use skills/)".into());
-    }
     Ok(spec)
+}
+
+/// Claude plugin commands (`commands/**/*.md`, plus declared command files and folders)
+/// become manual-only skills named after the file, folders joined with `-`. Their
+/// instructions open with [`crate::prompts::SKILL_COMMAND_NOTE`], which explains
+/// `$ARGUMENTS`, `!`command`` and `@path`; an id taken by a skill gets `-command`.
+fn import_commands(spec: &mut PluginSpec, declared: &[String]) -> anyhow::Result<()> {
+    let roots: Vec<&str> = std::iter::once("commands")
+        .chain(declared.iter().map(String::as_str))
+        .filter(|root| !root.is_empty())
+        .collect();
+    let mut commands = BTreeMap::new();
+    for path in spec.files.keys().filter(|path| path.ends_with(".md")) {
+        let relative = roots.iter().find_map(|root| {
+            if path == root {
+                Path::new(path).file_name().and_then(|name| name.to_str())
+            } else {
+                path.strip_prefix(&format!("{root}/"))
+            }
+        });
+        if let Some(relative) = relative {
+            commands.insert(
+                path.clone(),
+                relative.trim_end_matches(".md").replace('/', "-"),
+            );
+        }
+    }
+    for (path, id) in commands {
+        let taken = |id: &str| spec.skills.iter().any(|skill| skill.id == id);
+        let id = if taken(&id) {
+            format!("{id}-command")
+        } else {
+            id
+        };
+        if !safe_name(&id) || taken(&id) {
+            spec.unsupported
+                .push(format!("{path}: command name can't be used as a skill"));
+            continue;
+        }
+        let (metadata, body) = parse_skill(&spec.files[&path])?;
+        let first_line = body
+            .lines()
+            .map(|line| line.trim().trim_start_matches('#').trim())
+            .find(|line| !line.is_empty())
+            .unwrap_or_default();
+        let description = metadata
+            .get("description")
+            .cloned()
+            .unwrap_or_else(|| first_line.chars().take(200).collect());
+        for key in metadata.keys().filter(|key| key.as_str() != "description") {
+            spec.notices.push(if key == "allowed-tools" {
+                format!("{path}: Claude tool names are not permission grants in Themis")
+            } else {
+                format!("{path}: command frontmatter {key}")
+            });
+        }
+        let name = path
+            .rsplit('/')
+            .next()
+            .unwrap_or(&id)
+            .trim_end_matches(".md")
+            .to_owned();
+        spec.skill_paths.insert(id.clone(), path.clone());
+        spec.manual_skills.push(id.clone());
+        spec.skills.push(Skill {
+            id,
+            name,
+            description,
+            instructions: format!("{}\n\n{body}", crate::prompts::SKILL_COMMAND_NOTE),
+            allowed_tools: vec![],
+            scripts: vec![],
+        });
+    }
+    Ok(())
 }
 /// Text paths a manifest or marketplace entry declares for `label`, normalised and checked to
 /// stay inside the plugin. Problems are reported instead of failing the import.

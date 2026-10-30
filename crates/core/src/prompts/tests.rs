@@ -233,6 +233,7 @@ const ALL: &[(&str, &str, &[&str])] = &[
     (TOOL_BROWSER_UNTRUSTED, "tool-browser-untrusted", &[]),
     (TOOL_DEVTOOLS_PAUSED, "tool-devtools-paused", &[]),
     (TOOL_BACKGROUND_NEXT, "tool-background-next", &[]),
+    (SKILL_COMMAND_NOTE, "skill-command-note", &[]),
     (EVAL_ANSWER_PROBE, "eval-answer-probe", &["question"]),
     (
         EVAL_RECALL_TASK,

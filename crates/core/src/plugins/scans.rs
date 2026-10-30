@@ -20,7 +20,7 @@ pub struct MarketplaceScan {
 }
 
 /// Bumped whenever import rules change, so saved checks are redone with the new rules.
-const SCAN_VERSION: u32 = 5;
+const SCAN_VERSION: u32 = 6;
 
 /// Counts of a finished check: plugins per status, and how many plugins each reason affects.
 pub fn compatibility_summary(scan: &MarketplaceScan) -> Value {
