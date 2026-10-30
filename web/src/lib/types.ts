@@ -345,17 +345,6 @@ export type ThreadEvent =
 
 export type SubagentEnding = 'finished' | 'stopped' | 'failed' | 'incomplete';
 
-/** One message between the main agent and a subagent, as a chat bubble. */
-export interface SubagentBubble {
-  agentId: string;
-  name: string;
-  /** `main`: the main agent wrote it. `subagent`: the subagent's reply. */
-  from: 'main' | 'subagent';
-  text: string;
-  /** How it ended, on a reply that isn't a plain finish. */
-  ending?: SubagentEnding;
-}
-
 /** One subagent on its chat card. */
 export interface SubagentEntry {
   id: string;
@@ -560,8 +549,6 @@ export interface PersistedMessage {
   question?: Question;
   /** Subagents started together in this run, shown as one card. */
   subagents?: SubagentEntry[];
-  /** A message between the main agent and a subagent. */
-  subagentBubble?: SubagentBubble;
 }
 
 export type HistoryItem =

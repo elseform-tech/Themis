@@ -4,7 +4,7 @@ import { ResponseBody } from "../components/ResponseBody";
 import { getSubagentTranscript, stopSubagent } from "../lib/tauri";
 import type { SubagentEntry, ThreadEvent } from "../lib/types";
 import { describeError, useApp } from "../state/store";
-import { clock, elapsed, SubagentMessage, subagentLine, subagentState } from "./SubagentCard";
+import { clock, elapsed, subagentLine, subagentState } from "./SubagentCard";
 import { TaskIcon } from "./TaskIcon";
 import "./SubagentCard.css";
 
@@ -36,6 +36,21 @@ export function stepsOf(events: ThreadEvent[]): Step[] {
     }
   }
   return steps;
+}
+
+/** Longer messages start folded, so a long brief doesn't push the conversation away. */
+const FOLD_AT = 400;
+
+/** The main agent's message to the subagent, as a chat bubble. */
+function SubagentMessage({ text }: { text: string }) {
+  const [open, setOpen] = useState(false);
+  const long = text.length > FOLD_AT;
+  return (
+    <div className="themis-subagent-bubble">
+      <div className={`themis-subagent-bubble-text${long && !open ? " is-folded" : ""}`}><ResponseBody text={text} /></div>
+      {long && <button type="button" className="themis-subagent-bubble-more" onClick={() => setOpen(!open)}>{open ? "Show less" : "Show more"}</button>}
+    </div>
+  );
 }
 
 /** Workspace › Tasks detail of one subagent (board 26): its conversation with the main agent as a chat, with Stop while it runs. */
@@ -90,9 +105,9 @@ export function SubagentDetail({ threadId, agent, runLive, onBack }: { threadId:
       </header>
       {error && <p className="themis-workspace-note" role="alert">{error}</p>}
       <div className="themis-subagent-steps">
-        <SubagentMessage bubble={{ agentId: agent.id, name: agent.name, from: "main", text: agent.brief }} labelled={false} />
+        <SubagentMessage text={agent.brief} />
         {steps.map((step, index) => step.kind === "message"
-          ? <SubagentMessage key={index} bubble={{ agentId: agent.id, name: agent.name, from: "main", text: step.text }} labelled={false} />
+          ? <SubagentMessage key={index} text={step.text} />
           : step.kind === "text"
           ? <div key={index} className="themis-subagent-step-text"><ResponseBody text={step.text} /></div>
           : (
