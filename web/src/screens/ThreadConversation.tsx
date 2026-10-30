@@ -294,6 +294,7 @@ function Message({ message, threadId, activeRunId, durationMs, skills, plugins }
   // The answered question box already shows the answer the agent was sent.
   if (message.role === "user" && message.text.startsWith(ANSWER_MARKER)) return null;
   // A goal turn starts with a runtime message: a divider, not a bubble from the user.
+  if (message.goalStatus) return <p className="themis-goal-status">{message.text}</p>;
   if (message.goalTurn !== undefined) return <hr className="themis-goal-turn" aria-label={`Goal turn ${message.goalTurn}`} />;
   const text = message.attachments?.length ? message.text.split("\n\nAttached files (local paths;")[0]! : message.text;
   const isActiveRun = activeRunId !== undefined && message.runId === activeRunId;

@@ -379,9 +379,12 @@ async fn a_goal_runs_turn_after_turn_until_the_check_finds_it_reached() {
         |event| matches!(event, ThreadEvent::Finished { result, .. } if result == "I've reached the goal: the counter is 2."),
     )
     .await;
-    assert!(!seen
-        .iter()
-        .any(|event| matches!(event, ThreadEvent::GoalNote { .. })));
+    // The goal says why it carries on, in the chat, as a plain sentence.
+    assert!(seen.iter().any(|event| matches!(
+        event,
+        ThreadEvent::GoalNote { reason, .. }
+            if reason.starts_with("It isn't done yet because counter is 1")
+    )));
     // The second turn was started by the runtime, carrying the check's reason.
     let bodies: Vec<Value> = distinct(
         server

@@ -66,6 +66,24 @@ pub(super) fn backoff(failures: u32) -> Duration {
     Duration::from_secs(seconds).min(MAX_BACKOFF)
 }
 
+/// Why the goal carries on, in one natural sentence around the check's own reason.
+fn because_carrying_on(reason: &str) -> String {
+    let reason = reason.trim().trim_end_matches('.');
+    let mut chars = reason.chars();
+    let first = chars
+        .next()
+        .map(|c| c.to_lowercase().to_string())
+        .unwrap_or_default();
+    // An acronym or name keeps its capital.
+    let keep = reason.chars().nth(1).is_some_and(char::is_uppercase);
+    let reason = if keep {
+        reason.to_owned()
+    } else {
+        format!("{first}{}", chars.as_str())
+    };
+    format!("It isn't done yet because {reason}, so I'm carrying on.")
+}
+
 /// `wait` plus up to a fifth more, so chats hit by the same outage don't all retry at once.
 fn jittered(wait: Duration) -> Duration {
     use std::hash::BuildHasher;
@@ -274,6 +292,13 @@ impl AppState {
             .goal_for(&thread_id)
             .filter(|goal| goal.status != GoalStatus::Reached);
         let mut goal = self.begin_goal(sink.as_ref(), &thread_id, &text);
+        self.goal_note(
+            sink.as_ref(),
+            &thread_id,
+            "",
+            GoalNoteKind::Status,
+            "I'm starting on this goal, and I'll keep going until a separate check finds it done.",
+        );
         // Rewording an open goal continues it: its time, turn count and the
         // requests added to it carry over.
         if let Some(previous) = previous {
@@ -331,6 +356,13 @@ impl AppState {
                 }
             })
             .ok_or_else(|| "This chat has no goal".to_owned())?;
+        self.goal_note(
+            sink.as_ref(),
+            &thread_id,
+            "",
+            GoalNoteKind::Status,
+            "I've paused the goal as you asked, and nothing more runs until you resume it.",
+        );
         Ok(goal)
     }
 
@@ -367,6 +399,13 @@ impl AppState {
         }
         self.bump_goal_generation(&thread_id);
         self.store_goal(sink.as_ref(), &thread_id, None);
+        self.goal_note(
+            sink.as_ref(),
+            &thread_id,
+            "",
+            GoalNoteKind::Status,
+            "I've removed the goal, so I won't start any more turns for it.",
+        );
         Ok(())
     }
 
@@ -393,6 +432,13 @@ impl AppState {
                 goal.failures = 0;
             })
             .ok_or_else(|| "This chat has no goal".to_owned())?;
+        self.goal_note(
+            sink.as_ref(),
+            &thread_id,
+            "",
+            GoalNoteKind::Status,
+            "I'm picking the goal back up.",
+        );
         if !running && previous.status != GoalStatus::Running {
             let note = match previous.status {
                 GoalStatus::Quota => "Resumed after the model quota pause.",
@@ -835,6 +881,7 @@ impl AppState {
                         goal.progress = verdict.progress.clone();
                     }
                 });
+                let shown_reason = verdict.reason.clone();
                 // Turns without progress never stop the goal; the next one is
                 // told to change course.
                 let note = if stalls >= STALL_TURNS {
@@ -855,6 +902,13 @@ impl AppState {
                 } else {
                     verdict.reason
                 };
+                self.goal_note(
+                    sink.as_ref(),
+                    &thread_id,
+                    &run_id,
+                    GoalNoteKind::Status,
+                    &because_carrying_on(&shown_reason),
+                );
                 self.start_goal_turn(sink, thread_id, note).await;
             }
         }
@@ -962,6 +1016,15 @@ impl AppState {
                         goal.failures = 0;
                         set_status(goal, GoalStatus::Paused, Some(KEPT_FAILING.to_owned()));
                     });
+                    self.goal_note(
+                        sink.as_ref(),
+                        &thread_id,
+                        &run_id,
+                        GoalNoteKind::Status,
+                        &format!(
+                            "I'm pausing the goal because {KEPT_FAILING}. You can resume it whenever you're ready."
+                        ),
+                    );
                     let _ = self.inner.diagnostics.append(
                         "goal",
                         "paused_after_failures",
@@ -970,10 +1033,25 @@ impl AppState {
                     );
                     return;
                 }
+                let wait = jittered(backoff(failures));
+                self.goal_note(
+                    sink.as_ref(),
+                    &thread_id,
+                    &run_id,
+                    GoalNoteKind::Status,
+                    &format!(
+                        "That turn failed, so I'll try again in {}.",
+                        if wait.as_secs() < 60 {
+                            format!("{} s", wait.as_secs())
+                        } else {
+                            format!("{} min", wait.as_secs() / 60)
+                        }
+                    ),
+                );
                 self.schedule_goal_turn(
                     sink,
                     thread_id,
-                    jittered(backoff(failures)),
+                    wait,
                     themis_core::prompts::fill(
                         themis_core::prompts::GOAL_NOTE_FAILED,
                         &[("error", &core_goal::one_line(error, 200))],
@@ -1190,6 +1268,16 @@ mod tests {
         assert!(clipped.contains("characters clipped"));
         assert!(clipped.chars().count() < OUTPUT_HEAD_CHARS + OUTPUT_TAIL_CHARS + 50);
         assert_eq!(clip_output("short"), "short");
+    }
+
+    #[test]
+    fn the_reason_to_carry_on_reads_as_a_sentence() {
+        assert_eq!(
+            because_carrying_on("Counter is 1; needs 2."),
+            "It isn't done yet because counter is 1; needs 2, so I'm carrying on."
+        );
+        assert!(because_carrying_on("HTTP 500 remains").contains("because HTTP 500"));
+        assert!(!because_carrying_on("").contains(':'));
     }
 
     #[test]
