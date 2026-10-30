@@ -2,6 +2,7 @@
 import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Plugin } from "../lib/types";
+import { toolDisplayName } from "../lib/toolNames";
 import { HooksByEvent, hookMeta, skipReason } from "./HooksByEvent";
 
 afterEach(cleanup);
@@ -12,6 +13,12 @@ const plugin = (hooks: Plugin["spec"]["hooks"], unsupported: string[] = []): Plu
 } as unknown as Plugin);
 const hook = (name: string, event: string, extra: Partial<Plugin["spec"]["hooks"][number]> = {}) =>
   ({ name, event, command: "x", enabled: true, timeout_seconds: 10, blocking: false, ...extra });
+
+it("names hooks by plugin and hook, never by their wire id", () => {
+  expect(toolDisplayName("hook_g--ticketing--18e35169be252a40--before-shell_f6bb584aa0123456")).toBe("Hook · ticketing · before-shell");
+  expect(toolDisplayName("hook_g--ticketing--18e35169be252a40--before-shell")).toBe("Hook · ticketing · before-shell");
+  expect(toolDisplayName("hook_guard_f6bb584aa0123456")).toBe("Hook · guard");
+});
 
 describe("Hooks by event", () => {
   it("lists every event in run order, dims empty ones, and says what each hook covers", () => {

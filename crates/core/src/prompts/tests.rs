@@ -174,6 +174,8 @@ const ALL: &[(&str, &str, &[&str])] = &[
     (RUNTIME_HANDOFF, "runtime-handoff", &[]),
     (RUNTIME_STEERED, "runtime-steered", &[]),
     (HOOK_CONTEXT_NOTE, "hook-context-note", &[]),
+    (HOOK_BLOCKED, "hook-blocked", &["hook"]),
+    (HOOK_BLOCK_REASON_NOTE, "hook-block-reason-note", &[]),
     (RUNTIME_STEERS_CHECK, "runtime-steers-check", &["messages"]),
     (
         RUNTIME_BATCH_NOT_RUN,

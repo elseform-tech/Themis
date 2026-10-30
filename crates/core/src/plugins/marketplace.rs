@@ -1958,13 +1958,11 @@ fn import_hooks(value: &Value, spec: &mut PluginSpec) -> anyhow::Result<()> {
                     _ if event == "SessionStart" => None,
                     other => other.map(str::to_owned),
                 };
+                let command = raw["command"].as_str().context("Missing hook command")?;
                 spec.hooks.push(Hook {
-                    name: format!("imported-{}", spec.hooks.len()),
+                    name: imported_hook_name(mapped, matcher.as_deref(), command, &spec.hooks),
                     event: mapped.into(),
-                    command: raw["command"]
-                        .as_str()
-                        .context("Missing hook command")?
-                        .into(),
+                    command: command.into(),
                     enabled: false,
                     matcher,
                     failure_policy: None,
@@ -1978,4 +1976,116 @@ fn import_hooks(value: &Value, spec: &mut PluginSpec) -> anyhow::Result<()> {
         }
     }
     Ok(())
+}
+
+/// A name for an imported hook, which has none of its own: the script it runs, or else when it
+/// runs (`before-shell`), made unique within the plugin.
+fn imported_hook_name(event: &str, matcher: Option<&str>, command: &str, taken: &[Hook]) -> String {
+    const SCRIPTS: [&str; 9] = ["sh", "bash", "py", "js", "mjs", "cjs", "ts", "rb", "pl"];
+    const GENERIC: [&str; 5] = ["index", "main", "run", "hook", "hooks"];
+    let script = command
+        .split_whitespace()
+        .map(|word| word.trim_matches(|c| matches!(c, '"' | '\'' | ';')))
+        .filter_map(|word| word.rsplit(['/', '\\']).next()?.rsplit_once('.'))
+        .find(|(_, extension)| SCRIPTS.contains(extension))
+        .map(|(stem, _)| {
+            stem.to_ascii_lowercase()
+                .split(|c: char| !c.is_ascii_alphanumeric())
+                .filter(|part| !part.is_empty())
+                .collect::<Vec<_>>()
+                .join("-")
+        })
+        .filter(|stem| !stem.is_empty() && !GENERIC.contains(&stem.as_str()));
+    let tool = matcher.and_then(|matcher| matcher.split('|').next());
+    let base = script.unwrap_or_else(|| match (event, tool) {
+        ("PromptSubmit", _) => "prompt-submit".into(),
+        ("RunStart", _) => "run-start".into(),
+        ("BeforeCompaction", _) => "before-compaction".into(),
+        ("RunEnd", _) => "run-end".into(),
+        ("BeforeTool", Some(tool)) => format!("before-{tool}").replace('_', "-"),
+        ("AfterTool", Some(tool)) => format!("after-{tool}").replace('_', "-"),
+        ("ToolCallFailed", Some(tool)) => format!("{tool}-failed").replace('_', "-"),
+        ("BeforeTool", None) => "before-tool".into(),
+        ("AfterTool", None) => "after-tool".into(),
+        _ => "tool-failed".into(),
+    });
+    let mut name = base.clone();
+    let mut number = 1;
+    while taken.iter().any(|hook| hook.name == name) {
+        number += 1;
+        name = format!("{base}-{number}");
+    }
+    name
+}
+
+#[cfg(test)]
+mod imported_hook_name_tests {
+    use super::*;
+
+    fn named(names: &[&str]) -> Vec<Hook> {
+        names
+            .iter()
+            .map(|name| Hook {
+                name: (*name).into(),
+                event: "RunEnd".into(),
+                command: "true".into(),
+                enabled: false,
+                matcher: None,
+                failure_policy: None,
+                timeout_seconds: 10,
+                blocking: false,
+                plugin_root: None,
+                runtime_identity: None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn names_come_from_the_script_or_else_from_when_the_hook_runs() {
+        let name = |event, matcher, command| imported_hook_name(event, matcher, command, &[]);
+        assert_eq!(
+            name(
+                "BeforeTool",
+                Some("shell"),
+                r#"python3 "${CLAUDE_PLUGIN_ROOT}/hooks/Check_Secrets.py""#
+            ),
+            "check-secrets"
+        );
+        assert_eq!(
+            name(
+                "BeforeTool",
+                Some("shell|background_task"),
+                "if grep -q x; then echo y; fi"
+            ),
+            "before-shell"
+        );
+        assert_eq!(
+            name("AfterTool", Some("web_search"), "true"),
+            "after-web-search"
+        );
+        assert_eq!(name("ToolCallFailed", None, "true"), "tool-failed");
+        assert_eq!(
+            name("PromptSubmit", None, "echo 'see notes/today.txt'"),
+            "prompt-submit"
+        );
+        // A generic script name says nothing, so the event names the hook.
+        assert_eq!(
+            name("RunEnd", None, "node ${CLAUDE_PLUGIN_ROOT}/hooks/index.js"),
+            "run-end"
+        );
+    }
+
+    #[test]
+    fn names_stay_unique_and_valid_within_a_plugin() {
+        let taken = named(&["run-end", "run-end-2"]);
+        let name = imported_hook_name("RunEnd", None, "true", &taken);
+        assert_eq!(name, "run-end-3");
+        assert!(crate::plugins::safe_name(&name));
+        assert!(crate::plugins::safe_name(&imported_hook_name(
+            "BeforeTool",
+            None,
+            "./a--b.sh",
+            &[]
+        )));
+    }
 }

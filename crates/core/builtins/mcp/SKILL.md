@@ -1,9 +1,9 @@
 ---
-name: manage-mcp
+name: mcp
 description: Install, import, configure, create, test and troubleshoot local or remote MCP servers, including pasted JSON configurations.
 ---
 
-# Manage MCP
+# MCP
 
 Use global scope for new installations and personal packages so they are available in every chat. Preserve the scope of existing items when updating them.
 

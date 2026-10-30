@@ -109,7 +109,7 @@ fn run(data: &Path, thread: &str, text: &str) {
 #[tokio::test(flavor = "multi_thread")]
 async fn prompt_hook_context_reaches_the_model_after_the_message() {
     let (llm, data, _project, thread, serving) =
-        chat_with_prompt_hook("echo 'Ticket ABC-1 is open'").await;
+        chat_with_prompt_hook("echo Ticket ABC-1 is open").await;
     let dir = data.path().to_owned();
     tokio::task::spawn_blocking(move || run(&dir, &thread, "fix the login bug"))
         .await
@@ -134,9 +134,13 @@ async fn prompt_hook_context_reaches_the_model_after_the_message() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_prompt_hook_that_blocks_stops_the_turn_before_any_request() {
-    let (llm, data, _project, thread, serving) =
-        chat_with_prompt_hook(r#"echo '{"decision":"block","reason":"no tickets on Fridays"}'"#)
-            .await;
+    // cmd keeps single quotes in the output and treats double quotes as plain text.
+    let command = if cfg!(windows) {
+        r#"echo {"decision":"block","reason":"no tickets on Fridays"}"#
+    } else {
+        r#"echo '{"decision":"block","reason":"no tickets on Fridays"}'"#
+    };
+    let (llm, data, _project, thread, serving) = chat_with_prompt_hook(command).await;
     let dir = data.path().to_owned();
     let history = tokio::task::spawn_blocking(move || {
         run(&dir, &thread, "fix the login bug");
@@ -158,6 +162,9 @@ async fn a_prompt_hook_that_blocks_stops_the_turn_before_any_request() {
         .filter_map(|item| item["envelope"]["event"].as_object())
         .find(|event| event["kind"] == "failed")
         .expect("the turn failed");
-    assert_eq!(failed["error"], "Blocked by hook ticket-context");
+    assert_eq!(
+        failed["error"],
+        "Blocked by hook ticket-context: no tickets on Fridays"
+    );
     serving.abort();
 }

@@ -13,7 +13,7 @@ function promptPlugin(bundle:Plugin):PromptPlugin {
 }
 
 export function usePromptSkills(projectRoot?:string|null, refresh?:unknown) {
-  const [skills,setSkills]=useState<PromptSkill[]>([{id:"create-skill",name:"Create skill",description:"Ask the agent to create a local or global skill",plugin:"Themis"}]);
+  const [skills,setSkills]=useState<PromptSkill[]>([{id:"skills",name:"Skills",description:"Ask the agent to find, create or update a skill",plugin:"Themis"}]);
   const [error,setError]=useState("");
   const [plugins,setPlugins]=useState<PromptPlugin[]>([]);
   const previousRoot=useRef(projectRoot);

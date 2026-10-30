@@ -253,6 +253,12 @@ impl AppState {
                     serde_json::from_value(args["skill"].clone())?,
                     args["expectedRevision"].as_str(),
                 )?)?,
+                "save_hook" => serde_json::to_value(store.save_hook(
+                    scope,
+                    if name.is_empty() { "personal" } else { name },
+                    serde_json::from_value(args["hook"].clone())?,
+                    args["expectedRevision"].as_str(),
+                )?)?,
                 "delete" => {
                     store.delete(scope, name)?;
                     Value::Null
@@ -346,6 +352,7 @@ impl AppState {
             && matches!(
                 action,
                 "save"
+                    | "save_hook"
                     | "delete"
                     | "enable"
                     | "disable"
