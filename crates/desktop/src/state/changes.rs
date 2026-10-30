@@ -70,6 +70,57 @@ pub(super) fn bound_listed_lines(files: &mut [crate::types::DiffFile]) {
     }
 }
 
+fn read_diff(root: &Path, preexisting: &HashSet<String>) -> Result<DiffState, String> {
+    if !is_git_repo(root) {
+        return Ok(DiffState {
+            available: false,
+            reason: Some("project is not a git repository".to_owned()),
+            files: Vec::new(),
+        });
+    }
+    let mut hidden = 0usize;
+    let mut files = tracked_diff_files(root)?;
+    let mut seen: HashSet<String> = files.iter().map(|file| file.path.clone()).collect();
+    for relative in git_untracked(root)? {
+        if seen.insert(relative.clone()) && is_readable_change(root, &relative) {
+            files.push(untracked_diff_file(root, &relative));
+        } else if !files.iter().any(|file| file.path == relative) {
+            hidden += 1;
+        }
+    }
+    let before = files.len();
+    files.retain(|file| is_readable_change(root, &file.path));
+    hidden += before - files.len();
+    for file in &mut files {
+        file.preexisting = preexisting.contains(&file.path)
+            || file
+                .old_path
+                .as_deref()
+                .is_some_and(|old| preexisting.contains(old));
+    }
+    let total = files.len();
+    let mut notes = Vec::new();
+    if total > MAX_DIFF_FILES {
+        files.truncate(MAX_DIFF_FILES);
+        notes.push(format!(
+            "truncated: showing {MAX_DIFF_FILES} of {total} changed files"
+        ));
+    }
+    bound_listed_lines(&mut files);
+    if hidden > 0 {
+        notes.push(format!(
+            "{hidden} binary or generated file{} hidden",
+            if hidden == 1 { "" } else { "s" }
+        ));
+    }
+    let reason = (!notes.is_empty()).then(|| notes.join(" · "));
+    Ok(DiffState {
+        available: true,
+        reason,
+        files,
+    })
+}
+
 impl AppState {
     /// Lists the shared project checkout diff (git repos only).
     pub async fn list_diff(&self, thread_id: String) -> Result<DiffState, String> {
@@ -89,54 +140,10 @@ impl AppState {
                 }
             }
         };
-        if !is_git_repo(&root) {
-            return Ok(DiffState {
-                available: false,
-                reason: Some("project is not a git repository".to_owned()),
-                files: Vec::new(),
-            });
-        }
-        let mut hidden = 0usize;
-        let mut files = tracked_diff_files(&root)?;
-        let mut seen: HashSet<String> = files.iter().map(|file| file.path.clone()).collect();
-        for relative in git_untracked(&root)? {
-            if seen.insert(relative.clone()) && is_readable_change(&root, &relative) {
-                files.push(untracked_diff_file(&root, &relative));
-            } else if !files.iter().any(|file| file.path == relative) {
-                hidden += 1;
-            }
-        }
-        let before = files.len();
-        files.retain(|file| is_readable_change(&root, &file.path));
-        hidden += before - files.len();
-        for file in &mut files {
-            file.preexisting = preexisting.contains(&file.path)
-                || file
-                    .old_path
-                    .as_deref()
-                    .is_some_and(|old| preexisting.contains(old));
-        }
-        let total = files.len();
-        let mut notes = Vec::new();
-        if total > MAX_DIFF_FILES {
-            files.truncate(MAX_DIFF_FILES);
-            notes.push(format!(
-                "truncated: showing {MAX_DIFF_FILES} of {total} changed files"
-            ));
-        }
-        bound_listed_lines(&mut files);
-        if hidden > 0 {
-            notes.push(format!(
-                "{hidden} binary or generated file{} hidden",
-                if hidden == 1 { "" } else { "s" }
-            ));
-        }
-        let reason = (!notes.is_empty()).then(|| notes.join(" · "));
-        Ok(DiffState {
-            available: true,
-            reason,
-            files,
-        })
+        // Git and file reads block, and the live diff asks for this every few seconds.
+        tokio::task::spawn_blocking(move || read_diff(&root, &preexisting))
+            .await
+            .map_err(|err| err.to_string())?
     }
 
     /// Records acceptance of a changed file (in-memory; the disk already

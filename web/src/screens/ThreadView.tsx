@@ -309,7 +309,12 @@ export function ThreadView() {
       onOpenSettings={() => dispatch({ type: "ui/view", view: "settings", settings: { section: "Models" } })}
       budget={budget}
       compacting={compacting}
-      location={{ name: project.name, root: project.root, branch: workspace?.branch ?? null, branches: workspace?.branches.map(branch => branch.name), onSwitchBranch: branch => void switchBranch(project.root, branch).then(() => setWorkspaceVersion(version => version + 1)).catch(error => toast(dispatch, describeError(error), "danger")) }}
+      location={{ name: project.name, root: project.root, branch: workspace?.branch ?? null, branches: workspace?.branches.map(branch => branch.name), onSwitchBranch: branch => void switchBranch(project.root, branch).then(() => {
+        setWorkspaceVersion(version => version + 1);
+        // Git keeps uncommitted edits on a switch; say so rather than let them appear on the new branch unannounced.
+        const carried = state.diffs[thread.id]?.files.length ?? 0;
+        if (carried > 0) toast(dispatch, `${carried} uncommitted ${carried === 1 ? "change" : "changes"} came along to ${branch}`);
+      }).catch(error => toast(dispatch, describeError(error), "danger")) }}
       top={<>
         <ComposerStack threadId={thread.id} goal={goal} approvals={approvals} questions={questions} traces={trace}
           onEditGoal={async text => { try { await editGoal(thread.id, text); } catch (error) { toast(dispatch, `Could not save the goal: ${describeError(error)}`, "danger"); throw error; } }}
