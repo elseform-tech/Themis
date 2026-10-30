@@ -241,9 +241,9 @@ async fn short_reply_never_exceeds_the_hard_budget() {
         "scan the whole span",
         "paused but not finished",
         // From compaction-checkpoint.md, the shared system prompt of every checkpoint request.
-        "Read the whole span of records in order before writing",
-        "decision together with its reason",
-        "keep every other topic or task that was paused but not finished as parked work",
+        "Read every record in order",
+        "Record each decision with its reason",
+        "every paused, unfinished topic as parked work",
     ] {
         assert!(
             system.contains(expected),

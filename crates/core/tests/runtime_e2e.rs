@@ -167,10 +167,9 @@ async fn forced_checkpoint_resumes_task_at_24k_200k_and_256k_without_replaying_w
         );
         for packet in &ordinary_packets {
             let system = packet["messages"][0]["content"].as_str().unwrap();
-            assert_eq!(system.matches("For factual and technical work").count(), 1);
-            assert!(system.contains("verified current line or line range"));
+            assert_eq!(system.matches("Support claims, code changes and test results").count(), 1);
+            assert!(system.contains("verified line"));
             assert!(system.contains("why it addresses the task"));
-            assert!(system.contains("using permitted reference fields without extra wrappers"));
         }
         assert!(
             ordinary_packets[0]["messages"]
@@ -1802,10 +1801,9 @@ async fn skill_catalog_reaches_system_request_without_body() {
     let followup: serde_json::Value = serde_json::from_slice(&requests[1].body).unwrap();
     for packet in [&request, &followup] {
         let system = packet["messages"][0]["content"].as_str().unwrap();
-        assert_eq!(system.matches("For factual and technical work").count(), 1);
-        assert!(system.contains("verified current line or line range"));
+        assert_eq!(system.matches("Support claims, code changes and test results").count(), 1);
+        assert!(system.contains("verified line"));
         assert!(system.contains("why it addresses the task"));
-        assert!(system.contains("using permitted reference fields without extra wrappers"));
     }
     assert!(followup["messages"]
         .as_array()
