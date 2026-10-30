@@ -586,7 +586,14 @@ impl AppState {
                     if terminal {
                         // The run is over: its pages stop drawing until something needs them.
                         if let Some(chat) = pump_state.inner.browsers.existing(&pump_thread) {
-                            chat.freeze_pages().await;
+                            if chat.freeze_pages().await {
+                                let _ = pump_state.inner.diagnostics.append(
+                                    "browser",
+                                    "pages_frozen",
+                                    "info",
+                                    json!({"thread_id": pump_thread}),
+                                );
+                            }
                         }
                         let root = pump_root.clone();
                         let before = changes_before.clone();

@@ -1111,7 +1111,8 @@ impl ChatBrowser {
     /// several cores here, since this browser draws on the CPU. Screenshots and scripts still
     /// work on a frozen page. Not while the person watches the Browser tab or a recording
     /// runs. The next action, input or view brings them back ([`Self::thaw_pages`]).
-    pub async fn freeze_pages(&self) {
+    /// Returns whether this froze them.
+    pub async fn freeze_pages(&self) -> bool {
         let watching = self.ui_stream.load(Ordering::SeqCst)
             && self
                 .preview_width
@@ -1124,10 +1125,10 @@ impl ChatBrowser {
             .unwrap_or_else(|e| e.into_inner())
             .is_some();
         if watching || recording || self.frozen.swap(true, Ordering::SeqCst) {
-            return;
+            return false;
         }
         self.set_page_state("frozen").await;
-        crate::diagnostics::emit("browser", "pages_frozen", "info", json!({}));
+        true
     }
 
     /// Brings frozen pages back; an agent must never read a page that has stopped.
@@ -1141,8 +1142,20 @@ impl ChatBrowser {
     async fn set_page_state(&self, state: &str) {
         let view = self.view();
         let Some(cdp) = view.cdp else { return };
+        let freezing = state == "frozen";
         for tab in &view.tabs {
             let session = Some(tab.session_id.as_str());
+            // Focus emulation decides both ways (tested against the real engine): left on, a page
+            // ignores the freeze; left off, a thawed page stays hidden and never draws again.
+            if freezing {
+                let _ = cdp
+                    .call(
+                        session,
+                        "Emulation.setFocusEmulationEnabled",
+                        json!({"enabled": false}),
+                    )
+                    .await;
+            }
             let _ = cdp
                 .call(
                     session,
@@ -1150,19 +1163,14 @@ impl ChatBrowser {
                     json!({"state": state}),
                 )
                 .await;
-            // A thawed page stays hidden and never draws again until its focus state is set
-            // afresh (tested against the real engine): switched off first, since setting
-            // the same value again changes nothing.
-            if state == "active" {
-                for enabled in [false, true] {
-                    let _ = cdp
-                        .call(
-                            session,
-                            "Emulation.setFocusEmulationEnabled",
-                            json!({"enabled": enabled}),
-                        )
-                        .await;
-                }
+            if !freezing {
+                let _ = cdp
+                    .call(
+                        session,
+                        "Emulation.setFocusEmulationEnabled",
+                        json!({"enabled": true}),
+                    )
+                    .await;
             }
         }
     }

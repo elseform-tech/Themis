@@ -458,8 +458,8 @@ async fn the_speaker_starts_off_and_turns_on_for_current_and_new_pages() {
     hub.close_chat("chat-sound").await;
 }
 
-/// A page left open stops drawing until something needs it, and draws again afterwards. The
-/// page reports the longest pause between its frames, which only a freeze can make this long.
+/// A page left open stops drawing until something needs it, and draws again afterwards, every
+/// time. The page counts the long pauses between its frames, which only a freeze can cause.
 #[tokio::test(flavor = "multi_thread")]
 async fn a_frozen_page_stops_drawing_until_the_next_action() {
     let _browser = ONE_BROWSER.lock().await;
@@ -469,13 +469,13 @@ async fn a_frozen_page_stops_drawing_until_the_next_action() {
     Mock::given(path("/game"))
         .respond_with(ResponseTemplate::new(200).set_body_raw(
             r#"<!doctype html><title>Game</title><p id="out">none</p><script>
-let frames = 0, last = Date.now(), gap = 0;
+let frames = 0, last = Date.now(), pauses = 0;
 function draw() {
   const now = Date.now();
   frames++;
-  if (frames > 5) gap = Math.max(gap, now - last);
+  if (now - last > 1000) pauses++;
   last = now;
-  document.getElementById('out').textContent = 'frames ' + frames + ' gap ' + Math.round(gap) + ' ms';
+  document.getElementById('out').textContent = 'frames ' + frames + ' pauses ' + pauses;
   requestAnimationFrame(draw);
 }
 requestAnimationFrame(draw);
@@ -518,17 +518,14 @@ requestAnimationFrame(draw);
                 .parse()
                 .unwrap()
         };
-        (number("frames "), number("gap "))
+        (number("frames "), number("pauses "))
     };
-    // The action thaws the page, and drawing carries on, every time.
-    for round in 0..2 {
+    // The action thaws the page, and drawing carries on; each round needs its own freeze.
+    for round in 0..3 {
         let (before, _) = read().await;
         tokio::time::sleep(Duration::from_millis(1000)).await;
-        let (after, gap) = read().await;
-        assert!(
-            gap >= 1500,
-            "round {round}: it drew while frozen: gap {gap} ms"
-        );
+        let (after, pauses) = read().await;
+        assert_eq!(pauses, round + 1, "round {round}: it drew while frozen");
         assert!(
             after > before + 5,
             "round {round}: it stopped: {before} then {after}"
