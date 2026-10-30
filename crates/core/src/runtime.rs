@@ -2226,6 +2226,8 @@ impl RunNotes {
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .push_back(note);
+        // Keep Rust 1.98 support; the try_update replacement requires Rust 1.99.
+        #[allow(deprecated)]
         let _ = self
             .pending
             .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |n| n.checked_sub(1));
