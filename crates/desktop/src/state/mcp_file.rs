@@ -1,4 +1,4 @@
-//! Integrations › MCP › Open with: your personal MCP servers as one `mcp.json` copy, opened in
+//! Integrations › Connections › Open with: your personal MCP servers as one `mcp.json` copy, opened in
 //! your editor and applied when you save it. The copy is not a second registry: each save is
 //! validated and written through the integrations store with the revision the copy was made
 //! from, so a change made elsewhere meanwhile is a conflict rather than overwritten. Changed
@@ -19,7 +19,7 @@ const HEADER: &str = "// Your personal MCP servers, named integration/server. Sa
 
 /// Ready-to-use servers at the top of the list, commented out: one per way to authenticate.
 const EXAMPLES: &str = r#"    // Remove the // in front of an example to add it, then edit it. New servers start
-    // turned off; turn them on in Integrations › MCP.
+    // turned off; turn them on in Integrations › Connections.
     //
     // ${NAME} is the key called NAME in Settings › Keys (or an environment variable of
     // that name). Keys never go in this file.

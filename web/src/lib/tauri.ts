@@ -461,7 +461,7 @@ export interface SearchServerStatus {
 /** One test search against `url`, or the saved server when omitted. */
 export function checkSearchServer(url?: string): Promise<SearchServerStatus> { return invoke("check_search_server", url ? { url } : {}); }
 
-/** Integrations › MCP: the state of the mcp.json copy being edited. */
+/** Integrations › Connections: the state of the mcp.json copy being edited. */
 export interface McpConfigStatus {
   state: "closed" | "open" | "applied" | "invalid" | "conflict" | "error";
   changed?: string[];

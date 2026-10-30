@@ -71,12 +71,13 @@
 .themis-compatibility { font-size: .875rem; line-height: 1.6; overflow-wrap: anywhere; }
 .themis-preview-install { display: flex; align-items: center; justify-content: space-between; gap: 1rem; padding-top: 1rem; border-top: 1px solid var(--themis-border); font-size: .8rem; overflow-wrap: anywhere; }
 .themis-preview-install button { flex-shrink: 0; }
-.themis-integrations .themis-installed-integrations > li { display: grid; grid-template-columns: 1.5rem minmax(0, 1fr) auto auto auto; column-gap: .75rem; padding: .65rem .25rem; }
+.themis-integrations .themis-installed-integrations > li { display: grid; grid-template-columns: 1.5rem minmax(0, 1fr) auto auto auto auto; column-gap: .75rem; padding: .65rem .25rem; }
 .themis-installed-integrations .themis-integration-source { grid-row: 2; grid-column: 2; }
 .themis-installed-integrations .themis-integration-description { grid-row: 3; grid-column: 2 / -1; }
 .themis-installed-integrations .themis-integration-status { grid-row: 1; grid-column: 3; }
-.themis-installed-integrations .themis-integration-toggle { grid-row: 1; grid-column: 4; }
-.themis-installed-integrations button[title^="Uninstall"] { grid-row: 1; grid-column: 5; }
+.themis-installed-integrations > li > .themis-parts-toggle { grid-row: 1; grid-column: 4; }
+.themis-installed-integrations > li > .themis-integration-toggle { grid-row: 1; grid-column: 5; }
+.themis-installed-integrations button[title^="Uninstall"] { grid-row: 1; grid-column: 6; }
 .themis-installed-integrations .themis-integration-signin { grid-row: 2; grid-column: 3 / -1; justify-self: end; }
 .themis-skill-viewer .themis-response { max-width: 72ch; margin: .5rem auto; padding: 1.25rem 1.5rem; background: var(--themis-canvas); border: 1px solid var(--themis-border-subtle); border-radius: .5rem; line-height: 1.8; }
 .themis-skill-viewer .themis-response h2 { color: var(--themis-accent); font-size: 1rem; margin-top: 1.5em; }
@@ -193,3 +194,22 @@
 .themis-source-trust, .themis-source-problem { margin: 0; font-size: .8125rem; line-height: 1.5; color: var(--themis-text-2); }
 .themis-source-problem { color: var(--themis-danger, #f2b8b5); }
 .themis-marketplace-form input[aria-invalid="true"] { border-color: var(--themis-danger, #f2b8b5); }
+
+/* Integrations › Installed (board 23). */
+.themis-installed-tabs { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.themis-installed-tabs > nav { flex: 1; min-width: 0; }
+.themis-plugin-update { display: flex; align-items: center; gap: 12px; font-size: .75rem; color: var(--themis-text-2); }
+.themis-integrations button.themis-parts-toggle { min-height: 0; width: 36px; height: 36px; padding: 0; border-radius: 18px; display: grid; place-items: center; color: var(--themis-text-2); align-self: center; }
+.themis-parts-toggle svg { transition: transform .15s ease; }
+.themis-parts-toggle[aria-expanded="true"] svg { transform: rotate(180deg); }
+.themis-plugin-parts { grid-column: 2 / -1; margin: .5rem 0 0; padding: 0; list-style: none; }
+.themis-plugin-parts li { display: flex; align-items: center; gap: 12px; min-height: 40px; border-top: 1px solid var(--themis-border-subtle); }
+.themis-plugin-part-kind { flex: none; width: 92px; font-size: .75rem; color: var(--themis-text-3); }
+.themis-integrations button.themis-plugin-part-name { flex: 1; min-width: 0; min-height: 0; padding: 0; text-align: left; overflow-wrap: anywhere; }
+.themis-plugin-part-name:hover { text-decoration: underline; text-underline-offset: 3px; }
+.themis-plugin-part-state { font-size: .75rem; color: var(--themis-text-2); }
+
+/* Plugin logos (P8). */
+.themis-card-tile-small { width: 1.5rem; height: 1.5rem; border-radius: 7px; font-size: .75rem; }
+.themis-card-brand { background: var(--themis-raised); color: var(--themis-text); }
+.themis-card-brand svg { width: 60%; height: 60%; }

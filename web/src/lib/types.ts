@@ -89,6 +89,8 @@ export interface PluginSpec {
   import_issues?: Array<{kind:string;name:string;status:string;field?:string|null;reason?:string|null;remedy?:string|null}>;
   package_kind?: "plugin" | "skill" | "mcp" | "hook" | null;
   icon?: string | null;
+  icon_asset?: string;
+  brand?: string;
   disabled_skills?: string[];
   manual_skills?: string[];
   origin?: { kind: string; location: string; reference?: string | null; subdirectory?: string | null } | null;
@@ -663,6 +665,7 @@ export interface Settings {
   theme_palette: string;
   font_family: "system" | "sans" | "serif" | "mono" | "rounded" | "avenir" | "helvetica" | "verdana" | "trebuchet" | "palatino" | "charter" | "menlo";
   sidebar_hover: boolean;
+  check_sources_for_updates?: boolean;
   theme: ThemeMode;
   default_provider: ProviderKind;
   default_model: string;

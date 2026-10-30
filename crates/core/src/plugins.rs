@@ -6,7 +6,7 @@ pub mod keys;
 mod marketplace;
 pub mod oauth;
 mod scans;
-pub use scans::{catalog_groups, compatibility_summary, MarketplaceScan};
+pub use scans::{catalog_brands, catalog_groups, compatibility_summary, MarketplaceScan};
 
 use crate::skills::Skill;
 use anyhow::{bail, Context};
@@ -36,11 +36,20 @@ pub struct PluginSpec {
     pub skill_paths: BTreeMap<String, String>,
     #[serde(default)]
     pub icon: Option<String>,
+    /// The plugin's own icon in the app's icon store, saved when it was checked.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub icon_asset: Option<String>,
+    /// A bundled brand logo, matched when it was checked. Never taken from the plugin itself.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub brand: Option<String>,
     pub name: String,
     #[serde(default)]
     pub description: String,
     #[serde(default)]
     pub version: String,
+    /// What this plugin's package was when installed from a marketplace, to spot upstream changes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub package_hash: Option<String>,
     #[serde(default)]
     pub skills: Vec<Skill>,
     #[serde(default)]
@@ -311,6 +320,9 @@ impl PluginStore {
             if previous.map(|p| p.revision.as_str()) != expected {
                 bail!("Plugin changed since it was opened; reload before saving");
             }
+            // Set by a marketplace check, never by what is being saved.
+            spec.brand = previous.and_then(|p| p.spec.brand.clone());
+            spec.icon_asset = previous.and_then(|p| p.spec.icon_asset.clone());
             if let Some(previous) = previous {
                 for skill in &spec.skills {
                     let Some(old) = previous.spec.skills.iter().find(|old| old.id == skill.id)
@@ -986,10 +998,10 @@ fn validate(spec: &PluginSpec) -> anyhow::Result<()> {
                 && url.query().is_none()
                 && url.fragment().is_none()
         });
-        if !remote
-            && !(safe_relative(icon) && icon.ends_with(".svg") && spec.files.contains_key(icon))
-        {
-            bail!("Plugin icon must be an HTTPS URL or bundled SVG resource");
+        let bundled_svg = icon.ends_with(".svg") && spec.files.contains_key(icon);
+        let bundled_image = icon.ends_with(".png") || icon.ends_with(".webp");
+        if !remote && !(safe_relative(icon) && (bundled_svg || bundled_image)) {
+            bail!("Plugin icon must be an HTTPS URL or a bundled SVG, PNG or WebP");
         }
     }
     if spec.files.keys().any(|p| !safe_relative(p))
