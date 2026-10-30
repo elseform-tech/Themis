@@ -385,6 +385,11 @@ async fn a_goal_runs_turn_after_turn_until_the_check_finds_it_reached() {
         ThreadEvent::GoalNote { reason, .. }
             if reason.starts_with("That isn't proven yet, because counter is 1")
     )));
+    // Right after a turn's claim, the chat says the claim is being checked.
+    assert!(seen.iter().any(|event| matches!(
+        event,
+        ThreadEvent::GoalNote { reason, .. } if reason == "I'm checking that against the goal now."
+    )));
     // The second turn was started by the runtime, carrying the check's reason.
     let bodies: Vec<Value> = distinct(
         server
