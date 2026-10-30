@@ -208,3 +208,8 @@
 .themis-integrations button.themis-plugin-part-name { flex: 1; min-width: 0; min-height: 0; padding: 0; text-align: left; overflow-wrap: anywhere; }
 .themis-plugin-part-name:hover { text-decoration: underline; text-underline-offset: 3px; }
 .themis-plugin-part-state { font-size: .75rem; color: var(--themis-text-2); }
+
+/* Plugin logos (P8). */
+.themis-card-tile-small { width: 1.5rem; height: 1.5rem; border-radius: 7px; font-size: .75rem; }
+.themis-card-brand { background: var(--themis-raised); color: var(--themis-text); }
+.themis-card-brand svg { width: 60%; height: 60%; }

@@ -74,7 +74,9 @@ pub fn integration_risk(name: &str, args: &Value) -> Option<RiskLevel> {
         _ => args["action"].as_str().unwrap_or("list"),
     };
     Some(match action {
-        "list" | "inventory" | "marketplaces" | "sources" | "updates" => RiskLevel::Read,
+        "list" | "inventory" | "marketplaces" | "sources" | "updates" | "plugin_icon" => {
+            RiskLevel::Read
+        }
         "catalog"
         | "preview"
         | "preview_source"

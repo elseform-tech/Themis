@@ -89,6 +89,8 @@ export interface PluginSpec {
   import_issues?: Array<{kind:string;name:string;status:string;field?:string|null;reason?:string|null;remedy?:string|null}>;
   package_kind?: "plugin" | "skill" | "mcp" | "hook" | null;
   icon?: string | null;
+  icon_asset?: string;
+  brand?: string;
   disabled_skills?: string[];
   manual_skills?: string[];
   origin?: { kind: string; location: string; reference?: string | null; subdirectory?: string | null } | null;

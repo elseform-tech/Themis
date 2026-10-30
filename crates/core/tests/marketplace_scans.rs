@@ -557,3 +557,52 @@ async fn opening_the_app_checks_only_sources_not_checked_today_and_shown() {
         tokio::time::sleep(std::time::Duration::from_millis(25)).await;
     }
 }
+
+#[tokio::test]
+async fn a_bundled_icon_is_saved_during_the_check_and_outlives_its_source() {
+    let data = tempfile::tempdir().unwrap();
+    let source = tempfile::tempdir().unwrap();
+    acme_catalog(source.path());
+    let png = [b"\x89PNG\r\n\x1a\n".as_slice(), &[7; 32]].concat();
+    fs::write(source.path().join("quick/logo.png"), &png).unwrap();
+    fs::write(
+        source.path().join(".claude-plugin/marketplace.json"),
+        json!({"name":"acme","plugins":[{"name":"quick","source":"./quick","icon":"./logo.png"}]})
+            .to_string(),
+    )
+    .unwrap();
+    let store = PluginStore::new(data.path().into(), None);
+    store
+        .add_marketplace("acme", source.path().to_str().unwrap())
+        .unwrap();
+    let scan = store.wait_marketplace_scan("acme", false).await.unwrap();
+    let asset = scan.checks["quick"].spec.icon_asset.clone().expect("saved");
+    assert!(asset.ends_with(".png"));
+    assert!(store
+        .plugin_icon(&asset)
+        .unwrap()
+        .starts_with("data:image/png;base64,"));
+    let installed = store
+        .install_scanned("global", "acme", "quick", false, None)
+        .await
+        .unwrap();
+    assert_eq!(installed.spec.icon_asset.as_deref(), Some(asset.as_str()));
+    store.remove_marketplace("acme").unwrap();
+    assert!(store.plugin_icon(&asset).is_ok());
+    // Names can't reach outside the store, and saving can't claim a logo.
+    assert!(store.plugin_icon("../settings.json").is_err());
+    assert!(store
+        .plugin_icon(&format!("{}.exe", "a".repeat(64)))
+        .is_err());
+    let saved = store
+        .save(
+            "global",
+            serde_json::from_value(
+                json!({"name":"mine","brand":"stripe","icon_asset":asset,"skills":[]}),
+            )
+            .unwrap(),
+            None,
+        )
+        .unwrap();
+    assert!(saved.spec.brand.is_none() && saved.spec.icon_asset.is_none());
+}
