@@ -329,8 +329,8 @@ async fn marketplace_cli_reuses_checked_contents_and_rejects_stale_install() {
             "plugin",
             "marketplace",
             "add",
-            "saved",
             source.path().to_str().unwrap(),
+            "saved",
         ],
     );
     let preview = cli(
@@ -345,6 +345,8 @@ async fn marketplace_cli_reuses_checked_contents_and_rejects_stale_install() {
         .as_str()
         .unwrap()
         .contains("CACHED_REVIEW_BODY"));
+    // Inspecting one plugin no longer waits for the rest of the catalog.
+    cli(data.path(), &["plugin", "marketplace", "check", "saved"]);
     let before = cli(
         data.path(),
         &[
@@ -370,11 +372,11 @@ async fn marketplace_cli_reuses_checked_contents_and_rejects_stale_install() {
     assert!(client
         .call(
             "plugin_action",
-            json!({"action":"install","marketplace":"saved","name":"review","expectedScan":"stale"})
+            json!({"action":"install","marketplace":"saved","name":"review","expectedCheck":"stale"})
         )
         .await
         .is_err());
-    let installed = client.call("plugin_action", json!({"action":"install","marketplace":"saved","name":"review","expectedScan":before["revision"]})).await.unwrap();
+    let installed = client.call("plugin_action", json!({"action":"install","marketplace":"saved","name":"review","expectedCheck":before["checks"]["review"]["check_revision"]})).await.unwrap();
     assert_eq!(installed["scope"], "global");
     task.abort();
 }
@@ -415,8 +417,8 @@ async fn marketplace_check_counts_statuses_and_a_formerly_colliding_plugin_insta
             "plugin",
             "marketplace",
             "add",
-            "local",
             root.to_str().unwrap(),
+            "local",
         ],
     );
     let report = cli(data.path(), &["plugin", "marketplace", "check", "local"]);
@@ -522,8 +524,8 @@ async fn plugin_commands_install_as_manual_skills() {
             "plugin",
             "marketplace",
             "add",
-            "local",
             root.to_str().unwrap(),
+            "local",
         ],
     );
     let report = cli(data.path(), &["plugin", "marketplace", "check", "local"]);
@@ -551,5 +553,63 @@ async fn plugin_commands_install_as_manual_skills() {
         .unwrap()
         .iter()
         .any(|skill| skill.name == "commit"));
+    task.abort();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_source_is_previewed_added_hidden_and_removed_through_the_cli() {
+    let data = tempfile::tempdir().unwrap();
+    let source = tempfile::tempdir().unwrap();
+    let state = AppState::new_for_test(data.path().join("settings.json"));
+    let server = Server::bind(state, data.path()).await.unwrap();
+    let task = tokio::spawn(server.run());
+    std::fs::create_dir_all(source.path().join(".claude-plugin")).unwrap();
+    std::fs::create_dir_all(source.path().join("review")).unwrap();
+    std::fs::write(
+        source.path().join("review/SKILL.md"),
+        "---\nname: review\ndescription: Review\n---\nBody",
+    )
+    .unwrap();
+    std::fs::write(
+        source.path().join(".claude-plugin/marketplace.json"),
+        json!({"name":"acme","owner":{"name":"Acme Inc"},"plugins":[{"name":"review","source":"./review"}]}).to_string(),
+    )
+    .unwrap();
+    let path = source.path().to_str().unwrap().to_owned();
+    let data_dir = data.path().to_owned();
+    tokio::task::spawn_blocking(move || {
+        let data = data_dir.as_path();
+        let market = |args: &[&str]| cli(data, &[&["plugin", "marketplace"], args].concat());
+        let preview = market(&["preview", &path]);
+        assert_eq!(preview["name"], "acme");
+        assert_eq!(preview["publisher"], "Acme Inc");
+        assert_eq!(preview["plugins"], 1);
+        let row = |name: &str| {
+            market(&["list"])
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|source| source["name"] == name)
+                .cloned()
+        };
+        assert!(row("acme").is_none(), "previewing adds nothing");
+        market(&["add", &path]);
+        assert_eq!(row("acme").unwrap()["enabled"], true);
+        market(&["disable", "acme"]);
+        assert_eq!(row("acme").unwrap()["enabled"], false);
+        market(&["check", "acme"]);
+        let installed = cli(data, &["plugin", "install", "review@acme"]);
+        assert_eq!(installed["source"], "acme");
+        market(&["remove", "acme"]);
+        assert!(row("acme").is_none());
+        let plugins = cli(data, &["plugin", "list"]);
+        assert!(plugins
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|plugin| plugin["spec"]["name"] == "review"));
+    })
+    .await
+    .unwrap();
     task.abort();
 }

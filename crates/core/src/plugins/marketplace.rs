@@ -19,6 +19,9 @@ pub struct ImportReport {
 pub struct ImportPreview {
     pub spec: PluginSpec,
     pub report: ImportReport,
+    /// Identifies a saved marketplace check of this entry, so an install can refuse a newer one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub check_revision: Option<String>,
 }
 impl ImportPreview {
     pub fn from_spec(spec: PluginSpec) -> anyhow::Result<Self> {
@@ -78,6 +81,7 @@ impl ImportPreview {
                 status: status.into(),
                 components,
             },
+            check_revision: None,
         }
     }
 }
@@ -110,6 +114,22 @@ fn unsupported_mcp(
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Marketplace {
     pub name: String,
+    pub source: String,
+    /// Whether Discover shows this source.
+    #[serde(default = "shown")]
+    pub enabled: bool,
+}
+fn shown() -> bool {
+    true
+}
+/// The source every install starts with; it can be hidden but not removed.
+pub(super) const OFFICIAL_MARKETPLACE: &str = "claude-plugins-official";
+/// What a source is, read before adding it.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SourcePreview {
+    pub name: String,
+    pub publisher: String,
+    pub plugins: usize,
     pub source: String,
 }
 #[derive(Default, Serialize, Deserialize)]
@@ -377,8 +397,9 @@ impl PluginStore {
                 &path,
                 &Catalogs {
                     sources: vec![Marketplace {
-                        name: "claude-plugins-official".into(),
+                        name: OFFICIAL_MARKETPLACE.into(),
                         source: "https://github.com/anthropics/claude-plugins-official.git".into(),
+                        enabled: true,
                     }],
                 },
             )?;
@@ -389,15 +410,16 @@ impl PluginStore {
         if !safe_name(name) {
             bail!("Invalid marketplace name");
         }
-        validate_source(source)?;
+        let source = normalize_source(source)?;
         let lock = self.marketplace_lock()?;
         let mut sources = self.read_marketplaces()?;
         if sources.iter().any(|s| s.name == name) {
-            bail!("Marketplace already exists");
+            bail!("A source named {name} is already added");
         }
         sources.push(Marketplace {
             name: name.into(),
-            source: source.into(),
+            source,
+            enabled: true,
         });
         let result = write_json(
             &self.global.join("marketplaces.json"),
@@ -406,7 +428,54 @@ impl PluginStore {
         lock.unlock()?;
         result
     }
+    /// Reads a source's manifest without adding it: `owner/repo`, an HTTPS Git URL or a local
+    /// folder. A Git source only fetches the manifest file.
+    pub async fn preview_source(&self, input: &str) -> anyhow::Result<SourcePreview> {
+        let source = normalize_source(input)?;
+        if source.starts_with("https://") {
+            let staging = self
+                .global
+                .join("marketplace-cache")
+                .join(format!(".preview-{}", revision()));
+            let result = read_git_manifest(&source, &staging).await;
+            if staging.exists() {
+                let _ = fs::remove_dir_all(&staging);
+            }
+            source_preview(&source, &result?)
+        } else {
+            let directory = PathBuf::from(&source);
+            if !directory.is_dir() {
+                bail!("This folder can't be read.");
+            }
+            source_preview(&source, &directory)
+        }
+    }
+    /// Adds a source under the name in its manifest, and returns that name.
+    pub async fn add_source(&self, input: &str) -> anyhow::Result<String> {
+        let preview = self.preview_source(input).await?;
+        self.add_marketplace(&preview.name, &preview.source)?;
+        Ok(preview.name)
+    }
+    pub fn set_marketplace_enabled(&self, name: &str, enabled: bool) -> anyhow::Result<()> {
+        let lock = self.marketplace_lock()?;
+        let mut sources = self.read_marketplaces()?;
+        sources
+            .iter_mut()
+            .find(|source| source.name == name)
+            .context("Unknown marketplace")?
+            .enabled = enabled;
+        let result = write_json(
+            &self.global.join("marketplaces.json"),
+            &Catalogs { sources },
+        );
+        lock.unlock()?;
+        result
+    }
+    /// Removes a source and its saved checks. Plugins installed from it stay installed.
     pub fn remove_marketplace(&self, name: &str) -> anyhow::Result<()> {
+        if name == OFFICIAL_MARKETPLACE {
+            bail!("The official source can't be removed; turn it off instead");
+        }
         let _scan_lock = self.scan_lock(name)?;
         let lock = self.marketplace_lock()?;
         let mut sources = self.read_marketplaces()?;
@@ -699,6 +768,105 @@ impl PluginStore {
     }
 }
 
+/// The stored form of what a person typed: `owner/repo` becomes a GitHub URL, and a `~` path an
+/// absolute one.
+fn normalize_source(input: &str) -> anyhow::Result<String> {
+    let input = input.trim();
+    let is_part = |part: &str| {
+        !part.is_empty()
+            && !part.starts_with('.')
+            && part
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b"_.-".contains(&b))
+    };
+    let source = match input.split_once('/') {
+        Some((owner, repo)) if is_part(owner) && is_part(repo) => {
+            format!("https://github.com/{owner}/{repo}.git")
+        }
+        _ => match input.strip_prefix("~/").zip(std::env::var_os("HOME")) {
+            Some((rest, home)) => Path::new(&home).join(rest).to_string_lossy().into_owned(),
+            None => input.to_owned(),
+        },
+    };
+    validate_source(&source)?;
+    Ok(source)
+}
+/// Fetches only `.claude-plugin/marketplace.json` into `staging`: shallow, sparse and without
+/// other file contents, so previewing a large repository stays cheap.
+async fn read_git_manifest(source: &str, staging: &Path) -> anyhow::Result<PathBuf> {
+    fs::create_dir_all(staging.parent().context("Missing cache parent")?)?;
+    let path = staging.to_str().context("Invalid cache path")?;
+    let unreachable = "This source can't be reached.";
+    run_git(
+        &[
+            "clone",
+            "--depth=1",
+            "--filter=blob:none",
+            "--no-checkout",
+            "--sparse",
+            "--",
+            source,
+            path,
+        ],
+        None,
+    )
+    .await
+    .context(unreachable)?;
+    run_git(
+        &[
+            "sparse-checkout",
+            "set",
+            "--no-cone",
+            "/.claude-plugin/marketplace.json",
+        ],
+        Some(staging),
+    )
+    .await
+    .context(unreachable)?;
+    run_git(&["checkout"], Some(staging))
+        .await
+        .context(unreachable)?;
+    Ok(staging.to_path_buf())
+}
+/// What the manifest in `directory` says about a source, or the one-line reason it isn't one.
+fn source_preview(source: &str, directory: &Path) -> anyhow::Result<SourcePreview> {
+    let path = directory.join(".claude-plugin/marketplace.json");
+    let Ok(metadata) = fs::metadata(&path) else {
+        bail!("No marketplace found in this source.");
+    };
+    if metadata.len() > 8 * 1024 * 1024 {
+        bail!("This marketplace's catalog is too large.");
+    }
+    let value: Value = serde_json::from_str(&fs::read_to_string(&path)?)
+        .ok()
+        .filter(|value: &Value| value["plugins"].is_array())
+        .context("No marketplace found in this source.")?;
+    let plugins = value["plugins"].as_array().map_or(0, Vec::len);
+    if plugins > 2000 {
+        bail!("This marketplace has more than 2,000 plugins.");
+    }
+    // Catalogs may leave out their name; the source's last path part then names them.
+    let folder = source
+        .trim_end_matches('/')
+        .trim_end_matches(".git")
+        .rsplit(['/', '\\'])
+        .next()
+        .unwrap_or_default();
+    let name = value["name"].as_str().unwrap_or(folder);
+    if !safe_name(name) {
+        bail!("This marketplace's name isn't valid.");
+    }
+    let publisher = ["owner", "author"]
+        .iter()
+        .find_map(|key| value[key]["name"].as_str().or_else(|| value[key].as_str()))
+        .unwrap_or_default();
+    Ok(SourcePreview {
+        name: name.into(),
+        publisher: publisher.into(),
+        plugins,
+        source: source.into(),
+    })
+}
 fn validate_source(source: &str) -> anyhow::Result<()> {
     if source.starts_with("https://") {
         let url = reqwest::Url::parse(source)?;
@@ -2016,6 +2184,95 @@ fn imported_hook_name(event: &str, matcher: Option<&str>, command: &str, taken: 
         name = format!("{base}-{number}");
     }
     name
+}
+
+#[cfg(test)]
+mod source_tests {
+    use super::*;
+    use proptest::prelude::*;
+
+    #[test]
+    fn typed_sources_normalize_to_stored_ones() {
+        assert_eq!(
+            normalize_source(" acme/agent-plugins ").unwrap(),
+            "https://github.com/acme/agent-plugins.git"
+        );
+        assert_eq!(
+            normalize_source("https://example.com/a/b.git").unwrap(),
+            "https://example.com/a/b.git"
+        );
+        for bad in [
+            "",
+            "plugins",
+            "../up/here",
+            "a/b/c",
+            "http://example.com/a.git",
+        ] {
+            assert!(normalize_source(bad).is_err(), "{bad}");
+        }
+    }
+
+    proptest! {
+        /// Whatever is typed, what gets stored is an HTTPS URL without credentials, or an
+        /// absolute path. Nothing relative, and nothing that git could take as an option.
+        #[test]
+        fn stored_sources_are_https_or_absolute(input in "\\PC{0,40}") {
+            if let Ok(source) = normalize_source(&input) {
+                prop_assert!(source.starts_with("https://") || Path::new(&source).is_absolute());
+                prop_assert!(!source.starts_with('-'));
+                if source.starts_with("https://") {
+                    let url = reqwest::Url::parse(&source).unwrap();
+                    prop_assert!(url.username().is_empty() && url.password().is_none());
+                }
+            }
+        }
+    }
+
+    /// Only the manifest is fetched, however large the repository.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_git_source_fetches_only_its_manifest() {
+        let repository = tempfile::tempdir().unwrap();
+        let root = repository.path();
+        fs::create_dir_all(root.join(".claude-plugin")).unwrap();
+        fs::write(
+            root.join(".claude-plugin/marketplace.json"),
+            r#"{"name":"acme","plugins":[{"name":"one"}]}"#,
+        )
+        .unwrap();
+        fs::write(root.join("huge.bin"), "bulk").unwrap();
+        for args in [
+            vec!["init", "-q"],
+            vec!["add", "."],
+            vec![
+                "-c",
+                "user.name=t",
+                "-c",
+                "user.email=t@t",
+                "commit",
+                "-qm",
+                "x",
+            ],
+        ] {
+            assert!(std::process::Command::new("git")
+                .args(&args)
+                .current_dir(root)
+                .status()
+                .unwrap()
+                .success());
+        }
+        let out = tempfile::tempdir().unwrap();
+        let staging = out.path().join("preview");
+        let url = format!("file://{}", root.display());
+        let directory = read_git_manifest(&url, &staging).await.unwrap();
+        assert!(!directory.join("huge.bin").exists());
+        let preview = source_preview(&url, &directory).unwrap();
+        assert_eq!((preview.name.as_str(), preview.plugins), ("acme", 1));
+        let missing = read_git_manifest(&format!("{url}-missing"), &out.path().join("other"))
+            .await
+            .unwrap_err();
+        assert_eq!(missing.to_string(), "This source can't be reached.");
+    }
 }
 
 #[cfg(test)]

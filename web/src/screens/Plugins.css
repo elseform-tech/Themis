@@ -174,3 +174,22 @@
 .themis-hook-name:hover { text-decoration: underline; text-underline-offset: 3px; }
 .themis-hook-meta { font-size: .75rem; color: var(--themis-text-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .themis-hook-skipped { margin: 8px 0 0; padding: 12px 18px; border-radius: 16px; background: var(--themis-surface); font-size: .8125rem; color: var(--themis-text-2); }
+
+/* Discover › Sources (board 22). */
+.themis-integrations button.themis-sources-button { min-height: 0; height: 34px; padding: 0 14px; border-radius: var(--themis-radius-pill); background: var(--themis-raised); font-size: .8125rem; }
+.themis-sources { margin: 0 0 12px; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 4px; min-width: min(460px, 80vw); }
+.themis-sources li { display: flex; align-items: center; gap: 12px; padding: 8px 4px; }
+.themis-source-tile { flex: none; width: 36px; height: 36px; border-radius: 11px; background: var(--themis-raised); color: var(--themis-text); font-weight: 600; display: grid; place-items: center; }
+.themis-source-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.themis-source-text strong, .themis-source-preview strong { font-weight: 600; overflow-wrap: anywhere; }
+.themis-source-text > span, .themis-source-preview span span { font-size: .75rem; color: var(--themis-text-2); }
+.themis-source-text > span.is-failed { color: var(--themis-danger, #f2b8b5); }
+.themis-integrations button.themis-source-remove { min-height: 0; width: 36px; height: 36px; padding: 0; border-radius: 18px; display: grid; place-items: center; color: var(--themis-text-2); }
+.themis-sources li:not(:has(.themis-source-remove)) { padding-right: 52px; }
+.themis-sources-actions { display: flex; justify-content: flex-end; gap: .5rem; }
+.themis-marketplace-form > .themis-source-preview { justify-content: flex-start; }
+.themis-source-preview { display: flex; align-items: center; gap: 12px; padding: 12px; border-radius: 16px; background: var(--themis-raised); }
+.themis-source-preview > span:last-child { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.themis-source-trust, .themis-source-problem { margin: 0; font-size: .8125rem; line-height: 1.5; color: var(--themis-text-2); }
+.themis-source-problem { color: var(--themis-danger, #f2b8b5); }
+.themis-marketplace-form input[aria-invalid="true"] { border-color: var(--themis-danger, #f2b8b5); }

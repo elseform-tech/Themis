@@ -13,10 +13,27 @@ pub struct MarketplaceScan {
     pub checks: BTreeMap<String, ImportPreview>,
     pub errors: BTreeMap<String, String>,
     pub error: Option<String>,
+    /// When this check finished, in milliseconds since the epoch.
+    #[serde(default)]
+    pub checked_at: Option<u64>,
     source: String,
     version: u32,
     #[serde(default)]
     refresh: bool,
+}
+
+/// One row of the Sources list.
+#[derive(Clone, Serialize)]
+pub struct SourceStatus {
+    pub name: String,
+    pub source: String,
+    pub enabled: bool,
+    pub official: bool,
+    pub status: String,
+    pub completed: usize,
+    pub total: usize,
+    pub checked_at: Option<u64>,
+    pub error: Option<String>,
 }
 
 /// Bumped whenever import rules change, so saved checks are redone with the new rules.
@@ -144,20 +161,33 @@ impl PluginStore {
             .context("Marketplace is being checked; try again when scanning finishes")?;
         Ok(lock)
     }
-    async fn wait_scan_lock(&self, name: &str) -> anyhow::Result<fs::File> {
-        let lock = self.scan_lock_file(name)?;
-        loop {
-            match lock.try_lock() {
-                Ok(()) => return Ok(lock),
-                Err(fs::TryLockError::WouldBlock) => {
-                    tokio::time::sleep(std::time::Duration::from_millis(25)).await
-                }
-                Err(error) => return Err(error.into()),
-            }
-        }
-    }
     fn scan_state(&self, name: &str) -> anyhow::Result<MarketplaceScan> {
         read_json(&self.scan_directory(name)?.join("scan.json"))
+    }
+    /// Every source with where its check stands, without starting one.
+    pub fn sources(&self) -> anyhow::Result<Vec<SourceStatus>> {
+        Ok(self
+            .marketplaces()?
+            .into_iter()
+            .map(|source| {
+                let state = self
+                    .scan_state(&source.name)
+                    .ok()
+                    .filter(|state| state.source == source.source && state.version == SCAN_VERSION)
+                    .unwrap_or_default();
+                SourceStatus {
+                    official: source.name == super::marketplace::OFFICIAL_MARKETPLACE,
+                    name: source.name,
+                    source: source.source,
+                    enabled: source.enabled,
+                    status: state.status,
+                    completed: state.completed,
+                    total: state.total,
+                    checked_at: state.checked_at,
+                    error: state.error,
+                }
+            })
+            .collect())
     }
     /// Starts at most one scan, or returns its saved progress. The file lock also survives
     /// multiple app-server processes; process exit releases it so the next request resumes.
@@ -269,6 +299,7 @@ impl PluginStore {
         while let Some((plugin, result)) = checks.next().await {
             match result {
                 Ok(mut preview) => {
+                    preview.check_revision = Some(revision());
                     write_json(
                         &directory.join("previews").join(preview_file(&plugin)),
                         &preview,
@@ -289,6 +320,10 @@ impl PluginStore {
             tokio::task::yield_now().await;
         }
         state.status = "ready".into();
+        state.checked_at = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .ok()
+            .and_then(|elapsed| u64::try_from(elapsed.as_millis()).ok());
         write_json(&directory.join("scan.json"), state)
     }
     pub async fn wait_marketplace_scan(
@@ -312,18 +347,30 @@ impl PluginStore {
         }
         Ok(state)
     }
-    fn ready_scan(&self, marketplace: &str) -> anyhow::Result<MarketplaceScan> {
-        let source = self
-            .marketplaces()?
-            .into_iter()
-            .find(|m| m.name == marketplace)
-            .context("Unknown marketplace")?
-            .source;
-        let state = self.scan_state(marketplace)?;
-        if state.status != "ready" || state.source != source || state.version != SCAN_VERSION {
-            bail!("Marketplace is not ready; finish its compatibility scan first");
+    /// Waits for this entry's own check, starting or resuming the scan if needed. The rest of
+    /// the catalog may still be being checked.
+    async fn wait_marketplace_entry(
+        &self,
+        marketplace: &str,
+        name: &str,
+    ) -> anyhow::Result<MarketplaceScan> {
+        loop {
+            let state = self.start_marketplace_scan(marketplace, false)?;
+            if state.checks.contains_key(name) || state.errors.contains_key(name) {
+                return Ok(state);
+            }
+            match state.status.as_str() {
+                "scanning" => tokio::time::sleep(std::time::Duration::from_millis(100)).await,
+                "ready" => bail!("Plugin has no completed compatibility check"),
+                _ => bail!(
+                    "{}",
+                    state
+                        .error
+                        .as_deref()
+                        .unwrap_or("Compatibility scan failed; refresh to retry")
+                ),
+            }
         }
-        Ok(state)
     }
     fn read_scanned_preview(
         &self,
@@ -349,30 +396,35 @@ impl PluginStore {
         if preview.spec.name != name {
             bail!("Cached plugin identity does not match; refresh the marketplace");
         }
-        ImportPreview::from_spec(preview.spec)
+        let check_revision = preview.check_revision;
+        let mut preview = ImportPreview::from_spec(preview.spec)?;
+        preview.check_revision = check_revision;
+        Ok(preview)
     }
     pub async fn scanned_marketplace_preview(
         &self,
         marketplace: &str,
         name: &str,
     ) -> anyhow::Result<ImportPreview> {
-        let _lock = self.wait_scan_lock(marketplace).await?;
-        self.read_scanned_preview(marketplace, name, &self.ready_scan(marketplace)?)
+        let state = self.wait_marketplace_entry(marketplace, name).await?;
+        self.read_scanned_preview(marketplace, name, &state)
     }
+    /// Installs an entry from its saved check, whether or not the rest of the catalog is done.
+    /// `expected_check` is the check that was reviewed: a newer one stops the install.
     pub async fn install_scanned(
         &self,
         scope: &str,
         marketplace: &str,
         name: &str,
         allow_partial: bool,
-        expected_scan: Option<&str>,
+        expected_check: Option<&str>,
     ) -> anyhow::Result<Plugin> {
-        let _lock = self.wait_scan_lock(marketplace).await?;
-        let state = self.ready_scan(marketplace)?;
-        if expected_scan.is_some_and(|expected| expected != state.revision) {
-            bail!("Marketplace changed; reopen the plugin before installing");
+        let preview = self.scanned_marketplace_preview(marketplace, name).await?;
+        if expected_check
+            .is_some_and(|expected| preview.check_revision.as_deref() != Some(expected))
+        {
+            bail!("This plugin was checked again; reopen it before installing");
         }
-        let preview = self.read_scanned_preview(marketplace, name, &state)?;
         if !allow_partial && preview.report.status == "partial" {
             bail!("Plugin contains unsupported components; explicitly select partial installation");
         }

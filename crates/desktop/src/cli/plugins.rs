@@ -52,8 +52,11 @@ pub async fn run(client: &Client, words: &[String], directory: &Path) -> Result<
             } else { request["action"]=json!(if *import_action=="inspect" {"inspect_path"}else{"import_path"});request["path"]=json!(source);request["name"]=json!(positional.get(3)); }
         },
         ["plugin",action,name] if matches!(*action,"enable"|"disable"|"delete"|"uninstall")=>{request["action"]=json!(if *action=="uninstall"{"delete"}else{action});request["name"]=json!(name);},
-        ["plugin","marketplace","list"]=>request["action"]=json!("marketplaces"),
-        ["plugin","marketplace","add",name,source]=>{request["action"]=json!("add_marketplace");request["name"]=json!(name);request["source"]=json!(source);},
+        ["plugin","marketplace","list"]=>request["action"]=json!("sources"),
+        ["plugin","marketplace","preview",source]=>{request["action"]=json!("preview_source");request["source"]=json!(source);},
+        ["plugin","marketplace","add",source]=>{request["action"]=json!("add_marketplace");request["source"]=json!(source);},
+        ["plugin","marketplace","add",source,name]=>{request["action"]=json!("add_marketplace");request["source"]=json!(source);request["name"]=json!(name);},
+        ["plugin","marketplace",switch,name] if matches!(*switch,"enable"|"disable")=>{request["action"]=json!("set_marketplace_enabled");request["name"]=json!(name);request["enabled"]=json!(*switch=="enable");},
         ["plugin","marketplace","remove",name]=>{request["action"]=json!("remove_marketplace");request["name"]=json!(name);},
         ["plugin","marketplace",action,name] if matches!(*action,"browse"|"refresh")=>{request["action"]=json!("catalog");request["name"]=json!(name);request["refresh"]=json!(*action=="refresh");},
         ["plugin","marketplace","check",name]=>{request["action"]=json!("catalog_check");request["name"]=json!(name);},
@@ -102,7 +105,7 @@ pub async fn run(client: &Client, words: &[String], directory: &Path) -> Result<
             } else { return Err("Use skill verify FILE".into()); }
 
         },
-        _=>return Err("Use plugin list|create NAME|show NAME|edit NAME|save FILE|inspect SOURCE [NAME]|import SOURCE [NAME]|export NAME|install NAME@MARKET|update NAME|enable NAME|disable NAME|uninstall NAME; plugin marketplace list|add NAME SOURCE|browse NAME|refresh NAME|check NAME|remove NAME; skill list|save PLUGIN FILE|verify FILE|delete PLUGIN ID; mcp/hook list PLUGIN|add PLUGIN NAME FILE|update PLUGIN NAME FILE|test PLUGIN NAME|delete PLUGIN NAME. Options: --scope local|global --project PATH --expected REVISION --ref REF --subdirectory PATH --allow-partial. For agent creation: skill create THREAD REQUEST.".into()),
+        _=>return Err("Use plugin list|create NAME|show NAME|edit NAME|save FILE|inspect SOURCE [NAME]|import SOURCE [NAME]|export NAME|install NAME@MARKET|update NAME|enable NAME|disable NAME|uninstall NAME; plugin marketplace list|preview SOURCE|add SOURCE [NAME]|enable NAME|disable NAME|browse NAME|refresh NAME|check NAME|remove NAME; skill list|save PLUGIN FILE|verify FILE|delete PLUGIN ID; mcp/hook list PLUGIN|add PLUGIN NAME FILE|update PLUGIN NAME FILE|test PLUGIN NAME|delete PLUGIN NAME. Options: --scope local|global --project PATH --expected REVISION --ref REF --subdirectory PATH --allow-partial. For agent creation: skill create THREAD REQUEST.".into()),
     }
     client.call("plugin_action", request).await
 }
