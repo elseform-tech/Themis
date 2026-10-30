@@ -944,12 +944,12 @@ impl Subagent {
     }
 
     /// Replaces what it is held to, when the main agent gave something new.
-    pub(super) fn set_bar(&self, done_when: Option<String>, check: Option<String>) {
+    pub(super) fn set_bar(&self, done_when: Option<String>, check: Option<Option<String>>) {
         let mut bar = self.bar.lock().unwrap_or_else(|e| e.into_inner());
         if let Some(done_when) = done_when {
             bar.0 = done_when;
         }
-        if check.is_some() {
+        if let Some(check) = check {
             bar.1 = check;
         }
     }
