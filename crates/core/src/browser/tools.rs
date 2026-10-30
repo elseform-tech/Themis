@@ -585,7 +585,7 @@ pub struct MoveArgs {
 
 #[tool(
     name = "browser_move",
-    description = "Move the mouse to a point of the visible page without clicking: to aim in a game, where the view turns with the distance moved, or to open a hover menu.",
+    description = "Move the mouse to a point of the visible page without clicking: to aim in a game, where the view turns with the distance moved, or to open a hover menu. A snapshot cannot show what a canvas draws: read where things are with browser_devtools, then act here and with browser_click, since only real input tests the page.",
     input = MoveArgs,
 )]
 struct BrowserMove {
