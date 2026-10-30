@@ -203,6 +203,7 @@ export function SettingsScreen() {
       {section === "General" && <SettingsGroup>
         <div className="themis-settings-control"><span>Projects folder</span><span className="themis-settings-root" title={state.settings.projects_directory}>{state.settings.projects_directory}</span></div>
         <label className="themis-settings-check">Scheduled runs<Switch checked={form.automations_enabled} onChange={event => void save({ automations_enabled: event.target.checked })} /></label>
+        <label className="themis-settings-check">Check sources for updates<Switch checked={form.check_sources_for_updates !== false} onChange={event => void save({ check_sources_for_updates: event.target.checked })} /></label>
         <div className="themis-settings-control"><span>Updates</span><button type="button" className="themis-text-action" disabled={checking} onClick={() => void checkUpdates()}>{checking ? "Checking…" : "Check for updates"}</button></div>
         {update && <UpdateStatusView status={update} />}
       </SettingsGroup>}

@@ -22,7 +22,7 @@ vi.mock("../lib/tauri", () => ({
   getSubagentTranscript: vi.fn(async () => []),
 }));
 
-const agent = (id: string, patch: Partial<SubagentEntry> = {}): SubagentEntry => ({ id, name: `Agent ${id}`, brief: "b", model: "m", confined: true, status: "finished", text: "", result: `Result of ${id}`, toolCalls: 1, seconds: 5, ...patch });
+const agent = (id: string, patch: Partial<SubagentEntry> = {}): SubagentEntry => ({ id, name: `Agent ${id}`, brief: "b", model: "m", confined: true, writePaths: [], status: "finished", text: "", result: `Result of ${id}`, toolCalls: 1, seconds: 5, ...patch });
 const request = (runId: string, text: string, agents: SubagentEntry[]): ChatMessage[] => [
   { id: `u-${runId}`, role: "user", text, runId },
   { id: `s-${runId}`, role: "system", text: "", runId, subagents: agents },

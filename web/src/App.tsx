@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { pluginAction } from "./lib/tauri";
 import { usePopoverDismissal } from "./lib/dismiss";
 import { Button, Toasts } from "./components";
 import {
@@ -41,6 +42,9 @@ function Shell() {
     // eslint-disable-next-line react-hooks/exhaustive-deps -- react only to the panel opening or closing
   }, [state.diffPanelOpen]);
   useEffect(() => { applyAppearance(state.settings); }, [state.settings]);
+  // Looks for plugin updates when the app opens; the backend honours the setting and skips
+  // sources checked in the last day.
+  useEffect(() => { void pluginAction({ action: "check_sources" }).catch(() => {}); }, []);
 
   // Global keys: Cmd/Ctrl+K toggles the palette, Esc closes the topmost layer.
   useEffect(() => {

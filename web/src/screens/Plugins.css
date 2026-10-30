@@ -8,6 +8,12 @@
 .themis-integrations-tabs { display: flex; gap: 18px; }
 .themis-integrations-tabs button { padding: 4px 0; border: 0; background: transparent; color: var(--themis-text-2); font: inherit; font-size: .8125rem; cursor: pointer; }
 .themis-integrations-tabs button[aria-pressed="true"] { color: var(--themis-text); font-weight: 600; }
+.themis-discover-groups { display: flex; flex-wrap: wrap; gap: 6px; padding: 4px 0 10px; }
+.themis-discover-groups button { display: inline-flex; align-items: center; gap: 6px; height: 30px; padding: 0 12px; border: 0; border-radius: var(--themis-radius-pill); background: var(--themis-raised); color: var(--themis-text-2); font: inherit; font-size: .8125rem; cursor: pointer; }
+.themis-discover-groups button span { color: var(--themis-text-3); font-size: .75rem; }
+.themis-discover-groups button[aria-pressed="true"] { background: var(--themis-nav-active-bg); color: var(--themis-text); font-weight: 600; }
+.themis-discover-groups button[aria-pressed="true"] span { color: inherit; opacity: .7; }
+.themis-discover-groups button:focus-visible { outline: 2px solid var(--themis-accent); outline-offset: 2px; }
 .themis-integrations-toolbar { display: flex; flex-wrap: nowrap; align-items: center; justify-content: space-between; gap: .5rem; padding: 12px 0 8px; }
 .themis-integrations-toolbar > div { display: flex; align-items: center; gap: .5rem; }
 .themis-integrations-search { width: 200px; height: 34px; padding: 0 14px; border: 0; border-radius: var(--themis-radius-pill); background: var(--themis-raised); color: var(--themis-text); font: inherit; font-size: .8125rem; }
@@ -65,12 +71,13 @@
 .themis-compatibility { font-size: .875rem; line-height: 1.6; overflow-wrap: anywhere; }
 .themis-preview-install { display: flex; align-items: center; justify-content: space-between; gap: 1rem; padding-top: 1rem; border-top: 1px solid var(--themis-border); font-size: .8rem; overflow-wrap: anywhere; }
 .themis-preview-install button { flex-shrink: 0; }
-.themis-integrations .themis-installed-integrations > li { display: grid; grid-template-columns: 1.5rem minmax(0, 1fr) auto auto auto; column-gap: .75rem; padding: .65rem .25rem; }
+.themis-integrations .themis-installed-integrations > li { display: grid; grid-template-columns: 1.5rem minmax(0, 1fr) auto auto auto auto; column-gap: .75rem; padding: .65rem .25rem; }
 .themis-installed-integrations .themis-integration-source { grid-row: 2; grid-column: 2; }
 .themis-installed-integrations .themis-integration-description { grid-row: 3; grid-column: 2 / -1; }
 .themis-installed-integrations .themis-integration-status { grid-row: 1; grid-column: 3; }
-.themis-installed-integrations .themis-integration-toggle { grid-row: 1; grid-column: 4; }
-.themis-installed-integrations button[title^="Uninstall"] { grid-row: 1; grid-column: 5; }
+.themis-installed-integrations > li > .themis-parts-toggle { grid-row: 1; grid-column: 4; }
+.themis-installed-integrations > li > .themis-integration-toggle { grid-row: 1; grid-column: 5; }
+.themis-installed-integrations button[title^="Uninstall"] { grid-row: 1; grid-column: 6; }
 .themis-installed-integrations .themis-integration-signin { grid-row: 2; grid-column: 3 / -1; justify-self: end; }
 .themis-skill-viewer .themis-response { max-width: 72ch; margin: .5rem auto; padding: 1.25rem 1.5rem; background: var(--themis-canvas); border: 1px solid var(--themis-border-subtle); border-radius: .5rem; line-height: 1.8; }
 .themis-skill-viewer .themis-response h2 { color: var(--themis-accent); font-size: 1rem; margin-top: 1.5em; }
@@ -102,6 +109,13 @@
 .themis-compatibility-reason ul { padding: 0 .75rem .5rem 1.75rem; margin: 0; }
 .themis-compatibility-reason li + li { margin-top: .5rem; }
 .themis-installed-integrations .themis-compatibility-reason { grid-column: 2 / -1; }
+.themis-compatibility-notes { min-width: 0; margin: .25rem 0; font-size: .8rem; line-height: 1.6; color: var(--themis-text-2); overflow-wrap: anywhere; }
+.themis-integrations .themis-compatibility-notes summary { display: flex; align-items: center; gap: .5rem; list-style: none; color: inherit; font-size: inherit; min-height: 0; padding: .25rem .5rem; cursor: pointer; }
+.themis-compatibility-notes summary::-webkit-details-marker { display: none; }
+.themis-compatibility-notes summary::after { content: "⌄"; margin-left: auto; }
+.themis-compatibility-notes[open] summary::after { content: "⌃"; }
+.themis-compatibility-notes summary:focus-visible { outline: 2px solid var(--themis-accent); }
+.themis-compatibility-notes ul { padding: 0 .75rem .25rem 1.25rem; margin: 0; }
 .themis-filter-summary { display: flex; align-items: center; gap: 12px; padding-bottom: 6px; font-size: .75rem; color: var(--themis-text-2); }
 .themis-integrations .themis-filter-summary button { min-height: 0; padding: 2px 0; color: var(--themis-text-2); font-size: .75rem; }
 .themis-marketplace-loading { flex: 1; min-height: 260px; display: grid; place-items: center; }
@@ -120,3 +134,77 @@
 .themis-mcp-file-actions select { border: 0; border-bottom: 1px solid var(--themis-border); background: transparent; color: var(--themis-text); font: inherit; padding: 4px; }
 .themis-mcp-file-actions button { border: 0; background: transparent; color: var(--themis-accent); font: inherit; cursor: pointer; }
 .themis-integration-waiting { display: inline-flex; align-items: center; gap: .75rem; font-size: .8rem; color: var(--themis-text-2); }
+
+/* Board 21: header with the Discover / Installed switch, wide search, pill filters and cards. */
+.themis-integrations-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: .75rem; }
+.themis-integrations .themis-integrations-header h2 { margin: 0; }
+.themis-view-switch { display: flex; padding: 4px; border-radius: var(--themis-radius-pill); background: var(--themis-raised); }
+.themis-integrations .themis-view-switch button { min-height: 0; height: 34px; padding: 0 18px; border-radius: var(--themis-radius-pill); color: var(--themis-text-2); font-size: .8125rem; font-weight: 500; }
+.themis-integrations .themis-view-switch button[aria-pressed="true"] { background: var(--themis-text); color: var(--themis-canvas); }
+.themis-integration-filters { flex: 1; }
+.themis-integration-filters .themis-integrations-search { flex: 1 1 320px; width: auto; height: 40px; }
+.themis-integration-filters select { height: 40px; padding: 0 30px 0 16px; border-radius: var(--themis-radius-pill); border: 1px solid var(--themis-border); background-position: right 12px center; color: var(--themis-text); }
+.themis-integrations .themis-discover-groups button[aria-pressed="true"] { background: var(--themis-text); color: var(--themis-canvas); }
+.themis-integrations .themis-discover-groups button { height: 34px; padding: 0 14px; font-weight: 500; }
+.themis-integrations .themis-integration-cards > li { min-height: 0; gap: .6rem; background: transparent; border: 1px solid var(--themis-border-subtle); }
+.themis-card-heading > div { display: flex; flex-direction: column; min-width: 0; }
+.themis-integrations .themis-card-heading button.themis-integration-open { min-height: 0; padding: 0; font-weight: 600; }
+.themis-card-tile { flex-shrink: 0; width: 40px; height: 40px; border-radius: 12px; display: grid; place-items: center; overflow: hidden; background: var(--themis-raised); }
+.themis-card-tile img { width: 26px; height: 26px; object-fit: contain; }
+.themis-card-monogram { --tile-hue: 40; background: light-dark(hsl(var(--tile-hue) 45% 88%), hsl(var(--tile-hue) 30% 30%)); color: light-dark(hsl(var(--tile-hue) 45% 26%), hsl(var(--tile-hue) 70% 88%)); font-weight: 600; }
+.themis-card-footer { flex-wrap: nowrap; }
+.themis-card-footer .themis-integration-capabilities { flex: 1; min-width: 0; margin: 0; }
+.themis-integrations .themis-card-footer button { flex-shrink: 0; min-height: 0; height: 36px; padding: 0 16px; border-radius: var(--themis-radius-pill); background: var(--themis-raised); text-decoration: none; font-weight: 500; }
+.themis-integrations .themis-card-footer button.themis-installed:disabled { opacity: 1; background: transparent; color: var(--themis-success); }
+
+/* Installed › Hooks: events in run order (board 24). */
+.themis-hook-events { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 8px; }
+.themis-hook-events > li { display: flex; flex-direction: column; border: 1px solid var(--themis-border-subtle); border-radius: var(--themis-radius-card); background: var(--themis-sidebar-bg); }
+.themis-hook-events > li.is-empty { background: transparent; }
+.themis-hook-event { display: flex; align-items: center; gap: 12px; padding: 14px 18px; }
+.themis-integrations button.themis-hook-event { width: 100%; min-height: 0; padding: 14px 18px; border-radius: var(--themis-radius-card); text-align: left; }
+.themis-hook-chevron { flex: none; color: var(--themis-text-3); transition: transform .15s ease; }
+[aria-expanded="false"] > .themis-hook-chevron { transform: rotate(-90deg); }
+.themis-hook-step { flex: none; width: 28px; height: 28px; border-radius: 14px; background: var(--themis-raised); color: var(--themis-text-2); font-size: .75rem; font-weight: 600; display: grid; place-items: center; }
+.themis-hook-title { flex: 1; font-weight: 600; }
+.is-empty .themis-hook-title { color: var(--themis-text-3); }
+.themis-hook-count { font-size: .75rem; color: var(--themis-text-3); }
+.themis-hook-row { display: flex; align-items: center; gap: 12px; margin: 0 18px; padding: 12px 0 12px 40px; border-top: 1px solid var(--themis-border-subtle); }
+.themis-hook-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.themis-integrations button.themis-hook-name { align-self: flex-start; min-height: 0; padding: 0; border: 0; background: transparent; font: inherit; font-weight: 500; color: var(--themis-text); cursor: pointer; }
+.themis-hook-name:hover { text-decoration: underline; text-underline-offset: 3px; }
+.themis-hook-meta { font-size: .75rem; color: var(--themis-text-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.themis-hook-skipped { margin: 8px 0 0; padding: 12px 18px; border-radius: 16px; background: var(--themis-surface); font-size: .8125rem; color: var(--themis-text-2); }
+
+/* Discover › Sources (board 22). */
+.themis-integrations button.themis-sources-button { min-height: 0; height: 34px; padding: 0 14px; border-radius: var(--themis-radius-pill); background: var(--themis-raised); font-size: .8125rem; }
+.themis-sources { margin: 0 0 12px; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 4px; min-width: min(460px, 80vw); }
+.themis-sources li { display: flex; align-items: center; gap: 12px; padding: 8px 4px; }
+.themis-source-tile { flex: none; width: 36px; height: 36px; border-radius: 11px; background: var(--themis-raised); color: var(--themis-text); font-weight: 600; display: grid; place-items: center; }
+.themis-source-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.themis-source-text strong, .themis-source-preview strong { font-weight: 600; overflow-wrap: anywhere; }
+.themis-source-text > span, .themis-source-preview span span { font-size: .75rem; color: var(--themis-text-2); }
+.themis-source-text > span.is-failed { color: var(--themis-danger, #f2b8b5); }
+.themis-integrations button.themis-source-remove { min-height: 0; width: 36px; height: 36px; padding: 0; border-radius: 18px; display: grid; place-items: center; color: var(--themis-text-2); }
+.themis-sources li:not(:has(.themis-source-remove)) { padding-right: 52px; }
+.themis-sources-actions { display: flex; justify-content: flex-end; gap: .5rem; }
+.themis-marketplace-form > .themis-source-preview { justify-content: flex-start; }
+.themis-source-preview { display: flex; align-items: center; gap: 12px; padding: 12px; border-radius: 16px; background: var(--themis-raised); }
+.themis-source-preview > span:last-child { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.themis-source-trust, .themis-source-problem { margin: 0; font-size: .8125rem; line-height: 1.5; color: var(--themis-text-2); }
+.themis-source-problem { color: var(--themis-danger, #f2b8b5); }
+.themis-marketplace-form input[aria-invalid="true"] { border-color: var(--themis-danger, #f2b8b5); }
+
+/* Integrations › Installed (board 23). */
+.themis-installed-tabs { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.themis-installed-tabs > nav { flex: 1; min-width: 0; }
+.themis-plugin-update { display: flex; align-items: center; gap: 12px; font-size: .75rem; color: var(--themis-text-2); }
+.themis-integrations button.themis-parts-toggle { min-height: 0; width: 36px; height: 36px; padding: 0; border-radius: 18px; display: grid; place-items: center; color: var(--themis-text-2); align-self: center; }
+.themis-parts-toggle svg { transition: transform .15s ease; }
+.themis-parts-toggle[aria-expanded="true"] svg { transform: rotate(180deg); }
+.themis-plugin-parts { grid-column: 2 / -1; margin: .5rem 0 0; padding: 0; list-style: none; }
+.themis-plugin-parts li { display: flex; align-items: center; gap: 12px; min-height: 40px; border-top: 1px solid var(--themis-border-subtle); }
+.themis-plugin-part-kind { flex: none; width: 92px; font-size: .75rem; color: var(--themis-text-3); }
+.themis-integrations button.themis-plugin-part-name { flex: 1; min-width: 0; min-height: 0; padding: 0; text-align: left; overflow-wrap: anywhere; }
+.themis-plugin-part-name:hover { text-decoration: underline; text-underline-offset: 3px; }
+.themis-plugin-part-state { font-size: .75rem; color: var(--themis-text-2); }

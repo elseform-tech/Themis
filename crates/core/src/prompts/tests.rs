@@ -173,6 +173,9 @@ const ALL: &[(&str, &str, &[&str])] = &[
     ),
     (RUNTIME_HANDOFF, "runtime-handoff", &[]),
     (RUNTIME_STEERED, "runtime-steered", &[]),
+    (HOOK_CONTEXT_NOTE, "hook-context-note", &[]),
+    (HOOK_BLOCKED, "hook-blocked", &["hook"]),
+    (HOOK_BLOCK_REASON_NOTE, "hook-block-reason-note", &[]),
     (RUNTIME_STEERS_CHECK, "runtime-steers-check", &["messages"]),
     (
         RUNTIME_BATCH_NOT_RUN,
@@ -237,6 +240,11 @@ const ALL: &[(&str, &str, &[&str])] = &[
     (SUBAGENT_REVIEW, "subagent-review", &[]),
     (SUBAGENT_SYSTEM, "subagent-system", &[]),
     (SUBAGENT_READ_ONLY_NOTE, "subagent-read-only-note", &[]),
+    (
+        SUBAGENT_WRITE_PATHS_NOTE,
+        "subagent-write-paths-note",
+        &["paths"],
+    ),
     (SUBAGENT_STATUS_FIELD, "subagent-status-field", &[]),
     (SPAWN_SUBAGENTS_TOOL, "spawn-subagents-tool", &[]),
     (
@@ -252,6 +260,7 @@ const ALL: &[(&str, &str, &[&str])] = &[
         "subagent-result-note",
         &["name", "id", "status", "result"],
     ),
+    (SKILL_COMMAND_NOTE, "skill-command-note", &[]),
     (EVAL_ANSWER_PROBE, "eval-answer-probe", &["question"]),
     (
         EVAL_RECALL_TASK,

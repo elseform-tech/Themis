@@ -329,8 +329,8 @@ async fn marketplace_cli_reuses_checked_contents_and_rejects_stale_install() {
             "plugin",
             "marketplace",
             "add",
-            "saved",
             source.path().to_str().unwrap(),
+            "saved",
         ],
     );
     let preview = cli(
@@ -345,6 +345,8 @@ async fn marketplace_cli_reuses_checked_contents_and_rejects_stale_install() {
         .as_str()
         .unwrap()
         .contains("CACHED_REVIEW_BODY"));
+    // Inspecting one plugin no longer waits for the rest of the catalog.
+    cli(data.path(), &["plugin", "marketplace", "check", "saved"]);
     let before = cli(
         data.path(),
         &[
@@ -370,11 +372,256 @@ async fn marketplace_cli_reuses_checked_contents_and_rejects_stale_install() {
     assert!(client
         .call(
             "plugin_action",
-            json!({"action":"install","marketplace":"saved","name":"review","expectedScan":"stale"})
+            json!({"action":"install","marketplace":"saved","name":"review","expectedCheck":"stale"})
         )
         .await
         .is_err());
-    let installed = client.call("plugin_action", json!({"action":"install","marketplace":"saved","name":"review","expectedScan":before["revision"]})).await.unwrap();
+    let installed = client.call("plugin_action", json!({"action":"install","marketplace":"saved","name":"review","expectedCheck":before["checks"]["review"]["check_revision"]})).await.unwrap();
     assert_eq!(installed["scope"], "global");
+    task.abort();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn marketplace_check_counts_statuses_and_a_formerly_colliding_plugin_installs() {
+    let data = tempfile::tempdir().unwrap();
+    let source = tempfile::tempdir().unwrap();
+    let root = source.path();
+    let write = |path: &str, content: &str| {
+        let path = root.join(path);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, content).unwrap();
+    };
+    let skill = |name: &str| format!("---\nname: {name}\ndescription: {name}\n---\nUse {name}.");
+    write("clean/skills/review/SKILL.md", &skill("review"));
+    // The same skill shipped for other tools used to fail the import on a duplicate id.
+    for prefix in ["", "codex/", "agent-plugin/"] {
+        write(
+            &format!("copies/{prefix}skills/forms/SKILL.md"),
+            &skill("forms"),
+        );
+    }
+    write(
+        ".claude-plugin/marketplace.json",
+        &json!({"plugins":[
+            {"name":"clean","source":"./clean"},
+            {"name":"copies","source":"./copies"},
+            {"name":"broken","source":"./missing"}
+        ]})
+        .to_string(),
+    );
+    let state = AppState::new_for_test(data.path().join("settings.json"));
+    let task = tokio::spawn(Server::bind(state, data.path()).await.unwrap().run());
+    cli(
+        data.path(),
+        &[
+            "plugin",
+            "marketplace",
+            "add",
+            root.to_str().unwrap(),
+            "local",
+        ],
+    );
+    let report = cli(data.path(), &["plugin", "marketplace", "check", "local"]);
+    assert_eq!(report["total"], 3);
+    assert_eq!(
+        report["ungrouped"],
+        json!([]),
+        "only hand-sorted catalogs list these"
+    );
+    assert_eq!(report["statuses"], json!({"failed": 1, "supported": 2}));
+    assert_eq!(report["reasons"].as_array().unwrap().len(), 1, "{report}");
+    assert_eq!(report["reasons"][0]["plugins"], 1);
+    let installed = cli(data.path(), &["plugin", "install", "copies@local"]);
+    assert_eq!(installed["spec"]["skills"].as_array().unwrap().len(), 1);
+    assert_eq!(installed["spec"]["skills"][0]["id"], "forms");
+    task.abort();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn mcp_import_keeps_plain_values_and_reads_install_settings_as_keys() {
+    let data = tempfile::tempdir().unwrap();
+    let project = tempfile::tempdir().unwrap();
+    let state = AppState::new_for_test(data.path().join("settings.json"));
+    let task = tokio::spawn(Server::bind(state, data.path()).await.unwrap().run());
+    let config = project.path().join("mcp.json");
+    std::fs::write(
+        &config,
+        json!({"mcpServers": {
+            "bigquery": {"command": "npx", "args": ["-y", "@toolbox-sdk/server"], "env": {
+                "BIGQUERY_PROJECT": "${user_config.bigquery_project}",
+                "LOG_LEVEL": "ERROR",
+                "REGION": "${REGION:-us-central1}"
+            }},
+            "exa": {"type": "http", "url": "https://mcp.exa.ai/mcp?client=claude-code-plugin", "headers": {"x-exa-source": "claude-code-plugin"}}
+        }})
+        .to_string(),
+    )
+    .unwrap();
+    let imported = cli(
+        data.path(),
+        &["mcp", "import", config.to_str().unwrap(), "values"],
+    );
+    let mcp = &imported["spec"]["mcp"];
+    assert_eq!(
+        mcp["bigquery"]["env"]["BIGQUERY_PROJECT"],
+        "BIGQUERY_PROJECT"
+    );
+    assert_eq!(mcp["bigquery"]["env_values"]["LOG_LEVEL"], "ERROR");
+    assert_eq!(mcp["bigquery"]["defaults"]["REGION"], "us-central1");
+    assert_eq!(
+        mcp["exa"]["header_values"]["x-exa-source"],
+        "claude-code-plugin"
+    );
+    // A literal credential is still refused through the CLI.
+    std::fs::write(
+        &config,
+        json!({"mcpServers": {"bad": {"command": "run", "env": {"API_KEY": "abc"}}}}).to_string(),
+    )
+    .unwrap();
+    let refused = std::process::Command::new(env!("CARGO_BIN_EXE_themis"))
+        .arg("--data-dir")
+        .arg(data.path())
+        .args(["mcp", "import", config.to_str().unwrap(), "bad"])
+        .output()
+        .unwrap();
+    assert!(!refused.status.success());
+    assert!(String::from_utf8_lossy(&refused.stderr).contains("literal values are unsupported"));
+    task.abort();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn plugin_commands_install_as_manual_skills() {
+    let data = tempfile::tempdir().unwrap();
+    let source = tempfile::tempdir().unwrap();
+    let root = source.path();
+    std::fs::create_dir_all(root.join("tools/commands/git")).unwrap();
+    std::fs::write(
+        root.join("tools/commands/commit.md"),
+        "---\ndescription: Create a git commit\n---\nStatus: !`git status`\nCommit $ARGUMENTS.",
+    )
+    .unwrap();
+    std::fs::write(
+        root.join("tools/commands/git/clean.md"),
+        "Remove gone branches.",
+    )
+    .unwrap();
+    std::fs::create_dir_all(root.join(".claude-plugin")).unwrap();
+    std::fs::write(
+        root.join(".claude-plugin/marketplace.json"),
+        json!({"plugins":[{"name":"tools","source":"./tools"}]}).to_string(),
+    )
+    .unwrap();
+    let state = AppState::new_for_test(data.path().join("settings.json"));
+    let task = tokio::spawn(
+        Server::bind(state.clone(), data.path())
+            .await
+            .unwrap()
+            .run(),
+    );
+    cli(
+        data.path(),
+        &[
+            "plugin",
+            "marketplace",
+            "add",
+            root.to_str().unwrap(),
+            "local",
+        ],
+    );
+    let report = cli(data.path(), &["plugin", "marketplace", "check", "local"]);
+    assert_eq!(report["statuses"], json!({"supported": 1}), "{report}");
+    let installed = cli(data.path(), &["plugin", "install", "tools@local"]);
+    let skills = installed["spec"]["skills"].as_array().unwrap();
+    let ids: Vec<_> = skills
+        .iter()
+        .map(|skill| skill["id"].as_str().unwrap())
+        .collect();
+    assert_eq!(ids, ["commit", "git-clean"]);
+    assert_eq!(skills[0]["description"], "Create a git commit");
+    assert!(skills[0]["instructions"]
+        .as_str()
+        .unwrap()
+        .starts_with(themis_core::prompts::SKILL_COMMAND_NOTE));
+    assert_eq!(
+        installed["spec"]["manual_skills"],
+        json!(["commit", "git-clean"])
+    );
+    // Offered in the `/` menu like any manual skill.
+    assert!(state
+        .prompt_skills(None)
+        .await
+        .unwrap()
+        .iter()
+        .any(|skill| skill.name == "commit"));
+    task.abort();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_source_is_previewed_added_hidden_and_removed_through_the_cli() {
+    let data = tempfile::tempdir().unwrap();
+    let source = tempfile::tempdir().unwrap();
+    let state = AppState::new_for_test(data.path().join("settings.json"));
+    let server = Server::bind(state, data.path()).await.unwrap();
+    let task = tokio::spawn(server.run());
+    std::fs::create_dir_all(source.path().join(".claude-plugin")).unwrap();
+    std::fs::create_dir_all(source.path().join("review")).unwrap();
+    std::fs::write(
+        source.path().join("review/SKILL.md"),
+        "---\nname: review\ndescription: Review\n---\nBody",
+    )
+    .unwrap();
+    std::fs::write(
+        source.path().join(".claude-plugin/marketplace.json"),
+        json!({"name":"acme","owner":{"name":"Acme Inc"},"plugins":[{"name":"review","source":"./review"}]}).to_string(),
+    )
+    .unwrap();
+    let path = source.path().to_str().unwrap().to_owned();
+    let data_dir = data.path().to_owned();
+    tokio::task::spawn_blocking(move || {
+        let data = data_dir.as_path();
+        let market = |args: &[&str]| cli(data, &[&["plugin", "marketplace"], args].concat());
+        let preview = market(&["preview", &path]);
+        assert_eq!(preview["name"], "acme");
+        assert_eq!(preview["publisher"], "Acme Inc");
+        assert_eq!(preview["plugins"], 1);
+        let row = |name: &str| {
+            market(&["list"])
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|source| source["name"] == name)
+                .cloned()
+        };
+        assert!(row("acme").is_none(), "previewing adds nothing");
+        market(&["add", &path]);
+        assert_eq!(row("acme").unwrap()["enabled"], true);
+        market(&["disable", "acme"]);
+        assert_eq!(row("acme").unwrap()["enabled"], false);
+        market(&["check", "acme"]);
+        let installed = cli(data, &["plugin", "install", "review@acme"]);
+        assert_eq!(installed["source"], "acme");
+        // A change upstream is found, checked and offered, and the update clears the offer.
+        assert_eq!(cli(data, &["plugin", "updates"]), json!([]));
+        assert_eq!(market(&["changes", "acme"])["rechecked"], 0);
+        std::fs::write(
+            std::path::Path::new(&path).join("review/SKILL.md"),
+            "---\nname: review\ndescription: Review\n---\nNew body",
+        )
+        .unwrap();
+        assert_eq!(market(&["changes", "acme"])["rechecked"], 1);
+        assert_eq!(cli(data, &["plugin", "updates"])[0]["name"], "review");
+        cli(data, &["plugin", "update", "review"]);
+        assert_eq!(cli(data, &["plugin", "updates"]), json!([]));
+        market(&["remove", "acme"]);
+        assert!(row("acme").is_none());
+        let plugins = cli(data, &["plugin", "list"]);
+        assert!(plugins
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|plugin| plugin["spec"]["name"] == "review"));
+    })
+    .await
+    .unwrap();
     task.abort();
 }

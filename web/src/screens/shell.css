@@ -81,7 +81,7 @@ button:focus-visible, summary:focus-visible, input:focus-visible, textarea:focus
 
 /* Utility pages share one centred reading column, an unboxed title and divided rows. */
 .themis-review-queue, .themis-automations, .themis-integrations { width: 100%; max-width: 880px; margin: 0 auto; padding: 32px 32px 48px; }
-.themis-review-queue-title, .themis-automations-title, .themis-integrations > h2 { margin: 0; font-size: 1.375rem; font-weight: 500; }
+.themis-review-queue-title, .themis-automations-title, .themis-integrations > h2, .themis-integrations-header > h2 { margin: 0; font-size: 1.375rem; font-weight: 500; }
 .themis-review-list { gap: 0; }
 .themis-review-card { padding: 14px 4px; border-bottom: 1px solid var(--themis-border-subtle); }
 .themis-review-card:last-child { border-bottom: 0; }

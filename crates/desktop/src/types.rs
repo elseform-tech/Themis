@@ -275,6 +275,9 @@ pub enum ThreadEvent {
         model: String,
         /// Whether an OS sandbox confines its shell commands.
         confined: bool,
+        /// The project paths it may change; none when it is read-only.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        write_paths: Vec<String>,
         /// When it was started (RFC 3339); groups finished work by request in Tasks.
         #[serde(default, skip_serializing_if = "String::is_empty")]
         at: String,
@@ -986,6 +989,9 @@ pub struct Settings {
     pub font_family: String,
     #[serde(default = "default_automations_enabled")]
     pub sidebar_hover: bool,
+    /// Whether opening the app looks for plugin updates in sources not checked today.
+    #[serde(default = "default_automations_enabled")]
+    pub check_sources_for_updates: bool,
     pub theme: ThemeMode,
     pub default_provider: ProviderKind,
     pub default_model: String,
@@ -1077,6 +1083,7 @@ impl Default for Settings {
             theme_palette: default_appearance_choice(),
             font_family: default_appearance_choice(),
             sidebar_hover: true,
+            check_sources_for_updates: true,
             theme: ThemeMode::Dark,
             default_provider: ProviderKind::Go,
             default_model: themis_core::providers::GO_DEFAULT_MODEL.to_owned(),
@@ -1110,6 +1117,7 @@ pub struct SettingsPatch {
     pub theme_palette: Option<String>,
     pub font_family: Option<String>,
     pub sidebar_hover: Option<bool>,
+    pub check_sources_for_updates: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub theme: Option<ThemeMode>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1652,6 +1660,7 @@ mod tests {
                 "theme_palette": "system",
                 "font_family": "system",
                 "sidebar_hover": true,
+                "check_sources_for_updates": true,
                 "theme": "dark",
                 "default_provider": "go",
                 "default_model": "muse-spark-1.3-contributor",

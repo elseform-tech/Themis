@@ -295,7 +295,7 @@ export function getSubagentSettings(): Promise<{ settings: SubagentSettings; rev
 }
 
 /** Saves only `changes` (`model: null` is the chat's model), refused when the file changed since `revision`. */
-export function updateSubagentSettings(changes: Partial<Pick<SubagentSettings, 'enabled' | 'max_parallel' | 'model' | 'models'>>, revision: string): Promise<{ settings: SubagentSettings; revision: string }> {
+export function updateSubagentSettings(changes: Partial<Pick<SubagentSettings, 'enabled' | 'max_parallel' | 'model' | 'models' | 'allow_writes'>>, revision: string): Promise<{ settings: SubagentSettings; revision: string }> {
   return invoke('update_subagent_settings', { changes, revision });
 }
 
@@ -482,7 +482,7 @@ export interface SearchServerStatus {
 /** One test search against `url`, or the saved server when omitted. */
 export function checkSearchServer(url?: string): Promise<SearchServerStatus> { return invoke("check_search_server", url ? { url } : {}); }
 
-/** Integrations › MCP: the state of the mcp.json copy being edited. */
+/** Integrations › Connections: the state of the mcp.json copy being edited. */
 export interface McpConfigStatus {
   state: "closed" | "open" | "applied" | "invalid" | "conflict" | "error";
   changed?: string[];

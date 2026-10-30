@@ -174,6 +174,9 @@ impl SettingsStore {
             if let Some(hover) = patch.sidebar_hover {
                 current.sidebar_hover = hover;
             }
+            if let Some(check) = patch.check_sources_for_updates {
+                current.check_sources_for_updates = check;
+            }
             if let Some(total) = patch.max_total_turns {
                 if !(1..=2000).contains(&total) {
                     return Err("max_total_turns must be between 1 and 2000".to_owned());

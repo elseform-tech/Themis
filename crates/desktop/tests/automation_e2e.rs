@@ -738,7 +738,7 @@ async fn creator_prompt_reaches_llm_with_management_tools_and_verifier() {
         .send_message(
             Arc::new(sink),
             thread.id,
-            "[[skill:create-skill]] Design a local review skill".into(),
+            "[[skill:skills]] Design a local review skill".into(),
         )
         .await
         .unwrap();
@@ -747,7 +747,7 @@ async fn creator_prompt_reaches_llm_with_management_tools_and_verifier() {
     let request: Value = serde_json::from_slice(&requests[0].body).unwrap();
     assert!(request
         .to_string()
-        .contains("python3 .themis/skills/create-skill/verify.py"));
+        .contains("python3 .themis/skills/skills/verify.py"));
     let names: Vec<_> = request["tools"]
         .as_array()
         .unwrap()
@@ -756,5 +756,5 @@ async fn creator_prompt_reaches_llm_with_management_tools_and_verifier() {
         .collect();
     assert!(names.contains(&"save_skill"));
     assert!(names.contains(&"list_plugins"));
-    assert!(root.join(".themis/skills/create-skill/verify.py").is_file());
+    assert!(root.join(".themis/skills/skills/verify.py").is_file());
 }

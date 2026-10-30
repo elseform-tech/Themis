@@ -2226,6 +2226,8 @@ impl RunNotes {
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .push_back(note);
+        // Keep Rust 1.98 support; the try_update replacement requires Rust 1.99.
+        #[allow(deprecated)]
         let _ = self
             .pending
             .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |n| n.checked_sub(1));
@@ -2925,6 +2927,8 @@ fn active_request_index(messages: &[ChatMessage]) -> Option<usize> {
             && !message
                 .content
                 .starts_with(crate::prompts::RUNTIME_SUBAGENT_NOTE)
+            // Hook context is never the person's request.
+            && !message.content.starts_with(crate::prompts::HOOK_CONTEXT_NOTE)
     })
 }
 
@@ -3584,7 +3588,24 @@ fn initial_messages(history: Vec<ConversationTurn>, task: String) -> Vec<ChatMes
         message_type: MessageType::Text,
         content: task,
     });
+    if let Some(context) = crate::plugins::hooks::prompt_context() {
+        messages.push(ChatMessage {
+            role: ChatRole::User,
+            message_type: MessageType::Text,
+            content: hook_context_note(&context),
+        });
+    }
     messages
+}
+
+/// The model-facing form of context a `PromptSubmit` hook added: the label, then the
+/// context fenced so it cannot pose as the label or close the fence early.
+pub fn hook_context_note(context: &str) -> String {
+    let fenced = context.replace("<<<", "< < <").replace(">>>", "> > >");
+    format!(
+        "{}\n<<<hook-context\n{fenced}\n>>>",
+        crate::prompts::HOOK_CONTEXT_NOTE
+    )
 }
 
 async fn check_stopped(

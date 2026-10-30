@@ -52,10 +52,16 @@ pub async fn run(client: &Client, words: &[String], directory: &Path) -> Result<
             } else { request["action"]=json!(if *import_action=="inspect" {"inspect_path"}else{"import_path"});request["path"]=json!(source);request["name"]=json!(positional.get(3)); }
         },
         ["plugin",action,name] if matches!(*action,"enable"|"disable"|"delete"|"uninstall")=>{request["action"]=json!(if *action=="uninstall"{"delete"}else{action});request["name"]=json!(name);},
-        ["plugin","marketplace","list"]=>request["action"]=json!("marketplaces"),
-        ["plugin","marketplace","add",name,source]=>{request["action"]=json!("add_marketplace");request["name"]=json!(name);request["source"]=json!(source);},
+        ["plugin","marketplace","list"]=>request["action"]=json!("sources"),
+        ["plugin","updates"]=>request["action"]=json!("updates"),
+        ["plugin","marketplace","changes",name]=>{request["action"]=json!("check_source");request["name"]=json!(name);},
+        ["plugin","marketplace","preview",source]=>{request["action"]=json!("preview_source");request["source"]=json!(source);},
+        ["plugin","marketplace","add",source]=>{request["action"]=json!("add_marketplace");request["source"]=json!(source);},
+        ["plugin","marketplace","add",source,name]=>{request["action"]=json!("add_marketplace");request["source"]=json!(source);request["name"]=json!(name);},
+        ["plugin","marketplace",switch,name] if matches!(*switch,"enable"|"disable")=>{request["action"]=json!("set_marketplace_enabled");request["name"]=json!(name);request["enabled"]=json!(*switch=="enable");},
         ["plugin","marketplace","remove",name]=>{request["action"]=json!("remove_marketplace");request["name"]=json!(name);},
         ["plugin","marketplace",action,name] if matches!(*action,"browse"|"refresh")=>{request["action"]=json!("catalog");request["name"]=json!(name);request["refresh"]=json!(*action=="refresh");},
+        ["plugin","marketplace","check",name]=>{request["action"]=json!("catalog_check");request["name"]=json!(name);},
         ["plugin","install",target]=>{let(name,market)=target.split_once('@').ok_or("Use plugin@marketplace")?;request["action"]=json!("install");request["name"]=json!(name);request["marketplace"]=json!(market);},
         ["plugin",action,name] if matches!(*action,"show"|"export"|"edit"|"update")=>{
             let plugin=find(client,&request,name).await?;
@@ -76,8 +82,8 @@ pub async fn run(client: &Client, words: &[String], directory: &Path) -> Result<
         },
         ["skill","list"]=>return client.call("list_prompt_skills",json!({"projectRoot":project})).await,
         ["skill","verify",file]=>{
-            let path=directory.join("builtins/create-skill/verify.py");std::fs::create_dir_all(path.parent().ok_or("Missing verifier directory")?).map_err(|e|e.to_string())?;
-            std::fs::write(&path,include_str!("../../../core/builtins/create-skill/scripts/verify.py")).map_err(|e|e.to_string())?;
+            let path=directory.join("builtins/skills/verify.py");std::fs::create_dir_all(path.parent().ok_or("Missing verifier directory")?).map_err(|e|e.to_string())?;
+            std::fs::write(&path,include_str!("../../../core/builtins/skills/scripts/verify.py")).map_err(|e|e.to_string())?;
             let output=std::process::Command::new("python3").arg(path).arg(file).output().map_err(|e|e.to_string())?;
             if !output.status.success(){return Err(String::from_utf8_lossy(&output.stderr).into());}return Ok(json!({"valid":true}));
         },
@@ -101,7 +107,7 @@ pub async fn run(client: &Client, words: &[String], directory: &Path) -> Result<
             } else { return Err("Use skill verify FILE".into()); }
 
         },
-        _=>return Err("Use plugin list|create NAME|show NAME|edit NAME|save FILE|inspect SOURCE [NAME]|import SOURCE [NAME]|export NAME|install NAME@MARKET|update NAME|enable NAME|disable NAME|uninstall NAME; plugin marketplace list|add NAME SOURCE|browse NAME|refresh NAME|remove NAME; skill list|save PLUGIN FILE|verify FILE|delete PLUGIN ID; mcp/hook list PLUGIN|add PLUGIN NAME FILE|update PLUGIN NAME FILE|test PLUGIN NAME|delete PLUGIN NAME. Options: --scope local|global --project PATH --expected REVISION --ref REF --subdirectory PATH --allow-partial. For agent creation: skill create THREAD REQUEST.".into()),
+        _=>return Err("Use plugin list|updates|create NAME|show NAME|edit NAME|save FILE|inspect SOURCE [NAME]|import SOURCE [NAME]|export NAME|install NAME@MARKET|update NAME|enable NAME|disable NAME|uninstall NAME; plugin marketplace list|preview SOURCE|add SOURCE [NAME]|enable NAME|disable NAME|changes NAME|browse NAME|refresh NAME|check NAME|remove NAME; skill list|save PLUGIN FILE|verify FILE|delete PLUGIN ID; mcp/hook list PLUGIN|add PLUGIN NAME FILE|update PLUGIN NAME FILE|test PLUGIN NAME|delete PLUGIN NAME. Options: --scope local|global --project PATH --expected REVISION --ref REF --subdirectory PATH --allow-partial. For agent creation: skill create THREAD REQUEST.".into()),
     }
     client.call("plugin_action", request).await
 }

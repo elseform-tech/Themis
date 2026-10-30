@@ -96,16 +96,17 @@ export interface PluginSpec {
   executable_files?: string[];
   name: string; description: string; version: string;
   skills: Array<{ id: string; name: string; description: string; instructions: string; allowedTools: string[]; scripts: SkillScript[] }>;
-  mcp: Record<string, { command?: string | null; args: string[]; url?: string | null; env: Record<string,string>; bearer_env?: string | null; enabled: boolean }>;
-  hooks: Array<{name:string;event:string;command:string;enabled:boolean;timeout_seconds:number;blocking:boolean}>;
-  files: Record<string,string>; unsupported: string[];
+  mcp: Record<string, { command?: string | null; args: string[]; url?: string | null; env: Record<string,string>; env_values?: Record<string,string>; header_values?: Record<string,string>; defaults?: Record<string,string>; bearer_env?: string | null; enabled: boolean }>;
+  hooks: Array<{name:string;event:string;command:string;enabled:boolean;timeout_seconds:number;blocking:boolean;matcher?:string|null;failure_policy?:"ignore"|"abort"|null}>;
+  files: Record<string,string>; unsupported: string[]; notices?: string[];
 }
 export interface ImportPreview {
   spec: PluginSpec;
   report: { status: "supported" | "partial" | "unsupported"; components: NonNullable<PluginSpec["import_issues"]> };
+  check_revision?: string;
 }
 export interface Plugin { scope: "local"|"global"; revision: string; enabled: boolean; source: string|null; spec: PluginSpec }
-export interface Marketplace { name: string; source: string }
+export interface Marketplace { name: string; source: string; enabled?: boolean }
 
 export interface AutomationSchedule {
   repeat: "daily" | "weekdays" | "weekly";
@@ -334,7 +335,7 @@ export type ThreadEvent =
   | { kind: 'question_asked'; question: Question }
   | { kind: 'question_answered'; id: string; answer: string }
   /** The agent started a read-only subagent for one part of its task. */
-  | { kind: 'subagent_started'; id: string; name: string; brief: string; model: string; confined: boolean; /** RFC 3339. */ at?: string }
+  | { kind: 'subagent_started'; id: string; name: string; brief: string; model: string; confined: boolean; write_paths?: string[]; /** RFC 3339. */ at?: string }
   /** What a running subagent is doing now (live only). */
   /** `model`: the one it fell back to when its own could not run. */
   | { kind: 'subagent_status'; id: string; text: string; tool_calls: number; model?: string }
@@ -349,6 +350,8 @@ export interface SubagentEntry {
   brief: string;
   model: string;
   confined: boolean;
+  /** The project paths it may change; empty when it is read-only. */
+  writePaths: string[];
   status: 'running' | SubagentEnding;
   /** Its own status line, or its latest action. */
   text: string;
@@ -709,6 +712,7 @@ export interface Settings {
   theme_palette: string;
   font_family: "system" | "sans" | "serif" | "mono" | "rounded" | "avenir" | "helvetica" | "verdana" | "trebuchet" | "palatino" | "charter" | "menlo";
   sidebar_hover: boolean;
+  check_sources_for_updates?: boolean;
   theme: ThemeMode;
   default_provider: ProviderKind;
   default_model: string;

@@ -817,6 +817,19 @@ impl SandboxPlan {
         }
     }
 
+    /// A subagent's plan: read-only except for its own `paths`. Temporary folders stay writable
+    /// unless the project lives in one, and YOLO changes nothing here: this wall is the
+    /// harness's, not a default.
+    pub fn confined_to(&self, root: &Path, paths: &[PathBuf]) -> Self {
+        let mut plan = self.read_only();
+        let root = resolve_existing(root);
+        plan.writable.retain(|folder| !root.starts_with(folder));
+        for path in paths {
+            push_unique(&mut plan.writable, resolve_existing(path));
+        }
+        plan
+    }
+
     /// A plan that never sandboxes (the sandbox is off).
     pub fn disabled(project_root: &Path) -> Self {
         let config = SandboxConfig {
@@ -1079,7 +1092,12 @@ impl SandboxPlan {
     /// either. `None` when the sandbox is off.
     pub fn file_guard(&self, yolo: bool) -> Option<FileGuard> {
         if !self.enabled() {
-            return None;
+            // A subagent's write paths are a harness wall: they hold with no OS sandbox too.
+            return self.read_only.then(|| FileGuard {
+                no_write: self.protected.clone(),
+                no_read: Vec::new(),
+                only_write: Some(self.writable.clone()),
+            });
         }
         let mut no_write = Vec::new();
         if self.has_app_data {
@@ -1094,6 +1112,68 @@ impl SandboxPlan {
             only_write: self.read_only.then(|| self.writable.clone()),
         })
     }
+}
+
+/// A subagent's `write_paths` entry in its stored form: project-relative, with a trailing `/` for
+/// a folder. Refuses globs, anything that leaves the project, and `.themis/`, `.git/` and
+/// `protected` folders.
+pub fn normalize_write_path(
+    root: &Path,
+    raw: &str,
+    protected: &[PathBuf],
+) -> std::result::Result<String, String> {
+    let raw = raw.trim();
+    if raw.is_empty() || raw.chars().any(char::is_control) {
+        return Err("a write path can't be empty".into());
+    }
+    if raw.contains(['*', '?', '[', ']', '{', '}', '\\']) {
+        return Err(format!(
+            "'{raw}': write paths are folders or files, never globs"
+        ));
+    }
+    let relative = Path::new(raw);
+    let mut parts = Vec::new();
+    for part in relative.components() {
+        match part {
+            Component::Normal(name) => parts.push(name.to_string_lossy().into_owned()),
+            Component::CurDir => {}
+            _ => return Err(format!("'{raw}' must stay inside the project")),
+        }
+    }
+    let Some(first) = parts.first() else {
+        return Err(format!(
+            "'{raw}' is the whole project; name a folder or file in it"
+        ));
+    };
+    if first.eq_ignore_ascii_case(".themis") || first.eq_ignore_ascii_case(".git") {
+        return Err(format!("'{raw}': {first}/ is never writable by a subagent"));
+    }
+    let joined = parts.join("/");
+    let root = resolve_existing(root);
+    let resolved = resolve_existing(&root.join(&joined));
+    if !resolved.starts_with(&root) {
+        return Err(format!("'{raw}' must stay inside the project"));
+    }
+    if protected.iter().any(|folder| resolved.starts_with(folder)) {
+        return Err(format!("'{raw}' holds Themis settings or permissions"));
+    }
+    Ok(if raw.ends_with('/') || resolved.is_dir() {
+        format!("{joined}/")
+    } else {
+        joined
+    })
+}
+
+/// Whether two normalized write paths share any file: one is the other or holds it.
+pub fn write_paths_overlap(a: &str, b: &str) -> bool {
+    let parts = |path: &str| {
+        path.trim_end_matches('/')
+            .split('/')
+            .map(str::to_owned)
+            .collect::<Vec<_>>()
+    };
+    let (a, b) = (parts(a), parts(b));
+    a.iter().zip(&b).all(|(left, right)| left == right)
 }
 
 /// What the sandbox covers, for status views.
@@ -1222,7 +1302,7 @@ impl FileGuard {
                 .any(|part| part == std::path::Component::ParentDir);
             if climbs || !allowed.iter().any(|folder| resolved.starts_with(folder)) {
                 return Err(format!(
-                    "'{}' is outside the folders this read-only run may write",
+                    "'{}' is outside the folders this subagent may write",
                     path.display()
                 ));
             }

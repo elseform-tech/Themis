@@ -405,6 +405,183 @@ async fn a_stopped_subagent_ends_and_a_waited_result_is_not_repeated() {
     app.serving.abort();
 }
 
+/// Two read-only subagents and one that owns `notes/`: it writes there and nowhere else, in
+/// YOLO too, and the others stay read-only. Overlaps and escapes are refused before any start.
+#[tokio::test(flavor = "multi_thread")]
+async fn write_paths_hold_a_subagent_to_its_own_folder() {
+    let app = app(None, |body| {
+        if is_subagent(body) {
+            if !mentions(body, "Write the summary") {
+                return reply("Read-only part done.");
+            }
+            return match tool_results(body) {
+                // Slow enough that the main agent's next spawn finds it running.
+                0 => tools(&[(
+                    "w1",
+                    "write_file",
+                    json!({"file_path": "notes/summary.md", "content": "inside", "status": "Writing"}),
+                )])
+                .set_delay(std::time::Duration::from_millis(1500)),
+                1 => tools(&[(
+                    "w2",
+                    "write_file",
+                    json!({"file_path": "outside.md", "content": "outside", "status": "Trying"}),
+                )]),
+                2 => tools(&[(
+                    "w3",
+                    "shell",
+                    json!({"command": "sh", "args": ["-c", "echo shell > notes/shell.md; echo shell > shell-outside.md"], "status": "Shell"}),
+                )]),
+                _ => reply("Writer done."),
+            };
+        }
+        match tool_results(body) {
+            0 => tools(&[(
+                "bad1",
+                "spawn_subagents",
+                json!({"subagents": [{"brief": "Escape", "write_paths": ["../up/"]}]}),
+            )]),
+            1 => tools(&[(
+                "bad2",
+                "spawn_subagents",
+                json!({"subagents": [{"brief": "Settings", "write_paths": [".themis/"]}]}),
+            )]),
+            2 => tools(&[(
+                "bad3",
+                "spawn_subagents",
+                json!({"subagents": [
+                    {"brief": "One", "write_paths": ["notes/"]},
+                    {"brief": "Two", "write_paths": ["notes/deep/file.md"]}
+                ]}),
+            )]),
+            3 => tools(&[(
+                "s1",
+                "spawn_subagents",
+                json!({"subagents": [
+                    {"name": "Reader A", "brief": "Read part A"},
+                    {"name": "Reader B", "brief": "Read part B"},
+                    {"name": "Writer", "brief": "Write the summary", "write_paths": ["notes/"]}
+                ]}),
+            )]),
+            4 => tools(&[(
+                "s2",
+                "spawn_subagents",
+                json!({"subagents": [{"brief": "Late", "write_paths": ["notes/late.md"]}]}),
+            )]),
+            5 => tools(&[("w", "wait_subagents", json!({}))]),
+            _ => reply("All done."),
+        }
+    })
+    .await;
+    run(app.data.path(), &app.thread, "Do the parts");
+    let root = app.project.path();
+    assert_eq!(
+        std::fs::read_to_string(root.join("notes/summary.md")).unwrap(),
+        "inside"
+    );
+    assert!(!root.join("outside.md").exists(), "the file tool stayed in");
+    assert!(!root.join("up").exists());
+
+    let all = bodies(&app.llm).await;
+    let main_results = |needle: &str| {
+        all.iter().any(|body| {
+            !is_subagent(body)
+                && messages(body)
+                    .iter()
+                    .any(|m| m["role"] == "tool" && text(m).contains(needle))
+        })
+    };
+    assert!(main_results("must stay inside the project"));
+    assert!(main_results("never writable by a subagent"));
+    assert!(main_results("overlaps"), "within one call");
+    assert!(main_results("which Writer owns"), "with a running one");
+
+    let writer_tools = all
+        .iter()
+        .find(|body| is_subagent(body) && mentions(body, "Write the summary"))
+        .map(tool_names)
+        .unwrap();
+    assert!(writer_tools.iter().any(|name| name == "write_file"));
+    assert!(writer_tools.iter().any(|name| name == "apply_patch"));
+    assert!(!writer_tools.iter().any(|name| name == "delete_file"));
+    assert!(all.iter().any(|body| is_subagent(body)
+        && mentions(
+            body,
+            "may change files only under these project paths: notes/"
+        )));
+    let reader = all
+        .iter()
+        .find(|body| is_subagent(body) && mentions(body, "Read part A"))
+        .unwrap();
+    assert!(!tool_names(reader).iter().any(|name| name == "write_file"));
+    assert!(mentions(reader, "You are read-only"));
+
+    let writer_outcome = |needle: &str| {
+        all.iter().any(|body| {
+            is_subagent(body)
+                && messages(body)
+                    .iter()
+                    .any(|m| m["role"] == "tool" && text(m).contains(needle))
+        })
+    };
+    assert!(
+        writer_outcome("outside the folders"),
+        "the refusal reaches it"
+    );
+    // The shell wall needs an enforcing sandbox: macOS always has one.
+    if cfg!(target_os = "macos") {
+        assert!(
+            !root.join("shell-outside.md").exists(),
+            "the shell stayed in"
+        );
+        assert!(
+            root.join("notes/shell.md").exists(),
+            "its own folder is writable"
+        );
+    }
+
+    let events = history_kinds(app.data.path(), &app.thread);
+    let started = events
+        .iter()
+        .find(|event| event["kind"] == "subagent_started" && event["name"] == "Writer")
+        .expect("the writer started");
+    assert_eq!(started["write_paths"], json!(["notes/"]));
+    app.serving.abort();
+}
+
+/// `subagents.allow_writes` off keeps a subagent read-only and says so; a project can do this.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_project_can_turn_subagent_writes_off() {
+    let app = app(Some(r#"{"subagents": {"allow_writes": false}}"#), |body| {
+        if is_subagent(body) {
+            return reply("Done.");
+        }
+        match tool_results(body) {
+            0 => tools(&[(
+                "s1",
+                "spawn_subagents",
+                json!({"subagents": [{"brief": "Write it", "write_paths": ["notes/"]}]}),
+            )]),
+            1 => tools(&[("w", "wait_subagents", json!({}))]),
+            _ => reply("All done."),
+        }
+    })
+    .await;
+    run(app.data.path(), &app.thread, "Do it");
+    let all = bodies(&app.llm).await;
+    let child = all.iter().find(|body| is_subagent(body)).unwrap();
+    assert!(!tool_names(child).iter().any(|name| name == "write_file"));
+    assert!(mentions(child, "You are read-only"));
+    assert!(all.iter().any(|body| {
+        !is_subagent(body)
+            && messages(body)
+                .iter()
+                .any(|m| m["role"] == "tool" && text(m).contains("write_paths were ignored"))
+    }));
+    assert!(!app.project.path().join("notes").exists());
+    app.serving.abort();
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn a_project_can_turn_subagents_off() {
     let app = app(Some(r#"{"subagents": {"enabled": false}}"#), |_| {

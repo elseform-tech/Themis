@@ -30,7 +30,7 @@ vi.mock("../lib/tauri", () => tauri);
 
 const thread = "t1";
 const envelope = (event: object, run_id = "r1") => ({ type: "thread/event" as const, envelope: { thread_id: thread, run_id, event: event as never } });
-const agent = (patch: Partial<SubagentEntry> = {}): SubagentEntry => ({ id: "a1", name: "Bug hunt", brief: "Find bugs in runtime.rs", model: "glm-5", confined: true, status: "running", text: "Reading runtime.rs", toolCalls: 3, ...patch });
+const agent = (patch: Partial<SubagentEntry> = {}): SubagentEntry => ({ id: "a1", name: "Bug hunt", brief: "Find bugs in runtime.rs", model: "glm-5", confined: true, writePaths: [], status: "running", text: "Reading runtime.rs", toolCalls: 3, ...patch });
 const approval = (patch: Partial<ApprovalRequest> = {}): ApprovalRequest => ({ thread_id: thread, approval_id: "p1", tool: "shell", summary: "cargo test", risk: "execute", command: { argv: ["cargo", "test"] }, subagent: { id: "a1", name: "Bug hunt" }, ...patch });
 
 beforeEach(() => { dispatch.mockClear(); appState = { ...initialState }; });
@@ -159,6 +159,12 @@ describe("subagent detail", () => {
 });
 
 describe("Settings › Subagents", () => {
+  it("says what a subagent may write in its detail", () => {
+    render(<SubagentDetail threadId={thread} agent={agent({ writePaths: ["notes/", "a.md"] })} runLive onBack={() => {}} />);
+    expect(screen.getByText(/Writes notes\/, a\.md/)).toBeInTheDocument();
+    expect(screen.queryByText(/Read only/)).toBeNull();
+  });
+
   it("saves each field on its own with the page's revision", async () => {
     const saved = vi.fn();
     render(<SubagentSettingsSection onSaved={saved} />);
@@ -174,6 +180,9 @@ describe("Settings › Subagents", () => {
     await act(async () => {});
     expect(tauri.updateSubagentSettings).toHaveBeenLastCalledWith({ model: null }, "r2");
     expect(saved).toHaveBeenCalledTimes(3);
+    fireEvent.click(screen.getByRole("checkbox", { name: "Allow file writes" }));
+    await act(async () => {});
+    expect(tauri.updateSubagentSettings).toHaveBeenLastCalledWith({ allow_writes: false }, "r2");
     // Allowed models: added from the list, at most three, removed one by one.
     fireEvent.change(screen.getByRole("combobox", { name: "Add model" }), { target: { value: "glm-5" } });
     await act(async () => {});
@@ -181,7 +190,5 @@ describe("Settings › Subagents", () => {
     fireEvent.click(screen.getByRole("button", { name: "Remove glm-5" }));
     await act(async () => {});
     expect(tauri.updateSubagentSettings).toHaveBeenLastCalledWith({ models: [] }, "r2");
-    // No hint lines and no file-writes switch before write paths exist.
-    expect(screen.queryByText(/file writes/i)).toBeNull();
   });
 });

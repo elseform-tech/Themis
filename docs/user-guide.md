@@ -519,6 +519,7 @@ Preferences persisted to `settings.json`:
 | `projects_directory` | Fixed parent folder for new projects | `~/ThemisOS/Projects` |
 | `text_size` | Conversation text size (12–18 px) | `13` |
 | `sidebar_hover` | Reveal collapsed navigation on edge hover | `true` |
+| `check_sources_for_updates` | Look for plugin updates in sources not checked today when the app opens | `true` |
 | `config_editor` | Editor Settings → Permissions opens `runtime.jsonc` with (`""` = system text editor; or `vscode`, `cursor`, `windsurf`, `antigravity`, `zed`, `sublime`, `bbedit`, `xcode`) | `""` |
 
 Appearance and model defaults each have their own reset action.
@@ -630,7 +631,7 @@ Apply or Revert.
 
 ### Integration discovery and recovery
 
-Discover cards show purpose, origin and compatibility. Install directly from a tile; compatibility is checked automatically. Partial packages list omitted components and offer Install supported parts. Unsupported-only packages have a disabled Install action and are hidden from the checked catalog unless Unsupported or All statuses is selected. Not checked and Connection not checked are explicit unknowns, not errors or verification badges. New catalog installs are global, with a spinner during installation and ✓ Installed afterwards. Marketplace, status and Personal/Public source dropdowns share one toolbar. Existing project imports retain their scope. Colored labels retain readable text; installed items filter by Enabled or Disabled. MCP setup and testing remain available through chat or the CLI.
+Discover cards show purpose, origin and compatibility. Install directly from a tile; compatibility is checked automatically. Partial packages list omitted components and offer Install supported parts. Unsupported-only packages have a disabled Install action and are hidden from the checked catalog unless Unsupported or All statuses is selected. Not checked and Connection not checked are explicit unknowns, not errors or verification badges. New catalog installs are global, with a spinner during installation and ✓ Installed afterwards. Discover shows every marketplace together, grouped by purpose (Coding, Cloud & deploy, Data & databases, Monitoring, Security, Work apps, Design, Other) with a Source filter for one marketplace; search also matches the publisher. Fully working plugins carry no badge; partly working ones show "Some parts skipped". Existing project imports retain their scope. Colored labels retain readable text; installed items filter by Enabled or Disabled. MCP setup and testing remain available through chat or the CLI.
 
 Automation editors keep destination, timezone and enabled/paused status visible above Advanced. Custom permissions explain their next-run scope; approval dialogs label reusable grants Allow in this chat. The companion updates its mood without re-showing its native window. Keyboard focus includes editable instructions.
 

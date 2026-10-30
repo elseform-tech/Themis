@@ -129,4 +129,19 @@ describe("WorkspacePanel", () => {
     await act(async () => {});
     expect(container.querySelector(".themis-diff-path")).toHaveTextContent("docs/guide.md");
   });
+  it("filters Changes by author once a subagent has write paths", async () => {
+    const files = [{ ...diff.files[0], path: "src/a.ts" }, { ...diff.files[0], path: "notes/b.md" }];
+    vi.mocked(bridge.listDiff).mockImplementation(async () => ({ ...diff, files }) as never);
+    appState = { ...appState, diffs: { t1: { ...diff, files } as never }, messages: { t1: [{ id: "s", role: "system", text: "", subagents: [{ id: "a", name: "Writer", brief: "b", model: "m", confined: true, writePaths: ["notes/"], status: "running", text: "", toolCalls: 0 }] }] } as never };
+    render(<WorkspacePanel projectRoot="/repo" threadId="t1" workspace={workspace} />);
+    await act(async () => {});
+    const select = screen.getByRole("combobox", { name: "Author" });
+    expect(screen.getByTitle("notes/b.md")).toBeInTheDocument();
+    fireEvent.change(select, { target: { value: "Main" } });
+    expect(screen.queryByTitle("notes/b.md")).toBeNull();
+    fireEvent.change(select, { target: { value: "Writer" } });
+    expect(screen.queryByTitle("src/a.ts")).toBeNull();
+    expect(screen.getAllByTitle("notes/b.md").length).toBeGreaterThan(0);
+    vi.mocked(bridge.listDiff).mockImplementation(async () => diff);
+  });
 });

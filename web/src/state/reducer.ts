@@ -220,6 +220,7 @@ export const DEFAULT_SETTINGS: Settings = {
   theme_palette: "system",
   font_family: "system",
   sidebar_hover: true,
+  check_sources_for_updates: true,
   theme: "dark",
   default_provider: "go",
   default_model: DEFAULT_MODEL,
@@ -520,7 +521,7 @@ export function applyThreadEvent(
       return { ...state, messages: { ...state.messages, [threadId]: updated } };
     }
     case "subagent_started": {
-      const entry: SubagentEntry = { id: event.id, name: event.name, brief: event.brief, model: event.model, confined: event.confined, status: "running", text: "", toolCalls: 0, startedAt: measureDuration ? Date.now() : undefined, at: event.at };
+      const entry: SubagentEntry = { id: event.id, name: event.name, brief: event.brief, model: event.model, confined: event.confined, writePaths: event.write_paths ?? [], status: "running", text: "", toolCalls: 0, startedAt: measureDuration ? Date.now() : undefined, at: event.at };
       const rows = state.messages[threadId] ?? [];
       // One stack per reply: every subagent the run starts joins the first one.
       const index = rows.findIndex(row => row.subagents && row.runId === runId);
