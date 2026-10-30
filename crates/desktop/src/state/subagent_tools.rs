@@ -365,6 +365,11 @@ impl ToolRuntime for SubagentTool {
                 self.name()
             )));
         }
+        // The run's `say` line and tool start travel through its event channel, but these bubbles
+        // go straight to the chat: give the line a moment to get there first.
+        if matches!(self.kind, Kind::Spawn | Kind::Message) {
+            tokio::time::sleep(Duration::from_millis(150)).await;
+        }
         match self.kind {
             Kind::Spawn => self.spawn(&args),
             Kind::Wait => self.wait(&args).await,
