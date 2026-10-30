@@ -136,14 +136,9 @@ function ChangesView({ threadId }: { threadId: string }) {
     // A failed refresh keeps the last diff on screen.
     try { dispatch({ type: "diff/set", threadId, diff: await listDiff(threadId) }); } catch { /* keep last */ }
   }, [dispatch, threadId]);
-  // Live: refresh on open, after each completed tool call and when a run ends.
+  // Refresh on open, right after each completed tool call and when a run ends; useLiveDiff
+  // keeps it current in between.
   useEffect(() => { void refresh(); }, [refresh, toolsDone, running]);
-  // Shell commands can change files without a file-tool event, so poll during a run.
-  useEffect(() => {
-    if (!running) return;
-    const timer = setInterval(() => void refresh(), 4000);
-    return () => clearInterval(timer);
-  }, [running, refresh]);
   if (diff === undefined) return <EmptyState title="Loading changes…" />;
   if (diff === null || !diff.available) return <EmptyState title="Changes unavailable" hint={diff?.reason ?? "This folder has no Git diff."} />;
   const files = diff.files;
