@@ -232,7 +232,7 @@ export function Plugins() {
   async function browse(refresh = false, sources = markets.filter(source => source.enabled !== false).map(source => source.name)) {
     const request = ++catalogRequest.current;
     previewRequest.current++;
-    setPanel(null); setBusy(false); setInstalling(""); setScanProgress("Checking marketplaces…"); setScanPercent(undefined);
+    setPanel(null); setBusy(false); setInstalling(""); setScanProgress("Checking…"); setScanPercent(undefined);
     setCatalog([]); inspection.current.clear(); setChecks({}); setChecking({}); setCheckErrors({}); setCatalogLoading(true);
     const current = () => request === catalogRequest.current && root === activeRoot.current;
     const progress: Record<string, [number, number]> = {};
@@ -254,7 +254,7 @@ export function Plugins() {
         progress[name] = [value.completed, value.total];
         const [completed, total] = Object.values(progress).reduce(([a, b], [c, d]) => [a + c, b + d], [0, 0]);
         setScanPercent(total ? Math.min(100, Math.floor(completed / total * 100)) : undefined);
-        setScanProgress(total ? `Checking marketplaces… ${completed}/${total}` : "Checking marketplaces…");
+        setScanProgress(total ? `Checking ${completed}/${total}` : "Checking…");
         await new Promise(resolve => setTimeout(resolve, 1000));
       }
     };
@@ -315,7 +315,8 @@ export function Plugins() {
   const matchesOrigin = (publicItem: boolean) => originFilter === "all" || (publicItem ? "public" : "personal") === originFilter;
   const catalogInstalled = (entry: Pick<CatalogEntry, "market" | "name">) => plugins.some(plugin => plugin.scope === "global" && plugin.source === entry.market && plugin.spec.name === entry.name);
   const rows = items(plugins, category).filter(row => matchesOrigin(isPublic(row.plugin)) && (installedStatus === "all" || (row.enabled ? "enabled" : "disabled") === installedStatus)).filter(row => matches([row.name, pluginDisplayName(row.plugin), row.plugin.source, row.plugin.spec.origin?.location, row.plugin.spec.description, ...row.plugin.spec.skills.map(skill => skill.description)]));
-  const matchesStatus = (key: string, installed: boolean) => catalogStatus === "installed" ? installed : catalogStatus === "all" || (catalogStatus === "available" ? ["supported", "partial"].includes(checks[key]?.report.status) || (catalogLoading && !checks[key] && !checkErrors[key]) : (checks[key]?.report.status ?? (checkErrors[key] ? "failed" : "unchecked")) === catalogStatus);
+  // While checks run every card stays, so counts and cards don't shift; the filter applies after.
+  const matchesStatus = (key: string, installed: boolean) => catalogStatus === "installed" ? installed : catalogStatus === "all" || (catalogStatus === "available" ? catalogLoading || ["supported", "partial"].includes(checks[key]?.report.status) : (checks[key]?.report.status ?? (checkErrors[key] ? "failed" : "unchecked")) === catalogStatus);
   const skippedParts = (plugin: Plugin) => plugin.spec.unsupported?.length ?? 0;
   const updateFor = (plugin: Plugin) => updates.find(available => available.name === plugin.spec.name && available.scope === plugin.scope);
   const partsOf = (plugin: Plugin) => (["Connections", "Skills", "Hooks"] as const).flatMap(kind => items([plugin], kind));
@@ -352,7 +353,7 @@ export function Plugins() {
       <select aria-label="Source" value={originFilter} onChange={event => setOriginFilter(event.target.value)}><option value="all">All sources</option>{publicView && category === "Plugins" ? markets.filter(source => source.enabled !== false).map(source => <option key={source.name} value={source.name}>{sourceLabel(source.name)}</option>) : <><option value="personal">Personal</option><option value="public">Public</option></>}</select>
       <button aria-label="Refresh" title="Refresh" disabled={busy || mutating} onClick={() => { if (category === "Connections") window.dispatchEvent(new Event("themis-mcp-reconnect")); void (publicView && category === "Plugins" ? browse(true) : load()).catch(error => toast(dispatch, integrationError(error), "danger")); }}>↻</button></div></div>
     {category === "Connections" && !publicView && <McpFileRow onApplied={reloadAfterMcpEdit} />}
-    {(filtered || (publicView && catalogLoading)) && <div className="themis-filter-summary"><span>{publicView && catalogLoading ? "Checking catalog" : `${resultCount} result${resultCount === 1 ? "" : "s"}`}</span>{filtered && <button onClick={() => { setSearch(""); setOriginFilter("all"); if (publicView) { setCatalogStatus("available"); pickGroup("All"); } else setInstalledStatus("all"); }}>Reset filters</button>}</div>}
+    {(filtered || (publicView && catalogLoading)) && <div className="themis-filter-summary"><span>{publicView && catalogLoading ? scanProgress : `${resultCount} result${resultCount === 1 ? "" : "s"}`}</span>{filtered && <button onClick={() => { setSearch(""); setOriginFilter("all"); if (publicView) { setCatalogStatus("available"); pickGroup("All"); } else setInstalledStatus("all"); }}>Reset filters</button>}</div>}
     {publicView ? <>
       {catalogLoading && !catalog.length ? <div className="themis-marketplace-loading"><KnightLoading variant={readCompanionPreferences().variant} status={scanProgress} progress={scanPercent} progressLabel="Marketplace compatibility" /></div> : !catalogRows.length && <EmptyState title={(search.trim() || originFilter !== "all" || (publicView ? catalogStatus !== "available" : installedStatus !== "all")) ? "No matching integrations" : "No plugins to show"} />}
       {groupCounts.length > 1 && <nav className="themis-discover-groups" aria-label="Groups">{[["All", sourceRows.length] as const, ...groupCounts].map(([name, count]) => <button key={name} aria-pressed={shownGroup === name} onClick={() => pickGroup(name)}>{name}<span>{count}</span></button>)}</nav>}

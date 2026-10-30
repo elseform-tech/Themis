@@ -247,12 +247,12 @@ describe("Integration browsing and lifecycle", () => {
     await act(async () => fireEvent.click(screen.getByRole("button", { name: "Discover" })));
     // The ready source is usable while the slow one is still being checked.
     expect(screen.getByRole("button", { name: "View public-docs" })).toBeVisible();
-    expect(screen.getByText("Checking catalog")).toBeVisible();
+    expect(document.querySelector(".themis-filter-summary")).toHaveTextContent("Checking");
     expect(screen.queryByRole("combobox", { name: "Marketplace" })).toBeNull();
     await act(async () => finish({ status: "ready", revision: "slow-1", catalog: { plugins: [{ name: "late", author: { name: "Late Co" } }] }, checks: { late: { spec: { ...installed[0].spec, name: "late" }, report: { status: "supported", components: [] } } }, errors: {} }));
     const late = screen.getByRole("button", { name: "View late" }).closest("li")!;
     expect(late).toHaveTextContent("Late Co · slow");
-    expect(screen.queryByText("Checking catalog")).toBeNull();
+    expect(document.querySelector(".themis-filter-summary")?.textContent ?? "").not.toContain("Checking");
     fireEvent.change(screen.getByRole("combobox", { name: "Source" }), { target: { value: "slow" } });
     expect(screen.queryByRole("button", { name: "View public-docs" })).toBeNull();
     expect(screen.getByRole("button", { name: "View late" })).toBeVisible();
@@ -497,6 +497,8 @@ describe("Integration browsing and lifecycle", () => {
     expect(within(card("second")).getByRole("button", { name: "Install" })).toBeEnabled();
     expect(within(card("first")).getByRole("button", { name: "Install" })).toBeDisabled();
     expect(card("first")).toHaveTextContent("Checking…");
+    // The count is shown, and a card found to be unsupported stays until checking finishes.
+    expect(screen.getByText("Checking 1/2")).toBeVisible();
     // Cards keep their place while checks finish: checked ones don't jump ahead.
     expect(screen.getAllByRole("button", { name: /^View (first|second)$/ }).map(button => button.textContent)).toEqual(["first", "second"]);
   });
@@ -538,6 +540,24 @@ describe("Integration browsing and lifecycle", () => {
     expect(screen.queryByRole("button", { name: "MCP" })).toBeNull();
     expect(within(screen.getByRole("navigation", { name: "Integration categories" })).getByRole("button", { name: "Plugins" })).toHaveTextContent(/Plugins\s*1/);
     expect(tab).toBeVisible();
+  });
+  it("keeps an unsupported card in place until the catalog is done, then filters it", async () => {
+    const previous = vi.mocked(pluginAction).getMockImplementation()!;
+    let status = "scanning";
+    vi.mocked(pluginAction).mockImplementation(async args => args.action === "scan_marketplace" ? {
+      revision: "scan", status, completed: 1, total: 2, errors: {},
+      catalog: { plugins: [{ name: "plain" }, { name: "agents-only" }] },
+      checks: { "agents-only": { spec: { ...installed[0].spec, name: "agents-only", skills: [] }, report: { status: "unsupported", components: [] } } },
+    } as never : previous(args) as never);
+    render(<Plugins />);
+    await screen.findByRole("button", { name: "View docs" });
+    vi.useFakeTimers();
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Discover" })); await vi.advanceTimersByTimeAsync(0); });
+    expect(screen.getByRole("button", { name: "View agents-only" })).toBeVisible();
+    status = "ready";
+    await act(async () => { await vi.advanceTimersByTimeAsync(1100); });
+    expect(screen.queryByRole("button", { name: "View agents-only" })).toBeNull();
+    vi.useRealTimers();
   });
   it("marks a plugin whose source was removed", async () => {
     installed[0].source = "gone";
