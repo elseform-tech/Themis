@@ -600,6 +600,18 @@ async fn a_source_is_previewed_added_hidden_and_removed_through_the_cli() {
         market(&["check", "acme"]);
         let installed = cli(data, &["plugin", "install", "review@acme"]);
         assert_eq!(installed["source"], "acme");
+        // A change upstream is found, checked and offered, and the update clears the offer.
+        assert_eq!(cli(data, &["plugin", "updates"]), json!([]));
+        assert_eq!(market(&["changes", "acme"])["rechecked"], 0);
+        std::fs::write(
+            std::path::Path::new(&path).join("review/SKILL.md"),
+            "---\nname: review\ndescription: Review\n---\nNew body",
+        )
+        .unwrap();
+        assert_eq!(market(&["changes", "acme"])["rechecked"], 1);
+        assert_eq!(cli(data, &["plugin", "updates"])[0]["name"], "review");
+        cli(data, &["plugin", "update", "review"]);
+        assert_eq!(cli(data, &["plugin", "updates"]), json!([]));
         market(&["remove", "acme"]);
         assert!(row("acme").is_none());
         let plugins = cli(data, &["plugin", "list"]);

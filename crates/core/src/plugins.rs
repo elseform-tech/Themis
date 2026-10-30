@@ -41,6 +41,9 @@ pub struct PluginSpec {
     pub description: String,
     #[serde(default)]
     pub version: String,
+    /// What this plugin's package was when installed from a marketplace, to spot upstream changes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub package_hash: Option<String>,
     #[serde(default)]
     pub skills: Vec<Skill>,
     #[serde(default)]

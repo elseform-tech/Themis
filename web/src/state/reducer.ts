@@ -216,6 +216,7 @@ export const DEFAULT_SETTINGS: Settings = {
   theme_palette: "system",
   font_family: "system",
   sidebar_hover: true,
+  check_sources_for_updates: true,
   theme: "dark",
   default_provider: "go",
   default_model: DEFAULT_MODEL,

@@ -1,4 +1,5 @@
 //! Derived compatibility snapshots, never an integration registry or runtime health check.
+use super::marketplace::{git_remote_ref, package_hash, tree_fingerprint};
 use super::*;
 use futures_util::{stream, StreamExt};
 use serde_json::Value;
@@ -16,10 +17,38 @@ pub struct MarketplaceScan {
     /// When this check finished, in milliseconds since the epoch.
     #[serde(default)]
     pub checked_at: Option<u64>,
+    /// The commit a Git source was at, to skip downloading it when nothing changed.
+    #[serde(default)]
+    source_ref: String,
+    /// Each entry's upstream state when it was checked. Only entries whose state changes are
+    /// checked again.
+    #[serde(default)]
+    fingerprints: BTreeMap<String, String>,
     source: String,
     version: u32,
     #[serde(default)]
     refresh: bool,
+}
+
+/// An installed plugin whose upstream package has changed.
+#[derive(Clone, Serialize)]
+pub struct PluginUpdate {
+    pub name: String,
+    pub scope: String,
+    pub marketplace: String,
+    pub from: String,
+    pub to: String,
+    pub check_revision: Option<String>,
+}
+
+/// How long a source's last check counts as recent when the app opens.
+const SOURCE_CHECK_INTERVAL_MS: u64 = 24 * 60 * 60 * 1000;
+
+fn now_ms() -> Option<u64> {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()
+        .and_then(|elapsed| u64::try_from(elapsed.as_millis()).ok())
 }
 
 /// One row of the Sources list.
@@ -257,6 +286,11 @@ impl PluginStore {
         let directory = self.scan_directory(name)?;
         if state.catalog.is_null() {
             state.catalog = self.catalog_for_scan(name, state.refresh).await?;
+            if state.source.starts_with("https://") {
+                state.source_ref = git_remote_ref(&state.source, None)
+                    .await
+                    .unwrap_or_default();
+            }
         }
         let entries = state.catalog["plugins"]
             .as_array()
@@ -290,16 +324,24 @@ impl PluginStore {
                 !state.checks.contains_key(plugin) && !state.errors.contains_key(plugin)
             })
             .collect();
+        let catalog = state.catalog.clone();
+        let catalog = &catalog;
         let mut checks = stream::iter(pending)
             .map(|plugin| async move {
+                // Taken first: a change during the check then counts as a later change.
+                let fingerprint = self.entry_fingerprint(name, catalog, &plugin).await;
                 let result = self.inspect_for_scan(name, &plugin).await;
-                (plugin, result)
+                (plugin, fingerprint, result)
             })
             .buffer_unordered(4);
-        while let Some((plugin, result)) = checks.next().await {
+        while let Some((plugin, fingerprint, result)) = checks.next().await {
+            state
+                .fingerprints
+                .insert(plugin.clone(), fingerprint.unwrap_or_default());
             match result {
                 Ok(mut preview) => {
                     preview.check_revision = Some(revision());
+                    preview.package_hash = Some(package_hash(&preview.spec));
                     write_json(
                         &directory.join("previews").join(preview_file(&plugin)),
                         &preview,
@@ -320,10 +362,7 @@ impl PluginStore {
             tokio::task::yield_now().await;
         }
         state.status = "ready".into();
-        state.checked_at = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .ok()
-            .and_then(|elapsed| u64::try_from(elapsed.as_millis()).ok());
+        state.checked_at = now_ms();
         write_json(&directory.join("scan.json"), state)
     }
     pub async fn wait_marketplace_scan(
@@ -346,6 +385,184 @@ impl PluginStore {
             );
         }
         Ok(state)
+    }
+    /// An entry's upstream state: its catalog entry, plus its folder or its own repository's
+    /// commit. A pinned `sha` is part of the entry already.
+    async fn entry_fingerprint(
+        &self,
+        marketplace: &str,
+        catalog: &Value,
+        name: &str,
+    ) -> anyhow::Result<String> {
+        use sha2::{Digest, Sha256};
+        let entry = catalog["plugins"]
+            .as_array()
+            .and_then(|entries| entries.iter().find(|entry| entry["name"] == name))
+            .context("Plugin not listed")?;
+        let source = &entry["source"];
+        let upstream = if let Some(path) = source.as_str() {
+            let path = path.strip_prefix("./").unwrap_or(path);
+            if !safe_relative(path) {
+                bail!("Unsafe marketplace source path");
+            }
+            let root = self.marketplace_directory(marketplace, false).await?;
+            tree_fingerprint(&root.join(path))?
+        } else if source.get("sha").is_some() {
+            String::new()
+        } else {
+            let url = match source["source"].as_str() {
+                Some("github") => format!(
+                    "https://github.com/{}.git",
+                    source["repo"].as_str().context("Missing repo")?
+                ),
+                _ => source["url"].as_str().context("Missing URL")?.to_owned(),
+            };
+            git_remote_ref(&url, source["ref"].as_str()).await?
+        };
+        Ok(format!(
+            "{:x}",
+            Sha256::digest(format!("{entry}\n{upstream}"))
+        ))
+    }
+    /// Checks a finished source for upstream changes and checks again only the entries that
+    /// changed. Returns how many. Without a network nothing is lost: saved checks stay.
+    pub async fn check_source_for_changes(&self, name: &str) -> anyhow::Result<usize> {
+        let _lock = self.scan_lock(name)?;
+        let mut state = self.scan_state(name)?;
+        if state.status != "ready" {
+            bail!("Marketplace has no finished check yet");
+        }
+        let source_ref = if state.source.starts_with("https://") {
+            let head = git_remote_ref(&state.source, None).await?;
+            if head != state.source_ref {
+                self.catalog_for_scan(name, true).await?;
+            }
+            head
+        } else {
+            String::new()
+        };
+        let catalog = self.catalog_for_scan(name, false).await?;
+        let names: Vec<String> = catalog["plugins"]
+            .as_array()
+            .context("Missing plugins")?
+            .iter()
+            .filter_map(|entry| entry["name"].as_str().map(str::to_owned))
+            .collect();
+        let catalog_ref = &catalog;
+        let saved = &state.fingerprints;
+        let mut compared = stream::iter(names.clone())
+            .map(|plugin| async move {
+                // A repository that can't be reached right now keeps its saved check.
+                let fingerprint = self
+                    .entry_fingerprint(name, catalog_ref, &plugin)
+                    .await
+                    .ok()
+                    .or_else(|| saved.get(&plugin).cloned());
+                (plugin, fingerprint)
+            })
+            .buffer_unordered(4);
+        let mut changed = Vec::new();
+        while let Some((plugin, fingerprint)) = compared.next().await {
+            if saved.get(&plugin) != fingerprint.as_ref() {
+                changed.push(plugin);
+            }
+        }
+        drop(compared);
+        state.source_ref = source_ref;
+        state.catalog = catalog;
+        for map_key in state.checks.keys().cloned().collect::<Vec<_>>() {
+            if !names.contains(&map_key) {
+                state.checks.remove(&map_key);
+            }
+        }
+        state.errors.retain(|plugin, _| names.contains(plugin));
+        state
+            .fingerprints
+            .retain(|plugin, _| names.contains(plugin));
+        for plugin in &changed {
+            state.checks.remove(plugin);
+            state.errors.remove(plugin);
+        }
+        state.completed = state.checks.len() + state.errors.len();
+        if !changed.is_empty() {
+            state.status = "scanning".into();
+        }
+        self.run_marketplace_scan(name, &mut state).await?;
+        Ok(changed.len())
+    }
+    /// When the app opens: checks every shown source not checked in the last day, in the
+    /// background. A source that fails is tried again next time.
+    pub fn check_sources(&self) -> anyhow::Result<()> {
+        let now = now_ms().unwrap_or_default();
+        for source in self.sources()? {
+            let due = source.status == "ready"
+                && source
+                    .checked_at
+                    .is_none_or(|at| now.saturating_sub(at) >= SOURCE_CHECK_INTERVAL_MS);
+            if !source.enabled || !due {
+                continue;
+            }
+            let store = self.clone();
+            let context = crate::diagnostics::ACTIVE.try_with(Clone::clone).ok();
+            tokio::spawn(async move {
+                let work = async {
+                    let started = std::time::Instant::now();
+                    let outcome = store.check_source_for_changes(&source.name).await;
+                    crate::diagnostics::emit(
+                        "integration",
+                        "source_checked",
+                        if outcome.is_ok() { "info" } else { "warn" },
+                        serde_json::json!({
+                            "marketplace": source.name,
+                            "elapsed_ms": started.elapsed().as_millis() as u64,
+                            "rechecked": outcome.as_ref().ok(),
+                        }),
+                    );
+                };
+                match context {
+                    Some(context) => crate::diagnostics::ACTIVE.scope(context, work).await,
+                    None => work.await,
+                }
+            });
+        }
+        Ok(())
+    }
+    /// Installed plugins whose upstream package differs from what was installed.
+    pub fn plugin_updates(&self) -> anyhow::Result<Vec<PluginUpdate>> {
+        let sources = self.marketplaces()?;
+        let mut updates = Vec::new();
+        for plugin in self.list()? {
+            let (Some(market), Some(installed)) = (
+                plugin.source.as_deref(),
+                plugin.spec.package_hash.as_deref(),
+            ) else {
+                continue;
+            };
+            if !sources.iter().any(|source| source.name == market) {
+                continue;
+            }
+            let Ok(state) = self.scan_state(market) else {
+                continue;
+            };
+            let Some(check) = state.checks.get(&plugin.spec.name) else {
+                continue;
+            };
+            if check
+                .package_hash
+                .as_deref()
+                .is_some_and(|hash| hash != installed)
+            {
+                updates.push(PluginUpdate {
+                    name: plugin.spec.name.clone(),
+                    scope: plugin.scope.clone(),
+                    marketplace: market.to_owned(),
+                    from: plugin.spec.version.clone(),
+                    to: check.spec.version.clone(),
+                    check_revision: check.check_revision.clone(),
+                });
+            }
+        }
+        Ok(updates)
     }
     /// Waits for this entry's own check, starting or resuming the scan if needed. The rest of
     /// the catalog may still be being checked.
@@ -396,9 +613,10 @@ impl PluginStore {
         if preview.spec.name != name {
             bail!("Cached plugin identity does not match; refresh the marketplace");
         }
-        let check_revision = preview.check_revision;
+        let (check_revision, hash) = (preview.check_revision, preview.package_hash);
         let mut preview = ImportPreview::from_spec(preview.spec)?;
         preview.check_revision = check_revision;
+        preview.package_hash = hash;
         Ok(preview)
     }
     pub async fn scanned_marketplace_preview(

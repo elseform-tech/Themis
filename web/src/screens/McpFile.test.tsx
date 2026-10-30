@@ -18,7 +18,7 @@ vi.mock("../lib/tauri", () => ({
 }));
 afterEach(() => { cleanup(); vi.clearAllMocks(); vi.useRealTimers(); });
 
-describe("Integrations › MCP › Edit as mcp.json", () => {
+describe("Integrations › Connections › Edit as mcp.json", () => {
   it("opens the copy with the chosen editor and follows its saves", async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     const onApplied = vi.fn();

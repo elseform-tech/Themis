@@ -663,6 +663,7 @@ export interface Settings {
   theme_palette: string;
   font_family: "system" | "sans" | "serif" | "mono" | "rounded" | "avenir" | "helvetica" | "verdana" | "trebuchet" | "palatino" | "charter" | "menlo";
   sidebar_hover: boolean;
+  check_sources_for_updates?: boolean;
   theme: ThemeMode;
   default_provider: ProviderKind;
   default_model: string;
