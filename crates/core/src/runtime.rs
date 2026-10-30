@@ -675,9 +675,7 @@ async fn run_task_with_evidence_inner(
     let mut overflow_retried = false;
     let mut force_compaction = false;
     let mut turn = 0;
-    let mut silent_step = false;
-    let mut silent_notes = 0;
-    let mut after_subagents = false;
+    let mut reaction_due = false;
     while turn < policy.total_turns {
         turn += 1;
         check_stopped(&stopped, &events).await?;
@@ -694,20 +692,21 @@ async fn run_task_with_evidence_inner(
         }
         // Results of subagents (and other notes) join at the same boundary.
         for note in run_notes().map(|notes| notes.take()).unwrap_or_default() {
-            after_subagents = true;
+            reaction_due = true;
             messages.push(ChatMessage {
                 role: ChatRole::User,
                 message_type: MessageType::Text,
                 content: subagent_note(&note),
             });
         }
-        // The main agent went quiet on its last step: ask it to speak up on this one.
-        if silent_step {
-            silent_step = false;
+        // A subagent just reported: this step gives the main agent no tools, so it says what it
+        // makes of the reply before doing anything about it, whichever model it is.
+        let reacting = std::mem::take(&mut reaction_due) && !is_subagent_run();
+        if reacting {
             messages.push(ChatMessage {
                 role: ChatRole::User,
                 message_type: MessageType::Text,
-                content: SILENT_STEP_NOTE.to_owned(),
+                content: SUBAGENT_REACTION_NOTE.to_owned(),
             });
         }
         // Compaction and maintenance compare raw estimates, so hand them the equivalent raw budget.
@@ -895,7 +894,13 @@ async fn run_task_with_evidence_inner(
         usage_sink.store(0, Ordering::SeqCst);
         let (text, calls) = match crate::context_metrics::with_usage_sink(
             usage_sink.clone(),
-            request_answer(&llm, &messages, &llm_tools, &events, &stopped),
+            request_answer(
+                &llm,
+                &messages,
+                if reacting { &[] } else { &llm_tools },
+                &events,
+                &stopped,
+            ),
         )
         .await
         {
@@ -913,6 +918,17 @@ async fn run_task_with_evidence_inner(
                 // check_stopped already emitted the cancellation event.
                 if stopped.load(Ordering::SeqCst) {
                     return Err(error);
+                }
+                // Some providers refuse a request without tools once tools were used: skip the
+                // pause rather than lose the run over it.
+                if reacting {
+                    crate::diagnostics::emit(
+                        "subagents",
+                        "reaction_skipped",
+                        "warn",
+                        serde_json::json!({}),
+                    );
+                    continue;
                 }
                 // The provider rejected the input size before any answer text: tighten the
                 // estimate and compact once, then retry. Completed tools are never replayed.
@@ -982,6 +998,22 @@ async fn run_task_with_evidence_inner(
         check_stopped(&stopped, &events).await?;
         // A message steered in while the model wrote its answer keeps the run
         // going: the answer stays, and the next request reads the message.
+        // The reaction is said, not an answer: the run carries on with its tools back.
+        if reacting && calls.is_empty() {
+            let line = text.clone().unwrap_or_default();
+            if !line.trim().is_empty() {
+                events
+                    .send(RunEvent::AssistantText("\n\n".into()))
+                    .await
+                    .ok();
+            }
+            messages.push(ChatMessage {
+                role: ChatRole::Assistant,
+                message_type: MessageType::Text,
+                content: line,
+            });
+            continue;
+        }
         // An answer while subagents are still working keeps the run waiting for their results.
         let notes = run_notes().filter(|notes| notes.waiting() || notes.pending() > 0);
         if calls.is_empty() && !steer_waiting() {
@@ -1112,33 +1144,12 @@ async fn run_task_with_evidence_inner(
         }
 
         used_tools = true;
-        let quiet = text.as_deref().is_none_or(|text| text.trim().is_empty());
-        let main_agent = !is_subagent_run();
         // The line a subagent tool carries is said before the tool runs, when the reply had none.
-        let said = (quiet && main_agent)
-            .then(|| said_with_calls(&calls))
-            .flatten();
-        if let Some(line) = &said {
-            events
-                .send(RunEvent::AssistantText(line.clone()))
-                .await
-                .ok();
+        if text.as_deref().is_none_or(|text| text.trim().is_empty()) && !is_subagent_run() {
+            if let Some(line) = said_with_calls(&calls) {
+                events.send(RunEvent::AssistantText(line)).await.ok();
+            }
         }
-        // Around subagent work the main agent is never quiet: not when it calls them, and not
-        // on the step after, when it should be saying what it made of the reply.
-        let subagent_step = calls
-            .iter()
-            .any(|call| is_subagent_tool(&call.function.name));
-        if main_agent
-            && quiet
-            && said.is_none()
-            && (subagent_step || after_subagents)
-            && silent_notes < MAX_SILENT_NOTES
-        {
-            silent_notes += 1;
-            silent_step = true;
-        }
-        after_subagents = subagent_step;
         // A tool call starts new work: an earlier answer is no longer the turn's answer.
         answered.clear();
         let mut results = execute_tool_calls(
@@ -1153,6 +1164,11 @@ async fn run_task_with_evidence_inner(
         )
         .await?;
         for (call, result) in calls.iter().zip(&mut results) {
+            if call.function.name == "wait_subagents"
+                && result.function.arguments.contains("\"result\":")
+            {
+                reaction_due = true;
+            }
             // ponytail: exact observations only; semantic progress needs a separate audit.
             if matches!(
                 call.function.name.as_str(),
@@ -1940,7 +1956,7 @@ const FILE_CHANGES: [&str; 5] = [
 ];
 
 const CUT_OFF_NOTE: &str = crate::prompts::RUNTIME_CUT_OFF;
-const SILENT_STEP_NOTE: &str = crate::prompts::RUNTIME_SILENT_STEP;
+const SUBAGENT_REACTION_NOTE: &str = crate::prompts::RUNTIME_SUBAGENT_REACTION;
 /// The main agent's tools for working with subagents.
 fn is_subagent_tool(name: &str) -> bool {
     matches!(
@@ -1960,9 +1976,6 @@ fn said_with_calls(calls: &[ToolCall]) -> Option<String> {
             (!line.is_empty()).then(|| line.chars().take(400).collect())
         })
 }
-
-/// A model that ignores the note isn't told again and again.
-const MAX_SILENT_NOTES: usize = 8;
 
 const SILENT_CUT_OFF_NOTE: &str = crate::prompts::RUNTIME_SILENT_CUT_OFF;
 
@@ -2975,7 +2988,7 @@ fn calibration_sample(
 
 /// Notes the runtime adds as user messages during a run; none is a new request.
 const RUNTIME_NOTES: [&str; 6] = [
-    SILENT_STEP_NOTE,
+    SUBAGENT_REACTION_NOTE,
     SPEC_CHECK,
     CUT_OFF_NOTE,
     SILENT_CUT_OFF_NOTE,

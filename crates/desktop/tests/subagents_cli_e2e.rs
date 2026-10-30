@@ -564,6 +564,9 @@ async fn the_main_agent_can_send_a_finished_subagent_back() {
                 reply("First answer: 41.")
             };
         }
+        if tool_names(body).is_empty() {
+            return reply("Hmm, let me look at that.");
+        }
         if !mentions(body, "Ask it again") {
             return match tool_results(body) {
                 0 => tools(&[(
@@ -607,15 +610,16 @@ async fn the_main_agent_can_send_a_finished_subagent_back() {
     assert!(all
         .iter()
         .any(|body| !is_subagent(body) && mentions(body, "Corrected answer: 42.")));
-    // Its `wait` calls carry no line, so it is asked to speak up; subagents have their status
-    // line instead.
-    let silent = "You just went ahead with subagent work without a word";
+    // After each report the main agent had a step with no tools, to say what it made of it.
+    assert_eq!(
+        all.iter()
+            .filter(|body| !is_subagent(body) && tool_names(body).is_empty())
+            .count(),
+        2
+    );
     assert!(all
         .iter()
-        .any(|body| !is_subagent(body) && mentions(body, silent)));
-    assert!(!all
-        .iter()
-        .any(|body| is_subagent(body) && mentions(body, silent)));
+        .all(|body| !is_subagent(body) || !mentions(body, "A subagent just reported back")));
     let events = history_kinds(app.data.path(), &app.thread);
     let kinds: Vec<&str> = events
         .iter()
@@ -675,7 +679,7 @@ async fn the_main_agent_can_send_a_finished_subagent_back() {
     app.serving.abort();
 }
 
-/// An ordinary tool call says nothing about subagents, so the main agent isn't told to speak up.
+/// Ordinary tool calls never lose their tools for a step.
 #[tokio::test(flavor = "multi_thread")]
 async fn plain_tool_calls_are_not_nudged() {
     let app = app(None, |body| match tool_results(body) {
@@ -688,7 +692,7 @@ async fn plain_tool_calls_are_not_nudged() {
     assert!(!bodies(&app.llm)
         .await
         .iter()
-        .any(|body| mentions(body, "without a word")));
+        .any(|body| tool_names(body).is_empty()));
     app.serving.abort();
 }
 

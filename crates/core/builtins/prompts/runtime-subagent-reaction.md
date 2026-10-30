@@ -1,0 +1,1 @@
+[Runtime note, not from the user] A subagent just reported back. In a sentence or two of your own, thinking aloud, tell the person what came back, what you make of it and what you will do next. No tools in this reply; you carry on right after it.

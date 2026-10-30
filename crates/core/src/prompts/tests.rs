@@ -172,7 +172,7 @@ const ALL: &[(&str, &str, &[&str])] = &[
         &["earlier_id"],
     ),
     (RUNTIME_HANDOFF, "runtime-handoff", &[]),
-    (RUNTIME_SILENT_STEP, "runtime-silent-step", &[]),
+    (RUNTIME_SUBAGENT_REACTION, "runtime-subagent-reaction", &[]),
     (RUNTIME_STEERED, "runtime-steered", &[]),
     (HOOK_CONTEXT_NOTE, "hook-context-note", &[]),
     (HOOK_BLOCKED, "hook-blocked", &["hook"]),
