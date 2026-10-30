@@ -1112,7 +1112,8 @@ async fn run_task_with_evidence_inner(
                 && !summary_asked
                 // Only with a request to spare: the last one ends the run with what it has.
                 && turn < policy.total_turns
-                && progress_line(text.as_deref().unwrap_or_default())
+                && (progress_line(text.as_deref().unwrap_or_default())
+                    || announces_next_step(text.as_deref().unwrap_or_default()))
                 && !nudge_off("turn_summary")
             {
                 summary_asked = true;
@@ -1144,6 +1145,13 @@ async fn run_task_with_evidence_inner(
         }
 
         used_tools = true;
+        // Each round of subagent work may end on an announced step that has to be taken up.
+        if calls
+            .iter()
+            .any(|call| is_subagent_tool(&call.function.name))
+        {
+            summary_asked = false;
+        }
         // The line a subagent tool carries is said before the tool runs, when the reply had none.
         if text.as_deref().is_none_or(|text| text.trim().is_empty()) && !is_subagent_run() {
             if let Some(line) = said_with_calls(&calls) {
@@ -2037,6 +2045,43 @@ fn progress_line(text: &str) -> bool {
     !text.contains('\n')
         && text.chars().count() < PROGRESS_LINE_CHARS
         && STILL_GOING.iter().any(|word| lower.contains(word))
+}
+
+/// Whether a reply's last sentence announces an action it did not take ("Sending Writer back
+/// to fix it."), however long the reply. Agents said so and stopped after a subagent's report.
+fn announces_next_step(text: &str) -> bool {
+    let lower = text.trim().to_lowercase().replace('\u{2019}', "'");
+    let body = lower.trim_end_matches(['.', '!', '\u{2026}', ' ']);
+    if body.ends_with('?') {
+        return false;
+    }
+    // A sentence ends at a mark followed by a space, so `notes/b.txt` stays whole.
+    let last = body
+        .replace(". ", "\n")
+        .replace("! ", "\n")
+        .replace("? ", "\n");
+    let last = last
+        .lines()
+        .map(str::trim)
+        .rfind(|sentence| !sentence.is_empty())
+        .unwrap_or_default();
+    if last.starts_with("let me know") {
+        return false;
+    }
+    let first = last.split_whitespace().next().unwrap_or_default();
+    [
+        "i'll ",
+        "i will ",
+        "i'm going to ",
+        "let me ",
+        "now i ",
+        "next i ",
+    ]
+    .iter()
+    .any(|start| last.starts_with(start))
+        || (first.len() > 4
+            && first.ends_with("ing")
+            && !matches!(first, "everything" | "nothing" | "something" | "anything"))
 }
 
 const LOOP_WARNING: &str = crate::prompts::RUNTIME_LOOP_WARNING;
@@ -5518,6 +5563,28 @@ mod tests {
             }
         }
         assert_eq!(public, vec!["Recovered after a slow attempt"]);
+    }
+
+    #[test]
+    fn a_reply_ending_on_an_announced_step_is_not_finished() {
+        for reply in [
+            "Confirmed - notes/a.txt contains \"hello\".\n\nSending the Writer subagent back to create notes/b.txt.",
+            "All good so far. I'll send it back now.",
+            "Looks wrong. Let me check the file.",
+            "Checking the other folder\u{2026}",
+        ] {
+            assert!(announces_next_step(reply), "{reply}");
+        }
+        for reply in [
+            "Fixed add.py and the test passes.",
+            "Everything passes.",
+            "Nothing else is left.",
+            "It passes. Let me know if you want more.",
+            "Should I send it back?",
+            "Writer created both files, and I read them to confirm.",
+        ] {
+            assert!(!announces_next_step(reply), "{reply}");
+        }
     }
 
     #[test]
