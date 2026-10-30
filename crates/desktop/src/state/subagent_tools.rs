@@ -9,6 +9,11 @@ use themis_core::tools::{async_trait, ToolCallError, ToolRuntime, ToolT};
 
 use super::subagents::{Reporter, Subagent, SubagentKit, MAX_PER_CALL};
 
+/// The line the person sees before the call runs; the runtime shows it.
+fn say_field() -> Value {
+    json!({"type":"string","description":"One natural sentence for the person watching: what you are doing and why, in your own words, not repeating an earlier line."})
+}
+
 /// Longest wait one `wait_subagents` call may ask for.
 const MAX_WAIT_SECONDS: u64 = 600;
 /// The longest brief, in characters.
@@ -179,8 +184,8 @@ impl SubagentTool {
             .as_str()
             .ok_or_else(|| error("needs `id`: the subagent's id from spawn_subagents"))?;
         self.kit
-            .find(id)
-            .ok_or_else(|| error(format!("no subagent with id '{id}' in this run")))
+            .find_in_chat(id)
+            .ok_or_else(|| error(format!("no subagent with id '{id}' in this chat")))
     }
 
     fn spawn(&self, args: &Value) -> Result<Value, ToolCallError> {
@@ -238,8 +243,8 @@ impl SubagentTool {
                 .filter_map(Value::as_str)
                 .map(|id| {
                     self.kit
-                        .find(id)
-                        .ok_or_else(|| error(format!("no subagent with id '{id}' in this run")))
+                        .find_in_chat(id)
+                        .ok_or_else(|| error(format!("no subagent with id '{id}' in this chat")))
                 })
                 .collect::<Result<_, _>>()?,
             None => self
@@ -393,17 +398,19 @@ impl ToolT for SubagentTool {
                     item["properties"]["model"] = json!({"type":"string"});
                 }
                 json!({"type":"object","properties":{
+                    "say":say_field(),
                     "subagents":{"type":"array","minItems":1,"maxItems":MAX_PER_CALL,"items":item}
-                },"required":["subagents"],"additionalProperties":false})
+                },"required":["say","subagents"],"additionalProperties":false})
             }
             Kind::Wait => json!({"type":"object","properties":{
                 "ids":{"type":"array","items":{"type":"string"}},
                 "any":{"type":"boolean"},
-                "timeout_seconds":{"type":"integer","minimum":1,"maximum":MAX_WAIT_SECONDS}
-            },"additionalProperties":false}),
+                "timeout_seconds":{"type":"integer","minimum":1,"maximum":MAX_WAIT_SECONDS},
+                "say":say_field()
+            },"required":["say"],"additionalProperties":false}),
             Kind::Message => json!({"type":"object","properties":{
-                "id":{"type":"string"},"message":{"type":"string"}
-            },"required":["id","message"],"additionalProperties":false}),
+                "id":{"type":"string"},"message":{"type":"string"},"say":say_field()
+            },"required":["say","id","message"],"additionalProperties":false}),
             Kind::Stop => json!({"type":"object","properties":{
                 "id":{"type":"string"}
             },"required":["id"],"additionalProperties":false}),

@@ -383,7 +383,7 @@ function moveSubagentToRun(state: AppState, threadId: string, runId: string, age
 function mainAgentChanges(state: AppState, threadId: string, runId: string): ChangedFile[] | undefined {
   const files = state.runChanges[runId];
   if (!files) return undefined;
-  const owned = (state.messages[threadId] ?? []).flatMap(row => row.subagents ?? []).flatMap(agent => agent.writePaths ?? []);
+  const owned = (state.messages[threadId] ?? []).filter(row => row.runId === runId).flatMap(row => row.subagents ?? []).flatMap(agent => agent.writePaths);
   return files.filter(file => !owned.some(path => path.endsWith("/") ? file.path.startsWith(path) : file.path === path));
 }
 

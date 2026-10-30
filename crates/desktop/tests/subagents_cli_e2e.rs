@@ -564,18 +564,12 @@ async fn the_main_agent_can_send_a_finished_subagent_back() {
                 reply("First answer: 41.")
             };
         }
-        let last_user = messages(body)
-            .iter()
-            .rfind(|m| m["role"] == "user")
-            .map(text)
-            .unwrap_or_default()
-            .to_owned();
-        if last_user.contains("Do the sum") {
+        if !mentions(body, "Ask it again") {
             return match tool_results(body) {
                 0 => tools(&[(
                     "s1",
                     "spawn_subagents",
-                    json!({"subagents": [{"name": "Adder", "brief": "Add the numbers"}]}),
+                    json!({"say": "Starting Adder to do the sum.", "subagents": [{"name": "Adder", "brief": "Add the numbers"}]}),
                 )]),
                 1 => tools(&[("w1", "wait_subagents", json!({}))]),
                 2 => tools(&[("m1", "message_subagent", {
@@ -613,6 +607,15 @@ async fn the_main_agent_can_send_a_finished_subagent_back() {
     assert!(all
         .iter()
         .any(|body| !is_subagent(body) && mentions(body, "Corrected answer: 42.")));
+    // Its `wait` calls carry no line, so it is asked to speak up; subagents have their status
+    // line instead.
+    let silent = "You just went ahead with subagent work without a word";
+    assert!(all
+        .iter()
+        .any(|body| !is_subagent(body) && mentions(body, silent)));
+    assert!(!all
+        .iter()
+        .any(|body| is_subagent(body) && mentions(body, silent)));
     let events = history_kinds(app.data.path(), &app.thread);
     let kinds: Vec<&str> = events
         .iter()
@@ -633,6 +636,34 @@ async fn the_main_agent_can_send_a_finished_subagent_back() {
         .find(|event| event["kind"] == "subagent_message")
         .unwrap();
     assert_eq!(message["resumed"], json!(true));
+    // The line on a subagent tool shows in the chat before the tool starts.
+    let history = call(
+        app.data.path(),
+        "get_thread_history",
+        json!({"threadId": app.thread}),
+    );
+    let kinds: Vec<Value> = history
+        .as_array()
+        .or_else(|| history["items"].as_array())
+        .cloned()
+        .unwrap_or_default()
+        .into_iter()
+        .map(|item| item["envelope"]["event"].clone())
+        .collect();
+    let said = kinds
+        .iter()
+        .position(|event| {
+            event["kind"] == "assistant_text"
+                && event["text"]
+                    .as_str()
+                    .is_some_and(|t| t.contains("Starting Adder"))
+        })
+        .expect("the line was shown");
+    let started = kinds
+        .iter()
+        .position(|event| event["kind"] == "tool_started" && event["tool"] == "spawn_subagents")
+        .unwrap();
+    assert!(said < started);
 
     run(app.data.path(), &app.thread, "Ask it again");
     let all = bodies(&app.llm).await;
@@ -641,6 +672,23 @@ async fn the_main_agent_can_send_a_finished_subagent_back() {
         .find(|body| is_subagent(body) && mentions(body, "One more: double it"))
         .expect("a later turn reached it too");
     assert!(mentions(third, "Corrected answer: 42."));
+    app.serving.abort();
+}
+
+/// An ordinary tool call says nothing about subagents, so the main agent isn't told to speak up.
+#[tokio::test(flavor = "multi_thread")]
+async fn plain_tool_calls_are_not_nudged() {
+    let app = app(None, |body| match tool_results(body) {
+        0 => tools(&[("r1", "read_file", json!({"file_path": "notes.txt"}))]),
+        1 => tools(&[("r2", "list_dir", json!({"path": "."}))]),
+        _ => reply("Done."),
+    })
+    .await;
+    run(app.data.path(), &app.thread, "Look around");
+    assert!(!bodies(&app.llm)
+        .await
+        .iter()
+        .any(|body| mentions(body, "without a word")));
     app.serving.abort();
 }
 

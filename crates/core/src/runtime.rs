@@ -675,6 +675,9 @@ async fn run_task_with_evidence_inner(
     let mut overflow_retried = false;
     let mut force_compaction = false;
     let mut turn = 0;
+    let mut silent_step = false;
+    let mut silent_notes = 0;
+    let mut after_subagents = false;
     while turn < policy.total_turns {
         turn += 1;
         check_stopped(&stopped, &events).await?;
@@ -691,10 +694,20 @@ async fn run_task_with_evidence_inner(
         }
         // Results of subagents (and other notes) join at the same boundary.
         for note in run_notes().map(|notes| notes.take()).unwrap_or_default() {
+            after_subagents = true;
             messages.push(ChatMessage {
                 role: ChatRole::User,
                 message_type: MessageType::Text,
                 content: subagent_note(&note),
+            });
+        }
+        // The main agent went quiet on its last step: ask it to speak up on this one.
+        if silent_step {
+            silent_step = false;
+            messages.push(ChatMessage {
+                role: ChatRole::User,
+                message_type: MessageType::Text,
+                content: SILENT_STEP_NOTE.to_owned(),
             });
         }
         // Compaction and maintenance compare raw estimates, so hand them the equivalent raw budget.
@@ -1099,6 +1112,33 @@ async fn run_task_with_evidence_inner(
         }
 
         used_tools = true;
+        let quiet = text.as_deref().is_none_or(|text| text.trim().is_empty());
+        let main_agent = !is_subagent_run();
+        // The line a subagent tool carries is said before the tool runs, when the reply had none.
+        let said = (quiet && main_agent)
+            .then(|| said_with_calls(&calls))
+            .flatten();
+        if let Some(line) = &said {
+            events
+                .send(RunEvent::AssistantText(line.clone()))
+                .await
+                .ok();
+        }
+        // Around subagent work the main agent is never quiet: not when it calls them, and not
+        // on the step after, when it should be saying what it made of the reply.
+        let subagent_step = calls
+            .iter()
+            .any(|call| is_subagent_tool(&call.function.name));
+        if main_agent
+            && quiet
+            && said.is_none()
+            && (subagent_step || after_subagents)
+            && silent_notes < MAX_SILENT_NOTES
+        {
+            silent_notes += 1;
+            silent_step = true;
+        }
+        after_subagents = subagent_step;
         // A tool call starts new work: an earlier answer is no longer the turn's answer.
         answered.clear();
         let mut results = execute_tool_calls(
@@ -1900,6 +1940,29 @@ const FILE_CHANGES: [&str; 5] = [
 ];
 
 const CUT_OFF_NOTE: &str = crate::prompts::RUNTIME_CUT_OFF;
+const SILENT_STEP_NOTE: &str = crate::prompts::RUNTIME_SILENT_STEP;
+/// The main agent's tools for working with subagents.
+fn is_subagent_tool(name: &str) -> bool {
+    matches!(
+        name,
+        "spawn_subagents" | "wait_subagents" | "message_subagent"
+    )
+}
+
+/// The `say` line of a reply's subagent calls, for a reply with no text of its own.
+fn said_with_calls(calls: &[ToolCall]) -> Option<String> {
+    calls
+        .iter()
+        .filter(|call| is_subagent_tool(&call.function.name))
+        .find_map(|call| {
+            let args: serde_json::Value = serde_json::from_str(&call.function.arguments).ok()?;
+            let line = args["say"].as_str()?.trim();
+            (!line.is_empty()).then(|| line.chars().take(400).collect())
+        })
+}
+
+/// A model that ignores the note isn't told again and again.
+const MAX_SILENT_NOTES: usize = 8;
 
 const SILENT_CUT_OFF_NOTE: &str = crate::prompts::RUNTIME_SILENT_CUT_OFF;
 
@@ -2280,6 +2343,11 @@ async fn wait_for_note(notes: &RunNotes, stopped: &AtomicBool) {
         }
         let _ = tokio::time::timeout(std::time::Duration::from_millis(200), arrived).await;
     }
+}
+
+/// Whether this run is a subagent's: only they replace the system instructions.
+fn is_subagent_run() -> bool {
+    SYSTEM_HEAD.try_with(|_| ()).is_ok()
 }
 
 /// Runs `future` with `head` in place of the ordinary system instructions (subagent runs).
@@ -2906,7 +2974,8 @@ fn calibration_sample(
 }
 
 /// Notes the runtime adds as user messages during a run; none is a new request.
-const RUNTIME_NOTES: [&str; 5] = [
+const RUNTIME_NOTES: [&str; 6] = [
+    SILENT_STEP_NOTE,
     SPEC_CHECK,
     CUT_OFF_NOTE,
     SILENT_CUT_OFF_NOTE,

@@ -1,0 +1,1 @@
+[Runtime note, not from the user] You just went ahead with subagent work without a word, so the person watching could not tell what was happening. Start your next reply, in the same message as any tool calls, with a sentence in your own words: what came back and what you make of it, or what you are doing next and why. Don't repeat an earlier line, and don't mention this note.

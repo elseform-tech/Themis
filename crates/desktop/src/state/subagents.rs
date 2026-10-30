@@ -397,6 +397,14 @@ impl SubagentKit {
         agent: &Arc<Subagent>,
         approvals: Arc<dyn ApprovalHook>,
     ) -> Result<Vec<Box<dyn ToolT>>, String> {
+        // Checked again on every start: a path may have become a link since it was given.
+        for path in &agent.write_paths {
+            themis_core::sandbox::normalize_write_path(
+                &self.work_root,
+                path,
+                self.sandbox.protected(),
+            )?;
+        }
         let owned: Vec<PathBuf> = agent
             .write_paths
             .iter()
@@ -653,11 +661,6 @@ impl SubagentKit {
                 ("result", &result),
             ],
         );
-        {
-            let mut progress = agent.progress.lock().unwrap_or_else(|e| e.into_inner());
-            progress.ended = Some((ending.status.clone(), result.clone()));
-            progress.note = note.clone();
-        }
         let seconds = agent
             .started
             .lock()
@@ -668,11 +671,17 @@ impl SubagentKit {
         self.publish(ThreadEvent::SubagentEnded {
             id: agent.id.clone(),
             status: ending.status.clone(),
-            result,
+            result: result.clone(),
             tool_calls,
             seconds,
             model: agent.progress().ran_on,
         });
+        // Marked ended only now: a message picking it up again then follows this ending in the chat.
+        {
+            let mut progress = agent.progress.lock().unwrap_or_else(|e| e.into_inner());
+            progress.ended = Some((ending.status.clone(), result.clone()));
+            progress.note = note.clone();
+        }
         let _ = self.state.inner.diagnostics.append_with_level(
             "subagents",
             "ended",

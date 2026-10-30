@@ -1,1 +1,1 @@
-Wait until the listed subagents (or any one, with "any": true) have ended, at most timeout_seconds (up to 600), and return their results. Results that already arrived as notes are not repeated. Tell the person first, in your reply text, who you are waiting for and what you expect back.
+Wait until the listed subagents (or any one, with "any": true) have ended, at most timeout_seconds (up to 600), and return their results. Results that already arrived as notes are not repeated. Put who you are waiting for and what you expect back in `say`.
