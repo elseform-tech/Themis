@@ -5,6 +5,7 @@
 //! hides the tools.
 
 use std::path::Path;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use serde_json::{json, Value};
@@ -546,6 +547,100 @@ async fn write_paths_hold_a_subagent_to_its_own_folder() {
         .find(|event| event["kind"] == "subagent_started" && event["name"] == "Writer")
         .expect("the writer started");
     assert_eq!(started["write_paths"], json!(["notes/"]));
+    app.serving.abort();
+}
+
+/// The main agent sends a finished subagent back to correct itself: same subagent, its earlier
+/// exchange as history, and a second report. A later turn can do the same.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_main_agent_can_send_a_finished_subagent_back() {
+    let id = Arc::new(Mutex::new(String::new()));
+    let known = Arc::clone(&id);
+    let app = app(None, move |body| {
+        if is_subagent(body) {
+            return if mentions(body, "That is wrong") {
+                reply("Corrected answer: 42.")
+            } else {
+                reply("First answer: 41.")
+            };
+        }
+        let last_user = messages(body)
+            .iter()
+            .rfind(|m| m["role"] == "user")
+            .map(text)
+            .unwrap_or_default()
+            .to_owned();
+        if last_user.contains("Do the sum") {
+            return match tool_results(body) {
+                0 => tools(&[(
+                    "s1",
+                    "spawn_subagents",
+                    json!({"subagents": [{"name": "Adder", "brief": "Add the numbers"}]}),
+                )]),
+                1 => tools(&[("w1", "wait_subagents", json!({}))]),
+                2 => tools(&[("m1", "message_subagent", {
+                    let found = spawned_id(body).unwrap();
+                    *known.lock().unwrap() = found.clone();
+                    json!({"id": found, "message": "That is wrong, check the sum"})
+                })]),
+                3 => tools(&[("w2", "wait_subagents", json!({}))]),
+                _ => reply("Now it says 42."),
+            };
+        }
+        // A later turn: its tool results start again, and the id comes from the first turn.
+        match tool_results(body) {
+            0 => tools(&[(
+                "m2",
+                "message_subagent",
+                json!({"id": known.lock().unwrap().clone(), "message": "One more: double it"}),
+            )]),
+            1 => tools(&[("w3", "wait_subagents", json!({}))]),
+            _ => reply("It doubled it."),
+        }
+    })
+    .await;
+    run(app.data.path(), &app.thread, "Do the sum");
+    let all = bodies(&app.llm).await;
+    let second = all
+        .iter()
+        .find(|body| is_subagent(body) && mentions(body, "That is wrong"))
+        .expect("it was sent back");
+    assert!(
+        mentions(second, "Add the numbers"),
+        "its brief is still in its history"
+    );
+    assert!(mentions(second, "First answer: 41."), "so is its answer");
+    assert!(all
+        .iter()
+        .any(|body| !is_subagent(body) && mentions(body, "Corrected answer: 42.")));
+    let events = history_kinds(app.data.path(), &app.thread);
+    let kinds: Vec<&str> = events
+        .iter()
+        .filter_map(|event| event["kind"].as_str())
+        .filter(|kind| *kind != "subagent_status")
+        .collect();
+    assert_eq!(
+        kinds,
+        [
+            "subagent_started",
+            "subagent_ended",
+            "subagent_message",
+            "subagent_ended"
+        ]
+    );
+    let message = events
+        .iter()
+        .find(|event| event["kind"] == "subagent_message")
+        .unwrap();
+    assert_eq!(message["resumed"], json!(true));
+
+    run(app.data.path(), &app.thread, "Ask it again");
+    let all = bodies(&app.llm).await;
+    let third = all
+        .iter()
+        .find(|body| is_subagent(body) && mentions(body, "One more: double it"))
+        .expect("a later turn reached it too");
+    assert!(mentions(third, "Corrected answer: 42."));
     app.serving.abort();
 }
 

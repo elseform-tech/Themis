@@ -282,6 +282,14 @@ pub enum ThreadEvent {
         #[serde(default, skip_serializing_if = "String::is_empty")]
         at: String,
     },
+    /// The main agent wrote to a subagent after starting it; `resumed` when that picked an
+    /// ended one up again.
+    SubagentMessage {
+        id: String,
+        text: String,
+        #[serde(default)]
+        resumed: bool,
+    },
     /// What a running subagent is doing now. Live only.
     SubagentStatus {
         id: String,

@@ -4,31 +4,41 @@ import { ResponseBody } from "../components/ResponseBody";
 import { getSubagentTranscript, stopSubagent } from "../lib/tauri";
 import type { SubagentEntry, ThreadEvent } from "../lib/types";
 import { describeError, useApp } from "../state/store";
-import { clock, elapsed, subagentLine, subagentState } from "./SubagentCard";
+import { clock, elapsed, SubagentMessage, subagentLine, subagentState } from "./SubagentCard";
 import { TaskIcon } from "./TaskIcon";
 import "./SubagentCard.css";
 
-/** A subagent's steps: its own words, and its tool calls folded between them. */
-export type Step = { kind: "text"; text: string } | { kind: "tools"; calls: string[] };
+/** A subagent's steps: its own words, its tool calls folded between them, and the main agent's later messages. */
+export type Step = { kind: "text"; text: string } | { kind: "tools"; calls: string[] } | { kind: "message"; text: string };
+
+function saidSinceMessage(steps: Step[]): boolean {
+  for (let at = steps.length - 1; at >= 0; at -= 1) {
+    if (steps[at]!.kind === "message") return false;
+    if (steps[at]!.kind === "text") return true;
+  }
+  return false;
+}
 
 export function stepsOf(events: ThreadEvent[]): Step[] {
   const steps: Step[] = [];
   for (const event of events) {
     const last = steps[steps.length - 1];
-    if (event.kind === "assistant_text" && event.text.trim()) {
+    if (event.kind === "subagent_message") {
+      steps.push({ kind: "message", text: event.text });
+    } else if (event.kind === "assistant_text" && event.text.trim()) {
       if (last?.kind === "text") last.text += event.text;
       else steps.push({ kind: "text", text: event.text });
     } else if (event.kind === "tool_started") {
       if (last?.kind === "tools") last.calls.push(event.summary);
       else steps.push({ kind: "tools", calls: [event.summary] });
-    } else if (event.kind === "finished" && !steps.some(step => step.kind === "text") && event.result.trim()) {
+    } else if (event.kind === "finished" && !saidSinceMessage(steps) && event.result.trim()) {
       steps.push({ kind: "text", text: event.result });
     }
   }
   return steps;
 }
 
-/** Workspace › Tasks detail of one subagent (board 26): read-only, with Stop while it runs. */
+/** Workspace › Tasks detail of one subagent (board 26): its conversation with the main agent as a chat, with Stop while it runs. */
 export function SubagentDetail({ threadId, agent, runLive, onBack }: { threadId: string; agent: SubagentEntry; runLive: boolean; onBack: () => void }) {
   const { state } = useApp();
   const [events, setEvents] = useState<ThreadEvent[]>([]);
@@ -80,11 +90,10 @@ export function SubagentDetail({ threadId, agent, runLive, onBack }: { threadId:
       </header>
       {error && <p className="themis-workspace-note" role="alert">{error}</p>}
       <div className="themis-subagent-steps">
-        <details className="themis-subagent-brief-box" open>
-          <summary>Brief</summary>
-          <p>{agent.brief}</p>
-        </details>
-        {steps.map((step, index) => step.kind === "text"
+        <SubagentMessage bubble={{ agentId: agent.id, name: agent.name, from: "main", text: agent.brief }} labelled={false} />
+        {steps.map((step, index) => step.kind === "message"
+          ? <SubagentMessage key={index} bubble={{ agentId: agent.id, name: agent.name, from: "main", text: step.text }} labelled={false} />
+          : step.kind === "text"
           ? <div key={index} className="themis-subagent-step-text"><ResponseBody text={step.text} /></div>
           : (
             <details key={index} className="themis-subagent-calls">

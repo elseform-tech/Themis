@@ -47,8 +47,9 @@ pub const SPAWN_SUBAGENTS_MODELS: &str =
     include_str!("../builtins/prompts/spawn-subagents-models.md");
 /// Description of the `wait_subagents` tool.
 pub const WAIT_SUBAGENTS_TOOL: &str = include_str!("../builtins/prompts/wait-subagents-tool.md");
-/// Description of the `steer_subagent` tool.
-pub const STEER_SUBAGENT_TOOL: &str = include_str!("../builtins/prompts/steer-subagent-tool.md");
+/// Description of the `message_subagent` tool.
+pub const MESSAGE_SUBAGENT_TOOL: &str =
+    include_str!("../builtins/prompts/message-subagent-tool.md");
 /// Description of the `stop_subagent` tool.
 pub const STOP_SUBAGENT_TOOL: &str = include_str!("../builtins/prompts/stop-subagent-tool.md");
 /// A subagent's result, delivered to the main agent; `{{name}}`, `{{id}}`, `{{status}}`, `{{result}}`.

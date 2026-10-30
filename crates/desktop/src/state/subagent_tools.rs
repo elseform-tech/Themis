@@ -1,4 +1,4 @@
-//! The agent's subagent tools (`spawn_subagents`, `wait_subagents`, `steer_subagent`,
+//! The agent's subagent tools (`spawn_subagents`, `wait_subagents`, `message_subagent`,
 //! `stop_subagent`), and the `status` field every subagent tool call accepts.
 
 use std::sync::Arc;
@@ -21,7 +21,7 @@ fn error(message: impl ToString) -> ToolCallError {
 /// The subagent tools of one run, sharing its kit.
 pub(super) fn tools(kit: &Arc<SubagentKit>) -> Vec<Box<dyn ToolT>> {
     let others = kit.other_models();
-    [Kind::Spawn, Kind::Wait, Kind::Steer, Kind::Stop]
+    [Kind::Spawn, Kind::Wait, Kind::Message, Kind::Stop]
         .into_iter()
         .map(|kind| {
             let description = match kind {
@@ -38,7 +38,7 @@ pub(super) fn tools(kit: &Arc<SubagentKit>) -> Vec<Box<dyn ToolT>> {
                 ),
                 Kind::Spawn => themis_core::prompts::SPAWN_SUBAGENTS_TOOL.to_owned(),
                 Kind::Wait => themis_core::prompts::WAIT_SUBAGENTS_TOOL.to_owned(),
-                Kind::Steer => themis_core::prompts::STEER_SUBAGENT_TOOL.to_owned(),
+                Kind::Message => themis_core::prompts::MESSAGE_SUBAGENT_TOOL.to_owned(),
                 Kind::Stop => themis_core::prompts::STOP_SUBAGENT_TOOL.to_owned(),
             };
             Box::new(SubagentTool {
@@ -93,7 +93,7 @@ pub(super) fn pick_model(
 enum Kind {
     Spawn,
     Wait,
-    Steer,
+    Message,
     Stop,
 }
 
@@ -296,21 +296,33 @@ impl SubagentTool {
         Ok(output)
     }
 
-    fn steer(&self, args: &Value) -> Result<Value, ToolCallError> {
-        let agent = self.agent(args)?;
-        let message = args["message"]
+    fn message(&self, args: &Value) -> Result<Value, ToolCallError> {
+        let id = args["id"]
+            .as_str()
+            .ok_or_else(|| error("needs `id`: the subagent's id from spawn_subagents"))?;
+        let agent = self
+            .kit
+            .find_in_chat(id)
+            .ok_or_else(|| error(format!("no subagent with id '{id}' in this chat")))?;
+        let message: String = args["message"]
             .as_str()
             .map(str::trim)
             .filter(|message| !message.is_empty())
-            .ok_or_else(|| error("steer_subagent needs `message`"))?;
+            .ok_or_else(|| error("message_subagent needs `message`"))?
+            .chars()
+            .take(MAX_BRIEF)
+            .collect();
         if agent.ended() {
-            return Err(error(format!("subagent '{}' has already ended", agent.id)));
+            self.kit.resume(&agent, message).map_err(error)?;
+            return Ok(json!({"sent": true, "resumed": true,
+                "note": "It is working again and will report back as before."}));
         }
         agent
             .inbox
             .lock()
             .unwrap_or_else(|e| e.into_inner())
-            .push_back(message.chars().take(MAX_BRIEF).collect());
+            .push_back(message.clone());
+        self.kit.show_message(&agent, &message, false);
         Ok(json!({"sent": true}))
     }
 
@@ -351,7 +363,7 @@ impl ToolRuntime for SubagentTool {
         match self.kind {
             Kind::Spawn => self.spawn(&args),
             Kind::Wait => self.wait(&args).await,
-            Kind::Steer => self.steer(&args),
+            Kind::Message => self.message(&args),
             Kind::Stop => self.stop(&args),
         }
     }
@@ -362,7 +374,7 @@ impl ToolT for SubagentTool {
         match self.kind {
             Kind::Spawn => "spawn_subagents",
             Kind::Wait => "wait_subagents",
-            Kind::Steer => "steer_subagent",
+            Kind::Message => "message_subagent",
             Kind::Stop => "stop_subagent",
         }
     }
@@ -389,7 +401,7 @@ impl ToolT for SubagentTool {
                 "any":{"type":"boolean"},
                 "timeout_seconds":{"type":"integer","minimum":1,"maximum":MAX_WAIT_SECONDS}
             },"additionalProperties":false}),
-            Kind::Steer => json!({"type":"object","properties":{
+            Kind::Message => json!({"type":"object","properties":{
                 "id":{"type":"string"},"message":{"type":"string"}
             },"required":["id","message"],"additionalProperties":false}),
             Kind::Stop => json!({"type":"object","properties":{

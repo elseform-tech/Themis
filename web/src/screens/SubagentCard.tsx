@@ -1,4 +1,6 @@
-import type { ApprovalRequest, SubagentEntry } from "../lib/types";
+import { useState } from "react";
+import { ResponseBody } from "../components/ResponseBody";
+import type { ApprovalRequest, SubagentBubble, SubagentEntry } from "../lib/types";
 import { useApp } from "../state/store";
 import "./SubagentCard.css";
 
@@ -96,6 +98,30 @@ export function SubagentCard({ agents, runLive }: { agents: SubagentEntry[]; run
         })}
       </span>
       <button type="button" className="themis-subagents-count" onClick={() => open()}>{label}</button>
+    </div>
+  );
+}
+
+const ENDED_AS: Record<string, string> = { stopped: "Stopped", failed: "Failed", incomplete: "Reached its step limit" };
+/** Longer bubbles start folded, so a long brief or report doesn't push the chat away. */
+const FOLD_AT = 400;
+
+/** One message between the main agent and a subagent, in the chat like any other. */
+export function SubagentMessage({ bubble, labelled = true }: { bubble: SubagentBubble; labelled?: boolean }) {
+  const { dispatch } = useApp();
+  const [open, setOpen] = useState(false);
+  const long = bubble.text.length > FOLD_AT;
+  const mine = bubble.from === "main";
+  const label = mine ? `To ${bubble.name}` : bubble.name;
+  return (
+    <div className={`themis-subagent-bubble ${mine ? "is-main" : "is-subagent"}`}>
+      {labelled && (
+        <button type="button" className="themis-subagent-bubble-name" onClick={() => dispatch({ type: "ui/diff-panel", open: true, tab: "tasks", subagent: bubble.agentId })}>
+          {label}{bubble.ending ? ` · ${ENDED_AS[bubble.ending] ?? bubble.ending}` : ""}
+        </button>
+      )}
+      <div className={`themis-subagent-bubble-text${long && !open ? " is-folded" : ""}`}><ResponseBody text={bubble.text} /></div>
+      {long && <button type="button" className="themis-subagent-bubble-more" onClick={() => setOpen(!open)}>{open ? "Show less" : "Show more"}</button>}
     </div>
   );
 }

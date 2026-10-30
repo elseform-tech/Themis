@@ -366,6 +366,27 @@ function userMessage(text: string, runId: string | undefined, attachments?: stri
   };
 }
 
+/** A subagent picked up again joins the running reply's stack; its old stack loses it. */
+function moveSubagentToRun(state: AppState, threadId: string, runId: string, agent: SubagentEntry): AppState {
+  const rows = state.messages[threadId] ?? [];
+  const home = rows.find(row => row.subagents?.some(known => known.id === agent.id));
+  if (home?.runId === runId) return updateSubagent(state, threadId, agent.id, () => agent);
+  const without = rows
+    .map(row => row.subagents?.some(known => known.id === agent.id) ? { ...row, subagents: row.subagents.filter(known => known.id !== agent.id) } : row)
+    .filter(row => !row.subagents || row.subagents.length > 0);
+  const stack = without.findIndex(row => row.subagents && row.runId === runId);
+  if (stack >= 0) return { ...state, messages: { ...state.messages, [threadId]: without.map((row, at) => at === stack ? { ...row, subagents: [...row.subagents!, agent] } : row) } };
+  return appendMessage({ ...state, messages: { ...state.messages, [threadId]: without } }, threadId, { id: `subagents-${agent.id}-${runId}`, role: "system", text: "", runId, subagents: [agent] });
+}
+
+/** A run's changed files without those its subagents own: their work shows in their bubbles. */
+function mainAgentChanges(state: AppState, threadId: string, runId: string): ChangedFile[] | undefined {
+  const files = state.runChanges[runId];
+  if (!files) return undefined;
+  const owned = (state.messages[threadId] ?? []).flatMap(row => row.subagents ?? []).flatMap(agent => agent.writePaths ?? []);
+  return files.filter(file => !owned.some(path => path.endsWith("/") ? file.path.startsWith(path) : file.path === path));
+}
+
 function updateSubagent(state: AppState, threadId: string, id: string, change: (agent: SubagentEntry) => SubagentEntry): AppState {
   const rows = state.messages[threadId] ?? [];
   const updated = rows.map(row => row.subagents?.some(agent => agent.id === id)
@@ -525,16 +546,25 @@ export function applyThreadEvent(
       const rows = state.messages[threadId] ?? [];
       // One stack per reply: every subagent the run starts joins the first one.
       const index = rows.findIndex(row => row.subagents && row.runId === runId);
-      if (index >= 0) {
-        const updated = rows.map((row, at) => at === index ? { ...row, subagents: [...row.subagents!, entry] } : row);
-        return { ...state, messages: { ...state.messages, [threadId]: updated } };
-      }
-      return appendMessage(state, threadId, { id: `subagents-${event.id}`, role: "system", text: "", runId, subagents: [entry] });
+      const withCard = index >= 0
+        ? { ...state, messages: { ...state.messages, [threadId]: rows.map((row, at) => at === index ? { ...row, subagents: [...row.subagents!, entry] } : row) } }
+        : appendMessage(state, threadId, { id: `subagents-${event.id}`, role: "system", text: "", runId, subagents: [entry] });
+      return appendMessage(withCard, threadId, { id: `subagent-brief-${event.id}`, role: "system", text: "", runId, subagentBubble: { agentId: event.id, name: event.name, from: "main", text: event.brief } });
+    }
+    case "subagent_message": {
+      const rows = state.messages[threadId] ?? [];
+      const agent = rows.flatMap(row => row.subagents ?? []).find(known => known.id === event.id);
+      if (!agent) return state;
+      const next = event.resumed ? moveSubagentToRun(state, threadId, runId, { ...agent, status: "running", text: "", result: undefined, seconds: undefined, startedAt: Date.now() }) : state;
+      return appendMessage(next, threadId, { id: newId("subagent-message"), role: "system", text: "", runId, subagentBubble: { agentId: event.id, name: agent.name, from: "main", text: event.text } });
     }
     case "subagent_status":
       return updateSubagent(state, threadId, event.id, agent => ({ ...agent, text: event.text || agent.text, toolCalls: event.tool_calls, ranOn: event.model ?? agent.ranOn }));
-    case "subagent_ended":
-      return updateSubagent(state, threadId, event.id, agent => ({ ...agent, status: event.status, result: event.result, toolCalls: event.tool_calls, seconds: event.seconds, ranOn: event.model ?? agent.ranOn }));
+    case "subagent_ended": {
+      const name = (state.messages[threadId] ?? []).flatMap(row => row.subagents ?? []).find(agent => agent.id === event.id)?.name ?? "Subagent";
+      const ended = updateSubagent(state, threadId, event.id, agent => ({ ...agent, status: event.status, result: event.result, toolCalls: event.tool_calls, seconds: event.seconds, ranOn: event.model ?? agent.ranOn }));
+      return appendMessage(ended, threadId, { id: newId("subagent-reply"), role: "system", text: "", runId, subagentBubble: { agentId: event.id, name, from: "subagent", text: event.result, ...(event.status === "finished" ? {} : { ending: event.status }) } });
+    }
     case "context_budget": {
       const rows = state.messages[threadId] ?? [];
       const last = rows[rows.length - 1];
@@ -580,7 +610,7 @@ export function applyThreadEvent(
         runId,
         final: true,
         incomplete: event.kind === "incomplete",
-        ...(state.runChanges[runId] ? { changedFiles: state.runChanges[runId] } : {}),
+        ...(state.runChanges[runId] ? { changedFiles: mainAgentChanges(state, threadId, runId) } : {}),
         ...(state.runMedia[runId] ? { media: state.runMedia[runId] } : {}),
       });
       const startedAt = next.runStartedAt[threadId];
@@ -613,7 +643,7 @@ export function applyThreadEvent(
         role: "system",
         text: stopped ? event.error : `Run failed: ${event.error}`,
         runId,
-        ...(state.runChanges[runId] ? { changedFiles: state.runChanges[runId] } : {}),
+        ...(state.runChanges[runId] ? { changedFiles: mainAgentChanges(state, threadId, runId) } : {}),
         ...(state.runMedia[runId] ? { media: state.runMedia[runId] } : {}),
       });
       const startedAt = next.runStartedAt[threadId];

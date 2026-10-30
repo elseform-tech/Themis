@@ -336,12 +336,25 @@ export type ThreadEvent =
   | { kind: 'question_answered'; id: string; answer: string }
   /** The agent started a read-only subagent for one part of its task. */
   | { kind: 'subagent_started'; id: string; name: string; brief: string; model: string; confined: boolean; write_paths?: string[]; /** RFC 3339. */ at?: string }
+  /** The main agent wrote to a subagent; `resumed` when that picked an ended one up again. */
+  | { kind: 'subagent_message'; id: string; text: string; resumed?: boolean }
   /** What a running subagent is doing now (live only). */
   /** `model`: the one it fell back to when its own could not run. */
   | { kind: 'subagent_status'; id: string; text: string; tool_calls: number; model?: string }
   | { kind: 'subagent_ended'; id: string; status: SubagentEnding; result: string; tool_calls: number; seconds: number; model?: string };
 
 export type SubagentEnding = 'finished' | 'stopped' | 'failed' | 'incomplete';
+
+/** One message between the main agent and a subagent, as a chat bubble. */
+export interface SubagentBubble {
+  agentId: string;
+  name: string;
+  /** `main`: the main agent wrote it. `subagent`: the subagent's reply. */
+  from: 'main' | 'subagent';
+  text: string;
+  /** How it ended, on a reply that isn't a plain finish. */
+  ending?: SubagentEnding;
+}
 
 /** One subagent on its chat card. */
 export interface SubagentEntry {
@@ -547,6 +560,8 @@ export interface PersistedMessage {
   question?: Question;
   /** Subagents started together in this run, shown as one card. */
   subagents?: SubagentEntry[];
+  /** A message between the main agent and a subagent. */
+  subagentBubble?: SubagentBubble;
 }
 
 export type HistoryItem =
