@@ -959,6 +959,115 @@ async fn a_message_run_that_finishes_the_goal_is_checked_and_nothing_repeats_it(
     assert_eq!(state.goal_for(&thread).unwrap().turns, 1);
 }
 
+fn calls(name: &str, arguments: Value) -> ResponseTemplate {
+    ResponseTemplate::new(200).set_body_json(json!({"choices":[{"message":{"role":"assistant","content":null,"tool_calls":[{"id":"call_1","type":"function","function":{"name":name,"arguments":arguments.to_string()}}]},"finish_reason":"tool_calls"}]}))
+}
+
+/// Found in a live run: asked to stop the goal, the agent had no way to and said
+/// it had, and the next turn started anyway.
+#[tokio::test(flavor = "multi_thread")]
+async fn asked_to_stop_the_agent_pauses_the_goal_and_no_check_or_turn_follows() {
+    let server = MockServer::start().await;
+    let gate = Gate::default();
+    let held = gate.clone();
+    let checks = Arc::new(AtomicUsize::new(0));
+    let seen_checks = Arc::clone(&checks);
+    Mock::given(method("POST"))
+        .respond_with(move |request: &Request| {
+            let body = body(request);
+            if is_check(&body) {
+                seen_checks.fetch_add(1, Ordering::SeqCst);
+                return reply(r#"{"verdict":"not_yet","reason":"Keep going."}"#);
+            }
+            let sent = body["messages"].to_string();
+            if sent.contains("pause") && sent.contains("\"status\"") {
+                reply("The goal is paused.")
+            } else if sent.contains("Please stop the goal") {
+                calls("set_goal", json!({"pause": true}))
+            } else {
+                held.wait();
+                calls("list_dir", json!({"directory_path": "."}))
+            }
+        })
+        .mount(&server)
+        .await;
+    let (state, _data, _project, thread) = chat(&server).await;
+    let (sink, _rx) = ChannelSink::channel();
+    let sink = Arc::new(sink);
+    state
+        .send_message(
+            sink.clone(),
+            thread.clone(),
+            "/goal finish the thing".into(),
+        )
+        .await
+        .unwrap();
+    let stop = state
+        .enqueue_message(
+            sink.clone(),
+            thread.clone(),
+            "Please stop the goal".into(),
+            None,
+            vec![],
+        )
+        .await
+        .unwrap();
+    state
+        .steer_queued_message(sink.clone(), thread.clone(), stop.id)
+        .await
+        .unwrap();
+    gate.open();
+    goal_until(&state, &thread, |status| status == GoalStatus::Paused).await;
+    settle(&state, &thread).await;
+    let goal = state.goal_for(&thread).unwrap();
+    assert_eq!(goal.status, GoalStatus::Paused);
+    assert_eq!(goal.turns, 1);
+    assert_eq!(checks.load(Ordering::SeqCst), 0);
+}
+
+/// A goal keeps going until it is reached: the agent can't talk itself out of a
+/// hard one by pausing it.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_agent_cannot_pause_a_goal_nobody_asked_to_stop() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .respond_with(|request: &Request| {
+            let body = body(request);
+            if is_check(&body) {
+                return reply(r#"{"verdict":"reached","reason":"Done.","told_user":true}"#);
+            }
+            let used_tool = body["messages"]
+                .as_array()
+                .is_some_and(|messages| messages.iter().any(|m| m["role"] == "tool"));
+            if used_tool {
+                reply("Carrying on, and it's done.")
+            } else {
+                calls("set_goal", json!({"pause": true}))
+            }
+        })
+        .mount(&server)
+        .await;
+    let (state, _data, _project, thread) = chat(&server).await;
+    let (sink, mut rx) = ChannelSink::channel();
+    state
+        .send_message(
+            Arc::new(sink),
+            thread.clone(),
+            "/goal finish the thing".into(),
+        )
+        .await
+        .unwrap();
+    goal_until(&state, &thread, |status| status == GoalStatus::Reached).await;
+    let mut seen = Vec::new();
+    until(
+        &mut rx,
+        &mut seen,
+        |event| matches!(event, ThreadEvent::ToolFinished { ok: false, output, .. } if output.contains("pausing is refused")),
+    )
+    .await;
+    settle(&state, &thread).await;
+}
+
 /// Found in a live run: the agent reworded the goal with `set_goal` and its
 /// elapsed time and turn count started again from zero.
 #[tokio::test(flavor = "multi_thread")]

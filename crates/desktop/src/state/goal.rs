@@ -366,6 +366,42 @@ impl AppState {
         Ok(goal)
     }
 
+    /// Whether the person wrote in this chat since the goal's last check: the
+    /// agent may pause a goal only because they asked.
+    pub(super) fn person_spoke_since_goal_check(&self, thread_id: &str) -> bool {
+        let Some(goal) = self.goal_for(thread_id) else {
+            return false;
+        };
+        let mut through = goal.checked_seq;
+        while let Ok(page) =
+            self.inner
+                .transcript
+                .history_after(thread_id, through, EVIDENCE_PAGE_ITEMS)
+        {
+            let full = page.len() == EVIDENCE_PAGE_ITEMS;
+            for (seq, item) in page {
+                through = seq;
+                let spoke = match item {
+                    crate::transcript::HistoryItem::User { text, .. } => {
+                        !text.starts_with(themis_core::goal::GOAL_TURN_MARKER)
+                            && !text.starts_with("/goal")
+                    }
+                    crate::transcript::HistoryItem::Event { envelope } => {
+                        matches!(envelope.event, ThreadEvent::Steered { .. })
+                    }
+                    crate::transcript::HistoryItem::Legacy { .. } => false,
+                };
+                if spoke {
+                    return true;
+                }
+            }
+            if !full {
+                break;
+            }
+        }
+        false
+    }
+
     /// Saves the running time of every running goal (see [`BANK_INTERVAL`]).
     /// Saving banks the time since `running_since` into `active_ms`.
     pub fn bank_running_goals(&self, sink: &dyn EventSink) {

@@ -96,6 +96,8 @@ levels are listed.
   messages of up to 100,000 characters each.
 - **Changing the model or effort during a run** applies from the next turn:
   the running turn finishes on the model it started with.
+  Asking in the chat to stop or pause the goal pauses it; the agent can't pause a
+  goal nobody asked to stop.
 
 ### Questions from the agent
 
