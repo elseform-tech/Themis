@@ -512,6 +512,71 @@ async fn the_agent_moves_the_mouse_and_reopening_a_page_reuses_its_tab() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn the_agent_holds_a_key_named_as_a_page_names_it_and_sees_the_page_size() {
+    let _browser = ONE_BROWSER.lock().await;
+    let data = tempfile::tempdir().unwrap();
+    let Some(hub) = hub(data.path()) else { return };
+    let site = MockServer::start().await;
+    Mock::given(path("/keys"))
+        .respond_with(ResponseTemplate::new(200).set_body_raw(
+            r#"<!doctype html><title>Keys</title><body><p id="out">no key yet</p>
+<script>let down = 0;
+document.addEventListener('keydown', () => { down = performance.now(); });
+document.addEventListener('keyup', e => { document.getElementById('out').textContent =
+  e.code + ' held ' + (performance.now() - down >= 300 ? 'long' : 'briefly'); });
+</script>"#,
+            "text/html",
+        ))
+        .mount(&site)
+        .await;
+    let project = tempfile::tempdir().unwrap();
+    let chat = hub.chat("chat-keys", project.path());
+    let tools = themis_core::browser::tools::browser_tools(
+        Arc::new(FnHook::new(|_: &ToolAction| Approval::AllowOnce)),
+        themis_core::browser::tools::BrowserScope {
+            permissions: themis_core::tools::site_permissions::SitePermissions::new(
+                Default::default(),
+                None,
+            ),
+            chat: Arc::clone(&chat),
+            cancel: None,
+            media: None,
+        },
+    );
+    let tool = |name: &str| tools.iter().find(|tool| tool.name() == name).unwrap();
+    let opened = tool("browser_open")
+        .execute(json!({"url": format!("{}/keys", site.uri())}))
+        .await
+        .unwrap();
+    let size = opened["visible_page"].as_str().unwrap();
+    let (width, height) = size.split_once('x').unwrap();
+    assert!(width.parse::<u32>().unwrap() > 0, "{opened}");
+    assert!(height.parse::<u32>().unwrap() > 0, "{opened}");
+    let tapped = tool("browser_press")
+        .execute(json!({"key": "KeyW"}))
+        .await
+        .unwrap();
+    assert!(
+        tapped["snapshot"]
+            .as_str()
+            .unwrap()
+            .contains("KeyW held briefly"),
+        "{tapped}"
+    );
+    let held = tool("browser_press")
+        .execute(json!({"key": "KeyW", "hold_ms": 400}))
+        .await
+        .unwrap();
+    assert!(
+        held["snapshot"]
+            .as_str()
+            .unwrap()
+            .contains("KeyW held long"),
+        "{held}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn the_agent_clicks_a_point_of_a_canvas_seen_in_a_screenshot() {
     let _browser = ONE_BROWSER.lock().await;
     let data = tempfile::tempdir().unwrap();

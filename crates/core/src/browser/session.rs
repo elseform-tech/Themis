@@ -547,6 +547,9 @@ pub struct ActionReport {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tab: Option<String>,
     pub snapshot: String,
+    /// The size x and y are measured against, as `1280x720`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub visible_page: Option<String>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub new_since_last_action: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -575,6 +578,16 @@ pub fn parse_key(description: &str) -> Option<KeyPress> {
         Some((last, rest)) => (*last, rest),
         None => return None,
     };
+    // Web pages name keys KeyW and Digit1, so models do too.
+    let from_code = key
+        .strip_prefix("Key")
+        .filter(|rest| rest.len() == 1 && rest.chars().all(|c| c.is_ascii_alphabetic()))
+        .or_else(|| {
+            key.strip_prefix("Digit")
+                .filter(|rest| rest.len() == 1 && rest.chars().all(|c| c.is_ascii_digit()))
+        })
+        .map(str::to_ascii_lowercase);
+    let key = from_code.as_deref().unwrap_or(key);
     let mut mask = 0;
     for modifier in modifiers {
         mask |= match modifier.to_ascii_lowercase().as_str() {
@@ -1678,10 +1691,14 @@ impl ChatBrowser {
     }
 
     /// Presses a key (`Enter`, `Escape`, `Control+a`) in the focused element.
-    pub async fn press(self: &Arc<Self>, key: &str) -> Result<ActionReport, String> {
+    pub async fn press(
+        self: &Arc<Self>,
+        key: &str,
+        hold: Duration,
+    ) -> Result<ActionReport, String> {
         let press = parse_key(key).ok_or_else(|| {
             format!(
-                "unknown key '{}'; use names like Enter, Escape, Tab, ArrowDown or Control+a",
+                "unknown key '{}'; use names like Enter, Escape, Tab, ArrowDown, w, 1 or Control+a",
                 cap(key, 30)
             )
         })?;
@@ -1690,7 +1707,7 @@ impl ChatBrowser {
             return Err("no page is open; use browser_open first".into());
         }
         let (cdp, session) = self.current(&mut inner).await?;
-        press_key(&cdp, &session, &press).await?;
+        press_key_for(&cdp, &session, &press, hold).await?;
         self.settle(&inner, press.key == "Enter").await;
         let report = self.report(&mut inner, None).await;
         drop(inner);
@@ -1946,11 +1963,24 @@ impl ChatBrowser {
             .ok()
             .and_then(|value| value["result"]["value"].as_str().map(|t| cap(t, 200)))
             .unwrap_or(title);
+        let visible_page = cdp
+            .call(Some(&tab.session_id), "Page.getLayoutMetrics", json!({}))
+            .await
+            .ok()
+            .and_then(|metrics| {
+                let view = &metrics["cssVisualViewport"];
+                Some(format!(
+                    "{}x{}",
+                    view["clientWidth"].as_f64()?.round(),
+                    view["clientHeight"].as_f64()?.round()
+                ))
+            });
         Ok(ActionReport {
             url,
             title,
             tab: (count > 1).then(|| format!("{} of {count}", current + 1)),
             snapshot: if text.is_empty() { "(empty page)".to_owned() } else { text },
+            visible_page,
             new_since_last_action: notes,
             snapshot_note: truncated.then(|| {
                 format!("{omitted_lines} more lines not shown; use browser_snapshot with a ref to read one part, or browser_scroll")
@@ -2536,6 +2566,15 @@ async fn click_at(cdp: &Cdp, session: &str, x: f64, y: f64, clicks: u32) -> Resu
 }
 
 async fn press_key(cdp: &Cdp, session: &str, press: &KeyPress) -> Result<(), String> {
+    press_key_for(cdp, session, press, Duration::ZERO).await
+}
+
+async fn press_key_for(
+    cdp: &Cdp,
+    session: &str,
+    press: &KeyPress,
+    hold: Duration,
+) -> Result<(), String> {
     let mut down = json!({
         "type": if press.text.is_some() { "keyDown" } else { "rawKeyDown" },
         "key": press.key, "code": press.code,
@@ -2548,6 +2587,7 @@ async fn press_key(cdp: &Cdp, session: &str, press: &KeyPress) -> Result<(), Str
     }
     cdp.call(Some(session), "Input.dispatchKeyEvent", down)
         .await?;
+    tokio::time::sleep(hold).await;
     cdp.call(
         Some(session),
         "Input.dispatchKeyEvent",
@@ -2631,6 +2671,10 @@ mod tests {
             ),
             ("KeyA", 2, None)
         );
+        assert_eq!(parse_key("KeyW").unwrap(), parse_key("w").unwrap());
+        assert_eq!(parse_key("Digit1").unwrap(), parse_key("1").unwrap());
+        assert!(parse_key("Keyboard").is_none());
+        assert!(parse_key("Digita").is_none());
         let shifted = parse_key("Shift+k").unwrap();
         assert_eq!(
             (

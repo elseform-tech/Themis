@@ -490,18 +490,25 @@ impl ToolRuntime for BrowserSelect {
     }
 }
 
+const MAX_KEY_HOLD_MS: u64 = 5000;
+
 /// Arguments for `browser_press`.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, ToolInput)]
 pub struct PressArgs {
     #[input(
-        description = "Key name: Enter, Escape, Tab, ArrowDown, Backspace, PageDown, or a shortcut like Control+a"
+        description = "Key name: Enter, Escape, Tab, ArrowDown, Backspace, PageDown, a letter or digit like w or 1, or a shortcut like Control+a"
     )]
     pub key: String,
+    #[serde(default)]
+    #[input(
+        description = "Milliseconds to keep the key down, up to 5000, to move in a game; omit for a plain press"
+    )]
+    pub hold_ms: Option<u64>,
 }
 
 #[tool(
     name = "browser_press",
-    description = "Press a key in the focused element of the current page (Enter, Escape, Tab, arrows, or shortcuts like Control+a). Returns a fresh snapshot.",
+    description = "Press a key in the focused element of the current page (Enter, Escape, Tab, arrows, letters, or shortcuts like Control+a), or hold it with hold_ms. Returns a fresh snapshot.",
     input = PressArgs,
 )]
 struct BrowserPress {
@@ -513,6 +520,7 @@ impl ToolRuntime for BrowserPress {
     async fn execute(&self, args: Value) -> Result<Value, ToolCallError> {
         let args: PressArgs = parse_tool_args("browser_press", args)?;
         let key = args.key.trim().to_owned();
+        let hold = std::time::Duration::from_millis(args.hold_ms.unwrap_or(0).min(MAX_KEY_HOLD_MS));
         self.base
             .act(
                 "browser_press",
@@ -520,7 +528,7 @@ impl ToolRuntime for BrowserPress {
                 None,
                 format!("browser_press {key}"),
                 format!("pressing {key}"),
-                |chat| async move { chat.press(&key).await },
+                |chat| async move { chat.press(&key, hold).await },
             )
             .await
     }
