@@ -360,6 +360,20 @@ fn simple_command(command: &[String]) -> Option<Vec<String>> {
 /// Whether what `argv` runs is one simple command `patterns` names; see the top of this file.
 #[must_use]
 pub fn command_in_scope(argv: &[String], patterns: &[String]) -> bool {
+    // `command: "git status"` as one string doesn't run: the shell tool answers with a hint to
+    // split it. Read its words, so an allowed command reaches that hint instead of a refusal.
+    let split: Vec<String>;
+    let argv = match argv.split_first() {
+        Some((program, rest)) if program.contains(char::is_whitespace) => {
+            split = program
+                .split_whitespace()
+                .map(str::to_owned)
+                .chain(rest.iter().cloned())
+                .collect();
+            &split
+        }
+        _ => argv,
+    };
     let Some(command) = simple_command(argv) else {
         return false;
     };
@@ -383,6 +397,25 @@ pub fn command_in_scope(argv: &[String], patterns: &[String]) -> bool {
 
 #[cfg(test)]
 mod tests {
+    /// Found in a live run: a free model sends `command: "git status"` as one string. The shell
+    /// tool answers that with a hint to split it, so the scope must not refuse it first.
+    #[test]
+    fn a_command_written_as_one_string_is_read_as_its_words() {
+        let scope = ["git status:*".to_owned()];
+        assert!(command_in_scope(&["git status".to_owned()], &scope));
+        assert!(command_in_scope(&["git status --short".to_owned()], &scope));
+        for argv in [
+            vec!["git log".to_owned()],
+            vec!["git status; rm -rf x".to_owned()],
+            vec!["git status && rm -rf x".to_owned()],
+            vec!["git status $(rm x)".to_owned()],
+            vec!["git status".to_owned(), "; rm".to_owned()],
+            vec!["  ".to_owned()],
+        ] {
+            assert!(!command_in_scope(&argv, &scope), "{argv:?}");
+        }
+    }
+
     use super::*;
     use proptest::prelude::*;
 
