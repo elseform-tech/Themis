@@ -3,7 +3,7 @@
 
 .themis-thread-layout { display: flex; min-height: 0; height: 100%; }
 /* The chat column follows the room the sidebar and Workspace leave, with a readable cap. */
-.themis-thread { --themis-thread-column: clamp(740px, 90cqw, 1120px); position: relative; flex: 1; min-width: 0; display: flex; flex-direction: column; min-height: 0; height: 100%; }
+.themis-thread { --themis-thread-gutter: clamp(20px, 5cqw, 64px); --themis-thread-column: clamp(740px, 90cqw, 1120px); position: relative; flex: 1; min-width: 0; display: flex; flex-direction: column; min-height: 0; height: 100%; }
 
 /* Empty states without a thread. */
 .themis-welcome { margin: auto; text-align: center; padding: 32px; max-width: 540px; }
@@ -57,7 +57,7 @@
 .themis-starter:disabled { opacity: .5; cursor: not-allowed; }
 
 /* Conversation stream. */
-.themis-thread-stream { flex: 1; overflow-y: auto; overflow-x: hidden; display: flex; flex-direction: column; gap: 20px; padding: 16px max(20px, calc((100% - var(--themis-thread-column)) / 2)) 24px; }
+.themis-thread-stream { flex: 1; overflow-y: auto; overflow-x: hidden; display: flex; flex-direction: column; gap: 20px; padding: 16px max(var(--themis-thread-gutter), calc((100% - var(--themis-thread-column)) / 2)) 24px; }
 .themis-thread-start { margin: auto; color: var(--themis-text-2); font-size: .875rem; }
 .themis-thread-msg { max-width: 100%; }
 .themis-thread-msg--user { align-self: flex-end; max-width: 80%; padding: 12px 18px; border-radius: 22px 22px 6px 22px; background: var(--themis-user-message-bg); }
@@ -108,9 +108,9 @@
 }
 
 /* Composer: a rounded pill. A sweeping ring marks an active run. */
-.themis-thread-senderror { width: min(calc(100% - 40px), var(--themis-thread-column)); margin: 0 auto 6px; color: var(--themis-danger); font-size: .8125rem; }
+.themis-thread-senderror { width: min(calc(100% - 2 * var(--themis-thread-gutter)), var(--themis-thread-column)); margin: 0 auto 6px; color: var(--themis-danger); font-size: .8125rem; }
 /* z-index 2: the composer's pop-ups (context, menus) open over the sticky run-progress row (z-index 1). */
-.themis-thread-composer { position: relative; display: flex; flex-direction: column; gap: 6px; width: min(calc(100% - 40px), var(--themis-thread-column)); margin: 4px auto 20px; padding: 12px 12px 10px 20px; border-radius: var(--themis-radius-composer); background: var(--themis-composer-bg); isolation: isolate; z-index: 2; }
+.themis-thread-composer { position: relative; display: flex; flex-direction: column; gap: 6px; width: min(calc(100% - 2 * var(--themis-thread-gutter)), var(--themis-thread-column)); margin: 4px auto 20px; padding: 12px 12px 10px 20px; border-radius: var(--themis-radius-composer); background: var(--themis-composer-bg); isolation: isolate; z-index: 2; }
 /* A narrow chat keeps the composer's controls as icons; names stay in tooltips and accessible labels. */
 .themis-thread-composer { container: themis-composer / inline-size; }
 @container themis-composer (max-width: 420px) {
@@ -207,7 +207,7 @@
 .themis-context-legend b { margin-left: auto; font-weight: 500; font-variant-numeric: tabular-nums; color: var(--themis-text-2); }
 .themis-context-note { margin: 0; color: var(--themis-text-3); font-size: .75rem; }
 .themis-context-warn { margin: 0; padding: 10px 12px; border-radius: 12px; background: color-mix(in srgb, var(--themis-accent) 14%, transparent); color: var(--themis-gradient-3); font-size: .8125rem; line-height: 1.45; }
-.themis-compaction-notice { display: flex; align-items: center; gap: 10px; width: min(calc(100% - 40px), var(--themis-thread-column)); margin: 0 auto 6px; padding: 10px 10px 10px 16px; border-radius: 16px; background: color-mix(in srgb, var(--themis-accent) 14%, var(--themis-surface)); color: var(--themis-gradient-3); font-size: .8125rem; }
+.themis-compaction-notice { display: flex; align-items: center; gap: 10px; width: min(calc(100% - 2 * var(--themis-thread-gutter)), var(--themis-thread-column)); margin: 0 auto 6px; padding: 10px 10px 10px 16px; border-radius: 16px; background: color-mix(in srgb, var(--themis-accent) 14%, var(--themis-surface)); color: var(--themis-gradient-3); font-size: .8125rem; }
 .themis-compaction-notice > span { flex: 1; }
 .themis-compaction-notice button { width: 28px; height: 28px; border: 0; border-radius: 50%; background: transparent; color: inherit; font-size: 1.1rem; cursor: pointer; }
 

@@ -47,6 +47,16 @@ describe("WorkspacePanel", () => {
     await act(async () => fireEvent.click(screen.getByRole("button", { name: "Pull requests" })));
     expect(screen.getByText("GitHub CLI (gh) is not installed")).toBeInTheDocument();
   });
+  it("falls back to Changes when the remembered Goal tab has no goal in this chat", async () => {
+    window.localStorage.setItem("themis-workspace-tab", "goal");
+    appState = { ...appState, workspaceTabRequest: { tab: "goal", at: 1 } } as typeof appState;
+    render(<WorkspacePanel projectRoot="/repo" threadId="t1" workspace={workspace} />);
+    await act(async () => {});
+    expect(screen.queryByText("This chat has no goal.")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^Goal/ })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^Changes/ })).toHaveAttribute("aria-pressed", "true");
+  });
+
   it("keeps a lean header: icon tabs named by tooltips, and Close", () => {
     render(<WorkspacePanel projectRoot="/repo" threadId="t1" workspace={workspace} />);
     const head = document.querySelector(".themis-workspace-head")!;
