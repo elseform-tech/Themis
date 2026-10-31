@@ -217,6 +217,9 @@ pub const TOOL_COMPACTED_RECEIPT: &str =
 pub const TOOL_EXCERPT_WARNING: &str = include_str!("../builtins/prompts/tool-excerpt-warning.md");
 /// Refusal guidance added to every denied tool call.
 pub const TOOL_REFUSAL: &str = include_str!("../builtins/prompts/tool-refusal.md");
+/// Note on a call denied because the person steered a new message in while it waited.
+pub const TOOL_DENIED_NEW_MESSAGE: &str =
+    include_str!("../builtins/prompts/tool-denied-new-message.md");
 /// Note when a command's child process kept its output open.
 pub const TOOL_SHELL_OUTPUT_HELD: &str =
     include_str!("../builtins/prompts/tool-shell-output-held.md");

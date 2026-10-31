@@ -326,6 +326,10 @@ export type ThreadEvent =
   | { kind: 'background_tasks_changed' }
   /** A queued message the user steered into this run reached the model. */
   | { kind: 'steered'; text: string }
+  /** The user steered this message in: on screen now, before the run reads it. */
+  | { kind: 'steer_shown'; text: string }
+  /** The run ended without reading it: back in the queue, so it leaves the chat. */
+  | { kind: 'steer_returned'; text: string }
   /** The server started this run with a queued message or a goal turn (live only). */
   | { kind: 'user_message'; text: string; attachments?: string[] }
   | { kind: 'queue_changed'; queue: QueuedMessage[] }
@@ -496,6 +500,8 @@ export interface PersistedMessage {
   media?: AttachedMedia[];
   /** A message the user steered into a running run. */
   steered?: boolean;
+  /** Steered and on screen, but the run has not read it yet. */
+  steerUnread?: boolean;
   /** A runtime message that started goal turn N; shown as a divider, not a bubble. */
   /** How the goal stands, in plain words. */
   goalStatus?: boolean;
@@ -510,10 +516,12 @@ export type HistoryItem =
   | { kind: "event"; envelope: ThreadEventEnvelope }
   | { kind: "legacy"; message: PersistedMessage };
 
-/** The dialog for `approval_id` timed out and was denied; the UI removes it. */
+/** The dialog for `approval_id` was denied without an answer, so the UI removes it: it timed
+ *  out, or (`steered`) the person sent a new message past it, which needs no warning. */
 export interface ApprovalExpired {
   thread_id: string;
   approval_id: string;
+  steered?: boolean;
 }
 
 export interface ApprovalRequest {

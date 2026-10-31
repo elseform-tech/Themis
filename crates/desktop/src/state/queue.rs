@@ -3,17 +3,21 @@
 //! A message sent while a chat's run is going waits in the chat's queue
 //! (`queues/<chat id>.json` beside `threads.json`) and goes out by itself,
 //! oldest first, when the run ends. Steering moves a waiting message into the
-//! running run instead: the run reads it before its next model request. A
-//! steer the run never picked up returns to the front of the queue.
+//! running run instead: it shows in the chat at once, approvals the run waits on
+//! are denied so nothing holds it up, and the run reads it before its next model
+//! request. A steer the run never picked up leaves the chat and returns to the
+//! front of the queue.
 
 use std::path::PathBuf;
 use std::sync::Arc;
 
 use serde_json::json;
 use themis_core::runtime::SteerInbox;
+use themis_core::tools::Approval;
 
 use super::chat_grants::safe_chat_id;
-use super::AppState;
+use super::{AppState, SteerEntry};
+use crate::approvals::SteerWaiting;
 use crate::sink::EventSink;
 use crate::types::{QueuedMessage, ThreadEvent, ThreadEventEnvelope};
 
@@ -239,7 +243,9 @@ impl AppState {
         })
     }
 
-    /// Delivers a waiting message into the chat's running run.
+    /// Delivers a waiting message into the chat's running run: it shows in the
+    /// chat now, and any approval the run waits on is denied so the run can read
+    /// it. Saved grants and rules stay as they are.
     pub async fn steer_queued_message(
         &self,
         sink: Arc<dyn EventSink>,
@@ -263,34 +269,117 @@ impl AppState {
                 .steer_inboxes
                 .lock()
                 .unwrap_or_else(|e| e.into_inner());
-            let (inbox, _) = inboxes
+            let entry = inboxes
                 .get(&thread_id)
                 .ok_or_else(|| "No run is going; send the message instead".to_owned())?;
             let text = queue.remove(index).text;
-            inbox
+            // Before the inbox: the run may read it at once, and the chat must
+            // hear of it in this order.
+            self.record_steer_event(
+                sink.as_ref(),
+                &thread_id,
+                &entry.run_id,
+                ThreadEvent::SteerShown { text: text.clone() },
+            );
+            entry
+                .inbox
                 .lock()
                 .unwrap_or_else(|e| e.into_inner())
                 .push_back(text.clone());
             Ok(text)
         })?;
+        // After the inbox: an approval asked from here on sees the message there
+        // and is denied without a box (see `DesktopApprovalHook`).
+        let denied = self.deny_approvals_for_new_message(&thread_id);
         self.note_added_request(sink.as_ref(), &thread_id, &steered);
         let _ = self.inner.diagnostics.append(
             "queue",
             "steered",
             "info",
-            json!({"thread_id": thread_id}),
+            json!({"thread_id": thread_id, "approvals_denied": denied}),
         );
         Ok(())
     }
 
-    /// A fresh steer inbox for the run starting in `thread_id`.
-    pub(super) fn open_steer_inbox(&self, thread_id: &str, sink: Arc<dyn EventSink>) -> SteerInbox {
+    /// Asks whether the chat's current run has a steered message still unread.
+    /// Answers to questions share the inbox but are not steers: they leave
+    /// approvals alone.
+    pub(super) fn steer_waiting_check(&self, thread_id: &str) -> SteerWaiting {
+        let inbox = self
+            .inner
+            .steer_inboxes
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get(thread_id)
+            .map(|entry| Arc::clone(&entry.inbox))
+            .unwrap_or_default();
+        Arc::new(move || {
+            inbox
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .iter()
+                .any(|text| !text.starts_with(super::questions::ANSWER_MARKER))
+        })
+    }
+
+    /// Denies every approval the chat waits on, because the person sent a new
+    /// message. Each waiting hook takes its box away. Returns how many.
+    fn deny_approvals_for_new_message(&self, thread_id: &str) -> usize {
+        let mut denied = 0;
+        self.inner
+            .pending
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .retain(|_, approval| {
+                if approval.thread_id != thread_id {
+                    return true;
+                }
+                let _ = approval.sender.send(Approval::DenyForNewMessage);
+                denied += 1;
+                false
+            });
+        denied
+    }
+
+    /// Saves a steer's display event in the chat's history and sends it to clients.
+    fn record_steer_event(
+        &self,
+        sink: &dyn EventSink,
+        thread_id: &str,
+        run_id: &str,
+        event: ThreadEvent,
+    ) {
+        let envelope = ThreadEventEnvelope {
+            thread_id: thread_id.to_owned(),
+            run_id: run_id.to_owned(),
+            event,
+        };
+        if let Err(error) = self.inner.transcript.append_event(&envelope) {
+            self.record_error("save_thread_event", error);
+        }
+        sink.emit_thread_event(&envelope);
+    }
+
+    /// A fresh steer inbox for the run `run_id` starting in `thread_id`.
+    pub(super) fn open_steer_inbox(
+        &self,
+        thread_id: &str,
+        run_id: &str,
+        sink: Arc<dyn EventSink>,
+    ) -> SteerInbox {
         let inbox = SteerInbox::default();
         self.inner
             .steer_inboxes
             .lock()
             .unwrap_or_else(|e| e.into_inner())
-            .insert(thread_id.to_owned(), (Arc::clone(&inbox), sink));
+            .insert(
+                thread_id.to_owned(),
+                SteerEntry {
+                    inbox: Arc::clone(&inbox),
+                    sink,
+                    run_id: run_id.to_owned(),
+                },
+            );
         inbox
     }
 
@@ -303,7 +392,11 @@ impl AppState {
             .queue_lock
             .lock()
             .unwrap_or_else(|e| e.into_inner());
-        let Some((inbox, sink)) = self
+        let Some(SteerEntry {
+            inbox,
+            sink,
+            run_id,
+        }) = self
             .inner
             .steer_inboxes
             .lock()
@@ -323,6 +416,15 @@ impl AppState {
         let mut queue = self.queue_for(thread_id);
         let unread_count = unread.len();
         for text in unread.into_iter().rev() {
+            // Answers were never shown as steers; a steer leaves the chat for now.
+            if !text.starts_with(super::questions::ANSWER_MARKER) {
+                self.record_steer_event(
+                    sink.as_ref(),
+                    thread_id,
+                    &run_id,
+                    ThreadEvent::SteerReturned { text: text.clone() },
+                );
+            }
             queue.insert(
                 0,
                 QueuedMessage {
@@ -589,5 +691,71 @@ impl AppState {
                 let _ = std::fs::remove_file(path);
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::approvals::DesktopApprovalHook;
+    use crate::sink::ChannelSink;
+    use themis_core::tools::{ApprovalHook, RiskLevel, ToolAction};
+
+    /// Asks on its own thread, as a run does, and returns the decision.
+    fn ask(state: &AppState, thread: &str) -> std::thread::JoinHandle<Approval> {
+        let hook = DesktopApprovalHook::new(
+            thread.to_owned(),
+            true,
+            Arc::new(ChannelSink::channel().0),
+            Arc::clone(&state.inner.pending),
+        )
+        .with_timeout(std::time::Duration::from_millis(1_500));
+        std::thread::spawn(move || {
+            hook.approve(&ToolAction {
+                display: None,
+                command: Vec::new(),
+                tool: "write_file".to_owned(),
+                summary: "write".to_owned(),
+                risk: RiskLevel::Write,
+            })
+        })
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_steer_denies_every_approval_waiting_in_its_chat_and_no_other() {
+        let data = tempfile::tempdir().unwrap();
+        let state = AppState::new_for_test(data.path().join("settings.json"));
+        let mine = [ask(&state, "chat"), ask(&state, "chat")];
+        let other = ask(&state, "other chat");
+        while state.pending_approvals().len() < 3 {
+            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+        }
+        assert_eq!(state.deny_approvals_for_new_message("chat"), 2);
+        for waiting in mine {
+            assert_eq!(waiting.join().unwrap(), Approval::DenyForNewMessage);
+        }
+        let left = state.pending_approvals();
+        assert_eq!(left.len(), 1);
+        assert_eq!(left[0].thread_id, "other chat");
+        // The other chat's box runs its own course.
+        assert_eq!(other.join().unwrap(), Approval::Deny);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn only_a_steer_counts_as_waiting_not_an_answer() {
+        let data = tempfile::tempdir().unwrap();
+        let state = AppState::new_for_test(data.path().join("settings.json"));
+        let inbox = state.open_steer_inbox("chat", "run", Arc::new(ChannelSink::channel().0));
+        let waiting = state.steer_waiting_check("chat");
+        assert!(!waiting());
+        inbox.lock().unwrap().push_back(format!(
+            "{}\nAnswer",
+            super::super::questions::ANSWER_MARKER
+        ));
+        assert!(!waiting());
+        inbox.lock().unwrap().push_back("Use tabs".to_owned());
+        assert!(waiting());
+        inbox.lock().unwrap().clear();
+        assert!(!waiting());
     }
 }

@@ -49,3 +49,72 @@ describe("queue and goal events", () => {
     expect(loaded.messages[thread]!.map(row => [row.goalTurn, row.steered])).toEqual([[24, undefined], [undefined, true]]);
   });
 });
+
+describe("a steered message on screen", () => {
+  const steers = (state: ReturnType<typeof reducer>) => (state.messages[thread] ?? []).filter(row => row.role === "user").map(row => row.text);
+
+  it("appears when it is steered and not again when the run reads it", () => {
+    let state = reducer(initialState, envelope({ kind: "started", task: "x", max_turns: 5 }));
+    const before = steers(state).length;
+    state = reducer(state, envelope({ kind: "steer_shown", text: "Remove the goal" }));
+    expect(steers(state).slice(before)).toEqual(["Remove the goal"]);
+    expect(state.messages[thread]!.slice(-1)[0]).toMatchObject({ steered: true, runId: "r1" });
+    state = reducer(state, envelope({ kind: "steered", text: "Remove the goal" }));
+    expect(steers(state).slice(before)).toEqual(["Remove the goal"]);
+  });
+
+  it("leaves text still streaming alone until the run reads the message", () => {
+    let state = reducer(initialState, envelope({ kind: "assistant_text", text: "Half a sen" }));
+    state = reducer(state, envelope({ kind: "steer_shown", text: "Use tabs" }));
+    expect(state.streams[thread]).toBe("Half a sen");
+    state = reducer(state, envelope({ kind: "assistant_text", text: "tence." }));
+    state = reducer(state, envelope({ kind: "finished", result: "Half a sentence." }));
+    expect(state.messages[thread]!.map(row => row.text)).toEqual(["Use tabs", "Half a sentence."]);
+  });
+
+  it("pairs two identical steers one by one", () => {
+    let state = reducer(initialState, envelope({ kind: "steer_shown", text: "Again" }));
+    state = reducer(state, envelope({ kind: "steered", text: "Again" }));
+    state = reducer(state, envelope({ kind: "steer_shown", text: "Again" }));
+    state = reducer(state, envelope({ kind: "steered", text: "Again" }));
+    expect(steers(state)).toEqual(["Again", "Again"]);
+    // A read message that was never shown early (an old chat's history) still appears.
+    state = reducer(state, envelope({ kind: "steered", text: "Again" }));
+    expect(steers(state)).toEqual(["Again", "Again", "Again"]);
+  });
+
+  it("leaves the chat when the run never read it, so it shows once as the next message", () => {
+    let state = reducer(initialState, envelope({ kind: "steer_shown", text: "Use tabs" }));
+    state = reducer(state, envelope({ kind: "steer_returned", text: "Use tabs" }));
+    expect(steers(state)).toEqual([]);
+    state = reducer(state, envelope({ kind: "user_message", text: "Use tabs", attachments: [] }, "r2"));
+    expect(steers(state)).toEqual(["Use tabs"]);
+    // A return only takes back a message still unread.
+    state = reducer(state, envelope({ kind: "steer_shown", text: "Read" }));
+    state = reducer(state, envelope({ kind: "steered", text: "Read" }));
+    state = reducer(state, envelope({ kind: "steer_returned", text: "Read" }));
+    expect(steers(state)).toEqual(["Use tabs", "Read"]);
+  });
+
+  it("reloads from history in the order it was seen, once", () => {
+    const event = (kind: string, more: object = {}) => ({ kind: "event", envelope: { thread_id: thread, run_id: "r1", event: { kind, ...more } } });
+    const loaded = reducer(initialState, { type: "thread/history-loaded", threadId: thread, history: [
+      { kind: "user", run_id: "r1", text: "Make a dir", attachments: [] },
+      event("tool_started", { tool: "create_dir", summary: "create dir" }),
+      event("steer_shown", { text: "Remove the goal" }),
+      event("approval_decided", { tool: "create_dir", decision: "deny" }),
+      event("tool_finished", { tool: "create_dir", ok: false }),
+      event("steered", { text: "Remove the goal" }),
+      event("finished", { result: "Removed." }),
+    ] as never });
+    expect(loaded.messages[thread]!.map(row => row.text)).toEqual(["Make a dir", "create dir", "Remove the goal", "Removed."]);
+  });
+
+  it("takes an approval box away without the expired warning", () => {
+    const request = { thread_id: thread, approval_id: "a1", tool: "create_dir", summary: "s", risk: "write", grant_scope: "", grantable: true };
+    let state = reducer(initialState, { type: "approval/enqueued", request: request as never });
+    state = reducer(state, { type: "approval/expired", approvalId: "a1", steered: true } as never);
+    expect(state.approvals).toEqual([]);
+    expect(state.toasts).toEqual([]);
+  });
+});

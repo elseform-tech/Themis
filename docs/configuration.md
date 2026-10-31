@@ -495,6 +495,14 @@ minutes of waiting, and after 3 for anything else. App server commands:
 `list_queue`, `enqueue_message`, `update_queued_message`, `remove_queued_message`,
 `steer_queued_message`, `get_goal`, `set_goal`, `edit_goal`, `pause_goal`, `resume_goal`, `remove_goal`
 (also through `themis call`).
+A steer is saved and sent as a `steer_shown` event at once; `steered` follows when the model reads
+it, or `steer_returned` when the run ended first and the message went back to the queue. Clients
+show one row for the pair, and only `steered` enters the model's history. Steering also denies every
+approval the chat's run waits on, and any it asks for before reading the message, without a dialog;
+each result tells the agent a new message came and it may ask again. The dialog's
+`approval-expired` event carries `steered: true` (no expiry warning). Grants and rules do not change,
+and neither a plain queued message nor an answer to `ask_user` denies anything. Diagnostics record
+`queue`/`steered` with `approvals_denied`, a count.
 A goal's `added` lists the requests the user sent while it was open (steered, queued or typed;
 not answers to `ask_user` or goal turns), oldest first, at most 20 of up to 2,000 characters;
 the goal check reads them as fenced data and reaches the goal only when they are done too
@@ -641,7 +649,7 @@ metadata. Events cover server lifecycle, configuration saves, integration
 inspection/import/test outcomes, approvals (`approval`/`decided`: each gated action's
 `outcome`, `allowed` or `denied`, whether a rule, a chat grant, YOLO or a person settled it;
 `approval`/`answered`: only when a dialog was shown, what the person chose: `once`, `chat`
-for Allow in this chat, `deny`, or `none` when it expired, with `waited_ms`), the sandbox state each run
+for Allow in this chat, `deny`, `new_message` when they steered a message past it, or `none` when it expired, with `waited_ms`), the sandbox state each run
 captured (`sandbox`/`run_plan`: state, backend and network, never paths or
 commands), and compaction stages. A failed server command (`server`/`command_failed`)
 records its method and a fixed `category` (`unknown_method` when a window and the

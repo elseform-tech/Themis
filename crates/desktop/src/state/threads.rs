@@ -465,7 +465,7 @@ impl AppState {
                 .lock()
                 .unwrap_or_else(|e| e.into_inner())
                 .insert(thread_id.clone(), Arc::new(AtomicBool::new(false)));
-            self.open_steer_inbox(&thread_id, Arc::clone(&sink));
+            self.open_steer_inbox(&thread_id, &run_id, Arc::clone(&sink));
             if !record.titled {
                 record.title = title_from_message(&text);
                 record.titled = true;

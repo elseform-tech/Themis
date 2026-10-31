@@ -375,8 +375,9 @@ impl AppState {
                 .steer_inboxes
                 .lock()
                 .unwrap_or_else(|e| e.into_inner());
-            if let Some((inbox, _)) = inboxes.get(thread_id) {
-                inbox
+            if let Some(entry) = inboxes.get(thread_id) {
+                entry
+                    .inbox
                     .lock()
                     .unwrap_or_else(|e| e.into_inner())
                     .push_back(format!("{ANSWER_MARKER}\n{body}"));

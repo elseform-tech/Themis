@@ -206,6 +206,7 @@ const ALL: &[(&str, &str, &[&str])] = &[
     (TOOL_COMPACTED_RECEIPT, "tool-compacted-receipt", &[]),
     (TOOL_EXCERPT_WARNING, "tool-excerpt-warning", &[]),
     (TOOL_REFUSAL, "tool-refusal", &[]),
+    (TOOL_DENIED_NEW_MESSAGE, "tool-denied-new-message", &[]),
     (TOOL_SHELL_OUTPUT_HELD, "tool-shell-output-held", &[]),
     (
         TOOL_SANDBOX_BLOCKED_UNAPPROVED,

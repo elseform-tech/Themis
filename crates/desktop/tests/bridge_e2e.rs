@@ -114,6 +114,8 @@ fn event_kinds(events: &[ThreadEvent]) -> Vec<&'static str> {
             ThreadEvent::BrowserChanged { .. } => "browser_changed",
             ThreadEvent::BackgroundTasksChanged => "background_tasks_changed",
             ThreadEvent::Steered { .. } => "steered",
+            ThreadEvent::SteerShown { .. } => "steer_shown",
+            ThreadEvent::SteerReturned { .. } => "steer_returned",
             ThreadEvent::UserMessage { .. } => "user_message",
             ThreadEvent::QueueChanged { .. } => "queue_changed",
             ThreadEvent::GoalChanged { .. } => "goal_changed",

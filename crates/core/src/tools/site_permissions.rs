@@ -138,9 +138,9 @@ impl SitePermissions {
             risk,
             command: vec![site.to_owned()],
         };
-        let refused = || {
+        let refused = |note: &str| {
             tool_error(format!(
-                "approval denied for '{tool}': {} {REFUSAL_NOTE}",
+                "approval denied for '{tool}': {} {note}",
                 action.summary
             ))
         };
@@ -157,7 +157,7 @@ impl SitePermissions {
                 "{} is blocked for {site} in Settings › Browser. {REFUSAL_NOTE}",
                 permission.label()
             ))),
-            SiteAccess::Allow if approvals.denied_by_rule(&action) => Err(refused()),
+            SiteAccess::Allow if approvals.denied_by_rule(&action) => Err(refused(REFUSAL_NOTE)),
             SiteAccess::Allow => Ok(()),
             SiteAccess::Ask => match approvals.approve(&action) {
                 Approval::AllowOnce => Ok(()),
@@ -165,7 +165,9 @@ impl SitePermissions {
                     self.allow_always(site, permission);
                     Ok(())
                 }
-                Approval::Deny => Err(refused()),
+                denied @ (Approval::Deny | Approval::DenyForNewMessage) => {
+                    Err(refused(denied.refusal_note()))
+                }
             },
         }
     }
