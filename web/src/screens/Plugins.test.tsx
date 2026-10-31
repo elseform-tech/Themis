@@ -573,6 +573,25 @@ describe("Integration browsing and lifecycle", () => {
     expect(screen.getByRole("dialog")).toHaveTextContent("No skills");
     expect(screen.getByRole("dialog")).not.toHaveTextContent(/MCP connection|hook|Documents/);
   });
+  it("lists a plugin's subagents among its parts, even with nothing else to list", async () => {
+    installed[0].spec.skills = [];
+    installed[0].spec.subagents = [{ name: "code-reviewer", description: "Reviews code." }];
+    render(<Plugins />);
+    fireEvent.click(await screen.findByRole("button", { name: /^Show .* parts$/ }));
+    const parts = screen.getByRole("list", { name: /parts$/ });
+    expect(within(parts).getByText("Subagent")).toBeInTheDocument();
+    expect(within(parts).getByText("Code reviewer")).toBeInTheDocument();
+    expect(within(within(parts).getByText("Code reviewer").closest("li")!).queryByRole("switch")).toBeNull();
+    installed[0].spec.subagents = undefined;
+  });
+
+  it("keeps macOS from correcting what is typed in the search box", async () => {
+    render(<Plugins />);
+    const search = await screen.findByLabelText("Search integrations");
+    expect(search).toHaveAttribute("autocorrect", "off");
+    expect(search).toHaveAttribute("spellcheck", "false");
+  });
+
   it("names a plugin's subagents in words instead of saying it has nothing", async () => {
     installed[0].spec.skills = [];
     installed[0].spec.subagents = [{ name: "code-reviewer", description: "Reviews code." }, { name: "test_writer", description: "Writes tests." }];
