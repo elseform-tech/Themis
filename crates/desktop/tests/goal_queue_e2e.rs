@@ -379,9 +379,17 @@ async fn a_goal_runs_turn_after_turn_until_the_check_finds_it_reached() {
         |event| matches!(event, ThreadEvent::Finished { result, .. } if result == "I've reached the goal: the counter is 2."),
     )
     .await;
-    assert!(!seen
-        .iter()
-        .any(|event| matches!(event, ThreadEvent::GoalNote { .. })));
+    // The goal says why it carries on, in the chat, as a plain sentence.
+    assert!(seen.iter().any(|event| matches!(
+        event,
+        ThreadEvent::GoalNote { reason, .. }
+            if reason.starts_with("That isn't proven yet, because counter is 1")
+    )));
+    // Right after a turn's claim, the chat says the claim is being checked.
+    assert!(seen.iter().any(|event| matches!(
+        event,
+        ThreadEvent::GoalNote { reason, .. } if reason == "I'm checking that against the goal now."
+    )));
     // The second turn was started by the runtime, carrying the check's reason.
     let bodies: Vec<Value> = distinct(
         server
@@ -405,10 +413,7 @@ async fn a_goal_runs_turn_after_turn_until_the_check_finds_it_reached() {
         "[Goal — runtime, not from the user] Turn 2."
     ));
     assert!(mentions(turns[1], "Last check: Counter is 1; needs 2."));
-    assert!(mentions(
-        turns[1],
-        "Start your reply with one short sentence"
-    ));
+    assert!(mentions(turns[1], "Start your reply thinking aloud"));
     // Then one short turn, unchecked, tells the user the goal is reached.
     assert!(mentions(
         turns[2],
@@ -954,6 +959,115 @@ async fn a_message_run_that_finishes_the_goal_is_checked_and_nothing_repeats_it(
     assert_eq!(state.goal_for(&thread).unwrap().turns, 1);
 }
 
+fn calls(name: &str, arguments: Value) -> ResponseTemplate {
+    ResponseTemplate::new(200).set_body_json(json!({"choices":[{"message":{"role":"assistant","content":null,"tool_calls":[{"id":"call_1","type":"function","function":{"name":name,"arguments":arguments.to_string()}}]},"finish_reason":"tool_calls"}]}))
+}
+
+/// Found in a live run: asked to stop the goal, the agent had no way to and said
+/// it had, and the next turn started anyway.
+#[tokio::test(flavor = "multi_thread")]
+async fn asked_to_stop_the_agent_pauses_the_goal_and_no_check_or_turn_follows() {
+    let server = MockServer::start().await;
+    let gate = Gate::default();
+    let held = gate.clone();
+    let checks = Arc::new(AtomicUsize::new(0));
+    let seen_checks = Arc::clone(&checks);
+    Mock::given(method("POST"))
+        .respond_with(move |request: &Request| {
+            let body = body(request);
+            if is_check(&body) {
+                seen_checks.fetch_add(1, Ordering::SeqCst);
+                return reply(r#"{"verdict":"not_yet","reason":"Keep going."}"#);
+            }
+            let sent = body["messages"].to_string();
+            if sent.contains("pause") && sent.contains("\"status\"") {
+                reply("The goal is paused.")
+            } else if sent.contains("Please stop the goal") {
+                calls("set_goal", json!({"pause": true}))
+            } else {
+                held.wait();
+                calls("list_dir", json!({"directory_path": "."}))
+            }
+        })
+        .mount(&server)
+        .await;
+    let (state, _data, _project, thread) = chat(&server).await;
+    let (sink, _rx) = ChannelSink::channel();
+    let sink = Arc::new(sink);
+    state
+        .send_message(
+            sink.clone(),
+            thread.clone(),
+            "/goal finish the thing".into(),
+        )
+        .await
+        .unwrap();
+    let stop = state
+        .enqueue_message(
+            sink.clone(),
+            thread.clone(),
+            "Please stop the goal".into(),
+            None,
+            vec![],
+        )
+        .await
+        .unwrap();
+    state
+        .steer_queued_message(sink.clone(), thread.clone(), stop.id)
+        .await
+        .unwrap();
+    gate.open();
+    goal_until(&state, &thread, |status| status == GoalStatus::Paused).await;
+    settle(&state, &thread).await;
+    let goal = state.goal_for(&thread).unwrap();
+    assert_eq!(goal.status, GoalStatus::Paused);
+    assert_eq!(goal.turns, 1);
+    assert_eq!(checks.load(Ordering::SeqCst), 0);
+}
+
+/// A goal keeps going until it is reached: the agent can't talk itself out of a
+/// hard one by pausing it.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_agent_cannot_pause_a_goal_nobody_asked_to_stop() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .respond_with(|request: &Request| {
+            let body = body(request);
+            if is_check(&body) {
+                return reply(r#"{"verdict":"reached","reason":"Done.","told_user":true}"#);
+            }
+            let used_tool = body["messages"]
+                .as_array()
+                .is_some_and(|messages| messages.iter().any(|m| m["role"] == "tool"));
+            if used_tool {
+                reply("Carrying on, and it's done.")
+            } else {
+                calls("set_goal", json!({"pause": true}))
+            }
+        })
+        .mount(&server)
+        .await;
+    let (state, _data, _project, thread) = chat(&server).await;
+    let (sink, mut rx) = ChannelSink::channel();
+    state
+        .send_message(
+            Arc::new(sink),
+            thread.clone(),
+            "/goal finish the thing".into(),
+        )
+        .await
+        .unwrap();
+    goal_until(&state, &thread, |status| status == GoalStatus::Reached).await;
+    let mut seen = Vec::new();
+    until(
+        &mut rx,
+        &mut seen,
+        |event| matches!(event, ThreadEvent::ToolFinished { ok: false, output, .. } if output.contains("pausing is refused")),
+    )
+    .await;
+    settle(&state, &thread).await;
+}
+
 /// Found in a live run: the agent reworded the goal with `set_goal` and its
 /// elapsed time and turn count started again from zero.
 #[tokio::test(flavor = "multi_thread")]
@@ -1203,6 +1317,57 @@ async fn unsendable_queued_messages_are_recorded_and_the_queue_moves_on() {
 /// Review findings: a `/goal` whose run cannot start still continues (it
 /// retries as a failed turn instead of staying "running" with no turn), and a
 /// goal check that fails does not count as a turn without progress.
+/// A model that keeps refusing pauses the goal instead of retrying for ever, says why in its
+/// status, and adds no note to the chat. Takes the two retry waits (30 s and 60 s, jittered).
+#[tokio::test(flavor = "multi_thread")]
+async fn a_goal_pauses_after_its_turns_keep_failing() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .respond_with(ResponseTemplate::new(400).set_body_string("model broken"))
+        .mount(&server)
+        .await;
+    let data = tempfile::tempdir().unwrap();
+    let project = tempfile::tempdir().unwrap();
+    let state = AppState::new_for_test(data.path().join("settings.json"));
+    state.set_go_base_url_override(Some(server.uri()));
+    state
+        .set_secret("go".into(), "synthetic-test-key".into())
+        .await
+        .unwrap();
+    let thread = state
+        .create_thread(
+            project.path().to_string_lossy().into_owned(),
+            ProviderKind::Go,
+            Some("test-model".into()),
+        )
+        .await
+        .unwrap()
+        .id;
+    let (sink, mut rx) = ChannelSink::channel();
+    let sink: Arc<dyn themis_desktop::sink::EventSink> = Arc::new(sink);
+    state
+        .send_message(sink.clone(), thread.clone(), "/goal finish the work".into())
+        .await
+        .unwrap();
+    let paused = tokio::time::timeout(Duration::from_secs(240), async {
+        loop {
+            while rx.try_recv().is_ok() {}
+            if state
+                .goal_for(&thread)
+                .is_some_and(|goal| goal.status == GoalStatus::Paused)
+            {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+    })
+    .await;
+    let goal = state.goal_for(&thread).unwrap();
+    assert!(paused.is_ok(), "{goal:?}");
+    assert_eq!(goal.reason.as_deref(), Some("the model kept failing"));
+    assert_eq!(goal.failures, 0, "a resume starts counting again");
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn a_goal_whose_turn_cannot_start_retries_and_a_failed_check_is_not_a_stall() {
     let server = MockServer::start().await;
@@ -1235,7 +1400,7 @@ async fn a_goal_whose_turn_cannot_start_retries_and_a_failed_check_is_not_a_stal
         .await
         .unwrap()
         .id;
-    let (sink, mut rx) = ChannelSink::channel();
+    let (sink, _rx) = ChannelSink::channel();
     let sink: Arc<dyn themis_desktop::sink::EventSink> = Arc::new(sink);
     // No key yet: the goal's first run fails to start.
     let error = state
@@ -1243,23 +1408,19 @@ async fn a_goal_whose_turn_cannot_start_retries_and_a_failed_check_is_not_a_stal
         .await
         .unwrap_err();
     assert!(!error.is_empty());
-    let mut seen = Vec::new();
-    until(&mut rx, &mut seen, |event| {
-        matches!(
-            event,
-            ThreadEvent::GoalNote {
-                outcome: GoalNoteKind::Failed,
-                ..
-            }
-        )
+    // Counted as a failed turn and retried after a wait, with no note in the chat.
+    let counted = tokio::time::timeout(DEADLINE, async {
+        while state
+            .goal_for(&thread)
+            .is_none_or(|goal| goal.failures != 1)
+        {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
     })
     .await;
     let goal = state.goal_for(&thread).unwrap();
+    assert!(counted.is_ok(), "{goal:?}");
     assert_eq!(goal.status, GoalStatus::Running);
-    assert_eq!(
-        goal.failures, 1,
-        "counted as a failed turn, retried after a wait"
-    );
     // With the key in place, a resume starts the next turn now.
     state
         .set_secret("go".into(), "synthetic-test-key".into())

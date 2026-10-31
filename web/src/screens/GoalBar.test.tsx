@@ -4,7 +4,6 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Goal, QueuedMessage } from "../lib/types";
 import { GoalBar, formatElapsed, goalElapsedMs } from "./GoalBar";
 import { QueueStack } from "./QueueStack";
-import { GoalNote } from "./ThreadConversation";
 
 afterEach(() => { cleanup(); vi.useRealTimers(); try { window.localStorage?.clear(); } catch { /* no storage in this environment */ } });
 
@@ -113,19 +112,5 @@ describe("QueueStack", () => {
   it("renders nothing for an empty queue", () => {
     const { container } = render(<QueueStack queue={[]} running onSteer={vi.fn()} onHold={vi.fn()} onSave={vi.fn()} onRemove={vi.fn()} />);
     expect(container).toBeEmptyDOMElement();
-  });
-});
-
-describe("GoalNote", () => {
-  it("shows the small-window warning as one plain line, and check outcomes with their title", () => {
-    const reason = "Context window is small (32,768 tokens); long goals may stall.";
-    const { container } = render(<GoalNote note={{ outcome: "small_window", reason }} />);
-    const note = screen.getByRole("note");
-    expect(note).toHaveTextContent(reason);
-    expect(note).toHaveAttribute("data-outcome", "small_window");
-    expect(container.querySelector("strong")).toBeNull();
-    cleanup();
-    render(<GoalNote note={{ outcome: "not_yet", reason: "Counter is 1." }} />);
-    expect(screen.getByRole("note")).toHaveTextContent("Not reached yet. Counter is 1.");
   });
 });

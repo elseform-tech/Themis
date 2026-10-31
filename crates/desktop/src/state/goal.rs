@@ -26,6 +26,12 @@ use crate::types::{Goal, GoalNoteKind, GoalStatus, ThreadEvent, ThreadEventEnvel
 pub(super) const GOALS_DIR: &str = "goals";
 /// Turns without progress before the next turn is told to try a different approach.
 const STALL_TURNS: u32 = 3;
+/// Failed turns in a row before the goal pauses instead of retrying: a provider's bad
+/// spell usually clears within minutes (about 15 of waiting here), other errors won't.
+const TRANSIENT_FAILURES_BEFORE_PAUSE: u32 = 6;
+const OTHER_FAILURES_BEFORE_PAUSE: u32 = 3;
+/// Why a goal paused after failing, shown in its bar.
+const KEPT_FAILING: &str = "the model kept failing";
 /// How often a goal out of quota tries again.
 const QUOTA_RETRY: Duration = Duration::from_secs(15 * 60);
 /// Longest wait between attempts after failed turns.
@@ -58,6 +64,32 @@ fn now_ms() -> i64 {
 pub(super) fn backoff(failures: u32) -> Duration {
     let seconds = 30u64.saturating_mul(1 << failures.saturating_sub(1).min(10));
     Duration::from_secs(seconds).min(MAX_BACKOFF)
+}
+
+/// Why the goal carries on, in one natural sentence around the check's own reason.
+fn because_carrying_on(reason: &str) -> String {
+    let reason = reason.trim().trim_end_matches('.');
+    let mut chars = reason.chars();
+    let first = chars
+        .next()
+        .map(|c| c.to_lowercase().to_string())
+        .unwrap_or_default();
+    // An acronym or name keeps its capital.
+    let keep = reason.chars().nth(1).is_some_and(char::is_uppercase);
+    let reason = if keep {
+        reason.to_owned()
+    } else {
+        format!("{first}{}", chars.as_str())
+    };
+    format!("That isn't proven yet, because {reason}, so I'm carrying on.")
+}
+
+/// `wait` plus up to a fifth more, so chats hit by the same outage don't all retry at once.
+fn jittered(wait: Duration) -> Duration {
+    use std::hash::BuildHasher;
+    let room = wait.as_millis() as u64 / 5 + 1;
+    let extra = std::collections::hash_map::RandomState::new().hash_one(wait) % room;
+    wait + Duration::from_millis(extra)
 }
 
 /// The goal note for a small context window, such as "Context window is
@@ -260,6 +292,13 @@ impl AppState {
             .goal_for(&thread_id)
             .filter(|goal| goal.status != GoalStatus::Reached);
         let mut goal = self.begin_goal(sink.as_ref(), &thread_id, &text);
+        self.goal_note(
+            sink.as_ref(),
+            &thread_id,
+            "",
+            GoalNoteKind::Status,
+            "I'm starting on this goal, and I'll keep going until a separate check finds it done.",
+        );
         // Rewording an open goal continues it: its time, turn count and the
         // requests added to it carry over.
         if let Some(previous) = previous {
@@ -317,7 +356,50 @@ impl AppState {
                 }
             })
             .ok_or_else(|| "This chat has no goal".to_owned())?;
+        self.goal_note(
+            sink.as_ref(),
+            &thread_id,
+            "",
+            GoalNoteKind::Status,
+            "I've paused the goal as you asked, and nothing more runs until you resume it.",
+        );
         Ok(goal)
+    }
+
+    /// Whether the person wrote in this chat since the goal's last check: the
+    /// agent may pause a goal only because they asked.
+    pub(super) fn person_spoke_since_goal_check(&self, thread_id: &str) -> bool {
+        let Some(goal) = self.goal_for(thread_id) else {
+            return false;
+        };
+        let mut through = goal.checked_seq;
+        while let Ok(page) =
+            self.inner
+                .transcript
+                .history_after(thread_id, through, EVIDENCE_PAGE_ITEMS)
+        {
+            let full = page.len() == EVIDENCE_PAGE_ITEMS;
+            for (seq, item) in page {
+                through = seq;
+                let spoke = match item {
+                    crate::transcript::HistoryItem::User { text, .. } => {
+                        !text.starts_with(themis_core::goal::GOAL_TURN_MARKER)
+                            && !text.starts_with("/goal")
+                    }
+                    crate::transcript::HistoryItem::Event { envelope } => {
+                        matches!(envelope.event, ThreadEvent::Steered { .. })
+                    }
+                    crate::transcript::HistoryItem::Legacy { .. } => false,
+                };
+                if spoke {
+                    return true;
+                }
+            }
+            if !full {
+                break;
+            }
+        }
+        false
     }
 
     /// Saves the running time of every running goal (see [`BANK_INTERVAL`]).
@@ -353,6 +435,13 @@ impl AppState {
         }
         self.bump_goal_generation(&thread_id);
         self.store_goal(sink.as_ref(), &thread_id, None);
+        self.goal_note(
+            sink.as_ref(),
+            &thread_id,
+            "",
+            GoalNoteKind::Status,
+            "I've removed the goal, so I won't start any more turns for it.",
+        );
         Ok(())
     }
 
@@ -379,6 +468,13 @@ impl AppState {
                 goal.failures = 0;
             })
             .ok_or_else(|| "This chat has no goal".to_owned())?;
+        self.goal_note(
+            sink.as_ref(),
+            &thread_id,
+            "",
+            GoalNoteKind::Status,
+            "I'm picking the goal back up.",
+        );
         if !running && previous.status != GoalStatus::Running {
             let note = match previous.status {
                 GoalStatus::Quota => "Resumed after the model quota pause.",
@@ -687,6 +783,14 @@ impl AppState {
             });
             return;
         }
+        // Whatever the turn just claimed, the person sees it is not the verdict.
+        self.goal_note(
+            sink.as_ref(),
+            &thread_id,
+            "",
+            GoalNoteKind::Status,
+            "I'm checking that against the goal now.",
+        );
         let (evidence, changed_files, through_seq) =
             self.turn_evidence(&thread_id, goal.checked_seq);
         let checked_goal = goal.started_at;
@@ -821,6 +925,7 @@ impl AppState {
                         goal.progress = verdict.progress.clone();
                     }
                 });
+                let shown_reason = verdict.reason.clone();
                 // Turns without progress never stop the goal; the next one is
                 // told to change course.
                 let note = if stalls >= STALL_TURNS {
@@ -841,6 +946,13 @@ impl AppState {
                 } else {
                     verdict.reason
                 };
+                self.goal_note(
+                    sink.as_ref(),
+                    &thread_id,
+                    &run_id,
+                    GoalNoteKind::Status,
+                    &because_carrying_on(&shown_reason),
+                );
                 self.start_goal_turn(sink, thread_id, note).await;
             }
         }
@@ -930,20 +1042,49 @@ impl AppState {
                     reason,
                 );
             }
-            Failure::Transient | Failure::Other => {
+            failure @ (Failure::Transient | Failure::Other) => {
+                let limit = if failure == Failure::Transient {
+                    TRANSIENT_FAILURES_BEFORE_PAUSE
+                } else {
+                    OTHER_FAILURES_BEFORE_PAUSE
+                };
                 let failures = self
                     .update_goal(sink.as_ref(), &thread_id, |goal| {
                         goal.failures = goal.failures.saturating_add(1);
                     })
                     .map_or(1, |goal| goal.failures);
-                let wait = backoff(failures);
+                // A blip gets a quiet retry; a model that keeps failing pauses the goal, and the
+                // goal bar says why, until the person resumes it.
+                if failures >= limit {
+                    self.update_goal(sink.as_ref(), &thread_id, |goal| {
+                        goal.failures = 0;
+                        set_status(goal, GoalStatus::Paused, Some(KEPT_FAILING.to_owned()));
+                    });
+                    self.goal_note(
+                        sink.as_ref(),
+                        &thread_id,
+                        &run_id,
+                        GoalNoteKind::Status,
+                        &format!(
+                            "I'm pausing the goal because {KEPT_FAILING}. You can resume it whenever you're ready."
+                        ),
+                    );
+                    let _ = self.inner.diagnostics.append(
+                        "goal",
+                        "paused_after_failures",
+                        "warn",
+                        json!({"thread_id": thread_id, "run_id": run_id, "failures": failures}),
+                    );
+                    return;
+                }
+                let wait = jittered(backoff(failures));
                 self.goal_note(
                     sink.as_ref(),
                     &thread_id,
                     &run_id,
-                    GoalNoteKind::Failed,
+                    GoalNoteKind::Status,
                     &format!(
-                        "The turn failed; retrying in {}.",
+                        "That turn failed, so I'll try again in {}.",
                         if wait.as_secs() < 60 {
                             format!("{} s", wait.as_secs())
                         } else {
@@ -1171,6 +1312,26 @@ mod tests {
         assert!(clipped.contains("characters clipped"));
         assert!(clipped.chars().count() < OUTPUT_HEAD_CHARS + OUTPUT_TAIL_CHARS + 50);
         assert_eq!(clip_output("short"), "short");
+    }
+
+    #[test]
+    fn the_reason_to_carry_on_reads_as_a_sentence() {
+        assert_eq!(
+            because_carrying_on("Counter is 1; needs 2."),
+            "That isn't proven yet, because counter is 1; needs 2, so I'm carrying on."
+        );
+        assert!(because_carrying_on("HTTP 500 remains").contains("because HTTP 500"));
+        assert!(!because_carrying_on("").contains(':'));
+    }
+
+    #[test]
+    fn jitter_only_adds_up_to_a_fifth_and_varies() {
+        let wait = Duration::from_secs(30);
+        let waits: std::collections::HashSet<Duration> = (0..50).map(|_| jittered(wait)).collect();
+        assert!(waits
+            .iter()
+            .all(|got| *got >= wait && *got <= wait + wait / 5));
+        assert!(waits.len() > 1, "{waits:?}");
     }
 
     #[test]

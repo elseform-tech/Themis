@@ -332,6 +332,10 @@ pub fn classify_failure(error: &str) -> Failure {
         "temporarily",
         "overloaded",
         "unavailable",
+        // A request that never reached the provider, and a model that replied with nothing.
+        "error sending request",
+        "stream request failed",
+        "no public answer",
     ];
     if transient.iter().any(|word| lower.contains(word)) {
         return Failure::Transient;
@@ -444,6 +448,15 @@ mod tests {
         );
         assert_eq!(
             classify_failure("Rate Limit Error (429): slow down. Retry-After: 30s"),
+            Failure::Transient
+        );
+        // Both seen in a live goal: they clear by themselves.
+        assert_eq!(
+            classify_failure("LLM request failed: HTTP Error: stream request failed: error sending request for url (https://opencode.ai/inference/go/openai/v1/chat/completions)"),
+            Failure::Transient
+        );
+        assert_eq!(
+            classify_failure("LLM request failed: Generic Error : Provider returned no public answer or tool calls"),
             Failure::Transient
         );
         assert_eq!(classify_failure("agent run panicked: boom"), Failure::Other);

@@ -381,6 +381,8 @@ pub enum GoalNoteKind {
     Waiting,
     Quota,
     Failed,
+    /// What the goal is doing now and why: started, paused, resumed, removed, carrying on.
+    Status,
     /// The goal started with a small context window (a warning; the goal runs on).
     SmallWindow,
 }
