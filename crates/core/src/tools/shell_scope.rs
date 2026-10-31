@@ -306,10 +306,18 @@ fn class_allows(class: Class, program: &str, command: &[String], pattern: &Patte
     if !command[1..before].iter().all(|word| confirmed(word)) {
         return false;
     }
+    // Only git is known to take what follows `--` as plain paths: `make test -- SHELL=/x` still
+    // reads the assignment, so elsewhere `--` is an option like any other and ends nothing.
     let every_option = || {
-        command[before..]
+        let rest = &command[before..];
+        let checked = if program == "git" {
+            let end = rest.iter().position(|word| word == "--");
+            &rest[..end.unwrap_or(rest.len())]
+        } else {
+            rest
+        };
+        checked
             .iter()
-            .take_while(|word| *word != "--")
             .filter(|word| is_setting(word))
             .all(|word| confirmed(word))
     };
@@ -576,6 +584,12 @@ mod tests {
             (&["make", "test", "SHELL=/tmp/x"][..], "make test:*"),
             (&["make", "test", "CC=/tmp/x"], "make test *"),
             (&["make", "SHELL=/tmp/x", "test"], "make test:*"),
+            (&["make", "test", "--", "SHELL=/tmp/x"], "make test:*"),
+            (&["gmake", "test", "--", "CC=/tmp/x"], "gmake test:*"),
+            (
+                &["npm", "test", "--", "--script-shell=/tmp/x"],
+                "npm test:*",
+            ),
             (&["cargo", "+evil", "test"], "cargo test:*"),
             (&["cargo", "test", "--config=x"], "cargo test:*"),
             (&["pytest", "-p", "evil"], "pytest:*"),
@@ -589,6 +603,7 @@ mod tests {
         // Spelled out, it is what the pattern says; so is a plain target or path.
         assert!(allowed(&["make", "test", "CC=gcc"], &["make test CC=gcc"]));
         assert!(allowed(&["make", "test", "unit"], &["make test:*"]));
+        assert!(allowed(&["git", "diff", "--", "a=b.txt"], GIT_DIFF));
         assert!(allowed(&["pytest", "tests/a.py"], &["pytest:*"]));
         // What follows a script belongs to the script.
         assert!(allowed(

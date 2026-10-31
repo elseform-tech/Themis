@@ -856,6 +856,7 @@ async fn a_scoped_shell_holds_against_every_way_around_it() {
         // A setting is an option by another name, for make above all.
         shell(json!({"command": "make", "args": ["test", "SHELL=/tmp/evil"]})),
         shell(json!({"command": "make", "args": ["test", "CC=/tmp/evil"]})),
+        shell(json!({"command": "make", "args": ["test", "--", "SHELL=/tmp/evil"]})),
         // A wrapper, though the pattern names it.
         shell(json!({"command": "timeout", "args": ["5", "git", "status"]})),
         // Whole-program catch-alls aren't a limit, however a plugin writes them.
