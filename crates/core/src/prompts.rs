@@ -257,6 +257,7 @@ pub const TOOL_RECALL_UNTRUSTED: &str =
 pub const TOOL_RECALL_FILTERS_IGNORED: &str =
     include_str!("../builtins/prompts/tool-recall-filters-ignored.md");
 /// Note on built-in browser page snapshots.
+pub const TOOL_SCREENSHOT_NOTE: &str = include_str!("../builtins/prompts/tool-screenshot-note.md");
 pub const TOOL_BROWSER_UNTRUSTED: &str =
     include_str!("../builtins/prompts/tool-browser-untrusted.md");
 /// Note when DevTools paused the page in the debugger.

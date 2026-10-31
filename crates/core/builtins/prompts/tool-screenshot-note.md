@@ -1,0 +1,1 @@
+Saved for the person. You cannot see images, so this tells you nothing about the page: read it with browser_snapshot or browser_devtools. Call attach_file with this path to show it in your reply.
