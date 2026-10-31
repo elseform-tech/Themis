@@ -73,18 +73,39 @@ it("opens web links in the chat's browser, and in the system browser with Cmd", 
   fireEvent.click(screen.getByRole("link", { name: "mail" }));
   expect(open).not.toHaveBeenCalled();
 });
-it("knows which inline code names a file", () => {
-  for (const path of ["main.js", "notes/poem.txt", "./src/a.rs", "crates/core/src/runtime.rs", "/abs/x.py", "index.html"]) expect(fileNamedIn(path)).toBe(path);
-  expect(fileNamedIn("src/a.rs:12")).toBe("src/a.rs");
-  expect(fileNamedIn("src/a.rs:12-30")).toBe("src/a.rs");
-  for (const word of ["npm test", "foo.bar", "1.2.3", "River", "a - b", "https://x.dev/a.js", "--flag.js", "notes/", "object.method()"]) expect(fileNamedIn(word)).toBeNull();
+it("knows which inline code cites a file's lines", () => {
+  for (const [code, file] of [
+    ["src/app.ts:12", "src/app.ts"],
+    ["main.rs:10-40", "main.rs"],
+    ["./web/src/index.tsx:3:7", "./web/src/index.tsx"],
+  ]) expect(fileNamedIn(code!)).toBe(file);
+  // A name in passing is not evidence, however much it looks like a file.
+  for (const code of ["inventory.py", "src/app.ts", "docs/guide.md", "object.method", "v1.2.3", "cargo", "12:30", "list_items", "npm test", "https://x.dev/a.js:3", "--flag.js:3", "notes/:3"]) expect(fileNamedIn(code)).toBeNull();
 });
-it("opens files and addresses named as code, and leaves other code alone", () => {
-  const file = vi.fn(); const link = vi.fn();
-  render(<ResponseLinks.Provider value={link}><ResponseFiles.Provider value={file}><ResponseBody text={"See `notes/poem.txt:3`, `npm test` and `https://example.com/x`."} /></ResponseFiles.Provider></ResponseLinks.Provider>);
-  fireEvent.click(screen.getByRole("button", { name: "notes/poem.txt:3" }));
-  expect(file).toHaveBeenCalledWith("notes/poem.txt");
-  expect(screen.queryByRole("button", { name: "npm test" })).toBeNull();
-  fireEvent.click(screen.getByRole("link", { name: "https://example.com/x" }));
-  expect(link).toHaveBeenCalledWith("https://example.com/x");
+
+it("links line references and addresses written as code, and leaves file names plain", () => {
+  const openFile = vi.fn();
+  const openLink = vi.fn();
+  render(<ResponseLinks.Provider value={openLink}><ResponseFiles.Provider value={openFile}>
+    <ResponseBody text={"See `src/app.ts:12`, `https://example.com/a` and `inventory.py`, then `object.method`."} />
+  </ResponseFiles.Provider></ResponseLinks.Provider>);
+  fireEvent.click(screen.getByRole("button", { name: "src/app.ts:12" }));
+  expect(openFile).toHaveBeenCalledWith("src/app.ts");
+  fireEvent.click(screen.getByRole("link", { name: "https://example.com/a" }));
+  expect(openLink).toHaveBeenCalledWith("https://example.com/a");
+  expect(screen.queryByRole("button", { name: "inventory.py" })).not.toBeInTheDocument();
+  expect(screen.getByText("inventory.py").tagName).toBe("CODE");
+  expect(screen.queryByRole("button", { name: "object.method" })).not.toBeInTheDocument();
+});
+
+
+it("links a file the reply attached as an artifact, by its path or its name", () => {
+  const openFile = vi.fn();
+  render(<ResponseFiles.Provider value={openFile}>
+    <ResponseBody text={"The report is `report.pdf`, or `out/report.pdf`; the data is `data.csv`."} artifacts={["out/report.pdf"]} />
+  </ResponseFiles.Provider>);
+  fireEvent.click(screen.getByRole("button", { name: "report.pdf" }));
+  fireEvent.click(screen.getByRole("button", { name: "out/report.pdf" }));
+  expect(openFile.mock.calls).toEqual([["out/report.pdf"], ["out/report.pdf"]]);
+  expect(screen.queryByRole("button", { name: "data.csv" })).not.toBeInTheDocument();
 });
