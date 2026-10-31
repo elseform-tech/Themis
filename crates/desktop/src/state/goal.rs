@@ -117,6 +117,7 @@ fn page_spoiled_after(spoiled: bool, tool: &str, summary: &str) -> bool {
         return false;
     }
     spoiled || marks_page_change(tool, summary)
+}
 
 /// What the goal check tells the chat: what is wrong, what to change, and what is left.
 fn check_message(verdict: &core_goal::GoalVerdict) -> String {
@@ -920,20 +921,10 @@ impl AppState {
             });
             return;
         }
-        // Whatever the turn just claimed, the person sees it is not the verdict.
-        self.goal_note(
-            sink.as_ref(),
-            &thread_id,
-            "",
-            GoalNoteKind::Status,
-            "I'm checking that against the goal now.",
-        );
-        let (evidence, turn_files, through_seq, page_spoiled) =
-            self.turn_evidence(&thread_id, goal.checked_seq);
-
         // A passing status line says so while the check reads the turn.
         self.update_goal(sink.as_ref(), &thread_id, |goal| goal.checking = true);
-        let (evidence, turn_files, through_seq) = self.turn_evidence(&thread_id, goal.checked_seq);
+        let (evidence, turn_files, through_seq, page_spoiled) =
+            self.turn_evidence(&thread_id, goal.checked_seq);
         let changed_files = !turn_files.is_empty();
         self.update_goal(sink.as_ref(), &thread_id, |goal| {
             for file in &turn_files {
