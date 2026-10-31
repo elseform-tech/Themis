@@ -116,18 +116,20 @@ fn plugin_mentions_resolve_current_bundle_without_eager_skill_bodies() {
         .import_path("global", source.path(), Some("reviewer"))
         .unwrap();
     let (text, skills, plugins) = store
-        .resolve_prompt(
-            "Use [[plugin:g--reviewer]] and [[skill:manage-plugins]]",
-            &[],
-        )
+        .resolve_prompt("Use [[plugin:g--reviewer]] and [[skill:plugins]]", &[])
         .unwrap();
-    assert_eq!(text, "Use @reviewer and Manage plugins");
+    assert_eq!(text, "Use @reviewer and Plugins");
     assert_eq!(skills.len(), 1);
     assert_eq!(plugins.len(), 1);
     assert_eq!(plugins[0].spec.name, "reviewer");
     store.set_enabled("global", "reviewer", false).unwrap();
     assert!(store.resolve_prompt("[[plugin:g--reviewer]]", &[]).is_err());
     assert!(store.resolve_prompt("[[plugin:g--missing]]", &[]).is_err());
+    // The old command names are gone, with no aliases.
+    assert!(store
+        .resolve_prompt("[[skill:manage-plugins]]", &[])
+        .is_err());
+    assert!(store.resolve_prompt("[[skill:create-skill]]", &[]).is_err());
     assert!(store.resolve_prompt("[[plugin:invalid]]", &[]).is_err());
     assert!(store.resolve_prompt("[[plugin:g--reviewer", &[]).is_err());
 }
@@ -207,7 +209,8 @@ fn imports_mcp_shapes_without_credentials_or_silent_options() {
         json!({"mcpServers":{"x":{"type":"sse","url":"https://example.com"}}}),
         json!({"mcpServers":{"x":{"url":"https://example.com","headers":{"Authorization":"Bearer literal-secret"}}}}),
         json!({"mcpServers":{"x":{"command":"node","env":{"TOKEN":"literal-secret"}}}}),
-        json!({"mcpServers":{"x":{"command":"node","timeout":9000}}}),
+        json!({"mcpServers":{"x":{"command":"node","retries":3}}}),
+        json!({"mcpServers":{"x":{"command":"node","cwd":"/tmp"}}}),
     ] {
         assert!(store
             .import_mcp_json("global", "invalid", &invalid.to_string())
@@ -218,6 +221,18 @@ fn imports_mcp_shapes_without_credentials_or_silent_options() {
         .unwrap()
         .iter()
         .any(|p| p.spec.name == "invalid"));
+    // Claude's timeout is accepted, never silently: the import says Themis's own applies.
+    let timed = store
+        .import_mcp_json(
+            "global",
+            "timed",
+            &json!({"mcpServers":{"x":{"command":"node","timeout":9000}}}).to_string(),
+        )
+        .unwrap();
+    assert_eq!(
+        timed.spec.notices,
+        ["MCP connection x: its timeout is not used; Themis's own timeouts apply"]
+    );
     let path = global.path().join("mcp.json");
     fs::write(
         &path,

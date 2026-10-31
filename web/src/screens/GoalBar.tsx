@@ -69,7 +69,7 @@ export function GoalBar({ goal, onEdit, onPause, onResume, onRemove, onFold }: G
     setSaving(true);
     try { await onEdit(draft.trim()); setDraft(null); } finally { setSaving(false); }
   }
-  const label = STATUS_LABEL[goal.status];
+  const label = goal.status === "paused" && goal.reason ? `Paused · ${goal.reason}` : STATUS_LABEL[goal.status];
   const paused = goal.status === "paused" || goal.status === "stuck" || goal.status === "quota";
   const editable = goal.status !== "waiting";
   const elapsed = formatElapsed(goalElapsedMs(goal, now));

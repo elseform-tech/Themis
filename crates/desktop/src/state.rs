@@ -1160,6 +1160,12 @@ fn title_from_message(text: &str) -> String {
     // A chat started with `/goal` is named after the goal, not the command.
     let goal = themis_core::goal::parse_goal_command(text);
     let text = goal.as_deref().unwrap_or(text);
+    // So is one whose first message is the runtime's goal turn, set up from outside the composer.
+    let text = text
+        .strip_prefix(themis_core::goal::GOAL_TURN_MARKER)
+        .and_then(|rest| rest.lines().next())
+        .and_then(|line| line.split_once(": "))
+        .map_or(text, |(_, goal)| goal);
     let first = text.lines().next().unwrap_or_default();
     // Composer chips (`[[skill:id]]`, `[[plugin:id]]`) are not words.
     let (words, ids) = without_tokens(first);
@@ -1749,6 +1755,12 @@ mod tests {
 
     #[test]
     fn a_goal_chat_is_named_after_the_goal() {
+        assert_eq!(
+            title_from_message(
+                "[Goal — runtime, not from the user] Turn 1. Goal: speed up p95\nLast check: x"
+            ),
+            "speed up p95"
+        );
         assert_eq!(title_from_message("/goal speed up p95"), "speed up p95");
         assert_eq!(title_from_message("/goals list"), "/goals list");
     }

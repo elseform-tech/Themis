@@ -1,6 +1,6 @@
-//! Read-only workspace monitor: branch, branches, pull requests, directory
-//! listing and file contents. Nothing here writes to the project or runs
-//! git actions that change state.
+//! Workspace monitor: branch, branches, pull requests, directory listing and
+//! file contents, all read-only. The one exception is `switch_branch`, which the
+//! composer's branch chip calls; nothing here writes to project files otherwise.
 
 use std::path::{Component, Path, PathBuf};
 use std::process::Command;
@@ -9,6 +9,7 @@ use std::time::Duration;
 use serde::Serialize;
 
 use super::{canonical_project_dir, AppState};
+use crate::types::DiffState;
 
 /// Directory entries returned per listing.
 const MAX_ENTRIES: usize = 500;
@@ -196,6 +197,16 @@ fn pull_requests(root: &Path) -> Result<Vec<PullRequestInfo>, String> {
         .collect())
 }
 
+/// A branch name from the UI must be one of the project's local branches, so it can't be read
+/// as an option or a path.
+fn known_branch(root: &Path, branch: &str) -> Result<(), String> {
+    if branches(root).iter().any(|known| known.name == branch) {
+        Ok(())
+    } else {
+        Err(format!("Unknown branch: {branch}"))
+    }
+}
+
 impl AppState {
     /// Branch, local branches and open pull requests for a project.
     pub async fn get_workspace(
@@ -234,6 +245,86 @@ impl AppState {
         })
         .await
         .map_err(|err| err.to_string())
+    }
+
+    /// What a local branch adds since it left the current one, for reading in Workspace.
+    pub async fn branch_diff(
+        &self,
+        project_root: String,
+        branch: String,
+    ) -> Result<DiffState, String> {
+        let root = canonical_project_dir(&project_root)?;
+        tokio::task::spawn_blocking(move || {
+            known_branch(&root, &branch)?;
+            let mut files = crate::diff::git_diff_branch(&root, &branch)?;
+            let total = files.len();
+            let reason = (total > crate::diff::MAX_DIFF_FILES).then(|| {
+                format!(
+                    "truncated: showing {} of {total} changed files",
+                    crate::diff::MAX_DIFF_FILES
+                )
+            });
+            files.truncate(crate::diff::MAX_DIFF_FILES);
+            super::changes::bound_listed_lines(&mut files);
+            Ok(DiffState {
+                available: true,
+                reason,
+                files,
+            })
+        })
+        .await
+        .map_err(|err| err.to_string())?
+    }
+
+    /// Switches the project's checkout to a local branch. Refused while a chat is working in
+    /// that checkout; Git itself refuses a switch that would overwrite uncommitted changes.
+    pub async fn switch_branch(
+        &self,
+        project_root: String,
+        branch: String,
+    ) -> Result<WorkspaceInfo, String> {
+        let root = canonical_project_dir(&project_root)?;
+        let busy = {
+            let threads = self.inner.threads.read().await;
+            threads.values().any(|record| {
+                record.running && record.project_root.canonicalize().ok().as_ref() == Some(&root)
+            })
+        };
+        if busy {
+            return Err(
+                "A chat is working in this project; switch branches when it finishes".into(),
+            );
+        }
+        let target = root.clone();
+        let name = branch.clone();
+        tokio::task::spawn_blocking(move || {
+            known_branch(&target, &name)?;
+            let output = std::process::Command::new("git")
+                .arg("-C")
+                .arg(&target)
+                .args(["switch", "--no-guess", &name])
+                .output()
+                .map_err(|err| err.to_string())?;
+            if output.status.success() {
+                return Ok(());
+            }
+            let error = String::from_utf8_lossy(&output.stderr);
+            Err(error
+                .lines()
+                .find(|line| !line.trim().is_empty())
+                .unwrap_or("Could not switch branches")
+                .trim_start_matches("error: ")
+                .to_owned())
+        })
+        .await
+        .map_err(|err| err.to_string())??;
+        let _ = self.inner.diagnostics.append(
+            "workspace",
+            "branch_switched",
+            "info",
+            serde_json::json!({}),
+        );
+        self.get_workspace(project_root, false).await
     }
 
     /// Lists one project directory: folders first, `.git` hidden, bounded.

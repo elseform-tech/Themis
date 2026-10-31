@@ -24,6 +24,8 @@ pub const SYSTEM_EVIDENCE_FILES: &str =
 /// Staleness and tool-restriction caution closing both evidence pointers.
 pub const SYSTEM_EVIDENCE_CAUTION: &str =
     include_str!("../builtins/prompts/system-evidence-caution.md");
+/// Opens the instructions of a skill imported from a Claude plugin command.
+pub const SKILL_COMMAND_NOTE: &str = include_str!("../builtins/prompts/skill-command-note.md");
 /// Skill catalog appended to the system message; `{{skills}}` is the metadata JSON.
 pub const SYSTEM_SKILL_CATALOG: &str = include_str!("../builtins/prompts/system-skill-catalog.md");
 
@@ -172,6 +174,8 @@ pub const RUNTIME_EMPTY_ANSWER: &str = include_str!("../builtins/prompts/runtime
 /// Asked once when a run that used tools ends on a short progress line instead of a summary.
 pub const RUNTIME_TURN_SUMMARY: &str = include_str!("../builtins/prompts/runtime-turn-summary.md");
 /// Warning added after three unchanged tool results in a row.
+pub const RUNTIME_REPEATED_ACTION: &str =
+    include_str!("../builtins/prompts/runtime-repeated-action.md");
 pub const RUNTIME_LOOP_WARNING: &str = include_str!("../builtins/prompts/runtime-loop-warning.md");
 /// Note on a result already returned earlier in the run.
 pub const RUNTIME_REPEAT_NOTE: &str = include_str!("../builtins/prompts/runtime-repeat-note.md");
@@ -182,6 +186,11 @@ pub const RUNTIME_REPEAT_IN_CONTEXT: &str =
 pub const RUNTIME_HANDOFF: &str = include_str!("../builtins/prompts/runtime-handoff.md");
 /// Header before a message the user sent while the agent was working.
 pub const RUNTIME_STEERED: &str = include_str!("../builtins/prompts/runtime-steered.md");
+/// Label before context a `PromptSubmit` hook added: external information, not instructions.
+pub const HOOK_CONTEXT_NOTE: &str = include_str!("../builtins/prompts/hook-context-note.md");
+pub const HOOK_BLOCKED: &str = include_str!("../builtins/prompts/hook-blocked.md");
+pub const HOOK_BLOCK_REASON_NOTE: &str =
+    include_str!("../builtins/prompts/hook-block-reason-note.md");
 /// Sent once before a run that read two or more steered messages ends, listing them.
 pub const RUNTIME_STEERS_CHECK: &str = include_str!("../builtins/prompts/runtime-steers-check.md");
 /// Error for a call left out of a batch too large for the context; `{{calls}}`, `{{runnable}}`.

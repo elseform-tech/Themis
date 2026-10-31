@@ -674,6 +674,7 @@ async fn run_task_with_evidence_inner(
     let mut overflow_retried = false;
     let mut force_compaction = false;
     let mut turn = 0;
+    let mut action_counts = std::collections::HashMap::new();
     while turn < policy.total_turns {
         turn += 1;
         check_stopped(&stopped, &events).await?;
@@ -1082,6 +1083,24 @@ async fn run_task_with_evidence_inner(
         )
         .await?;
         for (call, result) in calls.iter().zip(&mut results) {
+            // Actions on a page change it, so its results never look unchanged: a run that kept
+            // clicking the same spot went unnoticed. These count by the call itself.
+            if is_repeatable_action(&call.function.name) {
+                let times = action_counts
+                    .entry(content_fingerprint(&format!(
+                        "{}{}",
+                        call.function.name, call.function.arguments
+                    )))
+                    .or_insert(0u32);
+                *times += 1;
+                if *times >= REPEATED_ACTION_NOTE_AT {
+                    let note = crate::prompts::fill(
+                        crate::prompts::RUNTIME_REPEATED_ACTION,
+                        &[("times", &times.to_string())],
+                    );
+                    annotate_result(result, "loop_warning", &note);
+                }
+            }
             // ponytail: exact observations only; semantic progress needs a separate audit.
             if matches!(
                 call.function.name.as_str(),
@@ -1930,6 +1949,17 @@ fn progress_line(text: &str) -> bool {
     !text.contains('\n')
         && text.chars().count() < PROGRESS_LINE_CHARS
         && STILL_GOING.iter().any(|word| lower.contains(word))
+}
+
+/// The same action this many times in a run is worth a word: some repeats are fine (shooting).
+const REPEATED_ACTION_NOTE_AT: u32 = 5;
+
+/// Tools that act on a page rather than read something.
+fn is_repeatable_action(name: &str) -> bool {
+    matches!(
+        name,
+        "browser_click" | "browser_move" | "browser_press" | "browser_type" | "browser_scroll"
+    )
 }
 
 const LOOP_WARNING: &str = crate::prompts::RUNTIME_LOOP_WARNING;
@@ -2802,7 +2832,10 @@ const RUNTIME_NOTES: [&str; 5] = [
 /// the current request, so a spec check late in a goal turn must not displace it.
 fn active_request_index(messages: &[ChatMessage]) -> Option<usize> {
     messages.iter().rposition(|message| {
-        message.role == ChatRole::User && !RUNTIME_NOTES.contains(&message.content.as_str())
+        message.role == ChatRole::User
+            && !RUNTIME_NOTES.contains(&message.content.as_str())
+            // Hook context is never the person's request.
+            && !message.content.starts_with(crate::prompts::HOOK_CONTEXT_NOTE)
     })
 }
 
@@ -3443,7 +3476,24 @@ fn initial_messages(history: Vec<ConversationTurn>, task: String) -> Vec<ChatMes
         message_type: MessageType::Text,
         content: task,
     });
+    if let Some(context) = crate::plugins::hooks::prompt_context() {
+        messages.push(ChatMessage {
+            role: ChatRole::User,
+            message_type: MessageType::Text,
+            content: hook_context_note(&context),
+        });
+    }
     messages
+}
+
+/// The model-facing form of context a `PromptSubmit` hook added: the label, then the
+/// context fenced so it cannot pose as the label or close the fence early.
+pub fn hook_context_note(context: &str) -> String {
+    let fenced = context.replace("<<<", "< < <").replace(">>>", "> > >");
+    format!(
+        "{}\n<<<hook-context\n{fenced}\n>>>",
+        crate::prompts::HOOK_CONTEXT_NOTE
+    )
 }
 
 async fn check_stopped(

@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { toast } from "../state/store";
 import { Plugins } from "./Plugins";
@@ -8,6 +8,7 @@ import type { ImportPreview, Plugin } from "../lib/types";
 import { pluginAction } from "../lib/tauri";
 
 const dispatch = vi.fn();
+let availableUpdates: unknown[] = [];
 let installed: Plugin[];
 let projectRoot: string | null;
 let mcpConnections = initialState.mcpConnections;
@@ -19,6 +20,7 @@ beforeEach(() => {
   projectRoot = "/project";
   mcpConnections = {};
   installed = [{ scope: "global", revision: "v1", enabled: true, source: null, spec: { name: "docs", description: "Documents", version: "1", skills: [{ id: "draft", name: "Draft", description: "Draft a document", instructions: "Read the sources before drafting.", allowedTools: [], scripts: [] }], mcp: { filesystem: { command: "node", args: [], env: { SECRET: "hidden-secret" }, enabled: true } }, hooks: [{ name: "startup-check", event: "RunStart", command: "printf '{}'", enabled: false, blocking: false, timeout_seconds: 10 }], files: {}, unsupported: [] } }];
+  availableUpdates = [];
   vi.mocked(pluginAction).mockImplementation(async args => {
     if (args.action === "mcp_tools") return [{ name: "lookup", description: "Find a document" }] as never;
     if (args.action === "list") return structuredClone(installed) as never;
@@ -30,7 +32,9 @@ beforeEach(() => {
       return { revision: "scan-1", status: "ready", catalog, checks, errors: {}, completed: catalog.plugins.length, total: catalog.plugins.length } as never;
     }
     if (args.action === "catalog") return { plugins: [{ name: "public-docs", description: "Review documents", icon: "https://example.com/icon.svg" }] } as never;
-    if (args.action === "inspect_marketplace") return { spec: { ...installed[0].spec, name: String(args.name) }, report: { status: "supported", components: [] } } as never;
+    if (args.action === "inspect_marketplace") return { spec: { ...installed[0].spec, name: String(args.name) }, report: { status: "supported", components: [] }, check_revision: "check-1" } as never;
+    if (args.action === "updates") return availableUpdates as never;
+    if (args.action === "sources") return [{ name: "official", source: "official-source", enabled: true, official: true, status: "ready", completed: 1, total: 1, checked_at: Date.now() }] as never;
     if (args.action === "install") { installed.push({ ...installed[0], source: String(args.marketplace), spec: { ...installed[0].spec, name: String(args.name) } }); return null as never; }
     const plugin = installed.find(plugin => plugin.spec.name === args.name);
     if (args.action === "delete") { installed = installed.filter(existing => existing !== plugin); return null as never; }
@@ -48,14 +52,14 @@ beforeEach(() => {
 function expectNoConfiguration() {
   expect(screen.queryByRole("button", { name: /^(Add (plugin|skill|MCP|hook)|Import|Configure|Update|Test|Run test|Save|More actions|Ask Themis)( |$)/ })).toBeNull();
   expect(screen.queryByRole("textbox", { name: "Configuration" })).toBeNull();
-  expect(vi.mocked(pluginAction).mock.calls.every(([args]) => ["mcp_tools", "list", "marketplaces", "scan_marketplace", "catalog", "inspect_marketplace", "inspect_repository", "enable", "disable", "set_component_enabled", "install", "import_repository", "delete", "remove_component"].includes(String(args.action)))).toBe(true);
+  expect(vi.mocked(pluginAction).mock.calls.every(([args]) => ["mcp_tools", "list", "marketplaces", "updates", "scan_marketplace", "catalog", "inspect_marketplace", "inspect_repository", "enable", "disable", "set_component_enabled", "install", "import_repository", "delete", "remove_component"].includes(String(args.action)))).toBe(true);
 }
 describe("Integration browsing and lifecycle", () => {
   it("shows actual MCP connection state separately from its activation switch", async () => {
     mcpConnections = { "global:docs:mcp:filesystem": { status: "failed", reason: "Process could not start" } };
     const view = render(<Plugins />);
     await screen.findByRole("button", { name: "View docs" });
-    fireEvent.click(screen.getByRole("button", { name: "MCP" }));
+    fireEvent.click(screen.getByRole("button", { name: "Connections" }));
     expect(screen.getByRole("switch")).toHaveAttribute("aria-checked", "true");
     expect(screen.getByText("Failed")).toBeVisible();
     expect(screen.getByText("Process could not start").closest("details")).not.toHaveAttribute("open");
@@ -73,7 +77,7 @@ describe("Integration browsing and lifecycle", () => {
     mcpConnections = { "global:docs:mcp:notes": { status: "needs_key", keys: ["NOTES_KEY"], reason: "Add NOTES_KEY in Settings › Keys." } };
     render(<Plugins />);
     await screen.findByRole("button", { name: "View docs" });
-    fireEvent.click(screen.getByRole("button", { name: "MCP" }));
+    fireEvent.click(screen.getByRole("button", { name: "Connections" }));
     expect(screen.getByText("Secret needed")).toBeVisible();
     expect(screen.queryByRole("button", { name: "Sign in" })).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Add secret" }));
@@ -87,7 +91,7 @@ describe("Integration browsing and lifecycle", () => {
     vi.mocked(pluginAction).mockImplementation(async args => (args.action === "mcp_sign_in" || args.action === "mcp_sign_out") ? signedIn as never : fallback(args));
     const view = render(<Plugins />);
     await screen.findByRole("button", { name: "View docs" });
-    fireEvent.click(screen.getByRole("button", { name: "MCP" }));
+    fireEvent.click(screen.getByRole("button", { name: "Connections" }));
     expect(screen.getByText("Sign in needed")).toBeVisible();
     // The reason is the button; no separate warning repeats it.
     expect(screen.queryByText("Sign in to use this server.")).toBeNull();
@@ -113,7 +117,7 @@ describe("Integration browsing and lifecycle", () => {
     });
     render(<Plugins />);
     await screen.findByRole("button", { name: "View docs" });
-    fireEvent.click(screen.getByRole("button", { name: "MCP" }));
+    fireEvent.click(screen.getByRole("button", { name: "Connections" }));
     fireEvent.click(screen.getByRole("button", { name: "Sign in" }));
     expect(screen.getByRole("status")).toHaveTextContent("Waiting for browser…");
     await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Cancel" })); });
@@ -174,7 +178,7 @@ describe("Integration browsing and lifecycle", () => {
     const previous = vi.mocked(pluginAction).getMockImplementation()!;
     vi.mocked(pluginAction).mockImplementation(async args => {
       if (args.action === "catalog") return { plugins: [{ name: "mixed", description: "Useful review tools" }, { name: "legacy", description: "Legacy tools" }] } as never;
-      if (args.action === "inspect_marketplace") return { spec: { ...installed[0].spec, name: args.name, skills: args.name === "legacy" ? [] : installed[0].spec.skills, mcp: {}, hooks: [], unsupported: ["lspServers"] }, report: { status: args.name === "legacy" ? "unsupported" : "partial", components: [{ kind: "lsp", name: "server", status: "unsupported", reason: "LSP is not supported", remedy: "Use the bundled skill instead" }] } } as never;
+      if (args.action === "inspect_marketplace") return { spec: { ...installed[0].spec, name: args.name, skills: args.name === "legacy" ? [] : installed[0].spec.skills, mcp: {}, hooks: [], unsupported: ["lspServers"], notices: ["File too large: docs/big.json"] }, report: { status: args.name === "legacy" ? "unsupported" : "partial", components: [{ kind: "lsp", name: "server", status: "unsupported", reason: "LSP is not supported", remedy: "Use the bundled skill instead" }] } } as never;
       return previous(args) as never;
     });
     render(<Plugins />);
@@ -182,10 +186,15 @@ describe("Integration browsing and lifecycle", () => {
     await act(async () => fireEvent.click(screen.getByRole("button", { name: "Discover" })));
     expect(screen.getByText("Useful review tools")).toBeVisible();
     expect(screen.getAllByRole("button", { name: "Install" })).toHaveLength(1);
+    const mixedCard = screen.getByRole("button", { name: "View mixed" }).closest("li")!;
+    expect(within(mixedCard).getByText(/Some parts skipped/)).toHaveTextContent("Some parts skipped (1)");
+    expect(mixedCard).not.toHaveTextContent("File too large");
     await act(async () => fireEvent.click(within(screen.getByRole("button", { name: "View mixed" }).closest("li")!).getByRole("button", { name: "Install" })));
     const dialog = screen.getByRole("dialog");
     expect(dialog).toHaveTextContent("Partially supported");
     expect(dialog).toHaveTextContent("Language servers aren’t supported yet.");
+    expect(within(dialog).getByText("Notes (1)")).toBeVisible();
+    expect(dialog).toHaveTextContent("File too large: docs/big.json");
     expect(within(dialog).getByRole("button", { name: "Install supported parts" })).toBeEnabled();
     fireEvent.click(within(dialog).getByRole("button", { name: "Close" }));
     fireEvent.change(screen.getByRole("combobox", { name: "Status" }), { target: { value: "unsupported" } });
@@ -201,7 +210,7 @@ describe("Integration browsing and lifecycle", () => {
     const reason = within(screen.getByRole("button", { name: "View legacy" }).closest("li")!).getByText("Language servers aren’t supported yet.");
     const warning = reason.closest("details")!;
     expect(warning).not.toHaveAttribute("open");
-    fireEvent.click(within(warning).getByText(/Compatibility details/));
+    fireEvent.click(within(warning).getByText(/Unsupported \(/));
     expect(warning).toHaveAttribute("open");
     expect(screen.queryByRole("button", { name: "View mixed" })).toBeNull();
     fireEvent.change(screen.getByRole("combobox", { name: "Status" }), { target: { value: "partial" } });
@@ -215,7 +224,9 @@ describe("Integration browsing and lifecycle", () => {
     await screen.findByRole("button", { name: "View docs" });
     await act(async () => fireEvent.click(screen.getByRole("button", { name: "Discover" })));
     const tile = screen.getByRole("button", { name: "View public-docs" }).closest("li")!;
-    expect(tile).toHaveTextContent("Compatible");
+    // A fully working plugin carries no badge, only what it adds.
+    expect(tile).toHaveTextContent("Connects to filesystem · 1 skill · 1 hook");
+    expect(tile).not.toHaveTextContent(/Compatible|Some parts skipped/);
     expect(screen.queryByRole("dialog")).toBeNull();
     await act(async () => fireEvent.click(screen.getByRole("button", { name: "View public-docs" })));
     const dialog = screen.getByRole("dialog");
@@ -223,25 +234,58 @@ describe("Integration browsing and lifecycle", () => {
     expect(dialog).not.toHaveTextContent(/Compatible|Documents|MCP|hook|Install|Available in/);
     expect(vi.mocked(pluginAction).mock.calls.filter(([args]) => args.action === "inspect_marketplace")).toHaveLength(2);
   });
-  it("keeps incomplete catalogs unavailable and ignores a scan after switching marketplaces", async () => {
+  it("shows every source together, each as soon as its check is ready", async () => {
     const previous = vi.mocked(pluginAction).getMockImplementation()!;
     let finish!: (value: unknown) => void;
     vi.mocked(pluginAction).mockImplementation(async args => {
-      if (args.action === "marketplaces") return [{ name: "slow", source: "/slow" }, { name: "ready", source: "/ready" }] as never;
+      if (args.action === "marketplaces") return [{ name: "slow", source: "/slow" }, { name: "official", source: "official-source" }] as never;
       if (args.action === "scan_marketplace" && args.name === "slow") return await new Promise<unknown>(resolve => { finish = resolve; }) as never;
       return previous(args) as never;
     });
     render(<Plugins />);
     await screen.findByRole("button", { name: "View docs" });
-    fireEvent.click(screen.getByRole("button", { name: "Discover" }));
-    expect(screen.getByRole("status")).toHaveTextContent("Checking marketplace");
-    expect(screen.queryByRole("button", { name: "Install" })).toBeNull();
-    expect(screen.getByRole("combobox", { name: "Marketplace" })).toBeEnabled();
-    await act(async () => fireEvent.change(screen.getByRole("combobox", { name: "Marketplace" }), { target: { value: "ready" } }));
+    await act(async () => fireEvent.click(screen.getByRole("button", { name: "Discover" })));
+    // The ready source is usable while the slow one is still being checked.
     expect(screen.getByRole("button", { name: "View public-docs" })).toBeVisible();
-    await act(async () => finish({ status: "ready", revision: "old", catalog: { plugins: [{ name: "stale" }] }, checks: {}, errors: {} }));
-    expect(screen.queryByRole("button", { name: "View stale" })).toBeNull();
-    expect(screen.getByRole("button", { name: "View public-docs" })).toBeVisible();
+    expect(document.querySelector(".themis-filter-summary")).toHaveTextContent("Checking");
+    expect(screen.queryByRole("combobox", { name: "Marketplace" })).toBeNull();
+    await act(async () => finish({ status: "ready", revision: "slow-1", catalog: { plugins: [{ name: "late", author: { name: "Late Co" } }] }, checks: { late: { spec: { ...installed[0].spec, name: "late" }, report: { status: "supported", components: [] } } }, errors: {} }));
+    const late = screen.getByRole("button", { name: "View late" }).closest("li")!;
+    expect(late).toHaveTextContent("Late Co · slow");
+    expect(document.querySelector(".themis-filter-summary")?.textContent ?? "").not.toContain("Checking");
+    fireEvent.change(screen.getByRole("combobox", { name: "Source" }), { target: { value: "slow" } });
+    expect(screen.queryByRole("button", { name: "View public-docs" })).toBeNull();
+    expect(screen.getByRole("button", { name: "View late" })).toBeVisible();
+    // Search covers the publisher.
+    fireEvent.change(screen.getByRole("combobox", { name: "Source" }), { target: { value: "all" } });
+    fireEvent.change(screen.getByRole("searchbox", { name: "Search integrations" }), { target: { value: "late co" } });
+    expect(screen.getByRole("button", { name: "View late" })).toBeVisible();
+    expect(screen.queryByRole("button", { name: "View public-docs" })).toBeNull();
+  });
+  it("groups Discover by purpose and remembers the last group", async () => {
+    const previous = vi.mocked(pluginAction).getMockImplementation()!;
+    vi.mocked(pluginAction).mockImplementation(async args => {
+      if (args.action === "catalog") return { plugins: [{ name: "lint" }, { name: "pager" }, { name: "query" }] } as never;
+      if (args.action === "scan_marketplace") {
+        const scan = await previous(args) as unknown as Record<string, unknown>;
+        return { ...scan, groups: { lint: "Coding", pager: "Monitoring", query: "Data & databases" } } as never;
+      }
+      return previous(args) as never;
+    });
+    const store = new Map<string, string>();
+    vi.stubGlobal("localStorage", { getItem: (k: string) => store.get(k) ?? null, setItem: (k: string, v: string) => store.set(k, v) });
+    render(<Plugins />);
+    await screen.findByRole("button", { name: "View docs" });
+    await act(async () => fireEvent.click(screen.getByRole("button", { name: "Discover" })));
+    const groups = screen.getByRole("navigation", { name: "Groups" });
+    expect(within(groups).getAllByRole("button").map(button => button.textContent)).toEqual(["All3", "Coding1", "Data & databases1", "Monitoring1"]);
+    fireEvent.click(within(groups).getByRole("button", { name: /Monitoring/ }));
+    expect(screen.getByRole("button", { name: "View pager" })).toBeVisible();
+    expect(screen.queryByRole("button", { name: "View lint" })).toBeNull();
+    expect(store.get("themis.discover.group")).toBe("Monitoring");
+    fireEvent.click(screen.getByRole("button", { name: "Reset filters" }));
+    expect(screen.getByRole("button", { name: "View lint" })).toBeVisible();
+    vi.unstubAllGlobals();
   });
   it("does not reopen a closed preview when refresh overtakes its response", async () => {
     const previous = vi.mocked(pluginAction).getMockImplementation()!;
@@ -259,7 +303,7 @@ describe("Integration browsing and lifecycle", () => {
     expect(screen.queryByRole("dialog")).toBeNull();
     expect(pluginAction).toHaveBeenCalledWith({ action: "scan_marketplace", name: "official", refresh: true });
     await act(async () => fireEvent.click(screen.getByRole("button", { name: "Install" })));
-    expect(pluginAction).toHaveBeenCalledWith(expect.objectContaining({ action: "install", expectedScan: "scan-1" }));
+    expect(pluginAction).toHaveBeenCalledWith(expect.objectContaining({ action: "install", expectedCheck: "check-1" }));
   });
   it("filters saved failures by their label and prevents installation", async () => {
     const previous = vi.mocked(pluginAction).getMockImplementation()!;
@@ -269,7 +313,7 @@ describe("Integration browsing and lifecycle", () => {
     await act(async () => fireEvent.click(screen.getByRole("button", { name: "Discover" })));
     fireEvent.change(screen.getByRole("combobox", { name: "Status" }), { target: { value: "failed" } });
     expect(screen.getByRole("button", { name: "View missing" })).toBeVisible();
-    fireEvent.click(screen.getByText(/Compatibility details/));
+    fireEvent.click(within(screen.getByRole("button", { name: "View missing" }).closest("li")!).getByText(/Check failed/));
     expect(screen.getByText("Plugin files are missing. Refresh to retry.")).toBeVisible();
     expect(screen.getByRole("button", { name: "Install" })).toBeDisabled();
     fireEvent.change(screen.getByRole("combobox", { name: "Status" }), { target: { value: "supported" } });
@@ -365,45 +409,162 @@ describe("Integration browsing and lifecycle", () => {
     expect(dialog.querySelector(".themis-skill-viewer")!.scrollTop).toBe(0);
     expect(pluginAction).not.toHaveBeenCalledWith(expect.objectContaining({ action: "install" }));
   });
-  it.each(["https://example.com/marketplace.json", "/local/marketplace.json"])("adds marketplace source %s and browses without installing", async source => {
-    const previous = vi.mocked(pluginAction).getMockImplementation()!;
-    vi.mocked(pluginAction).mockImplementation(async args => args.action === "add_marketplace" ? null as never : previous(args) as never);
+  const openSources = async () => {
     render(<Plugins />);
     await screen.findByRole("button", { name: "View docs" });
     await act(async () => fireEvent.click(screen.getByRole("button", { name: "Discover" })));
-    const add = screen.getByRole("button", { name: "Add marketplace" });
-    expect(add.querySelector("svg")).toBeInTheDocument();
-    expect(add).toHaveAttribute("title", "Add marketplace");
-    fireEvent.click(add);
-    const dialog = screen.getByRole("dialog", { name: "Add marketplace" });
-    fireEvent.change(within(dialog).getByRole("textbox", { name: "Name" }), { target: { value: "personal" } });
-    fireEvent.change(within(dialog).getByRole("textbox", { name: "URL or local path" }), { target: { value: source } });
-    await act(async () => fireEvent.click(within(dialog).getByRole("button", { name: "Add" })));
-    expect(pluginAction).toHaveBeenCalledWith(expect.objectContaining({ action: "add_marketplace", name: "personal", source }));
-    expect(pluginAction).toHaveBeenCalledWith({ action: "scan_marketplace", name: "personal", refresh: false });
-    expect(screen.queryByRole("dialog")).toBeNull();
-    expect(pluginAction).not.toHaveBeenCalledWith(expect.objectContaining({ action: "install" }));
-  });
-  it("keeps marketplace errors actionable and allows correction without installing", async () => {
+    await act(async () => fireEvent.click(screen.getByRole("button", { name: "Sources" })));
+    return screen.getByRole("dialog", { name: "Sources" });
+  };
+  it("checks a source before adding it, under the name in its manifest", async () => {
     const previous = vi.mocked(pluginAction).getMockImplementation()!;
     vi.mocked(pluginAction).mockImplementation(async args => {
-      if (args.action === "add_marketplace") throw new Error("Marketplace source could not be read\nDiagnostic operation: 12345678-1234-1234-1234-123456789abc");
+      if (args.action === "preview_source") return { name: "acme-plugins", publisher: "Acme Inc", plugins: 24, source: "https://github.com/acme/agent-plugins.git" } as never;
+      if (args.action === "add_marketplace") return null as never;
+      if (args.action === "marketplaces") return [{ name: "official", source: "official-source" }, { name: "acme-plugins", source: "x", enabled: true }] as never;
+      return previous(args) as never;
+    });
+    fireEvent.click(within(await openSources()).getByRole("button", { name: "Add marketplace" }));
+    const dialog = screen.getByRole("dialog", { name: "Add marketplace" });
+    expect(within(dialog).queryByRole("textbox", { name: "Name" })).toBeNull();
+    const check = within(dialog).getByRole("button", { name: "Check" });
+    expect(check).toBeDisabled();
+    fireEvent.change(within(dialog).getByRole("textbox", { name: "Source" }), { target: { value: "acme/agent-plugins" } });
+    await act(async () => fireEvent.click(within(dialog).getByRole("button", { name: "Check" })));
+    expect(pluginAction).toHaveBeenCalledWith({ action: "preview_source", source: "acme/agent-plugins" });
+    expect(within(dialog).getByText("acme-plugins")).toBeVisible();
+    expect(within(dialog).getByText("Acme Inc · 24 plugins")).toBeVisible();
+    expect(within(dialog).getByText("Plugins from this source can run commands once enabled.")).toBeVisible();
+    expect(pluginAction).not.toHaveBeenCalledWith(expect.objectContaining({ action: "add_marketplace" }));
+    await act(async () => fireEvent.click(within(dialog).getByRole("button", { name: "Add" })));
+    expect(pluginAction).toHaveBeenCalledWith(expect.objectContaining({ action: "add_marketplace", source: "https://github.com/acme/agent-plugins.git" }));
+    expect(pluginAction).toHaveBeenCalledWith({ action: "scan_marketplace", name: "acme-plugins", refresh: false });
+    expect(pluginAction).not.toHaveBeenCalledWith(expect.objectContaining({ action: "install" }));
+  });
+  it("says in one line why a source can't be added, and lets it be corrected", async () => {
+    const previous = vi.mocked(pluginAction).getMockImplementation()!;
+    vi.mocked(pluginAction).mockImplementation(async args => {
+      if (args.action === "preview_source") throw new Error("No marketplace found in this source.\nDiagnostic operation: 12345678-1234-1234-1234-123456789abc");
+      return previous(args) as never;
+    });
+    fireEvent.click(within(await openSources()).getByRole("button", { name: "Add marketplace" }));
+    const dialog = screen.getByRole("dialog", { name: "Add marketplace" });
+    const field = within(dialog).getByRole("textbox", { name: "Source" });
+    fireEvent.change(field, { target: { value: "acme/website" } });
+    await act(async () => fireEvent.click(within(dialog).getByRole("button", { name: "Check" })));
+    expect(within(dialog).getByRole("alert")).toHaveTextContent(/^No marketplace found in this source\.$/);
+    expect(field).toHaveAttribute("aria-invalid", "true");
+    expect(within(dialog).getByRole("button", { name: "Check" })).toBeDisabled();
+    fireEvent.change(field, { target: { value: "acme/plugins" } });
+    expect(within(dialog).queryByRole("alert")).toBeNull();
+    expect(within(dialog).getByRole("button", { name: "Check" })).toBeEnabled();
+  });
+  it("hides a source from Discover, and only other sources can be removed", async () => {
+    const previous = vi.mocked(pluginAction).getMockImplementation()!;
+    const rows = [
+      { name: "claude-plugins-official", source: "o", enabled: true, official: true, status: "ready", completed: 315, total: 315 },
+      { name: "team", source: "t", enabled: true, official: false, status: "scanning", completed: 12, total: 24 },
+    ];
+    vi.mocked(pluginAction).mockImplementation(async args => {
+      if (args.action === "sources") return rows as never;
+      if (args.action === "set_marketplace_enabled" || args.action === "remove_marketplace") return null as never;
+      return previous(args) as never;
+    });
+    const dialog = await openSources();
+    expect(within(dialog).getByText("Official")).toBeVisible();
+    expect(within(dialog).getByText("315 plugins")).toBeVisible();
+    expect(within(dialog).getByText("Checking 12/24")).toBeVisible();
+    expect(within(dialog).queryByRole("button", { name: "Remove claude-plugins-official" })).toBeNull();
+    await act(async () => fireEvent.click(within(dialog).getByRole("switch", { name: "Show team in Discover" })));
+    expect(pluginAction).toHaveBeenCalledWith(expect.objectContaining({ action: "set_marketplace_enabled", name: "team", enabled: false }));
+    fireEvent.click(within(screen.getByRole("dialog", { name: "Sources" })).getByRole("button", { name: "Remove team" }));
+    const confirm = screen.getByRole("dialog", { name: "Remove team?" });
+    expect(confirm).toHaveTextContent("stay installed");
+    await act(async () => fireEvent.click(within(confirm).getByRole("button", { name: "Remove" })));
+    expect(pluginAction).toHaveBeenCalledWith(expect.objectContaining({ action: "remove_marketplace", name: "team" }));
+  });
+  it("offers a checked plugin while the rest of its catalog is still being checked", async () => {
+    const previous = vi.mocked(pluginAction).getMockImplementation()!;
+    vi.mocked(pluginAction).mockImplementation(async args => args.action === "scan_marketplace" ? {
+      revision: "scan", status: "scanning", completed: 1, total: 2, errors: {},
+      catalog: { plugins: [{ name: "first" }, { name: "second" }] },
+      checks: { second: { spec: { ...installed[0].spec, name: "second" }, report: { status: "supported", components: [] }, check_revision: "check-second" } },
+    } as never : previous(args) as never);
+    render(<Plugins />);
+    await screen.findByRole("button", { name: "View docs" });
+    await act(async () => fireEvent.click(screen.getByRole("button", { name: "Discover" })));
+    const card = (name: string) => screen.getByRole("button", { name: `View ${name}` }).closest("li")!;
+    expect(within(card("second")).getByRole("button", { name: "Install" })).toBeEnabled();
+    expect(within(card("first")).getByRole("button", { name: "Install" })).toBeDisabled();
+    expect(card("first")).toHaveTextContent("Checking…");
+    // The count is shown, and a card found to be unsupported stays until checking finishes.
+    expect(screen.getByText("Checking 1/2")).toBeVisible();
+    // Cards keep their place while checks finish: checked ones don't jump ahead.
+    expect(screen.getAllByRole("button", { name: /^View (first|second)$/ }).map(button => button.textContent)).toEqual(["first", "second"]);
+  });
+  it("offers an update with its version change, and updates all", async () => {
+    installed[0].source = "official";
+    availableUpdates = [{ name: "docs", scope: installed[0].scope, marketplace: "official", from: "1.5.5", to: "1.6.0", check_revision: "check-2" }];
+    const previous = vi.mocked(pluginAction).getMockImplementation()!;
+    vi.mocked(pluginAction).mockImplementation(async args => {
+      if (args.action === "update") { availableUpdates = []; return null as never; }
       return previous(args) as never;
     });
     render(<Plugins />);
+    expect(await screen.findByText("1.5.5 → 1.6.0")).toBeVisible();
+    expect(screen.getByRole("button", { name: "Update all" })).toBeVisible();
+    await act(async () => fireEvent.click(screen.getByRole("button", { name: "Update" })));
+    expect(pluginAction).toHaveBeenCalledWith(expect.objectContaining({ action: "update", name: "docs", marketplace: "official", expectedCheck: "check-2" }));
+    expect(screen.queryByRole("button", { name: "Update all" })).toBeNull();
+    installed[0].source = undefined as never;
+  });
+  it("opens an installed plugin to its parts, each with its own switch", async () => {
+    installed[0].spec.unsupported = ["Hook event SessionEnd"];
+    render(<Plugins />);
+    const show = await screen.findByRole("button", { name: "Show docs parts" });
+    expect(screen.getByText(/1 part skipped/)).toBeVisible();
+    expect(screen.queryByRole("list", { name: "docs parts" })).toBeNull();
+    fireEvent.click(show);
+    const parts = screen.getByRole("list", { name: "docs parts" });
+    expect(within(parts).getAllByRole("listitem").length).toBeGreaterThan(0);
+    const first = within(parts).getAllByRole("switch")[0];
+    await act(async () => fireEvent.click(first));
+    expect(pluginAction).toHaveBeenCalledWith(expect.objectContaining({ action: "set_component_enabled", name: "docs" }));
+    fireEvent.click(screen.getByRole("button", { name: "Hide docs parts" }));
+    expect(screen.queryByRole("list", { name: "docs parts" })).toBeNull();
+    installed[0].spec.unsupported = [];
+  });
+  it("names the MCP tab Connections and counts each kind", async () => {
+    render(<Plugins />);
+    const tab = await screen.findByRole("button", { name: "Connections" });
+    expect(screen.queryByRole("button", { name: "MCP" })).toBeNull();
+    // The counts arrive after the tabs render.
+    await waitFor(() => expect(within(screen.getByRole("navigation", { name: "Integration categories" })).getByRole("button", { name: "Plugins" })).toHaveTextContent(/Plugins\s*1/));
+    expect(tab).toBeVisible();
+  });
+  it("keeps an unsupported card in place until the catalog is done, then filters it", async () => {
+    const previous = vi.mocked(pluginAction).getMockImplementation()!;
+    let status = "scanning";
+    vi.mocked(pluginAction).mockImplementation(async args => args.action === "scan_marketplace" ? {
+      revision: "scan", status, completed: 1, total: 2, errors: {},
+      catalog: { plugins: [{ name: "plain" }, { name: "agents-only" }] },
+      checks: { "agents-only": { spec: { ...installed[0].spec, name: "agents-only", skills: [] }, report: { status: "unsupported", components: [] } } },
+    } as never : previous(args) as never);
+    render(<Plugins />);
     await screen.findByRole("button", { name: "View docs" });
-    await act(async () => fireEvent.click(screen.getByRole("button", { name: "Discover" })));
-    fireEvent.click(screen.getByRole("button", { name: "Add marketplace" }));
-    const dialog = screen.getByRole("dialog", { name: "Add marketplace" });
-    expect(within(dialog).getByRole("button", { name: "Add" })).toBeDisabled();
-    fireEvent.change(within(dialog).getByRole("textbox", { name: "Name" }), { target: { value: "personal" } });
-    fireEvent.change(within(dialog).getByRole("textbox", { name: "URL or local path" }), { target: { value: "/missing" } });
-    await act(async () => fireEvent.click(within(dialog).getByRole("button", { name: "Add" })));
-    expect(toast).toHaveBeenCalledWith(expect.any(Function), "Marketplace source could not be read", "danger");
-    expect(within(dialog).queryByRole("alert")).toBeNull();
-    expect(within(dialog).getByRole("textbox", { name: "URL or local path" })).toHaveValue("/missing");
-    expect(within(dialog).getByRole("button", { name: "Add" })).toBeEnabled();
-    expect(pluginAction).not.toHaveBeenCalledWith(expect.objectContaining({ action: "install" }));
+    vi.useFakeTimers();
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Discover" })); await vi.advanceTimersByTimeAsync(0); });
+    expect(screen.getByRole("button", { name: "View agents-only" })).toBeVisible();
+    status = "ready";
+    await act(async () => { await vi.advanceTimersByTimeAsync(1100); });
+    expect(screen.queryByRole("button", { name: "View agents-only" })).toBeNull();
+    vi.useRealTimers();
+  });
+  it("marks a plugin whose source was removed", async () => {
+    installed[0].source = "gone";
+    render(<Plugins />);
+    expect(await screen.findByText(/· Source removed$/)).toBeVisible();
+    installed[0].source = undefined as never;
   });
   it("reports empty packages without inventing skills", async () => {
     installed[0].spec.skills = [];
@@ -444,7 +605,7 @@ describe("Integration browsing and lifecycle", () => {
     installed[0].spec.mcp.remote = { url: "https://example.com/mcp", args: [], env: {}, enabled: false };
     render(<Plugins />);
     await screen.findByRole("button", { name: "View docs" });
-    fireEvent.click(screen.getByRole("button", { name: "MCP" }));
+    fireEvent.click(screen.getByRole("button", { name: "Connections" }));
     fireEvent.click(screen.getByRole("button", { name: "View filesystem" }));
     expect(screen.getByRole("dialog")).toHaveTextContent("Local process");
     expect(screen.getByRole("dialog")).toHaveTextContent(`node -y @example/server '/a path/it'"'"'s here' ''`);
@@ -462,19 +623,18 @@ describe("Integration browsing and lifecycle", () => {
     expect(screen.getByRole("dialog")).toHaveTextContent("Disabled");
     expectNoConfiguration();
   });
-  it("uses source icons and replaces failed images with a glyph", async () => {
+  it("shows an icon URL nowhere: browsing makes no image requests", async () => {
     installed[0].spec.icon = "https://example.com/missing.svg";
     render(<Plugins />);
     await screen.findByRole("button", { name: "View docs" });
-    fireEvent.error(screen.getByAltText(""));
     expect(screen.queryByAltText("")).toBeNull();
-    expect(screen.getByRole("button", { name: "View docs" }).closest("li")!.querySelector("svg")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "View docs" }).closest("li")).toHaveTextContent("D");
   });
-  it("previews public bundles without installing and retains source icons", async () => {
+  it("previews public bundles without installing", async () => {
     render(<Plugins />);
     await screen.findByRole("button", { name: "View docs" });
     await act(async () => fireEvent.click(screen.getByRole("button", { name: "Discover" })));
-    expect(screen.getByAltText("")).toHaveAttribute("src", "https://example.com/icon.svg");
+    expect(screen.queryByAltText("")).toBeNull();
     await act(async () => fireEvent.click(screen.getByRole("button", { name: "View public-docs" })));
     const dialog = screen.getByRole("dialog", { name: "public-docs" });
     fireEvent.click(within(dialog).getByRole("button", { name: "View Draft" }));
@@ -497,26 +657,31 @@ describe("Integration browsing and lifecycle", () => {
     render(<Plugins />);
     await screen.findByRole("button", { name: "View docs" });
     fireEvent.click(screen.getByRole("button", { name: "Skills" }));
-    expect(screen.queryByRole("button", { name: "Discover" })).toBeNull();
+    // Skills has no catalog of its own: the page-level Discover is the plugin catalog.
+    expect(screen.getByRole("button", { name: "Discover" })).toHaveAttribute("aria-pressed", "false");
     fireEvent.click(screen.getByRole("button", { name: "View Draft" }));
     expect(screen.getByRole("dialog")).toHaveTextContent("Read the sources before drafting.");
     fireEvent.click(screen.getByRole("button", { name: "Close" }));
     installed.push({ ...installed[0], spec: { ...installed[0].spec, name: "standalone", package_kind: "skill", skills: [{ ...installed[0].spec.skills[0], name: "Local review" }] } });
     await act(async () => window.dispatchEvent(new Event("themis-plugins-changed")));
     expect(screen.getByRole("button", { name: "View Local review" })).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Plugins" }));
-    expect(screen.getByRole("button", { name: "Discover" })).toBeInTheDocument();
+    await act(async () => fireEvent.click(screen.getByRole("button", { name: "Discover" })));
+    // Discover hides the installed kind tabs and opens the plugin catalog.
+    expect(screen.queryByRole("button", { name: "Skills" })).toBeNull();
+    expect(screen.getByRole("button", { name: "View public-docs" })).toBeVisible();
   });
-  it.each(["Plugins", "Skills", "MCP", "Hooks"])("toggles %s with a switch and visible status", async category => {
+  it.each(["Plugins", "Skills", "Connections", "Hooks"])("toggles %s with a switch and visible status", async category => {
     render(<Plugins />);
     await screen.findByRole("button", { name: "View docs" });
     fireEvent.click(screen.getByRole("button", { name: category }));
     const control = screen.getByRole("switch");
     const wasEnabled = control.getAttribute("aria-checked") === "true";
-    expect(control.closest("li")).toHaveTextContent(wasEnabled ? category === "MCP" ? "Connecting…" : "Enabled" : "Disabled");
+    // Hook rows show only their switch (board 24); the others name their state too.
+    const labelled = category !== "Hooks";
+    if (labelled) expect(control.closest("li")).toHaveTextContent(wasEnabled ? category === "Connections" ? "Connecting…" : "Enabled" : "Disabled");
     await act(async () => fireEvent.click(control));
     expect(screen.getByRole("switch")).toHaveAttribute("aria-checked", String(!wasEnabled));
-    expect(screen.getByRole("switch").closest("li")).toHaveTextContent(wasEnabled ? "Disabled" : category === "MCP" ? "Connecting…" : "Enabled");
+    if (labelled) expect(screen.getByRole("switch").closest("li")).toHaveTextContent(wasEnabled ? "Disabled" : category === "Connections" ? "Connecting…" : "Enabled");
     expectNoConfiguration();
   });
   it("keeps disabled bundle children gated but reenables disabled discovered standalone skills", async () => {

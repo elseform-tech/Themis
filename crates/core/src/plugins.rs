@@ -6,7 +6,7 @@ pub mod keys;
 mod marketplace;
 pub mod oauth;
 mod scans;
-pub use scans::MarketplaceScan;
+pub use scans::{catalog_brands, catalog_groups, compatibility_summary, MarketplaceScan};
 
 use crate::skills::Skill;
 use anyhow::{bail, Context};
@@ -36,11 +36,20 @@ pub struct PluginSpec {
     pub skill_paths: BTreeMap<String, String>,
     #[serde(default)]
     pub icon: Option<String>,
+    /// The plugin's own icon in the app's icon store, saved when it was checked.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub icon_asset: Option<String>,
+    /// A bundled brand logo, matched when it was checked. Never taken from the plugin itself.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub brand: Option<String>,
     pub name: String,
     #[serde(default)]
     pub description: String,
     #[serde(default)]
     pub version: String,
+    /// What this plugin's package was when installed from a marketplace, to spot upstream changes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub package_hash: Option<String>,
     #[serde(default)]
     pub skills: Vec<Skill>,
     #[serde(default)]
@@ -53,6 +62,10 @@ pub struct PluginSpec {
     pub executable_files: Vec<String>,
     #[serde(default)]
     pub unsupported: Vec<String>,
+    /// Harmless import notes (dropped binary or oversized resources, unused frontmatter) that
+    /// are listed but do not make a package partial.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub notices: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub import_issues: Vec<ImportComponent>,
 }
@@ -307,6 +320,9 @@ impl PluginStore {
             if previous.map(|p| p.revision.as_str()) != expected {
                 bail!("Plugin changed since it was opened; reload before saving");
             }
+            // Set by a marketplace check, never by what is being saved.
+            spec.brand = previous.and_then(|p| p.spec.brand.clone());
+            spec.icon_asset = previous.and_then(|p| p.spec.icon_asset.clone());
             if let Some(previous) = previous {
                 for skill in &spec.skills {
                     let Some(old) = previous.spec.skills.iter().find(|old| old.id == skill.id)
@@ -720,32 +736,24 @@ impl PluginStore {
         Ok((text, skills, plugins))
     }
     fn builtin_skills(&self) -> Vec<Skill> {
-        let mut skills = vec![self.creator()];
+        let mut skills = Vec::new();
         for (id, name, instructions) in [
             (
-                "manage-plugins",
-                "Manage plugins",
-                include_str!("../builtins/manage-plugins/SKILL.md"),
+                "plugins",
+                "Plugins",
+                include_str!("../builtins/plugins/SKILL.md"),
             ),
             (
-                "manage-skills",
-                "Manage skills",
-                include_str!("../builtins/manage-skills/SKILL.md"),
+                "skills",
+                "Skills",
+                include_str!("../builtins/skills/SKILL.md"),
             ),
+            ("mcp", "MCP", include_str!("../builtins/mcp/SKILL.md")),
+            ("hooks", "Hooks", include_str!("../builtins/hooks/SKILL.md")),
             (
-                "manage-mcp",
-                "Manage MCP",
-                include_str!("../builtins/manage-mcp/SKILL.md"),
-            ),
-            (
-                "manage-hooks",
-                "Manage hooks",
-                include_str!("../builtins/manage-hooks/SKILL.md"),
-            ),
-            (
-                "manage-automations",
-                "Manage automations",
-                include_str!("../builtins/manage-automations/SKILL.md"),
+                "automations",
+                "Automations",
+                include_str!("../builtins/automations/SKILL.md"),
             ),
             (
                 "browser-use",
@@ -763,23 +771,17 @@ impl PluginStore {
                     .into(),
                 instructions: instructions.into(),
                 allowed_tools: vec![],
-                scripts: vec![],
+                scripts: if id == "skills" {
+                    vec![crate::skills::SkillScript {
+                        name: "verify.py".into(),
+                        content: include_str!("../builtins/skills/scripts/verify.py").into(),
+                    }]
+                } else {
+                    vec![]
+                },
             });
         }
         skills
-    }
-    fn creator(&self) -> Skill {
-        Skill {
-            id: "create-skill".into(),
-            name: "Create skill".into(),
-            description: "Design reusable skills".into(),
-            instructions: include_str!("../builtins/create-skill/SKILL.md").into(),
-            allowed_tools: vec![],
-            scripts: vec![crate::skills::SkillScript {
-                name: "verify.py".into(),
-                content: include_str!("../builtins/create-skill/scripts/verify.py").into(),
-            }],
-        }
     }
     pub fn save_skill(
         &self,
@@ -800,6 +802,41 @@ impl PluginStore {
             });
         spec.skills.retain(|s| s.id != skill.id);
         spec.skills.push(skill);
+        self.save(scope, spec, expected)
+    }
+    /// Adds or replaces one hook, keeping the rest of the plugin. A new or changed hook is saved
+    /// turned off; an unchanged one stays as it was.
+    pub fn save_hook(
+        &self,
+        scope: &str,
+        plugin_name: &str,
+        mut hook: Hook,
+        expected: Option<&str>,
+    ) -> anyhow::Result<Plugin> {
+        let mut spec = self
+            .registry(scope)?
+            .current
+            .get(plugin_name)
+            .map(|p| p.spec.clone())
+            .unwrap_or(PluginSpec {
+                name: plugin_name.into(),
+                ..Default::default()
+            });
+        hook.plugin_root = None;
+        hook.runtime_identity = None;
+        let definition = |hook: &Hook| {
+            let mut value = serde_json::to_value(hook).unwrap_or_default();
+            value["enabled"] = serde_json::Value::Null;
+            value
+        };
+        let previous = spec.hooks.iter().position(|old| old.name == hook.name);
+        hook.enabled = previous
+            .map(|index| &spec.hooks[index])
+            .is_some_and(|old| old.enabled && definition(old) == definition(&hook));
+        match previous {
+            Some(index) => spec.hooks[index] = hook,
+            None => spec.hooks.push(hook),
+        }
         self.save(scope, spec, expected)
     }
     pub fn materialize(&self, plugins: &[Plugin], root: &Path) -> anyhow::Result<()> {
@@ -961,10 +998,10 @@ fn validate(spec: &PluginSpec) -> anyhow::Result<()> {
                 && url.query().is_none()
                 && url.fragment().is_none()
         });
-        if !remote
-            && !(safe_relative(icon) && icon.ends_with(".svg") && spec.files.contains_key(icon))
-        {
-            bail!("Plugin icon must be an HTTPS URL or bundled SVG resource");
+        let bundled_svg = icon.ends_with(".svg") && spec.files.contains_key(icon);
+        let bundled_image = icon.ends_with(".png") || icon.ends_with(".webp");
+        if !remote && !(safe_relative(icon) && (bundled_svg || bundled_image)) {
+            bail!("Plugin icon must be an HTTPS URL or a bundled SVG, PNG or WebP");
         }
     }
     if spec.files.keys().any(|p| !safe_relative(p))
@@ -1193,7 +1230,7 @@ impl PluginStore {
             let skills = p.spec.skills.iter().map(|s| serde_json::json!({"id":s.id,"name":s.name,"description":s.description})).collect::<Vec<_>>();
             serde_json::json!({"scope":p.scope,"source":p.source,"revision":p.revision,"enabled":p.enabled,
                 "spec":{"name":p.spec.name,"description":p.spec.description,"package_kind":p.spec.package_kind,
-                    "mcp":mcp,"skills":skills,"skill_paths":p.spec.skill_paths,"hook_count":p.spec.hooks.len(),"file_count":p.spec.files.len()}})
+                    "mcp":mcp,"skills":skills,"skill_paths":p.spec.skill_paths,"hook_count":p.spec.hooks.len(),"hooks":p.spec.hooks,"file_count":p.spec.files.len()}})
         }).collect::<Vec<_>>();
         let next = offset + items.len();
         Ok(

@@ -50,7 +50,7 @@ export function PromptText({value,skills,plugins=[]}:{value:string;skills:Prompt
       return <span key={index} className="themis-skill-chip themis-plugin-chip" title={plugin?.origin ?? "Unavailable plugin"}><PluginIcon plugin={plugin} /><span className="themis-reference-label themis-shimmer">{plugin?.name ?? "Unavailable plugin"}</span></span>;
     }
     const skill=skills.find(s=>s.id===part.skill);
-    return <span key={index} className="themis-skill-chip" title={skill?.plugin ?? "Unavailable skill"}><SkillIcon /><span className="themis-reference-label themis-shimmer">{skill?.name ?? (part.skill==="create-skill"?"Create skill":"Unavailable skill")}</span></span>;
+    return <span key={index} className="themis-skill-chip" title={skill?.plugin ?? "Unavailable skill"}><SkillIcon /><span className="themis-reference-label themis-shimmer">{skill?.name ?? "Unavailable skill"}</span></span>;
   })}</>;
 }
 export function PromptInput({value,onChange,skills,plugins=[],commands=[],label,id,disabled,placeholder,onSubmit,history=[]}:Props) {
@@ -107,7 +107,7 @@ export function PromptInput({value,onChange,skills,plugins=[],commands=[],label,
         chip.className="themis-skill-chip";chip.contentEditable="false";chip.dataset.skill=part.skill;
         chip.title=skill ? `${skill.plugin} · ${skill.description}` : "Unavailable skill; replace before running";
         const icon=document.createElement("span");icon.textContent=skill?"✧":"⚠";icon.setAttribute("aria-hidden","true");
-        chip.append(icon,referenceLabel(skill?.name ?? (part.skill==="create-skill"?"Create skill":"Unavailable skill")));
+        chip.append(icon,referenceLabel(skill?.name ?? "Unavailable skill"));
         element.append(chip);
       }
       if (!element.lastChild || (element.lastChild instanceof HTMLElement && (element.lastChild.dataset.skill || element.lastChild.dataset.plugin || element.lastChild.dataset.command))) element.append(document.createTextNode(""));

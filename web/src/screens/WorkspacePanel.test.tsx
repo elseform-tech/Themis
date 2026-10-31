@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { initialState } from "../state/reducer";
 import type { WorkspaceInfo } from "../lib/types";
@@ -8,13 +8,14 @@ import * as bridge from "../lib/tauri";
 
 const dispatch = vi.fn();
 let appState: typeof initialState;
-const diff = { available: true, files: [{ path: "src/a.ts", status: "modified" as const, preexisting: false, hunks: [{ old_start: 1, old_lines: 1, new_start: 1, new_lines: 1, lines: [{ kind: "del" as const, text: "old" }, { kind: "add" as const, text: "new" }] }] }] };
+const diff = { available: true, files: [{ path: "src/a.ts", status: "modified" as const, preexisting: false, added: 0, removed: 0, hunks: [{ old_start: 1, old_lines: 1, new_start: 1, new_lines: 1, lines: [{ kind: "del" as const, text: "old" }, { kind: "add" as const, text: "new" }] }] }] };
 vi.mock("../state/store", async importOriginal => ({
   ...await importOriginal<typeof import("../state/store")>(),
   useApp: () => ({ state: appState, dispatch }),
 }));
 vi.mock("../lib/tauri", () => ({
   listDiff: vi.fn(async () => diff),
+  branchDiff: vi.fn(),
   listProjectDir: vi.fn(async () => ({ path: "", truncated: false, entries: [{ name: "README.md", path: "README.md", is_dir: false, size: 5 }] })),
   readProjectFile: vi.fn(async () => ({ path: "README.md", content: "hello", size: 5, truncated: false, binary: false })),
   getWorkspace: vi.fn(async () => ({ ...workspace, pull_requests_unavailable: "GitHub CLI (gh) is not installed" })),
@@ -87,7 +88,7 @@ describe("WorkspacePanel", () => {
     expect(fireEvent.mouseDown(panel)).toBe(false);
     expect(fireEvent.mouseDown(split)).toBe(false);
   });
-  it("refreshes the diff live: after each completed tool call and every few seconds during a run", async () => {
+  it("refreshes the diff right after each completed tool call", async () => {
     vi.useFakeTimers();
     appState = { ...appState, running: { t1: true }, traces: { t1: [] } };
     const view = render(<WorkspacePanel projectRoot="/repo" threadId="t1" workspace={workspace} />);
@@ -95,13 +96,39 @@ describe("WorkspacePanel", () => {
     const calls = () => vi.mocked(bridge.listDiff).mock.calls.length;
     const initial = calls();
     expect(initial).toBeGreaterThan(0);
-    await act(async () => { vi.advanceTimersByTime(4000); });
-    expect(calls()).toBe(initial + 1);
     appState = { ...appState, traces: { t1: [{ id: "x", tool: "write_file", summary: "write", ok: true }] } };
     view.rerender(<WorkspacePanel projectRoot="/repo" threadId="t1" workspace={workspace} />);
     await act(async () => {});
-    expect(calls()).toBe(initial + 2);
+    expect(calls()).toBe(initial + 1);
     vi.useRealTimers();
+  });
+  it("shows what another branch adds, read-only, and nothing for the current one", async () => {
+    const info = { ...workspace, is_git: true, branch: "main", branches: [
+      { name: "main", current: true, upstream: null, track: null, updated: "now" },
+      { name: "feature", current: false, upstream: null, track: null, updated: "now" },
+    ] };
+    vi.mocked(bridge.branchDiff).mockResolvedValue({ available: true, reason: null, files: [{ path: "new.txt", status: "added", hunks: [] }] } as never);
+    appState = { ...appState, workspaceTabRequest: { tab: "branches", at: 2 } };
+    render(<WorkspacePanel projectRoot="/repo" threadId="t1" workspace={info as never} />);
+    expect(screen.queryByRole("button", { name: /^main/ })).toBeNull();
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: /^feature/ })); });
+    expect(bridge.branchDiff).toHaveBeenCalledWith("/repo", "feature");
+    expect(within(screen.getByRole("region", { name: "Changes in feature" })).getAllByText("new.txt").length).toBeGreaterThan(0);
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: /^feature/ })); });
+    expect(screen.queryByRole("region", { name: "Changes in feature" })).toBeNull();
+  });
+  it("drops a branch's comparison when that branch becomes the current one, and rereads the others", async () => {
+    const branches = (current: string) => ({ ...workspace, is_git: true, branch: current, branches: ["main", "feature", "other"].map(name => ({ name, current: name === current, upstream: null, track: null, updated: "now" })) });
+    vi.mocked(bridge.branchDiff).mockClear();
+    vi.mocked(bridge.branchDiff).mockResolvedValue({ available: true, reason: null, files: [{ path: "new.txt", status: "added", hunks: [] }] } as never);
+    appState = { ...appState, workspaceTabRequest: { tab: "branches", at: 3 } };
+    const view = render(<WorkspacePanel projectRoot="/repo" threadId="t1" workspace={branches("main") as never} />);
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: /^other/ })); });
+    expect(bridge.branchDiff).toHaveBeenCalledTimes(1);
+    await act(async () => { view.rerender(<WorkspacePanel projectRoot="/repo" threadId="t1" workspace={branches("feature") as never} />); });
+    expect(bridge.branchDiff).toHaveBeenCalledTimes(2);
+    await act(async () => { view.rerender(<WorkspacePanel projectRoot="/repo" threadId="t1" workspace={branches("other") as never} />); });
+    expect(screen.queryByRole("region", { name: "Changes in other" })).toBeNull();
   });
   it("shows a Tasks tab with a count and opens it when the indicator asks", async () => {
     const feed = { thread_id: "t1", run: { running: true, awaiting_approval: false }, automations: [], recent: [] };

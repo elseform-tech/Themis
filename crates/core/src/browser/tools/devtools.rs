@@ -143,6 +143,7 @@ impl ToolRuntime for BrowserDevtools {
                 .replace("  ", " "),
             risk(&panel, &action, &args),
         )?;
+        self.base.scope.chat.thaw_pages().await;
         let secrets = self.base.scope.permissions.config().show_secrets;
         let saved = |kind: &str, extension: &str, bytes: Vec<u8>| -> Result<Value, ToolCallError> {
             match &self.base.scope.media {

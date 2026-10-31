@@ -169,13 +169,7 @@ pub async fn run() -> Result<(), String> {
     }
     let result = match words.as_slice() {
         [kind, create, id, request] if kind == "skill" && create == "create" => {
-            return send_message(
-                &client,
-                id,
-                &format!("[[skill:create-skill]] {request}"),
-                false,
-            )
-            .await;
+            return send_message(&client, id, &format!("[[skill:skills]] {request}"), false).await;
         }
         [kind, ..] if matches!(kind.as_str(), "plugin" | "skill" | "mcp" | "hook") => {
             plugins::run(&client, &words, &directory).await?

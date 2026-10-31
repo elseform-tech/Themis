@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { DiffView, EmptyState, FileTree, Tooltip } from "../components";
 import { CodeBlock } from "../components/CodeBlock";
-import type { DirEntry, FileView, WorkspaceInfo } from "../lib/types";
-import { getWorkspace, listDiff, listProjectDir, readProjectFile } from "../lib/tauri";
+import type { DiffState, DirEntry, FileView, WorkspaceInfo } from "../lib/types";
+import { branchDiff, getWorkspace, listDiff, listProjectDir, readProjectFile } from "../lib/tauri";
 import { describeError, useApp } from "../state/store";
 import { readSession, writeSession } from "../state/session";
 import type { WorkspaceTab } from "../state/reducer";
@@ -96,7 +96,7 @@ export function WorkspacePanel({ projectRoot, threadId, workspace }: { projectRo
       <div className={`themis-workspace-body${tab === "browser" ? " is-browser" : ""}`}>
         {tab === "changes" && <ChangesView threadId={threadId} />}
         {tab === "files" && <FilesView projectRoot={projectRoot} />}
-        {tab === "branches" && <BranchesView workspace={workspace} />}
+        {tab === "branches" && <BranchesView workspace={workspace} projectRoot={projectRoot} />}
         {tab === "pulls" && <PullRequestsView projectRoot={projectRoot} />}
         {tab === "tasks" && <TasksView threadId={threadId} />}
         {tab === "browser" && <BrowserView threadId={threadId} />}
@@ -136,14 +136,9 @@ function ChangesView({ threadId }: { threadId: string }) {
     // A failed refresh keeps the last diff on screen.
     try { dispatch({ type: "diff/set", threadId, diff: await listDiff(threadId) }); } catch { /* keep last */ }
   }, [dispatch, threadId]);
-  // Live: refresh on open, after each completed tool call and when a run ends.
+  // Refresh on open, right after each completed tool call and when a run ends; useLiveDiff
+  // keeps it current in between.
   useEffect(() => { void refresh(); }, [refresh, toolsDone, running]);
-  // Shell commands can change files without a file-tool event, so poll during a run.
-  useEffect(() => {
-    if (!running) return;
-    const timer = setInterval(() => void refresh(), 4000);
-    return () => clearInterval(timer);
-  }, [running, refresh]);
   if (diff === undefined) return <EmptyState title="Loading changes…" />;
   if (diff === null || !diff.available) return <EmptyState title="Changes unavailable" hint={diff?.reason ?? "This folder has no Git diff."} />;
   const files = diff.files;
@@ -188,6 +183,7 @@ export function DiffSplit({ children }: { children: [ReactNode, ReactNode] }) {
 }
 
 function FilesView({ projectRoot }: { projectRoot: string }) {
+  const { state } = useApp();
   const [listings, setListings] = useState<Record<string, DirEntry[] | string>>({});
   const [open, setOpen] = useState<Record<string, boolean>>({ "": true });
   const [file, setFile] = useState<FileView | null>(null);
@@ -197,6 +193,9 @@ function FilesView({ projectRoot }: { projectRoot: string }) {
     catch (reason) { setListings(previous => ({ ...previous, [path]: describeError(reason) })); }
   }, [projectRoot]);
   useEffect(() => { setListings({}); setOpen({ "": true }); setFile(null); void load(""); }, [load]);
+  // A file named in a reply asks to be shown; follow each new request.
+  const asked = state.fileFocus;
+  useEffect(() => { if (asked) void view(asked.path); }, [asked]); // eslint-disable-line react-hooks/exhaustive-deps
   async function view(path: string) {
     setError("");
     try { setFile(await readProjectFile(projectRoot, path)); }
@@ -239,19 +238,51 @@ function FilesView({ projectRoot }: { projectRoot: string }) {
   );
 }
 
-function BranchesView({ workspace }: { workspace: WorkspaceInfo | null }) {
+function BranchesView({ workspace, projectRoot }: { workspace: WorkspaceInfo | null; projectRoot: string }) {
+  const [picked, setPicked] = useState<string | null>(null);
+  // A branch that has become the current one has nothing to compare with.
+  const current = workspace?.branch ?? null;
+  const open = picked === current ? null : picked;
+  const [diff, setDiff] = useState<DiffState | string | null>(null);
+  const [selected, setSelected] = useState<string | null>(null);
+  useEffect(() => {
+    setDiff(null); setSelected(null);
+    if (open === null) return;
+    let cancelled = false;
+    branchDiff(projectRoot, open).then(result => { if (!cancelled) setDiff(result); }).catch(reason => { if (!cancelled) setDiff(describeError(reason)); });
+    return () => { cancelled = true; };
+  }, [open, current, projectRoot]);
   if (workspace === null) return <EmptyState title="Loading branches…" />;
   if (!workspace.is_git) return <EmptyState title="Not a Git repository" />;
   if (workspace.branches.length === 0) return <EmptyState title="No branches yet" hint="Branches appear after the first commit." />;
+  const files = typeof diff === "object" && diff ? diff.files : [];
+  const file = files.find(entry => entry.path === selected) ?? files[0] ?? null;
   return (
-    <ul className="themis-workspace-list" aria-label="Branches">
-      {workspace.branches.map(branch => (
-        <li key={branch.name} className={branch.current ? "is-current" : undefined}>
-          <span className="themis-workspace-list-title"><BranchIcon />{branch.name}{branch.current && <em>current</em>}</span>
-          <span className="themis-workspace-list-meta">{[branch.upstream, branch.track, branch.updated].filter(Boolean).join(" · ")}</span>
-        </li>
-      ))}
-    </ul>
+    <div className="themis-workspace-branches">
+      <ul className="themis-workspace-list" aria-label="Branches">
+        {workspace.branches.map(branch => (
+          <li key={branch.name} className={[branch.current ? "is-current" : "", open === branch.name ? "is-open" : ""].filter(Boolean).join(" ") || undefined}>
+            {branch.current
+              ? <span className="themis-workspace-list-title"><BranchIcon />{branch.name}<em>current</em></span>
+              : <button type="button" className="themis-workspace-list-title" aria-expanded={open === branch.name} onClick={() => setPicked(open === branch.name ? null : branch.name)}><BranchIcon />{branch.name}</button>}
+            <span className="themis-workspace-list-meta">{[branch.upstream, branch.track, branch.updated].filter(Boolean).join(" · ")}</span>
+          </li>
+        ))}
+      </ul>
+      {open !== null && <div className="themis-workspace-branch-diff" role="region" aria-label={`Changes in ${open}`}>
+        {diff === null ? <EmptyState title="Loading changes…" />
+          : typeof diff === "string" ? <EmptyState title="Changes unavailable" hint={diff} />
+          : <>
+            {diff.reason && <p className="themis-workspace-note">{diff.reason}</p>}
+            {file === null ? <EmptyState title="No changes" hint={`${open} adds nothing to ${workspace.branch ?? "the current branch"}.`} /> : (
+              <DiffSplit>
+                <FileTree files={files} selectedPath={file.path} onSelect={setSelected} />
+                <DiffView file={file} />
+              </DiffSplit>
+            )}
+          </>}
+      </div>}
+    </div>
   );
 }
 

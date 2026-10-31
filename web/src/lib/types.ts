@@ -89,6 +89,8 @@ export interface PluginSpec {
   import_issues?: Array<{kind:string;name:string;status:string;field?:string|null;reason?:string|null;remedy?:string|null}>;
   package_kind?: "plugin" | "skill" | "mcp" | "hook" | null;
   icon?: string | null;
+  icon_asset?: string;
+  brand?: string;
   disabled_skills?: string[];
   manual_skills?: string[];
   origin?: { kind: string; location: string; reference?: string | null; subdirectory?: string | null } | null;
@@ -96,16 +98,17 @@ export interface PluginSpec {
   executable_files?: string[];
   name: string; description: string; version: string;
   skills: Array<{ id: string; name: string; description: string; instructions: string; allowedTools: string[]; scripts: SkillScript[] }>;
-  mcp: Record<string, { command?: string | null; args: string[]; url?: string | null; env: Record<string,string>; bearer_env?: string | null; enabled: boolean }>;
-  hooks: Array<{name:string;event:string;command:string;enabled:boolean;timeout_seconds:number;blocking:boolean}>;
-  files: Record<string,string>; unsupported: string[];
+  mcp: Record<string, { command?: string | null; args: string[]; url?: string | null; env: Record<string,string>; env_values?: Record<string,string>; header_values?: Record<string,string>; defaults?: Record<string,string>; bearer_env?: string | null; enabled: boolean }>;
+  hooks: Array<{name:string;event:string;command:string;enabled:boolean;timeout_seconds:number;blocking:boolean;matcher?:string|null;failure_policy?:"ignore"|"abort"|null}>;
+  files: Record<string,string>; unsupported: string[]; notices?: string[];
 }
 export interface ImportPreview {
   spec: PluginSpec;
   report: { status: "supported" | "partial" | "unsupported"; components: NonNullable<PluginSpec["import_issues"]> };
+  check_revision?: string;
 }
 export interface Plugin { scope: "local"|"global"; revision: string; enabled: boolean; source: string|null; spec: PluginSpec }
-export interface Marketplace { name: string; source: string }
+export interface Marketplace { name: string; source: string; enabled?: boolean }
 
 export interface AutomationSchedule {
   repeat: "daily" | "weekdays" | "weekly";
@@ -365,7 +368,7 @@ export interface QueuedMessage {
 }
 
 export type GoalStatus = 'running' | 'paused' | 'waiting' | 'stuck' | 'quota' | 'reached';
-export type GoalNoteKind = 'reached' | 'not_yet' | 'stuck' | 'waiting' | 'quota' | 'failed' | 'small_window';
+export type GoalNoteKind = 'reached' | 'not_yet' | 'stuck' | 'waiting' | 'quota' | 'failed' | 'status' | 'small_window';
 
 /** A chat's goal: one sentence the agent keeps working toward. */
 export interface Goal {
@@ -494,9 +497,10 @@ export interface PersistedMessage {
   /** A message the user steered into a running run. */
   steered?: boolean;
   /** A runtime message that started goal turn N; shown as a divider, not a bubble. */
+  /** How the goal stands, in plain words. */
+  goalStatus?: boolean;
   goalTurn?: number;
   /** What the goal check concluded after a turn. */
-  goalNote?: { outcome: GoalNoteKind; reason: string };
   /** A question the agent asked the user. */
   question?: Question;
 }
@@ -624,6 +628,9 @@ export interface DiffFile {
   /** True when the file already differed from HEAD before the thread started. */
   preexisting: boolean;
   hunks: DiffHunk[];
+  /** Lines added and removed in the whole change, however few `hunks` hold. */
+  added: number;
+  removed: number;
   /** Too large to show line by line (a dataset, a generated file); listed without hunks. */
   too_large?: boolean;
 }
@@ -662,6 +669,7 @@ export interface Settings {
   theme_palette: string;
   font_family: "system" | "sans" | "serif" | "mono" | "rounded" | "avenir" | "helvetica" | "verdana" | "trebuchet" | "palatino" | "charter" | "menlo";
   sidebar_hover: boolean;
+  check_sources_for_updates?: boolean;
   theme: ThemeMode;
   default_provider: ProviderKind;
   default_model: string;

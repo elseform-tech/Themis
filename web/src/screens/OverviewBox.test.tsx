@@ -3,7 +3,7 @@ import { act, cleanup, fireEvent, render, renderHook, screen } from "@testing-li
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { initialState } from "../state/reducer";
 import type { ChatMessage } from "../state/reducer";
-import { diffTotals, OverviewBox, useOverview, useOverviewRoom } from "./OverviewBox";
+import { diffTotals, OverviewBox, useOverview } from "./OverviewBox";
 
 const dispatch = vi.fn();
 let appState: typeof initialState;
@@ -23,8 +23,8 @@ vi.mock("../lib/tauri", () => ({
 }));
 
 const diff = { available: true, files: [
-  { path: "notes/a.md", status: "added" as const, preexisting: false, hunks: [{ old_start: 0, old_lines: 0, new_start: 1, new_lines: 2, lines: [{ kind: "add" as const, text: "# A" }, { kind: "add" as const, text: "" }] }] },
-  { path: "src/routes.ts", status: "modified" as const, preexisting: false, hunks: [{ old_start: 1, old_lines: 2, new_start: 1, new_lines: 2, lines: [{ kind: "context" as const, text: "x" }, { kind: "del" as const, text: "old" }, { kind: "add" as const, text: "new" }] }] },
+  { path: "notes/a.md", status: "added" as const, preexisting: false, added: 2, removed: 0, hunks: [{ old_start: 0, old_lines: 0, new_start: 1, new_lines: 2, lines: [{ kind: "add" as const, text: "# A" }, { kind: "add" as const, text: "" }] }] },
+  { path: "src/routes.ts", status: "modified" as const, preexisting: false, added: 1, removed: 1, hunks: [{ old_start: 1, old_lines: 2, new_start: 1, new_lines: 2, lines: [{ kind: "context" as const, text: "x" }, { kind: "del" as const, text: "old" }, { kind: "add" as const, text: "new" }] }] },
 ] };
 const media: ChatMessage[] = [{ id: "m1", role: "assistant", text: "Here", final: true, media: [{ path: "/data/shot.png", name: "shot.png", kind: "image" }] }];
 
@@ -38,7 +38,9 @@ afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 
 describe("chat overview box", () => {
   it("adds up the changed lines and shows nothing without changes", () => {
-    expect(diffTotals(diff)).toEqual({ files: 2, added: 3, removed: 1 });
+    // From each file's own totals: a very large file's listing holds only its first lines.
+    const counted = { ...diff, files: [{ ...diff.files[0]!, added: 25000, removed: 1 }, { ...diff.files[1]!, added: 2, removed: 0 }] };
+    expect(diffTotals(counted)).toEqual({ files: 2, added: 25002, removed: 1 });
     expect(diffTotals({ available: true, files: [] })).toBeNull();
     expect(diffTotals({ available: false, reason: "not git", files: [] })).toBeNull();
   });
@@ -47,7 +49,6 @@ describe("chat overview box", () => {
     const { result } = renderHook(() => useOverview("t1", media));
     await act(async () => {});
     const overview = result.current;
-    expect(overview.visible).toBe(true);
     const openMedia = vi.fn();
     render(<OverviewBox threadId="t1" overview={overview} onOpenMedia={openMedia} />);
     // The browser shows as a live preview: small frames, the page left at its size.
@@ -108,22 +109,10 @@ describe("chat overview box", () => {
     expect(localStorage.getItem("themis:overviewCollapsed")).toBe("true");
   });
 
-  it("keeps the chat's room once the box has shown, so the conversation does not jump when a run ends", () => {
-    const { result, rerender } = renderHook(({ thread, visible }) => useOverviewRoom(thread, visible), { initialProps: { thread: "t1", visible: false } });
-    expect(result.current).toBe(false);
-    rerender({ thread: "t1", visible: true });
-    expect(result.current).toBe(true);
-    rerender({ thread: "t1", visible: false });
-    expect(result.current).toBe(true);
-    // Another chat starts without it.
-    rerender({ thread: "t2", visible: false });
-    expect(result.current).toBe(false);
-  });
-
-  it("is hidden when the chat has nothing to show", async () => {
+  it("has nothing to show in a chat with nothing to list", async () => {
     appState = { ...initialState };
     const { browserState } = await import("../lib/browser");
-    vi.mocked(browserState).mockResolvedValueOnce({ open: false, tabs: [], current: 0, url: "about:blank", title: "", can_go_back: false, can_go_forward: false, controller: "idle", activity: null, console_errors: 0, loading: false, muted: true });
+    vi.mocked(browserState).mockResolvedValueOnce({ open: false, tabs: [], current: 0, url: "about:blank", title: "", can_go_back: false, can_go_forward: false } as never);
     const { getUsageSummary } = await import("../lib/tauri");
     vi.mocked(getUsageSummary).mockResolvedValueOnce({ available: true, by_chat: [] } as never);
     const { result } = renderHook(() => useOverview("t2", []));

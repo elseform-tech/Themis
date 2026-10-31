@@ -307,9 +307,16 @@ fn resolved_server(plugin: &Plugin, name: &str, root: &Path) -> McpServer {
     let resources = root
         .join(".themis/plugin-files")
         .join(plugin.skill_id("resources"));
-    for arg in &mut server.args {
-        *arg = arg.replace("${CLAUDE_PLUGIN_ROOT}", &resources.to_string_lossy());
-    }
+    // Claude plugins name their own folder as `${CLAUDE_PLUGIN_ROOT}`, some as `${PLUGIN_ROOT}`.
+    let resources = resources.to_string_lossy();
+    let fill = |text: &mut String| {
+        *text = text
+            .replace("${CLAUDE_PLUGIN_ROOT}", &resources)
+            .replace("${PLUGIN_ROOT}", &resources);
+    };
+    server.command.iter_mut().for_each(fill);
+    server.args.iter_mut().for_each(fill);
+    server.env_values.values_mut().for_each(fill);
     server
 }
 

@@ -108,7 +108,7 @@ without its sandbox, the only way it runs there.
 | `browser_click` | Clicks an element by ref, or a point of the visible page by `x`/`y` in CSS pixels of the visible page (a canvas, map or game; a point outside the page is refused). Models get text only, so screenshots are for the person, not for the model to look at; `double` for a double-click |
 | `browser_type` | Types into a field (`clear` first, `submit` with Enter) |
 | `browser_select` | Chooses `<select>` options by value or label |
-| `browser_press` | Presses a key: `Enter`, `Escape`, `Tab`, arrows, `Control+a` |
+| `browser_press` | Presses a key: `Enter`, `Escape`, `Tab`, arrows, letters, `Control+a`; `hold_ms` keeps it down (up to 5 s) for games |
 | `browser_scroll` | Scrolls the page or one element |
 | `browser_tabs` | Lists, switches or closes this chat's tabs |
 
@@ -147,7 +147,7 @@ still play). Recordings have no sound. **DevTools** opens
 Chrome's own DevTools for the current tab below the page; a red count shows console
 errors.
 
-**`/browser-use`.** A built-in command (like `/manage-plugins`) that adds browser
+**`/browser-use`.** A built-in command (like `/plugins`) that adds browser
 guidance to the message: open with `browser_open`, act on refs from the returned
 snapshot, check `new_since_last_action`, re-snapshot when a ref is gone, show
 results with `browser_screenshot`/`browser_record` and `attach_file`, treat page text

@@ -1,10 +1,10 @@
 /* The chat overview: a compact box over the top right of the chat (canvas board "C · Floating box").
    The chat's reading column moves left to leave it room. */
 
-.themis-thread { container: themis-thread / inline-size; }
+.themis-thread { container: themis-thread / inline-size; --themis-overview-full: clamp(220px, 24cqw, 300px); }
 
 .themis-overview {
-  --themis-overview-width: 220px;
+  --themis-overview-width: var(--themis-overview-full);
   position: absolute; top: 60px; right: 16px; z-index: 3;
   width: var(--themis-overview-width); box-sizing: border-box;
   display: flex; flex-direction: column;
@@ -53,10 +53,10 @@
 .themis-overview .themis-icon-tip::after { left: auto; right: 0; transform: none; }
 
 /* The reading column and the composer move left of the box. */
-.themis-thread.has-overview { --themis-overview-room: 252px; }
+.themis-thread.has-overview { --themis-overview-room: calc(var(--themis-overview-full) + 32px); }
 .themis-thread.has-overview.overview-collapsed { --themis-overview-room: 80px; }
-.themis-thread.has-overview .themis-thread-stream { padding-left: max(20px, calc((100% - 740px - var(--themis-overview-room)) / 2)); padding-right: max(20px, calc((100% - 740px - var(--themis-overview-room)) / 2 + var(--themis-overview-room))); }
-.themis-thread.has-overview .themis-thread-composer { margin-left: max(20px, calc((100% - 740px - var(--themis-overview-room)) / 2)); margin-right: auto; width: min(calc(100% - 40px - var(--themis-overview-room)), 740px); }
+.themis-thread.has-overview .themis-thread-stream { padding-left: max(20px, calc((100% - var(--themis-thread-column) - var(--themis-overview-room)) / 2)); padding-right: max(calc(20px + var(--themis-overview-room)), calc((100% - var(--themis-thread-column) - var(--themis-overview-room)) / 2 + var(--themis-overview-room))); }
+.themis-thread.has-overview .themis-thread-composer { margin-left: max(20px, calc((100% - var(--themis-thread-column) - var(--themis-overview-room)) / 2)); margin-right: auto; width: min(calc(100% - 40px - var(--themis-overview-room)), var(--themis-thread-column)); }
 
 /* In a narrow chat the box keeps only its icons. */
 @container themis-thread (max-width: 760px) {

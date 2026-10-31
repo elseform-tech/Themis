@@ -1,6 +1,6 @@
 import { expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { ResponseBody, ResponseLinks } from "./ResponseBody";
+import { fileNamedIn, ResponseBody, ResponseFiles, ResponseLinks } from "./ResponseBody";
 const diagram = vi.hoisted(() => ({ initialize: vi.fn(), render: vi.fn(async () => ({ svg: '<svg viewBox="0 0 120 80"><text>Start</text></svg>' })) }));
 vi.mock("mermaid", () => ({ default: diagram }));
 it("formats markdown, tables and code, and copies the source", async () => {
@@ -72,4 +72,19 @@ it("opens web links in the chat's browser, and in the system browser with Cmd", 
   fireEvent.click(link, { metaKey: true });
   fireEvent.click(screen.getByRole("link", { name: "mail" }));
   expect(open).not.toHaveBeenCalled();
+});
+it("knows which inline code names a file", () => {
+  for (const path of ["main.js", "notes/poem.txt", "./src/a.rs", "crates/core/src/runtime.rs", "/abs/x.py", "index.html"]) expect(fileNamedIn(path)).toBe(path);
+  expect(fileNamedIn("src/a.rs:12")).toBe("src/a.rs");
+  expect(fileNamedIn("src/a.rs:12-30")).toBe("src/a.rs");
+  for (const word of ["npm test", "foo.bar", "1.2.3", "River", "a - b", "https://x.dev/a.js", "--flag.js", "notes/", "object.method()"]) expect(fileNamedIn(word)).toBeNull();
+});
+it("opens files and addresses named as code, and leaves other code alone", () => {
+  const file = vi.fn(); const link = vi.fn();
+  render(<ResponseLinks.Provider value={link}><ResponseFiles.Provider value={file}><ResponseBody text={"See `notes/poem.txt:3`, `npm test` and `https://example.com/x`."} /></ResponseFiles.Provider></ResponseLinks.Provider>);
+  fireEvent.click(screen.getByRole("button", { name: "notes/poem.txt:3" }));
+  expect(file).toHaveBeenCalledWith("notes/poem.txt");
+  expect(screen.queryByRole("button", { name: "npm test" })).toBeNull();
+  fireEvent.click(screen.getByRole("link", { name: "https://example.com/x" }));
+  expect(link).toHaveBeenCalledWith("https://example.com/x");
 });

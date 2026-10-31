@@ -15,7 +15,7 @@ function statusText(status: McpConfigStatus): string {
 }
 
 /**
- * Integrations › MCP: your personal MCP servers as one mcp.json copy, opened in the chosen
+ * Integrations › Connections: your personal MCP servers as one mcp.json copy, opened in the chosen
  * editor and applied each time you save it (revision-checked; see docs/plugins.md).
  */
 export function McpFileRow({ onApplied }: { onApplied: () => void }) {
