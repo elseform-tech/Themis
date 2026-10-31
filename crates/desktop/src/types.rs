@@ -389,6 +389,9 @@ pub struct Goal {
     /// The goal check is reading the turn that just ended.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub checking: bool,
+    /// Unix milliseconds when the next turn is due, while the goal waits to retry.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub retry_at: Option<i64>,
 }
 
 /// The kind of a goal note in the chat.

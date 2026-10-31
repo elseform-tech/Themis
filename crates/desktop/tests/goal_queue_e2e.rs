@@ -1303,6 +1303,60 @@ async fn the_checklist_follows_the_goal_as_it_changes() {
     settle(&state, &thread).await;
 }
 
+/// A failed turn waits with a countdown the chat can show, and leaves no note behind that
+/// would go out of date.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_failed_turn_counts_down_instead_of_leaving_a_note() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .respond_with(|request: &Request| {
+            if is_checklist(&body(request)) {
+                return reply(r#"{"requirements":[{"what":"The thing"}]}"#);
+            }
+            ResponseTemplate::new(400).set_body_string("bad request")
+        })
+        .mount(&server)
+        .await;
+    let (state, _data, _project, thread) = chat(&server).await;
+    let (sink, mut rx) = ChannelSink::channel();
+    let sink = Arc::new(sink);
+    state
+        .send_message(
+            sink.clone(),
+            thread.clone(),
+            "/goal finish the thing".into(),
+        )
+        .await
+        .unwrap();
+    for _ in 0..400 {
+        if state
+            .goal_for(&thread)
+            .is_some_and(|goal| goal.retry_at.is_some())
+        {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+    }
+    let goal = state.goal_for(&thread).unwrap();
+    assert!(goal.retry_at.is_some(), "{goal:?}");
+    let mut notes = Vec::new();
+    while let Ok(event) = rx.try_recv() {
+        if let TestEvent::Thread(envelope) = event {
+            if let ThreadEvent::GoalNote { reason, .. } = envelope.event {
+                notes.push(reason);
+            }
+        }
+    }
+    assert!(
+        !notes.iter().any(|note| note.contains("try again")),
+        "{notes:?}"
+    );
+    state
+        .remove_goal(sink.clone(), thread.clone())
+        .await
+        .unwrap();
+}
+
 /// Asked in the chat to remove the goal, the agent removes it: no goal is left, and
 /// no check or further turn follows.
 #[tokio::test(flavor = "multi_thread")]

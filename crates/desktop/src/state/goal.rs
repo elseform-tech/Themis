@@ -259,6 +259,7 @@ impl AppState {
             proof: Vec::new(),
             files: Vec::new(),
             checking: false,
+            retry_at: None,
         };
         self.bump_goal_generation(thread_id);
         self.store_goal(sink, thread_id, Some(goal.clone()));
@@ -699,6 +700,9 @@ impl AppState {
         note: String,
     ) {
         let generation = self.bump_goal_generation(&thread_id);
+        // The chat counts this down; a note would be out of date as soon as it was written.
+        let due = now_ms().saturating_add(i64::try_from(delay.as_millis()).unwrap_or(i64::MAX));
+        self.update_goal(sink.as_ref(), &thread_id, |goal| goal.retry_at = Some(due));
         let state = self.clone();
         tokio::spawn(async move {
             tokio::time::sleep(delay).await;
@@ -730,6 +734,7 @@ impl AppState {
             return; // That run's end continues the goal.
         }
         let Some(goal) = self.update_goal(sink.as_ref(), &thread_id, |goal| {
+            goal.retry_at = None;
             if goal.status == GoalStatus::Running {
                 goal.turns = goal.turns.saturating_add(1);
             }
@@ -1153,20 +1158,6 @@ impl AppState {
                     return;
                 }
                 let wait = jittered(backoff(failures));
-                self.goal_note(
-                    sink.as_ref(),
-                    &thread_id,
-                    &run_id,
-                    GoalNoteKind::Status,
-                    &format!(
-                        "That turn failed, so I'll try again in {}.",
-                        if wait.as_secs() < 60 {
-                            format!("{} s", wait.as_secs())
-                        } else {
-                            format!("{} min", wait.as_secs() / 60)
-                        }
-                    ),
-                );
                 self.schedule_goal_turn(
                     sink,
                     thread_id,
@@ -1429,6 +1420,7 @@ mod tests {
             proof: Vec::new(),
             files: Vec::new(),
             checking: false,
+            retry_at: None,
         };
         set_status(&mut goal, GoalStatus::Paused, None);
         assert!(goal.running_since.is_none());

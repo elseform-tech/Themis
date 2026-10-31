@@ -9,6 +9,7 @@ import { ANSWER_MARKER, type ChangedFile, type Question } from "../lib/types";
 import { QuestionNote, useNowAt } from "./QuestionBox";
 import { placeQuestion, questionOnComposer, QUESTION_OPEN_MS, usePlacements } from "../state/composerSlot";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { GoalWait } from "./GoalWait";
 import { ResponseBody, ResponseFiles, ResponseLinks } from "../components/ResponseBody";
 import "./GoalBar.css";
 import type { ChatMessage, ToolTraceEntry } from "../state/reducer";
@@ -20,6 +21,8 @@ import { OverviewBox, type Overview } from "./OverviewBox";
 interface ThreadConversationProps {
   /** The goal check is reading the turn that just ended. */
   goalChecking?: boolean;
+  /** When the goal's next turn is due, while it waits to retry. */
+  goalRetryAt?: number;
   threadId: string;
   messages: ChatMessage[];
   stream: string;
@@ -38,6 +41,7 @@ interface ThreadConversationProps {
 export function ThreadConversation({
   threadId,
   goalChecking,
+  goalRetryAt,
   messages,
   stream,
   running,
@@ -142,11 +146,7 @@ export function ThreadConversation({
           </div>
         </div>
       )}
-      {goalChecking && !running && !sending && (
-        <div className="themis-run-progress" role="status">
-          <div className="themis-run-status"><span className="themis-shimmer">Checking…</span></div>
-        </div>
-      )}
+      {!running && !sending && <GoalWait checking={goalChecking} retryAt={goalRetryAt} />}
       <div ref={endRef} />
     </div>
     {overview && <OverviewBox threadId={threadId} overview={overview} onOpenMedia={openMedia} />}

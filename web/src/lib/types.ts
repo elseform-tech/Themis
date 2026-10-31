@@ -393,6 +393,8 @@ export interface Goal {
   proof?: GoalRequirement[];
   /** The goal check is reading the turn that just ended. */
   checking?: boolean;
+  /** Unix milliseconds when the next turn is due, while the goal waits to retry. */
+  retry_at?: number;
 }
 
 export interface GoalRequirement {
