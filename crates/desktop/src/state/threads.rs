@@ -521,6 +521,9 @@ impl AppState {
         {
             self.refresh_checklist(Arc::clone(&sink), &thread_id);
         }
+        if goal_after.is_some() {
+            self.watch_checklist(Arc::clone(&sink), &thread_id);
+        }
         let shown_attachments = attachments.clone();
         if let Err(error) = self.inner.transcript.append_user_with_attachments(
             &thread_id,

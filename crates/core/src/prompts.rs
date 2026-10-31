@@ -105,6 +105,9 @@ pub const GOAL_NOTE_SCRIPT_PROOF: &str =
 pub const GOAL_CHECKLIST_SYSTEM: &str =
     include_str!("../builtins/prompts/goal-checklist-system.md");
 pub const GOAL_CHECKLIST_USER: &str = include_str!("../builtins/prompts/goal-checklist-user.md");
+pub const GOAL_CHECK_MIDTURN: &str = include_str!("../builtins/prompts/goal-check-midturn.md");
+pub const GOAL_CONTEXT_OVER: &str = include_str!("../builtins/prompts/goal-context-over.md");
+pub const GOAL_CONTEXT_PAUSED: &str = include_str!("../builtins/prompts/goal-context-paused.md");
 pub const GOAL_CHECK_PROOF: &str = include_str!("../builtins/prompts/goal-check-proof.md");
 /// Message that tells the user a checked goal is reached; `{{goal_turn_marker}}`,
 /// `{{turn}}`, `{{goal}}`, `{{reason}}`.
