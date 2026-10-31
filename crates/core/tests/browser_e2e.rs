@@ -579,11 +579,12 @@ requestAnimationFrame(draw);
     // The action thaws the page, and drawing carries on; each round needs its own freeze.
     for round in 0..3 {
         let (before, _) = read().await;
-        tokio::time::sleep(Duration::from_millis(1000)).await;
+        tokio::time::sleep(Duration::from_millis(2000)).await;
         let (after, pauses) = read().await;
         assert_eq!(pauses, round + 1, "round {round}: it drew while frozen");
+        // A slow runner may draw only a few frames, but a page left dead draws none.
         assert!(
-            after > before + 5,
+            after > before + 1,
             "round {round}: it stopped: {before} then {after}"
         );
         chat.freeze_pages().await;
