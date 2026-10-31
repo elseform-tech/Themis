@@ -107,8 +107,7 @@ function BrowserPreview({ threadId, label, agent, onOpen }: { threadId: string; 
  *  the Workspace on its tab; the Workspace's own button and Close bring this box back. */
 export function OverviewBox({ threadId, overview, onOpenMedia }: { threadId: string; overview: Overview; onOpenMedia: (path: string) => void }) {
   const { dispatch } = useApp();
-    changes, tasks, goal, browser: shownBrowser, media,
-    visible: !!(changes || tasks || goal || shownBrowser || media.length),
+  const { changes, tasks, goal, browser, media, collapsed, setCollapsed } = overview;
   const open = (tab?: WorkspaceTab) => dispatch({ type: "ui/diff-panel", open: true, ...(tab ? { tab } : {}) });
   const taskText = tasks ? [tasks.running ? `${tasks.running} running` : "", tasks.attention ? `${tasks.attention} need a look` : "", tasks.queued ? `${tasks.queued} queued` : ""].filter(Boolean).join(" · ") : "";
   return (
