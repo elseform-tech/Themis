@@ -9,7 +9,7 @@ import { ANSWER_MARKER, type ChangedFile, type Question } from "../lib/types";
 import { QuestionNote, useNowAt } from "./QuestionBox";
 import { placeQuestion, questionOnComposer, QUESTION_OPEN_MS, usePlacements } from "../state/composerSlot";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ResponseBody, ResponseLinks } from "../components/ResponseBody";
+import { ResponseBody, ResponseFiles, ResponseLinks } from "../components/ResponseBody";
 import "./GoalBar.css";
 import type { ChatMessage, ToolTraceEntry } from "../state/reducer";
 import { readSession, writeSession } from "../state/session";
@@ -58,12 +58,19 @@ export function ThreadConversation({
   const [viewing, setViewing] = useState<number | null>(null);
   const openMedia = useCallback((path: string) => { const index = media.findIndex(file => file.path === path); if (index >= 0) setViewing(index); }, [media]);
   const gallery = useMemo(() => ({ threadId, items: media, open: openMedia }), [threadId, media, openMedia]);
-  const { dispatch } = useApp();
+  const { state: { diffs }, dispatch } = useApp();
   // Links in replies open in this chat's browser, shown in the Workspace Browser tab.
   const openLink = useCallback((url: string) => {
     dispatch({ type: "ui/diff-panel", open: true, tab: "browser" });
     browserOpenUrl(threadId, url).catch(error => toast(dispatch, `Could not open the link: ${describeError(error)}`, "danger"));
   }, [dispatch, threadId]);
+  // Files named in replies open in Workspace: as a diff when this chat changed them.
+  const openFile = useCallback((named: string) => {
+    const root = project?.root ?? "";
+    const path = root && named.startsWith(`${root}/`) ? named.slice(root.length + 1) : named.replace(/^\.\//, "");
+    const changed = (diffs[threadId]?.files ?? []).some(file => file.path === path);
+    dispatch(changed ? { type: "ui/diff-panel", open: true, focus: path } : { type: "ui/diff-panel", open: true, tab: "files", file: path });
+  }, [dispatch, threadId, project?.root, diffs]);
   const elapsed = Math.max(0, Math.floor((now - (runStartedAt ?? now)) / 1000));
 
   useEffect(() => {
@@ -86,6 +93,7 @@ export function ThreadConversation({
   return (
     <MediaGallery.Provider value={gallery}>
     <ResponseLinks.Provider value={openLink}>
+    <ResponseFiles.Provider value={openFile}>
     <div
       ref={scrollRef}
       className="themis-thread-stream"
@@ -135,6 +143,7 @@ export function ThreadConversation({
     </div>
     {overview && <OverviewBox threadId={threadId} overview={overview} onOpenMedia={openMedia} />}
     {viewing !== null && media[viewing] && <MediaViewer threadId={threadId} items={media} index={viewing} onIndex={setViewing} onClose={() => setViewing(null)} />}
+    </ResponseFiles.Provider>
     </ResponseLinks.Provider>
     </MediaGallery.Provider>
   );
@@ -185,12 +194,11 @@ function ConversationRow({
 }
 
 /** Consecutive tool calls as one folded row that says what they did ("Read 4 files ·
- *  Ran python3 check.py"); open while one of them runs. */
+ *  Ran python3 check.py"). It stays folded during a run, so the chat doesn't jump with each call. */
 function ToolGroup({ messages, activeRunId, skills, plugins }: { messages: ChatMessage[]; activeRunId: string | undefined; skills: PromptSkill[]; plugins: PromptPlugin[] }) {
-  const running = activeRunId !== undefined && messages.some(message => message.tool?.ok === undefined);
   const failed = messages.filter(message => message.tool?.ok === false).length;
   return (
-    <details className="themis-tool-group" open={running || undefined}>
+    <details className="themis-tool-group">
       <summary>
         <span className="themis-tool-chevron" aria-hidden="true">›</span>
         <span title={`${messages.length} tool call${messages.length === 1 ? "" : "s"}`}>{describeTools(messages, activeRunId !== undefined)}</span>
@@ -272,25 +280,8 @@ function CheckpointDivider({ checkpoint }: { checkpoint: NonNullable<ChatMessage
   return <div className="themis-checkpoint-divider" role="note"><span>Context compacted{change}</span></div>;
 }
 
-const GOAL_NOTE_TITLE: Record<NonNullable<ChatMessage["goalNote"]>["outcome"], string> = {
-  reached: "Goal reached.",
-  not_yet: "Not reached yet.",
-  stuck: "Paused — stuck.",
-  waiting: "Paused — waiting for your reply.",
-  quota: "Paused — quota used up.",
-  failed: "Turn failed.",
-  small_window: "",
-};
 
 /** What the goal check concluded after a turn, or a warning as the goal starts (no title). */
-export function GoalNote({ note }: { note: NonNullable<ChatMessage["goalNote"]> }) {
-  return (
-    <div className="themis-goal-note" role="note" data-outcome={note.outcome}>
-      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true"><circle cx="12" cy="12" r="8" /><circle cx="12" cy="12" r="4" /></svg>
-      <span>{GOAL_NOTE_TITLE[note.outcome] && <><strong>{GOAL_NOTE_TITLE[note.outcome]}</strong> </>}{note.reason}</span>
-    </div>
-  );
-}
 
 /** A question in its turn: one line with its answer, or, once it has left the composer
  *  unanswered, a line that puts it back there. */
@@ -311,8 +302,8 @@ function Message({ message, threadId, activeRunId, durationMs, skills, plugins }
   // The answered question box already shows the answer the agent was sent.
   if (message.role === "user" && message.text.startsWith(ANSWER_MARKER)) return null;
   // A goal turn starts with a runtime message: a divider, not a bubble from the user.
-  if (message.goalTurn !== undefined) return <div className="themis-goal-turn" role="separator" aria-label={`Goal turn ${message.goalTurn}`}>Turn {message.goalTurn}</div>;
-  if (message.goalNote) return <GoalNote note={message.goalNote} />;
+  if (message.goalStatus) return <p className="themis-goal-status">{message.text}</p>;
+  if (message.goalTurn !== undefined) return <hr className="themis-goal-turn" aria-label={`Goal turn ${message.goalTurn}`} />;
   const text = message.attachments?.length ? message.text.split("\n\nAttached files (local paths;")[0]! : message.text;
   const isActiveRun = activeRunId !== undefined && message.runId === activeRunId;
   const actionWaiting = isActiveRun && message.role === "assistant" && !message.final && !message.tool;

@@ -108,7 +108,7 @@ without its sandbox, the only way it runs there.
 | `browser_click` | Clicks an element by ref, or a point of the visible page by `x`/`y` in CSS pixels of the visible page (a canvas, map or game; a point outside the page is refused). Models get text only, so screenshots are for the person, not for the model to look at; `double` for a double-click |
 | `browser_type` | Types into a field (`clear` first, `submit` with Enter) |
 | `browser_select` | Chooses `<select>` options by value or label |
-| `browser_press` | Presses a key: `Enter`, `Escape`, `Tab`, arrows, `Control+a` |
+| `browser_press` | Presses a key: `Enter`, `Escape`, `Tab`, arrows, letters, `Control+a`; `hold_ms` keeps it down (up to 5 s) for games |
 | `browser_scroll` | Scrolls the page or one element |
 | `browser_tabs` | Lists, switches or closes this chat's tabs |
 

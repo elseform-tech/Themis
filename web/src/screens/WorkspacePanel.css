@@ -74,3 +74,12 @@
 .themis-background-tail { max-height: 4.6em; overflow: hidden; }
 .themis-background-log { max-height: 240px; overflow: auto; }
 .themis-workspace-count--tasks { color: var(--themis-text-2); }
+
+/* Workspace › Branches: another branch's changes. */
+.themis-workspace-branches { display: flex; flex-direction: column; flex: 1; min-height: 0; height: 100%; }
+.themis-workspace-branches > .themis-workspace-list { flex: 0 1 auto; max-height: 40%; overflow-y: auto; }
+button.themis-workspace-list-title { padding: 0; border: 0; background: transparent; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+button.themis-workspace-list-title:hover { text-decoration: underline; text-underline-offset: 3px; }
+.themis-workspace-list li.is-open button.themis-workspace-list-title { font-weight: 600; }
+.themis-workspace-branch-diff { flex: 1; min-height: 0; display: flex; flex-direction: column; border-top: 1px solid var(--themis-border-subtle); }
+.themis-workspace-branch-diff > .themis-workspace-split { flex: 1; min-height: 0; }

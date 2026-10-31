@@ -61,14 +61,41 @@ function Diagram({ code }: { code: string }) {
 /** Opens a reply's web link in the chat's built-in browser; without it links open in the system browser. */
 export const ResponseLinks = createContext<((url: string) => void) | null>(null);
 
+/** Opens a file a reply names, in Workspace. */
+export const ResponseFiles = createContext<((path: string) => void) | null>(null);
+
+const FILE_EXTENSION = /\.(?:[cm]?[jt]sx?|json[cl]?|md|txt|html?|css|scss|py|rs|go|rb|java|kt|swift|c|h|cpp|hpp|cs|php|sh|zsh|toml|ya?ml|xml|csv|sql|lock|env|ini|cfg|svg|png|jpe?g|gif|webp|pdf|ipynb)$/i;
+
+/** The file a piece of inline code names, without a `:line` ending: a path with a folder or a
+ *  known file type. Words, versions and `object.method` stay plain code. */
+export function fileNamedIn(code: string): string | null {
+  const text = code.trim();
+  if (!/^[\w@./~-]+(?::\d+(?:[-:]\d+)?)?$/.test(text) || /^\d/.test(text) || text.includes("//")) return null;
+  const path = text.replace(/:\d+(?:[-:]\d+)?$/, "");
+  if (path.endsWith("/") || path.startsWith("-")) return null;
+  return FILE_EXTENSION.test(path) ? path : null;
+}
+
 export function ResponseBody({ text, streaming = false }: { text: string; streaming?: boolean }) {
   const openLink = useContext(ResponseLinks);
+  const openFile = useContext(ResponseFiles);
   const components = useMemo<Components>(() => ({
     pre({ children }) {
       const child = Children.toArray(children)[0];
       if (!isValidElement<{ className?: string; children?: string }>(child)) return <pre>{children}</pre>;
       const language = /language-([^\s]+)/.exec(child.props.className ?? "")?.[1] ?? "";
       return <CodePanel code={String(child.props.children ?? "").replace(/\n$/, "")} language={language.toLowerCase()} streaming={streaming} />;
+    },
+    code({ children, className }) {
+      const text = String(children ?? "");
+      if (className || text.includes("\n")) return <code className={className}>{children}</code>;
+      // A web address or a file written as code still goes somewhere.
+      if (openLink && /^https?:\/\/\S+$/i.test(text)) {
+        return <a href={text} target="_blank" rel="noreferrer noopener" onClick={event => { if (event.metaKey || event.ctrlKey) return; event.preventDefault(); openLink(text); }}><code>{text}</code></a>;
+      }
+      const file = openFile ? fileNamedIn(text) : null;
+      if (file && openFile) return <button type="button" className="themis-code-link" title={`Open ${file}`} onClick={() => openFile(file)}><code>{text}</code></button>;
+      return <code>{children}</code>;
     },
     a({ children, href }) {
       // Cmd/Ctrl-click keeps the system browser.
@@ -77,6 +104,6 @@ export function ResponseBody({ text, streaming = false }: { text: string; stream
     },
     img({ alt, src }) { return <a href={typeof src === "string" ? src : undefined} target="_blank" rel="noreferrer noopener">{alt || "Image"}</a>; },
     table({ children }) { return <div className="themis-response-table"><table>{children}</table></div>; },
-  }), [streaming, openLink]);
+  }), [streaming, openLink, openFile]);
   return <div className="themis-response"><Markdown remarkPlugins={[remarkGfm]} skipHtml components={components}>{text}</Markdown></div>;
 }

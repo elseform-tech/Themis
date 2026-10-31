@@ -194,6 +194,14 @@ impl BrowserHub {
         self.executable().is_some() || self.built_in()
     }
 
+    /// Whether pages run in a browser with no window.
+    fn headless(&self) -> bool {
+        self.config
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .headless
+    }
+
     /// Whether the automatic choice is the built-in engine (installed or downloadable).
     pub fn built_in(&self) -> bool {
         downloaded_browser(&self.root()).is_some()
@@ -271,6 +279,7 @@ impl BrowserHub {
                 activity: Mutex::new(None),
                 updates,
                 screencast: Mutex::new(None),
+                frozen: AtomicBool::new(false),
                 ui_stream: AtomicBool::new(false),
                 preview_width: Mutex::new(None),
                 recording: Mutex::new(None),
@@ -505,6 +514,8 @@ pub struct ChatBrowser {
     inner: tokio::sync::Mutex<ChatInner>,
     activity: Mutex<Option<String>>,
     updates: broadcast::Sender<BrowserUpdate>,
+    /// Its pages are frozen because nothing is using them (see [`Self::freeze_pages`]).
+    frozen: AtomicBool,
     /// Session id of the tab being streamed to the Workspace view.
     screencast: Mutex<Option<String>>,
     /// The Workspace view is showing the stream (frames go to it).
@@ -547,6 +558,9 @@ pub struct ActionReport {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tab: Option<String>,
     pub snapshot: String,
+    /// The size x and y are measured against, as `1280x720`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub visible_page: Option<String>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub new_since_last_action: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -575,6 +589,16 @@ pub fn parse_key(description: &str) -> Option<KeyPress> {
         Some((last, rest)) => (*last, rest),
         None => return None,
     };
+    // Web pages name keys KeyW and Digit1, so models do too.
+    let from_code = key
+        .strip_prefix("Key")
+        .filter(|rest| rest.len() == 1 && rest.chars().all(|c| c.is_ascii_alphabetic()))
+        .or_else(|| {
+            key.strip_prefix("Digit")
+                .filter(|rest| rest.len() == 1 && rest.chars().all(|c| c.is_ascii_digit()))
+        })
+        .map(str::to_ascii_lowercase);
+    let key = from_code.as_deref().unwrap_or(key);
     let mut mask = 0;
     for modifier in modifiers {
         mask |= match modifier.to_ascii_lowercase().as_str() {
@@ -1096,6 +1120,74 @@ fn handle_tab_event(
 }
 
 impl ChatBrowser {
+    /// Stops the chat's pages running while nothing uses them: a 3D page left open takes
+    /// several cores here, since this browser draws on the CPU. Screenshots and scripts still
+    /// work on a frozen page. Not while the person watches the Browser tab or a recording
+    /// runs. The next action, input or view brings them back ([`Self::thaw_pages`]).
+    /// Returns whether this froze them.
+    pub async fn freeze_pages(&self) -> bool {
+        let watching = self.ui_stream.load(Ordering::SeqCst)
+            && self
+                .preview_width
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .is_none();
+        let recording = self
+            .recording
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .is_some();
+        if watching || recording || self.frozen.swap(true, Ordering::SeqCst) {
+            return false;
+        }
+        self.set_page_state("frozen").await;
+        true
+    }
+
+    /// Brings frozen pages back; an agent must never read a page that has stopped.
+    pub async fn thaw_pages(&self) {
+        if self.frozen.swap(false, Ordering::SeqCst) {
+            self.set_page_state("active").await;
+            crate::diagnostics::emit("browser", "pages_thawed", "info", json!({}));
+        }
+    }
+
+    async fn set_page_state(&self, state: &str) {
+        let view = self.view();
+        let Some(cdp) = view.cdp else { return };
+        let freezing = state == "frozen";
+        for tab in &view.tabs {
+            let session = Some(tab.session_id.as_str());
+            // Focus emulation decides both ways (tested against the real engine): left on, a page
+            // ignores the freeze; left off, a thawed page stays hidden and never draws again.
+            if freezing {
+                let _ = cdp
+                    .call(
+                        session,
+                        "Emulation.setFocusEmulationEnabled",
+                        json!({"enabled": false}),
+                    )
+                    .await;
+            }
+            let _ = cdp
+                .call(
+                    session,
+                    "Page.setWebLifecycleState",
+                    json!({"state": state}),
+                )
+                .await;
+            if !freezing {
+                let _ = cdp
+                    .call(
+                        session,
+                        "Emulation.setFocusEmulationEnabled",
+                        json!({"enabled": true}),
+                    )
+                    .await;
+            }
+        }
+    }
+
     /// Updates for the Workspace view.
     pub fn subscribe(&self) -> broadcast::Receiver<BrowserUpdate> {
         self.updates.subscribe()
@@ -1370,6 +1462,16 @@ impl ChatBrowser {
                 json!({"width": viewport.width, "height": viewport.height, "deviceScaleFactor": viewport.scale, "mobile": false}),
             )
             .await;
+        // The stand-in is a convenience: a page that refuses it just has no pointer lock.
+        if self.hub.upgrade().is_some_and(|hub| hub.headless()) {
+            let _ = cdp
+                .call(
+                    Some(&session_id),
+                    "Page.addScriptToEvaluateOnNewDocument",
+                    json!({"source": include_str!("pointer_lock.js")}),
+                )
+                .await;
+        }
         // A tab that cannot take the sound setting is not opened.
         let audio_script =
             Some(install_audio(cdp, &session_id, self.muted.load(Ordering::SeqCst)).await?);
@@ -1397,6 +1499,7 @@ impl ChatBrowser {
         self: &Arc<Self>,
         inner: &mut ChatInner,
     ) -> Result<(Arc<Cdp>, String), String> {
+        self.thaw_pages().await;
         let browser = self.browser(inner).await?;
         if inner.tabs.is_empty() {
             self.new_tab(inner).await?;
@@ -1409,7 +1512,19 @@ impl ChatBrowser {
     pub async fn open(self: &Arc<Self>, url: &str, new_tab: bool) -> Result<ActionReport, String> {
         let mut inner = self.inner.lock().await;
         if new_tab && !inner.tabs.is_empty() {
-            self.new_tab(&mut inner).await?;
+            // The same page again reloads its tab: agents retrying a page piled up tabs, and every
+            // one of them keeps running.
+            let open_already = inner
+                .tabs
+                .iter()
+                .position(|tab| tab.state.lock().unwrap_or_else(|e| e.into_inner()).url == url);
+            match open_already {
+                Some(index) => {
+                    inner.current = index;
+                    self.remember(&inner);
+                }
+                None => self.new_tab(&mut inner).await?,
+            }
         }
         let (cdp, session) = self.current(&mut inner).await?;
         let navigated = cdp
@@ -1473,6 +1588,7 @@ impl ChatBrowser {
 
     /// Back/forward/reload for the person's toolbar.
     pub async fn navigate_for_user(&self, action: &str) -> Result<(), String> {
+        self.thaw_pages().await;
         self.person_acted();
         let Some((cdp, session)) = self.view().current() else {
             return Ok(());
@@ -1505,6 +1621,7 @@ impl ChatBrowser {
         inner: &ChatInner,
         reference: &str,
     ) -> Result<(Arc<Cdp>, String, i64), String> {
+        self.thaw_pages().await;
         let browser = inner
             .browser
             .as_ref()
@@ -1555,25 +1672,38 @@ impl ChatBrowser {
             .ok_or("no page is open; use browser_open first")?
             .session_id
             .clone();
-        let metrics = browser
-            .cdp
-            .call(Some(&session), "Page.getLayoutMetrics", json!({}))
-            .await?;
-        let view = &metrics["cssVisualViewport"];
-        let width = view["clientWidth"].as_f64().unwrap_or(0.0);
-        let height = view["clientHeight"].as_f64().unwrap_or(0.0);
-        if !(x.is_finite()
-            && y.is_finite()
-            && (0.0..width).contains(&x)
-            && (0.0..height).contains(&y))
-        {
-            return Err(format!(
-                "the point ({x}, {y}) is outside the visible page ({}×{} CSS pixels); take a browser_screenshot and use a point inside it",
-                width.round(),
-                height.round()
-            ));
-        }
+        check_visible_point(&browser.cdp, &session, x, y).await?;
         click_at(&browser.cdp, &session, x, y, if double { 2 } else { 1 }).await?;
+        self.settle(&inner, false).await;
+        let report = self.report(&mut inner, None).await;
+        drop(inner);
+        self.publish_state().await;
+        report
+    }
+
+    /// Moves the mouse to a point of the visible page without clicking, for aiming in games and
+    /// for hover menus. The page sees real movement.
+    pub async fn move_point(self: &Arc<Self>, x: f64, y: f64) -> Result<ActionReport, String> {
+        let mut inner = self.inner.lock().await;
+        let browser = inner
+            .browser
+            .clone()
+            .ok_or("no page is open; use browser_open first")?;
+        let session = inner
+            .tabs
+            .get(inner.current)
+            .ok_or("no page is open; use browser_open first")?
+            .session_id
+            .clone();
+        check_visible_point(&browser.cdp, &session, x, y).await?;
+        browser
+            .cdp
+            .call(
+                Some(&session),
+                "Input.dispatchMouseEvent",
+                json!({"type": "mouseMoved", "x": x, "y": y}),
+            )
+            .await?;
         self.settle(&inner, false).await;
         let report = self.report(&mut inner, None).await;
         drop(inner);
@@ -1653,10 +1783,14 @@ impl ChatBrowser {
     }
 
     /// Presses a key (`Enter`, `Escape`, `Control+a`) in the focused element.
-    pub async fn press(self: &Arc<Self>, key: &str) -> Result<ActionReport, String> {
+    pub async fn press(
+        self: &Arc<Self>,
+        key: &str,
+        hold: Duration,
+    ) -> Result<ActionReport, String> {
         let press = parse_key(key).ok_or_else(|| {
             format!(
-                "unknown key '{}'; use names like Enter, Escape, Tab, ArrowDown or Control+a",
+                "unknown key '{}'; use names like Enter, Escape, Tab, ArrowDown, w, 1 or Control+a",
                 cap(key, 30)
             )
         })?;
@@ -1665,7 +1799,7 @@ impl ChatBrowser {
             return Err("no page is open; use browser_open first".into());
         }
         let (cdp, session) = self.current(&mut inner).await?;
-        press_key(&cdp, &session, &press).await?;
+        press_key_for(&cdp, &session, &press, hold).await?;
         self.settle(&inner, press.key == "Enter").await;
         let report = self.report(&mut inner, None).await;
         drop(inner);
@@ -1921,11 +2055,24 @@ impl ChatBrowser {
             .ok()
             .and_then(|value| value["result"]["value"].as_str().map(|t| cap(t, 200)))
             .unwrap_or(title);
+        let visible_page = cdp
+            .call(Some(&tab.session_id), "Page.getLayoutMetrics", json!({}))
+            .await
+            .ok()
+            .and_then(|metrics| {
+                let view = &metrics["cssVisualViewport"];
+                Some(format!(
+                    "{}x{}",
+                    view["clientWidth"].as_f64()?.round(),
+                    view["clientHeight"].as_f64()?.round()
+                ))
+            });
         Ok(ActionReport {
             url,
             title,
             tab: (count > 1).then(|| format!("{} of {count}", current + 1)),
             snapshot: if text.is_empty() { "(empty page)".to_owned() } else { text },
+            visible_page,
             new_since_last_action: notes,
             snapshot_note: truncated.then(|| {
                 format!("{omitted_lines} more lines not shown; use browser_snapshot with a ref to read one part, or browser_scroll")
@@ -1942,6 +2089,7 @@ impl ChatBrowser {
     ) -> Result<(), String> {
         self.ui_stream.store(true, Ordering::SeqCst);
         *self.preview_width.lock().unwrap_or_else(|e| e.into_inner()) = None;
+        self.thaw_pages().await;
         self.run_screencast(width, height, scale).await
     }
 
@@ -1953,7 +2101,27 @@ impl ChatBrowser {
             Some(max_width.clamp(160, 1280));
         let viewport = *self.viewport.lock().unwrap_or_else(|e| e.into_inner());
         self.run_screencast(viewport.width, viewport.height, viewport.scale)
-            .await
+            .await?;
+        // A frozen page draws nothing, so the stream sends no frame: show how it was left.
+        if self.frozen.load(Ordering::SeqCst) {
+            if let Some((cdp, session)) = self.view().current() {
+                let shot = cdp
+                    .call(
+                        Some(&session),
+                        "Page.captureScreenshot",
+                        json!({"format": "jpeg", "quality": 60}),
+                    )
+                    .await?;
+                if let Some(data) = shot["data"].as_str() {
+                    let _ = self.updates.send(BrowserUpdate::Frame {
+                        data: data.to_owned(),
+                        width: viewport.width,
+                        height: viewport.height,
+                    });
+                }
+            }
+        }
+        Ok(())
     }
 
     /// Starts (or moves) the protocol screencast to the current tab.
@@ -2022,6 +2190,8 @@ impl ChatBrowser {
             return;
         }
         self.end_screencast().await;
+        // Nobody is looking; an agent's next action brings the pages back.
+        self.freeze_pages().await;
     }
 
     async fn end_screencast(&self) {
@@ -2276,6 +2446,7 @@ impl ChatBrowser {
     /// person and the agent use the browser at the same time; neither waits.
     pub async fn user_input(&self, input: &UserInput) -> Result<(), String> {
         self.person_acted();
+        self.thaw_pages().await;
         let Some((cdp, session_id)) = self.view().current() else {
             return Ok(());
         };
@@ -2440,6 +2611,24 @@ async fn resolve_object(cdp: &Cdp, session: &str, backend: i64) -> Result<String
 }
 
 /// Scrolls an element into view and returns its center in CSS pixels.
+/// Refuses a point outside the visible page, in CSS pixels.
+async fn check_visible_point(cdp: &Cdp, session: &str, x: f64, y: f64) -> Result<(), String> {
+    let metrics = cdp
+        .call(Some(session), "Page.getLayoutMetrics", json!({}))
+        .await?;
+    let view = &metrics["cssVisualViewport"];
+    let width = view["clientWidth"].as_f64().unwrap_or(0.0);
+    let height = view["clientHeight"].as_f64().unwrap_or(0.0);
+    if x.is_finite() && y.is_finite() && (0.0..width).contains(&x) && (0.0..height).contains(&y) {
+        return Ok(());
+    }
+    Err(format!(
+        "the point ({x}, {y}) is outside the visible page ({}×{} CSS pixels); take a browser_screenshot",
+        width.round(),
+        height.round()
+    ))
+}
+
 async fn element_center(cdp: &Cdp, session: &str, backend: i64) -> Result<(f64, f64), String> {
     let _ = cdp
         .call(
@@ -2493,6 +2682,15 @@ async fn click_at(cdp: &Cdp, session: &str, x: f64, y: f64, clicks: u32) -> Resu
 }
 
 async fn press_key(cdp: &Cdp, session: &str, press: &KeyPress) -> Result<(), String> {
+    press_key_for(cdp, session, press, Duration::ZERO).await
+}
+
+async fn press_key_for(
+    cdp: &Cdp,
+    session: &str,
+    press: &KeyPress,
+    hold: Duration,
+) -> Result<(), String> {
     let mut down = json!({
         "type": if press.text.is_some() { "keyDown" } else { "rawKeyDown" },
         "key": press.key, "code": press.code,
@@ -2505,6 +2703,7 @@ async fn press_key(cdp: &Cdp, session: &str, press: &KeyPress) -> Result<(), Str
     }
     cdp.call(Some(session), "Input.dispatchKeyEvent", down)
         .await?;
+    tokio::time::sleep(hold).await;
     cdp.call(
         Some(session),
         "Input.dispatchKeyEvent",
@@ -2588,6 +2787,10 @@ mod tests {
             ),
             ("KeyA", 2, None)
         );
+        assert_eq!(parse_key("KeyW").unwrap(), parse_key("w").unwrap());
+        assert_eq!(parse_key("Digit1").unwrap(), parse_key("1").unwrap());
+        assert!(parse_key("Keyboard").is_none());
+        assert!(parse_key("Digita").is_none());
         let shifted = parse_key("Shift+k").unwrap();
         assert_eq!(
             (

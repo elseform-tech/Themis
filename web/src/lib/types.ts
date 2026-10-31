@@ -368,7 +368,7 @@ export interface QueuedMessage {
 }
 
 export type GoalStatus = 'running' | 'paused' | 'waiting' | 'stuck' | 'quota' | 'reached';
-export type GoalNoteKind = 'reached' | 'not_yet' | 'stuck' | 'waiting' | 'quota' | 'failed' | 'small_window';
+export type GoalNoteKind = 'reached' | 'not_yet' | 'stuck' | 'waiting' | 'quota' | 'failed' | 'status' | 'small_window';
 
 /** A chat's goal: one sentence the agent keeps working toward. */
 export interface Goal {
@@ -497,9 +497,10 @@ export interface PersistedMessage {
   /** A message the user steered into a running run. */
   steered?: boolean;
   /** A runtime message that started goal turn N; shown as a divider, not a bubble. */
+  /** How the goal stands, in plain words. */
+  goalStatus?: boolean;
   goalTurn?: number;
   /** What the goal check concluded after a turn. */
-  goalNote?: { outcome: GoalNoteKind; reason: string };
   /** A question the agent asked the user. */
   question?: Question;
 }
@@ -627,6 +628,9 @@ export interface DiffFile {
   /** True when the file already differed from HEAD before the thread started. */
   preexisting: boolean;
   hunks: DiffHunk[];
+  /** Lines added and removed in the whole change, however few `hunks` hold. */
+  added: number;
+  removed: number;
   /** Too large to show line by line (a dataset, a generated file); listed without hunks. */
   too_large?: boolean;
 }

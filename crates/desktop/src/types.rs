@@ -381,6 +381,8 @@ pub enum GoalNoteKind {
     Waiting,
     Quota,
     Failed,
+    /// What the goal is doing now and why: started, paused, resumed, removed, carrying on.
+    Status,
     /// The goal started with a small context window (a warning; the goal runs on).
     SmallWindow,
 }
@@ -539,6 +541,11 @@ pub struct DiffFile {
     pub status: DiffStatus,
     pub preexisting: bool,
     pub hunks: Vec<DiffHunk>,
+    /// Lines added and removed in the whole change, however few `hunks` hold.
+    #[serde(default)]
+    pub added: usize,
+    #[serde(default)]
+    pub removed: usize,
     /// The change is too large to show whole (a downloaded dataset, a
     /// generated file): `hunks` hold only its first lines.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
@@ -1475,6 +1482,8 @@ mod tests {
             status: DiffStatus::Modified,
             preexisting: false,
             hunks: vec![hunk],
+            added: 1,
+            removed: 0,
             too_large: false,
         };
         let json = to_value(&file);

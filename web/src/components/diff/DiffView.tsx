@@ -48,14 +48,6 @@ function numberHunk(
 /** Read-only unified diff of one file. */
 export function DiffView({ file }: DiffViewProps) {
   const language = normalizeLanguage(file.path.split(".").pop());
-  let addCount = 0;
-  let delCount = 0;
-  for (const hunk of file.hunks) {
-    for (const line of hunk.lines) {
-      if (line.kind === "add") addCount += 1;
-      if (line.kind === "del") delCount += 1;
-    }
-  }
 
   return (
     <div className="themis-diff">
@@ -64,8 +56,8 @@ export function DiffView({ file }: DiffViewProps) {
           {file.path}
         </span>
         <span className="themis-diff-counts">
-          <span className="themis-diff-count-add">+{addCount}</span>
-          <span className="themis-diff-count-del">-{delCount}</span>
+          <span className="themis-diff-count-add">+{file.added}</span>
+          <span className="themis-diff-count-del">-{file.removed}</span>
         </span>
       </div>
 

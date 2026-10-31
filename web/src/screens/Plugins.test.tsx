@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { toast } from "../state/store";
 import { Plugins } from "./Plugins";
@@ -538,7 +538,8 @@ describe("Integration browsing and lifecycle", () => {
     render(<Plugins />);
     const tab = await screen.findByRole("button", { name: "Connections" });
     expect(screen.queryByRole("button", { name: "MCP" })).toBeNull();
-    expect(within(screen.getByRole("navigation", { name: "Integration categories" })).getByRole("button", { name: "Plugins" })).toHaveTextContent(/Plugins\s*1/);
+    // The counts arrive after the tabs render.
+    await waitFor(() => expect(within(screen.getByRole("navigation", { name: "Integration categories" })).getByRole("button", { name: "Plugins" })).toHaveTextContent(/Plugins\s*1/));
     expect(tab).toBeVisible();
   });
   it("keeps an unsupported card in place until the catalog is done, then filters it", async () => {

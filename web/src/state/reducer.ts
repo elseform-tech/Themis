@@ -134,6 +134,8 @@ export interface AppState {
   diffPanelOpen: boolean;
   /** A file to show in the Workspace changes view, e.g. from an edited-files list. */
   diffFocus: { path: string; at: number } | null;
+  /** A file to show in Workspace › Files. */
+  fileFocus: { path: string; at: number } | null;
   /** Asks the open (or next opened) Workspace panel to show a tab. */
   workspaceTabRequest: { tab: WorkspaceTab; at: number } | null;
   /** Each chat's built-in browser: who drives it and any recording (live only). */
@@ -203,7 +205,7 @@ export type AppAction =
   | { type: "toast/dismiss"; id: string }
   | { type: "ui/view"; view: MainView; settings?: { section: string; key?: string } }
   | { type: "ui/settings-section"; section: string }
-  | { type: "ui/diff-panel"; open: boolean; focus?: string; tab?: WorkspaceTab }
+  | { type: "ui/diff-panel"; open: boolean; focus?: string; tab?: WorkspaceTab; file?: string }
   | { type: "browser/opens-workspace"; value: boolean }
   | { type: "ui/tab-request-consumed" }
   | { type: "tasks/loaded"; threadId: string; tasks: ThreadTasks }
@@ -274,6 +276,7 @@ export const initialState: AppState = {
   toasts: [],
   diffPanelOpen: false,
   diffFocus: null,
+  fileFocus: null,
   workspaceTabRequest: null,
   browsers: {},
   tasks: {},
@@ -492,7 +495,7 @@ export function applyThreadEvent(
     case "goal_changed":
       return { ...state, goals: { ...state.goals, [threadId]: event.goal } };
     case "goal_note":
-      return appendMessage(state, threadId, { id: newId("msg"), role: "system", text: event.reason, runId, goalNote: { outcome: event.outcome, reason: event.reason } });
+      return appendMessage(state, threadId, { id: newId("msg"), role: "system", text: event.reason, runId, goalStatus: true });
     case "question_asked": {
       // A question asked again on its open topic updates its box where it was first asked.
       const rows = state.messages[threadId] ?? [];

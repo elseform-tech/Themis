@@ -6,7 +6,7 @@ import { Button } from "../components";
 import type { GoModel } from "../lib/types";
 import { usesGo } from "../lib/models";
 import { yoloKeeps } from "../lib/yolo";
-import { attachFiles, getEffectivePermissions, editGoal, enqueueMessage, getGoal, getThread, getWorkspace, listDiff, listGoModels, listQueue, pauseGoal, removeGoal, removeQueuedMessage, resumeGoal, sendMessage, setProvider, setThreadEffort, setThreadApprovalMode, steerQueuedMessage, stopThread, updateQueuedMessage } from "../lib/tauri";
+import { attachFiles, getEffectivePermissions, editGoal, enqueueMessage, getGoal, getThread, getWorkspace, listDiff, listGoModels, listQueue, pauseGoal, removeGoal, removeQueuedMessage, resumeGoal, sendMessage, setProvider, setThreadEffort, setThreadApprovalMode, steerQueuedMessage, stopThread, updateQueuedMessage, switchBranch } from "../lib/tauri";
 import { useLiveDiff } from "../lib/useLiveDiff";
 import { describeError, isConcurrencyLimitError, newId, toast, useActiveProject, useActiveThread, useApp } from "../state/store";
 import { readSession, writeSession } from "../state/session";
@@ -18,7 +18,7 @@ import { ComposerStack } from "./ComposerStack";
 import { QueueStack } from "./QueueStack";
 import { CompactionNotice } from "./ContextMeter";
 import { WorkspacePanel } from "./WorkspacePanel";
-import { useOverview, useOverviewRoom } from "./OverviewBox";
+import { useOverview } from "./OverviewBox";
 import { useProjectWorkspace } from "./useProjectWorkspace";
 import { useThreadTasksSync } from "./threadTasks";
 import { skillToken } from "../lib/prompt";
@@ -83,7 +83,6 @@ export function ThreadView() {
   const running = thread === null ? false : (state.running[thread.id] ?? false);
   const messages = thread === null ? EMPTY_MESSAGES : (state.messages[thread.id] ?? EMPTY_MESSAGES);
   const overview = useOverview(thread?.id ?? "", messages);
-  const overviewRoom = useOverviewRoom(thread?.id ?? "", overview.visible);
   const stream = thread === null ? "" : (state.streams[thread.id] ?? "");
 
   const sendError = thread === null ? undefined : state.sendErrors[thread.id];
@@ -110,7 +109,8 @@ export function ThreadView() {
     return () => { current = false; };
   }, [yoloThread, project]);
   const runningNow = threadId !== undefined && (state.running[threadId] ?? false);
-  const workspace = useProjectWorkspace(project?.root, runningNow, getWorkspace);
+  const [workspaceVersion, setWorkspaceVersion] = useState(0);
+  const workspace = useProjectWorkspace(project?.root, runningNow, getWorkspace, workspaceVersion);
   const gitProject = project?.is_git === true;
   // The header, the overview box and Workspace › Changes all show this chat's live diff.
   useLiveDiff(threadId, gitProject, runningNow, listDiff, (id, diff) => dispatch({ type: "diff/set", threadId: id, diff }));
@@ -267,9 +267,11 @@ export function ThreadView() {
   const diff = state.diffs[thread.id];
   const changedFiles = diff?.available ? diff.files.length : undefined;
   const empty = messages.length === 0 && stream === "" && !running && !sending;
-  // The overview box stands in for the Workspace while it is closed.
-  const showOverview = overview.visible && !state.diffPanelOpen && !empty;
-  const keepOverviewRoom = !state.diffPanelOpen && !empty && overviewRoom;
+  // The overview box stands in for the Workspace while it is closed. The chat keeps its room
+  // from the first message, so a long reply doesn't jump narrower when the box has something
+  // to list; with nothing to list it stays hidden.
+  const keepOverviewRoom = !state.diffPanelOpen && !empty;
+  const showOverview = keepOverviewRoom && overview.visible;
   const showNotice = budget?.compaction_soon === true && !compacting && running && !noticeDismissed[thread.id];
   const starters = [
     ...promptSkills.filter(skill => !skill.retired).slice(0, 2).map(skill => ({ label: `/ ${skill.name}`, text: `${skillToken(skill.id)} ` })),
@@ -308,7 +310,12 @@ export function ThreadView() {
       onOpenSettings={() => dispatch({ type: "ui/view", view: "settings", settings: { section: "Models" } })}
       budget={budget}
       compacting={compacting}
-      location={{ name: project.name, root: project.root, branch: workspace?.branch ?? null }}
+      location={{ name: project.name, root: project.root, branch: workspace?.branch ?? null, branches: workspace?.branches.map(branch => branch.name), onSwitchBranch: branch => void switchBranch(project.root, branch).then(() => {
+        setWorkspaceVersion(version => version + 1);
+        // Git keeps uncommitted edits on a switch; say so rather than let them appear on the new branch unannounced.
+        const carried = state.diffs[thread.id]?.files.length ?? 0;
+        if (carried > 0) toast(dispatch, `${carried} uncommitted ${carried === 1 ? "change" : "changes"} came along to ${branch}`, "info");
+      }).catch(error => toast(dispatch, describeError(error), "danger")) }}
       top={<>
         <ComposerStack threadId={thread.id} goal={goal} approvals={approvals} questions={questions} traces={trace}
           onEditGoal={async text => { try { await editGoal(thread.id, text); } catch (error) { toast(dispatch, `Could not save the goal: ${describeError(error)}`, "danger"); throw error; } }}

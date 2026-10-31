@@ -70,6 +70,7 @@ pub fn browser_tools(approvals: Arc<dyn ApprovalHook>, scope: BrowserScope) -> V
         Box::new(BrowserSelect { base: base.clone() }),
         Box::new(BrowserPress { base: base.clone() }),
         Box::new(BrowserScroll { base: base.clone() }),
+        Box::new(BrowserMove { base: base.clone() }),
         Box::new(BrowserTabs { base: base.clone() }),
     ];
     tools.extend(devtools::devtools(&base));
@@ -163,6 +164,7 @@ impl Base {
                 .unwrap_or_else(|| BLANK_SITE.to_owned()),
         };
         self.gate(tool, &site, format!("{summary} on {site}"), risk)?;
+        self.scope.chat.thaw_pages().await;
         chat.set_activity(Some(activity)).await;
         let started = std::time::Instant::now();
         let result = until_stopped(self.scope.cancel.as_deref(), action(Arc::clone(&chat))).await;
@@ -291,6 +293,7 @@ struct BrowserSnapshot {
 #[async_trait]
 impl ToolRuntime for BrowserSnapshot {
     async fn execute(&self, args: Value) -> Result<Value, ToolCallError> {
+        self.base.scope.chat.thaw_pages().await;
         let args: SnapshotArgs = parse_tool_args("browser_snapshot", args)?;
         let reference = Some(args.reference.trim().to_owned()).filter(|r| !r.is_empty());
         self.base
@@ -340,7 +343,8 @@ struct BrowserClick {
 impl ToolRuntime for BrowserClick {
     async fn execute(&self, args: Value) -> Result<Value, ToolCallError> {
         let args: ClickArgs = parse_tool_args("browser_click", args)?;
-        let reference = args.reference.trim().to_owned();
+        // Models sometimes quote a ref, as they saw it in a JSON result.
+        let reference = args.reference.trim().trim_matches('"').to_owned();
         let point = match (args.x, args.y) {
             (None, None) if reference.is_empty() => {
                 return Err(tool_error(
@@ -489,18 +493,25 @@ impl ToolRuntime for BrowserSelect {
     }
 }
 
+const MAX_KEY_HOLD_MS: u64 = 5000;
+
 /// Arguments for `browser_press`.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, ToolInput)]
 pub struct PressArgs {
     #[input(
-        description = "Key name: Enter, Escape, Tab, ArrowDown, Backspace, PageDown, or a shortcut like Control+a"
+        description = "Key name: Enter, Escape, Tab, ArrowDown, Backspace, PageDown, a letter or digit like w or 1, or a shortcut like Control+a"
     )]
     pub key: String,
+    #[serde(default)]
+    #[input(
+        description = "Milliseconds to keep the key down, up to 5000, to move in a game; omit for a plain press"
+    )]
+    pub hold_ms: Option<u64>,
 }
 
 #[tool(
     name = "browser_press",
-    description = "Press a key in the focused element of the current page (Enter, Escape, Tab, arrows, or shortcuts like Control+a). Returns a fresh snapshot.",
+    description = "Press a key in the focused element of the current page (Enter, Escape, Tab, arrows, letters, or shortcuts like Control+a), or hold it with hold_ms. Returns a fresh snapshot.",
     input = PressArgs,
 )]
 struct BrowserPress {
@@ -512,6 +523,7 @@ impl ToolRuntime for BrowserPress {
     async fn execute(&self, args: Value) -> Result<Value, ToolCallError> {
         let args: PressArgs = parse_tool_args("browser_press", args)?;
         let key = args.key.trim().to_owned();
+        let hold = std::time::Duration::from_millis(args.hold_ms.unwrap_or(0).min(MAX_KEY_HOLD_MS));
         self.base
             .act(
                 "browser_press",
@@ -519,7 +531,7 @@ impl ToolRuntime for BrowserPress {
                 None,
                 format!("browser_press {key}"),
                 format!("pressing {key}"),
-                |chat| async move { chat.press(&key).await },
+                |chat| async move { chat.press(&key, hold).await },
             )
             .await
     }
@@ -558,6 +570,42 @@ impl ToolRuntime for BrowserScroll {
                 format!("browser_scroll {direction}"),
                 "scrolling".to_owned(),
                 |chat| async move { chat.scroll(&direction, reference.as_deref()).await },
+            )
+            .await
+    }
+}
+
+/// Arguments for `browser_move`.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, ToolInput)]
+pub struct MoveArgs {
+    #[input(description = "CSS pixels from the left of the visible page")]
+    pub x: f64,
+    #[input(description = "CSS pixels from the top of the visible page")]
+    pub y: f64,
+}
+
+#[tool(
+    name = "browser_move",
+    description = "Move the mouse to a point of the visible page without clicking: to aim in a game, where the view turns with the distance moved, or to open a hover menu. A snapshot cannot show what a canvas draws: read where things are with browser_devtools, then act here and with browser_click, since only real input tests the page.",
+    input = MoveArgs,
+)]
+struct BrowserMove {
+    base: Base,
+}
+
+#[async_trait]
+impl ToolRuntime for BrowserMove {
+    async fn execute(&self, args: Value) -> Result<Value, ToolCallError> {
+        let MoveArgs { x, y } = parse_tool_args("browser_move", args)?;
+        let label = format!("({}, {})", x.round(), y.round());
+        self.base
+            .act(
+                "browser_move",
+                RiskLevel::Network,
+                None,
+                format!("browser_move {label}"),
+                format!("moving the mouse to {label}"),
+                |chat| async move { chat.move_point(x, y).await },
             )
             .await
     }
@@ -603,6 +651,7 @@ impl ToolRuntime for BrowserTabs {
             format!("browser_tabs {action} on {site}"),
             risk,
         )?;
+        self.base.scope.chat.thaw_pages().await;
         let tab = usize::try_from(args.tab).ok().filter(|tab| *tab > 0);
         chat.tabs(&action, tab)
             .await
@@ -651,6 +700,7 @@ impl ToolRuntime for BrowserScreenshot {
             format!("browser_screenshot on {site}"),
             RiskLevel::Read,
         )?;
+        self.base.scope.chat.thaw_pages().await;
         let reference = Some(args.reference.trim().to_owned()).filter(|r| !r.is_empty());
         let (png, width, height) = chat
             .screenshot(reference.as_deref(), args.full_page)
@@ -709,6 +759,7 @@ impl ToolRuntime for BrowserRecord {
             format!("browser_record {action} on {site}"),
             RiskLevel::Read,
         )?;
+        self.base.scope.chat.thaw_pages().await;
         match action.as_str() {
             "start" => {
                 let max = match args.max_seconds {
@@ -804,6 +855,7 @@ mod tests {
             "browser_select" => parse_tool_args::<SelectArgs>(tool, args).map(|_| ()),
             "browser_press" => parse_tool_args::<PressArgs>(tool, args).map(|_| ()),
             "browser_scroll" => parse_tool_args::<ScrollArgs>(tool, args).map(|_| ()),
+            "browser_move" => parse_tool_args::<MoveArgs>(tool, args).map(|_| ()),
             "browser_tabs" => parse_tool_args::<TabsArgs>(tool, args).map(|_| ()),
             "browser_screenshot" => parse_tool_args::<ScreenshotArgs>(tool, args).map(|_| ()),
             "browser_record" => parse_tool_args::<RecordArgs>(tool, args).map(|_| ()),
@@ -853,7 +905,7 @@ mod tests {
             let parsed = parses(tool.name(), Value::Object(args));
             assert!(parsed.is_ok(), "{}: {parsed:?} from {schema}", tool.name());
         }
-        assert_eq!(tools.len(), 12);
+        assert_eq!(tools.len(), 13);
         let click: ClickArgs = parse_tool_args("browser_click", json!({"ref": "e4"})).unwrap();
         assert_eq!(click.reference, "e4");
         let click: ClickArgs =

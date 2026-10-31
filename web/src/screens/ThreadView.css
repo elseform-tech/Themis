@@ -2,7 +2,8 @@
    One definition per selector; palette colors come from theme tokens. */
 
 .themis-thread-layout { display: flex; min-height: 0; height: 100%; }
-.themis-thread { position: relative; flex: 1; min-width: 0; display: flex; flex-direction: column; min-height: 0; height: 100%; }
+/* The chat column follows the room the sidebar and Workspace leave, with a readable cap. */
+.themis-thread { --themis-thread-column: clamp(740px, 90cqw, 1120px); position: relative; flex: 1; min-width: 0; display: flex; flex-direction: column; min-height: 0; height: 100%; }
 
 /* Empty states without a thread. */
 .themis-welcome { margin: auto; text-align: center; padding: 32px; max-width: 540px; }
@@ -56,7 +57,7 @@
 .themis-starter:disabled { opacity: .5; cursor: not-allowed; }
 
 /* Conversation stream. */
-.themis-thread-stream { flex: 1; overflow-y: auto; overflow-x: hidden; display: flex; flex-direction: column; gap: 20px; padding: 16px max(20px, calc((100% - 740px) / 2)) 24px; }
+.themis-thread-stream { flex: 1; overflow-y: auto; overflow-x: hidden; display: flex; flex-direction: column; gap: 20px; padding: 16px max(20px, calc((100% - var(--themis-thread-column)) / 2)) 24px; }
 .themis-thread-start { margin: auto; color: var(--themis-text-2); font-size: .875rem; }
 .themis-thread-msg { max-width: 100%; }
 .themis-thread-msg--user { align-self: flex-end; max-width: 80%; padding: 12px 18px; border-radius: 22px 22px 6px 22px; background: var(--themis-user-message-bg); }
@@ -107,9 +108,9 @@
 }
 
 /* Composer: a rounded pill. A sweeping ring marks an active run. */
-.themis-thread-senderror { width: min(calc(100% - 40px), 740px); margin: 0 auto 6px; color: var(--themis-danger); font-size: .8125rem; }
+.themis-thread-senderror { width: min(calc(100% - 40px), var(--themis-thread-column)); margin: 0 auto 6px; color: var(--themis-danger); font-size: .8125rem; }
 /* z-index 2: the composer's pop-ups (context, menus) open over the sticky run-progress row (z-index 1). */
-.themis-thread-composer { position: relative; display: flex; flex-direction: column; gap: 6px; width: min(calc(100% - 40px), 740px); margin: 4px auto 20px; padding: 12px 12px 10px 20px; border-radius: var(--themis-radius-composer); background: var(--themis-composer-bg); isolation: isolate; z-index: 2; }
+.themis-thread-composer { position: relative; display: flex; flex-direction: column; gap: 6px; width: min(calc(100% - 40px), var(--themis-thread-column)); margin: 4px auto 20px; padding: 12px 12px 10px 20px; border-radius: var(--themis-radius-composer); background: var(--themis-composer-bg); isolation: isolate; z-index: 2; }
 /* A narrow chat keeps the composer's controls as icons; names stay in tooltips and accessible labels. */
 .themis-thread-composer { container: themis-composer / inline-size; }
 @container themis-composer (max-width: 420px) {
@@ -206,7 +207,7 @@
 .themis-context-legend b { margin-left: auto; font-weight: 500; font-variant-numeric: tabular-nums; color: var(--themis-text-2); }
 .themis-context-note { margin: 0; color: var(--themis-text-3); font-size: .75rem; }
 .themis-context-warn { margin: 0; padding: 10px 12px; border-radius: 12px; background: color-mix(in srgb, var(--themis-accent) 14%, transparent); color: var(--themis-gradient-3); font-size: .8125rem; line-height: 1.45; }
-.themis-compaction-notice { display: flex; align-items: center; gap: 10px; width: min(calc(100% - 40px), 740px); margin: 0 auto 6px; padding: 10px 10px 10px 16px; border-radius: 16px; background: color-mix(in srgb, var(--themis-accent) 14%, var(--themis-surface)); color: var(--themis-gradient-3); font-size: .8125rem; }
+.themis-compaction-notice { display: flex; align-items: center; gap: 10px; width: min(calc(100% - 40px), var(--themis-thread-column)); margin: 0 auto 6px; padding: 10px 10px 10px 16px; border-radius: 16px; background: color-mix(in srgb, var(--themis-accent) 14%, var(--themis-surface)); color: var(--themis-gradient-3); font-size: .8125rem; }
 .themis-compaction-notice > span { flex: 1; }
 .themis-compaction-notice button { width: 28px; height: 28px; border: 0; border-radius: 50%; background: transparent; color: inherit; font-size: 1.1rem; cursor: pointer; }
 
@@ -234,3 +235,21 @@
 .themis-recording-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--themis-danger); animation: themis-recording-pulse 1.6s ease-in-out infinite; }
 @keyframes themis-recording-pulse { 0%, 100% { opacity: 1; } 50% { opacity: .35; } }
 @media (prefers-reduced-motion: reduce) { .themis-recording-dot { animation: none; } }
+
+/* Composer branch switcher. */
+.themis-composer-location > .themis-branch-picker { position: relative; min-width: 0; margin-left: 4px; }
+.themis-branch-picker > summary { display: flex; align-items: center; gap: 5px; min-width: 0; min-height: 24px; padding: 0 6px 0 8px; border-radius: var(--themis-radius-pill); background: color-mix(in srgb, var(--themis-text) 6%, transparent); color: var(--themis-text-2); cursor: pointer; list-style: none; transition: background .15s ease; }
+.themis-branch-picker > summary::-webkit-details-marker { display: none; }
+.themis-branch-picker > summary:hover, .themis-branch-picker > summary:focus-visible, .themis-branch-picker[open] > summary { background: color-mix(in srgb, var(--themis-text) 12%, transparent); color: var(--themis-text); }
+.themis-branch-picker > summary:focus-visible { outline: 2px solid var(--themis-text-2); outline-offset: 1px; }
+.themis-branch-chevron { flex: none; transition: transform .15s ease; }
+.themis-branch-picker[open] .themis-branch-chevron { transform: rotate(180deg); }
+/* The one idle shimmer: only while the chip is hovered or focused, to say it can be used. */
+.themis-branch-picker > summary:hover .themis-composer-branch, .themis-branch-picker > summary:focus-visible .themis-composer-branch { background: linear-gradient(100deg, var(--themis-shimmer-base) 30%, var(--themis-shimmer-highlight) 50%, var(--themis-shimmer-base) 70%); background-size: 220% 100%; -webkit-background-clip: text; background-clip: text; color: transparent; animation: themis-shimmer 1.8s linear infinite; }
+@media (prefers-reduced-motion: reduce) {
+  .themis-branch-picker > summary:hover .themis-composer-branch, .themis-branch-picker > summary:focus-visible .themis-composer-branch { animation: none; background: none; color: var(--themis-text); }
+  .themis-branch-chevron, .themis-branch-picker > summary { transition: none; }
+}
+.themis-branch-menu { position: absolute; bottom: calc(100% + 6px); left: 0; z-index: 30; display: flex; flex-direction: column; min-width: 180px; max-width: 320px; max-height: 260px; overflow-y: auto; padding: 4px; border-radius: 12px; background: var(--themis-raised); box-shadow: 0 8px 24px rgb(0 0 0 / .35); }
+.themis-branch-menu button { padding: 7px 10px; border: 0; border-radius: 8px; background: transparent; color: var(--themis-text); font: inherit; text-align: left; cursor: pointer; overflow-wrap: anywhere; }
+.themis-branch-menu button:hover, .themis-branch-menu button:focus-visible { background: color-mix(in srgb, var(--themis-text) 8%, transparent); }

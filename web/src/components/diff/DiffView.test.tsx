@@ -6,7 +6,7 @@ import { DiffView } from "./DiffView";
 const FILE: DiffFile = {
   path: "src/main.ts",
   status: "modified",
-  preexisting: false,
+  preexisting: false, added: 1, removed: 1,
   hunks: [
     {
       old_start: 1,
@@ -41,7 +41,7 @@ describe("DiffView", () => {
   });
 
   it("says when a change is too large to show", () => {
-    render(<DiffView file={{ path: "data/stars.csv", status: "added", preexisting: false, hunks: [], too_large: true }} />);
+    render(<DiffView file={{ path: "data/stars.csv", status: "added", preexisting: false, added: 0, removed: 0, hunks: [], too_large: true }} />);
     expect(screen.getByText("Too large to show")).toBeInTheDocument();
   });
 
