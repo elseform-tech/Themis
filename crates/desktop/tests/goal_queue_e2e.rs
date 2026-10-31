@@ -1121,6 +1121,49 @@ async fn proof_and_files_carry_from_turn_to_turn() {
     );
 }
 
+/// When the turn's answer already told the person, no closing turn runs, but the chat still
+/// says how the check came out instead of stopping on "I'm checking".
+#[tokio::test(flavor = "multi_thread")]
+async fn a_goal_reached_without_a_closing_turn_still_says_so_in_the_chat() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .respond_with(|request: &Request| {
+            let body = body(request);
+            if is_check(&body) {
+                return reply(r#"{"verdict":"reached","reason":"Score and health both change with real input.","told_user":true}"#);
+            }
+            reply("The game works: score and health change with real input.")
+        })
+        .mount(&server)
+        .await;
+    let (state, _data, _project, thread) = chat(&server).await;
+    let (sink, mut rx) = ChannelSink::channel();
+    state
+        .send_message(
+            Arc::new(sink),
+            thread.clone(),
+            "/goal finish the game".into(),
+        )
+        .await
+        .unwrap();
+    goal_until(&state, &thread, |status| status == GoalStatus::Reached).await;
+    let mut seen = Vec::new();
+    until(&mut rx, &mut seen, |event| {
+        matches!(event, ThreadEvent::GoalNote { reason, .. } if reason.contains("closing the goal"))
+    })
+    .await;
+    let note = seen
+        .iter()
+        .find_map(|event| match event {
+            ThreadEvent::GoalNote { reason, .. } if reason.contains("closing the goal") => {
+                Some(reason.clone())
+            }
+            _ => None,
+        })
+        .unwrap();
+    assert!(note.contains("score and health both change"), "{note}");
+}
+
 /// Asked in the chat to remove the goal, the agent removes it: no goal is left, and
 /// no check or further turn follows.
 #[tokio::test(flavor = "multi_thread")]

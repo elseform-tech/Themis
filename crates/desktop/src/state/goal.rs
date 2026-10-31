@@ -70,6 +70,12 @@ pub(super) fn backoff(failures: u32) -> Duration {
 
 /// Why the goal carries on, in one natural sentence around the check's own reason.
 fn because_carrying_on(reason: &str) -> String {
+    let reason = mid_sentence(reason);
+    format!("That isn't proven yet, because {reason}, so I'm carrying on.")
+}
+
+/// The check's reason, ready to sit inside a sentence.
+fn mid_sentence(reason: &str) -> String {
     let reason = reason.trim().trim_end_matches('.');
     let mut chars = reason.chars();
     let first = chars
@@ -78,12 +84,11 @@ fn because_carrying_on(reason: &str) -> String {
         .unwrap_or_default();
     // An acronym or name keeps its capital.
     let keep = reason.chars().nth(1).is_some_and(char::is_uppercase);
-    let reason = if keep {
+    if keep {
         reason.to_owned()
     } else {
         format!("{first}{}", chars.as_str())
-    };
-    format!("That isn't proven yet, because {reason}, so I'm carrying on.")
+    }
 }
 
 /// `wait` plus up to a fifth more, so chats hit by the same outage don't all retry at once.
@@ -909,6 +914,17 @@ impl AppState {
                 // An answer that already says so needs no second message,
                 // unless open questions still have to be named.
                 if verdict.told_user == Some(true) && self.open_questions(&thread_id).is_empty() {
+                    // The chat last said it was checking, so it says how that came out.
+                    self.goal_note(
+                        sink.as_ref(),
+                        &thread_id,
+                        &run_id,
+                        GoalNoteKind::Reached,
+                        &format!(
+                            "That's proven, because {}, so I'm closing the goal.",
+                            mid_sentence(&verdict.reason)
+                        ),
+                    );
                     return;
                 }
                 self.announce_reached(sink, &thread_id, &goal, &verdict.reason)
