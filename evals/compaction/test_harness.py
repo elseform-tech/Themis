@@ -202,7 +202,9 @@ class BehaviorMock(http.server.BaseHTTPRequestHandler):
         if "You summarize agent context" in messages[0]["content"]:
             text = SUMMARY
         else:
-            last = messages[-1]["content"]
+            # The runtime's own note after an announced step isn't the person's message.
+            person = [m for m in messages if m["role"] == "user" and "[Runtime note" not in str(m["content"])]
+            last = person[-1]["content"] if person else messages[-1]["content"]
             if isinstance(last, list):
                 last = json.dumps(last)
             type(self).anchored.append(any("Original exchange anchors" in str(m["content"]) for m in messages))

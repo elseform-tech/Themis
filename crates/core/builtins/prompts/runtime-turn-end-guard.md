@@ -1,0 +1,1 @@
+[Runtime note, not from the user] Your last reply named a next step or wrote a tool call as text but ran nothing, so make the real tool call now without repeating that text, or if nothing is left, say what this turn did.
