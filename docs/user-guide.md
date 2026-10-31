@@ -210,7 +210,7 @@ is reached; for example `/goal optimize this app to speed up p95`.
 - **The overview box** sits over the top right of a chat while Workspace is closed:
   a live preview of the chat's browser (the page keeps its size; only the preview is
   small), one row each for changed files (+/− lines), tasks and
-  queued messages, the latest artifact, and the chat's cost, as icons with short
+  queued messages, and the latest artifact, as icons with short
   values (hover a row for its name). Click a row to open Workspace on that tab,
   or the Workspace icon to open it as you left it; closing Workspace brings the
   box back. The chevron folds it to icons only, as does a narrow chat. Rows with
