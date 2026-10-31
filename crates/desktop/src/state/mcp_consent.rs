@@ -82,7 +82,11 @@ pub(super) fn definition_digest(
 }
 
 pub(super) fn plugin_digest(plugin: &Plugin, server: &McpServer) -> Option<String> {
-    definition_digest(server, &plugin.spec.files, &plugin.spec.executable_files)
+    definition_digest(
+        server,
+        &plugin.spec.approved_files(),
+        &plugin.spec.executable_files,
+    )
 }
 
 /// Namespace for a connection's generated tool names. It includes the approved

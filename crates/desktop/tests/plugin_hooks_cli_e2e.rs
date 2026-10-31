@@ -95,6 +95,16 @@ async fn app(
     files: &[(&str, &str)],
     respond: impl Fn(&Value) -> ResponseTemplate + Send + Sync + 'static,
 ) -> App {
+    app_with_folder(hooks, files, |_| {}, respond).await
+}
+
+/// The same, with `prepare` adding to the plugin's folder before it is imported.
+async fn app_with_folder(
+    hooks: Value,
+    files: &[(&str, &str)],
+    prepare: impl FnOnce(&Path),
+    respond: impl Fn(&Value) -> ResponseTemplate + Send + Sync + 'static,
+) -> App {
     let llm = MockServer::start().await;
     Mock::given(method("POST"))
         .respond_with(move |request: &Request| respond(&request.body_json().unwrap_or(Value::Null)))
@@ -128,6 +138,7 @@ async fn app(
     });
     let plugins = tempfile::tempdir().unwrap();
     let folder = plugin_folder(plugins.path(), &hooks, files);
+    prepare(&folder);
     let directory = data.path().to_owned();
     tokio::task::spawn_blocking(move || {
         let plugin = themis(
@@ -380,6 +391,78 @@ async fn if_runs_the_guard_only_on_the_commands_it_names() {
         exists(&app, "guard-ran"),
         "an unreadable script skipped the guard"
     );
+    app.serving.abort();
+}
+
+/// A plugin too big for the registry keeps every file, binary and large ones too, and what it
+/// ships really runs: its compiled hook is on disk, executable, and refuses the call.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_large_plugin_keeps_every_file_and_its_binary_hook_runs() {
+    let hooks = json!({"PreToolUse": [{"matcher": "Bash", "hooks": [{
+        "type": "command", "command": "${CLAUDE_PLUGIN_ROOT}/hooks/bin/guard"
+    }]}]});
+    let app = app_with_folder(
+        hooks,
+        &[(
+            "skills/big/SKILL.md",
+            "---\nname: big\ndescription: d\n---\nBody",
+        )],
+        |folder| {
+            use std::os::unix::fs::PermissionsExt;
+            let bin = folder.join("hooks/bin");
+            std::fs::create_dir_all(&bin).unwrap();
+            // Runs as a script, but it is not UTF-8, as a compiled hook isn't.
+            let mut guard = b"#!/bin/sh\necho 'from the binary' >&2; exit 2\n#".to_vec();
+            guard.extend_from_slice(&[0xff, 0xfe, 0x00, 0x80]);
+            std::fs::write(bin.join("guard"), guard).unwrap();
+            std::fs::set_permissions(bin.join("guard"), std::fs::Permissions::from_mode(0o755))
+                .unwrap();
+            let vendor = folder.join("vendor");
+            std::fs::create_dir_all(&vendor).unwrap();
+            std::fs::write(vendor.join("big.js"), "x".repeat(9 * 1024 * 1024)).unwrap();
+            for index in 0..1500 {
+                std::fs::write(vendor.join(format!("f{index}.txt")), "y".repeat(1024)).unwrap();
+            }
+        },
+        calls_once("shell", json!({"command": "true"})),
+    )
+    .await;
+    run(&app, "go").await;
+    assert!(
+        last_tool_result(&app).await.contains("from the binary"),
+        "the shipped binary hook did not refuse the call"
+    );
+    let resources = std::fs::read_dir(app.project.path().join(".themis/plugin-files"))
+        .unwrap()
+        .filter_map(Result::ok)
+        .find(|entry| entry.path().join("vendor").is_dir())
+        .expect("materialized plugin")
+        .path();
+    assert_eq!(
+        std::fs::metadata(resources.join("vendor/big.js"))
+            .unwrap()
+            .len(),
+        9 * 1024 * 1024
+    );
+    assert!(resources.join("vendor/f1499.txt").is_file());
+    // None of the bulk went through the registry, which every read loads whole.
+    let registry = std::fs::metadata(app.data.path().join("plugins/registry.json")).unwrap();
+    assert!(
+        registry.len() < 256 * 1024,
+        "registry is {} bytes",
+        registry.len()
+    );
+    let shown = call(app.data.path(), "plugin_action", json!({"action": "list"}));
+    let spec = &shown
+        .as_array()
+        .and_then(|all| {
+            all.iter()
+                .find(|plugin| plugin["spec"]["name"] == "guarded")
+        })
+        .expect("listed")["spec"];
+    assert!(spec["unsupported"].as_array().unwrap().is_empty(), "{spec}");
+    assert!(spec["package"]["files"].as_u64().unwrap() > 1500, "{spec}");
+    assert!(spec["files"].get("vendor/big.js").is_none());
     app.serving.abort();
 }
 

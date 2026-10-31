@@ -264,19 +264,21 @@ impl PluginStore {
         name: Option<&str>,
         allow_partial: bool,
     ) -> anyhow::Result<Plugin> {
-        let spec = self.path_spec(path, name, allow_partial)?;
+        let store = self.directory(scope)?.join(super::package::PACKAGES_DIR);
+        let spec = self.path_spec(path, name, allow_partial, Some(&store))?;
         spec.ensure_installable()?;
         self.save(scope, spec, None)
     }
     /// Inspect compatibility without registering or executing plugin capabilities.
     pub fn inspect_path(&self, path: &Path, name: Option<&str>) -> anyhow::Result<ImportPreview> {
-        Ok(ImportPreview::new(self.path_spec(path, name, true)?))
+        Ok(ImportPreview::new(self.path_spec(path, name, true, None)?))
     }
     fn path_spec(
         &self,
         path: &Path,
         name: Option<&str>,
         allow_partial: bool,
+        keep_in: Option<&Path>,
     ) -> anyhow::Result<PluginSpec> {
         let path = path.canonicalize().context("Import path is unavailable")?;
         let mut spec = if path.is_dir() || path.file_name().is_some_and(|s| s == "SKILL.md") {
@@ -288,6 +290,7 @@ impl PluginStore {
                 },
                 allow_partial,
                 None,
+                keep_in,
             )?
         } else {
             let bytes = fs::read(&path)?;
@@ -378,8 +381,16 @@ impl PluginStore {
         subdirectory: Option<&str>,
         allow_partial: bool,
     ) -> anyhow::Result<Plugin> {
+        let store = self.directory(scope)?.join(super::package::PACKAGES_DIR);
         let spec = self
-            .repository_spec(name, source, reference, subdirectory, allow_partial)
+            .repository_spec(
+                name,
+                source,
+                reference,
+                subdirectory,
+                allow_partial,
+                Some(&store),
+            )
             .await?;
         spec.ensure_installable()?;
         self.save(scope, spec, None)
@@ -392,7 +403,7 @@ impl PluginStore {
         subdirectory: Option<&str>,
     ) -> anyhow::Result<ImportPreview> {
         Ok(ImportPreview::new(
-            self.repository_spec(name, source, reference, subdirectory, true)
+            self.repository_spec(name, source, reference, subdirectory, true, None)
                 .await?,
         ))
     }
@@ -403,7 +414,7 @@ impl PluginStore {
         reference: Option<&str>,
         subdirectory: Option<&str>,
     ) -> anyhow::Result<PluginSpec> {
-        self.repository_spec(name, source, reference, subdirectory, false)
+        self.repository_spec(name, source, reference, subdirectory, false, None)
             .await
     }
     async fn repository_spec(
@@ -413,6 +424,7 @@ impl PluginStore {
         reference: Option<&str>,
         subdirectory: Option<&str>,
         allow_partial: bool,
+        keep_in: Option<&Path>,
     ) -> anyhow::Result<PluginSpec> {
         if !name.is_empty() && !safe_name(name) {
             bail!("Invalid plugin name");
@@ -434,7 +446,7 @@ impl PluginStore {
             if !directory.starts_with(staging.canonicalize()?) {
                 bail!("Plugin directory escapes repository");
             }
-            let mut spec = import_directory(&directory, allow_partial, None)?;
+            let mut spec = import_directory(&directory, allow_partial, None, keep_in)?;
             if !name.is_empty() {
                 spec.name = name.into();
             } else if directory == staging.canonicalize()?
@@ -711,8 +723,9 @@ impl PluginStore {
             .current
             .get(name)
             .is_some_and(|p| p.source.as_deref() == Some(marketplace));
+        let store = self.directory(scope)?.join(super::package::PACKAGES_DIR);
         let spec = self
-            .marketplace_spec(marketplace, name, refresh, allow_partial)
+            .marketplace_spec(marketplace, name, refresh, allow_partial, Some(&store))
             .await?;
         spec.ensure_installable()?;
         self.install_spec(scope, marketplace, name, spec)
@@ -772,7 +785,8 @@ impl PluginStore {
     /// Read supported package contents without registering or enabling any capability.
     pub async fn preview(&self, marketplace: &str, name: &str) -> anyhow::Result<PluginSpec> {
         let _lock = self.scan_lock(marketplace)?;
-        self.marketplace_spec(marketplace, name, false, false).await
+        self.marketplace_spec(marketplace, name, false, false, None)
+            .await
     }
     pub async fn inspect_marketplace(
         &self,
@@ -788,9 +802,33 @@ impl PluginStore {
         name: &str,
     ) -> anyhow::Result<ImportPreview> {
         Ok(ImportPreview::new(
-            self.marketplace_spec(marketplace, name, false, true)
+            self.marketplace_spec(marketplace, name, false, true, None)
                 .await?,
         ))
+    }
+    /// Downloads a checked package's files again to keep them, since a check only hashes them.
+    /// A package that has changed since it was checked isn't what was reviewed, so it stops.
+    pub(super) async fn keep_checked_package(
+        &self,
+        scope: &str,
+        marketplace: &str,
+        name: &str,
+        wanted: &super::package::PackageRef,
+    ) -> anyhow::Result<()> {
+        let store = self.directory(scope)?.join(super::package::PACKAGES_DIR);
+        if store.join(&wanted.hash).is_dir() {
+            return Ok(());
+        }
+        let spec = self
+            .marketplace_spec(marketplace, name, false, true, Some(&store))
+            .await?;
+        if spec.package.as_ref() != Some(wanted) {
+            if let Some(found) = spec.package {
+                let _ = fs::remove_dir_all(store.join(found.hash));
+            }
+            bail!("This plugin changed after it was checked; check it again before installing");
+        }
+        Ok(())
     }
     async fn marketplace_spec(
         &self,
@@ -798,6 +836,7 @@ impl PluginStore {
         name: &str,
         refresh: bool,
         allow_partial: bool,
+        keep_in: Option<&Path>,
     ) -> anyhow::Result<PluginSpec> {
         if !safe_name(name) {
             bail!("Invalid plugin name");
@@ -866,7 +905,7 @@ impl PluginStore {
                     staging
                 }
             };
-            let mut spec = import_directory(&directory, allow_partial, Some(entry))?;
+            let mut spec = import_directory(&directory, allow_partial, Some(entry), keep_in)?;
             spec.name = name.into();
             spec.package_kind = Some("plugin".into());
             for field in ["lspServers", "dependencies", "settings", "channels"] {
@@ -1040,7 +1079,8 @@ async fn clone_repository(
         bail!("Invalid repository reference");
     }
     fs::create_dir_all(path.parent().context("Missing cache parent")?)?;
-    run_git(
+    let limit = super::package::MAX_CLONE_BYTES;
+    run_git_within(
         &[
             "clone",
             "--depth=1",
@@ -1049,11 +1089,14 @@ async fn clone_repository(
             path.to_str().context("Invalid cache path")?,
         ],
         None,
+        Some((path, limit)),
     )
     .await?;
     if let Some(reference) = reference {
-        run_git(&["fetch", "--depth=1", "origin", reference], Some(path)).await?;
-        run_git(&["checkout", "--detach", "FETCH_HEAD"], Some(path)).await?;
+        let fetch = ["fetch", "--depth=1", "origin", reference];
+        run_git_within(&fetch, Some(path), Some((path, limit))).await?;
+        let checkout = ["checkout", "--detach", "FETCH_HEAD"];
+        run_git_within(&checkout, Some(path), Some((path, limit))).await?;
     }
     Ok(())
 }
@@ -1137,6 +1180,19 @@ pub(super) fn tree_fingerprint(root: &Path) -> anyhow::Result<String> {
     Ok(format!("{:x}", hash.finalize()))
 }
 async fn run_git(args: &[&str], directory: Option<&Path>) -> anyhow::Result<()> {
+    run_git_within(args, directory, None).await
+}
+/// How long one git command may take: a download of a large repository on a slow line.
+const GIT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(180);
+/// How often a download's size is looked at.
+const CLONE_WATCH: std::time::Duration = std::time::Duration::from_secs(2);
+/// Runs git, stopping it when the folder in `watch` grows past its limit: a repository can't
+/// fill the disk before the time limit is up.
+async fn run_git_within(
+    args: &[&str],
+    directory: Option<&Path>,
+    watch: Option<(&Path, u64)>,
+) -> anyhow::Result<()> {
     let mut command = tokio::process::Command::new("git");
     command
         .args(["-c", "core.hooksPath=/dev/null"])
@@ -1155,14 +1211,33 @@ async fn run_git(args: &[&str], directory: Option<&Path>) -> anyhow::Result<()> 
         .kill_on_drop(true)
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null());
-    let status = tokio::time::timeout(std::time::Duration::from_secs(60), command.status())
-        .await
-        .context("Repository download timed out")??;
+    let too_large = || watch.is_some_and(|(path, limit)| super::package::tree_bytes(path) > limit);
+    let mut child = command.spawn()?;
+    let status = tokio::time::timeout(GIT_TIMEOUT, async {
+        loop {
+            tokio::select! {
+                status = child.wait() => return status.map_err(anyhow::Error::from),
+                () = tokio::time::sleep(CLONE_WATCH) => {
+                    if too_large() {
+                        let _ = child.kill().await;
+                        bail!(REPOSITORY_TOO_LARGE);
+                    }
+                }
+            }
+        }
+    })
+    .await
+    .context("Repository download timed out")??;
     if !status.success() {
         bail!("Repository download failed; check repository access, reference, and network");
     }
+    // One that finished between two looks.
+    if too_large() {
+        bail!(REPOSITORY_TOO_LARGE);
+    }
     Ok(())
 }
+const REPOSITORY_TOO_LARGE: &str = "Repository is too large to download (over 2 GiB)";
 
 /// Imports a skill or plugin folder. `entry` is the marketplace entry, whose `skills`,
 /// `mcpServers` and `hooks` declarations count like the plugin manifest's.
@@ -1170,6 +1245,19 @@ fn import_directory(
     root: &Path,
     allow_partial: bool,
     entry: Option<&Value>,
+    keep_in: Option<&Path>,
+) -> anyhow::Result<PluginSpec> {
+    import_directory_within(root, allow_partial, entry, keep_in, super::package::LIMITS)
+}
+
+/// [`import_directory`] with the bounds given. `keep_in` is where a package too big for the
+/// registry is kept; without it, as in a check, it is only hashed.
+fn import_directory_within(
+    root: &Path,
+    allow_partial: bool,
+    entry: Option<&Value>,
+    keep_in: Option<&Path>,
+    limits: super::package::Limits,
 ) -> anyhow::Result<PluginSpec> {
     let manifest_path = root.join(".claude-plugin/plugin.json");
     let manifest: Value = if manifest_path.exists() {
@@ -1199,21 +1287,32 @@ fn import_directory(
         version: manifest["version"].as_str().unwrap_or_default().into(),
         ..Default::default()
     };
-    if let Err(error) = collect_plugin_files(root, &mut spec, None) {
-        if error.to_string() != RESOURCE_LIMITS {
-            return Err(error);
+    let components = declared_component_files(&manifest, entry);
+    let entries = match collect_plugin_files(root, &mut spec, None, &components, limits) {
+        Ok(entries) => entries,
+        Err(error) => {
+            if error.to_string() != RESOURCE_LIMITS {
+                return Err(error);
+            }
+            // Past even a package's bounds. Keep only the plugin's own folders and the files
+            // its declarations name.
+            crate::diagnostics::emit(
+                "plugins",
+                "package_over_limits",
+                "warn",
+                serde_json::json!({"files": limits.files, "bytes": limits.total_bytes}),
+            );
+            let keep = component_paths(&manifest, entry);
+            spec.files.clear();
+            spec.executable_files.clear();
+            spec.unsupported.clear();
+            spec.notices.clear();
+            let entries = collect_plugin_files(root, &mut spec, Some(keep), &components, limits)?;
+            spec.unsupported
+                .push("Large repository: only the plugin's own folders were imported".into());
+            entries
         }
-        // Many catalog entries point at a whole repository (a library, an MCP server's
-        // source). Keep only the plugin's own folders and the files its declarations name.
-        let keep = component_paths(&manifest, entry);
-        spec.files.clear();
-        spec.executable_files.clear();
-        spec.unsupported.clear();
-        spec.notices.clear();
-        collect_plugin_files(root, &mut spec, Some(keep))?;
-        spec.unsupported
-            .push("Large repository: only the plugin's own folders were imported".into());
-    }
+    };
     if let Some(icon) = manifest.get("icon").and_then(Value::as_str) {
         let icon = icon.strip_prefix("./").unwrap_or(icon);
         if usable_icon(icon, &spec.files, root) {
@@ -1350,9 +1449,17 @@ fn import_directory(
         ("bin/", "Plugin PATH executables"),
         ("output-styles/", "Output styles"),
     ] {
-        if spec.files.keys().any(|path| path.starts_with(directory)) {
+        if spec
+            .files
+            .keys()
+            .chain(entries.iter().map(|entry| &entry.relative))
+            .any(|path| path.starts_with(directory))
+        {
             spec.unsupported.push(label.into());
         }
+    }
+    if let (Some(store), Some(package)) = (keep_in, &spec.package) {
+        super::package::keep(&entries, package, store)?;
     }
     Ok(spec)
 }
@@ -1622,18 +1729,26 @@ pub(super) fn collect_files(
         notices: None,
         stack: vec![],
         keep: None,
+        entries: None,
+        limits: super::package::LIMITS,
+        total_bytes: 0,
     };
     walk.directory(directory, "")
 }
 
 /// Lenient walk used for plugin packages: links that stay inside the plugin are followed,
-/// oversized and binary files are left out with a notice, and other links are reported.
+/// files over the package bound are left out with a notice, and other links are reported.
+/// Nothing is read until the folder is known to be within bounds. Returns the files to keep on
+/// disk, when they don't fit in the registry; otherwise none.
 fn collect_plugin_files(
     root: &Path,
     spec: &mut PluginSpec,
     keep: Option<Vec<String>>,
-) -> anyhow::Result<()> {
+    components: &[String],
+    limits: super::package::Limits,
+) -> anyhow::Result<Vec<super::package::Entry>> {
     let root = root.canonicalize()?;
+    let mut entries = Vec::new();
     let mut walk = FileWalk {
         root: &root,
         files: &mut spec.files,
@@ -1642,11 +1757,119 @@ fn collect_plugin_files(
         notices: Some(&mut spec.notices),
         stack: vec![root.clone()],
         keep,
+        entries: Some(&mut entries),
+        limits,
+        total_bytes: 0,
     };
-    walk.directory(&root, "")
+    walk.directory(&root, "")?;
+    entries.sort_by(|a, b| a.relative.cmp(&b.relative));
+    if read_all_inline(&entries, spec)? {
+        return Ok(Vec::new());
+    }
+    read_components_inline(&entries, components, spec)?;
+    spec.package = Some(super::package::describe(&entries)?);
+    Ok(entries)
 }
 
-const MAX_PLUGIN_FILE_BYTES: u64 = 1024 * 1024;
+/// Puts every file in the registry if all of them fit. It stops at the first that doesn't, so at
+/// most the registry's bound is ever in memory.
+fn read_all_inline(
+    entries: &[super::package::Entry],
+    spec: &mut PluginSpec,
+) -> anyhow::Result<bool> {
+    use super::package::{MAX_INLINE_BYTES, MAX_INLINE_FILES, MAX_INLINE_FILE_BYTES};
+    let fits = entries.len() <= MAX_INLINE_FILES
+        && entries
+            .iter()
+            .all(|entry| entry.bytes <= MAX_INLINE_FILE_BYTES)
+        && entries.iter().map(|entry| entry.bytes).sum::<u64>() <= MAX_INLINE_BYTES as u64;
+    if !fits {
+        return Ok(false);
+    }
+    for entry in entries {
+        let Ok(text) = String::from_utf8(fs::read(&entry.path)?) else {
+            spec.files.clear();
+            spec.executable_files.clear();
+            return Ok(false);
+        };
+        spec.files.insert(entry.relative.clone(), text);
+        if entry.executable {
+            spec.executable_files.push(entry.relative.clone());
+        }
+    }
+    Ok(true)
+}
+
+/// Puts only what the importer and the UI read in the registry: the rest is on disk.
+fn read_components_inline(
+    entries: &[super::package::Entry],
+    components: &[String],
+    spec: &mut PluginSpec,
+) -> anyhow::Result<()> {
+    use super::package::{MAX_INLINE_BYTES, MAX_INLINE_FILES, MAX_INLINE_FILE_BYTES};
+    let mut bytes = 0usize;
+    for entry in entries
+        .iter()
+        .filter(|entry| is_component_file(&entry.relative, components))
+    {
+        if entry.bytes > MAX_INLINE_FILE_BYTES {
+            spec.notices
+                .push(format!("File too large: {}", entry.relative));
+            continue;
+        }
+        // A binary file beside them is in the package all the same.
+        let Ok(text) = String::from_utf8(fs::read(&entry.path)?) else {
+            continue;
+        };
+        bytes += text.len();
+        spec.files.insert(entry.relative.clone(), text);
+        if entry.executable {
+            spec.executable_files.push(entry.relative.clone());
+        }
+        if spec.files.len() > MAX_INLINE_FILES || bytes > MAX_INLINE_BYTES {
+            bail!(RESOURCE_LIMITS);
+        }
+    }
+    Ok(())
+}
+
+/// Whether the importer reads this file: manifests, skills, commands, subagents, and files a
+/// plugin declares as those.
+fn is_component_file(relative: &str, declared: &[String]) -> bool {
+    let markdown = relative.ends_with(".md");
+    relative.starts_with(".claude-plugin/")
+        || matches!(relative, ".mcp.json" | "hooks/hooks.json" | "SKILL.md")
+        || relative.ends_with("/SKILL.md")
+        || (markdown && relative.starts_with("commands/"))
+        || (markdown && relative.starts_with("agents/"))
+        || (markdown && relative.starts_with("output-styles/"))
+        || declared
+            .iter()
+            .any(|path| relative == path || (markdown && relative.starts_with(&format!("{path}/"))))
+}
+
+/// What a plugin's manifest and marketplace entry declare besides skills, which are always named
+/// `SKILL.md`: command, subagent, MCP and hook files and folders, and its icon.
+fn declared_component_files(manifest: &Value, entry: Option<&Value>) -> Vec<String> {
+    ["commands", "agents", "mcpServers", "hooks", "icon"]
+        .into_iter()
+        .flat_map(|field| {
+            [Some(manifest), entry]
+                .into_iter()
+                .flatten()
+                .filter_map(move |source| source.get(field))
+        })
+        .filter_map(declared_texts)
+        .flatten()
+        .map(|text| {
+            text.trim_start_matches("./")
+                .trim_end_matches('/')
+                .to_owned()
+        })
+        .filter(|path| safe_relative(path))
+        .collect()
+}
+
 const RESOURCE_LIMITS: &str = "Plugin exceeds resource limits";
 /// The folders and files a Claude plugin keeps its components in.
 const COMPONENT_PATHS: &[&str] = &[
@@ -1672,6 +1895,10 @@ struct FileWalk<'a> {
     stack: Vec<PathBuf>,
     /// When set, only these plugin-relative paths (and the folders leading to them) are read.
     keep: Option<Vec<String>>,
+    /// `Some` lists files without reading them, within `limits`. Discovery reads as it walks.
+    entries: Option<&'a mut Vec<super::package::Entry>>,
+    limits: super::package::Limits,
+    total_bytes: u64,
 }
 
 impl FileWalk<'_> {
@@ -1741,22 +1968,39 @@ impl FileWalk<'_> {
 
     fn file(&mut self, path: &Path, relative: String) -> anyhow::Result<()> {
         let metadata = fs::metadata(path)?;
-        if metadata.len() > MAX_PLUGIN_FILE_BYTES {
-            match self.notices.as_deref_mut() {
-                Some(notices) => {
+        if let Some(entries) = self.entries.as_deref_mut() {
+            if metadata.len() > self.limits.file_bytes {
+                if let Some(notices) = self.notices.as_deref_mut() {
                     notices.push(format!("File too large: {relative}"));
-                    return Ok(());
                 }
-                None => bail!("Plugin file exceeds 1 MiB"),
+                return Ok(());
             }
+            self.total_bytes = self.total_bytes.saturating_add(metadata.len());
+            #[cfg(unix)]
+            let executable = {
+                use std::os::unix::fs::PermissionsExt;
+                metadata.permissions().mode() & 0o111 != 0
+            };
+            #[cfg(not(unix))]
+            let executable = false;
+            entries.push(super::package::Entry {
+                relative,
+                path: path.to_owned(),
+                bytes: metadata.len(),
+                executable,
+            });
+            if entries.len() > self.limits.files || self.total_bytes > self.limits.total_bytes {
+                bail!(RESOURCE_LIMITS);
+            }
+            return Ok(());
+        }
+        if metadata.len() > super::package::MAX_INLINE_FILE_BYTES {
+            bail!("Plugin file exceeds 1 MiB");
         }
         let bytes = fs::read(path)?;
         let Ok(text) = String::from_utf8(bytes) else {
-            let note = format!("Binary resource omitted: {relative}");
-            match self.notices.as_deref_mut() {
-                Some(notices) => notices.push(note),
-                None => self.unsupported.push(note),
-            }
+            self.unsupported
+                .push(format!("Binary resource omitted: {relative}"));
             return Ok(());
         };
         #[cfg(unix)]
@@ -1767,8 +2011,9 @@ impl FileWalk<'_> {
             }
         }
         self.files.insert(relative, text);
-        if self.files.len() > 1000
-            || self.files.values().map(String::len).sum::<usize>() > 8 * 1024 * 1024
+        if self.files.len() > super::package::MAX_INLINE_FILES
+            || self.files.values().map(String::len).sum::<usize>()
+                > super::package::MAX_INLINE_BYTES
         {
             bail!(RESOURCE_LIMITS);
         }
@@ -2754,5 +2999,216 @@ mod imported_hook_name_tests {
             "./a--b.sh",
             &[]
         )));
+    }
+}
+
+#[cfg(test)]
+mod size_tests {
+    use super::super::package::{Limits, LIMITS, MAX_INLINE_FILE_BYTES};
+    use super::*;
+
+    fn folder(files: &[(&str, &[u8])]) -> tempfile::TempDir {
+        let root = tempfile::tempdir().unwrap();
+        let manifest = root.path().join(".claude-plugin/plugin.json");
+        fs::create_dir_all(manifest.parent().unwrap()).unwrap();
+        fs::write(manifest, r#"{"name": "big"}"#).unwrap();
+        for (path, content) in files {
+            let path = root.path().join(path);
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(path, content).unwrap();
+        }
+        root
+    }
+
+    const SKILL: &[u8] = b"---\nname: s\ndescription: d\n---\nBody";
+
+    #[test]
+    fn a_small_text_plugin_stays_in_the_registry_as_before() {
+        let root = folder(&[("skills/s/SKILL.md", SKILL), ("skills/s/notes.txt", b"n")]);
+        let spec = import_directory(root.path(), true, None, None).unwrap();
+        assert!(spec.package.is_none());
+        assert!(spec.files.contains_key("skills/s/notes.txt"));
+        assert!(spec.unsupported.is_empty(), "{:?}", spec.unsupported);
+    }
+
+    #[test]
+    fn a_large_or_binary_file_moves_the_folder_out_of_the_registry() {
+        let large = vec![b'x'; MAX_INLINE_FILE_BYTES as usize + 1];
+        for (name, content) in [
+            ("vendor/big.js", large.as_slice()),
+            ("bin.dat", &[0xff, 0xfe]),
+        ] {
+            let root = folder(&[("skills/s/SKILL.md", SKILL), (name, content)]);
+            let spec = import_directory(root.path(), true, None, None).unwrap();
+            let package = spec.package.expect(name);
+            assert_eq!(package.files, 3);
+            assert!(!spec.files.contains_key(name));
+            // What the importer reads stays, so the skill is found.
+            assert_eq!(spec.skills.len(), 1);
+            assert!(spec.unsupported.is_empty(), "{:?}", spec.unsupported);
+            assert!(spec.notices.is_empty(), "{:?}", spec.notices);
+        }
+    }
+
+    #[test]
+    fn a_check_only_hashes_and_an_install_keeps_the_files() {
+        let root = folder(&[("skills/s/SKILL.md", SKILL), ("bin.dat", &[0xff])]);
+        let store = tempfile::tempdir().unwrap();
+        let checked = import_directory(root.path(), true, None, None).unwrap();
+        assert_eq!(fs::read_dir(store.path()).unwrap().count(), 0);
+        let kept = import_directory(root.path(), true, None, Some(store.path())).unwrap();
+        assert_eq!(checked.package, kept.package);
+        let hash = kept.package.unwrap().hash;
+        assert_eq!(
+            fs::read(store.path().join(hash).join("bin.dat")).unwrap(),
+            [0xff]
+        );
+    }
+
+    #[test]
+    fn past_the_bounds_a_plugin_keeps_only_its_own_folders_and_says_so() {
+        let big = vec![b'x'; 1024];
+        let root = folder(&[
+            ("skills/s/SKILL.md", SKILL),
+            ("src/a.bin", &big),
+            ("src/b.bin", &big),
+        ]);
+        for limits in [
+            Limits {
+                total_bytes: 1500,
+                ..LIMITS
+            },
+            Limits { files: 3, ..LIMITS },
+        ] {
+            let spec = import_directory_within(root.path(), true, None, None, limits).unwrap();
+            assert!(!spec.files.contains_key("src/a.bin"));
+            assert!(
+                spec.unsupported
+                    .iter()
+                    .any(|reason| reason.starts_with("Large repository")),
+                "{:?}",
+                spec.unsupported
+            );
+            assert_eq!(spec.skills.len(), 1);
+        }
+        // A single file past the bound is left out, with a note, and the rest is kept.
+        let limits = Limits {
+            file_bytes: 100,
+            ..LIMITS
+        };
+        let spec = import_directory_within(root.path(), true, None, None, limits).unwrap();
+        assert!(spec
+            .notices
+            .iter()
+            .any(|note| note == "File too large: src/a.bin"));
+    }
+
+    #[test]
+    fn a_plugin_too_large_even_for_its_own_folders_fails() {
+        let root = folder(&[
+            ("skills/s/SKILL.md", SKILL),
+            ("skills/s/x.bin", &[0u8; 2048]),
+        ]);
+        let limits = Limits {
+            total_bytes: 1024,
+            ..LIMITS
+        };
+        let error = import_directory_within(root.path(), true, None, None, limits).unwrap_err();
+        assert_eq!(error.to_string(), RESOURCE_LIMITS);
+    }
+
+    /// A check keeps nothing; the install from it downloads the files again, and stops if they
+    /// aren't what was checked.
+    #[tokio::test]
+    async fn installing_a_checked_package_keeps_it_or_stops_if_it_changed() {
+        let data = tempfile::tempdir().unwrap();
+        let source = tempfile::tempdir().unwrap();
+        let manifest = source.path().join(".claude-plugin/marketplace.json");
+        fs::create_dir_all(manifest.parent().unwrap()).unwrap();
+        fs::write(
+            manifest,
+            r#"{"name": "local", "plugins": [{"name": "big", "source": "./big"}]}"#,
+        )
+        .unwrap();
+        let plugin = source.path().join("big");
+        fs::create_dir_all(plugin.join("skills/s")).unwrap();
+        fs::write(plugin.join("skills/s/SKILL.md"), SKILL).unwrap();
+        fs::write(plugin.join("tool.bin"), [0xff, 0x01]).unwrap();
+        let store = PluginStore::new(data.path().into(), None).with_home(None);
+        store
+            .add_marketplace("local", source.path().to_str().unwrap())
+            .unwrap();
+        store.wait_marketplace_scan("local", false).await.unwrap();
+        let packages = data
+            .path()
+            .join("plugins")
+            .join(super::super::package::PACKAGES_DIR);
+        assert!(!packages.exists(), "a check stored the package");
+        let installed = store
+            .install_scanned("global", "local", "big", false, None)
+            .await
+            .unwrap();
+        let hash = installed.spec.package.as_ref().unwrap().hash.clone();
+        assert_eq!(
+            fs::read(packages.join(&hash).join("tool.bin")).unwrap(),
+            [0xff, 0x01]
+        );
+        // Materialized for a run, then the store can be read again from the registry alone.
+        let project = tempfile::tempdir().unwrap();
+        store
+            .materialize(std::slice::from_ref(&installed), project.path())
+            .unwrap();
+        let copied = project
+            .path()
+            .join(".themis/plugin-files")
+            .join(installed.skill_id("resources"))
+            .join("tool.bin");
+        assert_eq!(fs::read(copied).unwrap(), [0xff, 0x01]);
+        // Upstream changed after the check: what was reviewed is no longer what would arrive.
+        store.delete("global", "big").unwrap();
+        fs::remove_dir_all(packages.join(&hash)).unwrap();
+        fs::write(plugin.join("tool.bin"), [0xff, 0x02]).unwrap();
+        let error = store
+            .install_scanned("global", "local", "big", false, None)
+            .await
+            .unwrap_err();
+        assert!(
+            error.to_string().contains("changed after it was checked"),
+            "{error}"
+        );
+        assert_eq!(fs::read_dir(&packages).unwrap().count(), 0);
+    }
+
+    #[tokio::test]
+    async fn a_download_past_its_limit_is_refused() {
+        let repository = folder(&[("big.bin", &[1u8; 4096])]);
+        for args in [
+            vec!["init", "-q"],
+            vec!["add", "."],
+            vec![
+                "-c",
+                "user.name=t",
+                "-c",
+                "user.email=t@t",
+                "commit",
+                "-qm",
+                "x",
+            ],
+        ] {
+            assert!(std::process::Command::new("git")
+                .args(args)
+                .current_dir(repository.path())
+                .status()
+                .unwrap()
+                .success());
+        }
+        let target = tempfile::tempdir().unwrap();
+        let path = target.path().join("copy");
+        let source = repository.path().to_str().unwrap();
+        let args = ["clone", "--depth=1", "--", source, path.to_str().unwrap()];
+        let error = run_git_within(&args, None, Some((path.as_path(), 1024)))
+            .await
+            .unwrap_err();
+        assert_eq!(error.to_string(), REPOSITORY_TOO_LARGE);
     }
 }

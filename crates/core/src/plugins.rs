@@ -6,6 +6,7 @@ pub mod hooks;
 pub mod keys;
 mod marketplace;
 pub mod oauth;
+pub mod package;
 mod scans;
 pub use scans::{catalog_brands, catalog_groups, compatibility_summary, MarketplaceScan};
 
@@ -62,6 +63,10 @@ pub struct PluginSpec {
     pub subagents: Vec<agents::SubagentProfile>,
     #[serde(default)]
     pub files: BTreeMap<String, String>,
+    /// The whole folder, kept on disk, when it doesn't fit in `files`; those are then only its
+    /// components (manifests, skills, commands and subagents).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub package: Option<package::PackageRef>,
     #[serde(default)]
     pub executable_files: Vec<String>,
     #[serde(default)]
@@ -72,6 +77,17 @@ pub struct PluginSpec {
     pub notices: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub import_issues: Vec<ImportComponent>,
+}
+
+impl PluginSpec {
+    /// What consent to start a server covers: its files, and the kept package by its hash.
+    pub fn approved_files(&self) -> BTreeMap<String, String> {
+        let mut files = self.files.clone();
+        if let Some(kept) = &self.package {
+            files.insert("\0package".into(), kept.hash.clone());
+        }
+        files
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -510,6 +526,17 @@ impl PluginStore {
         self.mutate(scope, |registry| {
             registry.current.remove(name).context("Unknown plugin")?;
             registry.revisions.retain(|_, p| p.spec.name != name);
+            let referenced: std::collections::BTreeSet<&str> = registry
+                .current
+                .values()
+                .chain(registry.revisions.values())
+                .filter_map(|plugin| plugin.spec.package.as_ref())
+                .map(|package| package.hash.as_str())
+                .collect();
+            package::prune(
+                &self.directory(scope)?.join(package::PACKAGES_DIR),
+                &referenced,
+            );
             Ok(())
         })
     }
@@ -847,10 +874,28 @@ impl PluginStore {
     }
     pub fn materialize(&self, plugins: &[Plugin], root: &Path) -> anyhow::Result<()> {
         for plugin in plugins {
+            let directory = root
+                .join(".themis/plugin-files")
+                .join(plugin.skill_id("resources"));
+            if let Some(kept) = &plugin.spec.package {
+                let store = self.directory(&plugin.scope)?.join(package::PACKAGES_DIR);
+                let prepare = |parent: &Path| -> anyhow::Result<()> {
+                    safe_create_parent(root, parent)?;
+                    crate::skills::ensure_git_excluded(&root.join(".themis/plugin-files"))?;
+                    Ok(())
+                };
+                if !package::copy_out(&store, kept, &directory, &prepare)? {
+                    // Its components still work, and a hook that needs the rest fails as it
+                    // would for any missing script, so a guard still blocks.
+                    crate::diagnostics::emit(
+                        "plugins",
+                        "package_missing",
+                        "warn",
+                        serde_json::json!({"plugin": plugin.spec.name}),
+                    );
+                }
+            }
             for (relative, content) in &plugin.spec.files {
-                let directory = root
-                    .join(".themis/plugin-files")
-                    .join(plugin.skill_id("resources"));
                 let path = directory.join(relative);
                 let parent = path.parent().context("Missing parent")?;
                 safe_create_parent(root, parent)?;
@@ -1011,9 +1056,12 @@ fn validate(spec: &PluginSpec) -> anyhow::Result<()> {
         }
     }
     if spec.files.keys().any(|p| !safe_relative(p))
-        || spec.files.values().map(String::len).sum::<usize>() > 8 * 1024 * 1024
+        || spec.files.values().map(String::len).sum::<usize>() > package::MAX_INLINE_BYTES
     {
         bail!("Unsafe resource path or plugin resources exceed 8 MiB");
+    }
+    if let Some(kept) = &spec.package {
+        kept.validate()?;
     }
     if spec
         .executable_files

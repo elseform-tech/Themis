@@ -122,7 +122,7 @@ pub struct SourceStatus {
 }
 
 /// Bumped whenever import rules change, so saved checks are redone with the new rules.
-const SCAN_VERSION: u32 = 10;
+const SCAN_VERSION: u32 = 11;
 
 /// Discover groups for catalogs we sort by hand, keyed by marketplace and plugin name.
 const PLUGIN_GROUPS: &str = include_str!("../../builtins/plugin-groups.json");
@@ -703,6 +703,10 @@ impl PluginStore {
             bail!("Plugin contains unsupported components; explicitly select partial installation");
         }
         preview.spec.ensure_installable()?;
+        if let Some(wanted) = &preview.spec.package {
+            self.keep_checked_package(scope, marketplace, name, wanted)
+                .await?;
+        }
         self.install_spec(scope, marketplace, name, preview.spec)
     }
 }
