@@ -244,7 +244,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         const offExpired = await onApprovalExpired((expired) => {
           if (cancelled) return;
           eventVersion++;
-          dispatch({ type: "approval/expired", approvalId: expired.approval_id });
+          dispatch({ type: "approval/expired", approvalId: expired.approval_id, steered: expired.steered });
         });
         const opening = new Set<string>();
         const offThreadChanged = await onThreadChanged((change) => {

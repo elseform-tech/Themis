@@ -71,6 +71,12 @@ pub const GOAL_CHECK_ADDED: &str = include_str!("../builtins/prompts/goal-check-
 pub const GOAL_CONTEXT: &str = include_str!("../builtins/prompts/goal-context.md");
 /// Message that starts a goal turn; `{{goal_turn_marker}}`, `{{turn}}`, `{{goal}}`, `{{note}}`.
 pub const GOAL_TURN: &str = include_str!("../builtins/prompts/goal-turn.md");
+pub const GOAL_TURN_PROOF: &str = include_str!("../builtins/prompts/goal-turn-proof.md");
+pub const GOAL_TURN_FILES: &str = include_str!("../builtins/prompts/goal-turn-files.md");
+pub const GOAL_CHECKLIST_SYSTEM: &str =
+    include_str!("../builtins/prompts/goal-checklist-system.md");
+pub const GOAL_CHECKLIST_USER: &str = include_str!("../builtins/prompts/goal-checklist-user.md");
+pub const GOAL_CHECK_PROOF: &str = include_str!("../builtins/prompts/goal-check-proof.md");
 /// Message that tells the user a checked goal is reached; `{{goal_turn_marker}}`,
 /// `{{turn}}`, `{{goal}}`, `{{reason}}`.
 pub const GOAL_REACHED_TURN: &str = include_str!("../builtins/prompts/goal-reached-turn.md");
@@ -173,6 +179,8 @@ pub const RUNTIME_SILENT_CUT_OFF: &str =
 pub const RUNTIME_EMPTY_ANSWER: &str = include_str!("../builtins/prompts/runtime-empty-answer.md");
 /// Asked once when a run that used tools ends on a short progress line instead of a summary.
 pub const RUNTIME_TURN_SUMMARY: &str = include_str!("../builtins/prompts/runtime-turn-summary.md");
+pub const RUNTIME_TURN_END_GUARD: &str =
+    include_str!("../builtins/prompts/runtime-turn-end-guard.md");
 /// Warning added after three unchanged tool results in a row.
 pub const RUNTIME_REPEATED_ACTION: &str =
     include_str!("../builtins/prompts/runtime-repeated-action.md");
@@ -217,6 +225,9 @@ pub const TOOL_COMPACTED_RECEIPT: &str =
 pub const TOOL_EXCERPT_WARNING: &str = include_str!("../builtins/prompts/tool-excerpt-warning.md");
 /// Refusal guidance added to every denied tool call.
 pub const TOOL_REFUSAL: &str = include_str!("../builtins/prompts/tool-refusal.md");
+/// Note on a call denied because the person steered a new message in while it waited.
+pub const TOOL_DENIED_NEW_MESSAGE: &str =
+    include_str!("../builtins/prompts/tool-denied-new-message.md");
 /// Note when a command's child process kept its output open.
 pub const TOOL_SHELL_OUTPUT_HELD: &str =
     include_str!("../builtins/prompts/tool-shell-output-held.md");
@@ -249,6 +260,7 @@ pub const TOOL_RECALL_UNTRUSTED: &str =
 pub const TOOL_RECALL_FILTERS_IGNORED: &str =
     include_str!("../builtins/prompts/tool-recall-filters-ignored.md");
 /// Note on built-in browser page snapshots.
+pub const TOOL_SCREENSHOT_NOTE: &str = include_str!("../builtins/prompts/tool-screenshot-note.md");
 pub const TOOL_BROWSER_UNTRUSTED: &str =
     include_str!("../builtins/prompts/tool-browser-untrusted.md");
 /// Note when DevTools paused the page in the debugger.

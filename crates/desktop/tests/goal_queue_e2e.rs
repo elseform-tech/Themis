@@ -59,6 +59,12 @@ fn distinct(bodies: Vec<Value>) -> Vec<Value> {
         .collect()
 }
 
+fn is_checklist(body: &Value) -> bool {
+    body["messages"][0]["content"]
+        .as_str()
+        .is_some_and(|text| text.contains("what a goal asks for"))
+}
+
 fn is_check(body: &Value) -> bool {
     body["messages"][0]["content"]
         .as_str()
@@ -379,17 +385,34 @@ async fn a_goal_runs_turn_after_turn_until_the_check_finds_it_reached() {
         |event| matches!(event, ThreadEvent::Finished { result, .. } if result == "I've reached the goal: the counter is 2."),
     )
     .await;
-    // The goal says why it carries on, in the chat, as a plain sentence.
+    // The verdict is recorded, for the chat to dim the turn; the agent voices it next turn.
     assert!(seen.iter().any(|event| matches!(
         event,
-        ThreadEvent::GoalNote { reason, .. }
-            if reason.starts_with("That isn't proven yet, because counter is 1")
+        ThreadEvent::GoalNote { outcome: GoalNoteKind::NotYet, reason, .. }
+            if reason == "Counter is 1; needs 2."
     )));
-    // Right after a turn's claim, the chat says the claim is being checked.
-    assert!(seen.iter().any(|event| matches!(
-        event,
-        ThreadEvent::GoalNote { reason, .. } if reason == "I'm checking that against the goal now."
-    )));
+    // The chat carries no announcements of its own around a check.
+    assert!(
+        !seen.iter().any(|event| matches!(
+            event,
+            ThreadEvent::GoalNote { outcome: GoalNoteKind::Status, reason, .. }
+                if reason.contains("checking") || reason.contains("starting")
+        )),
+        "{seen:?}"
+    );
+    // While the check runs, the goal says so, for a passing status line.
+    let checking: Vec<bool> = seen
+        .iter()
+        .filter_map(|event| match event {
+            ThreadEvent::GoalChanged { goal: Some(goal) } => Some(goal.checking),
+            _ => None,
+        })
+        .collect();
+    assert!(
+        checking.windows(2).any(|pair| pair == [true, false]),
+        "{checking:?}"
+    );
+    assert!(!state.goal_for(&thread).unwrap().checking);
     // The second turn was started by the runtime, carrying the check's reason.
     let bodies: Vec<Value> = distinct(
         server
@@ -400,7 +423,10 @@ async fn a_goal_runs_turn_after_turn_until_the_check_finds_it_reached() {
             .map(body)
             .collect(),
     );
-    let turns: Vec<&Value> = bodies.iter().filter(|body| !is_check(body)).collect();
+    let turns: Vec<&Value> = bodies
+        .iter()
+        .filter(|body| !is_check(body) && !is_checklist(body))
+        .collect();
     assert_eq!(turns.len(), 3);
     assert_eq!(
         checks.load(Ordering::SeqCst),
@@ -413,7 +439,7 @@ async fn a_goal_runs_turn_after_turn_until_the_check_finds_it_reached() {
         "[Goal — runtime, not from the user] Turn 2."
     ));
     assert!(mentions(turns[1], "Last check: Counter is 1; needs 2."));
-    assert!(mentions(turns[1], "Start your reply thinking aloud"));
+    assert!(mentions(turns[1], "what the last check found"));
     // Then one short turn, unchecked, tells the user the goal is reached.
     assert!(mentions(
         turns[2],
@@ -953,7 +979,10 @@ async fn a_message_run_that_finishes_the_goal_is_checked_and_nothing_repeats_it(
             .map(body)
             .collect(),
     );
-    let turns: Vec<&Value> = bodies.iter().filter(|body| !is_check(body)).collect();
+    let turns: Vec<&Value> = bodies
+        .iter()
+        .filter(|body| !is_check(body) && !is_checklist(body))
+        .collect();
     assert_eq!(turns.len(), 2, "no goal turn and no announcement followed");
     assert!(!turns.iter().any(|body| mentions(body, "[Goal — runtime")));
     assert_eq!(state.goal_for(&thread).unwrap().turns, 1);
@@ -1023,6 +1052,314 @@ async fn asked_to_stop_the_agent_pauses_the_goal_and_no_check_or_turn_follows() 
     assert_eq!(goal.status, GoalStatus::Paused);
     assert_eq!(goal.turns, 1);
     assert_eq!(checks.load(Ordering::SeqCst), 0);
+}
+
+/// What a check found proven survives into the next check and turn, which see it, and the
+/// next turn knows which files the work is in.
+#[tokio::test(flavor = "multi_thread")]
+async fn proof_and_files_carry_from_turn_to_turn() {
+    let server = MockServer::start().await;
+    let checks = Arc::new(AtomicUsize::new(0));
+    let seen_checks = Arc::clone(&checks);
+    let later_check = Arc::new(Mutex::new(String::new()));
+    let seen_later_check = Arc::clone(&later_check);
+    let later_turn = Arc::new(Mutex::new(String::new()));
+    let seen_later_turn = Arc::clone(&later_turn);
+    Mock::given(method("POST"))
+        .respond_with(move |request: &Request| {
+            let body = body(request);
+            let sent = body["messages"].to_string();
+            if is_check(&body) {
+                return if seen_checks.fetch_add(1, Ordering::SeqCst) == 0 {
+                    reply(r#"{"verdict":"not_yet","reason":"The health part isn't shown yet.","next":"Run check_health.py next.","requirements":[{"what":"Score rises","proven":true,"how":"0 to 10 after a real click"},{"what":"Health drops","proven":false}]}"#)
+                } else {
+                    *seen_later_check.lock().unwrap() = sent;
+                    reply(r#"{"verdict":"reached","reason":"Both are shown.","requirements":[{"what":"Score rises","proven":true,"how":"0 to 10 after a real click"},{"what":"Health drops","proven":true,"how":"100 to 90"}]}"#)
+                };
+            }
+            if mentions(&body, "A separate check found the goal reached") {
+                return reply("Done.");
+            }
+            if sent.contains("Turn 2.") {
+                *seen_later_turn.lock().unwrap() = sent;
+                return reply("Checked health.");
+            }
+            if sent.contains("score.txt") {
+                return reply("Wrote the score.");
+            }
+            calls("write_file", json!({"file_path": "score.txt", "content": "10"}))
+        })
+        .mount(&server)
+        .await;
+    let (state, _data, project, thread) = chat(&server).await;
+    // Changed files are read from Git, as in a real project.
+    let git = std::process::Command::new("git")
+        .args(["init", "-q"])
+        .current_dir(project.path())
+        .status()
+        .unwrap();
+    assert!(git.success());
+    state
+        .set_thread_approval_mode(
+            thread.clone(),
+            themis_core::configuration::ApprovalMode::Yolo,
+        )
+        .await
+        .unwrap();
+    let (sink, mut rx) = ChannelSink::channel();
+    let sink = Arc::new(sink);
+    state
+        .send_message(sink.clone(), thread.clone(), "/goal finish the game".into())
+        .await
+        .unwrap();
+    goal_until(&state, &thread, |status| status == GoalStatus::Reached).await;
+    let goal = state.goal_for(&thread).unwrap();
+    assert_eq!(goal.proof.len(), 2, "{goal:?}");
+    assert!(goal.proof.iter().all(|item| item.proven), "{goal:?}");
+    assert_eq!(goal.files, vec!["score.txt".to_owned()], "{goal:?}");
+    let turn = later_turn.lock().unwrap().clone();
+    assert!(turn.contains("Score rises"), "{turn}");
+    assert!(turn.contains("0 to 10 after a real click"), "{turn}");
+    assert!(turn.contains("score.txt"), "{turn}");
+    assert!(turn.contains("Run check_health.py next."), "{turn}");
+    let check = later_check.lock().unwrap().clone();
+    assert!(check.contains("0 to 10 after a real click"), "{check}");
+    let mut seen = Vec::new();
+    until(
+        &mut rx,
+        &mut seen,
+        |event| matches!(event, ThreadEvent::Finished { result, .. } if result == "Done."),
+    )
+    .await;
+    let notes: Vec<_> = seen
+        .iter()
+        .filter_map(|event| match event {
+            ThreadEvent::GoalNote { reason, .. } => Some(reason.clone()),
+            _ => None,
+        })
+        .collect();
+    assert!(
+        notes
+            .iter()
+            .any(|note| note.contains("health part isn't shown yet")),
+        "{notes:?}"
+    );
+    // The person sees what the agent is told: what's wrong, what to change, what's left.
+    assert!(
+        notes
+            .iter()
+            .any(|note| note
+                .contains("\n\nRun check_health.py next.\n\nStill pending: Health drops")),
+        "{notes:?}"
+    );
+}
+
+/// When the turn's answer already told the person, no closing turn runs, but the chat still
+/// shows how the check came out.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_goal_reached_without_a_closing_turn_still_says_so_in_the_chat() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .respond_with(|request: &Request| {
+            let body = body(request);
+            if is_check(&body) {
+                return reply(r#"{"verdict":"reached","reason":"Score and health both change with real input.","told_user":true}"#);
+            }
+            reply("The game works: score and health change with real input.")
+        })
+        .mount(&server)
+        .await;
+    let (state, _data, _project, thread) = chat(&server).await;
+    let (sink, mut rx) = ChannelSink::channel();
+    state
+        .send_message(
+            Arc::new(sink),
+            thread.clone(),
+            "/goal finish the game".into(),
+        )
+        .await
+        .unwrap();
+    goal_until(&state, &thread, |status| status == GoalStatus::Reached).await;
+    let mut seen = Vec::new();
+    until(&mut rx, &mut seen, |event| {
+        matches!(event, ThreadEvent::GoalNote { reason, .. } if reason.starts_with("Complete."))
+    })
+    .await;
+    let note = seen
+        .iter()
+        .find_map(|event| match event {
+            ThreadEvent::GoalNote { reason, .. } if reason.starts_with("Complete.") => {
+                Some(reason.clone())
+            }
+            _ => None,
+        })
+        .unwrap();
+    assert!(note.contains("Score and health both change"), "{note}");
+}
+
+/// The checklist is live: it appears when the goal is set, takes a steered requirement at once,
+/// and follows an edited goal, and refreshing it can never complete an item.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_checklist_follows_the_goal_as_it_changes() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .respond_with(move |request: &Request| {
+            let body = body(request);
+            let sent = body["messages"].to_string();
+            if is_check(&body) {
+                return reply(r#"{"verdict":"not_yet","reason":"Keep going."}"#);
+            }
+            if body["messages"][0]["content"].as_str().is_some_and(|text| text.contains("what a goal asks for")) {
+                return if sent.contains("in Rust") {
+                    reply(r#"{"requirements":[{"what":"Written in Rust","proven":true}]}"#)
+                } else if sent.contains("Also add a README") {
+                    reply(r#"{"requirements":[{"what":"The game runs"},{"what":"A README exists","proven":true}]}"#)
+                        .set_delay(std::time::Duration::from_secs(1))
+                } else {
+                    reply(r#"{"requirements":[{"what":"The game runs"}]}"#)
+                };
+            }
+            // Long enough to stay running through the test, without blocking the mock server.
+            reply("Working on it.").set_delay(std::time::Duration::from_secs(6))
+        })
+        .mount(&server)
+        .await;
+    let (state, _data, _project, thread) = chat(&server).await;
+    let (sink, _rx) = ChannelSink::channel();
+    let sink = Arc::new(sink);
+    async fn checklist_until(
+        state: &AppState,
+        thread: &str,
+        done: impl Fn(&[(String, bool)]) -> bool,
+    ) -> Vec<(String, bool)> {
+        for _ in 0..200 {
+            let list: Vec<_> = state
+                .goal_for(thread)
+                .map(|goal| goal.proof)
+                .unwrap_or_default()
+                .into_iter()
+                .map(|item| (item.what, item.proven))
+                .collect();
+            if done(&list) {
+                return list;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+        }
+        panic!("checklist never got there: {:?}", state.goal_for(thread));
+    }
+    state
+        .send_message(sink.clone(), thread.clone(), "/goal make the game".into())
+        .await
+        .unwrap();
+    // Set: listed before any check has run.
+    checklist_until(&state, &thread, |list| {
+        list == [("The game runs".to_owned(), false)]
+    })
+    .await;
+
+    let request = state
+        .enqueue_message(
+            sink.clone(),
+            thread.clone(),
+            "Also add a README".into(),
+            None,
+            vec![],
+        )
+        .await
+        .unwrap();
+    state
+        .steer_queued_message(sink.clone(), thread.clone(), request.id)
+        .await
+        .unwrap();
+    // Steered: pending at once, in the person's words, before the refresh's reply arrives.
+    let now = state.goal_for(&thread).unwrap().proof;
+    assert!(
+        now.iter()
+            .any(|item| item.what == "Also add a README" && !item.proven),
+        "{now:?}"
+    );
+    // Refreshed: tidied into the list, and the model's "proven" is ignored.
+    let list = checklist_until(&state, &thread, |list| {
+        list.iter().any(|item| item.0 == "A README exists")
+    })
+    .await;
+    assert_eq!(
+        list,
+        [
+            ("The game runs".to_owned(), false),
+            ("A README exists".to_owned(), false)
+        ]
+    );
+
+    // Edited: the list follows the new goal, and dropped items go.
+    state
+        .edit_goal(sink.clone(), thread.clone(), "make the game in Rust".into())
+        .await
+        .unwrap();
+    let list = checklist_until(&state, &thread, |list| {
+        list.iter().any(|item| item.0 == "Written in Rust")
+    })
+    .await;
+    assert_eq!(list, [("Written in Rust".to_owned(), false)]);
+    state
+        .remove_goal(sink.clone(), thread.clone())
+        .await
+        .unwrap();
+    settle(&state, &thread).await;
+}
+
+/// A failed turn waits with a countdown the chat can show, and leaves no note behind that
+/// would go out of date.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_failed_turn_counts_down_instead_of_leaving_a_note() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .respond_with(|request: &Request| {
+            if is_checklist(&body(request)) {
+                return reply(r#"{"requirements":[{"what":"The thing"}]}"#);
+            }
+            ResponseTemplate::new(400).set_body_string("bad request")
+        })
+        .mount(&server)
+        .await;
+    let (state, _data, _project, thread) = chat(&server).await;
+    let (sink, mut rx) = ChannelSink::channel();
+    let sink = Arc::new(sink);
+    state
+        .send_message(
+            sink.clone(),
+            thread.clone(),
+            "/goal finish the thing".into(),
+        )
+        .await
+        .unwrap();
+    for _ in 0..400 {
+        if state
+            .goal_for(&thread)
+            .is_some_and(|goal| goal.retry_at.is_some())
+        {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+    }
+    let goal = state.goal_for(&thread).unwrap();
+    assert!(goal.retry_at.is_some(), "{goal:?}");
+    let mut notes = Vec::new();
+    while let Ok(event) = rx.try_recv() {
+        if let TestEvent::Thread(envelope) = event {
+            if let ThreadEvent::GoalNote { reason, .. } = envelope.event {
+                notes.push(reason);
+            }
+        }
+    }
+    assert!(
+        !notes.iter().any(|note| note.contains("try again")),
+        "{notes:?}"
+    );
+    state
+        .remove_goal(sink.clone(), thread.clone())
+        .await
+        .unwrap();
 }
 
 /// Asked in the chat to remove the goal, the agent removes it: no goal is left, and
@@ -1725,5 +2062,426 @@ async fn a_request_steered_into_a_goal_reaches_the_goal_check() {
         !input.contains("[Goal"),
         "a goal turn is not a request: {input}"
     );
+    settle(&state, &thread).await;
+}
+
+/// The wire name of an event, the name clients and saved history see.
+fn event_kind(event: &ThreadEvent) -> String {
+    serde_json::to_value(event).unwrap()["kind"]
+        .as_str()
+        .unwrap()
+        .to_owned()
+}
+
+/// Every event kind in the chat's saved history, in order.
+async fn saved_kinds(state: &AppState, thread: &str) -> Vec<String> {
+    let history = serde_json::to_value(state.get_thread_history(thread).await.unwrap()).unwrap();
+    history
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|item| match item["kind"].as_str() {
+            Some("event") => item["envelope"]["event"]["kind"].as_str().map(Into::into),
+            Some("user") => Some("user".to_owned()),
+            _ => None,
+        })
+        .collect()
+}
+
+fn position(kinds: &[String], kind: &str) -> usize {
+    kinds
+        .iter()
+        .position(|seen| seen == kind)
+        .unwrap_or_else(|| panic!("no {kind} in {kinds:?}"))
+}
+
+fn two_dirs() -> ResponseTemplate {
+    let call = |id: &str, dir: &str| {
+        json!({"id": id, "type": "function", "function": {"name": "create_dir",
+            "arguments": json!({"directory_path": dir}).to_string()}})
+    };
+    ResponseTemplate::new(200).set_body_json(json!({"choices":[{"message":{"role":"assistant",
+        "content":null,"tool_calls":[call("a", "dir_a"), call("b", "dir_b")]},"finish_reason":"tool_calls"}]}))
+}
+
+/// A chat in Custom mode inside a Git project, where writes ask first.
+async fn asking_chat(
+    server: &MockServer,
+) -> (AppState, tempfile::TempDir, tempfile::TempDir, String) {
+    let (state, data, project, _) = chat(server).await;
+    let git = std::process::Command::new("git")
+        .args(["init", "-q"])
+        .current_dir(project.path())
+        .status()
+        .unwrap();
+    assert!(git.success());
+    // A chat notes whether its project uses Git when it is made.
+    let thread = state
+        .create_thread(
+            project.path().to_string_lossy().into_owned(),
+            ProviderKind::Go,
+            Some("test-model".into()),
+        )
+        .await
+        .unwrap()
+        .id;
+    state
+        .set_thread_approval_mode(
+            thread.clone(),
+            themis_core::configuration::ApprovalMode::Custom,
+        )
+        .await
+        .unwrap();
+    (state, data, project, thread)
+}
+
+/// Waits for the next approval box, keeping the thread events that pass by.
+async fn next_approval(
+    rx: &mut UnboundedReceiver<TestEvent>,
+    seen: &mut Vec<ThreadEvent>,
+) -> themis_desktop::types::ApprovalRequest {
+    let waited = tokio::time::timeout(Duration::from_secs(60), async {
+        loop {
+            match rx.recv().await.expect("event stream ended") {
+                TestEvent::Approval(request) => return request,
+                TestEvent::Thread(envelope) => seen.push(envelope.event),
+                _ => {}
+            }
+        }
+    })
+    .await;
+    match waited {
+        Ok(request) => request,
+        Err(_) => panic!(
+            "no approval asked; events: {:?}",
+            seen.iter().map(event_kind).collect::<Vec<_>>()
+        ),
+    }
+}
+
+fn after_a_tool(body: &Value) -> bool {
+    body["messages"]
+        .as_array()
+        .and_then(|messages| messages.last())
+        .is_some_and(|message| message["role"] == "tool")
+}
+
+/// Found in a live goal run: a request steered in while an approval box waited stayed out of
+/// sight and out of the agent's reach until the person answered the box.
+#[tokio::test(flavor = "multi_thread")]
+async fn steering_past_an_approval_shows_at_once_denies_it_and_reaches_the_agent() {
+    const STEER: &str = "Please remove the goal";
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .respond_with(move |request: &Request| {
+            let body = body(request);
+            if mentions(&body, "try again") {
+                if after_a_tool(&body) {
+                    reply("Made it.")
+                } else {
+                    calls("create_dir", json!({"directory_path": "dir_c"}))
+                }
+            } else if mentions(&body, STEER) {
+                reply("Understood.")
+            } else {
+                two_dirs()
+            }
+        })
+        .mount(&server)
+        .await;
+    let (state, data, project, thread) = asking_chat(&server).await;
+    let (sink, mut rx) = ChannelSink::channel();
+    let sink = Arc::new(sink);
+    state
+        .send_message(sink.clone(), thread.clone(), "make two dirs".into())
+        .await
+        .unwrap();
+    let mut seen = Vec::new();
+    next_approval(&mut rx, &mut seen).await;
+
+    // Plain queueing leaves the box waiting.
+    let plain = state
+        .enqueue_message(
+            sink.clone(),
+            thread.clone(),
+            "for later".into(),
+            None,
+            vec![],
+        )
+        .await
+        .unwrap();
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert!(!state.pending_approvals().is_empty());
+    state
+        .remove_queued_message(sink.clone(), thread.clone(), plain.id)
+        .await
+        .unwrap();
+
+    let steer = state
+        .enqueue_message(sink.clone(), thread.clone(), STEER.into(), None, vec![])
+        .await
+        .unwrap();
+    state
+        .steer_queued_message(sink.clone(), thread.clone(), steer.id)
+        .await
+        .unwrap();
+
+    // On screen as soon as it is steered, and no box is left, with no "expired" warning.
+    let mut quiet_boxes = 0;
+    let mut finished = false;
+    let drained = tokio::time::timeout(Duration::from_secs(20), async {
+        while !finished {
+            match rx.recv().await.expect("event stream ended") {
+                TestEvent::Thread(envelope) => {
+                    finished = matches!(envelope.event, ThreadEvent::Finished { .. });
+                    seen.push(envelope.event);
+                }
+                TestEvent::Expired(expired) => {
+                    assert_eq!(serde_json::to_value(&expired).unwrap()["steered"], true);
+                    quiet_boxes += 1;
+                }
+                TestEvent::Approval(request) => {
+                    // Calls running together may both have asked; a later ask must not.
+                    assert!(
+                        !seen.iter().any(|event| event_kind(event) == "steer_shown"),
+                        "asked again before the steer was read: {request:?}"
+                    );
+                }
+                _ => {}
+            }
+        }
+    })
+    .await;
+    assert!(
+        drained.is_ok(),
+        "the run stayed blocked; events: {:?}; boxes: {:?}",
+        seen.iter().map(event_kind).collect::<Vec<_>>(),
+        state.pending_approvals().len()
+    );
+    assert!(quiet_boxes >= 1, "the box was not taken away");
+    assert!(state.pending_approvals().is_empty());
+    assert!(!project.path().join("dir_a").exists());
+    assert!(!project.path().join("dir_b").exists());
+
+    let kinds: Vec<String> = seen.iter().map(event_kind).collect();
+    let count = |kind: &str| kinds.iter().filter(|seen| *seen == kind).count();
+    assert_eq!(count("steer_shown"), 1, "{kinds:?}");
+    assert_eq!(count("steered"), 1, "{kinds:?}");
+    assert!(
+        position(&kinds, "steer_shown") < position(&kinds, "steered"),
+        "{kinds:?}"
+    );
+
+    // Each denied call tells the agent why, and the message comes next to read.
+    let requests = server.received_requests().await.unwrap();
+    let last = body(requests.last().unwrap());
+    let messages = last["messages"].as_array().unwrap();
+    let denied: Vec<&Value> = messages.iter().filter(|m| m["role"] == "tool").collect();
+    assert_eq!(denied.len(), 2, "{last}");
+    for result in &denied {
+        let text = result["content"].to_string();
+        assert!(text.contains("approval denied"), "{text}");
+        assert!(text.contains("sent a new message"), "{text}");
+        assert!(!text.contains(themis_core::tools::REFUSAL_NOTE), "{text}");
+    }
+    let tool_at = messages.iter().rposition(|m| m["role"] == "tool").unwrap();
+    let steer_at = messages
+        .iter()
+        .position(|m| {
+            m["content"]
+                .as_str()
+                .is_some_and(|text| text.contains(STEER))
+        })
+        .unwrap();
+    assert!(tool_at < steer_at, "{last}");
+
+    // The history keeps what the person saw, in order.
+    let saved = saved_kinds(&state, &thread).await;
+    assert!(
+        position(&saved, "steer_shown") < position(&saved, "steered"),
+        "{saved:?}"
+    );
+    assert!(
+        position(&saved, "tool_finished") < position(&saved, "steered"),
+        "{saved:?}"
+    );
+    assert!(
+        position(&saved, "steered") < position(&saved, "finished"),
+        "{saved:?}"
+    );
+
+    // Nothing was remembered: the same kind of action asks again, and can then run.
+    assert!(!data
+        .path()
+        .join("chat_grants")
+        .join(format!("{thread}.json"))
+        .exists());
+    state
+        .send_message(sink.clone(), thread.clone(), "try again".into())
+        .await
+        .unwrap();
+    let again = next_approval(&mut rx, &mut seen).await;
+    state
+        .approve_action(
+            thread.clone(),
+            again.approval_id,
+            themis_desktop::types::ApprovalDecision::Once,
+        )
+        .await
+        .unwrap();
+    until(
+        &mut rx,
+        &mut seen,
+        |event| matches!(event, ThreadEvent::Finished { result, .. } if result == "Made it."),
+    )
+    .await;
+    assert!(project.path().join("dir_c").is_dir());
+    // The model has the steered message once, not once per record of it.
+    let requests = server.received_requests().await.unwrap();
+    let last = body(requests.last().unwrap());
+    let copies = last["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|m| {
+            m["content"]
+                .as_str()
+                .is_some_and(|text| text.contains(STEER))
+        })
+        .count();
+    assert_eq!(copies, 1, "{last}");
+    settle(&state, &thread).await;
+}
+
+/// A steer the run never read is taken back out of the chat, so it shows once when it
+/// goes out as the next message.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_steer_the_run_never_read_leaves_the_chat_and_comes_back_once() {
+    const STEER: &str = "Use tabs instead";
+    let server = MockServer::start().await;
+    let gate = Gate::default();
+    let held = gate.clone();
+    Mock::given(method("POST"))
+        .respond_with(move |request: &Request| {
+            if mentions(&body(request), STEER) {
+                reply("Tabs it is.")
+            } else {
+                held.wait();
+                reply("First done.")
+            }
+        })
+        .mount(&server)
+        .await;
+    let (state, _data, _project, thread) = chat(&server).await;
+    let (sink, mut rx) = ChannelSink::channel();
+    let sink = Arc::new(sink);
+    state
+        .send_message(sink.clone(), thread.clone(), "first".into())
+        .await
+        .unwrap();
+    let steer = state
+        .enqueue_message(sink.clone(), thread.clone(), STEER.into(), None, vec![])
+        .await
+        .unwrap();
+    state
+        .steer_queued_message(sink.clone(), thread.clone(), steer.id)
+        .await
+        .unwrap();
+    state.stop_thread(thread.clone()).await.unwrap();
+    gate.open();
+    let mut seen = Vec::new();
+    until(
+        &mut rx,
+        &mut seen,
+        |event| matches!(event, ThreadEvent::Finished { result, .. } if result == "Tabs it is."),
+    )
+    .await;
+    let kinds: Vec<String> = seen.iter().map(event_kind).collect();
+    assert!(!kinds.iter().any(|kind| kind == "steered"), "{kinds:?}");
+    let shown = position(&kinds, "steer_shown");
+    let returned = position(&kinds, "steer_returned");
+    assert!(shown < returned, "{kinds:?}");
+    assert!(seen[returned..]
+        .iter()
+        .any(|event| matches!(event, ThreadEvent::UserMessage { text, .. } if text == STEER)));
+    let saved = saved_kinds(&state, &thread).await;
+    assert!(
+        position(&saved, "steer_shown") < position(&saved, "steer_returned"),
+        "{saved:?}"
+    );
+    settle(&state, &thread).await;
+}
+
+/// An answer to a question also travels through the run's inbox, but it is not a steer:
+/// the box stays until the person decides.
+#[tokio::test(flavor = "multi_thread")]
+async fn answering_a_question_leaves_an_approval_waiting() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .respond_with(move |request: &Request| {
+            let body = body(request);
+            if !after_a_tool(&body) && !mentions(&body, "Answer: Rock") {
+                calls(
+                    "ask_user",
+                    json!({"question": "Which name?", "recommended": "Pebble", "why": "short"}),
+                )
+            } else if !body["messages"].to_string().contains("dir_a") {
+                two_dirs()
+            } else {
+                reply("Done.")
+            }
+        })
+        .mount(&server)
+        .await;
+    let (state, _data, project, thread) = asking_chat(&server).await;
+    let (sink, mut rx) = ChannelSink::channel();
+    let sink = Arc::new(sink);
+    state
+        .send_message(sink.clone(), thread.clone(), "name it".into())
+        .await
+        .unwrap();
+    let mut seen = Vec::new();
+    let first = next_approval(&mut rx, &mut seen).await;
+    let question = state
+        .list_questions(thread.clone())
+        .await
+        .unwrap()
+        .remove(0);
+    state
+        .answer_question(sink.clone(), thread.clone(), question.id, "Rock".into())
+        .await
+        .unwrap();
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert!(
+        state
+            .pending_approvals()
+            .iter()
+            .any(|request| request.approval_id == first.approval_id),
+        "an answer must not decide an approval"
+    );
+    state
+        .approve_action(
+            thread.clone(),
+            first.approval_id,
+            themis_desktop::types::ApprovalDecision::Once,
+        )
+        .await
+        .unwrap();
+    // The next call in the batch still asks: an unread answer does not refuse it.
+    let second = next_approval(&mut rx, &mut seen).await;
+    state
+        .approve_action(
+            thread.clone(),
+            second.approval_id,
+            themis_desktop::types::ApprovalDecision::Once,
+        )
+        .await
+        .unwrap();
+    until(&mut rx, &mut seen, |event| {
+        matches!(event, ThreadEvent::Finished { .. })
+    })
+    .await;
+    assert!(project.path().join("dir_a").is_dir());
+    assert!(project.path().join("dir_b").is_dir());
     settle(&state, &thread).await;
 }

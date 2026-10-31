@@ -70,7 +70,10 @@ levels are listed.
   check.py**, open while one of them runs; expand it, then a tool call, to inspect its
   input and output. Every turn that worked with tools ends with a message saying what it
   did: when the agent stops on a short progress line instead ("Continuing through the
-  files."), Themis asks it once to continue or sum up. Completed replies offer
+  files."), Themis asks it once to continue or sum up. A reply that only announces its
+  next step ("Let me check the console next.") or writes a tool call out as text also
+  gets one more try before the turn ends; an offer or a question to you ends it.
+  Completed replies offer
   **Copy** beside the model and the run's duration. Public text streams as it
   arrives; the model's private reasoning is never shown.
   Thinking/using-tool status and elapsed time remain visible during gaps.
@@ -85,11 +88,15 @@ levels are listed.
   running run now (the agent reads it before its next step, without stopping;
   a message with attached files waits for the next turn instead), **Edit**
   changes it while it waits (it is skipped while you edit), and **Remove**
-  takes it out of the queue. A steered message shows in the chat where the agent
-  read it, and the agent says in one short sentence how it will handle it before
+  takes it out of the queue. A steered message shows in the chat as soon as you
+  steer it, and the agent says in one short sentence how it will handle it before
   carrying on; when you steer in two or more, the agent is reminded
-  of all of them before it finishes. A steer the run never got to read is sent as
-  the next message. A message that cannot be sent (a bare `/goal`, a broken
+  of all of them before it finishes. If the agent is waiting on an approval when
+  you steer, you don't need to answer it first: the box goes away, the action is
+  denied this once so the agent reads your message, and it can ask again later.
+  Your chat permissions don't change, and a message left in the queue leaves the
+  box waiting. A steer the run never got to read leaves the chat, returns to the
+  front of the queue and is sent as the next message. A message that cannot be sent (a bare `/goal`, a broken
   project configuration) stays in the queue marked **Needs an edit**, with the
   reason as its tooltip and in the chat; edit it (or save it unchanged) to send
   it again. Queued messages survive a restart. A chat holds at most 50 queued
@@ -154,10 +161,13 @@ is reached; for example `/goal optimize this app to speed up p95`.
   turn starts by itself, told why). With a number in
   the goal, that number is the bar; without one, the check decides when further
   gains are not worth it and says why.
-  The check reads only the commands of the turn it judges (long outputs keep their
-  start and end), never earlier turns or the agent's claims, so the agent ends a
-  turn it thinks finishes the goal with one compact verification of every
-  requirement. The check also says whether the turn moved the work forward (a turn
+  The check reads the commands of the turn it judges (long outputs keep their
+  start and end), never the agent's claims, and keeps a list of what the goal asks
+  for and what is proven, so proof carries from turn to turn; an item goes back to
+  open when later work could have broken it. The overview box counts them ("2 of 5
+  complete"), and Workspace › Goal lists them as Pending and Complete, with what showed each. A turn's
+  replies dim when the check rejects them, so a claim the check didn't accept
+  doesn't read as a result. The check also says whether the turn moved the work forward (a turn
   that changed files always did); after three turns that only re-check, the next
   one is told to step back and try a different approach.
 - **What you add joins the goal.** A request you send while the goal is open

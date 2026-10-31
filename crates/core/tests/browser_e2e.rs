@@ -494,6 +494,17 @@ async fn the_agent_moves_the_mouse_and_reopening_a_page_reuses_its_tab() {
         .execute(json!({"url": url}))
         .await
         .unwrap();
+    // Models fill every field: a ref of "null" means no ref, and a zero point beside a ref means no point.
+    tool("browser_click")
+        .execute(json!({"reference": "null", "x": 20, "y": 20}))
+        .await
+        .unwrap();
+    let snapshot = tool("browser_snapshot")
+        .execute(json!({}))
+        .await
+        .unwrap()
+        .to_string();
+    assert!(snapshot.contains("moved to 20"), "{snapshot}");
     let moved = tool("browser_move")
         .execute(json!({"x": 300, "y": 100}))
         .await

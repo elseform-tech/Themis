@@ -295,7 +295,7 @@ impl ToolRuntime for BrowserSnapshot {
     async fn execute(&self, args: Value) -> Result<Value, ToolCallError> {
         self.base.scope.chat.thaw_pages().await;
         let args: SnapshotArgs = parse_tool_args("browser_snapshot", args)?;
-        let reference = Some(args.reference.trim().to_owned()).filter(|r| !r.is_empty());
+        let reference = Some(model_reference(&args.reference)).filter(|r| !r.is_empty());
         self.base
             .act(
                 "browser_snapshot",
@@ -344,8 +344,10 @@ impl ToolRuntime for BrowserClick {
     async fn execute(&self, args: Value) -> Result<Value, ToolCallError> {
         let args: ClickArgs = parse_tool_args("browser_click", args)?;
         // Models sometimes quote a ref, as they saw it in a JSON result.
-        let reference = args.reference.trim().trim_matches('"').to_owned();
+        let reference = model_reference(&args.reference);
         let point = match (args.x, args.y) {
+            // Models fill every field: a zero point beside a ref means no point.
+            (Some(x), Some(y)) if x == 0.0 && y == 0.0 && !reference.is_empty() => None,
             (None, None) if reference.is_empty() => {
                 return Err(tool_error(
                     "browser_click: give a ref, or x and y".to_owned(),
@@ -427,7 +429,7 @@ impl ToolRuntime for BrowserType {
                 "browser_type: text is longer than 10,000 characters".into(),
             ));
         }
-        let reference = args.reference.trim().to_owned();
+        let reference = model_reference(&args.reference);
         let name = self.base.scope.chat.name_of(&reference).await;
         let label = name.as_deref().map_or_else(|| reference.clone(), quote);
         self.base
@@ -474,7 +476,7 @@ impl ToolRuntime for BrowserSelect {
         if args.values.is_empty() || args.values.len() > 50 {
             return Err(tool_error("browser_select: give 1..50 values".into()));
         }
-        let reference = args.reference.trim().to_owned();
+        let reference = model_reference(&args.reference);
         let name = self.base.scope.chat.name_of(&reference).await;
         let label = name.as_deref().map_or_else(|| reference.clone(), quote);
         self.base
@@ -561,7 +563,7 @@ impl ToolRuntime for BrowserScroll {
     async fn execute(&self, args: Value) -> Result<Value, ToolCallError> {
         let args: ScrollArgs = parse_tool_args("browser_scroll", args)?;
         let direction = args.direction.trim().to_ascii_lowercase();
-        let reference = Some(args.reference.trim().to_owned()).filter(|r| !r.is_empty());
+        let reference = Some(model_reference(&args.reference)).filter(|r| !r.is_empty());
         self.base
             .act(
                 "browser_scroll",
@@ -572,6 +574,16 @@ impl ToolRuntime for BrowserScroll {
                 |chat| async move { chat.scroll(&direction, reference.as_deref()).await },
             )
             .await
+    }
+}
+
+/// A ref as a model sends it: models quote refs they saw in JSON, and fill unused fields with
+/// the word for nothing.
+fn model_reference(text: &str) -> String {
+    let text = text.trim().trim_matches('"').trim();
+    match text.to_ascii_lowercase().as_str() {
+        "null" | "none" | "nil" | "undefined" => String::new(),
+        _ => text.to_owned(),
     }
 }
 
@@ -705,7 +717,7 @@ pub struct ScreenshotArgs {
 
 #[tool(
     name = "browser_screenshot",
-    description = "Save a PNG screenshot of the current page (or one element, or the whole page). Returns its path; to show it to the user, call attach_file with that path. Use snapshots, not screenshots, to read a page.",
+    description = "Save a PNG screenshot of the current page (or one element, or the whole page) for the user. You cannot see it yourself. Returns its path; to show it to the user, call attach_file with that path. Use snapshots, not screenshots, to read a page.",
     input = ScreenshotArgs,
 )]
 struct BrowserScreenshot {
@@ -734,7 +746,7 @@ impl ToolRuntime for BrowserScreenshot {
             RiskLevel::Read,
         )?;
         self.base.scope.chat.thaw_pages().await;
-        let reference = Some(args.reference.trim().to_owned()).filter(|r| !r.is_empty());
+        let reference = Some(model_reference(&args.reference)).filter(|r| !r.is_empty());
         let (png, width, height) = chat
             .screenshot(reference.as_deref(), args.full_page)
             .await
@@ -746,7 +758,9 @@ impl ToolRuntime for BrowserScreenshot {
             "path": path,
             "width": width,
             "height": height,
-            "note": "Saved. Call attach_file with this path to show it in your reply.",
+            // True of every model while the provider wire rejects images (`providers/wire.rs`);
+            // sending screenshots to a vision model has to make this conditional.
+            "note": crate::prompts::TOOL_SCREENSHOT_NOTE,
         }))
     }
 }
@@ -831,6 +845,15 @@ impl ToolRuntime for BrowserRecord {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_ref_of_nothing_is_no_ref() {
+        for empty in ["", " ", "null", "NULL", "\"null\"", "none", "undefined"] {
+            assert_eq!(super::model_reference(empty), "", "{empty}");
+        }
+        assert_eq!(super::model_reference(" \"e14\" "), "e14");
+        assert_eq!(super::model_reference("nullable"), "nullable");
+    }
+
     use super::*;
 
     #[tokio::test]

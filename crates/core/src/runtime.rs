@@ -35,6 +35,7 @@ mod notes;
 mod pending;
 mod summary_evidence;
 mod summary_job;
+mod turn_end;
 
 use crate::skills::{compose_task, filter_tools, Skill};
 use crate::tools::{Approval, ApprovalHook, RiskLevel, ToolAction};
@@ -80,7 +81,7 @@ impl From<Approval> for ApprovalDecision {
         match value {
             Approval::AllowOnce => Self::AllowOnce,
             Approval::AllowAlways => Self::AllowAlways,
-            Approval::Deny => Self::Deny,
+            Approval::Deny | Approval::DenyForNewMessage => Self::Deny,
         }
     }
 }
@@ -650,9 +651,12 @@ async fn run_task_with_evidence_inner(
     // Whether this run changed files, and whether its spec check was already sent.
     let mut changed_files = false;
     let mut spec_checked = false;
-    // Whether the run has used tools, and whether it was already asked for its summary.
+    // Whether the run has used tools, and the one extra request a stretch of work may get
+    // when a reply with no tool call does not read as the end of the turn.
     let mut used_tools = false;
-    let mut summary_asked = false;
+    let mut turn_end_guard = turn_end::TurnEndGuard::default();
+    // The reply just sent back by that guard, which the next reply must not show again.
+    let mut sent_back: Option<String> = None;
     // What the run already told the user before a runtime check or note sent it back
     // without a tool call: the final answer continues it instead of repeating it.
     let mut answered = String::new();
@@ -874,11 +878,15 @@ async fn run_task_with_evidence_inner(
         usage_sink.store(0, Ordering::SeqCst);
         let (text, calls) = match crate::context_metrics::with_usage_sink(
             usage_sink.clone(),
-            request_answer(&llm, &messages, &llm_tools, &events, &stopped),
+            SENT_BACK_REPLY.scope(
+                sent_back.clone(),
+                request_answer(&llm, &messages, &llm_tools, &events, &stopped),
+            ),
         )
         .await
         {
             Ok(answer) => {
+                sent_back = None;
                 overflow_retried = false;
                 let raw_request = previous_size.saturating_add(schema_tokens);
                 let reported = usage_sink.load(Ordering::SeqCst);
@@ -1030,32 +1038,43 @@ async fn run_task_with_evidence_inner(
                 });
                 continue;
             }
-            // A run that worked with tools ends with a message to the user. A short progress
-            // line ("Continuing through the ember files.") is not one: agents narrated a step
-            // and stopped (replays, 13 of 1,452 turns). Asked once, it continues or sums up.
-            if used_tools
-                && !summary_asked
-                // Only with a request to spare: the last one ends the run with what it has.
-                && turn < policy.total_turns
-                && progress_line(text.as_deref().unwrap_or_default())
-                && !nudge_off("turn_summary")
-            {
-                summary_asked = true;
-                // The progress line is not part of the answer: the chat keeps it as one.
-                crate::context_metrics::activity("turn_summary_requests");
-                events
-                    .send(RunEvent::AssistantText("\n\n".into()))
-                    .await
-                    .ok();
+            // A reply with no tool call ends the turn only if it reads as an ending. A short
+            // progress line ("Continuing through the ember files.") is not one: agents narrated
+            // a step and stopped (replays, 13 of 1,452 turns). Nor is a reply that only
+            // announces its next step or writes a tool call as text (a free model's goal run,
+            // 3 of 6 checked turns). Asked once, it continues or sums up. The last request
+            // ends the run with what it has.
+            let unfinished =
+                (!llm_tools.is_empty() && turn < policy.total_turns && !nudge_off("turn_summary"))
+                    .then(|| turn_end_guard.check(text.as_deref().unwrap_or_default(), used_tools))
+                    .flatten();
+            if let Some(reason) = unfinished {
+                let answer = text.unwrap_or_default();
+                let note = if reason == turn_end::Unfinished::ProgressLine {
+                    crate::context_metrics::activity("turn_summary_requests");
+                    TURN_SUMMARY
+                } else {
+                    crate::context_metrics::activity("turn_end_guard_requests");
+                    TURN_END_GUARD
+                };
+                crate::diagnostics::emit(
+                    "answer",
+                    "turn_end_guard",
+                    "info",
+                    serde_json::json!({"reason":reason.as_str(),"request":turn,"reply_chars":answer.chars().count()}),
+                );
+                // The line is not part of the answer: the chat keeps it as it is, and the next
+                // reply starts its own paragraph without showing it again.
+                sent_back = Some(answer.clone());
                 messages.push(ChatMessage {
                     role: ChatRole::Assistant,
                     message_type: MessageType::Text,
-                    content: text.unwrap_or_default(),
+                    content: answer,
                 });
                 messages.push(ChatMessage {
                     role: ChatRole::User,
                     message_type: MessageType::Text,
-                    content: TURN_SUMMARY.to_owned(),
+                    content: note.to_owned(),
                 });
                 continue;
             }
@@ -1069,6 +1088,7 @@ async fn run_task_with_evidence_inner(
         }
 
         used_tools = true;
+        turn_end_guard.tool_ran();
         // A tool call starts new work: an earlier answer is no longer the turn's answer.
         answered.clear();
         let mut results = execute_tool_calls(
@@ -1496,7 +1516,14 @@ async fn request_answer_inner(
     let mut request = std::borrow::Cow::Borrowed(messages);
     // Text already shown from replies that were cut off; the answer continues after it.
     let mut shown = String::new();
+    let mut repeat = SENT_BACK_REPLY
+        .try_with(|reply| reply.as_deref().map(turn_end::RepeatFilter::new))
+        .ok()
+        .flatten();
     loop {
+        if let Some(filter) = &mut repeat {
+            filter.restart();
+        }
         let mut published = false;
         let mut attempt_text = String::new();
         let messages: &[ChatMessage] = &request;
@@ -1519,16 +1546,29 @@ async fn request_answer_inner(
                                 check_stopped(stopped, events).await?;
                                 match chunk? {
                                     StreamChunk::Text(delta) => {
-                                        published |= !delta.is_empty();
                                         attempt_text.push_str(&delta);
                                         text.push_str(&delta);
-                                        events.send(RunEvent::AssistantText(delta)).await.ok();
+                                        let visible = match &mut repeat {
+                                            Some(filter) => filter.push(&delta),
+                                            None => Some(delta),
+                                        };
+                                        if let Some(visible) = visible {
+                                            published |= !visible.is_empty();
+                                            events
+                                                .send(RunEvent::AssistantText(visible))
+                                                .await
+                                                .ok();
+                                        }
                                     }
                                     StreamChunk::ToolUseComplete { tool_call, .. } => {
                                         calls.push(tool_call)
                                     }
                                     _ => {} // Reasoning content is private; only public narration reaches the UI.
                                 }
+                            }
+                            if let Some(held) = repeat.as_mut().and_then(|f| f.finish()) {
+                                published = true;
+                                events.send(RunEvent::AssistantText(held)).await.ok();
                             }
                             Ok(((!text.is_empty()).then_some(text), calls))
                         }
@@ -1540,9 +1580,19 @@ async fn request_answer_inner(
                                 llm.chat_with_tools(messages, Some(llm_tools), None).await?;
                             let text = response.text().filter(|text| !text.is_empty());
                             if let Some(text) = text.clone() {
-                                published = true;
                                 attempt_text.push_str(&text);
-                                events.send(RunEvent::AssistantText(text)).await.ok();
+                                let visible = match &mut repeat {
+                                    Some(filter) => {
+                                        let mut visible = filter.push(&text).unwrap_or_default();
+                                        visible.extend(filter.finish());
+                                        visible
+                                    }
+                                    None => text,
+                                };
+                                if !visible.is_empty() {
+                                    published = true;
+                                    events.send(RunEvent::AssistantText(visible)).await.ok();
+                                }
                             }
                             Ok((text, response.tool_calls().unwrap_or_default()))
                         }
@@ -1903,6 +1953,7 @@ fn with_shown(shown: &str, text: Option<String>) -> Option<String> {
 const EMPTY_ANSWER_NOTE: &str = crate::prompts::RUNTIME_EMPTY_ANSWER;
 
 const TURN_SUMMARY: &str = crate::prompts::RUNTIME_TURN_SUMMARY;
+const TURN_END_GUARD: &str = crate::prompts::RUNTIME_TURN_END_GUARD;
 
 /// `earlier` and `later` as one answer, a blank line between; either may be empty. When
 /// one already holds the other (a model repeating itself), the fuller one is the answer.
@@ -2198,6 +2249,8 @@ fn effective_context_budget(requested: usize, model: &str) -> usize {
 
 tokio::task_local! { pub static MODEL_CONTEXT_CAPACITY: Option<usize>; }
 tokio::task_local! { static SHORT_REPLY_TURN: bool; }
+// The reply the turn-end guard sent back, while the model answers it.
+tokio::task_local! { static SENT_BACK_REPLY: Option<String>; }
 tokio::task_local! { static STEER_INBOX: SteerInbox; }
 
 tokio::task_local! { static FIRST_REQUEST: String; }
@@ -2819,12 +2872,13 @@ fn calibration_sample(
 }
 
 /// Notes the runtime adds as user messages during a run; none is a new request.
-const RUNTIME_NOTES: [&str; 5] = [
+const RUNTIME_NOTES: [&str; 6] = [
     SPEC_CHECK,
     CUT_OFF_NOTE,
     SILENT_CUT_OFF_NOTE,
     EMPTY_ANSWER_NOTE,
     TURN_SUMMARY,
+    TURN_END_GUARD,
 ];
 
 /// The request being worked on: the last user message that is not one of the
@@ -3629,10 +3683,10 @@ async fn execute_call(
     if stopped.load(Ordering::SeqCst) {
         return Err("Stopped by you".to_owned());
     }
-    if decision == Approval::Deny {
+    if decision.is_denied() {
         return Err(format!(
             "approval denied for '{name}': {summary} {}",
-            crate::tools::REFUSAL_NOTE
+            decision.refusal_note()
         ));
     }
     let parsed: serde_json::Value = match serde_json::from_str(args) {

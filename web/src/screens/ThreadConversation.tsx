@@ -9,6 +9,7 @@ import { ANSWER_MARKER, type ChangedFile, type Question } from "../lib/types";
 import { QuestionNote, useNowAt } from "./QuestionBox";
 import { placeQuestion, questionOnComposer, QUESTION_OPEN_MS, usePlacements } from "../state/composerSlot";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { GoalWait } from "./GoalWait";
 import { ResponseBody, ResponseFiles, ResponseLinks } from "../components/ResponseBody";
 import "./GoalBar.css";
 import type { ChatMessage, ToolTraceEntry } from "../state/reducer";
@@ -18,6 +19,10 @@ import { describeTools } from "./toolActivity";
 import { OverviewBox, type Overview } from "./OverviewBox";
 
 interface ThreadConversationProps {
+  /** The goal check is reading the turn that just ended. */
+  goalChecking?: boolean;
+  /** When the goal's next turn is due, while it waits to retry. */
+  goalRetryAt?: number;
   threadId: string;
   messages: ChatMessage[];
   stream: string;
@@ -35,6 +40,8 @@ interface ThreadConversationProps {
 
 export function ThreadConversation({
   threadId,
+  goalChecking,
+  goalRetryAt,
   messages,
   stream,
   running,
@@ -139,6 +146,7 @@ export function ThreadConversation({
           </div>
         </div>
       )}
+      {!running && !sending && <GoalWait checking={goalChecking} retryAt={goalRetryAt} />}
       <div ref={endRef} />
     </div>
     {overview && <OverviewBox threadId={threadId} overview={overview} onOpenMedia={openMedia} />}
@@ -302,8 +310,10 @@ function Message({ message, threadId, activeRunId, durationMs, skills, plugins }
   // The answered question box already shows the answer the agent was sent.
   if (message.role === "user" && message.text.startsWith(ANSWER_MARKER)) return null;
   // A goal turn starts with a runtime message: a divider, not a bubble from the user.
-  if (message.goalStatus) return <p className="themis-goal-status">{message.text}</p>;
-  if (message.goalTurn !== undefined) return <hr className="themis-goal-turn" aria-label={`Goal turn ${message.goalTurn}`} />;
+  if (message.goalStatus) return <div className="themis-thread-msg themis-thread-msg--assistant themis-thread-msg--completed"><ResponseBody text={message.text} /></div>;
+  if (message.goalCheck) return <div className="themis-thread-msg themis-thread-msg--user"><span className="themis-goal-check-label">Goal check</span><p className="themis-thread-text">{message.text}</p></div>;
+  // The check's bubble already marks where a new goal turn starts.
+  if (message.goalTurn !== undefined) return null;
   const text = message.attachments?.length ? message.text.split("\n\nAttached files (local paths;")[0]! : message.text;
   const isActiveRun = activeRunId !== undefined && message.runId === activeRunId;
   const actionWaiting = isActiveRun && message.role === "assistant" && !message.final && !message.tool;
@@ -312,7 +322,7 @@ function Message({ message, threadId, activeRunId, durationMs, skills, plugins }
   return (
     <>
     {threadId && !!message.attachments?.length && <div className="themis-message-attachments" aria-label="Attached files">{message.attachments.map(path => <AttachmentPreview key={path} threadId={threadId} path={path} />)}</div>}
-    <div className={`themis-thread-msg themis-thread-msg--${message.role}${message.text.startsWith("Stopped by you.") ? " themis-thread-msg--stopped" : ""}${actionWaiting ? " themis-thread-msg--action-waiting" : ""}${completed ? " themis-thread-msg--completed" : ""}`}>
+    <div className={`themis-thread-msg themis-thread-msg--${message.role}${message.text.startsWith("Stopped by you.") ? " themis-thread-msg--stopped" : ""}${message.goalRejected ? " themis-thread-msg--rejected" : ""}${actionWaiting ? " themis-thread-msg--action-waiting" : ""}${completed ? " themis-thread-msg--completed" : ""}`}>
       {message.tool ? (
         <details className="themis-tool-message">
           <summary className={message.tool.ok === undefined && isActiveRun ? "themis-shimmer" : ""}>

@@ -91,8 +91,8 @@
 .themis-queue-input:focus { outline: 2px solid color-mix(in srgb, var(--themis-accent) 55%, transparent); outline-offset: 0; }
 
 /* Conversation: goal turn dividers and goal notes. */
-.themis-goal-status { margin: 0; font-size: .875rem; line-height: 1.6; color: var(--themis-text-2); }
-.themis-goal-turn { width: 100%; height: 1px; margin: 4px 0; border: 0; background: var(--themis-border-subtle); }
+.themis-thread-msg--rejected .themis-response { opacity: .6; }
+.themis-goal-check-label { display: block; margin-bottom: 2px; font-size: .6875rem; color: var(--themis-text-2); }
 
 /* One box at a time on the composer (canvas board D): an approval, else a question. */
 .themis-composer-slot {
