@@ -1025,6 +1025,71 @@ async fn asked_to_stop_the_agent_pauses_the_goal_and_no_check_or_turn_follows() 
     assert_eq!(checks.load(Ordering::SeqCst), 0);
 }
 
+/// Asked in the chat to remove the goal, the agent removes it: no goal is left, and
+/// no check or further turn follows.
+#[tokio::test(flavor = "multi_thread")]
+async fn asked_to_remove_the_goal_the_agent_removes_it() {
+    let server = MockServer::start().await;
+    let gate = Gate::default();
+    let held = gate.clone();
+    let checks = Arc::new(AtomicUsize::new(0));
+    let seen_checks = Arc::clone(&checks);
+    Mock::given(method("POST"))
+        .respond_with(move |request: &Request| {
+            let body = body(request);
+            if is_check(&body) {
+                seen_checks.fetch_add(1, Ordering::SeqCst);
+                return reply(r#"{"verdict":"not_yet","reason":"Keep going."}"#);
+            }
+            let sent = body["messages"].to_string();
+            if sent.contains("removed") && sent.contains("\"status\"") {
+                reply("The goal is removed.")
+            } else if sent.contains("Please remove the goal") {
+                calls("set_goal", json!({"remove": true}))
+            } else {
+                held.wait();
+                calls("list_dir", json!({"directory_path": "."}))
+            }
+        })
+        .mount(&server)
+        .await;
+    let (state, _data, _project, thread) = chat(&server).await;
+    let (sink, _rx) = ChannelSink::channel();
+    let sink = Arc::new(sink);
+    state
+        .send_message(
+            sink.clone(),
+            thread.clone(),
+            "/goal finish the thing".into(),
+        )
+        .await
+        .unwrap();
+    let ask = state
+        .enqueue_message(
+            sink.clone(),
+            thread.clone(),
+            "Please remove the goal".into(),
+            None,
+            vec![],
+        )
+        .await
+        .unwrap();
+    state
+        .steer_queued_message(sink.clone(), thread.clone(), ask.id)
+        .await
+        .unwrap();
+    gate.open();
+    for _ in 0..200 {
+        if state.goal_for(&thread).is_none() {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+    settle(&state, &thread).await;
+    assert!(state.goal_for(&thread).is_none());
+    assert_eq!(checks.load(Ordering::SeqCst), 0);
+}
+
 /// A goal keeps going until it is reached: the agent can't talk itself out of a
 /// hard one by pausing it.
 #[tokio::test(flavor = "multi_thread")]

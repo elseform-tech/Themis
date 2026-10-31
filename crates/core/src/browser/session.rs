@@ -280,6 +280,7 @@ impl BrowserHub {
                 updates,
                 screencast: Mutex::new(None),
                 frozen: AtomicBool::new(false),
+                pointer: Mutex::new(None),
                 ui_stream: AtomicBool::new(false),
                 preview_width: Mutex::new(None),
                 recording: Mutex::new(None),
@@ -516,6 +517,8 @@ pub struct ChatBrowser {
     updates: broadcast::Sender<BrowserUpdate>,
     /// Its pages are frozen because nothing is using them (see [`Self::freeze_pages`]).
     frozen: AtomicBool,
+    /// Where the mouse last went on the visible page, for moves relative to it.
+    pointer: Mutex<Option<(f64, f64)>>,
     /// Session id of the tab being streamed to the Workspace view.
     screencast: Mutex<Option<String>>,
     /// The Workspace view is showing the stream (frames go to it).
@@ -1673,7 +1676,18 @@ impl ChatBrowser {
             .session_id
             .clone();
         check_visible_point(&browser.cdp, &session, x, y).await?;
-        click_at(&browser.cdp, &session, x, y, if double { 2 } else { 1 }).await?;
+        let clicks = if double { 2 } else { 1 };
+        // A locked pointer has no position to go to: the click must not turn the view.
+        let held = *self.pointer.lock().unwrap_or_else(|e| e.into_inner());
+        match held {
+            Some((held_x, held_y)) if pointer_locked(&browser.cdp, &session).await => {
+                press_at(&browser.cdp, &session, held_x, held_y, clicks).await?;
+            }
+            _ => {
+                click_at(&browser.cdp, &session, x, y, clicks).await?;
+                *self.pointer.lock().unwrap_or_else(|e| e.into_inner()) = Some((x, y));
+            }
+        }
         self.settle(&inner, false).await;
         let report = self.report(&mut inner, None).await;
         drop(inner);
@@ -1704,6 +1718,54 @@ impl ChatBrowser {
                 json!({"type": "mouseMoved", "x": x, "y": y}),
             )
             .await?;
+        *self.pointer.lock().unwrap_or_else(|e| e.into_inner()) = Some((x, y));
+        self.settle(&inner, false).await;
+        let report = self.report(&mut inner, None).await;
+        drop(inner);
+        self.publish_state().await;
+        report
+    }
+
+    /// Moves the mouse by a distance from where it is. While the page holds the pointer lock
+    /// the distance has no limit, as with a real locked mouse: past the page's edge it starts
+    /// from a point outside the page, which sends no event, so the page sees just this
+    /// movement. A page without the lock has an edge, and a move past it is refused.
+    pub async fn move_by(self: &Arc<Self>, dx: f64, dy: f64) -> Result<ActionReport, String> {
+        let mut inner = self.inner.lock().await;
+        let browser = inner
+            .browser
+            .clone()
+            .ok_or("no page is open; use browser_open first")?;
+        let session = inner
+            .tabs
+            .get(inner.current)
+            .ok_or("no page is open; use browser_open first")?
+            .session_id
+            .clone();
+        let (width, height) = visible_size(&browser.cdp, &session).await?;
+        let from = self
+            .pointer
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .unwrap_or((width / 2.0, height / 2.0));
+        let path = relative_path(from, (dx, dy), (width, height))?;
+        if path.start.is_some() && !pointer_locked(&browser.cdp, &session).await {
+            return Err(format!(
+                "moving by ({dx}, {dy}) from ({}, {}) leaves the visible page ({}×{} CSS pixels), and only a page holding the pointer lock can be moved past its edge",
+                from.0.round(), from.1.round(), width.round(), height.round()
+            ));
+        }
+        for (x, y) in path.start.into_iter().chain([path.end]) {
+            browser
+                .cdp
+                .call(
+                    Some(&session),
+                    "Input.dispatchMouseEvent",
+                    json!({"type": "mouseMoved", "x": x, "y": y}),
+                )
+                .await?;
+        }
+        *self.pointer.lock().unwrap_or_else(|e| e.into_inner()) = Some(path.end);
         self.settle(&inner, false).await;
         let report = self.report(&mut inner, None).await;
         drop(inner);
@@ -2463,6 +2525,7 @@ impl ChatBrowser {
                 delta_x,
                 delta_y,
             } => {
+                *self.pointer.lock().unwrap_or_else(|e| e.into_inner()) = Some((*x, *y));
                 let kind = match kind.as_str() {
                     "down" => "mousePressed",
                     "up" => "mouseReleased",
@@ -2612,13 +2675,92 @@ async fn resolve_object(cdp: &Cdp, session: &str, backend: i64) -> Result<String
 
 /// Scrolls an element into view and returns its center in CSS pixels.
 /// Refuses a point outside the visible page, in CSS pixels.
-async fn check_visible_point(cdp: &Cdp, session: &str, x: f64, y: f64) -> Result<(), String> {
+async fn visible_size(cdp: &Cdp, session: &str) -> Result<(f64, f64), String> {
     let metrics = cdp
         .call(Some(session), "Page.getLayoutMetrics", json!({}))
         .await?;
     let view = &metrics["cssVisualViewport"];
-    let width = view["clientWidth"].as_f64().unwrap_or(0.0);
-    let height = view["clientHeight"].as_f64().unwrap_or(0.0);
+    Ok((
+        view["clientWidth"].as_f64().unwrap_or(0.0),
+        view["clientHeight"].as_f64().unwrap_or(0.0),
+    ))
+}
+
+/// Whether the page holds the pointer lock (see `pointer_lock.js`).
+async fn pointer_locked(cdp: &Cdp, session: &str) -> bool {
+    cdp.call(
+        Some(session),
+        "Runtime.evaluate",
+        json!({"expression": "!!document.pointerLockElement", "returnByValue": true}),
+    )
+    .await
+    .is_ok_and(|reply| reply["result"]["value"].as_bool() == Some(true))
+}
+
+/// The mouse events of a relative move.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct RelativePath {
+    /// A point outside the page to go to first; set when the move would leave the page.
+    start: Option<(f64, f64)>,
+    /// The point on the page the move ends at.
+    end: (f64, f64),
+}
+
+/// Plans a move by `delta` from `from`. Inside the page that is one plain move. Past the edge,
+/// `start` lies outside the page, where the browser sends no event but still counts the
+/// distance, so the one event the page gets from `start` to `end` reports exactly `delta`.
+fn relative_path(
+    from: (f64, f64),
+    delta: (f64, f64),
+    size: (f64, f64),
+) -> Result<RelativePath, String> {
+    // The browser counts whole pixels, so a half anywhere would lose one on every move.
+    let (dx, dy) = (delta.0.round(), delta.1.round());
+    let (width, height) = (size.0.floor(), size.1.floor());
+    if !dx.is_finite() || !dy.is_finite() {
+        return Err("dx and dy must be numbers".to_owned());
+    }
+    if width < 1.0 || height < 1.0 {
+        return Err("the page has no visible size yet; take a browser_snapshot".to_owned());
+    }
+    // A page that shrank may have left the last position outside it.
+    let from = (
+        from.0.round().min(width - 1.0),
+        from.1.round().min(height - 1.0),
+    );
+    let (x, y) = (from.0 + dx, from.1 + dy);
+    if (0.0..width).contains(&x) && (0.0..height).contains(&y) {
+        return Ok(RelativePath {
+            start: None,
+            end: (x, y),
+        });
+    }
+    // The longer side of the move puts the start outside the page; the other side lands
+    // anywhere on the page, since a start outside on one side is outside.
+    let onto = |value: f64, size: f64| value.clamp(0.0, size - 1.0);
+    let end = if dx.abs() >= dy.abs() {
+        (entry(dx, width), onto(y, height))
+    } else {
+        (onto(x, width), entry(dy, height))
+    };
+    Ok(RelativePath {
+        start: Some((end.0 - dx, end.1 - dy)),
+        end,
+    })
+}
+
+/// Where on one side of the page a move of `delta` ends when it began outside the page: as
+/// close to the middle as the distance allows.
+fn entry(delta: f64, size: f64) -> f64 {
+    if delta > 0.0 {
+        (delta - 1.0).clamp(0.0, (size / 2.0).floor())
+    } else {
+        (size + delta).max((size / 2.0).floor())
+    }
+}
+
+async fn check_visible_point(cdp: &Cdp, session: &str, x: f64, y: f64) -> Result<(), String> {
+    let (width, height) = visible_size(cdp, session).await?;
     if x.is_finite() && y.is_finite() && (0.0..width).contains(&x) && (0.0..height).contains(&y) {
         return Ok(());
     }
@@ -2668,6 +2810,10 @@ async fn click_at(cdp: &Cdp, session: &str, x: f64, y: f64, clicks: u32) -> Resu
         json!({"type": "mouseMoved", "x": x, "y": y}),
     )
     .await?;
+    press_at(cdp, session, x, y, clicks).await
+}
+
+async fn press_at(cdp: &Cdp, session: &str, x: f64, y: f64, clicks: u32) -> Result<(), String> {
     for count in 1..=clicks {
         for kind in ["mousePressed", "mouseReleased"] {
             cdp.call(
@@ -2758,6 +2904,50 @@ async fn password_fields(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_relative_move_reports_its_distance_from_a_start_outside_the_page() {
+        const PAGE: (f64, f64) = (1280.0, 800.0);
+        let inside = super::relative_path((640.0, 400.0), (100.0, -50.0), PAGE).unwrap();
+        assert_eq!(inside.start, None);
+        assert_eq!(inside.end, (740.0, 350.0));
+        for from in [(0.0, 0.0), (640.0, 400.0), (1279.0, 799.0), (1279.0, 0.0)] {
+            for delta in [
+                (5000.0, 0.0),
+                (-5000.0, 0.0),
+                (0.0, 5000.0),
+                (0.0, -5000.0),
+                (1.0, 0.0),
+                (-1.0, 0.0),
+                (0.0, 2.0),
+                (0.0, -2.0),
+                (900.0, 900.0),
+                (-1300.0, 20.0),
+                (3.0, -2000.0),
+            ] {
+                let path = super::relative_path(from, delta, PAGE).unwrap();
+                let on_page =
+                    |(x, y): (f64, f64)| (0.0..PAGE.0).contains(&x) && (0.0..PAGE.1).contains(&y);
+                assert!(on_page(path.end), "{from:?} {delta:?} {path:?}");
+                match path.start {
+                    None => assert!(on_page((from.0 + delta.0, from.1 + delta.1))),
+                    Some(start) => {
+                        assert!(!on_page(start), "{from:?} {delta:?} {path:?}");
+                        assert_eq!(path.end.0 - start.0, delta.0, "{from:?} {delta:?}");
+                        assert_eq!(path.end.1 - start.1, delta.1, "{from:?} {delta:?}");
+                    }
+                }
+            }
+        }
+        assert!(super::relative_path((0.0, 0.0), (f64::NAN, 0.0), PAGE).is_err());
+        // The browser counts whole pixels, so half a pixel anywhere would lose one every move.
+        let odd = super::relative_path((640.5, 400.5), (2000.0, -3.0), (1281.0, 801.0)).unwrap();
+        let start = odd.start.unwrap();
+        for value in [start.0, start.1, odd.end.0, odd.end.1] {
+            assert_eq!(value, value.round(), "{odd:?}");
+        }
+        assert_eq!(odd.end.0 - start.0, 2000.0);
+    }
+
     #[test]
     fn a_preview_scales_frames_down_and_keeps_the_page_size() {
         let page = super::Viewport {

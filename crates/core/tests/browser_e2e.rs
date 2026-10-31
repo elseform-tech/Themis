@@ -514,6 +514,105 @@ async fn the_agent_moves_the_mouse_and_reopening_a_page_reuses_its_tab() {
     assert!(again.get("tab").is_none(), "{again}");
 }
 
+/// A first-person page turns without limit: relative moves carry on past the page's edge with
+/// the exact distance, and a click doesn't turn the view. A page without the lock has an edge.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_locked_page_turns_past_the_edge_and_clicking_does_not_turn_it() {
+    let _browser = ONE_BROWSER.lock().await;
+    let data = tempfile::tempdir().unwrap();
+    let Some(hub) = hub(data.path()) else { return };
+    let site = MockServer::start().await;
+    Mock::given(path("/look"))
+        .respond_with(ResponseTemplate::new(200).set_body_raw(
+            r#"<!doctype html><title>Look</title><body style="margin:0;height:100vh"><p id="out">0,0,0</p>
+<script>let x = 0, y = 0, shots = 0;
+const show = () => { document.getElementById('out').textContent = x + ',' + y + ',' + shots; };
+document.addEventListener('mousemove', e => { x += e.movementX; y += e.movementY; show(); });
+document.addEventListener('mousedown', () => {
+  if (document.pointerLockElement) { shots += 1; show(); } else { document.body.requestPointerLock(); }
+});
+</script></body>"#,
+            "text/html",
+        ))
+        .mount(&site)
+        .await;
+    let project = tempfile::tempdir().unwrap();
+    let chat = hub.chat("chat-look", project.path());
+    let tools = themis_core::browser::tools::browser_tools(
+        Arc::new(FnHook::new(|_: &ToolAction| Approval::AllowOnce)),
+        themis_core::browser::tools::BrowserScope {
+            permissions: themis_core::tools::site_permissions::SitePermissions::new(
+                Default::default(),
+                None,
+            ),
+            chat: Arc::clone(&chat),
+            cancel: None,
+            media: None,
+        },
+    );
+    let tool = |name: &str| tools.iter().find(|tool| tool.name() == name).unwrap();
+    tool("browser_open")
+        .execute(json!({"url": format!("{}/look", site.uri())}))
+        .await
+        .unwrap();
+    // No lock yet: the page has an edge, and a move past it says so.
+    let refused = tool("browser_move")
+        .execute(json!({"dx": 99999}))
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(refused.contains("pointer lock"), "{refused}");
+    assert!(tool("browser_move")
+        .execute(json!({"x": 1, "dx": 1}))
+        .await
+        .is_err());
+    tool("browser_click")
+        .execute(json!({"x": 300, "y": 300}))
+        .await
+        .unwrap();
+    let reading = |report: &Value| {
+        let snapshot = report["snapshot"].as_str().unwrap().to_owned();
+        snapshot
+            .split(|c: char| !(c.is_ascii_digit() || c == ',' || c == '-'))
+            .find(|part| part.matches(',').count() == 2)
+            .map(|part| {
+                part.split(',')
+                    .map(|n| n.parse::<i64>().unwrap())
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_else(|| panic!("no reading in {snapshot}"))
+    };
+    let first = tool("browser_move")
+        .execute(json!({"dx": 0, "dy": 0}))
+        .await
+        .unwrap();
+    let base = reading(&first);
+    // Five full page widths right, then a good way up: every pixel arrives.
+    let mut last = first;
+    for _ in 0..5 {
+        last = tool("browser_move")
+            .execute(json!({"dx": 2000}))
+            .await
+            .unwrap();
+    }
+    assert_eq!(reading(&last)[0] - base[0], 10_000, "{last}");
+    let up = tool("browser_move")
+        .execute(json!({"dx": -7, "dy": -3000}))
+        .await
+        .unwrap();
+    assert_eq!(reading(&up)[0] - base[0], 9_993, "{up}");
+    assert_eq!(reading(&up)[1] - base[1], -3000, "{up}");
+    // A click at some other point shoots and doesn't turn the view.
+    let shot = tool("browser_click")
+        .execute(json!({"x": 640, "y": 300}))
+        .await
+        .unwrap();
+    let after = reading(&shot);
+    assert_eq!(after[0] - base[0], 9_993, "{shot}");
+    assert_eq!(after[1] - base[1], -3000, "{shot}");
+    assert_eq!(after[2], base[2] + 1, "{shot}");
+}
+
 /// A page left open stops drawing until something needs it, and draws again afterwards, every
 /// time. The page counts the long pauses between its frames, which only a freeze can cause.
 #[tokio::test(flavor = "multi_thread")]
@@ -661,8 +760,8 @@ document.addEventListener('mousemove', e => { if (document.pointerLockElement) {
         "{text}"
     );
     // A real mouse move while locked reaches the page with its movement.
-    let moved = tool("browser_click")
-        .execute(json!({"x": 300, "y": 100}))
+    let moved = tool("browser_move")
+        .execute(json!({"dx": 200}))
         .await
         .unwrap();
     let text = moved["snapshot"].as_str().unwrap();
