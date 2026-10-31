@@ -158,8 +158,9 @@ async fn the_agent_fills_a_form_reads_notes_and_navigates_in_a_real_browser() {
     // The Workspace view watches; it is streaming, as when the tab is open.
     let mut updates = chat.subscribe();
     chat.start_screencast(800, 600, 1.0).await.unwrap();
+    // A ref quoted as it looks in a JSON result still works, as models send it.
     let clicked = tool("browser_click")
-        .execute(json!({"ref": submit}))
+        .execute(json!({"ref": format!("\"{submit}\"")}))
         .await
         .unwrap();
     let after = clicked["snapshot"].as_str().unwrap();

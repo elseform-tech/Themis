@@ -341,7 +341,8 @@ struct BrowserClick {
 impl ToolRuntime for BrowserClick {
     async fn execute(&self, args: Value) -> Result<Value, ToolCallError> {
         let args: ClickArgs = parse_tool_args("browser_click", args)?;
-        let reference = args.reference.trim().to_owned();
+        // Models sometimes quote a ref, as they saw it in a JSON result.
+        let reference = args.reference.trim().trim_matches('"').to_owned();
         let point = match (args.x, args.y) {
             (None, None) if reference.is_empty() => {
                 return Err(tool_error(
