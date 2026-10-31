@@ -243,6 +243,7 @@ const ALL: &[(&str, &str, &[&str])] = &[
         "tool-recall-filters-ignored",
         &[],
     ),
+    (TOOL_SCREENSHOT_NOTE, "tool-screenshot-note", &[]),
     (TOOL_BROWSER_UNTRUSTED, "tool-browser-untrusted", &[]),
     (TOOL_DEVTOOLS_PAUSED, "tool-devtools-paused", &[]),
     (TOOL_BACKGROUND_NEXT, "tool-background-next", &[]),
