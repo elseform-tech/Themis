@@ -2048,6 +2048,8 @@ async fn run_command_with_timeout(
     cancel: Option<Arc<AtomicBool>>,
     sandbox: Option<Arc<SandboxPlan>>,
 ) -> Result<CommandOutput, ToolCallError> {
+    // Read here: the worker thread is outside the run's scope.
+    let env = crate::plugins::hooks::session_env();
     tokio::task::spawn_blocking(move || {
         run_command_blocking(
             &program,
@@ -2057,6 +2059,7 @@ async fn run_command_with_timeout(
             timeout,
             cancel.as_deref(),
             sandbox.as_deref(),
+            &env,
         )
     })
     .await
@@ -2104,6 +2107,7 @@ impl Drain {
 /// chatty child never wedges on a full pipe buffer while we poll `try_wait`.
 /// After the child exits, output is collected for at most [`PIPE_GRACE`]: a
 /// grandchild that kept the pipes open no longer hangs the call.
+#[allow(clippy::too_many_arguments)]
 fn run_command_blocking(
     program: &str,
     args: &[String],
@@ -2112,6 +2116,7 @@ fn run_command_blocking(
     timeout: Duration,
     cancel: Option<&AtomicBool>,
     sandbox: Option<&SandboxPlan>,
+    env: &[(String, String)],
 ) -> Result<CommandOutput, ToolCallError> {
     let prepared = prepare_command(program, args, sandbox)
         .map_err(|e| tool_error(format!("{tool}: {}", spawn_failure(program, args, &e))))?;
@@ -2122,7 +2127,8 @@ fn run_command_blocking(
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .env_clear()
-        .envs(scrubbed_env());
+        .envs(scrubbed_env())
+        .envs(env.iter().map(|(name, value)| (name, value)));
     // Own process group so a timeout can take down grandchildren too.
     #[cfg(unix)]
     std::os::unix::process::CommandExt::process_group(&mut command, 0);

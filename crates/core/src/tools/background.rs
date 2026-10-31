@@ -370,6 +370,8 @@ pub struct StartSpec {
     pub timeout_secs: u64,
     /// Sandbox the task runs in (the run's captured plan); `None` runs it as is.
     pub sandbox: Option<Arc<crate::sandbox::SandboxPlan>>,
+    /// Variables session hooks set for this run's commands.
+    pub env: Vec<(String, String)>,
 }
 
 /// Tracks background tasks for every chat of one app server.
@@ -553,7 +555,8 @@ impl BackgroundRegistry {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .env_clear()
-            .envs(super::scrubbed_env());
+            .envs(super::scrubbed_env())
+            .envs(spec.env.iter().map(|(name, value)| (name, value)));
         #[cfg(unix)]
         std::os::unix::process::CommandExt::process_group(&mut command, 0);
         let mut child = command
@@ -940,6 +943,7 @@ impl BackgroundScope {
             workdir,
             timeout_secs,
             sandbox,
+            env: crate::plugins::hooks::session_env(),
         };
         let view = tokio::task::spawn_blocking(move || registry.start(spec))
             .await
@@ -1133,6 +1137,7 @@ mod own_tasks_tests {
                     workdir,
                     timeout_secs: 60,
                     sandbox: None,
+                    env: Vec::new(),
                 })
             })
         };

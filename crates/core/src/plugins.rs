@@ -525,6 +525,7 @@ impl PluginStore {
     pub fn delete(&self, scope: &str, name: &str) -> anyhow::Result<()> {
         self.mutate(scope, |registry| {
             registry.current.remove(name).context("Unknown plugin")?;
+            let _ = fs::remove_dir_all(self.plugin_data_dir(scope, name));
             registry.revisions.retain(|_, p| p.spec.name != name);
             let referenced: std::collections::BTreeSet<&str> = registry
                 .current
@@ -871,6 +872,13 @@ impl PluginStore {
             None => spec.hooks.push(hook),
         }
         self.save(scope, spec, expected)
+    }
+    /// `CLAUDE_PLUGIN_DATA`: a plugin's own folder, in app data and kept until it is uninstalled.
+    #[must_use]
+    pub fn plugin_data_dir(&self, scope: &str, name: &str) -> PathBuf {
+        self.global
+            .join("plugin-data")
+            .join(format!("{scope}--{name}"))
     }
     pub fn materialize(&self, plugins: &[Plugin], root: &Path) -> anyhow::Result<()> {
         for plugin in plugins {

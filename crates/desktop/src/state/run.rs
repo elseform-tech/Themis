@@ -273,6 +273,7 @@ impl AppState {
         } else {
             run_configuration.approval.clone()
         };
+        let session_dir = self.hook_session_dir(thread_id);
         let mut hooks = Vec::new();
         let mut setup_events = Vec::new();
         let mut tool_labels = std::collections::HashMap::new();
@@ -372,6 +373,9 @@ impl AppState {
                 let mut hook = hook.clone();
                 hook.runtime_identity = Some(plugin.skill_id(&hook.name));
                 hook.plugin_root = Some(resource_root.clone());
+                hook.plugin_data = Some(store.plugin_data_dir(&plugin.scope, &plugin.spec.name));
+                // Claude gives it only to session hooks, which import as PromptSubmit.
+                hook.env_file = (hook.event == "PromptSubmit").then(|| session_dir.join("env"));
                 hooks.push(hook);
             }
         }
@@ -522,6 +526,12 @@ impl AppState {
             approvals: approvals.clone(),
             agent: None,
             mcp_names,
+            session: themis_core::plugins::hooks::HookSession {
+                transcript_path: Some(session_dir.join("transcript.jsonl")),
+                permission_mode: permission_mode(snapshot.approval_mode).to_owned(),
+                cancel: Some(Arc::clone(&stopped)),
+                env_file: Some(session_dir.join("env")),
+            },
         };
         let skills = snapshot.skills;
 
@@ -837,7 +847,23 @@ impl AppState {
     }
 }
 
+/// App-data folder of what hooks read about a chat (`hook-sessions/<chat id>/`).
+const HOOK_SESSIONS_DIR: &str = "hook-sessions";
+
 impl AppState {
+    fn hook_session_dir(&self, thread_id: &str) -> std::path::PathBuf {
+        self.app_data_dir().join(HOOK_SESSIONS_DIR).join(thread_id)
+    }
+
+    /// Forgets what hooks read about deleted chats.
+    pub(super) fn forget_hook_sessions(&self, thread_ids: &[String]) {
+        for id in thread_ids {
+            if super::chat_grants::safe_chat_id(id) {
+                let _ = std::fs::remove_dir_all(self.hook_session_dir(id));
+            }
+        }
+    }
+
     /// Marks a run idle, releases its concurrency permit, and persists.
     pub(super) async fn finish_run(&self, thread_id: &str) {
         self.close_steer_inbox(thread_id);
@@ -873,6 +899,14 @@ impl AppState {
             );
         }
         self.persist_registry().await;
+    }
+}
+
+/// The mode in the words Claude's hooks read.
+pub(super) fn permission_mode(mode: themis_core::configuration::ApprovalMode) -> &'static str {
+    match mode {
+        themis_core::configuration::ApprovalMode::Yolo => "bypassPermissions",
+        themis_core::configuration::ApprovalMode::Custom => "default",
     }
 }
 

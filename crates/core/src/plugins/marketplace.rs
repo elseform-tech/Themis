@@ -2656,6 +2656,10 @@ fn quoted_command(program: &str, args: &[String]) -> String {
         .join(" ")
 }
 
+/// What an imported hook gets when it asks for no time limit: Claude's scripts are written for
+/// more than a native hook's ten seconds.
+const IMPORTED_HOOK_TIMEOUT: u64 = 60;
+
 fn import_hooks(value: &Value, spec: &mut PluginSpec) -> anyhow::Result<()> {
     let events = value
         .get("hooks")
@@ -2766,10 +2770,15 @@ fn import_hooks(value: &Value, spec: &mut PluginSpec) -> anyhow::Result<()> {
                     command_prefix,
                     // Claude's way to refuse; a SessionStart hook can't stop a turn there either.
                     exit_two_blocks: event != "SessionStart",
-                    timeout_seconds: raw["timeout"].as_u64().unwrap_or(10).clamp(1, 60),
+                    timeout_seconds: raw["timeout"]
+                        .as_u64()
+                        .unwrap_or(IMPORTED_HOOK_TIMEOUT)
+                        .clamp(1, super::hooks::MAX_TIMEOUT_SECONDS),
                     // A broken session hook must not stop every turn.
                     blocking: event == "PreToolUse" && !background,
                     plugin_root: None,
+                    plugin_data: None,
+                    env_file: None,
                     runtime_identity: None,
                 });
             }
@@ -2948,6 +2957,8 @@ mod imported_hook_name_tests {
                 timeout_seconds: 10,
                 blocking: false,
                 plugin_root: None,
+                plugin_data: None,
+                env_file: None,
                 runtime_identity: None,
             })
             .collect()

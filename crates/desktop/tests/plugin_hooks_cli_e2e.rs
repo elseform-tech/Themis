@@ -811,6 +811,260 @@ async fn a_stop_hook_that_never_lets_go_is_bounded_and_stoppable() {
     app.serving.abort();
 }
 
+/// A guard sees the real values Claude's hooks read, and the prompt in the transcript stays out of
+/// the logs.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_hook_gets_real_session_values_and_prompts_stay_out_of_the_logs() {
+    let hooks = json!({"PreToolUse": [{"matcher": "Bash", "hooks": [{"type": "command",
+        "command": "cat > seen.json; echo \"$CLAUDE_PLUGIN_DATA\" > data-dir; touch \"$CLAUDE_PLUGIN_DATA/kept\""}]}]});
+    let app = crate::app(hooks, &[], calls_once("shell", json!({"command": "true"}))).await;
+    let secret = "A-PROMPT-MARKER-NEVER-IN-LOGS";
+    run(&app, secret).await;
+    let seen: Value =
+        serde_json::from_slice(&std::fs::read(app.project.path().join("seen.json")).unwrap())
+            .unwrap();
+    assert_eq!(seen["permission_mode"], "bypassPermissions");
+    let transcript = seen["transcript_path"].as_str().unwrap();
+    assert!(
+        Path::new(transcript).starts_with(app.data.path().canonicalize().unwrap())
+            || Path::new(transcript).starts_with(app.data.path()),
+        "{transcript}"
+    );
+    let text = std::fs::read_to_string(transcript).unwrap();
+    assert!(text.contains(secret), "{text}");
+    assert!(text
+        .lines()
+        .all(|line| serde_json::from_str::<Value>(line).is_ok()));
+    // A person-only file.
+    use std::os::unix::fs::PermissionsExt;
+    assert_eq!(
+        std::fs::metadata(transcript).unwrap().permissions().mode() & 0o077,
+        0
+    );
+    // The plugin's own folder, outside the project and kept across runs.
+    let data = std::fs::read_to_string(app.project.path().join("data-dir")).unwrap();
+    let data = Path::new(data.trim());
+    assert!(data.join("kept").exists());
+    assert!(!data.starts_with(app.project.path()));
+    assert!(data.starts_with(app.data.path()));
+    // Nothing in the logs holds the prompt or the transcript's text.
+    for entry in std::fs::read_dir(app.data.path().join("logs"))
+        .unwrap()
+        .flatten()
+    {
+        let log = std::fs::read_to_string(entry.path()).unwrap_or_default();
+        assert!(!log.contains(secret), "{}", entry.path().display());
+    }
+    app.serving.abort();
+}
+
+/// `CLAUDE_ENV_FILE` is real: what a session hook writes reaches later shell commands, except what
+/// would change which program runs.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_session_hook_sets_the_environment_of_shell_commands() {
+    let hooks = json!({"SessionStart": [{"hooks": [{"type": "command",
+        "command": "printf 'export MY_VAR=\\\"from hook\\\"\\nexport PATH=/evil\\nexport LD_PRELOAD=/evil\\nexport TRICK=$(touch x)\\nexport GIT_DIR=/evil\\n' >> \"$CLAUDE_ENV_FILE\""}]}]});
+    for background in [false, true] {
+        let script = "echo \"[$MY_VAR][$PATH][$LD_PRELOAD][$TRICK][$GIT_DIR]\" > env.txt";
+        let app = crate::app(
+            hooks.clone(),
+            &[],
+            calls_once(
+                "shell",
+                json!({"command": "sh", "args": ["-c", script], "background": background}),
+            ),
+        )
+        .await;
+        run(&app, "go").await;
+        let path = app.project.path().join("env.txt");
+        until("the command never ran", || path.exists());
+        let text = std::fs::read_to_string(path).unwrap();
+        assert!(text.starts_with("[from hook]["), "{text}");
+        assert!(!text.contains("/evil"), "{text}");
+        assert!(text.trim_end().ends_with("[][][]"), "{text}");
+        app.serving.abort();
+    }
+}
+
+/// A guard on paths sees every file a call touches, and refusing any refuses the call.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_path_guard_sees_every_file_a_call_touches() {
+    const PATH_GUARD: &str = r#"#!/bin/sh
+input=$(cat)
+printf '%s\n' "$input" >> seen.jsonl
+case "$input" in
+  *'"file_path":"secret.txt"'*) echo 'that file is off limits' >&2; exit 2 ;;
+esac
+exit 0
+"#;
+    let hooks = json!({"PreToolUse": [{"matcher": "Edit|Write", "hooks": [{
+        "type": "command", "command": "sh \"${CLAUDE_PLUGIN_ROOT}/hooks/path.sh\""
+    }]}]});
+    let patch = |second: &str| {
+        format!(
+            "--- a/fine.txt\n+++ b/fine.txt\n@@ -1 +1 @@\n-a\n+b\n--- a/{second}\n+++ b/{second}\n@@ -1 +1 @@\n-a\n+b\n"
+        )
+    };
+    let deleting = "--- a/fine.txt\n+++ b/fine.txt\n@@ -1 +1 @@\n-a\n+b\n--- a/secret.txt\n+++ /dev/null\n@@ -1 +0,0 @@\n-a\n";
+    for (tool, args, touched) in [
+        ("apply_patch", json!({"patch": patch("secret.txt")}), true),
+        ("apply_patch", json!({"patch": deleting}), true),
+        (
+            "move_file",
+            json!({"source_path": "fine.txt", "destination_path": "secret.txt"}),
+            true,
+        ),
+        (
+            "move_file",
+            json!({"source_path": "secret.txt", "destination_path": "elsewhere.txt"}),
+            true,
+        ),
+        (
+            "copy_file",
+            json!({"source_path": "fine.txt", "destination_path": "secret.txt"}),
+            true,
+        ),
+        ("delete_file", json!({"file_path": "secret.txt"}), true),
+        ("apply_patch", json!({"patch": patch("other.txt")}), false),
+    ] {
+        let app = crate::app(
+            hooks.clone(),
+            &[("hooks/path.sh", PATH_GUARD)],
+            calls_once(tool, args.clone()),
+        )
+        .await;
+        for file in ["fine.txt", "secret.txt", "other.txt"] {
+            std::fs::write(app.project.path().join(file), "a\n").unwrap();
+        }
+        run(&app, "go").await;
+        let result = last_tool_result(&app).await;
+        assert_eq!(
+            result.contains("off limits"),
+            touched,
+            "{tool} {args}: {result}"
+        );
+        if touched {
+            // Nothing happened, to either file.
+            let read = |name: &str| std::fs::read_to_string(app.project.path().join(name));
+            assert_eq!(read("secret.txt").unwrap(), "a\n", "{tool} {args}");
+            assert_eq!(read("fine.txt").unwrap(), "a\n", "{tool} {args}");
+        } else {
+            // Once per file: it saw them both.
+            let seen = std::fs::read_to_string(app.project.path().join("seen.jsonl")).unwrap();
+            assert!(seen.contains("\"file_path\":\"fine.txt\""), "{seen}");
+            assert!(seen.contains("\"file_path\":\"other.txt\""), "{seen}");
+            assert_eq!(seen.lines().count(), 2, "{seen}");
+        }
+        app.serving.abort();
+    }
+}
+
+/// A plugin's long timeout is honoured up to the bound, and Stop doesn't wait for it.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_long_hook_timeout_is_honoured_and_stop_cuts_it_short() {
+    let hooks = json!({"PreToolUse": [{"matcher": "Bash", "hooks": [{"type": "command",
+        "command": "sleep 120", "timeout": 300}]}], "Stop": [{"hooks": [{"type": "command",
+        "command": "true", "timeout": 9999}]}]});
+    let app = crate::app(hooks, &[], calls_once("shell", json!({"command": "true"}))).await;
+    let (data, thread) = (app.data.path().to_owned(), app.thread.clone());
+    let shown = tokio::task::spawn_blocking(move || {
+        let shown = call(&data, "plugin_action", json!({"action": "list"}));
+        call(
+            &data,
+            "set_thread_approval_mode",
+            json!({"threadId": thread, "mode": "yolo"}),
+        );
+        call(
+            &data,
+            "send_message",
+            json!({"threadId": thread, "text": "go"}),
+        );
+        std::thread::sleep(Duration::from_millis(1500));
+        let started = Instant::now();
+        call(&data, "stop_thread", json!({"threadId": thread}));
+        until("the stop never took", || {
+            call(&data, "get_thread", json!({"threadId": thread}))["running"] != true
+        });
+        assert!(
+            started.elapsed() < Duration::from_secs(15),
+            "Stop waited for the hook"
+        );
+        shown
+    })
+    .await
+    .unwrap();
+    let spec = &shown
+        .as_array()
+        .and_then(|all| {
+            all.iter()
+                .find(|plugin| plugin["spec"]["name"] == "guarded")
+        })
+        .expect("listed")["spec"];
+    let timeouts: Vec<u64> = spec["hooks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|hook| hook["timeout_seconds"].as_u64().unwrap())
+        .collect();
+    assert!(timeouts.contains(&300), "{timeouts:?}");
+    assert!(timeouts.contains(&600), "{timeouts:?}");
+    app.serving.abort();
+}
+
+/// A loop plugin's whole path, as ralph-loop does it: it reads the agent's last reply from the
+/// transcript with `grep` and `jq`, and ends when it finds its promise.
+const PROMISE_LOOP: &str = r#"#!/bin/bash
+set -euo pipefail
+HOOK_INPUT=$(cat)
+TRANSCRIPT_PATH=$(echo "$HOOK_INPUT" | jq -r '.transcript_path')
+[[ -f "$TRANSCRIPT_PATH" ]] || { echo "no transcript" > failed; exit 0; }
+grep -q '"role":"assistant"' "$TRANSCRIPT_PATH" || { echo "no assistant" > failed; exit 0; }
+LAST_LINES=$(grep '"role":"assistant"' "$TRANSCRIPT_PATH" | tail -n 100)
+LAST_OUTPUT=$(echo "$LAST_LINES" | jq -rs 'map(.message.content[]? | select(.type == "text") | .text) | last // ""')
+echo "$LAST_OUTPUT" >> replies.txt
+if echo "$LAST_OUTPUT" | grep -q '<promise>DONE</promise>'; then exit 0; fi
+jq -n --arg prompt "Work on the task again" '{"decision": "block", "reason": $prompt}'
+"#;
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_loop_plugin_reads_the_transcript_and_ends_on_its_promise() {
+    if std::process::Command::new("jq")
+        .arg("--version")
+        .output()
+        .is_err()
+    {
+        eprintln!("jq is not installed: skipped");
+        return;
+    }
+    let hooks = json!({"Stop": [{"hooks": [{"type": "command",
+        "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/stop.sh\""}]}]});
+    let app = crate::app(hooks, &[("hooks/stop.sh", PROMISE_LOOP)], |body| {
+        let rounds = body.to_string().matches("Work on the task again").count();
+        match rounds {
+            0 => reply("Round one."),
+            1 => reply("Round two."),
+            _ => reply("All done. <promise>DONE</promise>"),
+        }
+    })
+    .await;
+    run(&app, "go").await;
+    assert!(
+        !exists(&app, "failed"),
+        "the hook couldn't read the transcript"
+    );
+    let replies = std::fs::read_to_string(app.project.path().join("replies.txt")).unwrap();
+    assert_eq!(
+        replies.lines().collect::<Vec<_>>(),
+        [
+            "Round one.",
+            "Round two.",
+            "All done. <promise>DONE</promise>"
+        ]
+    );
+    assert_eq!(bodies(&app.llm).await.len(), 3);
+    app.serving.abort();
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn an_async_hook_does_not_hold_the_turn_and_cannot_block() {
     let app = app(

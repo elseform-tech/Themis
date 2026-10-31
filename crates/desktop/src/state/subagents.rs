@@ -793,6 +793,12 @@ impl SubagentKit {
             approvals,
             agent: Some(json!({"id": agent.id, "name": agent.name})),
             mcp_names: Arc::clone(&self.mcp.names),
+            session: themis_core::plugins::hooks::HookSession {
+                transcript_path: self.transcript_path(agent),
+                permission_mode: super::run::permission_mode(self.mode).to_owned(),
+                cancel: Some(Arc::clone(&agent.stop)),
+                env_file: None,
+            },
         }
     }
 

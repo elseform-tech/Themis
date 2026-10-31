@@ -1202,6 +1202,9 @@ async fn run_task_with_evidence_inner(
 
         used_tools = true;
         turn_end_guard.tool_ran();
+        if let Some(said) = text.as_deref() {
+            crate::plugins::hooks::note_reply_current(said);
+        }
         // The line a subagent tool carries is said before the tool runs, when the reply had none.
         if text.as_deref().is_none_or(|text| text.trim().is_empty()) && !is_subagent_run() {
             if let Some(line) = said_with_calls(&calls) {

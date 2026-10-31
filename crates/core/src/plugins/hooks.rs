@@ -3,6 +3,7 @@ use crate::tools::{ApprovalHook, RiskLevel, ToolAction};
 use anyhow::{bail, Context};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use std::io::Read as _;
 use std::path::Path;
 use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -66,12 +67,20 @@ pub struct Hook {
     pub exit_two_blocks: bool,
     #[serde(skip)]
     pub plugin_root: Option<std::path::PathBuf>,
+    /// `CLAUDE_PLUGIN_DATA`: the plugin's own folder, kept across runs and updates.
+    #[serde(skip)]
+    pub plugin_data: Option<std::path::PathBuf>,
+    /// `CLAUDE_ENV_FILE`, for a hook that may set the environment of later commands.
+    #[serde(skip)]
+    pub env_file: Option<std::path::PathBuf>,
     #[serde(skip)]
     pub runtime_identity: Option<String>,
 }
 fn timeout() -> u64 {
     10
 }
+/// The longest a hook may ask for. A long one is cut short by Stop, not waited for.
+pub const MAX_TIMEOUT_SECONDS: u64 = 600;
 /// Seconds as a whole number; models often write `5.0`.
 fn whole_seconds<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<u64, D::Error> {
     let seconds = f64::deserialize(deserializer)?;
@@ -87,9 +96,11 @@ impl Hook {
         if !super::safe_name(&self.name)
             || !EVENTS.contains(&canonical_event(&self.event))
             || self.command.trim().is_empty()
-            || !(1..=60).contains(&self.timeout_seconds)
+            || !(1..=MAX_TIMEOUT_SECONDS).contains(&self.timeout_seconds)
         {
-            bail!("Invalid hook name, event, command, or timeout (1–60 seconds)");
+            bail!(
+                "Invalid hook name, event, command, or timeout (1–{MAX_TIMEOUT_SECONDS} seconds)"
+            );
         }
         if self.shell.as_deref().is_some_and(|shell| shell != "bash") {
             bail!("Hook shell must be bash");
@@ -157,6 +168,13 @@ fn matcher_covers(matcher: &str, tool: Option<&str>, mcp_names: &McpNames) -> bo
             || tool == Some(name)
             // The `git` tool runs what `shell` runs: a guard on one holds on the other.
             || (name == "shell" && tool == Some("git"))
+            // These write files as `write_file` and `apply_patch` do, so a guard on files covers
+            // them. Reading the source of a copy isn't a write, but a move is.
+            || (matches!(name, "write_file" | "apply_patch")
+                && matches!(
+                    tool,
+                    Some("copy_file" | "move_file" | "delete_file" | "create_dir")
+                ))
     })
 }
 
@@ -202,7 +220,7 @@ fn claude_tool_name(tool: &str) -> Option<&'static str> {
     Some(match tool {
         "shell" | "background_task" | "git" => "Bash",
         "read_file" => "Read",
-        "write_file" => "Write",
+        "write_file" | "copy_file" | "move_file" | "delete_file" | "create_dir" => "Write",
         "apply_patch" => "Edit",
         "search_file" => "Grep",
         "list_dir" => "LS",
@@ -213,8 +231,56 @@ fn claude_tool_name(tool: &str) -> Option<&'static str> {
     })
 }
 
+/// The files a patch names: both sides of every file header, so a deleted file counts too. A line
+/// in a hunk that reads like a header only adds a path to check, which errs towards checking.
+fn patch_paths(patch: &str) -> Vec<String> {
+    let mut paths: Vec<String> = Vec::new();
+    for line in patch.lines() {
+        let Some(path) = line
+            .strip_prefix("+++ ")
+            .or_else(|| line.strip_prefix("--- "))
+        else {
+            continue;
+        };
+        let path = path.split('\t').next().unwrap_or_default().trim();
+        if path.is_empty() || path == "/dev/null" {
+            continue;
+        }
+        let path = path
+            .strip_prefix("b/")
+            .or_else(|| path.strip_prefix("a/"))
+            .unwrap_or(path)
+            .to_owned();
+        if !paths.contains(&path) {
+            paths.push(path);
+        }
+    }
+    paths
+}
+
+/// Every file a tool call writes, changes or removes; for a move, both ends.
+fn paths_touched(tool: &str, arguments: &Value) -> Vec<String> {
+    let text = |key: &str| arguments[key].as_str().map(str::to_owned);
+    match tool {
+        "apply_patch" => arguments["patch"]
+            .as_str()
+            .map_or_else(Vec::new, patch_paths),
+        "move_file" => [text("source_path"), text("destination_path")]
+            .into_iter()
+            .flatten()
+            .collect(),
+        "copy_file" => text("destination_path").into_iter().collect(),
+        "delete_file" | "write_file" | "create_dir" => ["file_path", "path", "directory_path"]
+            .into_iter()
+            .find_map(text)
+            .into_iter()
+            .collect(),
+        _ => Vec::new(),
+    }
+}
+
 /// A tool's arguments in the shape Claude's tools take theirs: the whole command as one string,
-/// the patched file as `file_path` (the first, when a patch touches several).
+/// the file as `file_path` (the first, when a call touches several; see [`HookRuntime`]).
 fn claude_tool_input(tool: &str, arguments: &Value) -> Value {
     let mut input = arguments.clone();
     match tool {
@@ -224,17 +290,15 @@ fn claude_tool_input(tool: &str, arguments: &Value) -> Value {
                 input["command"] = argv.join(" ").into();
             }
         }
-        "apply_patch" => {
-            if let Some(path) = arguments["patch"].as_str().and_then(|patch| {
-                patch.lines().find_map(|line| {
-                    let path = line.strip_prefix("+++ ")?.split('\t').next()?.trim();
-                    (path != "/dev/null").then(|| path.strip_prefix("b/").unwrap_or(path))
-                })
-            }) {
-                input["file_path"] = path.into();
+        _ => {
+            let paths = paths_touched(tool, arguments);
+            if let Some(first) = paths.first() {
+                input["file_path"] = first.as_str().into();
+            }
+            if paths.len() > 1 {
+                input["file_paths"] = json!(paths);
             }
         }
-        _ => {}
     }
     input
 }
@@ -258,6 +322,15 @@ fn add_claude_fields(payload: &mut Value, runtime: &HookRuntime) {
     payload["hook_event_name"] = event.into();
     payload["session_id"] = runtime.thread_id.clone().into();
     payload["cwd"] = runtime.root.to_string_lossy().as_ref().into();
+    payload["permission_mode"] = runtime.session.permission_mode.as_str().into();
+    if let Some(path) = &runtime.session.transcript_path {
+        payload["transcript_path"] = path.to_string_lossy().as_ref().into();
+    }
+    if payload.get("stop_hook_active").is_none()
+        && matches!(payload["event"].as_str(), Some("Stop" | "SubagentEnd"))
+    {
+        payload["stop_hook_active"] = false.into();
+    }
     let Some(tool) = payload["tool"].as_str().map(str::to_owned) else {
         return;
     };
@@ -377,6 +450,16 @@ async fn execute(hook: &Hook, root: &Path, payload: &Value) -> anyhow::Result<Va
         command.env("CLAUDE_PLUGIN_ROOT", path);
     }
     command.env("CLAUDE_PROJECT_DIR", root);
+    if let Some(path) = &hook.plugin_data {
+        std::fs::create_dir_all(path)?;
+        command.env("CLAUDE_PLUGIN_DATA", path);
+    }
+    if let Some(path) = &hook.env_file {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        command.env("CLAUDE_ENV_FILE", path);
+    }
     #[cfg(unix)]
     command.process_group(0);
     let mut child = command.spawn()?;
@@ -457,6 +540,112 @@ async fn execute(hook: &Hook, root: &Path, payload: &Value) -> anyhow::Result<Va
     }
 }
 
+/// What hooks read about the session they run in.
+#[derive(Clone, Default)]
+pub struct HookSession {
+    /// The chat's Claude-format transcript, kept while it has hooks. It holds prompts, so it goes
+    /// to the hook and never to a log.
+    pub transcript_path: Option<std::path::PathBuf>,
+    /// Claude's words: `default`, or `bypassPermissions` in YOLO.
+    pub permission_mode: String,
+    /// Stops a hook that is still running (the person's Stop).
+    pub cancel: Option<Arc<std::sync::atomic::AtomicBool>>,
+    /// What `CLAUDE_ENV_FILE` hooks wrote; a subagent has none.
+    pub env_file: Option<std::path::PathBuf>,
+}
+
+/// Most of a transcript kept, in bytes: past this its older half goes.
+const TRANSCRIPT_BYTES: u64 = 8 * 1024 * 1024;
+/// Most of one entry kept in a transcript, in bytes.
+const TRANSCRIPT_ENTRY_BYTES: usize = 64 * 1024;
+/// Most files one call may make a path guard look at: more is refused, not half checked.
+const MAX_GUARDED_PATHS: usize = 64;
+/// Most of an env file read, and how many variables are taken from it.
+const ENV_FILE_BYTES: u64 = 64 * 1024;
+const ENV_FILE_VARIABLES: usize = 64;
+
+/// Whether an env file may set this variable. Not what changes which program runs, or how a
+/// program starts: a hook never decides what a command means to the rules that allowed it.
+fn env_name_allowed(name: &str) -> bool {
+    let valid = !name.is_empty()
+        && !name.starts_with(|c: char| c.is_ascii_digit())
+        && name.chars().all(|c| c == '_' || c.is_ascii_alphanumeric());
+    const WHOLE: [&str; 16] = [
+        "PATH",
+        "HOME",
+        "SHELL",
+        "ENV",
+        "BASH_ENV",
+        "ZDOTDIR",
+        "IFS",
+        "SHELLOPTS",
+        "BASHOPTS",
+        "PYTHONPATH",
+        "PYTHONHOME",
+        "PYTHONSTARTUP",
+        "NODE_OPTIONS",
+        "NODE_PATH",
+        "PERL5OPT",
+        "RUBYOPT",
+    ];
+    const PREFIXES: [&str; 5] = ["LD_", "DYLD_", "GIT_", "CLAUDE_", "THEMIS_"];
+    valid && !WHOLE.contains(&name) && !PREFIXES.iter().any(|prefix| name.starts_with(prefix))
+}
+
+/// The variables in an env file. It is read, never run: `export NAME=value` and `NAME=value`, with
+/// a plain or quoted value. A value that would need a shell to mean anything is left out.
+fn parse_env_file(text: &str) -> Vec<(String, String)> {
+    let mut variables: Vec<(String, String)> = Vec::new();
+    for line in text.lines() {
+        let line = line.trim();
+        let line = line.strip_prefix("export ").unwrap_or(line).trim_start();
+        let Some((name, value)) = line.split_once('=') else {
+            continue;
+        };
+        let value = value.trim();
+        let plain = ['"', '\'']
+            .into_iter()
+            .find_map(|quote| value.strip_prefix(quote)?.strip_suffix(quote))
+            .unwrap_or(value);
+        let needs_a_shell = plain
+            .contains(['$', '`', '\\', ';', '|', '&', '<', '>', '(', ')', '\n'])
+            || plain.contains(['"', '\''])
+            || (plain.len() == value.len() && plain.contains(char::is_whitespace));
+        if env_name_allowed(name) && !needs_a_shell && variables.len() < ENV_FILE_VARIABLES {
+            variables.retain(|(known, _)| known != name);
+            variables.push((name.to_owned(), plain.to_owned()));
+        }
+    }
+    variables
+}
+
+/// What this run's session hooks set for its shell commands. A subagent's scoped shell must mean
+/// what it says, so it has none.
+#[must_use]
+pub fn session_env() -> Vec<(String, String)> {
+    let Some(path) = ACTIVE
+        .try_with(|runtime| {
+            runtime
+                .agent
+                .is_none()
+                .then(|| runtime.session.env_file.clone())
+                .flatten()
+        })
+        .ok()
+        .flatten()
+    else {
+        return Vec::new();
+    };
+    let Ok(file) = std::fs::File::open(path) else {
+        return Vec::new();
+    };
+    let mut text = String::new();
+    if file.take(ENV_FILE_BYTES).read_to_string(&mut text).is_err() {
+        return Vec::new();
+    }
+    parse_env_file(&text)
+}
+
 #[derive(Clone)]
 pub struct HookRuntime {
     pub hooks: Vec<Hook>,
@@ -468,6 +657,7 @@ pub struct HookRuntime {
     pub agent: Option<Value>,
     /// The Claude names of this run's MCP tools, by Themis tool name.
     pub mcp_names: McpNames,
+    pub session: HookSession,
 }
 
 /// A Themis MCP tool's Claude names (`mcp__server__tool`, then the form Claude gives a server
@@ -596,6 +786,7 @@ pub async fn stop_refused(
     if runtime.agent.is_some() {
         return None;
     }
+    runtime.note_reply(reply);
     let payload = json!({"last_assistant_message": reply, "stop_hook_active": active});
     let error = runtime.emit("Stop", payload, events).await.err()?;
     error.downcast::<KeepGoing>().ok()
@@ -625,6 +816,37 @@ fn blocked_tool_note(hook: &str, reason: Option<&str>) -> String {
     }
 }
 
+/// Appends one line, readable only by the person, keeping the newer half when it grows too long.
+fn append_transcript(path: &Path, line: &str) -> std::io::Result<()> {
+    use std::io::Write as _;
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    if std::fs::metadata(path).is_ok_and(|metadata| metadata.len() > TRANSCRIPT_BYTES) {
+        let kept = std::fs::read(path)?;
+        let half = kept.len() / 2;
+        let start = kept[half..]
+            .iter()
+            .position(|byte| *byte == b'\n')
+            .map_or(kept.len(), |at| half + at + 1);
+        std::fs::write(path, &kept[start..])?;
+    }
+    let mut options = std::fs::OpenOptions::new();
+    options.create(true).append(true);
+    #[cfg(unix)]
+    std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o600);
+    let mut file = options.open(path)?;
+    file.write_all(line.as_bytes())?;
+    file.write_all(b"\n")
+}
+
+/// What the agent said before its tool calls, for this chat's transcript.
+pub fn note_reply_current(text: &str) {
+    if let Ok(runtime) = ACTIVE.try_with(Clone::clone) {
+        runtime.note_reply(text);
+    }
+}
+
 pub async fn emit_current(
     event: &str,
     payload: Value,
@@ -638,7 +860,66 @@ pub async fn emit_current(
     }
     Ok(())
 }
+/// `text` as one entry in a transcript, cut to its bound.
+fn entry_text(text: &str) -> &str {
+    capped(text, TRANSCRIPT_ENTRY_BYTES)
+}
+
 impl HookRuntime {
+    /// Adds a line to the chat's transcript, in the shape Claude writes: one JSON object a line,
+    /// with `"role":"…"` as hooks grep for it. Only the chat's own run writes there, and a failure
+    /// only costs a line: it never stops the work.
+    fn write_transcript(&self, role: &str, content: Value) {
+        if self.agent.is_some() || self.hooks.iter().all(|hook| !hook.enabled) {
+            return;
+        }
+        let Some(path) = &self.session.transcript_path else {
+            return;
+        };
+        let line = json!({"type": role, "sessionId": self.thread_id,
+            "message": {"role": role, "content": content}});
+        let _ = append_transcript(path, &line.to_string());
+    }
+
+    /// What the agent said, for the transcript.
+    pub fn note_reply(&self, text: &str) {
+        if !text.trim().is_empty() {
+            self.write_transcript(
+                "assistant",
+                json!([{"type": "text", "text": entry_text(text)}]),
+            );
+        }
+    }
+
+    fn note_prompt(&self, text: &str) {
+        self.write_transcript("user", json!(entry_text(text)));
+    }
+
+    /// A tool call or its result, for the transcript.
+    fn note_tool(&self, event: &str, payload: &Value) {
+        let name = payload["tool_name"].as_str().unwrap_or_default();
+        match event {
+            "BeforeTool" => {
+                let input = payload["tool_input"].to_string();
+                self.write_transcript(
+                    "assistant",
+                    json!([{"type": "tool_use", "name": name, "input": entry_text(&input)}]),
+                );
+            }
+            "AfterTool" => {
+                let output = payload["output"]
+                    .as_str()
+                    .or_else(|| payload["error"].as_str())
+                    .unwrap_or_default();
+                self.write_transcript(
+                    "user",
+                    json!([{"type": "tool_result", "name": name, "content": entry_text(output)}]),
+                );
+            }
+            _ => {}
+        }
+    }
+
     pub async fn emit(
         &self,
         event: &str,
@@ -655,6 +936,17 @@ impl HookRuntime {
         prompt: &str,
         events: &tokio::sync::mpsc::Sender<crate::runtime::RunEvent>,
     ) -> anyhow::Result<String> {
+        self.note_prompt(prompt);
+        // A session hook runs every turn here, so what it wrote last turn goes.
+        if let Some(path) = &self.session.env_file {
+            if self
+                .hooks
+                .iter()
+                .any(|hook| hook.enabled && hook.env_file.is_some())
+            {
+                let _ = std::fs::remove_file(path);
+            }
+        }
         let outputs = self
             .emit_collect("PromptSubmit", json!({"prompt": prompt}), events)
             .await?;
@@ -688,16 +980,65 @@ impl HookRuntime {
             payload["agent"] = agent.clone();
         }
         add_claude_fields(&mut payload, self);
-        for hook in self.hooks.iter().filter(|h| {
-            h.enabled && canonical_event(&h.event) == event && h.applies(&payload, &self.mcp_names)
-        }) {
+        self.note_tool(event, &payload);
+        // A guard written for Claude looks at one `file_path`: it sees each file a call touches
+        // in turn. A native hook gets the arguments, and reads them as it likes.
+        let touched = payload["tool"]
+            .as_str()
+            .filter(|_| matches!(event, "BeforeTool" | "AfterTool"))
+            .map_or_else(Vec::new, |tool| paths_touched(tool, &payload["arguments"]));
+        let applying = || {
+            self.hooks.iter().filter(|h| {
+                h.enabled
+                    && canonical_event(&h.event) == event
+                    && h.applies(&payload, &self.mcp_names)
+            })
+        };
+        if touched.len() > MAX_GUARDED_PATHS
+            && event == "BeforeTool"
+            && applying().any(|hook| hook.exit_two_blocks && hook.blocking)
+        {
+            let hook = applying()
+                .find(|hook| hook.blocking)
+                .map_or("", |h| h.name.as_str());
+            bail!(blocked_tool_note(
+                hook,
+                Some("This call touches too many files for the plugin's guard to check. Split it.")
+            ));
+        }
+        let mut views: Vec<(&Hook, Value)> = Vec::new();
+        for hook in applying() {
+            if hook.exit_two_blocks && touched.len() > 1 {
+                for path in touched.iter().take(MAX_GUARDED_PATHS) {
+                    let mut view = payload.clone();
+                    view["tool_input"]["file_path"] = path.as_str().into();
+                    views.push((hook, view));
+                }
+            } else {
+                views.push((hook, payload.clone()));
+            }
+        }
+        for (hook, payload) in &views {
+            let hook = *hook;
             if hook.background {
-                self.start_in_background(hook, &payload);
+                self.start_in_background(hook, payload);
                 continue;
             }
-            let outcome = IN_HOOK
-                .scope(true, run(hook, &self.root, &payload, &self.approvals))
-                .await;
+            let cancelled = async {
+                match &self.session.cancel {
+                    Some(flag) => {
+                        while !flag.load(std::sync::atomic::Ordering::SeqCst) {
+                            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                        }
+                    }
+                    None => std::future::pending::<()>().await,
+                }
+            };
+            // Dropping the running hook ends its process group.
+            let outcome = tokio::select! {
+                outcome = IN_HOOK.scope(true, run(hook, &self.root, payload, &self.approvals)) => outcome,
+                () = cancelled => Err(anyhow::anyhow!("Hook stopped")),
+            };
             events
                 .send(crate::runtime::RunEvent::ToolCallFinished {
                     tool: format!(
@@ -934,6 +1275,8 @@ mod tests {
             command_prefix: None,
             exit_two_blocks: false,
             plugin_root: None,
+            plugin_data: None,
+            env_file: None,
             runtime_identity: None,
         }
     }
@@ -987,6 +1330,7 @@ mod tests {
             thread_id: "thread".into(),
             agent: None,
             mcp_names: Arc::default(),
+            session: HookSession::default(),
         };
         let (tx, mut rx) = tokio::sync::mpsc::channel(32);
         runtime
@@ -1037,6 +1381,7 @@ mod tests {
             thread_id: "thread".into(),
             agent: Some(json!({"id": "s1", "name": "Bug hunt"})),
             mcp_names: Arc::default(),
+            session: HookSession::default(),
         };
         let (tx, _rx) = tokio::sync::mpsc::channel(32);
         runtime
@@ -1067,6 +1412,7 @@ mod tests {
             thread_id: "thread".into(),
             agent: None,
             mcp_names: Arc::default(),
+            session: HookSession::default(),
         };
         let (tx, _rx) = tokio::sync::mpsc::channel(32);
         // Plain text and Claude's JSON both add context, in order; the prompt reaches them.
@@ -1147,6 +1493,48 @@ mod tests {
     }
 
     #[test]
+    fn a_patch_names_every_file_it_touches() {
+        let patch = "--- a/one.txt\n+++ b/one.txt\n@@ -1 +1 @@\n-a\n+b\n--- a/two.txt\n+++ /dev/null\n@@ -1 +0,0 @@\n-a\n--- /dev/null\n+++ b/three.txt\n@@ -0,0 +1 @@\n+a\n";
+        assert_eq!(patch_paths(patch), ["one.txt", "two.txt", "three.txt"]);
+        assert!(patch_paths("nothing here").is_empty());
+    }
+
+    #[test]
+    fn an_env_file_is_read_and_never_run() {
+        let parsed = parse_env_file(
+            "export A=1\nB=two\nexport C=\"three words\"\nD='four'\n# a note\nexport PATH=/evil\nexport LD_PRELOAD=x\nexport DYLD_X=x\nexport GIT_DIR=x\nexport NODE_OPTIONS=x\nexport E=$(touch x)\nexport F=`x`\nexport G=a;b\nexport H=a b\nexport 9I=x\nexport A=again\n",
+        );
+        assert_eq!(
+            parsed,
+            [
+                ("B".to_owned(), "two".to_owned()),
+                ("C".to_owned(), "three words".to_owned()),
+                ("D".to_owned(), "four".to_owned()),
+                ("A".to_owned(), "again".to_owned()),
+            ]
+        );
+    }
+
+    proptest! {
+        /// Any text: no panic, and nothing that changes which program runs gets through.
+        #[test]
+        fn any_env_file_text_is_safe(text in "[ -~\n]{0,200}", name in "[A-Z_]{1,8}") {
+            for (key, value) in parse_env_file(&format!("{text}\nexport {name}=x\n{name}=$(y)\n")) {
+                prop_assert!(env_name_allowed(&key));
+                prop_assert!(!value.contains('$') && !value.contains('`'));
+            }
+        }
+
+        /// Any patch text: no panic, and no path is ever empty or the null device.
+        #[test]
+        fn any_patch_text_is_read_cleanly(text in "(\\+\\+\\+ |--- |[ -~\n]){0,40}") {
+            for path in patch_paths(&text) {
+                prop_assert!(!path.is_empty() && path != "/dev/null");
+            }
+        }
+    }
+
+    #[test]
     fn hook_timeouts_accept_whole_floats_only() {
         let parse = |seconds: Value| {
             serde_json::from_value::<Hook>(
@@ -1171,6 +1559,7 @@ mod tests {
             approvals: Arc::new(crate::tools::AllowAllHook),
             agent: None,
             mcp_names: Arc::default(),
+            session: HookSession::default(),
         };
         let tool_hook = |name: &str, command: &str, blocking: bool| Hook {
             name: name.into(),
@@ -1186,6 +1575,8 @@ mod tests {
             command_prefix: None,
             exit_two_blocks: false,
             plugin_root: None,
+            plugin_data: None,
+            env_file: None,
             runtime_identity: None,
         };
         let block = |hook: Hook| {
