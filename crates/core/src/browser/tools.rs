@@ -164,6 +164,7 @@ impl Base {
                 .unwrap_or_else(|| BLANK_SITE.to_owned()),
         };
         self.gate(tool, &site, format!("{summary} on {site}"), risk)?;
+        self.scope.chat.thaw_pages().await;
         chat.set_activity(Some(activity)).await;
         let started = std::time::Instant::now();
         let result = until_stopped(self.scope.cancel.as_deref(), action(Arc::clone(&chat))).await;
@@ -292,6 +293,7 @@ struct BrowserSnapshot {
 #[async_trait]
 impl ToolRuntime for BrowserSnapshot {
     async fn execute(&self, args: Value) -> Result<Value, ToolCallError> {
+        self.base.scope.chat.thaw_pages().await;
         let args: SnapshotArgs = parse_tool_args("browser_snapshot", args)?;
         let reference = Some(args.reference.trim().to_owned()).filter(|r| !r.is_empty());
         self.base
@@ -649,6 +651,7 @@ impl ToolRuntime for BrowserTabs {
             format!("browser_tabs {action} on {site}"),
             risk,
         )?;
+        self.base.scope.chat.thaw_pages().await;
         let tab = usize::try_from(args.tab).ok().filter(|tab| *tab > 0);
         chat.tabs(&action, tab)
             .await
@@ -697,6 +700,7 @@ impl ToolRuntime for BrowserScreenshot {
             format!("browser_screenshot on {site}"),
             RiskLevel::Read,
         )?;
+        self.base.scope.chat.thaw_pages().await;
         let reference = Some(args.reference.trim().to_owned()).filter(|r| !r.is_empty());
         let (png, width, height) = chat
             .screenshot(reference.as_deref(), args.full_page)
@@ -755,6 +759,7 @@ impl ToolRuntime for BrowserRecord {
             format!("browser_record {action} on {site}"),
             RiskLevel::Read,
         )?;
+        self.base.scope.chat.thaw_pages().await;
         match action.as_str() {
             "start" => {
                 let max = match args.max_seconds {
