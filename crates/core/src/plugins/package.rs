@@ -36,8 +36,6 @@ pub(super) const MAX_INLINE_FILES: usize = 1000;
 
 /// Where a package keeps its files within a scope's plugin directory.
 pub(super) const PACKAGES_DIR: &str = "packages";
-/// Written last when a package has been copied out, so a later run needn't look at every file.
-const COPIED_MARKER: &str = ".themis-package";
 /// A folder younger than this may belong to an install still on its way to the registry.
 const PRUNE_AFTER: std::time::Duration = std::time::Duration::from_secs(3600);
 
@@ -129,13 +127,14 @@ fn set_mode(path: &Path, executable: bool) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Keeps `entries` in `store` under their hash. The folder appears whole or not at all.
+/// Keeps `entries` in `store` under their hash. The folder appears whole or not at all, and one
+/// already there counts only if it really is this package: a project's store is in the project.
 pub(super) fn keep(entries: &[Entry], package: &PackageRef, store: &Path) -> anyhow::Result<()> {
-    package.validate()?;
-    let target = store.join(&package.hash);
-    if target.is_dir() {
+    if verified(store, package)?.is_some() {
         return Ok(());
     }
+    let target = store.join(&package.hash);
+    remove_any(&target)?;
     fs::create_dir_all(store)?;
     let temporary = store.join(format!(".tmp-{}", super::revision()));
     let copied = (|| {
@@ -164,50 +163,164 @@ pub(super) fn keep(entries: &[Entry], package: &PackageRef, store: &Path) -> any
     Ok(())
 }
 
-/// Copies a kept package to `directory`, once per folder. `false` when it is no longer kept.
-pub(super) fn copy_out(
-    store: &Path,
-    package: &PackageRef,
-    directory: &Path,
-    prepare_parent: &dyn Fn(&Path) -> anyhow::Result<()>,
-) -> anyhow::Result<bool> {
+/// Removes a file, a link (not what it points at) or a folder, if any is there.
+fn remove_any(path: &Path) -> anyhow::Result<()> {
+    match fs::symlink_metadata(path) {
+        Ok(metadata) if metadata.is_dir() => fs::remove_dir_all(path)?,
+        Ok(_) => fs::remove_file(path)?,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => return Err(error.into()),
+    }
+    Ok(())
+}
+
+fn is_executable(metadata: &fs::Metadata) -> bool {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        metadata.permissions().mode() & 0o111 != 0
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = metadata;
+        false
+    }
+}
+
+/// A kept package's files, if what is stored really is the package: every file hashed, no links,
+/// nothing extra. `None` when it is gone or isn't.
+pub(super) fn verified(store: &Path, package: &PackageRef) -> anyhow::Result<Option<Vec<Entry>>> {
     package.validate()?;
-    let source = store.join(&package.hash);
-    let marker = directory.join(COPIED_MARKER);
-    if fs::read_to_string(&marker).is_ok_and(|text| text == package.hash) {
-        return Ok(true);
+    let root = store.join(&package.hash);
+    if !fs::symlink_metadata(&root).is_ok_and(|metadata| metadata.is_dir()) {
+        return Ok(None);
     }
-    if !source.is_dir() {
-        return Ok(false);
-    }
-    let mut stack = vec![source.clone()];
-    while let Some(folder) = stack.pop() {
+    let mut entries = Vec::new();
+    let mut stack = vec![(root, String::new())];
+    while let Some((folder, logical)) = stack.pop() {
         for entry in fs::read_dir(&folder)? {
             let entry = entry?;
-            let from = entry.path();
-            if entry.file_type()?.is_dir() {
-                stack.push(from);
-                continue;
+            let name = entry.file_name().to_string_lossy().into_owned();
+            let relative = if logical.is_empty() {
+                name
+            } else {
+                format!("{logical}/{name}")
+            };
+            let metadata = fs::symlink_metadata(entry.path())?;
+            if metadata.is_dir() {
+                stack.push((entry.path(), relative));
+            } else if metadata.is_file() {
+                entries.push(Entry {
+                    relative,
+                    path: entry.path(),
+                    bytes: metadata.len(),
+                    executable: is_executable(&metadata),
+                });
+            } else {
+                return Ok(None);
             }
-            let to = directory.join(from.strip_prefix(&source)?);
-            prepare_parent(to.parent().context("Missing parent")?)?;
-            if to
-                .symlink_metadata()
-                .is_ok_and(|metadata| metadata.file_type().is_symlink())
-            {
-                bail!("Symlink resource target rejected");
-            }
-            // A persistent MCP process may be reading this revision: replace, never rewrite.
-            let temporary = to.with_extension(format!("{}.tmp", super::revision()));
-            let executable = entry.metadata()?.permissions();
-            fs::copy(&from, &temporary)?;
-            fs::set_permissions(&temporary, executable)?;
-            fs::rename(&temporary, &to)?;
         }
     }
+    entries.sort_by(|a, b| a.relative.cmp(&b.relative));
+    Ok((describe(&entries)? == *package).then_some(entries))
+}
+
+/// Whether two files hold the same bytes, reading one piece of each at a time.
+fn same_content(a: &Path, b: &Path) -> anyhow::Result<bool> {
+    let (mut a, mut b) = (fs::File::open(a)?, fs::File::open(b)?);
+    let (mut left, mut right) = (vec![0u8; 64 * 1024], vec![0u8; 64 * 1024]);
+    loop {
+        let read = a.read(&mut left)?;
+        if read == 0 {
+            return Ok(b.read(&mut right)? == 0);
+        }
+        if b.read_exact(&mut right[..read]).is_err() || left[..read] != right[..read] {
+            return Ok(false);
+        }
+    }
+}
+
+/// Whether what is at `path` is this entry: a real file, not a link, with its bytes and its bit.
+fn matches(path: &Path, entry: &Entry) -> anyhow::Result<bool> {
+    let Ok(metadata) = fs::symlink_metadata(path) else {
+        return Ok(false);
+    };
+    Ok(metadata.is_file()
+        && metadata.len() == entry.bytes
+        && is_executable(&metadata) == entry.executable
+        && same_content(path, &entry.path)?)
+}
+
+/// The paths of `entries`, for [`remove_others`].
+pub(super) fn names(entries: &[Entry]) -> BTreeSet<String> {
+    entries.iter().map(|entry| entry.relative.clone()).collect()
+}
+
+/// Removes everything in `directory` that isn't one of `wanted` or a folder leading to one. Links
+/// are removed as links, never followed. The project's copy of a plugin is written to by whoever
+/// can write the project, so nothing found there is taken on trust.
+pub(super) fn remove_others(directory: &Path, wanted: &BTreeSet<String>) -> anyhow::Result<()> {
+    let metadata = match fs::symlink_metadata(directory) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(error.into()),
+    };
+    if !metadata.is_dir() {
+        bail!("Plugin files folder is not a folder");
+    }
+    let folders: BTreeSet<&str> = wanted
+        .iter()
+        .flat_map(|path| {
+            path.char_indices()
+                .filter(|(_, character)| *character == '/')
+                .map(|(at, _)| &path[..at])
+        })
+        .collect();
+    let mut stack = vec![(directory.to_path_buf(), String::new())];
+    while let Some((folder, logical)) = stack.pop() {
+        for entry in fs::read_dir(&folder)? {
+            let entry = entry?;
+            let name = entry.file_name().to_string_lossy().into_owned();
+            let relative = if logical.is_empty() {
+                name
+            } else {
+                format!("{logical}/{name}")
+            };
+            let metadata = fs::symlink_metadata(entry.path())?;
+            if metadata.is_dir() && folders.contains(relative.as_str()) {
+                stack.push((entry.path(), relative));
+            } else if !(metadata.is_file() && wanted.contains(&relative)) {
+                remove_any(&entry.path())?;
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Makes `directory` hold each of `entries`, replacing only what differs: a persistent MCP process
+/// may be reading the rest.
+pub(super) fn copy_to(
+    entries: &[Entry],
+    directory: &Path,
+    prepare_parent: &dyn Fn(&Path) -> anyhow::Result<()>,
+) -> anyhow::Result<()> {
+    if fs::symlink_metadata(directory).is_ok_and(|metadata| !metadata.is_dir()) {
+        bail!("Plugin files folder is not a folder");
+    }
     prepare_parent(directory)?;
-    fs::write(marker, &package.hash)?;
-    Ok(true)
+    remove_others(directory, &names(entries))?;
+    for entry in entries {
+        let to = directory.join(&entry.relative);
+        if matches(&to, entry)? {
+            continue;
+        }
+        prepare_parent(to.parent().context("Missing parent")?)?;
+        let temporary = to.with_extension(format!("{}.tmp", super::revision()));
+        fs::copy(&entry.path, &temporary)?;
+        set_mode(&temporary, entry.executable)?;
+        fs::rename(&temporary, &to)?;
+    }
+    Ok(())
 }
 
 /// Removes kept packages nothing refers to any more.
@@ -268,24 +381,34 @@ mod tests {
         }
     }
 
-    #[test]
-    fn a_kept_package_comes_back_byte_for_byte_with_its_mode() {
+    fn prepare(parent: &Path) -> anyhow::Result<()> {
+        Ok(fs::create_dir_all(parent)?)
+    }
+
+    fn kept_package(store: &Path) -> (tempfile::TempDir, PackageRef) {
         let folder = tempfile::tempdir().unwrap();
-        let store = tempfile::tempdir().unwrap();
-        let out = tempfile::tempdir().unwrap();
         let entries = vec![
             entry(folder.path(), "bin/tool", &[0xff, 0x00, 0x80], true),
             entry(folder.path(), "notes/a.txt", b"hello", false),
         ];
         let package = describe(&entries).unwrap();
+        keep(&entries, &package, store).unwrap();
+        (folder, package)
+    }
+
+    #[test]
+    fn a_kept_package_comes_back_byte_for_byte_with_its_mode() {
+        let store = tempfile::tempdir().unwrap();
+        let out = tempfile::tempdir().unwrap();
+        let (folder, package) = kept_package(store.path());
         assert_eq!((package.files, package.bytes), (2, 8));
-        keep(&entries, &package, store.path()).unwrap();
         // Keeping it again changes nothing, and leaves no temporary folder.
+        let entries = verified(store.path(), &package).unwrap().unwrap();
         keep(&entries, &package, store.path()).unwrap();
         assert_eq!(fs::read_dir(store.path()).unwrap().count(), 1);
+        drop(folder);
         let target = out.path().join("plugin");
-        let prepare = |parent: &Path| Ok(fs::create_dir_all(parent)?);
-        assert!(copy_out(store.path(), &package, &target, &prepare).unwrap());
+        copy_to(&entries, &target, &prepare).unwrap();
         assert_eq!(
             fs::read(target.join("bin/tool")).unwrap(),
             [0xff, 0x00, 0x80]
@@ -303,10 +426,102 @@ mod tests {
             };
             assert_eq!((mode("bin/tool"), mode("notes/a.txt")), (0o755, 0o644));
         }
-        // Copied once: a later run doesn't touch the files again.
+    }
+
+    #[test]
+    fn whatever_is_in_the_target_it_ends_up_exactly_the_package() {
+        let store = tempfile::tempdir().unwrap();
+        let out = tempfile::tempdir().unwrap();
+        let (_folder, package) = kept_package(store.path());
+        let entries = verified(store.path(), &package).unwrap().unwrap();
+        let target = out.path().join("plugin");
+        copy_to(&entries, &target, &prepare).unwrap();
+        // A changed file, a marker claiming it was copied, a planted file and a folder where a
+        // file belongs.
+        fs::write(target.join("bin/tool"), "tampered").unwrap();
+        fs::write(target.join(".themis-package"), &package.hash).unwrap();
+        fs::write(target.join("planted"), "x").unwrap();
         fs::remove_file(target.join("notes/a.txt")).unwrap();
-        assert!(copy_out(store.path(), &package, &target, &prepare).unwrap());
-        assert!(!target.join("notes/a.txt").exists());
+        fs::create_dir(target.join("notes/a.txt")).unwrap();
+        fs::write(target.join("notes/a.txt/inner"), "x").unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let elsewhere = tempfile::tempdir().unwrap();
+            fs::write(elsewhere.path().join("kept"), "x").unwrap();
+            std::os::unix::fs::symlink(elsewhere.path(), target.join("bin/link")).unwrap();
+            let wanted = names(&entries);
+            remove_others(&target, &wanted).unwrap();
+            // A link is removed as a link: what it pointed at is untouched.
+            assert!(elsewhere.path().join("kept").exists());
+            fs::set_permissions(target.join("bin"), fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        copy_to(&entries, &target, &prepare).unwrap();
+        assert_eq!(
+            fs::read(target.join("bin/tool")).unwrap(),
+            [0xff, 0x00, 0x80]
+        );
+        assert_eq!(fs::read(target.join("notes/a.txt")).unwrap(), b"hello");
+        assert!(!target.join("planted").exists() && !target.join(".themis-package").exists());
+        assert!(fs::symlink_metadata(target.join("bin/link")).is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_target_that_is_a_link_is_refused_and_a_changed_mode_is_put_back() {
+        use std::os::unix::fs::PermissionsExt;
+        let store = tempfile::tempdir().unwrap();
+        let out = tempfile::tempdir().unwrap();
+        let (_folder, package) = kept_package(store.path());
+        let entries = verified(store.path(), &package).unwrap().unwrap();
+        let elsewhere = tempfile::tempdir().unwrap();
+        let link = out.path().join("link");
+        std::os::unix::fs::symlink(elsewhere.path(), &link).unwrap();
+        assert!(copy_to(&entries, &link, &prepare).is_err());
+        assert_eq!(fs::read_dir(elsewhere.path()).unwrap().count(), 0);
+        let target = out.path().join("plugin");
+        copy_to(&entries, &target, &prepare).unwrap();
+        let tool = target.join("bin/tool");
+        fs::set_permissions(&tool, fs::Permissions::from_mode(0o644)).unwrap();
+        copy_to(&entries, &target, &prepare).unwrap();
+        assert_eq!(
+            fs::metadata(&tool).unwrap().permissions().mode() & 0o777,
+            0o755
+        );
+    }
+
+    /// A project's store is in the project: it can be seeded with other content under the name
+    /// of the right hash.
+    #[test]
+    fn a_stored_package_that_is_not_what_its_name_says_is_not_used_or_kept() {
+        let store = tempfile::tempdir().unwrap();
+        let (folder, package) = kept_package(store.path());
+        let stored = store.path().join(&package.hash);
+        fs::write(stored.join("bin/tool"), "tampered").unwrap();
+        assert!(verified(store.path(), &package).unwrap().is_none());
+        // Keeping the real files replaces it.
+        let real = vec![
+            entry(folder.path(), "bin/tool", &[0xff, 0x00, 0x80], true),
+            entry(folder.path(), "notes/a.txt", b"hello", false),
+        ];
+        keep(&real, &package, store.path()).unwrap();
+        assert_eq!(
+            fs::read(stored.join("bin/tool")).unwrap(),
+            [0xff, 0x00, 0x80]
+        );
+        assert!(verified(store.path(), &package).unwrap().is_some());
+        // So are extra files and links.
+        fs::write(stored.join("planted"), "x").unwrap();
+        assert!(verified(store.path(), &package).unwrap().is_none());
+        fs::remove_file(stored.join("planted")).unwrap();
+        #[cfg(unix)]
+        {
+            let hash = package.hash.clone();
+            fs::remove_dir_all(&stored).unwrap();
+            let elsewhere = tempfile::tempdir().unwrap();
+            std::os::unix::fs::symlink(elsewhere.path(), store.path().join(hash)).unwrap();
+            assert!(verified(store.path(), &package).unwrap().is_none());
+        }
     }
 
     #[test]
@@ -325,14 +540,12 @@ mod tests {
     #[test]
     fn a_package_that_is_gone_is_reported_and_a_bad_hash_is_refused() {
         let store = tempfile::tempdir().unwrap();
-        let out = tempfile::tempdir().unwrap();
-        let prepare = |parent: &Path| Ok(fs::create_dir_all(parent)?);
         let gone = PackageRef {
             hash: "a".repeat(64),
             files: 1,
             bytes: 1,
         };
-        assert!(!copy_out(store.path(), &gone, out.path(), &prepare).unwrap());
+        assert!(verified(store.path(), &gone).unwrap().is_none());
         for bad in ["", "../../etc", &"g".repeat(64), &"a".repeat(63)] {
             let package = PackageRef {
                 hash: (*bad).to_owned(),
@@ -340,7 +553,7 @@ mod tests {
                 bytes: 0,
             };
             assert!(package.validate().is_err(), "{bad}");
-            assert!(copy_out(store.path(), &package, out.path(), &prepare).is_err());
+            assert!(verified(store.path(), &package).is_err());
         }
     }
 

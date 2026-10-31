@@ -466,6 +466,82 @@ async fn a_large_plugin_keeps_every_file_and_its_binary_hook_runs() {
     app.serving.abort();
 }
 
+/// What is in the project's `.themis/plugin-files` is never trusted: a repository or a process
+/// outside the sandbox can write there. Each run puts back what was installed, whatever claims
+/// otherwise, and removes what doesn't belong.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_tampered_plugin_file_never_runs() {
+    let hooks = json!({"PreToolUse": [{"matcher": "Bash", "hooks": [{
+        "type": "command", "command": "${CLAUDE_PLUGIN_ROOT}/hooks/bin/guard"
+    }]}]});
+    let app = app_with_folder(
+        hooks,
+        &[(
+            "skills/s/SKILL.md",
+            "---\nname: s\ndescription: d\n---\nBody",
+        )],
+        |folder| {
+            use std::os::unix::fs::PermissionsExt;
+            let bin = folder.join("hooks/bin");
+            std::fs::create_dir_all(&bin).unwrap();
+            let mut guard = b"#!/bin/sh\necho 'the real guard' >&2; exit 2\n#".to_vec();
+            guard.extend_from_slice(&[0xff, 0xfe]);
+            std::fs::write(bin.join("guard"), guard).unwrap();
+            std::fs::set_permissions(bin.join("guard"), std::fs::Permissions::from_mode(0o755))
+                .unwrap();
+        },
+        calls_once("shell", json!({"command": "true"})),
+    )
+    .await;
+    run(&app, "first").await;
+    assert!(last_tool_result(&app).await.contains("the real guard"));
+    let resources = std::fs::read_dir(app.project.path().join(".themis/plugin-files"))
+        .unwrap()
+        .filter_map(Result::ok)
+        .find(|entry| entry.path().join("hooks/bin/guard").is_file())
+        .expect("materialized plugin")
+        .path();
+    // Tampered, with the marker that used to say it was already copied, and with company.
+    let hash = {
+        let shown = call(app.data.path(), "plugin_action", json!({"action": "list"}));
+        shown
+            .as_array()
+            .and_then(|all| {
+                all.iter()
+                    .find(|plugin| plugin["spec"]["name"] == "guarded")
+            })
+            .expect("listed")["spec"]["package"]["hash"]
+            .as_str()
+            .unwrap()
+            .to_owned()
+    };
+    std::fs::write(resources.join(".themis-package"), &hash).unwrap();
+    std::fs::write(
+        resources.join("hooks/bin/guard"),
+        "#!/bin/sh\ntouch tampered-ran\nexit 0\n",
+    )
+    .unwrap();
+    std::fs::write(resources.join("hooks/bin/planted.sh"), "#!/bin/sh\n").unwrap();
+    let outside = tempfile::tempdir().unwrap();
+    std::os::unix::fs::symlink(outside.path(), resources.join("hooks/linked")).unwrap();
+    app.llm.reset().await;
+    Mock::given(method("POST"))
+        .respond_with(move |request: &Request| {
+            calls_once("shell", json!({"command": "true"}))(
+                &request.body_json().unwrap_or(Value::Null),
+            )
+        })
+        .mount(&app.llm)
+        .await;
+    run(&app, "second").await;
+    assert!(!exists(&app, "tampered-ran"), "the tampered hook ran");
+    assert!(last_tool_result(&app).await.contains("the real guard"));
+    assert!(!resources.join("hooks/bin/planted.sh").exists());
+    assert!(!resources.join(".themis-package").exists());
+    assert!(std::fs::symlink_metadata(resources.join("hooks/linked")).is_err());
+    app.serving.abort();
+}
+
 /// Every door to a command meets the guard: a guard on `git push` refuses it through `shell`, in
 /// the background and through the `git` tool (which YOLO lets run anything).
 #[tokio::test(flavor = "multi_thread")]

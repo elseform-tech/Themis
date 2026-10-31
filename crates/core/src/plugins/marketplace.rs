@@ -816,7 +816,7 @@ impl PluginStore {
         wanted: &super::package::PackageRef,
     ) -> anyhow::Result<()> {
         let store = self.directory(scope)?.join(super::package::PACKAGES_DIR);
-        if store.join(&wanted.hash).is_dir() {
+        if super::package::verified(&store, wanted)?.is_some() {
             return Ok(());
         }
         let spec = self

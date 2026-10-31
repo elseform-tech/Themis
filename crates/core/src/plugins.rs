@@ -877,24 +877,35 @@ impl PluginStore {
             let directory = root
                 .join(".themis/plugin-files")
                 .join(plugin.skill_id("resources"));
+            // Two runs of one project may start together: one must not remove the other's work.
+            let _materializing = MATERIALIZING.lock().unwrap_or_else(|e| e.into_inner());
+            // A project's copy can be written by a repository or anything outside the sandbox,
+            // so each run checks it all and puts back what was installed.
+            let prepare = |parent: &Path| -> anyhow::Result<()> {
+                safe_create_parent(root, parent)?;
+                crate::skills::ensure_git_excluded(&root.join(".themis/plugin-files"))?;
+                Ok(())
+            };
+            let mut wanted: std::collections::BTreeSet<String> =
+                plugin.spec.files.keys().cloned().collect();
             if let Some(kept) = &plugin.spec.package {
                 let store = self.directory(&plugin.scope)?.join(package::PACKAGES_DIR);
-                let prepare = |parent: &Path| -> anyhow::Result<()> {
-                    safe_create_parent(root, parent)?;
-                    crate::skills::ensure_git_excluded(&root.join(".themis/plugin-files"))?;
-                    Ok(())
-                };
-                if !package::copy_out(&store, kept, &directory, &prepare)? {
+                match package::verified(&store, kept)? {
+                    Some(entries) => {
+                        package::copy_to(&entries, &directory, &prepare)?;
+                        wanted.extend(package::names(&entries));
+                    }
                     // Its components still work, and a hook that needs the rest fails as it
                     // would for any missing script, so a guard still blocks.
-                    crate::diagnostics::emit(
+                    None => crate::diagnostics::emit(
                         "plugins",
                         "package_missing",
                         "warn",
                         serde_json::json!({"plugin": plugin.spec.name}),
-                    );
+                    ),
                 }
             }
+            package::remove_others(&directory, &wanted)?;
             for (relative, content) in &plugin.spec.files {
                 let path = directory.join(relative);
                 let parent = path.parent().context("Missing parent")?;
@@ -907,7 +918,12 @@ impl PluginStore {
                     bail!("Symlink resource target rejected");
                 }
                 // Persistent MCP processes may be reading this revision concurrently.
-                if !fs::read(&path).is_ok_and(|bytes| bytes == content.as_bytes()) {
+                // Not through a link: `fs::read` would follow one and compare what it points at.
+                if !path
+                    .symlink_metadata()
+                    .is_ok_and(|metadata| metadata.is_file())
+                    || !fs::read(&path).is_ok_and(|bytes| bytes == content.as_bytes())
+                {
                     write_bytes(
                         &path,
                         content.as_bytes(),
@@ -924,6 +940,9 @@ impl PluginStore {
         Ok(())
     }
 }
+
+/// Held while a plugin's files are put in place in a project.
+static MATERIALIZING: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 pub fn safe_name(name: &str) -> bool {
     !name.is_empty()
