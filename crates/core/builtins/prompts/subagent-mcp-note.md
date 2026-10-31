@@ -1,0 +1,1 @@
+You also have these MCP tools, from connections the person enabled: {{tools}}. They can act outside the project and the file limits above don't cover them, so use them only as far as your brief needs.

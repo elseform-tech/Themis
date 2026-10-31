@@ -493,7 +493,11 @@ impl AppState {
                 capacity_catalog.clone(),
                 endpoint_override,
                 hooks.clone(),
-                Arc::clone(&mcp_names),
+                super::subagents::SubagentMcp {
+                    names: Arc::clone(&mcp_names),
+                    labels: Arc::new(tool_labels.clone()),
+                    startup_rules: startup_rules.clone(),
+                },
                 Arc::clone(&llm),
                 policy,
                 &sandbox,

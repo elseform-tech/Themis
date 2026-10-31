@@ -289,6 +289,9 @@ pub enum ThreadEvent {
         /// The project paths it may change; none when it is read-only.
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         write_paths: Vec<String>,
+        /// The connections whose MCP tools it may use.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        connections: Vec<String>,
         /// When it was started (RFC 3339); groups finished work by request in Tasks.
         #[serde(default, skip_serializing_if = "String::is_empty")]
         at: String,

@@ -35,6 +35,10 @@ pub const SUBAGENT_SYSTEM: &str = include_str!("../builtins/prompts/subagent-sys
 /// Added to a read-only subagent's system message.
 pub const SUBAGENT_WRITE_PATHS_NOTE: &str =
     include_str!("../builtins/prompts/subagent-write-paths-note.md");
+pub const SUBAGENT_MCP_NOTE: &str = include_str!("../builtins/prompts/subagent-mcp-note.md");
+pub const SUBAGENT_MCP_LEFT_OUT: &str =
+    include_str!("../builtins/prompts/subagent-mcp-left-out.md");
+pub const SPAWN_SUBAGENTS_MCP: &str = include_str!("../builtins/prompts/spawn-subagents-mcp.md");
 pub const SUBAGENT_READ_ONLY_NOTE: &str =
     include_str!("../builtins/prompts/subagent-read-only-note.md");
 /// Explains the optional `status` field every subagent tool call accepts.

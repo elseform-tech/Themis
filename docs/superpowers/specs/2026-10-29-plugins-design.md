@@ -321,6 +321,15 @@ P1 through P4 each re-run the catalog check and record the numbers in the PR.
 - **Catalog check:** run against the official catalog after each of P1 to P4, labelled as a
   benchmark audit.
 
+## Later decision: MCP tools for subagents
+
+Originally subagents had no MCP tools, and `mcp__` names in a profile made the plugin partial. The
+owner has since approved them: a profile's list selects among the chat's enabled connections, a
+plain subagent gets them through `mcp_tools` on `spawn_subagents`, and `subagents.allow_mcp: false`
+turns them off. Named tools that aren't connected are left out with the subagent told, and don't
+mark the plugin partial. They act outside the project, so "read-only" there only means files. See
+`docs/plugins.md`, "Subagent profiles".
+
 ## Open questions
 
 - Whether "Check sources for updates" should also install updates automatically for plugins with

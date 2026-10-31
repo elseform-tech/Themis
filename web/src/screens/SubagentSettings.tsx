@@ -42,6 +42,7 @@ export function SubagentSettingsSection({ onSaved }: { onSaved?: () => void } = 
     <SettingsGroup>
       <label className="themis-settings-check">Allow subagents<Switch checked={settings.enabled} onChange={event => void patch({ enabled: event.target.checked })} /></label>
       <label className="themis-settings-check">Allow file writes<Switch checked={settings.allow_writes} disabled={!settings.enabled} onChange={event => void patch({ allow_writes: event.target.checked })} /></label>
+      <label className="themis-settings-check">Allow connections<Switch checked={settings.allow_mcp} disabled={!settings.enabled} onChange={event => void patch({ allow_mcp: event.target.checked })} /></label>
       <div className="themis-settings-control">
         <span id="subagents-max">Maximum subagents</span>
         <span className="themis-subagent-counts" role="radiogroup" aria-labelledby="subagents-max">

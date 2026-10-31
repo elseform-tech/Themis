@@ -1,0 +1,1 @@
+These tools were meant for you but aren't available in this chat: {{tools}}. Work without them, and say so if that limits your result.

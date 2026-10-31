@@ -178,5 +178,6 @@
     // "model": "qwen3.8-flash",              // absent: the chat's model
     // "models": ["glm-5", "beam-free"],      // up to 3 more models the agent may pick per subagent
     "allow_writes": true,                     // false keeps every subagent read-only
+    "allow_mcp": true,                        // false gives no subagent MCP tools
   },
 }

@@ -380,7 +380,14 @@ impl AppState {
         changes: serde_json::Map<String, Value>,
         revision: Option<&str>,
     ) -> Result<(configuration::SubagentsConfig, String), String> {
-        const EDITABLE: [&str; 5] = ["enabled", "max_parallel", "model", "models", "allow_writes"];
+        const EDITABLE: [&str; 6] = [
+            "enabled",
+            "max_parallel",
+            "model",
+            "models",
+            "allow_writes",
+            "allow_mcp",
+        ];
         if let Some(key) = changes.keys().find(|key| !EDITABLE.contains(&key.as_str())) {
             return Err(format!("Settings › Subagents cannot change `{key}`"));
         }
