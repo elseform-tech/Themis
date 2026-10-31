@@ -42,6 +42,32 @@ pub(super) const SUBAGENTS_DIR: &str = "subagents";
 /// A model's provider, or why it could not start.
 type Resolved = Result<Arc<dyn LLMProvider>, String>;
 
+/// The run's MCP tools, which are the connections the person enabled that came up when it
+/// started. Nothing here can add to them.
+pub(super) struct SubagentMcp {
+    /// Claude's names for each tool, by its Themis name.
+    pub(super) names: themis_core::plugins::hooks::McpNames,
+    /// "server · tool", by its Themis name.
+    pub(super) labels: Arc<HashMap<String, String>>,
+    /// The rules that may stop a server starting, as for the run.
+    pub(super) startup_rules: themis_core::configuration::ApprovalPolicy,
+}
+
+/// What MCP tools one subagent gets, decided when it is started.
+#[derive(Default)]
+pub(super) struct McpAccess {
+    /// Their Themis names.
+    pub(super) tools: Vec<String>,
+    /// Their servers.
+    pub(super) connections: Vec<String>,
+    /// What was named or asked for that it doesn't get.
+    pub(super) left_out: Vec<String>,
+}
+
+/// Names one diagnostics event may list, and how long each may be.
+const LOGGED_NAMES: usize = 20;
+const LOGGED_NAME_CHARS: usize = 80;
+
 /// What a chat's run hands its subagents, captured when the run starts.
 pub(super) struct SubagentKit {
     pub(super) state: AppState,
@@ -57,6 +83,9 @@ pub(super) struct SubagentKit {
     pub(super) catalog: Vec<themis_core::providers::GoModel>,
     pub(super) endpoint_override: bool,
     pub(super) hooks: Vec<themis_core::plugins::hooks::Hook>,
+    /// The run's MCP tools.
+    pub(super) mcp: SubagentMcp,
+    plugins: Vec<themis_core::plugins::Plugin>,
     /// The chat's model, used when `subagents.model` is unset or the same.
     pub(super) llm: Arc<dyn LLMProvider>,
     pub(super) model: String,
@@ -87,6 +116,7 @@ impl SubagentKit {
         catalog: Vec<themis_core::providers::GoModel>,
         endpoint_override: bool,
         hooks: Vec<themis_core::plugins::hooks::Hook>,
+        mcp: SubagentMcp,
         llm: Arc<dyn LLMProvider>,
         policy: RunPolicy,
         sandbox: &SandboxPlan,
@@ -112,6 +142,8 @@ impl SubagentKit {
             catalog,
             endpoint_override,
             hooks,
+            mcp,
+            plugins: snapshot.plugins.clone(),
             llm,
             model: snapshot.model.clone(),
             policy,
@@ -239,6 +271,141 @@ impl SubagentKit {
         resolved
     }
 
+    /// Whether the agent can give subagents MCP tools.
+    pub(super) fn offers_mcp(&self) -> bool {
+        self.config.subagents.allow_mcp && !self.mcp.names.is_empty()
+    }
+
+    /// The MCP tools a subagent gets: what its profile's list allows, narrowed by what the main
+    /// agent asked for; with no profile, only what was asked for. `asked` holds Themis names or
+    /// `*`. Whatever was named and can't be had is left out, not fatal.
+    pub(super) fn mcp_access(
+        &self,
+        profile: Option<&NamedProfile>,
+        asked: Option<&[String]>,
+    ) -> McpAccess {
+        let mut access = McpAccess::default();
+        let wanted_by_asking = |tool: &str| {
+            asked.map_or(profile.is_some(), |asked| {
+                asked.iter().any(|name| name == "*" || name == tool)
+            })
+        };
+        for (tool, names) in self.mcp.names.iter() {
+            if !wanted_by_asking(tool) {
+                continue;
+            }
+            if profile.is_none_or(|named| named.profile.allows_mcp(names)) {
+                access.tools.push(tool.clone());
+            } else if asked.is_some_and(|asked| asked.iter().any(|name| name == tool)) {
+                access.left_out.push(tool.clone());
+            }
+        }
+        access.tools.sort();
+        let all_names: Vec<&String> = self.mcp.names.values().flatten().collect();
+        if let Some(named) = profile {
+            let missing = named.profile.missing_mcp_tools(&all_names);
+            access
+                .left_out
+                .extend(missing.into_iter().map(str::to_owned));
+        }
+        access.left_out.extend(
+            asked
+                .into_iter()
+                .flatten()
+                .filter(|name| *name != "*" && !self.mcp.names.contains_key(*name))
+                .cloned(),
+        );
+        let off = !self.config.subagents.allow_mcp;
+        if off {
+            let tools = std::mem::take(&mut access.tools);
+            access.left_out.extend(tools);
+        }
+        for tool in &access.tools {
+            let label = self.mcp.labels.get(tool);
+            let server = label.and_then(|label| label.split(" · ").next());
+            if let Some(server) = server {
+                if !access.connections.iter().any(|known| known == server) {
+                    access.connections.push(server.to_owned());
+                }
+            }
+        }
+        access.connections.sort();
+        if !access.left_out.is_empty() {
+            self.log_left_out(
+                if off { "setting" } else { "not_connected" },
+                &access.left_out,
+            );
+        }
+        access
+    }
+
+    /// Metadata only: why, how many and which tools, never a call's contents.
+    fn log_left_out(&self, reason: &str, names: &[String]) {
+        let listed: Vec<String> = names
+            .iter()
+            .take(LOGGED_NAMES)
+            .map(|name| name.chars().take(LOGGED_NAME_CHARS).collect())
+            .collect();
+        let _ = self.state.inner.diagnostics.append_with_level(
+            "subagents",
+            "mcp_left_out",
+            "warn",
+            json!({"thread_id": self.thread_id, "run_id": self.run_id, "reason": reason,
+                "count": names.len(), "tools": listed}),
+            Some(&self.config.logging.level),
+        );
+    }
+
+    /// This subagent's MCP tools, asking `approvals` on every call: the tools themselves, what
+    /// they are called, and what could not be had after all.
+    async fn mcp_tools_for(
+        &self,
+        agent: &Arc<Subagent>,
+        approvals: &Arc<dyn ApprovalHook>,
+    ) -> (Vec<Box<dyn ToolT>>, Vec<String>) {
+        let mut tools: Vec<Box<dyn ToolT>> = Vec::new();
+        if agent.mcp.tools.is_empty() {
+            return (tools, Vec::new());
+        }
+        for plugin in &self.plugins {
+            for (name, server) in &plugin.spec.mcp {
+                if !server.enabled {
+                    continue;
+                }
+                let connected = themis_core::diagnostics::ACTIVE
+                    .scope(
+                        self.diagnostic_context(agent),
+                        self.state.mcp_tools(
+                            &self.work_root,
+                            plugin,
+                            name,
+                            Arc::clone(approvals),
+                            Some(&self.mcp.startup_rules),
+                        ),
+                    )
+                    .await;
+                if let Ok((found, _, _)) = connected {
+                    tools.extend(
+                        found.into_iter().filter(|tool| {
+                            agent.mcp.tools.iter().any(|wanted| wanted == tool.name())
+                        }),
+                    );
+                }
+            }
+        }
+        let missing: Vec<String> = agent
+            .mcp
+            .tools
+            .iter()
+            .filter(|wanted| !tools.iter().any(|tool| tool.name() == wanted.as_str()))
+            .cloned()
+            .collect();
+        if !missing.is_empty() {
+            self.log_left_out("not_connected", &missing);
+        }
+        (tools, missing)
+    }
+
     /// Starts one subagent on `model` (already checked against the allowed ones); it waits
     /// for a free slot before its first step.
     pub(super) fn start(
@@ -248,6 +415,7 @@ impl SubagentKit {
         model: String,
         write_paths: Vec<String>,
         profile: Option<Arc<NamedProfile>>,
+        mcp: McpAccess,
     ) -> Arc<Subagent> {
         let agent = Arc::new(Subagent {
             id: uuid::Uuid::new_v4().simple().to_string()[..12].to_owned(),
@@ -258,6 +426,7 @@ impl SubagentKit {
             earlier: Mutex::new(Vec::new()),
             write_paths,
             profile,
+            mcp,
             run_id: uuid::Uuid::new_v4().to_string(),
             started: Mutex::new(Instant::now()),
             stop: Arc::new(AtomicBool::new(false)),
@@ -278,6 +447,7 @@ impl SubagentKit {
             model: agent.model.clone(),
             confined: self.sandbox.enabled(),
             write_paths: agent.write_paths.clone(),
+            connections: agent.mcp.connections.clone(),
             at: chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
         });
         let _ = self.state.inner.diagnostics.append_with_level(
@@ -287,6 +457,7 @@ impl SubagentKit {
             json!({"thread_id": self.thread_id, "run_id": self.run_id, "subagent_id": agent.id,
                 "child_run_id": agent.run_id, "confined": self.sandbox.enabled(),
                 "write_paths": agent.write_paths.len(),
+                "mcp_tools": agent.mcp.tools.len(),
                 "profile": agent.profile.as_ref().map(|named| &named.profile.name)}),
             Some(&self.config.logging.level),
         );
@@ -399,6 +570,7 @@ impl SubagentKit {
         &self,
         agent: &Arc<Subagent>,
         approvals: Arc<dyn ApprovalHook>,
+        mcp: Vec<Box<dyn ToolT>>,
     ) -> Result<Vec<Box<dyn ToolT>>, String> {
         // Checked again on every start: a path may have become a link since it was given.
         for path in &agent.write_paths {
@@ -442,6 +614,13 @@ impl SubagentKit {
                     .as_ref()
                     .is_none_or(|named| named.profile.allows(tool.name()))
             })
+            // Chosen when it started; they are no file permission, so none of the above applies.
+            .chain(mcp.into_iter().map(|tool| {
+                Box::new(super::subagent_tools::Stoppable {
+                    inner: tool,
+                    stop: Arc::clone(&agent.stop),
+                }) as Box<dyn ToolT>
+            }))
             .map(|tool| {
                 Box::new(super::subagent_tools::StatusField {
                     inner: tool,
@@ -464,6 +643,7 @@ impl SubagentKit {
             root: self.work_root.clone(),
             approvals,
             agent: Some(json!({"id": agent.id, "name": agent.name})),
+            mcp_names: Arc::clone(&self.mcp.names),
         }
     }
 
@@ -556,7 +736,15 @@ impl SubagentKit {
         approvals: Arc<dyn ApprovalHook>,
         hooks: &themis_core::plugins::hooks::HookRuntime,
     ) -> (anyhow::Result<String>, bool) {
-        let tools = match self.tools(agent, Arc::clone(&approvals)) {
+        let (mcp_tools, mcp_missing) = self.mcp_tools_for(agent, &approvals).await;
+        let mcp_labels: Vec<String> = mcp_tools
+            .iter()
+            .map(|tool| {
+                let label = self.mcp.labels.get(tool.name());
+                label.map_or_else(|| tool.name().to_owned(), Clone::clone)
+            })
+            .collect();
+        let tools = match self.tools(agent, Arc::clone(&approvals), mcp_tools) {
             Ok(tools) => tools,
             Err(error) => return (Err(anyhow::anyhow!(error)), false),
         };
@@ -566,6 +754,7 @@ impl SubagentKit {
             self.transcript_path(agent),
             Arc::clone(agent),
             self.reporter(),
+            Arc::clone(&self.mcp.labels),
         ));
         // Stopping the chat stops its subagents.
         let done = Arc::new(AtomicBool::new(false));
@@ -608,9 +797,31 @@ impl SubagentKit {
                 ],
             )
         });
+        let mcp_note = (!mcp_labels.is_empty()).then(|| {
+            themis_core::prompts::fill(
+                themis_core::prompts::SUBAGENT_MCP_NOTE,
+                &[("tools", &mcp_labels.join(", "))],
+            )
+        });
+        let left_out: Vec<&str> = agent
+            .mcp
+            .left_out
+            .iter()
+            .chain(&mcp_missing)
+            .map(String::as_str)
+            .collect();
+        let left_out_note = (!left_out.is_empty()).then(|| {
+            themis_core::prompts::fill(
+                themis_core::prompts::SUBAGENT_MCP_LEFT_OUT,
+                &[("tools", &left_out.join(", "))],
+            )
+        });
         let head = std::iter::once(themis_core::prompts::SUBAGENT_SYSTEM)
             .chain(role.as_deref())
-            .chain([access.as_str(), themis_core::prompts::SUBAGENT_STATUS_FIELD])
+            .chain([access.as_str()])
+            .chain(mcp_note.as_deref())
+            .chain(left_out_note.as_deref())
+            .chain([themis_core::prompts::SUBAGENT_STATUS_FIELD])
             .collect::<Vec<_>>()
             .join("\n\n");
         let workspace = themis_core::prompts::fill(
@@ -836,6 +1047,8 @@ pub(super) struct Subagent {
     pub(super) write_paths: Vec<String>,
     /// The plugin profile it runs as.
     profile: Option<Arc<NamedProfile>>,
+    /// The MCP tools it may use.
+    pub(super) mcp: McpAccess,
     pub(super) run_id: String,
     started: Mutex<Instant>,
     pub(super) stop: Arc<AtomicBool>,
@@ -972,6 +1185,7 @@ async fn pump_events(
     path: Option<PathBuf>,
     agent: Arc<Subagent>,
     report: Reporter,
+    labels: Arc<HashMap<String, String>>,
 ) -> bool {
     let mut file = path.and_then(|path| {
         std::fs::create_dir_all(path.parent()?).ok()?;
@@ -1019,7 +1233,11 @@ async fn pump_events(
                 &mut file,
             );
         }
-        save(ThreadEvent::from(event), &mut file);
+        let mut saved = ThreadEvent::from(event);
+        if let ThreadEvent::ToolStarted { tool, label, .. } = &mut saved {
+            *label = labels.get(tool.as_str()).cloned();
+        }
+        save(saved, &mut file);
     }
     if !text.is_empty() {
         save(ThreadEvent::AssistantText { text }, &mut file);
@@ -1099,7 +1317,7 @@ impl AppState {
                             .ended
                             .unwrap_or_else(|| ("running".into(), String::new()));
                         json!({"id": agent.id, "name": agent.name, "brief": agent.brief,
-                            "model": agent.model, "write_paths": agent.write_paths, "profile": agent.profile.as_ref().map(|named| &named.profile.name), "ran_on": progress.ran_on, "status": status, "text": progress.status,
+                            "model": agent.model, "write_paths": agent.write_paths, "connections": agent.mcp.connections, "profile": agent.profile.as_ref().map(|named| &named.profile.name), "ran_on": progress.ran_on, "status": status, "text": progress.status,
                             "result": result, "tool_calls": agent.tool_calls.load(Ordering::SeqCst),
                             "seconds": agent.started.lock().unwrap_or_else(|e| e.into_inner()).elapsed().as_secs()})
                     })

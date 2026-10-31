@@ -122,7 +122,7 @@ pub struct SourceStatus {
 }
 
 /// Bumped whenever import rules change, so saved checks are redone with the new rules.
-const SCAN_VERSION: u32 = 9;
+const SCAN_VERSION: u32 = 10;
 
 /// Discover groups for catalogs we sort by hand, keyed by marketplace and plugin name.
 const PLUGIN_GROUPS: &str = include_str!("../../builtins/plugin-groups.json");

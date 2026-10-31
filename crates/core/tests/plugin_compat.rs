@@ -716,20 +716,275 @@ fn prompt_and_failure_hooks_import_and_claude_tool_names_map_to_themis_tools() {
         Some("apply_patch|write_file".into()),
         "lint".into()
     )));
-    // A matcher with no Themis tool is not imported; the reason is listed.
-    assert!(!hooks.iter().any(|(_, _, command)| command == "audit"));
+    // An MCP tool is matched by its Claude name when the hook runs.
+    assert!(hooks.contains(&(
+        "BeforeTool".into(),
+        Some("re:mcp__github__create_issue".into()),
+        "audit".into()
+    )));
     let notes = preview.spec.unsupported.join("\n");
-    assert!(
-        notes.contains("PreToolUse: matcher NotebookEdit has no Themis tool"),
-        "{notes}"
-    );
-    assert!(
-        notes.contains("PreToolUse: matcher for MCP tools has no Themis tool"),
-        "{notes}"
-    );
+    // Themis has no notebook tool: notebooks are edited with the tools this already covers.
+    assert!(!notes.contains("NotebookEdit"), "{notes}");
+    assert!(!notes.contains("MCP"), "{notes}");
     assert!(!notes.contains("Hook event UserPromptSubmit"));
     assert!(
         notes.contains("SessionStart: matcher compact has no Themis equivalent"),
         "{notes}"
     );
+}
+
+/// One PreToolUse hook on `Bash` with `options`, imported: the hook if it came through, and the
+/// notes either way.
+fn import_hook(options: serde_json::Value) -> (Option<themis_core::plugins::hooks::Hook>, String) {
+    let plugin = tempfile::tempdir().unwrap();
+    let root = plugin.path();
+    manifest(root, json!({"name": "fixture"}));
+    let mut hook = json!({"type": "command", "command": "guard"});
+    hook.as_object_mut()
+        .unwrap()
+        .extend(options.as_object().unwrap().clone());
+    write(
+        root,
+        "hooks/hooks.json",
+        &json!({"hooks": {"PreToolUse": [{"matcher": "Bash", "hooks": [hook]}]}}).to_string(),
+    );
+    let preview = inspect(root);
+    (
+        preview.spec.hooks.first().cloned(),
+        preview.spec.unsupported.join("\n"),
+    )
+}
+
+#[test]
+fn options_that_change_nothing_leave_a_guard_as_it_was() {
+    #[cfg(not(windows))]
+    let options = json!({"statusMessage": "Checking…", "async": false, "asyncRewake": false,
+        "commandWindows": "guard.cmd"});
+    #[cfg(windows)]
+    let options = json!({"statusMessage": "Checking…", "async": false, "asyncRewake": false});
+    let (hook, notes) = import_hook(options);
+    let hook = hook.expect("imported");
+    assert_eq!(notes, "");
+    assert_eq!(hook.command, "guard");
+    assert!(hook.blocking, "a guard stays blocking");
+    assert!(!hook.background);
+    assert_eq!(hook.shell, None);
+}
+
+#[test]
+fn shell_is_honoured_or_the_hook_stays_out() {
+    let (hook, notes) = import_hook(json!({"shell": "bash"}));
+    assert_eq!(hook.expect("imported").shell.as_deref(), Some("bash"));
+    assert_eq!(notes, "");
+    let (hook, notes) = import_hook(json!({"shell": "powershell"}));
+    assert!(hook.is_none());
+    assert!(notes.contains("PreToolUse: shell powershell"), "{notes}");
+}
+
+#[test]
+fn async_runs_in_the_background_and_rewake_stays_out() {
+    let (hook, notes) = import_hook(json!({"async": true}));
+    let hook = hook.expect("imported");
+    assert!(hook.background && !hook.blocking);
+    assert_eq!(notes, "");
+    // Waking the agent with the hook's findings is what the hook is for, and Themis can't.
+    for options in [
+        json!({"asyncRewake": true}),
+        json!({"async": true, "asyncRewake": true, "rewakeMessage": "x", "rewakeSummary": "y"}),
+    ] {
+        let (hook, notes) = import_hook(options);
+        assert!(hook.is_none());
+        assert!(notes.contains("PreToolUse: asyncRewake"), "{notes}");
+    }
+}
+
+#[test]
+fn if_names_a_command_or_the_hook_stays_out() {
+    for rule in ["Bash(git push *)", "Bash(git push:*)", "Bash(git push)"] {
+        let (hook, notes) = import_hook(json!({"if": rule}));
+        assert_eq!(
+            hook.expect("imported").command_prefix.unwrap(),
+            ["git", "push"],
+            "{rule}"
+        );
+        assert_eq!(notes, "");
+    }
+    for rule in [
+        "Bash(git*push*)",
+        "Bash(py* *x*scripts/*.py *)",
+        "Read(*.env)",
+        "Bash",
+        "Bash()",
+        "Bash(*)",
+    ] {
+        let (hook, notes) = import_hook(json!({"if": rule}));
+        assert!(hook.is_none(), "{rule}");
+        assert!(notes.contains("PreToolUse: condition"), "{rule}: {notes}");
+    }
+}
+
+#[test]
+fn an_option_nobody_has_taught_it_keeps_the_hook_out_and_is_named() {
+    let (hook, notes) = import_hook(json!({"once": true}));
+    assert!(hook.is_none());
+    assert!(notes.contains("PreToolUse: option once"), "{notes}");
+}
+
+#[cfg(unix)]
+#[test]
+fn args_reach_the_program_word_for_word() {
+    let awkward = [
+        "${CLAUDE_PLUGIN_ROOT}/a b.mjs",
+        "two words",
+        "$HOME `id` \"q\" 'r' \\",
+        "plain",
+    ];
+    let (hook, notes) = import_hook(json!({"args": awkward}));
+    assert_eq!(notes, "");
+    // `command` is `guard`: define it as the shell function that prints its arguments.
+    let script = format!(
+        "guard() {{ for word in \"$@\"; do printf '%s\\n' \"$word\"; done; }}; {}",
+        hook.unwrap().command
+    );
+    let output = std::process::Command::new("sh")
+        .args(["-c", &script])
+        .env("CLAUDE_PLUGIN_ROOT", "/plugin")
+        .output()
+        .unwrap();
+    assert_eq!(
+        String::from_utf8(output.stdout).unwrap(),
+        "/plugin/a b.mjs\ntwo words\n$HOME `id` \"q\" 'r' \\\nplain\n"
+    );
+    let (hook, notes) = import_hook(json!({"args": ["a", 1]}));
+    assert!(hook.is_none());
+    assert!(notes.contains("PreToolUse: args"), "{notes}");
+}
+
+fn imported_matcher(matcher: &str) -> (Option<String>, String) {
+    let plugin = tempfile::tempdir().unwrap();
+    let root = plugin.path();
+    manifest(root, json!({"name": "fixture"}));
+    write(
+        root,
+        "hooks/hooks.json",
+        &json!({"hooks": {"PreToolUse": [{"matcher": matcher, "hooks": [
+            {"type": "command", "command": "guard"}
+        ]}]}})
+        .to_string(),
+    );
+    let preview = inspect(root);
+    (
+        preview
+            .spec
+            .hooks
+            .first()
+            .and_then(|hook| hook.matcher.clone()),
+        preview.spec.unsupported.join("\n"),
+    )
+}
+
+#[test]
+fn matchers_map_to_themis_tools_and_mcp_regexes_or_stay_out() {
+    for (matcher, mapped) in [
+        ("Bash|Shell", "shell|background_task"),
+        ("Write|NotebookEdit", "write_file|apply_patch"),
+        ("mcp__.*__run_query", "re:mcp__.*__run_query"),
+        ("__exec$", "re:__exec$"),
+        (
+            "^mcp__(?:plugin_stripe_stripe|stripe)__.*$",
+            "re:^mcp__(?:plugin_stripe_stripe|stripe)__.*$",
+        ),
+        ("Bash|mcp__aws.*", "shell|background_task|re:mcp__aws.*"),
+    ] {
+        let (found, notes) = imported_matcher(matcher);
+        assert_eq!(found.as_deref(), Some(mapped), "{matcher}");
+        assert_eq!(notes, "", "{matcher}");
+    }
+    // Names Themis has no tool for are listed; what's left of the matcher still guards.
+    let (found, notes) = imported_matcher("use_aws|mcp__aws.*");
+    assert_eq!(found.as_deref(), Some("re:mcp__aws.*"));
+    assert!(
+        notes.contains("matcher use_aws has no Themis tool"),
+        "{notes}"
+    );
+    let (found, notes) = imported_matcher("Skill|Read");
+    assert_eq!(found.as_deref(), Some("read_file"));
+    assert!(
+        notes.contains("matcher Skill has no Themis tool"),
+        "{notes}"
+    );
+    // A guard that can't be mapped stays out rather than matching nothing, or everything.
+    for matcher in [
+        "Skill",
+        "Bash.*",
+        "(Edit|Write)",
+        "mcp__(?=x)",
+        "mcp__(",
+        "[a-z]+",
+    ] {
+        let (found, notes) = imported_matcher(matcher);
+        assert_eq!(found, None, "{matcher}");
+        assert!(notes.contains("no Themis tool"), "{matcher}: {notes}");
+    }
+}
+
+#[test]
+fn events_map_only_when_their_meaning_holds() {
+    let plugin = tempfile::tempdir().unwrap();
+    let root = plugin.path();
+    manifest(root, json!({"name": "fixture"}));
+    let one = json!([{"hooks": [{"type": "command", "command": "x"}]}]);
+    write(
+        root,
+        "hooks/hooks.json",
+        &json!({"hooks": {
+            "StopFailure": one, "SessionEnd": one, "UserPromptExpansion": one,
+            "PermissionRequest": one,
+            "PreToolUse": [{"hooks": [{"type": "prompt", "prompt": "think"},
+                                      {"type": "http", "url": "https://example.com"}]}]
+        }})
+        .to_string(),
+    );
+    let preview = inspect(root);
+    let events: Vec<&str> = preview
+        .spec
+        .hooks
+        .iter()
+        .map(|h| h.event.as_str())
+        .collect();
+    assert_eq!(events, ["RunFailed"]);
+    let notes = preview.spec.unsupported.join("\n");
+    for event in ["SessionEnd", "UserPromptExpansion", "PermissionRequest"] {
+        assert!(notes.contains(&format!("Hook event {event}")), "{notes}");
+    }
+    assert!(
+        notes.contains("PreToolUse: prompt hook has no Themis equivalent"),
+        "{notes}"
+    );
+    assert!(
+        notes.contains("PreToolUse: http hook has no Themis equivalent"),
+        "{notes}"
+    );
+}
+
+proptest::proptest! {
+    /// Whatever matcher a plugin writes: no panic, and what comes through passes validation, so
+    /// a hook that imports can run. A matcher never turns into "any tool".
+    #[test]
+    fn any_matcher_imports_cleanly(matcher in "[ -~]{1,24}") {
+        let (found, _) = imported_matcher(&matcher);
+        if matcher.trim_matches('|').is_empty() || matcher == "*" || matcher == ".*" {
+            return Ok(());
+        }
+        if let Some(found) = found {
+            proptest::prop_assert!(!found.is_empty());
+            let hook = themis_core::plugins::hooks::Hook {
+                matcher: Some(found),
+                ..serde_json::from_value(json!(
+                    {"name":"a","event":"BeforeTool","command":"x","timeout_seconds":1}
+                )).unwrap()
+            };
+            proptest::prop_assert!(hook.validate().is_ok());
+        }
+    }
 }

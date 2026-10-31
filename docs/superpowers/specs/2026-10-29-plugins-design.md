@@ -159,12 +159,15 @@ to be a `${VARIABLE}` reference, and that section is updated with this change.
   `AfterTool`, which only fires when the tool call fails. No new event is needed.
 - **Still skipped:** `SessionEnd`, `UserPromptExpansion`, `PermissionRequest` and
   `PostToolBatch`. Each is used by one or two plugins, and `SessionEnd` has no run to attach to.
+- **`StopFailure`** (added later) maps to `RunFailed`, the failure-only alias of `RunEnd`.
 - **Tool names in matchers:**
   - Imported matchers keep Claude tool names today, so a `Bash` guard never matches Themis's
     shell tool.
   - Matchers are mapped (`Bash` to shell, `Read` to read, `Edit` and `Write` to write and edit,
     `Grep` and `Glob` to search).
   - A matcher name that doesn't map makes the plugin partial and is listed in its detail.
+  - Alternatives naming MCP tools became `re:` patterns over Claude's names for them, and hook
+    input gained Claude's field names; see `docs/plugins.md`, "How imported Claude hooks run".
 - **Lifecycle options:** `SessionStart` matchers and `PostToolUse` and `Stop` options are mapped
   where Themis has the same meaning, and skipped with a reason otherwise.
 - **Hooks view** (board 24): see section 5.
@@ -317,6 +320,15 @@ P1 through P4 each re-run the catalog check and record the numbers in the PR.
     for each fixed reason.
 - **Catalog check:** run against the official catalog after each of P1 to P4, labelled as a
   benchmark audit.
+
+## Later decision: MCP tools for subagents
+
+Originally subagents had no MCP tools, and `mcp__` names in a profile made the plugin partial. The
+owner has since approved them: a profile's list selects among the chat's enabled connections, a
+plain subagent gets them through `mcp_tools` on `spawn_subagents`, and `subagents.allow_mcp: false`
+turns them off. Named tools that aren't connected are left out with the subagent told, and don't
+mark the plugin partial. They act outside the project, so "read-only" there only means files. See
+`docs/plugins.md`, "Subagent profiles".
 
 ## Open questions
 

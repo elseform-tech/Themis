@@ -2215,10 +2215,12 @@ pub fn mcp_server_to_standard(server: &McpServer) -> Value {
 /// Themis tools for a Claude tool name in a hook matcher.
 fn themis_tools(claude: &str) -> Option<&'static [&'static str]> {
     Some(match claude {
-        "Bash" => &["shell", "background_task"],
+        // `Shell` is what other agents call it; plugins for several list both.
+        "Bash" | "Shell" => &["shell", "background_task"],
         "Read" => &["read_file"],
         "Write" => &["write_file"],
-        "Edit" | "MultiEdit" => &["apply_patch", "write_file"],
+        // Themis has no notebook tool: a notebook is edited like any other file.
+        "Edit" | "MultiEdit" | "NotebookEdit" => &["apply_patch", "write_file"],
         "Grep" => &["search_file"],
         "Glob" | "LS" => &["list_dir", "search_file"],
         "WebFetch" => &["fetch_url"],
@@ -2227,24 +2229,55 @@ fn themis_tools(claude: &str) -> Option<&'static [&'static str]> {
     })
 }
 
-/// A Claude tool matcher ("Edit|Write") as Themis tool names, and the names with no Themis
-/// tool. Themis names already in it are kept.
-fn map_tool_matcher(matcher: &str) -> (Vec<String>, Vec<String>) {
+/// `matcher` split at its top-level `|`: one inside a group or a class doesn't split.
+fn matcher_alternatives(matcher: &str) -> Vec<&str> {
+    let mut parts = Vec::new();
+    let (mut depth, mut class, mut escaped, mut start) = (0usize, false, false, 0);
+    for (index, character) in matcher.char_indices() {
+        match character {
+            _ if escaped => escaped = false,
+            '\\' => escaped = true,
+            '[' => class = true,
+            ']' => class = false,
+            '(' if !class => depth += 1,
+            ')' if !class => depth = depth.saturating_sub(1),
+            '|' if !class && depth == 0 => {
+                parts.push(&matcher[start..index]);
+                start = index + 1;
+            }
+            _ => {}
+        }
+    }
+    parts.push(&matcher[start..]);
+    parts
+}
+
+/// A Claude tool matcher ("Edit|Write") as a Themis matcher, and the names with no Themis tool.
+/// Plain names become Themis tool names (those already Themis names are kept). Alternatives
+/// naming MCP tools (`mcp__.*__query`, `__exec$`) become a regular expression over Claude's
+/// names for them. Any other pattern says nothing Themis can check, so the whole matcher is
+/// unmapped: a guard must not silently match nothing, or everything.
+fn map_tool_matcher(matcher: &str) -> (Option<String>, Vec<String>) {
     let mut mapped: Vec<String> = Vec::new();
     let mut unmapped = Vec::new();
-    // MCP tools are named differently in Themis, and a regex group is not a list of names:
-    // either is one matcher with no Themis tool.
-    if matcher.contains("mcp__") {
-        return (mapped, vec!["for MCP tools".to_owned()]);
-    }
-    if matcher.contains(['(', ')', '[', '*', '.', '\\']) {
-        return (mapped, vec![matcher.to_owned()]);
-    }
-    for name in matcher
-        .split('|')
+    let mut patterns: Vec<&str> = Vec::new();
+    let alternatives: Vec<&str> = matcher_alternatives(matcher)
+        .into_iter()
         .map(str::trim)
         .filter(|name| !name.is_empty())
-    {
+        .collect();
+    let plain = |name: &str| {
+        name.bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
+    };
+    for name in alternatives {
+        if name.contains("__") {
+            patterns.push(name);
+            continue;
+        }
+        if !plain(name) {
+            return (None, vec![matcher.to_owned()]);
+        }
         let tools: Vec<&str> = match themis_tools(name) {
             Some(tools) => tools.to_vec(),
             None if crate::skills::known_tool_names()
@@ -2264,7 +2297,118 @@ fn map_tool_matcher(matcher: &str) -> (Vec<String>, Vec<String>) {
             }
         }
     }
-    (mapped, unmapped)
+    if !patterns.is_empty() {
+        let pattern = patterns.join("|");
+        if crate::plugins::hooks::compile_matcher(&pattern).is_err() {
+            return (None, vec![matcher.to_owned()]);
+        }
+        mapped.push(format!("re:{pattern}"));
+    }
+    ((!mapped.is_empty()).then(|| mapped.join("|")), unmapped)
+}
+
+/// What a command hook's Claude options come to.
+#[derive(Default)]
+struct HookOptions {
+    shell: Option<String>,
+    background: bool,
+    command_prefix: Option<Vec<String>>,
+    args: Option<Vec<String>>,
+}
+
+/// A hook's options, or why the hook has to stay out because its meaning wouldn't hold.
+/// `windows` because some only matter on the platform the check runs on.
+fn read_hook_options(raw: &Value, windows: bool) -> Result<HookOptions, String> {
+    let mut options = HookOptions::default();
+    let fields = raw.as_object().into_iter().flatten();
+    for (key, value) in fields {
+        match key.as_str() {
+            "type" | "command" | "timeout" => {}
+            // Text for Claude's spinner.
+            "statusMessage" => {}
+            "async" => options.background = value.as_bool() == Some(true),
+            // Waking the agent with the findings is the point of these; it can't be done here.
+            "asyncRewake" if value.as_bool() == Some(true) => {
+                return Err("asyncRewake needs a way to wake the agent".to_owned());
+            }
+            "asyncRewake" | "rewakeMessage" | "rewakeSummary" => {}
+            "shell" => match value.as_str() {
+                Some("bash") => options.shell = Some("bash".to_owned()),
+                other => return Err(format!("shell {} is not available", other.unwrap_or("?"))),
+            },
+            // The hook's command for Windows: on any other platform it never applies. Written
+            // for PowerShell, and Windows hooks here run in cmd.
+            "commandWindows" if windows => {
+                return Err("commandWindows needs PowerShell".to_owned());
+            }
+            "commandWindows" => {}
+            "args" => {
+                if windows {
+                    return Err("args are quoted for a POSIX shell".to_owned());
+                }
+                let words = value.as_array().and_then(|words| {
+                    words
+                        .iter()
+                        .map(|word| word.as_str().map(str::to_owned))
+                        .collect::<Option<Vec<_>>>()
+                });
+                options.args = Some(words.ok_or("args must be a list of words")?);
+            }
+            "if" => {
+                let rule = value.as_str().unwrap_or_default();
+                options.command_prefix = Some(
+                    condition_prefix(rule)
+                        .ok_or_else(|| format!("condition {rule} can't be checked"))?,
+                );
+            }
+            other => return Err(format!("option {other} has no Themis equivalent")),
+        }
+    }
+    Ok(options)
+}
+
+/// The command words in an `if` rule: `Bash(git push *)`, `Bash(git push:*)` or
+/// `Bash(git push)`. Patterns inside words can't be held to, so they aren't read.
+fn condition_prefix(rule: &str) -> Option<Vec<String>> {
+    let inner = rule.strip_prefix("Bash(")?.strip_suffix(')')?;
+    let words = inner
+        .strip_suffix(":*")
+        .or_else(|| inner.strip_suffix(" *"))
+        .unwrap_or(inner);
+    let plain = |word: &str| !word.contains(['*', '?', '[', ']', '(', ')', '"', '\'', '\\', '$']);
+    let words: Vec<String> = words.split_whitespace().map(str::to_owned).collect();
+    (!words.is_empty() && words.iter().all(|word| plain(word))).then_some(words)
+}
+
+/// A program and its arguments as one line for a POSIX shell, each word reaching the program as
+/// it was written. Only `${CLAUDE_PLUGIN_ROOT}` is left for the shell to fill in.
+fn quoted_command(program: &str, args: &[String]) -> String {
+    const ROOT: &str = "${CLAUDE_PLUGIN_ROOT}";
+    let quote = |word: &str| {
+        if !word.is_empty()
+            && word
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || b"_-./:=@%+,".contains(&byte))
+        {
+            return word.to_owned();
+        }
+        let escape = |part: &str| {
+            part.chars().fold(String::new(), |mut text, character| {
+                if matches!(character, '\\' | '"' | '`' | '$') {
+                    text.push('\\');
+                }
+                text.push(character);
+                text
+            })
+        };
+        let parts: Vec<String> = word.split(ROOT).map(escape).collect();
+        format!("\"{}\"", parts.join(ROOT))
+    };
+    std::iter::once(program)
+        .chain(args.iter().map(String::as_str))
+        .map(quote)
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 fn import_hooks(value: &Value, spec: &mut PluginSpec) -> anyhow::Result<()> {
@@ -2278,6 +2422,8 @@ fn import_hooks(value: &Value, spec: &mut PluginSpec) -> anyhow::Result<()> {
             // Its output is context for the model, which only PromptSubmit delivers: it runs
             // on every turn instead of once per session.
             "SessionStart" => "PromptSubmit",
+            // Fires only when the run failed; `Stop` also runs then, as RunEnd always does.
+            "StopFailure" => "RunFailed",
             "PreToolUse" => "BeforeTool",
             "PostToolUse" => "AfterTool",
             "Stop" => "RunEnd",
@@ -2299,7 +2445,10 @@ fn import_hooks(value: &Value, spec: &mut PluginSpec) -> anyhow::Result<()> {
         for group in groups.as_array().context("Invalid hook groups")? {
             for raw in group["hooks"].as_array().context("Invalid hook list")? {
                 if raw["type"] != "command" {
-                    spec.unsupported.push(format!("{event}: non-command hook"));
+                    // Nothing here asks a model or a web address whether a tool may run.
+                    let kind = raw["type"].as_str().unwrap_or("other");
+                    spec.unsupported
+                        .push(format!("{event}: {kind} hook has no Themis equivalent"));
                     continue;
                 }
                 // Every Claude session starts with "startup"; the other sources have no Themis
@@ -2327,15 +2476,13 @@ fn import_hooks(value: &Value, spec: &mut PluginSpec) -> anyhow::Result<()> {
                     ));
                     continue;
                 }
-                if raw.as_object().is_some_and(|value| {
-                    value
-                        .keys()
-                        .any(|key| !["type", "command", "timeout"].contains(&key.as_str()))
-                }) {
-                    spec.unsupported
-                        .push(format!("{event}: hook options require manual mapping"));
-                    continue;
-                }
+                let options = match read_hook_options(raw, cfg!(windows)) {
+                    Ok(options) => options,
+                    Err(reason) => {
+                        spec.unsupported.push(format!("{event}: {reason}"));
+                        continue;
+                    }
+                };
                 // Claude names its tools differently: a `Bash` guard must guard `shell`.
                 let matcher = match group["matcher"]
                     .as_str()
@@ -2347,25 +2494,36 @@ fn import_hooks(value: &Value, spec: &mut PluginSpec) -> anyhow::Result<()> {
                             spec.unsupported
                                 .push(format!("{event}: matcher {name} has no Themis tool"));
                         }
-                        if mapped_tools.is_empty() {
+                        if mapped_tools.is_none() {
                             continue;
                         }
-                        Some(mapped_tools.join("|"))
+                        mapped_tools
                     }
                     _ if event == "SessionStart" => None,
                     other => other.map(str::to_owned),
                 };
                 let command = raw["command"].as_str().context("Missing hook command")?;
+                let command = match &options.args {
+                    Some(args) => quoted_command(command, args),
+                    None => command.to_owned(),
+                };
+                let (shell, background, command_prefix) =
+                    (options.shell, options.background, options.command_prefix);
                 spec.hooks.push(Hook {
-                    name: imported_hook_name(mapped, matcher.as_deref(), command, &spec.hooks),
+                    name: imported_hook_name(mapped, matcher.as_deref(), &command, &spec.hooks),
                     event: mapped.into(),
-                    command: command.into(),
+                    command,
                     enabled: false,
                     matcher,
                     failure_policy: None,
+                    shell,
+                    background,
+                    command_prefix,
+                    // Claude's way to refuse; a SessionStart hook can't stop a turn there either.
+                    exit_two_blocks: event != "SessionStart",
                     timeout_seconds: raw["timeout"].as_u64().unwrap_or(10).clamp(1, 60),
                     // A broken session hook must not stop every turn.
-                    blocking: event == "PreToolUse",
+                    blocking: event == "PreToolUse" && !background,
                     plugin_root: None,
                     runtime_identity: None,
                 });
@@ -2393,12 +2551,15 @@ fn imported_hook_name(event: &str, matcher: Option<&str>, command: &str, taken: 
                 .join("-")
         })
         .filter(|stem| !stem.is_empty() && !GENERIC.contains(&stem.as_str()));
-    let tool = matcher.and_then(|matcher| matcher.split('|').next());
+    let tool = matcher
+        .and_then(|matcher| matcher.split('|').next())
+        .map(|tool| if tool.starts_with("re:") { "mcp" } else { tool });
     let base = script.unwrap_or_else(|| match (event, tool) {
         ("PromptSubmit", _) => "prompt-submit".into(),
         ("RunStart", _) => "run-start".into(),
         ("BeforeCompaction", _) => "before-compaction".into(),
         ("RunEnd", _) => "run-end".into(),
+        ("RunFailed", _) => "run-failed".into(),
         ("BeforeTool", Some(tool)) => format!("before-{tool}").replace('_', "-"),
         ("AfterTool", Some(tool)) => format!("after-{tool}").replace('_', "-"),
         ("ToolCallFailed", Some(tool)) => format!("{tool}-failed").replace('_', "-"),
@@ -2534,6 +2695,10 @@ mod imported_hook_name_tests {
                 enabled: false,
                 matcher: None,
                 failure_policy: None,
+                shell: None,
+                background: false,
+                command_prefix: None,
+                exit_two_blocks: false,
                 timeout_seconds: 10,
                 blocking: false,
                 plugin_root: None,

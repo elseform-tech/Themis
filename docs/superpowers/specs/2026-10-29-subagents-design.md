@@ -267,7 +267,9 @@ New files in `crates/core/builtins/prompts/`, each added to the inventory test:
     `Bash` to shell; `Edit` and `Write` to write and edit).
   - Unmapped names are dropped, and the profile is flagged partial.
   - A tool list can only narrow tools, MCP tools included: an explicit list leaves out MCP tools
-    it doesn't name.
+    it doesn't name. No list, or `*`, gets the chat's MCP tools. A plain subagent gets them only
+    through `mcp_tools` on `spawn_subagents`. They act outside the project, so "read-only" means
+    files alone; `subagents.allow_mcp: false` turns them off. See `docs/plugins.md`.
   - It never grants permissions.
 - **Writes:** a profile whose tools include write or edit still needs `write_paths` from the
   main agent before it can write. Without them it runs read-only.

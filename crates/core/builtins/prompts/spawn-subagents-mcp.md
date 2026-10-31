@@ -1,0 +1,1 @@
+A subagent has none of your MCP tools unless you list them in its `mcp_tools`: their names, or `*` for all. They can act outside the project, whatever its file access, and approvals apply as they do for you. With a profile, `mcp_tools` can only narrow what the profile's list allows.

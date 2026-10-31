@@ -23,6 +23,8 @@ const MAX_MODEL_BYTES: usize = 100;
 const MAX_TOOL_NAMES: usize = 256;
 const MAX_DROPPED_NAMES: usize = 32;
 const MAX_DROPPED_NAME_CHARS: usize = 80;
+/// Longest MCP tool name or pattern a list may hold.
+const MAX_MCP_NAME_CHARS: usize = 200;
 /// What the spawn tool's description may spend on listing profiles.
 const LISTING_BYTES: usize = 2048;
 const LISTED_DESCRIPTION_CHARS: usize = 100;
@@ -68,6 +70,14 @@ pub struct SubagentProfile {
     /// Listed tool names with no Themis tool, left out: the profile is partial.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub dropped_tools: Vec<String>,
+    /// The MCP tools it may use, by Claude's names (`mcp__docs__lookup`, `mcp__docs__*`,
+    /// `mcp__docs`), or `*` when its list leaves them open. These only select among the chat's
+    /// enabled connections; none means none.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub mcp_tools: Vec<String>,
+    /// The MCP tools its deny list takes away, by the same names.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub denied_mcp_tools: Vec<String>,
 }
 
 impl SubagentProfile {
@@ -79,6 +89,26 @@ impl SubagentProfile {
 
     pub fn allows_writes(&self) -> bool {
         WRITE_TOOLS.iter().any(|tool| self.allows(tool))
+    }
+
+    /// Whether it may use the MCP tool with these Claude names.
+    pub fn allows_mcp(&self, names: &[String]) -> bool {
+        let any = |patterns: &[String]| {
+            patterns
+                .iter()
+                .any(|pattern| names.iter().any(|name| mcp_name_matches(pattern, name)))
+        };
+        any(&self.mcp_tools) && !any(&self.denied_mcp_tools)
+    }
+
+    /// What its list names that matches none of the MCP tools there are.
+    pub fn missing_mcp_tools<'a>(&'a self, names: &[&String]) -> Vec<&'a str> {
+        self.mcp_tools
+            .iter()
+            .filter(|pattern| *pattern != "*")
+            .filter(|pattern| !names.iter().any(|name| mcp_name_matches(pattern, name)))
+            .map(String::as_str)
+            .collect()
     }
 
     pub(super) fn validate(&self) -> anyhow::Result<()> {
@@ -110,6 +140,13 @@ impl SubagentProfile {
         }
         if self.dropped_tools.len() > MAX_DROPPED_NAMES {
             bail!("Too many dropped subagent tools");
+        }
+        for names in [&self.mcp_tools, &self.denied_mcp_tools] {
+            if names.len() > MAX_TOOL_NAMES
+                || names.iter().any(|name| name != "*" && !is_mcp_name(name))
+            {
+                bail!("Invalid subagent MCP tools");
+            }
         }
         Ok(())
     }
@@ -357,39 +394,99 @@ fn clean_description(text: &str) -> String {
 /// The Themis tools a Claude tool name stands for.
 fn mapped(name: &str) -> Option<&'static [&'static str]> {
     match name {
-        "Read" | "Grep" | "Glob" => Some(&["read_file", "list_dir", "search_file"]),
+        // `LS` and `NotebookRead` are older names for what `Read` and `Glob` do now; `MultiEdit`
+        // for what `Edit` does. A subagent has these tools without any list.
+        "Read" | "Grep" | "Glob" | "LS" | "NotebookRead" => {
+            Some(&["read_file", "list_dir", "search_file"])
+        }
         "Bash" => Some(&["shell"]),
-        "Edit" | "Write" => Some(&WRITE_TOOLS),
+        "Edit" | "Write" | "MultiEdit" => Some(&WRITE_TOOLS),
         _ => None,
     }
 }
 
+/// `mcp__server__tool`, `mcp__server__*` or `mcp__server`, in the characters such names use.
+fn is_mcp_name(name: &str) -> bool {
+    name.starts_with("mcp__")
+        && name.len() > "mcp__".len()
+        && name.chars().count() <= MAX_MCP_NAME_CHARS
+        && name
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || b"_-.*".contains(&byte))
+}
+
+/// Whether a listed MCP name covers a tool's Claude name: `*` stands for any text, and a name
+/// with no tool part covers the whole server.
+fn mcp_name_matches(pattern: &str, name: &str) -> bool {
+    if pattern == "*" {
+        return true;
+    }
+    let whole_server = pattern
+        .strip_prefix("mcp__")
+        .is_some_and(|rest| !rest.contains("__"));
+    let (mut rest, mut parts) = (name, pattern.split('*').peekable());
+    let first = parts.next().unwrap_or_default();
+    let Some(after) = rest.strip_prefix(first) else {
+        return false;
+    };
+    rest = after;
+    if whole_server && !pattern.contains('*') {
+        return rest.starts_with("__");
+    }
+    if parts.peek().is_none() {
+        return rest.is_empty();
+    }
+    while let Some(part) = parts.next() {
+        if parts.peek().is_none() {
+            return rest.ends_with(part);
+        }
+        match rest.find(part) {
+            Some(at) => rest = &rest[at + part.len()..],
+            None => return false,
+        }
+    }
+    true
+}
+
+/// What a tool list and a deny list come to.
+struct ResolvedTools {
+    tools: Option<Vec<String>>,
+    dropped: Vec<String>,
+    mcp: Vec<String>,
+    denied_mcp: Vec<String>,
+}
+
 /// What a tool list and a deny list leave, in a fixed order, and the listed names that have no
 /// Themis tool. A scoped name such as `Bash(git diff:*)` can't be held to its scope, so it isn't
-/// widened to the whole tool; denying one takes the whole tool away.
-fn resolve_tools(
-    listed: Option<&[String]>,
-    denied: &[String],
-) -> (Option<Vec<String>>, Vec<String>) {
+/// widened to the whole tool; denying one takes the whole tool away. MCP names are kept as they
+/// are: which tools they mean depends on the chat's connections when a subagent starts.
+fn resolve_tools(listed: Option<&[String]>, denied: &[String]) -> ResolvedTools {
     let all = READ_ONLY_TOOLS.iter().chain(WRITE_TOOLS.iter());
     let everything = listed.is_none_or(|names| names.iter().any(|name| name == "*"));
     let mut dropped = Vec::new();
     let mut kept = BTreeSet::new();
+    let mut mcp = Vec::new();
+    let mut denied_mcp = Vec::new();
     if !everything {
         for name in listed.unwrap_or_default() {
             match mapped(name) {
                 Some(tools) => kept.extend(tools.iter().copied()),
+                None if is_mcp_name(name) => mcp.push(name.clone()),
                 None => dropped.push(name.chars().take(MAX_DROPPED_NAME_CHARS).collect()),
             }
         }
     } else {
         kept.extend(all.clone().copied());
+        mcp.push("*".to_owned());
     }
     let before = kept.len();
     for name in denied {
         let base = name.split('(').next().unwrap_or(name).trim();
         if base == "*" {
             kept.clear();
+            mcp.clear();
+        } else if is_mcp_name(base) {
+            denied_mcp.push(base.to_owned());
         } else if let Some(tools) = mapped(base) {
             for tool in tools {
                 kept.remove(tool);
@@ -397,17 +494,17 @@ fn resolve_tools(
         }
     }
     dropped.truncate(MAX_DROPPED_NAMES);
-    if everything && kept.len() == before {
-        return (None, dropped);
-    }
-    (
-        Some(
-            all.filter(|tool| kept.contains(**tool))
-                .map(|tool| (*tool).to_owned())
-                .collect(),
-        ),
+    let tools = (!everything || kept.len() != before).then(|| {
+        all.filter(|tool| kept.contains(**tool))
+            .map(|tool| (*tool).to_owned())
+            .collect()
+    });
+    ResolvedTools {
+        tools,
         dropped,
-    )
+        mcp,
+        denied_mcp,
+    }
 }
 
 /// Reads one `agents/*.md`. Fails on anything that isn't a whole, safe definition.
@@ -462,20 +559,21 @@ pub fn parse_profile(content: &str) -> anyhow::Result<ParsedProfile> {
         bail!("has no instructions");
     }
     let listed = fields.tools.as_deref().or(fields.allowed.as_deref());
-    let (tools, dropped_tools) =
-        resolve_tools(listed, fields.disallowed.as_deref().unwrap_or_default());
+    let resolved = resolve_tools(listed, fields.disallowed.as_deref().unwrap_or_default());
     let profile = SubagentProfile {
         name,
         description,
         instructions: instructions.to_owned(),
-        tools,
+        tools: resolved.tools,
         model: fields.model.filter(|model| {
             !model.is_empty()
                 && model != "inherit"
                 && model.len() <= MAX_MODEL_BYTES
                 && !model.chars().any(char::is_control)
         }),
-        dropped_tools,
+        dropped_tools: resolved.dropped,
+        mcp_tools: resolved.mcp,
+        denied_mcp_tools: resolved.denied_mcp,
     };
     profile.validate()?;
     Ok(ParsedProfile {
@@ -711,6 +809,18 @@ mod tests {
         assert_eq!(with_tools("tools: Write").tools.unwrap(), WRITE_TOOLS);
         assert_eq!(with_tools("tools: *").tools, None);
         assert_eq!(parse("---\nname: a\ndescription: d\n---\nB").tools, None);
+        // Older names for tools a subagent has anyway.
+        assert_eq!(with_tools("tools: LS, NotebookRead").tools.unwrap(), READS);
+        assert_eq!(with_tools("tools: MultiEdit").tools.unwrap(), WRITE_TOOLS);
+    }
+
+    #[test]
+    fn names_a_subagent_has_no_tool_for_stay_out() {
+        // A subagent has no web, plan or background tools, so naming them grants nothing.
+        let names = "WebFetch, WebSearch, TodoWrite, KillShell, BashOutput, AskUserQuestion";
+        let profile = with_tools(&format!("tools: Read, {names}"));
+        assert_eq!(profile.tools.as_deref().unwrap(), READS);
+        assert_eq!(profile.dropped_tools.join(", "), names);
     }
 
     #[test]
@@ -726,11 +836,61 @@ mod tests {
         // A scoped tool isn't widened to the whole tool, and commas inside it don't split.
         let scoped = with_tools("tools: Read, Bash(git diff:*, git log:*), mcp__docs__*");
         assert_eq!(scoped.tools.as_deref().unwrap(), READS);
-        assert_eq!(
-            scoped.dropped_tools,
-            ["Bash(git diff:*, git log:*)", "mcp__docs__*"]
-        );
+        assert_eq!(scoped.dropped_tools, ["Bash(git diff:*, git log:*)"]);
+        assert_eq!(scoped.mcp_tools, ["mcp__docs__*"]);
         assert!(!scoped.allows("shell") && !scoped.allows_writes());
+    }
+
+    fn names(names: &[&str]) -> Vec<String> {
+        names.iter().map(|name| (*name).to_owned()).collect()
+    }
+
+    #[test]
+    fn mcp_names_select_tools_and_a_list_never_widens() {
+        let lookup = names(&["mcp__docs__lookup", "mcp__plugin_kit_docs__lookup"]);
+        let other = names(&["mcp__other__lookup", "mcp__plugin_kit_other__lookup"]);
+        let allowed = |form: &str| with_tools(form);
+        for form in [
+            "tools: mcp__docs__lookup",
+            "tools: mcp__plugin_kit_docs__lookup",
+            "tools: mcp__docs__*",
+            "tools: mcp__docs",
+            "tools: mcp__*__lookup",
+            "tools: \"*\"",
+        ] {
+            assert!(allowed(form).allows_mcp(&lookup), "{form}");
+        }
+        for form in [
+            "tools: mcp__docs__lookup",
+            "tools: mcp__docs__*",
+            "tools: mcp__docs",
+            "tools: Read",
+            "tools: mcp__do",
+            "tools: mcp__docs__look",
+        ] {
+            assert!(!allowed(form).allows_mcp(&other), "{form}");
+        }
+        assert!(!allowed("tools: Read").allows_mcp(&lookup));
+        assert!(!allowed("tools:").allows_mcp(&lookup));
+        // No list at all leaves them open, and a deny list takes away.
+        assert!(parse("---\nname: a\ndescription: d\n---\nB").allows_mcp(&lookup));
+        assert!(!allowed("disallowedTools: mcp__docs__lookup").allows_mcp(&lookup));
+        assert!(!allowed("disallowedTools: mcp__docs").allows_mcp(&lookup));
+        assert!(allowed("disallowedTools: mcp__docs__lookup").allows_mcp(&other));
+        assert!(!allowed("disallowedTools: *").allows_mcp(&lookup));
+        // A saved profile that never had the field gets none.
+        let saved: SubagentProfile = serde_json::from_value(serde_json::json!(
+            {"name": "a", "description": "d", "instructions": "i"}
+        ))
+        .unwrap();
+        assert!(!saved.allows_mcp(&lookup));
+        // Never file permission.
+        let only_mcp = with_tools("tools: mcp__docs__*");
+        assert!(!only_mcp.allows_writes() && !only_mcp.allows("shell"));
+        // Odd names aren't MCP names, whatever they start with.
+        let odd = with_tools("tools: mcp__a(b), mcp__");
+        assert!(odd.mcp_tools.is_empty());
+        assert_eq!(odd.dropped_tools, ["mcp__a(b)", "mcp__"]);
     }
 
     #[test]
@@ -837,6 +997,8 @@ mod tests {
                         tools: None,
                         model: None,
                         dropped_tools: vec![],
+                        mcp_tools: vec![],
+                        denied_mcp_tools: vec![],
                     })
                     .collect(),
                 ..Default::default()
@@ -942,14 +1104,29 @@ mod tests {
             }
         }
 
+        /// Whatever the text, matching ends and a name only ever covers what it names.
+        #[test]
+        fn mcp_names_match_cleanly(
+            pattern in "mcp__[a-z_*]{0,12}",
+            name in "mcp__[a-z_]{0,12}",
+        ) {
+            let matched = mcp_name_matches(&pattern, &name);
+            if !pattern.contains('*') && !pattern["mcp__".len()..].contains("__") {
+                prop_assert_eq!(matched, name.starts_with(&format!("{pattern}__")));
+            } else if !pattern.contains('*') {
+                prop_assert_eq!(matched, pattern == name);
+            }
+        }
+
         /// Any scoped or unknown name is dropped, never mapped.
         #[test]
         fn names_with_a_scope_are_never_mapped(scope in "[a-z :*]{0,10}") {
             for base in ["Read", "Bash", "Write"] {
                 let name = format!("{base}({scope})");
-                let (tools, dropped) = resolve_tools(Some(std::slice::from_ref(&name)), &[]);
-                prop_assert_eq!(tools.unwrap(), Vec::<String>::new());
-                prop_assert_eq!(dropped.len(), 1);
+                let resolved = resolve_tools(Some(std::slice::from_ref(&name)), &[]);
+                prop_assert_eq!(resolved.tools.unwrap(), Vec::<String>::new());
+                prop_assert_eq!(resolved.dropped.len(), 1);
+                prop_assert!(resolved.mcp.is_empty());
             }
         }
     }

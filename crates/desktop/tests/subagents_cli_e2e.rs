@@ -1395,7 +1395,7 @@ async fn lookup_server() -> MockServer {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn a_tool_list_only_narrows_and_leaves_out_mcp_tools() {
+async fn a_tool_list_only_narrows() {
     let mcp = lookup_server().await;
     let app = app(
         None,
@@ -1456,7 +1456,7 @@ async fn a_tool_list_only_narrows_and_leaves_out_mcp_tools() {
     assert_eq!(report["report"]["status"], "partial", "{report}");
     let reasons = report["spec"]["unsupported"].to_string();
     assert!(reasons.contains("WebFetch"), "{reasons}");
-    assert!(reasons.contains("mcp__docs__lookup"), "{reasons}");
+    assert!(!reasons.contains("mcp__docs__lookup"), "{reasons}");
     assert!(reasons.contains("Bash(git diff:*)"), "{reasons}");
 
     run_in_yolo(&app, "review the project").await;
@@ -1472,10 +1472,13 @@ async fn a_tool_list_only_narrows_and_leaves_out_mcp_tools() {
             .iter()
             .find(|body| is_subagent(body) && mentions(body, brief))
             .unwrap_or_else(|| panic!("no child for {brief}"));
-        sorted_tools(child)
+        // What MCP tools they get has its own tests (`subagent_mcp_cli_e2e`).
+        let mut names = sorted_tools(child);
+        names.retain(|name| !name.starts_with("mcp_"));
+        names
     };
     let reads = ["list_dir", "read_file", "search_file"];
-    // A named MCP tool is not granted; WebFetch is dropped; Bash stays what it was.
+    // WebFetch is dropped; Bash stays what it was.
     assert_eq!(
         tools_of("names mcp"),
         ["list_dir", "read_file", "search_file", "shell"]

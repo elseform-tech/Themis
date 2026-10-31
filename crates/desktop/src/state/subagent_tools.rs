@@ -18,6 +18,8 @@ fn say_field() -> Value {
 const MAX_WAIT_SECONDS: u64 = 600;
 /// The longest brief, in characters.
 const MAX_BRIEF: usize = 8000;
+/// Most MCP tool names one subagent may be given.
+const MAX_MCP_TOOLS: usize = 256;
 
 fn error(message: impl ToString) -> ToolCallError {
     ToolCallError::RuntimeError(message.to_string().into())
@@ -41,6 +43,7 @@ pub(super) fn tools(kit: &Arc<SubagentKit>) -> Vec<Box<dyn ToolT>> {
                 description,
                 models: !others.is_empty(),
                 profiles: !kit.profiles.is_empty(),
+                mcp: kit.offers_mcp(),
             }) as Box<dyn ToolT>
         })
         .collect()
@@ -58,6 +61,9 @@ fn spawn_description(kit: &SubagentKit, others: &[String]) -> String {
                 ("default", &kit.default_model()),
             ],
         ));
+    }
+    if kit.offers_mcp() {
+        parts.push(themis_core::prompts::SPAWN_SUBAGENTS_MCP.to_owned());
     }
     if !kit.profiles.is_empty() {
         let (listing, more) = kit.profiles.listing();
@@ -129,6 +135,8 @@ struct SubagentTool {
     models: bool,
     /// The spawn tool offers `profile` (an enabled plugin ships some).
     profiles: bool,
+    /// The spawn tool offers `mcp_tools` (this run has some, and they are allowed).
+    mcp: bool,
 }
 
 impl std::fmt::Debug for SubagentTool {
@@ -147,6 +155,7 @@ struct Brief {
     model: Option<String>,
     profile: Option<String>,
     write_paths: Vec<String>,
+    mcp_tools: Option<Vec<String>>,
 }
 
 /// The briefs the model asked for, named "Subagent N" when it gave no name.
@@ -204,6 +213,26 @@ fn parse_briefs(args: &Value) -> Result<Vec<Brief>, ToolCallError> {
                                 index + 1
                             ))
                         })?,
+                },
+                mcp_tools: match &item["mcp_tools"] {
+                    Value::Null => None,
+                    names => Some(
+                        names
+                            .as_array()
+                            .and_then(|names| {
+                                names
+                                    .iter()
+                                    .take(MAX_MCP_TOOLS)
+                                    .map(|name| name.as_str().map(str::to_owned))
+                                    .collect::<Option<Vec<_>>>()
+                            })
+                            .ok_or_else(|| {
+                                error(format!(
+                                    "subagent {}: `mcp_tools` must be a list of tool names",
+                                    index + 1
+                                ))
+                            })?,
+                    ),
                 },
             })
         })
@@ -279,11 +308,21 @@ impl SubagentTool {
             .into_iter()
             .zip(write_paths)
             .map(|((brief, model, profile), paths)| {
+                let mcp = self
+                    .kit
+                    .mcp_access(profile.as_deref(), brief.mcp_tools.as_deref());
                 let agent = self
                     .kit
-                    .start(brief.name, brief.brief, model, paths, profile);
-                json!({"id": agent.id, "name": agent.name, "model": agent.model,
-                    "write_paths": agent.write_paths})
+                    .start(brief.name, brief.brief, model, paths, profile, mcp);
+                let mut started = json!({"id": agent.id, "name": agent.name, "model": agent.model,
+                    "write_paths": agent.write_paths});
+                if !agent.mcp.tools.is_empty() {
+                    started["mcp_tools"] = json!(agent.mcp.tools.len());
+                }
+                if !agent.mcp.left_out.is_empty() {
+                    started["mcp_left_out"] = json!(agent.mcp.left_out);
+                }
+                started
             })
             .collect();
         let mut output =
@@ -464,6 +503,10 @@ impl ToolT for SubagentTool {
                 if self.profiles {
                     item["properties"]["profile"] = json!({"type":"string"});
                 }
+                if self.mcp {
+                    item["properties"]["mcp_tools"] =
+                        json!({"type":"array","items":{"type":"string"},"maxItems":MAX_MCP_TOOLS});
+                }
                 json!({"type":"object","properties":{
                     "say":say_field(),
                     "subagents":{"type":"array","minItems":1,"maxItems":MAX_PER_CALL,"items":item}
@@ -501,6 +544,43 @@ impl std::fmt::Debug for StatusField {
         f.debug_struct("StatusField")
             .field("tool", &self.inner.name())
             .finish_non_exhaustive()
+    }
+}
+
+/// Ends a tool's call when its subagent is stopped, rather than when the server answers.
+#[derive(Debug)]
+pub(super) struct Stoppable {
+    pub(super) inner: Box<dyn ToolT>,
+    pub(super) stop: Arc<std::sync::atomic::AtomicBool>,
+}
+
+#[async_trait]
+impl ToolRuntime for Stoppable {
+    async fn execute(&self, args: Value) -> Result<Value, ToolCallError> {
+        let stopped = async {
+            while !self.stop.load(std::sync::atomic::Ordering::SeqCst) {
+                tokio::time::sleep(Duration::from_millis(100)).await;
+            }
+        };
+        tokio::select! {
+            result = self.inner.execute(args) => result,
+            () = stopped => Err(error("Stopped by you")),
+        }
+    }
+}
+
+impl ToolT for Stoppable {
+    fn name(&self) -> &str {
+        self.inner.name()
+    }
+    fn description(&self) -> &str {
+        self.inner.description()
+    }
+    fn args_schema(&self) -> Value {
+        self.inner.args_schema()
+    }
+    fn output_schema(&self) -> Option<Value> {
+        self.inner.output_schema()
     }
 }
 

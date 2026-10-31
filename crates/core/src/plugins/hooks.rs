@@ -22,7 +22,7 @@ fn canonical_event(event: &str) -> &str {
     match event {
         "BeforeToolCall" => "BeforeTool",
         "AfterToolCall" | "ToolCallFailed" => "AfterTool",
-        "RunFinished" => "RunEnd",
+        "RunFinished" | "RunFailed" => "RunEnd",
         "SubagentStop" => "SubagentEnd",
         _ => event,
     }
@@ -50,6 +50,19 @@ pub struct Hook {
     pub matcher: Option<String>,
     #[serde(default)]
     pub failure_policy: Option<HookFailurePolicy>,
+    /// The shell for `command`; only `bash` is known. Absent, the platform's own.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub shell: Option<String>,
+    /// Runs without being waited for: it can't block anything or add context.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub background: bool,
+    /// Only for a shell call running a command that starts with these words. A script that
+    /// can't be read counts as running it, so a guard errs towards running.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub command_prefix: Option<Vec<String>>,
+    /// Claude's convention: exit code 2 asks to block, with the reason on stderr.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub exit_two_blocks: bool,
     #[serde(skip)]
     pub plugin_root: Option<std::path::PathBuf>,
     #[serde(skip)]
@@ -77,7 +90,169 @@ impl Hook {
         {
             bail!("Invalid hook name, event, command, or timeout (1–60 seconds)");
         }
+        if self.shell.as_deref().is_some_and(|shell| shell != "bash") {
+            bail!("Hook shell must be bash");
+        }
+        if let Some(pattern) = self.matcher.as_deref().and_then(matcher_regex) {
+            compile_matcher(pattern).context("Invalid hook matcher")?;
+        }
         Ok(())
+    }
+
+    /// Whether this hook runs for `payload` of its event.
+    fn applies(&self, payload: &Value, mcp_names: &McpNames) -> bool {
+        let tool = payload["tool"].as_str();
+        (self.event != "ToolCallFailed" || payload["ok"] == false)
+            && (self.event != "RunFailed" || payload["status"] == "failed")
+            && self
+                .matcher
+                .as_ref()
+                .is_none_or(|matcher| matcher_covers(matcher, tool, mcp_names))
+            && self.command_prefix.as_ref().is_none_or(|prefix| {
+                tool == Some("shell") && runs_command(&payload["arguments"], prefix)
+            })
+    }
+}
+
+/// What marks the regular expression at the end of a matcher: `shell|re:mcp__.*__query`. It
+/// is matched against an MCP tool's Claude names, since those are what plugins write.
+const MATCHER_REGEX: &str = "re:";
+/// Largest compiled size of a matcher's regular expression.
+const MATCHER_REGEX_BYTES: usize = 1 << 20;
+
+fn matcher_regex(matcher: &str) -> Option<&str> {
+    if let Some(pattern) = matcher.strip_prefix(MATCHER_REGEX) {
+        return Some(pattern);
+    }
+    matcher.split_once("|re:").map(|(_, pattern)| pattern)
+}
+
+/// A matcher's regular expression, compiled. Unanchored, like Claude's.
+pub fn compile_matcher(pattern: &str) -> Result<regex::Regex, regex::Error> {
+    regex::RegexBuilder::new(pattern)
+        .size_limit(MATCHER_REGEX_BYTES)
+        .build()
+}
+
+fn matcher_covers(matcher: &str, tool: Option<&str>, mcp_names: &McpNames) -> bool {
+    let names = match matcher_regex(matcher) {
+        Some(pattern) => {
+            let found = tool.and_then(|tool| mcp_names.get(tool));
+            if found.is_some_and(|names| {
+                compile_matcher(pattern)
+                    .is_ok_and(|regex| names.iter().any(|name| regex.is_match(name)))
+            }) {
+                return true;
+            }
+            matcher
+                .strip_suffix(pattern)
+                .and_then(|rest| rest.strip_suffix(MATCHER_REGEX))
+                .unwrap_or_default()
+        }
+        None => matcher,
+    };
+    names
+        .split('|')
+        .any(|name| name == "*" || tool == Some(name))
+}
+
+/// Whether a shell call runs a command starting with `prefix`, or might.
+fn runs_command(arguments: &Value, prefix: &[String]) -> bool {
+    let argv = crate::tools::shell_argv(arguments);
+    if argv.is_empty() {
+        return true;
+    }
+    crate::tools::commands_run_by(&argv)
+        .is_none_or(|commands| commands.iter().any(|command| starts_with(command, prefix)))
+}
+
+/// The same program, with the rule's other words among its arguments in order. Options may sit
+/// between them (`git -C . push`), so this errs towards a guard running.
+fn starts_with(command: &[String], prefix: &[String]) -> bool {
+    let (Some((program, arguments)), Some((wanted, words))) =
+        (command.split_first(), prefix.split_first())
+    else {
+        return false;
+    };
+    if crate::tools::program_basename(program) != crate::tools::program_basename(wanted) {
+        return false;
+    }
+    let mut arguments = arguments.iter();
+    words
+        .iter()
+        .all(|word| arguments.any(|argument| argument == word))
+}
+
+/// A Themis tool's name in Claude's words, for scripts written for Claude.
+fn claude_tool_name(tool: &str) -> Option<&'static str> {
+    Some(match tool {
+        "shell" | "background_task" => "Bash",
+        "read_file" => "Read",
+        "write_file" => "Write",
+        "apply_patch" => "Edit",
+        "search_file" => "Grep",
+        "list_dir" => "LS",
+        "fetch_url" => "WebFetch",
+        "web_search" => "WebSearch",
+        "spawn_subagents" => "Agent",
+        _ => return None,
+    })
+}
+
+/// A tool's arguments in the shape Claude's tools take theirs: the whole command as one string,
+/// the patched file as `file_path` (the first, when a patch touches several).
+fn claude_tool_input(tool: &str, arguments: &Value) -> Value {
+    let mut input = arguments.clone();
+    match tool {
+        "shell" => input["command"] = crate::tools::shell_argv(arguments).join(" ").into(),
+        "apply_patch" => {
+            if let Some(path) = arguments["patch"].as_str().and_then(|patch| {
+                patch.lines().find_map(|line| {
+                    let path = line.strip_prefix("+++ ")?.split('\t').next()?.trim();
+                    (path != "/dev/null").then(|| path.strip_prefix("b/").unwrap_or(path))
+                })
+            }) {
+                input["file_path"] = path.into();
+            }
+        }
+        _ => {}
+    }
+    input
+}
+
+/// Adds the field names Claude's hooks read, beside Themis's own: a plugin's guard that reads
+/// `tool_input.command` would otherwise find nothing, and let everything through.
+fn add_claude_fields(payload: &mut Value, runtime: &HookRuntime) {
+    let event = match payload["event"].as_str().unwrap_or_default() {
+        "PromptSubmit" => "UserPromptSubmit",
+        "RunStart" => "SessionStart",
+        "BeforeTool" => "PreToolUse",
+        "AfterTool" if payload["ok"] == false => "PostToolUseFailure",
+        "AfterTool" => "PostToolUse",
+        "BeforeCompaction" => "PreCompact",
+        "RunEnd" if payload["status"] == "failed" => "StopFailure",
+        "RunEnd" => "Stop",
+        "SubagentEnd" => "SubagentStop",
+        other => other,
+    }
+    .to_owned();
+    payload["hook_event_name"] = event.into();
+    payload["session_id"] = runtime.thread_id.clone().into();
+    payload["cwd"] = runtime.root.to_string_lossy().as_ref().into();
+    let Some(tool) = payload["tool"].as_str().map(str::to_owned) else {
+        return;
+    };
+    let name = runtime
+        .mcp_names
+        .get(&tool)
+        .and_then(|names| names.first().cloned())
+        .or_else(|| claude_tool_name(&tool).map(str::to_owned))
+        .unwrap_or_else(|| tool.clone());
+    payload["tool_name"] = name.into();
+    payload["tool_input"] = claude_tool_input(&tool, &payload["arguments"]);
+    if let Some(output) = payload["output"].as_str() {
+        let response = serde_json::from_str(output).unwrap_or_else(|_| json!(output));
+        payload["tool_response"] = response;
     }
 }
 
@@ -87,6 +262,12 @@ pub async fn run(
     payload: &Value,
     approvals: &Arc<dyn ApprovalHook>,
 ) -> anyhow::Result<Value> {
+    authorize(hook, approvals)?;
+    execute(hook, root, payload).await
+}
+
+/// Validates a hook and asks whether it may run.
+fn authorize(hook: &Hook, approvals: &Arc<dyn ApprovalHook>) -> anyhow::Result<()> {
     hook.validate()?;
     use std::hash::{Hash, Hasher};
     let mut definition = std::collections::hash_map::DefaultHasher::new();
@@ -110,14 +291,50 @@ pub async fn run(
     if approvals.approve(&action).is_denied() {
         bail!("Hook execution denied");
     }
+    Ok(())
+}
+
+/// Most of a hook's stderr that is kept, in bytes.
+const STDERR_LIMIT: usize = 4096;
+
+/// Drains a hook's stderr, keeping its start so a refusal can give the reason.
+fn keep_stderr(
+    mut stderr: tokio::process::ChildStderr,
+) -> (Arc<std::sync::Mutex<Vec<u8>>>, tokio::task::JoinHandle<()>) {
+    let kept = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let filling = Arc::clone(&kept);
+    let reader = tokio::spawn(async move {
+        let mut chunk = [0u8; 1024];
+        while let Ok(count) = stderr.read(&mut chunk).await {
+            if count == 0 {
+                break;
+            }
+            let mut kept = filling.lock().unwrap_or_else(|e| e.into_inner());
+            let room = STDERR_LIMIT.saturating_sub(kept.len());
+            kept.extend_from_slice(&chunk[..count.min(room)]);
+        }
+        let kept = filling.lock().unwrap_or_else(|e| e.into_inner()).clone();
+        if !kept.is_empty() {
+            crate::diagnostics::capture_stderr(std::io::Cursor::new(kept), "hook", Vec::new());
+        }
+    });
+    (kept, reader)
+}
+
+/// Runs an authorized hook.
+async fn execute(hook: &Hook, root: &Path, payload: &Value) -> anyhow::Result<Value> {
     #[cfg(not(windows))]
     let mut command = {
-        let mut c = tokio::process::Command::new("sh");
+        let mut c = tokio::process::Command::new(hook.shell.as_deref().unwrap_or("sh"));
         c.args(["-c", &hook.command]);
         c
     };
     #[cfg(windows)]
-    let mut command = {
+    let mut command = if let Some(shell) = &hook.shell {
+        let mut c = tokio::process::Command::new(shell);
+        c.args(["-c", &hook.command]);
+        c
+    } else {
         let mut c = tokio::process::Command::new("cmd");
         // cmd parses shell text rather than C-runtime escaped argv.
         c.args(["/D", "/S", "/C"])
@@ -140,12 +357,11 @@ pub async fn run(
     if let Some(path) = &hook.plugin_root {
         command.env("CLAUDE_PLUGIN_ROOT", path);
     }
+    command.env("CLAUDE_PROJECT_DIR", root);
     #[cfg(unix)]
     command.process_group(0);
     let mut child = command.spawn()?;
-    if let Some(stderr) = child.stderr.take() {
-        crate::diagnostics::capture_stderr(stderr, "hook", Vec::new());
-    }
+    let stderr = child.stderr.take().map(keep_stderr);
     let _group = ProcessGroup(child.id());
     let outcome = tokio::time::timeout(
         std::time::Duration::from_secs(hook.timeout_seconds),
@@ -175,6 +391,20 @@ pub async fn run(
                 bail!("Hook output exceeds 64 KiB");
             }
             let status = child.wait().await?;
+            if hook.exit_two_blocks && status.code() == Some(2) {
+                let mut reason = String::new();
+                if let Some((kept, reader)) = stderr {
+                    // A process the hook left behind may hold stderr open: don't wait for it.
+                    let _ =
+                        tokio::time::timeout(std::time::Duration::from_millis(200), reader).await;
+                    let kept = kept.lock().unwrap_or_else(|e| e.into_inner());
+                    reason = String::from_utf8_lossy(&kept).trim().to_owned();
+                }
+                return Err(Blocked(
+                    (!reason.is_empty()).then(|| capped(&reason, BLOCK_REASON_LIMIT).to_owned()),
+                )
+                .into());
+            }
             if !status.success() {
                 bail!("Hook exited unsuccessfully ({status})");
             }
@@ -217,7 +447,18 @@ pub struct HookRuntime {
     pub approvals: Arc<dyn ApprovalHook>,
     /// Set inside a subagent: payloads carry `agent: {id, name}`.
     pub agent: Option<Value>,
+    /// The Claude names of this run's MCP tools, by Themis tool name.
+    pub mcp_names: McpNames,
 }
+
+/// A Themis MCP tool's Claude names (`mcp__server__tool`, then the form Claude gives a server
+/// inside a plugin, `mcp__plugin_name_server__tool`), by its Themis name.
+pub type McpNames = Arc<std::collections::HashMap<String, Vec<String>>>;
+
+/// Background hooks running at once; past this they are skipped, with a diagnostics event.
+const BACKGROUND_HOOKS: usize = 8;
+static BACKGROUND_SLOTS: tokio::sync::Semaphore =
+    tokio::sync::Semaphore::const_new(BACKGROUND_HOOKS);
 tokio::task_local! { pub static ACTIVE: HookRuntime; static IN_HOOK: bool; static PROMPT_CONTEXT: String; }
 
 /// Most context `PromptSubmit` hooks may add to a turn, in bytes.
@@ -365,16 +606,14 @@ impl HookRuntime {
         if let Some(agent) = &self.agent {
             payload["agent"] = agent.clone();
         }
+        add_claude_fields(&mut payload, self);
         for hook in self.hooks.iter().filter(|h| {
-            h.enabled
-                && canonical_event(&h.event) == event
-                && (h.event != "ToolCallFailed" || payload["ok"] == false)
-                && h.matcher.as_ref().is_none_or(|matcher| {
-                    matcher
-                        .split('|')
-                        .any(|pattern| pattern == "*" || payload["tool"].as_str() == Some(pattern))
-                })
+            h.enabled && canonical_event(&h.event) == event && h.applies(&payload, &self.mcp_names)
         }) {
+            if hook.background {
+                self.start_in_background(hook, &payload);
+                continue;
+            }
             let outcome = IN_HOOK
                 .scope(true, run(hook, &self.root, &payload, &self.approvals))
                 .await;
@@ -420,6 +659,42 @@ impl HookRuntime {
             }
         }
         Ok(outputs)
+    }
+}
+
+impl HookRuntime {
+    /// Starts a hook nobody waits for. It is asked about here, in the run, and whatever comes
+    /// of it only reaches the diagnostics; its time limit bounds how long it outlives the run.
+    fn start_in_background(&self, hook: &Hook, payload: &Value) {
+        let log = |event: &str, level: &str| {
+            crate::diagnostics::emit("hook", event, level, json!({"hook": hook.name}));
+        };
+        if authorize(hook, &self.approvals).is_err() {
+            log("background_denied", "warn");
+            return;
+        }
+        let Ok(permit) = BACKGROUND_SLOTS.try_acquire() else {
+            log("background_skipped", "warn");
+            return;
+        };
+        let (hook, root, payload) = (hook.clone(), self.root.clone(), payload.clone());
+        let context = crate::diagnostics::ACTIVE.try_with(Clone::clone).ok();
+        let work = async move {
+            let _permit = permit;
+            let outcome = IN_HOOK.scope(true, execute(&hook, &root, &payload)).await;
+            crate::diagnostics::emit(
+                "hook",
+                "background_finished",
+                if outcome.is_ok() { "info" } else { "warn" },
+                json!({"hook": hook.name, "ok": outcome.is_ok()}),
+            );
+        };
+        tokio::spawn(async move {
+            match context {
+                Some(context) => crate::diagnostics::ACTIVE.scope(context, work).await,
+                None => work.await,
+            }
+        });
     }
 }
 
@@ -556,6 +831,10 @@ mod tests {
             blocking: false,
             matcher: None,
             failure_policy: None,
+            shell: None,
+            background: false,
+            command_prefix: None,
+            exit_two_blocks: false,
             plugin_root: None,
             runtime_identity: None,
         }
@@ -609,6 +888,7 @@ mod tests {
             run_id: "run".into(),
             thread_id: "thread".into(),
             agent: None,
+            mcp_names: Arc::default(),
         };
         let (tx, mut rx) = tokio::sync::mpsc::channel(32);
         runtime
@@ -658,6 +938,7 @@ mod tests {
             run_id: "child".into(),
             thread_id: "thread".into(),
             agent: Some(json!({"id": "s1", "name": "Bug hunt"})),
+            mcp_names: Arc::default(),
         };
         let (tx, _rx) = tokio::sync::mpsc::channel(32);
         runtime
@@ -687,6 +968,7 @@ mod tests {
             run_id: "run".into(),
             thread_id: "thread".into(),
             agent: None,
+            mcp_names: Arc::default(),
         };
         let (tx, _rx) = tokio::sync::mpsc::channel(32);
         // Plain text and Claude's JSON both add context, in order; the prompt reaches them.
@@ -755,6 +1037,7 @@ mod tests {
             root: root.path().into(),
             approvals: Arc::new(crate::tools::AllowAllHook),
             agent: None,
+            mcp_names: Arc::default(),
         };
         let tool_hook = |name: &str, command: &str, blocking: bool| Hook {
             name: name.into(),
@@ -765,6 +1048,10 @@ mod tests {
             failure_policy: None,
             timeout_seconds: 10,
             blocking,
+            shell: None,
+            background: false,
+            command_prefix: None,
+            exit_two_blocks: false,
             plugin_root: None,
             runtime_identity: None,
         };

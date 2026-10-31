@@ -680,7 +680,7 @@ fn rm_recursive(args: &[String]) -> bool {
 }
 
 /// Basename of a program token, lowercased, without a Windows `.exe` suffix.
-fn program_basename(program: &str) -> String {
+pub(crate) fn program_basename(program: &str) -> String {
     let name = program.rsplit(['/', '\\']).next().unwrap_or(program);
     let name = name.to_ascii_lowercase();
     name.strip_suffix(".exe").map(str::to_owned).unwrap_or(name)
