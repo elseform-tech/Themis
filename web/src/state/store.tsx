@@ -158,6 +158,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     let recoveryRequested = false;
     let recoveryWarning = false;
     let retry: ReturnType<typeof setTimeout> | undefined;
+    const loadedAt = new Map<string, number>();
     async function recover() {
       if (cancelled) return;
       if (recovering) { recoveryRequested = true; return; }
@@ -176,6 +177,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
               dispatch({ type: "thread/running-loaded", threadId: thread.id, running: true });
               pending = true; continue;
             }
+            // While another chat keeps this loop going, an idle chat that has not changed stays as loaded.
+            if (thread.last_activity_seq !== undefined && loadedAt.get(thread.id) === thread.last_activity_seq) continue;
             const history = await getThreadHistory(thread.id);
             const latest = await getThread(thread.id);
             if (cancelled) return;
@@ -183,6 +186,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
             dispatch({ type: "thread/synced", projectRoot: project.root, thread: latest });
             dispatch({ type: "thread/history-loaded", threadId: thread.id, history });
             dispatch({ type: "thread/running-loaded", threadId: thread.id, running: false });
+            if (latest.last_activity_seq !== undefined) loadedAt.set(thread.id, latest.last_activity_seq);
           }
         }
         const version = eventVersion;

@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { act, fireEvent, render, screen, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, within, waitFor } from "@testing-library/react";
 import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_SETTINGS } from "../state/reducer";
 import App from "../App";
@@ -159,6 +159,39 @@ describe("Workspace journey", () => {
     fireEvent.click(screen.getByRole("button", { name: "Recovery test" }));
     expect(await screen.findByText("Recovered completion")).toBeInTheDocument();
   });
+
+  it("does not reload an idle chat's history again while another chat keeps running", async () => {
+    const base = { provider: "go" as const, model: "test", worktree_path: null, base_branch: null, branch: null, approval_mode: "custom" as const, last_activity_seq: 5 };
+    const idle = { ...base, id: "idle", title: "Idle chat", running: false };
+    const busy = { ...base, id: "busy", title: "Busy chat", running: true };
+    vi.mocked(bridge.listThreads).mockResolvedValue([idle, busy] as never);
+    vi.mocked(bridge.getThread).mockResolvedValue(idle as never);
+    vi.mocked(bridge.getThreadHistory).mockClear();
+    await mount();
+    const loads = () => vi.mocked(bridge.getThreadHistory).mock.calls.filter(call => call[0] === "idle").length;
+    const passes = () => vi.mocked(bridge.listThreads).mock.calls.length;
+    await waitFor(() => expect(loads()).toBeGreaterThan(0));
+    await waitFor(() => expect(passes()).toBeGreaterThanOrEqual(2), { timeout: 5000 });
+    const settled = loads();
+    const seen = passes();
+    await waitFor(() => expect(passes()).toBeGreaterThanOrEqual(seen + 2), { timeout: 7000 });
+    expect(loads()).toBe(settled);
+  }, 15000);
+
+  it("reloads an idle chat's history once it has new activity", async () => {
+    const base = { provider: "go" as const, model: "test", worktree_path: null, base_branch: null, branch: null, approval_mode: "custom" as const };
+    const idle = { ...base, id: "idle", title: "Idle chat", running: false, last_activity_seq: 5 };
+    const busy = { ...base, id: "busy", title: "Busy chat", running: true, last_activity_seq: 5 };
+    vi.mocked(bridge.listThreads).mockResolvedValue([idle, busy] as never);
+    vi.mocked(bridge.getThread).mockResolvedValue(idle as never);
+    vi.mocked(bridge.getThreadHistory).mockClear();
+    await mount();
+    await waitFor(() => expect(vi.mocked(bridge.getThreadHistory)).toHaveBeenCalledWith("idle"));
+    const changed = { ...idle, last_activity_seq: 6 };
+    vi.mocked(bridge.listThreads).mockResolvedValue([changed, busy] as never);
+    vi.mocked(bridge.getThread).mockResolvedValue(changed as never);
+    await waitFor(() => expect(vi.mocked(bridge.getThreadHistory).mock.calls.filter(call => call[0] === "idle").length).toBe(2), { timeout: 5000 });
+  }, 10000);
 
   it("permits YOLO selection and sending in a non-Git project",async()=>{
     const project={name:"NonGit QA",root:"/tmp/non-git-qa",is_git:false};
