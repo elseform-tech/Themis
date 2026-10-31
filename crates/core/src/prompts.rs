@@ -73,6 +73,9 @@ pub const GOAL_CONTEXT: &str = include_str!("../builtins/prompts/goal-context.md
 pub const GOAL_TURN: &str = include_str!("../builtins/prompts/goal-turn.md");
 pub const GOAL_TURN_PROOF: &str = include_str!("../builtins/prompts/goal-turn-proof.md");
 pub const GOAL_TURN_FILES: &str = include_str!("../builtins/prompts/goal-turn-files.md");
+pub const GOAL_EVIDENCE_SCRIPT: &str = include_str!("../builtins/prompts/goal-evidence-script.md");
+pub const GOAL_NOTE_SCRIPT_PROOF: &str =
+    include_str!("../builtins/prompts/goal-note-script-proof.md");
 pub const GOAL_CHECKLIST_SYSTEM: &str =
     include_str!("../builtins/prompts/goal-checklist-system.md");
 pub const GOAL_CHECKLIST_USER: &str = include_str!("../builtins/prompts/goal-checklist-user.md");

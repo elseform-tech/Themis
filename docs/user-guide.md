@@ -167,7 +167,7 @@ is reached; for example `/goal optimize this app to speed up p95`.
   open when later work could have broken it. The overview box counts them ("2 of 5
   complete"), and Workspace › Goal lists them as Pending and Complete, with what showed each. A turn's
   replies dim when the check rejects them, so a claim the check didn't accept
-  doesn't read as a result. The check also says whether the turn moved the work forward (a turn
+  doesn't read as a result. A browser script that changes the page instead of using it (setting a value, clicking from code) rules out reaching the goal until the page is reloaded and the whole thing shown again with real input. The check also says whether the turn moved the work forward (a turn
   that changed files always did); after three turns that only re-check, the next
   one is told to step back and try a different approach.
 - **What you add joins the goal.** A request you send while the goal is open
