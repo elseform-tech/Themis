@@ -289,8 +289,7 @@ New files in `crates/core/builtins/prompts/`, each added to the inventory test:
    - This is large enough to split: backend and CLI first, then the desktop UI.
 2. **`write_paths`:** path validation, harness write limits, the sandbox wall, the author filter
    in Changes, and the writes row in Settings.
-3. **Steering:** the Steer icon and composer chip, and `message_subagent` delivery.
-4. **Plugin `agents/` profiles.**
+3. **Plugin `agents/` profiles.**
 
 ## Verification
 

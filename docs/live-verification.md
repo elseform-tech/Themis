@@ -117,6 +117,7 @@ full tour.
 | `tool:browser_record` | tour | `crates/core/src/browser` | Ask for a short recording; it plays in the media viewer. |
 | `tool:browser_devtools` | tour | `crates/core/src/browser/tools/devtools.rs` | Only with Developer mode on: read the console. Off: the tool is not offered. |
 | `tool:set_goal` | tour | `crates/desktop/src/state/goal_tool.rs` | `/goal` sets the goal; the goal bar shows it. More › Remove goal removes it; asking in the chat to pause or remove it does the same. |
+| `feature:goal-proof` | tour | `crates/desktop/src/state/goal.rs` | Run a goal over several turns: a rejected turn's replies dim, and the next turn doesn't re-prove what is listed. A passing "Checking…" shows during a check, then a "Goal check" bubble saying what is wrong, what to change and what is pending, and the agent answers it. |
 | `tool:ask_user` | tour | `crates/desktop/src/state/question_tool.rs` | The separator question appears on the composer after any approval, answered inline. |
 | `tool:spawn_subagents` | tour | `crates/desktop/src/state/subagent_tools.rs` | Ask for a review of two separate areas: two read-only subagents start, both results reach the reply, and the turn ends only after both. |
 | `tool:attach_file` | tour | `crates/desktop/src/state/media_tool.rs` | The screenshot is attached to the reply. |
@@ -139,11 +140,12 @@ full tour.
 | `feature:subagents-ui` | tour | `web/src/screens/SubagentCard.tsx`, `web/src/screens/SubagentDetail.tsx` | Ask for two subagents in Custom mode: the stack shows two ringed circles, a subagent's command asks under its name, the overview shows its approval, a circle opens its detail in Tasks with Stop, and the rings stop when they end. |
 | `feature:goal` | tour | `crates/desktop/src/state/goal.rs`, `web/src/screens/GoalBar.tsx` | Edit, pause after this turn, resume and remove from the goal bar; the goal continues across turns and ends with one summary. Each turn opens in the agent's own thinking-aloud words with no "Goal:" label, turns are divided by a plain line, and no status box appears in the chat. |
 | `feature:checkpoints` | tour | `crates/core/src/runtime.rs`, `crates/core/src/runtime/maintenance.rs` | At 32k the goal passes a checkpoint; the context meter drops and the work carries on. |
-| `feature:queue-and-steer` | tour | `crates/desktop/src/state/queue.rs`, `web/src/screens/QueueStack.tsx` | Queue, edit and remove a message; steer one in and see it handled. |
+| `feature:queue-and-steer` | tour | `crates/desktop/src/state/queue.rs`, `web/src/screens/QueueStack.tsx` | Queue, edit and remove a message; steer one in and see it handled. In Custom mode, while an approval box waits: a queued message leaves the box there; steering shows the message in the chat at once, the box goes away with no expiry warning, the agent reads the message without the box being answered, and it shows once, also after a reload. The same action asks again later. |
 | `feature:approvals` | smoke | `web/src/components/approval`, `crates/desktop/src/state/chat_grants.rs` | Allow once, Allow in this chat (no prompt next time), Deny; after a click on the box, keys 1–3 decide (typed in the composer, they do not). |
 | `feature:yolo` | tour | `web/src/lib/yolo.ts`, `crates/core/src/sandbox.rs` | Switch the shield to YOLO: no prompts; a deny rule still blocks. |
 | `feature:stop` | tour | `web/src/screens/ThreadComposer.tsx` | Esc twice stops the run with the hint shown first. |
 | `feature:turn-summary` | smoke | `crates/core/src/runtime.rs` | Every turn ends with a short natural summary; thinking folds only after the turn. |
+| `feature:turn-end-guard` | tour | `crates/core/src/runtime/turn_end.rs`, `crates/core/builtins/prompts/runtime-turn-end-guard.md` | On a free model that narrates, run a multi-step goal: turns no longer stop on a line that only announces the next step or on a tool call written as text. The tool runs after the line, the line shows once, an offer or a question to you ends the turn, and `logs/diagnostics-0.jsonl` holds `turn_end_guard` records with a reason and no reply text. |
 | `feature:model-picker` | smoke | `web/src/screens/ThreadHeader.tsx` | Change the model and effort; the next run uses them. |
 | `feature:attachments` | tour | `web/src/screens/AttachmentPreview.tsx`, `crates/desktop/src/state/attachments.rs` | Attach a file with +; the agent reads it. |
 | `feature:mentions` | tour | `web/src/components/PromptInput.tsx` | `/` lists skills, `@` lists plugins; the chosen one is used. |
@@ -170,6 +172,7 @@ full tour.
 | `workspace:branches` | tour | `web/src/screens/WorkspacePanel.tsx` | Lists `tour`. |
 | `workspace:pulls` | tour | `web/src/screens/WorkspacePanel.tsx` | Shows PRs or the reason it cannot. |
 | `workspace:tasks` | tour | `web/src/screens/TasksView.tsx` | Shows the run and the server; Stop and Pause work. |
+| `workspace:goal` | tour | `web/src/screens/GoalView.tsx` | During a goal, the Goal tab sorts the checklist into Pending and Complete; the list appears when the goal is set, a steered request lands in Pending at once, editing the goal redoes the list, items move as checks pass, and the overview box counts them. |
 | `workspace:browser` | tour | `web/src/screens/BrowserView.tsx` | Drive the page by hand while the agent uses it; Capture to message works. |
 | `view:skills` | tour | `web/src/screens/Skills.tsx`, `web/src/screens/Plugins.tsx` | Create, edit and delete a skill; install, enable and disable a catalog plugin. |
 | `view:automations` | tour | `web/src/screens/Automations.tsx` | Create, run now, pause and delete an automation. |

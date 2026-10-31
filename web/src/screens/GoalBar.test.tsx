@@ -59,6 +59,14 @@ describe("GoalBar", () => {
     expect(remove).toHaveBeenCalled();
   });
 
+  it("keeps the checklist out of the composer", () => {
+    const proof = [{ what: "Clicking starts the game", proven: true }, { what: "Health drops", proven: false }];
+    render(<GoalBar goal={goal({ proof })} onEdit={vi.fn()} onPause={vi.fn()} onResume={vi.fn()} onRemove={vi.fn()} />);
+    fireEvent.click(screen.getByRole("button", { name: "Optimize this app to bring p95 under 200 ms" }));
+    expect(screen.queryByText("Health drops")).not.toBeInTheDocument();
+    expect(screen.queryByText(/complete|proven/i)).not.toBeInTheDocument();
+  });
+
   it("leaves the composer once the goal is reached", () => {
     const { container, rerender } = render(<GoalBar goal={goal()} onEdit={vi.fn()} onPause={vi.fn()} onResume={vi.fn()} onRemove={vi.fn()} />);
     expect(screen.getByRole("region", { name: "Goal" })).toBeInTheDocument();

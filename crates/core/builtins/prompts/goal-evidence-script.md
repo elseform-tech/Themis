@@ -1,0 +1,1 @@
+(That script changed the page instead of using it as a person would, so nothing after it is real proof until the page is reloaded.)

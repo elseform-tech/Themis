@@ -1100,6 +1100,7 @@ impl AppState {
                 sink.emit_approval_expired(&ApprovalExpired {
                     thread_id: thread_id.to_owned(),
                     approval_id: approval_id.clone(),
+                    steered: false,
                 });
             }
             !mine

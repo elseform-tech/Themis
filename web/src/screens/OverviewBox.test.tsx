@@ -64,7 +64,8 @@ describe("chat overview box", () => {
     expect(preview).toHaveTextContent("Agent is clicking “Save”");
     expect(screen.getByRole("button", { name: "Changes: 2 files, 3 added and 1 removed lines" })).toHaveTextContent("2 files+3 −1");
     expect(screen.getByRole("button", { name: "Tasks: 1 queued" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Cost of this chat: $0.02. Opens Settings › Usage" })).toBeInTheDocument();
+    // Cost lives in Settings › Usage only.
+    expect(screen.queryByRole("button", { name: /Cost of this chat/ })).toBeNull();
 
     fireEvent.click(screen.getByRole("button", { name: /^Changes/ }));
     expect(dispatch).toHaveBeenLastCalledWith({ type: "ui/diff-panel", open: true, tab: "changes" });
@@ -117,5 +118,16 @@ describe("chat overview box", () => {
     const { result } = renderHook(() => useOverview("t2", []));
     await act(async () => {});
     expect(result.current.visible).toBe(false);
+  });
+});
+
+describe("the goal in the overview box", () => {
+  beforeEach(() => { dispatch.mockClear(); });
+  const overview = { changes: null, tasks: null, subagents: null, browser: null, media: [], visible: true, collapsed: false, setCollapsed: vi.fn() };
+  it("counts the checklist and opens the Goal tab", () => {
+    appState = initialState;
+    render(<OverviewBox threadId="t1" overview={{ ...overview, goal: { complete: 7, total: 8 } }} onOpenMedia={vi.fn()} />);
+    fireEvent.click(screen.getByRole("button", { name: "Goal: 7 of 8 complete" }));
+    expect(dispatch).toHaveBeenLastCalledWith({ type: "ui/diff-panel", open: true, tab: "goal" });
   });
 });

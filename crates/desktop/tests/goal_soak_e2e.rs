@@ -60,6 +60,12 @@ fn is_check(body: &Value) -> bool {
     system_has(body, CHECK_MARKER)
 }
 
+fn is_checklist(body: &Value) -> bool {
+    body["messages"][0]["content"]
+        .as_str()
+        .is_some_and(|text| text.contains("what a goal asks for"))
+}
+
 fn is_summary(body: &Value) -> bool {
     system_has(body, SUMMARY_MARKER)
 }
@@ -113,6 +119,9 @@ fn respond(
     if is_summary(body) {
         script.lock().unwrap().summaries += 1;
         return reply(CHECKPOINT);
+    }
+    if is_checklist(body) {
+        return reply(r#"{"requirements":[{"what":"All items written"}]}"#);
     }
     if is_check(body) {
         let written = script.lock().unwrap().written;
@@ -214,7 +223,7 @@ impl Soak {
 }
 
 fn ordinary(body: &&Value) -> bool {
-    !is_check(body) && !is_summary(body)
+    !is_check(body) && !is_summary(body) && !is_checklist(body)
 }
 
 /// Runs the goal to the end through the app server and the CLI: a first message with a

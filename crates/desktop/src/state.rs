@@ -218,8 +218,12 @@ impl RegistryEntry {
     }
 }
 
-/// A running run's steer inbox and the sink its events go to.
-type SteerEntry = (themis_core::runtime::SteerInbox, Arc<dyn EventSink>);
+/// A running run's steer inbox, the sink its events go to, and its id.
+struct SteerEntry {
+    inbox: themis_core::runtime::SteerInbox,
+    sink: Arc<dyn EventSink>,
+    run_id: String,
+}
 
 struct AppStateInner {
     stop_flags: std::sync::Mutex<HashMap<String, Arc<AtomicBool>>>,

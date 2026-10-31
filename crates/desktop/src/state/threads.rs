@@ -465,7 +465,7 @@ impl AppState {
                 .lock()
                 .unwrap_or_else(|e| e.into_inner())
                 .insert(thread_id.clone(), Arc::new(AtomicBool::new(false)));
-            self.open_steer_inbox(&thread_id, Arc::clone(&sink));
+            self.open_steer_inbox(&thread_id, &run_id, Arc::clone(&sink));
             if !record.titled {
                 record.title = title_from_message(&text);
                 record.titled = true;
@@ -502,6 +502,7 @@ impl AppState {
         };
         // `/goal` sets the goal, a reply resumes a goal waiting for the user;
         // every run while a goal runs is told about it.
+        let goal_before = self.goal_for(&thread_id);
         let resolved_text = match self.goal_for_message(sink.as_ref(), &thread_id, &text, &run_id) {
             Ok(context) => format!("{resolved_text}{context}"),
             Err(error) => {
@@ -509,6 +510,17 @@ impl AppState {
                 return Err(error);
             }
         };
+        // A new goal or an added request changes the checklist.
+        let goal_after = self.goal_for(&thread_id);
+        if goal_after
+            .as_ref()
+            .map(|goal| (goal.started_at, goal.added.len()))
+            != goal_before
+                .as_ref()
+                .map(|goal| (goal.started_at, goal.added.len()))
+        {
+            self.refresh_checklist(Arc::clone(&sink), &thread_id);
+        }
         let shown_attachments = attachments.clone();
         if let Err(error) = self.inner.transcript.append_user_with_attachments(
             &thread_id,

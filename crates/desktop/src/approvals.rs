@@ -56,7 +56,11 @@ pub struct DesktopApprovalHook {
     test_decisions: Option<Arc<Mutex<VecDeque<Approval>>>>,
     audit: Option<DiagnosticContext>,
     subagent: Option<crate::types::SubagentLabel>,
+    steer_waiting: Option<SteerWaiting>,
 }
+
+/// Whether a message the person steered in is waiting for the run to read it.
+pub type SteerWaiting = Arc<dyn Fn() -> bool + Send + Sync>;
 
 impl DesktopApprovalHook {
     /// Requests from this hook name the subagent that asks.
@@ -85,7 +89,16 @@ impl DesktopApprovalHook {
             test_decisions: None,
             audit: None,
             subagent: None,
+            steer_waiting: None,
         }
+    }
+
+    /// While a steered message waits to be read, actions are denied with no
+    /// dialog (the next call of a batch would otherwise block it all over again).
+    #[must_use]
+    pub fn with_steer_waiting(mut self, steer_waiting: SteerWaiting) -> Self {
+        self.steer_waiting = Some(steer_waiting);
+        self
     }
 
     /// Logs each dialog's answer (`approval/answered`) to the run's diagnostics.
@@ -96,7 +109,8 @@ impl DesktopApprovalHook {
     }
 
     /// What the person answered, before any downgrade: `once`, `chat` ("Allow in
-    /// this chat"), `deny`, or `none` when the dialog expired or was dropped.
+    /// this chat"), `deny`, `new_message` when they steered a message past the
+    /// dialog, or `none` when the dialog expired or was dropped.
     fn log_answer(&self, action: &ToolAction, decision: Option<Approval>, waited: Duration) {
         let Some(context) = &self.audit else {
             return;
@@ -105,6 +119,7 @@ impl DesktopApprovalHook {
             Some(Approval::AllowOnce) => "once",
             Some(Approval::AllowAlways) => "chat",
             Some(Approval::Deny) => "deny",
+            Some(Approval::DenyForNewMessage) => "new_message",
             None => "none",
         };
         let _ = context.log.append_with_level(
@@ -198,6 +213,11 @@ impl ApprovalHook for DesktopApprovalHook {
                 .pending
                 .lock()
                 .unwrap_or_else(|poisoned| poisoned.into_inner());
+            // Under the lock steering takes to deny what waits, after it fills the
+            // inbox: an action either sees the message here or is there to be denied.
+            if self.steer_waiting.as_ref().is_some_and(|waiting| waiting()) {
+                return Approval::DenyForNewMessage;
+            }
             pending.insert(
                 approval_id.clone(),
                 PendingApproval {
@@ -219,11 +239,22 @@ impl ApprovalHook for DesktopApprovalHook {
         match decision {
             // Only grantable actions may be remembered for the chat.
             Some(Approval::AllowAlways) if !grantable => Approval::AllowOnce,
+            // Sent from here, after the request above, so no client can see them
+            // out of order and be left with a dead box.
+            Some(Approval::DenyForNewMessage) => {
+                self.sink.emit_approval_expired(&ApprovalExpired {
+                    thread_id: self.thread_id.clone(),
+                    approval_id,
+                    steered: true,
+                });
+                Approval::DenyForNewMessage
+            }
             Some(decision) => decision,
             None => {
                 self.sink.emit_approval_expired(&ApprovalExpired {
                     thread_id: self.thread_id.clone(),
                     approval_id,
+                    steered: false,
                 });
                 Approval::Deny
             }
@@ -505,6 +536,59 @@ mod tests {
             panic!("expected a request");
         };
         assert!(request.grantable);
+    }
+
+    #[test]
+    fn a_steered_message_already_waiting_denies_without_a_box() {
+        let (hook, mut rx) = hook_with_sink(true);
+        let waiting = Arc::new(std::sync::atomic::AtomicBool::new(true));
+        let check = Arc::clone(&waiting);
+        let hook = hook
+            .with_timeout(Duration::from_millis(5))
+            .with_steer_waiting(Arc::new(move || {
+                check.load(std::sync::atomic::Ordering::SeqCst)
+            }));
+        assert_eq!(
+            hook.approve(&action("write_file", CoreRisk::Write)),
+            Approval::DenyForNewMessage
+        );
+        assert!(rx.try_recv().is_err(), "no box, and nothing to take away");
+        // Once the run has read it, actions ask as usual.
+        waiting.store(false, std::sync::atomic::Ordering::SeqCst);
+        hook.approve(&action("write_file", CoreRisk::Write));
+        assert!(matches!(rx.try_recv(), Ok(TestEvent::Approval(_))));
+    }
+
+    #[test]
+    fn a_new_message_takes_the_box_away_without_an_expiry() {
+        let (sink, mut rx) = ChannelSink::channel();
+        let pending: PendingMap = PendingMap::default();
+        let hook = DesktopApprovalHook::new(
+            "thread-1".to_owned(),
+            true,
+            Arc::new(sink),
+            Arc::clone(&pending),
+        )
+        .with_timeout(Duration::from_secs(30));
+        let handle = std::thread::spawn(move || hook.approve(&action("shell", CoreRisk::Execute)));
+        let Some(TestEvent::Approval(request)) = rx.blocking_recv() else {
+            panic!("expected a request");
+        };
+        let waiting = pending.lock().unwrap().remove(&request.approval_id);
+        waiting
+            .unwrap()
+            .sender
+            .send(Approval::DenyForNewMessage)
+            .unwrap();
+        assert_eq!(handle.join().unwrap(), Approval::DenyForNewMessage);
+        let Some(TestEvent::Expired(expired)) = rx.blocking_recv() else {
+            panic!("expected the box to be taken away");
+        };
+        assert_eq!(expired.approval_id, request.approval_id);
+        assert!(
+            expired.steered,
+            "no expiry warning for the person's own act"
+        );
     }
 
     #[test]

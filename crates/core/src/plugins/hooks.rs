@@ -1,5 +1,5 @@
 //! Bounded hook commands. Hooks cannot grant tool permissions.
-use crate::tools::{Approval, ApprovalHook, RiskLevel, ToolAction};
+use crate::tools::{ApprovalHook, RiskLevel, ToolAction};
 use anyhow::{bail, Context};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -107,7 +107,7 @@ pub async fn run(
         summary: format!("{}: {}", hook.event, hook.command),
         risk: RiskLevel::Execute,
     };
-    if approvals.approve(&action) == Approval::Deny {
+    if approvals.approve(&action).is_denied() {
         bail!("Hook execution denied");
     }
     #[cfg(not(windows))]
@@ -569,7 +569,7 @@ mod tests {
         let approvals = crate::runtime::CachingApprovals::wrap(Arc::new(FnHook::new(
             move |action: &ToolAction| {
                 capture.lock().unwrap().push(action.tool.clone());
-                Approval::AllowAlways
+                crate::tools::Approval::AllowAlways
             },
         )));
         let approvals: Arc<dyn ApprovalHook> = approvals;

@@ -1,6 +1,5 @@
 import { useEffect, useState } from "react";
 import { browserPreview, browserScreencastStop, browserState, browserStream, type BrowserState } from "../lib/browser";
-import { getUsageSummary } from "../lib/tauri";
 import type { AttachedMedia, DiffState } from "../lib/types";
 import type { ChatMessage, WorkspaceTab } from "../state/reducer";
 import { readSession, writeSession } from "../state/session";
@@ -16,9 +15,10 @@ export interface Overview {
   tasks: { running: number; attention: number; queued: number } | null;
   /** Subagents of the current run that are still working. */
   subagents: { running: number; approval: number } | null;
+  /** The goal's checklist, once a check has listed it. */
+  goal?: { complete: number; total: number } | null;
   browser: { label: string; agent: boolean; activity: string | null } | null;
   media: AttachedMedia[];
-  cost: { usd?: number; free: boolean } | null;
   /** Something to show: the box (and the room the chat leaves for it) appears only then. */
   /** Whether it has anything to list; the chat keeps its room either way. */
   visible: boolean;
@@ -42,7 +42,6 @@ export function useOverview(threadId: string, messages: ChatMessage[]): Overview
   const { state } = useApp();
   const [collapsed, setCollapsedState] = useState(() => readSession<boolean>(COLLAPSED_KEY, false));
   const [browser, setBrowser] = useState<BrowserState | null>(null);
-  const [cost, setCost] = useState<Overview["cost"]>(null);
   const running = state.running[threadId] ?? false;
   const browserAt = state.browsers[threadId]?.at;
 
@@ -53,18 +52,6 @@ export function useOverview(threadId: string, messages: ChatMessage[]): Overview
     browserState(threadId).then(next => { if (live) setBrowser(next); }).catch(() => { if (live) setBrowser(null); });
     return () => { live = false; };
   }, [threadId, browserAt, running]);
-
-  // Cost comes from the usage log; it changes only when a run ends.
-  useEffect(() => {
-    if (!threadId || running) return;
-    let live = true;
-    getUsageSummary().then(summary => {
-      if (!live) return;
-      const chat = summary.available ? summary.by_chat.find(entry => entry.key === threadId) : undefined;
-      setCost(chat ? { usd: chat.totals.estimated_cost_usd, free: chat.free === true } : null);
-    }).catch(() => { if (live) setCost(null); });
-    return () => { live = false; };
-  }, [threadId, running]);
 
   const counts = countTasks(state.tasks[threadId], state.settings.automations_enabled);
   const queued = state.queues[threadId]?.length ?? 0;
@@ -78,11 +65,12 @@ export function useOverview(threadId: string, messages: ChatMessage[]): Overview
   const subagents = subagentsRunning + approval > 0 ? { running: subagentsRunning, approval } : null;
   const media = messages.flatMap(message => message.media ?? []);
   const shownBrowser = browser?.open && browser.url !== "about:blank" ? { label: browserLabel(browser), agent: browser.controller === "agent", activity: browser.activity } : null;
-  const shownCost = cost && (cost.free || (cost.usd ?? 0) > 0) ? cost : null;
   const setCollapsed = (value: boolean) => { setCollapsedState(value); writeSession(COLLAPSED_KEY, value); };
+  const checklist = state.goals[threadId]?.proof ?? [];
+  const goal = checklist.length ? { complete: checklist.filter(item => item.proven).length, total: checklist.length } : null;
   return {
-    changes, tasks, subagents, browser: shownBrowser, media, cost: shownCost,
-    visible: !!(changes || tasks || subagents || shownBrowser || media.length || shownCost),
+    changes, tasks, subagents, goal, browser: shownBrowser, media,
+    visible: !!(changes || tasks || subagents || goal || shownBrowser || media.length),
     collapsed, setCollapsed,
   };
 }
@@ -123,15 +111,12 @@ function BrowserPreview({ threadId, label, agent, onOpen }: { threadId: string; 
   );
 }
 
-function formatUsd(usd: number): string {
-  return usd < 0.01 ? "< $0.01" : `$${usd.toFixed(2)}`;
-}
 
 /** A compact summary of the chat's workspace over the top right of the chat. Every row opens
  *  the Workspace on its tab; the Workspace's own button and Close bring this box back. */
 export function OverviewBox({ threadId, overview, onOpenMedia }: { threadId: string; overview: Overview; onOpenMedia: (path: string) => void }) {
   const { dispatch } = useApp();
-  const { changes, tasks, subagents, browser, media, cost, collapsed, setCollapsed } = overview;
+  const { changes, tasks, subagents, goal, browser, media, collapsed, setCollapsed } = overview;
   const open = (tab?: WorkspaceTab) => dispatch({ type: "ui/diff-panel", open: true, ...(tab ? { tab } : {}) });
   const subagentText = subagents ? [subagents.running ? `${subagents.running} running` : "", subagents.approval ? `${subagents.approval} approval${subagents.approval === 1 ? "" : "s"}` : ""].filter(Boolean).join(" · ") : "";
   const taskText = tasks ? [tasks.running ? `${tasks.running} running` : "", tasks.attention ? `${tasks.attention} need a look` : "", tasks.queued ? `${tasks.queued} queued` : ""].filter(Boolean).join(" · ") : "";
@@ -174,17 +159,17 @@ export function OverviewBox({ threadId, overview, onOpenMedia }: { threadId: str
           {tasks.attention > 0 && <span className="themis-overview-dot is-attention" aria-hidden="true" />}
         </button>
       )}
+      {goal && (
+        <button type="button" className="themis-overview-row themis-icon-tip" data-tooltip="Goal" aria-label={`Goal: ${goal.complete} of ${goal.total} complete`} onClick={() => open("goal")}>
+          <svg className="themis-overview-glyph" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden="true"><circle cx="12" cy="12" r="8" /><circle cx="12" cy="12" r="4" /></svg>
+          <span className="themis-overview-value">{goal.complete} of {goal.total} complete</span>
+        </button>
+      )}
       {media.length > 0 && (
         <button type="button" className="themis-overview-row themis-icon-tip" data-tooltip="Artifacts" aria-label={`Artifacts: ${media.length}. Opens the latest, ${media[media.length - 1]!.name}`} onClick={() => onOpenMedia(media[media.length - 1]!.path)}>
           <svg className="themis-overview-glyph" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><rect x="4" y="4" width="16" height="16" rx="2" /><circle cx="9" cy="9" r="1.5" /><path d="m20 15-5-5-9 9" /></svg>
           <span className="themis-overview-value">{media[media.length - 1]!.name}</span>
           <span className="themis-overview-meta">{media.length}</span>
-        </button>
-      )}
-      {cost && (
-        <button type="button" className="themis-overview-row themis-icon-tip" data-tooltip="Cost of this chat" aria-label={`Cost of this chat: ${cost.free ? "free model" : formatUsd(cost.usd ?? 0)}. Opens Settings › Usage`} onClick={() => dispatch({ type: "ui/view", view: "settings", settings: { section: "Usage" } })}>
-          <svg className="themis-overview-glyph" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden="true"><circle cx="12" cy="12" r="9" /><path d="M14.5 9.5c-.5-1-1.5-1.5-2.5-1.5-1.5 0-2.5.8-2.5 2s1 1.6 2.5 2 2.5.8 2.5 2-1 2-2.5 2c-1 0-2-.5-2.5-1.5M12 6.5V8M12 16v1.5" /></svg>
-          <span className="themis-overview-value">{cost.free ? "Free model" : formatUsd(cost.usd ?? 0)}</span>
         </button>
       )}
     </section>

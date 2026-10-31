@@ -130,7 +130,7 @@ async fn cli_long_job_survives_oversized_batches_and_one_loop_streak() {
             }
             // A stubborn re-reader: keeps reading item-0 until it is warned.
             if last["role"] == "tool" && tool_text.contains("loop_warning") {
-                return reply(json!({"content":"Saving progress instead of re-reading."}));
+                return reply(json!({"content":"Item 0 is unchanged, so I stopped re-reading it."}));
             }
             let id = format!("l{}", messages.len());
             reply(json!({"tool_calls":[read_call(&id, "item-0.txt")]}))
@@ -183,7 +183,7 @@ async fn cli_long_job_survives_oversized_batches_and_one_loop_streak() {
     assert_eq!(done["kind"], "finished", "{done}");
     assert_eq!(
         done["result"].as_str().unwrap(),
-        "Saving progress instead of re-reading."
+        "Item 0 is unchanged, so I stopped re-reading it."
     );
     serving.abort();
 }
@@ -491,7 +491,7 @@ async fn cli_continues_a_reply_cut_off_after_shown_text() {
                 assert!(messages[messages.len() - 1]["content"].as_str().unwrap().contains("cut off"));
                 format!(
                     "data: {}\n\ndata: [DONE]\n\n",
-                    json!({"choices":[{"delta":{"content":"I will write it in parts."},"finish_reason":"stop"}]})
+                    json!({"choices":[{"delta":{"content":"The scene is too long for one reply, so nothing was written."},"finish_reason":"stop"}]})
                 )
             };
             ResponseTemplate::new(200).set_body_raw(body, "text/event-stream")
@@ -518,7 +518,7 @@ async fn cli_continues_a_reply_cut_off_after_shown_text() {
     assert_eq!(done["kind"], "finished", "{done}");
     assert_eq!(
         done["result"].as_str().unwrap(),
-        "Writing the scene now.\n\nI will write it in parts."
+        "Writing the scene now.\n\nThe scene is too long for one reply, so nothing was written."
     );
     assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 2);
     assert!(!project.path().join("scene.html").exists());

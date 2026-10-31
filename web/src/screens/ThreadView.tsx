@@ -367,6 +367,8 @@ export function ThreadView() {
       ) : (
         <>
           <ThreadConversation
+            goalChecking={goal?.checking}
+            goalRetryAt={goal?.status === "running" || goal?.status === "quota" ? goal.retry_at : undefined}
             threadId={thread.id}
             messages={messages}
             stream={stream}

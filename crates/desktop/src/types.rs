@@ -237,6 +237,17 @@ pub enum ThreadEvent {
     Steered {
         text: String,
     },
+    /// The user steered this message in: it shows in the chat now, ahead of
+    /// [`Self::Steered`] or [`Self::SteerReturned`]. Display only: the model's
+    /// history follows `Steered`.
+    SteerShown {
+        text: String,
+    },
+    /// The run ended without reading a steered message: it is back in the queue,
+    /// to go out as the next message, so it leaves the chat until then.
+    SteerReturned {
+        text: String,
+    },
     /// The user message that starts this run, from any client, the queue or a
     /// goal turn. Live only: the history already holds the message.
     UserMessage {
@@ -420,6 +431,18 @@ pub struct Goal {
     /// oldest first; the goal check counts them as part of the goal.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub added: Vec<String>,
+    /// What the goal asks for and what is proven, as the last decided check saw it.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub proof: Vec<themis_core::goal::GoalRequirement>,
+    /// Files changed while working on this goal, so a new turn knows where its work is.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub files: Vec<String>,
+    /// The goal check is reading the turn that just ended.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub checking: bool,
+    /// Unix milliseconds when the next turn is due, while the goal waits to retry.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub retry_at: Option<i64>,
 }
 
 /// The kind of a goal note in the chat.
@@ -523,12 +546,15 @@ const fn default_grantable() -> bool {
     true
 }
 
-/// `approval-expired` payload: the dialog for `approval_id` timed out and was
-/// denied, so the UI removes it (`ApprovalExpired` in types.ts).
+/// `approval-expired` payload: the dialog for `approval_id` was denied without
+/// an answer, so the UI removes it (`ApprovalExpired` in types.ts): it timed
+/// out, or (`steered`) the person sent a new message past it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ApprovalExpired {
     pub thread_id: String,
     pub approval_id: String,
+    #[serde(default)]
+    pub steered: bool,
 }
 
 /// One diff line kind (`DiffLineKind` in types.ts).

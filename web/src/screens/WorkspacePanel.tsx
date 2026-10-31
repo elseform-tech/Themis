@@ -7,13 +7,14 @@ import { branchDiff, getWorkspace, listDiff, listProjectDir, readProjectFile } f
 import { describeError, useApp } from "../state/store";
 import { readSession, writeSession } from "../state/session";
 import type { WorkspaceTab } from "../state/reducer";
+import { GoalView } from "./GoalView";
 import { BrowserView } from "./BrowserView";
 import { TasksView } from "./TasksView";
 import { countTasks } from "./threadTasks";
 import "./WorkspacePanel.css";
 
 type Tab = WorkspaceTab;
-const TABS: Array<[Tab, string]> = [["changes", "Changes"], ["files", "Files"], ["branches", "Branches"], ["pulls", "Pull requests"], ["tasks", "Tasks"], ["browser", "Browser"]];
+const TABS: Array<[Tab, string]> = [["changes", "Changes"], ["files", "Files"], ["branches", "Branches"], ["pulls", "Pull requests"], ["tasks", "Tasks"], ["goal", "Goal"], ["browser", "Browser"]];
 const MIN_WIDTH = 300;
 const MAX_WIDTH = 1600;
 const DEFAULT_WIDTH = 560;
@@ -35,6 +36,7 @@ function clampWidth(value: number) {
 /** Read-only monitor of what agents change (diffs, files, branches, PRs), Stop and Pause for this chat's tasks, and the chat's built-in browser. */
 export function WorkspacePanel({ projectRoot, threadId, workspace }: { projectRoot: string; threadId: string; workspace: WorkspaceInfo | null }) {
   const { state, dispatch } = useApp();
+  const goal = state.goals[threadId] ?? null;
   const [tab, setTab] = useState<Tab>(() => state.workspaceTabRequest ? state.workspaceTabRequest.tab : readSession<Tab>("workspaceTab", "changes"));
   const widthKey = tab === "browser" ? "workspaceBrowserWidth" : "workspacePanelWidth";
   const defaultWidth = tab === "browser" ? BROWSER_DEFAULT_WIDTH : DEFAULT_WIDTH;
@@ -76,8 +78,8 @@ export function WorkspacePanel({ projectRoot, threadId, workspace }: { projectRo
       {/* One lean row of icon tabs and Close; the composer already shows the project and branch. */}
       <header className="themis-workspace-head">
         <nav className="themis-workspace-tabs" aria-label="Workspace views">
-          {TABS.map(([value, label]) => {
-            const count = value === "changes" ? changed : value === "tasks" ? taskCount : 0;
+          {TABS.filter(([value]) => value !== "goal" || goal).map(([value, label]) => {
+            const count = value === "changes" ? changed : value === "tasks" ? taskCount : value === "goal" ? (goal?.proof ?? []).filter(item => !item.proven).length : 0;
             return (
               <Tooltip key={value} content={label} below>
                 <button type="button" aria-label={count > 0 ? `${label} ${count}` : label} aria-pressed={tab === value} onClick={() => choose(value)}>
@@ -100,6 +102,7 @@ export function WorkspacePanel({ projectRoot, threadId, workspace }: { projectRo
         {tab === "branches" && <BranchesView workspace={workspace} projectRoot={projectRoot} />}
         {tab === "pulls" && <PullRequestsView projectRoot={projectRoot} />}
         {tab === "tasks" && <TasksView threadId={threadId} />}
+        {tab === "goal" && <GoalView goal={goal} />}
         {tab === "browser" && <BrowserView threadId={threadId} />}
       </div>
     </aside>
@@ -114,6 +117,7 @@ function TabIcon({ tab }: { tab: Tab }) {
       {tab === "changes" && <><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z" /><path d="M14 3v5h5M12 10.5v5M9.5 13h5M9.5 18h5" /></>}
       {tab === "files" && <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />}
       {tab === "pulls" && <><circle cx="6" cy="6" r="2" /><circle cx="6" cy="18" r="2" /><circle cx="18" cy="18" r="2" /><path d="M6 8v8M18 16V9a2 2 0 0 0-2-2h-4M14 5l-2 2 2 2" /></>}
+      {tab === "goal" && <><circle cx="12" cy="12" r="8" /><circle cx="12" cy="12" r="4" /></>}
       {tab === "tasks" && <path d="m4 6 1.5 1.5L8 5M4 12l1.5 1.5L8 11M4 18l1.5 1.5L8 17M12 6h8M12 12h8M12 18h8" />}
       {tab === "browser" && <><circle cx="12" cy="12" r="9" /><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18" /></>}
     </svg>

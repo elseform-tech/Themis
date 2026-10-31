@@ -905,6 +905,27 @@ pub enum Approval {
     AllowAlways,
     /// Refuse to run this action.
     Deny,
+    /// Refuse to run this action for now: the person steered a new message in
+    /// while it waited (or before it asked), and the agent should read that first.
+    DenyForNewMessage,
+}
+
+impl Approval {
+    /// Whether the action must not run. Check this rather than comparing with
+    /// [`Approval::Deny`], so that every refusal counts.
+    #[must_use]
+    pub const fn is_denied(self) -> bool {
+        matches!(self, Self::Deny | Self::DenyForNewMessage)
+    }
+
+    /// The guidance a refusal carries in the tool result.
+    #[must_use]
+    pub const fn refusal_note(self) -> &'static str {
+        match self {
+            Self::DenyForNewMessage => crate::prompts::TOOL_DENIED_NEW_MESSAGE,
+            _ => REFUSAL_NOTE,
+        }
+    }
 }
 
 /// [`ApprovalHook`] adapter over a closure.
@@ -957,9 +978,11 @@ impl ApprovalHook for DenyAllHook {
 fn check_approval(hook: &dyn ApprovalHook, action: &ToolAction) -> Result<(), ToolCallError> {
     match hook.approve(action) {
         Approval::AllowOnce | Approval::AllowAlways => Ok(()),
-        Approval::Deny => Err(tool_error(format!(
-            "approval denied for '{}': {} {REFUSAL_NOTE}",
-            action.tool, action.summary
+        denied @ (Approval::Deny | Approval::DenyForNewMessage) => Err(tool_error(format!(
+            "approval denied for '{}': {} {}",
+            action.tool,
+            action.summary,
+            denied.refusal_note()
         ))),
     }
 }
