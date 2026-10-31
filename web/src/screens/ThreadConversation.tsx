@@ -340,7 +340,7 @@ function Message({ message, threadId, activeRunId, durationMs, skills, plugins }
         </>
       ) : message.role === "assistant" ? (
         <>
-          <ResponseBody text={message.text} />
+          <ResponseBody text={message.text} artifacts={message.media?.map(file => file.path)} />
           {!!message.media?.length && <MediaStrip files={message.media} />}
           {!!message.changedFiles?.length && <EditedFiles files={message.changedFiles} />}
           {(message.final || !message.runId) && <div className="themis-response-actions">
