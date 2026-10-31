@@ -1,0 +1,1 @@
+expected a list of strings, one per argument, like ["-c", "print(1)"]. A pipe or redirect isn't an argument: to use one, run a shell, with command "sh" and args ["-c", "find . | head"]
