@@ -364,7 +364,12 @@ pub fn command_in_scope(argv: &[String], patterns: &[String]) -> bool {
     // split it. Read its words, so an allowed command reaches that hint instead of a refusal.
     let split: Vec<String>;
     let argv = match argv.split_first() {
-        Some((program, rest)) if program.contains(char::is_whitespace) => {
+        Some((program, rest))
+            if program.contains(char::is_whitespace)
+                && !program.contains([
+                    ';', '&', '|', '$', '`', '<', '>', '(', ')', '\'', '"', '\\', '\n',
+                ]) =>
+        {
             split = program
                 .split_whitespace()
                 .map(str::to_owned)
