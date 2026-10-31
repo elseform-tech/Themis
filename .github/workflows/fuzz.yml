@@ -1,7 +1,11 @@
 name: fuzz
 
 on:
+  # Every target is built and run nightly; a PR only builds them when it changes the fuzz crate.
   pull_request:
+    paths:
+      - fuzz/**
+      - .github/workflows/fuzz.yml
   schedule:
     - cron: "17 3 * * *"
   workflow_dispatch:
