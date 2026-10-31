@@ -156,6 +156,32 @@ async fn agent_saving(spec: Value) -> MockServer {
     llm
 }
 
+/// A plugin with as many text files as the registry takes can be enabled like any other: seven
+/// catalog plugins (cloudflare and sentry among them) ship 360 to 800.
+#[tokio::test(flavor = "multi_thread")]
+async fn enabling_a_server_of_a_plugin_with_many_files_starts_it() {
+    let data = tempfile::tempdir().unwrap();
+    let project = tempfile::tempdir().unwrap();
+    let root = project.path().canonicalize().unwrap();
+    let state = AppState::new_for_test(data.path().join("settings.json"));
+    let mcp = mcp_server().await;
+    let mut spec = url_spec(&mcp.uri(), false);
+    for index in 0..1000 {
+        spec.files
+            .insert(format!("skills/x/{index}.md"), "x".into());
+    }
+    PluginStore::new(data.path().to_owned(), Some(root.clone()))
+        .save("local", spec, None)
+        .unwrap();
+    state
+        .plugin_action(json!({"action":"set_component_enabled","scope":"local","projectRoot":root,"name":"docs","kind":"mcp","id":"docs","enabled":true}))
+        .await
+        .unwrap();
+    let shown = settled(&state, &root).await;
+    assert!(!status(&shown).contains("Needs your approval"), "{shown}");
+    assert!(requests_to(&mcp).await > 0, "it never started: {shown}");
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn definitions_that_a_person_did_not_enable_never_start() {
     let data = tempfile::tempdir().unwrap();

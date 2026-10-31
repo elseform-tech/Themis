@@ -25,8 +25,9 @@ use super::AppState;
 
 const VERSION: u32 = 1;
 const MAX_ENTRIES: usize = 4096;
-/// Resource files hashed into a fingerprint; more than this fails closed.
-const MAX_FILES: usize = 256;
+/// Resource files hashed into a fingerprint; more than this fails closed. The importer's own bound
+/// on a plugin's text files is 1,000, and consent must be possible for whatever it accepts.
+const MAX_FILES: usize = 1024;
 const MAX_FILE_BYTES: usize = 8 * 1024 * 1024;
 
 #[derive(Serialize, Deserialize)]
