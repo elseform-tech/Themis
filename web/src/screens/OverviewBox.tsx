@@ -12,6 +12,8 @@ const COLLAPSED_KEY = "overviewCollapsed";
 export interface Overview {
   changes: { files: number; added: number; removed: number } | null;
   tasks: { running: number; attention: number; queued: number } | null;
+  /** The goal's checklist, once a check has listed it. */
+  goal?: { complete: number; total: number } | null;
   browser: { label: string; agent: boolean; activity: string | null } | null;
   media: AttachedMedia[];
   /** Something to show: the box (and the room the chat leaves for it) appears only then. */
@@ -55,9 +57,11 @@ export function useOverview(threadId: string, messages: ChatMessage[]): Overview
   const media = messages.flatMap(message => message.media ?? []);
   const shownBrowser = browser?.open && browser.url !== "about:blank" ? { label: browserLabel(browser), agent: browser.controller === "agent", activity: browser.activity } : null;
   const setCollapsed = (value: boolean) => { setCollapsedState(value); writeSession(COLLAPSED_KEY, value); };
+  const checklist = state.goals[threadId]?.proof ?? [];
+  const goal = checklist.length ? { complete: checklist.filter(item => item.proven).length, total: checklist.length } : null;
   return {
-    changes, tasks, browser: shownBrowser, media,
-    visible: !!(changes || tasks || shownBrowser || media.length),
+    changes, tasks, goal, browser: shownBrowser, media,
+    visible: !!(changes || tasks || goal || shownBrowser || media.length),
     collapsed, setCollapsed,
   };
 }
@@ -103,7 +107,8 @@ function BrowserPreview({ threadId, label, agent, onOpen }: { threadId: string; 
  *  the Workspace on its tab; the Workspace's own button and Close bring this box back. */
 export function OverviewBox({ threadId, overview, onOpenMedia }: { threadId: string; overview: Overview; onOpenMedia: (path: string) => void }) {
   const { dispatch } = useApp();
-  const { changes, tasks, browser, media, collapsed, setCollapsed } = overview;
+    changes, tasks, goal, browser: shownBrowser, media,
+    visible: !!(changes || tasks || goal || shownBrowser || media.length),
   const open = (tab?: WorkspaceTab) => dispatch({ type: "ui/diff-panel", open: true, ...(tab ? { tab } : {}) });
   const taskText = tasks ? [tasks.running ? `${tasks.running} running` : "", tasks.attention ? `${tasks.attention} need a look` : "", tasks.queued ? `${tasks.queued} queued` : ""].filter(Boolean).join(" · ") : "";
   return (
@@ -136,6 +141,12 @@ export function OverviewBox({ threadId, overview, onOpenMedia }: { threadId: str
           <svg className="themis-overview-glyph" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="m4 6 1.5 1.5L8 5M4 12l1.5 1.5L8 11M4 18l1.5 1.5L8 17M12 6h8M12 12h8M12 18h8" /></svg>
           <span className="themis-overview-value">{taskText}</span>
           {tasks.attention > 0 && <span className="themis-overview-dot is-attention" aria-hidden="true" />}
+        </button>
+      )}
+      {goal && (
+        <button type="button" className="themis-overview-row themis-icon-tip" data-tooltip="Goal" aria-label={`Goal: ${goal.complete} of ${goal.total} complete`} onClick={() => open("goal")}>
+          <svg className="themis-overview-glyph" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden="true"><circle cx="12" cy="12" r="8" /><circle cx="12" cy="12" r="4" /></svg>
+          <span className="themis-overview-value">{goal.complete} of {goal.total} complete</span>
         </button>
       )}
       {media.length > 0 && (

@@ -117,7 +117,7 @@ full tour.
 | `tool:browser_record` | tour | `crates/core/src/browser` | Ask for a short recording; it plays in the media viewer. |
 | `tool:browser_devtools` | tour | `crates/core/src/browser/tools/devtools.rs` | Only with Developer mode on: read the console. Off: the tool is not offered. |
 | `tool:set_goal` | tour | `crates/desktop/src/state/goal_tool.rs` | `/goal` sets the goal; the goal bar shows it. More › Remove goal removes it; asking in the chat to pause or remove it does the same. |
-| `feature:goal-proof` | tour | `crates/desktop/src/state/goal.rs` | Run a goal over several turns: the goal row counts what is proven, clicking the sentence lists it, a rejected turn's replies dim, and the next turn doesn't re-prove what is listed. |
+| `feature:goal-proof` | tour | `crates/desktop/src/state/goal.rs` | Run a goal over several turns: a rejected turn's replies dim, and the next turn doesn't re-prove what is listed. The agent says what the check found in its own words, with no separate status lines, and a passing "Checking…" shows during a check. |
 | `tool:ask_user` | tour | `crates/desktop/src/state/question_tool.rs` | The separator question appears on the composer after any approval, answered inline. |
 | `tool:attach_file` | tour | `crates/desktop/src/state/media_tool.rs` | The screenshot is attached to the reply. |
 | `tool:list_plugins` | tour | `crates/desktop/src/state/integration_tools.rs` | Goal lists plugins. |
@@ -165,6 +165,7 @@ full tour.
 | `workspace:branches` | tour | `web/src/screens/WorkspacePanel.tsx` | Lists `tour`. |
 | `workspace:pulls` | tour | `web/src/screens/WorkspacePanel.tsx` | Shows PRs or the reason it cannot. |
 | `workspace:tasks` | tour | `web/src/screens/TasksView.tsx` | Shows the run and the server; Stop and Pause work. |
+| `workspace:goal` | tour | `web/src/screens/GoalView.tsx` | During a goal, the Goal tab sorts the checklist into Pending and Complete; items move as checks pass, and the overview box counts them. |
 | `workspace:browser` | tour | `web/src/screens/BrowserView.tsx` | Drive the page by hand while the agent uses it; Capture to message works. |
 | `view:skills` | tour | `web/src/screens/Skills.tsx`, `web/src/screens/Plugins.tsx` | Create, edit and delete a skill; install, enable and disable a catalog plugin. |
 | `view:automations` | tour | `web/src/screens/Automations.tsx` | Create, run now, pause and delete an automation. |

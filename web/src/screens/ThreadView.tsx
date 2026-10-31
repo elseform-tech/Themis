@@ -367,6 +367,7 @@ export function ThreadView() {
       ) : (
         <>
           <ThreadConversation
+            goalChecking={goal?.checking}
             threadId={thread.id}
             messages={messages}
             stream={stream}

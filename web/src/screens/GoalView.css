@@ -1,0 +1,9 @@
+.themis-goal-view { display: flex; flex-direction: column; gap: 14px; height: 100%; padding: 16px; overflow-y: auto; }
+.themis-goal-view-text { margin: 0; font-size: .875rem; line-height: 1.5; color: var(--themis-text); }
+.themis-goal-view-empty { margin: 0; padding: 16px; font-size: .8125rem; color: var(--themis-text-2); }
+.themis-goal-board { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; align-items: start; }
+.themis-goal-column { min-width: 0; padding: 10px; border-radius: 12px; background: var(--themis-sidebar-bg); }
+.themis-goal-column h3 { display: flex; justify-content: space-between; margin: 0 0 8px; padding: 0 4px; font-size: .75rem; font-weight: 600; color: var(--themis-text-2); }
+.themis-goal-column ul { display: flex; flex-direction: column; gap: 6px; margin: 0; padding: 0; list-style: none; }
+.themis-goal-column li { display: flex; flex-direction: column; gap: 3px; padding: 8px 10px; border-radius: 8px; background: var(--themis-raised); font-size: .8125rem; line-height: 1.4; color: var(--themis-text); overflow-wrap: anywhere; }
+.themis-goal-column small { font-size: .75rem; color: var(--themis-text-2); }

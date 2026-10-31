@@ -391,6 +391,8 @@ export interface Goal {
   failures: number;
   /** What the goal asks for and what is proven, from the last decided check. */
   proof?: GoalRequirement[];
+  /** The goal check is reading the turn that just ended. */
+  checking?: boolean;
 }
 
 export interface GoalRequirement {

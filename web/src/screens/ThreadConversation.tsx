@@ -18,6 +18,8 @@ import { describeTools } from "./toolActivity";
 import { OverviewBox, type Overview } from "./OverviewBox";
 
 interface ThreadConversationProps {
+  /** The goal check is reading the turn that just ended. */
+  goalChecking?: boolean;
   threadId: string;
   messages: ChatMessage[];
   stream: string;
@@ -35,6 +37,7 @@ interface ThreadConversationProps {
 
 export function ThreadConversation({
   threadId,
+  goalChecking,
   messages,
   stream,
   running,
@@ -137,6 +140,11 @@ export function ThreadConversation({
             </span>
             <time aria-label="Elapsed time">{Math.floor(elapsed / 60)}:{String(elapsed % 60).padStart(2, "0")}</time>
           </div>
+        </div>
+      )}
+      {goalChecking && !running && !sending && (
+        <div className="themis-run-progress" role="status">
+          <div className="themis-run-status"><span className="themis-shimmer">Checking…</span></div>
         </div>
       )}
       <div ref={endRef} />
@@ -302,7 +310,7 @@ function Message({ message, threadId, activeRunId, durationMs, skills, plugins }
   // The answered question box already shows the answer the agent was sent.
   if (message.role === "user" && message.text.startsWith(ANSWER_MARKER)) return null;
   // A goal turn starts with a runtime message: a divider, not a bubble from the user.
-  if (message.goalStatus) return <p className="themis-goal-status">{message.text}</p>;
+  if (message.goalStatus) return <div className="themis-thread-msg themis-thread-msg--assistant themis-thread-msg--completed"><ResponseBody text={message.text} /></div>;
   if (message.goalTurn !== undefined) return <hr className="themis-goal-turn" aria-label={`Goal turn ${message.goalTurn}`} />;
   const text = message.attachments?.length ? message.text.split("\n\nAttached files (local paths;")[0]! : message.text;
   const isActiveRun = activeRunId !== undefined && message.runId === activeRunId;

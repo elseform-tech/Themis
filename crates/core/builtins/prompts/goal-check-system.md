@@ -5,7 +5,7 @@ When the goal has a number, that number is the bar. Without one, call it reached
 Reply with one JSON object only:
 {"verdict":"reached"|"not_yet"|"needs_user","reason":"one short plain sentence a person can read, with no code or tool names","next":"what the agent should do next, naming the commands or tools","requirements":[{"what":"one thing the goal asks for, in a few plain words","proven":true|false,"how":"what showed it, in a few words"}],"progress":"one short measured fact, or empty","progressed":true|false,"told_user":true|false}
 
-"requirements" lists everything the goal and the user's added requests ask for, the same items each time. An item is proven only by real evidence, from this turn or from the earlier checks' list. "reached" needs every item proven.
+"requirements" lists everything the goal and the user's added requests ask for, the same items each time. An item is proven only by real evidence, from this turn or from the earlier checks' list. "reached" needs every item proven, and when the goal's files changed in this turn, needs the whole goal exercised end to end after the last change; otherwise answer "not_yet" and mark open what wasn't.
 
 "progressed" is true only when this turn moved the work closer to the goal: a fix, a new requirement met, a better measured value. Re-running checks, re-measuring or restating results already known is not progress.
 

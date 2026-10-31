@@ -68,12 +68,6 @@ pub(super) fn backoff(failures: u32) -> Duration {
     Duration::from_secs(seconds).min(MAX_BACKOFF)
 }
 
-/// Why the goal carries on, in one natural sentence around the check's own reason.
-fn because_carrying_on(reason: &str) -> String {
-    let reason = mid_sentence(reason);
-    format!("That isn't proven yet, because {reason}, so I'm carrying on.")
-}
-
 /// The check's reason, ready to sit inside a sentence.
 fn mid_sentence(reason: &str) -> String {
     let reason = reason.trim().trim_end_matches('.');
@@ -281,6 +275,7 @@ impl AppState {
             added: Vec::new(),
             proof: Vec::new(),
             files: Vec::new(),
+            checking: false,
         };
         self.bump_goal_generation(thread_id);
         self.store_goal(sink, thread_id, Some(goal.clone()));
@@ -301,13 +296,6 @@ impl AppState {
             .goal_for(&thread_id)
             .filter(|goal| goal.status != GoalStatus::Reached);
         let mut goal = self.begin_goal(sink.as_ref(), &thread_id, &text);
-        self.goal_note(
-            sink.as_ref(),
-            &thread_id,
-            "",
-            GoalNoteKind::Status,
-            "I'm starting on this goal, and I'll keep going until a separate check finds it done.",
-        );
         // Rewording an open goal continues it: its time, turn count and the
         // requests added to it carry over.
         if let Some(previous) = previous {
@@ -794,14 +782,8 @@ impl AppState {
             });
             return;
         }
-        // Whatever the turn just claimed, the person sees it is not the verdict.
-        self.goal_note(
-            sink.as_ref(),
-            &thread_id,
-            "",
-            GoalNoteKind::Status,
-            "I'm checking that against the goal now.",
-        );
+        // A passing status line says so while the check reads the turn.
+        self.update_goal(sink.as_ref(), &thread_id, |goal| goal.checking = true);
         let (evidence, turn_files, through_seq) = self.turn_evidence(&thread_id, goal.checked_seq);
         let changed_files = !turn_files.is_empty();
         self.update_goal(sink.as_ref(), &thread_id, |goal| {
@@ -839,6 +821,7 @@ impl AppState {
             Err(error) => Err(error),
         };
         let check_failed = verdict.is_err();
+        self.update_goal(sink.as_ref(), &thread_id, |goal| goal.checking = false);
         // The goal may have been paused or edited while the check ran.
         let Some(goal) = self.goal_for(&thread_id) else {
             return;
@@ -986,17 +969,24 @@ impl AppState {
                 } else {
                     agent_note
                 };
-                self.goal_note(
-                    sink.as_ref(),
-                    &thread_id,
-                    &run_id,
-                    if check_failed {
-                        GoalNoteKind::Status
-                    } else {
-                        GoalNoteKind::NotYet
-                    },
-                    &because_carrying_on(&shown_reason),
-                );
+                // The chat dims the turn on this; the agent says why in its own words next turn.
+                if check_failed {
+                    self.goal_note(
+                        sink.as_ref(),
+                        &thread_id,
+                        &run_id,
+                        GoalNoteKind::Status,
+                        "The check couldn't decide this time, so I'm carrying on.",
+                    );
+                } else {
+                    self.goal_note(
+                        sink.as_ref(),
+                        &thread_id,
+                        &run_id,
+                        GoalNoteKind::NotYet,
+                        &shown_reason,
+                    );
+                }
                 self.start_goal_turn(sink, thread_id, note).await;
             }
         }
@@ -1262,6 +1252,10 @@ impl AppState {
             let Some(goal) = self.goal_for(&thread_id) else {
                 continue;
             };
+            // A check the app closed during is not still going.
+            if goal.checking {
+                self.update_goal(sink.as_ref(), &thread_id, |goal| goal.checking = false);
+            }
             match goal.status {
                 GoalStatus::Running => {
                     // Time with the app closed does not count.
@@ -1359,13 +1353,13 @@ mod tests {
     }
 
     #[test]
-    fn the_reason_to_carry_on_reads_as_a_sentence() {
+    fn the_reason_reads_inside_a_sentence() {
         assert_eq!(
-            because_carrying_on("Counter is 1; needs 2."),
-            "That isn't proven yet, because counter is 1; needs 2, so I'm carrying on."
+            mid_sentence("Counter is 1; needs 2."),
+            "counter is 1; needs 2"
         );
-        assert!(because_carrying_on("HTTP 500 remains").contains("because HTTP 500"));
-        assert!(!because_carrying_on("").contains(':'));
+        assert_eq!(mid_sentence("HTTP 500 remains"), "HTTP 500 remains");
+        assert_eq!(mid_sentence(""), "");
     }
 
     #[test]
@@ -1403,6 +1397,7 @@ mod tests {
             added: Vec::new(),
             proof: Vec::new(),
             files: Vec::new(),
+            checking: false,
         };
         set_status(&mut goal, GoalStatus::Paused, None);
         assert!(goal.running_since.is_none());
