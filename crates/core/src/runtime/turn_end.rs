@@ -188,10 +188,28 @@ fn ends_on_list_item(body: &str) -> bool {
     matches!(marker, "-" | "*" | "+") || numbered
 }
 
+/// "Once I have those results, I'll let you know" names work still to do before it reports,
+/// unlike "When you're ready, I'll start", which waits on the person.
+fn waits_on_own_work(sentence: &str, spaced: &str) -> bool {
+    let Some((opening, _)) = sentence.split_once(',') else {
+        return false;
+    };
+    ["once ", "when ", "after "]
+        .iter()
+        .any(|start| opening.starts_with(start))
+        && !opening
+            .split(|c: char| !c.is_alphanumeric())
+            .any(|word| word == "you")
+        && ABOUT_TO.iter().any(|about| spaced.contains(about))
+}
+
 /// An offer or hand-off to the person ("want me to...", "I'll leave that for you") is no
 /// unfinished step, whichever way it is worded.
 fn hands_over(sentence: &str) -> bool {
     let spaced = format!(" {sentence} ");
+    if waits_on_own_work(sentence, &spaced) {
+        return false;
+    }
     sentence
         .split(|c: char| !c.is_alphanumeric())
         .any(|word| word == "you")
@@ -477,6 +495,26 @@ mod tests {
         }
     }
 
+    /// Found in a live run: after subagents reported back, the model promised to check their
+    /// work and stopped. "Let you know" is not handing over when it waits on work still to do.
+    #[test]
+    fn a_promise_to_report_after_more_work_gets_another_request() {
+        for worked in [false, true] {
+            for reply in [
+                "So I'll read both files directly from the project root right now to confirm the actual contents. Once I have those results, I'll let you know for sure what I found.",
+                "Once I have those results, I'll let you know.",
+                "When the tests finish, I will tell you what they show.",
+                "After I check the files, I'll report back.",
+            ] {
+                assert_eq!(
+                    unfinished_ending(reply, worked),
+                    Some(Unfinished::Announced),
+                    "{reply}"
+                );
+            }
+        }
+    }
+
     #[test]
     fn a_closing_reply_ends_the_turn() {
         for worked in [false, true] {
@@ -484,6 +522,9 @@ mod tests {
                 "I fixed the overlay and the score now rises.",
                 "Done. Let me know if you need anything else.",
                 "I'll leave that for you to decide.",
+                "Once you have tried it, let me know how it goes.",
+                "When you're ready, I'll start on the next part.",
+                "If you want, I'll let you know when it ships.",
             ] {
                 assert_eq!(unfinished_ending(reply, worked), None, "{reply}");
             }

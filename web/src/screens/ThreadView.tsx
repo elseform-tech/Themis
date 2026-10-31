@@ -1,7 +1,7 @@
 import { open } from "@tauri-apps/plugin-dialog";
 import type { Attachment } from "../lib/tauri";
 import { usePromptSkills } from "../lib/usePromptSkills";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "../components";
 import type { GoModel } from "../lib/types";
 import { usesGo } from "../lib/models";
@@ -22,6 +22,7 @@ import { useOverview } from "./OverviewBox";
 import { useProjectWorkspace } from "./useProjectWorkspace";
 import { useThreadTasksSync } from "./threadTasks";
 import { skillToken } from "../lib/prompt";
+import { composerHistory } from "./conversation";
 import "./ThreadView.css";
 
 
@@ -82,6 +83,7 @@ export function ThreadView() {
   }
   const running = thread === null ? false : (state.running[thread.id] ?? false);
   const messages = thread === null ? EMPTY_MESSAGES : (state.messages[thread.id] ?? EMPTY_MESSAGES);
+  const history = useMemo(() => composerHistory(messages), [messages]);
   const overview = useOverview(thread?.id ?? "", messages);
   const stream = thread === null ? "" : (state.streams[thread.id] ?? "");
 
@@ -290,7 +292,7 @@ export function ThreadView() {
       onRemoveAttachment={path => updateAttachments(thread.id, files => files.filter(file => file.path !== path))}
       skills={promptSkills}
       plugins={promptPlugins}
-      history={messages.filter(m => m.role === "user" && !messages.some(error => m.runId !== undefined && error.runId === m.runId && error.text.startsWith("Send failed:"))).map(m => m.text)}
+      history={history}
       composerDisabled={composerDisabled}
       readOnly={readOnly}
       running={running}

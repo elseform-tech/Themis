@@ -219,7 +219,7 @@ function ConversationRow({
 
 /** Consecutive tool calls as one folded row that says what they did ("Read 4 files ·
  *  Ran python3 check.py"). It stays folded during a run, so the chat doesn't jump with each call. */
-function ToolGroup({ messages, activeRunId, skills, plugins }: { messages: ChatMessage[]; activeRunId: string | undefined; skills: PromptSkill[]; plugins: PromptPlugin[] }) {
+export function ToolGroup({ messages, activeRunId, skills, plugins }: { messages: ChatMessage[]; activeRunId: string | undefined; skills: PromptSkill[]; plugins: PromptPlugin[] }) {
   const failed = messages.filter(message => message.tool?.ok === false).length;
   return (
     <details className="themis-tool-group">
