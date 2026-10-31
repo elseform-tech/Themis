@@ -183,7 +183,7 @@ async fn goal_until(state: &AppState, thread_id: &str, done: impl Fn(GoalStatus)
 
 #[tokio::test(flavor = "multi_thread")]
 async fn queued_messages_wait_steers_reach_the_run_and_the_queue_drains() {
-    let server = MockServer::start().await;
+    let server = MockServer::builder().start().await;
     let gate = Gate::default();
     let held = gate.clone();
     Mock::given(method("POST"))
@@ -332,7 +332,7 @@ async fn queued_messages_wait_steers_reach_the_run_and_the_queue_drains() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_goal_runs_turn_after_turn_until_the_check_finds_it_reached() {
-    let server = MockServer::start().await;
+    let server = MockServer::builder().start().await;
     let checks = Arc::new(AtomicUsize::new(0));
     let seen_checks = Arc::clone(&checks);
     Mock::given(method("POST"))
@@ -470,7 +470,7 @@ async fn turns_that_only_re_verify_stall_and_the_goal_changes_course_instead_of_
     // which counted as progress. The check's own progress judgement decides.
     // A goal never gives up: after three such turns the next one is told to
     // try a different approach, and the goal keeps running.
-    let server = MockServer::start().await;
+    let server = MockServer::builder().start().await;
     let checks = Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let counted = Arc::clone(&checks);
     Mock::given(method("POST"))
@@ -528,7 +528,7 @@ async fn turns_that_only_re_verify_stall_and_the_goal_changes_course_instead_of_
 /// that changed files is never a stall, whatever the check says.
 #[tokio::test(flavor = "multi_thread")]
 async fn a_turn_that_changed_files_is_never_a_stall() {
-    let server = MockServer::start().await;
+    let server = MockServer::builder().start().await;
     let checks = Arc::new(AtomicUsize::new(0));
     let counted = Arc::clone(&checks);
     let writes = Arc::new(AtomicUsize::new(0));
@@ -600,7 +600,7 @@ async fn a_turn_that_changed_files_is_never_a_stall() {
 async fn a_running_goal_saves_its_elapsed_time_during_a_turn() {
     // A live goal showed only the current turn's time: elapsed time was saved
     // at turn boundaries, so each app restart mid-turn lost the whole turn.
-    let server = MockServer::start().await;
+    let server = MockServer::builder().start().await;
     let released = Gate::default();
     let gate = released.clone();
     Mock::given(method("POST"))
@@ -635,7 +635,7 @@ async fn a_running_goal_saves_its_elapsed_time_during_a_turn() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn pause_holds_the_goal_resume_continues_and_stalls_never_stop_it() {
-    let server = MockServer::start().await;
+    let server = MockServer::builder().start().await;
     // The first turn's answer waits for the test to pause the goal, so the
     // pause always lands while that turn runs, however slow the machine.
     let released = Gate::default();
@@ -760,7 +760,7 @@ async fn pause_holds_the_goal_resume_continues_and_stalls_never_stop_it() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_used_up_quota_pauses_the_goal_and_a_model_switch_resumes_it() {
-    let server = MockServer::start().await;
+    let server = MockServer::builder().start().await;
     let quota = Arc::new(Mutex::new(true));
     let out_of_quota = Arc::clone(&quota);
     Mock::given(method("POST"))
@@ -818,7 +818,7 @@ async fn a_used_up_quota_pauses_the_goal_and_a_model_switch_resumes_it() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_running_goal_resumes_when_the_app_starts_again() {
-    let server = MockServer::start().await;
+    let server = MockServer::builder().start().await;
     Mock::given(method("POST"))
         .respond_with(|request: &Request| {
             if is_check(&body(request)) {
@@ -873,7 +873,7 @@ async fn a_running_goal_resumes_when_the_app_starts_again() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn the_agent_sets_a_goal_with_its_tool_and_turns_follow() {
-    let server = MockServer::start().await;
+    let server = MockServer::builder().start().await;
     let checks = Arc::new(AtomicUsize::new(0));
     let seen_checks = Arc::clone(&checks);
     Mock::given(method("POST"))
@@ -922,7 +922,7 @@ async fn the_agent_sets_a_goal_with_its_tool_and_turns_follow() {
 /// announcement.
 #[tokio::test(flavor = "multi_thread")]
 async fn a_message_run_that_finishes_the_goal_is_checked_and_nothing_repeats_it() {
-    let server = MockServer::start().await;
+    let server = MockServer::builder().start().await;
     let gate = Gate::default();
     let held = gate.clone();
     let checks = Arc::new(AtomicUsize::new(0));
@@ -996,7 +996,7 @@ fn calls(name: &str, arguments: Value) -> ResponseTemplate {
 /// it had, and the next turn started anyway.
 #[tokio::test(flavor = "multi_thread")]
 async fn asked_to_stop_the_agent_pauses_the_goal_and_no_check_or_turn_follows() {
-    let server = MockServer::start().await;
+    let server = MockServer::builder().start().await;
     let gate = Gate::default();
     let held = gate.clone();
     let checks = Arc::new(AtomicUsize::new(0));
@@ -1058,7 +1058,7 @@ async fn asked_to_stop_the_agent_pauses_the_goal_and_no_check_or_turn_follows() 
 /// next turn knows which files the work is in.
 #[tokio::test(flavor = "multi_thread")]
 async fn proof_and_files_carry_from_turn_to_turn() {
-    let server = MockServer::start().await;
+    let server = MockServer::builder().start().await;
     let checks = Arc::new(AtomicUsize::new(0));
     let seen_checks = Arc::clone(&checks);
     let later_check = Arc::new(Mutex::new(String::new()));
@@ -1158,7 +1158,7 @@ async fn proof_and_files_carry_from_turn_to_turn() {
 /// shows how the check came out.
 #[tokio::test(flavor = "multi_thread")]
 async fn a_goal_reached_without_a_closing_turn_still_says_so_in_the_chat() {
-    let server = MockServer::start().await;
+    let server = MockServer::builder().start().await;
     Mock::given(method("POST"))
         .respond_with(|request: &Request| {
             let body = body(request);
@@ -1201,7 +1201,7 @@ async fn a_goal_reached_without_a_closing_turn_still_says_so_in_the_chat() {
 /// and follows an edited goal, and refreshing it can never complete an item.
 #[tokio::test(flavor = "multi_thread")]
 async fn the_checklist_follows_the_goal_as_it_changes() {
-    let server = MockServer::start().await;
+    let server = MockServer::builder().start().await;
     Mock::given(method("POST"))
         .respond_with(move |request: &Request| {
             let body = body(request);
@@ -1312,7 +1312,7 @@ async fn the_checklist_follows_the_goal_as_it_changes() {
 /// would go out of date.
 #[tokio::test(flavor = "multi_thread")]
 async fn a_failed_turn_counts_down_instead_of_leaving_a_note() {
-    let server = MockServer::start().await;
+    let server = MockServer::builder().start().await;
     Mock::given(method("POST"))
         .respond_with(|request: &Request| {
             if is_checklist(&body(request)) {
@@ -1367,7 +1367,7 @@ async fn a_failed_turn_counts_down_instead_of_leaving_a_note() {
 /// or paused says so, and a chat that never had a goal hears nothing about goals.
 #[tokio::test(flavor = "multi_thread")]
 async fn a_message_after_a_goal_is_told_the_goal_is_not_running() {
-    let server = MockServer::start().await;
+    let server = MockServer::builder().start().await;
     Mock::given(method("POST"))
         .respond_with(|request: &Request| {
             let body = body(request);
@@ -1440,7 +1440,7 @@ async fn a_message_after_a_goal_is_told_the_goal_is_not_running() {
 /// no check or further turn follows.
 #[tokio::test(flavor = "multi_thread")]
 async fn asked_to_remove_the_goal_the_agent_removes_it() {
-    let server = MockServer::start().await;
+    let server = MockServer::builder().start().await;
     let gate = Gate::default();
     let held = gate.clone();
     let checks = Arc::new(AtomicUsize::new(0));
@@ -1505,7 +1505,7 @@ async fn asked_to_remove_the_goal_the_agent_removes_it() {
 /// hard one by pausing it.
 #[tokio::test(flavor = "multi_thread")]
 async fn the_agent_cannot_pause_a_goal_nobody_asked_to_stop() {
-    let server = MockServer::start().await;
+    let server = MockServer::builder().start().await;
     Mock::given(method("POST"))
         .respond_with(|request: &Request| {
             let body = body(request);
@@ -1548,7 +1548,7 @@ async fn the_agent_cannot_pause_a_goal_nobody_asked_to_stop() {
 /// elapsed time and turn count started again from zero.
 #[tokio::test(flavor = "multi_thread")]
 async fn rewording_an_open_goal_keeps_its_time_and_turns() {
-    let server = MockServer::start().await;
+    let server = MockServer::builder().start().await;
     Mock::given(method("POST"))
         .respond_with(|request: &Request| {
             let body = body(request);
@@ -1595,7 +1595,7 @@ async fn rewording_an_open_goal_keeps_its_time_and_turns() {
 /// for you" needs a question in the answer.
 #[tokio::test(flavor = "multi_thread")]
 async fn the_check_sees_work_done_since_the_last_check_and_never_waits_without_a_question() {
-    let server = MockServer::start().await;
+    let server = MockServer::builder().start().await;
     let gate = Gate::default();
     let held = gate.clone();
     let checks = Arc::new(AtomicUsize::new(0));
@@ -1685,7 +1685,7 @@ async fn the_check_sees_work_done_since_the_last_check_and_never_waits_without_a
 /// stays queued.
 #[tokio::test(flavor = "multi_thread")]
 async fn unsendable_queued_messages_are_recorded_and_the_queue_moves_on() {
-    let server = MockServer::start().await;
+    let server = MockServer::builder().start().await;
     let gate = Gate::default();
     let held_answer = gate.clone();
     Mock::given(method("POST"))
@@ -1797,7 +1797,7 @@ async fn unsendable_queued_messages_are_recorded_and_the_queue_moves_on() {
 /// status, and adds no note to the chat. Takes the two retry waits (30 s and 60 s, jittered).
 #[tokio::test(flavor = "multi_thread")]
 async fn a_goal_pauses_after_its_turns_keep_failing() {
-    let server = MockServer::start().await;
+    let server = MockServer::builder().start().await;
     Mock::given(method("POST"))
         .respond_with(ResponseTemplate::new(400).set_body_string("model broken"))
         .mount(&server)
@@ -1846,7 +1846,7 @@ async fn a_goal_pauses_after_its_turns_keep_failing() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_goal_whose_turn_cannot_start_retries_and_a_failed_check_is_not_a_stall() {
-    let server = MockServer::start().await;
+    let server = MockServer::builder().start().await;
     let checks = Arc::new(AtomicUsize::new(0));
     let seen_checks = Arc::clone(&checks);
     Mock::given(method("POST"))
@@ -1938,7 +1938,7 @@ async fn a_goal_whose_turn_cannot_start_retries_and_a_failed_check_is_not_a_stal
 /// leaves the rest waiting in order, with one note instead of one per message.
 #[tokio::test(flavor = "multi_thread")]
 async fn a_chat_wide_error_holds_one_message_and_keeps_the_rest_in_order() {
-    let server = MockServer::start().await;
+    let server = MockServer::builder().start().await;
     let gate = Gate::default();
     let held = gate.clone();
     Mock::given(method("POST"))
@@ -2009,7 +2009,7 @@ async fn a_chat_wide_error_holds_one_message_and_keeps_the_rest_in_order() {
 /// and still runs to the end; a later turn does not repeat the note.
 #[tokio::test(flavor = "multi_thread")]
 async fn a_goal_with_a_small_context_window_warns_once() {
-    let server = MockServer::start().await;
+    let server = MockServer::builder().start().await;
     let checks = Arc::new(AtomicUsize::new(0));
     let seen_checks = Arc::clone(&checks);
     Mock::given(method("POST"))
@@ -2072,7 +2072,7 @@ async fn a_goal_with_a_small_context_window_warns_once() {
 /// agent's question are not requests.
 #[tokio::test(flavor = "multi_thread")]
 async fn a_request_steered_into_a_goal_reaches_the_goal_check() {
-    let server = MockServer::start().await;
+    let server = MockServer::builder().start().await;
     let gate = Gate::default();
     let held = gate.clone();
     let checks = Arc::new(Mutex::new(Vec::new()));
@@ -2245,7 +2245,7 @@ fn after_a_tool(body: &Value) -> bool {
 #[tokio::test(flavor = "multi_thread")]
 async fn steering_past_an_approval_shows_at_once_denies_it_and_reaches_the_agent() {
     const STEER: &str = "Please remove the goal";
-    let server = MockServer::start().await;
+    let server = MockServer::builder().start().await;
     Mock::given(method("POST"))
         .respond_with(move |request: &Request| {
             let body = body(request);
@@ -2432,7 +2432,7 @@ async fn steering_past_an_approval_shows_at_once_denies_it_and_reaches_the_agent
 #[tokio::test(flavor = "multi_thread")]
 async fn a_steer_the_run_never_read_leaves_the_chat_and_comes_back_once() {
     const STEER: &str = "Use tabs instead";
-    let server = MockServer::start().await;
+    let server = MockServer::builder().start().await;
     let gate = Gate::default();
     let held = gate.clone();
     Mock::given(method("POST"))
@@ -2490,7 +2490,7 @@ async fn a_steer_the_run_never_read_leaves_the_chat_and_comes_back_once() {
 /// the box stays until the person decides.
 #[tokio::test(flavor = "multi_thread")]
 async fn answering_a_question_leaves_an_approval_waiting() {
-    let server = MockServer::start().await;
+    let server = MockServer::builder().start().await;
     Mock::given(method("POST"))
         .respond_with(move |request: &Request| {
             let body = body(request);
