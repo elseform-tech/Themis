@@ -12,8 +12,9 @@
 //! 2. Its words fit a pattern, word by word, with its program as written (`./git` isn't `git`,
 //!    and a pattern can't leave the program open). A `*` stays within its word, except that
 //!    `:*` and a final ` *` or `*` take any further words.
-//! 3. If the program can run others ([`Class`]), every option is named by the pattern or on a
-//!    small allow-list for that subcommand, and what it runs is spelled out.
+//! 3. If the program can run others ([`Class`]), every option and `NAME=value` word is named by
+//!    the pattern or (options only) on a small allow-list for that subcommand, and what it runs
+//!    is spelled out.
 //!
 //! **What this does not do.** It narrows what a subagent can start; it is not a security boundary.
 //! A program that runs project code (`npm test`, `pytest`, `make test`, `python3 check.py`) runs
@@ -83,7 +84,8 @@ fn class_of(program: &str) -> Option<Class> {
         | "pip3" | "pipx" | "uv" | "poetry" | "composer" | "bundle" | "gem" | "rake" | "mvn"
         | "gradle" => Some(Class::Subcommand),
         "find" | "gfind" | "fd" | "fdfind" | "rg" | "ag" | "sort" | "vim" | "vi" | "nvim"
-        | "less" | "more" | "man" | "curl" | "wget" => Some(Class::Options),
+        | "less" | "more" | "man" | "curl" | "wget" | "pytest" | "py.test" | "tox" | "jest"
+        | "vitest" | "mocha" | "tsc" | "eslint" | "ruff" | "mypy" => Some(Class::Options),
         _ => None,
     }
 }
@@ -184,6 +186,11 @@ fn is_option(word: &str) -> bool {
     word.starts_with('-') || word.starts_with('+')
 }
 
+/// A word that sets something for these programs as an option does: `SHELL=/tmp/x` to `make`.
+fn is_setting(word: &str) -> bool {
+    is_option(word) || wrapped::is_assignment(word)
+}
+
 /// An option without its value: `--eval` from `--eval=x`.
 fn flag_of(word: &str) -> &str {
     word.split('=').next().unwrap_or(word)
@@ -272,12 +279,13 @@ fn class_allows(class: Class, program: &str, command: &[String], pattern: &Patte
         .iter()
         .enumerate()
         .skip(1)
-        .find(|(_, word)| !is_option(word));
+        .find(|(_, word)| !is_setting(word));
     let subcommand = first_plain.map(|(_, word)| word.as_str());
     let allowed = allowed_options(program, subcommand);
     let confirmed = |word: &str| {
-        pattern.names(word)
-            || allowed.contains(&flag_of(word))
+        pattern.words.contains(&word)
+            || (is_option(word) && pattern.names(word))
+            || (is_option(word) && allowed.contains(&flag_of(word)))
             // `git log -5`.
             || (program == "git"
                 && subcommand == Some("log")
@@ -302,7 +310,7 @@ fn class_allows(class: Class, program: &str, command: &[String], pattern: &Patte
         command[before..]
             .iter()
             .take_while(|word| *word != "--")
-            .filter(|word| is_option(word))
+            .filter(|word| is_setting(word))
             .all(|word| confirmed(word))
     };
     match (class, first_plain) {
@@ -559,6 +567,34 @@ mod tests {
         ] {
             assert!(allowed(line, &[pattern]), "{line:?} under {pattern}");
         }
+    }
+
+    /// A `NAME=value` word sets something for these programs, as an option does.
+    #[test]
+    fn a_setting_word_is_confirmed_like_an_option() {
+        for (line, pattern) in [
+            (&["make", "test", "SHELL=/tmp/x"][..], "make test:*"),
+            (&["make", "test", "CC=/tmp/x"], "make test *"),
+            (&["make", "SHELL=/tmp/x", "test"], "make test:*"),
+            (&["cargo", "+evil", "test"], "cargo test:*"),
+            (&["cargo", "test", "--config=x"], "cargo test:*"),
+            (&["pytest", "-p", "evil"], "pytest:*"),
+            (&["pytest", "-c", "evil.ini"], "pytest *"),
+            (&["pytest", "--rootdir=x"], "pytest:*"),
+            (&["npm", "run", "x", "--script-shell=/tmp/x"], "npm run x:*"),
+            (&["jest", "--config=evil.js"], "jest:*"),
+        ] {
+            assert!(!allowed(line, &[pattern]), "{line:?} under {pattern}");
+        }
+        // Spelled out, it is what the pattern says; so is a plain target or path.
+        assert!(allowed(&["make", "test", "CC=gcc"], &["make test CC=gcc"]));
+        assert!(allowed(&["make", "test", "unit"], &["make test:*"]));
+        assert!(allowed(&["pytest", "tests/a.py"], &["pytest:*"]));
+        // What follows a script belongs to the script.
+        assert!(allowed(
+            &["python3", "check.py", "A=1"],
+            &["python3 check.py:*"]
+        ));
     }
 
     #[test]

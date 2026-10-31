@@ -853,6 +853,9 @@ async fn a_scoped_shell_holds_against_every_way_around_it() {
         // Not one simple command, though every part is named.
         shell(json!({"command": "sh", "args": ["-c", "git status && git status"]})),
         shell(json!({"command": "sh", "args": ["-c", "git status | cat"]})),
+        // A setting is an option by another name, for make above all.
+        shell(json!({"command": "make", "args": ["test", "SHELL=/tmp/evil"]})),
+        shell(json!({"command": "make", "args": ["test", "CC=/tmp/evil"]})),
         // A wrapper, though the pattern names it.
         shell(json!({"command": "timeout", "args": ["5", "git", "status"]})),
         // Whole-program catch-alls aren't a limit, however a plugin writes them.
@@ -869,8 +872,9 @@ async fn a_scoped_shell_holds_against_every_way_around_it() {
         Setup {
             agents: &[(
                 "scoped",
-                "tools: Read, Bash(python3 *tool.py*), Bash(python3:*), Bash(node run.js:*), Bash(node:*), Bash(git status:*), Bash(git:*), Bash(find . -name *), Bash(find:*), Bash(npx tsc:*), Bash(npx:*), Bash(ruby:*), Bash(perl *), Bash(bash:*), Bash(awk *), Bash(make:*), Bash(env:*), Bash(xargs:*), Bash(tar *), Bash(tar tf *), Bash(timeout *)",
+                "tools: Read, Bash(python3 *tool.py*), Bash(python3:*), Bash(node run.js:*), Bash(node:*), Bash(git status:*), Bash(git:*), Bash(find . -name *), Bash(find:*), Bash(npx tsc:*), Bash(npx:*), Bash(ruby:*), Bash(perl *), Bash(bash:*), Bash(awk *), Bash(make:*), Bash(env:*), Bash(xargs:*), Bash(tar *), Bash(tar tf *), Bash(timeout *), Bash(make test:*)",
             )],
+            user_config: Some(r#"{"subagents": {"max_turns": 80}}"#),
             ..Setup::default()
         },
         spawning(Some("scoped"), calling(calls)),
