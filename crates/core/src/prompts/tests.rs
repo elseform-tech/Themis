@@ -252,6 +252,7 @@ const ALL: &[(&str, &str, &[&str])] = &[
         &[],
     ),
     (TOOL_SCREENSHOT_NOTE, "tool-screenshot-note", &[]),
+    (TOOL_SHELL_ARGS_INVALID, "tool-shell-args-invalid", &[]),
     (TOOL_BROWSER_UNTRUSTED, "tool-browser-untrusted", &[]),
     (TOOL_DEVTOOLS_PAUSED, "tool-devtools-paused", &[]),
     (TOOL_BACKGROUND_NEXT, "tool-background-next", &[]),

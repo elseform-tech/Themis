@@ -788,12 +788,12 @@ pub fn repair_list_arguments(tool: &str, arguments: &str) -> String {
     let Some(Value::String(text)) = fields.get("args") else {
         return arguments.to_owned();
     };
-    match serde_json::from_str::<Vec<String>>(text) {
-        Ok(list) => {
+    match argv_text(text) {
+        Some(list) => {
             fields.insert("args".to_owned(), json!(list));
             Value::Object(fields).to_string()
         }
-        Err(_) => arguments.to_owned(),
+        None => arguments.to_owned(),
     }
 }
 
@@ -811,7 +811,7 @@ pub fn shell_argv(args: &serde_json::Value) -> Vec<String> {
             argv.extend(rest.iter().filter_map(|v| v.as_str()).map(str::to_owned));
         }
         Some(Value::String(text)) => {
-            argv.extend(serde_json::from_str::<Vec<String>>(text).unwrap_or_default());
+            argv.extend(argv_text(text).unwrap_or_default());
         }
         _ => {}
     }
@@ -820,6 +820,32 @@ pub fn shell_argv(args: &serde_json::Value) -> Vec<String> {
         return Vec::new();
     }
     argv
+}
+
+/// A list of arguments from JSON text. Models often leave raw line breaks and tabs inside a
+/// string, which is unambiguous, so those are read as what they plainly mean. Nothing else is
+/// repaired, so a list with anything tacked on is refused rather than guessed at.
+fn argv_text(text: &str) -> Option<Vec<String>> {
+    if let Ok(list) = serde_json::from_str(text) {
+        return Some(list);
+    }
+    let mut escaped = String::with_capacity(text.len());
+    let (mut in_string, mut after_backslash) = (false, false);
+    for c in text.chars() {
+        match c {
+            '\n' if in_string => escaped.push_str("\\n"),
+            '\r' if in_string => escaped.push_str("\\r"),
+            '\t' if in_string => escaped.push_str("\\t"),
+            _ => escaped.push(c),
+        }
+        if in_string && c == '"' && !after_backslash {
+            in_string = false;
+        } else if !in_string && c == '"' {
+            in_string = true;
+        }
+        after_backslash = in_string && c == '\\' && !after_backslash;
+    }
+    serde_json::from_str(&escaped).ok()
 }
 
 /// `args` as a list, or that list sent as JSON text, which models often do
@@ -836,8 +862,8 @@ fn argv_or_json_text<'de, D: serde::Deserializer<'de>>(
     }
     match Argv::deserialize(deserializer)? {
         Argv::List(list) => Ok(list),
-        Argv::Text(text) => serde_json::from_str(&text)
-            .map_err(|_| serde::de::Error::custom("expected a list of strings, one per argument")),
+        Argv::Text(text) => argv_text(&text)
+            .ok_or_else(|| serde::de::Error::custom(crate::prompts::TOOL_SHELL_ARGS_INVALID)),
     }
 }
 
@@ -4116,6 +4142,26 @@ mod tests {
     }
 
     #[test]
+    fn shell_args_sent_as_text_survive_raw_line_breaks_and_a_bad_list_says_what_to_do() {
+        // Raw line breaks inside a JSON string are the commonest way this text breaks.
+        let script = "[\"-c\", \"import json\nprint(1)\ttwo\"]";
+        assert_eq!(
+            argv_text(script).unwrap(),
+            vec!["-c".to_owned(), "import json\nprint(1)\ttwo".to_owned()]
+        );
+        // Line breaks between items are only whitespace.
+        assert_eq!(argv_text("[\"a\",\n \"b\"]").unwrap(), vec!["a", "b"]);
+        // An escaped quote doesn't end the string.
+        assert_eq!(argv_text("[\"a\\\"\nb\"]").unwrap(), vec!["a\"\nb"]);
+        // A pipe tacked on is refused, not guessed at, and the error shows the way.
+        assert!(argv_text("[\"find\", \".\"] | head").is_none());
+        assert!(crate::prompts::TOOL_SHELL_ARGS_INVALID.contains("\"sh\""));
+        let parsed: std::result::Result<ShellArgs, _> =
+            serde_json::from_value(json!({"command":"find","args":"[\"find\", \".\"] | head"}));
+        assert!(parsed.unwrap_err().to_string().contains("\"-c\""));
+    }
+
+    #[test]
     fn list_arguments_sent_as_a_string_are_read_as_the_list() {
         let repaired = repair_list_arguments(
             "shell",
@@ -4142,6 +4188,16 @@ mod tests {
         }
         let other = r#"{"args":"[\"a\"]"}"#;
         assert_eq!(repair_list_arguments("read_file", other), other);
+        // The person approves what will run, so a repaired script reads the same both ways.
+        let script = repair_list_arguments(
+            "shell",
+            &json!({"command":"python3","args":"[\"-c\", \"a\nb\"]"}).to_string(),
+        );
+        let value: Value = serde_json::from_str(&script).unwrap();
+        assert_eq!(shell_argv(&value), ["python3", "-c", "a\nb"]);
+        // Rules read the raw call too, and must see what the tool would run.
+        let raw = json!({"command":"sh","args":"[\"-c\", \"rm -rf x\ny\"]"});
+        assert_eq!(shell_argv(&raw), ["sh", "-c", "rm -rf x\ny"]);
     }
 
     mod repair_list_arguments_props {
