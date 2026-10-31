@@ -573,6 +573,17 @@ describe("Integration browsing and lifecycle", () => {
     expect(screen.getByRole("dialog")).toHaveTextContent("No skills");
     expect(screen.getByRole("dialog")).not.toHaveTextContent(/MCP connection|hook|Documents/);
   });
+  it("names a plugin's subagents in words instead of saying it has nothing", async () => {
+    installed[0].spec.skills = [];
+    installed[0].spec.subagents = [{ name: "code-reviewer", description: "Reviews code." }, { name: "test_writer", description: "Writes tests." }];
+    render(<Plugins />);
+    fireEvent.click(await screen.findByRole("button", { name: "View docs" }));
+    const dialog = screen.getByRole("dialog");
+    expect(dialog).toHaveTextContent("Subagents: Code reviewer, Test writer");
+    expect(dialog).not.toHaveTextContent("No skills");
+    expect(dialog).not.toHaveTextContent("code-reviewer");
+    installed[0].spec.subagents = undefined;
+  });
   it("keeps standalone wrappers in Skills and shows disabled status without actions", async () => {
     installed.push({ ...installed[0], enabled: false, source: "discovered", spec: { ...installed[0].spec, name: "discovered-1234", skills: [{ ...installed[0].spec.skills[0], name: "Discovered draft" }] } });
     for (const kind of ["skill", "mcp", "hook"] as const) installed.push({ ...installed[0], spec: { ...installed[0].spec, name: `standalone-${kind}`, package_kind: kind } });
