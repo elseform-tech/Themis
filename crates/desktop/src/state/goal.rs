@@ -53,6 +53,8 @@ const MAX_GOAL_FILES: usize = 30;
 const MAX_NOTE_PART_CHARS: usize = 800;
 /// Most pending items a check's message names; Workspace › Goal has them all.
 const MAX_PENDING_SHOWN: usize = 5;
+/// How soon to look again at a chat whose project has the live checklist switched off.
+const CHECKLIST_OFF_RECHECK: Duration = Duration::from_secs(60);
 /// A long command output keeps its start and its end (where results and
 /// summaries are), in characters.
 const OUTPUT_HEAD_CHARS: usize = 2_000;
@@ -386,6 +388,7 @@ impl AppState {
             }
         }
         self.refresh_checklist(Arc::clone(&sink), &thread_id);
+        self.watch_checklist(Arc::clone(&sink), &thread_id);
         if !running {
             self.start_goal_turn(
                 sink,
@@ -705,6 +708,140 @@ impl AppState {
         });
     }
 
+    /// Keeps a running goal's checklist moving during long turns: every so often, if the turn
+    /// has done something new, the check reads it and updates the list. It never decides the
+    /// goal, which only happens when a turn ends. One loop per chat, until the goal is over.
+    pub(super) fn watch_checklist(&self, sink: Arc<dyn EventSink>, thread_id: &str) {
+        let Some(started_at) = self.goal_for(thread_id).map(|goal| goal.started_at) else {
+            return;
+        };
+        let watching = (thread_id.to_owned(), started_at);
+        if !self
+            .inner
+            .goal_checklist_watches
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(watching.clone())
+        {
+            return;
+        }
+        let state = self.clone();
+        let thread_id = thread_id.to_owned();
+        tokio::spawn(async move {
+            let mut read_through = 0;
+            loop {
+                let wait = state.checklist_refresh_every(&thread_id).await;
+                tokio::time::sleep(wait.unwrap_or(CHECKLIST_OFF_RECHECK)).await;
+                let Some(goal) = state
+                    .goal_for(&thread_id)
+                    .filter(|goal| goal.started_at == started_at)
+                else {
+                    break;
+                };
+                if goal.status == GoalStatus::Reached {
+                    break;
+                }
+                let idle = !matches!(state.require_thread(&thread_id).await, Ok(true));
+                if wait.is_none() || goal.status != GoalStatus::Running || goal.checking || idle {
+                    continue;
+                }
+                let (evidence, _, through, spoiled) =
+                    state.turn_evidence(&thread_id, goal.checked_seq);
+                if spoiled || through == read_through || evidence.trim().is_empty() {
+                    continue;
+                }
+                read_through = through;
+                let checked = state
+                    .run_goal_check(
+                        &thread_id,
+                        "",
+                        &goal,
+                        themis_core::prompts::GOAL_CHECK_MIDTURN,
+                        &evidence,
+                    )
+                    .await;
+                let Ok(verdict) = checked else {
+                    let _ = state.inner.diagnostics.append(
+                        "goal",
+                        "checklist_failed",
+                        "warn",
+                        json!({"thread_id": thread_id}),
+                    );
+                    continue;
+                };
+                if verdict.requirements.is_empty() {
+                    continue;
+                }
+                state.update_goal(sink.as_ref(), &thread_id, |current| {
+                    if current.started_at == started_at
+                        && current.checked_seq == goal.checked_seq
+                        && !current.checking
+                        && current.text == goal.text
+                        && current.added == goal.added
+                    {
+                        current.proof = verdict.requirements;
+                    }
+                });
+            }
+            state
+                .inner
+                .goal_checklist_watches
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .remove(&watching);
+        });
+    }
+
+    /// How often the chat's project wants the checklist refreshed during a turn, if at all.
+    async fn checklist_refresh_every(&self, thread_id: &str) -> Option<Duration> {
+        let project_root = self
+            .inner
+            .threads
+            .read()
+            .await
+            .get(thread_id)
+            .map(|record| record.project_root.clone())?;
+        let seconds = self
+            .runtime_configuration(Some(&project_root), None)
+            .ok()?
+            .config
+            .goal
+            .checklist_refresh_seconds;
+        (seconds > 0).then(|| Duration::from_secs(u64::from(seconds)))
+    }
+
+    /// One request to the goal check, on its model, recorded as a goal check.
+    async fn run_goal_check(
+        &self,
+        thread_id: &str,
+        run_id: &str,
+        goal: &Goal,
+        answer: &str,
+        evidence: &str,
+    ) -> Result<core_goal::GoalVerdict, String> {
+        let (config, catalog) = self.goal_check_config(thread_id).await?;
+        // The same per-model routes and limits real runs use.
+        themis_core::providers::with_catalog_limits(
+            &catalog,
+            themis_core::context_metrics::with_usage_recorder(
+                self.usage_recorder(thread_id, run_id),
+                themis_core::context_metrics::with_usage_kind(
+                    themis_core::context_metrics::UsageKind::GoalCheck,
+                    core_goal::check_with_config(
+                        &config,
+                        &goal.text,
+                        &goal.added,
+                        &goal.proof,
+                        answer,
+                        evidence,
+                    ),
+                ),
+            ),
+        )
+        .await
+        .map_err(|error| format!("{error:#}"))
+    }
+
     /// Notes once, when a goal's first turn starts, that the context window
     /// is below [`themis_core::context_window::SMALL_WINDOW_TOKENS`]: long
     /// goals may stall there.
@@ -940,31 +1077,9 @@ impl AppState {
             goal.files.drain(..excess);
         });
         let checked_goal = goal.started_at;
-        let verdict = match self.goal_check_config(&thread_id).await {
-            Ok((config, catalog)) => {
-                // The same per-model routes and limits real runs use.
-                themis_core::providers::with_catalog_limits(
-                    &catalog,
-                    themis_core::context_metrics::with_usage_recorder(
-                        self.usage_recorder(&thread_id, &run_id),
-                        themis_core::context_metrics::with_usage_kind(
-                            themis_core::context_metrics::UsageKind::GoalCheck,
-                            core_goal::check_with_config(
-                                &config,
-                                &goal.text,
-                                &goal.added,
-                                &goal.proof,
-                                &answer,
-                                &evidence,
-                            ),
-                        ),
-                    ),
-                )
-                .await
-                .map_err(|error| format!("{error:#}"))
-            }
-            Err(error) => Err(error),
-        };
+        let verdict = self
+            .run_goal_check(&thread_id, &run_id, &goal, &answer, &evidence)
+            .await;
         let check_failed = verdict.is_err();
         self.update_goal(sink.as_ref(), &thread_id, |goal| goal.checking = false);
         // The goal may have been paused or edited while the check ran.
@@ -1397,6 +1512,9 @@ impl AppState {
             let Some(goal) = self.goal_for(&thread_id) else {
                 continue;
             };
+            if goal.status != GoalStatus::Reached {
+                self.watch_checklist(Arc::clone(&sink), &thread_id);
+            }
             // A check the app closed during is not still going.
             if goal.checking {
                 self.update_goal(sink.as_ref(), &thread_id, |goal| goal.checking = false);
