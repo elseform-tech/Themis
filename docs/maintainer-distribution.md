@@ -91,18 +91,14 @@ To enable in-app updates:
 
 ## CI overview
 
-Status: **no workflows ship** — this repo has no `.github/` directory
-(verified). Any workflow added should run at least these gates, which mirror
-the repo's documented commands:
+`.github/workflows/ci.yml` runs once per pull request and on every push to `main`. `main` runs every job. A pull request runs only what it could affect:
 
-```sh
-cargo fmt --check
-cargo clippy --workspace -- -D warnings
-cargo test --workspace
-npm --prefix web test
-npm --prefix web run build
-```
+| Job | On a pull request |
+|---|---|
+| `fmt`, `dashboard-quality` | Always |
+| `clippy`, `rust-test` (Linux, macOS, Windows) | When Rust, evals, or a web or docs file that Rust tests read changes |
+| `web` | When `web/` changes |
+| `tauri-build` (Linux, macOS, Windows) | When packaging inputs change: app config, icons, dependencies, the bundled search server |
+| `rust-coverage` | Never; `main` only |
 
-Suggested layout when CI is introduced: a lint job (fmt + clippy), a test job
-(cargo tests + web tests + web build), and — once signing secrets exist — a
-per-OS release job running `npx tauri build` on tag push.
+The `changes` job holds these lists. A Rust test that starts reading a file outside `crates/` must add that file to its `rust` list, or a change to the file can fail only after the merge. `main` saves the Rust build cache, and pull requests reuse it. `.github/workflows/fuzz.yml` runs nightly; see [fuzzing.md](fuzzing.md).

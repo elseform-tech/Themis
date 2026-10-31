@@ -62,8 +62,10 @@ cargo +nightly fuzz run --sanitizer none diff_parse -- -max_total_time=60
 
 Targets run without AddressSanitizer: they cover safe Rust for panics and
 invariant violations, and the sanitizer fails to link Tauri dependencies on
-macOS. The `fuzz` workflow builds every target on pull requests and runs each
-for five minutes nightly (or on demand), uploading `fuzz/artifacts` on failure.
+macOS. The `fuzz` workflow builds and runs each target for five minutes nightly (or on
+demand), uploading `fuzz/artifacts` on failure. A pull request only builds the
+targets when it changes `fuzz/` or the workflow, so a change that stops a target
+compiling shows up in the next nightly run.
 
 When a crash is found, minimise it (`cargo fuzz tmin`), fix the bug, and commit
 the input as an ordinary regression test next to the code it exercises.
