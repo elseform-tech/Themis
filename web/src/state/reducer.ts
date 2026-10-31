@@ -382,14 +382,6 @@ function moveSubagentToRun(state: AppState, threadId: string, runId: string, age
   return appendMessage({ ...state, messages: { ...state.messages, [threadId]: without } }, threadId, { id: `subagents-${agent.id}-${runId}`, role: "system", text: "", runId, subagents: [agent] });
 }
 
-/** A run's changed files without those its subagents own. */
-function mainAgentChanges(state: AppState, threadId: string, runId: string): ChangedFile[] | undefined {
-  const files = state.runChanges[runId];
-  if (!files) return undefined;
-  const owned = (state.messages[threadId] ?? []).filter(row => row.runId === runId).flatMap(row => row.subagents ?? []).flatMap(agent => agent.writePaths);
-  return files.filter(file => !owned.some(path => path.endsWith("/") ? file.path.startsWith(path) : file.path === path));
-}
-
 function updateSubagent(state: AppState, threadId: string, id: string, change: (agent: SubagentEntry) => SubagentEntry): AppState {
   const rows = state.messages[threadId] ?? [];
   const updated = rows.map(row => row.subagents?.some(agent => agent.id === id)
@@ -610,7 +602,7 @@ export function applyThreadEvent(
         runId,
         final: true,
         incomplete: event.kind === "incomplete",
-        ...(state.runChanges[runId] ? { changedFiles: mainAgentChanges(state, threadId, runId) } : {}),
+        ...(state.runChanges[runId] ? { changedFiles: state.runChanges[runId] } : {}),
         ...(state.runMedia[runId] ? { media: state.runMedia[runId] } : {}),
       });
       const startedAt = next.runStartedAt[threadId];
@@ -643,7 +635,7 @@ export function applyThreadEvent(
         role: "system",
         text: stopped ? event.error : `Run failed: ${event.error}`,
         runId,
-        ...(state.runChanges[runId] ? { changedFiles: mainAgentChanges(state, threadId, runId) } : {}),
+        ...(state.runChanges[runId] ? { changedFiles: state.runChanges[runId] } : {}),
         ...(state.runMedia[runId] ? { media: state.runMedia[runId] } : {}),
       });
       const startedAt = next.runStartedAt[threadId];

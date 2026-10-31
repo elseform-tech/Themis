@@ -207,6 +207,14 @@ describe("subagents in the chat", () => {
     expect(rows[0]!.subagents![0]!.status).toBe("running");
   });
 
+  it("lists the files a subagent changed in the turn's edited-files card", () => {
+    const files = [{ path: "notes/a.md", status: "added" }, { path: "src/main.rs", status: "modified" }];
+    let state = reducer(initialState, envelope(started("a1", "Writer", "Write it", ["notes/"])));
+    state = reducer(state, envelope({ kind: "files_changed", files } as never));
+    state = reducer(state, envelope({ kind: "finished", result: "Done." } as never));
+    expect((state.messages[thread] ?? []).find(row => row.role === "assistant")?.changedFiles).toEqual(files);
+  });
+
   it("moves a subagent picked up in a later reply to that reply's stack", () => {
     const first = reducer(reducer(initialState, envelope(started("a1", "Writer", "Write it"))), envelope(ended("Wrong")));
     const later = envelope({ kind: "subagent_message", id: "a1", text: "Redo", resumed: true } as never) as { envelope: { run_id: string } };
