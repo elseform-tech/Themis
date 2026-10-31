@@ -3,7 +3,7 @@
 
 .themis-thread-layout { display: flex; min-height: 0; height: 100%; }
 /* The chat column follows the room the sidebar and Workspace leave, with a readable cap. */
-.themis-thread { --themis-thread-gutter: clamp(20px, 5cqw, 64px); --themis-thread-column: clamp(740px, 90cqw, 1120px); position: relative; flex: 1; min-width: 0; display: flex; flex-direction: column; min-height: 0; height: 100%; }
+.themis-thread { --themis-thread-gutter: clamp(20px, 5cqw, 64px); --themis-thread-column: 620px; position: relative; flex: 1; min-width: 0; display: flex; flex-direction: column; min-height: 0; height: 100%; }
 
 /* Empty states without a thread. */
 .themis-welcome { margin: auto; text-align: center; padding: 32px; max-width: 540px; }
