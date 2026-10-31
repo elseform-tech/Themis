@@ -16,6 +16,7 @@ import { readSession, writeSession } from "../state/session";
 import { groupConversation, toolDisplayName, type ConversationRow } from "./conversation";
 import { describeTools } from "./toolActivity";
 import { OverviewBox, type Overview } from "./OverviewBox";
+import { SubagentCard } from "./SubagentCard";
 
 interface ThreadConversationProps {
   threadId: string;
@@ -132,7 +133,7 @@ export function ThreadConversation({
                 : compacting
                   ? "Compacting context…"
                   : toolPending
-                    ? `Using ${toolDisplayName(toolPending.tool, toolPending.label)}…`
+                    ? subagentWaitLine(toolPending.tool, messages) ?? `Using ${toolDisplayName(toolPending.tool, toolPending.label)}…`
                     : "Thinking…"}
             </span>
             <time aria-label="Elapsed time">{Math.floor(elapsed / 60)}:{String(elapsed % 60).padStart(2, "0")}</time>
@@ -147,6 +148,18 @@ export function ThreadConversation({
     </ResponseLinks.Provider>
     </MediaGallery.Provider>
   );
+}
+
+/** The heads-up while the main agent deals with its subagents, whatever it said itself. */
+export function subagentWaitLine(tool: string, messages: ChatMessage[]): string | null {
+  const running = messages.flatMap(message => message.subagents ?? []).filter(agent => agent.status === "running").map(agent => agent.name);
+  switch (tool) {
+    case "spawn_subagents": return "Starting subagents…";
+    case "message_subagent": return "Messaging a subagent…";
+    case "stop_subagent": return "Stopping a subagent…";
+    case "wait_subagents": return running.length ? `Waiting for ${running.join(", ")}…` : "Waiting for subagents…";
+    default: return null;
+  }
 }
 
 function ConversationRow({
@@ -166,6 +179,9 @@ function ConversationRow({
 }) {
   if (row.kind === "message" && row.message.question) {
     return <QuestionRow question={row.message.question} />;
+  }
+  if (row.kind === "message" && row.message.subagents) {
+    return <SubagentCard agents={row.message.subagents} runLive={row.message.runId !== undefined && row.message.runId === activeRunId} />;
   }
   if (row.kind === "message") {
     const durationMs = row.message.final && row.message.runId ? runDurations[row.message.runId] : undefined;

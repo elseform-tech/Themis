@@ -1,0 +1,70 @@
+/* Subagents in a chat turn (board 25): overlapping letter circles, ringed while they work. */
+.themis-subagents { display: flex; flex: none; align-items: center; gap: 10px; align-self: flex-start; }
+.themis-subagents-glyph { width: 16px; height: 16px; fill: none; stroke: var(--themis-info); stroke-width: 1.8; stroke-linecap: round; flex: none; }
+.themis-subagent-stack { display: flex; padding-left: 8px; }
+.themis-subagent-dot {
+  --tone: var(--themis-info);
+  position: relative; width: 30px; height: 30px; margin-left: -8px; padding: 0;
+  border: 2px solid var(--themis-canvas); border-radius: 15px;
+  background: color-mix(in srgb, var(--tone) 22%, var(--themis-canvas)); color: var(--tone);
+  display: grid; place-items: center; font: inherit; font-size: .75rem; font-weight: 600; cursor: pointer;
+}
+.themis-subagent-dot.is-small { width: 24px; height: 24px; margin: 0; border-radius: 12px; border-color: var(--themis-sidebar-bg); font-size: .6875rem; cursor: inherit; }
+.themis-subagent-dot.is-small .themis-subagent-ring { left: -5px; top: -5px; width: 30px; height: 30px; }
+.themis-subagent-dot.is-success { --tone: var(--themis-success); }
+.themis-subagent-dot.is-accent { --tone: var(--themis-accent); }
+.themis-subagent-dot.is-neutral { --tone: var(--themis-text-2); }
+.themis-subagent-dot:hover { transform: translateY(-1px); }
+.themis-subagent-dot:focus-visible { outline: 2px solid var(--themis-accent); outline-offset: 1px; }
+.themis-subagent-ring {
+  position: absolute; left: -4px; top: -4px; width: 34px; height: 34px; pointer-events: none;
+  fill: none; stroke: var(--tone); stroke-width: 2; stroke-linecap: round;
+  transform-origin: 50% 50%; animation: themis-thread-spin 1.1s linear infinite;
+}
+@media (prefers-reduced-motion: reduce) { .themis-subagent-ring { animation: none; } }
+.themis-subagents-count {
+  padding: 4px 6px; border: 0; border-radius: 8px; background: transparent;
+  font: inherit; font-size: .8125rem; color: var(--themis-text-2); cursor: pointer;
+}
+.themis-subagents-count:hover { color: var(--themis-text); }
+.themis-subagents-count:focus-visible { outline: 2px solid var(--themis-accent); outline-offset: 1px; }
+
+/* Workspace › Tasks detail of one subagent (board 26). */
+.themis-subagent-detail { display: flex; flex-direction: column; min-height: 0; }
+.themis-subagent-detail-head {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 4px 0 14px;
+  border-bottom: 1px solid var(--themis-border-subtle);
+}
+.themis-subagent-back {
+  width: 36px; height: 36px; border: 0; border-radius: 18px; background: transparent; display: grid; place-items: center;
+  color: var(--themis-text-2); cursor: pointer;
+}
+.themis-subagent-back:hover { background: var(--themis-nav-hover-bg); color: var(--themis-text); }
+.themis-subagent-back svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; }
+.themis-subagent-detail-title { flex: 1; min-width: 180px; display: flex; flex-direction: column; gap: 2px; }
+.themis-subagent-detail-name { display: flex; align-items: center; gap: 8px; }
+.themis-subagent-detail-name strong { font-size: 1rem; font-weight: 600; }
+.themis-subagent-detail-meta { font-size: .75rem; color: var(--themis-text-3); }
+.themis-subagent-stop {
+  height: 36px; padding: 0 14px; border: 1px solid color-mix(in srgb, var(--themis-danger) 40%, transparent);
+  border-radius: 18px; background: transparent; color: var(--themis-danger); font: inherit; font-size: .8125rem; cursor: pointer;
+}
+.themis-subagent-stop:disabled { opacity: .5; cursor: not-allowed; }
+.themis-subagent-steps { display: flex; flex-direction: column; gap: 14px; padding: 16px 0; overflow-y: auto; }
+.themis-subagent-brief-box { padding: 12px 14px; border-radius: 16px; background: var(--themis-canvas); }
+.themis-subagent-brief-box summary { cursor: pointer; font-size: .75rem; font-weight: 500; color: var(--themis-text-2); }
+.themis-subagent-brief-box p { margin: 10px 0 0; font-size: .8125rem; line-height: 1.6; color: var(--themis-text-2); white-space: pre-wrap; }
+.themis-subagent-step-text { font-size: .875rem; line-height: 1.7; }
+.themis-subagent-calls { align-self: flex-start; max-width: 100%; }
+.themis-subagent-calls summary {
+  display: inline-flex; height: 32px; align-items: center; padding: 0 12px; border-radius: 16px; background: var(--themis-raised);
+  font-size: .8125rem; color: var(--themis-text-2); cursor: pointer;
+}
+.themis-subagent-calls ul { margin: 8px 0 0; padding: 0 0 0 20px; list-style: none; display: flex; flex-direction: column; gap: 4px; }
+.themis-subagent-calls li { font-family: ui-monospace, SFMono-Regular, monospace; font-size: .75rem; color: var(--themis-text-2); overflow-wrap: anywhere; }
+.themis-subagent-ending { margin: 0; font-size: .8125rem; color: var(--themis-text-2); }
+.themis-subagent-bubble { display: flex; flex-direction: column; align-items: flex-end; align-self: flex-end; gap: 4px; max-width: 80%; }
+.themis-subagent-bubble-text { padding: 10px 16px; border-radius: 18px 18px 6px 18px; background: var(--themis-user-message-bg); }
+.themis-subagent-bubble-text.is-folded { max-height: 9em; overflow: hidden; -webkit-mask-image: linear-gradient(#000 60%, transparent); mask-image: linear-gradient(#000 60%, transparent); }
+.themis-subagent-bubble-more { padding: 0; border: 0; background: transparent; color: var(--themis-text-2); font: inherit; font-size: .75rem; cursor: pointer; }
+.themis-subagent-bubble-more:hover { color: var(--themis-text); }

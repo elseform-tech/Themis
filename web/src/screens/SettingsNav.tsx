@@ -2,7 +2,7 @@ import { Tooltip } from "../components";
 import { useApp } from "../state/store";
 import { SectionIcon } from "./SettingsGroup";
 
-export const SETTINGS_SECTIONS = ["General", "Appearance", "Models", "Usage", "Secrets", "Permissions", "Browser", "Web", "Advanced"];
+export const SETTINGS_SECTIONS = ["General", "Appearance", "Models", "Usage", "Secrets", "Permissions", "Browser", "Web", "Subagents", "Advanced"];
 
 /** The section shown on the right; the sidebar's list and the pane share it through the store. */
 export function useSettingsSection() {

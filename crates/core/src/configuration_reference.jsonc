@@ -166,4 +166,14 @@
   "goal": {
     // "check_model": "glm-5.3",             // checks each goal turn; absent: the chat's model
   },
+  // Subagents the agent may start for independent parts of a task. A project file may only
+  // lower these or turn them off.
+  "subagents": {
+    "enabled": true,                          // offer the subagent tools to the agent
+    "max_parallel": 3,                        // subagents running at once per chat (1-6)
+    "max_turns": 40,                          // model requests per subagent (1-1000)
+    // "model": "qwen3.8-flash",              // absent: the chat's model
+    // "models": ["glm-5", "beam-free"],      // up to 3 more models the agent may pick per subagent
+    "allow_writes": true,                     // false keeps every subagent read-only
+  },
 }

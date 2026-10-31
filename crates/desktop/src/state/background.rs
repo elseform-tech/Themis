@@ -29,6 +29,7 @@ fn timestamp(milliseconds: u64) -> String {
 fn feed_row(view: TaskView) -> ThreadTaskBackground {
     ThreadTaskBackground {
         id: view.record.id,
+        run_id: view.record.run_id,
         command: view.summary,
         cwd: view.record.cwd,
         state: view.record.state,

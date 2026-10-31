@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type CSSProperties, type ReactNode, useMemo } from "react";
 import { DiffView, EmptyState, FileTree, Tooltip } from "../components";
+import { authorOf, authorOptions } from "../lib/changeAuthors";
 import { CodeBlock } from "../components/CodeBlock";
 import type { DiffState, DirEntry, FileView, WorkspaceInfo } from "../lib/types";
 import { branchDiff, getWorkspace, listDiff, listProjectDir, readProjectFile } from "../lib/tauri";
@@ -129,6 +130,8 @@ function ChangesView({ threadId }: { threadId: string }) {
   const running = state.running[threadId] ?? false;
   const toolsDone = (state.traces[threadId] ?? []).filter(entry => entry.ok !== undefined).length;
   const [selected, setSelected] = useState<string | null>(null);
+  const [author, setAuthor] = useState("");
+  const authors = useMemo(() => (state.messages[threadId] ?? []).flatMap(row => row.subagents ?? []), [state.messages, threadId]);
   // An edited-files row asks for its file; follow each new request.
   const focus = state.diffFocus;
   useEffect(() => { if (focus) setSelected(focus.path); }, [focus]);
@@ -141,11 +144,21 @@ function ChangesView({ threadId }: { threadId: string }) {
   useEffect(() => { void refresh(); }, [refresh, toolsDone, running]);
   if (diff === undefined) return <EmptyState title="Loading changes…" />;
   if (diff === null || !diff.available) return <EmptyState title="Changes unavailable" hint={diff?.reason ?? "This folder has no Git diff."} />;
-  const files = diff.files;
+  const options = authorOptions(authors, diff.files.map(entry => entry.path));
+  const shownAuthor = options.includes(author) ? author : "";
+  const files = shownAuthor ? diff.files.filter(entry => authorOf(entry.path, authors) === shownAuthor) : diff.files;
   const file = files.find(entry => entry.path === selected) ?? files[0] ?? null;
   return (
     <div className="themis-workspace-changes">
       {diff.reason && <p className="themis-workspace-note">{diff.reason}</p>}
+      {options.length > 0 && (
+        <label className="themis-workspace-author">Author
+          <select value={shownAuthor} onChange={event => setAuthor(event.target.value)}>
+            <option value="">All</option>
+            {options.map(option => <option key={option} value={option}>{option}</option>)}
+          </select>
+        </label>
+      )}
       {file === null ? <EmptyState title="No changes" hint="The checkout matches its last commit." /> : (
         <DiffSplit>
           <FileTree files={files} selectedPath={file.path} onSelect={setSelected} />

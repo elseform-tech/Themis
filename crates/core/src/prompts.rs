@@ -29,6 +29,32 @@ pub const SKILL_COMMAND_NOTE: &str = include_str!("../builtins/prompts/skill-com
 /// Skill catalog appended to the system message; `{{skills}}` is the metadata JSON.
 pub const SYSTEM_SKILL_CATALOG: &str = include_str!("../builtins/prompts/system-skill-catalog.md");
 
+// Subagents.
+/// System message head of a subagent run, instead of the ordinary system instructions.
+pub const SUBAGENT_SYSTEM: &str = include_str!("../builtins/prompts/subagent-system.md");
+/// Added to a read-only subagent's system message.
+pub const SUBAGENT_WRITE_PATHS_NOTE: &str =
+    include_str!("../builtins/prompts/subagent-write-paths-note.md");
+pub const SUBAGENT_READ_ONLY_NOTE: &str =
+    include_str!("../builtins/prompts/subagent-read-only-note.md");
+/// Explains the optional `status` field every subagent tool call accepts.
+pub const SUBAGENT_STATUS_FIELD: &str =
+    include_str!("../builtins/prompts/subagent-status-field.md");
+/// Description of the `spawn_subagents` tool.
+pub const SPAWN_SUBAGENTS_TOOL: &str = include_str!("../builtins/prompts/spawn-subagents-tool.md");
+/// Appended to the spawn tool when `subagents.models` lists models the agent may pick.
+pub const SPAWN_SUBAGENTS_MODELS: &str =
+    include_str!("../builtins/prompts/spawn-subagents-models.md");
+/// Description of the `wait_subagents` tool.
+pub const WAIT_SUBAGENTS_TOOL: &str = include_str!("../builtins/prompts/wait-subagents-tool.md");
+/// Description of the `message_subagent` tool.
+pub const MESSAGE_SUBAGENT_TOOL: &str =
+    include_str!("../builtins/prompts/message-subagent-tool.md");
+/// Description of the `stop_subagent` tool.
+pub const STOP_SUBAGENT_TOOL: &str = include_str!("../builtins/prompts/stop-subagent-tool.md");
+/// A subagent's result, delivered to the main agent; `{{name}}`, `{{id}}`, `{{status}}`, `{{result}}`.
+pub const SUBAGENT_RESULT_NOTE: &str = include_str!("../builtins/prompts/subagent-result-note.md");
+
 // Desktop run setup.
 /// Current run workspace preamble before the skill catalog; `{{workspace}}`.
 pub const DESKTOP_RUN_WORKSPACE: &str =
@@ -185,7 +211,14 @@ pub const RUNTIME_REPEAT_IN_CONTEXT: &str =
 /// Request for a closing answer when a run reaches its turn limit.
 pub const RUNTIME_HANDOFF: &str = include_str!("../builtins/prompts/runtime-handoff.md");
 /// Header before a message the user sent while the agent was working.
+pub const RUNTIME_SUBAGENT_REACTION: &str =
+    include_str!("../builtins/prompts/runtime-subagent-reaction.md");
 pub const RUNTIME_STEERED: &str = include_str!("../builtins/prompts/runtime-steered.md");
+/// Header before a subagent's result delivered between steps: data, not the person's words.
+pub const RUNTIME_SUBAGENT_NOTE: &str =
+    include_str!("../builtins/prompts/runtime-subagent-note.md");
+/// How the agent treats subagent results: claims it checks before relying on them, and says so.
+pub const SUBAGENT_REVIEW: &str = include_str!("../builtins/prompts/subagent-review.md");
 /// Label before context a `PromptSubmit` hook added: external information, not instructions.
 pub const HOOK_CONTEXT_NOTE: &str = include_str!("../builtins/prompts/hook-context-note.md");
 pub const HOOK_BLOCKED: &str = include_str!("../builtins/prompts/hook-blocked.md");

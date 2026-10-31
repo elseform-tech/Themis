@@ -148,7 +148,7 @@ describe("Settings section list", () => {
   it("lists Back to app once, then every section, and marks the chosen one", async () => {
     await act(async () => { render(<SettingsNav />); });
     const nav = screen.getByRole("navigation", { name: "Settings sections" });
-    expect(within(nav).getAllByRole("button").map(button => button.getAttribute("aria-label"))).toEqual(["Back to app", "General", "Appearance", "Models", "Usage", "Secrets", "Permissions", "Browser", "Web", "Advanced"]);
+    expect(within(nav).getAllByRole("button").map(button => button.getAttribute("aria-label"))).toEqual(["Back to app", "General", "Appearance", "Models", "Usage", "Secrets", "Permissions", "Browser", "Web", "Subagents", "Advanced"]);
     expect(within(nav).getByRole("button", { name: "Models" })).toHaveAttribute("aria-current", "page");
     expect(within(nav).getByRole("button", { name: "General" })).not.toHaveAttribute("aria-current");
   });

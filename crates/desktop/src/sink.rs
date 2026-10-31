@@ -140,6 +140,7 @@ mod tests {
             grant_site: None,
             grantable: true,
             command: None,
+            subagent: None,
         });
         sink.emit_review_item(&ReviewItem {
             id: "r".to_owned(),

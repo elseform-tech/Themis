@@ -8,6 +8,7 @@ import { AppearanceSettings } from "./Appearance";
 import { PermissionsSettings } from "./PermissionsView";
 import { BrowserSettingsSection } from "./BrowserSettings";
 import { WebSettingsSection } from "./WebSettings";
+import { SubagentSettingsSection } from "./SubagentSettings";
 import { SecretsSettings } from "./SecretsSettings";
 import { ModelsSettings } from "./ModelsSettings";
 import { UsageSettingsSection } from "./UsageSettings";
@@ -110,7 +111,7 @@ function NotificationSettings({ form, save }: { form: Settings; save: (patch: Pa
 
 const SAVED_NOTE_MS = 3000;
 /** Sections whose settings change what agents do; the rest apply at once. */
-const RUN_SECTIONS = new Set(["Models", "Permissions", "Browser", "Web", "Advanced"]);
+const RUN_SECTIONS = new Set(["Models", "Permissions", "Browser", "Web", "Subagents", "Advanced"]);
 
 export function SettingsScreen() {
   const { state, dispatch } = useApp();
@@ -214,6 +215,7 @@ export function SettingsScreen() {
       {section === "Secrets" && <SecretsSettings focusKey={state.settingsFocus?.key} />}
       {section === "Browser" && <BrowserSettingsSection onSaved={flashSaved} />}
       {section === "Web" && <WebSettingsSection onSaved={flashSaved} />}
+      {section === "Subagents" && <SubagentSettingsSection onSaved={flashSaved} />}
       {section === "Advanced" && <SettingsGroup title="Run limits" action={<SettingsIconButton label="Reset limits" onClick={() => void save({ max_total_turns: 200, context_token_cap: 0, concurrency_limit: 3 })}><ResetIcon /></SettingsIconButton>}>
         {number("max_total_turns", "Steps per reply", 1, 2000, "Tool calls and answers per reply")}
         {contextTokens}

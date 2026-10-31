@@ -35,6 +35,13 @@ const tasks = (over: Partial<ThreadTasks> = {}): ThreadTasks => ({
 beforeEach(() => { appState = { ...initialState }; dispatch.mockClear(); vi.mocked(bridge.stopThread).mockClear(); vi.mocked(bridge.setAutomationEnabled).mockClear(); });
 afterEach(cleanup);
 
+/** Opens the folded Done section (it remembers being open within the session). */
+function openDone() {
+  const fold = screen.getByRole("button", { name: /^Done · / });
+  if (fold.getAttribute("aria-expanded") === "false") fireEvent.click(fold);
+  return screen.getByRole("region", { name: "Done" });
+}
+
 describe("task grouping", () => {
   it("counts each kind and describes them in order", () => {
     const feed = tasks({
@@ -115,7 +122,7 @@ describe("watches", () => {
   it("renders removal rows in the Earlier section", () => {
     appState = { ...initialState, tasks: { t1: tasks({ removed: [{ id: "x", automation_id: "w1", name: "Watch status.txt", origin: "agent", removed_at: "2030-01-01T20:02:00Z", reason: "completed by agent", run_count: 2 }] }) } };
     render(<TasksView threadId="t1" />);
-    expect(screen.getByRole("region", { name: "Earlier" })).toHaveTextContent("Watch status.txt");
+    expect(openDone()).toHaveTextContent("Watch status.txt");
     expect(screen.getByText(/Completed by agent/)).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /Pause|Stop/ })).toBeNull();
   });
@@ -141,8 +148,8 @@ describe("TasksView", () => {
       recent: [finished({ review_id: "r9", seen: true })],
     }) } };
     render(<TasksView threadId="t1" />);
-    for (const name of ["Running", "Scheduled", "Earlier"]) expect(screen.getByRole("region", { name })).toBeInTheDocument();
-    expect(screen.queryByRole("region", { name: "Needs attention" })).toBeNull();
+    for (const name of ["Running", "Scheduled", "Done"]) expect(screen.getByRole("region", { name })).toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "Needs you" })).toBeNull();
     expect(screen.getByText("Shows this chat only. Stopping never undoes work already done.")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Stop Morning review" }));
     await waitFor(() => expect(bridge.stopThread).toHaveBeenCalledWith("t1"));

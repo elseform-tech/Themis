@@ -7,13 +7,15 @@ use std::path::Path;
 use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
-pub const EVENTS: [&str; 6] = [
+pub const EVENTS: [&str; 8] = [
     "PromptSubmit",
     "RunStart",
     "BeforeTool",
     "AfterTool",
     "BeforeCompaction",
     "RunEnd",
+    "SubagentStart",
+    "SubagentEnd",
 ];
 
 fn canonical_event(event: &str) -> &str {
@@ -21,6 +23,7 @@ fn canonical_event(event: &str) -> &str {
         "BeforeToolCall" => "BeforeTool",
         "AfterToolCall" | "ToolCallFailed" => "AfterTool",
         "RunFinished" => "RunEnd",
+        "SubagentStop" => "SubagentEnd",
         _ => event,
     }
 }
@@ -212,6 +215,8 @@ pub struct HookRuntime {
     pub thread_id: String,
     pub root: std::path::PathBuf,
     pub approvals: Arc<dyn ApprovalHook>,
+    /// Set inside a subagent: payloads carry `agent: {id, name}`.
+    pub agent: Option<Value>,
 }
 tokio::task_local! { pub static ACTIVE: HookRuntime; static IN_HOOK: bool; static PROMPT_CONTEXT: String; }
 
@@ -357,6 +362,9 @@ impl HookRuntime {
         payload["run_id"] = self.run_id.clone().into();
         payload["thread_id"] = self.thread_id.clone().into();
         payload["project_root"] = self.root.to_string_lossy().as_ref().into();
+        if let Some(agent) = &self.agent {
+            payload["agent"] = agent.clone();
+        }
         for hook in self.hooks.iter().filter(|h| {
             h.enabled
                 && canonical_event(&h.event) == event
@@ -600,6 +608,7 @@ mod tests {
             approvals: Arc::new(AllowAllHook),
             run_id: "run".into(),
             thread_id: "thread".into(),
+            agent: None,
         };
         let (tx, mut rx) = tokio::sync::mpsc::channel(32);
         runtime
@@ -637,6 +646,38 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn subagent_payloads_name_the_agent_and_claude_stop_maps_to_end() {
+        let root = tempfile::tempdir().unwrap();
+        let runtime = HookRuntime {
+            hooks: vec![
+                hook("BeforeTool", "cat > tool.json"),
+                hook("SubagentStop", "cat > ended.json"),
+            ],
+            root: root.path().into(),
+            approvals: Arc::new(AllowAllHook),
+            run_id: "child".into(),
+            thread_id: "thread".into(),
+            agent: Some(json!({"id": "s1", "name": "Bug hunt"})),
+        };
+        let (tx, _rx) = tokio::sync::mpsc::channel(32);
+        runtime
+            .emit("BeforeTool", json!({"tool": "read_file"}), &tx)
+            .await
+            .unwrap();
+        runtime
+            .emit("SubagentEnd", json!({"status": "finished"}), &tx)
+            .await
+            .unwrap();
+        let read = |name: &str| -> Value {
+            serde_json::from_slice(&std::fs::read(root.path().join(name)).unwrap()).unwrap()
+        };
+        assert_eq!(read("tool.json")["agent"]["name"], "Bug hunt");
+        let ended = read("ended.json");
+        assert_eq!(ended["event"], "SubagentEnd");
+        assert_eq!(ended["agent"]["id"], "s1");
+    }
+
+    #[tokio::test]
     async fn prompt_hooks_add_capped_context_or_block_the_turn() {
         let root = tempfile::tempdir().unwrap();
         let runtime = |hooks: Vec<Hook>| HookRuntime {
@@ -645,6 +686,7 @@ mod tests {
             approvals: Arc::new(AllowAllHook),
             run_id: "run".into(),
             thread_id: "thread".into(),
+            agent: None,
         };
         let (tx, _rx) = tokio::sync::mpsc::channel(32);
         // Plain text and Claude's JSON both add context, in order; the prompt reaches them.
@@ -712,6 +754,7 @@ mod tests {
             thread_id: "t".into(),
             root: root.path().into(),
             approvals: Arc::new(crate::tools::AllowAllHook),
+            agent: None,
         };
         let tool_hook = |name: &str, command: &str, blocking: bool| Hook {
             name: name.into(),

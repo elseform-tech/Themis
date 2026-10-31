@@ -2273,6 +2273,8 @@ fn import_hooks(value: &Value, spec: &mut PluginSpec) -> anyhow::Result<()> {
             "PostToolUse" => "AfterTool",
             "Stop" => "RunEnd",
             "PreCompact" => "BeforeCompaction",
+            "SubagentStart" => "SubagentStart",
+            "SubagentStop" => "SubagentEnd",
             "UserPromptSubmit" => "PromptSubmit",
             // Fires only when the tool call failed.
             "PostToolUseFailure" => "ToolCallFailed",
