@@ -2101,7 +2101,27 @@ impl ChatBrowser {
             Some(max_width.clamp(160, 1280));
         let viewport = *self.viewport.lock().unwrap_or_else(|e| e.into_inner());
         self.run_screencast(viewport.width, viewport.height, viewport.scale)
-            .await
+            .await?;
+        // A frozen page draws nothing, so the stream sends no frame: show how it was left.
+        if self.frozen.load(Ordering::SeqCst) {
+            if let Some((cdp, session)) = self.view().current() {
+                let shot = cdp
+                    .call(
+                        Some(&session),
+                        "Page.captureScreenshot",
+                        json!({"format": "jpeg", "quality": 60}),
+                    )
+                    .await?;
+                if let Some(data) = shot["data"].as_str() {
+                    let _ = self.updates.send(BrowserUpdate::Frame {
+                        data: data.to_owned(),
+                        width: viewport.width,
+                        height: viewport.height,
+                    });
+                }
+            }
+        }
+        Ok(())
     }
 
     /// Starts (or moves) the protocol screencast to the current tab.
