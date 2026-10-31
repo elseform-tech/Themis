@@ -126,6 +126,10 @@ impl ImportPreview {
             ),
             ("mcp", spec.mcp.keys().cloned().collect()),
             ("hook", spec.hooks.iter().map(|h| h.name.clone()).collect()),
+            (
+                "subagent",
+                spec.subagents.iter().map(|p| p.name.clone()).collect(),
+            ),
         ] {
             components.extend(names.into_iter().map(|name| ImportComponent {
                 kind: kind.into(),
@@ -154,7 +158,7 @@ impl ImportPreview {
             reason: Some(reason.clone()),
             remedy: None,
         }));
-        let status = if spec.skills.is_empty() && spec.mcp.is_empty() && spec.hooks.is_empty() {
+        let status = if !spec.has_capabilities() {
             "unsupported"
         } else if components
             .iter()
@@ -228,9 +232,15 @@ struct Catalogs {
 }
 
 impl PluginSpec {
+    fn has_capabilities(&self) -> bool {
+        !(self.skills.is_empty()
+            && self.mcp.is_empty()
+            && self.hooks.is_empty()
+            && self.subagents.is_empty())
+    }
     /// Installation must add a capability; empty personal drafts may still be saved.
     pub fn ensure_installable(&self) -> anyhow::Result<()> {
-        if self.skills.is_empty() && self.mcp.is_empty() && self.hooks.is_empty() {
+        if !self.has_capabilities() {
             bail!("No supported capabilities to install. Inspect compatibility details or choose another package.");
         }
         Ok(())
@@ -859,13 +869,7 @@ impl PluginStore {
             let mut spec = import_directory(&directory, allow_partial, Some(entry))?;
             spec.name = name.into();
             spec.package_kind = Some("plugin".into());
-            for field in [
-                "agents",
-                "lspServers",
-                "dependencies",
-                "settings",
-                "channels",
-            ] {
+            for field in ["lspServers", "dependencies", "settings", "channels"] {
                 if entry.get(field).is_some() {
                     spec.unsupported.push(format!(
                         "Marketplace entry {field}: component declarations require plugin manifest"
@@ -1276,6 +1280,13 @@ fn import_directory(
         &mut spec.unsupported,
     );
     import_commands(&mut spec, &command_roots)?;
+    let agent_roots = declared_paths(
+        &declared("agents"),
+        "subagents",
+        &spec.files,
+        &mut spec.unsupported,
+    );
+    super::agents::import_profiles(&mut spec, &agent_roots)?;
     let mut mcp_files = vec![".mcp.json".to_owned()];
     let mut hook_files = vec!["hooks/hooks.json".to_owned()];
     for value in declared("mcpServers") {
@@ -1315,7 +1326,6 @@ fn import_directory(
         }
     }
     for field in [
-        "agents",
         "channels",
         "defaultEnabled",
         "lspServers",
@@ -1337,7 +1347,6 @@ fn import_directory(
             .push("Install settings (userConfig) are entered in Settings › Secrets".into());
     }
     for (directory, label) in [
-        ("agents/", "Claude subagents"),
         ("bin/", "Plugin PATH executables"),
         ("output-styles/", "Output styles"),
     ] {
@@ -1468,7 +1477,7 @@ fn declared_texts(value: &Value) -> Option<Vec<&str>> {
 
 /// What to keep when a plugin folder is too large: its component folders and declared paths.
 fn component_paths(manifest: &Value, entry: Option<&Value>) -> Vec<String> {
-    let declared = ["skills", "mcpServers", "hooks"]
+    let declared = ["skills", "mcpServers", "hooks", "agents"]
         .into_iter()
         .flat_map(|field| {
             [Some(manifest), entry]

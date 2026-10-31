@@ -1,4 +1,5 @@
 //! Shared, revisioned plugin storage. App and CLI mutations use the same server.
+pub mod agents;
 pub mod connections;
 mod discovery;
 pub mod hooks;
@@ -56,6 +57,9 @@ pub struct PluginSpec {
     pub mcp: BTreeMap<String, McpServer>,
     #[serde(default)]
     pub hooks: Vec<Hook>,
+    /// Profiles `spawn_subagents` can name, from the plugin's `agents/*.md`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub subagents: Vec<agents::SubagentProfile>,
     #[serde(default)]
     pub files: BTreeMap<String, String>,
     #[serde(default)]
@@ -286,11 +290,13 @@ impl PluginStore {
                         "skill"
                     } else if plugin.spec.skills.is_empty()
                         && plugin.spec.hooks.is_empty()
+                        && plugin.spec.subagents.is_empty()
                         && !plugin.spec.mcp.is_empty()
                     {
                         "mcp"
                     } else if plugin.spec.skills.is_empty()
                         && plugin.spec.mcp.is_empty()
+                        && plugin.spec.subagents.is_empty()
                         && !plugin.spec.hooks.is_empty()
                     {
                         "hook"
@@ -1028,6 +1034,13 @@ fn validate(spec: &PluginSpec) -> anyhow::Result<()> {
             bail!("Duplicate hook name");
         }
         hook.validate()?;
+    }
+    let mut profile_names = std::collections::HashSet::new();
+    for profile in &spec.subagents {
+        if !profile_names.insert(&profile.name) {
+            bail!("Duplicate subagent name");
+        }
+        profile.validate()?;
     }
     Ok(())
 }
