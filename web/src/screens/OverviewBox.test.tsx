@@ -120,3 +120,14 @@ describe("chat overview box", () => {
     expect(result.current.visible).toBe(false);
   });
 });
+
+describe("the goal in the overview box", () => {
+  beforeEach(() => { dispatch.mockClear(); });
+  const overview = { changes: null, tasks: null, browser: null, media: [], visible: true, collapsed: false, setCollapsed: vi.fn() };
+  it("counts the checklist and opens the Goal tab", () => {
+    appState = initialState;
+    render(<OverviewBox threadId="t1" overview={{ ...overview, goal: { complete: 7, total: 8 } }} onOpenMedia={vi.fn()} />);
+    fireEvent.click(screen.getByRole("button", { name: "Goal: 7 of 8 complete" }));
+    expect(dispatch).toHaveBeenLastCalledWith({ type: "ui/diff-panel", open: true, tab: "goal" });
+  });
+});

@@ -95,6 +95,10 @@ fn reply(text: &str) -> ResponseTemplate {
     }))
 }
 
+fn is_checklist(request: &Request) -> bool {
+    String::from_utf8_lossy(&request.body).contains("what a goal asks for")
+}
+
 fn is_check(request: &Request) -> bool {
     request
         .body_json::<Value>()
@@ -204,7 +208,7 @@ async fn cli_starts_a_goal_queues_a_message_and_reads_the_goal_back() {
     let requests = llm.received_requests().await.unwrap();
     let turns: Vec<Value> = requests
         .iter()
-        .filter(|request| !is_check(request))
+        .filter(|request| !is_check(request) && !is_checklist(request))
         .map(|request| request.body_json().unwrap())
         .collect();
     assert!(turns
@@ -377,7 +381,7 @@ async fn the_goal_check_uses_goal_check_model_and_turns_use_the_chats_model() {
     let checks: Vec<String> = requests.iter().filter(|r| is_check(r)).map(model).collect();
     let turns: Vec<String> = requests
         .iter()
-        .filter(|r| !is_check(r))
+        .filter(|r| !is_check(r) && !is_checklist(r))
         .map(model)
         .collect();
     assert!(
@@ -531,7 +535,7 @@ async fn cli_a_message_that_finishes_the_goal_is_not_repeated() {
     let requests = llm.received_requests().await.unwrap();
     let mut agent: Vec<Value> = requests
         .iter()
-        .filter(|request| !is_check(request))
+        .filter(|request| !is_check(request) && !is_checklist(request))
         .map(|request| request.body_json::<Value>().unwrap())
         .collect();
     agent.dedup();

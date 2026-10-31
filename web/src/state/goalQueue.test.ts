@@ -20,8 +20,13 @@ describe("queue and goal events", () => {
     expect(claims().map(row => row.goalRejected)).toEqual([undefined, undefined]);
     state = reducer(state, envelope({ kind: "goal_note", outcome: "status", reason: "I'm checking that against the goal now." }));
     expect(claims().map(row => row.goalRejected)).toEqual([undefined, undefined]);
+    const rows = (state.messages[thread] ?? []).length;
     state = reducer(state, envelope({ kind: "goal_note", outcome: "not_yet", reason: "That isn't proven yet." }));
     expect(claims().map(row => row.goalRejected)).toEqual([true, true]);
+    // The verdict is the next thing the agent hears, so it shows as a bubble of its own.
+    const bubbles = () => (state.messages[thread] ?? []).filter(row => row.goalCheck);
+    expect((state.messages[thread] ?? []).length).toBe(rows + 1);
+    expect(bubbles().map(row => row.text)).toEqual(["That isn't proven yet."]);
     state = reducer(state, envelope({ kind: "user_message", text: turn.replace("Turn 2", "Turn 3") }));
     state = reducer(state, envelope({ kind: "finished", result: "Fixed it.", model: "m" }));
     expect(claims().map(row => row.goalRejected)).toEqual([true, true, undefined]);
@@ -31,6 +36,13 @@ describe("queue and goal events", () => {
       { kind: "event", envelope: { thread_id: thread, run_id: "", event: { kind: "goal_note", outcome: "not_yet", reason: "That isn't proven yet." } } },
     ] } as never);
     expect((loaded.messages[thread] ?? []).find(row => row.role === "assistant")?.goalRejected).toBe(true);
+    expect((loaded.messages[thread] ?? []).filter(row => row.goalCheck).map(row => row.text)).toEqual(["That isn't proven yet."]);
+    // The goal's end speaks the same way; other notes stay in the conversation's own voice.
+    const reached = reducer(initialState, envelope({ kind: "goal_note", outcome: "reached", reason: "Everything is complete." }));
+    expect((reached.messages[thread] ?? [])[0]).toMatchObject({ text: "Everything is complete.", goalCheck: true });
+    const paused = reducer(initialState, envelope({ kind: "goal_note", outcome: "status", reason: "I've paused the goal." }));
+    expect((paused.messages[thread] ?? [])[0]).toMatchObject({ goalStatus: true });
+    expect((paused.messages[thread] ?? [])[0]?.goalCheck).toBeUndefined();
   });
 
   it("keeps the queue and goal of each chat", () => {
@@ -68,7 +80,7 @@ describe("queue and goal events", () => {
     expect(goalTurnNumber(turn)).toBe(24);
     expect(goalTurnNumber("Turn 24")).toBeUndefined();
     let state = reducer(initialState, envelope({ kind: "user_message", text: turn }, ""));
-    state = reducer(state, envelope({ kind: "goal_note", outcome: "not_yet", reason: "p95 is 238 ms." }));
+    state = reducer(state, envelope({ kind: "goal_note", outcome: "status", reason: "p95 is 238 ms." }));
     expect((state.messages[thread] ?? []).slice(-1)[0]).toMatchObject({ text: "p95 is 238 ms.", goalStatus: true });
     const loaded = reducer(initialState, { type: "thread/history-loaded", threadId: thread, history: [
       { kind: "user", run_id: "r2", text: turn, attachments: [] },

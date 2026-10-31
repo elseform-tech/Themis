@@ -59,6 +59,12 @@ fn distinct(bodies: Vec<Value>) -> Vec<Value> {
         .collect()
 }
 
+fn is_checklist(body: &Value) -> bool {
+    body["messages"][0]["content"]
+        .as_str()
+        .is_some_and(|text| text.contains("what a goal asks for"))
+}
+
 fn is_check(body: &Value) -> bool {
     body["messages"][0]["content"]
         .as_str()
@@ -379,17 +385,34 @@ async fn a_goal_runs_turn_after_turn_until_the_check_finds_it_reached() {
         |event| matches!(event, ThreadEvent::Finished { result, .. } if result == "I've reached the goal: the counter is 2."),
     )
     .await;
-    // The goal says why it carries on, in the chat, as a plain sentence.
+    // The verdict is recorded, for the chat to dim the turn; the agent voices it next turn.
     assert!(seen.iter().any(|event| matches!(
         event,
-        ThreadEvent::GoalNote { reason, .. }
-            if reason.starts_with("That isn't proven yet, because counter is 1")
+        ThreadEvent::GoalNote { outcome: GoalNoteKind::NotYet, reason, .. }
+            if reason == "Counter is 1; needs 2."
     )));
-    // Right after a turn's claim, the chat says the claim is being checked.
-    assert!(seen.iter().any(|event| matches!(
-        event,
-        ThreadEvent::GoalNote { reason, .. } if reason == "I'm checking that against the goal now."
-    )));
+    // The chat carries no announcements of its own around a check.
+    assert!(
+        !seen.iter().any(|event| matches!(
+            event,
+            ThreadEvent::GoalNote { outcome: GoalNoteKind::Status, reason, .. }
+                if reason.contains("checking") || reason.contains("starting")
+        )),
+        "{seen:?}"
+    );
+    // While the check runs, the goal says so, for a passing status line.
+    let checking: Vec<bool> = seen
+        .iter()
+        .filter_map(|event| match event {
+            ThreadEvent::GoalChanged { goal: Some(goal) } => Some(goal.checking),
+            _ => None,
+        })
+        .collect();
+    assert!(
+        checking.windows(2).any(|pair| pair == [true, false]),
+        "{checking:?}"
+    );
+    assert!(!state.goal_for(&thread).unwrap().checking);
     // The second turn was started by the runtime, carrying the check's reason.
     let bodies: Vec<Value> = distinct(
         server
@@ -400,7 +423,10 @@ async fn a_goal_runs_turn_after_turn_until_the_check_finds_it_reached() {
             .map(body)
             .collect(),
     );
-    let turns: Vec<&Value> = bodies.iter().filter(|body| !is_check(body)).collect();
+    let turns: Vec<&Value> = bodies
+        .iter()
+        .filter(|body| !is_check(body) && !is_checklist(body))
+        .collect();
     assert_eq!(turns.len(), 3);
     assert_eq!(
         checks.load(Ordering::SeqCst),
@@ -413,7 +439,7 @@ async fn a_goal_runs_turn_after_turn_until_the_check_finds_it_reached() {
         "[Goal — runtime, not from the user] Turn 2."
     ));
     assert!(mentions(turns[1], "Last check: Counter is 1; needs 2."));
-    assert!(mentions(turns[1], "Start your reply thinking aloud"));
+    assert!(mentions(turns[1], "what the last check found"));
     // Then one short turn, unchecked, tells the user the goal is reached.
     assert!(mentions(
         turns[2],
@@ -953,7 +979,10 @@ async fn a_message_run_that_finishes_the_goal_is_checked_and_nothing_repeats_it(
             .map(body)
             .collect(),
     );
-    let turns: Vec<&Value> = bodies.iter().filter(|body| !is_check(body)).collect();
+    let turns: Vec<&Value> = bodies
+        .iter()
+        .filter(|body| !is_check(body) && !is_checklist(body))
+        .collect();
     assert_eq!(turns.len(), 2, "no goal turn and no announcement followed");
     assert!(!turns.iter().any(|body| mentions(body, "[Goal — runtime")));
     assert_eq!(state.goal_for(&thread).unwrap().turns, 1);
@@ -1026,7 +1055,7 @@ async fn asked_to_stop_the_agent_pauses_the_goal_and_no_check_or_turn_follows() 
 }
 
 /// What a check found proven survives into the next check and turn, which see it, and the
-/// next turn knows which files the work is in. The person never sees the note for the agent.
+/// next turn knows which files the work is in.
 #[tokio::test(flavor = "multi_thread")]
 async fn proof_and_files_carry_from_turn_to_turn() {
     let server = MockServer::start().await;
@@ -1115,14 +1144,18 @@ async fn proof_and_files_carry_from_turn_to_turn() {
             .any(|note| note.contains("health part isn't shown yet")),
         "{notes:?}"
     );
+    // The person sees what the agent is told: what's wrong, what to change, what's left.
     assert!(
-        !notes.iter().any(|note| note.contains("check_health.py")),
+        notes
+            .iter()
+            .any(|note| note
+                .contains("\n\nRun check_health.py next.\n\nStill pending: Health drops")),
         "{notes:?}"
     );
 }
 
 /// When the turn's answer already told the person, no closing turn runs, but the chat still
-/// says how the check came out instead of stopping on "I'm checking".
+/// shows how the check came out.
 #[tokio::test(flavor = "multi_thread")]
 async fn a_goal_reached_without_a_closing_turn_still_says_so_in_the_chat() {
     let server = MockServer::start().await;
@@ -1149,19 +1182,184 @@ async fn a_goal_reached_without_a_closing_turn_still_says_so_in_the_chat() {
     goal_until(&state, &thread, |status| status == GoalStatus::Reached).await;
     let mut seen = Vec::new();
     until(&mut rx, &mut seen, |event| {
-        matches!(event, ThreadEvent::GoalNote { reason, .. } if reason.contains("closing the goal"))
+        matches!(event, ThreadEvent::GoalNote { reason, .. } if reason.starts_with("Complete."))
     })
     .await;
     let note = seen
         .iter()
         .find_map(|event| match event {
-            ThreadEvent::GoalNote { reason, .. } if reason.contains("closing the goal") => {
+            ThreadEvent::GoalNote { reason, .. } if reason.starts_with("Complete.") => {
                 Some(reason.clone())
             }
             _ => None,
         })
         .unwrap();
-    assert!(note.contains("score and health both change"), "{note}");
+    assert!(note.contains("Score and health both change"), "{note}");
+}
+
+/// The checklist is live: it appears when the goal is set, takes a steered requirement at once,
+/// and follows an edited goal, and refreshing it can never complete an item.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_checklist_follows_the_goal_as_it_changes() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .respond_with(move |request: &Request| {
+            let body = body(request);
+            let sent = body["messages"].to_string();
+            if is_check(&body) {
+                return reply(r#"{"verdict":"not_yet","reason":"Keep going."}"#);
+            }
+            if body["messages"][0]["content"].as_str().is_some_and(|text| text.contains("what a goal asks for")) {
+                return if sent.contains("in Rust") {
+                    reply(r#"{"requirements":[{"what":"Written in Rust","proven":true}]}"#)
+                } else if sent.contains("Also add a README") {
+                    reply(r#"{"requirements":[{"what":"The game runs"},{"what":"A README exists","proven":true}]}"#)
+                        .set_delay(std::time::Duration::from_secs(1))
+                } else {
+                    reply(r#"{"requirements":[{"what":"The game runs"}]}"#)
+                };
+            }
+            // Long enough to stay running through the test, without blocking the mock server.
+            reply("Working on it.").set_delay(std::time::Duration::from_secs(6))
+        })
+        .mount(&server)
+        .await;
+    let (state, _data, _project, thread) = chat(&server).await;
+    let (sink, _rx) = ChannelSink::channel();
+    let sink = Arc::new(sink);
+    async fn checklist_until(
+        state: &AppState,
+        thread: &str,
+        done: impl Fn(&[(String, bool)]) -> bool,
+    ) -> Vec<(String, bool)> {
+        for _ in 0..200 {
+            let list: Vec<_> = state
+                .goal_for(thread)
+                .map(|goal| goal.proof)
+                .unwrap_or_default()
+                .into_iter()
+                .map(|item| (item.what, item.proven))
+                .collect();
+            if done(&list) {
+                return list;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+        }
+        panic!("checklist never got there: {:?}", state.goal_for(thread));
+    }
+    state
+        .send_message(sink.clone(), thread.clone(), "/goal make the game".into())
+        .await
+        .unwrap();
+    // Set: listed before any check has run.
+    checklist_until(&state, &thread, |list| {
+        list == [("The game runs".to_owned(), false)]
+    })
+    .await;
+
+    let request = state
+        .enqueue_message(
+            sink.clone(),
+            thread.clone(),
+            "Also add a README".into(),
+            None,
+            vec![],
+        )
+        .await
+        .unwrap();
+    state
+        .steer_queued_message(sink.clone(), thread.clone(), request.id)
+        .await
+        .unwrap();
+    // Steered: pending at once, in the person's words, before the refresh's reply arrives.
+    let now = state.goal_for(&thread).unwrap().proof;
+    assert!(
+        now.iter()
+            .any(|item| item.what == "Also add a README" && !item.proven),
+        "{now:?}"
+    );
+    // Refreshed: tidied into the list, and the model's "proven" is ignored.
+    let list = checklist_until(&state, &thread, |list| {
+        list.iter().any(|item| item.0 == "A README exists")
+    })
+    .await;
+    assert_eq!(
+        list,
+        [
+            ("The game runs".to_owned(), false),
+            ("A README exists".to_owned(), false)
+        ]
+    );
+
+    // Edited: the list follows the new goal, and dropped items go.
+    state
+        .edit_goal(sink.clone(), thread.clone(), "make the game in Rust".into())
+        .await
+        .unwrap();
+    let list = checklist_until(&state, &thread, |list| {
+        list.iter().any(|item| item.0 == "Written in Rust")
+    })
+    .await;
+    assert_eq!(list, [("Written in Rust".to_owned(), false)]);
+    state
+        .remove_goal(sink.clone(), thread.clone())
+        .await
+        .unwrap();
+    settle(&state, &thread).await;
+}
+
+/// A failed turn waits with a countdown the chat can show, and leaves no note behind that
+/// would go out of date.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_failed_turn_counts_down_instead_of_leaving_a_note() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .respond_with(|request: &Request| {
+            if is_checklist(&body(request)) {
+                return reply(r#"{"requirements":[{"what":"The thing"}]}"#);
+            }
+            ResponseTemplate::new(400).set_body_string("bad request")
+        })
+        .mount(&server)
+        .await;
+    let (state, _data, _project, thread) = chat(&server).await;
+    let (sink, mut rx) = ChannelSink::channel();
+    let sink = Arc::new(sink);
+    state
+        .send_message(
+            sink.clone(),
+            thread.clone(),
+            "/goal finish the thing".into(),
+        )
+        .await
+        .unwrap();
+    for _ in 0..400 {
+        if state
+            .goal_for(&thread)
+            .is_some_and(|goal| goal.retry_at.is_some())
+        {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+    }
+    let goal = state.goal_for(&thread).unwrap();
+    assert!(goal.retry_at.is_some(), "{goal:?}");
+    let mut notes = Vec::new();
+    while let Ok(event) = rx.try_recv() {
+        if let TestEvent::Thread(envelope) = event {
+            if let ThreadEvent::GoalNote { reason, .. } = envelope.event {
+                notes.push(reason);
+            }
+        }
+    }
+    assert!(
+        !notes.iter().any(|note| note.contains("try again")),
+        "{notes:?}"
+    );
+    state
+        .remove_goal(sink.clone(), thread.clone())
+        .await
+        .unwrap();
 }
 
 /// Asked in the chat to remove the goal, the agent removes it: no goal is left, and
