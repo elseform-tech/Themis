@@ -73,8 +73,6 @@ export function GoalBar({ goal, onEdit, onPause, onResume, onRemove, onFold }: G
   const paused = goal.status === "paused" || goal.status === "stuck" || goal.status === "quota";
   const editable = goal.status !== "waiting";
   const elapsed = formatElapsed(goalElapsedMs(goal, now));
-  const proof = goal.proof ?? [];
-  const proven = proof.filter(item => item.proven).length;
   // A reached goal leaves the composer; its note stays in the conversation.
   if (goal.status === "reached") return null;
 
@@ -100,13 +98,11 @@ export function GoalBar({ goal, onEdit, onPause, onResume, onRemove, onFold }: G
   }
 
   return (
-    <>
     <div role="region" aria-label="Goal" className={`themis-goal-bar${expanded ? " is-expanded" : ""}`} data-status={goal.status}>
       <GoalMark />
       <button type="button" className="themis-goal-text" aria-expanded={expanded} title={expanded ? "Show less" : goal.text} onClick={toggle}>{goal.text}</button>
       <span className="themis-goal-meta">
         {label && <span className="themis-goal-state">{label}</span>}
-        {proof.length > 0 && <span className="themis-goal-count">{proven} of {proof.length} proven</span>}
         <span className="themis-goal-elapsed themis-icon-tip" data-tooltip="Elapsed" tabIndex={0} aria-label={`Elapsed ${elapsed}`}>
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden="true"><circle cx="12" cy="12" r="8" /><path d="M12 8v4l3 2" /></svg>
           {elapsed}
@@ -146,17 +142,6 @@ export function GoalBar({ goal, onEdit, onPause, onResume, onRemove, onFold }: G
         </button>
       )}
     </div>
-    {expanded && proof.length > 0 && (
-      <ul className="themis-goal-proof" aria-label="What the goal asks for">
-        {proof.map(item => (
-          <li key={item.what} aria-label={`${item.proven ? "Proven" : "Still open"}: ${item.what}`} className={item.proven ? "is-proven" : undefined}>
-            <span className="themis-goal-proof-mark" aria-hidden="true">{item.proven ? "✓" : "○"}</span>
-            <span>{item.what}{item.how && <span className="themis-goal-proof-how"> · {item.how}</span>}</span>
-          </li>
-        ))}
-      </ul>
-    )}
-    </>
   );
 }
 

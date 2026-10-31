@@ -391,6 +391,10 @@ export interface Goal {
   failures: number;
   /** What the goal asks for and what is proven, from the last decided check. */
   proof?: GoalRequirement[];
+  /** The goal check is reading the turn that just ended. */
+  checking?: boolean;
+  /** Unix milliseconds when the next turn is due, while the goal waits to retry. */
+  retry_at?: number;
 }
 
 export interface GoalRequirement {
@@ -513,6 +517,8 @@ export interface PersistedMessage {
   /** A runtime message that started goal turn N; shown as a divider, not a bubble. */
   /** How the goal stands, in plain words. */
   goalStatus?: boolean;
+  /** What the goal check said about the turn before it. */
+  goalCheck?: boolean;
   /** A goal turn's reply that the goal check then rejected. */
   goalRejected?: boolean;
   goalTurn?: number;

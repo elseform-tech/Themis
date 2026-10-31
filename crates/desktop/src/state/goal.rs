@@ -49,6 +49,10 @@ const MAX_ADDED_CHARS: usize = 2000;
 const MAX_EVIDENCE_CHARS: usize = 32_000;
 /// Most changed files a goal remembers, the latest ones.
 const MAX_GOAL_FILES: usize = 30;
+/// Longest paragraph of a goal note.
+const MAX_NOTE_PART_CHARS: usize = 800;
+/// Most pending items a check's message names; Workspace › Goal has them all.
+const MAX_PENDING_SHOWN: usize = 5;
 /// A long command output keeps its start and its end (where results and
 /// summaries are), in characters.
 const OUTPUT_HEAD_CHARS: usize = 2_000;
@@ -56,6 +60,28 @@ const OUTPUT_TAIL_CHARS: usize = 4_000;
 /// History items read per page while gathering evidence (memory stays
 /// bounded; the text kept is capped by `MAX_EVIDENCE_CHARS`).
 const EVIDENCE_PAGE_ITEMS: usize = 2_000;
+
+/// What the goal check tells the chat: what is wrong, what to change, and what is left.
+fn check_message(verdict: &core_goal::GoalVerdict) -> String {
+    let mut parts = vec![verdict.reason.clone()];
+    parts.extend(verdict.next.clone());
+    let pending: Vec<&str> = verdict
+        .requirements
+        .iter()
+        .filter(|item| !item.proven)
+        .map(|item| item.what.as_str())
+        .collect();
+    if !pending.is_empty() {
+        let shown = pending[..pending.len().min(MAX_PENDING_SHOWN)].join(", ");
+        let more = pending.len().saturating_sub(MAX_PENDING_SHOWN);
+        parts.push(if more > 0 {
+            format!("Still pending: {shown} and {more} more")
+        } else {
+            format!("Still pending: {shown}")
+        });
+    }
+    parts.join("\n\n")
+}
 
 fn now_ms() -> i64 {
     chrono::Utc::now().timestamp_millis()
@@ -66,29 +92,6 @@ fn now_ms() -> i64 {
 pub(super) fn backoff(failures: u32) -> Duration {
     let seconds = 30u64.saturating_mul(1 << failures.saturating_sub(1).min(10));
     Duration::from_secs(seconds).min(MAX_BACKOFF)
-}
-
-/// Why the goal carries on, in one natural sentence around the check's own reason.
-fn because_carrying_on(reason: &str) -> String {
-    let reason = mid_sentence(reason);
-    format!("That isn't proven yet, because {reason}, so I'm carrying on.")
-}
-
-/// The check's reason, ready to sit inside a sentence.
-fn mid_sentence(reason: &str) -> String {
-    let reason = reason.trim().trim_end_matches('.');
-    let mut chars = reason.chars();
-    let first = chars
-        .next()
-        .map(|c| c.to_lowercase().to_string())
-        .unwrap_or_default();
-    // An acronym or name keeps its capital.
-    let keep = reason.chars().nth(1).is_some_and(char::is_uppercase);
-    if keep {
-        reason.to_owned()
-    } else {
-        format!("{first}{}", chars.as_str())
-    }
 }
 
 /// `wait` plus up to a fifth more, so chats hit by the same outage don't all retry at once.
@@ -237,7 +240,12 @@ impl AppState {
             run_id: run_id.to_owned(),
             event: ThreadEvent::GoalNote {
                 outcome,
-                reason: core_goal::one_line(reason, 400),
+                // A check's message keeps its paragraphs.
+                reason: reason
+                    .split("\n\n")
+                    .map(|part| core_goal::one_line(part, MAX_NOTE_PART_CHARS))
+                    .collect::<Vec<_>>()
+                    .join("\n\n"),
             },
         };
         if let Err(error) = self.inner.transcript.append_event(&envelope) {
@@ -281,6 +289,8 @@ impl AppState {
             added: Vec::new(),
             proof: Vec::new(),
             files: Vec::new(),
+            checking: false,
+            retry_at: None,
         };
         self.bump_goal_generation(thread_id);
         self.store_goal(sink, thread_id, Some(goal.clone()));
@@ -301,13 +311,6 @@ impl AppState {
             .goal_for(&thread_id)
             .filter(|goal| goal.status != GoalStatus::Reached);
         let mut goal = self.begin_goal(sink.as_ref(), &thread_id, &text);
-        self.goal_note(
-            sink.as_ref(),
-            &thread_id,
-            "",
-            GoalNoteKind::Status,
-            "I'm starting on this goal, and I'll keep going until a separate check finds it done.",
-        );
         // Rewording an open goal continues it: its time, turn count and the
         // requests added to it carry over.
         if let Some(previous) = previous {
@@ -324,6 +327,7 @@ impl AppState {
                 goal = updated;
             }
         }
+        self.refresh_checklist(Arc::clone(&sink), &thread_id);
         if !running {
             self.start_goal_turn(
                 sink,
@@ -344,12 +348,15 @@ impl AppState {
     ) -> Result<Goal, String> {
         self.require_thread(&thread_id).await?;
         let text = core_goal::normalize_goal(&text).ok_or("The goal cannot be empty")?;
-        self.update_goal(sink.as_ref(), &thread_id, |goal| {
-            goal.text = text;
-            // A changed goal gets a fresh look: old stalls no longer apply.
-            goal.stalls = 0;
-        })
-        .ok_or_else(|| "This chat has no goal".to_owned())
+        let goal = self
+            .update_goal(sink.as_ref(), &thread_id, |goal| {
+                goal.text = text;
+                // A changed goal gets a fresh look: old stalls no longer apply.
+                goal.stalls = 0;
+            })
+            .ok_or_else(|| "This chat has no goal".to_owned())?;
+        self.refresh_checklist(sink, &thread_id);
+        Ok(goal)
     }
 
     /// Pauses the goal after the current turn; nothing is undone.
@@ -570,10 +577,68 @@ impl AppState {
         }
         let request: String = text.chars().take(MAX_ADDED_CHARS).collect();
         self.update_goal(sink, thread_id, |goal| {
+            let item = core_goal::pending_item(&request);
+            if !goal.proof.iter().any(|known| known.what == item.what) {
+                goal.proof.push(item);
+            }
             goal.added.push(request);
             if goal.added.len() > MAX_ADDED_REQUESTS {
                 goal.added.remove(0);
             }
+        });
+    }
+
+    /// Lists what the goal asks for, in the background, so the checklist follows the goal as it
+    /// is set, edited and added to. Dropped if the goal moved on meanwhile; a failure leaves the
+    /// list as it was, and the next check fills it anyway.
+    pub(super) fn refresh_checklist(&self, sink: Arc<dyn EventSink>, thread_id: &str) {
+        let Some(goal) = self.goal_for(thread_id) else {
+            return;
+        };
+        if goal.status == GoalStatus::Reached {
+            return;
+        }
+        let state = self.clone();
+        let thread_id = thread_id.to_owned();
+        tokio::spawn(async move {
+            let planned = match state.goal_check_config(&thread_id).await {
+                Ok((config, catalog)) => themis_core::providers::with_catalog_limits(
+                    &catalog,
+                    themis_core::context_metrics::with_usage_recorder(
+                        state.usage_recorder(&thread_id, ""),
+                        themis_core::context_metrics::with_usage_kind(
+                            themis_core::context_metrics::UsageKind::GoalCheck,
+                            core_goal::plan_checklist_with_config(
+                                &config,
+                                &goal.text,
+                                &goal.added,
+                                &goal.proof,
+                            ),
+                        ),
+                    ),
+                )
+                .await
+                .map_err(|error| format!("{error:#}")),
+                Err(error) => Err(error),
+            };
+            let Ok(planned) = planned else {
+                let _ = state.inner.diagnostics.append(
+                    "goal",
+                    "checklist_failed",
+                    "warn",
+                    json!({"thread_id": thread_id}),
+                );
+                return;
+            };
+            state.update_goal(sink.as_ref(), &thread_id, |current| {
+                if current.started_at == goal.started_at
+                    && current.text == goal.text
+                    && current.added == goal.added
+                    && current.proof == goal.proof
+                {
+                    current.proof = planned;
+                }
+            });
         });
     }
 
@@ -666,6 +731,9 @@ impl AppState {
         note: String,
     ) {
         let generation = self.bump_goal_generation(&thread_id);
+        // The chat counts this down; a note would be out of date as soon as it was written.
+        let due = now_ms().saturating_add(i64::try_from(delay.as_millis()).unwrap_or(i64::MAX));
+        self.update_goal(sink.as_ref(), &thread_id, |goal| goal.retry_at = Some(due));
         let state = self.clone();
         tokio::spawn(async move {
             tokio::time::sleep(delay).await;
@@ -697,6 +765,7 @@ impl AppState {
             return; // That run's end continues the goal.
         }
         let Some(goal) = self.update_goal(sink.as_ref(), &thread_id, |goal| {
+            goal.retry_at = None;
             if goal.status == GoalStatus::Running {
                 goal.turns = goal.turns.saturating_add(1);
             }
@@ -794,14 +863,8 @@ impl AppState {
             });
             return;
         }
-        // Whatever the turn just claimed, the person sees it is not the verdict.
-        self.goal_note(
-            sink.as_ref(),
-            &thread_id,
-            "",
-            GoalNoteKind::Status,
-            "I'm checking that against the goal now.",
-        );
+        // A passing status line says so while the check reads the turn.
+        self.update_goal(sink.as_ref(), &thread_id, |goal| goal.checking = true);
         let (evidence, turn_files, through_seq) = self.turn_evidence(&thread_id, goal.checked_seq);
         let changed_files = !turn_files.is_empty();
         self.update_goal(sink.as_ref(), &thread_id, |goal| {
@@ -839,6 +902,7 @@ impl AppState {
             Err(error) => Err(error),
         };
         let check_failed = verdict.is_err();
+        self.update_goal(sink.as_ref(), &thread_id, |goal| goal.checking = false);
         // The goal may have been paused or edited while the check ran.
         let Some(goal) = self.goal_for(&thread_id) else {
             return;
@@ -911,20 +975,16 @@ impl AppState {
                 }) else {
                     return;
                 };
+                self.goal_note(
+                    sink.as_ref(),
+                    &thread_id,
+                    &run_id,
+                    GoalNoteKind::Reached,
+                    &format!("Complete. {}", verdict.reason),
+                );
                 // An answer that already says so needs no second message,
                 // unless open questions still have to be named.
                 if verdict.told_user == Some(true) && self.open_questions(&thread_id).is_empty() {
-                    // The chat last said it was checking, so it says how that came out.
-                    self.goal_note(
-                        sink.as_ref(),
-                        &thread_id,
-                        &run_id,
-                        GoalNoteKind::Reached,
-                        &format!(
-                            "That's proven, because {}, so I'm closing the goal.",
-                            mid_sentence(&verdict.reason)
-                        ),
-                    );
                     return;
                 }
                 self.announce_reached(sink, &thread_id, &goal, &verdict.reason)
@@ -961,8 +1021,7 @@ impl AppState {
                         goal.progress = verdict.progress.clone();
                     }
                 });
-                let shown_reason = verdict.reason.clone();
-                // The person reads the reason; only the agent needs the how.
+                let shown_message = check_message(&verdict);
                 let agent_note = match &verdict.next {
                     Some(next) => format!("{} {next}", verdict.reason),
                     None => verdict.reason.clone(),
@@ -986,17 +1045,24 @@ impl AppState {
                 } else {
                     agent_note
                 };
-                self.goal_note(
-                    sink.as_ref(),
-                    &thread_id,
-                    &run_id,
-                    if check_failed {
-                        GoalNoteKind::Status
-                    } else {
-                        GoalNoteKind::NotYet
-                    },
-                    &because_carrying_on(&shown_reason),
-                );
+                // The chat dims the turn on this; the agent says why in its own words next turn.
+                if check_failed {
+                    self.goal_note(
+                        sink.as_ref(),
+                        &thread_id,
+                        &run_id,
+                        GoalNoteKind::Status,
+                        "The check couldn't decide this time, so I'm carrying on.",
+                    );
+                } else {
+                    self.goal_note(
+                        sink.as_ref(),
+                        &thread_id,
+                        &run_id,
+                        GoalNoteKind::NotYet,
+                        &shown_message,
+                    );
+                }
                 self.start_goal_turn(sink, thread_id, note).await;
             }
         }
@@ -1122,20 +1188,6 @@ impl AppState {
                     return;
                 }
                 let wait = jittered(backoff(failures));
-                self.goal_note(
-                    sink.as_ref(),
-                    &thread_id,
-                    &run_id,
-                    GoalNoteKind::Status,
-                    &format!(
-                        "That turn failed, so I'll try again in {}.",
-                        if wait.as_secs() < 60 {
-                            format!("{} s", wait.as_secs())
-                        } else {
-                            format!("{} min", wait.as_secs() / 60)
-                        }
-                    ),
-                );
                 self.schedule_goal_turn(
                     sink,
                     thread_id,
@@ -1262,6 +1314,10 @@ impl AppState {
             let Some(goal) = self.goal_for(&thread_id) else {
                 continue;
             };
+            // A check the app closed during is not still going.
+            if goal.checking {
+                self.update_goal(sink.as_ref(), &thread_id, |goal| goal.checking = false);
+            }
             match goal.status {
                 GoalStatus::Running => {
                     // Time with the app closed does not count.
@@ -1359,13 +1415,34 @@ mod tests {
     }
 
     #[test]
-    fn the_reason_to_carry_on_reads_as_a_sentence() {
+    fn the_check_says_what_is_wrong_what_to_change_and_what_is_left() {
+        let item = |what: &str, proven| core_goal::GoalRequirement {
+            what: what.to_owned(),
+            proven,
+            how: String::new(),
+        };
+        let verdict = |next: Option<&str>, requirements| core_goal::GoalVerdict {
+            verdict: Verdict::NotYet,
+            reason: "Shooting doesn't raise the score.".to_owned(),
+            next: next.map(str::to_owned),
+            requirements,
+            progress: None,
+            progressed: None,
+            told_user: None,
+        };
         assert_eq!(
-            because_carrying_on("Counter is 1; needs 2."),
-            "That isn't proven yet, because counter is 1; needs 2, so I'm carrying on."
+            check_message(&verdict(
+                Some("Fix how bullets hit enemies, then show the score rising."),
+                vec![item("Health", true), item("Score", false), item("Restart", false)],
+            )),
+            "Shooting doesn't raise the score.\n\nFix how bullets hit enemies, then show the score rising.\n\nStill pending: Score, Restart"
         );
-        assert!(because_carrying_on("HTTP 500 remains").contains("because HTTP 500"));
-        assert!(!because_carrying_on("").contains(':'));
+        assert_eq!(
+            check_message(&verdict(None, Vec::new())),
+            "Shooting doesn't raise the score."
+        );
+        let many: Vec<_> = (0..8).map(|n| item(&format!("Item {n}"), false)).collect();
+        assert!(check_message(&verdict(None, many)).ends_with("Item 4 and 3 more"));
     }
 
     #[test]
@@ -1403,6 +1480,8 @@ mod tests {
             added: Vec::new(),
             proof: Vec::new(),
             files: Vec::new(),
+            checking: false,
+            retry_at: None,
         };
         set_status(&mut goal, GoalStatus::Paused, None);
         assert!(goal.running_since.is_none());

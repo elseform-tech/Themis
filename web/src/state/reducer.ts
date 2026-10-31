@@ -151,7 +151,7 @@ export interface AppState {
 }
 
 /** The Workspace panel's views. */
-export type WorkspaceTab = "changes" | "files" | "branches" | "pulls" | "tasks" | "browser";
+export type WorkspaceTab = "changes" | "files" | "branches" | "pulls" | "tasks" | "goal" | "browser";
 
 export type AppAction =
   | { type: "mcp/status"; connections: McpConnections }
@@ -517,8 +517,12 @@ export function applyThreadEvent(
     case "goal_changed":
       return { ...state, goals: { ...state.goals, [threadId]: event.goal } };
     case "goal_note": {
-      const noted = event.outcome === "not_yet" ? markTurnRejected(state, threadId) : state;
-      return appendMessage(noted, threadId, { id: newId("msg"), role: "system", text: event.reason, runId, goalStatus: true });
+      // The check's verdict is the next thing the agent hears, so it gets a small bubble.
+      if (event.outcome === "not_yet" || event.outcome === "reached") {
+        const noted = event.outcome === "not_yet" ? markTurnRejected(state, threadId) : state;
+        return appendMessage(noted, threadId, { id: newId("msg"), role: "system", text: event.reason, runId, goalCheck: true });
+      }
+      return appendMessage(state, threadId, { id: newId("msg"), role: "system", text: event.reason, runId, goalStatus: true });
     }
     case "question_asked": {
       // A question asked again on its open topic updates its box where it was first asked.
