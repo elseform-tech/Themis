@@ -274,6 +274,15 @@ impl AppState {
             run_configuration.approval.clone()
         };
         let session_dir = self.hook_session_dir(thread_id);
+        // A chat with history that hasn't run since the app started is one being continued.
+        let resumed = self
+            .inner
+            .chats_run
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(thread_id.to_owned())
+            && !snapshot.history.is_empty();
+        let mut plugin_bins = Vec::new();
         let mut hooks = Vec::new();
         let mut setup_events = Vec::new();
         let mut tool_labels = std::collections::HashMap::new();
@@ -283,6 +292,9 @@ impl AppState {
                 .work_root
                 .join(".themis/plugin-files")
                 .join(plugin.skill_id("resources"));
+            if resource_root.join("bin").is_dir() {
+                plugin_bins.push(resource_root.join("bin"));
+            }
             for (name, server) in &plugin.spec.mcp {
                 if !server.enabled {
                     continue;
@@ -509,6 +521,7 @@ impl AppState {
                     config: web,
                     permissions: Arc::clone(&site_permissions),
                 },
+                plugin_bins.clone(),
                 Arc::clone(&llm),
                 policy,
                 &sandbox,
@@ -532,6 +545,8 @@ impl AppState {
                 transcript_path: Some(session_dir.join("transcript.jsonl")),
                 permission_mode: permission_mode(snapshot.approval_mode).to_owned(),
                 cancel: Some(Arc::clone(&stopped)),
+                source: if resumed { "resume" } else { "startup" }.to_owned(),
+                plugin_bins,
                 attached_skills: snapshot
                     .skills
                     .iter()

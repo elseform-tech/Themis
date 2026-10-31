@@ -770,7 +770,7 @@ impl PluginStore {
             let plugin = Plugin {
                 scope: scope.into(),
                 revision: revision(),
-                enabled: previous.map(|p| p.enabled).unwrap_or(true),
+                enabled: previous.map_or(!spec.starts_disabled, |p| p.enabled),
                 source: Some(marketplace.into()),
                 spec,
             };
@@ -1424,9 +1424,9 @@ fn import_directory_within(
             import_hooks(&serde_json::from_str::<Value>(raw)?, &mut spec)?;
         }
     }
+    spec.starts_disabled = manifest.get("defaultEnabled") == Some(&Value::Bool(false));
     for field in [
         "channels",
-        "defaultEnabled",
         "lspServers",
         "outputStyles",
         "settings",
@@ -1445,19 +1445,7 @@ fn import_directory_within(
         spec.notices
             .push("Install settings (userConfig) are entered in Settings › Secrets".into());
     }
-    for (directory, label) in [
-        ("bin/", "Plugin PATH executables"),
-        ("output-styles/", "Output styles"),
-    ] {
-        if spec
-            .files
-            .keys()
-            .chain(entries.iter().map(|entry| &entry.relative))
-            .any(|path| path.starts_with(directory))
-        {
-            spec.unsupported.push(label.into());
-        }
-    }
+    import_output_styles(&mut spec)?;
     if let (Some(store), Some(package)) = (keep_in, &spec.package) {
         super::package::keep(&entries, package, store)?;
     }
@@ -1531,6 +1519,44 @@ fn import_commands(spec: &mut PluginSpec, declared: &[String]) -> anyhow::Result
             name,
             description,
             instructions: format!("{}\n\n{body}", crate::prompts::SKILL_COMMAND_NOTE),
+            allowed_tools: vec![],
+            scripts: vec![],
+        });
+    }
+    Ok(())
+}
+/// Claude's output styles (`output-styles/*.md`) become manual-only skills named `style-<file>`:
+/// Themis has no lasting output style, so one applies to the turn it is chosen for, and the
+/// compatibility details say so.
+fn import_output_styles(spec: &mut PluginSpec) -> anyhow::Result<()> {
+    let paths: Vec<String> = spec
+        .files
+        .keys()
+        .filter(|path| {
+            path.strip_prefix("output-styles/")
+                .is_some_and(|rest| rest.ends_with(".md") && !rest.contains('/'))
+        })
+        .cloned()
+        .collect();
+    for path in paths {
+        let (metadata, body) = parse_skill(&spec.files[&path])?;
+        let stem = path
+            .trim_start_matches("output-styles/")
+            .trim_end_matches(".md");
+        let id = format!("style-{stem}");
+        if !safe_name(&id) || spec.skills.iter().any(|skill| skill.id == id) {
+            continue;
+        }
+        spec.notices.push(format!(
+            "{path}: an output style, used as the /{id} skill for one turn at a time"
+        ));
+        spec.skill_paths.insert(id.clone(), path.clone());
+        spec.manual_skills.push(id.clone());
+        spec.skills.push(Skill {
+            name: metadata.get("name").cloned().unwrap_or_else(|| id.clone()),
+            description: metadata.get("description").cloned().unwrap_or_default(),
+            instructions: format!("{}\n\n{body}", crate::prompts::SKILL_OUTPUT_STYLE_NOTE),
+            id,
             allowed_tools: vec![],
             scripts: vec![],
         });
@@ -2268,6 +2294,7 @@ fn import_mcp_server(name: &str, raw: &Value, opencode: bool) -> anyhow::Result<
             "headers",
             "enabled",
             "bearer_env",
+            "cwd",
             // Accepted without effect: descriptions and notes, Claude's own switch (imported
             // servers start disabled), its timeout and auto-approval (Themis's apply).
             "description",
@@ -2322,6 +2349,9 @@ fn import_mcp_server(name: &str, raw: &Value, opencode: bool) -> anyhow::Result<
         // registration); preset OAuth client settings are not used.
     }
     let mut server = McpServer::default();
+    if let Some(cwd) = raw.get("cwd") {
+        server.cwd = Some(cwd.as_str().context("MCP cwd must be text")?.to_owned());
+    }
     if let Some(command) = raw.get("command") {
         if opencode {
             let command = command
@@ -2409,6 +2439,9 @@ pub fn mcp_server_to_standard(server: &McpServer) -> Value {
         if !server.args.is_empty() {
             entry.insert("args".into(), json!(server.args));
         }
+        if let Some(cwd) = &server.cwd {
+            entry.insert("cwd".into(), json!(cwd));
+        }
     }
     if let Some(url) = &server.url {
         entry.insert("type".into(), json!("http"));
@@ -2472,6 +2505,7 @@ fn themis_tools(claude: &str) -> Option<&'static [&'static str]> {
         "WebSearch" => &["web_search"],
         // Not a tool here: hooks fire for it when a skill is taken up (`hooks::skill_read_hooks`).
         "Skill" => &["Skill"],
+        "Agent" | "Task" => &["spawn_subagents"],
         _ => return None,
     })
 }
@@ -2702,14 +2736,20 @@ fn import_hooks(value: &Value, spec: &mut PluginSpec) -> anyhow::Result<()> {
                         .push(format!("{event}: {kind} hook has no Themis equivalent"));
                     continue;
                 }
-                // Every Claude session starts with "startup"; the other sources have no Themis
+                // Every Claude session starts with "startup", which here is every turn; `resume` is
+                // a chat's first run after the app started. Clearing and compacting have no
                 // equivalent.
                 let session_matcher = (event == "SessionStart")
                     .then(|| group["matcher"].as_str())
                     .flatten()
                     .filter(|matcher| !matcher.is_empty() && *matcher != "*");
+                let mut session_sources = None;
                 if let Some(matcher) = session_matcher {
-                    if !matcher.split('|').any(|source| source.trim() == "startup") {
+                    let has =
+                        |wanted: &str| matcher.split('|').any(|source| source.trim() == wanted);
+                    if has("resume") && !has("startup") {
+                        session_sources = Some(vec!["resume".to_owned()]);
+                    } else if !has("startup") {
                         spec.unsupported.push(format!(
                             "SessionStart: matcher {matcher} has no Themis equivalent"
                         ));
@@ -2781,6 +2821,7 @@ fn import_hooks(value: &Value, spec: &mut PluginSpec) -> anyhow::Result<()> {
                     plugin_root: None,
                     plugin_data: None,
                     env_file: None,
+                    session_sources,
                     runtime_identity: None,
                 });
             }
@@ -2961,6 +3002,7 @@ mod imported_hook_name_tests {
                 plugin_root: None,
                 plugin_data: None,
                 env_file: None,
+                session_sources: None,
                 runtime_identity: None,
             })
             .collect()
@@ -3035,6 +3077,77 @@ mod size_tests {
     }
 
     const SKILL: &[u8] = b"---\nname: s\ndescription: d\n---\nBody";
+
+    #[test]
+    fn default_enabled_false_arrives_switched_off() {
+        let root = folder(&[("skills/s/SKILL.md", SKILL)]);
+        let manifest = root.path().join(".claude-plugin/plugin.json");
+        fs::write(&manifest, r#"{"name": "big", "defaultEnabled": false}"#).unwrap();
+        let data = tempfile::tempdir().unwrap();
+        let store = PluginStore::new(data.path().into(), None).with_home(None);
+        let plugin = store.import_path("global", root.path(), None).unwrap();
+        assert!(!plugin.enabled);
+        assert!(
+            plugin.spec.unsupported.is_empty(),
+            "{:?}",
+            plugin.spec.unsupported
+        );
+        fs::write(&manifest, r#"{"name": "other", "defaultEnabled": true}"#).unwrap();
+        let plugin = store.import_path("global", root.path(), None).unwrap();
+        assert!(plugin.enabled);
+    }
+
+    #[test]
+    fn an_output_style_is_a_manual_skill_and_says_what_it_is() {
+        let style: &[u8] = b"---\nname: Terse\ndescription: Short\n---\nBe brief.";
+        let root = folder(&[
+            ("skills/s/SKILL.md", SKILL),
+            ("output-styles/terse.md", style),
+        ]);
+        let spec = import_directory(root.path(), true, None, None).unwrap();
+        let skill = spec
+            .skills
+            .iter()
+            .find(|skill| skill.id == "style-terse")
+            .unwrap();
+        assert!(
+            skill.instructions.ends_with("Be brief."),
+            "{}",
+            skill.instructions
+        );
+        assert!(spec.manual_skills.contains(&"style-terse".to_owned()));
+        assert!(spec.unsupported.is_empty(), "{:?}", spec.unsupported);
+        assert!(spec
+            .notices
+            .iter()
+            .any(|note| note.contains("for one turn")));
+    }
+
+    #[test]
+    fn a_servers_cwd_stays_inside() {
+        let server = |cwd: &str| McpServer {
+            command: Some("x".into()),
+            cwd: Some(cwd.into()),
+            ..Default::default()
+        };
+        for good in [
+            ".",
+            "sub/dir",
+            "${CLAUDE_PLUGIN_ROOT}",
+            "${CLAUDE_PLUGIN_ROOT}/x",
+        ] {
+            assert!(server(good).validate().is_ok(), "{good}");
+        }
+        for bad in [
+            "..",
+            "../x",
+            "/etc",
+            "${CLAUDE_PLUGIN_ROOT}/../x",
+            "a/../../b",
+        ] {
+            assert!(server(bad).validate().is_err(), "{bad}");
+        }
+    }
 
     #[test]
     fn a_small_text_plugin_stays_in_the_registry_as_before() {

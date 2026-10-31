@@ -319,6 +319,7 @@ const ALL: &[(&str, &str, &[&str])] = &[
         &["name", "id", "status", "result"],
     ),
     (SKILL_COMMAND_NOTE, "skill-command-note", &[]),
+    (SKILL_OUTPUT_STYLE_NOTE, "skill-output-style-note", &[]),
     (EVAL_ANSWER_PROBE, "eval-answer-probe", &["question"]),
     (
         EVAL_RECALL_TASK,

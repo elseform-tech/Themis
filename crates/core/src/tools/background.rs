@@ -370,6 +370,8 @@ pub struct StartSpec {
     pub timeout_secs: u64,
     /// Sandbox the task runs in (the run's captured plan); `None` runs it as is.
     pub sandbox: Option<Arc<crate::sandbox::SandboxPlan>>,
+    /// The `bin` folders of the run's plugins.
+    pub plugin_bins: Vec<PathBuf>,
 }
 
 /// Tracks background tasks for every chat of one app server.
@@ -544,8 +546,13 @@ impl BackgroundRegistry {
         if let Some(refusal) = spec.sandbox.as_ref().and_then(|plan| plan.refusal()) {
             return Err(refusal);
         }
-        let prepared = super::prepare_command(&spec.program, &spec.args, spec.sandbox.as_deref())
-            .map_err(|error| super::spawn_failure(&spec.program, &spec.args, &error))?;
+        let prepared = super::prepare_command(
+            &spec.program,
+            &spec.args,
+            spec.sandbox.as_deref(),
+            &spec.plugin_bins,
+        )
+        .map_err(|error| super::spawn_failure(&spec.program, &spec.args, &error))?;
         let mut command = prepared.command();
         command
             .current_dir(&spec.workdir)
@@ -554,6 +561,9 @@ impl BackgroundRegistry {
             .stderr(Stdio::piped())
             .env_clear()
             .envs(super::scrubbed_env());
+        if let Some(path) = super::child_path(&spec.plugin_bins) {
+            command.env("PATH", path);
+        }
         #[cfg(unix)]
         std::os::unix::process::CommandExt::process_group(&mut command, 0);
         let mut child = command
@@ -940,6 +950,7 @@ impl BackgroundScope {
             workdir,
             timeout_secs,
             sandbox,
+            plugin_bins: crate::plugins::hooks::plugin_bins(),
         };
         let view = tokio::task::spawn_blocking(move || registry.start(spec))
             .await
@@ -1133,6 +1144,7 @@ mod own_tasks_tests {
                     workdir,
                     timeout_secs: 60,
                     sandbox: None,
+                    plugin_bins: Vec::new(),
                 })
             })
         };

@@ -62,6 +62,10 @@ pub struct Hook {
     /// can't be read counts as running it, so a guard errs towards running.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub command_prefix: Option<Vec<String>>,
+    /// Only when the chat is at one of these (`resume`: it continues after a restart). Absent, on
+    /// every turn.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_sources: Option<Vec<String>>,
     /// Claude's convention: exit code 2 asks to block, with the reason on stderr.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub exit_two_blocks: bool,
@@ -120,6 +124,11 @@ impl Hook {
                 .matcher
                 .as_ref()
                 .is_none_or(|matcher| matcher_covers(matcher, tool, mcp_names))
+            && self.session_sources.as_ref().is_none_or(|sources| {
+                payload["source"]
+                    .as_str()
+                    .is_some_and(|source| sources.iter().any(|wanted| wanted == source))
+            })
             && self.command_prefix.as_ref().is_none_or(|prefix| {
                 tool.is_some_and(|tool| runs_command(tool, &payload["arguments"], prefix))
             })
@@ -559,6 +568,10 @@ pub struct HookSession {
     pub permission_mode: String,
     /// Stops a hook that is still running (the person's Stop).
     pub cancel: Option<Arc<std::sync::atomic::AtomicBool>>,
+    /// Claude's `source`: `resume` on a chat's first run after the app started, else `startup`.
+    pub source: String,
+    /// The `bin` folders of this run's plugins, searched after the system's for its commands.
+    pub plugin_bins: Vec<std::path::PathBuf>,
     /// The skills the person attached to this turn, in Claude's words: they enter it with no call.
     pub attached_skills: Vec<String>,
     /// The skills this run's hooks have been told about, so one read in pages counts once.
@@ -940,6 +953,14 @@ pub async fn skill_read_hooks(
     Ok(())
 }
 
+/// The `bin` folders of this run's plugins, for its commands' `PATH`.
+#[must_use]
+pub fn plugin_bins() -> Vec<std::path::PathBuf> {
+    ACTIVE
+        .try_with(|runtime| runtime.session.plugin_bins.clone())
+        .unwrap_or_default()
+}
+
 /// What the agent said before its tool calls, for this chat's transcript.
 pub fn note_reply_current(text: &str) {
     if let Ok(runtime) = ACTIVE.try_with(Clone::clone) {
@@ -1092,7 +1113,11 @@ impl HookRuntime {
             let _ = std::fs::remove_file(&file.path);
         }
         let outputs = self
-            .emit_collect("PromptSubmit", json!({"prompt": prompt}), events)
+            .emit_collect(
+                "PromptSubmit",
+                json!({"prompt": prompt, "source": self.session.source}),
+                events,
+            )
             .await?;
         // Metadata only: how many, never the names or values a hook wrote.
         let mut seen = std::collections::HashSet::new();
@@ -1443,6 +1468,7 @@ mod tests {
             plugin_root: None,
             plugin_data: None,
             env_file: None,
+            session_sources: None,
             runtime_identity: None,
         }
     }
@@ -1821,6 +1847,7 @@ mod tests {
             plugin_root: None,
             plugin_data: None,
             env_file: None,
+            session_sources: None,
             runtime_identity: None,
         };
         let block = |hook: Hook| {

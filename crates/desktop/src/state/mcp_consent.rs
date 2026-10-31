@@ -62,7 +62,8 @@ pub(super) fn definition_digest(
         server.args,
         server.url,
         server.env,
-        server.bearer_env
+        server.bearer_env,
+        server.cwd
     ]);
     hasher.update(definition.to_string().as_bytes());
     for (path, content) in files {

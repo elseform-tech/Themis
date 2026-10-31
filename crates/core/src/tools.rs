@@ -2048,6 +2048,8 @@ async fn run_command_with_timeout(
     cancel: Option<Arc<AtomicBool>>,
     sandbox: Option<Arc<SandboxPlan>>,
 ) -> Result<CommandOutput, ToolCallError> {
+    // Read here: the worker thread is outside the run's scope.
+    let plugin_bins = crate::plugins::hooks::plugin_bins();
     tokio::task::spawn_blocking(move || {
         run_command_blocking(
             &program,
@@ -2057,6 +2059,7 @@ async fn run_command_with_timeout(
             timeout,
             cancel.as_deref(),
             sandbox.as_deref(),
+            &plugin_bins,
         )
     })
     .await
@@ -2104,6 +2107,7 @@ impl Drain {
 /// chatty child never wedges on a full pipe buffer while we poll `try_wait`.
 /// After the child exits, output is collected for at most [`PIPE_GRACE`]: a
 /// grandchild that kept the pipes open no longer hangs the call.
+#[allow(clippy::too_many_arguments)]
 fn run_command_blocking(
     program: &str,
     args: &[String],
@@ -2112,8 +2116,9 @@ fn run_command_blocking(
     timeout: Duration,
     cancel: Option<&AtomicBool>,
     sandbox: Option<&SandboxPlan>,
+    plugin_bins: &[PathBuf],
 ) -> Result<CommandOutput, ToolCallError> {
-    let prepared = prepare_command(program, args, sandbox)
+    let prepared = prepare_command(program, args, sandbox, plugin_bins)
         .map_err(|e| tool_error(format!("{tool}: {}", spawn_failure(program, args, &e))))?;
     let mut command = prepared.command();
     command
@@ -2123,6 +2128,9 @@ fn run_command_blocking(
         .stderr(Stdio::piped())
         .env_clear()
         .envs(scrubbed_env());
+    if let Some(path) = child_path(plugin_bins) {
+        command.env("PATH", path);
+    }
     // Own process group so a timeout can take down grandchildren too.
     #[cfg(unix)]
     std::os::unix::process::CommandExt::process_group(&mut command, 0);
@@ -2192,17 +2200,32 @@ fn run_command_blocking(
     Ok(output)
 }
 
+/// The child's `PATH`: the scrubbed one, then the `bin` folders of the run's plugins, so a plugin's
+/// program is found but never comes ahead of a system one of the same name.
+pub(crate) fn child_path(plugin_bins: &[PathBuf]) -> Option<std::ffi::OsString> {
+    let system = scrubbed_env()
+        .into_iter()
+        .find(|(name, _)| name.to_string_lossy().eq_ignore_ascii_case("PATH"))
+        .map(|(_, value)| value);
+    if plugin_bins.is_empty() {
+        return system;
+    }
+    let all = system
+        .iter()
+        .flat_map(std::env::split_paths)
+        .chain(plugin_bins.iter().cloned());
+    std::env::join_paths(all).ok().or(system)
+}
+
 /// `program args` wrapped for `sandbox` (unchanged without one). The program is
 /// resolved against the scrubbed child `PATH`, the one the child would use.
 pub(crate) fn prepare_command(
     program: &str,
     args: &[String],
     sandbox: Option<&SandboxPlan>,
+    plugin_bins: &[PathBuf],
 ) -> std::io::Result<crate::sandbox::Prepared> {
-    let path = scrubbed_env()
-        .into_iter()
-        .find(|(name, _)| name.to_string_lossy().eq_ignore_ascii_case("PATH"))
-        .map(|(_, value)| value);
+    let path = child_path(plugin_bins);
     match sandbox {
         Some(plan) => plan.prepare(program, args, path.as_deref()),
         None => crate::sandbox::SandboxPlan::unsandboxed(program, args),

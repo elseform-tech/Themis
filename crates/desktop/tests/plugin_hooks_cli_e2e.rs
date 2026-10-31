@@ -1304,6 +1304,139 @@ async fn a_project_file_named_like_a_skill_is_not_a_skill() {
     app.serving.abort();
 }
 
+/// A plugin's `bin` program is found by commands, background ones too, after the system's.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_plugins_bin_is_on_the_path_after_the_systems() {
+    for background in [false, true] {
+        let hooks = json!({"Stop": [{"hooks": [{"type": "command", "command": "true"}]}]});
+        let app = app_with_folder(
+            hooks,
+            &[],
+            |folder| {
+                use std::os::unix::fs::PermissionsExt;
+                let bin = folder.join("bin");
+                std::fs::create_dir_all(&bin).unwrap();
+                for (name, body) in [
+                    ("plugin-tool", "#!/bin/sh\ntouch plugin-tool-ran\n"),
+                    ("ls", "#!/bin/sh\ntouch plugin-ls-ran\n"),
+                ] {
+                    std::fs::write(bin.join(name), body).unwrap();
+                    std::fs::set_permissions(
+                        bin.join(name),
+                        std::fs::Permissions::from_mode(0o755),
+                    )
+                    .unwrap();
+                }
+            },
+            move |body: &Value| {
+                let script = "plugin-tool && ls > listed.txt";
+                match tool_results(body).len() {
+                    0 => tool_call(
+                        "c0",
+                        "shell",
+                        &json!({"command": "sh", "args": ["-c", script], "background": background}),
+                    ),
+                    _ => reply("Done."),
+                }
+            },
+        )
+        .await;
+        run(&app, "use [[plugin:g--guarded]] now").await;
+        until("the plugin's program never ran", || {
+            exists(&app, "plugin-tool-ran")
+        });
+        until("ls never ran", || exists(&app, "listed.txt"));
+        assert!(!exists(&app, "plugin-ls-ran"), "the plugin's ls came first");
+        app.serving.abort();
+    }
+}
+
+/// `Agent` matchers fire on the tool that starts subagents.
+#[tokio::test(flavor = "multi_thread")]
+async fn an_agent_matcher_fires_when_subagents_start() {
+    let hooks = json!({"PostToolUse": [{"matcher": "Agent", "hooks": [{"type": "command", "command": "cat > agent.json"}]}]});
+    let app = crate::app(hooks, &[], |body| {
+        if body["messages"][0]["content"]
+            .as_str()
+            .unwrap_or_default()
+            .starts_with("You are a subagent")
+        {
+            return reply("Reported.");
+        }
+        match tool_results(body).len() {
+            0 => tool_call(
+                "s1",
+                "spawn_subagents",
+                &json!({"say": "Starting.", "subagents": [{"brief": "b"}]}),
+            ),
+            _ => reply("Done."),
+        }
+    })
+    .await;
+    run(&app, "go").await;
+    until("the hook never ran", || exists(&app, "agent.json"));
+    let seen: Value =
+        serde_json::from_slice(&std::fs::read(app.project.path().join("agent.json")).unwrap())
+            .unwrap();
+    assert_eq!(seen["tool_name"], "Agent");
+    app.serving.abort();
+}
+
+/// A local server runs where `cwd` says, inside the project.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_servers_cwd_is_where_it_runs() {
+    let out = tempfile::tempdir().unwrap();
+    let marker = out.path().join("where");
+    let script = format!("pwd > {}; sleep 1", marker.display());
+    let mcp = json!({"mcpServers": {"local": {"command": "sh", "args": ["-c", script], "cwd": "${CLAUDE_PLUGIN_ROOT}/server"}}});
+    let app = crate::app(
+        json!({"Stop": [{"hooks": [{"type": "command", "command": "true"}]}]}),
+        &[(".mcp.json", &mcp.to_string()), ("server/keep.txt", "x")],
+        |_| reply("Done."),
+    )
+    .await;
+    run(&app, "use [[plugin:g--guarded]] now").await;
+    until("the server never started", || marker.exists());
+    let folder = std::fs::read_to_string(&marker).unwrap();
+    assert!(folder.trim_end().ends_with("resources/server"), "{folder}");
+    app.serving.abort();
+}
+
+/// A chat continued after a restart is what a `resume` hook runs on, and only then.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_resume_hook_runs_on_a_chats_first_turn_after_a_restart() {
+    let hooks = json!({"SessionStart": [{"matcher": "resume", "hooks": [{"type": "command",
+        "command": "cat >> resumed.jsonl; echo >> resumed.jsonl"}]}]});
+    let app = crate::app(hooks, &[], |_| reply("Done.")).await;
+    run(&app, "first").await;
+    assert!(
+        !exists(&app, "resumed.jsonl"),
+        "a new chat isn't a resumed one"
+    );
+    run(&app, "second").await;
+    assert!(!exists(&app, "resumed.jsonl"), "nor is its next turn");
+    app.serving.abort();
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    // The app starts again on the same data.
+    let state = AppState::new_for_test(app.data.path().join("settings.json"));
+    state
+        .set_secret("go".into(), "synthetic-test-key".into())
+        .await
+        .unwrap();
+    state.set_go_base_url_override(Some(app.llm.uri()));
+    let server = Server::bind(state, app.data.path()).await.unwrap();
+    let serving = tokio::spawn(async move {
+        let _ = server.run().await;
+    });
+    run(&app, "third").await;
+    let first = std::fs::read_to_string(app.project.path().join("resumed.jsonl")).unwrap();
+    assert!(first.contains("\"source\":\"resume\""), "{first}");
+    run(&app, "fourth").await;
+    let later = std::fs::read_to_string(app.project.path().join("resumed.jsonl")).unwrap();
+    assert_eq!(first, later, "it runs once");
+    serving.abort();
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn an_async_hook_does_not_hold_the_turn_and_cannot_block() {
     let app = app(

@@ -61,6 +61,9 @@ pub struct PluginSpec {
     /// Profiles `spawn_subagents` can name, from the plugin's `agents/*.md`.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub subagents: Vec<agents::SubagentProfile>,
+    /// `defaultEnabled: false`: it arrives switched off, until the person turns it on.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub starts_disabled: bool,
     #[serde(default)]
     pub files: BTreeMap<String, String>,
     /// The whole folder, kept on disk, when it doesn't fit in `files`; those are then only its
@@ -384,7 +387,7 @@ impl PluginStore {
             let plugin = Plugin {
                 scope: scope.into(),
                 revision: revision(),
-                enabled: previous.map(|p| p.enabled).unwrap_or(true),
+                enabled: previous.map_or(!spec.starts_disabled, |p| p.enabled),
                 source: None,
                 spec,
             };

@@ -102,6 +102,8 @@ pub(super) struct SubagentKit {
     /// The run's MCP tools.
     pub(super) mcp: SubagentMcp,
     web: SubagentWeb,
+    /// The `bin` folders of the run's plugins.
+    plugin_bins: Vec<PathBuf>,
     plugins: Vec<themis_core::plugins::Plugin>,
     /// The chat's model, used when `subagents.model` is unset or the same.
     pub(super) llm: Arc<dyn LLMProvider>,
@@ -135,6 +137,7 @@ impl SubagentKit {
         hooks: Vec<themis_core::plugins::hooks::Hook>,
         mcp: SubagentMcp,
         web: SubagentWeb,
+        plugin_bins: Vec<PathBuf>,
         llm: Arc<dyn LLMProvider>,
         policy: RunPolicy,
         sandbox: &SandboxPlan,
@@ -162,6 +165,7 @@ impl SubagentKit {
             hooks,
             mcp,
             web,
+            plugin_bins,
             plugins: snapshot.plugins.clone(),
             llm,
             model: snapshot.model.clone(),
@@ -798,6 +802,8 @@ impl SubagentKit {
                 transcript_path: self.transcript_path(agent),
                 permission_mode: super::run::permission_mode(self.mode).to_owned(),
                 cancel: Some(Arc::clone(&agent.stop)),
+                source: "startup".to_owned(),
+                plugin_bins: self.plugin_bins.clone(),
                 attached_skills: Vec::new(),
                 skills_seen: Arc::default(),
             },
