@@ -194,6 +194,14 @@ impl BrowserHub {
         self.executable().is_some() || self.built_in()
     }
 
+    /// Whether pages run in a browser with no window.
+    fn headless(&self) -> bool {
+        self.config
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .headless
+    }
+
     /// Whether the automatic choice is the built-in engine (installed or downloadable).
     pub fn built_in(&self) -> bool {
         downloaded_browser(&self.root()).is_some()
@@ -271,6 +279,7 @@ impl BrowserHub {
                 activity: Mutex::new(None),
                 updates,
                 screencast: Mutex::new(None),
+                frozen: AtomicBool::new(false),
                 ui_stream: AtomicBool::new(false),
                 preview_width: Mutex::new(None),
                 recording: Mutex::new(None),
@@ -505,6 +514,8 @@ pub struct ChatBrowser {
     inner: tokio::sync::Mutex<ChatInner>,
     activity: Mutex<Option<String>>,
     updates: broadcast::Sender<BrowserUpdate>,
+    /// Its pages are frozen because nothing is using them (see [`Self::freeze_pages`]).
+    frozen: AtomicBool,
     /// Session id of the tab being streamed to the Workspace view.
     screencast: Mutex<Option<String>>,
     /// The Workspace view is showing the stream (frames go to it).
@@ -1096,6 +1107,74 @@ fn handle_tab_event(
 }
 
 impl ChatBrowser {
+    /// Stops the chat's pages running while nothing uses them: a 3D page left open takes
+    /// several cores here, since this browser draws on the CPU. Screenshots and scripts still
+    /// work on a frozen page. Not while the person watches the Browser tab or a recording
+    /// runs. The next action, input or view brings them back ([`Self::thaw_pages`]).
+    /// Returns whether this froze them.
+    pub async fn freeze_pages(&self) -> bool {
+        let watching = self.ui_stream.load(Ordering::SeqCst)
+            && self
+                .preview_width
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .is_none();
+        let recording = self
+            .recording
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .is_some();
+        if watching || recording || self.frozen.swap(true, Ordering::SeqCst) {
+            return false;
+        }
+        self.set_page_state("frozen").await;
+        true
+    }
+
+    /// Brings frozen pages back; an agent must never read a page that has stopped.
+    pub async fn thaw_pages(&self) {
+        if self.frozen.swap(false, Ordering::SeqCst) {
+            self.set_page_state("active").await;
+            crate::diagnostics::emit("browser", "pages_thawed", "info", json!({}));
+        }
+    }
+
+    async fn set_page_state(&self, state: &str) {
+        let view = self.view();
+        let Some(cdp) = view.cdp else { return };
+        let freezing = state == "frozen";
+        for tab in &view.tabs {
+            let session = Some(tab.session_id.as_str());
+            // Focus emulation decides both ways (tested against the real engine): left on, a page
+            // ignores the freeze; left off, a thawed page stays hidden and never draws again.
+            if freezing {
+                let _ = cdp
+                    .call(
+                        session,
+                        "Emulation.setFocusEmulationEnabled",
+                        json!({"enabled": false}),
+                    )
+                    .await;
+            }
+            let _ = cdp
+                .call(
+                    session,
+                    "Page.setWebLifecycleState",
+                    json!({"state": state}),
+                )
+                .await;
+            if !freezing {
+                let _ = cdp
+                    .call(
+                        session,
+                        "Emulation.setFocusEmulationEnabled",
+                        json!({"enabled": true}),
+                    )
+                    .await;
+            }
+        }
+    }
+
     /// Updates for the Workspace view.
     pub fn subscribe(&self) -> broadcast::Receiver<BrowserUpdate> {
         self.updates.subscribe()
@@ -1370,6 +1449,16 @@ impl ChatBrowser {
                 json!({"width": viewport.width, "height": viewport.height, "deviceScaleFactor": viewport.scale, "mobile": false}),
             )
             .await;
+        // The stand-in is a convenience: a page that refuses it just has no pointer lock.
+        if self.hub.upgrade().is_some_and(|hub| hub.headless()) {
+            let _ = cdp
+                .call(
+                    Some(&session_id),
+                    "Page.addScriptToEvaluateOnNewDocument",
+                    json!({"source": include_str!("pointer_lock.js")}),
+                )
+                .await;
+        }
         // A tab that cannot take the sound setting is not opened.
         let audio_script =
             Some(install_audio(cdp, &session_id, self.muted.load(Ordering::SeqCst)).await?);
@@ -1397,6 +1486,7 @@ impl ChatBrowser {
         self: &Arc<Self>,
         inner: &mut ChatInner,
     ) -> Result<(Arc<Cdp>, String), String> {
+        self.thaw_pages().await;
         let browser = self.browser(inner).await?;
         if inner.tabs.is_empty() {
             self.new_tab(inner).await?;
@@ -1473,6 +1563,7 @@ impl ChatBrowser {
 
     /// Back/forward/reload for the person's toolbar.
     pub async fn navigate_for_user(&self, action: &str) -> Result<(), String> {
+        self.thaw_pages().await;
         self.person_acted();
         let Some((cdp, session)) = self.view().current() else {
             return Ok(());
@@ -1505,6 +1596,7 @@ impl ChatBrowser {
         inner: &ChatInner,
         reference: &str,
     ) -> Result<(Arc<Cdp>, String, i64), String> {
+        self.thaw_pages().await;
         let browser = inner
             .browser
             .as_ref()
@@ -1942,6 +2034,7 @@ impl ChatBrowser {
     ) -> Result<(), String> {
         self.ui_stream.store(true, Ordering::SeqCst);
         *self.preview_width.lock().unwrap_or_else(|e| e.into_inner()) = None;
+        self.thaw_pages().await;
         self.run_screencast(width, height, scale).await
     }
 
@@ -2022,6 +2115,8 @@ impl ChatBrowser {
             return;
         }
         self.end_screencast().await;
+        // Nobody is looking; an agent's next action brings the pages back.
+        self.freeze_pages().await;
     }
 
     async fn end_screencast(&self) {
@@ -2276,6 +2371,7 @@ impl ChatBrowser {
     /// person and the agent use the browser at the same time; neither waits.
     pub async fn user_input(&self, input: &UserInput) -> Result<(), String> {
         self.person_acted();
+        self.thaw_pages().await;
         let Some((cdp, session_id)) = self.view().current() else {
             return Ok(());
         };
