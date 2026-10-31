@@ -144,8 +144,9 @@ is reached; for example `/goal optimize this app to speed up p95`.
   not count). Its icons are
   **Edit** (applies from the next turn; the current turn keeps running),
   **Pause** (after this turn) or **Resume**, and **More**, which holds **Remove**
-  (the current turn finishes; no further turns or checks). In a narrow
-  chat the sentence sits on its own line below the icons.
+  (the current turn finishes; no further turns or checks). You can also ask in the
+  chat to pause or remove the goal, and the agent does it; it can't do either unless
+  you asked. In a narrow chat the sentence sits on its own line below the icons.
 - **After each turn** (a goal turn, or the run of a message you sent while the
   goal is open) a separate check (on the chat's model, or the one
   `goal.check_model` names in runtime.jsonc), with a fresh context, reads the goal, the

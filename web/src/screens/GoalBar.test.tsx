@@ -48,6 +48,17 @@ describe("GoalBar", () => {
     expect(screen.queryByRole("menu")).not.toBeInTheDocument();
   });
 
+  it("keeps the menu open through the mouse press, as the app's web view needs", () => {
+    const remove = vi.fn();
+    render(<GoalBar goal={goal({ status: "paused", running_since: undefined })} onEdit={vi.fn()} onPause={vi.fn()} onResume={vi.fn()} onRemove={remove} />);
+    fireEvent.click(screen.getByRole("button", { name: "More goal actions" }));
+    const item = screen.getByRole("menuitem", { name: "Remove goal" });
+    // False means the press was kept from moving focus, so no blur closes the menu first.
+    expect(fireEvent.mouseDown(item)).toBe(false);
+    fireEvent.click(item);
+    expect(remove).toHaveBeenCalled();
+  });
+
   it("leaves the composer once the goal is reached", () => {
     const { container, rerender } = render(<GoalBar goal={goal()} onEdit={vi.fn()} onPause={vi.fn()} onResume={vi.fn()} onRemove={vi.fn()} />);
     expect(screen.getByRole("region", { name: "Goal" })).toBeInTheDocument();

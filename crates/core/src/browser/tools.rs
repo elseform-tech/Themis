@@ -319,7 +319,7 @@ pub struct ClickArgs {
     pub reference: String,
     #[serde(default)]
     #[input(
-        description = "A point to click instead of a ref: CSS pixels from the left of the visible page (for canvas, maps and games)"
+        description = "A point to click instead of a ref: CSS pixels from the left of the visible page (for canvas, maps and games). A page holding the pointer lock is clicked where the mouse is"
     )]
     pub x: Option<f64>,
     #[serde(default)]
@@ -578,15 +578,27 @@ impl ToolRuntime for BrowserScroll {
 /// Arguments for `browser_move`.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, ToolInput)]
 pub struct MoveArgs {
-    #[input(description = "CSS pixels from the left of the visible page")]
-    pub x: f64,
-    #[input(description = "CSS pixels from the top of the visible page")]
-    pub y: f64,
+    #[serde(default)]
+    #[input(description = "CSS pixels from the left of the visible page; goes with y")]
+    pub x: Option<f64>,
+    #[serde(default)]
+    #[input(description = "CSS pixels from the top of the visible page; goes with x")]
+    pub y: Option<f64>,
+    #[serde(default)]
+    #[input(
+        description = "Instead of x and y: CSS pixels to move right (negative for left) from where the mouse is"
+    )]
+    pub dx: Option<f64>,
+    #[serde(default)]
+    #[input(
+        description = "Instead of x and y: CSS pixels to move down (negative for up) from where the mouse is"
+    )]
+    pub dy: Option<f64>,
 }
 
 #[tool(
     name = "browser_move",
-    description = "Move the mouse to a point of the visible page without clicking: to aim in a game, where the view turns with the distance moved, or to open a hover menu. A snapshot cannot show what a canvas draws: read where things are with browser_devtools, then act here and with browser_click, since only real input tests the page.",
+    description = "Move the mouse without clicking: x and y go to a point of the visible page, as for a hover menu; dx and dy move by a distance from where the mouse is, to aim in a game, where the view turns with the distance moved and a page holding the pointer lock has no edge. A snapshot cannot show what a canvas draws: read where things are with browser_devtools, then act here and with browser_click, since only real input tests the page.",
     input = MoveArgs,
 )]
 struct BrowserMove {
@@ -596,16 +608,37 @@ struct BrowserMove {
 #[async_trait]
 impl ToolRuntime for BrowserMove {
     async fn execute(&self, args: Value) -> Result<Value, ToolCallError> {
-        let MoveArgs { x, y } = parse_tool_args("browser_move", args)?;
-        let label = format!("({}, {})", x.round(), y.round());
+        let MoveArgs { x, y, dx, dy } = parse_tool_args("browser_move", args)?;
+        let relative = dx.is_some() || dy.is_some();
+        let target = match (x, y, relative) {
+            (Some(x), Some(y), false) => (x, y),
+            (None, None, true) => (dx.unwrap_or(0.0), dy.unwrap_or(0.0)),
+            _ => {
+                return Err(tool_error(
+                    "browser_move: give either x and y, or dx and dy".to_owned(),
+                ))
+            }
+        };
+        let (first, second) = target;
+        let label = if relative {
+            format!("by ({}, {})", first.round(), second.round())
+        } else {
+            format!("to ({}, {})", first.round(), second.round())
+        };
         self.base
             .act(
                 "browser_move",
                 RiskLevel::Network,
                 None,
                 format!("browser_move {label}"),
-                format!("moving the mouse to {label}"),
-                |chat| async move { chat.move_point(x, y).await },
+                format!("moving the mouse {label}"),
+                |chat| async move {
+                    if relative {
+                        chat.move_by(first, second).await
+                    } else {
+                        chat.move_point(first, second).await
+                    }
+                },
             )
             .await
     }

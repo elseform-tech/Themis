@@ -109,6 +109,7 @@ without its sandbox, the only way it runs there.
 | `browser_type` | Types into a field (`clear` first, `submit` with Enter) |
 | `browser_select` | Chooses `<select>` options by value or label |
 | `browser_press` | Presses a key: `Enter`, `Escape`, `Tab`, arrows, letters, `Control+a`; `hold_ms` keeps it down (up to 5 s) for games |
+| `browser_move` | Moves the mouse without clicking: `x` and `y` go to a point; `dx` and `dy` move by a distance, with no edge while the page holds the pointer lock. A click on a locked page stays where the mouse is, so it doesn't turn the view |
 | `browser_scroll` | Scrolls the page or one element |
 | `browser_tabs` | Lists, switches or closes this chat's tabs |
 
