@@ -1727,3 +1727,424 @@ async fn a_request_steered_into_a_goal_reaches_the_goal_check() {
     );
     settle(&state, &thread).await;
 }
+
+/// The wire name of an event, the name clients and saved history see.
+fn event_kind(event: &ThreadEvent) -> String {
+    serde_json::to_value(event).unwrap()["kind"]
+        .as_str()
+        .unwrap()
+        .to_owned()
+}
+
+/// Every event kind in the chat's saved history, in order.
+async fn saved_kinds(state: &AppState, thread: &str) -> Vec<String> {
+    let history = serde_json::to_value(state.get_thread_history(thread).await.unwrap()).unwrap();
+    history
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|item| match item["kind"].as_str() {
+            Some("event") => item["envelope"]["event"]["kind"].as_str().map(Into::into),
+            Some("user") => Some("user".to_owned()),
+            _ => None,
+        })
+        .collect()
+}
+
+fn position(kinds: &[String], kind: &str) -> usize {
+    kinds
+        .iter()
+        .position(|seen| seen == kind)
+        .unwrap_or_else(|| panic!("no {kind} in {kinds:?}"))
+}
+
+fn two_dirs() -> ResponseTemplate {
+    let call = |id: &str, dir: &str| {
+        json!({"id": id, "type": "function", "function": {"name": "create_dir",
+            "arguments": json!({"directory_path": dir}).to_string()}})
+    };
+    ResponseTemplate::new(200).set_body_json(json!({"choices":[{"message":{"role":"assistant",
+        "content":null,"tool_calls":[call("a", "dir_a"), call("b", "dir_b")]},"finish_reason":"tool_calls"}]}))
+}
+
+/// A chat in Custom mode inside a Git project, where writes ask first.
+async fn asking_chat(
+    server: &MockServer,
+) -> (AppState, tempfile::TempDir, tempfile::TempDir, String) {
+    let (state, data, project, _) = chat(server).await;
+    let git = std::process::Command::new("git")
+        .args(["init", "-q"])
+        .current_dir(project.path())
+        .status()
+        .unwrap();
+    assert!(git.success());
+    // A chat notes whether its project uses Git when it is made.
+    let thread = state
+        .create_thread(
+            project.path().to_string_lossy().into_owned(),
+            ProviderKind::Go,
+            Some("test-model".into()),
+        )
+        .await
+        .unwrap()
+        .id;
+    state
+        .set_thread_approval_mode(
+            thread.clone(),
+            themis_core::configuration::ApprovalMode::Custom,
+        )
+        .await
+        .unwrap();
+    (state, data, project, thread)
+}
+
+/// Waits for the next approval box, keeping the thread events that pass by.
+async fn next_approval(
+    rx: &mut UnboundedReceiver<TestEvent>,
+    seen: &mut Vec<ThreadEvent>,
+) -> themis_desktop::types::ApprovalRequest {
+    let waited = tokio::time::timeout(Duration::from_secs(60), async {
+        loop {
+            match rx.recv().await.expect("event stream ended") {
+                TestEvent::Approval(request) => return request,
+                TestEvent::Thread(envelope) => seen.push(envelope.event),
+                _ => {}
+            }
+        }
+    })
+    .await;
+    match waited {
+        Ok(request) => request,
+        Err(_) => panic!(
+            "no approval asked; events: {:?}",
+            seen.iter().map(event_kind).collect::<Vec<_>>()
+        ),
+    }
+}
+
+fn after_a_tool(body: &Value) -> bool {
+    body["messages"]
+        .as_array()
+        .and_then(|messages| messages.last())
+        .is_some_and(|message| message["role"] == "tool")
+}
+
+/// Found in a live goal run: a request steered in while an approval box waited stayed out of
+/// sight and out of the agent's reach until the person answered the box.
+#[tokio::test(flavor = "multi_thread")]
+async fn steering_past_an_approval_shows_at_once_denies_it_and_reaches_the_agent() {
+    const STEER: &str = "Please remove the goal";
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .respond_with(move |request: &Request| {
+            let body = body(request);
+            if mentions(&body, "try again") {
+                if after_a_tool(&body) {
+                    reply("Made it.")
+                } else {
+                    calls("create_dir", json!({"directory_path": "dir_c"}))
+                }
+            } else if mentions(&body, STEER) {
+                reply("Understood.")
+            } else {
+                two_dirs()
+            }
+        })
+        .mount(&server)
+        .await;
+    let (state, data, project, thread) = asking_chat(&server).await;
+    let (sink, mut rx) = ChannelSink::channel();
+    let sink = Arc::new(sink);
+    state
+        .send_message(sink.clone(), thread.clone(), "make two dirs".into())
+        .await
+        .unwrap();
+    let mut seen = Vec::new();
+    next_approval(&mut rx, &mut seen).await;
+
+    // Plain queueing leaves the box waiting.
+    let plain = state
+        .enqueue_message(
+            sink.clone(),
+            thread.clone(),
+            "for later".into(),
+            None,
+            vec![],
+        )
+        .await
+        .unwrap();
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert!(!state.pending_approvals().is_empty());
+    state
+        .remove_queued_message(sink.clone(), thread.clone(), plain.id)
+        .await
+        .unwrap();
+
+    let steer = state
+        .enqueue_message(sink.clone(), thread.clone(), STEER.into(), None, vec![])
+        .await
+        .unwrap();
+    state
+        .steer_queued_message(sink.clone(), thread.clone(), steer.id)
+        .await
+        .unwrap();
+
+    // On screen as soon as it is steered, and no box is left, with no "expired" warning.
+    let mut quiet_boxes = 0;
+    let mut finished = false;
+    let drained = tokio::time::timeout(Duration::from_secs(20), async {
+        while !finished {
+            match rx.recv().await.expect("event stream ended") {
+                TestEvent::Thread(envelope) => {
+                    finished = matches!(envelope.event, ThreadEvent::Finished { .. });
+                    seen.push(envelope.event);
+                }
+                TestEvent::Expired(expired) => {
+                    assert_eq!(serde_json::to_value(&expired).unwrap()["steered"], true);
+                    quiet_boxes += 1;
+                }
+                TestEvent::Approval(request) => {
+                    // Calls running together may both have asked; a later ask must not.
+                    assert!(
+                        !seen.iter().any(|event| event_kind(event) == "steer_shown"),
+                        "asked again before the steer was read: {request:?}"
+                    );
+                }
+                _ => {}
+            }
+        }
+    })
+    .await;
+    assert!(
+        drained.is_ok(),
+        "the run stayed blocked; events: {:?}; boxes: {:?}",
+        seen.iter().map(event_kind).collect::<Vec<_>>(),
+        state.pending_approvals().len()
+    );
+    assert!(quiet_boxes >= 1, "the box was not taken away");
+    assert!(state.pending_approvals().is_empty());
+    assert!(!project.path().join("dir_a").exists());
+    assert!(!project.path().join("dir_b").exists());
+
+    let kinds: Vec<String> = seen.iter().map(event_kind).collect();
+    let count = |kind: &str| kinds.iter().filter(|seen| *seen == kind).count();
+    assert_eq!(count("steer_shown"), 1, "{kinds:?}");
+    assert_eq!(count("steered"), 1, "{kinds:?}");
+    assert!(
+        position(&kinds, "steer_shown") < position(&kinds, "steered"),
+        "{kinds:?}"
+    );
+
+    // Each denied call tells the agent why, and the message comes next to read.
+    let requests = server.received_requests().await.unwrap();
+    let last = body(requests.last().unwrap());
+    let messages = last["messages"].as_array().unwrap();
+    let denied: Vec<&Value> = messages.iter().filter(|m| m["role"] == "tool").collect();
+    assert_eq!(denied.len(), 2, "{last}");
+    for result in &denied {
+        let text = result["content"].to_string();
+        assert!(text.contains("approval denied"), "{text}");
+        assert!(text.contains("sent a new message"), "{text}");
+        assert!(!text.contains(themis_core::tools::REFUSAL_NOTE), "{text}");
+    }
+    let tool_at = messages.iter().rposition(|m| m["role"] == "tool").unwrap();
+    let steer_at = messages
+        .iter()
+        .position(|m| {
+            m["content"]
+                .as_str()
+                .is_some_and(|text| text.contains(STEER))
+        })
+        .unwrap();
+    assert!(tool_at < steer_at, "{last}");
+
+    // The history keeps what the person saw, in order.
+    let saved = saved_kinds(&state, &thread).await;
+    assert!(
+        position(&saved, "steer_shown") < position(&saved, "steered"),
+        "{saved:?}"
+    );
+    assert!(
+        position(&saved, "tool_finished") < position(&saved, "steered"),
+        "{saved:?}"
+    );
+    assert!(
+        position(&saved, "steered") < position(&saved, "finished"),
+        "{saved:?}"
+    );
+
+    // Nothing was remembered: the same kind of action asks again, and can then run.
+    assert!(!data
+        .path()
+        .join("chat_grants")
+        .join(format!("{thread}.json"))
+        .exists());
+    state
+        .send_message(sink.clone(), thread.clone(), "try again".into())
+        .await
+        .unwrap();
+    let again = next_approval(&mut rx, &mut seen).await;
+    state
+        .approve_action(
+            thread.clone(),
+            again.approval_id,
+            themis_desktop::types::ApprovalDecision::Once,
+        )
+        .await
+        .unwrap();
+    until(
+        &mut rx,
+        &mut seen,
+        |event| matches!(event, ThreadEvent::Finished { result, .. } if result == "Made it."),
+    )
+    .await;
+    assert!(project.path().join("dir_c").is_dir());
+    // The model has the steered message once, not once per record of it.
+    let requests = server.received_requests().await.unwrap();
+    let last = body(requests.last().unwrap());
+    let copies = last["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|m| {
+            m["content"]
+                .as_str()
+                .is_some_and(|text| text.contains(STEER))
+        })
+        .count();
+    assert_eq!(copies, 1, "{last}");
+    settle(&state, &thread).await;
+}
+
+/// A steer the run never read is taken back out of the chat, so it shows once when it
+/// goes out as the next message.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_steer_the_run_never_read_leaves_the_chat_and_comes_back_once() {
+    const STEER: &str = "Use tabs instead";
+    let server = MockServer::start().await;
+    let gate = Gate::default();
+    let held = gate.clone();
+    Mock::given(method("POST"))
+        .respond_with(move |request: &Request| {
+            if mentions(&body(request), STEER) {
+                reply("Tabs it is.")
+            } else {
+                held.wait();
+                reply("First done.")
+            }
+        })
+        .mount(&server)
+        .await;
+    let (state, _data, _project, thread) = chat(&server).await;
+    let (sink, mut rx) = ChannelSink::channel();
+    let sink = Arc::new(sink);
+    state
+        .send_message(sink.clone(), thread.clone(), "first".into())
+        .await
+        .unwrap();
+    let steer = state
+        .enqueue_message(sink.clone(), thread.clone(), STEER.into(), None, vec![])
+        .await
+        .unwrap();
+    state
+        .steer_queued_message(sink.clone(), thread.clone(), steer.id)
+        .await
+        .unwrap();
+    state.stop_thread(thread.clone()).await.unwrap();
+    gate.open();
+    let mut seen = Vec::new();
+    until(
+        &mut rx,
+        &mut seen,
+        |event| matches!(event, ThreadEvent::Finished { result, .. } if result == "Tabs it is."),
+    )
+    .await;
+    let kinds: Vec<String> = seen.iter().map(event_kind).collect();
+    assert!(!kinds.iter().any(|kind| kind == "steered"), "{kinds:?}");
+    let shown = position(&kinds, "steer_shown");
+    let returned = position(&kinds, "steer_returned");
+    assert!(shown < returned, "{kinds:?}");
+    assert!(seen[returned..]
+        .iter()
+        .any(|event| matches!(event, ThreadEvent::UserMessage { text, .. } if text == STEER)));
+    let saved = saved_kinds(&state, &thread).await;
+    assert!(
+        position(&saved, "steer_shown") < position(&saved, "steer_returned"),
+        "{saved:?}"
+    );
+    settle(&state, &thread).await;
+}
+
+/// An answer to a question also travels through the run's inbox, but it is not a steer:
+/// the box stays until the person decides.
+#[tokio::test(flavor = "multi_thread")]
+async fn answering_a_question_leaves_an_approval_waiting() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .respond_with(move |request: &Request| {
+            let body = body(request);
+            if !after_a_tool(&body) && !mentions(&body, "Answer: Rock") {
+                calls(
+                    "ask_user",
+                    json!({"question": "Which name?", "recommended": "Pebble", "why": "short"}),
+                )
+            } else if !body["messages"].to_string().contains("dir_a") {
+                two_dirs()
+            } else {
+                reply("Done.")
+            }
+        })
+        .mount(&server)
+        .await;
+    let (state, _data, project, thread) = asking_chat(&server).await;
+    let (sink, mut rx) = ChannelSink::channel();
+    let sink = Arc::new(sink);
+    state
+        .send_message(sink.clone(), thread.clone(), "name it".into())
+        .await
+        .unwrap();
+    let mut seen = Vec::new();
+    let first = next_approval(&mut rx, &mut seen).await;
+    let question = state
+        .list_questions(thread.clone())
+        .await
+        .unwrap()
+        .remove(0);
+    state
+        .answer_question(sink.clone(), thread.clone(), question.id, "Rock".into())
+        .await
+        .unwrap();
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert!(
+        state
+            .pending_approvals()
+            .iter()
+            .any(|request| request.approval_id == first.approval_id),
+        "an answer must not decide an approval"
+    );
+    state
+        .approve_action(
+            thread.clone(),
+            first.approval_id,
+            themis_desktop::types::ApprovalDecision::Once,
+        )
+        .await
+        .unwrap();
+    // The next call in the batch still asks: an unread answer does not refuse it.
+    let second = next_approval(&mut rx, &mut seen).await;
+    state
+        .approve_action(
+            thread.clone(),
+            second.approval_id,
+            themis_desktop::types::ApprovalDecision::Once,
+        )
+        .await
+        .unwrap();
+    until(&mut rx, &mut seen, |event| {
+        matches!(event, ThreadEvent::Finished { .. })
+    })
+    .await;
+    assert!(project.path().join("dir_a").is_dir());
+    assert!(project.path().join("dir_b").is_dir());
+    settle(&state, &thread).await;
+}

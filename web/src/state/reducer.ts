@@ -196,7 +196,7 @@ export type AppAction =
   | { type: "review/updated"; review: ReviewItem }
   | { type: "approval/enqueued"; request: ApprovalRequest }
   | { type: "approval/dequeued"; approvalId: string }
-  | { type: "approval/expired"; approvalId: string }
+  | { type: "approval/expired"; approvalId: string; steered?: boolean }
   | { type: "settings/loaded"; settings: Settings }
   | { type: "settings/patched"; settings: Settings }
   | { type: "secrets/loaded"; status: SecretStatus }
@@ -478,7 +478,21 @@ export function applyThreadEvent(
       const text = state.streams[threadId];
       if (text) next = appendMessage(next, threadId, { id: newId("msg"), role: "assistant", text, runId });
       next = { ...next, streams: { ...next.streams, [threadId]: "" } };
-      return appendMessage(next, threadId, { id: newId("msg"), role: "user", text: event.text, runId, steered: true });
+      // Shown when it was steered: it only stops being unread now.
+      const rows = next.messages[threadId] ?? [];
+      const shown = rows.findIndex(row => row.steerUnread && row.text === event.text);
+      if (shown < 0) return appendMessage(next, threadId, { id: newId("msg"), role: "user", text: event.text, runId, steered: true });
+      const read = rows.map((row, index) => index === shown ? { ...row, steerUnread: false } : row);
+      return { ...next, messages: { ...next.messages, [threadId]: read } };
+    }
+    case "steer_shown":
+      // Text still streaming stays where it is: the final answer may repeat all of it.
+      return appendMessage(state, threadId, { id: newId("msg"), role: "user", text: event.text, runId, steered: true, steerUnread: true });
+    case "steer_returned": {
+      const rows = state.messages[threadId] ?? [];
+      const unread = rows.findIndex(row => row.steerUnread && row.text === event.text);
+      if (unread < 0) return state;
+      return { ...state, messages: { ...state.messages, [threadId]: rows.filter((_, index) => index !== unread) } };
     }
     case "user_message": {
       // This window's own send is already on screen without a run: adopt it.
@@ -673,7 +687,8 @@ export function reducer(state: AppState, action: AppAction): AppState {
       // The backend already denied it after the wait ran out: drop the stale dialog and say so once.
       if (!state.approvals.some(approval => approval.approval_id === action.approvalId)) return state;
       const next = { ...state, approvals: state.approvals.filter(approval => approval.approval_id !== action.approvalId) };
-      return pushToast(next, APPROVAL_EXPIRED_NOTE, "warning");
+      // Sending a new message past the box is the person's own act; the chat already shows it.
+      return action.steered ? next : pushToast(next, APPROVAL_EXPIRED_NOTE, "warning");
     }
     case "thread/synced": {
       const threads = state.threadsByProject[action.projectRoot] ?? [];

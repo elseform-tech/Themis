@@ -689,7 +689,7 @@ pub fn authorize_start(
     approvals: &dyn ApprovalHook,
 ) -> anyhow::Result<()> {
     let action = startup_action(name, server)?;
-    if approvals.approve(&action) == crate::tools::Approval::Deny {
+    if approvals.approve(&action).is_denied() {
         crate::diagnostics::emit("mcp", "startup_denied", "warn", json!({"server":name}));
         bail!("MCP startup denied");
     }

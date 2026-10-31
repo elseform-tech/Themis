@@ -85,11 +85,15 @@ levels are listed.
   running run now (the agent reads it before its next step, without stopping;
   a message with attached files waits for the next turn instead), **Edit**
   changes it while it waits (it is skipped while you edit), and **Remove**
-  takes it out of the queue. A steered message shows in the chat where the agent
-  read it, and the agent says in one short sentence how it will handle it before
+  takes it out of the queue. A steered message shows in the chat as soon as you
+  steer it, and the agent says in one short sentence how it will handle it before
   carrying on; when you steer in two or more, the agent is reminded
-  of all of them before it finishes. A steer the run never got to read is sent as
-  the next message. A message that cannot be sent (a bare `/goal`, a broken
+  of all of them before it finishes. If the agent is waiting on an approval when
+  you steer, you don't need to answer it first: the box goes away, the action is
+  denied this once so the agent reads your message, and it can ask again later.
+  Your chat permissions don't change, and a message left in the queue leaves the
+  box waiting. A steer the run never got to read leaves the chat, returns to the
+  front of the queue and is sent as the next message. A message that cannot be sent (a bare `/goal`, a broken
   project configuration) stays in the queue marked **Needs an edit**, with the
   reason as its tooltip and in the chat; edit it (or save it unchanged) to send
   it again. Queued messages survive a restart. A chat holds at most 50 queued

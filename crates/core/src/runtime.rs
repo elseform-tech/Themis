@@ -80,7 +80,7 @@ impl From<Approval> for ApprovalDecision {
         match value {
             Approval::AllowOnce => Self::AllowOnce,
             Approval::AllowAlways => Self::AllowAlways,
-            Approval::Deny => Self::Deny,
+            Approval::Deny | Approval::DenyForNewMessage => Self::Deny,
         }
     }
 }
@@ -3629,10 +3629,10 @@ async fn execute_call(
     if stopped.load(Ordering::SeqCst) {
         return Err("Stopped by you".to_owned());
     }
-    if decision == Approval::Deny {
+    if decision.is_denied() {
         return Err(format!(
             "approval denied for '{name}': {summary} {}",
-            crate::tools::REFUSAL_NOTE
+            decision.refusal_note()
         ));
     }
     let parsed: serde_json::Value = match serde_json::from_str(args) {

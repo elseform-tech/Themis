@@ -35,7 +35,7 @@ impl ApprovalHook for AuditedApprovals {
         let decision = self.inner.approve(action);
         let _ = self.context.log.append_with_level("approval", "decided", "info", json!({
             "thread_id":self.context.thread_id,"run_id":self.context.run_id,"operation_id":self.context.run_id,"tool":action.tool,
-            "risk":format!("{:?}",action.risk),"outcome":if decision == themis_core::tools::Approval::Deny { "denied" } else { "allowed" },"elapsed_ms":started.elapsed().as_millis()
+            "risk":format!("{:?}",action.risk),"outcome":if decision.is_denied() { "denied" } else { "allowed" },"elapsed_ms":started.elapsed().as_millis()
         }), Some(&self.context.level));
         decision
     }
@@ -170,7 +170,8 @@ impl AppState {
             )))
             .with_read_approval(true)
             .with_unattended(snapshot.automation_run)
-            .with_audit(diagnostic_context.clone()),
+            .with_audit(diagnostic_context.clone())
+            .with_steer_waiting(self.steer_waiting_check(thread_id)),
         );
         // "Allow in this chat" grants persist for the chat: loaded now, extended
         // by this run's answers, and inherited by later runs (including the
@@ -520,7 +521,7 @@ impl AppState {
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .get(thread_id)
-            .map(|(inbox, _)| Arc::clone(inbox))
+            .map(|entry| Arc::clone(&entry.inbox))
             .unwrap_or_default();
         let state = self.clone();
         let thread_id = thread_id.to_owned();

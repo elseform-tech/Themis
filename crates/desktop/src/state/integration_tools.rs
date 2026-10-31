@@ -327,10 +327,7 @@ impl ManagementTool {
                 PolicyAction::Allow => (true, false),
                 PolicyAction::Deny => (false, false),
                 PolicyAction::Ask if sole => (true, true),
-                PolicyAction::Ask => (
-                    self.run.interactive.approve(&action) != themis_core::tools::Approval::Deny,
-                    true,
-                ),
+                PolicyAction::Ask => (!self.run.interactive.approve(&action).is_denied(), true),
             }
         };
         if !allowed {
@@ -531,7 +528,7 @@ impl ManagementTool {
                     input.interval_mins
                 );
                 let decision = self.run.interactive.approve(&action);
-                if decision == themis_core::tools::Approval::Deny {
+                if decision.is_denied() {
                     Err("The user did not approve the check command, so the watch was not saved. Retry without check_command (read the file yourself on each run), or ask the user to allow this exact command.".to_owned())
                 } else {
                     if decision == themis_core::tools::Approval::AllowAlways {
