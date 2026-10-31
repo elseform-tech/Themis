@@ -30,8 +30,13 @@ const request = (runId: string, text: string, agents: SubagentEntry[]): ChatMess
 const feed = (over: Partial<ThreadTasks> = {}): ThreadTasks => ({ thread_id: "t1", run: { running: false, awaiting_approval: false }, automations: [], recent: [], ...over });
 const approval = (subagent: string): ApprovalRequest => ({ thread_id: "t1", approval_id: "p", tool: "shell", summary: "cargo test", risk: "execute", command: { argv: ["cargo", "test"] }, subagent: { id: subagent, name: subagent } });
 
-beforeEach(() => { dispatch.mockClear(); sessionStorage.clear(); });
-afterEach(cleanup);
+beforeEach(() => {
+  dispatch.mockClear();
+  // Done's open state is saved in localStorage; a fresh store keeps one test's fold out of the next.
+  const store = new Map<string, string>();
+  vi.stubGlobal("localStorage", { getItem: (key: string) => store.get(key) ?? null, setItem: (key: string, value: string) => void store.set(key, value) });
+});
+afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 
 describe("Done groups", () => {
   it("groups finished subagents by the request that started them, newest first", () => {
