@@ -297,7 +297,7 @@ export function getSubagentSettings(): Promise<{ settings: SubagentSettings; rev
 }
 
 /** Saves only `changes` (`model: null` is the chat's model), refused when the file changed since `revision`. */
-export function updateSubagentSettings(changes: Partial<Pick<SubagentSettings, 'enabled' | 'max_parallel' | 'model' | 'models' | 'allow_writes' | 'allow_mcp'>>, revision: string): Promise<{ settings: SubagentSettings; revision: string }> {
+export function updateSubagentSettings(changes: Partial<Pick<SubagentSettings, 'enabled' | 'max_parallel' | 'model' | 'models' | 'allow_writes' | 'allow_mcp' | 'allow_web'>>, revision: string): Promise<{ settings: SubagentSettings; revision: string }> {
   return invoke('update_subagent_settings', { changes, revision });
 }
 

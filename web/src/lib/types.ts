@@ -342,7 +342,7 @@ export type ThreadEvent =
   | { kind: 'question_asked'; question: Question }
   | { kind: 'question_answered'; id: string; answer: string }
   /** The agent started a read-only subagent for one part of its task. */
-  | { kind: 'subagent_started'; id: string; name: string; brief: string; model: string; confined: boolean; write_paths?: string[]; connections?: string[]; /** RFC 3339. */ at?: string }
+  | { kind: 'subagent_started'; id: string; name: string; brief: string; model: string; confined: boolean; write_paths?: string[]; connections?: string[]; web?: boolean; /** RFC 3339. */ at?: string }
   /** The main agent wrote to a subagent; `resumed` when that picked an ended one up again. */
   | { kind: 'subagent_message'; id: string; text: string; resumed?: boolean }
   /** What a running subagent is doing now (live only). */
@@ -363,6 +363,8 @@ export interface SubagentEntry {
   writePaths: string[];
   /** The connections whose MCP tools it may use. */
   connections?: string[];
+  /** Whether it has web tools. */
+  web?: boolean;
   status: 'running' | SubagentEnding;
   /** Its own status line, or its latest action. */
   text: string;
@@ -388,6 +390,7 @@ export interface SubagentSettings {
   models?: string[];
   allow_writes: boolean;
   allow_mcp: boolean;
+  allow_web: boolean;
 }
 
 /** A question the agent asked without stopping its work. */

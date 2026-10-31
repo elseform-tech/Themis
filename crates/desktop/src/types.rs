@@ -292,6 +292,9 @@ pub enum ThreadEvent {
         /// The connections whose MCP tools it may use.
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         connections: Vec<String>,
+        /// Whether it has web tools.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        web: bool,
         /// When it was started (RFC 3339); groups finished work by request in Tasks.
         #[serde(default, skip_serializing_if = "String::is_empty")]
         at: String,

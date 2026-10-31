@@ -15,7 +15,9 @@ use std::time::Instant;
 use serde_json::{json, Value};
 use themis_core::chat_grants::ChatGrants;
 use themis_core::configuration::{ApprovalMode, RuntimeConfig};
-use themis_core::plugins::agents::{NamedProfile, ProfileCatalog, READ_ONLY_TOOLS, WRITE_TOOLS};
+use themis_core::plugins::agents::{
+    NamedProfile, ProfileCatalog, READ_ONLY_TOOLS, WEB_TOOLS, WRITE_TOOLS,
+};
 use themis_core::runtime::{
     ConversationRole, ConversationTurn, LLMProvider, RunEvent, RunNotes, RunPolicy, SteerInbox,
 };
@@ -53,6 +55,12 @@ pub(super) struct SubagentMcp {
     pub(super) startup_rules: themis_core::configuration::ApprovalPolicy,
 }
 
+/// The run's web tools: the settings and site permissions the main agent's use.
+pub(super) struct SubagentWeb {
+    pub(super) config: themis_core::configuration::WebConfig,
+    pub(super) permissions: Arc<themis_core::tools::site_permissions::SitePermissions>,
+}
+
 /// What MCP tools one subagent gets, decided when it is started.
 #[derive(Default)]
 pub(super) struct McpAccess {
@@ -61,6 +69,14 @@ pub(super) struct McpAccess {
     /// Their servers.
     pub(super) connections: Vec<String>,
     /// What was named or asked for that it doesn't get.
+    pub(super) left_out: Vec<String>,
+}
+
+/// What web tools one subagent gets, decided when it is started.
+#[derive(Default)]
+pub(super) struct WebAccess {
+    pub(super) tools: Vec<String>,
+    /// What its profile names that it can't have.
     pub(super) left_out: Vec<String>,
 }
 
@@ -85,6 +101,7 @@ pub(super) struct SubagentKit {
     pub(super) hooks: Vec<themis_core::plugins::hooks::Hook>,
     /// The run's MCP tools.
     pub(super) mcp: SubagentMcp,
+    web: SubagentWeb,
     plugins: Vec<themis_core::plugins::Plugin>,
     /// The chat's model, used when `subagents.model` is unset or the same.
     pub(super) llm: Arc<dyn LLMProvider>,
@@ -117,6 +134,7 @@ impl SubagentKit {
         endpoint_override: bool,
         hooks: Vec<themis_core::plugins::hooks::Hook>,
         mcp: SubagentMcp,
+        web: SubagentWeb,
         llm: Arc<dyn LLMProvider>,
         policy: RunPolicy,
         sandbox: &SandboxPlan,
@@ -143,6 +161,7 @@ impl SubagentKit {
             endpoint_override,
             hooks,
             mcp,
+            web,
             plugins: snapshot.plugins.clone(),
             llm,
             model: snapshot.model.clone(),
@@ -339,6 +358,58 @@ impl SubagentKit {
         access
     }
 
+    /// Whether subagents may have the web tools at all: `subagents.allow_web` is on, and the
+    /// run's sandbox doesn't block the network. These tools run in the app, outside the OS
+    /// sandbox, so a subagent held to a blocked network must not be handed them.
+    pub(super) fn offers_web(&self) -> bool {
+        self.config.subagents.allow_web
+            && self.sandbox.network() != themis_core::sandbox::NetworkPolicy::Block
+    }
+
+    /// The web tools this subagent may have.
+    fn web_access(&self, profile: Option<&NamedProfile>) -> WebAccess {
+        let allowed = |tool: &&str| profile.is_none_or(|named| named.profile.allows(tool));
+        let wanted: Vec<&str> = WEB_TOOLS.iter().copied().filter(allowed).collect();
+        // A list that names them and can't have them is told so; no list asked for nothing.
+        let named = profile.is_some_and(|named| named.profile.tools.is_some());
+        if self.offers_web() {
+            // No search address means no search, for the main agent as well.
+            let tools: Vec<&str> = wanted
+                .iter()
+                .copied()
+                .filter(|tool| *tool != "web_search" || self.web.config.search_url.is_some())
+                .collect();
+            return WebAccess {
+                left_out: wanted
+                    .iter()
+                    .filter(|tool| named && !tools.contains(tool))
+                    .map(|tool| (*tool).to_owned())
+                    .collect(),
+                tools: tools.into_iter().map(str::to_owned).collect(),
+            };
+        }
+        let left_out: Vec<String> = if named {
+            wanted.iter().map(|tool| (*tool).to_owned()).collect()
+        } else {
+            Vec::new()
+        };
+        if !left_out.is_empty() {
+            let _ = self.state.inner.diagnostics.append_with_level(
+                "subagents",
+                "web_left_out",
+                "warn",
+                json!({"thread_id": self.thread_id, "run_id": self.run_id,
+                    "reason": if self.config.subagents.allow_web { "network_blocked" } else { "setting" },
+                    "count": left_out.len()}),
+                Some(&self.config.logging.level),
+            );
+        }
+        WebAccess {
+            tools: Vec::new(),
+            left_out,
+        }
+    }
+
     /// Metadata only: why, how many and which tools, never a call's contents.
     fn log_left_out(&self, reason: &str, names: &[String]) {
         let listed: Vec<String> = names
@@ -417,6 +488,7 @@ impl SubagentKit {
         profile: Option<Arc<NamedProfile>>,
         mcp: McpAccess,
     ) -> Arc<Subagent> {
+        let web = self.web_access(profile.as_deref());
         let agent = Arc::new(Subagent {
             id: uuid::Uuid::new_v4().simple().to_string()[..12].to_owned(),
             name,
@@ -427,6 +499,7 @@ impl SubagentKit {
             write_paths,
             profile,
             mcp,
+            web,
             run_id: uuid::Uuid::new_v4().to_string(),
             started: Mutex::new(Instant::now()),
             stop: Arc::new(AtomicBool::new(false)),
@@ -448,6 +521,7 @@ impl SubagentKit {
             confined: self.sandbox.enabled(),
             write_paths: agent.write_paths.clone(),
             connections: agent.mcp.connections.clone(),
+            web: !agent.web.tools.is_empty(),
             at: chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
         });
         let _ = self.state.inner.diagnostics.append_with_level(
@@ -458,6 +532,7 @@ impl SubagentKit {
                 "child_run_id": agent.run_id, "confined": self.sandbox.enabled(),
                 "write_paths": agent.write_paths.len(),
                 "mcp_tools": agent.mcp.tools.len(),
+                "web_tools": agent.web.tools.len(),
                 "profile": agent.profile.as_ref().map(|named| &named.profile.name)}),
             Some(&self.config.logging.level),
         );
@@ -585,6 +660,7 @@ impl SubagentKit {
             .iter()
             .map(|path| self.work_root.join(path))
             .collect();
+        let approvals_for_web = Arc::clone(&approvals);
         // Folders exist from the start, so an OS sandbox can allow them.
         for path in agent.write_paths.iter().filter(|path| path.ends_with('/')) {
             let _ = std::fs::create_dir_all(self.work_root.join(path));
@@ -601,6 +677,12 @@ impl SubagentKit {
             },
         )
         .map_err(|error| format!("failed to build tools: {error:#}"))?;
+        let mut web = themis_core::tools::web::web_tools(
+            Arc::clone(&approvals_for_web),
+            &self.web.config,
+            Some(Arc::clone(&self.web.permissions)),
+        );
+        web.retain(|tool| agent.web.tools.iter().any(|wanted| wanted == tool.name()));
         Ok(tools
             .into_iter()
             .filter(|tool| {
@@ -615,7 +697,7 @@ impl SubagentKit {
                     .is_none_or(|named| named.profile.allows(tool.name()))
             })
             // Chosen when it started; they are no file permission, so none of the above applies.
-            .chain(mcp.into_iter().map(|tool| {
+            .chain(mcp.into_iter().chain(web).map(|tool| {
                 Box::new(super::subagent_tools::Stoppable {
                     inner: tool,
                     stop: Arc::clone(&agent.stop),
@@ -803,11 +885,18 @@ impl SubagentKit {
                 &[("tools", &mcp_labels.join(", "))],
             )
         });
+        let web_note = (!agent.web.tools.is_empty()).then(|| {
+            themis_core::prompts::fill(
+                themis_core::prompts::SUBAGENT_WEB_NOTE,
+                &[("tools", &agent.web.tools.join(", "))],
+            )
+        });
         let left_out: Vec<&str> = agent
             .mcp
             .left_out
             .iter()
             .chain(&mcp_missing)
+            .chain(&agent.web.left_out)
             .map(String::as_str)
             .collect();
         let left_out_note = (!left_out.is_empty()).then(|| {
@@ -820,6 +909,7 @@ impl SubagentKit {
             .chain(role.as_deref())
             .chain([access.as_str()])
             .chain(mcp_note.as_deref())
+            .chain(web_note.as_deref())
             .chain(left_out_note.as_deref())
             .chain([themis_core::prompts::SUBAGENT_STATUS_FIELD])
             .collect::<Vec<_>>()
@@ -1049,6 +1139,8 @@ pub(super) struct Subagent {
     profile: Option<Arc<NamedProfile>>,
     /// The MCP tools it may use.
     pub(super) mcp: McpAccess,
+    /// The web tools it may use.
+    pub(super) web: WebAccess,
     pub(super) run_id: String,
     started: Mutex<Instant>,
     pub(super) stop: Arc<AtomicBool>,
@@ -1317,7 +1409,7 @@ impl AppState {
                             .ended
                             .unwrap_or_else(|| ("running".into(), String::new()));
                         json!({"id": agent.id, "name": agent.name, "brief": agent.brief,
-                            "model": agent.model, "write_paths": agent.write_paths, "connections": agent.mcp.connections, "profile": agent.profile.as_ref().map(|named| &named.profile.name), "ran_on": progress.ran_on, "status": status, "text": progress.status,
+                            "model": agent.model, "write_paths": agent.write_paths, "connections": agent.mcp.connections, "web": !agent.web.tools.is_empty(), "profile": agent.profile.as_ref().map(|named| &named.profile.name), "ran_on": progress.ran_on, "status": status, "text": progress.status,
                             "result": result, "tool_calls": agent.tool_calls.load(Ordering::SeqCst),
                             "seconds": agent.started.lock().unwrap_or_else(|e| e.into_inner()).elapsed().as_secs()})
                     })

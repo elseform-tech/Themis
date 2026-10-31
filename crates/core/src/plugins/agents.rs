@@ -16,6 +16,8 @@ use std::sync::Arc;
 pub const READ_ONLY_TOOLS: [&str; 4] = ["read_file", "list_dir", "search_file", "shell"];
 /// The tools a subagent with write paths also gets; the file guard holds them to those paths.
 pub const WRITE_TOOLS: [&str; 3] = ["write_file", "apply_patch", "create_dir"];
+/// The web tools; they go through the approval rules, per site, as the main agent's do.
+pub const WEB_TOOLS: [&str; 2] = ["fetch_url", "web_search"];
 
 const MAX_FRONTMATTER_BYTES: usize = 64 * 1024;
 const MAX_DESCRIPTION_BYTES: usize = 1024;
@@ -128,10 +130,12 @@ impl SubagentProfile {
         }
         if self.tools.as_ref().is_some_and(|tools| {
             tools.iter().any(|tool| {
-                !READ_ONLY_TOOLS.contains(&tool.as_str()) && !WRITE_TOOLS.contains(&tool.as_str())
+                !READ_ONLY_TOOLS.contains(&tool.as_str())
+                    && !WRITE_TOOLS.contains(&tool.as_str())
+                    && !WEB_TOOLS.contains(&tool.as_str())
             })
         }) {
-            bail!("Subagent tools must be Themis file, search or shell tools");
+            bail!("Subagent tools must be Themis file, search, shell or web tools");
         }
         if self.model.as_ref().is_some_and(|model| {
             model.len() > MAX_MODEL_BYTES || model.chars().any(char::is_control)
@@ -401,6 +405,8 @@ fn mapped(name: &str) -> Option<&'static [&'static str]> {
         }
         "Bash" => Some(&["shell"]),
         "Edit" | "Write" | "MultiEdit" => Some(&WRITE_TOOLS),
+        "WebFetch" => Some(&["fetch_url"]),
+        "WebSearch" => Some(&["web_search"]),
         _ => None,
     }
 }
@@ -461,7 +467,10 @@ struct ResolvedTools {
 /// widened to the whole tool; denying one takes the whole tool away. MCP names are kept as they
 /// are: which tools they mean depends on the chat's connections when a subagent starts.
 fn resolve_tools(listed: Option<&[String]>, denied: &[String]) -> ResolvedTools {
-    let all = READ_ONLY_TOOLS.iter().chain(WRITE_TOOLS.iter());
+    let all = READ_ONLY_TOOLS
+        .iter()
+        .chain(WRITE_TOOLS.iter())
+        .chain(WEB_TOOLS.iter());
     let everything = listed.is_none_or(|names| names.iter().any(|name| name == "*"));
     let mut dropped = Vec::new();
     let mut kept = BTreeSet::new();
@@ -816,17 +825,30 @@ mod tests {
 
     #[test]
     fn names_a_subagent_has_no_tool_for_stay_out() {
-        // A subagent has no web, plan or background tools, so naming them grants nothing.
-        let names = "WebFetch, WebSearch, TodoWrite, KillShell, BashOutput, AskUserQuestion";
+        let names = "TodoWrite, KillShell, BashOutput, AskUserQuestion";
         let profile = with_tools(&format!("tools: Read, {names}"));
         assert_eq!(profile.tools.as_deref().unwrap(), READS);
         assert_eq!(profile.dropped_tools.join(", "), names);
     }
 
     #[test]
+    fn web_names_map_to_the_web_tools_and_a_list_narrows_them() {
+        let both = with_tools("tools: WebFetch, WebSearch");
+        assert_eq!(both.tools.unwrap(), WEB_TOOLS);
+        let one = with_tools("tools: Read, WebSearch");
+        assert!(one.allows("web_search") && !one.allows("fetch_url"));
+        assert!(one.dropped_tools.is_empty());
+        // No list leaves them open; a deny list takes one away.
+        assert!(parse("---\nname: a\ndescription: d\n---\nB").allows("fetch_url"));
+        let denied = with_tools("disallowedTools: WebFetch");
+        assert!(!denied.allows("fetch_url") && denied.allows("web_search"));
+        assert!(!with_tools("tools: Read").allows("fetch_url"));
+    }
+
+    #[test]
     fn a_list_it_cannot_read_never_becomes_all_tools() {
         // Empty lists, and lists of only unknown names, leave nothing.
-        for form in ["tools:", "tools: []", "tools: WebFetch", "tools: read"] {
+        for form in ["tools:", "tools: []", "tools: TodoWrite", "tools: read"] {
             assert_eq!(
                 with_tools(form).tools.unwrap(),
                 Vec::<String>::new(),
@@ -896,11 +918,14 @@ mod tests {
     #[test]
     fn a_deny_list_only_takes_away() {
         let denied = with_tools("disallowedTools: Bash(rm:*), Write");
-        assert_eq!(denied.tools.as_deref().unwrap(), READS);
+        assert_eq!(
+            denied.tools.as_deref().unwrap(),
+            [&READS[..], &WEB_TOOLS[..]].concat()
+        );
         let both = with_tools("tools: Read, Bash\ndisallowedTools: Bash");
         assert_eq!(both.tools.as_deref().unwrap(), READS);
         // An unknown name denies nothing it can name.
-        assert_eq!(with_tools("disallowedTools: WebFetch").tools, None);
+        assert_eq!(with_tools("disallowedTools: TodoWrite").tools, None);
         assert_eq!(
             with_tools("disallowedTools: *").tools.unwrap(),
             Vec::<String>::new()

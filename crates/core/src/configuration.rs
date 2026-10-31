@@ -568,6 +568,8 @@ pub struct SubagentsConfig {
     pub allow_writes: bool,
     /// `false` gives no subagent MCP tools, whatever a profile names or the agent asks for.
     pub allow_mcp: bool,
+    /// `false` gives no subagent the web tools, whatever a profile names.
+    pub allow_web: bool,
 }
 
 /// Most models `subagents.models` may list.
@@ -582,18 +584,19 @@ impl Default for SubagentsConfig {
             models: Vec::new(),
             allow_writes: true,
             allow_mcp: true,
+            allow_web: true,
         }
     }
 }
 
-/// A project or run layer may only lower subagent limits or turn subagents (or their writes or
-/// MCP tools) off; the model may be set anywhere.
+/// A project or run layer may only lower subagent limits or turn subagents (or their writes, MCP
+/// tools or web tools) off; the model may be set anywhere.
 fn check_subagents_restriction(
     current: &SubagentsConfig,
     layer: &Value,
     origin: &str,
 ) -> Result<()> {
-    for field in ["enabled", "allow_writes", "allow_mcp"] {
+    for field in ["enabled", "allow_writes", "allow_mcp", "allow_web"] {
         if let Some(value) = layer.pointer(&format!("/subagents/{field}")) {
             ensure!(
                 value == &Value::Bool(false),
@@ -1878,7 +1881,8 @@ fn base_schema() -> Value {
                 "model":{"type":["string","null"],"minLength":1,"maxLength":256,"default":null,"description":"Model for subagents; absent, the chat's model. <provider>/<id> for one from providers"},
                 "models":{"type":"array","maxItems":3,"uniqueItems":true,"items":{"type":"string","minLength":1,"maxLength":256},"default":[],"description":"Up to three more models the agent may give a subagent; any other is refused"},
                 "allow_writes":{"type":"boolean","default":true,"description":"false keeps every subagent read-only"},
-                "allow_mcp":{"type":"boolean","default":true,"description":"false gives no subagent MCP tools"}
+                "allow_mcp":{"type":"boolean","default":true,"description":"false gives no subagent MCP tools"},
+                "allow_web":{"type":"boolean","default":true,"description":"false gives no subagent the web tools"}
             }},
             "goal":{"type":"object","additionalProperties":false,"properties":{
                 "check_model":{"type":["string","null"],"minLength":1,"maxLength":256,"default":null,"description":"The model that checks each goal turn; absent, the chat's model. Any model a connected provider offers; <provider>/<id> for one from providers"},
@@ -2211,14 +2215,16 @@ mod tests {
     fn subagent_settings_resolve_and_projects_may_only_lower_them() {
         let resolved = resolve(
             Some(r#"{"subagents":{"max_parallel":5,"model":"glm-5.3","models":["glm-5","beam-free"]}}"#),
-            Some(r#"{"subagents":{"max_parallel":2,"enabled":false,"allow_writes":false,"allow_mcp":false,"models":["glm-5"]}}"#),
+            Some(r#"{"subagents":{"max_parallel":2,"enabled":false,"allow_writes":false,"allow_mcp":false,"allow_web":false,"models":["glm-5"]}}"#),
             None,
         )
         .unwrap();
         let subagents = &resolved.config.subagents;
         assert_eq!(subagents.max_parallel, 2);
         assert!(!subagents.enabled && !subagents.allow_writes && !subagents.allow_mcp);
+        assert!(!subagents.allow_web);
         assert_eq!(resolved.provenance["subagents.allow_mcp"], "project");
+        assert_eq!(resolved.provenance["subagents.allow_web"], "project");
         assert_eq!(subagents.max_turns, 40);
         assert_eq!(subagents.model.as_deref(), Some("glm-5.3"));
         assert_eq!(subagents.models, ["glm-5"]);
@@ -2229,6 +2235,7 @@ mod tests {
             r#"{"subagents":{"enabled":true}}"#,
             r#"{"subagents":{"allow_writes":true}}"#,
             r#"{"subagents":{"allow_mcp":true}}"#,
+            r#"{"subagents":{"allow_web":true}}"#,
             r#"{"subagents":{"allow_mcp":"no"}}"#,
             r#"{"subagents":{"models":["claude-opus"]}}"#,
         ] {

@@ -655,7 +655,7 @@ async fn marketplace_check_counts_subagents_as_a_capability_not_a_skip_reason() 
     // A dropped tool makes the plugin partial, with a reason shared by every such plugin.
     write(
         "dropped/agents/searcher.md",
-        &agent("searcher", "tools: Read, WebFetch\n"),
+        &agent("searcher", "tools: Read, Workflow\n"),
     );
     write(
         "bad/agents/broken.md",

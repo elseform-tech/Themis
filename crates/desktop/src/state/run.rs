@@ -498,6 +498,10 @@ impl AppState {
                     labels: Arc::new(tool_labels.clone()),
                     startup_rules: startup_rules.clone(),
                 },
+                super::subagents::SubagentWeb {
+                    config: web,
+                    permissions: Arc::clone(&site_permissions),
+                },
                 Arc::clone(&llm),
                 policy,
                 &sandbox,

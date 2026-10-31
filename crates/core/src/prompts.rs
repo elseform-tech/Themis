@@ -39,6 +39,8 @@ pub const SUBAGENT_MCP_NOTE: &str = include_str!("../builtins/prompts/subagent-m
 pub const SUBAGENT_MCP_LEFT_OUT: &str =
     include_str!("../builtins/prompts/subagent-mcp-left-out.md");
 pub const SPAWN_SUBAGENTS_MCP: &str = include_str!("../builtins/prompts/spawn-subagents-mcp.md");
+pub const SUBAGENT_WEB_NOTE: &str = include_str!("../builtins/prompts/subagent-web-note.md");
+pub const SPAWN_SUBAGENTS_WEB: &str = include_str!("../builtins/prompts/spawn-subagents-web.md");
 pub const SUBAGENT_READ_ONLY_NOTE: &str =
     include_str!("../builtins/prompts/subagent-read-only-note.md");
 /// Explains the optional `status` field every subagent tool call accepts.

@@ -65,6 +65,9 @@ fn spawn_description(kit: &SubagentKit, others: &[String]) -> String {
     if kit.offers_mcp() {
         parts.push(themis_core::prompts::SPAWN_SUBAGENTS_MCP.to_owned());
     }
+    if kit.offers_web() {
+        parts.push(themis_core::prompts::SPAWN_SUBAGENTS_WEB.to_owned());
+    }
     if !kit.profiles.is_empty() {
         let (listing, more) = kit.profiles.listing();
         parts.push(themis_core::prompts::fill(
