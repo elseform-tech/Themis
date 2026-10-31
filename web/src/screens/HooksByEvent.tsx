@@ -18,6 +18,7 @@ export const HOOK_EVENTS: Array<{ title: string; events: string[] }> = [
   { title: "Subagent starts", events: ["SubagentStart"] },
   { title: "Subagent ends", events: ["SubagentEnd"] },
   { title: "Before context is compacted", events: ["BeforeCompaction"] },
+  { title: "Turn would end", events: ["Stop"] },
   { title: "Run ends", events: ["RunEnd", "RunFinished"] },
 ];
 

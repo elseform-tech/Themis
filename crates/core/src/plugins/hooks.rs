@@ -7,12 +7,13 @@ use std::path::Path;
 use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
-pub const EVENTS: [&str; 8] = [
+pub const EVENTS: [&str; 9] = [
     "PromptSubmit",
     "RunStart",
     "BeforeTool",
     "AfterTool",
     "BeforeCompaction",
+    "Stop",
     "RunEnd",
     "SubagentStart",
     "SubagentEnd",
@@ -419,7 +420,7 @@ async fn execute(hook: &Hook, root: &Path, payload: &Value) -> anyhow::Result<Va
                     reason = String::from_utf8_lossy(&kept).trim().to_owned();
                 }
                 return Err(Blocked(
-                    (!reason.is_empty()).then(|| capped(&reason, BLOCK_REASON_LIMIT).to_owned()),
+                    (!reason.is_empty()).then(|| capped(&reason, reason_limit(hook)).to_owned()),
                 )
                 .into());
             }
@@ -441,7 +442,7 @@ async fn execute(hook: &Hook, root: &Path, payload: &Value) -> anyhow::Result<Va
                 || value.get("decision").and_then(Value::as_str) == Some("block")
                 || value["hookSpecificOutput"]["permissionDecision"] == "deny"
             {
-                return Err(Blocked(block_reason(&value)).into());
+                return Err(Blocked(block_reason(&value, reason_limit(hook))).into());
             }
             Ok(value)
         },
@@ -515,6 +516,18 @@ fn capped(text: &str, limit: usize) -> &str {
 /// Most of a hook's block reason that is kept, in bytes.
 const BLOCK_REASON_LIMIT: usize = 1024;
 
+/// Most of the reason a `Stop` hook gives, in bytes: it is what the agent does next, often a whole
+/// prompt, where another hook's only explains a refusal.
+const STOP_REASON_LIMIT: usize = 32 * 1024;
+
+fn reason_limit(hook: &Hook) -> usize {
+    if hook.event == "Stop" {
+        STOP_REASON_LIMIT
+    } else {
+        BLOCK_REASON_LIMIT
+    }
+}
+
 /// A hook asked to block the action, with the reason it gave, if any.
 #[derive(Debug)]
 struct Blocked(Option<String>);
@@ -529,13 +542,63 @@ impl std::error::Error for Blocked {}
 
 /// The reason in a hook's output: `reason`, or Claude's
 /// `hookSpecificOutput.permissionDecisionReason`.
-fn block_reason(output: &Value) -> Option<String> {
+fn block_reason(output: &Value, limit: usize) -> Option<String> {
     output["reason"]
         .as_str()
         .or_else(|| output["hookSpecificOutput"]["permissionDecisionReason"].as_str())
         .map(str::trim)
         .filter(|reason| !reason.is_empty())
-        .map(|reason| capped(reason, BLOCK_REASON_LIMIT).to_owned())
+        .map(|reason| capped(reason, limit).to_owned())
+}
+
+/// A `Stop` hook wants the turn to go on: what the model is told. Labelled and fenced, since it
+/// comes from a plugin and can't pose as the person.
+#[derive(Debug)]
+pub struct KeepGoing {
+    pub hook: String,
+    pub reason: Option<String>,
+}
+
+impl std::fmt::Display for KeepGoing {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(formatter, "Hook {} asks to keep going", self.hook)
+    }
+}
+
+impl std::error::Error for KeepGoing {}
+
+impl KeepGoing {
+    /// The note the model gets.
+    #[must_use]
+    pub fn note(&self) -> String {
+        let reason = self.reason.as_deref().unwrap_or_default();
+        let fenced = reason.replace("<<<", "< < <").replace(">>>", "> > >");
+        crate::prompts::fill(
+            crate::prompts::HOOK_STOP_CONTINUE,
+            &[("hook", &self.hook), ("reason", &fenced)],
+        )
+    }
+}
+
+/// Asks this run's `Stop` hooks whether its turn may end, with the reply it ended on. `active`
+/// says a hook already kept it going, as Claude's `stop_hook_active` does: a hook can use it to
+/// let go. A subagent's end is `SubagentEnd`, so it has none, and a hook that merely fails doesn't
+/// keep anything going. The run's own turn limit and the person's Stop bound the loop.
+pub async fn stop_refused(
+    reply: &str,
+    active: bool,
+    events: &tokio::sync::mpsc::Sender<crate::runtime::RunEvent>,
+) -> Option<KeepGoing> {
+    if IN_HOOK.try_with(|running| *running).unwrap_or(false) {
+        return None;
+    }
+    let runtime = ACTIVE.try_with(Clone::clone).ok()?;
+    if runtime.agent.is_some() {
+        return None;
+    }
+    let payload = json!({"last_assistant_message": reply, "stop_hook_active": active});
+    let error = runtime.emit("Stop", payload, events).await.err()?;
+    error.downcast::<KeepGoing>().ok()
 }
 
 /// What the person sees when a hook blocks a turn or a stage of the run.
@@ -649,6 +712,22 @@ impl HookRuntime {
                 })
                 .await
                 .ok();
+            if event == "Stop" {
+                // Asking to go on is a decision; failing says nothing, whatever the policy.
+                match outcome {
+                    Ok(value) => outputs.push(value),
+                    Err(error) => {
+                        if let Some(Blocked(reason)) = error.downcast_ref::<Blocked>() {
+                            return Err(KeepGoing {
+                                hook: hook.name.clone(),
+                                reason: reason.clone(),
+                            }
+                            .into());
+                        }
+                    }
+                }
+                continue;
+            }
             let stoppable = matches!(
                 event,
                 "PromptSubmit" | "RunStart" | "BeforeTool" | "BeforeCompaction"

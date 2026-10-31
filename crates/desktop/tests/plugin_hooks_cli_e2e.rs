@@ -216,6 +216,14 @@ async fn run(app: &App, task: &'static str) {
     .unwrap();
 }
 
+async fn until_async<F: std::future::Future<Output = bool>>(what: &str, done: impl Fn() -> F) {
+    let deadline = Instant::now() + Duration::from_secs(30);
+    while !done().await {
+        assert!(Instant::now() < deadline, "{what}");
+        tokio::time::sleep(Duration::from_millis(30)).await;
+    }
+}
+
 async fn bodies(llm: &MockServer) -> Vec<Value> {
     llm.received_requests()
         .await
@@ -664,6 +672,143 @@ async fn a_shell_deny_rule_holds_on_the_git_tool_in_yolo() {
         );
         app.serving.abort();
     }
+}
+
+/// A `Stop` hook counting rounds: it refuses twice, then lets the turn end.
+const LOOPING: &str = r#"#!/bin/sh
+input=$(cat)
+count=$(cat count 2>/dev/null || echo 0)
+printf '%s' "$input" > "stop-$count.json"
+echo $((count + 1)) > count
+if [ "$count" -lt 2 ]; then
+  echo "{\"decision\":\"block\",\"reason\":\"Now do round $((count + 1))\"}"
+fi
+"#;
+
+/// What a loop plugin relies on: its hook refuses, the agent keeps going with what it said.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_stop_hook_that_blocks_keeps_the_turn_going() {
+    let hooks = json!({"Stop": [{"hooks": [{
+        "type": "command", "command": "sh \"${CLAUDE_PLUGIN_ROOT}/hooks/loop.sh\""
+    }]}]});
+    let app = crate::app(hooks, &[("hooks/loop.sh", LOOPING)], |_| {
+        reply("A round is done.")
+    })
+    .await;
+    run(&app, "go").await;
+    let all = bodies(&app.llm).await;
+    assert_eq!(all.len(), 3, "one request per round");
+    let said = |body: &Value| body.to_string();
+    assert!(
+        said(&all[1]).contains("Now do round 1"),
+        "{}",
+        said(&all[1])
+    );
+    assert!(
+        said(&all[1]).contains("not from the person"),
+        "{}",
+        said(&all[1])
+    );
+    assert!(
+        said(&all[2]).contains("Now do round 2"),
+        "{}",
+        said(&all[2])
+    );
+    let seen = |name: &str| -> Value {
+        serde_json::from_slice(&std::fs::read(app.project.path().join(name)).unwrap()).unwrap()
+    };
+    let first = seen("stop-0.json");
+    assert_eq!(first["hook_event_name"], "Stop");
+    assert_eq!(first["stop_hook_active"], false);
+    assert_eq!(first["last_assistant_message"], "A round is done.");
+    assert_eq!(seen("stop-1.json")["stop_hook_active"], true);
+    assert_eq!(seen("stop-2.json")["stop_hook_active"], true);
+    // A finished turn, not a failed one: the chat ends on a reply.
+    let thread = call(
+        app.data.path(),
+        "get_thread",
+        json!({"threadId": app.thread}),
+    );
+    assert_eq!(thread["running"], false, "{thread}");
+    app.serving.abort();
+}
+
+/// Exit code 2 refuses too, with stderr as what to do; a hook that merely fails doesn't.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_stop_hook_refuses_by_exit_code_and_a_failing_one_does_not() {
+    let hooks = json!({"Stop": [{"hooks": [{"type": "command",
+        "command": "[ -f second ] && exit 0; touch second; echo 'run the tests' >&2; exit 2"}]}]});
+    let app = crate::app(hooks, &[], |_| reply("Done.")).await;
+    run(&app, "go").await;
+    let all = bodies(&app.llm).await;
+    assert_eq!(all.len(), 2);
+    assert!(all[1].to_string().contains("run the tests"));
+    app.serving.abort();
+    let hooks = json!({"Stop": [{"hooks": [{"type": "command", "command": "exit 7"}]}]});
+    let app = crate::app(hooks, &[], |_| reply("Done.")).await;
+    run(&app, "go").await;
+    assert_eq!(bodies(&app.llm).await.len(), 1);
+    app.serving.abort();
+}
+
+/// A hook that never lets go ends at the run's turn limit, and the person's Stop ends it sooner.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_stop_hook_that_never_lets_go_is_bounded_and_stoppable() {
+    let hooks = json!({"Stop": [{"hooks": [{"type": "command",
+        "command": "echo '{\"decision\":\"block\",\"reason\":\"Again\"}'"}]}]});
+    let app = crate::app(hooks.clone(), &[], |_| reply("Done.")).await;
+    std::fs::create_dir_all(app.project.path().join(".themis")).unwrap();
+    std::fs::write(
+        app.project.path().join(".themis/config.jsonc"),
+        r#"{"total_turns": 5}"#,
+    )
+    .unwrap();
+    run(&app, "go").await;
+    assert_eq!(bodies(&app.llm).await.len(), 5, "the limit bounds it");
+    app.serving.abort();
+    // The person's Stop.
+    let app = crate::app(hooks, &[], |_| {
+        reply("Done.").set_delay(Duration::from_millis(50))
+    })
+    .await;
+    let (data, thread) = (app.data.path().to_owned(), app.thread.clone());
+    {
+        let (data, thread) = (data.clone(), thread.clone());
+        tokio::task::spawn_blocking(move || {
+            call(
+                &data,
+                "set_thread_approval_mode",
+                json!({"threadId": thread, "mode": "yolo"}),
+            );
+            call(
+                &data,
+                "send_message",
+                json!({"threadId": thread, "text": "go"}),
+            );
+        })
+        .await
+        .unwrap();
+    }
+    until_async("the loop never started", || async {
+        bodies(&app.llm).await.len() >= 3
+    })
+    .await;
+    tokio::task::spawn_blocking(move || {
+        call(&data, "stop_thread", json!({"threadId": thread}));
+        until("the stop never took", || {
+            call(&data, "get_thread", json!({"threadId": thread}))["running"] != true
+        });
+    })
+    .await
+    .unwrap();
+    let before_stop = bodies(&app.llm).await.len();
+    tokio::time::sleep(Duration::from_millis(400)).await;
+    assert_eq!(
+        bodies(&app.llm).await.len(),
+        before_stop,
+        "it went on after Stop"
+    );
+    app.serving.abort();
 }
 
 #[tokio::test(flavor = "multi_thread")]

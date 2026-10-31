@@ -261,6 +261,7 @@ pub const HOOK_CONTEXT_NOTE: &str = include_str!("../builtins/prompts/hook-conte
 pub const HOOK_BLOCKED: &str = include_str!("../builtins/prompts/hook-blocked.md");
 pub const HOOK_BLOCK_REASON_NOTE: &str =
     include_str!("../builtins/prompts/hook-block-reason-note.md");
+pub const HOOK_STOP_CONTINUE: &str = include_str!("../builtins/prompts/hook-stop-continue.md");
 /// Sent once before a run that read two or more steered messages ends, listing them.
 pub const RUNTIME_STEERS_CHECK: &str = include_str!("../builtins/prompts/runtime-steers-check.md");
 /// Error for a call left out of a batch too large for the context; `{{calls}}`, `{{runnable}}`.

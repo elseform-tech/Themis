@@ -656,6 +656,7 @@ async fn run_task_with_evidence_inner(
     // when a reply with no tool call does not read as the end of the turn.
     let mut used_tools = false;
     let mut turn_end_guard = turn_end::TurnEndGuard::default();
+    let mut stop_hook_rounds = 0usize;
     // The reply just sent back by that guard, which the next reply must not show again.
     let mut sent_back: Option<String> = None;
     // What the run already told the user before a runtime check or note sent it back
@@ -1153,6 +1154,42 @@ async fn run_task_with_evidence_inner(
                     content: note.to_owned(),
                 });
                 continue;
+            }
+            // The turn would end here. A `Stop` hook may ask it to go on, as a loop plugin does;
+            // each round is a request like any other, so the turn limit and Stop bound it.
+            if turn < policy.total_turns && !stopped.load(Ordering::SeqCst) {
+                let reply = text.clone().unwrap_or_default();
+                let refused =
+                    crate::plugins::hooks::stop_refused(&reply, stop_hook_rounds > 0, &events)
+                        .await;
+                if let Some(keep_going) = refused {
+                    stop_hook_rounds += 1;
+                    crate::context_metrics::activity("stop_hook_rounds");
+                    crate::diagnostics::emit(
+                        "hook",
+                        "stop_kept_going",
+                        "info",
+                        serde_json::json!({"hook":keep_going.hook,"rounds":stop_hook_rounds,"request":turn}),
+                    );
+                    answered = joined(&answered, &reply);
+                    if !reply.trim().is_empty() {
+                        events
+                            .send(RunEvent::AssistantText("\n\n".into()))
+                            .await
+                            .ok();
+                    }
+                    messages.push(ChatMessage {
+                        role: ChatRole::Assistant,
+                        message_type: MessageType::Text,
+                        content: reply,
+                    });
+                    messages.push(ChatMessage {
+                        role: ChatRole::User,
+                        message_type: MessageType::Text,
+                        content: keep_going.note(),
+                    });
+                    continue;
+                }
             }
             let result = joined(&answered, &text.unwrap_or_default());
             emit(RunEvent::Finished {
