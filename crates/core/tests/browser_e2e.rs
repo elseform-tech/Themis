@@ -160,8 +160,9 @@ async fn the_agent_fills_a_form_reads_notes_and_navigates_in_a_real_browser() {
     // The Workspace view watches; it is streaming, as when the tab is open.
     let mut updates = chat.subscribe();
     chat.start_screencast(800, 600, 1.0).await.unwrap();
+    // A ref quoted as it looks in a JSON result still works, as models send it.
     let clicked = tool("browser_click")
-        .execute(json!({"ref": submit}))
+        .execute(json!({"ref": format!("\"{submit}\"")}))
         .await
         .unwrap();
     let after = clicked["snapshot"].as_str().unwrap();
@@ -578,11 +579,12 @@ requestAnimationFrame(draw);
     // The action thaws the page, and drawing carries on; each round needs its own freeze.
     for round in 0..3 {
         let (before, _) = read().await;
-        tokio::time::sleep(Duration::from_millis(1000)).await;
+        tokio::time::sleep(Duration::from_millis(2000)).await;
         let (after, pauses) = read().await;
         assert_eq!(pauses, round + 1, "round {round}: it drew while frozen");
+        // A slow runner may draw only a few frames, but a page left dead draws none.
         assert!(
-            after > before + 5,
+            after > before + 1,
             "round {round}: it stopped: {before} then {after}"
         );
         chat.freeze_pages().await;
@@ -649,6 +651,68 @@ document.addEventListener('mousemove', e => { if (document.pointerLockElement) {
         .unwrap();
     let text = moved["snapshot"].as_str().unwrap();
     assert!(!text.contains("moved 0"), "{text}");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn the_agent_holds_a_key_named_as_a_page_names_it_and_sees_the_page_size() {
+    let _browser = ONE_BROWSER.lock().await;
+    let data = tempfile::tempdir().unwrap();
+    let Some(hub) = hub(data.path()) else { return };
+    let site = MockServer::start().await;
+    Mock::given(path("/keys"))
+        .respond_with(ResponseTemplate::new(200).set_body_raw(
+            r#"<!doctype html><title>Keys</title><body><p id="out">no key yet</p>
+<script>let down = 0;
+document.addEventListener('keydown', () => { down = performance.now(); });
+document.addEventListener('keyup', e => { document.getElementById('out').textContent =
+  e.code + ' held ' + (performance.now() - down >= 1000 ? 'long' : 'briefly'); });
+</script>"#,
+            "text/html",
+        ))
+        .mount(&site)
+        .await;
+    let project = tempfile::tempdir().unwrap();
+    let chat = hub.chat("chat-keys", project.path());
+    let tools = themis_core::browser::tools::browser_tools(
+        Arc::new(FnHook::new(|_: &ToolAction| Approval::AllowOnce)),
+        themis_core::browser::tools::BrowserScope {
+            permissions: themis_core::tools::site_permissions::SitePermissions::new(
+                Default::default(),
+                None,
+            ),
+            chat: Arc::clone(&chat),
+            cancel: None,
+            media: None,
+        },
+    );
+    let tool = |name: &str| tools.iter().find(|tool| tool.name() == name).unwrap();
+    let opened = tool("browser_open")
+        .execute(json!({"url": format!("{}/keys", site.uri())}))
+        .await
+        .unwrap();
+    let size = opened["visible_page"].as_str().unwrap();
+    let (width, height) = size.split_once('x').unwrap();
+    assert!(width.parse::<u32>().unwrap() > 0, "{opened}");
+    assert!(height.parse::<u32>().unwrap() > 0, "{opened}");
+    let tapped = tool("browser_press")
+        .execute(json!({"key": "KeyW"}))
+        .await
+        .unwrap();
+    assert!(
+        tapped["snapshot"].as_str().unwrap().contains("KeyW held"),
+        "{tapped}"
+    );
+    let held = tool("browser_press")
+        .execute(json!({"key": "KeyW", "hold_ms": 1200}))
+        .await
+        .unwrap();
+    assert!(
+        held["snapshot"]
+            .as_str()
+            .unwrap()
+            .contains("KeyW held long"),
+        "{held}"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread")]

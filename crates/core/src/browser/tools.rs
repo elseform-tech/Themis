@@ -343,7 +343,8 @@ struct BrowserClick {
 impl ToolRuntime for BrowserClick {
     async fn execute(&self, args: Value) -> Result<Value, ToolCallError> {
         let args: ClickArgs = parse_tool_args("browser_click", args)?;
-        let reference = args.reference.trim().to_owned();
+        // Models sometimes quote a ref, as they saw it in a JSON result.
+        let reference = args.reference.trim().trim_matches('"').to_owned();
         let point = match (args.x, args.y) {
             (None, None) if reference.is_empty() => {
                 return Err(tool_error(
@@ -492,18 +493,25 @@ impl ToolRuntime for BrowserSelect {
     }
 }
 
+const MAX_KEY_HOLD_MS: u64 = 5000;
+
 /// Arguments for `browser_press`.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, ToolInput)]
 pub struct PressArgs {
     #[input(
-        description = "Key name: Enter, Escape, Tab, ArrowDown, Backspace, PageDown, or a shortcut like Control+a"
+        description = "Key name: Enter, Escape, Tab, ArrowDown, Backspace, PageDown, a letter or digit like w or 1, or a shortcut like Control+a"
     )]
     pub key: String,
+    #[serde(default)]
+    #[input(
+        description = "Milliseconds to keep the key down, up to 5000, to move in a game; omit for a plain press"
+    )]
+    pub hold_ms: Option<u64>,
 }
 
 #[tool(
     name = "browser_press",
-    description = "Press a key in the focused element of the current page (Enter, Escape, Tab, arrows, or shortcuts like Control+a). Returns a fresh snapshot.",
+    description = "Press a key in the focused element of the current page (Enter, Escape, Tab, arrows, letters, or shortcuts like Control+a), or hold it with hold_ms. Returns a fresh snapshot.",
     input = PressArgs,
 )]
 struct BrowserPress {
@@ -515,6 +523,7 @@ impl ToolRuntime for BrowserPress {
     async fn execute(&self, args: Value) -> Result<Value, ToolCallError> {
         let args: PressArgs = parse_tool_args("browser_press", args)?;
         let key = args.key.trim().to_owned();
+        let hold = std::time::Duration::from_millis(args.hold_ms.unwrap_or(0).min(MAX_KEY_HOLD_MS));
         self.base
             .act(
                 "browser_press",
@@ -522,7 +531,7 @@ impl ToolRuntime for BrowserPress {
                 None,
                 format!("browser_press {key}"),
                 format!("pressing {key}"),
-                |chat| async move { chat.press(&key).await },
+                |chat| async move { chat.press(&key, hold).await },
             )
             .await
     }
@@ -577,7 +586,7 @@ pub struct MoveArgs {
 
 #[tool(
     name = "browser_move",
-    description = "Move the mouse to a point of the visible page without clicking: to aim in a game, where the view turns with the distance moved, or to open a hover menu.",
+    description = "Move the mouse to a point of the visible page without clicking: to aim in a game, where the view turns with the distance moved, or to open a hover menu. A snapshot cannot show what a canvas draws: read where things are with browser_devtools, then act here and with browser_click, since only real input tests the page.",
     input = MoveArgs,
 )]
 struct BrowserMove {
