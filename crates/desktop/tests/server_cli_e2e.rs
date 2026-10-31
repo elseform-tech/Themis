@@ -348,7 +348,7 @@ async fn streamed_cli_followup_uses_persisted_context_and_skills() {
         let project = tempfile::tempdir().unwrap();
         let data = tempfile::tempdir().unwrap();
         let state = AppState::new_for_test(data.path().join("settings.json"));
-        let provider = MockServer::start().await;
+        let provider = MockServer::builder().start().await;
         Mock::given(method("POST"))
             .and(path(endpoint))
             .respond_with(ResponseTemplate::new(200).set_body_json(response))
@@ -672,7 +672,7 @@ async fn cli_preserves_incomplete_handoff_and_exits_nonzero() {
     use std::sync::atomic::{AtomicUsize, Ordering};
     use wiremock::matchers::{method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
-    let provider = MockServer::start().await;
+    let provider = MockServer::builder().start().await;
     let calls = AtomicUsize::new(0);
     Mock::given(method("POST"))
         .and(path("/chat/completions"))
@@ -910,7 +910,7 @@ async fn cli_stop_releases_stalled_compaction_and_restores_chat() {
         r#"{"schema_version":1,"context_token_budget":12000}"#,
     )
     .unwrap();
-    let provider = MockServer::start().await;
+    let provider = MockServer::builder().start().await;
     Mock::given(method("POST"))
         .respond_with(ResponseTemplate::new(200).set_delay(Duration::from_secs(30)).set_body_json(json!({"choices":[{"message":{"role":"assistant","content":"Late checkpoint"},"finish_reason":"stop"}]})))
         .mount(&provider).await;

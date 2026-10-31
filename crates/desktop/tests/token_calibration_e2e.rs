@@ -40,7 +40,7 @@ async fn cli_run_reports_calibration_and_recovers_from_one_context_overflow() {
     let (_repo_dir, root_path) = common::init_repo();
     let data_dir = tempfile::tempdir().unwrap();
     let state = AppState::new_for_test(data_dir.path().join("settings.json"));
-    let provider = MockServer::start().await;
+    let provider = MockServer::builder().start().await;
     let ordinary = Arc::new(AtomicUsize::new(0));
     let seen = ordinary.clone();
     Mock::given(method("POST"))

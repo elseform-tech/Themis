@@ -888,7 +888,7 @@ mod key_check_tests {
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
     async fn go_answering(status: u16) -> MockServer {
-        let server = MockServer::start().await;
+        let server = MockServer::builder().start().await;
         Mock::given(method("POST"))
             .and(path("/chat/completions"))
             .and(header("authorization", "Bearer sk-test"))

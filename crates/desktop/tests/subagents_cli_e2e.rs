@@ -129,7 +129,7 @@ async fn app(
     project_config: Option<&str>,
     respond: impl Fn(&Value) -> ResponseTemplate + Send + Sync + 'static,
 ) -> App {
-    let llm = MockServer::start().await;
+    let llm = MockServer::builder().start().await;
     Mock::given(method("POST"))
         .respond_with(move |request: &Request| respond(&request.body_json().unwrap_or(Value::Null)))
         .mount(&llm)
@@ -1380,7 +1380,7 @@ async fn a_project_plugins_subagent_is_kept_in_the_project_and_runs() {
 
 /// An MCP server with one tool, `lookup`.
 async fn lookup_server() -> MockServer {
-    let mcp = MockServer::start().await;
+    let mcp = MockServer::builder().start().await;
     Mock::given(method("POST"))
         .respond_with(|request: &Request| {
             let body: Value = serde_json::from_slice(&request.body).unwrap();

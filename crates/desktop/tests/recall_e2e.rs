@@ -80,7 +80,7 @@ async fn cli_recall_returns_attachment_original_coordinates_without_approval() {
     );
     std::fs::write(&source, &body).unwrap();
 
-    let provider = MockServer::start().await;
+    let provider = MockServer::builder().start().await;
     let requests_seen = Arc::new(std::sync::Mutex::new(Vec::<Value>::new()));
     let sink = requests_seen.clone();
     Mock::given(method("POST"))
@@ -213,7 +213,7 @@ async fn cli_denied_read_file_withdraws_recall_and_the_prompt_falls_back() {
         r#"{"approval":{"rules":[{"tool":"read_file","action":"deny"}]}}"#,
     )
     .unwrap();
-    let provider = MockServer::start().await;
+    let provider = MockServer::builder().start().await;
     let seen = Arc::new(std::sync::Mutex::new(Vec::<Value>::new()));
     let sink = seen.clone();
     Mock::given(method("POST"))

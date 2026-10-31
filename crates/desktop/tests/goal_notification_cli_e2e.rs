@@ -39,7 +39,7 @@ fn reply(text: &str) -> ResponseTemplate {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_reached_goal_notifies_once_and_attempts_log_metadata_only() {
-    let llm = MockServer::start().await;
+    let llm = MockServer::builder().start().await;
     Mock::given(method("POST"))
         .respond_with(|request: &Request| {
             let check = request.body_json::<Value>().ok().is_some_and(|body| {

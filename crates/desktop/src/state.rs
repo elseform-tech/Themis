@@ -1513,7 +1513,7 @@ mod tests {
                 .set_secret("go".into(), "synthetic-test-key".into())
                 .await
                 .unwrap();
-            let server = MockServer::start().await;
+            let server = MockServer::builder().start().await;
             Mock::given(method("GET"))
                 .and(path("/models"))
                 .respond_with(ResponseTemplate::new(503))
@@ -1565,7 +1565,7 @@ mod tests {
             .set_secret("go".into(), "synthetic-test-key".into())
             .await
             .unwrap();
-        let server = MockServer::start().await;
+        let server = MockServer::builder().start().await;
         Mock::given(method("GET"))
             .and(path("/models"))
             .respond_with(ResponseTemplate::new(503).set_delay(std::time::Duration::from_secs(30)))
@@ -1619,7 +1619,7 @@ mod tests {
             .set_secret("go".into(), "synthetic-test-key".into())
             .await
             .unwrap();
-        let server = MockServer::start().await;
+        let server = MockServer::builder().start().await;
         state.set_go_base_url_override(Some(server.uri()));
         let thread = state
             .create_thread(

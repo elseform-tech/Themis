@@ -132,7 +132,7 @@ async fn marketplace_import_keeps_resources_and_disables_executable_components()
 
 async fn mcp_with_instructions(instructions: Option<serde_json::Value>) -> wiremock::MockServer {
     use wiremock::{matchers::body_partial_json, Mock, MockServer, ResponseTemplate};
-    let server = MockServer::start().await;
+    let server = MockServer::builder().start().await;
     let mut result = json!({"protocolVersion":"2025-03-26","capabilities":{},"serverInfo":{"name":"fixture","version":"1"}});
     if let Some(instructions) = instructions {
         result["instructions"] = instructions;

@@ -46,7 +46,7 @@ async fn chat_with_prompt_hook(
     String,
     tokio::task::JoinHandle<()>,
 ) {
-    let llm = MockServer::start().await;
+    let llm = MockServer::builder().start().await;
     Mock::given(method("POST"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
             "choices": [{"message": {"role": "assistant", "content": "Done."}, "finish_reason": "stop"}]

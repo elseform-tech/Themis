@@ -64,7 +64,7 @@ async fn cli_run_drives_the_browser_and_the_workspace_commands_see_it() {
         eprintln!("skipping: no Chromium browser installed");
         return;
     }
-    let site = MockServer::start().await;
+    let site = MockServer::builder().start().await;
     let port = site.address().port();
     Mock::given(path("/app"))
         .respond_with(ResponseTemplate::new(200).set_body_raw(
@@ -73,7 +73,7 @@ async fn cli_run_drives_the_browser_and_the_workspace_commands_see_it() {
         ))
         .mount(&site)
         .await;
-    let llm = MockServer::start().await;
+    let llm = MockServer::builder().start().await;
     Mock::given(method("POST"))
         .respond_with(move |request: &Request| {
             let body: Value = request.body_json().unwrap_or(Value::Null);

@@ -113,7 +113,7 @@ async fn run_turn<F>(answer: F) -> Run
 where
     F: Fn(usize) -> ResponseTemplate + Send + Sync + 'static,
 {
-    let llm = MockServer::start().await;
+    let llm = MockServer::builder().start().await;
     let served = Arc::new(AtomicUsize::new(0));
     Mock::given(method("POST"))
         .respond_with(move |_: &Request| answer(served.fetch_add(1, Ordering::SeqCst)))

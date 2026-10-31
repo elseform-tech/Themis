@@ -122,7 +122,7 @@ async fn app(
     setup: Setup<'_>,
     respond: impl Fn(&Value) -> ResponseTemplate + Send + Sync + 'static,
 ) -> App {
-    let llm = MockServer::start().await;
+    let llm = MockServer::builder().start().await;
     Mock::given(method("POST"))
         .respond_with(move |request: &Request| respond(&request.body_json().unwrap_or(Value::Null)))
         .mount(&llm)
@@ -319,7 +319,7 @@ async fn child_request(app: &App) -> (Vec<String>, String) {
 }
 
 async fn web_page() -> (MockServer, String) {
-    let web = MockServer::start().await;
+    let web = MockServer::builder().start().await;
     Mock::given(path("/doc"))
         .respond_with(
             ResponseTemplate::new(200)

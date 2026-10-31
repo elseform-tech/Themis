@@ -31,7 +31,7 @@ async fn sigterm_under_connection_churn_stops_the_server_and_its_background_task
     let (_repo, project) = common::init_repo();
     let data = tempfile::tempdir().unwrap();
     let state = AppState::new_for_test(data.path().join("settings.json"));
-    let provider = MockServer::start().await;
+    let provider = MockServer::builder().start().await;
     Mock::given(method("POST"))
         .and(path("/chat/completions"))
         .respond_with(|request: &Request| {

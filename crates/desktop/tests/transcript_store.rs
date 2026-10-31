@@ -347,7 +347,7 @@ fn checkpoint_replaces_old_model_context_but_preserves_full_history() {
 
 #[tokio::test]
 async fn followup_after_restart_receives_prior_conversation() {
-    let server = MockServer::start().await;
+    let server = MockServer::builder().start().await;
     Mock::given(method("POST")).and(path("/chat/completions"))
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
             "choices": [{"message": {"role": "assistant", "content": "Noted"}, "finish_reason": "stop"}]

@@ -92,7 +92,7 @@ async fn plain_cli_prompt_loads_catalog_mcp_hooks_and_refreshes_next_turn() {
     let data = tempfile::tempdir().unwrap();
     let project = tempfile::tempdir().unwrap();
     let state = AppState::new_for_test(data.path().join("settings.json"));
-    let llm = MockServer::start().await;
+    let llm = MockServer::builder().start().await;
     Mock::given(method("POST")).respond_with(ResponseTemplate::new(200).set_body_json(json!({"choices":[{"message":{"role":"assistant","content":"done"},"finish_reason":"stop"}]}))).mount(&llm).await;
     state
         .set_secret("go".into(), "test-key".into())
@@ -100,7 +100,7 @@ async fn plain_cli_prompt_loads_catalog_mcp_hooks_and_refreshes_next_turn() {
         .unwrap();
     state.set_go_base_url_override(Some(llm.uri()));
     state.create_skill(serde_json::from_value(json!({"name":"Global legacy","description":"GLOBAL_LEGACY_DESCRIPTION","instructions":"LEGACY_BODY_STAYS_LAZY","allowed_tools":[],"scripts":[]})).unwrap()).await.unwrap();
-    let mcp = MockServer::start().await;
+    let mcp = MockServer::builder().start().await;
     Mock::given(method("POST")).respond_with(|request: &Request| {
         let body: Value = serde_json::from_slice(&request.body).unwrap();
         let result = match body["method"].as_str().unwrap() {
@@ -274,7 +274,7 @@ async fn agent_can_disable_broken_enabled_mcp_without_losing_chat() {
     let data = tempfile::tempdir().unwrap();
     let project = tempfile::tempdir().unwrap();
     let state = AppState::new_for_test(data.path().join("settings.json"));
-    let provider = MockServer::start().await;
+    let provider = MockServer::builder().start().await;
     Mock::given(method("POST")).respond_with(|request: &Request| {
         let body: Value = serde_json::from_slice(&request.body).unwrap();
         let handled = body["messages"].as_array().unwrap().iter().any(|message| message["role"] == "tool");
@@ -411,7 +411,7 @@ async fn agent_marketplace_management_dispatches_approvals_and_refreshes_catalog
     std::fs::write(marketplace.path().join("bundle/skills/review/SKILL.md"),"---\nname: review\ndescription: UNIQUE_INSTALLED_REVIEW_METADATA\n---\nPRIVATE_INSTALLED_REVIEW_BODY\n").unwrap();
     let state = AppState::new_for_test(data.path().join("settings.json"));
     state.plugin_action(json!({"action":"add_marketplace","name":"fixture","source":marketplace.path(),"projectRoot":project.path()})).await.unwrap();
-    let provider = MockServer::start().await;
+    let provider = MockServer::builder().start().await;
     Mock::given(method("POST")).respond_with(|request: &Request| {
         let body: Value = serde_json::from_slice(&request.body).unwrap();
         let messages = body["messages"].as_array().unwrap();
@@ -521,7 +521,7 @@ async fn mcp_startup_is_background_isolated_and_reuses_connections() {
     use wiremock::{matchers::method, Mock, MockServer, Request, ResponseTemplate};
     let data = tempfile::tempdir().unwrap();
     let project = tempfile::tempdir().unwrap();
-    let mcp = MockServer::start().await;
+    let mcp = MockServer::builder().start().await;
     Mock::given(method("POST")).respond_with(|request: &Request| {
         let body: Value = serde_json::from_slice(&request.body).unwrap();
         let result = match body["method"].as_str().unwrap() {

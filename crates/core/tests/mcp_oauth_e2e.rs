@@ -44,7 +44,7 @@ fn form(request: &Request) -> HashMap<String, String> {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn signing_in_to_an_oauth_mcp_server_then_connecting_and_refreshing() {
-    let server = MockServer::start().await;
+    let server = MockServer::builder().start().await;
     let base = server.uri();
     let resource = format!("{base}/mcp");
     let store = Arc::new(Memory::default());

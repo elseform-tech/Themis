@@ -81,7 +81,7 @@ async fn cli_browser_permissions_block_in_every_mode_and_always_allow_is_saved()
         return;
     }
     // `.invalid` never resolves, so no test reaches the network.
-    let llm = MockServer::start().await;
+    let llm = MockServer::builder().start().await;
     Mock::given(method("POST"))
         .respond_with(|request: &Request| {
             let body: Value = request.body_json().unwrap_or(Value::Null);
@@ -249,7 +249,7 @@ async fn cli_debugging_tools_run_on_a_local_app_and_a_project_can_turn_them_off(
         eprintln!("skipping: no Chromium browser installed");
         return;
     }
-    let site = MockServer::start().await;
+    let site = MockServer::builder().start().await;
     Mock::given(wiremock::matchers::path("/app"))
         .respond_with(ResponseTemplate::new(200).set_body_raw(
             "<!doctype html><title>Local app</title><script>console.warn('slow start')</script><h1>Hi</h1>",
@@ -258,7 +258,7 @@ async fn cli_debugging_tools_run_on_a_local_app_and_a_project_can_turn_them_off(
         .mount(&site)
         .await;
     let page = format!("http://127.0.0.1:{}/app", site.address().port());
-    let llm = MockServer::start().await;
+    let llm = MockServer::builder().start().await;
     Mock::given(method("POST"))
         .respond_with(move |request: &Request| {
             let body: Value = request.body_json().unwrap_or(Value::Null);
@@ -549,7 +549,7 @@ async fn cli_sets_and_checks_the_search_server() {
         "{\n  // my notes\n  \"schema_version\": 1\n}\n",
     )
     .unwrap();
-    let searxng = MockServer::start().await;
+    let searxng = MockServer::builder().start().await;
     Mock::given(method("GET"))
         .and(wiremock::matchers::path("/search"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
@@ -825,7 +825,7 @@ async fn cli_the_built_in_search_server_answers() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn cli_a_remote_mcp_server_that_asks_for_sign_in_says_so() {
-    let mcp = MockServer::start().await;
+    let mcp = MockServer::builder().start().await;
     Mock::given(method("POST"))
         .respond_with(ResponseTemplate::new(401).insert_header("WWW-Authenticate", "Bearer"))
         .mount(&mcp)

@@ -47,7 +47,7 @@ async fn a_configured_provider_lists_its_models_and_answers_a_chat() {
     // test in this file, so no other test reads the environment meanwhile).
     std::env::remove_var("OPENCODE_KEY");
     std::env::remove_var("LOCAL_KEY");
-    let provider = MockServer::start().await;
+    let provider = MockServer::builder().start().await;
     Mock::given(method("GET"))
         .and(path("/v1/models"))
         .and(header("authorization", "Bearer local-test-key"))

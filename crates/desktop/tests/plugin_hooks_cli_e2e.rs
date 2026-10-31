@@ -105,7 +105,7 @@ async fn app_with_folder(
     prepare: impl FnOnce(&Path),
     respond: impl Fn(&Value) -> ResponseTemplate + Send + Sync + 'static,
 ) -> App {
-    let llm = MockServer::start().await;
+    let llm = MockServer::builder().start().await;
     Mock::given(method("POST"))
         .respond_with(move |request: &Request| respond(&request.body_json().unwrap_or(Value::Null)))
         .mount(&llm)
@@ -1513,7 +1513,7 @@ async fn an_async_hook_does_not_hold_the_turn_and_cannot_block() {
 
 /// An MCP server with `run_query` and `other`, answering each call.
 async fn mcp_server() -> MockServer {
-    let mcp = MockServer::start().await;
+    let mcp = MockServer::builder().start().await;
     Mock::given(method("POST"))
         .respond_with(|request: &Request| {
             let body: Value = serde_json::from_slice(&request.body).unwrap();

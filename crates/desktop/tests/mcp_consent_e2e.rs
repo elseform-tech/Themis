@@ -21,7 +21,7 @@ use wiremock::{Mock, MockServer, Request, ResponseTemplate};
 mod common;
 
 async fn mcp_server() -> MockServer {
-    let mcp = MockServer::start().await;
+    let mcp = MockServer::builder().start().await;
     Mock::given(method("POST"))
         .respond_with(|request: &Request| {
             let body: Value = serde_json::from_slice(&request.body).unwrap();
@@ -134,7 +134,7 @@ async fn new_chat(state: &AppState, project: &std::path::Path) -> String {
 
 /// Provider that, on the first round, asks the agent tool to save `spec`.
 async fn agent_saving(spec: Value) -> MockServer {
-    let llm = MockServer::start().await;
+    let llm = MockServer::builder().start().await;
     Mock::given(method("POST"))
         .and(path("/chat/completions"))
         .respond_with(move |request: &Request| {

@@ -136,7 +136,7 @@ async fn a_branch_is_read_without_switching_and_switching_guards_uncommitted_wor
 
 #[tokio::test(flavor = "multi_thread")]
 async fn switching_waits_while_a_chat_is_working_in_that_checkout() {
-    let llm = MockServer::start().await;
+    let llm = MockServer::builder().start().await;
     Mock::given(method("POST"))
         .respond_with(
             ResponseTemplate::new(200)
