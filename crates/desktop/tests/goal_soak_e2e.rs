@@ -68,7 +68,7 @@ fn item_path(item: usize) -> String {
     format!("out/item-{item:02}.md")
 }
 
-/// Filler that makes each turn's answer large enough that the 16k budget fills every
+/// Filler that makes each turn's answer large enough that the 17k budget fills every
 /// few turns.
 fn padding(item: usize) -> String {
     format!("Item {item} notes: the item lists its owner and fields in order; ").repeat(40)
@@ -224,7 +224,7 @@ fn ordinary(body: &&Value) -> bool {
 async fn soak() -> Soak {
     let started = Instant::now();
     // The system prompt lists the user's skills (~/.agents, ~/.codex, ~/.claude), and at
-    // 16k a large personal catalog alone outgrows the budget. An empty home keeps the
+    // 17k a large personal catalog alone outgrows the budget. An empty home keeps the
     // prompt the same on every machine. Every test here sets it to an empty folder, so
     // changing the process environment races with nothing that matters.
     let home = tempfile::tempdir().unwrap();
@@ -254,7 +254,7 @@ async fn soak() -> Soak {
     std::fs::create_dir_all(project.path().join(".themis")).unwrap();
     std::fs::write(
         project.path().join(".themis/config.jsonc"),
-        r#"{"context_token_budget":16000,"recent_messages":4,"total_turns":8}"#,
+        r#"{"context_token_budget":17000,"recent_messages":4,"total_turns":8}"#,
     )
     .unwrap();
     let state = AppState::new_for_test(data.path().join("settings.json"));

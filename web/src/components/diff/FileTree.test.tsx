@@ -4,8 +4,8 @@ import type { DiffFile } from "../../lib/types";
 import { FileTree } from "./FileTree";
 
 const FILES: DiffFile[] = [
-  { path: "src/a.ts", status: "modified", preexisting: false, hunks: [] },
-  { path: "src/b.ts", status: "added", preexisting: true, hunks: [] },
+  { path: "src/a.ts", status: "modified", preexisting: false, added: 0, removed: 0, hunks: [] },
+  { path: "src/b.ts", status: "added", preexisting: true, added: 0, removed: 0, hunks: [] },
 ];
 
 function setup(files: DiffFile[] = FILES) {
@@ -61,7 +61,7 @@ describe("FileTree", () => {
   });
 
   it("groups large change lists by folder and filters them", () => {
-    const many: DiffFile[] = Array.from({ length: 14 }, (_, i) => ({ path: `${i % 2 ? "docs" : "src"}/file-${i}.ts`, status: "modified", preexisting: false, hunks: [] }));
+    const many: DiffFile[] = Array.from({ length: 14 }, (_, i) => ({ path: `${i % 2 ? "docs" : "src"}/file-${i}.ts`, status: "modified", preexisting: false, added: 0, removed: 0, hunks: [] }));
     render(<FileTree files={many} selectedPath={null} onSelect={vi.fn()} />);
     expect(screen.getByRole("button", { name: /src\s*7/ })).toHaveAttribute("aria-expanded", "true");
     expect(screen.queryByRole("checkbox")).toBeNull();

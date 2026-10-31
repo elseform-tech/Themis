@@ -256,6 +256,9 @@ describe("thread lifecycle events", () => {
     expect(s.diffPanelOpen).toBe(true);
     expect(s.workspaceTabRequest?.tab).toBe("browser");
     // The person closes it; later browser steps in the same run leave it closed.
+    s = reducer(s, { type: "ui/diff-panel", open: true, tab: "files", file: "notes/poem.txt" });
+    expect(s.fileFocus?.path).toBe("notes/poem.txt");
+    expect(s.workspaceTabRequest?.tab).toBe("files");
     s = reducer(s, { type: "ui/diff-panel", open: false });
     s = live(s, { kind: "tool_started", tool: "browser_click", summary: "click" });
     expect(s.diffPanelOpen).toBe(false);

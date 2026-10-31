@@ -674,6 +674,7 @@ async fn run_task_with_evidence_inner(
     let mut overflow_retried = false;
     let mut force_compaction = false;
     let mut turn = 0;
+    let mut action_counts = std::collections::HashMap::new();
     while turn < policy.total_turns {
         turn += 1;
         check_stopped(&stopped, &events).await?;
@@ -1082,6 +1083,24 @@ async fn run_task_with_evidence_inner(
         )
         .await?;
         for (call, result) in calls.iter().zip(&mut results) {
+            // Actions on a page change it, so its results never look unchanged: a run that kept
+            // clicking the same spot went unnoticed. These count by the call itself.
+            if is_repeatable_action(&call.function.name) {
+                let times = action_counts
+                    .entry(content_fingerprint(&format!(
+                        "{}{}",
+                        call.function.name, call.function.arguments
+                    )))
+                    .or_insert(0u32);
+                *times += 1;
+                if *times >= REPEATED_ACTION_NOTE_AT {
+                    let note = crate::prompts::fill(
+                        crate::prompts::RUNTIME_REPEATED_ACTION,
+                        &[("times", &times.to_string())],
+                    );
+                    annotate_result(result, "loop_warning", &note);
+                }
+            }
             // ponytail: exact observations only; semantic progress needs a separate audit.
             if matches!(
                 call.function.name.as_str(),
@@ -1930,6 +1949,17 @@ fn progress_line(text: &str) -> bool {
     !text.contains('\n')
         && text.chars().count() < PROGRESS_LINE_CHARS
         && STILL_GOING.iter().any(|word| lower.contains(word))
+}
+
+/// The same action this many times in a run is worth a word: some repeats are fine (shooting).
+const REPEATED_ACTION_NOTE_AT: u32 = 5;
+
+/// Tools that act on a page rather than read something.
+fn is_repeatable_action(name: &str) -> bool {
+    matches!(
+        name,
+        "browser_click" | "browser_move" | "browser_press" | "browser_type" | "browser_scroll"
+    )
 }
 
 const LOOP_WARNING: &str = crate::prompts::RUNTIME_LOOP_WARNING;

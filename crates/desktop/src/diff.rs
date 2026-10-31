@@ -256,6 +256,23 @@ pub fn is_readable_change(root: &Path, relative: &str) -> bool {
 /// Builds an "added" [`DiffFile`] for an untracked file: full content as one
 /// hunk of additions (empty files get no hunks).
 #[must_use]
+/// A file's lines, read in pieces so a very large one costs no memory.
+fn count_lines(path: &Path) -> usize {
+    let Ok(mut file) = std::fs::File::open(path) else {
+        return 0;
+    };
+    let mut buffer = [0u8; 64 * 1024];
+    let (mut lines, mut last) = (0, b'\n');
+    while let Ok(read) = std::io::Read::read(&mut file, &mut buffer) {
+        if read == 0 {
+            break;
+        }
+        lines += buffer[..read].iter().filter(|byte| **byte == b'\n').count();
+        last = buffer[read - 1];
+    }
+    lines + usize::from(last != b'\n')
+}
+
 pub fn untracked_diff_file(root: &Path, relative: &str) -> DiffFile {
     let mut bytes = Vec::new();
     let mut too_large = false;
@@ -299,6 +316,8 @@ pub fn untracked_diff_file(root: &Path, relative: &str) -> DiffFile {
         status: DiffStatus::Added,
         preexisting: false,
         hunks,
+        added: count_lines(&root.join(relative)),
+        removed: 0,
         too_large,
     }
 }
@@ -425,6 +444,14 @@ impl FileBuilder {
         } else {
             (DiffStatus::Modified, self.new_path.clone(), None)
         };
+        let count = |kind: DiffLineKind| {
+            self.hunks
+                .iter()
+                .flat_map(|hunk| &hunk.lines)
+                .filter(|line| line.kind == kind)
+                .count()
+        };
+        let (added, removed) = (count(DiffLineKind::Add), count(DiffLineKind::Del));
         let (hunks, too_large) = first_lines(self.hunks, MAX_SHOWN_DIFF_LINES);
         DiffFile {
             path,
@@ -432,6 +459,8 @@ impl FileBuilder {
             status,
             preexisting: false,
             hunks,
+            added,
+            removed,
             too_large,
         }
     }
@@ -769,6 +798,27 @@ index 5555555..6666666 100644
 
         assert_eq!(files.len(), 1);
         assert_eq!(files[0].path, "café.txt");
+    }
+
+    #[test]
+    fn totals_count_the_whole_change_however_little_is_listed() {
+        let dir = tempfile::tempdir().unwrap();
+        let text: String = (0..25_000).map(|n| format!("{n}\n")).collect();
+        std::fs::write(dir.path().join("big.js"), &text).unwrap();
+        let file = untracked_diff_file(dir.path(), "big.js");
+        assert!(file.too_large);
+        assert_eq!((file.added, file.removed), (25_000, 0));
+        std::fs::write(dir.path().join("open.js"), "a\nb").unwrap();
+        assert_eq!(untracked_diff_file(dir.path(), "open.js").added, 2);
+
+        let mut diff =
+            String::from("diff --git a/a b/a\n--- a/a\n+++ b/a\n@@ -1 +1,3000 @@\n-old\n");
+        for line in 0..3000 {
+            diff.push_str(&format!("+{line}\n"));
+        }
+        let parsed = parse_diff(&diff);
+        assert!(parsed[0].too_large);
+        assert_eq!((parsed[0].added, parsed[0].removed), (3000, 1));
     }
 
     #[test]

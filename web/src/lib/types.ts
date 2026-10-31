@@ -628,6 +628,9 @@ export interface DiffFile {
   /** True when the file already differed from HEAD before the thread started. */
   preexisting: boolean;
   hunks: DiffHunk[];
+  /** Lines added and removed in the whole change, however few `hunks` hold. */
+  added: number;
+  removed: number;
   /** Too large to show line by line (a dataset, a generated file); listed without hunks. */
   too_large?: boolean;
 }

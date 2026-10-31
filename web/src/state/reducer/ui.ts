@@ -26,6 +26,7 @@ export function reduceUiActions(
         ...state,
         diffPanelOpen: action.open,
         ...(action.focus ? { diffFocus: { path: action.focus, at: Date.now() } } : {}),
+        ...(action.file ? { fileFocus: { path: action.file, at: Date.now() } } : {}),
         ...(action.open && action.tab ? { workspaceTabRequest: { tab: action.tab, at: Date.now() } } : {}),
       };
     case "ui/tab-request-consumed":

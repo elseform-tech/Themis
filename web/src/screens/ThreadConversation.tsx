@@ -9,7 +9,7 @@ import { ANSWER_MARKER, type ChangedFile, type Question } from "../lib/types";
 import { QuestionNote, useNowAt } from "./QuestionBox";
 import { placeQuestion, questionOnComposer, QUESTION_OPEN_MS, usePlacements } from "../state/composerSlot";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ResponseBody, ResponseLinks } from "../components/ResponseBody";
+import { ResponseBody, ResponseFiles, ResponseLinks } from "../components/ResponseBody";
 import "./GoalBar.css";
 import type { ChatMessage, ToolTraceEntry } from "../state/reducer";
 import { readSession, writeSession } from "../state/session";
@@ -58,12 +58,19 @@ export function ThreadConversation({
   const [viewing, setViewing] = useState<number | null>(null);
   const openMedia = useCallback((path: string) => { const index = media.findIndex(file => file.path === path); if (index >= 0) setViewing(index); }, [media]);
   const gallery = useMemo(() => ({ threadId, items: media, open: openMedia }), [threadId, media, openMedia]);
-  const { dispatch } = useApp();
+  const { state: { diffs }, dispatch } = useApp();
   // Links in replies open in this chat's browser, shown in the Workspace Browser tab.
   const openLink = useCallback((url: string) => {
     dispatch({ type: "ui/diff-panel", open: true, tab: "browser" });
     browserOpenUrl(threadId, url).catch(error => toast(dispatch, `Could not open the link: ${describeError(error)}`, "danger"));
   }, [dispatch, threadId]);
+  // Files named in replies open in Workspace: as a diff when this chat changed them.
+  const openFile = useCallback((named: string) => {
+    const root = project?.root ?? "";
+    const path = root && named.startsWith(`${root}/`) ? named.slice(root.length + 1) : named.replace(/^\.\//, "");
+    const changed = (diffs[threadId]?.files ?? []).some(file => file.path === path);
+    dispatch(changed ? { type: "ui/diff-panel", open: true, focus: path } : { type: "ui/diff-panel", open: true, tab: "files", file: path });
+  }, [dispatch, threadId, project?.root, diffs]);
   const elapsed = Math.max(0, Math.floor((now - (runStartedAt ?? now)) / 1000));
 
   useEffect(() => {
@@ -86,6 +93,7 @@ export function ThreadConversation({
   return (
     <MediaGallery.Provider value={gallery}>
     <ResponseLinks.Provider value={openLink}>
+    <ResponseFiles.Provider value={openFile}>
     <div
       ref={scrollRef}
       className="themis-thread-stream"
@@ -135,6 +143,7 @@ export function ThreadConversation({
     </div>
     {overview && <OverviewBox threadId={threadId} overview={overview} onOpenMedia={openMedia} />}
     {viewing !== null && media[viewing] && <MediaViewer threadId={threadId} items={media} index={viewing} onIndex={setViewing} onClose={() => setViewing(null)} />}
+    </ResponseFiles.Provider>
     </ResponseLinks.Provider>
     </MediaGallery.Provider>
   );
@@ -185,12 +194,11 @@ function ConversationRow({
 }
 
 /** Consecutive tool calls as one folded row that says what they did ("Read 4 files ·
- *  Ran python3 check.py"); open while one of them runs. */
+ *  Ran python3 check.py"). It stays folded during a run, so the chat doesn't jump with each call. */
 function ToolGroup({ messages, activeRunId, skills, plugins }: { messages: ChatMessage[]; activeRunId: string | undefined; skills: PromptSkill[]; plugins: PromptPlugin[] }) {
-  const running = activeRunId !== undefined && messages.some(message => message.tool?.ok === undefined);
   const failed = messages.filter(message => message.tool?.ok === false).length;
   return (
-    <details className="themis-tool-group" open={running || undefined}>
+    <details className="themis-tool-group">
       <summary>
         <span className="themis-tool-chevron" aria-hidden="true">›</span>
         <span title={`${messages.length} tool call${messages.length === 1 ? "" : "s"}`}>{describeTools(messages, activeRunId !== undefined)}</span>
