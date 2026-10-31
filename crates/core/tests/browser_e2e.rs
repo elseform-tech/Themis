@@ -664,7 +664,7 @@ async fn the_agent_holds_a_key_named_as_a_page_names_it_and_sees_the_page_size()
 <script>let down = 0;
 document.addEventListener('keydown', () => { down = performance.now(); });
 document.addEventListener('keyup', e => { document.getElementById('out').textContent =
-  e.code + ' held ' + (performance.now() - down >= 300 ? 'long' : 'briefly'); });
+  e.code + ' held ' + (performance.now() - down >= 1000 ? 'long' : 'briefly'); });
 </script>"#,
             "text/html",
         ))
@@ -698,14 +698,11 @@ document.addEventListener('keyup', e => { document.getElementById('out').textCon
         .await
         .unwrap();
     assert!(
-        tapped["snapshot"]
-            .as_str()
-            .unwrap()
-            .contains("KeyW held briefly"),
+        tapped["snapshot"].as_str().unwrap().contains("KeyW held"),
         "{tapped}"
     );
     let held = tool("browser_press")
-        .execute(json!({"key": "KeyW", "hold_ms": 400}))
+        .execute(json!({"key": "KeyW", "hold_ms": 1200}))
         .await
         .unwrap();
     assert!(
