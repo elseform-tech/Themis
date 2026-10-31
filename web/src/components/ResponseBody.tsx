@@ -76,9 +76,14 @@ export function fileNamedIn(code: string): string | null {
   return FILE_EXTENSION.test(path) ? path : null;
 }
 
+const REMARK_PLUGINS = [remarkGfm];
+
 export function ResponseBody({ text, streaming = false, artifacts }: { text: string; streaming?: boolean; /** Files this reply attached: naming one links to it. */ artifacts?: string[] }) {
+  const artifactKey = artifacts?.join("\n");
   const openLink = useContext(ResponseLinks);
   const openFile = useContext(ResponseFiles);
+  // The chat builds this list on every update; an equal one must not count as a change.
+  const attached = useMemo(() => artifactKey?.split("\n"), [artifactKey]);
   const components = useMemo<Components>(() => ({
     pre({ children }) {
       const child = Children.toArray(children)[0];
@@ -93,7 +98,7 @@ export function ResponseBody({ text, streaming = false, artifacts }: { text: str
       if (openLink && /^https?:\/\/\S+$/i.test(text)) {
         return <a href={text} target="_blank" rel="noreferrer noopener" onClick={event => { if (event.metaKey || event.ctrlKey) return; event.preventDefault(); openLink(text); }}><code>{text}</code></a>;
       }
-      const artifact = artifacts?.find(path => path === text || path.split("/").pop() === text);
+      const artifact = attached?.find(path => path === text || path.split("/").pop() === text);
       const file = openFile ? artifact ?? fileNamedIn(text) : null;
       if (file && openFile) return <button type="button" className="themis-code-link" title={`Open ${file}`} onClick={() => openFile(file)}><code>{text}</code></button>;
       return <code>{children}</code>;
@@ -105,6 +110,7 @@ export function ResponseBody({ text, streaming = false, artifacts }: { text: str
     },
     img({ alt, src }) { return <a href={typeof src === "string" ? src : undefined} target="_blank" rel="noreferrer noopener">{alt || "Image"}</a>; },
     table({ children }) { return <div className="themis-response-table"><table>{children}</table></div>; },
-  }), [streaming, openLink, openFile, artifacts]);
-  return <div className="themis-response"><Markdown remarkPlugins={[remarkGfm]} skipHtml components={components}>{text}</Markdown></div>;
+  }), [streaming, openLink, openFile, attached]);
+  // Keeping the element keeps React from parsing a finished reply again each time the chat updates.
+  return useMemo(() => <div className="themis-response"><Markdown remarkPlugins={REMARK_PLUGINS} skipHtml components={components}>{text}</Markdown></div>, [text, components]);
 }

@@ -68,4 +68,17 @@ export function groupConversation(messages: ChatMessage[], running: boolean, run
   return rows;
 }
 
+/** What the composer's up and down keys recall: the person's messages, minus any that failed to send. */
+export function composerHistory(messages: ChatMessage[]): string[] {
+  const failedRuns = new Set<string>();
+  const kept: string[] = [];
+  for (const message of messages) {
+    if (message.runId !== undefined && message.text.startsWith("Send failed:")) failedRuns.add(message.runId);
+  }
+  for (const message of messages) {
+    if (message.role === "user" && (message.runId === undefined || !failedRuns.has(message.runId))) kept.push(message.text);
+  }
+  return kept;
+}
+
 export { toolDisplayName } from "../lib/toolNames";
