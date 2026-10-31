@@ -518,6 +518,7 @@ impl SubagentKit {
             profile,
             mcp,
             web,
+            confined: self.sandbox.is_active(),
             run_id: uuid::Uuid::new_v4().to_string(),
             started: Mutex::new(Instant::now()),
             stop: Arc::new(AtomicBool::new(false)),
@@ -536,7 +537,7 @@ impl SubagentKit {
             name: agent.name.clone(),
             brief: agent.brief.clone(),
             model: agent.model.clone(),
-            confined: self.sandbox.enabled(),
+            confined: agent.confined,
             write_paths: agent.write_paths.clone(),
             connections: agent.mcp.connections.clone(),
             web: !agent.web.tools.is_empty(),
@@ -548,7 +549,7 @@ impl SubagentKit {
             "started",
             "info",
             json!({"thread_id": self.thread_id, "run_id": self.run_id, "subagent_id": agent.id,
-                "child_run_id": agent.run_id, "confined": self.sandbox.enabled(),
+                "child_run_id": agent.run_id, "confined": agent.confined,
                 "write_paths": agent.write_paths.len(),
                 "mcp_tools": agent.mcp.tools.len(),
                 "web_tools": agent.web.tools.len(),
@@ -1291,6 +1292,8 @@ pub(super) struct Subagent {
     pub(super) mcp: McpAccess,
     /// The web tools it may use.
     pub(super) web: WebAccess,
+    /// Whether an OS sandbox really confines its shell: not when off, nor when none can run.
+    pub(super) confined: bool,
     pub(super) run_id: String,
     started: Mutex<Instant>,
     pub(super) stop: Arc<AtomicBool>,
@@ -1598,7 +1601,7 @@ impl AppState {
                             .ended
                             .unwrap_or_else(|| ("running".into(), String::new()));
                         json!({"id": agent.id, "name": agent.name, "brief": agent.brief,
-                            "model": agent.model, "write_paths": agent.write_paths, "connections": agent.mcp.connections, "web": !agent.web.tools.is_empty(), "shell_scopes": agent.shell_scopes(), "profile": agent.profile.as_ref().map(|named| &named.profile.name), "ran_on": progress.ran_on, "status": status, "text": progress.status,
+                            "model": agent.model, "write_paths": agent.write_paths, "connections": agent.mcp.connections, "web": !agent.web.tools.is_empty(), "shell_scopes": agent.shell_scopes(), "confined": agent.confined, "profile": agent.profile.as_ref().map(|named| &named.profile.name), "ran_on": progress.ran_on, "status": status, "text": progress.status,
                             "result": result, "tool_calls": agent.tool_calls.load(Ordering::SeqCst),
                             "seconds": agent.started.lock().unwrap_or_else(|e| e.into_inner()).elapsed().as_secs()})
                     })

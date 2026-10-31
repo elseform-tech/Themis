@@ -1,97 +1,198 @@
 //! A shell held to named commands: a plugin's `Bash(git diff:*)` means those and nothing else.
 //!
-//! It reads commands with the parser deny rules use, but the question is turned around: a deny
-//! rule asks whether a forbidden command might run, this asks whether every command that would
-//! run is named, so whatever can't be read is refused. Only `sh -c` and its kin are seen through;
-//! another wrapper (`env`, `sudo`, `xargs`, `timeout`) must be named itself, since it can change
-//! what a named command means (`env PATH=. git diff`). For the same reason a script's
-//! assignments and redirections are refused, and programs are compared as written, so
-//! `./git diff` is not `git diff`.
+//! It passes only what it can positively confirm; any other form is refused, harmless or not, and
+//! the subagent reports the refusal. Three rounds of review found ways past a list of bad options
+//! per program, because such a list can't be complete, so there are none here.
 //!
-//! Patterns are matched word by word, so a `*` can't reach past one word to find the name it wants
-//! further along (`python3 evil.py check.py` against `python3 *check.py*`). Programs that run code
-//! they are given ([`Runner`]) are held harder: every option must be named by the pattern as a
-//! whole word, however it is bundled, and what they run must be spelled out, so `python3:*`,
-//! `git:*` and `npx *` allow nothing past the bare program. That is an allow-list, unlike the
-//! options in [`escape_options`], which only cover a few well-known programs.
+//! A command passes when all of this holds:
 //!
-//! **What this is not.** It narrows what a call may start; it is not a sandbox. A named program
-//! does what that program does: `python3 check.py` runs whatever `check.py` holds, `npm test` runs
-//! whatever `package.json` says, and a program nobody listed here may have its own way to run
-//! another (`rg --pre`, `gh extension`). The sandbox and the approval rules still apply to all of
-//! it, and they are what contains it.
+//! 1. It is one simple command: direct, or the only command of an `sh -c` script. No chains,
+//!    pipes, substitutions, assignments or redirections to files, and no wrapper (`env`, `sudo`,
+//!    `xargs`, `timeout`), even a named one, since those change what a named command means.
+//! 2. Its words fit a pattern, word by word, with its program as written (`./git` isn't `git`,
+//!    and a pattern can't leave the program open). A `*` stays within its word, except that
+//!    `:*` and a final ` *` or `*` take any further words.
+//! 3. If the program can run others ([`Class`]), every option is named by the pattern or on a
+//!    small allow-list for that subcommand, and what it runs is spelled out.
+//!
+//! **What this does not do.** It narrows what a subagent can start; it is not a security boundary.
+//! A program that runs project code (`npm test`, `pytest`, `make test`, `python3 check.py`) runs
+//! whatever that code does, and a program in none of the classes below does what it does with
+//! whatever words the pattern lets through. The OS sandbox is the wall.
 
 use super::{program_basename, wrapped};
 
-/// Wrapper levels followed before giving up.
-const MAX_DEPTH: usize = 4;
 /// Longest pattern kept, and the most a profile may name.
 pub const MAX_PATTERN_CHARS: usize = 200;
 pub const MAX_PATTERNS: usize = 64;
 
-/// Redirections that write nothing a person would want guarded.
+/// Redirections that write nothing.
 const HARMLESS_REDIRECTIONS: [&str; 3] = ["2>&1", "2>/dev/null", ">/dev/null"];
 
-/// A program that runs code it is given.
+/// Programs whose whole purpose is to run another; none passes, whatever a pattern names.
+const WRAPPERS: [&str; 21] = [
+    "env",
+    "sudo",
+    "doas",
+    "nice",
+    "ionice",
+    "timeout",
+    "gtimeout",
+    "xargs",
+    "parallel",
+    "stdbuf",
+    "caffeinate",
+    "nohup",
+    "setsid",
+    "time",
+    "command",
+    "builtin",
+    "exec",
+    "eval",
+    "busybox",
+    "script",
+    "watch",
+];
+
+/// How a program that can run others is held.
 #[derive(Clone, Copy, PartialEq)]
-enum Runner {
-    /// The first word after its options is a script or a program: a pattern may leave part of a
-    /// name open (`*check.py*`) but not all of it.
+enum Class {
+    /// `python3 check.py`, `sh x.sh`, `awk 'p' f`: options before the first plain word are named;
+    /// a pattern may leave part of that word open (`*check.py*`), not all of it. What follows
+    /// belongs to the script.
     Script,
-    /// The first word after its options chooses what runs (`git status`, `npx tsc`, `make test`):
-    /// the pattern must spell it out.
+    /// `npx tsc`: as above, with the name it fetches and runs spelled out whole.
+    Launcher,
+    /// `git diff`, `make test`, `tar tf`: the first plain word is spelled out whole, and every
+    /// option anywhere is named or on the allow-list for it.
     Subcommand,
+    /// `find`, `rg`: plain words are free; every option is named or on the allow-list.
+    Options,
 }
 
-fn runner(program: &str) -> Option<Runner> {
+fn class_of(program: &str) -> Option<Class> {
     match program {
-        name if name.starts_with("python") || name.starts_with("pypy") => Some(Runner::Script),
+        name if name.starts_with("python") || name.starts_with("pypy") => Some(Class::Script),
         "node" | "nodejs" | "ruby" | "perl" | "php" | "deno" | "bun" | "lua" | "tsx"
         | "ts-node" | "rscript" | "osascript" | "sh" | "bash" | "zsh" | "dash" | "ksh" | "mksh"
-        | "ash" | "fish" | "pwsh" | "powershell" | "awk" | "gawk" | "mawk" | "nawk" | "sed"
-        | "gsed" => Some(Runner::Script),
-        "git" | "npx" | "pnpx" | "bunx" | "uvx" | "uv" | "pipx" | "npm" | "pnpm" | "yarn"
-        | "make" | "gmake" | "cargo" | "go" | "docker" | "podman" | "ssh" | "gh" | "kubectl" => {
-            Some(Runner::Subcommand)
-        }
+        | "ash" | "fish" | "pwsh" | "powershell" | "cmd" | "awk" | "gawk" | "mawk" | "nawk"
+        | "sed" | "gsed" => Some(Class::Script),
+        "npx" | "pnpx" | "bunx" | "uvx" => Some(Class::Launcher),
+        "git" | "npm" | "pnpm" | "yarn" | "make" | "gmake" | "cargo" | "go" | "docker"
+        | "podman" | "ssh" | "scp" | "gh" | "kubectl" | "tar" | "gtar" | "rsync" | "pip"
+        | "pip3" | "pipx" | "uv" | "poetry" | "composer" | "bundle" | "gem" | "rake" | "mvn"
+        | "gradle" => Some(Class::Subcommand),
+        "find" | "gfind" | "fd" | "fdfind" | "rg" | "ag" | "sort" | "vim" | "vi" | "nvim"
+        | "less" | "more" | "man" | "curl" | "wget" => Some(Class::Options),
         _ => None,
     }
 }
 
-/// Options of a few programs that make it run something else, wherever they appear. Not a complete
-/// list and it can't be: see the note at the top.
-fn escape_options(program: &str) -> &'static [&'static str] {
-    match program {
-        "find" => &[
-            "-exec", "-execdir", "-ok", "-okdir", "-delete", "-fprint", "-fprintf", "-fls",
-            "-fprint0",
+/// Options that only choose what is shown, by program and subcommand. Short on purpose: anything
+/// else has to be named by the pattern.
+fn allowed_options(program: &str, subcommand: Option<&str>) -> &'static [&'static str] {
+    const GIT_SHOWING: &[&str] = &[
+        "--stat",
+        "--shortstat",
+        "--numstat",
+        "--name-only",
+        "--name-status",
+        "--no-color",
+        "--no-ext-diff",
+        "--oneline",
+        "--patch",
+        "-p",
+        "--unified",
+        "--format",
+        "--pretty",
+        "--abbrev-commit",
+        "--no-pager",
+    ];
+    match (program, subcommand) {
+        ("git", Some("diff")) => &[
+            "--stat",
+            "--shortstat",
+            "--numstat",
+            "--name-only",
+            "--name-status",
+            "--no-color",
+            "--no-ext-diff",
+            "--patch",
+            "-p",
+            "--unified",
+            "--cached",
+            "--staged",
         ],
-        "git" => &[
-            "--ext-diff",
-            "--textconv",
-            "--upload-pack",
-            "--receive-pack",
-            "--exec",
-            "--open-files-in-pager",
+        ("git", Some("show")) => GIT_SHOWING,
+        ("git", Some("log")) => &[
+            "--stat",
+            "--shortstat",
+            "--numstat",
+            "--name-only",
+            "--name-status",
+            "--no-color",
+            "--no-ext-diff",
+            "--oneline",
+            "--patch",
+            "-p",
+            "--format",
+            "--pretty",
+            "--abbrev-commit",
+            "--graph",
+            "--decorate",
+            "--all",
+            "--reverse",
+            "--no-merges",
+            "--since",
+            "--until",
+            "--author",
+            "--grep",
+            "-n",
         ],
-        "tar" => &[
-            "--to-command",
-            "--use-compress-program",
-            "--checkpoint-action",
-            "-I",
+        ("git", Some("status")) => &["--short", "-s", "--porcelain", "--branch", "-b"],
+        ("git", Some("branch")) => &["--show-current", "--list", "-a", "-r", "--all"],
+        ("git", Some("rev-parse")) => &["--short", "--abbrev-ref", "--show-toplevel", "HEAD"],
+        ("git", Some("symbolic-ref")) => &["--short", "-q", "--quiet"],
+        ("gh", Some(_)) => &[
+            "--json",
+            "-q",
+            "--jq",
+            "--paginate",
+            "-R",
+            "--repo",
+            "-L",
+            "--limit",
+            "--state",
         ],
-        "rsync" => &["-e", "--rsh"],
-        "rg" => &["--pre"],
-        "fd" | "fdfind" => &["-x", "-X", "--exec", "--exec-batch"],
+        ("rg", _) => &[
+            "-n",
+            "-i",
+            "-l",
+            "-c",
+            "-w",
+            "-F",
+            "--line-number",
+            "--files",
+        ],
         _ => &[],
     }
 }
 
-/// A pattern as Claude writes them, in words: `git diff:*` and `git diff *` are `git diff` with or
-/// without more words; a last word ending in `*` takes any further words too.
+/// A word that is an option. A lone `-` means standard input, which holds a program as well as an
+/// option could.
+fn is_option(word: &str) -> bool {
+    word.starts_with('-') || word.starts_with('+')
+}
+
+/// An option without its value: `--eval` from `--eval=x`.
+fn flag_of(word: &str) -> &str {
+    word.split('=').next().unwrap_or(word)
+}
+
+/// A pattern as Claude writes them, in words.
 struct Pattern<'a> {
     words: Vec<&'a str>,
-    /// Any number of further words.
+    /// Any number of further words: `:*`, or a final ` *`.
     rest: bool,
 }
 
@@ -110,13 +211,22 @@ impl<'a> Pattern<'a> {
         Self { words, rest }
     }
 
-    /// Whether `word` is one of its own words: a flag exempted must be spelled out whole.
-    fn names(&self, word: &str) -> bool {
-        self.words.contains(&word)
+    /// Whether it has this option as a word of its own, value or no value. A flag's letters
+    /// inside another word don't count.
+    fn names(&self, option: &str) -> bool {
+        self.words
+            .iter()
+            .any(|word| *word == option || flag_of(word) == flag_of(option))
     }
 
     fn covers(&self, command: &[String]) -> bool {
-        let last = self.words.len().saturating_sub(1);
+        let Some(program) = self.words.first() else {
+            return false;
+        };
+        if program.contains('*') {
+            return false;
+        }
+        let last = self.words.len() - 1;
         for (index, wanted) in self.words.iter().enumerate() {
             let Some(word) = command.get(index) else {
                 return false;
@@ -128,7 +238,7 @@ impl<'a> Pattern<'a> {
                 return self.rest || (wanted.ends_with('*') && index > 0);
             }
         }
-        !self.words.is_empty()
+        true
     }
 }
 
@@ -155,104 +265,104 @@ fn glob_matches(pattern: &str, text: &str) -> bool {
     true
 }
 
-/// Whether a runner may run this under this pattern. Everything before the first word that isn't
-/// an option must be named whole, so `-Ic`, `-pe` and `--eval=x` fail for not being named, with
-/// no list of letters to get wrong. That first word must then be spelled out in the pattern.
-fn runner_allowed(kind: Runner, command: &[String], pattern: &Pattern<'_>) -> bool {
-    for (index, word) in command.iter().enumerate().skip(1) {
-        if word.starts_with('-') || word.starts_with('+') {
-            if !pattern.names(word) {
-                return false;
+/// Whether a program in `class` may run these words under this pattern.
+fn class_allows(class: Class, program: &str, command: &[String], pattern: &Pattern<'_>) -> bool {
+    // The first plain word: a script, a package or a subcommand.
+    let first_plain = command
+        .iter()
+        .enumerate()
+        .skip(1)
+        .find(|(_, word)| !is_option(word));
+    let subcommand = first_plain.map(|(_, word)| word.as_str());
+    let allowed = allowed_options(program, subcommand);
+    let confirmed = |word: &str| {
+        pattern.names(word)
+            || allowed.contains(&flag_of(word))
+            // `git log -5`.
+            || (program == "git"
+                && subcommand == Some("log")
+                && word.len() > 1
+                && word[1..].bytes().all(|byte| byte.is_ascii_digit()))
+    };
+    let spelled_out = |index: usize, whole: bool| {
+        pattern.words.get(index).is_some_and(|wanted| {
+            if whole {
+                !wanted.contains('*')
+            } else {
+                wanted.chars().any(|c| !matches!(c, '*' | '.' | '/'))
             }
-            continue;
-        }
-        let Some(wanted) = pattern.words.get(index) else {
-            return false;
-        };
-        return match kind {
-            Runner::Subcommand => !wanted.contains('*'),
-            Runner::Script => wanted.chars().any(|c| !matches!(c, '*' | '.' | '/')),
-        };
+        })
+    };
+    // Everything before the first plain word is the program's own, in every class.
+    let before = first_plain.map_or(command.len(), |(index, _)| index);
+    if !command[1..before].iter().all(|word| confirmed(word)) {
+        return false;
     }
-    // Nothing to run but what it was given as options, all of them named.
-    true
+    let every_option = || {
+        command[before..]
+            .iter()
+            .take_while(|word| *word != "--")
+            .filter(|word| is_option(word))
+            .all(|word| confirmed(word))
+    };
+    match (class, first_plain) {
+        (Class::Options, _) => every_option(),
+        (_, None) => true,
+        (Class::Script, Some((index, _))) => spelled_out(index, false),
+        (Class::Launcher, Some((index, _))) => spelled_out(index, true),
+        (Class::Subcommand, Some((index, _))) => spelled_out(index, true) && every_option(),
+    }
 }
 
-/// A long option, whole or abbreviated (git accepts `--ext-d`), or a short one by its letters.
-fn is_escape(word: &str, escapes: &[&str]) -> bool {
-    let flag = word.split('=').next().unwrap_or(word);
-    escapes.iter().any(|escape| {
-        if let Some(long) = escape.strip_prefix("--") {
-            flag.strip_prefix("--")
-                .is_some_and(|name| name.len() >= 3 && long.starts_with(name))
-        } else if escape.len() == 2 {
-            // `-e` also found bundled, as in `-ve`.
-            flag.starts_with('-') && !flag.starts_with("--") && flag.contains(&escape[1..])
-        } else {
-            flag == *escape
-        }
-    })
+/// The one simple command this runs, if it is one: itself, or the only command of a shell script.
+fn simple_command(command: &[String]) -> Option<Vec<String>> {
+    let Some(script) = wrapped::shell_script_text(command) else {
+        return Some(command.to_vec());
+    };
+    let commands = wrapped::split_script_keeping_assignments(script)?;
+    let [words] = commands.as_slice() else {
+        return None;
+    };
+    if words
+        .first()
+        .is_some_and(|word| wrapped::is_assignment(word))
+    {
+        return None;
+    }
+    let words: Vec<String> = words
+        .iter()
+        .filter(|word| !HARMLESS_REDIRECTIONS.contains(&word.as_str()))
+        .cloned()
+        .collect();
+    let plain = !words
+        .iter()
+        .any(|word| word.contains('>') || word.contains('<'));
+    // A script's only command being another script is more wrapping than anyone needs.
+    (plain && wrapped::shell_script_text(&words).is_none()).then_some(words)
 }
 
-/// One simple command, not looking inside it.
-fn named(command: &[String], patterns: &[String]) -> bool {
+/// Whether what `argv` runs is one simple command `patterns` names; see the top of this file.
+#[must_use]
+pub fn command_in_scope(argv: &[String], patterns: &[String]) -> bool {
+    let Some(command) = simple_command(argv) else {
+        return false;
+    };
     let Some(program) = command.first() else {
         return false;
     };
     let name = program_basename(program);
-    let escapes = escape_options(&name);
-    let kind = runner(&name);
+    // The parser's own wrappers count too, should this list miss one.
+    if WRAPPERS.contains(&name.as_str())
+        || !wrapped::wrapped_commands(&command).is_some_and(|inner| inner.is_empty())
+    {
+        return false;
+    }
+    let class = class_of(&name);
     patterns.iter().any(|text| {
         let pattern = Pattern::parse(text);
-        pattern.covers(command)
-            && kind.is_none_or(|kind| runner_allowed(kind, command, &pattern))
-            && !command[1..]
-                .iter()
-                .any(|word| is_escape(word, escapes) && !pattern.names(word))
+        pattern.covers(&command)
+            && class.is_none_or(|class| class_allows(class, &name, &command, &pattern))
     })
-}
-
-fn in_scope(command: &[String], patterns: &[String], depth: usize) -> bool {
-    if depth > MAX_DEPTH {
-        return false;
-    }
-    if let Some(script) = wrapped::shell_script_text(command) {
-        let Some(commands) = wrapped::split_script_keeping_assignments(script) else {
-            return false;
-        };
-        return commands.iter().all(|words| {
-            !words
-                .first()
-                .is_some_and(|word| wrapped::is_assignment(word))
-                && !words.iter().any(|word| {
-                    word.contains('>') && !HARMLESS_REDIRECTIONS.contains(&word.as_str())
-                })
-                && in_scope(&without_harmless(words), patterns, depth + 1)
-        });
-    }
-    if !named(command, patterns) {
-        return false;
-    }
-    // A named wrapper still can't run what isn't named.
-    wrapped::wrapped_commands(command).is_some_and(|inner| {
-        inner
-            .iter()
-            .all(|command| in_scope(command, patterns, depth + 1))
-    })
-}
-
-fn without_harmless(words: &[String]) -> Vec<String> {
-    words
-        .iter()
-        .filter(|word| !HARMLESS_REDIRECTIONS.contains(&word.as_str()))
-        .cloned()
-        .collect()
-}
-
-/// Whether every command `argv` would run is one `patterns` names.
-#[must_use]
-pub fn command_in_scope(argv: &[String], patterns: &[String]) -> bool {
-    !argv.is_empty() && in_scope(argv, patterns, 0)
 }
 
 #[cfg(test)]
@@ -274,7 +384,12 @@ mod tests {
         assert!(allowed(&["git", "diff", "--stat", "a b"], GIT_DIFF));
         assert!(allowed(&["gh", "pr", "view", "1"], &["gh pr view *"]));
         assert!(allowed(&["gh", "pr", "view"], &["gh pr view *"]));
+        assert!(allowed(
+            &["gh", "pr", "view", "--json", "x"],
+            &["gh pr view *"]
+        ));
         assert!(allowed(&["ls"], &["ls"]));
+        assert!(allowed(&["ls", "-la", "x"], &["ls *"]));
         assert!(allowed(
             &["gh", "api", "repos/a/b/pulls/1/comments", "-q", "x"],
             &["gh api repos/*/pulls/*/comments *"]
@@ -287,15 +402,15 @@ mod tests {
             &["find", ".", "-name", "x", "-type", "f"],
             &["find * -name * -type *"]
         ));
-        assert!(allowed(
-            &["sh", "-c", "git diff && git diff --stat"],
-            GIT_DIFF
-        ));
+        assert!(allowed(&["sh", "-c", "git diff --stat"], GIT_DIFF));
         assert!(allowed(&["sh", "-c", "git diff 2>&1"], GIT_DIFF));
+        assert!(allowed(&["git", "log", "-5", "--oneline"], &["git log:*"]));
     }
 
+    /// Everything three reviews named, and what followed from them. The forms are refused for not
+    /// being confirmed, so a form nobody thought of is refused the same way.
     #[test]
-    fn anything_else_is_refused() {
+    fn anything_it_cannot_confirm_is_refused() {
         for line in [
             &["git", "push"][..],
             &["git", "diffx"],
@@ -304,15 +419,18 @@ mod tests {
             // Another spelling, or a path, is another program.
             &["./git", "diff"],
             &["/tmp/git", "diff"],
+            &["/usr/bin/git", "diff"],
             &["git", "-C", ".", "push"],
             &["git", "-C", ".", "diff"],
-            // Chains and wrappers hide nothing.
+            // Not one simple command.
+            &["sh", "-c", "git diff && git diff"],
             &["sh", "-c", "git diff && rm x"],
             &["sh", "-c", "git diff; rm x"],
             &["sh", "-c", "git diff | tee x"],
+            &["sh", "-c", "git diff | cat"],
             &["sh", "-c", "git diff $(rm x)"],
             &["sh", "-c", "git diff `rm x`"],
-            &["bash", "-lc", "sh -c 'rm x'"],
+            &["bash", "-lc", "sh -c 'git diff'"],
             &["sh", "-c", "$X diff"],
             &["sh", "-c", "git diff \"$(rm x)\""],
             &["sh", "-c", "git diff\nrm x"],
@@ -330,25 +448,56 @@ mod tests {
             &["sh", "-c", "git diff > x"],
             &["sh", "-c", "git diff>x"],
             &["sh", "-c", "git diff >> x"],
-            // Options that run something else.
+            &["sh", "-c", "git diff < x"],
+            // Any option git isn't known to only show with, however it is spelled.
             &["git", "diff", "--ext-diff"],
             &["git", "diff", "--ext-d"],
-            &["git", "--config-env=a=b", "diff"],
+            &["git", "diff", "--output=x"],
+            &["git", "diff", "--no-index", "a", "b"],
+            &["git", "diff", "-c", "core.pager=x"],
             &["git", "-c", "core.pager=x", "diff"],
+            &["git", "--config", "a=b", "diff"],
+            &["git", "--config-env=a=b", "diff"],
+            &["git", "--exec-path=.", "diff"],
+            &["git", "-u", "diff"],
+            &["git", "diff", "-u"],
             &[],
         ] {
             assert!(!allowed(line, GIT_DIFF), "{line:?}");
         }
-        assert!(!allowed(
-            &["find", ".", "-name", "x", "-exec", "rm", "{}", ";"],
-            &["find *"]
-        ));
-        assert!(!allowed(&["find", ".", "-delete"], &["find *"]));
-        assert!(!allowed(
-            &["python3", "-c", "evil", "extract_aspects.py"],
-            &["python3 *extract_aspects.py*"]
-        ));
-        assert!(!allowed(&["node", "--eval=x", "a.js"], &["node *"]));
+        // A wrapper stays refused even when a pattern names it.
+        for (line, pattern) in [
+            (&["timeout", "5", "git", "diff"][..], "timeout *"),
+            (&["env", "git", "diff"], "env:*"),
+            (&["xargs", "git", "diff"], "xargs *"),
+            (&["sudo", "ls"], "sudo:*"),
+            (&["/usr/bin/env", "python3", "-c", "x"], "/usr/bin/env *"),
+        ] {
+            assert!(!allowed(line, &[pattern]), "{line:?} under {pattern}");
+        }
+        // An option that isn't confirmed, wherever it sits.
+        for (line, pattern) in [
+            (
+                &["find", ".", "-name", "x", "-exec", "rm", "{}", ";"][..],
+                "find *",
+            ),
+            (&["find", ".", "-delete"], "find *"),
+            (&["find", ".", "-name", "x", "-newevil"], "find . -name *"),
+            (&["tar", "xI", "evil", "-f", "x"], "tar *"),
+            (&["tar", "xI", "evil"], "tar:*"),
+            (&["tar", "-xI", "evil", "-f", "x"], "tar *"),
+            (&["tar", "tf", "x", "--to-command=evil"], "tar tf *"),
+            (&["tar", "tf", "x", "-I", "evil"], "tar tf *"),
+            (&["rsync", "-e", "evil", "a", "b"], "rsync *"),
+            (&["rg", "--pre", "evil", "x"], "rg *"),
+            (&["rg", "--pre=evil", "x"], "rg *"),
+            (&["fd", "-x", "evil"], "fd *"),
+            (&["make", "test", "-f", "evil"], "make test:*"),
+            (&["npm", "test", "--prefix", "x"], "npm test:*"),
+            (&["node", "--eval=x", "a.js"], "node *"),
+        ] {
+            assert!(!allowed(line, &[pattern]), "{line:?} under {pattern}");
+        }
     }
 
     #[test]
@@ -391,6 +540,9 @@ mod tests {
         ] {
             assert!(!allowed(line, &[pattern]), "{line:?} under {pattern}");
         }
+        // A program can't be left open.
+        assert!(!allowed(&["git", "status"], &["*git status"]));
+        assert!(!allowed(&["rm", "x"], &["r* x"]));
         // What is spelled out runs, options included.
         for (line, pattern) in [
             (&["python3", "-m", "pytest", "x"][..], "python3 -m pytest *"),
@@ -400,8 +552,10 @@ mod tests {
             (&["git", "status"], "git status:*"),
             (&["npx", "tsc", "--noEmit"], "npx tsc:*"),
             (&["make", "test"], "make test"),
-            (&["gh", "pr", "view", "1"], "gh pr view *"),
             (&["node", "--version"], "node --version"),
+            (&["tar", "tf", "x.tar"], "tar tf *"),
+            (&["find", ".", "-exec", "x"], "find . -exec x"),
+            (&["git", "log", "--output=x"], "git log --output=*"),
         ] {
             assert!(allowed(line, &[pattern]), "{line:?} under {pattern}");
         }
@@ -420,7 +574,6 @@ mod tests {
             &["git", "diff", "--ext-diff"],
             &["git diff *--ext-diff-x*"]
         ));
-        assert!(allowed(&["find", ".", "-exec", "x"], &["find . -exec x"]));
     }
 
     #[test]
@@ -430,22 +583,6 @@ mod tests {
         assert!(!allowed(&["cat", "a", "b"], &["cat a"]));
         assert!(allowed(&["cat", "a", "b"], &["cat * b"]));
         assert!(!allowed(&["cat", "a", "x", "b"], &["cat * b"]));
-    }
-
-    #[test]
-    fn a_wrapper_or_option_counts_only_when_it_is_named() {
-        assert!(allowed(
-            &["timeout", "5", "git", "diff"],
-            &["timeout *", "git diff:*"]
-        ));
-        // Named, but what it runs isn't.
-        assert!(!allowed(
-            &["timeout", "5", "rm", "x"],
-            &["timeout *", "git diff:*"]
-        ));
-        assert!(!allowed(&["env", "sh", "-c", "rm x"], &["env *"]));
-        assert!(allowed(&["python3", "-c", "1"], &["python3 -c 1"]));
-        assert!(allowed(&["find", ".", "-exec", "x"], &["find * -exec *"]));
     }
 
     proptest! {

@@ -1,1 +1,1 @@
-Your shell runs only these commands: {{scopes}}. Run each directly as one command; anything else, including through `sh -c` with other commands, an environment variable or a redirection, is refused.
+Your shell runs only these commands: {{scopes}}. Run each on its own, as one direct command with no pipe, chain, environment variable or redirection. Anything else is refused, and so are options that aren't named above unless they only choose what is shown. If that stops you, say so in your result rather than looking for another way.

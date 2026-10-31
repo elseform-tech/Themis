@@ -843,6 +843,18 @@ async fn a_scoped_shell_holds_against_every_way_around_it() {
         shell(json!({"command": "git", "args": ["--exec-path=.", "status"]})),
         shell(json!({"command": "git", "args": ["--git-dir=x", "status"]})),
         shell(json!({"command": "git", "args": ["status", "--ext-diff"]})),
+        shell(json!({"command": "git", "args": ["--config", "a=b", "status"]})),
+        shell(json!({"command": "git", "args": ["-u", "status"]})),
+        shell(json!({"command": "git", "args": ["status", "-u"]})),
+        // Tar's bundles need no dash, and its options run programs.
+        shell(json!({"command": "tar", "args": ["xI", "touch escaped", "-f", "x.tar"]})),
+        shell(json!({"command": "tar", "args": ["-xI", "touch escaped", "-f", "x.tar"]})),
+        shell(json!({"command": "tar", "args": ["tf", "x.tar", "--to-command=touch escaped"]})),
+        // Not one simple command, though every part is named.
+        shell(json!({"command": "sh", "args": ["-c", "git status && git status"]})),
+        shell(json!({"command": "sh", "args": ["-c", "git status | cat"]})),
+        // A wrapper, though the pattern names it.
+        shell(json!({"command": "timeout", "args": ["5", "git", "status"]})),
         // Whole-program catch-alls aren't a limit, however a plugin writes them.
         shell(json!({"command": "npx", "args": ["cowsay"]})),
         shell(json!({"command": "npx", "args": ["-p", "evil", "tsc"]})),
@@ -857,7 +869,7 @@ async fn a_scoped_shell_holds_against_every_way_around_it() {
         Setup {
             agents: &[(
                 "scoped",
-                "tools: Read, Bash(python3 *tool.py*), Bash(python3:*), Bash(node run.js:*), Bash(node:*), Bash(git status:*), Bash(git:*), Bash(find . -name *), Bash(find:*), Bash(npx tsc:*), Bash(npx:*), Bash(ruby:*), Bash(perl *), Bash(bash:*), Bash(awk *), Bash(make:*), Bash(env:*), Bash(xargs:*)",
+                "tools: Read, Bash(python3 *tool.py*), Bash(python3:*), Bash(node run.js:*), Bash(node:*), Bash(git status:*), Bash(git:*), Bash(find . -name *), Bash(find:*), Bash(npx tsc:*), Bash(npx:*), Bash(ruby:*), Bash(perl *), Bash(bash:*), Bash(awk *), Bash(make:*), Bash(env:*), Bash(xargs:*), Bash(tar *), Bash(tar tf *), Bash(timeout *)",
             )],
             ..Setup::default()
         },
@@ -885,6 +897,39 @@ async fn a_scoped_shell_holds_against_every_way_around_it() {
     app.serving.abort();
 }
 
+/// With no enforcing sandbox a subagent keeps its shell, as the design says, the scope still holds,
+/// and its detail says the shell isn't confined.
+#[tokio::test(flavor = "multi_thread")]
+async fn with_no_sandbox_a_scope_still_holds_and_the_detail_says_so() {
+    let calls = vec![
+        ("shell", json!({"command": "git", "args": ["status"]})),
+        ("shell", json!({"command": "touch", "args": ["escaped"]})),
+    ];
+    let app = app(
+        Setup {
+            agents: &[("scoped", "tools: Bash(git status:*)")],
+            user_config: Some(r#"{"sandbox": {"enabled": false}}"#),
+            ..Setup::default()
+        },
+        spawning(Some("scoped"), calling(calls)),
+    )
+    .await;
+    run(&app, "yolo", "go").await;
+    let (tools, _) = child_request(&app).await;
+    assert!(tools.iter().any(|tool| tool == "shell"), "{tools:?}");
+    let answered = child_results(&app).await;
+    assert!(answered[0].contains("exit_code"), "{}", answered[0]);
+    assert!(answered[1].contains("denied"), "{}", answered[1]);
+    assert!(!app.project.path().join("escaped").exists());
+    let listed = call(
+        app.data.path(),
+        "list_subagents",
+        json!({"threadId": app.thread}),
+    );
+    assert_eq!(listed[0]["confined"], false, "{listed}");
+    app.serving.abort();
+}
+
 /// What the scopes name still runs: a limit nobody can use isn't one.
 #[tokio::test(flavor = "multi_thread")]
 async fn a_scoped_shell_still_runs_what_it_names() {
@@ -893,7 +938,7 @@ async fn a_scoped_shell_still_runs_what_it_names() {
         shell(json!({"command": "python3", "args": ["tools/tool.py", "--flag", "-c"]})),
         shell(json!({"command": "git", "args": ["status", "--short"]})),
         shell(json!({"command": "find", "args": [".", "-name", "*.py"]})),
-        shell(json!({"command": "sh", "args": ["-c", "git status --short && ls"]})),
+        shell(json!({"command": "sh", "args": ["-c", "git status --short 2>&1"]})),
     ];
     let count = calls.len();
     let app = app(
