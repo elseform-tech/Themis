@@ -50,21 +50,12 @@
   border-radius: 18px; background: transparent; color: var(--themis-danger); font: inherit; font-size: .8125rem; cursor: pointer;
 }
 .themis-subagent-stop:disabled { opacity: .5; cursor: not-allowed; }
-.themis-subagent-steps { display: flex; flex-direction: column; gap: 14px; padding: 16px 0; overflow-y: auto; }
+.themis-subagent-steps { container: themis-thread / inline-size; display: flex; flex-direction: column; gap: 20px; padding: 16px 0; overflow-y: auto; }
 .themis-subagent-brief-box { padding: 12px 14px; border-radius: 16px; background: var(--themis-canvas); }
 .themis-subagent-brief-box summary { cursor: pointer; font-size: .75rem; font-weight: 500; color: var(--themis-text-2); }
 .themis-subagent-brief-box p { margin: 10px 0 0; font-size: .8125rem; line-height: 1.6; color: var(--themis-text-2); white-space: pre-wrap; }
-.themis-subagent-step-text { font-size: .875rem; line-height: 1.7; }
-.themis-subagent-calls { align-self: flex-start; max-width: 100%; }
-.themis-subagent-calls summary {
-  display: inline-flex; height: 32px; align-items: center; padding: 0 12px; border-radius: 16px; background: var(--themis-raised);
-  font-size: .8125rem; color: var(--themis-text-2); cursor: pointer;
-}
-.themis-subagent-calls ul { margin: 8px 0 0; padding: 0 0 0 20px; list-style: none; display: flex; flex-direction: column; gap: 4px; }
-.themis-subagent-calls li { font-family: ui-monospace, SFMono-Regular, monospace; font-size: .75rem; color: var(--themis-text-2); overflow-wrap: anywhere; }
 .themis-subagent-ending { margin: 0; font-size: .8125rem; color: var(--themis-text-2); }
 .themis-subagent-bubble { display: flex; flex-direction: column; align-items: flex-end; align-self: flex-end; gap: 4px; max-width: 80%; }
-.themis-subagent-bubble-text { padding: 10px 16px; border-radius: 18px 18px 6px 18px; background: var(--themis-user-message-bg); }
-.themis-subagent-bubble-text.is-folded { max-height: 9em; overflow: hidden; -webkit-mask-image: linear-gradient(#000 60%, transparent); mask-image: linear-gradient(#000 60%, transparent); }
+.themis-subagent-bubble .is-folded { max-height: 9em; overflow: hidden; -webkit-mask-image: linear-gradient(#000 60%, transparent); mask-image: linear-gradient(#000 60%, transparent); }
 .themis-subagent-bubble-more { padding: 0; border: 0; background: transparent; color: var(--themis-text-2); font: inherit; font-size: .75rem; cursor: pointer; }
 .themis-subagent-bubble-more:hover { color: var(--themis-text); }

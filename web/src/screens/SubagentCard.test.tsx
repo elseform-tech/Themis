@@ -132,7 +132,10 @@ describe("subagent detail", () => {
       { kind: "tool_started", tool: "read_file", summary: "read x" },
       { kind: "tool_started", tool: "read_file", summary: "read y" },
       { kind: "finished", result: "A" },
-    ] as never)).toEqual([{ kind: "text", text: "A" }, { kind: "tools", calls: ["read x", "read y"] }]);
+    ] as never)).toEqual([{ kind: "text", text: "A" }, { kind: "tools", calls: [
+      { tool: "read_file", summary: "read x" },
+      { tool: "read_file", summary: "read y" },
+    ] }]);
     expect(stepsOf([{ kind: "finished", result: "Only the result." }] as never)).toEqual([{ kind: "text", text: "Only the result." }]);
   });
 
@@ -143,7 +146,7 @@ describe("subagent detail", () => {
     expect(screen.getByText("Subagent")).toBeInTheDocument();
     expect(screen.getByText("glm-5 · Read only · Shell not confined · 3 tool calls")).toBeInTheDocument();
     expect(screen.getByText("Find bugs in runtime.rs")).toBeInTheDocument();
-    expect(screen.getByText("2 tool calls")).toBeInTheDocument();
+    expect(document.querySelector("details.themis-tool-group")).not.toBeNull();
     expect(screen.getAllByText("Bug found at runtime.rs:3496.")).toHaveLength(1);
     fireEvent.click(screen.getByRole("button", { name: "Stop" }));
     await act(async () => {});
@@ -227,6 +230,31 @@ describe("subagents in the chat", () => {
     const rows = [{ id: "s", role: "system", text: "", subagents: [agent({ name: "Writer" }), agent({ id: "a2", name: "Done", status: "finished" })] }] as never;
     expect(subagentWaitLine("wait_subagents", rows)).toBe("Waiting for Writer…");
     expect(subagentWaitLine("read_file", rows)).toBeNull();
+  });
+
+  it("looks like the chat: same bubble, reply text, folded tool row and status line", async () => {
+    vi.mocked(tauri.getSubagentTranscript).mockResolvedValueOnce([
+      { kind: "tool_started", tool: "read_file", summary: "read `a.txt`" },
+      { kind: "tool_finished", tool: "read_file", ok: true },
+      { kind: "tool_started", tool: "shell", summary: "call `shell` with {\"command\":\"ls\"}" },
+      { kind: "tool_finished", tool: "shell", ok: false },
+      { kind: "assistant_text", text: "Found it." },
+    ] as never);
+    const { container } = render(<SubagentDetail threadId={thread} agent={agent({ brief: "Look at a.txt" })} runLive onBack={() => {}} />);
+    await act(async () => {});
+    expect(screen.getByText("Look at a.txt").closest(".themis-thread-msg--user")).not.toBeNull();
+    expect(screen.getByText("Found it.").closest(".themis-thread-msg--assistant")).not.toBeNull();
+    const group = container.querySelector("details.themis-tool-group")!;
+    expect(group.querySelector("summary")).toHaveTextContent(/Read a\.txt|Read a file/);
+    expect(group.querySelector("summary")).toHaveTextContent("1 failed");
+    expect(group.querySelectorAll(".themis-tool-message")).toHaveLength(2);
+    expect(container.querySelector(".themis-run-progress .themis-shimmer")).not.toBeNull();
+  });
+
+  it("shows no status line once the subagent has ended", async () => {
+    const { container } = render(<SubagentDetail threadId={thread} agent={agent({ status: "finished", seconds: 3 })} runLive={false} onBack={() => {}} />);
+    await act(async () => {});
+    expect(container.querySelector(".themis-run-progress")).toBeNull();
   });
 
   it("shows the main agent's messages in the detail, folding a long one", async () => {
