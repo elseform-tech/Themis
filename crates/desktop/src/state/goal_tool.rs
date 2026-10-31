@@ -34,7 +34,8 @@ impl ToolRuntime for GoalTool {
     async fn execute(&self, args: Value) -> Result<Value, ToolCallError> {
         let pause = args["pause"].as_bool() == Some(true);
         let goal = args["goal"].as_str().filter(|goal| !goal.trim().is_empty());
-        if goal.is_none() && !pause {
+        let remove = args["remove"].as_bool() == Some(true);
+        if goal.is_none() && !pause && !remove {
             return Err(error("set_goal needs `goal`: the goal in one sentence"));
         }
         let action = ToolAction {
@@ -60,12 +61,20 @@ impl ToolRuntime for GoalTool {
                 "approval denied for 'set_goal': the approval rules deny setting goals",
             ));
         }
+        if (pause || remove) && !self.state.person_spoke_since_goal_check(&self.thread_id) {
+            let verb = if remove { "removing" } else { "pausing" };
+            return Err(error(format!(
+                "set_goal: {verb} is refused because the person has not asked; keep working toward the goal"
+            )));
+        }
+        if remove {
+            self.state
+                .remove_goal(Arc::clone(&self.sink), self.thread_id.clone())
+                .await
+                .map_err(error)?;
+            return Ok(json!({"status": "removed"}));
+        }
         if pause {
-            if !self.state.person_spoke_since_goal_check(&self.thread_id) {
-                return Err(error(
-                    "set_goal: pausing is refused because the person has not asked; keep working toward the goal",
-                ));
-            }
             self.state
                 .pause_goal(Arc::clone(&self.sink), self.thread_id.clone())
                 .await
@@ -94,10 +103,10 @@ impl ToolT for GoalTool {
         "set_goal"
     }
     fn description(&self) -> &str {
-        "Set this chat's goal: one sentence the runtime keeps working toward, turn after turn, until a separate check finds it reached. Call it only after the user agreed to make their request a goal (when a request clearly needs many rounds of work toward a measurable or judgeable outcome, first ask once, in one line: \"Want me to make this a goal and keep working until it's reached?\"). Include any conditions the user added. Never call it for questions or one-step changes. Replaces an existing goal. When the person asks to stop or pause the goal, pass pause: true instead, and say the goal is stopped only after that succeeds; it is refused unless they asked."
+        "Set this chat's goal: one sentence the runtime keeps working toward, turn after turn, until a separate check finds it reached. Call it only after the user agreed to make their request a goal (when a request clearly needs many rounds of work toward a measurable or judgeable outcome, first ask once, in one line: \"Want me to make this a goal and keep working until it's reached?\"). Include any conditions the user added. Never call it for questions or one-step changes. Replaces an existing goal. When the person asks to stop or pause the goal, pass pause: true instead; when they ask to remove, drop or cancel it, pass remove: true. Say it is done only after that succeeds; both are refused unless they asked."
     }
     fn args_schema(&self) -> Value {
-        json!({"type":"object","properties":{"goal":{"type":"string","description":"The goal in one sentence, in the user's terms."},"pause":{"type":"boolean","description":"True to pause this chat's goal because the person asked."}},"additionalProperties":false})
+        json!({"type":"object","properties":{"goal":{"type":"string","description":"The goal in one sentence, in the user's terms."},"pause":{"type":"boolean","description":"True to pause this chat's goal because the person asked."},"remove":{"type":"boolean","description":"True to remove this chat's goal because the person asked."}},"additionalProperties":false})
     }
     fn output_schema(&self) -> Option<Value> {
         None

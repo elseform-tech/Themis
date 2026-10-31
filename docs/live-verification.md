@@ -110,13 +110,13 @@ full tour.
 | `tool:browser_type` | tour | `crates/core/src/browser` | Ask the agent to type into the address or a search field. |
 | `tool:browser_select` | tour | `crates/core/src/browser` | Ask the agent to pick an option on a page with a select box. |
 | `tool:browser_press` | tour | `crates/core/src/browser` | Ask the agent to press Enter or Escape on a page. |
-| `tool:browser_move` | tour | `crates/core/src/browser` | Ask the agent to aim in a first-person page: the view turns with the mouse. |
+| `tool:browser_move` | tour | `crates/core/src/browser` | Ask the agent to aim in a first-person page: `dx` turns the view past the page's edge, and a click shoots without turning it. |
 | `tool:browser_scroll` | tour | `crates/core/src/browser` | Ask the agent to scroll a long page. |
 | `tool:browser_tabs` | tour | `crates/core/src/browser` | Ask the agent to list and switch tabs. |
 | `tool:browser_screenshot` | tour | `crates/core/src/browser` | Goal screenshots the page. |
 | `tool:browser_record` | tour | `crates/core/src/browser` | Ask for a short recording; it plays in the media viewer. |
 | `tool:browser_devtools` | tour | `crates/core/src/browser/tools/devtools.rs` | Only with Developer mode on: read the console. Off: the tool is not offered. |
-| `tool:set_goal` | tour | `crates/desktop/src/state/goal_tool.rs` | `/goal` sets the goal; the goal bar shows it. |
+| `tool:set_goal` | tour | `crates/desktop/src/state/goal_tool.rs` | `/goal` sets the goal; the goal bar shows it. More › Remove goal removes it; asking in the chat to pause or remove it does the same. |
 | `tool:ask_user` | tour | `crates/desktop/src/state/question_tool.rs` | The separator question appears on the composer after any approval, answered inline. |
 | `tool:attach_file` | tour | `crates/desktop/src/state/media_tool.rs` | The screenshot is attached to the reply. |
 | `tool:list_plugins` | tour | `crates/desktop/src/state/integration_tools.rs` | Goal lists plugins. |

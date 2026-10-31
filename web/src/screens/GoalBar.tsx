@@ -128,7 +128,10 @@ export function GoalBar({ goal, onEdit, onPause, onResume, onRemove, onFold }: G
           <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="5" cy="12" r="1.7" /><circle cx="12" cy="12" r="1.7" /><circle cx="19" cy="12" r="1.7" /></svg>
         </button>
         {menu && (
-          <span className="themis-goal-menu" role="menu" onKeyDown={event => { if (event.key === "Escape") { event.stopPropagation(); setMenu(false); } }}>
+          <span className="themis-goal-menu" role="menu"
+            // WebKit moves focus off a button on mouse down, which would close the menu before the click lands.
+            onMouseDown={event => event.preventDefault()}
+            onKeyDown={event => { if (event.key === "Escape") { event.stopPropagation(); setMenu(false); } }}>
             <button type="button" role="menuitem" autoFocus onClick={() => { setMenu(false); onRemove(); }} onBlur={event => { if (!event.currentTarget.parentElement?.contains(event.relatedTarget as Node | null)) setMenu(false); }}>Remove goal</button>
           </span>
         )}
