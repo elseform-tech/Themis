@@ -7796,20 +7796,19 @@ mod tests {
             .contains("first line is exactly Milestone:"));
         for instruction in [
             "sources you actually inspected",
-            "verified current line or line range",
+            "verified line",
             "why it addresses the task",
             "material tradeoffs",
             "actual test commands and outcomes",
             "Never invent references or coordinates",
             "Creative prose needs no evidence citations",
-            "using permitted reference fields without extra wrappers",
         ] {
             assert!(messages[0].content.contains(instruction), "{instruction}");
         }
         assert_eq!(
             messages[0]
                 .content
-                .matches("For factual and technical work")
+                .matches("Support claims, code changes and test results")
                 .count(),
             1
         );
