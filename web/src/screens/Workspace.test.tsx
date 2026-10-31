@@ -105,33 +105,33 @@ describe("Workspace journey", () => {
     let mounted!: ReturnType<typeof render>;
     await act(async () => { mounted = render(<App />); });
     const handle = screen.getByRole("separator", { name: "Resize sidebar" });
-    expect(handle).toHaveAttribute("aria-valuenow", "292");
+    expect(handle).toHaveAttribute("aria-valuenow", "320");
     fireEvent.keyDown(handle, { key: "ArrowRight" });
-    expect(handle).toHaveAttribute("aria-valuenow", "312");
-    expect(localStorage.getItem("themis:sidebarWidth")).toBe("312");
+    expect(handle).toHaveAttribute("aria-valuenow", "340");
+    expect(localStorage.getItem("themis:sidebarWidth")).toBe("340");
     vi.stubGlobal("PointerEvent", MouseEvent);
     handle.setPointerCapture = vi.fn();
     handle.hasPointerCapture = vi.fn(() => true);
     handle.releasePointerCapture = vi.fn();
-    vi.spyOn(handle.parentElement!, "getBoundingClientRect").mockReturnValue({ width: 312 } as DOMRect);
+    vi.spyOn(handle.parentElement!, "getBoundingClientRect").mockReturnValue({ width: 340 } as DOMRect);
     fireEvent.pointerDown(handle, { pointerId: 1, button: 0, clientX: 300 });
     fireEvent.pointerMove(handle, { pointerId: 1, clientX: 420 });
     // Dragging only moves the CSS width; the value commits on release.
-    expect(handle.parentElement!.style.getPropertyValue("--themis-sidebar-width")).toBe("432px");
+    expect(handle.parentElement!.style.getPropertyValue("--themis-sidebar-width")).toBe("460px");
     fireEvent.pointerUp(handle, { pointerId: 1 });
-    expect(handle).toHaveAttribute("aria-valuenow", "432");
+    expect(handle).toHaveAttribute("aria-valuenow", "460");
     fireEvent.pointerMove(handle, { pointerId: 1, clientX: 450 });
-    expect(localStorage.getItem("themis:sidebarWidth")).toBe("432");
+    expect(localStorage.getItem("themis:sidebarWidth")).toBe("460");
     mounted.unmount();
     await mount();
     const restored = screen.getByRole("separator", { name: "Resize sidebar" });
-    expect(restored).toHaveAttribute("aria-valuenow", "432");
+    expect(restored).toHaveAttribute("aria-valuenow", "460");
     fireEvent.keyDown(restored, { key: "End" });
     expect(restored).toHaveAttribute("aria-valuenow", "560");
     fireEvent.keyDown(restored, { key: "ArrowRight" });
     expect(restored).toHaveAttribute("aria-valuenow", "560");
     fireEvent.keyDown(restored, { key: "Home" });
-    expect(restored).toHaveAttribute("aria-valuenow", "240");
+    expect(restored).toHaveAttribute("aria-valuenow", "280");
   });
 
   it("restores an active approval when the app is refreshed", async () => {

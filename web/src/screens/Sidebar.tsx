@@ -13,12 +13,17 @@ const views: Array<[MainView, string]> = [["skills", "Integrations"], ["automati
 type SidebarIconName = "home" | "panel" | "chat" | "thread" | "skills" | "automations" | "queue" | "project" | "settings" | "help" | "search" | "rename" | "trash";
 const viewIcons: Record<MainView, SidebarIconName> = { thread: "home", skills: "skills", automations: "automations", queue: "queue", settings: "settings" };
 
+/** Below this the chat list is mostly cut-off titles. */
+const SIDEBAR_MIN = 280;
+const SIDEBAR_MAX = 560;
+const SIDEBAR_DEFAULT = 320;
+
 export function Sidebar({ collapsed: folded, companionControl }: { collapsed: boolean; companionControl?: import("react").ReactNode }) {
   const { state, dispatch } = useApp();
   // Settings takes over the whole sidebar with its section list; the toggle folds it the same way.
   const collapsed = folded;
   const settingsOpen = state.mainView === "settings";
-  const [width, setWidth] = useState(() => Math.max(240, Math.min(560, Number(readSession("sidebarWidth", 292)) || 292)));
+  const [width, setWidth] = useState(() => Math.max(SIDEBAR_MIN, Math.min(SIDEBAR_MAX, Number(readSession("sidebarWidth", SIDEBAR_DEFAULT)) || SIDEBAR_DEFAULT)));
   const resizeStart = useRef<{ x: number; width: number } | null>(null);
   const [resizing, setResizing] = useState(false);
   const slot = useRef<HTMLDivElement>(null);
@@ -31,7 +36,7 @@ export function Sidebar({ collapsed: folded, companionControl }: { collapsed: bo
     const active = document.activeElement;
     if (!active || active === document.body) slot.current?.querySelector<HTMLElement>('[aria-current="page"]')?.focus();
   }, [settingsOpen]);
-  const clampSidebar = (value: number) => Math.round(Math.max(240, Math.min(560, value)));
+  const clampSidebar = (value: number) => Math.round(Math.max(SIDEBAR_MIN, Math.min(SIDEBAR_MAX, value)));
   function resize(value: number) {
     const next = clampSidebar(value);
     setWidth(next);
@@ -151,14 +156,14 @@ export function Sidebar({ collapsed: folded, companionControl }: { collapsed: bo
         </div>
       </aside>
       </>}
-      {!collapsed && <div className="themis-sidebar-resize" role="separator" aria-label="Resize sidebar" aria-controls="themis-sidebar" aria-orientation="vertical" aria-valuemin={240} aria-valuemax={560} aria-valuenow={width} tabIndex={0}
+      {!collapsed && <div className="themis-sidebar-resize" role="separator" aria-label="Resize sidebar" aria-controls="themis-sidebar" aria-orientation="vertical" aria-valuemin={SIDEBAR_MIN} aria-valuemax={SIDEBAR_MAX} aria-valuenow={width} tabIndex={0}
         onPointerDown={event => { if (event.button !== 0) return; event.preventDefault(); event.currentTarget.focus(); resizeStart.current = { x: event.clientX, width: event.currentTarget.parentElement!.getBoundingClientRect().width }; event.currentTarget.setPointerCapture(event.pointerId); setResizing(true); }}
         onPointerMove={event => { if (resizeStart.current) preview(resizeStart.current.width + event.clientX - resizeStart.current.x); }}
         onPointerUp={event => { finishResize(); if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId); }}
         onLostPointerCapture={finishResize}
         onPointerCancel={() => { resizeStart.current = null; setResizing(false); preview(width); }}
-        onDoubleClick={() => resize(292)}
-        onKeyDown={event => { if (["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) { event.preventDefault(); resize(event.key === "Home" ? 240 : event.key === "End" ? 560 : width + (event.key === "ArrowRight" ? 20 : -20)); } }}
+        onDoubleClick={() => resize(SIDEBAR_DEFAULT)}
+        onKeyDown={event => { if (["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) { event.preventDefault(); resize(event.key === "Home" ? SIDEBAR_MIN : event.key === "End" ? SIDEBAR_MAX : width + (event.key === "ArrowRight" ? 20 : -20)); } }}
       />}
     </div>
     <Dialog open={state.projectDialogOpen} title="Create project" onClose={() => { if (!busy) dispatch({ type: "ui/project-dialog", open: false }); }}>
