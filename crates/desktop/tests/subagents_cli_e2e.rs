@@ -367,12 +367,16 @@ async fn a_stopped_subagent_ends_and_a_waited_result_is_not_repeated() {
                 "spawn_subagents",
                 json!({"subagents": [{"name": "Slow", "brief": "Look at everything."}]}),
             )]),
-            1 => tools(&[("t1", "stop_subagent", json!({"id": id}))]),
-            2 => tools(&[(
-                "w1",
-                "wait_subagents",
-                json!({"ids": [id], "timeout_seconds": 30}),
-            )]),
+            // In one reply: notes join between replies, so a subagent that ends quickly (as it
+            // did on Windows) can't reach the main agent as a note before the wait takes it.
+            1 => tools(&[
+                ("t1", "stop_subagent", json!({"id": id})),
+                (
+                    "w1",
+                    "wait_subagents",
+                    json!({"ids": [id], "timeout_seconds": 30}),
+                ),
+            ]),
             _ => reply("It was stopped."),
         }
     })

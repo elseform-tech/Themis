@@ -11,7 +11,7 @@ use wiremock::matchers::method;
 use wiremock::{Mock, MockServer, Request, ResponseTemplate};
 
 const TURN_SUMMARY: &str =
-    "[Runtime note, not from the user] You ended this turn with a short progress line.";
+    "[Runtime note, not from the user] You ended this turn saying what comes next, without doing it.";
 const SUMMARY: &str = "I listed the project and found it empty, so nothing changed. Next: tell me which files to add.";
 
 fn call(data: &Path, command: &str, args: Value) -> Value {

@@ -642,7 +642,9 @@ async fn cli_plain_and_shell_evidence_survives_maintenance_and_reaches_summary()
     std::fs::create_dir_all(&folder).unwrap();
     std::fs::write(
         project.path().join(".themis/config.jsonc"),
-        r#"{"context_token_budget":24500,"recent_messages":2,"total_turns":30}"#,
+        // A read adds about 1k tokens. Maintenance starts well below compaction so one read can't
+        // jump past it: at the default 0.83 this test passed or failed by the prompt's size.
+        r#"{"context_token_budget":24500,"recent_messages":2,"total_turns":30,"compaction":{"maintenance_threshold_ratio":0.7}}"#,
     )
     .unwrap();
     let source = format!(
