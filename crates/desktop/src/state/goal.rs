@@ -68,23 +68,6 @@ pub(super) fn backoff(failures: u32) -> Duration {
     Duration::from_secs(seconds).min(MAX_BACKOFF)
 }
 
-/// The check's reason, ready to sit inside a sentence.
-fn mid_sentence(reason: &str) -> String {
-    let reason = reason.trim().trim_end_matches('.');
-    let mut chars = reason.chars();
-    let first = chars
-        .next()
-        .map(|c| c.to_lowercase().to_string())
-        .unwrap_or_default();
-    // An acronym or name keeps its capital.
-    let keep = reason.chars().nth(1).is_some_and(char::is_uppercase);
-    if keep {
-        reason.to_owned()
-    } else {
-        format!("{first}{}", chars.as_str())
-    }
-}
-
 /// `wait` plus up to a fifth more, so chats hit by the same outage don't all retry at once.
 fn jittered(wait: Duration) -> Duration {
     use std::hash::BuildHasher;
@@ -956,20 +939,16 @@ impl AppState {
                 }) else {
                     return;
                 };
+                self.goal_note(
+                    sink.as_ref(),
+                    &thread_id,
+                    &run_id,
+                    GoalNoteKind::Reached,
+                    &format!("Complete. {}", verdict.reason),
+                );
                 // An answer that already says so needs no second message,
                 // unless open questions still have to be named.
                 if verdict.told_user == Some(true) && self.open_questions(&thread_id).is_empty() {
-                    // The chat last said it was checking, so it says how that came out.
-                    self.goal_note(
-                        sink.as_ref(),
-                        &thread_id,
-                        &run_id,
-                        GoalNoteKind::Reached,
-                        &format!(
-                            "That's proven, because {}, so I'm closing the goal.",
-                            mid_sentence(&verdict.reason)
-                        ),
-                    );
                     return;
                 }
                 self.announce_reached(sink, &thread_id, &goal, &verdict.reason)
@@ -1412,16 +1391,6 @@ mod tests {
         assert!(clipped.contains("characters clipped"));
         assert!(clipped.chars().count() < OUTPUT_HEAD_CHARS + OUTPUT_TAIL_CHARS + 50);
         assert_eq!(clip_output("short"), "short");
-    }
-
-    #[test]
-    fn the_reason_reads_inside_a_sentence() {
-        assert_eq!(
-            mid_sentence("Counter is 1; needs 2."),
-            "counter is 1; needs 2"
-        );
-        assert_eq!(mid_sentence("HTTP 500 remains"), "HTTP 500 remains");
-        assert_eq!(mid_sentence(""), "");
     }
 
     #[test]

@@ -1151,7 +1151,7 @@ async fn proof_and_files_carry_from_turn_to_turn() {
 }
 
 /// When the turn's answer already told the person, no closing turn runs, but the chat still
-/// says how the check came out instead of stopping on "I'm checking".
+/// shows how the check came out.
 #[tokio::test(flavor = "multi_thread")]
 async fn a_goal_reached_without_a_closing_turn_still_says_so_in_the_chat() {
     let server = MockServer::start().await;
@@ -1178,19 +1178,19 @@ async fn a_goal_reached_without_a_closing_turn_still_says_so_in_the_chat() {
     goal_until(&state, &thread, |status| status == GoalStatus::Reached).await;
     let mut seen = Vec::new();
     until(&mut rx, &mut seen, |event| {
-        matches!(event, ThreadEvent::GoalNote { reason, .. } if reason.contains("closing the goal"))
+        matches!(event, ThreadEvent::GoalNote { reason, .. } if reason.starts_with("Complete."))
     })
     .await;
     let note = seen
         .iter()
         .find_map(|event| match event {
-            ThreadEvent::GoalNote { reason, .. } if reason.contains("closing the goal") => {
+            ThreadEvent::GoalNote { reason, .. } if reason.starts_with("Complete.") => {
                 Some(reason.clone())
             }
             _ => None,
         })
         .unwrap();
-    assert!(note.contains("score and health both change"), "{note}");
+    assert!(note.contains("Score and health both change"), "{note}");
 }
 
 /// The checklist is live: it appears when the goal is set, takes a steered requirement at once,

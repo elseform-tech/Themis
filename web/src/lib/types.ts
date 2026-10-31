@@ -515,6 +515,8 @@ export interface PersistedMessage {
   /** A runtime message that started goal turn N; shown as a divider, not a bubble. */
   /** How the goal stands, in plain words. */
   goalStatus?: boolean;
+  /** What the goal check said about the turn before it. */
+  goalCheck?: boolean;
   /** A goal turn's reply that the goal check then rejected. */
   goalRejected?: boolean;
   goalTurn?: number;
