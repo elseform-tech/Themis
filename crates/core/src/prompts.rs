@@ -179,6 +179,8 @@ pub const RUNTIME_SILENT_CUT_OFF: &str =
 pub const RUNTIME_EMPTY_ANSWER: &str = include_str!("../builtins/prompts/runtime-empty-answer.md");
 /// Asked once when a run that used tools ends on a short progress line instead of a summary.
 pub const RUNTIME_TURN_SUMMARY: &str = include_str!("../builtins/prompts/runtime-turn-summary.md");
+pub const RUNTIME_TURN_END_GUARD: &str =
+    include_str!("../builtins/prompts/runtime-turn-end-guard.md");
 /// Warning added after three unchanged tool results in a row.
 pub const RUNTIME_REPEATED_ACTION: &str =
     include_str!("../builtins/prompts/runtime-repeated-action.md");

@@ -15,6 +15,7 @@ inside the normal suites, on every platform, with reproducible shrinking.
 | Provider wire | Any model tool arguments reach every protocol as a JSON object; valid objects unchanged, others wrapped with the exact original text | `crates/core/src/providers.rs` |
 | Task ledger | User text never becomes ledger entries; rendered ledgers stay within budget, framed, one JSON object per line; plan arguments never panic | `crates/core/src/runtime/ledger.rs` |
 | Truncation | Prefixes keep whole characters; summaries stay one bounded line | `crates/core/src/runtime.rs` |
+| Turn endings | Any reply reads without a panic; the turn-end guard fires at most once between two tool calls; a repeated line is dropped however the stream splits it, and other text is shown whole | `crates/core/src/runtime/turn_end.rs` |
 | Project paths | No mix of names, `.`/`..`, separators or symlinks resolves outside the project | `crates/desktop/src/state/workspace.rs`, `state/changes.rs` |
 | Diffs | Arbitrary text never panics the parser; well-formed diffs round-trip; change detection reports exactly the differing files; readable files are NUL-free UTF-8 | `crates/desktop/src/diff.rs` |
 | Recall | Arbitrary bytes never panic the record parser or bounded line reader; lines stay under the cap and reassemble; scan ranges stay in bounds | `crates/core/src/tools/recall/tests.rs` |
