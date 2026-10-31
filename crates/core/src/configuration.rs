@@ -118,7 +118,8 @@ fn rule_matches(rule: &ApprovalRule, action: &ToolAction) -> bool {
         .strip_suffix('*')
         .map_or(rule.tool == action.tool, |prefix| {
             action.tool.starts_with(prefix)
-        });
+        })
+        || deny_crosses_command_tools(rule, action);
     if crate::tools::is_site_tool(&action.tool) {
         // Web and browser rules name a site: the host or any of its subdomains.
         return matches
@@ -166,6 +167,17 @@ fn rule_matches(rule: &ApprovalRule, action: &ToolAction) -> bool {
             .risk
             .as_ref()
             .is_none_or(|risk| risk == risk_name(action.risk))
+}
+/// `shell` and the `git` tool both run git, so a deny rule on one holds on the other: a rule on
+/// `shell` (with or without a command) covers the `git` tool, and a rule on `git` naming a
+/// command covers a shell call running it. A rule on `git` with no command stays about the tool.
+fn deny_crosses_command_tools(rule: &ApprovalRule, action: &ToolAction) -> bool {
+    rule.action == PolicyAction::Deny
+        && match (rule.tool.as_str(), action.tool.as_str()) {
+            ("shell", "git") => true,
+            ("git", "shell") => rule.command.is_some(),
+            _ => false,
+        }
 }
 /// `host` is `site` or one of its subdomains (`docs.example.com` for
 /// `example.com`), compared without case.
@@ -234,6 +246,12 @@ fn deny_matches(command: &[String], prefix: &[String]) -> bool {
     if program != normalize_program(first) {
         return false;
     }
+    // `git -C . push` is still a push.
+    let rest = if program == "git" && !wanted.first().is_some_and(|word| word.starts_with('-')) {
+        crate::tools::git_from_subcommand(rest)
+    } else {
+        rest
+    };
     if rest.starts_with(wanted) {
         return true;
     }
@@ -2645,6 +2663,67 @@ mod tests {
             Some(3)
         );
         assert_eq!(locate_error_line(text, "no field here"), None);
+    }
+
+    #[test]
+    fn deny_rules_hold_across_shell_and_the_git_tool() {
+        let action = |tool: &str, command: &[&str]| ToolAction {
+            display: None,
+            command: command.iter().map(|word| (*word).to_owned()).collect(),
+            tool: tool.into(),
+            summary: String::new(),
+            risk: RiskLevel::Execute,
+        };
+        let policy = |rule: &str| ApprovalPolicy {
+            default: PolicyAction::Allow,
+            rules: vec![serde_json::from_str(rule).unwrap()],
+        };
+        let shell_rule = policy(r#"{"tool":"shell","command":["git","push"],"action":"deny"}"#);
+        let git_rule = policy(r#"{"tool":"git","command":["git","push"],"action":"deny"}"#);
+        for rules in [&shell_rule, &git_rule] {
+            for denied in [
+                action("shell", &["git", "-C", ".", "push"]),
+                action(
+                    "shell",
+                    &["git", "-c", "a=b", "--git-dir", "x", "push", "-f"],
+                ),
+                action("git", &["git", "push"]),
+                action("git", &["git", "-C", ".", "push"]),
+                action("shell", &["git", "push"]),
+                action("shell", &["sh", "-c", "x && git push"]),
+            ] {
+                assert_eq!(
+                    rules.yolo_decision(&denied),
+                    PolicyAction::Deny,
+                    "{denied:?}"
+                );
+            }
+            let status = action("git", &["git", "status"]);
+            assert_eq!(rules.yolo_decision(&status), PolicyAction::Allow);
+        }
+        // A whole-tool rule on `shell` takes the `git` tool too; one on `git` stays its own.
+        let all_shell = policy(r#"{"tool":"shell","action":"deny"}"#);
+        assert_eq!(
+            all_shell.yolo_decision(&action("git", &["git", "status"])),
+            PolicyAction::Deny
+        );
+        let all_git = policy(r#"{"tool":"git","action":"deny"}"#);
+        assert_eq!(
+            all_git.yolo_decision(&action("shell", &["ls"])),
+            PolicyAction::Allow
+        );
+        // Only deny crosses: an allow on `shell` never allows the `git` tool.
+        let allow = ApprovalPolicy {
+            default: PolicyAction::Ask,
+            rules: vec![serde_json::from_str(
+                r#"{"tool":"shell","command":["git","push"],"action":"allow"}"#,
+            )
+            .unwrap()],
+        };
+        assert_eq!(
+            allow.decision(&action("git", &["git", "push"])),
+            PolicyAction::Ask
+        );
     }
 
     #[test]

@@ -109,7 +109,7 @@ impl Hook {
                 .as_ref()
                 .is_none_or(|matcher| matcher_covers(matcher, tool, mcp_names))
             && self.command_prefix.as_ref().is_none_or(|prefix| {
-                tool == Some("shell") && runs_command(&payload["arguments"], prefix)
+                tool.is_some_and(|tool| runs_command(tool, &payload["arguments"], prefix))
             })
     }
 }
@@ -151,14 +151,27 @@ fn matcher_covers(matcher: &str, tool: Option<&str>, mcp_names: &McpNames) -> bo
         }
         None => matcher,
     };
-    names
-        .split('|')
-        .any(|name| name == "*" || tool == Some(name))
+    names.split('|').any(|name| {
+        name == "*"
+            || tool == Some(name)
+            // The `git` tool runs what `shell` runs: a guard on one holds on the other.
+            || (name == "shell" && tool == Some("git"))
+    })
 }
 
-/// Whether a shell call runs a command starting with `prefix`, or might.
-fn runs_command(arguments: &Value, prefix: &[String]) -> bool {
-    let argv = crate::tools::shell_argv(arguments);
+/// Whether a tool call runs a command starting with `prefix`, or might. Arguments that can't be
+/// read count as might, so a guard errs towards running. `background_task` only looks at or
+/// stops tasks `shell` started, which met the guard then.
+fn runs_command(tool: &str, arguments: &Value, prefix: &[String]) -> bool {
+    let argv = match tool {
+        "shell" if crate::tools::shell_arguments_readable(arguments) => {
+            crate::tools::shell_argv(arguments)
+        }
+        "git" => crate::tools::git_argv(arguments).unwrap_or_default(),
+        "shell" => return true,
+        "background_task" => return !crate::tools::background::only_inspects(arguments),
+        _ => return false,
+    };
     if argv.is_empty() {
         return true;
     }
@@ -186,7 +199,7 @@ fn starts_with(command: &[String], prefix: &[String]) -> bool {
 /// A Themis tool's name in Claude's words, for scripts written for Claude.
 fn claude_tool_name(tool: &str) -> Option<&'static str> {
     Some(match tool {
-        "shell" | "background_task" => "Bash",
+        "shell" | "background_task" | "git" => "Bash",
         "read_file" => "Read",
         "write_file" => "Write",
         "apply_patch" => "Edit",
@@ -205,6 +218,11 @@ fn claude_tool_input(tool: &str, arguments: &Value) -> Value {
     let mut input = arguments.clone();
     match tool {
         "shell" => input["command"] = crate::tools::shell_argv(arguments).join(" ").into(),
+        "git" => {
+            if let Some(argv) = crate::tools::git_argv(arguments) {
+                input["command"] = argv.join(" ").into();
+            }
+        }
         "apply_patch" => {
             if let Some(path) = arguments["patch"].as_str().and_then(|patch| {
                 patch.lines().find_map(|line| {
@@ -819,6 +837,7 @@ impl Drop for ProcessGroup {
 mod tests {
     use super::*;
     use crate::tools::{AllowAllHook, FnHook};
+    use proptest::prelude::*;
     use std::sync::Mutex;
 
     fn hook(event: &str, command: &str) -> Hook {
@@ -1011,6 +1030,41 @@ mod tests {
         // A hook that merely fails does not, unless its policy says so.
         let failing = runtime(vec![hook("PromptSubmit", "exit 3")]);
         assert_eq!(failing.prompt_submit("x", &tx).await.unwrap(), "");
+    }
+
+    proptest! {
+        /// Whatever a model sends: no panic, a call that isn't read as a known harmless shape
+        /// runs a command guard, and only tools that can run commands ever count.
+        #[test]
+        fn a_command_guard_never_passes_what_it_cannot_read(
+            command in proptest::option::of("[ -~]{0,12}"),
+            args in prop_oneof![
+                Just(Value::Null),
+                "[ -~]{0,20}".prop_map(Value::from),
+                proptest::collection::vec("[a-z-]{0,6}", 0..4).prop_map(|list| json!(list)),
+                proptest::collection::vec(0u8..9, 1..3).prop_map(|list| json!(list)),
+            ],
+            action in proptest::option::of("[a-z]{0,6}"),
+        ) {
+            let prefix = vec!["git".to_owned(), "push".to_owned()];
+            let call = json!({"command": command, "args": args, "action": action});
+            for tool in ["shell", "git", "background_task", "read_file"] {
+                let ran = runs_command(tool, &call, &prefix);
+                let read = match tool {
+                    "shell" => crate::tools::shell_arguments_readable(&call),
+                    "git" => crate::tools::git_argv(&call).is_some(),
+                    "background_task" => crate::tools::background::only_inspects(&call),
+                    _ => true,
+                };
+                prop_assert!(read || ran, "{tool} skipped unreadable {call}");
+                if tool == "read_file" {
+                    prop_assert!(!ran);
+                }
+                if tool == "background_task" {
+                    prop_assert_eq!(ran, !read);
+                }
+            }
+        }
     }
 
     #[test]

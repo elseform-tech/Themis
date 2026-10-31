@@ -411,23 +411,28 @@ fn positionals(args: &[String]) -> impl Iterator<Item = &str> {
         .filter(|arg| !arg.starts_with('-'))
 }
 
+/// Git's global options that take their value as the next word.
+const GIT_VALUE_OPTIONS: &[&str] = &[
+    "-C",
+    "-c",
+    "--git-dir",
+    "--work-tree",
+    "--namespace",
+    "--config-env",
+    "--super-prefix",
+    "--attr-source",
+];
+
+/// A `git` argv (without the program name) from its subcommand on: `-C . push` is `push`.
+pub(crate) fn git_from_subcommand(args: &[String]) -> &[String] {
+    first_subcommand(args, GIT_VALUE_OPTIONS).map_or(args, |(at, _)| &args[at..])
+}
+
 /// Whether a `git` argv (without the program name) is a destructive,
 /// history-rewriting or working-tree-discarding variant that must not share a
 /// grant or an allow rule with its harmless siblings.
 fn git_destructive(args: &[String]) -> bool {
-    let Some((at, sub)) = first_subcommand(
-        args,
-        &[
-            "-C",
-            "-c",
-            "--git-dir",
-            "--work-tree",
-            "--namespace",
-            "--config-env",
-            "--super-prefix",
-            "--attr-source",
-        ],
-    ) else {
+    let Some((at, sub)) = first_subcommand(args, GIT_VALUE_OPTIONS) else {
         return false;
     };
     let rest = &args[at + 1..];
@@ -824,6 +829,33 @@ pub fn shell_argv(args: &serde_json::Value) -> Vec<String> {
         return Vec::new();
     }
     argv
+}
+
+/// Whether [`shell_argv`] reads all of a call's arguments as the tool would: a program, and
+/// `args` as a list of strings or the text of one. Anything else makes the tool fail, and a
+/// guard shouldn't treat what it can't read as harmless.
+pub fn shell_arguments_readable(args: &serde_json::Value) -> bool {
+    args.get("command").is_some_and(Value::is_string) && args_list(args.get("args")).is_some()
+}
+
+/// `git` and its arguments, from a `git` tool call; `None` when its `args` can't be read.
+pub fn git_argv(args: &serde_json::Value) -> Option<Vec<String>> {
+    let rest = args.get("args").filter(|args| !args.is_null())?;
+    let rest = args_list(Some(rest))?;
+    Some(std::iter::once("git".to_owned()).chain(rest).collect())
+}
+
+/// A list of strings, or the JSON text of one; nothing at all is an empty list.
+fn args_list(args: Option<&Value>) -> Option<Vec<String>> {
+    match args {
+        None | Some(Value::Null) => Some(Vec::new()),
+        Some(Value::Array(rest)) => rest
+            .iter()
+            .map(|value| value.as_str().map(str::to_owned))
+            .collect(),
+        Some(Value::String(text)) => argv_text(text),
+        Some(_) => None,
+    }
 }
 
 /// A list of arguments from JSON text. Models often leave raw line breaks and tabs inside a

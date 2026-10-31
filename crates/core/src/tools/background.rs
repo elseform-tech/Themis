@@ -974,6 +974,16 @@ pub struct BackgroundArgs {
     pub max_bytes: u64,
 }
 
+/// Whether a `background_task` call is one this tool only inspects or stops with. It has no
+/// way to start a program; anything that doesn't read as such a call is not vouched for.
+pub fn only_inspects(arguments: &Value) -> bool {
+    arguments.get("command").is_none()
+        && arguments
+            .get("action")
+            .and_then(Value::as_str)
+            .is_some_and(|action| matches!(action, "list" | "status" | "log" | "stop"))
+}
+
 /// Inspects and stops this chat's background shell tasks.
 ///
 /// No approval prompt: it only reaches tasks this chat already started with an

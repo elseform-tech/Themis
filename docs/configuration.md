@@ -429,6 +429,8 @@ Deny rules also match every command a wrapper runs: `sh`/`bash`/`zsh`/`dash`/`ks
 interpreters (`python -c`, `node -e`) are not read: this is a tool policy, not a
 sandbox; deny those interpreters if you need to.
 
+A deny rule holds across the two tools that run git: one on `shell` also covers the `git` tool, and one on `git` that names a `command` also covers a shell call running it (a `git` rule with no `command` stays about the tool). `git -C . push` is matched as `git push`. Allow and ask rules stay on the tool they name.
+
 Project approval configuration may add deny rules only (including `command` denies). Those restrictions are
 evaluated ahead of user rules; a project cannot grant itself access. Explicit
 run overrides are caller-supplied policy. An interactive **Allow in this chat** grant

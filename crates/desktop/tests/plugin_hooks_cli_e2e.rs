@@ -383,6 +383,130 @@ async fn if_runs_the_guard_only_on_the_commands_it_names() {
     app.serving.abort();
 }
 
+/// Every door to a command meets the guard: a guard on `git push` refuses it through `shell`, in
+/// the background and through the `git` tool (which YOLO lets run anything).
+#[tokio::test(flavor = "multi_thread")]
+async fn a_command_guard_holds_on_every_tool_that_runs_commands() {
+    let hooks = json!({"PreToolUse": [{"matcher": "Bash", "hooks": [{
+        "type": "command",
+        "command": "touch guard-ran; echo 'pushes are frozen' >&2; exit 2",
+        "if": "Bash(git push *)"
+    }]}]});
+    for (tool, args) in [
+        ("shell", json!({"command": "git", "args": ["push"]})),
+        (
+            "shell",
+            json!({"command": "git", "args": ["push"], "background": true}),
+        ),
+        ("git", json!({"args": ["push"]})),
+        ("git", json!({"args": ["-C", ".", "push"]})),
+    ] {
+        let app = crate::app(hooks.clone(), &[], calls_once(tool, args.clone())).await;
+        run(&app, "push").await;
+        let result = last_tool_result(&app).await;
+        assert!(exists(&app, "guard-ran"), "{tool} {args}");
+        assert!(
+            result.contains("pushes are frozen"),
+            "{tool} {args}: {result}"
+        );
+        app.serving.abort();
+    }
+    // What runs no named command stays out of it, and works.
+    for (tool, args) in [
+        ("shell", json!({"command": "touch", "args": ["other-ran"]})),
+        (
+            "shell",
+            json!({"command": "touch", "args": ["other-ran"], "background": true}),
+        ),
+        ("git", json!({"args": ["status"]})),
+        ("background_task", json!({"action": "list"})),
+        (
+            "background_task",
+            json!({"action": "status", "task_id": "x"}),
+        ),
+    ] {
+        let app = crate::app(hooks.clone(), &[], calls_once(tool, args.clone())).await;
+        run(&app, "other").await;
+        assert!(!exists(&app, "guard-ran"), "{tool} {args}");
+        app.serving.abort();
+    }
+    // Arguments it can't read: the guard runs, because they might be the named command.
+    for (tool, args) in [
+        ("shell", json!({"command": 5})),
+        ("shell", json!({"command": "git", "args": "push"})),
+        ("shell", json!({"command": "git", "args": ["push", 5]})),
+        ("git", json!({"args": "push"})),
+        ("git", json!({})),
+        ("background_task", json!({"action": "run"})),
+        ("background_task", json!({})),
+        (
+            "background_task",
+            json!({"action": "list", "command": "git", "args": ["push"]}),
+        ),
+    ] {
+        let app = crate::app(hooks.clone(), &[], calls_once(tool, args.clone())).await;
+        run(&app, "odd").await;
+        assert!(exists(&app, "guard-ran"), "skipped on {tool} {args}");
+        app.serving.abort();
+    }
+}
+
+/// A guard reading Claude's fields finds the `git` tool's command like a shell call's.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_bash_guard_sees_the_git_tool_as_bash() {
+    let hooks = json!({"PreToolUse": [{"matcher": "Bash", "hooks": [{
+        "type": "command", "command": "bash ${CLAUDE_PLUGIN_ROOT}/guard.sh"
+    }]}]});
+    let app = crate::app(
+        hooks,
+        &[("guard.sh", GUARD)],
+        calls_once("git", json!({"args": ["push", "origin"]})),
+    )
+    .await;
+    run(&app, "push").await;
+    let seen: Value =
+        serde_json::from_slice(&std::fs::read(app.project.path().join("seen.json")).unwrap())
+            .unwrap();
+    assert_eq!(seen["tool_name"], "Bash");
+    assert_eq!(seen["tool_input"]["command"], "git push origin");
+    assert!(last_tool_result(&app).await.contains("pushes are frozen"));
+    app.serving.abort();
+}
+
+/// A deny rule on `git push` holds in YOLO through the `git` tool too, not only through `shell`.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_shell_deny_rule_holds_on_the_git_tool_in_yolo() {
+    for (tool, args) in [
+        ("git", json!({"args": ["push"]})),
+        ("git", json!({"args": ["-C", ".", "push"]})),
+        (
+            "shell",
+            json!({"command": "git", "args": ["push"], "background": true}),
+        ),
+        (
+            "shell",
+            json!({"command": "git", "args": ["-C", ".", "push"]}),
+        ),
+    ] {
+        // The hook only gives the plugin something to import.
+        let hooks = json!({"Stop": [{"hooks": [{"type": "command", "command": "true"}]}]});
+        let app = crate::app(hooks, &[], calls_once(tool, args.clone())).await;
+        std::fs::create_dir_all(app.project.path().join(".themis")).unwrap();
+        std::fs::write(
+            app.project.path().join(".themis/config.jsonc"),
+            r#"{"approval":{"rules":[{"tool":"shell","command":["git","push"],"action":"deny"}]}}"#,
+        )
+        .unwrap();
+        run(&app, "push").await;
+        let result = last_tool_result(&app).await;
+        assert!(
+            result.contains("approval denied") || result.contains("denied"),
+            "{tool} {args}: {result}"
+        );
+        app.serving.abort();
+    }
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn an_async_hook_does_not_hold_the_turn_and_cannot_block() {
     let app = app(
