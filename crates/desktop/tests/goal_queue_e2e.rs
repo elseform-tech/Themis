@@ -1214,6 +1214,7 @@ async fn the_checklist_follows_the_goal_as_it_changes() {
                     reply(r#"{"requirements":[{"what":"Written in Rust","proven":true}]}"#)
                 } else if sent.contains("Also add a README") {
                     reply(r#"{"requirements":[{"what":"The game runs"},{"what":"A README exists","proven":true}]}"#)
+                        .set_delay(std::time::Duration::from_secs(1))
                 } else {
                     reply(r#"{"requirements":[{"what":"The game runs"}]}"#)
                 };
@@ -1270,7 +1271,7 @@ async fn the_checklist_follows_the_goal_as_it_changes() {
         .steer_queued_message(sink.clone(), thread.clone(), request.id)
         .await
         .unwrap();
-    // Steered: pending at once, in the person's words, with no model call to wait for.
+    // Steered: pending at once, in the person's words, before the refresh's reply arrives.
     let now = state.goal_for(&thread).unwrap().proof;
     assert!(
         now.iter()
