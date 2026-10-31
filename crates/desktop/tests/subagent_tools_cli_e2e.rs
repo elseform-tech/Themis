@@ -804,3 +804,121 @@ async fn a_subagents_question_reaches_the_person_and_the_answer_reaches_it() {
     assert!(system.contains("ask_user"), "{system}");
     app.serving.abort();
 }
+
+/// Patterns as catalog plugins write them, and every way around them a model could try. Each
+/// form would create `escaped` if it ran. They are refused, not merely unsuccessful.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_scoped_shell_holds_against_every_way_around_it() {
+    let touch_py = "open('escaped','w')";
+    let touch_js = "require('fs').writeFileSync('escaped','')";
+    let shell = |args: Value| ("shell", args);
+    let calls: Vec<(&'static str, Value)> = vec![
+        // Interpreter options, bundled and long, beside a pattern with a loose script name.
+        shell(json!({"command": "python3", "args": ["-c", touch_py]})),
+        shell(json!({"command": "python3", "args": ["-Ic", touch_py]})),
+        shell(json!({"command": "python3", "args": ["-Ic", touch_py, "tool.py"]})),
+        shell(json!({"command": "python3", "args": ["-c", touch_py, "tool.py"]})),
+        shell(json!({"command": "python3", "args": ["-", "tool.py"]})),
+        shell(json!({"command": "python3", "args": ["-m", "http.server", "tool.py"]})),
+        // Another script, with the named one further along.
+        shell(json!({"command": "python3", "args": ["evil.py", "tool.py"]})),
+        shell(json!({"command": "node", "args": ["-e", touch_js, "run.js"]})),
+        shell(json!({"command": "node", "args": ["-pe", touch_js, "run.js"]})),
+        shell(json!({"command": "node", "args": ["--eval=x", "run.js"]})),
+        shell(json!({"command": "node", "args": ["--eval", touch_js, "run.js"]})),
+        // A path, or a prefix, in front of it.
+        shell(json!({"command": "/usr/bin/env", "args": ["python3", "-c", touch_py]})),
+        shell(json!({"command": "env", "args": ["python3", "-c", touch_py]})),
+        shell(json!({"command": "/usr/bin/python3", "args": ["-c", touch_py]})),
+        shell(json!({"command": "sh", "args": ["-c", "python3 -c \"open('escaped','w')\""]})),
+        shell(json!({"command": "sh", "args": ["-c", "touch escaped"]})),
+        shell(json!({"command": "xargs", "args": ["touch", "escaped"]})),
+        shell(
+            json!({"command": "find", "args": [".", "-name", "x", "-exec", "touch", "escaped", ";"]}),
+        ),
+        shell(json!({"command": "find", "args": [".", "-name", "x", "-delete"]})),
+        // Git's ways of running something else.
+        shell(json!({"command": "git", "args": ["-c", "core.sshCommand=touch escaped", "status"]})),
+        shell(json!({"command": "git", "args": ["-c", "alias.status=!touch escaped", "status"]})),
+        shell(json!({"command": "git", "args": ["--exec-path=.", "status"]})),
+        shell(json!({"command": "git", "args": ["--git-dir=x", "status"]})),
+        shell(json!({"command": "git", "args": ["status", "--ext-diff"]})),
+        // Whole-program catch-alls aren't a limit, however a plugin writes them.
+        shell(json!({"command": "npx", "args": ["cowsay"]})),
+        shell(json!({"command": "npx", "args": ["-p", "evil", "tsc"]})),
+        shell(json!({"command": "ruby", "args": ["-e", "File.write('escaped','')"]})),
+        shell(json!({"command": "perl", "args": ["-e", "open(F,'>escaped')"]})),
+        shell(json!({"command": "bash", "args": ["evil.sh"]})),
+        shell(json!({"command": "awk", "args": ["BEGIN{system(\"touch escaped\")}"]})),
+        shell(json!({"command": "make", "args": ["-f", "evil.mk"]})),
+    ];
+    let count = calls.len();
+    let app = app(
+        Setup {
+            agents: &[(
+                "scoped",
+                "tools: Read, Bash(python3 *tool.py*), Bash(python3:*), Bash(node run.js:*), Bash(node:*), Bash(git status:*), Bash(git:*), Bash(find . -name *), Bash(find:*), Bash(npx tsc:*), Bash(npx:*), Bash(ruby:*), Bash(perl *), Bash(bash:*), Bash(awk *), Bash(make:*), Bash(env:*), Bash(xargs:*)",
+            )],
+            ..Setup::default()
+        },
+        spawning(Some("scoped"), calling(calls)),
+    )
+    .await;
+    std::fs::write(app.project.path().join("evil.py"), "open('escaped','w')").unwrap();
+    std::fs::write(app.project.path().join("evil.sh"), "touch escaped").unwrap();
+    std::fs::write(
+        app.project.path().join("evil.mk"),
+        "all:\n\ttouch escaped\n",
+    )
+    .unwrap();
+    run(&app, "yolo", "go").await;
+    let answered = child_results(&app).await;
+    assert_eq!(answered.len(), count, "{answered:?}");
+    let ran: Vec<usize> = answered
+        .iter()
+        .enumerate()
+        .filter(|(_, answer)| !answer.contains("denied"))
+        .map(|(index, _)| index)
+        .collect();
+    assert!(ran.is_empty(), "these ran: {ran:?}: {answered:?}");
+    assert!(!app.project.path().join("escaped").exists());
+    app.serving.abort();
+}
+
+/// What the scopes name still runs: a limit nobody can use isn't one.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_scoped_shell_still_runs_what_it_names() {
+    let shell = |args: Value| ("shell", args);
+    let calls: Vec<(&'static str, Value)> = vec![
+        shell(json!({"command": "python3", "args": ["tools/tool.py", "--flag", "-c"]})),
+        shell(json!({"command": "git", "args": ["status", "--short"]})),
+        shell(json!({"command": "find", "args": [".", "-name", "*.py"]})),
+        shell(json!({"command": "sh", "args": ["-c", "git status --short && ls"]})),
+    ];
+    let count = calls.len();
+    let app = app(
+        Setup {
+            agents: &[(
+                "scoped",
+                "tools: Bash(python3 *tool.py*), Bash(git status:*), Bash(find . -name *), Bash(ls)",
+            )],
+            ..Setup::default()
+        },
+        spawning(Some("scoped"), calling(calls)),
+    )
+    .await;
+    std::fs::create_dir_all(app.project.path().join("tools")).unwrap();
+    std::fs::write(
+        app.project.path().join("tools/tool.py"),
+        "print('script ran')",
+    )
+    .unwrap();
+    run(&app, "yolo", "go").await;
+    let answered = child_results(&app).await;
+    assert_eq!(answered.len(), count, "{answered:?}");
+    assert!(answered[0].contains("script ran"), "{}", answered[0]);
+    for answer in &answered {
+        assert!(!answer.contains("denied"), "{answer}");
+    }
+    app.serving.abort();
+}
