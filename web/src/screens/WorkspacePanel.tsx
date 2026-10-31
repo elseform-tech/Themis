@@ -183,6 +183,7 @@ export function DiffSplit({ children }: { children: [ReactNode, ReactNode] }) {
 }
 
 function FilesView({ projectRoot }: { projectRoot: string }) {
+  const { state } = useApp();
   const [listings, setListings] = useState<Record<string, DirEntry[] | string>>({});
   const [open, setOpen] = useState<Record<string, boolean>>({ "": true });
   const [file, setFile] = useState<FileView | null>(null);
@@ -192,6 +193,9 @@ function FilesView({ projectRoot }: { projectRoot: string }) {
     catch (reason) { setListings(previous => ({ ...previous, [path]: describeError(reason) })); }
   }, [projectRoot]);
   useEffect(() => { setListings({}); setOpen({ "": true }); setFile(null); void load(""); }, [load]);
+  // A file named in a reply asks to be shown; follow each new request.
+  const asked = state.fileFocus;
+  useEffect(() => { if (asked) void view(asked.path); }, [asked]); // eslint-disable-line react-hooks/exhaustive-deps
   async function view(path: string) {
     setError("");
     try { setFile(await readProjectFile(projectRoot, path)); }
