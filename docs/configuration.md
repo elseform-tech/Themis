@@ -514,7 +514,7 @@ each result tells the agent a new message came and it may ask again. The dialog'
 `approval-expired` event carries `steered: true` (no expiry warning). Grants and rules do not change,
 and neither a plain queued message nor an answer to `ask_user` denies anything. Diagnostics record
 `queue`/`steered` with `approvals_denied`, a count.
-A goal's `proof` is its checklist: a background request lists it when the goal is set, edited or added to (on the check's model, usage counted as a goal check; `checklist_failed` is logged if it fails, and the list stays), and only the goal check marks items complete. `files` lists the files changed for it, up to 30. `checking` is true while a check runs.
+A goal's `proof` is its checklist: a background request lists it when the goal is set, edited or added to (on the check's model, usage counted as a goal check; `checklist_updated` logs the item counts and whether it was mid-turn, `script_proof_refused` logs a goal held back by a page a script changed, both with none of the goal's text, and `checklist_failed` is logged if it fails, and the list stays), and only the goal check marks items complete. `files` lists the files changed for it, up to 30. `checking` is true while a check runs.
 A goal's `added` lists the requests the user sent while it was open (steered, queued or typed;
 not answers to `ask_user` or goal turns), oldest first, at most 20 of up to 2,000 characters;
 the goal check reads them as fenced data and reaches the goal only when they are done too
