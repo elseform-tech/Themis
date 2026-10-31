@@ -2470,6 +2470,8 @@ fn themis_tools(claude: &str) -> Option<&'static [&'static str]> {
         "Glob" | "LS" => &["list_dir", "search_file"],
         "WebFetch" => &["fetch_url"],
         "WebSearch" => &["web_search"],
+        // Not a tool here: hooks fire for it when a skill is taken up (`hooks::skill_read_hooks`).
+        "Skill" => &["Skill"],
         _ => return None,
     })
 }

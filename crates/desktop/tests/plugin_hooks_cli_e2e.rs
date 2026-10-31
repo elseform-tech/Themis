@@ -1165,6 +1165,145 @@ async fn a_loop_plugin_reads_the_transcript_and_ends_on_its_promise() {
     app.serving.abort();
 }
 
+const SKILL_FILE: &str = "---\nname: review\ndescription: Review well\n---\nTHE SKILL BODY";
+
+/// The path of the plugin's skill in the catalog in the system message, if it lists it. The
+/// catalog's built-in skills come first.
+fn catalog_path(body: &Value) -> Option<String> {
+    let text = body["messages"][0]["content"].as_str()?;
+    let end = text.find("review/SKILL.md")? + "review/SKILL.md".len();
+    let at = text[..end].rfind(".themis/skill-catalogs/")?;
+    Some(text[at..end].to_owned())
+}
+
+/// Reads the skill the catalog lists, twice, then ends.
+fn reads_the_skill(body: &Value) -> ResponseTemplate {
+    let done = tool_results(body).len();
+    match catalog_path(body) {
+        Some(path) if done < 2 => tool_call(
+            &format!("r{done}"),
+            "read_file",
+            &json!({"file_path": path}),
+        ),
+        _ => reply("Done."),
+    }
+}
+
+/// A `Skill` hook runs when the agent takes up a skill: as many plugins expect, with Claude's
+/// `tool_name` and `tool_input.skill`, once a run, and it may refuse it.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_skill_hook_runs_when_the_agent_reads_a_skill() {
+    let hooks = json!({
+        "PreToolUse": [{"matcher": "Skill", "hooks": [{"type": "command", "command": "cat >> before-skill.jsonl"}]}],
+        "PostToolUse": [{"matcher": "Skill", "hooks": [{"type": "command", "command": "cat >> after-skill.jsonl"}]}]
+    });
+    let app = crate::app(
+        hooks,
+        &[("skills/review/SKILL.md", SKILL_FILE)],
+        reads_the_skill,
+    )
+    .await;
+    run(&app, "use [[plugin:g--guarded]] now").await;
+    let all = bodies(&app.llm).await;
+    assert!(
+        catalog_path(&all[0]).is_some(),
+        "no catalog: {}",
+        all[0]["messages"][0]
+    );
+    assert!(all
+        .iter()
+        .any(|body| body.to_string().contains("THE SKILL BODY")));
+    let before = std::fs::read_to_string(app.project.path().join("before-skill.jsonl")).unwrap();
+    assert_eq!(
+        before.matches("\"hook_event_name\":\"PreToolUse\"").count(),
+        1,
+        "once a run: {before}"
+    );
+    assert!(before.contains("\"tool_name\":\"Skill\""), "{before}");
+    assert!(before.contains("\"skill\":\"guarded:review\""), "{before}");
+    let after = std::fs::read_to_string(app.project.path().join("after-skill.jsonl")).unwrap();
+    assert!(
+        after.contains("\"hook_event_name\":\"PostToolUse\""),
+        "{after}"
+    );
+    app.serving.abort();
+    // Refusing it refuses the read.
+    let hooks = json!({"PreToolUse": [{"matcher": "Skill", "hooks": [{"type": "command",
+        "command": "echo 'no skills today' >&2; exit 2"}]}]});
+    let app = crate::app(
+        hooks,
+        &[("skills/review/SKILL.md", SKILL_FILE)],
+        reads_the_skill,
+    )
+    .await;
+    run(&app, "use [[plugin:g--guarded]] now").await;
+    let told = bodies(&app.llm).await;
+    let refusal = told
+        .iter()
+        .flat_map(tool_results)
+        .any(|text| text.contains("no skills today"));
+    assert!(refusal, "{told:?}");
+    assert!(!bodies(&app.llm)
+        .await
+        .last()
+        .unwrap()
+        .to_string()
+        .contains("THE SKILL BODY"));
+    app.serving.abort();
+}
+
+/// A skill the person attaches goes into the turn with no tool call: its hook runs before the
+/// first request, and refusing it stops the turn before the model sees it.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_skill_hook_runs_for_a_skill_the_person_attached() {
+    let hooks = json!({"PreToolUse": [{"matcher": "Skill", "hooks": [{"type": "command", "command": "cat > attached.json"}]}]});
+    let app = crate::app(hooks, &[("skills/review/SKILL.md", SKILL_FILE)], |_| {
+        reply("Done.")
+    })
+    .await;
+    run(&app, "[[skill:g--guarded--review]] please").await;
+    let seen: Value = serde_json::from_slice(
+        &std::fs::read(app.project.path().join("attached.json")).expect("the hook didn't run"),
+    )
+    .unwrap();
+    assert_eq!(seen["tool_name"], "Skill");
+    assert_eq!(seen["tool_input"]["skill"], "guarded:review");
+    assert!(bodies(&app.llm).await[0]
+        .to_string()
+        .contains("THE SKILL BODY"));
+    app.serving.abort();
+    let hooks = json!({"PreToolUse": [{"matcher": "Skill", "hooks": [{"type": "command",
+        "command": "echo 'not this one' >&2; exit 2"}]}]});
+    let app = crate::app(hooks, &[("skills/review/SKILL.md", SKILL_FILE)], |_| {
+        reply("Done.")
+    })
+    .await;
+    run(&app, "[[skill:g--guarded--review]] please").await;
+    assert!(
+        bodies(&app.llm).await.is_empty(),
+        "the model saw the refused skill"
+    );
+    app.serving.abort();
+}
+
+/// A guard on `Read` is no guard on what a project happens to call SKILL.md, and a `Skill` hook
+/// doesn't fire for a project's own file of that name.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_project_file_named_like_a_skill_is_not_a_skill() {
+    let hooks = json!({"PreToolUse": [{"matcher": "Skill", "hooks": [{"type": "command", "command": "touch skill-hook-ran"}]}]});
+    let app = crate::app(
+        hooks,
+        &[("skills/review/SKILL.md", SKILL_FILE)],
+        calls_once("read_file", json!({"file_path": "docs/SKILL.md"})),
+    )
+    .await;
+    std::fs::create_dir_all(app.project.path().join("docs")).unwrap();
+    std::fs::write(app.project.path().join("docs/SKILL.md"), "mine").unwrap();
+    run(&app, "go").await;
+    assert!(!exists(&app, "skill-hook-ran"));
+    app.serving.abort();
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn an_async_hook_does_not_hold_the_turn_and_cannot_block() {
     let app = app(

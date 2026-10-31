@@ -798,6 +798,8 @@ impl SubagentKit {
                 transcript_path: self.transcript_path(agent),
                 permission_mode: super::run::permission_mode(self.mode).to_owned(),
                 cancel: Some(Arc::clone(&agent.stop)),
+                attached_skills: Vec::new(),
+                skills_seen: Arc::default(),
             },
         }
     }

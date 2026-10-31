@@ -532,6 +532,12 @@ impl AppState {
                 transcript_path: Some(session_dir.join("transcript.jsonl")),
                 permission_mode: permission_mode(snapshot.approval_mode).to_owned(),
                 cancel: Some(Arc::clone(&stopped)),
+                attached_skills: snapshot
+                    .skills
+                    .iter()
+                    .map(|skill| themis_core::plugins::hooks::skill_label(&skill.id))
+                    .collect(),
+                skills_seen: Arc::default(),
             },
         };
         let skills = snapshot.skills;

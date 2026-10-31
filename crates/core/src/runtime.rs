@@ -3963,6 +3963,9 @@ async fn execute_call(
         Ok(parsed) => parsed,
         Err(err) => return Err(format!("tool '{name}' got invalid arguments: {err}")),
     };
+    crate::plugins::hooks::skill_read_hooks(name, &parsed, None, events)
+        .await
+        .map_err(|e| e.to_string())?;
     crate::plugins::hooks::emit_current(
         "BeforeTool",
         serde_json::json!({"event":"BeforeTool","tool":name,"arguments":parsed}),
@@ -3984,6 +3987,9 @@ async fn execute_call(
         Err(err) => Err(format!("tool '{name}' failed: {}", tool_failure(&err))),
     };
     crate::plugins::hooks::emit_current("AfterTool", serde_json::json!({"event":"AfterTool","tool":name,"arguments":parsed,"ok":outcome.is_ok(),"output":outcome.as_ref().ok(),"error":outcome.as_ref().err()}), events).await.map_err(|e|e.to_string())?;
+    crate::plugins::hooks::skill_read_hooks(name, &parsed, Some(outcome.is_ok()), events)
+        .await
+        .map_err(|e| e.to_string())?;
     outcome
 }
 

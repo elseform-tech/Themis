@@ -227,6 +227,7 @@ fn claude_tool_name(tool: &str) -> Option<&'static str> {
         "fetch_url" => "WebFetch",
         "web_search" => "WebSearch",
         "spawn_subagents" => "Agent",
+        "Skill" => "Skill",
         _ => return None,
     })
 }
@@ -558,6 +559,47 @@ pub struct HookSession {
     pub permission_mode: String,
     /// Stops a hook that is still running (the person's Stop).
     pub cancel: Option<Arc<std::sync::atomic::AtomicBool>>,
+    /// The skills the person attached to this turn, in Claude's words: they enter it with no call.
+    pub attached_skills: Vec<String>,
+    /// The skills this run's hooks have been told about, so one read in pages counts once.
+    pub skills_seen: Arc<std::sync::Mutex<std::collections::HashSet<String>>>,
+}
+
+/// What `Skill` hooks are told a skill is called, from its id (`g--plugin--revision--name`,
+/// `g--plugin--name`) or its folder: `plugin:name`, or just the name of one of its own.
+#[must_use]
+pub fn skill_label(id: &str) -> String {
+    let parts: Vec<&str> = id.split("--").collect();
+    match parts.as_slice() {
+        [_, plugin, name] | [_, plugin, _, name] => format!("{plugin}:{name}"),
+        _ => id.to_owned(),
+    }
+}
+
+/// Which skill a read takes up, if it does: a `SKILL.md` Themis put under `.themis/` for the run
+/// (the catalog the model picks from, or a plugin's files). A project's own file of that name
+/// isn't one, and nor is `.themis` further down a path that doesn't start there.
+fn skill_being_read(tool: &str, arguments: &Value) -> Option<String> {
+    if tool != "read_file" {
+        return None;
+    }
+    let path = arguments["file_path"].as_str()?;
+    let path = path.replace('\\', "/");
+    let at = if path.starts_with(".themis/") {
+        0
+    } else {
+        path.find("/.themis/")? + 1
+    };
+    let inside = &path[at..];
+    let name = inside.strip_suffix("/SKILL.md")?.rsplit('/').next()?;
+    if inside.starts_with(".themis/skill-catalogs/") || inside.starts_with(".themis/skills/") {
+        return Some(skill_label(name));
+    }
+    // `.themis/plugin-files/<scope>--<plugin>--<revision>--resources/skills/<name>/SKILL.md`
+    let resources = inside.strip_prefix(".themis/plugin-files/")?;
+    let (package, _) = resources.split_once('/')?;
+    let plugin = package.split("--").nth(1)?;
+    Some(format!("{plugin}:{name}"))
 }
 
 /// Most of a transcript kept, in bytes: past this its older half goes.
@@ -862,6 +904,42 @@ fn append_transcript(path: &Path, line: &str) -> std::io::Result<()> {
     file.write_all(b"\n")
 }
 
+/// Runs `Skill` hooks when a tool call takes up a skill: once a run for each skill, before the read
+/// so a hook can refuse it, and after it (`after` is whether the read went well).
+pub async fn skill_read_hooks(
+    tool: &str,
+    arguments: &Value,
+    after: Option<bool>,
+    events: &tokio::sync::mpsc::Sender<crate::runtime::RunEvent>,
+) -> anyhow::Result<()> {
+    let Some(skill) = skill_being_read(tool, arguments) else {
+        return Ok(());
+    };
+    let Ok(runtime) = ACTIVE.try_with(Clone::clone) else {
+        return Ok(());
+    };
+    match after {
+        None => {
+            if runtime.first_sight_of(&skill) {
+                let call = json!({"tool": "Skill", "arguments": {"skill": skill}});
+                if let Err(error) = runtime.emit("BeforeTool", call, events).await {
+                    // It can be taken up again once a hook lets it.
+                    runtime.forget_skill(&skill);
+                    return Err(error);
+                }
+            }
+        }
+        Some(ok) => {
+            if runtime.report_after(&skill) {
+                let call = json!({"tool": "Skill", "arguments": {"skill": skill}, "ok": ok,
+                    "output": json!({"success": ok, "commandName": skill}).to_string()});
+                runtime.emit("AfterTool", call, events).await?;
+            }
+        }
+    }
+    Ok(())
+}
+
 /// What the agent said before its tool calls, for this chat's transcript.
 pub fn note_reply_current(text: &str) {
     if let Ok(runtime) = ACTIVE.try_with(Clone::clone) {
@@ -901,6 +979,50 @@ impl HookRuntime {
         let line = json!({"type": role, "sessionId": self.thread_id,
             "message": {"role": role, "content": content}});
         let _ = append_transcript(path, &line.to_string());
+    }
+
+    /// Whether this run's hooks haven't heard of this skill yet.
+    fn first_sight_of(&self, skill: &str) -> bool {
+        self.session
+            .skills_seen
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(skill.to_owned())
+    }
+
+    fn forget_skill(&self, skill: &str) {
+        self.session
+            .skills_seen
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(skill);
+    }
+
+    /// Whether the read that follows the first sight of a skill is still to be reported.
+    fn report_after(&self, skill: &str) -> bool {
+        self.first_sight_of(&format!("after:{skill}"))
+    }
+
+    /// The hooks for skills the person attached: they go into the turn with no call, so this is
+    /// when they are taken up. A hook that refuses stops the turn, as a prompt hook does.
+    async fn attached_skill_hooks(
+        &self,
+        events: &tokio::sync::mpsc::Sender<crate::runtime::RunEvent>,
+    ) -> anyhow::Result<()> {
+        for skill in &self.session.attached_skills {
+            if !self.first_sight_of(skill) {
+                continue;
+            }
+            let call = json!({"tool": "Skill", "arguments": {"skill": skill}});
+            self.emit("BeforeTool", call, events)
+                .await
+                .map_err(|error| anyhow::anyhow!("Skill {skill} was refused: {error}"))?;
+            let done = json!({"tool": "Skill", "arguments": {"skill": skill}, "ok": true,
+                "output": json!({"success": true, "commandName": skill}).to_string()});
+            self.first_sight_of(&format!("after:{skill}"));
+            self.emit("AfterTool", done, events).await.ok();
+        }
+        Ok(())
     }
 
     /// What the agent said, for the transcript.
@@ -1229,7 +1351,14 @@ where
         }
     });
     // The person's message goes to the PromptSubmit hooks before the first model request.
-    let context = match runtime.prompt_submit(task, &events).await {
+    let submitted = match runtime.prompt_submit(task, &events).await {
+        Ok(context) => runtime
+            .attached_skill_hooks(&events)
+            .await
+            .map(|()| context),
+        Err(error) => Err(error),
+    };
+    let context = match submitted {
         Ok(context) => context,
         Err(error) => {
             runtime
@@ -1526,6 +1655,52 @@ mod tests {
                     prop_assert_eq!(ran, !read);
                 }
             }
+        }
+    }
+
+    #[test]
+    fn only_a_skill_themis_put_in_place_counts_as_taking_one_up() {
+        let read = |path: &str| skill_being_read("read_file", &json!({ "file_path": path }));
+        assert_eq!(
+            read(".themis/skill-catalogs/run1/.themis/skills/g--kit--123--review/SKILL.md")
+                .as_deref(),
+            Some("kit:review")
+        );
+        assert_eq!(
+            read("/work/.themis/skill-catalogs/r/.themis/skills/skills/SKILL.md").as_deref(),
+            Some("skills")
+        );
+        assert_eq!(
+            read(".themis/plugin-files/g--kit--123--resources/skills/lint/SKILL.md").as_deref(),
+            Some("kit:lint")
+        );
+        for other in [
+            "docs/SKILL.md",
+            "SKILL.md",
+            "skills/x/SKILL.md",
+            ".themis/config.jsonc",
+            ".themis/skill-catalogs/r/.themis/skills/a/notes.md",
+            ".themis/notes/x/SKILL.md",
+        ] {
+            assert_eq!(read(other), None, "{other}");
+        }
+        assert_eq!(
+            skill_being_read(
+                "write_file",
+                &json!({"file_path": ".themis/skills/a/SKILL.md"})
+            ),
+            None
+        );
+        assert_eq!(skill_label("g--kit--review"), "kit:review");
+        assert_eq!(skill_label("plain"), "plain");
+    }
+
+    proptest! {
+        /// Any path a model sends: no panic.
+        #[test]
+        fn any_path_is_read_cleanly(path in "[ -~]{0,60}") {
+            let _ = skill_being_read("read_file", &json!({"file_path": path}));
+            let _ = skill_label(&path);
         }
     }
 
