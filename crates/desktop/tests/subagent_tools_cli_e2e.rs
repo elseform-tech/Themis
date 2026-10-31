@@ -513,3 +513,294 @@ async fn an_explicit_tool_list_narrows_the_web_tools_too() {
         app.serving.abort();
     }
 }
+
+/// A scoped `Bash(...)` gives the shell for those commands and refuses the rest, however they are
+/// wrapped, in YOLO too.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_scoped_shell_runs_only_the_commands_it_names() {
+    let calls = vec![
+        ("shell", json!({"command": "git", "args": ["status"]})),
+        ("shell", json!({"command": "touch", "args": ["plain-ran"]})),
+        (
+            "shell",
+            json!({"command": "sh", "args": ["-c", "git status && touch chained-ran"]}),
+        ),
+        (
+            "shell",
+            json!({"command": "sh", "args": ["-c", "touch wrapped-ran"]}),
+        ),
+        (
+            "shell",
+            json!({"command": "git", "args": ["-C", ".", "push"]}),
+        ),
+        (
+            "shell",
+            json!({"command": "env", "args": ["PATH=.", "git", "status"]}),
+        ),
+        (
+            "shell",
+            json!({"command": "sh", "args": ["-c", "PATH=. git status"]}),
+        ),
+        (
+            "shell",
+            json!({"command": "sh", "args": ["-c", "git status > redirected-ran"]}),
+        ),
+        (
+            "shell",
+            json!({"command": "touch", "args": ["background-ran"], "background": true}),
+        ),
+        (
+            "shell",
+            json!({"command": "sh", "args": ["-c", "$X status"]}),
+        ),
+        ("shell", json!({"command": "git", "args": ["statusx"]})),
+    ];
+    let count = calls.len();
+    let app = app(
+        Setup {
+            agents: &[("scoped", "tools: Read, Bash(git status:*)")],
+            ..Setup::default()
+        },
+        spawning(Some("scoped"), calling(calls)),
+    )
+    .await;
+    run(&app, "yolo", "go").await;
+    let (tools, system) = child_request(&app).await;
+    assert!(tools.iter().any(|tool| tool == "shell"), "{tools:?}");
+    // No other way to a command, and it knows its limit.
+    for other in ["git", "background_task", "write_file"] {
+        assert!(!tools.iter().any(|tool| tool == other), "{tools:?}");
+    }
+    assert!(system.contains("git status:*"), "{system}");
+    let answered = child_results(&app).await;
+    assert_eq!(answered.len(), count, "{answered:?}");
+    assert!(
+        answered[0].contains("\"exit_code\""),
+        "the named command was refused: {}",
+        answered[0]
+    );
+    for (index, answer) in answered.iter().enumerate().skip(1) {
+        assert!(answer.contains("denied"), "call {index} ran: {answer}");
+    }
+    for ran in [
+        "plain-ran",
+        "chained-ran",
+        "wrapped-ran",
+        "redirected-ran",
+        "background-ran",
+    ] {
+        assert!(!app.project.path().join(ran).exists(), "{ran}");
+    }
+    let listed = call(
+        app.data.path(),
+        "list_subagents",
+        json!({"threadId": app.thread}),
+    );
+    assert_eq!(
+        listed[0]["shell_scopes"],
+        json!(["git status:*"]),
+        "{listed}"
+    );
+    app.serving.abort();
+}
+
+/// With `BashOutput` and `KillShell` it can start, read and stop its own background program, and
+/// the program ends with it. A scope still holds for what it starts.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_subagent_uses_background_programs_and_they_end_with_it() {
+    let child = |body: &Value| -> ResponseTemplate {
+        let done = results(body);
+        match done.len() {
+            0 => tool_call(
+                "b0",
+                "shell",
+                &json!({"command": "sh", "args": ["-c", "echo started-output; sleep 300"], "background": true}),
+            ),
+            1 => {
+                let started: Value = serde_json::from_str(done[0]).unwrap_or(Value::Null);
+                std::thread::sleep(Duration::from_millis(300));
+                tool_call(
+                    "b1",
+                    "background_task",
+                    &json!({"action": "log", "task_id": started["task_id"]}),
+                )
+            }
+            2 => tool_call("b2", "background_task", &json!({"action": "list"})),
+            _ => reply("Reported."),
+        }
+    };
+    let app = app(
+        Setup {
+            agents: &[("runner", "tools: Bash, BashOutput, KillShell")],
+            ..Setup::default()
+        },
+        spawning(Some("runner"), child),
+    )
+    .await;
+    run(&app, "yolo", "go").await;
+    let (tools, _) = child_request(&app).await;
+    assert!(
+        tools.iter().any(|tool| tool == "background_task"),
+        "{tools:?}"
+    );
+    let answered = child_results(&app).await;
+    assert!(answered[1].contains("started-output"), "{answered:?}");
+    assert!(answered[2].contains("\"tasks\""), "{answered:?}");
+    let data = app.data.path().to_owned();
+    let thread = app.thread.clone();
+    tokio::task::spawn_blocking(move || {
+        let deadline = Instant::now() + Duration::from_secs(20);
+        loop {
+            let tasks = call(&data, "get_thread_tasks", json!({"threadId": thread}));
+            if tasks["background_tasks"][0]["state"] == "stopped" {
+                break;
+            }
+            assert!(Instant::now() < deadline, "still running: {tasks}");
+            std::thread::sleep(Duration::from_millis(100));
+        }
+    })
+    .await
+    .unwrap();
+    app.serving.abort();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_plain_subagent_has_none_of_these_tools_unless_named() {
+    let app = app(
+        Setup::default(),
+        spawning(None, |_: &Value| reply("Reported.")),
+    )
+    .await;
+    run(&app, "yolo", "go").await;
+    let (tools, _) = child_request(&app).await;
+    for named_only in [
+        "background_task",
+        "todo_write",
+        "ask_user",
+        "spawn_subagents",
+        "git",
+    ] {
+        assert!(!tools.iter().any(|tool| tool == named_only), "{tools:?}");
+    }
+    app.serving.abort();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_todo_list_is_kept_and_shows_what_it_is_doing() {
+    let todos = json!({"todos": [
+        {"content": "Read the code", "status": "completed"},
+        {"content": "Write the report", "status": "in_progress"}
+    ]});
+    let app = app(
+        Setup {
+            agents: &[("planner", "tools: Read, TodoWrite")],
+            ..Setup::default()
+        },
+        spawning(Some("planner"), calling(vec![("todo_write", todos)])),
+    )
+    .await;
+    run(&app, "custom", "go").await;
+    let answered = child_results(&app).await;
+    assert!(answered[0].contains("\"done\":1"), "{answered:?}");
+    let listed = call(
+        app.data.path(),
+        "list_subagents",
+        json!({"threadId": app.thread}),
+    );
+    assert_eq!(listed[0]["text"], "Write the report", "{listed}");
+    app.serving.abort();
+}
+
+/// `AskUserQuestion` reaches the person through the chat, names who asks, and the answer goes to
+/// the subagent that asked, which never stops to wait.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_subagents_question_reaches_the_person_and_the_answer_reaches_it() {
+    let child = |body: &Value| -> ResponseTemplate {
+        if mentions(body, "Use the blue one") {
+            return reply("Done with blue.");
+        }
+        if results(body).is_empty() {
+            return tool_call(
+                "q0",
+                "ask_user",
+                &json!({"question": "Which colour?", "blocking": true}),
+            );
+        }
+        if results(body).len() == 1 {
+            return tool_call(
+                "q1",
+                "ask_user",
+                &json!({"question": "Which colour?", "recommended": "red", "why": "It is the house style"}),
+            );
+        }
+        tool_call("w", "shell", &json!({"command": "sleep", "args": ["0.1"]}))
+    };
+    let app = app(
+        Setup {
+            agents: &[("asker", "tools: Bash, AskUserQuestion")],
+            ..Setup::default()
+        },
+        spawning(Some("asker"), child),
+    )
+    .await;
+    let (data, thread) = (app.data.path().to_owned(), app.thread.clone());
+    tokio::task::spawn_blocking(move || {
+        call(
+            &data,
+            "set_thread_approval_mode",
+            json!({"threadId": thread, "mode": "yolo"}),
+        );
+        call(
+            &data,
+            "send_message",
+            json!({"threadId": thread, "text": "go"}),
+        );
+        let deadline = Instant::now() + Duration::from_secs(30);
+        let question = loop {
+            assert!(Instant::now() < deadline, "the question never came");
+            let open = call(&data, "list_questions", json!({"threadId": thread}));
+            if let Some(found) = open.as_array().and_then(|all| all.first().cloned()) {
+                break found;
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        };
+        assert!(
+            question["question"]
+                .as_str()
+                .unwrap()
+                .starts_with("Helper: "),
+            "{question}"
+        );
+        assert_eq!(question["blocking"], false, "{question}");
+        call(
+            &data,
+            "answer_question",
+            json!({"threadId": thread, "questionId": question["id"], "answer": "Use the blue one"}),
+        );
+        while call(&data, "get_thread", json!({"threadId": thread}))["running"] == true {
+            assert!(Instant::now() < deadline, "the run never finished");
+            std::thread::sleep(Duration::from_millis(50));
+        }
+    })
+    .await
+    .unwrap();
+    let all = bodies(&app.llm).await;
+    let child_saw = all
+        .iter()
+        .any(|body| is_subagent(body) && mentions(body, "Use the blue one"));
+    assert!(child_saw, "the answer never reached the subagent");
+    let first = all.iter().rfind(|body| is_subagent(body)).unwrap();
+    assert!(
+        results(first)[0].contains("can't stop"),
+        "a blocking question from a subagent is refused: {:?}",
+        results(first)
+    );
+    assert!(
+        !all.iter()
+            .any(|body| !is_subagent(body) && mentions(body, "Use the blue one")),
+        "the answer went to the main agent as well"
+    );
+    let (_, system) = child_request(&app).await;
+    assert!(system.contains("ask_user"), "{system}");
+    app.serving.abort();
+}

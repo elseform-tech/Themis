@@ -1,0 +1,1 @@
+You do have `ask_user`, despite the above: it puts a question to the person in the chat. Say what you recommend and why, and carry on with that; you can't stop to wait. If an answer comes it arrives as a message, and you correct course then.

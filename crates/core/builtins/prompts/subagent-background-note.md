@@ -1,0 +1,1 @@
+With `shell` you can start a program with background=true and use `background_task` to read its output or stop it. You can only reach programs you started, and they stop when you finish.

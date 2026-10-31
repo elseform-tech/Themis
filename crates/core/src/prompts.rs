@@ -40,6 +40,14 @@ pub const SUBAGENT_MCP_LEFT_OUT: &str =
     include_str!("../builtins/prompts/subagent-mcp-left-out.md");
 pub const SPAWN_SUBAGENTS_MCP: &str = include_str!("../builtins/prompts/spawn-subagents-mcp.md");
 pub const SUBAGENT_WEB_NOTE: &str = include_str!("../builtins/prompts/subagent-web-note.md");
+pub const SUBAGENT_SHELL_SCOPE_NOTE: &str =
+    include_str!("../builtins/prompts/subagent-shell-scope-note.md");
+pub const SUBAGENT_ASK_NOTE: &str = include_str!("../builtins/prompts/subagent-ask-note.md");
+pub const SUBAGENT_BACKGROUND_NOTE: &str =
+    include_str!("../builtins/prompts/subagent-background-note.md");
+pub const SUBAGENT_CLAUDE_NAMES: &str =
+    include_str!("../builtins/prompts/subagent-claude-names.md");
+pub const SUBAGENT_TODO_TOOL: &str = include_str!("../builtins/prompts/subagent-todo-tool.md");
 pub const SPAWN_SUBAGENTS_WEB: &str = include_str!("../builtins/prompts/spawn-subagents-web.md");
 pub const SUBAGENT_READ_ONLY_NOTE: &str =
     include_str!("../builtins/prompts/subagent-read-only-note.md");

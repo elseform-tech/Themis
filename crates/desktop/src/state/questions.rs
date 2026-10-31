@@ -52,6 +52,8 @@ pub(super) struct NewQuestion {
     pub why: Option<String>,
     pub blocking: bool,
     pub topic: Option<String>,
+    /// The subagent asking, by id: its answer goes to that subagent.
+    pub subagent: Option<String>,
 }
 
 /// Why a question was not asked.
@@ -235,6 +237,7 @@ impl AppState {
                 question.reasons = reasons;
                 question.blocking = asked.blocking;
                 question.topic = topic.or(question.topic.take());
+                question.subagent = asked.subagent;
                 question.run_id = run_id.to_owned();
                 question.clone()
             }
@@ -251,6 +254,7 @@ impl AppState {
                     reasons,
                     blocking: asked.blocking,
                     topic,
+                    subagent: asked.subagent,
                     asked_at: now_ms(),
                     answer: None,
                 };
@@ -367,6 +371,20 @@ impl AppState {
                 ("answer", answer),
             ],
         );
+        // The subagent that asked gets it while it is running; once it has ended, the main
+        // agent does, like any answer.
+        if let Some(agent) = question
+            .subagent
+            .as_deref()
+            .and_then(|id| self.running_subagent(thread_id, id))
+        {
+            agent
+                .inbox
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .push_back(format!("{ANSWER_MARKER}\n{body}"));
+            return Ok(true);
+        }
         // Under the queue lock, like a steer: closing the inbox takes the same
         // lock, so the answer lands in a live inbox or in the queue.
         self.edit_queue(sink, thread_id, |queue| {

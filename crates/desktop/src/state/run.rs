@@ -401,6 +401,7 @@ impl AppState {
             run_id: run_id.to_owned(),
             run: check_approval.clone(),
             end: Arc::clone(&end_request),
+            subagent: None,
         }));
         tools.push(Box::new(super::media_tool::AttachFileTool {
             state: self.clone(),

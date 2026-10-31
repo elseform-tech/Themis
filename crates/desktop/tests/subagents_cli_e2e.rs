@@ -1457,11 +1457,10 @@ async fn a_tool_list_only_narrows() {
         report
     })
     .await;
-    // Names with no Themis tool are dropped, and that shows.
-    assert_eq!(report["report"]["status"], "partial", "{report}");
+    // Every name here means something, so nothing is dropped.
     let reasons = report["spec"]["unsupported"].to_string();
     assert!(!reasons.contains("mcp__docs__lookup"), "{reasons}");
-    assert!(reasons.contains("Bash(git diff:*)"), "{reasons}");
+    assert!(!reasons.contains("Bash(git diff:*)"), "{reasons}");
 
     run_in_yolo(&app, "review the project").await;
     let all = bodies(&app.llm).await;
@@ -1488,8 +1487,11 @@ async fn a_tool_list_only_narrows() {
         ["fetch_url", "list_dir", "read_file", "search_file", "shell"]
     );
     assert_eq!(tools_of("omits mcp"), reads);
-    // A scoped Bash(...) can't be honoured, so it is left out rather than widened to all of it.
-    assert_eq!(tools_of("scoped shell"), reads);
+    // A scoped Bash(...) gives the shell, held to its commands (`subagent_tools_cli_e2e`).
+    assert_eq!(
+        tools_of("scoped shell"),
+        ["list_dir", "read_file", "search_file", "shell"]
+    );
     // A list that denies part of the shell loses the shell.
     assert_eq!(
         tools_of("denied shell"),

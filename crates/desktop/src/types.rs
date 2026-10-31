@@ -295,6 +295,9 @@ pub enum ThreadEvent {
         /// Whether it has web tools.
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         web: bool,
+        /// What its shell is limited to, as its profile wrote them; empty is no limit.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        shell_scopes: Vec<String>,
         /// When it was started (RFC 3339); groups finished work by request in Tasks.
         #[serde(default, skip_serializing_if = "String::is_empty")]
         at: String,
@@ -360,6 +363,9 @@ pub struct Question {
     /// Asking again on an open topic updates this question.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub topic: Option<String>,
+    /// The subagent that asked, by id.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub subagent: Option<String>,
     /// Unix milliseconds.
     pub asked_at: i64,
     #[serde(default, skip_serializing_if = "Option::is_none")]

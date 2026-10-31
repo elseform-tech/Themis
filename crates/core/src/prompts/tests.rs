@@ -268,6 +268,15 @@ const ALL: &[(&str, &str, &[&str])] = &[
     (SUBAGENT_MCP_LEFT_OUT, "subagent-mcp-left-out", &["tools"]),
     (SPAWN_SUBAGENTS_MCP, "spawn-subagents-mcp", &[]),
     (SUBAGENT_WEB_NOTE, "subagent-web-note", &["tools"]),
+    (
+        SUBAGENT_SHELL_SCOPE_NOTE,
+        "subagent-shell-scope-note",
+        &["scopes"],
+    ),
+    (SUBAGENT_ASK_NOTE, "subagent-ask-note", &[]),
+    (SUBAGENT_BACKGROUND_NOTE, "subagent-background-note", &[]),
+    (SUBAGENT_CLAUDE_NAMES, "subagent-claude-names", &["names"]),
+    (SUBAGENT_TODO_TOOL, "subagent-todo-tool", &[]),
     (SPAWN_SUBAGENTS_WEB, "spawn-subagents-web", &[]),
     (
         SUBAGENT_WRITE_PATHS_NOTE,

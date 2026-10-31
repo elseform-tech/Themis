@@ -15,6 +15,7 @@
 pub mod background;
 mod patch;
 pub mod recall;
+pub mod shell_scope;
 pub mod site_permissions;
 pub mod web;
 mod wrapped;
@@ -112,8 +113,10 @@ pub fn tool_approves_itself(name: &str) -> bool {
     // approve per site, and only they know the site (the browser's current page).
     // The subagent tools change nothing themselves: each subagent's own actions
     // are approved as they happen.
-    matches!(name, "manage_automations" | "set_goal" | "ask_user")
-        || crate::skills::SUBAGENT_TOOLS.contains(&name)
+    matches!(
+        name,
+        "manage_automations" | "set_goal" | "ask_user" | "todo_write"
+    ) || crate::skills::SUBAGENT_TOOLS.contains(&name)
         || is_site_tool(name)
 }
 

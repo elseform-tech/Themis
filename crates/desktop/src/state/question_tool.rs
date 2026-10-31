@@ -21,6 +21,9 @@ pub(super) struct QuestionTool {
     pub(super) run: RunApproval,
     /// Set for a blocking question: the run ends after this tool batch.
     pub(super) end: themis_core::runtime::EndRequest,
+    /// The subagent asking, by id and name. It keeps working: only the chat's own run can end on
+    /// a question.
+    pub(super) subagent: Option<(String, String)>,
 }
 
 impl std::fmt::Debug for QuestionTool {
@@ -65,6 +68,7 @@ fn parse(args: &Value) -> NewQuestion {
         assumption: text("recommended").or_else(|| text("assumption")),
         // A question the agent can recommend an answer to never stops the work: it works
         // on that answer meanwhile. Only one it cannot answer at all may block.
+        subagent: None,
         blocking: args["blocking"].as_bool().unwrap_or(false)
             && text("recommended")
                 .or_else(|| text("assumption"))
@@ -76,7 +80,16 @@ fn parse(args: &Value) -> NewQuestion {
 #[async_trait]
 impl ToolRuntime for QuestionTool {
     async fn execute(&self, args: Value) -> Result<Value, ToolCallError> {
-        let asked = parse(&args);
+        let mut asked = parse(&args);
+        if let Some((id, name)) = &self.subagent {
+            if asked.blocking || args["recommended"].as_str().is_none() {
+                return Err(error(
+                    "ask_user: a subagent can't stop to wait for an answer: give `recommended` and `why`, and carry on with that",
+                ));
+            }
+            asked.question = format!("{name}: {}", asked.question);
+            asked.subagent = Some(id.clone());
+        }
         if !asked.blocking {
             let Some(recommended) = asked.assumption.as_deref().filter(|a| !a.trim().is_empty())
             else {

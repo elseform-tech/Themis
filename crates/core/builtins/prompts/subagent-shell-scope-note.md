@@ -1,0 +1,1 @@
+Your shell runs only these commands: {{scopes}}. Run each directly as one command; anything else, including through `sh -c` with other commands, an environment variable or a redirection, is refused.

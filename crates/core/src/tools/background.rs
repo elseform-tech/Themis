@@ -889,6 +889,8 @@ pub struct BackgroundScope {
     pub thread_id: String,
     /// The run whose tasks these are.
     pub run_id: Option<String>,
+    /// Only that run's tasks can be seen or stopped: a subagent's reach ends at its own.
+    pub own_tasks_only: bool,
 }
 
 fn blocking_error(error: tokio::task::JoinError) -> ToolCallError {
@@ -902,7 +904,15 @@ impl BackgroundScope {
             registry,
             thread_id: thread_id.into(),
             run_id: None,
+            own_tasks_only: false,
         }
+    }
+
+    /// Only this run's tasks can be seen or stopped through this scope.
+    #[must_use]
+    pub fn own_tasks_only(mut self) -> Self {
+        self.own_tasks_only = true;
+        self
     }
 
     /// Tasks started through this scope record `run_id`.
@@ -1025,11 +1035,21 @@ impl ToolRuntime for BackgroundTool {
         tokio::task::spawn_blocking(move || {
             let registry = &scope.registry;
             let thread = scope.thread_id.as_str();
+            let mine = |record: &TaskRecord| !scope.own_tasks_only || record.run_id == scope.run_id;
+            if action != "list" {
+                let found = registry.status(thread, &task_id).map_err(fail)?;
+                if !mine(&found.record) {
+                    return Err(fail(format!(
+                        "unknown background task '{task_id}' in this chat"
+                    )));
+                }
+            }
             match action.as_str() {
                 "list" => {
                     let tasks: Vec<Value> = registry
                         .list(thread, 0)
                         .into_iter()
+                        .filter(|view| mine(&view.record))
                         .map(|view| {
                             json!({
                                 "task_id": view.record.id,
@@ -1089,6 +1109,64 @@ impl ToolRuntime for BackgroundTool {
         })
         .await
         .map_err(blocking_error)?
+    }
+}
+
+#[cfg(all(test, unix))]
+mod own_tasks_tests {
+    use super::*;
+
+    /// A subagent's scope reaches only what it started: it can't see or stop the chat's others.
+    #[tokio::test]
+    async fn a_scope_limited_to_its_run_cannot_reach_other_tasks() {
+        let dir = tempfile::tempdir().unwrap();
+        let registry = BackgroundRegistry::open(None);
+        let start = |run: &str| {
+            let registry = Arc::clone(&registry);
+            let (run, workdir) = (run.to_owned(), dir.path().to_owned());
+            tokio::task::spawn_blocking(move || {
+                registry.start(StartSpec {
+                    thread_id: "chat".into(),
+                    run_id: Some(run),
+                    program: "sleep".into(),
+                    args: vec!["30".into()],
+                    workdir,
+                    timeout_secs: 60,
+                    sandbox: None,
+                })
+            })
+        };
+        let main = start("main").await.unwrap().unwrap().record.id;
+        let own = start("child").await.unwrap().unwrap().record.id;
+        let tool = BackgroundTool::new(Some(
+            BackgroundScope::new(Arc::clone(&registry), "chat")
+                .with_run("child")
+                .own_tasks_only(),
+        ));
+        let listed = tool.execute(json!({"action": "list"})).await.unwrap();
+        assert_eq!(listed["tasks"].as_array().unwrap().len(), 1, "{listed}");
+        assert_eq!(listed["tasks"][0]["task_id"], own.as_str());
+        for action in ["status", "log", "stop"] {
+            let refused = tool
+                .execute(json!({"action": action, "task_id": main}))
+                .await;
+            assert!(refused.is_err(), "{action} reached another task");
+        }
+        assert_eq!(
+            registry.status("chat", &main).unwrap().record.state,
+            TaskState::Running
+        );
+        let stopped = tool
+            .execute(json!({"action": "stop", "task_id": own}))
+            .await
+            .unwrap();
+        assert_eq!(stopped["state"], "stopped", "{stopped}");
+        // Without the limit, as for the main agent, it can.
+        let main_tool = BackgroundTool::new(Some(BackgroundScope::new(registry, "chat")));
+        assert!(main_tool
+            .execute(json!({"action": "stop", "task_id": main}))
+            .await
+            .is_ok());
     }
 }
 

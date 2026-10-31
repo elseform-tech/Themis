@@ -410,6 +410,24 @@ impl SubagentKit {
         }
     }
 
+    /// Whether a deny rule someone wrote covers a tool that approves itself, in YOLO too.
+    fn denies(&self, tool: &str) -> bool {
+        let action = ToolAction {
+            display: None,
+            command: Vec::new(),
+            tool: tool.to_owned(),
+            summary: tool.to_owned(),
+            risk: themis_core::tools::RiskLevel::Read,
+        };
+        let policy = &self.config.approval;
+        let decision = if self.mode == ApprovalMode::Yolo {
+            policy.yolo_decision(&action)
+        } else {
+            policy.decision(&action)
+        };
+        decision == themis_core::configuration::PolicyAction::Deny
+    }
+
     /// Metadata only: why, how many and which tools, never a call's contents.
     fn log_left_out(&self, reason: &str, names: &[String]) {
         let listed: Vec<String> = names
@@ -522,6 +540,7 @@ impl SubagentKit {
             write_paths: agent.write_paths.clone(),
             connections: agent.mcp.connections.clone(),
             web: !agent.web.tools.is_empty(),
+            shell_scopes: agent.shell_scopes().to_vec(),
             at: chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
         });
         let _ = self.state.inner.diagnostics.append_with_level(
@@ -630,15 +649,29 @@ impl SubagentKit {
             inner: Arc::new(dialog),
             grants: ChatGrants::in_memory(),
         });
-        Arc::new(AuditedApprovals {
-            inner: themis_core::configuration::configured_hook_with_grants(
-                self.mode,
-                self.config.approval.clone(),
-                own,
-                Arc::clone(&self.grants),
-            ),
-            context,
-        })
+        let configured = themis_core::configuration::configured_hook_with_grants(
+            self.mode,
+            self.config.approval.clone(),
+            own,
+            Arc::clone(&self.grants),
+        );
+        // A shell held to named commands refuses the others before anything can allow them, in
+        // YOLO too: this is the outermost answer, and a call reaches its tool only through it.
+        let scopes = agent
+            .profile
+            .as_ref()
+            .map(|named| named.profile.shell_scopes.clone())
+            .unwrap_or_default();
+        let inner: Arc<dyn ApprovalHook> = if scopes.is_empty() {
+            configured
+        } else {
+            Arc::new(ScopedShell {
+                inner: configured,
+                scopes,
+                context: context.clone(),
+            })
+        };
+        Arc::new(AuditedApprovals { inner, context })
     }
 
     fn tools(
@@ -670,7 +703,15 @@ impl SubagentKit {
             approvals,
             themis_core::tools::ToolOptions {
                 yolo: self.mode == ApprovalMode::Yolo,
-                background: None,
+                // Only when its profile names them, and only its own.
+                background: names(agent, "background_task").then(|| {
+                    themis_core::tools::background::BackgroundScope::new(
+                        self.state.background_registry(),
+                        &self.thread_id,
+                    )
+                    .with_run(&agent.run_id)
+                    .own_tasks_only()
+                }),
                 cancel: Some(Arc::clone(&agent.stop)),
                 sandbox: Some(Arc::new(self.sandbox.confined_to(&self.work_root, &owned))),
                 no_escalation: true,
@@ -683,11 +724,36 @@ impl SubagentKit {
             Some(Arc::clone(&self.web.permissions)),
         );
         web.retain(|tool| agent.web.tools.iter().any(|wanted| wanted == tool.name()));
+        let mut named: Vec<Box<dyn ToolT>> = Vec::new();
+        if names(agent, "todo_write") {
+            named.push(Box::new(super::subagent_tools::TodoTool {
+                agent: Arc::clone(agent),
+                report: self.reporter(),
+                denied: self.denies("todo_write"),
+            }));
+        }
+        if names(agent, "ask_user") {
+            named.push(Box::new(super::question_tool::QuestionTool {
+                state: self.state.clone(),
+                sink: Arc::clone(&self.sink),
+                thread_id: self.thread_id.clone(),
+                run_id: self.run_id.clone(),
+                run: super::integration_tools::RunApproval {
+                    mode: self.mode,
+                    policy: self.config.approval.clone(),
+                    interactive: Arc::clone(&approvals_for_web),
+                    grants: Arc::clone(&self.grants),
+                },
+                end: themis_core::runtime::EndRequest::default(),
+                subagent: Some((agent.id.clone(), agent.name.clone())),
+            }));
+        }
         Ok(tools
             .into_iter()
             .filter(|tool| {
                 READ_ONLY_TOOLS.contains(&tool.name())
                     || (!agent.write_paths.is_empty() && WRITE_TOOLS.contains(&tool.name()))
+                    || (tool.name() == "background_task" && names(agent, "background_task"))
             })
             // A profile's list can only take away from the above.
             .filter(|tool| {
@@ -697,6 +763,7 @@ impl SubagentKit {
                     .is_none_or(|named| named.profile.allows(tool.name()))
             })
             // Chosen when it started; they are no file permission, so none of the above applies.
+            .chain(named)
             .chain(mcp.into_iter().chain(web).map(|tool| {
                 Box::new(super::subagent_tools::Stoppable {
                     inner: tool,
@@ -891,6 +958,22 @@ impl SubagentKit {
                 &[("tools", &agent.web.tools.join(", "))],
             )
         });
+        let shell_note = (!agent.shell_scopes().is_empty()).then(|| {
+            themis_core::prompts::fill(
+                themis_core::prompts::SUBAGENT_SHELL_SCOPE_NOTE,
+                &[("scopes", &agent.shell_scopes().join(", "))],
+            )
+        });
+        let ask_note = names(agent, "ask_user").then_some(themis_core::prompts::SUBAGENT_ASK_NOTE);
+        let background_note = names(agent, "background_task")
+            .then_some(themis_core::prompts::SUBAGENT_BACKGROUND_NOTE);
+        let names_note = agent.profile.as_ref().map(|_| {
+            let available: Vec<String> = claude_names(&tools);
+            themis_core::prompts::fill(
+                themis_core::prompts::SUBAGENT_CLAUDE_NAMES,
+                &[("names", &available.join(", "))],
+            )
+        });
         let left_out: Vec<&str> = agent
             .mcp
             .left_out
@@ -907,7 +990,11 @@ impl SubagentKit {
         });
         let head = std::iter::once(themis_core::prompts::SUBAGENT_SYSTEM)
             .chain(role.as_deref())
+            .chain(names_note.as_deref())
             .chain([access.as_str()])
+            .chain(shell_note.as_deref())
+            .chain(background_note)
+            .chain(ask_note)
             .chain(mcp_note.as_deref())
             .chain(web_note.as_deref())
             .chain(left_out_note.as_deref())
@@ -972,7 +1059,28 @@ impl SubagentKit {
         (outcome, incomplete)
     }
 
+    /// Stops the background programs it left running: nothing owns them after it.
+    async fn stop_its_programs(&self, agent: &Subagent) {
+        let registry = self.state.background_registry();
+        let (thread, run) = (self.thread_id.clone(), agent.run_id.clone());
+        let _ = tokio::task::spawn_blocking(move || {
+            for view in registry.list(&thread, 0) {
+                if view.record.run_id.as_deref() == Some(run.as_str())
+                    && view.record.state == themis_core::tools::background::TaskState::Running
+                {
+                    let _ = registry.stop(
+                        &thread,
+                        &view.record.id,
+                        themis_core::tools::background::STOP_WAIT,
+                    );
+                }
+            }
+        })
+        .await;
+    }
+
     async fn end(&self, agent: &Subagent, ending: Ending) {
+        self.stop_its_programs(agent).await;
         let result = bounded(&ending.result);
         let note = themis_core::prompts::fill(
             themis_core::prompts::SUBAGENT_RESULT_NOTE,
@@ -1123,6 +1231,42 @@ impl SubagentKit {
     }
 }
 
+/// Refuses a shell call running anything its profile's `Bash(...)` entries don't name.
+struct ScopedShell {
+    inner: Arc<dyn ApprovalHook>,
+    scopes: Vec<String>,
+    context: themis_core::diagnostics::DiagnosticContext,
+}
+
+impl ScopedShell {
+    fn refuses(&self, action: &ToolAction) -> bool {
+        action.tool == "shell"
+            && !themis_core::tools::shell_scope::command_in_scope(&action.command, &self.scopes)
+    }
+}
+
+impl ApprovalHook for ScopedShell {
+    fn denied_by_rule(&self, action: &ToolAction) -> bool {
+        self.refuses(action) || self.inner.denied_by_rule(action)
+    }
+
+    fn approve(&self, action: &ToolAction) -> Approval {
+        if self.refuses(action) {
+            // Metadata only: never the command.
+            let _ = self.context.log.append_with_level(
+                "subagents",
+                "shell_scope_refused",
+                "info",
+                json!({"thread_id": self.context.thread_id, "run_id": self.context.run_id,
+                    "scopes": self.scopes.len()}),
+                Some(&self.context.level),
+            );
+            return Approval::Deny;
+        }
+        self.inner.approve(action)
+    }
+}
+
 /// One subagent's live state.
 pub(super) struct Subagent {
     pub(super) id: String,
@@ -1164,7 +1308,46 @@ pub(super) struct Progress {
     pub(super) fallback_reason: String,
 }
 
+/// Whether its profile's list names this tool.
+fn names(agent: &Subagent, tool: &str) -> bool {
+    agent
+        .profile
+        .as_ref()
+        .is_some_and(|named| named.profile.names(tool))
+}
+
+/// Claude's names for the tools it has, for instructions written for Claude.
+fn claude_names(tools: &[Box<dyn ToolT>]) -> Vec<String> {
+    const NAMES: [(&str, &str); 13] = [
+        ("read_file", "Read"),
+        ("search_file", "Grep"),
+        ("list_dir", "LS and Glob"),
+        ("shell", "Bash"),
+        ("write_file", "Write"),
+        ("apply_patch", "Edit"),
+        ("fetch_url", "WebFetch"),
+        ("web_search", "WebSearch"),
+        ("todo_write", "TodoWrite"),
+        ("background_task", "BashOutput and KillShell"),
+        ("ask_user", "AskUserQuestion"),
+        ("create_dir", "mkdir"),
+        ("recall", "recall"),
+    ];
+    NAMES
+        .iter()
+        .filter(|(tool, _)| tools.iter().any(|known| known.name() == *tool))
+        .map(|(tool, claude)| format!("{tool} for {claude}"))
+        .collect()
+}
+
 impl Subagent {
+    /// What its shell is limited to; empty is no limit.
+    pub(super) fn shell_scopes(&self) -> &[String] {
+        self.profile
+            .as_ref()
+            .map_or(&[], |named| named.profile.shell_scopes.as_slice())
+    }
+
     pub(super) fn progress(&self) -> Progress {
         self.progress
             .lock()
@@ -1409,7 +1592,7 @@ impl AppState {
                             .ended
                             .unwrap_or_else(|| ("running".into(), String::new()));
                         json!({"id": agent.id, "name": agent.name, "brief": agent.brief,
-                            "model": agent.model, "write_paths": agent.write_paths, "connections": agent.mcp.connections, "web": !agent.web.tools.is_empty(), "profile": agent.profile.as_ref().map(|named| &named.profile.name), "ran_on": progress.ran_on, "status": status, "text": progress.status,
+                            "model": agent.model, "write_paths": agent.write_paths, "connections": agent.mcp.connections, "web": !agent.web.tools.is_empty(), "shell_scopes": agent.shell_scopes(), "profile": agent.profile.as_ref().map(|named| &named.profile.name), "ran_on": progress.ran_on, "status": status, "text": progress.status,
                             "result": result, "tool_calls": agent.tool_calls.load(Ordering::SeqCst),
                             "seconds": agent.started.lock().unwrap_or_else(|e| e.into_inner()).elapsed().as_secs()})
                     })
@@ -1438,6 +1621,18 @@ impl AppState {
             }
             !mine
         });
+    }
+
+    /// One of the chat's subagents, while it is running.
+    pub(super) fn running_subagent(&self, thread_id: &str, id: &str) -> Option<Arc<Subagent>> {
+        self.inner
+            .subagents
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get(thread_id)?
+            .iter()
+            .find(|agent| agent.id == id && !agent.ended())
+            .cloned()
     }
 
     /// Stops one subagent of the chat (Workspace › Tasks); the main agent gets what it

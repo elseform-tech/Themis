@@ -7,6 +7,7 @@
 //! hold `Context: …`), so only known field names start a field.
 
 use super::{safe_name, Plugin, PluginSpec};
+use crate::tools::shell_scope;
 use anyhow::{bail, Context};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
@@ -18,6 +19,9 @@ pub const READ_ONLY_TOOLS: [&str; 4] = ["read_file", "list_dir", "search_file", 
 pub const WRITE_TOOLS: [&str; 3] = ["write_file", "apply_patch", "create_dir"];
 /// The web tools; they go through the approval rules, per site, as the main agent's do.
 pub const WEB_TOOLS: [&str; 2] = ["fetch_url", "web_search"];
+/// Tools a subagent has only when its profile's list names them: they cost every subagent context,
+/// and a plain one has no use for them.
+pub const NAMED_ONLY_TOOLS: [&str; 3] = ["background_task", "todo_write", "ask_user"];
 
 const MAX_FRONTMATTER_BYTES: usize = 64 * 1024;
 const MAX_DESCRIPTION_BYTES: usize = 1024;
@@ -80,6 +84,10 @@ pub struct SubagentProfile {
     /// The MCP tools its deny list takes away, by the same names.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub denied_mcp_tools: Vec<String>,
+    /// What `Bash(git diff:*)` entries name: when any, its shell runs only these. Empty with
+    /// `shell` in `tools` is the whole shell.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub shell_scopes: Vec<String>,
 }
 
 impl SubagentProfile {
@@ -87,6 +95,13 @@ impl SubagentProfile {
         self.tools
             .as_ref()
             .is_none_or(|tools| tools.iter().any(|name| name == tool))
+    }
+
+    /// Whether its list names this tool. No list names nothing.
+    pub fn names(&self, tool: &str) -> bool {
+        self.tools
+            .as_ref()
+            .is_some_and(|tools| tools.iter().any(|name| name == tool))
     }
 
     pub fn allows_writes(&self) -> bool {
@@ -133,9 +148,22 @@ impl SubagentProfile {
                 !READ_ONLY_TOOLS.contains(&tool.as_str())
                     && !WRITE_TOOLS.contains(&tool.as_str())
                     && !WEB_TOOLS.contains(&tool.as_str())
+                    && !NAMED_ONLY_TOOLS.contains(&tool.as_str())
             })
         }) {
-            bail!("Subagent tools must be Themis file, search, shell or web tools");
+            bail!("Subagent tools must be tools a subagent can have");
+        }
+        if self.shell_scopes.len() > shell_scope::MAX_PATTERNS
+            || self.shell_scopes.iter().any(|pattern| {
+                pattern.is_empty()
+                    || pattern.chars().count() > shell_scope::MAX_PATTERN_CHARS
+                    || pattern.chars().any(char::is_control)
+            })
+        {
+            bail!("Invalid subagent shell scope");
+        }
+        if !self.shell_scopes.is_empty() && !self.allows("shell") {
+            bail!("A subagent shell scope needs the shell");
         }
         if self.model.as_ref().is_some_and(|model| {
             model.len() > MAX_MODEL_BYTES || model.chars().any(char::is_control)
@@ -407,6 +435,15 @@ fn mapped(name: &str) -> Option<&'static [&'static str]> {
         "Edit" | "Write" | "MultiEdit" => Some(&WRITE_TOOLS),
         "WebFetch" => Some(&["fetch_url"]),
         "WebSearch" => Some(&["web_search"]),
+        // Its own plan: Claude's older and newer names for one list.
+        "TodoWrite" | "TodoRead" | "TaskCreate" | "TaskUpdate" | "TaskList" | "TaskGet" => {
+            Some(&["todo_write"])
+        }
+        // Background programs it started with the shell.
+        "BashOutput" | "KillShell" | "KillBash" | "TaskOutput" | "TaskStop" => {
+            Some(&["background_task"])
+        }
+        "AskUserQuestion" => Some(&["ask_user"]),
         _ => None,
     }
 }
@@ -454,8 +491,26 @@ fn mcp_name_matches(pattern: &str, name: &str) -> bool {
     true
 }
 
+/// What `Bash(a:*, b:*)` names, if it is that. An empty one names nothing.
+fn shell_patterns(name: &str) -> Option<Vec<String>> {
+    let inner = name.strip_prefix("Bash(")?.strip_suffix(')')?;
+    let patterns: Vec<String> = inner
+        .split(',')
+        .map(str::trim)
+        .filter(|pattern| !pattern.is_empty())
+        .map(str::to_owned)
+        .collect();
+    (!patterns.is_empty()
+        && patterns.iter().all(|pattern| {
+            pattern.chars().count() <= shell_scope::MAX_PATTERN_CHARS
+                && !pattern.chars().any(char::is_control)
+        }))
+    .then_some(patterns)
+}
+
 /// What a tool list and a deny list come to.
 struct ResolvedTools {
+    shell_scopes: Vec<String>,
     tools: Option<Vec<String>>,
     dropped: Vec<String>,
     mcp: Vec<String>,
@@ -463,14 +518,18 @@ struct ResolvedTools {
 }
 
 /// What a tool list and a deny list leave, in a fixed order, and the listed names that have no
-/// Themis tool. A scoped name such as `Bash(git diff:*)` can't be held to its scope, so it isn't
-/// widened to the whole tool; denying one takes the whole tool away. MCP names are kept as they
-/// are: which tools they mean depends on the chat's connections when a subagent starts.
+/// Themis tool. `Bash(git diff:*)` gives the shell held to those commands, never all of it; a
+/// plain `Bash` beside it is all of it. Denying part of a tool takes the whole tool away. MCP
+/// names are kept as they are: which tools they mean depends on the chat's connections when a
+/// subagent starts.
 fn resolve_tools(listed: Option<&[String]>, denied: &[String]) -> ResolvedTools {
-    let all = READ_ONLY_TOOLS
+    let everyday = READ_ONLY_TOOLS
         .iter()
         .chain(WRITE_TOOLS.iter())
         .chain(WEB_TOOLS.iter());
+    let all = everyday.clone().chain(NAMED_ONLY_TOOLS.iter());
+    let mut shell_scopes: Vec<String> = Vec::new();
+    let mut whole_shell = false;
     let everything = listed.is_none_or(|names| names.iter().any(|name| name == "*"));
     let mut dropped = Vec::new();
     let mut kept = BTreeSet::new();
@@ -478,16 +537,25 @@ fn resolve_tools(listed: Option<&[String]>, denied: &[String]) -> ResolvedTools 
     let mut denied_mcp = Vec::new();
     if !everything {
         for name in listed.unwrap_or_default() {
+            whole_shell |= name == "Bash";
             match mapped(name) {
                 Some(tools) => kept.extend(tools.iter().copied()),
                 None if is_mcp_name(name) => mcp.push(name.clone()),
+                None if shell_patterns(name).is_some() => {
+                    kept.insert("shell");
+                    shell_scopes.extend(shell_patterns(name).unwrap_or_default());
+                }
                 None => dropped.push(name.chars().take(MAX_DROPPED_NAME_CHARS).collect()),
             }
         }
     } else {
-        kept.extend(all.clone().copied());
+        kept.extend(everyday.copied());
         mcp.push("*".to_owned());
     }
+    if whole_shell || shell_scopes.iter().any(|pattern| pattern == "*") {
+        shell_scopes.clear();
+    }
+    shell_scopes.truncate(shell_scope::MAX_PATTERNS);
     let before = kept.len();
     for name in denied {
         let base = name.split('(').next().unwrap_or(name).trim();
@@ -503,12 +571,16 @@ fn resolve_tools(listed: Option<&[String]>, denied: &[String]) -> ResolvedTools 
         }
     }
     dropped.truncate(MAX_DROPPED_NAMES);
+    if !kept.contains("shell") {
+        shell_scopes.clear();
+    }
     let tools = (!everything || kept.len() != before).then(|| {
         all.filter(|tool| kept.contains(**tool))
             .map(|tool| (*tool).to_owned())
             .collect()
     });
     ResolvedTools {
+        shell_scopes,
         tools,
         dropped,
         mcp,
@@ -583,6 +655,7 @@ pub fn parse_profile(content: &str) -> anyhow::Result<ParsedProfile> {
         dropped_tools: resolved.dropped,
         mcp_tools: resolved.mcp,
         denied_mcp_tools: resolved.denied_mcp,
+        shell_scopes: resolved.shell_scopes,
     };
     profile.validate()?;
     Ok(ParsedProfile {
@@ -824,11 +897,63 @@ mod tests {
     }
 
     #[test]
-    fn names_a_subagent_has_no_tool_for_stay_out() {
-        let names = "TodoWrite, KillShell, BashOutput, AskUserQuestion";
+    fn names_with_no_tool_stay_out_and_nesting_is_one_of_them() {
+        // Subagents don't start subagents.
+        let names = "Task, Agent, Task(a, b), Agent(c), Workflow, Skill, fullstory:x";
         let profile = with_tools(&format!("tools: Read, {names}"));
         assert_eq!(profile.tools.as_deref().unwrap(), READS);
         assert_eq!(profile.dropped_tools.join(", "), names);
+    }
+
+    #[test]
+    fn claudes_other_names_map_to_what_a_subagent_can_have_when_named() {
+        let all = with_tools(
+            "tools: TodoWrite, TaskCreate, TaskUpdate, BashOutput, KillShell, AskUserQuestion",
+        );
+        assert!(all.dropped_tools.is_empty(), "{:?}", all.dropped_tools);
+        for tool in NAMED_ONLY_TOOLS {
+            assert!(all.names(tool), "{tool}");
+        }
+        // No list, or `*`, gets the everyday tools and none of these.
+        for open in [
+            parse("---\nname: a\ndescription: d\n---\nB"),
+            with_tools("tools: \"*\""),
+        ] {
+            for tool in NAMED_ONLY_TOOLS {
+                assert!(!open.names(tool), "{tool}");
+            }
+        }
+        assert!(
+            !with_tools("tools: BashOutput\ndisallowedTools: KillShell").names("background_task")
+        );
+    }
+
+    #[test]
+    fn a_scoped_shell_is_held_to_its_commands() {
+        let scoped = with_tools("tools: Read, Bash(git diff:*, git log:*), Bash(ls *)");
+        assert!(scoped.allows("shell") && scoped.dropped_tools.is_empty());
+        assert_eq!(scoped.shell_scopes, ["git diff:*", "git log:*", "ls *"]);
+        // The whole shell beside it, or `*`, is the whole shell.
+        assert!(with_tools("tools: Bash(ls *), Bash")
+            .shell_scopes
+            .is_empty());
+        assert!(with_tools("tools: Bash, Bash(ls *)")
+            .shell_scopes
+            .is_empty());
+        assert!(with_tools("tools: Bash(*)").shell_scopes.is_empty());
+        // Denying any of it takes it all.
+        let denied = with_tools("tools: Bash(ls *)\ndisallowedTools: Bash(rm:*)");
+        assert!(!denied.allows("shell") && denied.shell_scopes.is_empty());
+        // Nothing named names nothing; it never widens to the whole shell.
+        let empty = with_tools("tools: Read, Bash()");
+        assert!(!empty.allows("shell"));
+        assert_eq!(empty.dropped_tools, ["Bash()"]);
+        // A saved profile can't claim a scope with no shell.
+        let bad: SubagentProfile = serde_json::from_value(serde_json::json!({"name": "a",
+            "description": "d", "instructions": "i", "tools": ["read_file"],
+            "shell_scopes": ["ls"]}))
+        .unwrap();
+        assert!(bad.validate().is_err());
     }
 
     #[test]
@@ -848,17 +973,17 @@ mod tests {
     #[test]
     fn a_list_it_cannot_read_never_becomes_all_tools() {
         // Empty lists, and lists of only unknown names, leave nothing.
-        for form in ["tools:", "tools: []", "tools: TodoWrite", "tools: read"] {
+        for form in ["tools:", "tools: []", "tools: Workflow", "tools: read"] {
             assert_eq!(
                 with_tools(form).tools.unwrap(),
                 Vec::<String>::new(),
                 "{form}"
             );
         }
-        // A scoped tool isn't widened to the whole tool, and commas inside it don't split.
-        let scoped = with_tools("tools: Read, Bash(git diff:*, git log:*), mcp__docs__*");
+        // Another tool's scope isn't widened to the whole tool, and commas inside don't split.
+        let scoped = with_tools("tools: Read, Edit(a, b), mcp__docs__*");
         assert_eq!(scoped.tools.as_deref().unwrap(), READS);
-        assert_eq!(scoped.dropped_tools, ["Bash(git diff:*, git log:*)"]);
+        assert_eq!(scoped.dropped_tools, ["Edit(a, b)"]);
         assert_eq!(scoped.mcp_tools, ["mcp__docs__*"]);
         assert!(!scoped.allows("shell") && !scoped.allows_writes());
     }
@@ -925,7 +1050,7 @@ mod tests {
         let both = with_tools("tools: Read, Bash\ndisallowedTools: Bash");
         assert_eq!(both.tools.as_deref().unwrap(), READS);
         // An unknown name denies nothing it can name.
-        assert_eq!(with_tools("disallowedTools: TodoWrite").tools, None);
+        assert_eq!(with_tools("disallowedTools: Workflow").tools, None);
         assert_eq!(
             with_tools("disallowedTools: *").tools.unwrap(),
             Vec::<String>::new()
@@ -1024,6 +1149,7 @@ mod tests {
                         dropped_tools: vec![],
                         mcp_tools: vec![],
                         denied_mcp_tools: vec![],
+                        shell_scopes: vec![],
                     })
                     .collect(),
                 ..Default::default()
@@ -1123,7 +1249,8 @@ mod tests {
                     && !content.contains('*') && !content.contains("[")
                     && !content.contains("allowed-tools") && !content.contains("disallowedTools")
                 {
-                    prop_assert!(!profile.allows("shell"));
+                    // A scoped name gives the shell only with its scope.
+                    prop_assert!(!profile.allows("shell") || !profile.shell_scopes.is_empty());
                     prop_assert!(!profile.allows_writes());
                 }
             }
@@ -1143,10 +1270,18 @@ mod tests {
             }
         }
 
-        /// Any scoped or unknown name is dropped, never mapped.
+        /// A scope on another tool is dropped, never mapped; on the shell it stays a scope.
         #[test]
-        fn names_with_a_scope_are_never_mapped(scope in "[a-z :*]{0,10}") {
-            for base in ["Read", "Bash", "Write"] {
+        fn names_with_a_scope_are_never_widened(scope in "[a-z :*]{0,10}") {
+            let shell = format!("Bash({scope})");
+            let resolved = resolve_tools(Some(std::slice::from_ref(&shell)), &[]);
+            let all_of_it = scope.split(',').any(|part| part.trim() == "*");
+            prop_assert!(
+                all_of_it
+                    || !resolved.tools.unwrap().contains(&"shell".to_owned())
+                    || !resolved.shell_scopes.is_empty()
+            );
+            for base in ["Read", "Write"] {
                 let name = format!("{base}({scope})");
                 let resolved = resolve_tools(Some(std::slice::from_ref(&name)), &[]);
                 prop_assert_eq!(resolved.tools.unwrap(), Vec::<String>::new());
