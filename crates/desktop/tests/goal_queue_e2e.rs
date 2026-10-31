@@ -2542,3 +2542,77 @@ async fn answering_a_question_leaves_an_approval_waiting() {
     assert!(project.path().join("dir_b").is_dir());
     settle(&state, &thread).await;
 }
+
+/// Found in a live run: "yo" in a chat whose goal was removed sent the agent back to rebuilding
+/// everything, because the old goal turns were all it could see. A message after a goal ended
+/// or paused says so, and a chat that never had a goal hears nothing about goals.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_message_after_a_goal_is_told_the_goal_is_not_running() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .respond_with(|request: &Request| {
+            let body = body(request);
+            if is_checklist(&body) {
+                return reply(r#"{"requirements":[{"what":"The thing"}]}"#);
+            }
+            if is_check(&body) {
+                return reply(r#"{"verdict":"not_yet","reason":"Keep going."}"#);
+            }
+            reply("Hi.")
+        })
+        .mount(&server)
+        .await;
+    let (state, _data, _project, thread) = chat(&server).await;
+    let (sink, _rx) = ChannelSink::channel();
+    let sink = Arc::new(sink);
+    let last_sent = |bodies: Vec<wiremock::Request>| {
+        bodies
+            .iter()
+            .map(body)
+            .rfind(|body| !is_check(body) && !is_checklist(body))
+            .unwrap()["messages"]
+            .to_string()
+    };
+    // A chat that never had a goal hears nothing about one.
+    state
+        .send_message(sink.clone(), thread.clone(), "hello".into())
+        .await
+        .unwrap();
+    settle(&state, &thread).await;
+    let sent = last_sent(server.received_requests().await.unwrap());
+    assert!(!sent.contains("No goal is running"), "{sent}");
+
+    state
+        .send_message(
+            sink.clone(),
+            thread.clone(),
+            "/goal finish the thing".into(),
+        )
+        .await
+        .unwrap();
+    state
+        .pause_goal(sink.clone(), thread.clone())
+        .await
+        .unwrap();
+    settle(&state, &thread).await;
+    state
+        .send_message(sink.clone(), thread.clone(), "yo".into())
+        .await
+        .unwrap();
+    settle(&state, &thread).await;
+    let sent = last_sent(server.received_requests().await.unwrap());
+    assert!(sent.contains("This chat's goal is paused"), "{sent}");
+
+    state
+        .remove_goal(sink.clone(), thread.clone())
+        .await
+        .unwrap();
+    state
+        .send_message(sink.clone(), thread.clone(), "yo again".into())
+        .await
+        .unwrap();
+    settle(&state, &thread).await;
+    let sent = last_sent(server.received_requests().await.unwrap());
+    assert!(sent.contains("No goal is running"), "{sent}");
+    assert!(state.goal_for(&thread).is_none());
+}

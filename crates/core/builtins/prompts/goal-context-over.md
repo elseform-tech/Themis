@@ -1,0 +1,1 @@
+No goal is running in this chat. Earlier goal turns are over, so answer what this message asks and do not resume that work unless it asks you to.

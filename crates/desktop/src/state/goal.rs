@@ -614,6 +614,11 @@ impl AppState {
         }
         Ok(match self.goal_for(thread_id) {
             Some(goal) if goal.status == GoalStatus::Running => core_goal::goal_context(&goal.text),
+            // Old goal turns in the chat read as unfinished work unless this says otherwise.
+            Some(goal) if !is_turn => core_goal::paused_context(&goal.text),
+            None if !is_turn && self.inner.transcript.had_goal(thread_id) => {
+                core_goal::over_context()
+            }
             _ => String::new(),
         })
     }

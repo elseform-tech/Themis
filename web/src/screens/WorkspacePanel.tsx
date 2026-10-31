@@ -36,7 +36,9 @@ function clampWidth(value: number) {
 export function WorkspacePanel({ projectRoot, threadId, workspace }: { projectRoot: string; threadId: string; workspace: WorkspaceInfo | null }) {
   const { state, dispatch } = useApp();
   const goal = state.goals[threadId] ?? null;
-  const [tab, setTab] = useState<Tab>(() => state.workspaceTabRequest ? state.workspaceTabRequest.tab : readSession<Tab>("workspaceTab", "changes"));
+  const [chosenTab, setTab] = useState<Tab>(() => state.workspaceTabRequest ? state.workspaceTabRequest.tab : readSession<Tab>("workspaceTab", "changes"));
+  // The Goal tab is remembered across chats, and not every chat has a goal.
+  const tab = chosenTab === "goal" && !goal ? "changes" : chosenTab;
   const widthKey = tab === "browser" ? "workspaceBrowserWidth" : "workspacePanelWidth";
   const defaultWidth = tab === "browser" ? BROWSER_DEFAULT_WIDTH : DEFAULT_WIDTH;
   const [widths, setWidths] = useState<Record<string, number>>({});

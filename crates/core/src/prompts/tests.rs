@@ -70,6 +70,8 @@ const ALL: &[(&str, &str, &[&str])] = &[
     (GOAL_TURN_FILES, "goal-turn-files", &["files"]),
     (GOAL_CHECK_PROOF, "goal-check-proof", &["requirements"]),
     (GOAL_CHECK_MIDTURN, "goal-check-midturn", &[]),
+    (GOAL_CONTEXT_OVER, "goal-context-over", &[]),
+    (GOAL_CONTEXT_PAUSED, "goal-context-paused", &["goal"]),
     (GOAL_EVIDENCE_SCRIPT, "goal-evidence-script", &[]),
     (GOAL_NOTE_SCRIPT_PROOF, "goal-note-script-proof", &[]),
     (GOAL_CHECKLIST_SYSTEM, "goal-checklist-system", &[]),

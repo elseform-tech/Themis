@@ -90,6 +90,20 @@ impl TranscriptStore {
     }
 
     /// Durable ordering across conversations, without reading message bodies.
+    /// Whether this chat has ever had a goal, from its goal turns or a `/goal` message.
+    pub fn had_goal(&self, thread_id: &str) -> bool {
+        self.connection
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM context_turns WHERE thread_id = ?1 AND role = 'user' \
+                 AND (instr(text, ?2) > 0 OR text LIKE '/goal%'))",
+                params![thread_id, themis_core::goal::GOAL_TURN_MARKER],
+                |row| row.get(0),
+            )
+            .unwrap_or(false)
+    }
+
     pub fn last_activity_seq(&self, thread_id: &str) -> Result<i64, String> {
         self.connection
             .lock()

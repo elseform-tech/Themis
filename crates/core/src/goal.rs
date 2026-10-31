@@ -404,6 +404,20 @@ pub fn goal_context(goal: &str) -> String {
     )
 }
 
+/// What a message is told when the chat's goal is paused, so old goal turns don't read as work
+/// to resume.
+pub fn paused_context(goal: &str) -> String {
+    format!(
+        "\n\n{}",
+        crate::prompts::fill(crate::prompts::GOAL_CONTEXT_PAUSED, &[("goal", goal)])
+    )
+}
+
+/// What a message is told when the chat once had a goal and none is running.
+pub fn over_context() -> String {
+    format!("\n\n{}", crate::prompts::GOAL_CONTEXT_OVER)
+}
+
 /// The message that starts goal turn `turn`. `note` says why it continues
 /// (the last check's reason, an interruption or a failure).
 pub fn turn_message(
