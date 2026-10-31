@@ -2,7 +2,7 @@
 /* Prose keeps an even right edge; hyphens stop the gaps justifying can leave between words. */
 .themis-response p, .themis-response li { text-align: justify; hyphens: auto; }
 /* In a narrow chat there is too little on a line to stretch: justifying leaves wide gaps between words. */
-@container themis-thread (max-width: 900px) { .themis-response p, .themis-response li { text-align: left; hyphens: manual; } }
+@container themis-thread (max-width: 700px) { .themis-response p, .themis-response li { text-align: left; hyphens: manual; } }
 .themis-response > :first-child { margin-top: 0; }
 .themis-response > :last-child { margin-bottom: 0; }
 .themis-response p { margin: .6em 0; }

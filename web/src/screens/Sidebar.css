@@ -1,7 +1,7 @@
 /* Workspace sidebar: a permanent utility rail plus a resizable dock with
    pill-shaped rows. One definition per selector. */
 
-.themis-sidebar-slot { position: relative; display: flex; flex-shrink: 0; width: min(var(--themis-sidebar-width, 320px), calc(100vw - 120px)); overflow: visible; background: var(--themis-sidebar-bg); transition: width 240ms cubic-bezier(.2, .8, .2, 1); }
+.themis-sidebar-slot { position: relative; display: flex; flex-shrink: 0; width: min(var(--themis-sidebar-width, 280px), calc(100vw - 120px)); overflow: visible; background: var(--themis-sidebar-bg); transition: width 240ms cubic-bezier(.2, .8, .2, 1); }
 .themis-sidebar-slot.is-collapsed { width: 64px; }
 .themis-sidebar-slot.is-resizing { transition: none; user-select: none; }
 .themis-sidebar { position: absolute; inset: 0 0 0 64px; z-index: 20; display: flex; flex-direction: column; overflow: hidden; background: var(--themis-sidebar-bg); visibility: hidden; opacity: 0; pointer-events: none; transition: opacity 180ms ease, visibility 240ms; }

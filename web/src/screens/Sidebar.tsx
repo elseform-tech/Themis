@@ -16,7 +16,7 @@ const viewIcons: Record<MainView, SidebarIconName> = { thread: "home", skills: "
 /** Below this the chat list is mostly cut-off titles. */
 const SIDEBAR_MIN = 280;
 const SIDEBAR_MAX = 560;
-const SIDEBAR_DEFAULT = 320;
+const SIDEBAR_DEFAULT = 280;
 
 export function Sidebar({ collapsed: folded, companionControl }: { collapsed: boolean; companionControl?: import("react").ReactNode }) {
   const { state, dispatch } = useApp();
