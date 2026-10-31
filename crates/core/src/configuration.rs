@@ -508,13 +508,25 @@ impl Default for CompactionConfig {
     }
 }
 /// Goal mode (`goal`); file only.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct GoalConfig {
     /// The model that checks each goal turn; absent, the chat's own model. Any
     /// model a connected provider offers (`<provider>/<id>` for one from `providers`).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub check_model: Option<String>,
+    /// How often a running turn's new work updates the goal's checklist, in seconds; 0 is
+    /// only when the turn ends. Each update is one request on the check's model.
+    pub checklist_refresh_seconds: u32,
+}
+
+impl Default for GoalConfig {
+    fn default() -> Self {
+        Self {
+            check_model: None,
+            checklist_refresh_seconds: 90,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1518,6 +1530,10 @@ pub fn validate(config: &RuntimeConfig) -> Result<()> {
         config.compaction.retry_limit <= 2,
         "compaction.retry_limit must be 0..2"
     );
+    ensure!(
+        config.goal.checklist_refresh_seconds <= 3600,
+        "goal.checklist_refresh_seconds must be from 0 to 3600"
+    );
     for (field, model) in [
         ("compaction.summary_model", &compaction.summary_model),
         ("goal.check_model", &config.goal.check_model),
@@ -1734,7 +1750,8 @@ fn base_schema() -> Value {
                 "prompt_file":{"type":"string"}
             }},
             "goal":{"type":"object","additionalProperties":false,"properties":{
-                "check_model":{"type":["string","null"],"minLength":1,"maxLength":256,"default":null,"description":"The model that checks each goal turn; absent, the chat's model. Any model a connected provider offers; <provider>/<id> for one from providers"}
+                "check_model":{"type":["string","null"],"minLength":1,"maxLength":256,"default":null,"description":"The model that checks each goal turn; absent, the chat's model. Any model a connected provider offers; <provider>/<id> for one from providers"},
+                "checklist_refresh_seconds":{"type":"integer","minimum":0,"maximum":3600,"default":90,"description":"How often a running goal turn's new work updates the checklist, in seconds; 0 is only when the turn ends. Each update is one request on the check's model."}
             }}
         }
     })
@@ -1789,6 +1806,7 @@ mod tests {
             "total_turns",
             "summary_model",
             "check_model",
+            "checklist_refresh_seconds",
             "prompt_file",
             "command",
             "downloads",

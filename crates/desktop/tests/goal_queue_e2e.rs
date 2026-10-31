@@ -1362,6 +1362,63 @@ async fn a_failed_turn_counts_down_instead_of_leaving_a_note() {
         .unwrap();
 }
 
+/// While a long turn runs, the checklist moves as evidence comes in. These passes only ever
+/// update the list: even a check saying "reached" can't end the goal in the middle of a turn.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_checklist_moves_during_a_long_turn_and_cannot_end_the_goal() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .respond_with(|request: &Request| {
+            let body = body(request);
+            let sent = body["messages"].to_string();
+            if is_checklist(&body) {
+                return reply(r#"{"requirements":[{"what":"Notes exist"}]}"#);
+            }
+            if is_check(&body) {
+                return reply(r#"{"verdict":"reached","reason":"Done.","told_user":true,"requirements":[{"what":"Notes exist","proven":true,"how":"written"}]}"#);
+            }
+            if sent.contains("notes.txt") {
+                // The turn stays open a while after the work that can be checked.
+                return reply("All written.").set_delay(std::time::Duration::from_secs(5));
+            }
+            calls("write_file", json!({"file_path": "notes.txt", "content": "hello"}))
+        })
+        .mount(&server)
+        .await;
+    let (state, _data, project, thread) = chat(&server).await;
+    std::fs::create_dir_all(project.path().join(".themis")).unwrap();
+    std::fs::write(
+        project.path().join(".themis/config.jsonc"),
+        r#"{"goal":{"checklist_refresh_seconds":1}}"#,
+    )
+    .unwrap();
+    state
+        .set_thread_approval_mode(
+            thread.clone(),
+            themis_core::configuration::ApprovalMode::Yolo,
+        )
+        .await
+        .unwrap();
+    let (sink, _rx) = ChannelSink::channel();
+    let sink = Arc::new(sink);
+    state
+        .send_message(sink.clone(), thread.clone(), "/goal write the notes".into())
+        .await
+        .unwrap();
+    let mut moved = None;
+    for _ in 0..160 {
+        let goal = state.goal_for(&thread).unwrap();
+        if goal.proof.iter().any(|item| item.proven) {
+            moved = Some(goal);
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+    }
+    let goal = moved.expect("the checklist never moved during the turn");
+    assert_eq!(goal.status, GoalStatus::Running, "{goal:?}");
+    goal_until(&state, &thread, |status| status == GoalStatus::Reached).await;
+}
+
 /// Asked in the chat to remove the goal, the agent removes it: no goal is left, and
 /// no check or further turn follows.
 #[tokio::test(flavor = "multi_thread")]

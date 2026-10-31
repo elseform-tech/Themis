@@ -314,6 +314,8 @@ struct AppStateInner {
     goal_lock: std::sync::Mutex<()>,
     /// Runs started as goal turns (checked when they end).
     goal_turn_runs: std::sync::Mutex<HashSet<String>>,
+    /// Goals, as (chat, start time), whose checklist is being kept current during turns.
+    goal_checklist_watches: std::sync::Mutex<HashSet<(String, i64)>>,
     /// Bumped whenever a waiting goal timer must no longer fire.
     goal_generations: std::sync::Mutex<HashMap<String, u64>>,
     /// Runs the server itself sends (queued messages, goal turns), by run id:
@@ -585,6 +587,7 @@ impl AppState {
                 goals_dir: app_dir.join(goal::GOALS_DIR),
                 goal_lock: std::sync::Mutex::new(()),
                 goal_turn_runs: std::sync::Mutex::new(HashSet::new()),
+                goal_checklist_watches: std::sync::Mutex::new(HashSet::new()),
                 goal_generations: std::sync::Mutex::new(HashMap::new()),
                 server_sends: std::sync::Mutex::new(HashMap::new()),
             }),
