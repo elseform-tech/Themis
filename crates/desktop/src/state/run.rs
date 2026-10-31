@@ -374,8 +374,10 @@ impl AppState {
                 hook.runtime_identity = Some(plugin.skill_id(&hook.name));
                 hook.plugin_root = Some(resource_root.clone());
                 hook.plugin_data = Some(store.plugin_data_dir(&plugin.scope, &plugin.spec.name));
-                // Claude gives it only to session hooks, which import as PromptSubmit.
-                hook.env_file = (hook.event == "PromptSubmit").then(|| session_dir.join("env"));
+                hook.env_file = Some(themis_core::plugins::hooks::PluginEnvFile {
+                    path: session_dir.join(format!("env-{}", plugin.skill_id("hooks"))),
+                    prefix: themis_core::plugins::hooks::env_prefix(&plugin.spec.name),
+                });
                 hooks.push(hook);
             }
         }
@@ -530,7 +532,6 @@ impl AppState {
                 transcript_path: Some(session_dir.join("transcript.jsonl")),
                 permission_mode: permission_mode(snapshot.approval_mode).to_owned(),
                 cancel: Some(Arc::clone(&stopped)),
-                env_file: Some(session_dir.join("env")),
             },
         };
         let skills = snapshot.skills;

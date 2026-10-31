@@ -70,9 +70,9 @@ pub struct Hook {
     /// `CLAUDE_PLUGIN_DATA`: the plugin's own folder, kept across runs and updates.
     #[serde(skip)]
     pub plugin_data: Option<std::path::PathBuf>,
-    /// `CLAUDE_ENV_FILE`, for a hook that may set the environment of later commands.
+    /// Where the plugin's session hooks leave variables for its later hooks.
     #[serde(skip)]
-    pub env_file: Option<std::path::PathBuf>,
+    pub env_file: Option<PluginEnvFile>,
     #[serde(skip)]
     pub runtime_identity: Option<String>,
 }
@@ -454,11 +454,19 @@ async fn execute(hook: &Hook, root: &Path, payload: &Value) -> anyhow::Result<Va
         std::fs::create_dir_all(path)?;
         command.env("CLAUDE_PLUGIN_DATA", path);
     }
-    if let Some(path) = &hook.env_file {
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)?;
+    if let Some(file) = &hook.env_file {
+        let (variables, refused) = file.read();
+        command.envs(variables);
+        if !refused.is_empty() {
+            command.env("THEMIS_ENV_REFUSED", refused.join(","));
         }
-        command.env("CLAUDE_ENV_FILE", path);
+        // Claude gives it only to session hooks, which import as PromptSubmit.
+        if hook.event == "PromptSubmit" {
+            if let Some(parent) = file.path.parent() {
+                std::fs::create_dir_all(parent)?;
+            }
+            command.env("CLAUDE_ENV_FILE", &file.path);
+        }
     }
     #[cfg(unix)]
     command.process_group(0);
@@ -550,8 +558,6 @@ pub struct HookSession {
     pub permission_mode: String,
     /// Stops a hook that is still running (the person's Stop).
     pub cancel: Option<Arc<std::sync::atomic::AtomicBool>>,
-    /// What `CLAUDE_ENV_FILE` hooks wrote; a subagent has none.
-    pub env_file: Option<std::path::PathBuf>,
 }
 
 /// Most of a transcript kept, in bytes: past this its older half goes.
@@ -564,40 +570,59 @@ const MAX_GUARDED_PATHS: usize = 64;
 const ENV_FILE_BYTES: u64 = 64 * 1024;
 const ENV_FILE_VARIABLES: usize = 64;
 
-/// Whether an env file may set this variable. Not what changes which program runs, or how a
-/// program starts: a hook never decides what a command means to the rules that allowed it.
-fn env_name_allowed(name: &str) -> bool {
-    let valid = !name.is_empty()
-        && !name.starts_with(|c: char| c.is_ascii_digit())
-        && name.chars().all(|c| c == '_' || c.is_ascii_alphanumeric());
-    const WHOLE: [&str; 16] = [
-        "PATH",
-        "HOME",
-        "SHELL",
-        "ENV",
-        "BASH_ENV",
-        "ZDOTDIR",
-        "IFS",
-        "SHELLOPTS",
-        "BASHOPTS",
-        "PYTHONPATH",
-        "PYTHONHOME",
-        "PYTHONSTARTUP",
-        "NODE_OPTIONS",
-        "NODE_PATH",
-        "PERL5OPT",
-        "RUBYOPT",
-    ];
-    const PREFIXES: [&str; 5] = ["LD_", "DYLD_", "GIT_", "CLAUDE_", "THEMIS_"];
-    valid && !WHOLE.contains(&name) && !PREFIXES.iter().any(|prefix| name.starts_with(prefix))
+/// One plugin's `CLAUDE_ENV_FILE`. What its session hooks write there reaches its own later hooks
+/// and nothing else: not the agent's commands, and not another plugin. Those hooks already run
+/// with the person's permissions, so this adds nothing to what the plugin can do.
+///
+/// A list of dangerous names can't be complete (`GCONV_PATH`, `PERL5LIB`, `RUBYLIB`,
+/// `JAVA_TOOL_OPTIONS`, `npm_config_*`, …), so the rule says what is allowed: names under the
+/// plugin's own prefix, in capitals (`my-kit` may set `MY_KIT_ANYTHING`). In the official catalog
+/// the one plugin whose hooks write this file is `vercel`, with `VERCEL_PLUGIN_*` names it reads
+/// back in its own later hooks, so this fits what ships.
+#[derive(Clone, Debug)]
+pub struct PluginEnvFile {
+    pub path: std::path::PathBuf,
+    /// Its variables' prefix, from [`env_prefix`].
+    pub prefix: String,
 }
 
-/// The variables in an env file. It is read, never run: `export NAME=value` and `NAME=value`, with
-/// a plain or quoted value. A value that would need a shell to mean anything is left out.
-fn parse_env_file(text: &str) -> Vec<(String, String)> {
+/// The prefix a plugin's variables must have: its name in capitals, then `_`.
+#[must_use]
+pub fn env_prefix(plugin: &str) -> String {
+    let name: String = plugin
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() {
+                c.to_ascii_uppercase()
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    format!("{name}_")
+}
+
+/// Whether a plugin may set this name: its prefix, then at least one more character, all capitals,
+/// digits and `_`. A name a shell couldn't use, or one in lower case, is not confirmed.
+fn env_name_allowed(name: &str, prefix: &str) -> bool {
+    name.strip_prefix(prefix)
+        .is_some_and(|rest| !rest.is_empty())
+        && name
+            .bytes()
+            .all(|byte| byte == b'_' || byte.is_ascii_uppercase() || byte.is_ascii_digit())
+}
+
+/// The variables in an env file, and the names refused. It is read, never run: `export NAME=value`
+/// and `NAME=value`, with a plain or quoted value. A value that would need a shell to mean anything
+/// is refused with its name.
+fn parse_env_file(text: &str, prefix: &str) -> (Vec<(String, String)>, Vec<String>) {
     let mut variables: Vec<(String, String)> = Vec::new();
+    let mut refused: Vec<String> = Vec::new();
     for line in text.lines() {
         let line = line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
         let line = line.strip_prefix("export ").unwrap_or(line).trim_start();
         let Some((name, value)) = line.split_once('=') else {
             continue;
@@ -607,43 +632,40 @@ fn parse_env_file(text: &str) -> Vec<(String, String)> {
             .into_iter()
             .find_map(|quote| value.strip_prefix(quote)?.strip_suffix(quote))
             .unwrap_or(value);
-        let needs_a_shell = plain
-            .contains(['$', '`', '\\', ';', '|', '&', '<', '>', '(', ')', '\n'])
-            || plain.contains(['"', '\''])
-            || (plain.len() == value.len() && plain.contains(char::is_whitespace));
-        if env_name_allowed(name) && !needs_a_shell && variables.len() < ENV_FILE_VARIABLES {
+        let needs_a_shell = plain.contains([
+            '$', '`', '\\', ';', '|', '&', '<', '>', '(', ')', '\n', '"', '\'',
+        ]) || (plain.len() == value.len()
+            && plain.contains(char::is_whitespace));
+        if env_name_allowed(name, prefix) && !needs_a_shell && variables.len() < ENV_FILE_VARIABLES
+        {
             variables.retain(|(known, _)| known != name);
             variables.push((name.to_owned(), plain.to_owned()));
+        } else if refused.len() < ENV_FILE_VARIABLES {
+            // Only what can be shown safely: what a hook wrote is not to be trusted as text.
+            let shown: String = name
+                .chars()
+                .filter(|c| c.is_ascii_alphanumeric() || *c == '_')
+                .take(64)
+                .collect();
+            if !shown.is_empty() && !refused.contains(&shown) {
+                refused.push(shown);
+            }
         }
     }
-    variables
+    (variables, refused)
 }
 
-/// What this run's session hooks set for its shell commands. A subagent's scoped shell must mean
-/// what it says, so it has none.
-#[must_use]
-pub fn session_env() -> Vec<(String, String)> {
-    let Some(path) = ACTIVE
-        .try_with(|runtime| {
-            runtime
-                .agent
-                .is_none()
-                .then(|| runtime.session.env_file.clone())
-                .flatten()
-        })
-        .ok()
-        .flatten()
-    else {
-        return Vec::new();
-    };
-    let Ok(file) = std::fs::File::open(path) else {
-        return Vec::new();
-    };
-    let mut text = String::new();
-    if file.take(ENV_FILE_BYTES).read_to_string(&mut text).is_err() {
-        return Vec::new();
+impl PluginEnvFile {
+    /// What it allows, and the names it refuses.
+    fn read(&self) -> (Vec<(String, String)>, Vec<String>) {
+        let mut text = String::new();
+        let read = std::fs::File::open(&self.path)
+            .and_then(|file| file.take(ENV_FILE_BYTES).read_to_string(&mut text));
+        match read {
+            Ok(_) => parse_env_file(&text, &self.prefix),
+            Err(_) => (Vec::new(), Vec::new()),
+        }
     }
-    parse_env_file(&text)
 }
 
 #[derive(Clone)]
@@ -938,18 +960,33 @@ impl HookRuntime {
     ) -> anyhow::Result<String> {
         self.note_prompt(prompt);
         // A session hook runs every turn here, so what it wrote last turn goes.
-        if let Some(path) = &self.session.env_file {
-            if self
-                .hooks
+        let env_files = || {
+            self.hooks
                 .iter()
-                .any(|hook| hook.enabled && hook.env_file.is_some())
-            {
-                let _ = std::fs::remove_file(path);
-            }
+                .filter(|hook| hook.enabled)
+                .filter_map(|hook| hook.env_file.as_ref())
+        };
+        for file in env_files() {
+            let _ = std::fs::remove_file(&file.path);
         }
         let outputs = self
             .emit_collect("PromptSubmit", json!({"prompt": prompt}), events)
             .await?;
+        // Metadata only: how many, never the names or values a hook wrote.
+        let mut seen = std::collections::HashSet::new();
+        for file in env_files() {
+            if seen.insert(&file.path) {
+                let refused = file.read().1.len();
+                if refused > 0 {
+                    crate::diagnostics::emit(
+                        "hook",
+                        "env_refused",
+                        "warn",
+                        json!({"count": refused}),
+                    );
+                }
+            }
+        }
         let mut context = String::new();
         for output in outputs {
             if let Some(text) = added_context(&output) {
@@ -1501,27 +1538,59 @@ mod tests {
 
     #[test]
     fn an_env_file_is_read_and_never_run() {
-        let parsed = parse_env_file(
-            "export A=1\nB=two\nexport C=\"three words\"\nD='four'\n# a note\nexport PATH=/evil\nexport LD_PRELOAD=x\nexport DYLD_X=x\nexport GIT_DIR=x\nexport NODE_OPTIONS=x\nexport E=$(touch x)\nexport F=`x`\nexport G=a;b\nexport H=a b\nexport 9I=x\nexport A=again\n",
+        let (variables, refused) = parse_env_file(
+            "export KIT_A=1\nKIT_B=two\nexport KIT_C=\"three words\"\nKIT_D='four'\n# a note\nexport PATH=/evil\nexport GCONV_PATH=x\nexport kit_lower=x\nexport KIT_=x\nexport KITTEN=x\nexport KIT_E=$(touch x)\nexport KIT_F=`x`\nexport KIT_G=a;b\nexport KIT_H=a b\nexport KIT_A=again\n",
+            &env_prefix("kit"),
         );
         assert_eq!(
-            parsed,
+            variables,
             [
-                ("B".to_owned(), "two".to_owned()),
-                ("C".to_owned(), "three words".to_owned()),
-                ("D".to_owned(), "four".to_owned()),
-                ("A".to_owned(), "again".to_owned()),
+                ("KIT_B".to_owned(), "two".to_owned()),
+                ("KIT_C".to_owned(), "three words".to_owned()),
+                ("KIT_D".to_owned(), "four".to_owned()),
+                ("KIT_A".to_owned(), "again".to_owned()),
+            ]
+        );
+        assert_eq!(
+            refused,
+            [
+                "PATH",
+                "GCONV_PATH",
+                "kit_lower",
+                "KIT_",
+                "KITTEN",
+                "KIT_E",
+                "KIT_F",
+                "KIT_G",
+                "KIT_H"
             ]
         );
     }
 
+    #[test]
+    fn a_plugins_prefix_comes_from_its_name() {
+        assert_eq!(env_prefix("my-kit.2"), "MY_KIT_2_");
+        assert!(env_name_allowed("MY_KIT_2_A", "MY_KIT_2_"));
+        assert!(!env_name_allowed("MY_KIT_2_", "MY_KIT_2_"));
+        assert!(!env_name_allowed("MY_KIT_2_a", "MY_KIT_2_"));
+    }
+
     proptest! {
-        /// Any text: no panic, and nothing that changes which program runs gets through.
+        /// Any text: no panic, and only names under the plugin's prefix ever get through, with
+        /// nothing a shell would have to read.
         #[test]
-        fn any_env_file_text_is_safe(text in "[ -~\n]{0,200}", name in "[A-Z_]{1,8}") {
-            for (key, value) in parse_env_file(&format!("{text}\nexport {name}=x\n{name}=$(y)\n")) {
-                prop_assert!(env_name_allowed(&key));
+        fn any_env_file_text_gives_only_the_plugins_own_names(
+            text in "[ -~\n]{0,200}",
+            name in "[A-Za-z_]{1,8}",
+        ) {
+            let text = format!("{text}\nexport {name}=x\n{name}=$(y)\n");
+            let (variables, refused) = parse_env_file(&text, "KIT_");
+            for (key, value) in variables {
+                prop_assert!(key.starts_with("KIT_"), "{key}");
                 prop_assert!(!value.contains('$') && !value.contains('`'));
+            }
+            for shown in refused {
+                prop_assert!(!shown.contains(','));
             }
         }
 

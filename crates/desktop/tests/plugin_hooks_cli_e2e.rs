@@ -858,30 +858,130 @@ async fn a_hook_gets_real_session_values_and_prompts_stay_out_of_the_logs() {
     app.serving.abort();
 }
 
-/// `CLAUDE_ENV_FILE` is real: what a session hook writes reaches later shell commands, except what
-/// would change which program runs.
+/// What a session hook writes to `CLAUDE_ENV_FILE` reaches only this plugin's later hooks, by a
+/// rule that says what is allowed: names under the plugin's own prefix. It never reaches the
+/// agent's commands or another plugin, and nothing else is taken, whatever its name.
 #[tokio::test(flavor = "multi_thread")]
-async fn a_session_hook_sets_the_environment_of_shell_commands() {
-    let hooks = json!({"SessionStart": [{"hooks": [{"type": "command",
-        "command": "printf 'export MY_VAR=\\\"from hook\\\"\\nexport PATH=/evil\\nexport LD_PRELOAD=/evil\\nexport TRICK=$(touch x)\\nexport GIT_DIR=/evil\\n' >> \"$CLAUDE_ENV_FILE\""}]}]});
+async fn an_env_file_reaches_only_the_plugins_own_later_hooks() {
+    const WRITES: &str = r#"#!/bin/sh
+cat >> "$CLAUDE_ENV_FILE" <<'EOF'
+export GUARDED_TOKEN=yes
+export GUARDED_QUOTED="two words"
+export guarded_lower=no
+export PATH=/evil
+export HOME=/evil
+export LD_PRELOAD=/evil
+export GCONV_PATH=/evil
+export PERL5LIB=/evil
+export RUBYLIB=/evil
+export JAVA_TOOL_OPTIONS=/evil
+export CLASSPATH=/evil
+export PAGER=/evil
+export EDITOR=/evil
+export PROMPT_COMMAND=/evil
+export RUSTFLAGS=/evil
+export npm_config_script_shell=/evil
+export PROJECT_TYPE=nodejs
+export GUARDED_RAN=$(touch ran-from-env)
+export GUARDED_EMPTY=""
+EOF
+"#;
+    let hooks = json!({
+        "SessionStart": [{"hooks": [{"type": "command",
+            "command": "sh \"${CLAUDE_PLUGIN_ROOT}/hooks/writes.sh\""}]}],
+        "PreToolUse": [{"matcher": "Bash", "hooks": [{"type": "command",
+            "command": "env > later-hook.txt"}]}]
+    });
+    let script = "env > agent-command.txt";
     for background in [false, true] {
-        let script = "echo \"[$MY_VAR][$PATH][$LD_PRELOAD][$TRICK][$GIT_DIR]\" > env.txt";
         let app = crate::app(
             hooks.clone(),
-            &[],
+            &[("hooks/writes.sh", WRITES)],
             calls_once(
                 "shell",
                 json!({"command": "sh", "args": ["-c", script], "background": background}),
             ),
         )
         .await;
+        // Another plugin's hook, on the same call.
+        let other = app._plugins.path().join("other");
+        std::fs::create_dir_all(other.join(".claude-plugin")).unwrap();
+        std::fs::create_dir_all(other.join("hooks")).unwrap();
+        std::fs::write(
+            other.join(".claude-plugin/plugin.json"),
+            json!({"name": "other", "description": "Another"}).to_string(),
+        )
+        .unwrap();
+        std::fs::write(
+            other.join("hooks/hooks.json"),
+            json!({"hooks": {"PreToolUse": [{"matcher": "Bash", "hooks": [{"type": "command",
+                "command": "env > other-plugin.txt"}]}]}})
+            .to_string(),
+        )
+        .unwrap();
+        let directory = app.data.path().to_owned();
+        tokio::task::spawn_blocking(move || {
+            let plugin = themis(&directory, &["plugin", "import", other.to_str().unwrap()]);
+            let hook = plugin["spec"]["hooks"][0]["name"]
+                .as_str()
+                .unwrap()
+                .to_owned();
+            themis(&directory, &["hook", "enable", "other", &hook]);
+        })
+        .await
+        .unwrap();
         run(&app, "go").await;
-        let path = app.project.path().join("env.txt");
-        until("the command never ran", || path.exists());
-        let text = std::fs::read_to_string(path).unwrap();
-        assert!(text.starts_with("[from hook]["), "{text}");
-        assert!(!text.contains("/evil"), "{text}");
-        assert!(text.trim_end().ends_with("[][][]"), "{text}");
+        let read = |name: &str| {
+            let path = app.project.path().join(name);
+            until("the file never came", || path.exists());
+            std::thread::sleep(Duration::from_millis(100));
+            std::fs::read_to_string(path).unwrap()
+        };
+        let later = read("later-hook.txt");
+        assert!(later.contains("GUARDED_TOKEN=yes\n"), "{later}");
+        assert!(later.contains("GUARDED_QUOTED=two words\n"), "{later}");
+        // As vercel's hooks start theirs.
+        assert!(later.contains("GUARDED_EMPTY=\n"), "{later}");
+        // Everything else is refused, whatever it is called, and the plugin is told by name.
+        assert!(!later.contains("/evil"), "{later}");
+        assert!(!later.contains("guarded_lower="), "{later}");
+        assert!(!later.contains("PROJECT_TYPE=nodejs"), "{later}");
+        let told = later
+            .lines()
+            .find_map(|line| line.strip_prefix("THEMIS_ENV_REFUSED="))
+            .expect("told what was refused");
+        for name in [
+            "guarded_lower",
+            "PATH",
+            "GCONV_PATH",
+            "npm_config_script_shell",
+            "PAGER",
+        ] {
+            assert!(told.split(',').any(|known| known == name), "{name}: {told}");
+        }
+        assert!(!exists(&app, "ran-from-env"), "the env file was run");
+        // Not the agent's commands, nor another plugin.
+        for name in ["agent-command.txt", "other-plugin.txt"] {
+            let env = read(name);
+            assert!(!env.contains("GUARDED_"), "{name}: {env}");
+            assert!(!env.contains("/evil"), "{name}: {env}");
+        }
+        // Logged as metadata: how many, and none of the names or values.
+        let mut logged = String::new();
+        for entry in std::fs::read_dir(app.data.path().join("logs"))
+            .unwrap()
+            .flatten()
+        {
+            logged.push_str(&std::fs::read_to_string(entry.path()).unwrap_or_default());
+        }
+        let line = logged
+            .lines()
+            .find(|line| line.contains("env_refused"))
+            .expect("the refusal is logged");
+        assert!(
+            !line.contains("GCONV_PATH") && !line.contains("/evil"),
+            "{line}"
+        );
         app.serving.abort();
     }
 }
