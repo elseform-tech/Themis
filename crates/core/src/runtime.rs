@@ -7799,7 +7799,7 @@ mod tests {
             "verified current line or line range",
             "why it addresses the task",
             "material tradeoffs",
-            "actual test commands and outcomes",
+            "what you tested and how it came out",
             "Never invent references or coordinates",
             "Creative prose needs no evidence citations",
             "using permitted reference fields without extra wrappers",
