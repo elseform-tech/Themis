@@ -1055,7 +1055,7 @@ async fn asked_to_stop_the_agent_pauses_the_goal_and_no_check_or_turn_follows() 
 }
 
 /// What a check found proven survives into the next check and turn, which see it, and the
-/// next turn knows which files the work is in. The person never sees the note for the agent.
+/// next turn knows which files the work is in.
 #[tokio::test(flavor = "multi_thread")]
 async fn proof_and_files_carry_from_turn_to_turn() {
     let server = MockServer::start().await;
@@ -1144,8 +1144,12 @@ async fn proof_and_files_carry_from_turn_to_turn() {
             .any(|note| note.contains("health part isn't shown yet")),
         "{notes:?}"
     );
+    // The person sees what the agent is told: what's wrong, what to change, what's left.
     assert!(
-        !notes.iter().any(|note| note.contains("check_health.py")),
+        notes
+            .iter()
+            .any(|note| note
+                .contains("\n\nRun check_health.py next.\n\nStill pending: Health drops")),
         "{notes:?}"
     );
 }

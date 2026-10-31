@@ -49,6 +49,8 @@ const MAX_ADDED_CHARS: usize = 2000;
 const MAX_EVIDENCE_CHARS: usize = 32_000;
 /// Most changed files a goal remembers, the latest ones.
 const MAX_GOAL_FILES: usize = 30;
+/// Longest paragraph of a goal note.
+const MAX_NOTE_PART_CHARS: usize = 800;
 /// Most pending items a check's message names; Workspace › Goal has them all.
 const MAX_PENDING_SHOWN: usize = 5;
 /// A long command output keeps its start and its end (where results and
@@ -238,7 +240,12 @@ impl AppState {
             run_id: run_id.to_owned(),
             event: ThreadEvent::GoalNote {
                 outcome,
-                reason: core_goal::one_line(reason, 400),
+                // A check's message keeps its paragraphs.
+                reason: reason
+                    .split("\n\n")
+                    .map(|part| core_goal::one_line(part, MAX_NOTE_PART_CHARS))
+                    .collect::<Vec<_>>()
+                    .join("\n\n"),
             },
         };
         if let Err(error) = self.inner.transcript.append_event(&envelope) {
