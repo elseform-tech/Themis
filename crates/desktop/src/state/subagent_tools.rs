@@ -30,18 +30,7 @@ pub(super) fn tools(kit: &Arc<SubagentKit>) -> Vec<Box<dyn ToolT>> {
         .into_iter()
         .map(|kind| {
             let description = match kind {
-                Kind::Spawn if !others.is_empty() => format!(
-                    "{}\n\n{}",
-                    themis_core::prompts::SPAWN_SUBAGENTS_TOOL,
-                    themis_core::prompts::fill(
-                        themis_core::prompts::SPAWN_SUBAGENTS_MODELS,
-                        &[
-                            ("models", &others.join(", ")),
-                            ("default", &kit.default_model()),
-                        ],
-                    )
-                ),
-                Kind::Spawn => themis_core::prompts::SPAWN_SUBAGENTS_TOOL.to_owned(),
+                Kind::Spawn => spawn_description(kit, &others),
                 Kind::Wait => themis_core::prompts::WAIT_SUBAGENTS_TOOL.to_owned(),
                 Kind::Message => themis_core::prompts::MESSAGE_SUBAGENT_TOOL.to_owned(),
                 Kind::Stop => themis_core::prompts::STOP_SUBAGENT_TOOL.to_owned(),
@@ -51,9 +40,39 @@ pub(super) fn tools(kit: &Arc<SubagentKit>) -> Vec<Box<dyn ToolT>> {
                 kit: Arc::clone(kit),
                 description,
                 models: !others.is_empty(),
+                profiles: !kit.profiles.is_empty(),
             }) as Box<dyn ToolT>
         })
         .collect()
+}
+
+/// The spawn tool's description: the models it may choose, and a bounded list of the profiles
+/// of this run's enabled plugins, so an unused feature costs nothing.
+fn spawn_description(kit: &SubagentKit, others: &[String]) -> String {
+    let mut parts = vec![themis_core::prompts::SPAWN_SUBAGENTS_TOOL.to_owned()];
+    if !others.is_empty() {
+        parts.push(themis_core::prompts::fill(
+            themis_core::prompts::SPAWN_SUBAGENTS_MODELS,
+            &[
+                ("models", &others.join(", ")),
+                ("default", &kit.default_model()),
+            ],
+        ));
+    }
+    if !kit.profiles.is_empty() {
+        let (listing, more) = kit.profiles.listing();
+        parts.push(themis_core::prompts::fill(
+            themis_core::prompts::SPAWN_SUBAGENTS_PROFILES,
+            &[("profiles", &listing)],
+        ));
+        if more > 0 {
+            parts.push(themis_core::prompts::fill(
+                themis_core::prompts::SPAWN_SUBAGENTS_PROFILES_MORE,
+                &[("count", &more.to_string())],
+            ));
+        }
+    }
+    parts.join("\n\n")
 }
 
 /// The model a subagent runs on: the default without one, else the one allowed model the
@@ -108,6 +127,8 @@ struct SubagentTool {
     description: String,
     /// The spawn tool offers `model` (`subagents.models` lists some).
     models: bool,
+    /// The spawn tool offers `profile` (an enabled plugin ships some).
+    profiles: bool,
 }
 
 impl std::fmt::Debug for SubagentTool {
@@ -124,6 +145,7 @@ struct Brief {
     name: String,
     brief: String,
     model: Option<String>,
+    profile: Option<String>,
     write_paths: Vec<String>,
 }
 
@@ -156,6 +178,16 @@ fn parse_briefs(args: &Value) -> Result<Vec<Brief>, ToolCallError> {
                 name,
                 brief: brief.chars().take(MAX_BRIEF).collect(),
                 model: item["model"].as_str().map(str::to_owned),
+                profile: match &item["profile"] {
+                    Value::Null => None,
+                    Value::String(profile) => Some(profile.clone()),
+                    _ => {
+                        return Err(error(format!(
+                            "subagent {}: `profile` must be a profile's name",
+                            index + 1
+                        )))
+                    }
+                },
                 write_paths: match &item["write_paths"] {
                     Value::Null => Vec::new(),
                     paths => paths
@@ -191,20 +223,45 @@ impl SubagentTool {
     fn spawn(&self, args: &Value) -> Result<Value, ToolCallError> {
         let default = self.kit.default_model();
         let others = self.kit.other_models();
-        // Every model is checked before any subagent starts.
+        // Every profile and model is checked before any subagent starts.
         let briefs = parse_briefs(args)?
             .into_iter()
             .map(|brief| {
-                pick_model(brief.model.as_deref(), &default, &others)
-                    .map(|model| (brief, model))
-                    .map_err(error)
+                let profile = brief
+                    .profile
+                    .as_deref()
+                    .map(|name| self.kit.profiles.find(name))
+                    .transpose()
+                    .map_err(error)?;
+                let model = match (brief.model.as_deref(), &profile) {
+                    // A profile's model is a wish: without a match the default applies.
+                    (None, Some(named)) => {
+                        pick_model(named.profile.model.as_deref(), &default, &others)
+                            .unwrap_or_else(|_| default.clone())
+                    }
+                    (asked, _) => pick_model(asked, &default, &others).map_err(error)?,
+                };
+                Ok((brief, model, profile))
             })
-            .collect::<Result<Vec<_>, _>>()?;
+            .collect::<Result<Vec<_>, ToolCallError>>()?;
         // `subagents.allow_writes` off keeps every subagent read-only, and the agent is told.
         let allow_writes = self.kit.config.subagents.allow_writes;
+        if allow_writes {
+            if let Some((_, _, Some(named))) = briefs.iter().find(|(brief, _, profile)| {
+                !brief.write_paths.is_empty()
+                    && profile
+                        .as_ref()
+                        .is_some_and(|named| !named.profile.allows_writes())
+            }) {
+                return Err(error(format!(
+                    "profile '{}' has no write tools, so write_paths would do nothing: leave them out or use another profile",
+                    named.profile.name
+                )));
+            }
+        }
         let asked: Vec<Vec<String>> = briefs
             .iter()
-            .map(|(brief, _)| {
+            .map(|(brief, _, _)| {
                 if allow_writes {
                     brief.write_paths.clone()
                 } else {
@@ -215,14 +272,16 @@ impl SubagentTool {
         let refused_writes = !allow_writes
             && briefs
                 .iter()
-                .any(|(brief, _)| !brief.write_paths.is_empty());
+                .any(|(brief, _, _)| !brief.write_paths.is_empty());
         // Every path is checked before any subagent starts.
         let write_paths = self.kit.check_write_paths(&asked).map_err(error)?;
         let started: Vec<Value> = briefs
             .into_iter()
             .zip(write_paths)
-            .map(|((brief, model), paths)| {
-                let agent = self.kit.start(brief.name, brief.brief, model, paths);
+            .map(|((brief, model, profile), paths)| {
+                let agent = self
+                    .kit
+                    .start(brief.name, brief.brief, model, paths, profile);
                 json!({"id": agent.id, "name": agent.name, "model": agent.model,
                     "write_paths": agent.write_paths})
             })
@@ -401,6 +460,9 @@ impl ToolT for SubagentTool {
                 },"required":["brief"]});
                 if self.models {
                     item["properties"]["model"] = json!({"type":"string"});
+                }
+                if self.profiles {
+                    item["properties"]["profile"] = json!({"type":"string"});
                 }
                 json!({"type":"object","properties":{
                     "say":say_field(),

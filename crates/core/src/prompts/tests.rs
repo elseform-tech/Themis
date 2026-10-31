@@ -276,6 +276,21 @@ const ALL: &[(&str, &str, &[&str])] = &[
         "spawn-subagents-models",
         &["models", "default"],
     ),
+    (
+        SPAWN_SUBAGENTS_PROFILES,
+        "spawn-subagents-profiles",
+        &["profiles"],
+    ),
+    (
+        SPAWN_SUBAGENTS_PROFILES_MORE,
+        "spawn-subagents-profiles-more",
+        &["count"],
+    ),
+    (
+        SUBAGENT_PROFILE,
+        "subagent-profile",
+        &["name", "plugin", "instructions"],
+    ),
     (WAIT_SUBAGENTS_TOOL, "wait-subagents-tool", &[]),
     (MESSAGE_SUBAGENT_TOOL, "message-subagent-tool", &[]),
     (STOP_SUBAGENT_TOOL, "stop-subagent-tool", &[]),

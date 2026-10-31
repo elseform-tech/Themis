@@ -15,6 +15,7 @@ use std::time::Instant;
 use serde_json::{json, Value};
 use themis_core::chat_grants::ChatGrants;
 use themis_core::configuration::{ApprovalMode, RuntimeConfig};
+use themis_core::plugins::agents::{NamedProfile, ProfileCatalog, READ_ONLY_TOOLS, WRITE_TOOLS};
 use themis_core::runtime::{
     ConversationRole, ConversationTurn, LLMProvider, RunEvent, RunNotes, RunPolicy, SteerInbox,
 };
@@ -37,10 +38,6 @@ const TRANSCRIPT_LIMIT: u64 = 4 * 1024 * 1024;
 const KEPT_PER_CHAT: usize = 50;
 /// App-data folder of subagent transcripts (`subagents/<chat id>/<id>.jsonl`).
 pub(super) const SUBAGENTS_DIR: &str = "subagents";
-/// The tools a read-only subagent gets.
-const READ_ONLY_TOOLS: [&str; 4] = ["read_file", "list_dir", "search_file", "shell"];
-/// The tools a subagent with write paths also gets; the file guard holds them to those paths.
-const WRITE_TOOLS: [&str; 3] = ["write_file", "apply_patch", "create_dir"];
 
 /// A model's provider, or why it could not start.
 type Resolved = Result<Arc<dyn LLMProvider>, String>;
@@ -71,6 +68,8 @@ pub(super) struct SubagentKit {
     pub(super) stopped: Arc<AtomicBool>,
     pub(super) notes: Arc<RunNotes>,
     pub(super) slots: Arc<tokio::sync::Semaphore>,
+    /// The profiles of this run's enabled plugins.
+    pub(super) profiles: ProfileCatalog,
     /// Subagents this run started, in order.
     pub(super) started: Mutex<Vec<Arc<Subagent>>>,
     /// Providers resolved for models other than the chat's, by model.
@@ -121,6 +120,7 @@ impl SubagentKit {
             stopped,
             notes: RunNotes::new(),
             slots,
+            profiles: ProfileCatalog::from_plugins(&snapshot.plugins),
             started: Mutex::new(Vec::new()),
             other_llms: tokio::sync::Mutex::new(HashMap::new()),
         }
@@ -247,6 +247,7 @@ impl SubagentKit {
         brief: String,
         model: String,
         write_paths: Vec<String>,
+        profile: Option<Arc<NamedProfile>>,
     ) -> Arc<Subagent> {
         let agent = Arc::new(Subagent {
             id: uuid::Uuid::new_v4().simple().to_string()[..12].to_owned(),
@@ -256,6 +257,7 @@ impl SubagentKit {
             model,
             earlier: Mutex::new(Vec::new()),
             write_paths,
+            profile,
             run_id: uuid::Uuid::new_v4().to_string(),
             started: Mutex::new(Instant::now()),
             stop: Arc::new(AtomicBool::new(false)),
@@ -284,7 +286,8 @@ impl SubagentKit {
             "info",
             json!({"thread_id": self.thread_id, "run_id": self.run_id, "subagent_id": agent.id,
                 "child_run_id": agent.run_id, "confined": self.sandbox.enabled(),
-                "write_paths": agent.write_paths.len()}),
+                "write_paths": agent.write_paths.len(),
+                "profile": agent.profile.as_ref().map(|named| &named.profile.name)}),
             Some(&self.config.logging.level),
         );
         let kit = Arc::clone(self);
@@ -431,6 +434,13 @@ impl SubagentKit {
             .filter(|tool| {
                 READ_ONLY_TOOLS.contains(&tool.name())
                     || (!agent.write_paths.is_empty() && WRITE_TOOLS.contains(&tool.name()))
+            })
+            // A profile's list can only take away from the above.
+            .filter(|tool| {
+                agent
+                    .profile
+                    .as_ref()
+                    .is_none_or(|named| named.profile.allows(tool.name()))
             })
             .map(|tool| {
                 Box::new(super::subagent_tools::StatusField {
@@ -586,12 +596,23 @@ impl SubagentKit {
                 &[("paths", &agent.write_paths.join(", "))],
             )
         };
-        let head = [
-            themis_core::prompts::SUBAGENT_SYSTEM,
-            &access,
-            themis_core::prompts::SUBAGENT_STATUS_FIELD,
-        ]
-        .join("\n\n");
+        // Before the brief, and with its access stated after it, so that has the last word. In
+        // the system message it outlasts a checkpoint, a fallback and being picked up again.
+        let role = agent.profile.as_ref().map(|named| {
+            themis_core::prompts::fill(
+                themis_core::prompts::SUBAGENT_PROFILE,
+                &[
+                    ("name", &named.profile.name),
+                    ("plugin", &named.plugin),
+                    ("instructions", &named.profile.instructions),
+                ],
+            )
+        });
+        let head = std::iter::once(themis_core::prompts::SUBAGENT_SYSTEM)
+            .chain(role.as_deref())
+            .chain([access.as_str(), themis_core::prompts::SUBAGENT_STATUS_FIELD])
+            .collect::<Vec<_>>()
+            .join("\n\n");
         let workspace = themis_core::prompts::fill(
             themis_core::prompts::DESKTOP_RUN_WORKSPACE,
             &[(
@@ -813,6 +834,8 @@ pub(super) struct Subagent {
     earlier: Mutex<Vec<ConversationTurn>>,
     /// The project paths it may change, normalized; none when it is read-only.
     pub(super) write_paths: Vec<String>,
+    /// The plugin profile it runs as.
+    profile: Option<Arc<NamedProfile>>,
     pub(super) run_id: String,
     started: Mutex<Instant>,
     pub(super) stop: Arc<AtomicBool>,
@@ -1076,7 +1099,7 @@ impl AppState {
                             .ended
                             .unwrap_or_else(|| ("running".into(), String::new()));
                         json!({"id": agent.id, "name": agent.name, "brief": agent.brief,
-                            "model": agent.model, "write_paths": agent.write_paths, "ran_on": progress.ran_on, "status": status, "text": progress.status,
+                            "model": agent.model, "write_paths": agent.write_paths, "profile": agent.profile.as_ref().map(|named| &named.profile.name), "ran_on": progress.ran_on, "status": status, "text": progress.status,
                             "result": result, "tool_calls": agent.tool_calls.load(Ordering::SeqCst),
                             "seconds": agent.started.lock().unwrap_or_else(|e| e.into_inner()).elapsed().as_secs()})
                     })

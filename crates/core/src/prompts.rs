@@ -45,6 +45,15 @@ pub const SPAWN_SUBAGENTS_TOOL: &str = include_str!("../builtins/prompts/spawn-s
 /// Appended to the spawn tool when `subagents.models` lists models the agent may pick.
 pub const SPAWN_SUBAGENTS_MODELS: &str =
     include_str!("../builtins/prompts/spawn-subagents-models.md");
+/// Appended to the spawn tool when enabled plugins ship subagent profiles; `{{profiles}}`.
+pub const SPAWN_SUBAGENTS_PROFILES: &str =
+    include_str!("../builtins/prompts/spawn-subagents-profiles.md");
+/// Follows the profile list when it was cut to its budget; `{{count}}`.
+pub const SPAWN_SUBAGENTS_PROFILES_MORE: &str =
+    include_str!("../builtins/prompts/spawn-subagents-profiles-more.md");
+/// A plugin profile's body in a subagent's system message; `{{name}}`, `{{plugin}}`,
+/// `{{instructions}}`.
+pub const SUBAGENT_PROFILE: &str = include_str!("../builtins/prompts/subagent-profile.md");
 /// Description of the `wait_subagents` tool.
 pub const WAIT_SUBAGENTS_TOOL: &str = include_str!("../builtins/prompts/wait-subagents-tool.md");
 /// Description of the `message_subagent` tool.
