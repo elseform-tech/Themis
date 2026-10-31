@@ -312,6 +312,7 @@ impl AppState {
                 goal = updated;
             }
         }
+        self.refresh_checklist(Arc::clone(&sink), &thread_id);
         if !running {
             self.start_goal_turn(
                 sink,
@@ -332,12 +333,15 @@ impl AppState {
     ) -> Result<Goal, String> {
         self.require_thread(&thread_id).await?;
         let text = core_goal::normalize_goal(&text).ok_or("The goal cannot be empty")?;
-        self.update_goal(sink.as_ref(), &thread_id, |goal| {
-            goal.text = text;
-            // A changed goal gets a fresh look: old stalls no longer apply.
-            goal.stalls = 0;
-        })
-        .ok_or_else(|| "This chat has no goal".to_owned())
+        let goal = self
+            .update_goal(sink.as_ref(), &thread_id, |goal| {
+                goal.text = text;
+                // A changed goal gets a fresh look: old stalls no longer apply.
+                goal.stalls = 0;
+            })
+            .ok_or_else(|| "This chat has no goal".to_owned())?;
+        self.refresh_checklist(sink, &thread_id);
+        Ok(goal)
     }
 
     /// Pauses the goal after the current turn; nothing is undone.
@@ -558,10 +562,68 @@ impl AppState {
         }
         let request: String = text.chars().take(MAX_ADDED_CHARS).collect();
         self.update_goal(sink, thread_id, |goal| {
+            let item = core_goal::pending_item(&request);
+            if !goal.proof.iter().any(|known| known.what == item.what) {
+                goal.proof.push(item);
+            }
             goal.added.push(request);
             if goal.added.len() > MAX_ADDED_REQUESTS {
                 goal.added.remove(0);
             }
+        });
+    }
+
+    /// Lists what the goal asks for, in the background, so the checklist follows the goal as it
+    /// is set, edited and added to. Dropped if the goal moved on meanwhile; a failure leaves the
+    /// list as it was, and the next check fills it anyway.
+    pub(super) fn refresh_checklist(&self, sink: Arc<dyn EventSink>, thread_id: &str) {
+        let Some(goal) = self.goal_for(thread_id) else {
+            return;
+        };
+        if goal.status == GoalStatus::Reached {
+            return;
+        }
+        let state = self.clone();
+        let thread_id = thread_id.to_owned();
+        tokio::spawn(async move {
+            let planned = match state.goal_check_config(&thread_id).await {
+                Ok((config, catalog)) => themis_core::providers::with_catalog_limits(
+                    &catalog,
+                    themis_core::context_metrics::with_usage_recorder(
+                        state.usage_recorder(&thread_id, ""),
+                        themis_core::context_metrics::with_usage_kind(
+                            themis_core::context_metrics::UsageKind::GoalCheck,
+                            core_goal::plan_checklist_with_config(
+                                &config,
+                                &goal.text,
+                                &goal.added,
+                                &goal.proof,
+                            ),
+                        ),
+                    ),
+                )
+                .await
+                .map_err(|error| format!("{error:#}")),
+                Err(error) => Err(error),
+            };
+            let Ok(planned) = planned else {
+                let _ = state.inner.diagnostics.append(
+                    "goal",
+                    "checklist_failed",
+                    "warn",
+                    json!({"thread_id": thread_id}),
+                );
+                return;
+            };
+            state.update_goal(sink.as_ref(), &thread_id, |current| {
+                if current.started_at == goal.started_at
+                    && current.text == goal.text
+                    && current.added == goal.added
+                    && current.proof == goal.proof
+                {
+                    current.proof = planned;
+                }
+            });
         });
     }
 

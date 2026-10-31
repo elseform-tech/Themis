@@ -59,6 +59,12 @@ fn distinct(bodies: Vec<Value>) -> Vec<Value> {
         .collect()
 }
 
+fn is_checklist(body: &Value) -> bool {
+    body["messages"][0]["content"]
+        .as_str()
+        .is_some_and(|text| text.contains("what a goal asks for"))
+}
+
 fn is_check(body: &Value) -> bool {
     body["messages"][0]["content"]
         .as_str()
@@ -417,7 +423,10 @@ async fn a_goal_runs_turn_after_turn_until_the_check_finds_it_reached() {
             .map(body)
             .collect(),
     );
-    let turns: Vec<&Value> = bodies.iter().filter(|body| !is_check(body)).collect();
+    let turns: Vec<&Value> = bodies
+        .iter()
+        .filter(|body| !is_check(body) && !is_checklist(body))
+        .collect();
     assert_eq!(turns.len(), 3);
     assert_eq!(
         checks.load(Ordering::SeqCst),
@@ -970,7 +979,10 @@ async fn a_message_run_that_finishes_the_goal_is_checked_and_nothing_repeats_it(
             .map(body)
             .collect(),
     );
-    let turns: Vec<&Value> = bodies.iter().filter(|body| !is_check(body)).collect();
+    let turns: Vec<&Value> = bodies
+        .iter()
+        .filter(|body| !is_check(body) && !is_checklist(body))
+        .collect();
     assert_eq!(turns.len(), 2, "no goal turn and no announcement followed");
     assert!(!turns.iter().any(|body| mentions(body, "[Goal — runtime")));
     assert_eq!(state.goal_for(&thread).unwrap().turns, 1);
@@ -1186,8 +1198,6 @@ async fn a_goal_reached_without_a_closing_turn_still_says_so_in_the_chat() {
 #[tokio::test(flavor = "multi_thread")]
 async fn the_checklist_follows_the_goal_as_it_changes() {
     let server = MockServer::start().await;
-    let gate = Gate::default();
-    let held = gate.clone();
     Mock::given(method("POST"))
         .respond_with(move |request: &Request| {
             let body = body(request);
@@ -1204,8 +1214,8 @@ async fn the_checklist_follows_the_goal_as_it_changes() {
                     reply(r#"{"requirements":[{"what":"The game runs"}]}"#)
                 };
             }
-            held.wait();
-            reply("Working on it.")
+            // Long enough to stay running through the test, without blocking the mock server.
+            reply("Working on it.").set_delay(std::time::Duration::from_secs(6))
         })
         .mount(&server)
         .await;
@@ -1286,7 +1296,6 @@ async fn the_checklist_follows_the_goal_as_it_changes() {
     })
     .await;
     assert_eq!(list, [("Written in Rust".to_owned(), false)]);
-    gate.open();
     state
         .remove_goal(sink.clone(), thread.clone())
         .await

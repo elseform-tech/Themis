@@ -69,6 +69,12 @@ const ALL: &[(&str, &str, &[&str])] = &[
     (GOAL_TURN_PROOF, "goal-turn-proof", &["proven", "open"]),
     (GOAL_TURN_FILES, "goal-turn-files", &["files"]),
     (GOAL_CHECK_PROOF, "goal-check-proof", &["requirements"]),
+    (GOAL_CHECKLIST_SYSTEM, "goal-checklist-system", &[]),
+    (
+        GOAL_CHECKLIST_USER,
+        "goal-checklist-user",
+        &["goal", "requests", "current"],
+    ),
     (
         GOAL_REACHED_TURN,
         "goal-reached-turn",

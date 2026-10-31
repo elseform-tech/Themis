@@ -26,7 +26,7 @@ export function GoalView({ goal }: { goal: Goal | null }) {
     <div className="themis-goal-view">
       <p className="themis-goal-view-text">{goal.text}</p>
       {items.length === 0
-        ? <p className="themis-goal-view-empty">The checklist appears after the first check.</p>
+        ? <p className="themis-goal-view-empty">The checklist will appear here in a moment.</p>
         : (
           <div className="themis-goal-board">
             <Column title="Pending" items={items.filter(item => !item.proven)} />

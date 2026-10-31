@@ -59,6 +59,95 @@ pub async fn check(
     Err(last_error)
 }
 
+/// Lists what a goal asks for, keeping what `current` already found complete. An error leaves
+/// the checklist as it was.
+pub async fn plan_checklist_with_config(
+    config: &crate::providers::ProviderConfig,
+    goal: &str,
+    added: &[String],
+    current: &[GoalRequirement],
+) -> anyhow::Result<Vec<GoalRequirement>> {
+    let llm = crate::providers::resolve(config).await?;
+    let lines = |items: Vec<String>| match items.is_empty() {
+        true => "(none)".to_owned(),
+        false => items.join("\n"),
+    };
+    let user = crate::prompts::fill(
+        crate::prompts::GOAL_CHECKLIST_USER,
+        &[
+            ("goal", &fenced(goal)),
+            ("requests", &fenced(&lines(added.to_vec()))),
+            (
+                "current",
+                &fenced(&lines(
+                    current.iter().map(|item| item.what.clone()).collect(),
+                )),
+            ),
+        ],
+    );
+    let messages = [
+        ChatMessage {
+            role: ChatRole::System,
+            message_type: MessageType::Text,
+            content: crate::prompts::GOAL_CHECKLIST_SYSTEM.to_owned(),
+        },
+        ChatMessage {
+            role: ChatRole::User,
+            message_type: MessageType::Text,
+            content: user,
+        },
+    ];
+    let reply = llm.chat(&messages, None).await?;
+    let planned = reply
+        .text()
+        .as_deref()
+        .and_then(parse_checklist)
+        .ok_or_else(|| anyhow::anyhow!("the checklist reply was unusable"))?;
+    Ok(merge_checklist(current, planned))
+}
+
+/// The first JSON object with a non-empty `requirements` in a reply.
+pub fn parse_checklist(reply: &str) -> Option<Vec<GoalRequirement>> {
+    reply.match_indices('{').find_map(|(start, _)| {
+        let value = serde_json::Deserializer::from_str(&reply[start..])
+            .into_iter::<serde_json::Value>()
+            .next()?
+            .ok()?;
+        let items = parse_requirements(value.get("requirements")?.clone());
+        (!items.is_empty()).then_some(items)
+    })
+}
+
+/// A refreshed checklist. Only the goal check completes an item, so the only way to be
+/// complete here is to already be: the same item, complete, with what showed it.
+pub fn merge_checklist(
+    current: &[GoalRequirement],
+    planned: Vec<GoalRequirement>,
+) -> Vec<GoalRequirement> {
+    planned
+        .into_iter()
+        .map(|item| {
+            let known = current
+                .iter()
+                .find(|old| old.proven && old.what.eq_ignore_ascii_case(&item.what));
+            GoalRequirement {
+                proven: known.is_some(),
+                how: known.map_or_else(String::new, |old| old.how.clone()),
+                what: item.what,
+            }
+        })
+        .collect()
+}
+
+/// A person's request as a checklist item, until the next refresh tidies it.
+pub fn pending_item(request: &str) -> GoalRequirement {
+    GoalRequirement {
+        what: one_line(request, MAX_REQUIREMENT_CHARS),
+        proven: false,
+        how: String::new(),
+    }
+}
+
 /// Marks a message the runtime sends to continue a goal; never the user's words.
 pub const GOAL_TURN_MARKER: &str = "[Goal — runtime, not from the user]";
 
@@ -684,7 +773,37 @@ mod tests {
         assert!(!plain.contains("Files"), "{plain}");
     }
 
+    #[test]
+    fn refreshing_the_checklist_can_never_complete_an_item() {
+        let current = [
+            requirement("Clicking starts the game", true, "a real click"),
+            requirement("Health drops", false, ""),
+        ];
+        let planned = parse_checklist(
+            r#"Here: {"requirements":[{"what":"clicking starts the game"},{"what":"Health drops","proven":true,"how":"trust me"},{"what":"New","proven":true},{"nope":1}]}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            merge_checklist(&current, planned),
+            vec![
+                requirement("clicking starts the game", true, "a real click"),
+                requirement("Health drops", false, ""),
+                requirement("New", false, ""),
+            ]
+        );
+        assert_eq!(parse_checklist("no list"), None);
+        assert_eq!(parse_checklist(r#"{"requirements":[]}"#), None);
+    }
+
     proptest! {
+        #[test]
+        fn any_checklist_reply_is_bounded_and_completes_nothing(reply in ".{0,600}") {
+            if let Some(items) = parse_checklist(&reply) {
+                prop_assert!(items.len() <= MAX_REQUIREMENTS);
+                prop_assert!(merge_checklist(&[], items).iter().all(|item| !item.proven));
+            }
+        }
+
         #[test]
         fn parsing_any_reply_is_bounded(reply in ".{0,600}") {
             if let Some(verdict) = parse_verdict(&reply) {

@@ -22,9 +22,9 @@ it("sorts the checklist into Pending and Complete columns", () => {
   expect(screen.queryByText(/proven/i)).not.toBeInTheDocument();
 });
 
-it("says so before the first check has listed anything, and without a goal", () => {
+it("says so before the checklist has come through, and without a goal", () => {
   const { rerender } = render(<GoalView goal={goal(undefined)} />);
-  expect(screen.getByText("The checklist appears after the first check.")).toBeInTheDocument();
+  expect(screen.getByText("The checklist will appear here in a moment.")).toBeInTheDocument();
   rerender(<GoalView goal={null} />);
   expect(screen.getByText("This chat has no goal.")).toBeInTheDocument();
 });
