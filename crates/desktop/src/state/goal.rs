@@ -57,6 +57,64 @@ const OUTPUT_TAIL_CHARS: usize = 4_000;
 /// bounded; the text kept is capped by `MAX_EVIDENCE_CHARS`).
 const EVIDENCE_PAGE_ITEMS: usize = 2_000;
 
+/// Calls that make a page do something rather than report on it.
+const PAGE_CHANGING_CALLS: [&str; 11] = [
+    ".click(",
+    ".set(",
+    ".lookAt(",
+    ".dispatchEvent(",
+    ".submit(",
+    ".remove(",
+    ".translate",
+    ".rotate",
+    "shoot(",
+    "force",
+    "innerHTML",
+];
+
+/// Whether a devtools script changed the page instead of reading it. This is a screen for a
+/// plain mistake, not a sandbox: a read that looks like a write only costs the agent a reload.
+fn marks_page_change(tool: &str, summary: &str) -> bool {
+    if tool != "browser_devtools" {
+        return false;
+    }
+    // A long call's summary is cut short, so this can't parse it as JSON.
+    let script = summary
+        .split_once(r#""expression":""#)
+        .map_or("", |(_, rest)| rest.split(r#"","#).next().unwrap_or(rest));
+    PAGE_CHANGING_CALLS.iter().any(|call| script.contains(call)) || assigns(script)
+}
+
+/// Whether a script assigns to anything but a variable it declares for itself.
+fn assigns(script: &str) -> bool {
+    let bytes = script.as_bytes();
+    script.match_indices('=').any(|(at, _)| {
+        let before = at.checked_sub(1).map(|index| bytes[index]);
+        let after = bytes.get(at + 1).copied();
+        let comparison =
+            matches!(before, Some(b'=' | b'!' | b'<' | b'>')) || matches!(after, Some(b'=' | b'>'));
+        if comparison {
+            return false;
+        }
+        let statement = script[..at]
+            .rsplit([';', '{', '('])
+            .next()
+            .unwrap_or_default();
+        !["const ", "let ", "var "]
+            .iter()
+            .any(|word| statement.trim_start().starts_with(word))
+    })
+}
+
+/// Whether what follows a tool call can't count as real proof, given what came before: a script
+/// changing the page spoils it until the page is opened or reloaded.
+fn page_spoiled_after(spoiled: bool, tool: &str, summary: &str) -> bool {
+    if tool == "browser_open" || (tool == "browser_navigate" && summary.contains("reload")) {
+        return false;
+    }
+    spoiled || marks_page_change(tool, summary)
+}
+
 fn now_ms() -> i64 {
     chrono::Utc::now().timestamp_millis()
 }
@@ -802,7 +860,8 @@ impl AppState {
             GoalNoteKind::Status,
             "I'm checking that against the goal now.",
         );
-        let (evidence, turn_files, through_seq) = self.turn_evidence(&thread_id, goal.checked_seq);
+        let (evidence, turn_files, through_seq, page_spoiled) =
+            self.turn_evidence(&thread_id, goal.checked_seq);
         let changed_files = !turn_files.is_empty();
         self.update_goal(sink.as_ref(), &thread_id, |goal| {
             for file in &turn_files {
@@ -872,6 +931,16 @@ impl AppState {
                     told_user: None,
                 }
             }
+        };
+        // However sure the check is: proof from a page a script changed isn't proof.
+        let verdict = if page_spoiled && verdict.verdict == Verdict::Reached {
+            core_goal::GoalVerdict {
+                verdict: Verdict::NotYet,
+                reason: themis_core::prompts::GOAL_NOTE_SCRIPT_PROOF.to_owned(),
+                ..verdict
+            }
+        } else {
+            verdict
         };
         // "Waiting for you" needs a question to the user in the answer; a check
         // that only lacks evidence means not yet.
@@ -1155,7 +1224,8 @@ impl AppState {
     /// history position read through. History after `after_seq` is read in
     /// pages; only the newest evidence text is kept, but every item counts
     /// toward "changed files" and the position.
-    fn turn_evidence(&self, thread_id: &str, after_seq: i64) -> (String, Vec<String>, i64) {
+    fn turn_evidence(&self, thread_id: &str, after_seq: i64) -> (String, Vec<String>, i64, bool) {
+        let mut spoiled = false;
         let mut evidence = String::new();
         let mut changed = Vec::new();
         let mut through = after_seq;
@@ -1172,7 +1242,15 @@ impl AppState {
                 };
                 let line = match envelope.event {
                     ThreadEvent::ToolStarted { tool, summary, .. } => {
-                        format!("$ {tool}: {summary}\n")
+                        spoiled = page_spoiled_after(spoiled, &tool, &summary);
+                        if marks_page_change(&tool, &summary) {
+                            format!(
+                                "$ {tool}: {summary}\n{}\n",
+                                themis_core::prompts::GOAL_EVIDENCE_SCRIPT
+                            )
+                        } else {
+                            format!("$ {tool}: {summary}\n")
+                        }
                     }
                     ThreadEvent::ToolFinished { ok, output, .. } => {
                         let output = clip_output(&output);
@@ -1212,7 +1290,7 @@ impl AppState {
                     .collect::<String>()
             );
         }
-        (evidence, changed, through)
+        (evidence, changed, through, spoiled)
     }
 
     /// The provider for the goal check (`goal.check_model`, else the chat's current model,
@@ -1411,5 +1489,73 @@ mod tests {
         set_status(&mut goal, GoalStatus::Running, None);
         assert_eq!(goal.active_ms, paused);
         assert!(goal.running_since.is_some());
+    }
+}
+
+#[cfg(test)]
+mod script_tests {
+    use super::{marks_page_change, page_spoiled_after};
+
+    #[test]
+    fn a_changed_page_stays_unproven_until_it_is_reloaded() {
+        let script =
+            r#"call `browser_devtools` with {"expression":"camera.position.set(1, 10, 2)"}"#;
+        let click = r#"call `browser_click` with {"x":640,"y":400}"#;
+        let mut spoiled = false;
+        spoiled = page_spoiled_after(spoiled, "browser_click", click);
+        assert!(!spoiled);
+        spoiled = page_spoiled_after(spoiled, "browser_devtools", script);
+        assert!(spoiled);
+        spoiled = page_spoiled_after(spoiled, "browser_click", click);
+        assert!(spoiled, "a real click doesn't undo it");
+        spoiled = page_spoiled_after(
+            spoiled,
+            "browser_navigate",
+            r#"call `browser_navigate` with {"action":"reload"}"#,
+        );
+        assert!(!spoiled);
+        spoiled = page_spoiled_after(spoiled, "browser_devtools", script);
+        spoiled = page_spoiled_after(
+            spoiled,
+            "browser_open",
+            r#"call `browser_open` with {"url":"http://localhost"}"#,
+        );
+        assert!(!spoiled);
+    }
+
+    #[test]
+    fn scripts_that_change_the_page_are_told_apart_from_reads_and_real_input() {
+        for changes in [
+            r#"call `browser_devtools` with {"expression":"camera.position.set(1, 10, 2)"}"#,
+            r#"call `browser_devtools` with {"expression":"controls.getObject().lookAt(e.position)"}"#,
+            r#"call `browser_devtools` with {"expression":"document.getElementById('restartBtn').click()"}"#,
+            r#"call `browser_devtools` with {"expression":"el.dispatchEvent(new MouseEvent('click'))"}"#,
+            r#"call `browser_devtools` with {"expression":"window._debug.forceKillNearest()"}"#,
+            r#"call `browser_devtools` with {"expression":"score = 10"}"#,
+            r#"call `browser_devtools` with {"expression":"window._debug.shoot()"}"#,
+        ] {
+            assert!(marks_page_change("browser_devtools", changes), "{changes}");
+        }
+        for reads in [
+            r#"call `browser_devtools` with {"expression":"document.getElementById('score').textContent"}"#,
+            r#"call `browser_devtools` with {"expression":"JSON.stringify({n: enemies.length, ok: a === b})"}"#,
+            r#"call `browser_devtools` with {"expression":"enemies.filter(e => e.alive).length"}"#,
+            r#"call `browser_devtools` with {"action":"read","area":"console","expression":""}"#,
+        ] {
+            assert!(!marks_page_change("browser_devtools", reads), "{reads}");
+        }
+        // A summary cut short still counts, and later fields aren't taken for the script.
+        assert!(marks_page_change(
+            "browser_devtools",
+            r#"call `browser_devtools` with {"action":"run","expression":"const c = window._debug.controls.getObject(); c.position.set(-0.14, 10, 0.12); c.loo…"#
+        ));
+        assert!(!marks_page_change(
+            "browser_devtools",
+            r#"call `browser_devtools` with {"expression":"a.length","selector":"x=y"}"#
+        ));
+        assert!(!marks_page_change(
+            "browser_click",
+            r#"call `browser_click` with {"x":640,"y":400}"#
+        ));
     }
 }

@@ -1,0 +1,1 @@
+A script changed the page during this turn and it wasn't reloaded afterwards, so this isn't proof of how the real thing behaves. Reload the page, then show the whole goal working with real clicks, keys and mouse moves, without scripts that change anything.
