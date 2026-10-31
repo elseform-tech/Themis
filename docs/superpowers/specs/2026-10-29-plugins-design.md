@@ -159,12 +159,15 @@ to be a `${VARIABLE}` reference, and that section is updated with this change.
   `AfterTool`, which only fires when the tool call fails. No new event is needed.
 - **Still skipped:** `SessionEnd`, `UserPromptExpansion`, `PermissionRequest` and
   `PostToolBatch`. Each is used by one or two plugins, and `SessionEnd` has no run to attach to.
+- **`StopFailure`** (added later) maps to `RunFailed`, the failure-only alias of `RunEnd`.
 - **Tool names in matchers:**
   - Imported matchers keep Claude tool names today, so a `Bash` guard never matches Themis's
     shell tool.
   - Matchers are mapped (`Bash` to shell, `Read` to read, `Edit` and `Write` to write and edit,
     `Grep` and `Glob` to search).
   - A matcher name that doesn't map makes the plugin partial and is listed in its detail.
+  - Alternatives naming MCP tools became `re:` patterns over Claude's names for them, and hook
+    input gained Claude's field names; see `docs/plugins.md`, "How imported Claude hooks run".
 - **Lifecycle options:** `SessionStart` matchers and `PostToolUse` and `Stop` options are mapped
   where Themis has the same meaning, and skipped with a reason otherwise.
 - **Hooks view** (board 24): see section 5.

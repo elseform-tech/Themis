@@ -627,7 +627,9 @@ impl ToolT for McpTool {
         None
     }
 }
-pub type McpTools = (Vec<Box<dyn ToolT>>, Option<String>);
+/// A server's tools for one run, its instructions, and each tool's Themis name with the server's
+/// own name for it (the Themis name cuts long ones short).
+pub type McpTools = (Vec<Box<dyn ToolT>>, Option<String>, Vec<(String, String)>);
 
 pub async fn tools(
     name: &str,
@@ -755,13 +757,22 @@ impl Session {
         if !self.is_connected() {
             bail!("MCP connection closed; reconnect it from Integrations");
         }
+        let wire = |remote: &str| format!("mcp_{}", tool_identity(name, remote));
+        let names = self
+            .metadata
+            .iter()
+            .map(|tool| {
+                let remote = tool["name"].as_str().expect("validated tool name");
+                (wire(remote), remote.to_owned())
+            })
+            .collect();
         let tools = self
             .metadata
             .iter()
             .map(|tool| {
                 let remote = tool["name"].as_str().expect("validated tool name");
                 Box::new(McpTool {
-                    name: format!("mcp_{}", tool_identity(name, remote)),
+                    name: wire(remote),
                     remote: remote.into(),
                     description: tool["description"].as_str().unwrap_or("MCP tool").into(),
                     schema: tool["inputSchema"].clone(),
@@ -771,7 +782,7 @@ impl Session {
                 }) as Box<dyn ToolT>
             })
             .collect();
-        Ok((tools, self.instructions.clone()))
+        Ok((tools, self.instructions.clone(), names))
     }
 }
 

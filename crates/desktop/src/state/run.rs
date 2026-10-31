@@ -276,6 +276,7 @@ impl AppState {
         let mut hooks = Vec::new();
         let mut setup_events = Vec::new();
         let mut tool_labels = std::collections::HashMap::new();
+        let mut mcp_names = std::collections::HashMap::new();
         for plugin in &snapshot.plugins {
             let resource_root = snapshot
                 .work_root
@@ -299,7 +300,16 @@ impl AppState {
                     )
                     .await
                 {
-                    Ok((connection_tools, instructions)) => {
+                    Ok((connection_tools, instructions, remote_names)) => {
+                        for (wire, remote) in remote_names {
+                            mcp_names.insert(
+                                wire,
+                                vec![
+                                    format!("mcp__{name}__{remote}"),
+                                    format!("mcp__plugin_{}_{name}__{remote}", plugin.spec.name),
+                                ],
+                            );
+                        }
                         for tool in &connection_tools {
                             if let Some(remote) = mcp_remote_name(tool.name()) {
                                 tool_labels
@@ -472,6 +482,7 @@ impl AppState {
         ));
         // Subagents share this run's configuration, rules and grants, and its sandbox made
         // read-only; their results reach this run as notes.
+        let mcp_names: themis_core::plugins::hooks::McpNames = Arc::new(mcp_names);
         let run_notes = if run_configuration.subagents.enabled {
             let kit = Arc::new(super::subagents::SubagentKit::new(
                 self.clone(),
@@ -482,6 +493,7 @@ impl AppState {
                 capacity_catalog.clone(),
                 endpoint_override,
                 hooks.clone(),
+                Arc::clone(&mcp_names),
                 Arc::clone(&llm),
                 policy,
                 &sandbox,
@@ -500,6 +512,7 @@ impl AppState {
             root: snapshot.work_root.clone(),
             approvals: approvals.clone(),
             agent: None,
+            mcp_names,
         };
         let skills = snapshot.skills;
 

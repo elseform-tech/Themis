@@ -10,6 +10,7 @@ chrono = { version = "0.4", default-features = false, features = ["clock"] }
 libc = "0.2"
 futures-util = "0.3"
 httpdate = "1"
+regex = "1"
 autoagents = "0.4"
 autoagents-derive = "0.4"
 autoagents-toolkit = { version = "0.4", features = ["filesystem"] }

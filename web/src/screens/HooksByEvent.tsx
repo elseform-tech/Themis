@@ -31,10 +31,15 @@ export function skipReason(note: string): string | null {
   if (!CLAUDE_EVENTS.test(note)) return null;
   const [name, detail = ""] = note.split(/:\s*/, 2);
   if (/^matcher .+ has no Themis tool$/.test(detail)) return detail;
-  if (detail === "non-command hook") return "not a command";
   if (detail === "lifecycle matcher requires manual mapping") return `${name} matcher not supported`;
-  if (detail === "hook options require manual mapping") return `${name} options not supported`;
   return detail || name;
+}
+
+/** A matcher's tools, then the pattern it may end in for MCP tools. */
+function matcherText(matcher: string): string {
+  const at = matcher.startsWith("re:") ? -1 : matcher.indexOf("|re:");
+  if (at < 0 && !matcher.startsWith("re:")) return matcher.split("|").join(", ");
+  return at < 0 ? matcher.slice(3) : [...matcher.slice(0, at).split("|"), matcher.slice(at + 4)].join(", ");
 }
 
 /** "Personal · shell, background_task · Only when it fails · Blocks on failure" */
@@ -44,7 +49,7 @@ export function hookMeta(row: HookRow, source: string): string {
   const blocks = hook.failure_policy === "abort" || (!hook.failure_policy && hook.blocking);
   return [
     source,
-    hook.matcher ? hook.matcher.split("|").join(", ") : "",
+    hook.matcher ? matcherText(hook.matcher) : "",
     ["BeforeTool", "BeforeToolCall", "AfterTool", "AfterToolCall", "ToolCallFailed"].includes(hook.event) ? "Main and subagents" : "",
     hook.event === "ToolCallFailed" ? "Only when it fails" : "",
     blocks ? "Blocks on failure" : "",

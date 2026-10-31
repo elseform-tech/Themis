@@ -638,6 +638,10 @@ async fn real_public_plugin_and_skill_import_acceptance() {
             enabled: true,
             matcher: None,
             failure_policy: None,
+            shell: None,
+            background: false,
+            command_prefix: None,
+            exit_two_blocks: false,
             timeout_seconds: 10,
             blocking: true,
             plugin_root: Some(resource_root),
@@ -669,7 +673,7 @@ async fn real_public_plugin_and_skill_import_acceptance() {
         .into_iter()
         .find(|p| p.spec.name == "real-filesystem")
         .unwrap();
-    let (tools, _instructions) = themis_core::plugins::connections::tools(
+    let (tools, _instructions, _) = themis_core::plugins::connections::tools(
         "filesystem",
         &mcp.spec.mcp["filesystem"],
         work.path(),

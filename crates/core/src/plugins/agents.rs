@@ -357,9 +357,13 @@ fn clean_description(text: &str) -> String {
 /// The Themis tools a Claude tool name stands for.
 fn mapped(name: &str) -> Option<&'static [&'static str]> {
     match name {
-        "Read" | "Grep" | "Glob" => Some(&["read_file", "list_dir", "search_file"]),
+        // `LS` and `NotebookRead` are older names for what `Read` and `Glob` do now; `MultiEdit`
+        // for what `Edit` does. A subagent has these tools without any list.
+        "Read" | "Grep" | "Glob" | "LS" | "NotebookRead" => {
+            Some(&["read_file", "list_dir", "search_file"])
+        }
         "Bash" => Some(&["shell"]),
-        "Edit" | "Write" => Some(&WRITE_TOOLS),
+        "Edit" | "Write" | "MultiEdit" => Some(&WRITE_TOOLS),
         _ => None,
     }
 }
@@ -711,6 +715,18 @@ mod tests {
         assert_eq!(with_tools("tools: Write").tools.unwrap(), WRITE_TOOLS);
         assert_eq!(with_tools("tools: *").tools, None);
         assert_eq!(parse("---\nname: a\ndescription: d\n---\nB").tools, None);
+        // Older names for tools a subagent has anyway.
+        assert_eq!(with_tools("tools: LS, NotebookRead").tools.unwrap(), READS);
+        assert_eq!(with_tools("tools: MultiEdit").tools.unwrap(), WRITE_TOOLS);
+    }
+
+    #[test]
+    fn names_a_subagent_has_no_tool_for_stay_out() {
+        // A subagent has no web, plan or background tools, so naming them grants nothing.
+        let names = "WebFetch, WebSearch, TodoWrite, KillShell, BashOutput, AskUserQuestion";
+        let profile = with_tools(&format!("tools: Read, {names}"));
+        assert_eq!(profile.tools.as_deref().unwrap(), READS);
+        assert_eq!(profile.dropped_tools.join(", "), names);
     }
 
     #[test]

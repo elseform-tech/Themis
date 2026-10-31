@@ -57,6 +57,8 @@ pub(super) struct SubagentKit {
     pub(super) catalog: Vec<themis_core::providers::GoModel>,
     pub(super) endpoint_override: bool,
     pub(super) hooks: Vec<themis_core::plugins::hooks::Hook>,
+    /// The Claude names of the run's MCP tools, for its hooks.
+    pub(super) mcp_names: themis_core::plugins::hooks::McpNames,
     /// The chat's model, used when `subagents.model` is unset or the same.
     pub(super) llm: Arc<dyn LLMProvider>,
     pub(super) model: String,
@@ -87,6 +89,7 @@ impl SubagentKit {
         catalog: Vec<themis_core::providers::GoModel>,
         endpoint_override: bool,
         hooks: Vec<themis_core::plugins::hooks::Hook>,
+        mcp_names: themis_core::plugins::hooks::McpNames,
         llm: Arc<dyn LLMProvider>,
         policy: RunPolicy,
         sandbox: &SandboxPlan,
@@ -112,6 +115,7 @@ impl SubagentKit {
             catalog,
             endpoint_override,
             hooks,
+            mcp_names,
             llm,
             model: snapshot.model.clone(),
             policy,
@@ -464,6 +468,7 @@ impl SubagentKit {
             root: self.work_root.clone(),
             approvals,
             agent: Some(json!({"id": agent.id, "name": agent.name})),
+            mcp_names: Arc::clone(&self.mcp_names),
         }
     }
 

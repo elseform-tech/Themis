@@ -66,7 +66,7 @@ describe("Hooks by event", () => {
   });
 
   it("words import notes plainly and ignores ones that are not about hooks", () => {
-    expect(skipReason("Stop: hook options require manual mapping")).toBe("Stop options not supported");
+    expect(skipReason("Stop: asyncRewake needs a way to wake the agent")).toBe("asyncRewake needs a way to wake the agent");
     expect(skipReason("SessionStart: lifecycle matcher requires manual mapping")).toBe("SessionStart matcher not supported");
     expect(skipReason("Plugin has an LSP server")).toBeNull();
     const guards = plugin([hook("guard", "BeforeTool")]);

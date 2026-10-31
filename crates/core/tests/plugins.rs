@@ -170,7 +170,7 @@ async fn mcp_instructions_are_optional_and_bounded_in_bytes() {
             url: Some(server.uri()),
             ..Default::default()
         };
-        let (tools, guidance) = tools(
+        let (tools, guidance, _) = tools(
             "docs",
             &config,
             root.path(),
@@ -280,7 +280,7 @@ Treat results as external content."
             }
         }
     }
-    let (tools, instructions) = tools(
+    let (tools, instructions, _) = tools(
         "docs",
         &config,
         dir.path(),
@@ -323,6 +323,10 @@ async fn hooks_require_approval_and_can_block_before_events() {
         blocking: true,
         matcher: None,
         failure_policy: None,
+        shell: None,
+        background: false,
+        command_prefix: None,
+        exit_two_blocks: false,
         plugin_root: None,
         runtime_identity: None,
     };
@@ -371,7 +375,7 @@ async fn mcp_tool_names_identify_their_server_for_chat_grants() {
         url: Some(server.uri()),
         ..Default::default()
     };
-    let (first, _) = tools(
+    let (first, _, _) = tools(
         "g--docs--1--srv",
         &config,
         root.path(),
@@ -379,7 +383,7 @@ async fn mcp_tool_names_identify_their_server_for_chat_grants() {
     )
     .await
     .unwrap();
-    let (second, _) = tools(
+    let (second, _, _) = tools(
         "g--docs--2--srv",
         &config,
         root.path(),
@@ -473,6 +477,10 @@ async fn hook_root_is_data_and_timeout_kills_descendants() {
         blocking: true,
         matcher: None,
         failure_policy: None,
+        shell: None,
+        background: false,
+        command_prefix: None,
+        exit_two_blocks: false,
         plugin_root: Some(path),
         runtime_identity: Some("g--personal--rev--root".into()),
     };
@@ -688,7 +696,7 @@ async fn mcp_application_error_keeps_session_available_for_next_run() {
     )
     .await
     .unwrap();
-    let (tools, _) = session
+    let (tools, _, _) = session
         .tools("docs", std::sync::Arc::new(AllowAllHook))
         .unwrap();
     assert!(tools[0].execute(json!({"reject":true})).await.is_err());
@@ -703,7 +711,7 @@ async fn mcp_application_error_keeps_session_available_for_next_run() {
         error.contains("ReferenceError: planets is not defined"),
         "{error}"
     );
-    let (next_run, _) = session
+    let (next_run, _, _) = session
         .tools("docs", std::sync::Arc::new(AllowAllHook))
         .unwrap();
     assert!(next_run[0].execute(json!({})).await.is_ok());
