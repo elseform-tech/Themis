@@ -135,6 +135,33 @@ another option or write your own.
   which ones and what it recommended. Questions stay with the chat across restarts;
   from the CLI, `themis call list_questions` and `answer_question` do the same.
 
+### Subagents
+
+For work that splits into independent parts, such as reviewing several areas or
+searching a large codebase, the agent can start subagents. Each one works on its
+own brief while the agent carries on, and its result reaches the agent before its
+next step. The agent's turn ends only after every subagent it started has
+reported back.
+
+- **Checked, not trusted.** The agent treats what a subagent reports as claims: before relying on a finding it reads the code itself (you see "Read …" right after the subagents), and its reply opens with what it checked and what it confirmed or rejected.
+- **Read-only.** Subagents read, list and search files and run shell commands, but
+  do not change the project. Where the OS sandbox is available their commands may
+  write only temporary folders; without it nothing confines them beyond your
+  approval rules.
+- **Approvals.** A subagent's approval names it. **Allow in this chat** on its
+  request covers only that subagent; your chat's existing grants and deny rules
+  apply to it as usual.
+- **Stop.** Stop on the chat stops its subagents too. The agent can stop one
+  subagent; that subagent's partial result still reaches it.
+- **Choosing models.** Name them in your request: "use glm-5 for the review and haiku for the docs". The agent may use the **Default model** (the chat's model unless you set one) and up to three **Allowed models** you list in Settings › Subagents; it matches your words to them and says so when you name one that isn't listed. If a subagent's model can't start, or its first request fails (a used-up quota, say), it falls back to the Default model, then the chat's model; Workspace › Tasks shows "claude-haiku → glm-5".
+- **Limits.** At most three run at once by default (`subagents.max_parallel`);
+  more wait their turn. Each has 40 model requests (`subagents.max_turns`).
+  `subagents.model` picks a different model for them, and `subagents.enabled:
+  false` turns them off; see [configuration](configuration.md).
+- **Watching them.** A reply's subagents show in the chat as one small stack of lettered circles, each ringed while it works. Hover one for its name, or click it to open its steps in Workspace › Tasks, where **Stop** ends just that subagent; the chat overview shows how many run and whether one waits for your approval. Settings › Subagents turns them off, sets how many run at once, and sets their Default and Allowed models.
+- Each subagent's steps are saved beside the chat and removed with it. From the
+  CLI, `themis call list_subagents '{"threadId": "…"}'` lists a chat's subagents.
+
 ### Goals
 
 A goal is one sentence the agent keeps working toward, turn after turn, until it

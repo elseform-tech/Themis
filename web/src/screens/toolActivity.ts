@@ -33,11 +33,12 @@ const host = (url: string) => { try { return new URL(url).host; } catch { return
 const count = (n: number, one: string, many: string) => (n === 1 ? `a ${one}` : `${n} ${many}`);
 const clip = (text: string, max = 40) => (text.length > max ? `${text.slice(0, max - 1)}…` : text);
 
-type Kind = "read" | "edit" | "list" | "search" | "run" | "git" | "web" | "fetch" | "browser" | "recall" | "checklist" | "other";
+type Kind = "subagents" | "read" | "edit" | "list" | "search" | "run" | "git" | "web" | "fetch" | "browser" | "recall" | "checklist" | "other";
 
 const KIND: Record<string, Kind> = {
   read_file: "read", write_file: "edit", apply_patch: "edit", copy_file: "edit", move_file: "edit",
   delete_file: "edit", create_dir: "edit", list_dir: "list", search_file: "search", shell: "run",
+  spawn_subagents: "subagents", wait_subagents: "subagents", message_subagent: "subagents", stop_subagent: "subagents",
   git: "git", web_search: "web", fetch_url: "fetch", recall: "recall", goal_checklist: "checklist",
 };
 
@@ -71,6 +72,15 @@ function phrase(kind: Kind, calls: { name: string; summary: string; label?: stri
       const commands = unique(targets.map(target => target.command));
       const verb = pending ? "Running" : "Ran";
       return commands.length === 1 ? `${verb} ${clip(commands[0]!)}` : `${verb} ${count(calls.length, "command", "commands")}`;
+    }
+    case "subagents": {
+      const words: Record<string, [string, string]> = {
+        spawn_subagents: ["Starting subagents", "Started subagents"],
+        wait_subagents: ["Waiting for subagents", "Waited for subagents"],
+        message_subagent: ["Messaging a subagent", "Messaged a subagent"],
+        stop_subagent: ["Stopping a subagent", "Stopped a subagent"],
+      };
+      return unique(calls.map(call => words[call.name]?.[pending ? 0 : 1] ?? call.name)).join(" · ");
     }
     case "git": return one ? "Used git" : `Used git ${calls.length} times`;
     case "web": {

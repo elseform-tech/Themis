@@ -28,7 +28,10 @@ export function reduceUiActions(
         ...(action.focus ? { diffFocus: { path: action.focus, at: Date.now() } } : {}),
         ...(action.file ? { fileFocus: { path: action.file, at: Date.now() } } : {}),
         ...(action.open && action.tab ? { workspaceTabRequest: { tab: action.tab, at: Date.now() } } : {}),
+        ...(action.subagent ? { subagentFocus: action.subagent } : {}),
       };
+    case "ui/subagent-focus":
+      return { ...state, subagentFocus: action.id };
     case "ui/tab-request-consumed":
       return state.workspaceTabRequest ? { ...state, workspaceTabRequest: null } : state;
     case "tasks/loaded":

@@ -40,6 +40,8 @@ pub fn searxng_stop_for_test() {
     searxng::stop();
 }
 mod skills;
+mod subagent_tools;
+mod subagents;
 mod threads;
 mod usage;
 mod workspace;
@@ -305,6 +307,8 @@ struct AppStateInner {
     /// Per-chat questions to the user (`questions/<chat id>.json`), loaded on first use.
     questions: std::sync::Mutex<HashMap<String, Vec<crate::types::Question>>>,
     questions_dir: PathBuf,
+    /// Each chat's subagents, live and recently ended.
+    subagents: subagents::SubagentMap,
     /// Serializes question changes.
     question_lock: std::sync::Mutex<()>,
     /// Per-chat goals (`goals/<chat id>.json`), loaded on first use.
@@ -582,6 +586,7 @@ impl AppState {
                 steer_inboxes: std::sync::Mutex::new(HashMap::new()),
                 questions: std::sync::Mutex::new(HashMap::new()),
                 questions_dir: app_dir.join(questions::QUESTIONS_DIR),
+                subagents: std::sync::Mutex::new(HashMap::new()),
                 question_lock: std::sync::Mutex::new(()),
                 goals: std::sync::Mutex::new(HashMap::new()),
                 goals_dir: app_dir.join(goal::GOALS_DIR),

@@ -220,6 +220,8 @@ export type BackgroundTaskState = 'running' | 'exited' | 'stopped' | 'timed_out'
 /** One background shell task in the chat's task feed. */
 export interface ThreadTaskBackground {
   id: string;
+  /** The run that started it, when known. */
+  run_id?: string;
   command: string;
   cwd: string;
   state: BackgroundTaskState;
@@ -337,7 +339,52 @@ export type ThreadEvent =
   | { kind: 'goal_note'; outcome: GoalNoteKind; reason: string }
   /** The agent asked the user a question, or updated one still open (same id). */
   | { kind: 'question_asked'; question: Question }
-  | { kind: 'question_answered'; id: string; answer: string };
+  | { kind: 'question_answered'; id: string; answer: string }
+  /** The agent started a read-only subagent for one part of its task. */
+  | { kind: 'subagent_started'; id: string; name: string; brief: string; model: string; confined: boolean; write_paths?: string[]; /** RFC 3339. */ at?: string }
+  /** The main agent wrote to a subagent; `resumed` when that picked an ended one up again. */
+  | { kind: 'subagent_message'; id: string; text: string; resumed?: boolean }
+  /** What a running subagent is doing now (live only). */
+  /** `model`: the one it fell back to when its own could not run. */
+  | { kind: 'subagent_status'; id: string; text: string; tool_calls: number; model?: string }
+  | { kind: 'subagent_ended'; id: string; status: SubagentEnding; result: string; tool_calls: number; seconds: number; model?: string };
+
+export type SubagentEnding = 'finished' | 'stopped' | 'failed' | 'incomplete';
+
+/** One subagent on its chat card. */
+export interface SubagentEntry {
+  id: string;
+  name: string;
+  brief: string;
+  model: string;
+  confined: boolean;
+  /** The project paths it may change; empty when it is read-only. */
+  writePaths: string[];
+  status: 'running' | SubagentEnding;
+  /** Its own status line, or its latest action. */
+  text: string;
+  result?: string;
+  toolCalls: number;
+  /** Seconds it ran, once ended. */
+  seconds?: number;
+  /** When it started, for live elapsed time (live events only). */
+  startedAt?: number;
+  /** The model it fell back to, when `model` could not run. */
+  ranOn?: string;
+  /** When it was started (RFC 3339), from the saved event. */
+  at?: string;
+}
+
+/** Settings › Subagents (the `subagents` block of the user runtime.jsonc). */
+export interface SubagentSettings {
+  enabled: boolean;
+  max_parallel: number;
+  max_turns: number;
+  model?: string | null;
+  /** Up to three more models the agent may give a subagent. */
+  models?: string[];
+  allow_writes: boolean;
+}
 
 /** A question the agent asked without stopping its work. */
 export interface Question {
@@ -525,6 +572,8 @@ export interface PersistedMessage {
   /** What the goal check concluded after a turn. */
   /** A question the agent asked the user. */
   question?: Question;
+  /** Subagents started together in this run, shown as one card. */
+  subagents?: SubagentEntry[];
 }
 
 export type HistoryItem =
@@ -560,6 +609,8 @@ export interface ApprovalRequest {
     /** Set when the sandbox blocked this command and the request asks to run it outside the sandbox: why (untrusted text). */
     sandbox_blocked?: string;
   };
+  /** Set when a subagent, not the main agent, asks. */
+  subagent?: { id: string; name: string };
 }
 
 /** Tool name of a request to run a sandbox-blocked command outside the sandbox. */

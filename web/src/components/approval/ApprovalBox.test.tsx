@@ -135,6 +135,14 @@ describe("ApprovalBox", () => {
     expect(document.body).toHaveTextContent("saves Downloads for files.example.com");
   });
 
+  it("names the subagent that asks", () => {
+    setup({ ...REQUEST, subagent: { id: "a1", name: "Test gaps" }, command: { argv: ["cargo", "test"] } });
+    expect(screen.getByRole("region", { name: "Test gaps (subagent) wants to run a command" })).toBeInTheDocument();
+    cleanup();
+    setup({ ...REQUEST, tool: "fetch_url", command: undefined, subagent: { id: "a1", name: "Docs" } });
+    expect(screen.getByRole("region", { name: "Docs (subagent) needs approval" })).toBeInTheDocument();
+  });
+
   it("sits in the chat instead of covering it, and only an explicit choice decides", () => {
     const { onDecide } = setup();
     expect(screen.queryByRole("dialog")).toBeNull();

@@ -122,6 +122,10 @@ fn event_kinds(events: &[ThreadEvent]) -> Vec<&'static str> {
             ThreadEvent::GoalNote { .. } => "goal_note",
             ThreadEvent::QuestionAsked { .. } => "question_asked",
             ThreadEvent::QuestionAnswered { .. } => "question_answered",
+            ThreadEvent::SubagentStarted { .. } => "subagent_started",
+            ThreadEvent::SubagentMessage { .. } => "subagent_message",
+            ThreadEvent::SubagentStatus { .. } => "subagent_status",
+            ThreadEvent::SubagentEnded { .. } => "subagent_ended",
         })
         .collect()
 }

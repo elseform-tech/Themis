@@ -119,6 +119,7 @@ full tour.
 | `tool:set_goal` | tour | `crates/desktop/src/state/goal_tool.rs` | `/goal` sets the goal; the goal bar shows it. More › Remove goal removes it; asking in the chat to pause or remove it does the same. |
 | `feature:goal-proof` | tour | `crates/desktop/src/state/goal.rs` | Run a goal over several turns: a rejected turn's replies dim, and the next turn doesn't re-prove what is listed. A passing "Checking…" shows during a check, then a "Goal check" bubble saying what is wrong, what to change and what is pending, and the agent answers it. |
 | `tool:ask_user` | tour | `crates/desktop/src/state/question_tool.rs` | The separator question appears on the composer after any approval, answered inline. |
+| `tool:spawn_subagents` | tour | `crates/desktop/src/state/subagent_tools.rs` | Ask for a review of two separate areas: two read-only subagents start, both results reach the reply, and the turn ends only after both. |
 | `tool:attach_file` | tour | `crates/desktop/src/state/media_tool.rs` | The screenshot is attached to the reply. |
 | `tool:list_plugins` | tour | `crates/desktop/src/state/integration_tools.rs` | Goal lists plugins. |
 | `tool:save_skill` | tour | `crates/desktop/src/state/integration_tools.rs` | `tour-note` appears in Integrations › Skills. |
@@ -133,6 +134,10 @@ full tour.
 | `feature:plugin-icons` | tour | `crates/core/src/plugins/marketplace.rs`, `web/src/screens/PluginLogo.tsx` | Discover shows brand logos on matching plugins and colored initial tiles on the rest, with no icon requests while browsing. A local fixture with a bundled PNG shows its own icon in Discover and in Installed, and keeps it after its source is removed. |
 | `tool:manage_integrations` | tour | `crates/desktop/src/state/integration_tools.rs` | Ask the agent to disable then enable a plugin; Integrations agrees. |
 | `tool:manage_automations` | tour | `crates/desktop/src/state/integration_tools.rs`, `crates/desktop/src/state/automation.rs` | The daily automation appears paused in Automations and Tasks. |
+| `feature:subagent-models` | tour | `crates/desktop/src/state/subagent_tools.rs`, `web/src/screens/SubagentSettings.tsx` | Add a model under Allowed models, then ask "use <model> for the review and the default for the docs": Tasks shows that model on one row only; a model that fails at once shows "<model> → <fallback>". |
+| `feature:subagent-chat` | tour | `web/src/screens/SubagentCard.tsx`, `crates/desktop/src/state/subagents.rs` | Ask for a subagent whose answer the main agent should check and send back: the main agent says what it is about to do before each step, the status names who it waits for, the chat shows no subagent bubbles, its Tasks detail shows the brief, messages and replies as a conversation, and the same subagent answers again with its earlier exchange in mind. |
+| `feature:subagent-writes` | tour | `crates/desktop/src/state/subagents.rs`, `web/src/lib/changeAuthors.ts` | Ask for one subagent that writes a file in `notes/` and tries one outside it: the file in `notes/` appears, the other is refused, the detail says "Writes notes/", and Workspace › Changes filters by that subagent. With Allow file writes off in Settings › Subagents the same request stays read-only. |
+| `feature:subagents-ui` | tour | `web/src/screens/SubagentCard.tsx`, `web/src/screens/SubagentDetail.tsx` | Ask for two subagents in Custom mode: the stack shows two ringed circles, a subagent's command asks under its name, the overview shows its approval, a circle opens its detail in Tasks with Stop, and the rings stop when they end. |
 | `feature:goal` | tour | `crates/desktop/src/state/goal.rs`, `web/src/screens/GoalBar.tsx` | Edit, pause after this turn, resume and remove from the goal bar; the goal continues across turns and ends with one summary. Each turn opens in the agent's own thinking-aloud words with no "Goal:" label, turns are divided by a plain line, and no status box appears in the chat. |
 | `feature:checkpoints` | tour | `crates/core/src/runtime.rs`, `crates/core/src/runtime/maintenance.rs` | At 32k the goal passes a checkpoint; the context meter drops and the work carries on. |
 | `feature:queue-and-steer` | tour | `crates/desktop/src/state/queue.rs`, `web/src/screens/QueueStack.tsx` | Queue, edit and remove a message; steer one in and see it handled. In Custom mode, while an approval box waits: a queued message leaves the box there; steering shows the message in the chat at once, the box goes away with no expiry warning, the agent reads the message without the box being answered, and it shows once, also after a reload. The same action asks again later. |
@@ -155,6 +160,7 @@ full tour.
 | `settings:General` | tour | `web/src/screens/Settings.tsx` | Toggle the reply sound; it takes effect on the next reply. |
 | `settings:Appearance` | tour | `web/src/screens/Appearance.tsx` | Preview, revert and apply a theme. |
 | `settings:Models` | tour | `web/src/screens/ModelsSettings.tsx` | Change the default model; a new chat uses it. |
+| `settings:Subagents` | tour | `web/src/screens/SubagentSettings.tsx` | Set Maximum subagents to 2; `runtime.jsonc` shows `max_parallel: 2` and the next spawn runs two at a time. |
 | `settings:Usage` | tour | `web/src/screens/UsageSettings.tsx` | Today's chats appear with their tokens. |
 | `settings:Secrets` | tour | `web/src/screens/SecretsSettings.tsx` | Add then remove a dummy secret. |
 | `settings:Permissions` | tour | `web/src/screens/PermissionsView.tsx` | The config file reads as valid; Open opens it; the default mode applies to a new chat. |
@@ -176,6 +182,7 @@ full tour.
 | `config:browser` | tour | `crates/core/src/configuration.rs` | Set by Settings › Browser; the file shows the change. |
 | `config:web` | tour | `crates/core/src/configuration.rs` | Set by Settings › Web; the file shows the change. |
 | `config:skills` | tour | `crates/core/src/skills.rs` | A skill under a configured path is found. |
+| `config:subagents` | tour | `crates/core/src/configuration.rs` | With `"enabled": false` in the project's `.themis/config.jsonc` the agent offers no subagents. |
 | `config:instructions` | tour | `crates/core/src/configuration.rs` | A listed file's rule is followed. |
 | `config:providers` | tour | `crates/core/src/providers.rs` | A configured provider lists in Settings › Models. |
 | `config:models` | tour | `crates/core/src/providers/catalog.rs` | A `reasoning_effort` override is the default effort. |

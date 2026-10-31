@@ -711,6 +711,17 @@ async fn dispatch_command(
                 state.patch_user_browser_config(changes, revision.as_deref())?;
             output!(json!({"settings": settings, "revision": revision}))
         }
+        "get_subagent_settings" => output!({
+            let (settings, revision) = state.user_subagents_view()?;
+            json!({"settings": settings, "revision": revision})
+        }),
+        "update_subagent_settings" => {
+            let changes: serde_json::Map<String, Value> = arg(&args, "changes")?;
+            let revision: Option<String> = arg(&args, "revision")?;
+            let (settings, revision) =
+                state.patch_user_subagents_config(changes, revision.as_deref())?;
+            output!(json!({"settings": settings, "revision": revision}))
+        }
         "get_web_settings" => output!(json!({
             "search_url": state.user_web_config()?.search_url,
             "built_in": crate::state::searxng::status(),
@@ -961,6 +972,16 @@ async fn dispatch_command(
                 .await
         ),
         "list_questions" => output!(state.list_questions(arg(&args, "threadId")?).await?),
+        "list_subagents" => output!(state.list_subagents(&arg::<String>(&args, "threadId")?)),
+        "get_subagent_transcript" => output!(state.get_subagent_transcript(
+            &arg::<String>(&args, "threadId")?,
+            &arg::<String>(&args, "subagentId")?
+        )?),
+        "stop_subagent" => done!(state.stop_subagent(
+            sink.as_ref(),
+            &arg::<String>(&args, "threadId")?,
+            &arg::<String>(&args, "subagentId")?
+        )),
         "answer_question" => output!(
             state
                 .answer_question(

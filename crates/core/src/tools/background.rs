@@ -292,6 +292,9 @@ pub enum TaskState {
 pub struct TaskRecord {
     pub id: String,
     pub thread_id: String,
+    /// The run that started it, when known (groups finished work by request).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub run_id: Option<String>,
     pub command: Vec<String>,
     pub cwd: String,
     pub started_at_ms: u64,
@@ -358,6 +361,8 @@ pub type Notifier = Arc<dyn Fn(&str) + Send + Sync>;
 /// Parameters for [`BackgroundRegistry::start`].
 pub struct StartSpec {
     pub thread_id: String,
+    /// The run that starts it.
+    pub run_id: Option<String>,
     pub program: String,
     pub args: Vec<String>,
     pub workdir: PathBuf,
@@ -561,6 +566,7 @@ impl BackgroundRegistry {
             record: Mutex::new(TaskRecord {
                 id,
                 thread_id: spec.thread_id.clone(),
+                run_id: spec.run_id.clone(),
                 command: argv,
                 cwd: spec.workdir.to_string_lossy().into_owned(),
                 started_at_ms: now_ms(),
@@ -881,6 +887,8 @@ pub fn storage_dir(app_dir: &Path) -> PathBuf {
 pub struct BackgroundScope {
     pub registry: Arc<BackgroundRegistry>,
     pub thread_id: String,
+    /// The run whose tasks these are.
+    pub run_id: Option<String>,
 }
 
 fn blocking_error(error: tokio::task::JoinError) -> ToolCallError {
@@ -893,7 +901,14 @@ impl BackgroundScope {
         Self {
             registry,
             thread_id: thread_id.into(),
+            run_id: None,
         }
+    }
+
+    /// Tasks started through this scope record `run_id`.
+    pub fn with_run(mut self, run_id: impl Into<String>) -> Self {
+        self.run_id = Some(run_id.into());
+        self
     }
 
     /// Starts a background task (the caller already obtained approval).
@@ -909,6 +924,7 @@ impl BackgroundScope {
         let sandboxed = sandbox.as_ref().is_some_and(|plan| plan.is_active());
         let spec = StartSpec {
             thread_id: self.thread_id.clone(),
+            run_id: self.run_id.clone(),
             program,
             args,
             workdir,

@@ -26,6 +26,7 @@
 /* The page gets the room: the Browser tab keeps only a thin edge. */
 .themis-workspace-body.is-browser { padding: 6px 8px 8px 12px; }
 .themis-workspace-changes { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 10px; }
+.themis-workspace-author { display: flex; align-items: center; gap: 8px; color: var(--themis-text-2); font-size: .75rem; }
 .themis-workspace-note { margin: 0; color: var(--themis-text-2); font-size: .75rem; }
 .themis-workspace-split { position: relative; flex: 1; min-height: 0; display: grid; grid-template-columns: min(var(--themis-diff-list, 200px), calc(100% - 180px)) 12px minmax(0, 1fr); }
 .themis-workspace-split.is-resizing { user-select: none; }
@@ -83,3 +84,24 @@ button.themis-workspace-list-title:hover { text-decoration: underline; text-unde
 .themis-workspace-list li.is-open button.themis-workspace-list-title { font-weight: 600; }
 .themis-workspace-branch-diff { flex: 1; min-height: 0; display: flex; flex-direction: column; border-top: 1px solid var(--themis-border-subtle); }
 .themis-workspace-branch-diff > .themis-workspace-split { flex: 1; min-height: 0; }
+.themis-task-row-open { padding: 0; border: 0; background: transparent; font: inherit; color: inherit; text-align: left; cursor: pointer; }
+.themis-task-row-open:hover .themis-workspace-list-title { color: var(--themis-text); text-decoration: underline; text-underline-offset: 3px; }
+.themis-task-row-open:focus-visible { outline: 2px solid var(--themis-accent); outline-offset: 2px; border-radius: 6px; }
+.themis-tasks-heading.is-attention { color: var(--themis-warning); }
+/* Tasks rows are spaced, not ruled (board 29); a reply's subagents hang under it on one rule. */
+.themis-tasks .themis-workspace-list li { border-bottom: 0; padding: 8px 0; }
+.themis-tasks .themis-workspace-list li.themis-task-children { display: block; margin-left: 7px; padding: 0 0 0 17px; border-left: 1px solid var(--themis-border-subtle); }
+.themis-tasks-done { border-top: 1px solid var(--themis-border-subtle); }
+.themis-tasks-fold {
+  display: flex; align-items: center; gap: 8px; width: 100%; padding: 10px 0; border: 0; background: transparent;
+  font: inherit; font-size: .8125rem; color: var(--themis-text-2); text-align: left; cursor: pointer;
+}
+.themis-tasks-fold[aria-expanded="true"] { color: var(--themis-text); }
+.themis-tasks-fold.is-group { padding: 6px 0; font-size: .75rem; color: var(--themis-text-3); }
+.themis-tasks-fold.is-group[aria-expanded="true"] { color: var(--themis-text-2); }
+.themis-tasks-fold svg { width: 12px; height: 12px; flex: none; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; }
+.themis-tasks-fold:focus-visible { outline: 2px solid var(--themis-accent); outline-offset: 2px; border-radius: 6px; }
+/* One line per title, so the kind tag stays beside it (board 29). */
+.themis-tasks .themis-task-row-text .themis-workspace-list-title { flex-wrap: nowrap; min-width: 0; }
+.themis-task-row-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.themis-tasks .themis-workspace-list-title em { flex: none; }

@@ -15,6 +15,8 @@ export const HOOK_EVENTS: Array<{ title: string; events: string[] }> = [
   { title: "Run starts", events: ["RunStart"] },
   { title: "Before a tool runs", events: ["BeforeTool", "BeforeToolCall"] },
   { title: "After a tool runs", events: ["AfterTool", "AfterToolCall", "ToolCallFailed"] },
+  { title: "Subagent starts", events: ["SubagentStart"] },
+  { title: "Subagent ends", events: ["SubagentEnd"] },
   { title: "Before context is compacted", events: ["BeforeCompaction"] },
   { title: "Run ends", events: ["RunEnd", "RunFinished"] },
 ];
@@ -43,6 +45,7 @@ export function hookMeta(row: HookRow, source: string): string {
   return [
     source,
     hook.matcher ? hook.matcher.split("|").join(", ") : "",
+    ["BeforeTool", "BeforeToolCall", "AfterTool", "AfterToolCall", "ToolCallFailed"].includes(hook.event) ? "Main and subagents" : "",
     hook.event === "ToolCallFailed" ? "Only when it fails" : "",
     blocks ? "Blocks on failure" : "",
   ].filter(Boolean).join(" · ");

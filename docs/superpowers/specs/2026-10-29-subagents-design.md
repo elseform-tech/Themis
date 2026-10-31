@@ -48,7 +48,7 @@ short and has no hint lines.
 |---|---|
 | `spawn_subagents` | Starts one or more subagents and returns their ids at once |
 | `wait_subagents` | Waits until the listed subagents (or any one of them) end, with a timeout of at most 10 min; returns their results |
-| `steer_subagent` | Sends a note into one running subagent |
+| `message_subagent` | Sends a note into one running subagent |
 | `stop_subagent` | Stops one running subagent; its partial result comes back as usual |
 
 ```json
@@ -143,7 +143,7 @@ short and has no hint lines.
     in Workspace.
   - The message is steered into the main agent, tagged with that subagent. Because the main
     agent is free while subagents run, it reads the note before its next request. It then
-    decides whether to pass it on (`steer_subagent`), stop the subagent or start another one.
+    decides whether to pass it on (`message_subagent`), stop the subagent or start another one.
 
 ### Events and UI
 
@@ -289,8 +289,7 @@ New files in `crates/core/builtins/prompts/`, each added to the inventory test:
    - This is large enough to split: backend and CLI first, then the desktop UI.
 2. **`write_paths`:** path validation, harness write limits, the sandbox wall, the author filter
    in Changes, and the writes row in Settings.
-3. **Steering:** the Steer icon and composer chip, and `steer_subagent` delivery.
-4. **Plugin `agents/` profiles.**
+3. **Plugin `agents/` profiles.**
 
 ## Verification
 

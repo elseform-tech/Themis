@@ -55,6 +55,7 @@ pub struct DesktopApprovalHook {
     unattended: bool,
     test_decisions: Option<Arc<Mutex<VecDeque<Approval>>>>,
     audit: Option<DiagnosticContext>,
+    subagent: Option<crate::types::SubagentLabel>,
     steer_waiting: Option<SteerWaiting>,
 }
 
@@ -62,6 +63,14 @@ pub struct DesktopApprovalHook {
 pub type SteerWaiting = Arc<dyn Fn() -> bool + Send + Sync>;
 
 impl DesktopApprovalHook {
+    /// Requests from this hook name the subagent that asks.
+    pub fn with_subagent(mut self, id: &str, name: &str) -> Self {
+        self.subagent = Some(crate::types::SubagentLabel {
+            id: id.to_owned(),
+            name: name.to_owned(),
+        });
+        self
+    }
     /// Creates a hook for `thread_id` emitting on `sink`.
     pub fn new(
         thread_id: String,
@@ -79,6 +88,7 @@ impl DesktopApprovalHook {
             unattended: false,
             test_decisions: None,
             audit: None,
+            subagent: None,
             steer_waiting: None,
         }
     }
@@ -195,6 +205,7 @@ impl ApprovalHook for DesktopApprovalHook {
                 .map(|(tools, site)| crate::types::GrantSite { tools, site }),
             grantable,
             command: action.display.clone(),
+            subagent: self.subagent.clone(),
         };
         let (sender, receiver) = std::sync::mpsc::channel();
         {

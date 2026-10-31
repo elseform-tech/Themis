@@ -1,0 +1,1 @@
+Every tool call accepts an optional "status": one short line, at most 80 characters, saying what you are doing now (for example "Checking the CLI path for the same bug"). The person watching sees it. Fill it in when you start a new piece of work, not on every call.

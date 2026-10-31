@@ -278,6 +278,57 @@ pub enum ThreadEvent {
         id: String,
         answer: String,
     },
+    /// The agent started a subagent for one part of the task.
+    SubagentStarted {
+        id: String,
+        name: String,
+        brief: String,
+        model: String,
+        /// Whether an OS sandbox confines its shell commands.
+        confined: bool,
+        /// The project paths it may change; none when it is read-only.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        write_paths: Vec<String>,
+        /// When it was started (RFC 3339); groups finished work by request in Tasks.
+        #[serde(default, skip_serializing_if = "String::is_empty")]
+        at: String,
+    },
+    /// The main agent wrote to a subagent after starting it; `resumed` when that picked an
+    /// ended one up again.
+    SubagentMessage {
+        id: String,
+        text: String,
+        #[serde(default)]
+        resumed: bool,
+    },
+    /// What a running subagent is doing now. Live only.
+    SubagentStatus {
+        id: String,
+        text: String,
+        tool_calls: usize,
+        /// The model it fell back to, when its own could not run.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        model: Option<String>,
+    },
+    /// A subagent ended: `finished`, `stopped`, `failed` or `turn_limit`, with its result
+    /// (or what it had so far).
+    SubagentEnded {
+        id: String,
+        status: String,
+        result: String,
+        tool_calls: usize,
+        seconds: u64,
+        /// The model it fell back to, when its own could not run.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        model: Option<String>,
+    },
+}
+
+/// Which subagent raised an approval (`ApprovalRequest.subagent`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SubagentLabel {
+    pub id: String,
+    pub name: String,
 }
 
 /// A question the agent asked the user (`questions/<chat id>.json`).
@@ -478,6 +529,9 @@ pub struct ApprovalRequest {
     /// of the joined `summary`, which can be spoofed by argument contents.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub command: Option<themis_core::tools::CommandDisplay>,
+    /// Set when a subagent, not the main agent, asks.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub subagent: Option<SubagentLabel>,
 }
 
 /// What a site grant covers (`GrantSite` in types.ts).
@@ -901,6 +955,9 @@ pub struct ThreadTasks {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ThreadTaskBackground {
     pub id: String,
+    /// The run that started it, when known.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub run_id: Option<String>,
     /// One-line, length-bounded command.
     pub command: String,
     pub cwd: String,
@@ -1441,6 +1498,7 @@ mod tests {
             grant_site: None,
             grantable: true,
             command: None,
+            subagent: None,
         };
         assert_eq!(
             to_value(&request),

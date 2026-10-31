@@ -123,7 +123,7 @@ describe("chat overview box", () => {
 
 describe("the goal in the overview box", () => {
   beforeEach(() => { dispatch.mockClear(); });
-  const overview = { changes: null, tasks: null, browser: null, media: [], visible: true, collapsed: false, setCollapsed: vi.fn() };
+  const overview = { changes: null, tasks: null, subagents: null, browser: null, media: [], visible: true, collapsed: false, setCollapsed: vi.fn() };
   it("counts the checklist and opens the Goal tab", () => {
     appState = initialState;
     render(<OverviewBox threadId="t1" overview={{ ...overview, goal: { complete: 7, total: 8 } }} onOpenMedia={vi.fn()} />);

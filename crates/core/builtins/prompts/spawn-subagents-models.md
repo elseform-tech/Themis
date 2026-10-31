@@ -1,0 +1,1 @@
+Each subagent may take a "model": one of {{models}}. Without one it runs on {{default}}. Give a model when the person asks for one for that part (match their words to this list), or when a part clearly suits one of these; no other model is accepted.

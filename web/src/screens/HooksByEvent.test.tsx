@@ -32,12 +32,12 @@ describe("Hooks by event", () => {
     render(<HooksByEvent rows={rows} plugins={[guards]} sourceOf={() => "guards"} disabled={() => false} onToggle={toggle} onOpen={() => {}} />);
     const events = within(screen.getByRole("list", { name: "Hook events in run order" })).getAllByRole("listitem");
     expect(events.map(item => item.querySelector(".themis-hook-title")!.textContent)).toEqual([
-      "Prompt submitted", "Run starts", "Before a tool runs", "After a tool runs", "Before context is compacted", "Run ends",
+      "Prompt submitted", "Run starts", "Before a tool runs", "After a tool runs", "Subagent starts", "Subagent ends", "Before context is compacted", "Run ends",
     ]);
     expect(events[1]).toHaveClass("is-empty");
     expect(events[1]).toHaveTextContent("None");
     expect(events[0]).toHaveTextContent("ticket-context");
-    expect(events[2]).toHaveTextContent("guards · shell, background_task · Blocks on failure");
+    expect(events[2]).toHaveTextContent("guards · shell, background_task · Main and subagents · Blocks on failure");
     expect(events[3]).toHaveTextContent("Only when it fails");
     // Skipped hooks: one plain line per plugin; other notes stay out.
     expect(screen.getByRole("note")).toHaveTextContent("2 hooks skipped (guards): unsupported event (SessionEnd); matcher NotebookEdit has no Themis tool.");
@@ -70,6 +70,6 @@ describe("Hooks by event", () => {
     expect(skipReason("SessionStart: lifecycle matcher requires manual mapping")).toBe("SessionStart matcher not supported");
     expect(skipReason("Plugin has an LSP server")).toBeNull();
     const guards = plugin([hook("guard", "BeforeTool")]);
-    expect(hookMeta({ key: "k", id: "guard", plugin: guards, enabled: true }, "guards")).toBe("guards");
+    expect(hookMeta({ key: "k", id: "guard", plugin: guards, enabled: true }, "guards")).toBe("guards · Main and subagents");
   });
 });

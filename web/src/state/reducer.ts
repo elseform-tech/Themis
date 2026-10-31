@@ -2,6 +2,7 @@
 // safe to load in node-based unit tests.
 import type {
   AttachedMedia,
+  SubagentEntry,
   BrowserRecording,
   ChangedFile,
   ContextBudget,
@@ -136,6 +137,8 @@ export interface AppState {
   diffFocus: { path: string; at: number } | null;
   /** A file to show in Workspace › Files. */
   fileFocus: { path: string; at: number } | null;
+  /** The subagent Workspace › Tasks shows in detail. */
+  subagentFocus: string | null;
   /** Asks the open (or next opened) Workspace panel to show a tab. */
   workspaceTabRequest: { tab: WorkspaceTab; at: number } | null;
   /** Each chat's built-in browser: who drives it and any recording (live only). */
@@ -205,7 +208,8 @@ export type AppAction =
   | { type: "toast/dismiss"; id: string }
   | { type: "ui/view"; view: MainView; settings?: { section: string; key?: string } }
   | { type: "ui/settings-section"; section: string }
-  | { type: "ui/diff-panel"; open: boolean; focus?: string; tab?: WorkspaceTab; file?: string }
+  | { type: "ui/diff-panel"; open: boolean; focus?: string; tab?: WorkspaceTab; file?: string; subagent?: string }
+  | { type: "ui/subagent-focus"; id: string | null }
   | { type: "browser/opens-workspace"; value: boolean }
   | { type: "ui/tab-request-consumed" }
   | { type: "tasks/loaded"; threadId: string; tasks: ThreadTasks }
@@ -277,6 +281,7 @@ export const initialState: AppState = {
   diffPanelOpen: false,
   diffFocus: null,
   fileFocus: null,
+  subagentFocus: null,
   workspaceTabRequest: null,
   browsers: {},
   tasks: {},
@@ -362,6 +367,27 @@ function userMessage(text: string, runId: string | undefined, attachments?: stri
     ...(attachments?.length ? { attachments } : {}),
     ...(goalTurn === undefined ? {} : { goalTurn }),
   };
+}
+
+/** A subagent picked up again joins the running reply's stack; its old stack loses it. */
+function moveSubagentToRun(state: AppState, threadId: string, runId: string, agent: SubagentEntry): AppState {
+  const rows = state.messages[threadId] ?? [];
+  const home = rows.find(row => row.subagents?.some(known => known.id === agent.id));
+  if (home?.runId === runId) return updateSubagent(state, threadId, agent.id, () => agent);
+  const without = rows
+    .map(row => row.subagents?.some(known => known.id === agent.id) ? { ...row, subagents: row.subagents.filter(known => known.id !== agent.id) } : row)
+    .filter(row => !row.subagents || row.subagents.length > 0);
+  const stack = without.findIndex(row => row.subagents && row.runId === runId);
+  if (stack >= 0) return { ...state, messages: { ...state.messages, [threadId]: without.map((row, at) => at === stack ? { ...row, subagents: [...row.subagents!, agent] } : row) } };
+  return appendMessage({ ...state, messages: { ...state.messages, [threadId]: without } }, threadId, { id: `subagents-${agent.id}-${runId}`, role: "system", text: "", runId, subagents: [agent] });
+}
+
+function updateSubagent(state: AppState, threadId: string, id: string, change: (agent: SubagentEntry) => SubagentEntry): AppState {
+  const rows = state.messages[threadId] ?? [];
+  const updated = rows.map(row => row.subagents?.some(agent => agent.id === id)
+    ? { ...row, subagents: row.subagents.map(agent => agent.id === id ? change(agent) : agent) }
+    : row);
+  return { ...state, messages: { ...state.messages, [threadId]: updated } };
 }
 
 /** Marks the replies of the goal turn the check just rejected: everything since it began. */
@@ -538,6 +564,27 @@ export function applyThreadEvent(
       const updated = rows.map(row => row.question?.id === event.id ? { ...row, question: { ...row.question, answer: event.answer } } : row);
       return { ...state, messages: { ...state.messages, [threadId]: updated } };
     }
+    case "subagent_started": {
+      const entry: SubagentEntry = { id: event.id, name: event.name, brief: event.brief, model: event.model, confined: event.confined, writePaths: event.write_paths ?? [], status: "running", text: "", toolCalls: 0, startedAt: measureDuration ? Date.now() : undefined, at: event.at };
+      const rows = state.messages[threadId] ?? [];
+      // One stack per reply: every subagent the run starts joins the first one.
+      const index = rows.findIndex(row => row.subagents && row.runId === runId);
+      if (index >= 0) {
+        const updated = rows.map((row, at) => at === index ? { ...row, subagents: [...row.subagents!, entry] } : row);
+        return { ...state, messages: { ...state.messages, [threadId]: updated } };
+      }
+      return appendMessage(state, threadId, { id: `subagents-${event.id}`, role: "system", text: "", runId, subagents: [entry] });
+    }
+    case "subagent_message": {
+      // Shown in the subagent's detail; here it only matters when it picked the subagent up again.
+      if (!event.resumed) return state;
+      const agent = (state.messages[threadId] ?? []).flatMap(row => row.subagents ?? []).find(known => known.id === event.id);
+      return agent ? moveSubagentToRun(state, threadId, runId, { ...agent, status: "running", text: "", result: undefined, seconds: undefined, startedAt: Date.now() }) : state;
+    }
+    case "subagent_status":
+      return updateSubagent(state, threadId, event.id, agent => ({ ...agent, text: event.text || agent.text, toolCalls: event.tool_calls, ranOn: event.model ?? agent.ranOn }));
+    case "subagent_ended":
+      return updateSubagent(state, threadId, event.id, agent => ({ ...agent, status: event.status, result: event.result, toolCalls: event.tool_calls, seconds: event.seconds, ranOn: event.model ?? agent.ranOn }));
     case "context_budget": {
       const rows = state.messages[threadId] ?? [];
       const last = rows[rows.length - 1];

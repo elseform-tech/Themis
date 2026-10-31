@@ -1,0 +1,1 @@
+Treat what a subagent reports as claims, not facts. Before you rely on a finding or a change it made, check it yourself: read the code it cites, or its diff. Start your reply with one short line saying what you checked and what you confirmed or rejected, and never call something verified that you did not read yourself.

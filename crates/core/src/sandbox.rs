@@ -599,6 +599,8 @@ pub struct SandboxPlan {
     /// Whether `protected` starts with the app-data folder.
     has_app_data: bool,
     secrets: Vec<PathBuf>,
+    /// A subagent's read-only copy: in-process file tools may write only `writable`.
+    read_only: bool,
     #[cfg(target_os = "linux")]
     landlock: OnceLock<Result<Arc<landlock::Ruleset>, String>>,
 }
@@ -781,9 +783,51 @@ impl SandboxPlan {
             protected,
             has_app_data: inputs.app_data.is_some(),
             secrets,
+            read_only: false,
             #[cfg(target_os = "linux")]
             landlock: OnceLock::new(),
         }
+    }
+
+    /// The same plan for a read-only subagent: only the temporary folders stay writable, so
+    /// commands can read the project and run tools that write scratch files, but cannot
+    /// change the project. Network, secrets and protected folders are unchanged.
+    pub fn read_only(&self) -> Self {
+        let mut writable = Vec::new();
+        for dir in temp_dirs() {
+            push_unique(&mut writable, dir);
+        }
+        Self {
+            enforcement: self.enforcement.clone(),
+            reason: self.reason.clone(),
+            open: self.open,
+            network: self.network,
+            network_enforced: self.network_enforced,
+            allow_keychain: self.allow_keychain,
+            landlock_abi: self.landlock_abi,
+            configured_writable: Vec::new(),
+            home: self.home.clone(),
+            writable,
+            protected: self.protected.clone(),
+            has_app_data: self.has_app_data,
+            secrets: self.secrets.clone(),
+            read_only: true,
+            #[cfg(target_os = "linux")]
+            landlock: OnceLock::new(),
+        }
+    }
+
+    /// A subagent's plan: read-only except for its own `paths`. Temporary folders stay writable
+    /// unless the project lives in one, and YOLO changes nothing here: this wall is the
+    /// harness's, not a default.
+    pub fn confined_to(&self, root: &Path, paths: &[PathBuf]) -> Self {
+        let mut plan = self.read_only();
+        let root = resolve_existing(root);
+        plan.writable.retain(|folder| !root.starts_with(folder));
+        for path in paths {
+            push_unique(&mut plan.writable, resolve_existing(path));
+        }
+        plan
     }
 
     /// A plan that never sandboxes (the sandbox is off).
@@ -1048,7 +1092,12 @@ impl SandboxPlan {
     /// either. `None` when the sandbox is off.
     pub fn file_guard(&self, yolo: bool) -> Option<FileGuard> {
         if !self.enabled() {
-            return None;
+            // A subagent's write paths are a harness wall: they hold with no OS sandbox too.
+            return self.read_only.then(|| FileGuard {
+                no_write: self.protected.clone(),
+                no_read: Vec::new(),
+                only_write: Some(self.writable.clone()),
+            });
         }
         let mut no_write = Vec::new();
         if self.has_app_data {
@@ -1060,8 +1109,74 @@ impl SandboxPlan {
         Some(FileGuard {
             no_write,
             no_read: self.secrets.clone(),
+            only_write: self.read_only.then(|| self.writable.clone()),
         })
     }
+}
+
+/// A subagent's `write_paths` entry in its stored form: project-relative, with a trailing `/` for
+/// a folder. Refuses globs, anything that leaves the project, and `.themis/`, `.git/` and
+/// `protected` folders.
+pub fn normalize_write_path(
+    root: &Path,
+    raw: &str,
+    protected: &[PathBuf],
+) -> std::result::Result<String, String> {
+    let raw = raw.trim();
+    if raw.is_empty() || raw.chars().any(char::is_control) {
+        return Err("a write path can't be empty".into());
+    }
+    if raw.contains(['*', '?', '[', ']', '{', '}', '\\']) {
+        return Err(format!(
+            "'{raw}': write paths are folders or files, never globs"
+        ));
+    }
+    let relative = Path::new(raw);
+    let mut parts = Vec::new();
+    for part in relative.components() {
+        match part {
+            Component::Normal(name) => parts.push(name.to_string_lossy().into_owned()),
+            Component::CurDir => {}
+            _ => return Err(format!("'{raw}' must stay inside the project")),
+        }
+    }
+    let Some(first) = parts.first() else {
+        return Err(format!(
+            "'{raw}' is the whole project; name a folder or file in it"
+        ));
+    };
+    if first.eq_ignore_ascii_case(".themis") || first.eq_ignore_ascii_case(".git") {
+        return Err(format!("'{raw}': {first}/ is never writable by a subagent"));
+    }
+    let joined = parts.join("/");
+    let root = resolve_existing(root);
+    let resolved = resolve_existing(&root.join(&joined));
+    if !resolved.starts_with(&root) {
+        return Err(format!("'{raw}' must stay inside the project"));
+    }
+    if protected.iter().any(|folder| resolved.starts_with(folder)) {
+        return Err(format!("'{raw}' holds Themis settings or permissions"));
+    }
+    Ok(if raw.ends_with('/') || resolved.is_dir() {
+        format!("{joined}/")
+    } else {
+        joined
+    })
+}
+
+/// Whether two normalized write paths share any file: one is the other or holds it.
+pub fn write_paths_overlap(a: &str, b: &str) -> bool {
+    let parts = |path: &str| {
+        path.trim_end_matches('/')
+            .split('/')
+            .map(str::to_owned)
+            .collect::<Vec<_>>()
+    };
+    let (a, b) = (parts(a), parts(b));
+    // Ignoring case: on macOS and Windows `src/` and `Src/` are one folder.
+    a.iter()
+        .zip(&b)
+        .all(|(left, right)| left.eq_ignore_ascii_case(right))
 }
 
 /// What the sandbox covers, for status views.
@@ -1146,6 +1261,8 @@ pub struct BackendInfo {
 pub struct FileGuard {
     no_write: Vec<PathBuf>,
     no_read: Vec<PathBuf>,
+    /// Set for a read-only plan: writes outside these folders are refused.
+    only_write: Option<Vec<PathBuf>>,
 }
 
 impl FileGuard {
@@ -1179,6 +1296,30 @@ impl FileGuard {
                 "'{}' holds Themis settings or permissions; the sandbox does not let agents change it. Edit it yourself if needed",
                 path.display()
             ));
+        }
+        if let Some(allowed) = &self.only_write {
+            // A dangling link looks like a new file here, but a write would land at its target.
+            let dangling = path.ancestors().any(|step| {
+                step.symlink_metadata().is_ok_and(|meta| meta.is_symlink())
+                    && step.canonicalize().is_err()
+            });
+            if dangling {
+                return Err(format!(
+                    "'{}' goes through a broken link; this subagent may not write through it",
+                    path.display()
+                ));
+            }
+            // Only the resolved path counts, and `..` is never followed, so a path cannot
+            // start inside an allowed folder and step out of it.
+            let climbs = path
+                .components()
+                .any(|part| part == std::path::Component::ParentDir);
+            if climbs || !allowed.iter().any(|folder| resolved.starts_with(folder)) {
+                return Err(format!(
+                    "'{}' is outside the folders this subagent may write",
+                    path.display()
+                ));
+            }
         }
         Ok(())
     }

@@ -1,0 +1,1 @@
+You may change files only under these project paths: {{paths}}. Writes anywhere else are refused, so do not try to get around that, and the rest of the project is read-only for you. Other subagents may be working elsewhere in the project at the same time: do not undo or rely on changes outside your paths.

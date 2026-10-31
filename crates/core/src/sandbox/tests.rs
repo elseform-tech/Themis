@@ -255,6 +255,69 @@ fn plan_writable_protected_and_secret_lists() {
 }
 
 #[test]
+fn a_read_only_plan_keeps_walls_but_writes_only_temp_folders() {
+    let fx = fixture();
+    let configured = config(r#"{"writable_paths":["~/cache"]}"#);
+    let plan = plan_with(
+        Enforcement::Active(Backend::Seatbelt),
+        &configured,
+        &fx.root,
+        &fx.app_data,
+        &fx.home,
+    )
+    .read_only();
+    assert!(!plan.writable().contains(&fx.root));
+    assert!(!plan.writable().contains(&fx.home.join("cache")));
+    assert!(plan
+        .writable()
+        .contains(&resolve_existing(&std::env::temp_dir())));
+    assert_eq!(plan.protected()[0], fx.app_data);
+    assert!(plan.secrets().contains(&fx.home.join(".ssh")));
+    assert_eq!(plan.status().state, "on");
+    assert!(!plan.open());
+    // In-process file tools are held to the same folders.
+    let guard = plan.file_guard(false).unwrap();
+    assert!(guard.check_write(&fx.root.join("src/main.rs")).is_err());
+    assert!(guard
+        .check_write(&std::env::temp_dir().join("scratch.txt"))
+        .is_ok());
+    // Stepping out of a temp folder is refused, however the path is spelled.
+    let escape = std::env::temp_dir()
+        .join("..")
+        .join(fx.root.strip_prefix("/").unwrap_or(&fx.root));
+    assert!(guard.check_write(&escape.join("src/main.rs")).is_err());
+    #[cfg(unix)]
+    {
+        let link = tempfile::tempdir().unwrap();
+        let alias = link.path().join("project");
+        std::os::unix::fs::symlink(&fx.root, &alias).unwrap();
+        assert!(guard.check_write(&alias.join("src/main.rs")).is_err());
+    }
+    assert!(guard.check_read(&fx.root.join("src/main.rs")).is_ok());
+
+    // A YOLO run's subagent keeps YOLO's reach for reads, and says so in its status.
+    let open = SandboxPlan::with_enforcement(
+        PlanInputs {
+            config: &configured,
+            project_root: &fx.root,
+            app_data: Some(&fx.app_data),
+            home: Some(&fx.home),
+            open: Some(YoloSandbox::default()),
+        },
+        Enforcement::Active(Backend::Seatbelt),
+        "test".into(),
+    )
+    .read_only();
+    assert!(open.open());
+    assert!(!open.writable().contains(&PathBuf::from("/")));
+    assert!(!open.writable().contains(&fx.root));
+    assert_eq!(
+        open.status().secret_paths.is_empty(),
+        open.secrets().is_empty()
+    );
+}
+
+#[test]
 fn file_guard_protects_app_data_secrets_and_yolo_project_config() {
     let fx = fixture();
     let plan = plan_with(
@@ -1033,4 +1096,164 @@ fn bubblewrap_open_plan_on_a_real_command() {
 #[test]
 fn landlock_open_plan_on_a_real_command() {
     check_real_open(Backend::Landlock);
+}
+
+#[test]
+fn a_subagent_plan_writes_only_its_paths_even_on_an_open_or_absent_sandbox() {
+    let fx = fixture();
+    let configured = config("{}");
+    let plan = plan_with(
+        Enforcement::Active(Backend::Seatbelt),
+        &configured,
+        &fx.root,
+        &fx.app_data,
+        &fx.home,
+    );
+    let mine = fx.root.join("tests");
+    std::fs::create_dir_all(&mine).unwrap();
+    let confined = plan.confined_to(&fx.root, std::slice::from_ref(&mine));
+    assert!(confined.writable().contains(&resolve_existing(&mine)));
+    assert!(!confined.writable().contains(&fx.root));
+    let guard = confined.file_guard(false).unwrap();
+    assert!(guard.check_write(&mine.join("new.rs")).is_ok());
+    assert!(guard.check_write(&fx.root.join("src.rs")).is_err());
+    assert!(guard.check_write(&mine.join("../src.rs")).is_err());
+    // With no enforcing sandbox the file tools still hold the line.
+    let absent = plan_with(
+        Enforcement::Disabled,
+        &configured,
+        &fx.root,
+        &fx.app_data,
+        &fx.home,
+    );
+    assert!(
+        absent.file_guard(false).is_none(),
+        "the main agent is unchanged"
+    );
+    let guard = absent
+        .confined_to(&fx.root, std::slice::from_ref(&mine))
+        .file_guard(false)
+        .expect("subagents keep the guard");
+    assert!(guard.check_write(&mine.join("new.rs")).is_ok());
+    assert!(guard.check_write(&fx.root.join("src.rs")).is_err());
+}
+
+#[test]
+fn a_project_in_a_temporary_folder_gets_no_write_access_from_it() {
+    let fx = fixture();
+    let configured = config("{}");
+    let temp = resolve_existing(&std::env::temp_dir());
+    let project = temp.join(format!("themis-confined-{}", std::process::id()));
+    std::fs::create_dir_all(project.join("mine")).unwrap();
+    let plan = plan_with(
+        Enforcement::Active(Backend::Seatbelt),
+        &configured,
+        &project,
+        &fx.app_data,
+        &fx.home,
+    )
+    .confined_to(&project, &[project.join("mine")]);
+    let guard = plan.file_guard(false).unwrap();
+    assert!(!plan.writable().contains(&temp));
+    assert!(guard.check_write(&project.join("mine/a.txt")).is_ok());
+    assert!(guard.check_write(&project.join("a.txt")).is_err());
+    std::fs::remove_dir_all(project).unwrap();
+}
+
+#[test]
+fn write_paths_normalize_and_refuse_what_they_must() {
+    let fx = fixture();
+    std::fs::create_dir_all(fx.root.join("crates/core")).unwrap();
+    let normal = |raw| normalize_write_path(&fx.root, raw, std::slice::from_ref(&fx.app_data));
+    assert_eq!(normal("crates/core/").unwrap(), "crates/core/");
+    assert_eq!(
+        normal("./crates/core").unwrap(),
+        "crates/core/",
+        "an existing folder"
+    );
+    assert_eq!(normal("docs/new.md").unwrap(), "docs/new.md");
+    for bad in [
+        "",
+        "  ",
+        ".",
+        "./",
+        "/etc/",
+        "../up",
+        "a/../../up",
+        "src/*.rs",
+        "src/**",
+        "a?.txt",
+        ".themis/",
+        ".THEMIS/config",
+        ".git/hooks",
+        "a\\b",
+    ] {
+        assert!(normal(bad).is_err(), "{bad:?}");
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn a_write_path_through_a_link_cant_leave_the_project() {
+    let fx = fixture();
+    let outside = tempfile::tempdir().unwrap();
+    std::os::unix::fs::symlink(outside.path(), fx.root.join("away")).unwrap();
+    assert!(normalize_write_path(&fx.root, "away/", &[]).is_err());
+    assert!(normalize_write_path(&fx.root, "away/file.txt", &[]).is_err());
+}
+
+#[cfg(unix)]
+#[test]
+fn a_subagent_cant_write_through_a_broken_link_in_its_own_folder() {
+    let fx = fixture();
+    let mine = fx.root.join("mine");
+    std::fs::create_dir_all(&mine).unwrap();
+    std::os::unix::fs::symlink(fx.root.join("elsewhere.rs"), mine.join("link")).unwrap();
+    let plan = plan_with(
+        Enforcement::Active(Backend::Seatbelt),
+        &config("{}"),
+        &fx.root,
+        &fx.app_data,
+        &fx.home,
+    )
+    .confined_to(&fx.root, std::slice::from_ref(&mine));
+    let guard = plan.file_guard(false).unwrap();
+    assert!(guard.check_write(&mine.join("link")).is_err());
+    assert!(guard.check_write(&mine.join("real.rs")).is_ok());
+}
+
+#[test]
+fn write_paths_overlap_by_whole_path_parts() {
+    for (a, b, overlap) in [
+        ("a/", "a/", true),
+        ("a/", "a/b.txt", true),
+        ("a/b/", "a/", true),
+        ("a/b.txt", "a/b.txt", true),
+        ("Src/", "src/a.rs", true),
+        ("a/b", "a/bc", false),
+        ("a/", "b/", false),
+        ("tests/", "tests2/", false),
+    ] {
+        assert_eq!(write_paths_overlap(a, b), overlap, "{a} {b}");
+    }
+}
+
+proptest::proptest! {
+    /// Whatever is asked for, a normalized path stays inside the project, by plain parts.
+    #[test]
+    fn normalized_write_paths_stay_inside(raw in "[a-zA-Z0-9_./*?\\\\ -]{0,24}") {
+        let fx = fixture();
+        if let Ok(path) = normalize_write_path(&fx.root, &raw, &[]) {
+            proptest::prop_assert!(!path.starts_with('/'));
+            proptest::prop_assert!(!path.split('/').any(|part| part == ".." || part == "."));
+            proptest::prop_assert!(!path.contains(['*', '?', '\\']));
+            proptest::prop_assert!(resolve_existing(&fx.root.join(&path)).starts_with(resolve_existing(&fx.root)));
+        }
+    }
+
+    #[test]
+    fn overlap_is_symmetric_and_reflexive(a in "[ab]{1,2}(/[ab]{1,2}){0,2}/?", b in "[ab]{1,2}(/[ab]{1,2}){0,2}/?") {
+        proptest::prop_assert_eq!(write_paths_overlap(&a, &b), write_paths_overlap(&b, &a));
+        proptest::prop_assert!(write_paths_overlap(&a, &a));
+    }
 }
