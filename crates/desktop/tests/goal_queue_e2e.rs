@@ -1362,78 +1362,61 @@ async fn a_failed_turn_counts_down_instead_of_leaving_a_note() {
         .unwrap();
 }
 
-/// Found in a live run: "yo" in a chat whose goal was removed sent the agent back to rebuilding
-/// everything, because the old goal turns were all it could see. A message after a goal ended
-/// or paused says so, and a chat that never had a goal hears nothing about goals.
+/// While a long turn runs, the checklist moves as evidence comes in. These passes only ever
+/// update the list: even a check saying "reached" can't end the goal in the middle of a turn.
 #[tokio::test(flavor = "multi_thread")]
-async fn a_message_after_a_goal_is_told_the_goal_is_not_running() {
+async fn the_checklist_moves_during_a_long_turn_and_cannot_end_the_goal() {
     let server = MockServer::builder().start().await;
     Mock::given(method("POST"))
         .respond_with(|request: &Request| {
             let body = body(request);
+            let sent = body["messages"].to_string();
             if is_checklist(&body) {
-                return reply(r#"{"requirements":[{"what":"The thing"}]}"#);
+                return reply(r#"{"requirements":[{"what":"Notes exist"}]}"#);
             }
             if is_check(&body) {
-                return reply(r#"{"verdict":"not_yet","reason":"Keep going."}"#);
+                return reply(r#"{"verdict":"reached","reason":"Done.","told_user":true,"requirements":[{"what":"Notes exist","proven":true,"how":"written"}]}"#);
             }
-            reply("Hi.")
+            if sent.contains("notes.txt") {
+                // The turn stays open a while after the work that can be checked.
+                return reply("All written.").set_delay(std::time::Duration::from_secs(5));
+            }
+            calls("write_file", json!({"file_path": "notes.txt", "content": "hello"}))
         })
         .mount(&server)
         .await;
-    let (state, _data, _project, thread) = chat(&server).await;
-    let (sink, _rx) = ChannelSink::channel();
-    let sink = Arc::new(sink);
-    let last_sent = |bodies: Vec<wiremock::Request>| {
-        bodies
-            .iter()
-            .map(body)
-            .rfind(|body| !is_check(body) && !is_checklist(body))
-            .unwrap()["messages"]
-            .to_string()
-    };
-    // A chat that never had a goal hears nothing about one.
+    let (state, _data, project, thread) = chat(&server).await;
+    std::fs::create_dir_all(project.path().join(".themis")).unwrap();
+    std::fs::write(
+        project.path().join(".themis/config.jsonc"),
+        r#"{"goal":{"checklist_refresh_seconds":1}}"#,
+    )
+    .unwrap();
     state
-        .send_message(sink.clone(), thread.clone(), "hello".into())
-        .await
-        .unwrap();
-    settle(&state, &thread).await;
-    let sent = last_sent(server.received_requests().await.unwrap());
-    assert!(!sent.contains("No goal is running"), "{sent}");
-
-    state
-        .send_message(
-            sink.clone(),
+        .set_thread_approval_mode(
             thread.clone(),
-            "/goal finish the thing".into(),
+            themis_core::configuration::ApprovalMode::Yolo,
         )
         .await
         .unwrap();
+    let (sink, _rx) = ChannelSink::channel();
+    let sink = Arc::new(sink);
     state
-        .pause_goal(sink.clone(), thread.clone())
+        .send_message(sink.clone(), thread.clone(), "/goal write the notes".into())
         .await
         .unwrap();
-    settle(&state, &thread).await;
-    state
-        .send_message(sink.clone(), thread.clone(), "yo".into())
-        .await
-        .unwrap();
-    settle(&state, &thread).await;
-    let sent = last_sent(server.received_requests().await.unwrap());
-    assert!(sent.contains("This chat's goal is paused"), "{sent}");
-
-    state
-        .remove_goal(sink.clone(), thread.clone())
-        .await
-        .unwrap();
-    state
-        .send_message(sink.clone(), thread.clone(), "yo again".into())
-        .await
-        .unwrap();
-    settle(&state, &thread).await;
-    let sent = last_sent(server.received_requests().await.unwrap());
-    assert!(sent.contains("No goal is running"), "{sent}");
-    assert!(state.goal_for(&thread).is_none());
+    let mut moved = None;
+    for _ in 0..160 {
+        let goal = state.goal_for(&thread).unwrap();
+        if goal.proof.iter().any(|item| item.proven) {
+            moved = Some(goal);
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+    }
+    let goal = moved.expect("the checklist never moved during the turn");
+    assert_eq!(goal.status, GoalStatus::Running, "{goal:?}");
+    goal_until(&state, &thread, |status| status == GoalStatus::Reached).await;
 }
 
 /// Asked in the chat to remove the goal, the agent removes it: no goal is left, and
@@ -2558,4 +2541,78 @@ async fn answering_a_question_leaves_an_approval_waiting() {
     assert!(project.path().join("dir_a").is_dir());
     assert!(project.path().join("dir_b").is_dir());
     settle(&state, &thread).await;
+}
+
+/// Found in a live run: "yo" in a chat whose goal was removed sent the agent back to rebuilding
+/// everything, because the old goal turns were all it could see. A message after a goal ended
+/// or paused says so, and a chat that never had a goal hears nothing about goals.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_message_after_a_goal_is_told_the_goal_is_not_running() {
+    let server = MockServer::builder().start().await;
+    Mock::given(method("POST"))
+        .respond_with(|request: &Request| {
+            let body = body(request);
+            if is_checklist(&body) {
+                return reply(r#"{"requirements":[{"what":"The thing"}]}"#);
+            }
+            if is_check(&body) {
+                return reply(r#"{"verdict":"not_yet","reason":"Keep going."}"#);
+            }
+            reply("Hi.")
+        })
+        .mount(&server)
+        .await;
+    let (state, _data, _project, thread) = chat(&server).await;
+    let (sink, _rx) = ChannelSink::channel();
+    let sink = Arc::new(sink);
+    let last_sent = |bodies: Vec<wiremock::Request>| {
+        bodies
+            .iter()
+            .map(body)
+            .rfind(|body| !is_check(body) && !is_checklist(body))
+            .unwrap()["messages"]
+            .to_string()
+    };
+    // A chat that never had a goal hears nothing about one.
+    state
+        .send_message(sink.clone(), thread.clone(), "hello".into())
+        .await
+        .unwrap();
+    settle(&state, &thread).await;
+    let sent = last_sent(server.received_requests().await.unwrap());
+    assert!(!sent.contains("No goal is running"), "{sent}");
+
+    state
+        .send_message(
+            sink.clone(),
+            thread.clone(),
+            "/goal finish the thing".into(),
+        )
+        .await
+        .unwrap();
+    state
+        .pause_goal(sink.clone(), thread.clone())
+        .await
+        .unwrap();
+    settle(&state, &thread).await;
+    state
+        .send_message(sink.clone(), thread.clone(), "yo".into())
+        .await
+        .unwrap();
+    settle(&state, &thread).await;
+    let sent = last_sent(server.received_requests().await.unwrap());
+    assert!(sent.contains("This chat's goal is paused"), "{sent}");
+
+    state
+        .remove_goal(sink.clone(), thread.clone())
+        .await
+        .unwrap();
+    state
+        .send_message(sink.clone(), thread.clone(), "yo again".into())
+        .await
+        .unwrap();
+    settle(&state, &thread).await;
+    let sent = last_sent(server.received_requests().await.unwrap());
+    assert!(sent.contains("No goal is running"), "{sent}");
+    assert!(state.goal_for(&thread).is_none());
 }
