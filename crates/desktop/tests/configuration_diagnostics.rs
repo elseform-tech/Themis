@@ -532,7 +532,12 @@ async fn cli_retries_required_summary_automatically_and_exposes_usage() {
         {
             assert_current_project(&body, project.path());
             let system = body["messages"][0]["content"].as_str().unwrap();
-            assert_eq!(system.matches("Support claims, code changes and test results").count(), 1);
+            assert_eq!(
+                system
+                    .matches("Support claims, code changes and test results")
+                    .count(),
+                1
+            );
             assert!(system.contains("verified line"));
             assert!(system.contains("why it addresses the task"));
             ordinary_requests += 1;
