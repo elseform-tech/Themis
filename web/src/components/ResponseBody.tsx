@@ -66,17 +66,17 @@ export const ResponseFiles = createContext<((path: string) => void) | null>(null
 
 const FILE_EXTENSION = /\.(?:[cm]?[jt]sx?|json[cl]?|md|txt|html?|css|scss|py|rs|go|rb|java|kt|swift|c|h|cpp|hpp|cs|php|sh|zsh|toml|ya?ml|xml|csv|sql|lock|env|ini|cfg|svg|png|jpe?g|gif|webp|pdf|ipynb)$/i;
 
-/** The file a piece of inline code names, without a `:line` ending: a path with a folder or a
- *  known file type. Words, versions and `object.method` stay plain code. */
+/** The file a piece of inline code cites by line, without its `:line` ending. A file named in
+ *  passing isn't evidence, so it stays plain code, like words, versions and `object.method`. */
 export function fileNamedIn(code: string): string | null {
   const text = code.trim();
-  if (!/^[\w@./~-]+(?::\d+(?:[-:]\d+)?)?$/.test(text) || /^\d/.test(text) || text.includes("//")) return null;
+  if (!/^[\w@./~-]+:\d+(?:[-:]\d+)?$/.test(text) || /^\d/.test(text) || text.includes("//")) return null;
   const path = text.replace(/:\d+(?:[-:]\d+)?$/, "");
   if (path.endsWith("/") || path.startsWith("-")) return null;
   return FILE_EXTENSION.test(path) ? path : null;
 }
 
-export function ResponseBody({ text, streaming = false }: { text: string; streaming?: boolean }) {
+export function ResponseBody({ text, streaming = false, artifacts }: { text: string; streaming?: boolean; /** Files this reply attached: naming one links to it. */ artifacts?: string[] }) {
   const openLink = useContext(ResponseLinks);
   const openFile = useContext(ResponseFiles);
   const components = useMemo<Components>(() => ({
@@ -89,11 +89,12 @@ export function ResponseBody({ text, streaming = false }: { text: string; stream
     code({ children, className }) {
       const text = String(children ?? "");
       if (className || text.includes("\n")) return <code className={className}>{children}</code>;
-      // A web address or a file written as code still goes somewhere.
+      // A web address, a cited line or an attached file goes somewhere.
       if (openLink && /^https?:\/\/\S+$/i.test(text)) {
         return <a href={text} target="_blank" rel="noreferrer noopener" onClick={event => { if (event.metaKey || event.ctrlKey) return; event.preventDefault(); openLink(text); }}><code>{text}</code></a>;
       }
-      const file = openFile ? fileNamedIn(text) : null;
+      const artifact = artifacts?.find(path => path === text || path.split("/").pop() === text);
+      const file = openFile ? artifact ?? fileNamedIn(text) : null;
       if (file && openFile) return <button type="button" className="themis-code-link" title={`Open ${file}`} onClick={() => openFile(file)}><code>{text}</code></button>;
       return <code>{children}</code>;
     },
@@ -104,6 +105,6 @@ export function ResponseBody({ text, streaming = false }: { text: string; stream
     },
     img({ alt, src }) { return <a href={typeof src === "string" ? src : undefined} target="_blank" rel="noreferrer noopener">{alt || "Image"}</a>; },
     table({ children }) { return <div className="themis-response-table"><table>{children}</table></div>; },
-  }), [streaming, openLink, openFile]);
+  }), [streaming, openLink, openFile, artifacts]);
   return <div className="themis-response"><Markdown remarkPlugins={[remarkGfm]} skipHtml components={components}>{text}</Markdown></div>;
 }
