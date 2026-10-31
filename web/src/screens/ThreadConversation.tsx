@@ -311,7 +311,7 @@ function Message({ message, threadId, activeRunId, durationMs, skills, plugins }
   if (message.role === "user" && message.text.startsWith(ANSWER_MARKER)) return null;
   // A goal turn starts with a runtime message: a divider, not a bubble from the user.
   if (message.goalStatus) return <div className="themis-thread-msg themis-thread-msg--assistant themis-thread-msg--completed"><ResponseBody text={message.text} /></div>;
-  if (message.goalCheck) return <p className="themis-goal-check"><span>Goal check</span>{message.text}</p>;
+  if (message.goalCheck) return <div className="themis-thread-msg themis-thread-msg--user"><span className="themis-goal-check-label">Goal check</span><p className="themis-thread-text">{message.text}</p></div>;
   // The check's bubble already marks where a new goal turn starts.
   if (message.goalTurn !== undefined) return null;
   const text = message.attachments?.length ? message.text.split("\n\nAttached files (local paths;")[0]! : message.text;

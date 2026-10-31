@@ -49,6 +49,8 @@ const MAX_ADDED_CHARS: usize = 2000;
 const MAX_EVIDENCE_CHARS: usize = 32_000;
 /// Most changed files a goal remembers, the latest ones.
 const MAX_GOAL_FILES: usize = 30;
+/// Most pending items a check's message names; Workspace › Goal has them all.
+const MAX_PENDING_SHOWN: usize = 5;
 /// A long command output keeps its start and its end (where results and
 /// summaries are), in characters.
 const OUTPUT_HEAD_CHARS: usize = 2_000;
@@ -56,6 +58,28 @@ const OUTPUT_TAIL_CHARS: usize = 4_000;
 /// History items read per page while gathering evidence (memory stays
 /// bounded; the text kept is capped by `MAX_EVIDENCE_CHARS`).
 const EVIDENCE_PAGE_ITEMS: usize = 2_000;
+
+/// What the goal check tells the chat: what is wrong, what to change, and what is left.
+fn check_message(verdict: &core_goal::GoalVerdict) -> String {
+    let mut parts = vec![verdict.reason.clone()];
+    parts.extend(verdict.next.clone());
+    let pending: Vec<&str> = verdict
+        .requirements
+        .iter()
+        .filter(|item| !item.proven)
+        .map(|item| item.what.as_str())
+        .collect();
+    if !pending.is_empty() {
+        let shown = pending[..pending.len().min(MAX_PENDING_SHOWN)].join(", ");
+        let more = pending.len().saturating_sub(MAX_PENDING_SHOWN);
+        parts.push(if more > 0 {
+            format!("Still pending: {shown} and {more} more")
+        } else {
+            format!("Still pending: {shown}")
+        });
+    }
+    parts.join("\n\n")
+}
 
 fn now_ms() -> i64 {
     chrono::Utc::now().timestamp_millis()
@@ -990,8 +1014,7 @@ impl AppState {
                         goal.progress = verdict.progress.clone();
                     }
                 });
-                let shown_reason = verdict.reason.clone();
-                // The person reads the reason; only the agent needs the how.
+                let shown_message = check_message(&verdict);
                 let agent_note = match &verdict.next {
                     Some(next) => format!("{} {next}", verdict.reason),
                     None => verdict.reason.clone(),
@@ -1030,7 +1053,7 @@ impl AppState {
                         &thread_id,
                         &run_id,
                         GoalNoteKind::NotYet,
-                        &shown_reason,
+                        &shown_message,
                     );
                 }
                 self.start_goal_turn(sink, thread_id, note).await;
@@ -1382,6 +1405,37 @@ mod tests {
         assert!(clipped.contains("characters clipped"));
         assert!(clipped.chars().count() < OUTPUT_HEAD_CHARS + OUTPUT_TAIL_CHARS + 50);
         assert_eq!(clip_output("short"), "short");
+    }
+
+    #[test]
+    fn the_check_says_what_is_wrong_what_to_change_and_what_is_left() {
+        let item = |what: &str, proven| core_goal::GoalRequirement {
+            what: what.to_owned(),
+            proven,
+            how: String::new(),
+        };
+        let verdict = |next: Option<&str>, requirements| core_goal::GoalVerdict {
+            verdict: Verdict::NotYet,
+            reason: "Shooting doesn't raise the score.".to_owned(),
+            next: next.map(str::to_owned),
+            requirements,
+            progress: None,
+            progressed: None,
+            told_user: None,
+        };
+        assert_eq!(
+            check_message(&verdict(
+                Some("Fix how bullets hit enemies, then show the score rising."),
+                vec![item("Health", true), item("Score", false), item("Restart", false)],
+            )),
+            "Shooting doesn't raise the score.\n\nFix how bullets hit enemies, then show the score rising.\n\nStill pending: Score, Restart"
+        );
+        assert_eq!(
+            check_message(&verdict(None, Vec::new())),
+            "Shooting doesn't raise the score."
+        );
+        let many: Vec<_> = (0..8).map(|n| item(&format!("Item {n}"), false)).collect();
+        assert!(check_message(&verdict(None, many)).ends_with("Item 4 and 3 more"));
     }
 
     #[test]
