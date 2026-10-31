@@ -125,3 +125,10 @@ path = "fuzz_targets/provider_models.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "subagent_profile"
+path = "fuzz_targets/subagent_profile.rs"
+test = false
+doc = false
+bench = false

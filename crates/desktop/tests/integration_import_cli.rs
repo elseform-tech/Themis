@@ -625,3 +625,79 @@ async fn a_source_is_previewed_added_hidden_and_removed_through_the_cli() {
     .unwrap();
     task.abort();
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn marketplace_check_counts_subagents_as_a_capability_not_a_skip_reason() {
+    let data = tempfile::tempdir().unwrap();
+    let source = tempfile::tempdir().unwrap();
+    let root = source.path();
+    let write = |path: &str, content: &str| {
+        let path = root.join(path);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, content).unwrap();
+    };
+    let agent = |name: &str, tools: &str| {
+        format!("---\nname: {name}\ndescription: {name}\n{tools}---\nWork as {name}.")
+    };
+    // Only subagents: unsupported before.
+    write(
+        "only/agents/reviewer.md",
+        &agent("reviewer", "tools: Read\n"),
+    );
+    // Declared in the manifest, in a folder of its own.
+    write(
+        "manifest/.claude-plugin/plugin.json",
+        &json!({"name": "manifest", "agents": ["./team/planner.md"]}).to_string(),
+    );
+    write("manifest/team/planner.md", &agent("planner", ""));
+    // Declared in the marketplace entry.
+    write("entry/crew/fixer.md", &agent("fixer", ""));
+    // A dropped tool makes the plugin partial, with a reason shared by every such plugin.
+    write(
+        "dropped/agents/searcher.md",
+        &agent("searcher", "tools: Read, WebFetch\n"),
+    );
+    write(
+        "bad/agents/broken.md",
+        "---\nname: broken\ndescription: never closed\n",
+    );
+    write(
+        ".claude-plugin/marketplace.json",
+        &json!({"plugins":[
+            {"name":"only","source":"./only"},
+            {"name":"manifest","source":"./manifest"},
+            {"name":"entry","source":"./entry","agents":["./crew/fixer.md"]},
+            {"name":"dropped","source":"./dropped"},
+            {"name":"bad","source":"./bad"}
+        ]})
+        .to_string(),
+    );
+    let state = AppState::new_for_test(data.path().join("settings.json"));
+    let task = tokio::spawn(Server::bind(state, data.path()).await.unwrap().run());
+    cli(
+        data.path(),
+        &[
+            "plugin",
+            "marketplace",
+            "add",
+            root.to_str().unwrap(),
+            "local",
+        ],
+    );
+    let report = cli(data.path(), &["plugin", "marketplace", "check", "local"]);
+    assert_eq!(
+        report["statuses"],
+        json!({"failed": 1, "partial": 1, "supported": 3}),
+        "{report}"
+    );
+    let reasons = report["reasons"].to_string();
+    assert!(!reasons.contains("Claude subagents"), "{reasons}");
+    assert!(reasons.contains("Subagent tools left out"), "{reasons}");
+    let installed = cli(data.path(), &["plugin", "install", "only@local"]);
+    assert_eq!(installed["spec"]["subagents"][0]["name"], "reviewer");
+    let declared = cli(data.path(), &["plugin", "install", "entry@local"]);
+    assert_eq!(declared["spec"]["subagents"][0]["name"], "fixer");
+    let manifest = cli(data.path(), &["plugin", "install", "manifest@local"]);
+    assert_eq!(manifest["spec"]["subagents"][0]["name"], "planner");
+    task.abort();
+}
