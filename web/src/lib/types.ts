@@ -389,6 +389,14 @@ export interface Goal {
   stalls: number;
   progress?: string;
   failures: number;
+  /** What the goal asks for and what is proven, from the last decided check. */
+  proof?: GoalRequirement[];
+}
+
+export interface GoalRequirement {
+  what: string;
+  proven: boolean;
+  how?: string;
 }
 
 export interface ThreadEventEnvelope {
@@ -505,6 +513,8 @@ export interface PersistedMessage {
   /** A runtime message that started goal turn N; shown as a divider, not a bubble. */
   /** How the goal stands, in plain words. */
   goalStatus?: boolean;
+  /** A goal turn's reply that the goal check then rejected. */
+  goalRejected?: boolean;
   goalTurn?: number;
   /** What the goal check concluded after a turn. */
   /** A question the agent asked the user. */

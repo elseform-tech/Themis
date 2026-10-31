@@ -5,6 +5,34 @@ const thread = "t1";
 const envelope = (event: object, run_id = "r1") => ({ type: "thread/event" as const, envelope: { thread_id: thread, run_id, event: event as never } });
 
 describe("queue and goal events", () => {
+  it("mutes a goal turn's replies once the check rejects them, live and from history", () => {
+    const turn = "[Goal — runtime, not from the user] Turn 2. Working toward: speed up p95";
+    const steps = [
+      { kind: "user_message", text: turn },
+      { kind: "assistant_text", text: "All requirements are met." },
+      { kind: "tool_started", tool: "shell", summary: "ls" },
+      { kind: "tool_finished", tool: "shell", ok: true, output: "" },
+      { kind: "finished", result: "Everything looks good.", model: "m" },
+    ];
+    let state = initialState;
+    for (const event of steps) state = reducer(state, envelope(event as never));
+    const claims = () => (state.messages[thread] ?? []).filter(row => row.role === "assistant" && !row.tool);
+    expect(claims().map(row => row.goalRejected)).toEqual([undefined, undefined]);
+    state = reducer(state, envelope({ kind: "goal_note", outcome: "status", reason: "I'm checking that against the goal now." }));
+    expect(claims().map(row => row.goalRejected)).toEqual([undefined, undefined]);
+    state = reducer(state, envelope({ kind: "goal_note", outcome: "not_yet", reason: "That isn't proven yet." }));
+    expect(claims().map(row => row.goalRejected)).toEqual([true, true]);
+    state = reducer(state, envelope({ kind: "user_message", text: turn.replace("Turn 2", "Turn 3") }));
+    state = reducer(state, envelope({ kind: "finished", result: "Fixed it.", model: "m" }));
+    expect(claims().map(row => row.goalRejected)).toEqual([true, true, undefined]);
+    const loaded = reducer(initialState, { type: "thread/history-loaded", threadId: thread, history: [
+      { kind: "user", run_id: "r2", text: turn, attachments: [] },
+      { kind: "event", envelope: { thread_id: thread, run_id: "r2", event: { kind: "finished", result: "Everything looks good.", model: "m" } } },
+      { kind: "event", envelope: { thread_id: thread, run_id: "", event: { kind: "goal_note", outcome: "not_yet", reason: "That isn't proven yet." } } },
+    ] } as never);
+    expect((loaded.messages[thread] ?? []).find(row => row.role === "assistant")?.goalRejected).toBe(true);
+  });
+
   it("keeps the queue and goal of each chat", () => {
     let state = reducer(initialState, envelope({ kind: "queue_changed", queue: [{ id: "q", text: "later", attachments: [], held: false }] }, ""));
     state = reducer(state, envelope({ kind: "goal_changed", goal: { text: "speed up p95", status: "running", started_at: 0, active_ms: 0, turns: 1, stalls: 0, failures: 0 } }, ""));

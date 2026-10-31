@@ -158,10 +158,13 @@ is reached; for example `/goal optimize this app to speed up p95`.
   turn starts by itself, told why). With a number in
   the goal, that number is the bar; without one, the check decides when further
   gains are not worth it and says why.
-  The check reads only the commands of the turn it judges (long outputs keep their
-  start and end), never earlier turns or the agent's claims, so the agent ends a
-  turn it thinks finishes the goal with one compact verification of every
-  requirement. The check also says whether the turn moved the work forward (a turn
+  The check reads the commands of the turn it judges (long outputs keep their
+  start and end), never the agent's claims, and keeps a list of what the goal asks
+  for and what is proven, so proof carries from turn to turn; an item goes back to
+  open when later work could have broken it. The goal row counts them ("2 of 5
+  proven"), and clicking the sentence lists them with what showed each. A turn's
+  replies dim when the check rejects them, so a claim the check didn't accept
+  doesn't read as a result. The check also says whether the turn moved the work forward (a turn
   that changed files always did); after three turns that only re-check, the next
   one is told to step back and try a different approach.
 - **What you add joins the goal.** A request you send while the goal is open

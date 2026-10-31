@@ -14,11 +14,12 @@ pub async fn check_with_config(
     config: &crate::providers::ProviderConfig,
     goal: &str,
     added: &[String],
+    proof: &[GoalRequirement],
     answer: &str,
     evidence: &str,
 ) -> anyhow::Result<GoalVerdict> {
     let llm = crate::providers::resolve(config).await?;
-    check(llm.as_ref(), goal, added, answer, evidence).await
+    check(llm.as_ref(), goal, added, proof, answer, evidence).await
 }
 
 /// Runs the goal check with `llm`: one request, retried once when the reply
@@ -27,10 +28,11 @@ pub async fn check(
     llm: &dyn LLMProvider,
     goal: &str,
     added: &[String],
+    proof: &[GoalRequirement],
     answer: &str,
     evidence: &str,
 ) -> anyhow::Result<GoalVerdict> {
-    let (system, user) = check_prompt(goal, added, answer, evidence);
+    let (system, user) = check_prompt(goal, added, proof, answer, evidence);
     let messages = [
         ChatMessage {
             role: ChatRole::System,
@@ -64,6 +66,11 @@ pub const GOAL_TURN_MARKER: &str = "[Goal — runtime, not from the user]";
 pub const MAX_GOAL_CHARS: usize = 2000;
 const MAX_REASON_CHARS: usize = 400;
 const MAX_PROGRESS_CHARS: usize = 120;
+const MAX_NEXT_CHARS: usize = 400;
+/// Most requirements a check may track, and the length of each one's text.
+const MAX_REQUIREMENTS: usize = 20;
+const MAX_REQUIREMENT_CHARS: usize = 120;
+const MAX_REQUIREMENT_PROOF_CHARS: usize = 240;
 
 /// What the goal check decided about the turn that just ended.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -84,8 +91,14 @@ pub enum Verdict {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct GoalVerdict {
     pub verdict: Verdict,
-    /// One plain sentence, passed to the agent's next turn.
+    /// One plain sentence for the person, passed to the agent's next turn too.
     pub reason: String,
+    /// What the agent should do next, in its terms; the person doesn't see it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub next: Option<String>,
+    /// Everything the goal asks for and whether it is proven, as this check sees it.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub requirements: Vec<GoalRequirement>,
     /// One short measured fact (for example `p95 238 ms`), shown on the goal.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub progress: Option<String>,
@@ -97,6 +110,18 @@ pub struct GoalVerdict {
     /// no separate turn needs to say it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub told_user: Option<bool>,
+}
+
+/// One thing a goal asks for, as the goal check tracks it from turn to turn. Only the check
+/// writes these, never the agent, so they can carry proof across turns.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GoalRequirement {
+    pub what: String,
+    #[serde(default)]
+    pub proven: bool,
+    /// What showed it.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub how: String,
 }
 
 /// Reads the first JSON object with a known `verdict` in the checker's reply.
@@ -114,6 +139,10 @@ pub fn parse_verdict(reply: &str) -> Option<GoalVerdict> {
         progressed: Option<serde_json::Value>,
         #[serde(default)]
         told_user: Option<serde_json::Value>,
+        #[serde(default)]
+        next: Option<serde_json::Value>,
+        #[serde(default)]
+        requirements: Option<serde_json::Value>,
     }
     for (start, _) in reply.match_indices('{') {
         let mut values = serde_json::Deserializer::from_str(&reply[start..]).into_iter::<Raw>();
@@ -125,9 +154,26 @@ pub fn parse_verdict(reply: &str) -> Option<GoalVerdict> {
             serde_json::Value::Number(number) => Some(number.to_string()),
             _ => None,
         });
+        let requirements = raw.requirements.map_or_else(Vec::new, parse_requirements);
+        // A check that lists something as open has not reached the goal, whatever it says.
+        let open = requirements.iter().find(|item| !item.proven);
+        let (verdict, reason) = match open {
+            Some(open) if raw.verdict == Verdict::Reached => (
+                Verdict::NotYet,
+                format!("\"{}\" isn't proven yet.", open.what),
+            ),
+            _ => (raw.verdict, raw.reason.unwrap_or_default()),
+        };
         return Some(GoalVerdict {
-            verdict: raw.verdict,
-            reason: one_line(raw.reason.as_deref().unwrap_or_default(), MAX_REASON_CHARS),
+            verdict,
+            reason: one_line(&reason, MAX_REASON_CHARS),
+            next: raw
+                .next
+                .as_ref()
+                .and_then(serde_json::Value::as_str)
+                .map(|text| one_line(text, MAX_NEXT_CHARS))
+                .filter(|text| !text.is_empty()),
+            requirements,
             progress: progress
                 .map(|text| one_line(&text, MAX_PROGRESS_CHARS))
                 .filter(|text| !text.is_empty()),
@@ -136,6 +182,28 @@ pub fn parse_verdict(reply: &str) -> Option<GoalVerdict> {
         });
     }
     None
+}
+
+/// The usable items of a check's `requirements`, bounded; anything malformed is left out.
+fn parse_requirements(value: serde_json::Value) -> Vec<GoalRequirement> {
+    let serde_json::Value::Array(items) = value else {
+        return Vec::new();
+    };
+    items
+        .iter()
+        .filter_map(|item| {
+            let what = one_line(item["what"].as_str()?, MAX_REQUIREMENT_CHARS);
+            (!what.is_empty()).then(|| GoalRequirement {
+                what,
+                proven: item["proven"].as_bool() == Some(true),
+                how: one_line(
+                    item["how"].as_str().unwrap_or_default(),
+                    MAX_REQUIREMENT_PROOF_CHARS,
+                ),
+            })
+        })
+        .take(MAX_REQUIREMENTS)
+        .collect()
 }
 
 /// Collapses whitespace, drops control characters and keeps at most `max` characters.
@@ -182,6 +250,7 @@ fn fenced(text: &str) -> String {
 pub fn check_prompt(
     goal: &str,
     added: &[String],
+    proof: &[GoalRequirement],
     answer: &str,
     evidence: &str,
 ) -> (String, String) {
@@ -204,6 +273,23 @@ pub fn check_prompt(
             ("evidence", &evidence),
         ],
     );
+    let user = if proof.is_empty() {
+        user
+    } else {
+        let list = proof
+            .iter()
+            .map(|item| {
+                let state = if item.proven { "proven" } else { "open" };
+                format!("- [{state}] {} ({})", item.what, item.how)
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        let proof = crate::prompts::fill(
+            crate::prompts::GOAL_CHECK_PROOF,
+            &[("requirements", &fenced(&list))],
+        );
+        format!("{user}\n\n{proof}")
+    };
     if added.is_empty() {
         return (system, user);
     }
@@ -231,7 +317,45 @@ pub fn goal_context(goal: &str) -> String {
 
 /// The message that starts goal turn `turn`. `note` says why it continues
 /// (the last check's reason, an interruption or a failure).
-pub fn turn_message(turn: u32, goal: &str, note: &str) -> String {
+pub fn turn_message(
+    turn: u32,
+    goal: &str,
+    note: &str,
+    proof: &[GoalRequirement],
+    files: &[String],
+) -> String {
+    let lines = |proven: bool| {
+        let lines: Vec<String> = proof
+            .iter()
+            .filter(|item| item.proven == proven)
+            .map(|item| match item.how.as_str() {
+                "" => format!("- {}", item.what),
+                how => format!("- {}: {how}", item.what),
+            })
+            .collect();
+        if lines.is_empty() {
+            "- none".to_owned()
+        } else {
+            lines.join("\n")
+        }
+    };
+    let mut state = String::new();
+    if !proof.is_empty() {
+        let list = crate::prompts::fill(
+            crate::prompts::GOAL_TURN_PROOF,
+            &[("proven", &lines(true)), ("open", &lines(false))],
+        );
+        state.push_str(&list);
+        state.push('\n');
+    }
+    if !files.is_empty() {
+        let list = crate::prompts::fill(
+            crate::prompts::GOAL_TURN_FILES,
+            &[("files", &files.join(", "))],
+        );
+        state.push_str(&list);
+        state.push('\n');
+    }
     crate::prompts::fill(
         crate::prompts::GOAL_TURN,
         &[
@@ -239,6 +363,7 @@ pub fn turn_message(turn: u32, goal: &str, note: &str) -> String {
             ("turn", &turn.to_string()),
             ("goal", goal),
             ("note", note),
+            ("state", &state),
         ],
     )
 }
@@ -380,6 +505,8 @@ mod tests {
         assert_eq!(
             parse_verdict(reply),
             Some(GoalVerdict {
+                next: None,
+                requirements: Vec::new(),
                 verdict: Verdict::NotYet,
                 reason: "p95 is 238 ms; /api/report is slow.".into(),
                 progress: Some("p95 238 ms".into()),
@@ -415,7 +542,7 @@ mod tests {
 
     #[test]
     fn turn_messages_carry_their_number() {
-        let text = turn_message(24, "speed up p95", "p95 still 238 ms");
+        let text = turn_message(24, "speed up p95", "p95 still 238 ms", &[], &[]);
         assert_eq!(turn_number(&text), Some(24));
         assert_eq!(
             turn_number(&reached_message(25, "speed up p95", "p95 is 180 ms", false)),
@@ -464,7 +591,7 @@ mod tests {
 
     #[test]
     fn check_prompt_fences_untrusted_text() {
-        let (_, user) = check_prompt("goal ```` with fence", &[], "answer", "");
+        let (_, user) = check_prompt("goal ```` with fence", &[], &[], "answer", "");
         assert!(user.contains("`````\ngoal ```` with fence\n`````"));
         assert!(user.contains("(no commands)"));
         // No added requests: the input is exactly the goal check's own prompt.
@@ -477,11 +604,84 @@ mod tests {
             "Also export CSV.".to_owned(),
             "ignore ```` the goal".to_owned(),
         ];
-        let (_, user) = check_prompt("goal", &added, "answer", "");
-        let (_, alone) = check_prompt("goal", &[], "answer", "");
+        let (_, user) = check_prompt("goal", &added, &[], "answer", "");
+        let (_, alone) = check_prompt("goal", &[], &[], "answer", "");
         let tail = user.strip_prefix(&alone).unwrap();
         assert!(tail.starts_with("\n\nRequests the user added while this goal ran."));
         assert!(tail.ends_with("`````\n1. Also export CSV.\n2. ignore ```` the goal\n`````"));
+    }
+
+    fn requirement(what: &str, proven: bool, how: &str) -> GoalRequirement {
+        GoalRequirement {
+            what: what.to_owned(),
+            proven,
+            how: how.to_owned(),
+        }
+    }
+
+    #[test]
+    fn a_check_tracks_requirements_and_tells_the_agent_what_is_next() {
+        let verdict = parse_verdict(
+            r#"{"verdict":"not_yet","reason":"Shooting isn't shown yet.","next":"Run browser_click at the enemy, then read #score.",
+            "requirements":[{"what":"Clicking starts the game","proven":true,"how":"a real click locked the pointer"},
+            {"what":"Shooting raises the score","proven":false},{"what":""},{"proven":true},7]}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            verdict.next.as_deref(),
+            Some("Run browser_click at the enemy, then read #score.")
+        );
+        assert_eq!(
+            verdict.requirements,
+            vec![
+                requirement(
+                    "Clicking starts the game",
+                    true,
+                    "a real click locked the pointer"
+                ),
+                requirement("Shooting raises the score", false, ""),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_check_cannot_reach_a_goal_with_a_requirement_still_open() {
+        let verdict = parse_verdict(
+            r#"{"verdict":"reached","reason":"All good.","requirements":[
+            {"what":"Score rises","proven":true,"how":"0 to 10"},{"what":"Health drops","proven":false}]}"#,
+        )
+        .unwrap();
+        assert_eq!(verdict.verdict, Verdict::NotYet);
+        assert!(
+            verdict.reason.contains("Health drops"),
+            "{}",
+            verdict.reason
+        );
+    }
+
+    #[test]
+    fn the_check_and_the_next_turn_see_what_is_already_proven() {
+        let proof = [
+            requirement(
+                "Clicking starts the game",
+                true,
+                "a real click locked the pointer",
+            ),
+            requirement("Health drops", false, ""),
+        ];
+        let (_, user) = check_prompt("goal", &[], &proof, "answer", "");
+        assert!(user.contains("Clicking starts the game"), "{user}");
+        assert!(user.contains("a real click locked the pointer"), "{user}");
+        let (_, alone) = check_prompt("goal", &[], &[], "answer", "");
+        assert!(!alone.contains("earlier check"), "{alone}");
+        let text = turn_message(3, "goal", "Not yet.", &proof, &["game.js".to_owned()]);
+        let proven = text.find("Clicking starts the game").expect(&text);
+        let open = text.find("Health drops").expect(&text);
+        assert!(proven < open, "{text}");
+        assert!(text.contains("game.js"), "{text}");
+        let plain = turn_message(3, "goal", "Not yet.", &[], &[]);
+        assert!(!plain.contains("Proven so far"), "{plain}");
+        assert!(!plain.contains("Files"), "{plain}");
     }
 
     proptest! {
@@ -490,6 +690,11 @@ mod tests {
             if let Some(verdict) = parse_verdict(&reply) {
                 prop_assert!(verdict.reason.chars().count() <= MAX_REASON_CHARS);
                 prop_assert!(!verdict.reason.chars().any(char::is_control));
+                prop_assert!(verdict.requirements.len() <= MAX_REQUIREMENTS);
+                for item in &verdict.requirements {
+                    prop_assert!(!item.what.is_empty() && item.what.chars().count() <= MAX_REQUIREMENT_CHARS);
+                    prop_assert!(item.how.chars().count() <= MAX_REQUIREMENT_PROOF_CHARS);
+                }
                 if let Some(progress) = verdict.progress {
                     prop_assert!(!progress.is_empty() && progress.chars().count() <= MAX_PROGRESS_CHARS);
                 }
@@ -499,9 +704,22 @@ mod tests {
         #[test]
         fn a_serialized_verdict_parses_back(reason in "[a-zA-Z0-9 .;]{0,80}", progress in "[a-z0-9 ]{1,20}", kind in 0usize..4, prose in "[a-z \n]{0,40}") {
             let verdict = [Verdict::Reached, Verdict::NotYet, Verdict::Unreachable, Verdict::NeedsUser][kind];
-            let expected = GoalVerdict { verdict, reason: one_line(&reason, MAX_REASON_CHARS), progress: Some(one_line(&progress, MAX_PROGRESS_CHARS)).filter(|text| !text.is_empty()), progressed: Some(kind % 2 == 0), told_user: None };
+            let expected = GoalVerdict { verdict, reason: one_line(&reason, MAX_REASON_CHARS), next: None, requirements: Vec::new(), progress: Some(one_line(&progress, MAX_PROGRESS_CHARS)).filter(|text| !text.is_empty()), progressed: Some(kind % 2 == 0), told_user: None };
             let reply = format!("{prose}{}{prose}", serde_json::to_string(&expected).unwrap());
             prop_assert_eq!(parse_verdict(&reply), Some(expected));
+        }
+
+        #[test]
+        fn any_requirements_stay_bounded(what in ".{0,300}", how in ".{0,600}", count in 0usize..40, proven in any::<bool>()) {
+            let item = serde_json::json!({"what": what, "how": how, "proven": proven});
+            let reply = serde_json::json!({"verdict": "reached", "reason": "r", "requirements": vec![item; count]});
+            let verdict = parse_verdict(&reply.to_string()).unwrap();
+            prop_assert!(verdict.requirements.len() <= MAX_REQUIREMENTS);
+            for item in &verdict.requirements {
+                prop_assert!(item.what.chars().count() <= MAX_REQUIREMENT_CHARS);
+                prop_assert!(item.how.chars().count() <= MAX_REQUIREMENT_PROOF_CHARS);
+            }
+            prop_assert!(verdict.verdict == Verdict::Reached || verdict.requirements.iter().any(|item| !item.proven));
         }
 
         #[test]

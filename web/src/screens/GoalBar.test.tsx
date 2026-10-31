@@ -59,6 +59,21 @@ describe("GoalBar", () => {
     expect(remove).toHaveBeenCalled();
   });
 
+  it("counts what is proven, and lists it with the sentence in full", () => {
+    const proof = [{ what: "Clicking starts the game", proven: true, how: "a real click" }, { what: "Health drops", proven: false }];
+    render(<GoalBar goal={goal({ proof })} onEdit={vi.fn()} onPause={vi.fn()} onResume={vi.fn()} onRemove={vi.fn()} />);
+    expect(screen.getByText("1 of 2 proven")).toBeInTheDocument();
+    expect(screen.queryByText("Health drops")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Optimize this app to bring p95 under 200 ms" }));
+    expect(screen.getByRole("listitem", { name: "Proven: Clicking starts the game" })).toHaveTextContent("a real click");
+    expect(screen.getByRole("listitem", { name: "Still open: Health drops" })).toBeInTheDocument();
+  });
+
+  it("shows no count before a check has listed anything", () => {
+    render(<GoalBar goal={goal()} onEdit={vi.fn()} onPause={vi.fn()} onResume={vi.fn()} onRemove={vi.fn()} />);
+    expect(screen.queryByText(/proven/)).not.toBeInTheDocument();
+  });
+
   it("leaves the composer once the goal is reached", () => {
     const { container, rerender } = render(<GoalBar goal={goal()} onEdit={vi.fn()} onPause={vi.fn()} onResume={vi.fn()} onRemove={vi.fn()} />);
     expect(screen.getByRole("region", { name: "Goal" })).toBeInTheDocument();
