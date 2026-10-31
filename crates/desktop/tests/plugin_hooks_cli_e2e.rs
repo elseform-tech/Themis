@@ -1437,6 +1437,49 @@ async fn a_resume_hook_runs_on_a_chats_first_turn_after_a_restart() {
     serving.abort();
 }
 
+/// The real `ralph-loop` stop hook, from a copy of the plugin. It isn't in this repository, so
+/// this is opt-in:
+///
+/// ```sh
+/// THEMIS_RALPH_PLUGIN=/path/to/plugins/ralph-loop cargo test -p themis-desktop \\
+///   --test plugin_hooks_cli_e2e -- --ignored the_real_ralph_loop --nocapture
+/// ```
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "needs a copy of the ralph-loop plugin"]
+async fn the_real_ralph_loop_goes_round_and_ends_on_its_promise() {
+    let real = std::path::PathBuf::from(std::env::var_os("THEMIS_RALPH_PLUGIN").unwrap());
+    let script = std::fs::read_to_string(real.join("hooks/stop-hook.sh")).unwrap();
+    let hooks: Value =
+        serde_json::from_str(&std::fs::read_to_string(real.join("hooks/hooks.json")).unwrap())
+            .unwrap();
+    let app = crate::app(
+        hooks["hooks"].clone(),
+        &[("hooks/stop-hook.sh", &script)],
+        |body| {
+            let rounds = body.to_string().matches("Polish the notes").count();
+            // Once in the state file's prompt, handed back each round.
+            match rounds {
+                0 | 1 => reply("Round one."),
+                2 => reply("Round two."),
+                _ => reply("All done. <promise>FINISHED</promise>"),
+            }
+        },
+    )
+    .await;
+    let state = app.project.path().join(".claude/ralph-loop.local.md");
+    std::fs::create_dir_all(state.parent().unwrap()).unwrap();
+    std::fs::write(
+        &state,
+        "---\nactive: true\niteration: 1\nmax_iterations: 8\ncompletion_promise: \"FINISHED\"\nstarted_at: \"x\"\n---\n\nPolish the notes\n",
+    )
+    .unwrap();
+    run(&app, "go").await;
+    let all = bodies(&app.llm).await;
+    assert!(all.len() >= 3, "it never looped: {}", all.len());
+    assert!(!state.exists(), "the promise didn't end the loop");
+    app.serving.abort();
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn an_async_hook_does_not_hold_the_turn_and_cannot_block() {
     let app = app(
