@@ -49,13 +49,16 @@ jobs:
               - web/**
             packaging:
               - .github/workflows/ci.yml
+              - Cargo.toml
               - Cargo.lock
               - crates/desktop/Cargo.toml
               - crates/desktop/build.rs
               - crates/desktop/tauri*.json
               - crates/desktop/capabilities/**
               - crates/desktop/icons/**
-              - scripts/bundle-searxng*
+              - scripts/**
+              - crates/desktop/tests/browser_permissions_cli_e2e.rs
+              - crates/desktop/src/**/*searxng*
               - web/package.json
               - web/package-lock.json
               - web/vite.config.*
