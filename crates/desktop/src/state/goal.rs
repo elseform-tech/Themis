@@ -47,6 +47,8 @@ const MAX_ADDED_REQUESTS: usize = 20;
 const MAX_ADDED_CHARS: usize = 2000;
 /// Most command evidence the goal check reads, in characters.
 const MAX_EVIDENCE_CHARS: usize = 32_000;
+/// Most changed files a goal remembers, the latest ones.
+const MAX_GOAL_FILES: usize = 30;
 /// A long command output keeps its start and its end (where results and
 /// summaries are), in characters.
 const OUTPUT_HEAD_CHARS: usize = 2_000;
@@ -272,6 +274,8 @@ impl AppState {
                 .last_activity_seq(thread_id)
                 .unwrap_or(0),
             added: Vec::new(),
+            proof: Vec::new(),
+            files: Vec::new(),
         };
         self.bump_goal_generation(thread_id);
         self.store_goal(sink, thread_id, Some(goal.clone()));
@@ -309,6 +313,8 @@ impl AppState {
                 goal.active_ms = previous.active_ms.saturating_add(stretch);
                 goal.turns = previous.turns;
                 goal.added = previous.added;
+                goal.proof = previous.proof;
+                goal.files = previous.files;
             }) {
                 goal = updated;
             }
@@ -696,7 +702,7 @@ impl AppState {
             return;
         }
         let note = self.with_open_questions(&thread_id, note);
-        let text = core_goal::turn_message(goal.turns, &goal.text, &note);
+        let text = core_goal::turn_message(goal.turns, &goal.text, &note, &goal.proof, &goal.files);
         let run_id = uuid::Uuid::new_v4().to_string();
         self.mark_goal_turn(&run_id);
         let (sent, progress) = self
@@ -791,8 +797,16 @@ impl AppState {
             GoalNoteKind::Status,
             "I'm checking that against the goal now.",
         );
-        let (evidence, changed_files, through_seq) =
-            self.turn_evidence(&thread_id, goal.checked_seq);
+        let (evidence, turn_files, through_seq) = self.turn_evidence(&thread_id, goal.checked_seq);
+        let changed_files = !turn_files.is_empty();
+        self.update_goal(sink.as_ref(), &thread_id, |goal| {
+            for file in &turn_files {
+                goal.files.retain(|known| known != file);
+                goal.files.push(file.clone());
+            }
+            let excess = goal.files.len().saturating_sub(MAX_GOAL_FILES);
+            goal.files.drain(..excess);
+        });
         let checked_goal = goal.started_at;
         let verdict = match self.goal_check_config(&thread_id).await {
             Ok((config, catalog)) => {
@@ -807,6 +821,7 @@ impl AppState {
                                 &config,
                                 &goal.text,
                                 &goal.added,
+                                &goal.proof,
                                 &answer,
                                 &evidence,
                             ),
@@ -845,6 +860,8 @@ impl AppState {
                 core_goal::GoalVerdict {
                     verdict: Verdict::NotYet,
                     reason: reason.into(),
+                    next: None,
+                    requirements: Vec::new(),
                     progress: None,
                     progressed: None,
                     told_user: None,
@@ -875,6 +892,9 @@ impl AppState {
             self.update_goal(sink.as_ref(), &thread_id, |goal| {
                 if goal.started_at == checked_goal {
                     goal.checked_seq = through_seq;
+                    if !verdict.requirements.is_empty() {
+                        goal.proof = verdict.requirements.clone();
+                    }
                 }
             });
         }
@@ -926,6 +946,11 @@ impl AppState {
                     }
                 });
                 let shown_reason = verdict.reason.clone();
+                // The person reads the reason; only the agent needs the how.
+                let agent_note = match &verdict.next {
+                    Some(next) => format!("{} {next}", verdict.reason),
+                    None => verdict.reason.clone(),
+                };
                 // Turns without progress never stop the goal; the next one is
                 // told to change course.
                 let note = if stalls >= STALL_TURNS {
@@ -936,21 +961,24 @@ impl AppState {
                         json!({"thread_id": thread_id, "run_id": run_id, "stalls": stalls}),
                     );
                     format!(
-                        "{} {}",
-                        verdict.reason,
+                        "{agent_note} {}",
                         themis_core::prompts::fill(
                             themis_core::prompts::GOAL_NOTE_STALLED,
                             &[("turns", &stalls.to_string())],
                         )
                     )
                 } else {
-                    verdict.reason
+                    agent_note
                 };
                 self.goal_note(
                     sink.as_ref(),
                     &thread_id,
                     &run_id,
-                    GoalNoteKind::Status,
+                    if check_failed {
+                        GoalNoteKind::Status
+                    } else {
+                        GoalNoteKind::NotYet
+                    },
                     &because_carrying_on(&shown_reason),
                 );
                 self.start_goal_turn(sink, thread_id, note).await;
@@ -1111,9 +1139,9 @@ impl AppState {
     /// history position read through. History after `after_seq` is read in
     /// pages; only the newest evidence text is kept, but every item counts
     /// toward "changed files" and the position.
-    fn turn_evidence(&self, thread_id: &str, after_seq: i64) -> (String, bool, i64) {
+    fn turn_evidence(&self, thread_id: &str, after_seq: i64) -> (String, Vec<String>, i64) {
         let mut evidence = String::new();
-        let mut changed = false;
+        let mut changed = Vec::new();
         let mut through = after_seq;
         while let Ok(page) =
             self.inner
@@ -1135,7 +1163,7 @@ impl AppState {
                         format!("{}{output}\n\n", if ok { "" } else { "(failed) " })
                     }
                     ThreadEvent::FilesChanged { files } => {
-                        changed |= !files.is_empty();
+                        changed.extend(files.iter().map(|file| file.path.clone()));
                         format!(
                             "Files changed: {}\n",
                             files
@@ -1357,6 +1385,8 @@ mod tests {
             failures: 0,
             checked_seq: 0,
             added: Vec::new(),
+            proof: Vec::new(),
+            files: Vec::new(),
         };
         set_status(&mut goal, GoalStatus::Paused, None);
         assert!(goal.running_since.is_none());

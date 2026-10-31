@@ -1025,6 +1025,102 @@ async fn asked_to_stop_the_agent_pauses_the_goal_and_no_check_or_turn_follows() 
     assert_eq!(checks.load(Ordering::SeqCst), 0);
 }
 
+/// What a check found proven survives into the next check and turn, which see it, and the
+/// next turn knows which files the work is in. The person never sees the note for the agent.
+#[tokio::test(flavor = "multi_thread")]
+async fn proof_and_files_carry_from_turn_to_turn() {
+    let server = MockServer::start().await;
+    let checks = Arc::new(AtomicUsize::new(0));
+    let seen_checks = Arc::clone(&checks);
+    let later_check = Arc::new(Mutex::new(String::new()));
+    let seen_later_check = Arc::clone(&later_check);
+    let later_turn = Arc::new(Mutex::new(String::new()));
+    let seen_later_turn = Arc::clone(&later_turn);
+    Mock::given(method("POST"))
+        .respond_with(move |request: &Request| {
+            let body = body(request);
+            let sent = body["messages"].to_string();
+            if is_check(&body) {
+                return if seen_checks.fetch_add(1, Ordering::SeqCst) == 0 {
+                    reply(r#"{"verdict":"not_yet","reason":"The health part isn't shown yet.","next":"Run check_health.py next.","requirements":[{"what":"Score rises","proven":true,"how":"0 to 10 after a real click"},{"what":"Health drops","proven":false}]}"#)
+                } else {
+                    *seen_later_check.lock().unwrap() = sent;
+                    reply(r#"{"verdict":"reached","reason":"Both are shown.","requirements":[{"what":"Score rises","proven":true,"how":"0 to 10 after a real click"},{"what":"Health drops","proven":true,"how":"100 to 90"}]}"#)
+                };
+            }
+            if mentions(&body, "A separate check found the goal reached") {
+                return reply("Done.");
+            }
+            if sent.contains("Turn 2.") {
+                *seen_later_turn.lock().unwrap() = sent;
+                return reply("Checked health.");
+            }
+            if sent.contains("score.txt") {
+                return reply("Wrote the score.");
+            }
+            calls("write_file", json!({"file_path": "score.txt", "content": "10"}))
+        })
+        .mount(&server)
+        .await;
+    let (state, _data, project, thread) = chat(&server).await;
+    // Changed files are read from Git, as in a real project.
+    let git = std::process::Command::new("git")
+        .args(["init", "-q"])
+        .current_dir(project.path())
+        .status()
+        .unwrap();
+    assert!(git.success());
+    state
+        .set_thread_approval_mode(
+            thread.clone(),
+            themis_core::configuration::ApprovalMode::Yolo,
+        )
+        .await
+        .unwrap();
+    let (sink, mut rx) = ChannelSink::channel();
+    let sink = Arc::new(sink);
+    state
+        .send_message(sink.clone(), thread.clone(), "/goal finish the game".into())
+        .await
+        .unwrap();
+    goal_until(&state, &thread, |status| status == GoalStatus::Reached).await;
+    let goal = state.goal_for(&thread).unwrap();
+    assert_eq!(goal.proof.len(), 2, "{goal:?}");
+    assert!(goal.proof.iter().all(|item| item.proven), "{goal:?}");
+    assert_eq!(goal.files, vec!["score.txt".to_owned()], "{goal:?}");
+    let turn = later_turn.lock().unwrap().clone();
+    assert!(turn.contains("Score rises"), "{turn}");
+    assert!(turn.contains("0 to 10 after a real click"), "{turn}");
+    assert!(turn.contains("score.txt"), "{turn}");
+    assert!(turn.contains("Run check_health.py next."), "{turn}");
+    let check = later_check.lock().unwrap().clone();
+    assert!(check.contains("0 to 10 after a real click"), "{check}");
+    let mut seen = Vec::new();
+    until(
+        &mut rx,
+        &mut seen,
+        |event| matches!(event, ThreadEvent::Finished { result, .. } if result == "Done."),
+    )
+    .await;
+    let notes: Vec<_> = seen
+        .iter()
+        .filter_map(|event| match event {
+            ThreadEvent::GoalNote { reason, .. } => Some(reason.clone()),
+            _ => None,
+        })
+        .collect();
+    assert!(
+        notes
+            .iter()
+            .any(|note| note.contains("health part isn't shown yet")),
+        "{notes:?}"
+    );
+    assert!(
+        !notes.iter().any(|note| note.contains("check_health.py")),
+        "{notes:?}"
+    );
+}
+
 /// Asked in the chat to remove the goal, the agent removes it: no goal is left, and
 /// no check or further turn follows.
 #[tokio::test(flavor = "multi_thread")]

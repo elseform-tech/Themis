@@ -91,6 +91,14 @@
 .themis-queue-input:focus { outline: 2px solid color-mix(in srgb, var(--themis-accent) 55%, transparent); outline-offset: 0; }
 
 /* Conversation: goal turn dividers and goal notes. */
+.themis-goal-count { white-space: nowrap; }
+.themis-goal-proof { display: flex; flex-direction: column; gap: 4px; margin: 0; padding: 0 12px 10px 40px; list-style: none; font-size: .8125rem; line-height: 1.45; color: var(--themis-text); }
+.themis-goal-proof li { display: flex; gap: 8px; }
+.themis-goal-proof li.is-proven { color: var(--themis-text-2); }
+.themis-goal-proof-mark { flex: none; width: 1em; text-align: center; color: var(--themis-text-2); }
+.themis-goal-proof li.is-proven .themis-goal-proof-mark { color: var(--themis-success); }
+.themis-goal-proof-how { color: var(--themis-text-2); }
+.themis-thread-msg--rejected .themis-thread-text, .themis-thread-msg--rejected p, .themis-thread-msg--rejected li { color: var(--themis-text-2); }
 .themis-goal-status { margin: 0; font-size: .875rem; line-height: 1.6; color: var(--themis-accent); }
 .themis-goal-turn { width: 100%; height: 1px; margin: 4px 0; border: 0; background: var(--themis-border-subtle); }
 

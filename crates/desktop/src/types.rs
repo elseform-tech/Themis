@@ -369,6 +369,12 @@ pub struct Goal {
     /// oldest first; the goal check counts them as part of the goal.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub added: Vec<String>,
+    /// What the goal asks for and what is proven, as the last decided check saw it.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub proof: Vec<themis_core::goal::GoalRequirement>,
+    /// Files changed while working on this goal, so a new turn knows where its work is.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub files: Vec<String>,
 }
 
 /// The kind of a goal note in the chat.

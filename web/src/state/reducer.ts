@@ -364,6 +364,14 @@ function userMessage(text: string, runId: string | undefined, attachments?: stri
   };
 }
 
+/** Marks the replies of the goal turn the check just rejected: everything since it began. */
+function markTurnRejected(state: AppState, threadId: string): AppState {
+  const rows = state.messages[threadId] ?? [];
+  const start = rows.map(row => row.role).lastIndexOf("user");
+  const marked = rows.map((row, index) => index > start && row.role === "assistant" && !row.tool && row.text ? { ...row, goalRejected: true } : row);
+  return { ...state, messages: { ...state.messages, [threadId]: marked } };
+}
+
 function appendMessage(
   state: AppState,
   threadId: string,
@@ -494,8 +502,10 @@ export function applyThreadEvent(
       return { ...state, queues: { ...state.queues, [threadId]: event.queue } };
     case "goal_changed":
       return { ...state, goals: { ...state.goals, [threadId]: event.goal } };
-    case "goal_note":
-      return appendMessage(state, threadId, { id: newId("msg"), role: "system", text: event.reason, runId, goalStatus: true });
+    case "goal_note": {
+      const noted = event.outcome === "not_yet" ? markTurnRejected(state, threadId) : state;
+      return appendMessage(noted, threadId, { id: newId("msg"), role: "system", text: event.reason, runId, goalStatus: true });
+    }
     case "question_asked": {
       // A question asked again on its open topic updates its box where it was first asked.
       const rows = state.messages[threadId] ?? [];
