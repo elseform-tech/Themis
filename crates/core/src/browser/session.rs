@@ -2714,8 +2714,9 @@ fn relative_path(
     delta: (f64, f64),
     size: (f64, f64),
 ) -> Result<RelativePath, String> {
-    let (dx, dy) = delta;
-    let (width, height) = size;
+    // The browser counts whole pixels, so a half anywhere would lose one on every move.
+    let (dx, dy) = (delta.0.round(), delta.1.round());
+    let (width, height) = (size.0.floor(), size.1.floor());
     if !dx.is_finite() || !dy.is_finite() {
         return Err("dx and dy must be numbers".to_owned());
     }
@@ -2723,7 +2724,10 @@ fn relative_path(
         return Err("the page has no visible size yet; take a browser_snapshot".to_owned());
     }
     // A page that shrank may have left the last position outside it.
-    let from = (from.0.min(width - 1.0), from.1.min(height - 1.0));
+    let from = (
+        from.0.round().min(width - 1.0),
+        from.1.round().min(height - 1.0),
+    );
     let (x, y) = (from.0 + dx, from.1 + dy);
     if (0.0..width).contains(&x) && (0.0..height).contains(&y) {
         return Ok(RelativePath {
@@ -2749,9 +2753,9 @@ fn relative_path(
 /// close to the middle as the distance allows.
 fn entry(delta: f64, size: f64) -> f64 {
     if delta > 0.0 {
-        (delta - 1.0).clamp(0.0, size / 2.0)
+        (delta - 1.0).clamp(0.0, (size / 2.0).floor())
     } else {
-        (size + delta).max(size / 2.0)
+        (size + delta).max((size / 2.0).floor())
     }
 }
 
@@ -2914,8 +2918,8 @@ mod tests {
                 (0.0, -5000.0),
                 (1.0, 0.0),
                 (-1.0, 0.0),
-                (0.0, 0.5),
-                (0.0, -0.5),
+                (0.0, 2.0),
+                (0.0, -2.0),
                 (900.0, 900.0),
                 (-1300.0, 20.0),
                 (3.0, -2000.0),
@@ -2935,6 +2939,13 @@ mod tests {
             }
         }
         assert!(super::relative_path((0.0, 0.0), (f64::NAN, 0.0), PAGE).is_err());
+        // The browser counts whole pixels, so half a pixel anywhere would lose one every move.
+        let odd = super::relative_path((640.5, 400.5), (2000.0, -3.0), (1281.0, 801.0)).unwrap();
+        let start = odd.start.unwrap();
+        for value in [start.0, start.1, odd.end.0, odd.end.1] {
+            assert_eq!(value, value.round(), "{odd:?}");
+        }
+        assert_eq!(odd.end.0 - start.0, 2000.0);
     }
 
     #[test]
