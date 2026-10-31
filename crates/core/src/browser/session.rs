@@ -1499,7 +1499,19 @@ impl ChatBrowser {
     pub async fn open(self: &Arc<Self>, url: &str, new_tab: bool) -> Result<ActionReport, String> {
         let mut inner = self.inner.lock().await;
         if new_tab && !inner.tabs.is_empty() {
-            self.new_tab(&mut inner).await?;
+            // The same page again reloads its tab: agents retrying a page piled up tabs, and every
+            // one of them keeps running.
+            let open_already = inner
+                .tabs
+                .iter()
+                .position(|tab| tab.state.lock().unwrap_or_else(|e| e.into_inner()).url == url);
+            match open_already {
+                Some(index) => {
+                    inner.current = index;
+                    self.remember(&inner);
+                }
+                None => self.new_tab(&mut inner).await?,
+            }
         }
         let (cdp, session) = self.current(&mut inner).await?;
         let navigated = cdp
@@ -1647,25 +1659,38 @@ impl ChatBrowser {
             .ok_or("no page is open; use browser_open first")?
             .session_id
             .clone();
-        let metrics = browser
-            .cdp
-            .call(Some(&session), "Page.getLayoutMetrics", json!({}))
-            .await?;
-        let view = &metrics["cssVisualViewport"];
-        let width = view["clientWidth"].as_f64().unwrap_or(0.0);
-        let height = view["clientHeight"].as_f64().unwrap_or(0.0);
-        if !(x.is_finite()
-            && y.is_finite()
-            && (0.0..width).contains(&x)
-            && (0.0..height).contains(&y))
-        {
-            return Err(format!(
-                "the point ({x}, {y}) is outside the visible page ({}×{} CSS pixels); take a browser_screenshot and use a point inside it",
-                width.round(),
-                height.round()
-            ));
-        }
+        check_visible_point(&browser.cdp, &session, x, y).await?;
         click_at(&browser.cdp, &session, x, y, if double { 2 } else { 1 }).await?;
+        self.settle(&inner, false).await;
+        let report = self.report(&mut inner, None).await;
+        drop(inner);
+        self.publish_state().await;
+        report
+    }
+
+    /// Moves the mouse to a point of the visible page without clicking, for aiming in games and
+    /// for hover menus. The page sees real movement.
+    pub async fn move_point(self: &Arc<Self>, x: f64, y: f64) -> Result<ActionReport, String> {
+        let mut inner = self.inner.lock().await;
+        let browser = inner
+            .browser
+            .clone()
+            .ok_or("no page is open; use browser_open first")?;
+        let session = inner
+            .tabs
+            .get(inner.current)
+            .ok_or("no page is open; use browser_open first")?
+            .session_id
+            .clone();
+        check_visible_point(&browser.cdp, &session, x, y).await?;
+        browser
+            .cdp
+            .call(
+                Some(&session),
+                "Input.dispatchMouseEvent",
+                json!({"type": "mouseMoved", "x": x, "y": y}),
+            )
+            .await?;
         self.settle(&inner, false).await;
         let report = self.report(&mut inner, None).await;
         drop(inner);
@@ -2536,6 +2561,24 @@ async fn resolve_object(cdp: &Cdp, session: &str, backend: i64) -> Result<String
 }
 
 /// Scrolls an element into view and returns its center in CSS pixels.
+/// Refuses a point outside the visible page, in CSS pixels.
+async fn check_visible_point(cdp: &Cdp, session: &str, x: f64, y: f64) -> Result<(), String> {
+    let metrics = cdp
+        .call(Some(session), "Page.getLayoutMetrics", json!({}))
+        .await?;
+    let view = &metrics["cssVisualViewport"];
+    let width = view["clientWidth"].as_f64().unwrap_or(0.0);
+    let height = view["clientHeight"].as_f64().unwrap_or(0.0);
+    if x.is_finite() && y.is_finite() && (0.0..width).contains(&x) && (0.0..height).contains(&y) {
+        return Ok(());
+    }
+    Err(format!(
+        "the point ({x}, {y}) is outside the visible page ({}×{} CSS pixels); take a browser_screenshot",
+        width.round(),
+        height.round()
+    ))
+}
+
 async fn element_center(cdp: &Cdp, session: &str, backend: i64) -> Result<(f64, f64), String> {
     let _ = cdp
         .call(

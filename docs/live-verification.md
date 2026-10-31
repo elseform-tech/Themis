@@ -110,6 +110,7 @@ full tour.
 | `tool:browser_type` | tour | `crates/core/src/browser` | Ask the agent to type into the address or a search field. |
 | `tool:browser_select` | tour | `crates/core/src/browser` | Ask the agent to pick an option on a page with a select box. |
 | `tool:browser_press` | tour | `crates/core/src/browser` | Ask the agent to press Enter or Escape on a page. |
+| `tool:browser_move` | tour | `crates/core/src/browser` | Ask the agent to aim in a first-person page: the view turns with the mouse. |
 | `tool:browser_scroll` | tour | `crates/core/src/browser` | Ask the agent to scroll a long page. |
 | `tool:browser_tabs` | tour | `crates/core/src/browser` | Ask the agent to list and switch tabs. |
 | `tool:browser_screenshot` | tour | `crates/core/src/browser` | Goal screenshots the page. |

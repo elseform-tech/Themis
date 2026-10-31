@@ -174,6 +174,8 @@ pub const RUNTIME_EMPTY_ANSWER: &str = include_str!("../builtins/prompts/runtime
 /// Asked once when a run that used tools ends on a short progress line instead of a summary.
 pub const RUNTIME_TURN_SUMMARY: &str = include_str!("../builtins/prompts/runtime-turn-summary.md");
 /// Warning added after three unchanged tool results in a row.
+pub const RUNTIME_REPEATED_ACTION: &str =
+    include_str!("../builtins/prompts/runtime-repeated-action.md");
 pub const RUNTIME_LOOP_WARNING: &str = include_str!("../builtins/prompts/runtime-loop-warning.md");
 /// Note on a result already returned earlier in the run.
 pub const RUNTIME_REPEAT_NOTE: &str = include_str!("../builtins/prompts/runtime-repeat-note.md");
