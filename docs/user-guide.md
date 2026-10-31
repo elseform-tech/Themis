@@ -70,7 +70,10 @@ levels are listed.
   check.py**, open while one of them runs; expand it, then a tool call, to inspect its
   input and output. Every turn that worked with tools ends with a message saying what it
   did: when the agent stops on a short progress line instead ("Continuing through the
-  files."), Themis asks it once to continue or sum up. Completed replies offer
+  files."), Themis asks it once to continue or sum up. A reply that only announces its
+  next step ("Let me check the console next.") or writes a tool call out as text also
+  gets one more try before the turn ends; an offer or a question to you ends it.
+  Completed replies offer
   **Copy** beside the model and the run's duration. Public text streams as it
   arrives; the model's private reasoning is never shown.
   Thinking/using-tool status and elapsed time remain visible during gaps.

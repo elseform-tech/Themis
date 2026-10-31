@@ -139,6 +139,7 @@ full tour.
 | `feature:yolo` | tour | `web/src/lib/yolo.ts`, `crates/core/src/sandbox.rs` | Switch the shield to YOLO: no prompts; a deny rule still blocks. |
 | `feature:stop` | tour | `web/src/screens/ThreadComposer.tsx` | Esc twice stops the run with the hint shown first. |
 | `feature:turn-summary` | smoke | `crates/core/src/runtime.rs` | Every turn ends with a short natural summary; thinking folds only after the turn. |
+| `feature:turn-end-guard` | tour | `crates/core/src/runtime/turn_end.rs`, `crates/core/builtins/prompts/runtime-turn-end-guard.md` | On a free model that narrates, run a multi-step goal: turns no longer stop on a line that only announces the next step or on a tool call written as text. The tool runs after the line, the line shows once, an offer or a question to you ends the turn, and `logs/diagnostics-0.jsonl` holds `turn_end_guard` records with a reason and no reply text. |
 | `feature:model-picker` | smoke | `web/src/screens/ThreadHeader.tsx` | Change the model and effort; the next run uses them. |
 | `feature:attachments` | tour | `web/src/screens/AttachmentPreview.tsx`, `crates/desktop/src/state/attachments.rs` | Attach a file with +; the agent reads it. |
 | `feature:mentions` | tour | `web/src/components/PromptInput.tsx` | `/` lists skills, `@` lists plugins; the chosen one is used. |
