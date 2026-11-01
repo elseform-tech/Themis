@@ -664,7 +664,8 @@ fn native_bundle_inspection_validates_before_reporting_compatibility() {
 fn unsupported_only_imports_cannot_create_empty_installed_packages() {
     let global = tempfile::tempdir().unwrap();
     let store = PluginStore::new(global.path().into(), None);
-    let input = r#"{"mcpServers":{"legacy":{"type":"websocket","url":"https://example.com/events"}}}"#;
+    let input =
+        r#"{"mcpServers":{"legacy":{"type":"websocket","url":"https://example.com/events"}}}"#;
     assert_eq!(
         store
             .inspect_mcp_json("legacy", input)
