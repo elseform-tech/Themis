@@ -206,5 +206,6 @@
     "allow_writes": true,                     // false keeps every subagent read-only
     "allow_mcp": true,                        // false gives no subagent MCP tools
     "allow_web": true,                        // false gives no subagent the web tools
+    "allow_nested": true,                     // false stops subagents starting subagents (a plugin's profile asks for it by naming Agent or Task)
   },
 }

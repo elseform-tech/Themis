@@ -590,7 +590,7 @@ export function applyThreadEvent(
       return { ...state, messages: { ...state.messages, [threadId]: updated } };
     }
     case "subagent_started": {
-      const entry: SubagentEntry = { id: event.id, name: event.name, brief: event.brief, model: event.model, confined: event.confined, writePaths: event.write_paths ?? [], connections: event.connections, web: event.web, shellScopes: event.shell_scopes, status: "running", text: "", toolCalls: 0, startedAt: measureDuration ? Date.now() : undefined, at: event.at };
+      const entry: SubagentEntry = { id: event.id, name: event.name, brief: event.brief, model: event.model, confined: event.confined, writePaths: event.write_paths ?? [], connections: event.connections, web: event.web, shellScopes: event.shell_scopes, startedBy: event.started_by, status: "running", text: "", toolCalls: 0, startedAt: measureDuration ? Date.now() : undefined, at: event.at };
       const rows = state.messages[threadId] ?? [];
       // One stack per reply: every subagent the run starts joins the first one.
       const index = rows.findIndex(row => row.subagents && row.runId === runId);

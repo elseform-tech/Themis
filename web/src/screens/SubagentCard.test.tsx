@@ -24,8 +24,8 @@ const tauri = vi.hoisted(() => ({
     { kind: "finished", result: "Bug found at runtime.rs:3496." },
   ]),
   stopSubagent: vi.fn(async () => undefined),
-  getSubagentSettings: vi.fn(async () => ({ settings: { enabled: true, max_parallel: 3, max_turns: 40, model: null, allow_writes: true, allow_mcp: true, allow_web: true }, revision: "r1" })),
-  updateSubagentSettings: vi.fn(async (changes: object) => ({ settings: { enabled: true, max_parallel: 3, max_turns: 40, model: null, allow_writes: true, allow_mcp: true, allow_web: true, ...changes }, revision: "r2" })),
+  getSubagentSettings: vi.fn(async () => ({ settings: { enabled: true, max_parallel: 3, max_turns: 40, model: null, allow_writes: true, allow_mcp: true, allow_web: true, allow_nested: true }, revision: "r1" })),
+  updateSubagentSettings: vi.fn(async (changes: object) => ({ settings: { enabled: true, max_parallel: 3, max_turns: 40, model: null, allow_writes: true, allow_mcp: true, allow_web: true, allow_nested: true, ...changes }, revision: "r2" })),
   listGoModels: vi.fn(async () => [{ id: "glm-5" }, { id: "beam-free" }]),
 }));
 vi.mock("../lib/tauri", () => tauri);
@@ -119,6 +119,15 @@ describe("subagent models", () => {
     expect(modelNote(agent({ model: "claude-haiku", ranOn: "glm-5" }), "glm-5")).toBe("claude-haiku → glm-5");
   });
 
+  it("says in the detail which subagent started it", async () => {
+    const state = reducer(initialState, envelope({ kind: "subagent_started", id: "a1", name: "Inner", brief: "b", model: "glm-5", confined: true, started_by: "Helper" }));
+    const entry = state.messages[thread]!.find(row => row.subagents)!.subagents![0]!;
+    expect(entry.startedBy).toBe("Helper");
+    render(<SubagentDetail threadId={thread} agent={agent({ model: "glm-5", startedBy: entry.startedBy, status: "finished", seconds: 9 })} runLive={false} onBack={() => {}} />);
+    await act(async () => {});
+    expect(screen.getByText(/^glm-5 · Started by Helper · Read only/)).toBeInTheDocument();
+  });
+
   it("says in the detail which model it fell back to", async () => {
     render(<SubagentDetail threadId={thread} agent={agent({ model: "claude-haiku", ranOn: "glm-5", status: "finished", seconds: 9 })} runLive={false} onBack={() => {}} />);
     await act(async () => {});
@@ -206,6 +215,9 @@ describe("Settings › Subagents", () => {
     fireEvent.click(screen.getByRole("checkbox", { name: "Allow web" }));
     await act(async () => {});
     expect(tauri.updateSubagentSettings).toHaveBeenLastCalledWith({ allow_web: false }, "r2");
+    fireEvent.click(screen.getByRole("checkbox", { name: "Allow subagents to start subagents" }));
+    await act(async () => {});
+    expect(tauri.updateSubagentSettings).toHaveBeenLastCalledWith({ allow_nested: false }, "r2");
     // Allowed models: added from the list, at most three, removed one by one.
     fireEvent.change(screen.getByRole("combobox", { name: "Add model" }), { target: { value: "glm-5" } });
     await act(async () => {});

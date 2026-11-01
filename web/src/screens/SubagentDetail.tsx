@@ -112,6 +112,7 @@ export function SubagentDetail({ threadId, agent, runLive, onBack }: { threadId:
   const time = elapsed(agent, now);
   const meta = [
     agent.ranOn ? `${agent.ranOn} (${agent.model} unavailable)` : agent.model,
+    agent.startedBy ? `Started by ${agent.startedBy}` : "",
     agent.writePaths.length ? `Writes ${agent.writePaths.join(", ")}` : agent.connections?.length || agent.web ? "Files read only" : "Read only",
     agent.connections?.length ? `Connections: ${agent.connections.join(", ")}` : "",
     agent.web ? "Web" : "",

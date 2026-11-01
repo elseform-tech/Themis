@@ -298,6 +298,9 @@ pub enum ThreadEvent {
         /// What its shell is limited to, as its profile wrote them; empty is no limit.
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         shell_scopes: Vec<String>,
+        /// The name of the subagent that started it; none when the main agent did.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        started_by: Option<String>,
         /// When it was started (RFC 3339); groups finished work by request in Tasks.
         #[serde(default, skip_serializing_if = "String::is_empty")]
         at: String,

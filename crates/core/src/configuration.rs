@@ -694,6 +694,8 @@ pub struct SubagentsConfig {
     pub allow_mcp: bool,
     /// `false` gives no subagent the web tools, whatever a profile names.
     pub allow_web: bool,
+    /// Whether a subagent whose profile names `Agent` or `Task` may start subagents of its own.
+    pub allow_nested: bool,
 }
 
 /// Plugin hooks (`hooks`); the hooks themselves are in the plugin registry, this is how they may
@@ -742,6 +744,7 @@ impl Default for SubagentsConfig {
             allow_writes: true,
             allow_mcp: true,
             allow_web: true,
+            allow_nested: true,
         }
     }
 }
@@ -753,7 +756,13 @@ fn check_subagents_restriction(
     layer: &Value,
     origin: &str,
 ) -> Result<()> {
-    for field in ["enabled", "allow_writes", "allow_mcp", "allow_web"] {
+    for field in [
+        "enabled",
+        "allow_writes",
+        "allow_mcp",
+        "allow_web",
+        "allow_nested",
+    ] {
         if let Some(value) = layer.pointer(&format!("/subagents/{field}")) {
             ensure!(
                 value == &Value::Bool(false),
@@ -2095,7 +2104,8 @@ fn base_schema() -> Value {
                 "models":{"type":"array","maxItems":3,"uniqueItems":true,"items":{"type":"string","minLength":1,"maxLength":256},"default":[],"description":"Up to three more models the agent may give a subagent; any other is refused"},
                 "allow_writes":{"type":"boolean","default":true,"description":"false keeps every subagent read-only"},
                 "allow_mcp":{"type":"boolean","default":true,"description":"false gives no subagent MCP tools"},
-                "allow_web":{"type":"boolean","default":true,"description":"false gives no subagent the web tools"}
+                "allow_web":{"type":"boolean","default":true,"description":"false gives no subagent the web tools"},
+                "allow_nested":{"type":"boolean","default":true,"description":"false stops subagents starting subagents, whatever a plugin's profile names. A project or run layer may only set it to false."}
             }},
             "hooks":{"type":"object","additionalProperties":false,"properties":{
                 "max_wakes":{"type":"integer","minimum":0,"maximum":10,"default":3,"description":"Turns in a row a finished background plugin hook may start in an idle chat before you write again; 0 never starts one, and what a hook reports waits for the next turn"}
