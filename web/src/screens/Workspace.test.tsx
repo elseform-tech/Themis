@@ -517,7 +517,7 @@ describe("Workspace journey", () => {
       fireEvent.scroll(stream);
     };
     await act(async () => scrollTo(1500));
-    await act(async () => scrollTo(100));
+    await act(async () => { fireEvent.wheel(stream, { deltaY: -1400 }); scrollTo(100); });
     const away = document.querySelector(".themis-run-progress") as HTMLElement;
     expect(away).toHaveClass("is-away");
     expect(away).toHaveTextContent(/^…$/);

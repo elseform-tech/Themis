@@ -4,13 +4,17 @@ import { readSession, writeSession } from "../state/session";
 /** Within this many pixels of the end still counts as reading the latest message. */
 export const FOLLOW_MARGIN = 64;
 
+/** How long after a wheel, touch, key or scrollbar press a scroll counts as the person's. */
+const PERSON_MS = 800;
+
 /**
- * Only moving up leaves the latest message. Content growing, a panel opening or a row folding can
- * put the view far from the end without the person having done anything.
+ * Only a person moving up leaves the latest message. Content growing, a panel opening or a row
+ * folding can put the view far from the end, and the browser reports that a moment later, when
+ * a position looks like a move up.
  */
-export function stillFollowing({ before, top, distance, following }: { before: number; top: number; distance: number; following: boolean }): boolean {
+export function stillFollowing({ before, top, distance, following, person }: { before: number; top: number; distance: number; following: boolean; person: boolean }): boolean {
   if (distance < FOLLOW_MARGIN) return true;
-  return top < before ? false : following;
+  return person && top < before ? false : following;
 }
 
 const distanceFromEnd = (element: HTMLElement) => element.scrollHeight - element.scrollTop - element.clientHeight;
@@ -22,9 +26,11 @@ export function useFollowLatest(threadId: string, output: unknown) {
   const endRef = useRef<HTMLDivElement>(null);
   const following = useRef(true);
   const lastTop = useRef(0);
+  const personAt = useRef(0);
   /** Away from the latest output: the status shrinks, so it doesn't cover what's being read. */
   const [scrolledUp, setScrolledUp] = useState(false);
 
+  const person = useCallback(() => { personAt.current = Date.now(); }, []);
   const toEnd = useCallback(() => {
     const element = scrollRef.current;
     if (!element || !following.current) return;
@@ -55,10 +61,19 @@ export function useFollowLatest(threadId: string, output: unknown) {
     return () => observer.disconnect();
   }, [toEnd]);
 
+  // Listened to here rather than as props so a wheel stays a passive, smooth scroll.
+  useEffect(() => {
+    const element = scrollRef.current;
+    if (!element) return;
+    const kinds = ["wheel", "touchmove", "pointerdown", "keydown"] as const;
+    kinds.forEach(kind => element.addEventListener(kind, person, { passive: true }));
+    return () => kinds.forEach(kind => element.removeEventListener(kind, person));
+  }, [person]);
+
   const onScroll = useCallback((event: UIEvent<HTMLDivElement>) => {
     const element = event.currentTarget;
     const top = element.scrollTop;
-    following.current = stillFollowing({ before: lastTop.current, top, distance: distanceFromEnd(element), following: following.current });
+    following.current = stillFollowing({ before: lastTop.current, top, distance: distanceFromEnd(element), following: following.current, person: Date.now() - personAt.current < PERSON_MS });
     lastTop.current = top;
     setScrolledUp(!following.current);
     writeSession(`scroll:${threadId}`, following.current ? null : top);

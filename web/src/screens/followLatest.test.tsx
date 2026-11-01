@@ -36,17 +36,25 @@ function sized(scroller: HTMLElement, height: number, top: number) {
   Object.defineProperty(scroller, "clientHeight", { configurable: true, value: 500 });
   scroller.scrollTop = top;
 }
+/** A person's wheel, then the scroll it causes. */
+const personScrollsTo = (scroller: HTMLElement, top: number) => act(() => {
+  scroller.dispatchEvent(new WheelEvent("wheel", { bubbles: true, deltaY: top - scroller.scrollTop }));
+  scroller.scrollTop = top;
+  scroller.dispatchEvent(new Event("scroll", { bubbles: true }));
+});
 const scrollTo = (scroller: HTMLElement, top: number) => act(() => {
   scroller.scrollTop = top;
   scroller.dispatchEvent(new Event("scroll", { bubbles: true }));
 });
 const contentResized = () => act(() => resized.forEach(callback => callback()));
 
-it("a change in layout never stops following, only moving up does", () => {
-  expect(stillFollowing({ before: 1000, top: 1000, distance: FOLLOW_MARGIN + 100, following: true })).toBe(true);
-  expect(stillFollowing({ before: 1000, top: 900, distance: FOLLOW_MARGIN + 100, following: true })).toBe(false);
-  expect(stillFollowing({ before: 1000, top: 1100, distance: FOLLOW_MARGIN + 100, following: false })).toBe(false);
-  expect(stillFollowing({ before: 1000, top: 900, distance: 0, following: false })).toBe(true);
+it("a change in layout never stops following, only a person moving up does", () => {
+  const away = FOLLOW_MARGIN + 100;
+  expect(stillFollowing({ before: 1000, top: 1000, distance: away, following: true, person: false })).toBe(true);
+  expect(stillFollowing({ before: 1000, top: 900, distance: away, following: true, person: false })).toBe(true);
+  expect(stillFollowing({ before: 1000, top: 900, distance: away, following: true, person: true })).toBe(false);
+  expect(stillFollowing({ before: 1000, top: 1100, distance: away, following: false, person: true })).toBe(false);
+  expect(stillFollowing({ before: 1000, top: 900, distance: 0, following: false, person: false })).toBe(true);
 });
 
 it("stays on the latest message when something above changes height", () => {
@@ -66,7 +74,7 @@ it("leaves the view alone once the person has scrolled up", () => {
   const scroller = getByTestId("scroller");
   sized(scroller, 2000, 1500);
   scrollTo(scroller, 1500);
-  scrollTo(scroller, 700);
+  personScrollsTo(scroller, 700);
   sized(scroller, 2600, 700);
   contentResized();
   expect(scroller.scrollTop).toBe(700);
@@ -90,8 +98,21 @@ it("coming back to a chat the person had scrolled up in keeps their place", () =
   const scroller = first.getByTestId("scroller");
   sized(scroller, 2000, 1500);
   scrollTo(scroller, 1500);
-  scrollTo(scroller, 700);
+  personScrollsTo(scroller, 700);
   first.unmount();
   const second = render(<Chat threadId="a" />);
   expect(second.getByTestId("scroller").scrollTop).toBe(700);
+});
+
+it("only a person leaves the latest message: a late scroll event from the layout doesn't", () => {
+  const { getByTestId } = render(<Chat threadId="a" />);
+  const scroller = getByTestId("scroller");
+  sized(scroller, 2000, 1500);
+  scrollTo(scroller, 1500);
+  // The content shrank then grew back: the browser reports the clamped position afterwards.
+  sized(scroller, 2600, 1500);
+  scrollTo(scroller, 900);
+  expect(scroller.dataset.away).toBe("false");
+  contentResized();
+  expect(scroller.scrollTop).toBe(2600);
 });
