@@ -759,7 +759,7 @@ describe("Workspace journey", () => {
     expect(document.documentElement.dataset.palette).toBe("system");
     fireEvent.click(screen.getByRole("button", { name: "Ink" }));
     await act(async () => fireEvent.click(screen.getByRole("button", { name: "Apply" })));
-    expect(bridge.updateSettings).toHaveBeenLastCalledWith({ theme: "dark", theme_palette: "ink", font_family: "serif", text_size: 13 });
+    expect(bridge.updateSettings).toHaveBeenLastCalledWith({ theme: "dark", theme_palette: "ink", font_family: "serif", text_size: 12 });
     fireEvent.click(screen.getByRole("button", { name: "Forest" }));
     fireEvent.click(screen.getByRole("button", { name: "Back to app" }));
     expect(document.documentElement.dataset.palette).toBe("ink");

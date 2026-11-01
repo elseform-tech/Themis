@@ -1,4 +1,4 @@
-.themis-response { font-size: .875rem; line-height: 1.6; overflow-wrap: anywhere; min-width: 0; }
+.themis-response { font-size: .8333rem; line-height: 1.6; overflow-wrap: anywhere; min-width: 0; }
 /* Prose keeps an even right edge; hyphens stop the gaps justifying can leave between words. */
 .themis-response p, .themis-response li { text-align: justify; hyphens: auto; }
 /* In a narrow chat there is too little on a line to stretch: justifying leaves wide gaps between words. */
@@ -22,7 +22,7 @@
 .themis-code-link:hover code { background: var(--themis-border); }
 .themis-code-panel { position: relative; margin: 8px 0; border-radius: 6px; background: color-mix(in srgb, var(--themis-text) 4%, transparent); }
 /* The language and Copy show only when wanted, over the block's corner. */
-.themis-code-toolbar { position: absolute; top: 4px; right: 6px; z-index: 1; display: flex; align-items: center; gap: 6px; padding: 1px 4px; border-radius: 4px; background: var(--themis-surface); font-size: .6875rem; color: var(--themis-text-3); opacity: 0; transition: opacity 120ms ease; }
+.themis-code-toolbar { position: absolute; top: 4px; right: 6px; z-index: 1; display: flex; align-items: center; gap: 6px; padding: 1px 4px; border-radius: 4px; background: var(--themis-surface); font-size: .75rem; color: var(--themis-text-3); opacity: 0; transition: opacity 120ms ease; }
 .themis-code-panel:hover > .themis-code-toolbar, .themis-code-panel:focus-within > .themis-code-toolbar { opacity: 1; }
 @media (pointer: coarse) { .themis-code-toolbar { opacity: 1; } }
 .themis-code-toolbar button { border: 0; background: none; color: inherit; cursor: pointer; font: inherit; padding: 1px 2px; }

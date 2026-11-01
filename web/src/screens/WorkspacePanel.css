@@ -21,7 +21,7 @@
 .themis-workspace-tabs button:focus-visible, /* The selected view: brighter and bolder, unboxed. */
 .themis-workspace-tabs button[aria-pressed="true"] { color: var(--themis-text); }
 .themis-workspace-tabs button[aria-pressed="true"] svg { stroke-width: 2.3; }
-.themis-workspace-count { position: absolute; top: 1px; right: 0; min-width: 14px; padding: 0 3px; border-radius: 7px; background: var(--themis-sidebar-bg); color: var(--themis-accent); font-size: .625rem; font-weight: 700; line-height: 14px; font-variant-numeric: tabular-nums; }
+.themis-workspace-count { position: absolute; top: 1px; right: 0; min-width: 14px; padding: 0 3px; border-radius: 7px; background: var(--themis-sidebar-bg); color: var(--themis-accent); font-size: .75rem; font-weight: 700; line-height: 14px; font-variant-numeric: tabular-nums; }
 .themis-workspace-body { flex: 1; min-height: 0; display: flex; flex-direction: column; padding: 8px 10px 10px 14px; overflow: hidden; }
 /* The page gets the room: the Browser tab keeps only a thin edge. */
 .themis-workspace-body.is-browser { padding: 6px 8px 8px 12px; }
@@ -63,7 +63,7 @@
 .themis-files-view .themis-codeblock-lineno { text-indent: 0; }
 /* Tasks tab: this chat's runs and automations. */
 .themis-tasks { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 14px; overflow: auto; }
-.themis-tasks-heading { margin: 0 0 2px; color: var(--themis-text-3); font-size: .6875rem; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; }
+.themis-tasks-heading { margin: 0 0 2px; color: var(--themis-text-3); font-size: .75rem; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; }
 .themis-task-row { grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; column-gap: 10px; }
 .themis-task-row-icon { display: grid; place-items: center; width: 16px; height: 16px; }
 .themis-task-row-text { display: grid; gap: 2px; min-width: 0; }

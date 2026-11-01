@@ -64,7 +64,7 @@
 .themis-integration-capabilities { font-size: .75rem; margin: .25rem 0; color: var(--themis-text-2); }
 .themis-card-footer { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: .5rem; margin-top: auto; }
 .themis-card-footer button { font-size: .8rem; text-decoration: underline; text-underline-offset: .2em; }
-.themis-compatibility-badge { display: inline-block; width: fit-content; font-size: .72rem; font-weight: 500; line-height: 1.4; padding: .25rem .55rem; border: 1px solid var(--themis-border); border-radius: 1rem; color: var(--themis-text-2); }
+.themis-compatibility-badge { display: inline-block; width: fit-content; font-size: .75rem; font-weight: 500; line-height: 1.4; padding: .25rem .55rem; border: 1px solid var(--themis-border); border-radius: 1rem; color: var(--themis-text-2); }
 .themis-compatibility-badge.supported { color: light-dark(#21633d, #8cdbab); background: light-dark(#e7f5ec, #193c29); border-color: light-dark(#a5cfb4, #3b7350); }
 .themis-compatibility-badge.partial { color: light-dark(#795009, #f3cc7c); background: light-dark(#fff4d9, #41351c); border-color: light-dark(#ddc18c, #816833); }
 .themis-compatibility-badge.unsupported, .themis-compatibility-badge.failed { color: light-dark(#a02e3a, #f3a1aa); background: light-dark(#fcecef, #48252c); border-color: light-dark(#e4afb7, #884b55); }

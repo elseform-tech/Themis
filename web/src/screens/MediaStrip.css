@@ -8,7 +8,7 @@
 .themis-media-tile:focus-visible .themis-media-frame { box-shadow: 0 0 0 2px var(--themis-accent); }
 .themis-media-tile:focus-visible { outline: none; }
 .themis-media-play { position: absolute; display: grid; place-items: center; width: 28px; height: 28px; border-radius: 50%; background: rgba(19, 19, 20, .78); color: #fff; }
-.themis-media-caption { width: 0; min-width: 100%; overflow: hidden; color: var(--themis-text-3); font-size: .72rem; text-overflow: ellipsis; white-space: nowrap; }
+.themis-media-caption { width: 0; min-width: 100%; overflow: hidden; color: var(--themis-text-3); font-size: .75rem; text-overflow: ellipsis; white-space: nowrap; }
 .themis-media-more { cursor: pointer; }
 .themis-media-more .themis-media-frame { width: 72px; }
 .themis-media-count { color: var(--themis-text-2); font-size: 1rem; font-weight: 600; }

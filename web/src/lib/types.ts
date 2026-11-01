@@ -760,6 +760,8 @@ export interface Settings {
   projects_directory: string;
   project_names?: Record<string, string>;
   text_size: number;
+  /** Someone picked `text_size`, so a change of default leaves it alone. */
+  text_size_chosen?: boolean;
   theme_palette: string;
   font_family: "system" | "sans" | "serif" | "mono" | "rounded" | "avenir" | "helvetica" | "verdana" | "trebuchet" | "palatino" | "charter" | "menlo";
   sidebar_hover: boolean;

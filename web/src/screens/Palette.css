@@ -6,7 +6,7 @@
 .themis-palette-search input:focus-visible { outline: none; }
 .themis-palette-search input::placeholder { color: var(--themis-text-3); }
 .themis-palette-list { display: flex; flex-direction: column; max-height: min(420px, 60vh); padding: 4px 0 6px; overflow-y: auto; overflow-x: hidden; border-top: 1px solid var(--themis-border-subtle); }
-.themis-palette-group { margin: 10px 14px 4px; color: var(--themis-text-3); font-size: .6875rem; font-weight: 500; }
+.themis-palette-group { margin: 10px 14px 4px; color: var(--themis-text-3); font-size: .75rem; font-weight: 500; }
 .themis-palette-row { display: flex; align-items: center; gap: 12px; width: 100%; min-height: 36px; padding: 0 14px; border: 0; border-radius: 12px; background: transparent; color: var(--themis-text-2); font: inherit; font-size: .875rem; text-align: left; cursor: pointer; }
 .themis-palette-row--active { background: var(--themis-raised); color: var(--themis-text); }
 .themis-palette-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

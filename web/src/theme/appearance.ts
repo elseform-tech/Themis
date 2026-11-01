@@ -42,7 +42,8 @@ export function applyAppearance(settings: Appearance) {
   root.dataset.theme = "dark";
   root.dataset.palette = preset.id;
   root.dataset.font = settings.font_family;
-  root.style.fontSize = `${16 * settings.text_size / 14}px`;
+  // Body text is .8333rem, so the setting is its size in pixels.
+  root.style.fontSize = `${settings.text_size * 1.2}px`;
   ["shell-bg", "canvas", "surface", "raised", "border", "text", "text-2", "accent"].forEach((token, i) => {
     root.style.setProperty(`--themis-${token}`, preset.colors[i]);
   });

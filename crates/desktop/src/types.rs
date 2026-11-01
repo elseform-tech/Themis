@@ -1048,6 +1048,9 @@ pub struct Settings {
     pub project_names: std::collections::HashMap<String, String>,
     #[serde(default = "default_text_size")]
     pub text_size: u32,
+    /// Someone picked `text_size`, so a change of default leaves it alone.
+    #[serde(default)]
+    pub text_size_chosen: bool,
     #[serde(default = "default_appearance_choice")]
     pub theme_palette: String,
     #[serde(default = "default_appearance_choice")]
@@ -1119,8 +1122,8 @@ fn default_appearance_choice() -> String {
     "system".to_owned()
 }
 
-const fn default_text_size() -> u32 {
-    13
+pub(crate) const fn default_text_size() -> u32 {
+    12
 }
 
 const fn default_completion_sound() -> bool {
@@ -1145,6 +1148,7 @@ impl Default for Settings {
             projects_directory: default_projects_directory(),
             project_names: std::collections::HashMap::new(),
             text_size: default_text_size(),
+            text_size_chosen: false,
             theme_palette: default_appearance_choice(),
             font_family: default_appearance_choice(),
             sidebar_hover: true,
@@ -1724,7 +1728,8 @@ mod tests {
             to_value(&settings),
             json!({
                 "projects_directory": default_projects_directory(),
-                "text_size": 13,
+                "text_size": 12,
+                "text_size_chosen": false,
                 "theme_palette": "system",
                 "font_family": "system",
                 "sidebar_hover": true,
