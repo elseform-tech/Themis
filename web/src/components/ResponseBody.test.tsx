@@ -142,7 +142,7 @@ it("gives every chart the same frame, with the graph fitted inside it", async ()
     unmount();
   }
   const options = diagram.initialize.mock.lastCall![0] as { themeVariables: Record<string, string> };
-  expect(options.themeVariables.fontSize).toBe("10px");
+  expect(options.themeVariables.fontSize).toBe("12px");
   expect(options.themeVariables.fontFamily).toContain("system-ui");
 });
 it("shows the whole chart when enlarged, in its own shape", async () => {
