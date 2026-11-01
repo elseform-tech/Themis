@@ -11,6 +11,7 @@ pub mod configuration;
 pub mod context_metrics;
 pub mod context_window;
 pub mod diagnostics;
+pub mod git_guard;
 pub mod goal;
 pub mod plugins;
 pub mod prompts;
