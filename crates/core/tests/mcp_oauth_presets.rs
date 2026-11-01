@@ -206,7 +206,7 @@ fn sign_in_page(base: &str) -> impl FnOnce(&str) -> Result<(), String> + Send + 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_preset_client_id_and_callback_port_are_used_and_the_whole_flow_ends_in_an_mcp_call() {
     let store = store();
-    let server = MockServer::start().await;
+    let server = MockServer::builder().start().await;
     let base = server.uri();
     let resource = format!("{base}/mcp");
     mcp_endpoint(&server, &["at-1", "at-2"]).await;
@@ -266,7 +266,7 @@ async fn a_preset_client_id_and_callback_port_are_used_and_the_whole_flow_ends_i
 #[tokio::test(flavor = "multi_thread")]
 async fn the_plugins_scopes_and_metadata_address_win_and_dynamic_registration_still_runs() {
     let store = store();
-    let server = MockServer::start().await;
+    let server = MockServer::builder().start().await;
     let base = server.uri();
     let resource = format!("{base}/mcp");
     mcp_endpoint(&server, &["at-w"]).await;
@@ -340,7 +340,7 @@ async fn the_plugins_scopes_and_metadata_address_win_and_dynamic_registration_st
 #[tokio::test(flavor = "multi_thread")]
 async fn a_wrong_state_is_refused_and_the_real_one_still_finishes() {
     let store = store();
-    let server = MockServer::start().await;
+    let server = MockServer::builder().start().await;
     let base = server.uri();
     let resource = format!("{base}/mcp");
     mcp_endpoint(&server, &["at-1"]).await;
@@ -384,7 +384,7 @@ async fn a_wrong_state_is_refused_and_the_real_one_still_finishes() {
 #[tokio::test(flavor = "multi_thread")]
 async fn only_a_wrong_state_never_signs_in() {
     let _store = store();
-    let server = MockServer::start().await;
+    let server = MockServer::builder().start().await;
     let base = server.uri();
     let resource = format!("{base}/mcp");
     mcp_endpoint(&server, &[]).await;
@@ -412,7 +412,7 @@ async fn only_a_wrong_state_never_signs_in() {
 #[tokio::test(flavor = "multi_thread")]
 async fn an_expired_token_is_refreshed_and_a_refused_refresh_asks_for_sign_in_again() {
     let store = store();
-    let server = MockServer::start().await;
+    let server = MockServer::builder().start().await;
     let base = server.uri();
     let resource = format!("{base}/mcp");
     mcp_endpoint(&server, &["at-1", "at-2"]).await;
@@ -487,7 +487,7 @@ async fn an_expired_token_is_refreshed_and_a_refused_refresh_asks_for_sign_in_ag
 #[tokio::test(flavor = "multi_thread")]
 async fn a_callback_port_already_taken_says_so() {
     let _store = store();
-    let server = MockServer::start().await;
+    let server = MockServer::builder().start().await;
     let base = server.uri();
     let resource = format!("{base}/mcp");
     mcp_endpoint(&server, &[]).await;
@@ -512,7 +512,7 @@ async fn a_callback_port_already_taken_says_so() {
 #[tokio::test(flavor = "multi_thread")]
 async fn no_client_id_and_no_registration_is_reported_and_opens_nothing() {
     let _store = store();
-    let server = MockServer::start().await;
+    let server = MockServer::builder().start().await;
     let base = server.uri();
     let resource = format!("{base}/mcp");
     mcp_endpoint(&server, &[]).await;
@@ -537,8 +537,8 @@ async fn no_client_id_and_no_registration_is_reported_and_opens_nothing() {
 async fn a_client_secret_goes_only_to_the_server_or_its_declared_authorization_server() {
     let store = store();
     store.save("key:OPENCODE_KEY", "the-persons-key").unwrap();
-    let server = MockServer::start().await;
-    let attacker = MockServer::start().await;
+    let server = MockServer::builder().start().await;
+    let attacker = MockServer::builder().start().await;
     let base = server.uri();
     mcp_endpoint(&server, &[]).await;
     Mock::given(method("GET"))
@@ -588,8 +588,8 @@ async fn a_redirect_from_the_token_address_does_not_carry_the_client_secret() {
     store
         .save("key:CLIENT_SECRET_X", "the-persons-key")
         .unwrap();
-    let server = MockServer::start().await;
-    let attacker = MockServer::start().await;
+    let server = MockServer::builder().start().await;
+    let attacker = MockServer::builder().start().await;
     let base = server.uri();
     mcp_endpoint(&server, &[]).await;
     Mock::given(method("GET"))
@@ -650,8 +650,8 @@ async fn a_redirect_from_the_mcp_server_does_not_carry_its_secret() {
     store
         .save("key:HEADER_SECRET_X", "the-persons-key")
         .unwrap();
-    let server = MockServer::start().await;
-    let attacker = MockServer::start().await;
+    let server = MockServer::builder().start().await;
+    let attacker = MockServer::builder().start().await;
     Mock::given(method("POST"))
         .respond_with(
             ResponseTemplate::new(307)
@@ -674,7 +674,7 @@ async fn a_redirect_from_the_mcp_server_does_not_carry_its_secret() {
 #[tokio::test(flavor = "multi_thread")]
 async fn metadata_for_another_server_is_refused() {
     let _store = store();
-    let server = MockServer::start().await;
+    let server = MockServer::builder().start().await;
     let base = server.uri();
     let resource = format!("{base}/mcp");
     mcp_endpoint(&server, &[]).await;
