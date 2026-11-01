@@ -350,6 +350,7 @@ impl AppState {
         worktree_path: &Path,
         branch: &str,
     ) {
+        self.close_terminals_under(worktree_path).await;
         let _ = worktree::remove_worktree(checkout, worktree_path);
         if worktree_path.exists() && worktree_path.starts_with(&self.inner.worktrees_root) {
             let _ = std::fs::remove_dir_all(worktree_path);
