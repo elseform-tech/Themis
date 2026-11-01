@@ -12,6 +12,8 @@ pub mod diff;
 pub mod doctor;
 pub mod notifications;
 pub mod resources;
+#[cfg(test)]
+mod scale;
 pub mod secrets;
 pub mod server;
 pub mod settings;
