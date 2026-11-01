@@ -18,7 +18,7 @@ it("keeps inline code readable inside shimmering status text", () => {
 
 it("compacts the composer's labels to icons when the chat is narrow", () => {
   expect(styles).toMatch(/\.themis-thread-composer\s*\{\s*container:\s*themis-composer \/ inline-size;\s*\}/);
-  expect(styles).toMatch(/@container themis-composer \(max-width: 420px\)\s*\{\s*\.themis-thread-composer \.themis-composer-label\s*\{\s*display:\s*none;/);
+  expect(styles).toMatch(/@container themis-composer \(max-width: 380px\)\s*\{\s*\.themis-thread-composer \.themis-composer-label\s*\{\s*display:\s*none;/);
 });
 
 it("shrinks the header's Workspace button before the model name when the chat is narrow", () => {
@@ -29,6 +29,6 @@ it("shrinks the header's Workspace button before the model name when the chat is
 
 it("puts the goal sentence on its own line when the chat is too narrow to show it beside the controls", () => {
   const goal = readFileSync(new URL("./GoalBar.css", import.meta.url), "utf8");
-  expect(goal).toMatch(/@container themis-composer \(max-width: 420px\)\s*\{\s*\.themis-goal-bar:not\(\.is-editing\)\s*\{[^}]*flex-wrap:\s*wrap/);
+  expect(goal).toMatch(/@container themis-composer \(max-width: 380px\)\s*\{\s*\.themis-goal-bar:not\(\.is-editing\)\s*\{[^}]*flex-wrap:\s*wrap/);
   expect(goal).toMatch(/\.themis-goal-bar:not\(\.is-editing\) \.themis-goal-text\s*\{[^}]*flex-basis:\s*100%/);
 });

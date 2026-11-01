@@ -167,6 +167,28 @@ impl Client {
         }
     }
 
+    /// One folder's terminal output; the first value has what it kept and whether it runs.
+    pub async fn subscribe_terminal(&self, root: &str) -> Result<(TcpStream, Value), String> {
+        let (mut stream, discovery) = self.connect().await?;
+        write_frame(
+            &mut stream,
+            &Request {
+                token: discovery.token,
+                method: "subscribe_terminal".to_owned(),
+                args: json!({"root": root}),
+            },
+        )
+        .await?;
+        let reply: Response = read_frame(&mut stream).await?;
+        if reply.ok {
+            Ok((stream, reply.value))
+        } else {
+            Err(reply
+                .error
+                .unwrap_or_else(|| "terminal subscription failed".to_owned()))
+        }
+    }
+
     pub async fn next_event(stream: &mut TcpStream) -> Result<Value, String> {
         read_frame(stream).await
     }
@@ -354,6 +376,7 @@ impl Server {
         self.state.end_all_hook_sessions().await;
         // Background programs belong to this server: stop them with it.
         self.state.shutdown_background_tasks().await;
+        self.state.shutdown_terminals().await;
         let path = self.data_dir.join(DISCOVERY_FILE);
         if std::fs::read_to_string(&path)
             .ok()
@@ -515,6 +538,60 @@ async fn serve_connection(
             let bytes = serde_json::to_vec(&payload).map_err(|err| err.to_string())?;
             if bytes.len() <= MAX_FRAME {
                 write_bytes(&mut stream, &bytes).await?;
+            }
+        }
+    }
+    if request.method == "subscribe_terminal" {
+        // On its own connection, like the browser's: a noisy program never crowds the app's
+        // events. A reader that falls behind what is kept picks up at the oldest text.
+        let root = arg::<String>(&request.args, "root")?;
+        let Some(session) = state.terminal_session(&root) else {
+            return write_frame(
+                &mut stream,
+                &Response {
+                    ok: false,
+                    value: Value::Null,
+                    error: Some("This terminal isn't open".to_owned()),
+                },
+            )
+            .await;
+        };
+        let mut updates = session.updates();
+        let (scrollback, mut offset) = session.scrollback();
+        let mut value = state.terminal_state(&root);
+        value["scrollback"] = json!(scrollback);
+        write_frame(
+            &mut stream,
+            &Response {
+                ok: true,
+                value,
+                error: None,
+            },
+        )
+        .await?;
+        let mut gone = [0u8; 1];
+        loop {
+            // Whether it ended is read first: its output is all in by then.
+            let ended = session.ended();
+            loop {
+                let (data, next) = session.since(offset);
+                if data.is_empty() {
+                    break;
+                }
+                offset = next;
+                write_frame(&mut stream, &json!({"kind": "output", "data": data})).await?;
+            }
+            if let Some(code) = ended {
+                return write_frame(&mut stream, &json!({"kind": "exit", "code": code})).await;
+            }
+            tokio::select! {
+                changed = updates.changed() => {
+                    if changed.is_err() {
+                        return Ok(());
+                    }
+                }
+                // The reader sends nothing, so this only returns when it has left.
+                _ = stream.read(&mut gone) => return Ok(()),
             }
         }
     }
@@ -904,6 +981,29 @@ async fn dispatch_command(
                 )
                 .await?
         ),
+        "terminal_open" => output!(
+            state
+                .terminal_open(
+                    arg(&args, "projectRoot")?,
+                    arg(&args, "threadId").unwrap_or(None),
+                    arg(&args, "cols")?,
+                    arg(&args, "rows")?
+                )
+                .await?
+        ),
+        "terminal_state" => output!(state.terminal_state(&arg::<String>(&args, "root")?)),
+        "terminal_input" => done!(state.terminal_input(
+            &arg::<String>(&args, "root")?,
+            &arg::<String>(&args, "data")?
+        )),
+        "terminal_resize" => done!(state.terminal_resize(
+            &arg::<String>(&args, "root")?,
+            arg(&args, "cols")?,
+            arg(&args, "rows")?
+        )),
+        "terminal_close" => done!(Ok::<(), String>(
+            state.terminal_close(&arg::<String>(&args, "root")?).await
+        )),
         "list_project_dir" => output!(
             state
                 .list_project_dir(arg(&args, "projectRoot")?, arg(&args, "path")?)

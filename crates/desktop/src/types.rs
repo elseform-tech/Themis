@@ -607,6 +607,11 @@ pub struct DiffHunk {
 pub struct ChangedFile {
     pub path: String,
     pub status: DiffStatus,
+    /// Lines added and removed against the last commit; none when they can't be counted.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub added: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub removed: Option<u32>,
 }
 
 /// One file shown under a reply (`AttachedMedia` in types.ts).

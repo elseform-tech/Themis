@@ -663,11 +663,13 @@ describe("Workspace journey", () => {
     fireEvent.click(within(sidebar).getByRole("button", { name: /^One/ }));
     const receive = vi.mocked(bridge.onThreadEvent).mock.calls[0]![0];
     await act(async () => receive({ thread_id: "edit", run_id: "r", event: { kind: "started", task: "fix", max_turns: 3 } }));
-    await act(async () => receive({ thread_id: "edit", run_id: "r", event: { kind: "files_changed", files: [{ path: "src/stats.py", status: "modified" }, { path: "tests/test_stats.py", status: "added" }] } }));
+    await act(async () => receive({ thread_id: "edit", run_id: "r", event: { kind: "files_changed", files: [{ path: "src/stats.py", status: "modified", added: 7, removed: 2 }, { path: "tests/test_stats.py", status: "added", added: 10, removed: 0 }] } }));
     await act(async () => receive({ thread_id: "edit", run_id: "r", event: { kind: "finished", result: "Fixed the median." } }));
     const edited = screen.getByRole("region", { name: "Files edited in this turn" });
     expect(edited).toHaveTextContent("Edited 2 files");
     expect(edited).toHaveTextContent("src/stats.py");
+    expect(within(edited).getByLabelText("17 added, 2 removed")).toHaveTextContent("+17 -2");
+    expect(within(edited).getByLabelText("7 added, 2 removed")).toHaveTextContent("+7 -2");
     expect(within(edited).getByLabelText("added")).toHaveTextContent("A");
     await act(async () => fireEvent.click(within(edited).getAllByRole("button")[0]!));
     expect(screen.getByRole("complementary", { name: "Workspace (read-only)" })).toBeInTheDocument();
@@ -679,7 +681,8 @@ describe("Workspace journey", () => {
     await act(async () => receive({ thread_id: "edit", run_id: "r2", event: { kind: "finished", result: "Refactored." } }));
     const regions = screen.getAllByRole("region", { name: "Files edited in this turn" });
     const big = regions[regions.length - 1]!;
-    expect(big).toHaveTextContent("12 modified");
+    // Older chats saved no counts, and show none rather than a made-up zero.
+    expect(big).not.toHaveTextContent("+0");
     expect(within(big).getAllByRole("listitem")).toHaveLength(5);
     fireEvent.click(within(big).getByRole("button", { name: "Show all 12" }));
     expect(within(big).getAllByRole("listitem")).toHaveLength(12);

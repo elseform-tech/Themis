@@ -17,7 +17,7 @@
 .themis-filetree-status--deleted { color: var(--themis-danger); }
 .themis-filetree-status--renamed { color: var(--themis-info); }
 .themis-filetree-path { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: ui-monospace, SFMono-Regular, monospace; font-size: .75rem; }
-.themis-filetree-pre { flex: none; color: var(--themis-text-3); font-size: .6875rem; }
+.themis-filetree-counts { flex: none; display: inline-flex; gap: 5px; margin-left: auto; font-size: .6875rem; font-variant-numeric: tabular-nums; }
 .themis-filetree-actions { display: flex; gap: 2px; opacity: 0; }
 .themis-filetree-row:hover .themis-filetree-actions, .themis-filetree-row:focus-within .themis-filetree-actions, .themis-filetree-row--selected .themis-filetree-actions { opacity: 1; }
 .themis-filetree-btn { display: grid; place-items: center; width: 26px; height: 26px; padding: 0; border: 0; border-radius: 50%; background: transparent; font-size: .75rem; cursor: pointer; }

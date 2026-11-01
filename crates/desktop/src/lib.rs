@@ -89,6 +89,51 @@ fn browser_stream_stop(streams: State<'_, BrowserStreams>, thread_id: String) {
     }
 }
 
+/// Streams one folder's terminal to the Terminal tab until the tab leaves or it ends.
+#[derive(Default)]
+struct TerminalStreams(
+    std::sync::Mutex<std::collections::HashMap<String, tauri::async_runtime::JoinHandle<()>>>,
+);
+
+#[tauri::command]
+async fn terminal_stream(
+    backend: State<'_, server::Client>,
+    streams: State<'_, TerminalStreams>,
+    root: String,
+    on_event: tauri::ipc::Channel<Value>,
+) -> Result<(), String> {
+    let (mut stream, state) = backend.subscribe_terminal(&root).await?;
+    let _ = on_event.send(serde_json::json!({"kind": "state", "state": state}));
+    let task = tauri::async_runtime::spawn(async move {
+        while let Ok(update) = server::Client::next_event(&mut stream).await {
+            if on_event.send(update).is_err() {
+                break;
+            }
+        }
+    });
+    if let Some(previous) = streams
+        .0
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .insert(root, task)
+    {
+        previous.abort();
+    }
+    Ok(())
+}
+
+#[tauri::command]
+fn terminal_stream_stop(streams: State<'_, TerminalStreams>, root: String) {
+    if let Some(task) = streams
+        .0
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .remove(&root)
+    {
+        task.abort();
+    }
+}
+
 #[tauri::command]
 async fn attachment_file(
     app: tauri::AppHandle,
@@ -519,12 +564,15 @@ pub fn run() {
             forward_remote_events(app.handle().clone(), client.clone());
             app.manage(client);
             app.manage(BrowserStreams::default());
+            app.manage(TerminalStreams::default());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
             backend_command,
             browser_stream,
             browser_stream_stop,
+            terminal_stream,
+            terminal_stream_stop,
             attachment_file,
             completion_haptic,
             notifications::notification_permission,

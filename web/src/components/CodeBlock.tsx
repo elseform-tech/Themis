@@ -1,4 +1,5 @@
 import { useMemo } from "react";
+import { common, createLowlight } from "lowlight";
 import "./CodeBlock.css";
 
 export interface CodeBlockProps {
@@ -7,153 +8,69 @@ export interface CodeBlockProps {
   showLineNumbers?: boolean;
 }
 
-type TokenKind = "comment" | "string" | "keyword" | "number" | "plain";
+type TokenKind = "comment" | "string" | "keyword" | "number" | "title" | "type" | "meta" | "plain";
 
-interface Token {
+export interface Token {
   kind: TokenKind;
   text: string;
 }
 
-const KEYWORDS: Record<string, readonly string[]> = {
-  ts: [
-    "const", "let", "var", "function", "return", "if", "else", "for", "while",
-    "class", "interface", "type", "import", "from", "export", "default",
-    "extends", "implements", "new", "async", "await", "try", "catch", "throw",
-    "switch", "case", "break", "continue", "do", "of", "in", "as", "is",
-    "null", "undefined", "true", "false", "this", "void", "enum", "public",
-    "private", "readonly", "static",
-  ],
-  rust: [
-    "fn", "let", "mut", "const", "struct", "enum", "impl", "trait", "pub",
-    "use", "mod", "return", "if", "else", "for", "while", "loop", "match",
-    "where", "type", "as", "in", "ref", "move", "async", "await", "try",
-    "true", "false", "self", "Self", "crate", "super", "static", "dyn",
-    "break", "continue",
-  ],
-  python: [
-    "def", "class", "return", "if", "elif", "else", "for", "while", "import",
-    "from", "as", "with", "try", "except", "raise", "pass", "lambda", "yield",
-    "async", "await", "None", "True", "False", "and", "or", "not", "in", "is",
-    "break", "continue", "global", "nonlocal", "assert", "del",
-  ],
-  bash: [
-    "if", "then", "else", "elif", "fi", "for", "while", "do", "done", "case",
-    "esac", "in", "function", "return", "exit", "export", "local", "readonly",
-    "echo", "true", "false",
-  ],
+const lowlight = createLowlight(common);
+
+/** Past this much text a block isn't coloured, so a huge file stays quick to open. */
+const MAX_HIGHLIGHTED_CHARS = 200_000;
+
+const KINDS: Record<string, TokenKind> = {
+  comment: "comment", doctag: "comment", quote: "comment",
+  string: "string", regexp: "string", symbol: "string",
+  keyword: "keyword", literal: "keyword", "selector-tag": "keyword",
+  number: "number",
+  title: "title", section: "title", name: "title",
+  type: "type", built_in: "type", class: "type",
+  meta: "meta", attr: "meta", attribute: "meta", variable: "meta", params: "plain", subst: "plain",
 };
 
-export function normalizeLanguage(language: string | undefined): string {
-  const lang = (language ?? "").trim().toLowerCase();
-  if (lang === "js" || lang === "javascript" || lang === "jsx") return "ts";
-  if (lang === "ts" || lang === "typescript" || lang === "tsx") return "ts";
-  if (lang === "rs" || lang === "rust") return "rust";
-  if (lang === "py" || lang === "python") return "python";
-  if (lang === "sh" || lang === "bash" || lang === "shell") return "bash";
-  return "generic";
-}
-
-function lineCommentStart(lang: string): string | null {
-  if (lang === "python" || lang === "bash") return "#";
-  if (lang === "generic") return null;
-  return "//";
-}
-
-/** Lightweight tokenizer: comments, strings, keywords, numbers. */
-export function tokenizeLine(line: string, lang: string): Token[] {
-  const tokens: Token[] = [];
-  const keywords = new Set(KEYWORDS[lang] ?? []);
-  const commentStart = lineCommentStart(lang);
-  let i = 0;
-  let current = "";
-
-  function flush() {
-    if (current !== "") {
-      tokens.push({ kind: "plain", text: current });
-      current = "";
-    }
+function kindOf(classes: readonly unknown[] | undefined, inherited: TokenKind): TokenKind {
+  for (const name of classes ?? []) {
+    const known = KINDS[String(name).replace(/^hljs-/, "").replace(/_$/, "")];
+    if (known) return known;
   }
+  return inherited;
+}
 
-  while (i < line.length) {
-    const ch = line[i] ?? "";
-    const rest = line.slice(i);
+interface Tree {
+  type: string;
+  value?: string;
+  children?: Tree[];
+  properties?: { className?: readonly unknown[] };
+}
 
-    // Line comment: rest of the line.
-    if (
-      commentStart !== null &&
-      (commentStart === "//"
-        ? rest.startsWith("//")
-        : ch === "#")
-    ) {
-      flush();
-      tokens.push({ kind: "comment", text: rest });
-      break;
-    }
-
-    // Block comment opener on one line (/* ... */); unterminated runs to EOL.
-    if (
-      (lang === "ts" || lang === "rust" || lang === "generic") &&
-      rest.startsWith("/*")
-    ) {
-      flush();
-      const end = line.indexOf("*/", i + 2);
-      if (end === -1) {
-        tokens.push({ kind: "comment", text: rest });
-        break;
-      }
-      tokens.push({ kind: "comment", text: line.slice(i, end + 2) });
-      i = end + 2;
-      continue;
-    }
-
-    // Strings: '...' "..." `...` (no multiline tracking per line).
-    if (ch === '"' || ch === "'" || ch === "`") {
-      flush();
-      let j = i + 1;
-      while (j < line.length) {
-        if (line[j] === "\\") {
-          j += 2;
-          continue;
-        }
-        if (line[j] === ch) {
-          j += 1;
-          break;
-        }
-        j += 1;
-      }
-      tokens.push({ kind: "string", text: line.slice(i, j) });
-      i = j;
-      continue;
-    }
-
-    // Numbers: digit runs, optionally with . and suffix letters.
-    if (/[0-9]/.test(ch)) {
-      flush();
-      const match = /^[0-9][0-9a-zA-Z_.]*/.exec(rest);
-      const text = match?.[0] ?? ch;
-      tokens.push({ kind: "number", text });
-      i += text.length;
-      continue;
-    }
-
-    // Words: keyword or plain.
-    if (/[A-Za-z_$]/.test(ch)) {
-      flush();
-      const match = /^[A-Za-z_$][A-Za-z0-9_$]*/.exec(rest);
-      const text = match?.[0] ?? ch;
-      tokens.push({
-        kind: keywords.has(text) ? "keyword" : "plain",
-        text,
+/** The highlighter's tree as flat tokens, one list per line. */
+function linesOf(root: Tree): Token[][] {
+  const lines: Token[][] = [[]];
+  const walk = (node: Tree, kind: TokenKind) => {
+    if (node.type === "text") {
+      (node.value ?? "").split("\n").forEach((part, index) => {
+        if (index > 0) lines.push([]);
+        if (part) lines[lines.length - 1]!.push({ kind, text: part });
       });
-      i += text.length;
-      continue;
+      return;
     }
+    const own = node.type === "element" ? kindOf(node.properties?.className, kind) : kind;
+    for (const child of node.children ?? []) walk(child, own);
+  };
+  walk(root, "plain");
+  return lines;
+}
 
-    current += ch;
-    i += 1;
+/** The code's coloured tokens, line by line; plain for a language it doesn't know. The tree is
+ *  turned into text nodes rather than HTML, so code can never become markup. */
+export function highlightLines(code: string, language: string | undefined): Token[][] {
+  const name = (language ?? "").trim().toLowerCase();
+  if (!name || code.length > MAX_HIGHLIGHTED_CHARS || !lowlight.registered(name)) {
+    return code.split("\n").map(line => (line ? [{ kind: "plain" as const, text: line }] : []));
   }
-  flush();
-  return tokens;
+  return linesOf(lowlight.highlight(name, code) as unknown as Tree);
 }
 
 export function CodeBlock({
@@ -161,12 +78,7 @@ export function CodeBlock({
   language,
   showLineNumbers = false,
 }: CodeBlockProps) {
-  const lang = normalizeLanguage(language);
-  const lines = useMemo(() => code.split("\n"), [code]);
-  const tokenized = useMemo(
-    () => lines.map((line) => tokenizeLine(line, lang)),
-    [lines, lang],
-  );
+  const tokenized = useMemo(() => highlightLines(code, language), [code, language]);
 
   return (
     <pre className="themis-codeblock">

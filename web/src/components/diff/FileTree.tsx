@@ -96,9 +96,10 @@ export function FileTree({
                         <span className="themis-filetree-path" title={file.path}>
                           {groups.size > 1 ? file.path.slice(directory.length + (directory ? 1 : 0)) : file.path}
                         </span>
-                        {file.preexisting && (
-                          <span className="themis-filetree-pre" title="Changed before this thread started">
-                            pre-existing
+                        {(file.added > 0 || file.removed > 0) && (
+                          <span className="themis-filetree-counts" aria-label={`${file.added} added, ${file.removed} removed`}>
+                            {file.added > 0 && <span className="themis-diff-count-add">+{file.added}</span>}
+                            {file.removed > 0 && <span className="themis-diff-count-del">-{file.removed}</span>}
                           </span>
                         )}
                       </button>
@@ -118,7 +119,7 @@ export function FileTree({
                           aria-label={`Discard ${file.path}`}
                           title={
                             file.preexisting
-                              ? "Pre-existing changes cannot be discarded"
+                              ? "Changed before this chat started, so it can't be discarded here"
                               : `Discard ${file.path}`
                           }
                           className="themis-filetree-btn themis-filetree-btn--discard"

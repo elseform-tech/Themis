@@ -190,3 +190,35 @@ async fn switching_waits_while_a_chat_is_working_in_that_checkout() {
     .unwrap();
     serving.abort();
 }
+
+/// The composer's switch runs outside the sandbox: a hook the repository names doesn't start.
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread")]
+async fn switching_starts_none_of_the_repositorys_hooks() {
+    use std::os::unix::fs::PermissionsExt;
+    let data = tempfile::tempdir().unwrap();
+    let project = tempfile::tempdir().unwrap();
+    repository(project.path());
+    let marker = project.path().join("hook-ran");
+    let hook = project.path().join(".git/hooks/post-checkout");
+    std::fs::write(&hook, format!("#!/bin/sh\ntouch '{}'\n", marker.display())).unwrap();
+    std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let state = AppState::new_for_test(data.path().join("settings.json"));
+    let server = Server::bind(state, data.path()).await.unwrap();
+    let serving = tokio::spawn(async move {
+        let _ = server.run().await;
+    });
+    let (dir, root) = (data.path().to_owned(), project.path().to_owned());
+    let done = tokio::task::spawn_blocking(move || {
+        call(
+            &dir,
+            "switch_branch",
+            json!({"projectRoot": root.to_string_lossy(), "branch": "feature"}),
+        )
+    })
+    .await
+    .unwrap();
+    serving.abort();
+    assert_eq!(done.unwrap()["branch"], "feature");
+    assert!(!marker.exists(), "the repository's hook ran");
+}
