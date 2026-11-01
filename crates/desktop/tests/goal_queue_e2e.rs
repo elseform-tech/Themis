@@ -1415,7 +1415,18 @@ async fn the_checklist_moves_during_a_long_turn_and_cannot_end_the_goal() {
         tokio::time::sleep(std::time::Duration::from_millis(25)).await;
     }
     let goal = moved.expect("the checklist never moved during the turn");
-    let mid_turn = logged(_data.path());
+    // The checklist shows before its log line is written, so give the line a moment.
+    let mut mid_turn = String::new();
+    for _ in 0..200 {
+        mid_turn = logged(_data.path());
+        if mid_turn
+            .lines()
+            .any(|line| line.contains("checklist_updated") && line.contains("\"mid_turn\":true"))
+        {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+    }
     assert!(
         mid_turn
             .lines()
