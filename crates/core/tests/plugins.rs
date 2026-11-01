@@ -411,6 +411,7 @@ fn mcp_startup_is_blocked_only_by_an_explicit_deny_rule() {
     let ask = ApprovalPolicy {
         default: PolicyAction::Ask,
         rules: Vec::new(),
+        ..Default::default()
     };
     assert!(!startup_denied("fixture", &local, &ask).unwrap());
     let deny = ApprovalPolicy {
@@ -421,6 +422,7 @@ fn mcp_startup_is_blocked_only_by_an_explicit_deny_rule() {
             risk: None,
             command: None,
         }],
+        ..Default::default()
     };
     assert!(startup_denied("fixture", &local, &deny).unwrap());
     // The startup action shows its command as structured tokens, not a joined string.

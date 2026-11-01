@@ -52,6 +52,7 @@ internal parsers through the off-by-default `fuzzing` feature of
 | `searxng_results` | Arbitrary bytes as a SearXNG JSON response: results stay unique http(s) URLs within the requested count |
 | `provider_models` | Arbitrary bytes as a configured provider's `/models` response and as the `providers` block of a user `runtime.jsonc`: never panics, kept ids are unique and usable, no resolved provider has a reserved id or a literal key |
 | `subagent_profile` | Arbitrary bytes as a plugin's `agents/*.md`: never panics; an accepted profile has a safe name, bounded fields and only tools a subagent may have |
+| `sensitive_files` | Tool arguments and `approval.sensitive_files` patterns, and message text: reading which sensitive files a call names, and whether text looks like a secret, never panic |
 | `shell_wrapped` | Shell argv, often behind `sh -c`/`sudo`/`env`/`eval`/`cmd /c`: reading wrapped commands never panics, stays bounded and yields no empty commands |
 
 ```sh

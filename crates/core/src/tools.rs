@@ -15,6 +15,7 @@
 pub mod background;
 mod patch;
 pub mod recall;
+pub mod sensitive;
 pub mod site_permissions;
 pub mod web;
 mod wrapped;
@@ -292,6 +293,10 @@ impl ToolAction {
         }
         if let Some(site) = self.site() {
             return format!("{}\0{site}", site_grant_group(&self.tool));
+        }
+        if self.tool == sensitive::SENSITIVE_TOOL {
+            // One file and one kind of access: reading `.env` is not writing it.
+            return format!("{}\0{}", self.tool, self.command.join("\0"));
         }
         if !is_command_tool(&self.tool) || self.command.is_empty() {
             return self.tool.clone();
@@ -920,6 +925,20 @@ pub trait ApprovalHook: Send + Sync {
     fn denied_by_rule(&self, _action: &ToolAction) -> bool {
         false
     }
+
+    /// The sensitive project files this tool call touches, when the hook knows the list.
+    fn sensitive_access(&self, _tool: &str, _args: &Value) -> Option<sensitive::SensitiveAccess> {
+        None
+    }
+
+    /// [`Self::approve`] for a call that touches sensitive files.
+    fn approve_sensitive(
+        &self,
+        action: &ToolAction,
+        _access: &sensitive::SensitiveAccess,
+    ) -> Approval {
+        self.approve(action)
+    }
 }
 
 /// Decision returned by an [`ApprovalHook`].
@@ -1002,7 +1021,11 @@ impl ApprovalHook for DenyAllHook {
 }
 
 fn check_approval(hook: &dyn ApprovalHook, action: &ToolAction) -> Result<(), ToolCallError> {
-    match hook.approve(action) {
+    check_decision(hook.approve(action), action)
+}
+
+fn check_decision(decision: Approval, action: &ToolAction) -> Result<(), ToolCallError> {
+    match decision {
         Approval::AllowOnce | Approval::AllowAlways => Ok(()),
         denied @ (Approval::Deny | Approval::DenyForNewMessage) => Err(tool_error(format!(
             "approval denied for '{}': {} {}",
@@ -1054,6 +1077,22 @@ pub fn check_approval_permitted(
         return Ok(());
     }
     check_approval(hook, action)
+}
+
+/// [`check_approval_permitted`] for a file or command tool: a call that touches a
+/// sensitive file asks as one (dispatch already did, when the permit is there).
+fn check_call_permitted(
+    hook: &dyn ApprovalHook,
+    action: &ToolAction,
+    args: &Value,
+) -> Result<(), ToolCallError> {
+    if take_dispatch_permit() {
+        return Ok(());
+    }
+    match hook.sensitive_access(&action.tool, args) {
+        Some(access) => check_decision(hook.approve_sensitive(action, &access), action),
+        None => check_approval(hook, action),
+    }
 }
 
 pub(crate) fn tool_error(message: String) -> ToolCallError {
@@ -1379,7 +1418,7 @@ impl GatedTool {
             summary: (self.summarize)(name, &args),
             risk: self.risk,
         };
-        check_approval_permitted(self.approvals.as_ref(), &action)?;
+        check_call_permitted(self.approvals.as_ref(), &action, &args)?;
         self.check_guard(name, &args)?;
         if name == "read_file" {
             // Models often send the archive-only selectors on ordinary files; read the file
@@ -2482,6 +2521,7 @@ impl ShellTool {
 #[async_trait]
 impl ToolRuntime for ShellTool {
     async fn execute(&self, args: Value) -> Result<Value, ToolCallError> {
+        let raw = args.clone();
         let ShellArgs {
             command,
             args,
@@ -2533,7 +2573,7 @@ impl ToolRuntime for ShellTool {
                 "shell: background tasks are not available in this context".to_string(),
             ));
         }
-        check_approval_permitted(self.approvals.as_ref(), &action)?;
+        check_call_permitted(self.approvals.as_ref(), &action, &raw)?;
         if let Some(refusal) = self.sandbox.as_ref().and_then(|plan| plan.refusal()) {
             return Err(tool_error(format!("shell: {refusal}")));
         }
@@ -2726,6 +2766,7 @@ impl ApplyPatchTool {
 #[async_trait]
 impl ToolRuntime for ApplyPatchTool {
     async fn execute(&self, args: Value) -> Result<Value, ToolCallError> {
+        let raw = args.clone();
         let ApplyPatchArgs { patch } = parse_tool_args("apply_patch", args)?;
         // Plan first (validates every path and hunk), approve, then commit.
         let plan = plan_tool_patch(&self.root, &patch, self.unrestricted)
@@ -2739,7 +2780,7 @@ impl ToolRuntime for ApplyPatchTool {
                 .collect();
             format!("apply patch to {}: {}", plan.len(), files.join(", "))
         };
-        check_approval_permitted(
+        check_call_permitted(
             self.approvals.as_ref(),
             &ToolAction {
                 display: None,
@@ -2748,6 +2789,7 @@ impl ToolRuntime for ApplyPatchTool {
                 summary,
                 risk: RiskLevel::Write,
             },
+            &raw,
         )?;
         if let Some(guard) = &self.guard {
             for file in &plan {
@@ -2841,6 +2883,7 @@ impl GitTool {
 #[async_trait]
 impl ToolRuntime for GitTool {
     async fn execute(&self, args: Value) -> Result<Value, ToolCallError> {
+        let raw = args.clone();
         let GitArgs { args } = parse_tool_args("git", args)?;
         let Some(subcommand) = args.first().map(String::as_str) else {
             return Err(tool_error("git: no subcommand given".to_string()));
@@ -2869,7 +2912,7 @@ impl ToolRuntime for GitTool {
             summary: format!("run `git {}`", args.join(" ")),
             risk,
         };
-        check_approval_permitted(self.approvals.as_ref(), &action)?;
+        check_call_permitted(self.approvals.as_ref(), &action, &raw)?;
         if let Some(refusal) = self.sandbox.as_ref().and_then(|plan| plan.refusal()) {
             return Err(tool_error(format!("git: {refusal}")));
         }
@@ -3148,6 +3191,14 @@ pub fn shared_tools(
 pub mod fuzzing {
     /// Commands found inside wrappers such as `sh -c "..."` or `sudo` (see
     /// [`super::commands_run_by`]).
+    pub fn sensitive_names(patterns: &[String], tool: &str, args: &Value) -> Vec<String> {
+        // No root: names alone, so a fuzzer's paths touch neither the disk nor Git.
+        sensitive::SensitiveMatcher::new(patterns, None)
+            .classify(tool, args)
+            .map(|access| access.names())
+            .unwrap_or_default()
+    }
+
     pub fn wrapped_commands(command: &[String]) -> Option<Vec<Vec<String>>> {
         super::wrapped::wrapped_commands(command)
     }
@@ -3788,6 +3839,7 @@ mod tests {
                 action: crate::configuration::PolicyAction::Deny,
                 risk: Some("read".into()),
             }],
+            ..Default::default()
         };
         let approvals = crate::configuration::configured_hook(
             crate::configuration::ApprovalMode::Custom,

@@ -1,0 +1,1 @@
+[Runtime check, not from the user] The message above looks like it holds an API key or other secret. Warn the person without repeating it: it has now gone to the model provider and is saved in this chat, so if it is real they should revoke and rotate it, and use Settings › Secrets or an environment variable. Do not use it unless they asked you to.

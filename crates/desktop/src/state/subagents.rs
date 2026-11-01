@@ -556,11 +556,12 @@ impl SubagentKit {
             grants: ChatGrants::in_memory(),
         });
         Arc::new(AuditedApprovals {
-            inner: themis_core::configuration::configured_hook_with_grants(
+            inner: themis_core::configuration::configured_hook_for_project(
                 self.mode,
                 self.config.approval.clone(),
                 own,
                 Arc::clone(&self.grants),
+                Some(&self.work_root),
             ),
             context,
         })
@@ -817,6 +818,7 @@ impl SubagentKit {
             )
         });
         let head = std::iter::once(themis_core::prompts::SUBAGENT_SYSTEM)
+            .chain([themis_core::prompts::SUBAGENT_SECRETS_NOTE])
             .chain(role.as_deref())
             .chain([access.as_str()])
             .chain(mcp_note.as_deref())
@@ -1264,6 +1266,36 @@ impl ApprovalHook for OwnGrants {
             Approval::AllowAlways => {
                 if action.grantable() {
                     self.grants.remember(action);
+                }
+                Approval::AllowOnce
+            }
+            decision => decision,
+        }
+    }
+
+    /// Asks past a grant this subagent has for the tool or command alone, and remembers each
+    /// file with it, in the same place: "allow in this chat" stays its own.
+    fn approve_sensitive(
+        &self,
+        action: &ToolAction,
+        access: &themis_core::tools::sensitive::SensitiveAccess,
+    ) -> Approval {
+        let files = access.file_actions();
+        let command = themis_core::tools::is_command_tool(&action.tool);
+        if files.iter().all(|file| self.grants.covers(file))
+            && (!command || self.grants.covers(action))
+        {
+            return Approval::AllowOnce;
+        }
+        match self.inner.approve_sensitive(action, access) {
+            Approval::AllowAlways => {
+                if action.grantable() {
+                    for file in &files {
+                        self.grants.remember(file);
+                    }
+                    if command {
+                        self.grants.remember(action);
+                    }
                 }
                 Approval::AllowOnce
             }
