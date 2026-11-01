@@ -43,7 +43,7 @@ it("enlarges Mermaid with zoom controls", async () => {
   fireEvent.click(screen.getByRole("button", { name: "Fit", hidden: true }));
   expect(container.querySelector<HTMLElement>(".themis-diagram-stage")?.style.transform).toContain("translate(0px, 0px)");
 });
-it("keeps incomplete streaming diagrams as code", () => {
+it("draws no chart from incomplete streaming code", () => {
   render(<ResponseBody text={'```mermaid\nflowchart LR\n A--'} streaming />);
   expect(screen.queryByTitle("Mermaid diagram")).toBeNull();
 });
@@ -161,4 +161,18 @@ it("shows the whole chart when enlarged, in its own shape", async () => {
   expect(enlarged.style.height).toBe("274px");
   sizes.mockRestore();
   widths.mockRestore();
+});
+it("shimmers in the chart's own frame while it's written and drawn, instead of showing code", async () => {
+  const { rerender, container } = render(<ResponseBody text={'```mermaid\nflowchart LR\n A--'} streaming />);
+  const loading = screen.getByRole("status", { name: "Drawing chart" });
+  expect(loading.style.height).toBe("280px");
+  expect(container.querySelector(".themis-codeblock")).toBeNull();
+  // Still shimmering between the code being complete and the picture being ready.
+  let finish: (value: { svg: string }) => void = () => {};
+  diagram.render.mockReturnValueOnce(new Promise(resolve => { finish = resolve as never; }) as never);
+  rerender(<ResponseBody text={'```mermaid\nflowchart LR\n A-->G\n```'} />);
+  expect(await screen.findByRole("status", { name: "Drawing chart" })).toBeInTheDocument();
+  finish({ svg: '<svg viewBox="0 0 120 80"></svg>' });
+  expect(await screen.findByTitle("Mermaid diagram")).toBeInTheDocument();
+  expect(screen.queryByRole("status", { name: "Drawing chart" })).toBeNull();
 });

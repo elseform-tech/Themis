@@ -8,8 +8,8 @@ import "./ResponseBody.css";
 function CodePanel({ code, language, streaming }: { code: string; language: string; streaming: boolean }) {
   const [copied, setCopied] = useState(false);
   const [copyError, setCopyError] = useState(false);
-  return <div className={`themis-code-panel${language === "mermaid" && !streaming ? " themis-code-panel--diagram" : ""}`}><div className="themis-code-toolbar"><span>{language || "text"}</span><button onClick={async () => { try { await navigator.clipboard.writeText(code); setCopied(true); setCopyError(false); } catch { setCopyError(true); } }}>{copyError ? "Select to copy" : copied ? "Copied" : "Copy"}</button></div>
-    {language === "mermaid" && !streaming ? <Diagram code={code} /> : <CodeBlock code={code} language={language} />}
+  return <div className={`themis-code-panel${language === "mermaid" ? " themis-code-panel--diagram" : ""}`}><div className="themis-code-toolbar"><span>{language || "text"}</span><button onClick={async () => { try { await navigator.clipboard.writeText(code); setCopied(true); setCopyError(false); } catch { setCopyError(true); } }}>{copyError ? "Select to copy" : copied ? "Copied" : "Copy"}</button></div>
+    {language === "mermaid" ? (streaming ? <DiagramLoading /> : <Diagram code={code} />) : <CodeBlock code={code} language={language} />}
   </div>;
 }
 
@@ -17,6 +17,11 @@ function CodePanel({ code, language, streaming }: { code: string; language: stri
 const DIAGRAM_FRAME_HEIGHT = 280;
 /** Enlarged, a huge chart can go this small to fit the window. */
 const DIAGRAM_SMALLEST_ZOOM = 0.25;
+
+/** Holds the chart's place, at its size, while it's written and drawn. */
+function DiagramLoading() {
+  return <div className="themis-diagram-loading" role="status" aria-label="Drawing chart" style={{ height: DIAGRAM_FRAME_HEIGHT }} />;
+}
 
 function Diagram({ code }: { code: string }) {
   const id = `diagram-${useId().replace(/[^a-zA-Z0-9]/g, "")}`;
@@ -67,7 +72,7 @@ function Diagram({ code }: { code: string }) {
       {expanded && <dialog ref={dialog} className="themis-diagram-dialog" onClose={() => setExpanded(false)} aria-label="Enlarged Mermaid diagram">
         <div className="themis-diagram-toolbar"><strong>Diagram</strong><button onClick={() => setZoom(Math.max(DIAGRAM_SMALLEST_ZOOM, +(zoom - .25).toFixed(2)))} aria-label="Zoom out">−</button><span>{Math.round(zoom * 100)}%</span><button onClick={() => setZoom(Math.min(3, +(zoom + .25).toFixed(2)))} aria-label="Zoom in">+</button><button onClick={() => { setZoom(1); setOffset({ x: 0, y: 0 }); }}>100%</button><button onClick={fitToWindow}>Fit</button><button onClick={() => setExpanded(false)} aria-label="Close diagram">Close</button></div>
         <div className="themis-diagram-canvas" onPointerDown={(event) => { if (event.button !== 0) return; pan.current = { x: event.clientX, y: event.clientY, left: offset.x, top: offset.y }; event.currentTarget.setPointerCapture(event.pointerId); }} onPointerMove={(event) => { if (!pan.current) return; setOffset({ x: pan.current.left + event.clientX - pan.current.x, y: pan.current.top + event.clientY - pan.current.y }); }} onPointerUp={() => { pan.current = null; }} onPointerCancel={() => { pan.current = null; }}><div className="themis-diagram-stage" style={{ width: ownWidth * zoom + 24, height: ownHeight * zoom + 24, transform: `translateX(-50%) translate(${offset.x}px, ${offset.y}px)` }}>{frame(zoom)}</div></div>
-      </dialog>}</> : !error && <p>Rendering diagram…</p>}
+      </dialog>}</> : !error && <DiagramLoading />}
     <details open={error || undefined}><summary>{error ? "Diagram unavailable · View source" : "View source"}</summary><CodeBlock code={code} language="mermaid" /></details>
   </div>;
 }
