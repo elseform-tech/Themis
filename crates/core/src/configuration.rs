@@ -438,6 +438,15 @@ impl ApprovalHook for ConfiguredHook {
         }
     }
 
+    fn would_ask(&self, action: &ToolAction) -> bool {
+        if action.tool == crate::tools::UNSANDBOXED_TOOL || self.mode == ApprovalMode::Yolo {
+            return false;
+        }
+        self.policy.decision(action) == PolicyAction::Ask
+            && (action.tool.starts_with("browser_") || !self.grants.covers(action))
+            && self.interactive.would_ask(action)
+    }
+
     fn approve(&self, action: &ToolAction) -> Approval {
         if action.tool == crate::tools::UNSANDBOXED_TOOL {
             return self.approve_escape(action);
@@ -704,14 +713,22 @@ pub struct HooksConfig {
     /// How many turns in a row a finished background hook may start in an idle chat before the
     /// person writes again. 0 never starts one: what a hook reports waits for the next turn.
     pub max_wakes: u32,
+    /// Minutes a chat may sit idle before its session ends for plugin hooks (`SessionEnd`, then
+    /// `SessionStart` when the person writes again). 0 never ends one for being idle.
+    pub session_idle_minutes: u32,
 }
 
 /// Most `hooks.max_wakes` may say.
 pub const MAX_HOOK_WAKES: u32 = 10;
+/// Most `hooks.session_idle_minutes` may say: a week.
+pub const MAX_HOOK_IDLE_MINUTES: u32 = 7 * 24 * 60;
 
 impl Default for HooksConfig {
     fn default() -> Self {
-        Self { max_wakes: 3 }
+        Self {
+            max_wakes: 3,
+            session_idle_minutes: 60,
+        }
     }
 }
 
@@ -1863,6 +1880,10 @@ pub fn validate(config: &RuntimeConfig) -> Result<()> {
         "hooks.max_wakes must be 0..{MAX_HOOK_WAKES}"
     );
     ensure!(
+        config.hooks.session_idle_minutes <= MAX_HOOK_IDLE_MINUTES,
+        "hooks.session_idle_minutes must be 0..{MAX_HOOK_IDLE_MINUTES}"
+    );
+    ensure!(
         (1..=6).contains(&config.subagents.max_parallel),
         "subagents.max_parallel must be 1..6"
     );
@@ -2098,7 +2119,8 @@ fn base_schema() -> Value {
                 "allow_web":{"type":"boolean","default":true,"description":"false gives no subagent the web tools"}
             }},
             "hooks":{"type":"object","additionalProperties":false,"properties":{
-                "max_wakes":{"type":"integer","minimum":0,"maximum":10,"default":3,"description":"Turns in a row a finished background plugin hook may start in an idle chat before you write again; 0 never starts one, and what a hook reports waits for the next turn"}
+                "max_wakes":{"type":"integer","minimum":0,"maximum":10,"default":3,"description":"Turns in a row a finished background plugin hook may start in an idle chat before you write again; 0 never starts one, and what a hook reports waits for the next turn"},
+                "session_idle_minutes":{"type":"integer","minimum":0,"maximum":10080,"default":60,"description":"Minutes a chat may sit idle before its session ends for plugin hooks; writing again starts the next one. 0 never ends one for being idle"}
             }},
             "goal":{"type":"object","additionalProperties":false,"properties":{
                 "check_model":{"type":["string","null"],"minLength":1,"maxLength":256,"default":null,"description":"The model that checks each goal turn; absent, the chat's model. Any model a connected provider offers; <provider>/<id> for one from providers"},

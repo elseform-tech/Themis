@@ -16,6 +16,7 @@ pub(crate) mod configuration;
 pub(crate) mod editors;
 mod goal;
 mod goal_tool;
+mod hook_sessions;
 mod hook_wakes;
 mod integration_tools;
 mod keys;
@@ -47,6 +48,7 @@ mod threads;
 mod usage;
 mod workspace;
 pub use browser::update_payload as browser_update_payload;
+pub(crate) use hook_sessions::IDLE_CHECK_EVERY as HOOK_IDLE_CHECK_EVERY;
 /// Project path resolution, exposed for the `fuzz/` targets; not a stable API.
 #[cfg(feature = "fuzzing")]
 #[doc(hidden)]
@@ -325,8 +327,8 @@ struct AppStateInner {
     goal_turn_runs: std::sync::Mutex<HashSet<String>>,
     /// Goals, as (chat, start time), whose checklist is being kept current during turns.
     goal_checklist_watches: std::sync::Mutex<HashSet<(String, i64)>>,
-    /// Chats that have run since the app started.
-    chats_run: std::sync::Mutex<HashSet<String>>,
+    /// Open plugin hook sessions, by chat; see `hook_sessions.rs`.
+    hook_sessions: std::sync::Mutex<HashMap<String, hook_sessions::OpenHookSession>>,
     /// Bumped whenever a waiting goal timer must no longer fire.
     goal_generations: std::sync::Mutex<HashMap<String, u64>>,
     /// Runs the server itself sends (queued messages, goal turns), by run id:
@@ -602,7 +604,7 @@ impl AppState {
                 goal_lock: std::sync::Mutex::new(()),
                 goal_turn_runs: std::sync::Mutex::new(HashSet::new()),
                 goal_checklist_watches: std::sync::Mutex::new(HashSet::new()),
-                chats_run: std::sync::Mutex::new(HashSet::new()),
+                hook_sessions: std::sync::Mutex::new(HashMap::new()),
                 goal_generations: std::sync::Mutex::new(HashMap::new()),
                 server_sends: std::sync::Mutex::new(HashMap::new()),
             }),
@@ -686,6 +688,17 @@ impl AppState {
             return Err("invalid chat id".to_owned());
         }
         let level = if record.outcome == NotificationOutcome::Sent {
+            let (kind, message) = match record.kind {
+                crate::notifications::GoalNotice::Reached => ("goal_reached", "Goal reached"),
+                crate::notifications::GoalNotice::Stuck => ("goal_stuck", "Goal paused"),
+                crate::notifications::GoalNotice::Waiting => {
+                    ("goal_waiting", "Goal waiting for you")
+                }
+                crate::notifications::GoalNotice::Quota => {
+                    ("goal_quota", "Goal paused: quota used up")
+                }
+            };
+            self.notify_session_hooks(&record.thread_id, kind, message);
             "info"
         } else {
             "warn"

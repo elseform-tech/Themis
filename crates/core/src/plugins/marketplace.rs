@@ -1411,7 +1411,7 @@ fn import_directory_within(
     }
     for value in declared("hooks") {
         if value.is_object() {
-            import_hooks(value, &mut spec)?;
+            import_hooks(value, root, &mut spec)?;
         } else {
             hook_files.extend(declared_paths(
                 &[value],
@@ -1430,7 +1430,7 @@ fn import_directory_within(
     }
     for path in unique(hook_files) {
         if let Some(raw) = spec.files.get(&path) {
-            import_hooks(&serde_json::from_str::<Value>(raw)?, &mut spec)?;
+            import_hooks(&serde_json::from_str::<Value>(raw)?, root, &mut spec)?;
         }
     }
     spec.starts_disabled = manifest.get("defaultEnabled") == Some(&Value::Bool(false));
@@ -3125,7 +3125,37 @@ fn quoted_command(program: &str, args: &[String]) -> String {
 /// more than a native hook's ten seconds.
 const IMPORTED_HOOK_TIMEOUT: u64 = 60;
 
-fn import_hooks(value: &Value, spec: &mut PluginSpec) -> anyhow::Result<()> {
+/// Whether a `PermissionRequest` hook's worth is answering yes, going by its command and the script
+/// it runs. Hooks never grant permissions, so such a hook can't do what it is for, and the plugin
+/// has to say so. Only text can be read: a compiled program that answers allow still has it
+/// ignored when it runs, and logged.
+fn answers_allow(command: &str, root: &Path) -> bool {
+    static ALLOW: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+        regex::Regex::new(r#"behavior[\\"']*\s*[:=]\s*[\\"']*allow"#).expect("valid pattern")
+    });
+    if ALLOW.is_match(command) {
+        return true;
+    }
+    const ROOT: &str = "${CLAUDE_PLUGIN_ROOT}/";
+    let Ok(folder) = root.canonicalize() else {
+        return false;
+    };
+    command.match_indices(ROOT).any(|(at, _)| {
+        let rest = &command[at + ROOT.len()..];
+        let path = rest
+            .split(|c: char| c.is_whitespace() || matches!(c, '"' | '\'' | ';' | '|' | '&'))
+            .next()
+            .unwrap_or_default();
+        let Ok(script) = root.join(path).canonicalize() else {
+            return false;
+        };
+        script.starts_with(&folder)
+            && fs::metadata(&script).is_ok_and(|meta| meta.len() <= 1024 * 1024)
+            && fs::read(&script).is_ok_and(|bytes| ALLOW.is_match(&String::from_utf8_lossy(&bytes)))
+    })
+}
+
+fn import_hooks(value: &Value, root: &Path, spec: &mut PluginSpec) -> anyhow::Result<()> {
     let events = value
         .get("hooks")
         .unwrap_or(value)
@@ -3133,9 +3163,19 @@ fn import_hooks(value: &Value, spec: &mut PluginSpec) -> anyhow::Result<()> {
         .context("Invalid hook configuration")?;
     for (event, groups) in events {
         let mapped = match event.as_str() {
-            // Its output is context for the model, which only PromptSubmit delivers: it runs
-            // on every turn instead of once per session.
-            "SessionStart" => "PromptSubmit",
+            // Themis has these moments under the same names; see `hooks::EVENTS`.
+            "SessionStart" => "SessionStart",
+            "SessionEnd" => "SessionEnd",
+            "UserPromptExpansion" => "UserPromptExpansion",
+            "PermissionRequest" => "PermissionRequest",
+            "PermissionDenied" => "PermissionDenied",
+            "PostToolBatch" => "PostToolBatch",
+            "PostCompact" => "PostCompact",
+            "Notification" => "Notification",
+            "TaskCreated" => "TaskCreated",
+            "TaskCompleted" => "TaskCompleted",
+            "ConfigChange" => "ConfigChange",
+            "InstructionsLoaded" => "InstructionsLoaded",
             // Fires only when the run failed; `Stop` also runs then, as RunEnd always does.
             "StopFailure" => "RunFailed",
             "PreToolUse" => "BeforeTool",
@@ -3154,7 +3194,33 @@ fn import_hooks(value: &Value, spec: &mut PluginSpec) -> anyhow::Result<()> {
         };
         let tool_event = matches!(
             event.as_str(),
-            "PreToolUse" | "PostToolUse" | "PostToolUseFailure"
+            "PreToolUse"
+                | "PostToolUse"
+                | "PostToolUseFailure"
+                | "PermissionRequest"
+                | "PermissionDenied"
+        );
+        // What each event can be about here, and so what a matcher on it can ever match. An empty
+        // list takes any name (a skill's). Claude takes no matcher on the last group.
+        let moments: Option<&[&str]> = match event.as_str() {
+            "SessionStart" => Some(&["startup", "resume"]),
+            "SessionEnd" => Some(&["prompt_input_exit", "other"]),
+            "PostCompact" => Some(&["auto"]),
+            "Notification" => Some(&[
+                "permission_prompt",
+                "goal_reached",
+                "goal_stuck",
+                "goal_waiting",
+                "goal_quota",
+            ]),
+            "ConfigChange" => Some(&["user_settings", "project_settings"]),
+            "InstructionsLoaded" => Some(&["session_start"]),
+            "UserPromptExpansion" => Some(&[]),
+            _ => None,
+        };
+        let matcher_ignored = matches!(
+            event.as_str(),
+            "PostToolBatch" | "TaskCreated" | "TaskCompleted"
         );
         for group in groups.as_array().context("Invalid hook groups")? {
             for raw in group["hooks"].as_array().context("Invalid hook list")? {
@@ -3165,28 +3231,34 @@ fn import_hooks(value: &Value, spec: &mut PluginSpec) -> anyhow::Result<()> {
                         .push(format!("{event}: {kind} hook has no Themis equivalent"));
                     continue;
                 }
-                // Every Claude session starts with "startup", which here is every turn; `resume` is
-                // a chat's first run after the app started. Clearing and compacting have no
-                // equivalent.
-                let session_matcher = (event == "SessionStart")
-                    .then(|| group["matcher"].as_str())
-                    .flatten()
-                    .filter(|matcher| !matcher.is_empty() && *matcher != "*");
-                let mut session_sources = None;
-                if let Some(matcher) = session_matcher {
-                    let has =
-                        |wanted: &str| matcher.split('|').any(|source| source.trim() == wanted);
-                    if has("resume") && !has("startup") {
-                        session_sources = Some(vec!["resume".to_owned()]);
-                    } else if !has("startup") {
+                // Clearing, compacting and logging out have no equivalent: a matcher naming only
+                // those would never run, which isn't the same as working.
+                let mut moment_matcher = None;
+                if let (Some(moments), Some(matcher)) = (
+                    moments,
+                    group["matcher"]
+                        .as_str()
+                        .filter(|matcher| !matcher.is_empty() && *matcher != "*"),
+                ) {
+                    let reachable = moments.is_empty()
+                        || moments
+                            .iter()
+                            .any(|moment| super::hooks::moment_matches(matcher, moment));
+                    let compiles = matcher
+                        .chars()
+                        .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '|')
+                        || super::hooks::compile_matcher(matcher).is_ok();
+                    if !reachable || !compiles {
                         spec.unsupported.push(format!(
-                            "SessionStart: matcher {matcher} has no Themis equivalent"
+                            "{event}: matcher {matcher} has no Themis equivalent"
                         ));
                         continue;
                     }
+                    moment_matcher = Some(matcher.to_owned());
                 }
                 if !tool_event
-                    && event != "SessionStart"
+                    && moments.is_none()
+                    && !matcher_ignored
                     && group["matcher"]
                         .as_str()
                         .is_some_and(|matcher| !matcher.is_empty() && matcher != "*")
@@ -3219,10 +3291,16 @@ fn import_hooks(value: &Value, spec: &mut PluginSpec) -> anyhow::Result<()> {
                         }
                         mapped_tools
                     }
-                    _ if event == "SessionStart" => None,
+                    _ if moments.is_some() || matcher_ignored => None,
                     other => other.map(str::to_owned),
                 };
                 let command = raw["command"].as_str().context("Missing hook command")?;
+                if event == "PermissionRequest" && answers_allow(command, root) {
+                    spec.unsupported.push(format!(
+                        "{event}: answers allow, and hooks never grant permissions"
+                    ));
+                    continue;
+                }
                 let command = match &options.args {
                     Some(args) => quoted_command(command, args),
                     None => command.to_owned(),
@@ -3264,7 +3342,7 @@ fn import_hooks(value: &Value, spec: &mut PluginSpec) -> anyhow::Result<()> {
                     plugin_root: None,
                     plugin_data: None,
                     env_file: None,
-                    session_sources,
+                    moment_matcher,
                     runtime_identity: None,
                 });
             }
@@ -3306,7 +3384,18 @@ fn imported_hook_name(event: &str, matcher: Option<&str>, command: &str, taken: 
         ("ToolCallFailed", Some(tool)) => format!("{tool}-failed").replace('_', "-"),
         ("BeforeTool", None) => "before-tool".into(),
         ("AfterTool", None) => "after-tool".into(),
-        _ => "tool-failed".into(),
+        ("ToolCallFailed", None) => "tool-failed".into(),
+        // `SessionEnd` is `session-end`.
+        (other, _) => {
+            let mut name = String::new();
+            for letter in other.chars() {
+                if letter.is_ascii_uppercase() && !name.is_empty() {
+                    name.push('-');
+                }
+                name.push(letter.to_ascii_lowercase());
+            }
+            name
+        }
     });
     let mut name = base.clone();
     let mut number = 1;
@@ -3447,7 +3536,7 @@ mod imported_hook_name_tests {
                 plugin_root: None,
                 plugin_data: None,
                 env_file: None,
-                session_sources: None,
+                moment_matcher: None,
                 runtime_identity: None,
             })
             .collect()

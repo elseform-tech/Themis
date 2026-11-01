@@ -702,7 +702,7 @@ impl AppState {
         self.forget_goals(std::slice::from_ref(&thread_id));
         self.forget_questions(std::slice::from_ref(&thread_id));
         self.forget_subagents(std::slice::from_ref(&thread_id));
-        self.forget_hook_sessions(std::slice::from_ref(&thread_id));
+        self.end_deleted_chat_session(&thread_id);
         self.forget_browsers(std::slice::from_ref(&thread_id)).await;
         self.forget_background_tasks(&[thread_id]).await;
         self.persist_registry().await;

@@ -867,6 +867,166 @@ fn prompt_and_failure_hooks_import_and_claude_tool_names_map_to_themis_tools() {
     );
 }
 
+/// Events Themis has a moment for import under their own names, with a matcher kept for what it
+/// can match; one that could only match what never happens here is listed, not kept to do nothing.
+/// Events with no moment stay listed.
+#[test]
+fn lifecycle_events_import_only_where_their_moment_exists() {
+    let plugin = tempfile::tempdir().unwrap();
+    let root = plugin.path();
+    let command = |text: &str| json!([{"type": "command", "command": text}]);
+    write(
+        root,
+        ".claude-plugin/plugin.json",
+        r#"{"name":"moments","description":"d"}"#,
+    );
+    write(
+        root,
+        "hooks/hooks.json",
+        &json!({"hooks": {
+            "SessionStart": [
+                {"matcher": "startup|clear", "hooks": command("start")},
+                {"matcher": "compact", "hooks": command("after-compact")},
+            ],
+            "SessionEnd": [
+                {"hooks": command("end")},
+                {"matcher": "clear|logout", "hooks": command("end-on-clear")},
+                {"matcher": "clear|other", "hooks": command("end-other")},
+            ],
+            "UserPromptExpansion": [{"matcher": "^kit:review$", "hooks": command("expand")}],
+            "UserPromptSubmit": [{"hooks": command("submit")}],
+            "PermissionRequest": [{"matcher": "Bash", "hooks": command("asked")}],
+            "PermissionDenied": [{"matcher": "Bash", "hooks": command("denied")}],
+            "PostToolBatch": [{"hooks": command("batch")}],
+            "PostCompact": [
+                {"matcher": "auto", "hooks": command("compacted")},
+                {"matcher": "manual", "hooks": command("compacted-by-hand")},
+            ],
+            "Notification": [
+                {"matcher": "permission_prompt", "hooks": command("told")},
+                {"matcher": "idle_prompt", "hooks": command("told-idle")},
+            ],
+            "TaskCreated": [{"hooks": command("created")}],
+            "TaskCompleted": [{"hooks": command("completed")}],
+            "ConfigChange": [{"matcher": "project_settings", "hooks": command("config")}],
+            "InstructionsLoaded": [{"matcher": "session_start", "hooks": command("loaded")}],
+            "FileChanged": [{"matcher": ".envrc", "hooks": command("file")}],
+            "CwdChanged": [{"hooks": command("cwd")}],
+            "TeammateIdle": [{"hooks": command("idle")}],
+            "Elicitation": [{"hooks": command("elicit")}],
+            "ElicitationResult": [{"hooks": command("elicited")}],
+        }})
+        .to_string(),
+    );
+    let preview = inspect(root);
+    let find = |command: &str| {
+        preview
+            .spec
+            .hooks
+            .iter()
+            .find(|hook| hook.command == command)
+    };
+    for (command, event, moment) in [
+        ("start", "SessionStart", Some("startup|clear")),
+        ("end", "SessionEnd", None),
+        ("end-other", "SessionEnd", Some("clear|other")),
+        ("expand", "UserPromptExpansion", Some("^kit:review$")),
+        ("batch", "PostToolBatch", None),
+        ("compacted", "PostCompact", Some("auto")),
+        ("told", "Notification", Some("permission_prompt")),
+        ("created", "TaskCreated", None),
+        ("completed", "TaskCompleted", None),
+        ("config", "ConfigChange", Some("project_settings")),
+        ("loaded", "InstructionsLoaded", Some("session_start")),
+    ] {
+        let hook = find(command).unwrap_or_else(|| panic!("{command} wasn't imported"));
+        assert_eq!(hook.event, event, "{command}");
+        assert_eq!(hook.moment_matcher.as_deref(), moment, "{command}");
+        assert!(hook.matcher.is_none(), "{command}");
+    }
+    for (command, event) in [
+        ("asked", "PermissionRequest"),
+        ("denied", "PermissionDenied"),
+    ] {
+        let hook = find(command).unwrap();
+        assert_eq!(hook.event, event);
+        assert_eq!(hook.matcher.as_deref(), Some("shell|background_task"));
+    }
+    assert_eq!(find("submit").unwrap().event, "PromptSubmit");
+    assert!(!find("start").unwrap().exit_two_blocks);
+    for never in [
+        "after-compact",
+        "end-on-clear",
+        "compacted-by-hand",
+        "told-idle",
+        "file",
+        "cwd",
+        "idle",
+        "elicit",
+        "elicited",
+    ] {
+        assert!(find(never).is_none(), "{never} would never run");
+    }
+    let notes = preview.spec.unsupported.join("\n");
+    for reason in [
+        "SessionStart: matcher compact has no Themis equivalent",
+        "SessionEnd: matcher clear|logout has no Themis equivalent",
+        "PostCompact: matcher manual has no Themis equivalent",
+        "Notification: matcher idle_prompt has no Themis equivalent",
+        "Hook event FileChanged",
+        "Hook event CwdChanged",
+        "Hook event TeammateIdle",
+        "Hook event Elicitation",
+        "Hook event ElicitationResult",
+    ] {
+        assert!(notes.contains(reason), "{reason}: {notes}");
+    }
+    assert!(!notes.contains("Hook event SessionEnd"), "{notes}");
+}
+
+/// A hook whose worth is answering yes can't work here: hooks never grant. It stays out, and the
+/// plugin says so. One that only watches, or only says no, isn't affected.
+#[test]
+fn a_permission_hook_that_approves_is_named_as_not_working() {
+    let plugin = tempfile::tempdir().unwrap();
+    let root = plugin.path();
+    write(
+        root,
+        ".claude-plugin/plugin.json",
+        r#"{"name":"approver","description":"d"}"#,
+    );
+    write(
+        root,
+        "hooks/approve.sh",
+        r#"#!/bin/sh
+echo '{"hookSpecificOutput":{"hookEventName":"PermissionRequest","decision":{"behavior":"allow"}}}'
+"#,
+    );
+    write(root, "hooks/watch.sh", "#!/bin/sh\ncat >> seen.jsonl\n");
+    write(
+        root,
+        "hooks/hooks.json",
+        &json!({"hooks": {"PermissionRequest": [
+            {"hooks": [{"type": "command", "command": "sh \"${CLAUDE_PLUGIN_ROOT}/hooks/approve.sh\""}]},
+            {"hooks": [{"type": "command", "command": "sh \"${CLAUDE_PLUGIN_ROOT}/hooks/watch.sh\""}]},
+            {"hooks": [{"type": "command", "command": "echo '{\"decision\":{\"behavior\":\"allow\"}}'"}]},
+        ]}})
+        .to_string(),
+    );
+    let preview = inspect(root);
+    assert_eq!(preview.report.status, "partial", "{:?}", preview.report);
+    let notes = preview.spec.unsupported.join("\n");
+    assert_eq!(
+        notes
+            .matches("PermissionRequest: answers allow, and hooks never grant permissions")
+            .count(),
+        2,
+        "{notes}"
+    );
+    assert_eq!(preview.spec.hooks.len(), 1, "{:?}", preview.spec.hooks);
+    assert!(preview.spec.hooks[0].command.contains("watch.sh"));
+}
+
 /// One PreToolUse hook on `Bash` with `options`, imported: the hook if it came through, and the
 /// notes either way.
 fn import_hook(options: serde_json::Value) -> (Option<themis_core::plugins::hooks::Hook>, String) {
@@ -1112,8 +1272,8 @@ fn events_map_only_when_their_meaning_holds() {
         root,
         "hooks/hooks.json",
         &json!({"hooks": {
-            "StopFailure": one, "SessionEnd": one, "UserPromptExpansion": one,
-            "PermissionRequest": one,
+            "StopFailure": one, "FileChanged": one, "CwdChanged": one,
+            "TeammateIdle": one,
             "PreToolUse": [{"hooks": [{"type": "prompt", "prompt": "think"},
                                       {"type": "http", "url": "https://example.com"}]}]
         }})
@@ -1128,7 +1288,7 @@ fn events_map_only_when_their_meaning_holds() {
         .collect();
     assert_eq!(events, ["RunFailed"]);
     let notes = preview.spec.unsupported.join("\n");
-    for event in ["SessionEnd", "UserPromptExpansion", "PermissionRequest"] {
+    for event in ["FileChanged", "CwdChanged", "TeammateIdle"] {
         assert!(notes.contains(&format!("Hook event {event}")), "{notes}");
     }
     assert!(
