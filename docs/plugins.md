@@ -127,9 +127,29 @@ own browser with PKCE (S256) and the `resource` parameter (RFC 8707). A one-time
 `127.0.0.1` receives the result (five minutes at most); the tokens are stored in the Keychain
 (never in configuration files) and refreshed when they expire. **Sign out** forgets them.
 Sign-in and sign-out are offered only for servers you installed. A server whose sign-in needs a
-client registered by hand (no registration endpoint) is reported as such; use a
-`Bearer ${NAME}` header for it instead. A server that has its own key header never signs in. Imported definitions with an `oauth` setting are
-accepted; the sign-in happens after installing.
+client registered by hand (no registration endpoint, and no client named in its plugin) is reported
+as such; use a `Bearer ${NAME}` header for it instead. A server whose own key header has a value
+never signs in; a header written `${NAME:-}` doesn't count until it has one, so a plugin like that
+takes a key or a sign-in.
+
+An `oauth` block in a plugin's configuration is honoured, and the sign-in happens after installing:
+
+| Field | What it does |
+|---|---|
+| `clientId` | The client to sign in as, instead of registering one (a client registered with the provider, or the address of a client metadata document). The page comes back to `http://localhost:PORT/callback`, since a registered client is held to the exact address it was registered with; a client registered by Themis itself uses `http://127.0.0.1:PORT/callback`. |
+| `callbackPort` | The port the listener takes; a port already in use is reported before any page opens. Absent, any free port. |
+| `scopes` (`scope` in OpenCode's form) | What to ask for, in place of the server's `WWW-Authenticate` scope and then its `scopes_supported`. |
+| `authServerMetadataUrl` | Where the authorization server's metadata is (HTTPS, or HTTP on this computer), in place of discovery. |
+| `clientSecret` | A secret holding the client's secret, as `${NAME}`. |
+
+Any other field keeps that connection out, and is named. The token asks for the protected resource
+the server's metadata names when that covers its address (`https://mcp.slack.com` for
+`https://mcp.slack.com/mcp`), and a refresh names the same one; metadata about another server is
+refused. A preset client is often one its provider registered for Claude (`claude`, or a metadata
+document naming Claude Code), so the provider's page may name Claude, not Themis.
+
+How far each catalog plugin's real provider was checked, without signing in to anything:
+[integrations verification](integrations-verification.md#mcp-sign-in-providers).
 
 ## Keys for MCP servers
 

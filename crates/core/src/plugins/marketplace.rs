@@ -1,3 +1,4 @@
+use super::connections::McpOauth;
 use super::*;
 use serde_json::{json, Value};
 
@@ -2260,12 +2261,22 @@ fn import_headers(server: &mut McpServer, headers: &Value) -> anyhow::Result<()>
 /// Defaults from `${NAME:-value}`: plain, non-secret values only.
 fn add_defaults(server: &mut McpServer, defaults: Vec<(String, String)>) -> anyhow::Result<()> {
     for (name, default) in defaults {
-        if !crate::plugins::keys::safe_literal(&name, &default) {
+        // `${NAME:-}` says the value is optional; it holds nothing to refuse.
+        if !default.is_empty() && !crate::plugins::keys::safe_literal(&name, &default) {
             bail!(LITERAL_REFUSED);
         }
         server.defaults.insert(name, default);
     }
     Ok(())
+}
+/// Whether `default` for `key` stands where the URL's host goes and can't be one: Datadog writes
+/// `https://${DD_MCP_DOMAIN:-not-setup}/`, which means the value is needed, not that a computer
+/// called `not-setup` is the server.
+fn unusable_host_default(url: &str, key: &str, default: &str) -> bool {
+    let host = url
+        .split_once("://")
+        .map_or(url, |(_, rest)| rest.split('/').next().unwrap_or(rest));
+    host.contains(&format!("${{{key}}}")) && !default.contains('.') && default != "localhost"
 }
 fn import_mcp_server(name: &str, raw: &Value, opencode: bool) -> anyhow::Result<McpServer> {
     if !safe_name(name) {
@@ -2295,6 +2306,7 @@ fn import_mcp_server(name: &str, raw: &Value, opencode: bool) -> anyhow::Result<
             "enabled",
             "bearer_env",
             "cwd",
+            "oauth",
             // Accepted without effect: descriptions and notes, Claude's own switch (imported
             // servers start disabled), its timeout and auto-approval (Themis's apply).
             "description",
@@ -2337,18 +2349,14 @@ fn import_mcp_server(name: &str, raw: &Value, opencode: bool) -> anyhow::Result<
             ));
         }
     }
-    if raw.get("oauth").is_some_and(|v| v != &Value::Bool(false)) {
-        if let Some(secret) = raw["oauth"].get("clientSecret") {
-            environment_reference(
-                secret
-                    .as_str()
-                    .context("OAuth secret must be an environment reference")?,
-            )?;
-        }
-        // Sign-in happens in Integrations after installing (MCP OAuth with dynamic client
-        // registration); preset OAuth client settings are not used.
-    }
     let mut server = McpServer::default();
+    if let Some(block) = raw.get("oauth") {
+        match read_oauth(name, block, opencode) {
+            Ok(oauth) => server.oauth = oauth,
+            Err(error) if error.is::<UnsupportedMcp>() => compatibility_error = Some(error),
+            Err(error) => return Err(error),
+        }
+    }
     if let Some(cwd) = raw.get("cwd") {
         server.cwd = Some(cwd.as_str().context("MCP cwd must be text")?.to_owned());
     }
@@ -2388,6 +2396,10 @@ fn import_mcp_server(name: &str, raw: &Value, opencode: bool) -> anyhow::Result<
         let url = url.as_str().context("MCP URL must be a string")?;
         let (url, defaults) = crate::plugins::keys::normalize_references(url)
             .context("MCP URL references must be ${NAME}")?;
+        let defaults = defaults
+            .into_iter()
+            .filter(|(key, default)| !unusable_host_default(&url, key, default))
+            .collect();
         server.url = Some(url);
         add_defaults(&mut server, defaults)?;
     }
@@ -2423,6 +2435,63 @@ fn import_mcp_server(name: &str, raw: &Value, opencode: bool) -> anyhow::Result<
     }
     Ok(server)
 }
+/// A connection's `oauth` block: how its sign-in goes (Integrations signs in after installing).
+/// A bare `true` or `false` and an empty block leave it to discovery. A field Themis would not honour is named
+/// rather than quietly dropped, and a client's secret must be a reference.
+fn read_oauth(name: &str, block: &Value, opencode: bool) -> anyhow::Result<Option<McpOauth>> {
+    if block.is_boolean() {
+        return Ok(None);
+    }
+    let fields = block.as_object().context("MCP oauth must be an object")?;
+    let text = |value: &Value, field: &str| -> anyhow::Result<String> {
+        value
+            .as_str()
+            .map(str::to_owned)
+            .with_context(|| format!("MCP oauth {field} must be text"))
+    };
+    let mut oauth = McpOauth::default();
+    for (field, value) in fields {
+        match field.as_str() {
+            "clientId" => oauth.client_id = Some(text(value, field)?),
+            "clientSecret" => {
+                oauth.client_secret_env = Some(environment_reference(&text(value, field)?)?);
+            }
+            "scopes" | "scope" => oauth.scopes = Some(read_scopes(value)?),
+            "callbackPort" if !opencode => {
+                oauth.callback_port = Some(
+                    value
+                        .as_u64()
+                        .and_then(|port| u16::try_from(port).ok())
+                        .context("MCP oauth callbackPort must be a port number")?,
+                );
+            }
+            "authServerMetadataUrl" if !opencode => {
+                oauth.auth_server_metadata_url = Some(text(value, field)?);
+            }
+            other => {
+                return Err(unsupported_mcp(
+                    format!("{name}.oauth.{other}"),
+                    "Unsupported MCP oauth field",
+                    "Remove this field or configure the component manually",
+                ));
+            }
+        }
+    }
+    Ok((oauth != McpOauth::default()).then_some(oauth))
+}
+
+/// Scopes as one space-separated string, as written either way.
+fn read_scopes(value: &Value) -> anyhow::Result<String> {
+    if let Some(text) = value.as_str() {
+        return Ok(text.to_owned());
+    }
+    let words = value
+        .as_array()
+        .and_then(|words| words.iter().map(Value::as_str).collect::<Option<Vec<_>>>())
+        .context("MCP oauth scopes must be text or a list of text")?;
+    Ok(words.join(" "))
+}
+
 /// One connection from the standard `mcpServers` shape used by Claude Desktop, Claude Code
 /// and Cursor: `{command, args, env}` for local servers, `{type: "http", url, headers}` for
 /// remote ones. Credentials must be `${VARIABLE}` references, as for any import.
@@ -2465,6 +2534,32 @@ pub fn mcp_server_to_standard(server: &McpServer) -> Value {
         );
         if !headers.is_empty() {
             entry.insert("headers".into(), Value::Object(headers));
+        }
+        if let Some(oauth) = &server.oauth {
+            let mut block = serde_json::Map::new();
+            let mut put = |field: &str, value: Option<Value>| {
+                if let Some(value) = value {
+                    block.insert(field.to_owned(), value);
+                }
+            };
+            put("clientId", oauth.client_id.as_ref().map(|id| json!(id)));
+            put("callbackPort", oauth.callback_port.map(|port| json!(port)));
+            put(
+                "authServerMetadataUrl",
+                oauth
+                    .auth_server_metadata_url
+                    .as_ref()
+                    .map(|url| json!(url)),
+            );
+            put("scopes", oauth.scopes.as_ref().map(|scopes| json!(scopes)));
+            put(
+                "clientSecret",
+                oauth
+                    .client_secret_env
+                    .as_ref()
+                    .map(|name| json!(format!("${{{name}}}"))),
+            );
+            entry.insert("oauth".into(), Value::Object(block));
         }
     }
     if !server.env.is_empty() || !server.env_values.is_empty() {

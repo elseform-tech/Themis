@@ -279,6 +279,8 @@ struct AppStateInner {
     removals: tokio::sync::RwLock<HashMap<String, AutomationRemoval>>,
     removals_path: PathBuf,
     /// Automations the scheduler is processing right now (check or spawn).
+    /// Stands in for the person's browser in tests; absent, the system opens addresses.
+    url_opener: std::sync::Mutex<Option<UrlOpener>>,
     watch_inflight: std::sync::Mutex<HashSet<String>>,
     /// In-flight automation runs (`run_id` -> context). Deliberately
     /// in-memory only: a run killed mid-flight by a shutdown has no mapping
@@ -567,6 +569,7 @@ impl AppState {
                 reviews_path,
                 removals: tokio::sync::RwLock::new(removals),
                 removals_path,
+                url_opener: std::sync::Mutex::new(None),
                 watch_inflight: std::sync::Mutex::new(HashSet::new()),
                 automation_runs: std::sync::Mutex::new(HashMap::new()),
                 scheduler_sink: std::sync::Mutex::new(None),
@@ -1280,6 +1283,33 @@ pub(crate) fn spawn_text_editor(target: &Path) -> Result<(), String> {
 }
 
 /// Opens an http(s) URL in the person's default browser (no shell parses it).
+/// What opens a web address in the person's browser.
+pub type UrlOpener = Arc<dyn Fn(&str) -> Result<(), String> + Send + Sync>;
+
+impl AppState {
+    /// Sends sign-in pages to `opener` instead of the browser: a test's fake person.
+    pub fn use_url_opener(&self, opener: UrlOpener) {
+        *self
+            .inner
+            .url_opener
+            .lock()
+            .unwrap_or_else(|e| e.into_inner()) = Some(opener);
+    }
+
+    pub(crate) fn open_url(&self, url: &str) -> Result<(), String> {
+        let opener = self
+            .inner
+            .url_opener
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone();
+        match opener {
+            Some(opener) => opener(url),
+            None => spawn_opener_url(url),
+        }
+    }
+}
+
 pub(crate) fn spawn_opener_url(url: &str) -> Result<(), String> {
     let web = url.starts_with("https://") || url.starts_with("http://");
     if !web || url.chars().any(|c| c.is_whitespace() || c.is_control()) {

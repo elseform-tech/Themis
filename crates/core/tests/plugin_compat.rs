@@ -397,6 +397,87 @@ fn install_time_settings_become_keys() {
 }
 
 #[test]
+fn the_oauth_blocks_the_catalog_ships_are_kept_as_written() {
+    // The blocks of mongodb-atlas, render, slack and wingspan, as they are.
+    let preview = import_mcp(json!({
+        "mongodb-atlas": {"type": "http", "url": "https://mcp.mongodb.com/",
+            "oauth": {"clientId": "https://claude.ai/oauth/claude-code-client-metadata"}},
+        "render": {"type": "http", "url": "https://mcp.render.com/mcp", "oauth": {"clientId": "claude"}},
+        "slack": {"type": "http", "url": "https://mcp.slack.com/mcp",
+            "oauth": {"clientId": "1601185624273.8899143856786", "callbackPort": 3118}},
+        "wingspan": {"type": "http", "url": "https://api.wingspan.app/v3/mcp",
+            "oauth": {"scopes": "offline_access",
+                "authServerMetadataUrl": "https://api.wingspan.app/.well-known/oauth-authorization-server"}},
+    }))
+    .unwrap();
+    assert_eq!(preview.report.status, "supported", "{:?}", preview.report);
+    let oauth = |name: &str| preview.spec.mcp[name].oauth.clone().unwrap();
+    assert_eq!(oauth("render").client_id.as_deref(), Some("claude"));
+    assert_eq!(oauth("slack").callback_port, Some(3118));
+    assert_eq!(oauth("wingspan").scopes.as_deref(), Some("offline_access"));
+    assert!(oauth("wingspan").auth_server_metadata_url.is_some());
+    // And `Edit as mcp.json` writes them back as they came.
+    let written = themis_core::plugins::mcp_server_to_standard(&preview.spec.mcp["slack"]);
+    assert_eq!(
+        written["oauth"],
+        json!({"clientId": "1601185624273.8899143856786", "callbackPort": 3118})
+    );
+    let again = themis_core::plugins::mcp_server_from_standard("slack", &written).unwrap();
+    assert_eq!(again.oauth, Some(oauth("slack")));
+}
+
+#[test]
+fn an_oauth_block_it_would_not_honour_is_named_or_refused() {
+    // A field it doesn't know: the connection stays out and the field is named.
+    let preview = import_mcp(json!({"a": {"type": "http", "url": "https://a.example/mcp",
+        "oauth": {"clientId": "x", "pkce": false}}}))
+    .unwrap();
+    assert!(preview.spec.mcp.is_empty());
+    assert_eq!(
+        preview.spec.import_issues[0].field.as_deref(),
+        Some("mcpServers.a.oauth.pkce")
+    );
+    // Nothing to connect to, or nothing that could be meant.
+    for block in [
+        json!({"command": "run", "oauth": {"clientId": "x"}}),
+        json!({"url": "https://a.example/mcp", "oauth": "yes"}),
+        json!({"url": "https://a.example/mcp", "oauth": {"callbackPort": 80}}),
+        json!({"url": "https://a.example/mcp", "oauth": {"callbackPort": 70000}}),
+        json!({"url": "https://a.example/mcp", "oauth": {"clientId": ""}}),
+        json!({"url": "https://a.example/mcp", "oauth": {"clientId": 7}}),
+        json!({"url": "https://a.example/mcp", "oauth": {"scopes": 7}}),
+        json!({"url": "https://a.example/mcp", "oauth": {"authServerMetadataUrl": "http://a.example/m"}}),
+        json!({"url": "https://a.example/mcp", "oauth": {"authServerMetadataUrl": "not an address"}}),
+    ] {
+        assert!(import_mcp(json!({"a": block.clone()})).is_err(), "{block}");
+    }
+    // Empty or off: discovery decides.
+    for block in [json!({}), json!(false)] {
+        let preview =
+            import_mcp(json!({"a": {"url": "https://a.example/mcp", "oauth": block}})).unwrap();
+        assert_eq!(preview.spec.mcp["a"].oauth, None);
+    }
+}
+
+proptest::proptest! {
+    #[test]
+    fn any_oauth_block_imports_or_is_refused_cleanly(
+        field in proptest::sample::select(vec!["clientId", "callbackPort", "scopes", "authServerMetadataUrl", "clientSecret", "other"]),
+        text in "\\PC{0,40}",
+        port in proptest::num::i64::ANY,
+    ) {
+        for value in [json!(text), json!(port), json!([text]), json!({"x": text})] {
+            let result = import_mcp(json!({"a": {"url": "https://a.example/mcp", "oauth": {field: value}}}));
+            if let Ok(preview) = result {
+                if let Some(server) = preview.spec.mcp.get("a") {
+                    proptest::prop_assert!(server.validate().is_ok());
+                }
+            }
+        }
+    }
+}
+
+#[test]
 fn defaults_and_plain_settings_are_kept_but_secrets_must_be_keys() {
     let preview = import_mcp(json!({"grafana": {
         "command": "docker",
@@ -534,10 +615,12 @@ fn url_defaults_harmless_fields_and_install_settings() {
         spec.mcp["logfire"].defaults["LOGFIRE_MCP_URL"],
         "https://logfire-us.pydantic.dev/mcp"
     );
-    assert_eq!(spec.mcp["datadog"].defaults["DD_MCP_DOMAIN"], "not-setup");
+    // `not-setup` can't be a host: the value is needed, and no computer of that name is tried.
+    assert!(!spec.mcp["datadog"].defaults.contains_key("DD_MCP_DOMAIN"));
+    assert_eq!(spec.mcp["datadog"].key_names(), ["DD_MCP_DOMAIN"]);
     assert_eq!(spec.notices.len(), 2, "{:?}", spec.notices);
 
-    // A preset OAuth client (registered for another app) stays a real gap.
+    // A preset OAuth client is kept, and a plugin's install settings are noted.
     let global = tempfile::tempdir().unwrap();
     let plugin = tempfile::tempdir().unwrap();
     let root = plugin.path();
@@ -554,7 +637,7 @@ fn url_defaults_harmless_fields_and_install_settings() {
     let preview = PluginStore::new(global.path().into(), None)
         .inspect_path(root, Some("fixture"))
         .unwrap();
-    assert_eq!(preview.report.status, "partial", "{:?}", preview.report);
+    assert_eq!(preview.report.status, "supported", "{:?}", preview.report);
     assert!(preview
         .spec
         .notices

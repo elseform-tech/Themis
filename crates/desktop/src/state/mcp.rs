@@ -48,6 +48,8 @@ pub(super) struct McpEntry {
     fingerprint: String,
     /// A remote server's address when it may use a sign-in (no token variable of its own).
     remote: Option<String>,
+    /// That address with its secrets filled in: what a sign-in is kept under.
+    remote_filled: Option<String>,
     result: tokio::sync::watch::Receiver<Option<SessionResult>>,
     task: tokio::task::JoinHandle<()>,
 }
@@ -72,7 +74,8 @@ impl McpEntry {
     fn status(&self) -> Value {
         let mut status = self.connection_status();
         if let Some(url) = &self.remote {
-            status["signed_in"] = json!(themis_core::plugins::oauth::signed_in(url));
+            let filled = self.remote_filled.as_deref().unwrap_or(url);
+            status["signed_in"] = json!(themis_core::plugins::oauth::signed_in(filled));
             status["url"] = json!(url);
         }
         status
@@ -112,6 +115,7 @@ impl AppState {
     ) -> Arc<McpEntry> {
         let key = format!("{}:{}:mcp:{name}", plugin.scope, plugin.spec.name);
         let remote_url = server.url.clone().filter(|_| !server.has_credentials());
+        let signed_in_at = server.filled_url();
         let fingerprint = format!(
             "{}:{blocked:?}:{}",
             plugin.revision,
@@ -187,6 +191,7 @@ impl AppState {
         let entry = Arc::new(McpEntry {
             fingerprint,
             remote: remote_url,
+            remote_filled: signed_in_at,
             result,
             task,
         });
@@ -332,7 +337,8 @@ impl AppState {
     /// browser; once they finish, its connection is tried again. Only URLs of servers you have
     /// installed are accepted.
     pub(super) async fn mcp_sign_in(&self, root: &Path, url: &str) -> Result<Value, String> {
-        self.installed_mcp_url(root, url)?;
+        let server = self.installed_mcp_url(root, url)?;
+        let filled = sign_in_address(&server)?;
         // The person may close the browser tab instead of finishing: Cancel (in Integrations)
         // stops the wait at once instead of leaving it until the time limit.
         let cancel = Arc::new(tokio::sync::Notify::new());
@@ -342,8 +348,9 @@ impl AppState {
             .insert(url.to_owned(), Arc::clone(&cancel));
         let outcome = tokio::select! {
             outcome = themis_core::plugins::oauth::sign_in(
-                url,
-                crate::state::spawn_opener_url,
+                &filled,
+                server.oauth.as_ref(),
+                |page| self.open_url(page),
                 std::time::Duration::from_secs(300),
             ) => outcome.map_err(|e| format!("{e:#}")),
             () = cancel.notified() => Err(SIGN_IN_CANCELLED.to_owned()),
@@ -370,12 +377,13 @@ impl AppState {
 
     /// Forgets the sign-in of an installed remote MCP server.
     pub(super) fn mcp_sign_out(&self, root: &Path, url: &str) -> Result<Value, String> {
-        self.installed_mcp_url(root, url)?;
-        themis_core::plugins::oauth::sign_out(url)?;
+        let server = self.installed_mcp_url(root, url)?;
+        themis_core::plugins::oauth::sign_out(&sign_in_address(&server)?)?;
         self.mcp_status(root, true)
     }
 
-    fn installed_mcp_url(&self, root: &Path, url: &str) -> Result<(), String> {
+    /// The installed server at this address as it is written (`${NAME}` and all).
+    fn installed_mcp_url(&self, root: &Path, url: &str) -> Result<McpServer, String> {
         let plugins = self
             .plugin_store(Some(root.to_owned()))
             .list()
@@ -383,8 +391,15 @@ impl AppState {
         plugins
             .iter()
             .flat_map(|plugin| plugin.spec.mcp.values())
-            .any(|server| server.url.as_deref() == Some(url))
-            .then_some(())
+            .find(|server| server.url.as_deref() == Some(url))
+            .cloned()
             .ok_or_else(|| "No installed MCP server has that address".to_owned())
     }
+}
+
+/// The address a server signs in at, its secrets filled in.
+fn sign_in_address(server: &McpServer) -> Result<String, String> {
+    server
+        .filled_url()
+        .ok_or_else(|| "Add the secrets this server's address needs first.".to_owned())
 }

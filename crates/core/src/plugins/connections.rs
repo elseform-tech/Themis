@@ -17,6 +17,65 @@ impl std::fmt::Display for RequestRejected {
 }
 impl std::error::Error for RequestRejected {}
 
+/// How a remote server signs in, as an imported `oauth` block says: a client someone registered
+/// with its provider, the fixed address it was registered with, and what to ask for. Never a
+/// credential: `client_secret_env` names a secret.
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct McpOauth {
+    /// A preregistered client (or a client metadata document's address); absent, Themis registers
+    /// a client of its own if the provider lets it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub client_id: Option<String>,
+    /// The port the local listener takes; absent, any free one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub callback_port: Option<u16>,
+    /// Where the authorization server's metadata is, when discovery wouldn't find it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auth_server_metadata_url: Option<String>,
+    /// Space-separated; absent, what the server lists.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scopes: Option<String>,
+    /// The secret holding the client's secret, for a client that has one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub client_secret_env: Option<String>,
+}
+
+impl McpOauth {
+    fn validate(&self) -> anyhow::Result<()> {
+        let plain = |text: &str, limit: usize| {
+            !text.is_empty()
+                && text.len() <= limit
+                && text.bytes().all(|b| (b' '..=b'~').contains(&b))
+        };
+        if self.client_id.as_deref().is_some_and(|id| !plain(id, 512)) {
+            bail!("MCP oauth clientId is not valid");
+        }
+        if self
+            .scopes
+            .as_deref()
+            .is_some_and(|scopes| !plain(scopes, 2048))
+        {
+            bail!("MCP oauth scopes are not valid");
+        }
+        // Below 1024 a listener needs privileges a sign-in never has.
+        if self.callback_port.is_some_and(|port| port < 1024) {
+            bail!("MCP oauth callbackPort must be 1024 or above");
+        }
+        if let Some(url) = &self.auth_server_metadata_url {
+            check_url(url).context("MCP oauth authServerMetadataUrl is not valid")?;
+        }
+        if self
+            .client_secret_env
+            .as_deref()
+            .is_some_and(|name| !super::keys::valid_name(name))
+        {
+            bail!("MCP oauth clientSecret must name a secret");
+        }
+        Ok(())
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(deny_unknown_fields)]
 pub struct McpServer {
@@ -47,6 +106,9 @@ pub struct McpServer {
     /// and held inside the project when it starts.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cwd: Option<String>,
+    /// How a remote server signs in; see [`McpOauth`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub oauth: Option<McpOauth>,
     #[serde(default)]
     pub enabled: bool,
 }
@@ -77,6 +139,12 @@ impl McpServer {
             if !url.starts_with("${") {
                 check_url(&super::keys::fill(url, |_| "key".into()))?;
             }
+        }
+        if let Some(oauth) = &self.oauth {
+            if self.url.is_none() {
+                bail!("Only remote MCP servers sign in");
+            }
+            oauth.validate()?;
         }
         self.validate_plain_values()?;
         if !self.header_values.is_empty() && self.url.is_none() {
@@ -132,7 +200,9 @@ impl McpServer {
             }
         }
         for (name, value) in &self.defaults {
-            if !super::keys::valid_name(name) || !super::keys::safe_literal(name, value) {
+            if !super::keys::valid_name(name)
+                || !(value.is_empty() || super::keys::safe_literal(name, value))
+            {
                 bail!("MCP default for '{name}' must be a plain, non-secret value");
             }
         }
@@ -168,9 +238,36 @@ impl McpServer {
         }
         names
     }
-    /// Whether the server brings its own credentials (else a remote one may sign in).
+    /// Whether the server brings its own credentials (else a remote one may sign in). A header
+    /// written `${NAME:-}` only counts once it has a value: such a plugin takes a key or a sign-in.
     pub fn has_credentials(&self) -> bool {
-        self.bearer_env.is_some() || !self.headers.is_empty()
+        let filled = |template: &String| {
+            let Ok((_, name)) = super::keys::header_template(template) else {
+                return true;
+            };
+            self.defaults
+                .get(name)
+                .is_none_or(|default| !default.is_empty())
+                || super::keys::value(name).is_some()
+        };
+        self.bearer_env.is_some() || self.headers.values().any(filled)
+    }
+    /// The server's address with its secrets filled in, as a connection reaches it; `None` for a
+    /// local server or while a secret it needs is missing.
+    pub fn filled_url(&self) -> Option<String> {
+        let url = self.url.as_deref()?;
+        let known =
+            |name: &&str| super::keys::value(name).is_some() || self.defaults.contains_key(*name);
+        super::keys::template_names(url)
+            .iter()
+            .all(|name| known(name))
+            .then(|| {
+                super::keys::fill(url, |name| {
+                    super::keys::value(name)
+                        .or_else(|| self.defaults.get(name).cloned())
+                        .unwrap_or_default()
+                })
+            })
     }
 }
 /// A remote MCP address: HTTPS (or HTTP to this computer) with no user name, password or
@@ -327,6 +424,11 @@ impl Connection {
             let headers = server
                 .headers
                 .iter()
+                // `${NAME:-}` left empty: the header isn't sent at all.
+                .filter(|(_, template)| {
+                    super::keys::header_template(template)
+                        .map_or(true, |(_, name)| !keys[name].is_empty())
+                })
                 .map(|(header, template)| {
                     let (prefix, name) = super::keys::header_template(template)?;
                     Ok((header.clone(), format!("{prefix}{}", keys[name])))

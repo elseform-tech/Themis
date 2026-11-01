@@ -157,6 +157,7 @@ async fn signing_in_to_an_oauth_mcp_server_then_connecting_and_refreshing() {
     let challenge_slot = Arc::clone(&challenge);
     oauth::sign_in(
         &resource,
+        None,
         move |page| {
             let page = reqwest::Url::parse(page).unwrap();
             let query: HashMap<String, String> = page.query_pairs().into_owned().collect();

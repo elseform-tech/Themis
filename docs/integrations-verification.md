@@ -134,3 +134,24 @@ The uninstalled `idmp-plugin` preview showed all 23 skill names. Selecting `idmp
 The rebuilt native browser-use View now truthfully shows zero bundled skills. Its revision `18dc04b4fe912420`, enabled state, MCP configuration and captured files match the pre-patch snapshot. No browser/provider task was executed. The bundle embeds `index-CLNNu6Gs.js`; its release build passed. Existing history was preserved. A startup notification about an already missing temporary project remains unrelated to these changes.
 
 Evidence: [marketplace dialog](verification/native-marketplace-add.png), [Markdown beginning](verification/native-skill-preview-top.png), [zero-skill browser-use](verification/native-browser-no-skills.png). Fresh web tests: 279/26 files, including 24 integrations cases; lint/build and 13 dashboard tests pass. Final dashboard mean cyclomatic2.50, cognitive2.24, maintainability73.6; Plugins is 218 lines, cyclomatic2.57, cognitive2.63, maintainability81.9.
+
+## MCP sign-in providers
+
+Checked on 2026-11-01 against the real providers with no account: discovery documents, a client
+registration where one is offered, and the authorization page in a browser. Nobody signed in, so
+**no code exchange against a real provider has happened**; the code exchange, refresh and MCP call
+are proven only against the fake provider in `crates/core/tests/mcp_oauth_presets.rs` and
+`crates/desktop/tests/mcp_signin_cli_e2e.rs`. The bogus-client check shows whether a sign-in page
+says anything about the client: where a made-up client reaches the same page, the page proves
+nothing about ours.
+
+| Plugin | Client | Registration | Authorization page | Made-up client | Still unknown |
+|---|---|---|---|---|---|
+| `render` | preset `claude` | none offered | Render's sign-in, then consent | refused (`invalid_client`) | the code exchange |
+| `wingspan` | registered by Themis | HTTP 201 | Wingspan's sign-in | refused | the code exchange |
+| `mongodb-atlas` | preset, the metadata document naming Claude Code; it lists `http://localhost/callback` and `http://127.0.0.1/callback` | none offered | MongoDB's log in | same page | whether the client and callback hold after log in, and the code exchange |
+| `slack` | preset, on port 3118 | none offered | Slack's workspace sign-in | same page | whether the client and callback hold after sign-in, and the code exchange. Slack's metadata lists only `client_secret_post` for its token endpoint and the plugin has no secret, so the exchange itself may be refused |
+| `cloudinary` (four OAuth servers) | registered by Themis | HTTP 201 | Cloudinary's console login | not tried | the code exchange |
+| `datadog` (with `DD_MCP_DOMAIN=mcp.datadoghq.com`) | registered by Themis | HTTP 201 | Datadog's log in | not tried | the code exchange |
+
+`cloudinary-mediaflows` publishes no OAuth metadata: it takes only its three header values.
