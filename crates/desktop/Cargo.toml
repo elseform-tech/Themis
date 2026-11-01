@@ -22,6 +22,7 @@ uuid = { version = "1", features = ["v4"] }
 rpassword = "7.5.4"
 zeroize = "1"
 sysinfo = { version = "0.38.4", default-features = false, features = ["system"] }
+portable-pty = "=0.9.0"
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
@@ -37,8 +38,10 @@ rusqlite = { version = "0.32", features = ["hooks"] }
 tempfile = "3"
 wiremock = "0.6"
 
-[target.'cfg(target_os = "macos")'.dependencies]
+[target.'cfg(unix)'.dependencies]
 libc = "0.2"
+
+[target.'cfg(target_os = "macos")'.dependencies]
 block2 = "0.6.2"
 objc2 = "0.6.2"
 objc2-app-kit = { version = "0.3.2", default-features = false, features = ["NSApplication", "NSHapticFeedback", "NSImage"] }

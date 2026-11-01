@@ -43,10 +43,12 @@ pub fn searxng_stop_for_test() {
 mod skills;
 mod subagent_tools;
 mod subagents;
+mod terminal;
 mod threads;
 mod usage;
 mod workspace;
 pub use browser::update_payload as browser_update_payload;
+pub use terminal::TerminalSession;
 /// Project path resolution, exposed for the `fuzz/` targets; not a stable API.
 #[cfg(feature = "fuzzing")]
 #[doc(hidden)]
@@ -314,6 +316,8 @@ struct AppStateInner {
     questions_dir: PathBuf,
     /// Each chat's subagents, live and recently ended.
     subagents: subagents::SubagentMap,
+    /// The person's shells in the Workspace terminal.
+    terminals: Arc<terminal::Terminals>,
     /// Serializes question changes.
     question_lock: std::sync::Mutex<()>,
     /// Per-chat goals (`goals/<chat id>.json`), loaded on first use.
@@ -596,6 +600,7 @@ impl AppState {
                 questions: std::sync::Mutex::new(HashMap::new()),
                 questions_dir: app_dir.join(questions::QUESTIONS_DIR),
                 subagents: std::sync::Mutex::new(HashMap::new()),
+                terminals: Arc::default(),
                 question_lock: std::sync::Mutex::new(()),
                 goals: std::sync::Mutex::new(HashMap::new()),
                 goals_dir: app_dir.join(goal::GOALS_DIR),
