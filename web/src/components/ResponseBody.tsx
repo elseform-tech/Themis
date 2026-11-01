@@ -13,10 +13,8 @@ function CodePanel({ code, language, streaming }: { code: string; language: stri
   </div>;
 }
 
-/** A chart sits in the reply: never past its own size, nor taller than this if it can help it. Enlarge shows it all. */
-const DIAGRAM_MAX_HEIGHT = 360;
-/** A tall chart stops shrinking here, where its labels are still readable; it runs taller instead. */
-const DIAGRAM_SMALLEST = 0.7;
+/** Every chart gets the same frame in the reply, and its graph fits inside. Enlarge shows the detail. */
+const DIAGRAM_FRAME_HEIGHT = 280;
 /** Enlarged, a huge chart can go this small to fit the window. */
 const DIAGRAM_SMALLEST_ZOOM = 0.25;
 
@@ -61,10 +59,11 @@ function Diagram({ code }: { code: string }) {
   useEffect(() => {
     if (expanded) { dialog.current?.showModal(); fitToWindow(); } else dialog.current?.close();
   }, [expanded]); // eslint-disable-line react-hooks/exhaustive-deps
-  const srcDoc = `<!doctype html><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; img-src data:"><style>:root{color-scheme:${theme === "dark" ? "dark" : "light"}}html,body{background:transparent}body{margin:0;padding:12px;box-sizing:border-box}svg{width:100%!important;max-width:none!important;height:auto!important;display:block}</style>${svg}`;
-  const frame = (scale: number) => <iframe title="Mermaid diagram" sandbox="" draggable={false} style={{ width: ownWidth * scale + 24, height: ownHeight * scale + 24 }} srcDoc={srcDoc} />;
+  // Filled by the graph whole and centred; the preview also holds a small chart at its own size.
+  const page = (limit: string) => `<!doctype html><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; img-src data:"><style>:root{color-scheme:${theme === "dark" ? "dark" : "light"}}html,body{height:100%;background:transparent}body{margin:0;padding:8px;box-sizing:border-box;display:flex;align-items:center;justify-content:center;overflow:hidden}svg{display:block;width:100%!important;height:100%!important;${limit.replace(/;/g, "!important;")}!important;object-fit:contain}</style>${svg}`;
+  const frame = (scale: number) => <iframe title="Mermaid diagram" sandbox="" draggable={false} style={{ width: ownWidth * scale + 24, height: ownHeight * scale + 24 }} srcDoc={page("max-width:none")} />;
   return <div className="themis-diagram">
-    {svg ? <><div className="themis-diagram-preview"><iframe title="Mermaid diagram" sandbox="" draggable={false} style={{ width: "100%", marginInline: "auto", maxWidth: Math.min(ownWidth + 24, Math.max(Math.round((DIAGRAM_MAX_HEIGHT * (ownWidth + 24)) / (ownHeight + 24)), Math.round(ownWidth * DIAGRAM_SMALLEST))), aspectRatio: `${ownWidth + 24} / ${ownHeight + 24}` }} srcDoc={srcDoc} /><button className="themis-diagram-expand" aria-label="Enlarge diagram" title="Enlarge diagram" onClick={() => { setZoom(1); setOffset({ x: 0, y: 0 }); setExpanded(true); }}><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M8 3H3v5m13-5h5v5M3 16v5h5m13-5v5h-5"/><path d="M3 3l6 6m12-6-6 6M3 21l6-6m12 6-6-6"/></svg></button></div>
+    {svg ? <><div className="themis-diagram-preview"><iframe title="Mermaid diagram" sandbox="" draggable={false} style={{ width: "100%", height: DIAGRAM_FRAME_HEIGHT }} srcDoc={page(`max-width:${ownWidth}px;max-height:${ownHeight}px`)} /><button className="themis-diagram-expand" aria-label="Enlarge diagram" title="Enlarge diagram" onClick={() => { setZoom(1); setOffset({ x: 0, y: 0 }); setExpanded(true); }}><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M8 3H3v5m13-5h5v5M3 16v5h5m13-5v5h-5"/><path d="M3 3l6 6m12-6-6 6M3 21l6-6m12 6-6-6"/></svg></button></div>
       {expanded && <dialog ref={dialog} className="themis-diagram-dialog" onClose={() => setExpanded(false)} aria-label="Enlarged Mermaid diagram">
         <div className="themis-diagram-toolbar"><strong>Diagram</strong><button onClick={() => setZoom(Math.max(DIAGRAM_SMALLEST_ZOOM, +(zoom - .25).toFixed(2)))} aria-label="Zoom out">−</button><span>{Math.round(zoom * 100)}%</span><button onClick={() => setZoom(Math.min(3, +(zoom + .25).toFixed(2)))} aria-label="Zoom in">+</button><button onClick={() => { setZoom(1); setOffset({ x: 0, y: 0 }); }}>100%</button><button onClick={fitToWindow}>Fit</button><button onClick={() => setExpanded(false)} aria-label="Close diagram">Close</button></div>
         <div className="themis-diagram-canvas" onPointerDown={(event) => { if (event.button !== 0) return; pan.current = { x: event.clientX, y: event.clientY, left: offset.x, top: offset.y }; event.currentTarget.setPointerCapture(event.pointerId); }} onPointerMove={(event) => { if (!pan.current) return; setOffset({ x: pan.current.left + event.clientX - pan.current.x, y: pan.current.top + event.clientY - pan.current.y }); }} onPointerUp={() => { pan.current = null; }} onPointerCancel={() => { pan.current = null; }}><div className="themis-diagram-stage" style={{ width: ownWidth * zoom + 24, height: ownHeight * zoom + 24, transform: `translateX(-50%) translate(${offset.x}px, ${offset.y}px)` }}>{frame(zoom)}</div></div>

@@ -112,11 +112,6 @@ it("links a file the reply attached as an artifact, by its path or its name", ()
 it("fits a diagram to the chat's column, in colours that tell groups apart", async () => {
   render(<ResponseBody text={'```mermaid\nflowchart TD\n A-->B\n```'} />);
   const frame = await screen.findByTitle("Mermaid diagram");
-  expect(frame.style.width).toBe("100%");
-  expect(frame.style.aspectRatio).not.toBe("");
-  // The mock's chart is 120 wide and 80 tall, and the frame's floor makes it 320 by 160: it never
-  // grows past its natural size or the height a reply can give it.
-  expect(parseInt(frame.style.maxWidth, 10)).toBeLessThanOrEqual(344);
   expect(frame.closest(".themis-code-panel")).toHaveClass("themis-code-panel--diagram");
   expect(frame.getAttribute("srcdoc")).toContain("background:transparent");
   const options = diagram.initialize.mock.lastCall![0] as { theme: string; themeVariables: Record<string, string> };
@@ -125,13 +120,6 @@ it("fits a diagram to the chat's column, in colours that tell groups apart", asy
   expect(options.themeVariables.secondaryColor).not.toBe(options.themeVariables.primaryColor);
   expect(options.themeVariables.tertiaryColor).not.toBe(options.themeVariables.primaryColor);
 });
-it("keeps a tall chart readable instead of shrinking it to the height limit", async () => {
-  diagram.render.mockResolvedValueOnce({ svg: '<svg viewBox="0 0 400 1600"></svg>' } as never);
-  render(<ResponseBody text={'```mermaid\nflowchart TD\n A-->B\n```'} />);
-  const frame = await screen.findByTitle("Mermaid diagram");
-  // At least 70% of its own width, which is about where its labels stop being readable.
-  expect(parseInt(frame.style.maxWidth, 10)).toBeGreaterThanOrEqual(280);
-});
 it("gives the frame the page's colour scheme, so a dark window has no white box", async () => {
   document.documentElement.dataset.theme = "dark";
   render(<ResponseBody text={'```mermaid\nflowchart TD\n A-->C\n```'} />);
@@ -139,17 +127,19 @@ it("gives the frame the page's colour scheme, so a dark window has no white box"
   expect(frame.getAttribute("srcdoc")).toContain("color-scheme:dark");
   delete document.documentElement.dataset.theme;
 });
-it("doesn't blow a small chart up past its own size", async () => {
-  diagram.render.mockResolvedValueOnce({ svg: '<svg viewBox="0 0 150 500"></svg>' } as never);
-  render(<ResponseBody text={'```mermaid\nflowchart TD\n A-->D\n```'} />);
-  const frame = await screen.findByTitle("Mermaid diagram");
-  expect(parseInt(frame.style.maxWidth, 10)).toBeLessThanOrEqual(174);
-  expect(frame.style.aspectRatio).toBe("174 / 524");
-});
-it("centres a chart and labels it in small, plain text", async () => {
-  render(<ResponseBody text={'```mermaid\nflowchart TD\n A-->E\n```'} />);
-  const frame = await screen.findByTitle("Mermaid diagram");
-  expect(frame.style.marginInline).toBe("auto");
+it("gives every chart the same frame, with the graph fitted inside it", async () => {
+  for (const svg of ['<svg viewBox="0 0 150 500"></svg>', '<svg viewBox="0 0 2400 300"></svg>']) {
+    diagram.render.mockResolvedValueOnce({ svg } as never);
+    const { unmount } = render(<ResponseBody text={`\`\`\`mermaid\nflowchart TD\n A-->${svg.length}\n\`\`\``} />);
+    const frame = await screen.findByTitle("Mermaid diagram");
+    expect(frame.style.width).toBe("100%");
+    expect(frame.style.height).toBe("280px");
+    const page = frame.getAttribute("srcdoc")!;
+    // Whole and centred; a small chart stays at its own size rather than filling the frame.
+    expect(page).toContain("object-fit:contain");
+    expect(page).toContain("max-width:" + svg.match(/0 0 (\d+)/)![1] + "px");
+    unmount();
+  }
   const options = diagram.initialize.mock.lastCall![0] as { themeVariables: Record<string, string> };
   expect(options.themeVariables.fontSize).toBe("10px");
   expect(options.themeVariables.fontFamily).toContain("system-ui");
