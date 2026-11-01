@@ -154,7 +154,7 @@ export interface AppState {
 }
 
 /** The Workspace panel's views. */
-export type WorkspaceTab = "changes" | "files" | "branches" | "pulls" | "tasks" | "goal" | "browser";
+export type WorkspaceTab = "changes" | "files" | "pulls" | "tasks" | "goal" | "browser";
 
 export type AppAction =
   | { type: "mcp/status"; connections: McpConnections }

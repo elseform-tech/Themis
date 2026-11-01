@@ -1,5 +1,5 @@
 /* Read-only workspace monitor: resizable side panel with unboxed tabs and actions. */
-.themis-workspace-panel { position: relative; flex: none; min-width: 300px; max-width: calc(100% - 260px); display: flex; flex-direction: column; min-height: 0; border-left: 1px solid var(--themis-border-subtle); background: var(--themis-sidebar-bg); }
+.themis-workspace-panel { position: relative; flex: none; min-width: 300px; max-width: calc(100% - 340px); display: flex; flex-direction: column; min-height: 0; border-left: 1px solid var(--themis-border-subtle); background: var(--themis-sidebar-bg); }
 .themis-workspace-panel.is-resizing { user-select: none; }
 .themis-workspace-resize { position: absolute; top: 0; bottom: 0; left: -5px; z-index: 5; width: 10px; cursor: col-resize; touch-action: none; }
 .themis-workspace-resize::after { content: ""; position: absolute; top: 0; bottom: 0; left: 4px; width: 2px; border-radius: 1px; background: var(--themis-accent); opacity: 0; transition: opacity 120ms ease; }
@@ -26,9 +26,11 @@
 /* The page gets the room: the Browser tab keeps only a thin edge. */
 .themis-workspace-body.is-browser { padding: 6px 8px 8px 12px; }
 .themis-workspace-changes { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 10px; }
+.themis-workspace-source { display: inline-flex; align-items: center; gap: 8px; align-self: flex-start; max-width: 100%; color: var(--themis-text-2); font-size: .8125rem; }
+.themis-workspace-source select { min-width: 0; max-width: 100%; height: 30px; padding: 0 8px; border: 1px solid var(--themis-border-subtle); border-radius: 8px; background: var(--themis-canvas); color: var(--themis-text); font: inherit; }
 .themis-workspace-author { display: flex; align-items: center; gap: 8px; color: var(--themis-text-2); font-size: .75rem; }
 .themis-workspace-note { margin: 0; color: var(--themis-text-2); font-size: .75rem; }
-.themis-workspace-split { position: relative; flex: 1; min-height: 0; display: grid; grid-template-columns: min(var(--themis-diff-list, 200px), calc(100% - 180px)) 12px minmax(0, 1fr); }
+.themis-workspace-split { position: relative; flex: 1; min-height: 0; display: grid; grid-template-columns: min(var(--themis-diff-list, 200px), 40%) 12px minmax(0, 1fr); }
 .themis-workspace-split.is-resizing { user-select: none; }
 .themis-workspace-split > :not(.themis-split-resize) { min-height: 0; min-width: 0; overflow: auto; }
 .themis-split-resize { position: relative; cursor: col-resize; touch-action: none; }
@@ -77,7 +79,6 @@
 .themis-workspace-count--tasks { color: var(--themis-text-2); }
 
 /* Workspace › Branches: another branch's changes. */
-.themis-workspace-branches { display: flex; flex-direction: column; flex: 1; min-height: 0; height: 100%; }
 .themis-workspace-branches > .themis-workspace-list { flex: 0 1 auto; max-height: 40%; overflow-y: auto; }
 button.themis-workspace-list-title { padding: 0; border: 0; background: transparent; color: inherit; font: inherit; text-align: left; cursor: pointer; }
 button.themis-workspace-list-title:hover { text-decoration: underline; text-underline-offset: 3px; }

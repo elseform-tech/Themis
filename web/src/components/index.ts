@@ -34,7 +34,7 @@ export type { EmptyStateProps } from "./primitives/EmptyState";
 export { BudgetMeter } from "./primitives/BudgetMeter";
 export type { BudgetMeterProps } from "./primitives/BudgetMeter";
 
-export { CodeBlock, tokenizeLine } from "./CodeBlock";
+export { CodeBlock, highlightLines } from "./CodeBlock";
 export type { CodeBlockProps } from "./CodeBlock";
 
 export { DiffView } from "./diff/DiffView";

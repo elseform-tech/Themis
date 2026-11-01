@@ -14,10 +14,12 @@ import { countTasks } from "./threadTasks";
 import "./WorkspacePanel.css";
 
 type Tab = WorkspaceTab;
-const TABS: Array<[Tab, string]> = [["changes", "Changes"], ["files", "Files"], ["branches", "Branches"], ["pulls", "Pull requests"], ["tasks", "Tasks"], ["goal", "Goal"], ["browser", "Browser"]];
+const TABS: Array<[Tab, string]> = [["changes", "Changes"], ["files", "Files"], ["pulls", "Pull requests"], ["tasks", "Tasks"], ["goal", "Goal"], ["browser", "Browser"]];
 const MIN_WIDTH = 300;
 const MAX_WIDTH = 1600;
-const DEFAULT_WIDTH = 560;
+/** A share of the space beside the rail, within limits: enough to read a diff, leaving the chat a usable column. */
+const DEFAULT_SHARE = 0.62;
+const DEFAULT_WIDTH = 640;
 /** The Browser tab needs room for a page; it remembers its own width. */
 const BROWSER_DEFAULT_WIDTH = 760;
 /** The Changes file list beside the diff; the diff keeps at least DIFF_MIN_WIDTH (CSS). */
@@ -39,9 +41,12 @@ export function WorkspacePanel({ projectRoot, threadId, workspace }: { projectRo
   const goal = state.goals[threadId] ?? null;
   const [chosenTab, setTab] = useState<Tab>(() => state.workspaceTabRequest ? state.workspaceTabRequest.tab : readSession<Tab>("workspaceTab", "changes"));
   // The Goal tab is remembered across chats, and not every chat has a goal.
-  const tab = chosenTab === "goal" && !goal ? "changes" : chosenTab;
-  const widthKey = tab === "browser" ? "workspaceBrowserWidth" : "workspacePanelWidth";
-  const defaultWidth = tab === "browser" ? BROWSER_DEFAULT_WIDTH : DEFAULT_WIDTH;
+  // A tab remembered from an older version may no longer exist.
+  const tab = (chosenTab === "goal" && !goal) || !TABS.some(([value]) => value === chosenTab) ? "changes" : chosenTab;
+  // Named anew when the default grew, so an older, narrower width doesn't stick.
+  const widthKey = tab === "browser" ? "workspaceBrowserWidth" : "workspaceViewWidth";
+  const smallest = tab === "browser" ? BROWSER_DEFAULT_WIDTH : DEFAULT_WIDTH;
+  const defaultWidth = Math.max(smallest, Math.round(window.innerWidth * DEFAULT_SHARE) - 64);
   const [widths, setWidths] = useState<Record<string, number>>({});
   const width = widths[widthKey] ?? (clampWidth(Number(readSession(widthKey, defaultWidth)) || defaultWidth));
   const setWidth = (value: number) => setWidths(previous => ({ ...previous, [widthKey]: value }));
@@ -99,9 +104,8 @@ export function WorkspacePanel({ projectRoot, threadId, workspace }: { projectRo
         </Tooltip>
       </header>
       <div className={`themis-workspace-body${tab === "browser" ? " is-browser" : ""}`}>
-        {tab === "changes" && <ChangesView threadId={threadId} />}
+        {tab === "changes" && <ChangesView threadId={threadId} workspace={workspace} projectRoot={projectRoot} />}
         {tab === "files" && <FilesView projectRoot={projectRoot} />}
-        {tab === "branches" && <BranchesView workspace={workspace} projectRoot={projectRoot} />}
         {tab === "pulls" && <PullRequestsView projectRoot={projectRoot} />}
         {tab === "tasks" && <TasksView threadId={threadId} />}
         {tab === "goal" && <GoalView goal={goal} />}
@@ -113,7 +117,6 @@ export function WorkspacePanel({ projectRoot, threadId, workspace }: { projectRo
 
 /** One 16px stroke icon per Workspace view; the tab's name is its tooltip and accessible name. */
 function TabIcon({ tab }: { tab: Tab }) {
-  if (tab === "branches") return <BranchIcon size={16} />;
   return (
     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
       {tab === "changes" && <><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z" /><path d="M14 3v5h5M12 10.5v5M9.5 13h5M9.5 18h5" /></>}
@@ -130,17 +133,24 @@ export function BranchIcon({ size = 14 }: { size?: number }) {
   return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden="true"><circle cx="6" cy="5" r="2" /><circle cx="6" cy="19" r="2" /><circle cx="18" cy="7" r="2" /><path d="M6 7v10M18 9c0 5-6 4-11 8" /></svg>;
 }
 
-function ChangesView({ threadId }: { threadId: string }) {
+/** Uncommitted changes, or what another branch adds; only ever a view, the composer switches. */
+function ChangesView({ threadId, workspace, projectRoot }: { threadId: string; workspace: WorkspaceInfo | null; projectRoot: string }) {
   const { state, dispatch } = useApp();
-  const diff = state.diffs[threadId];
+  const liveDiff = state.diffs[threadId];
   const running = state.running[threadId] ?? false;
   const toolsDone = (state.traces[threadId] ?? []).filter(entry => entry.ok !== undefined).length;
   const [selected, setSelected] = useState<string | null>(null);
   const [author, setAuthor] = useState("");
+  const [picked, setPicked] = useState<string | null>(null);
+  const [branchChanges, setBranchChanges] = useState<DiffState | string | null>(null);
   const authors = useMemo(() => (state.messages[threadId] ?? []).flatMap(row => row.subagents ?? []), [state.messages, threadId]);
-  // An edited-files row asks for its file; follow each new request.
+  // A branch that has become the current one has nothing to compare with.
+  const current = workspace?.branch ?? null;
+  const others = (workspace?.branches ?? []).filter(branch => !branch.current);
+  const branch = picked !== null && others.some(other => other.name === picked) ? picked : null;
+  // An edited-files row asks for its file, which is among the uncommitted changes.
   const focus = state.diffFocus;
-  useEffect(() => { if (focus) setSelected(focus.path); }, [focus]);
+  useEffect(() => { if (focus) { setSelected(focus.path); setPicked(null); } }, [focus]);
   const refresh = useCallback(async () => {
     // A failed refresh keeps the last diff on screen.
     try { dispatch({ type: "diff/set", threadId, diff: await listDiff(threadId) }); } catch { /* keep last */ }
@@ -148,14 +158,35 @@ function ChangesView({ threadId }: { threadId: string }) {
   // Refresh on open, right after each completed tool call and when a run ends; useLiveDiff
   // keeps it current in between.
   useEffect(() => { void refresh(); }, [refresh, toolsDone, running]);
-  if (diff === undefined) return <EmptyState title="Loading changes…" />;
-  if (diff === null || !diff.available) return <EmptyState title="Changes unavailable" hint={diff?.reason ?? "This folder has no Git diff."} />;
-  const options = authorOptions(authors, diff.files.map(entry => entry.path));
+  useEffect(() => {
+    setBranchChanges(null);
+    if (branch === null) return;
+    let cancelled = false;
+    branchDiff(projectRoot, branch).then(result => { if (!cancelled) setBranchChanges(result); }).catch(reason => { if (!cancelled) setBranchChanges(describeError(reason)); });
+    return () => { cancelled = true; };
+  }, [branch, current, projectRoot]);
+  const switcher = others.length > 0 && (
+    <label className="themis-workspace-source">
+      <BranchIcon />
+      <span className="themis-sr-only">Show changes from</span>
+      <select aria-label="Show changes from" value={branch ?? ""} onChange={event => { setPicked(event.target.value || null); setSelected(null); }}>
+        <option value="">Uncommitted changes{current ? ` on ${current}` : ""}</option>
+        {others.map(other => <option key={other.name} value={other.name}>{other.name}</option>)}
+      </select>
+    </label>
+  );
+  const diff = branch !== null ? branchChanges : liveDiff;
+  if (branch === null && diff === undefined) return <EmptyState title="Loading changes…" />;
+  if (branch !== null && diff === null) return <div className="themis-workspace-changes">{switcher}<EmptyState title="Loading changes…" /></div>;
+  if (typeof diff === "string") return <div className="themis-workspace-changes">{switcher}<EmptyState title="Changes unavailable" hint={diff} /></div>;
+  if (!diff || !diff.available) return <div className="themis-workspace-changes">{switcher}<EmptyState title="Changes unavailable" hint={diff?.reason ?? "This folder has no Git diff."} /></div>;
+  const options = branch === null ? authorOptions(authors, diff.files.map(entry => entry.path)) : [];
   const shownAuthor = options.includes(author) ? author : "";
   const files = shownAuthor ? diff.files.filter(entry => authorOf(entry.path, authors) === shownAuthor) : diff.files;
   const file = files.find(entry => entry.path === selected) ?? files[0] ?? null;
   return (
     <div className="themis-workspace-changes">
+      {switcher}
       {diff.reason && <p className="themis-workspace-note">{diff.reason}</p>}
       {options.length > 0 && (
         <label className="themis-workspace-author">Author
@@ -165,12 +196,14 @@ function ChangesView({ threadId }: { threadId: string }) {
           </select>
         </label>
       )}
-      {file === null ? <EmptyState title="No changes" hint="The checkout matches its last commit." /> : (
-        <DiffSplit>
-          <FileTree files={files} selectedPath={file.path} onSelect={setSelected} />
-          <DiffView file={file} />
-        </DiffSplit>
-      )}
+      {file === null
+        ? <EmptyState title="No changes" hint={branch !== null ? `${branch} adds nothing to ${current ?? "the current branch"}.` : "The checkout matches its last commit."} />
+        : (
+          <DiffSplit>
+            <FileTree files={files} selectedPath={file.path} onSelect={setSelected} />
+            <DiffView file={file} />
+          </DiffSplit>
+        )}
     </div>
   );
 }
@@ -254,54 +287,6 @@ function FilesView({ projectRoot }: { projectRoot: string }) {
             </>}
       </div>
     </DiffSplit>
-  );
-}
-
-function BranchesView({ workspace, projectRoot }: { workspace: WorkspaceInfo | null; projectRoot: string }) {
-  const [picked, setPicked] = useState<string | null>(null);
-  // A branch that has become the current one has nothing to compare with.
-  const current = workspace?.branch ?? null;
-  const open = picked === current ? null : picked;
-  const [diff, setDiff] = useState<DiffState | string | null>(null);
-  const [selected, setSelected] = useState<string | null>(null);
-  useEffect(() => {
-    setDiff(null); setSelected(null);
-    if (open === null) return;
-    let cancelled = false;
-    branchDiff(projectRoot, open).then(result => { if (!cancelled) setDiff(result); }).catch(reason => { if (!cancelled) setDiff(describeError(reason)); });
-    return () => { cancelled = true; };
-  }, [open, current, projectRoot]);
-  if (workspace === null) return <EmptyState title="Loading branches…" />;
-  if (!workspace.is_git) return <EmptyState title="Not a Git repository" />;
-  if (workspace.branches.length === 0) return <EmptyState title="No branches yet" hint="Branches appear after the first commit." />;
-  const files = typeof diff === "object" && diff ? diff.files : [];
-  const file = files.find(entry => entry.path === selected) ?? files[0] ?? null;
-  return (
-    <div className="themis-workspace-branches">
-      <ul className="themis-workspace-list" aria-label="Branches">
-        {workspace.branches.map(branch => (
-          <li key={branch.name} className={[branch.current ? "is-current" : "", open === branch.name ? "is-open" : ""].filter(Boolean).join(" ") || undefined}>
-            {branch.current
-              ? <span className="themis-workspace-list-title"><BranchIcon />{branch.name}<em>current</em></span>
-              : <button type="button" className="themis-workspace-list-title" aria-expanded={open === branch.name} onClick={() => setPicked(open === branch.name ? null : branch.name)}><BranchIcon />{branch.name}</button>}
-            <span className="themis-workspace-list-meta">{[branch.upstream, branch.track, branch.updated].filter(Boolean).join(" · ")}</span>
-          </li>
-        ))}
-      </ul>
-      {open !== null && <div className="themis-workspace-branch-diff" role="region" aria-label={`Changes in ${open}`}>
-        {diff === null ? <EmptyState title="Loading changes…" />
-          : typeof diff === "string" ? <EmptyState title="Changes unavailable" hint={diff} />
-          : <>
-            {diff.reason && <p className="themis-workspace-note">{diff.reason}</p>}
-            {file === null ? <EmptyState title="No changes" hint={`${open} adds nothing to ${workspace.branch ?? "the current branch"}.`} /> : (
-              <DiffSplit>
-                <FileTree files={files} selectedPath={file.path} onSelect={setSelected} />
-                <DiffView file={file} />
-              </DiffSplit>
-            )}
-          </>}
-      </div>}
-    </div>
   );
 }
 

@@ -5,7 +5,7 @@
 .themis-diff-counts { display: inline-flex; gap: 8px; font-size: .75rem; font-weight: 600; }
 .themis-diff-count-add { color: var(--themis-success); }
 .themis-diff-count-del { color: var(--themis-danger); }
-.themis-diff-toggle { display: inline-flex; gap: 10px; }
+.themis-diff-toggle { flex: none; display: inline-flex; gap: 10px; }
 .themis-diff-toggle-btn { padding: 0; border: 0; background: transparent; color: var(--themis-text-3); font: inherit; font-family: system-ui, sans-serif; font-size: .75rem; cursor: pointer; }
 .themis-diff-toggle-btn:hover { color: var(--themis-text); }
 .themis-diff-toggle-btn--active { color: var(--themis-text); font-weight: 600; }
@@ -19,12 +19,12 @@
 .themis-diff-line--context { color: var(--themis-text-2); }
 .themis-diff-line--add .themis-diff-text, .themis-diff-line--del .themis-diff-text { color: var(--themis-text); }
 .themis-diff-line--empty { background-color: transparent; }
-.themis-diff-no { display: inline-block; flex-shrink: 0; min-width: 3.25rem; padding: 0 10px; text-align: right; color: var(--themis-text-3); user-select: none; }
+.themis-diff-no { display: inline-block; flex-shrink: 0; min-width: 2.5rem; padding: 0 6px; text-align: right; color: var(--themis-text-3); user-select: none; }
 .themis-diff-sign { display: inline-block; flex-shrink: 0; width: 1.25rem; text-align: center; color: var(--themis-text-3); user-select: none; }
 .themis-diff-text { flex: 1; min-width: 0; padding: 0 16px 0 2px; white-space: pre-wrap; overflow-wrap: anywhere; tab-size: 4; }
 .themis-diff-side-grid { display: flex; flex-direction: column; }
 .themis-diff-side-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
-.themis-diff-cell { display: flex; align-items: baseline; min-width: 0; overflow-x: auto; white-space: pre; }
+.themis-diff-cell { display: flex; align-items: baseline; min-width: 0; }
 .themis-diff-cell + .themis-diff-cell { border-left: 1px solid var(--themis-border-subtle); }
 [data-theme="light"] .themis-diff { --cb-string: var(--themis-code-string-light); --cb-keyword: var(--themis-link-light); --cb-number: var(--themis-code-number-light); }
 .themis-diff-note { margin: 8px 12px 0; font-size: .75rem; color: var(--themis-text-2); }

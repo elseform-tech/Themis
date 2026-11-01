@@ -47,6 +47,19 @@
   color: var(--cb-number);
 }
 
+.themis-codeblock-token--title {
+  color: var(--themis-accent);
+}
+
+.themis-codeblock-token--type {
+  color: var(--cb-keyword);
+  opacity: .85;
+}
+
+.themis-codeblock-token--meta {
+  color: var(--cb-number);
+}
+
 [data-theme="light"] .themis-codeblock {
   --cb-string: var(--themis-code-string-light);
   --cb-keyword: var(--themis-link-light);

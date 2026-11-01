@@ -1,6 +1,8 @@
+import { useState } from "react";
 import type { DiffFile } from "../../lib/types";
+import { readSession, writeSession } from "../../state/session";
 import { EmptyState } from "../primitives/EmptyState";
-import { normalizeLanguage, tokenizeLine } from "../CodeBlock";
+import { highlightLines } from "../CodeBlock";
 import "../CodeBlock.css";
 import "./DiffView.css";
 
@@ -8,7 +10,12 @@ export interface DiffViewProps {
   file: DiffFile;
 }
 
-interface NumberedLine {
+type DiffLayout = "unified" | "split";
+const LAYOUT_KEY = "workspaceDiffLayout";
+/** A longer line (minified code) stays plain. */
+const MAX_COLOURED_LINE = 2000;
+
+export interface NumberedLine {
   kind: "context" | "add" | "del";
   text: string;
   oldNo: number | null;
@@ -45,9 +52,36 @@ function numberHunk(
   });
 }
 
-/** Read-only unified diff of one file. */
+/** Rows of a side-by-side view: a removal lines up with the addition that replaced it. */
+export function sideBySide(lines: NumberedLine[]): Array<[NumberedLine | null, NumberedLine | null]> {
+  const rows: Array<[NumberedLine | null, NumberedLine | null]> = [];
+  let at = 0;
+  while (at < lines.length) {
+    const line = lines[at]!;
+    if (line.kind === "context") {
+      rows.push([line, line]);
+      at += 1;
+      continue;
+    }
+    const removed: NumberedLine[] = [];
+    const added: NumberedLine[] = [];
+    while (lines[at]?.kind === "del") removed.push(lines[at++]!);
+    while (lines[at]?.kind === "add") added.push(lines[at++]!);
+    for (let row = 0; row < Math.max(removed.length, added.length); row += 1) rows.push([removed[row] ?? null, added[row] ?? null]);
+  }
+  return rows;
+}
+
+function LineText({ text, extension }: { text: string; extension: string | undefined }) {
+  const tokens = text.length > MAX_COLOURED_LINE ? [{ kind: "plain" as const, text }] : highlightLines(text, extension)[0] ?? [];
+  return <span className="themis-diff-text">{tokens.map((token, index) => token.kind === "plain" ? token.text : <span key={index} className={`themis-codeblock-token--${token.kind}`}>{token.text}</span>)}</span>;
+}
+
+/** Read-only diff of one file, unified or side by side; the choice is remembered. */
 export function DiffView({ file }: DiffViewProps) {
-  const language = normalizeLanguage(file.path.split(".").pop());
+  const extension = file.path.split(".").pop();
+  const [layout, setLayoutState] = useState<DiffLayout>(() => readSession<DiffLayout>(LAYOUT_KEY, "unified"));
+  const setLayout = (next: DiffLayout) => { setLayoutState(next); writeSession(LAYOUT_KEY, next); };
 
   return (
     <div className="themis-diff">
@@ -59,6 +93,13 @@ export function DiffView({ file }: DiffViewProps) {
           <span className="themis-diff-count-add">+{file.added}</span>
           <span className="themis-diff-count-del">-{file.removed}</span>
         </span>
+        <span className="themis-diff-toggle" role="group" aria-label="Diff layout">
+          {(["unified", "split"] as const).map(option => (
+            <button key={option} type="button" aria-pressed={layout === option} className={`themis-diff-toggle-btn${layout === option ? " themis-diff-toggle-btn--active" : ""}`} onClick={() => setLayout(option)}>
+              {option === "unified" ? "Unified" : "Split"}
+            </button>
+          ))}
+        </span>
       </div>
 
       {file.too_large && file.hunks.length === 0 ? (
@@ -66,35 +107,38 @@ export function DiffView({ file }: DiffViewProps) {
       ) : file.hunks.length === 0 ? (
         <EmptyState title="No changes" hint={`${file.path} has no hunks to display.`} />
       ) : (
-        <div className="themis-diff-unified">
-          {file.hunks.map((hunk, hunkIndex) => (
-            <div key={hunkIndex} className="themis-diff-hunk">
-              <div className="themis-diff-hunk-header">
-                {hunkHeader(hunk.old_start, hunk.old_lines, hunk.new_start, hunk.new_lines)}
-              </div>
-              {numberHunk(
-                hunk.old_start,
-                hunk.new_start,
-                hunk.lines.map((l) => ({ ...l, oldNo: null, newNo: null })),
-              ).map((line, lineIndex) => (
-                <div
-                  key={lineIndex}
-                  className={`themis-diff-line themis-diff-line--${line.kind}`}
-                >
-                  <span className="themis-diff-no">
-                    {line.oldNo ?? ""}
-                  </span>
-                  <span className="themis-diff-no">
-                    {line.newNo ?? ""}
-                  </span>
-                  <span className="themis-diff-sign">
-                    {line.kind === "add" ? "+" : line.kind === "del" ? "-" : " "}
-                  </span>
-                  <span className="themis-diff-text">{tokenizeLine(line.text, language).map((token, index) => token.kind === "plain" ? token.text : <span key={index} className={`themis-codeblock-token--${token.kind}`}>{token.text}</span>)}</span>
+        <div className={layout === "split" ? "themis-diff-side" : "themis-diff-unified"}>
+          {file.hunks.map((hunk, hunkIndex) => {
+            const lines = numberHunk(hunk.old_start, hunk.new_start, hunk.lines.map((l) => ({ ...l, oldNo: null, newNo: null })));
+            return (
+              <div key={hunkIndex} className="themis-diff-hunk">
+                <div className="themis-diff-hunk-header">
+                  {hunkHeader(hunk.old_start, hunk.old_lines, hunk.new_start, hunk.new_lines)}
                 </div>
-              ))}
-            </div>
-          ))}
+                {layout === "split"
+                  ? sideBySide(lines).map(([left, right], rowIndex) => (
+                    <div key={rowIndex} className="themis-diff-side-row">
+                      {[left, right].map((line, side) => (
+                        <div key={side} className={`themis-diff-cell themis-diff-line--${line ? line.kind : "empty"}`}>
+                          {line && <>
+                            <span className="themis-diff-no">{side === 0 ? line.oldNo : line.newNo}</span>
+                            <LineText text={line.text} extension={extension} />
+                          </>}
+                        </div>
+                      ))}
+                    </div>
+                  ))
+                  : lines.map((line, lineIndex) => (
+                    <div key={lineIndex} className={`themis-diff-line themis-diff-line--${line.kind}`}>
+                      <span className="themis-diff-no">{line.oldNo ?? ""}</span>
+                      <span className="themis-diff-no">{line.newNo ?? ""}</span>
+                      <span className="themis-diff-sign">{line.kind === "add" ? "+" : line.kind === "del" ? "-" : " "}</span>
+                      <LineText text={line.text} extension={extension} />
+                    </div>
+                  ))}
+              </div>
+            );
+          })}
           {file.too_large && <p className="themis-diff-note">Showing the first lines only; the rest of this change is too large to show.</p>}
         </div>
       )}
