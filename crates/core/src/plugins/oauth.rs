@@ -483,7 +483,7 @@ pub async fn sign_in(
             _ => error.into(),
         })?;
     let port = listener.local_addr()?.port();
-    // A preset client was registered with an exact address, and Claude's say `localhost`. One
+    // A preset client was registered with an exact address, usually `localhost`. One
     // registered here says the loopback address, as RFC 8252 recommends.
     let host = if settings.client_id.is_some() {
         "localhost"

@@ -2699,6 +2699,15 @@ fn import_mcp_server(
     }
     Ok(server)
 }
+/// Preset clients a provider registered for Claude (those of the render, mongodb-atlas and slack
+/// plugins). Themis doesn't sign in as another app; a provider's own client for Themis would go
+/// through like any other.
+const CLIENTS_REGISTERED_FOR_CLAUDE: &[&str] = &[
+    "claude",
+    "https://claude.ai/oauth/claude-code-client-metadata",
+    "1601185624273.8899143856786",
+];
+
 /// A connection's `oauth` block: how its sign-in goes (Integrations signs in after installing).
 /// A bare `true` or `false` and an empty block leave it to discovery. A field Themis would not honour is named
 /// rather than quietly dropped, and a client's secret must be a reference.
@@ -2721,7 +2730,17 @@ fn read_oauth(
     let mut oauth = McpOauth::default();
     for (field, value) in fields {
         match field.as_str() {
-            "clientId" => oauth.client_id = Some(text(value, field)?),
+            "clientId" => {
+                let client = text(value, field)?;
+                if CLIENTS_REGISTERED_FOR_CLAUDE.contains(&client.as_str()) {
+                    return Err(unsupported_mcp(
+                        format!("{name}.oauth.{field}"),
+                        "This sign-in is set up for Claude, so its provider would see Themis as Claude",
+                        "Register a client with the provider and use its clientId",
+                    ));
+                }
+                oauth.client_id = Some(client);
+            }
             "clientSecret" => {
                 let written = text(value, field)?;
                 let reference = environment_reference(&written);

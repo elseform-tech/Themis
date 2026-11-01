@@ -147,8 +147,10 @@ An `oauth` block in a plugin's configuration is honoured, and the sign-in happen
 Any other field keeps that connection out, and is named. The token asks for the protected resource
 the server's metadata names when that covers its address (`https://mcp.slack.com` for
 `https://mcp.slack.com/mcp`), and a refresh names the same one; metadata about another server is
-refused. A preset client is often one its provider registered for Claude (`claude`, or a metadata
-document naming Claude Code), so the provider's page may name Claude, not Themis.
+refused. A preset client its provider registered for Claude (`render`, `mongodb-atlas` and `slack`
+ship one) keeps that connection out, with the reason named: Themis doesn't sign in as another app.
+The rest of those plugins still installs, and a client the provider registers for Themis works like
+any other.
 
 How far each catalog plugin's real provider was checked, without signing in to anything:
 [integrations verification](integrations-verification.md#mcp-sign-in-providers).

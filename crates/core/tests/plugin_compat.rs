@@ -398,13 +398,10 @@ fn install_time_settings_become_keys() {
 
 #[test]
 fn the_oauth_blocks_the_catalog_ships_are_kept_as_written() {
-    // The blocks of mongodb-atlas, render, slack and wingspan, as they are.
+    // Wingspan's block as it is, and a preset client like one a provider registered for Themis.
     let preview = import_mcp(json!({
-        "mongodb-atlas": {"type": "http", "url": "https://mcp.mongodb.com/",
-            "oauth": {"clientId": "https://claude.ai/oauth/claude-code-client-metadata"}},
-        "render": {"type": "http", "url": "https://mcp.render.com/mcp", "oauth": {"clientId": "claude"}},
-        "slack": {"type": "http", "url": "https://mcp.slack.com/mcp",
-            "oauth": {"clientId": "1601185624273.8899143856786", "callbackPort": 3118}},
+        "registered": {"type": "http", "url": "https://mcp.example/mcp",
+            "oauth": {"clientId": "1601.8899", "callbackPort": 3118}},
         "wingspan": {"type": "http", "url": "https://api.wingspan.app/v3/mcp",
             "oauth": {"scopes": "offline_access",
                 "authServerMetadataUrl": "https://api.wingspan.app/.well-known/oauth-authorization-server"}},
@@ -412,18 +409,55 @@ fn the_oauth_blocks_the_catalog_ships_are_kept_as_written() {
     .unwrap();
     assert_eq!(preview.report.status, "supported", "{:?}", preview.report);
     let oauth = |name: &str| preview.spec.mcp[name].oauth.clone().unwrap();
-    assert_eq!(oauth("render").client_id.as_deref(), Some("claude"));
-    assert_eq!(oauth("slack").callback_port, Some(3118));
+    assert_eq!(oauth("registered").client_id.as_deref(), Some("1601.8899"));
+    assert_eq!(oauth("registered").callback_port, Some(3118));
     assert_eq!(oauth("wingspan").scopes.as_deref(), Some("offline_access"));
     assert!(oauth("wingspan").auth_server_metadata_url.is_some());
     // And `Edit as mcp.json` writes them back as they came.
-    let written = themis_core::plugins::mcp_server_to_standard(&preview.spec.mcp["slack"]);
+    let written = themis_core::plugins::mcp_server_to_standard(&preview.spec.mcp["registered"]);
     assert_eq!(
         written["oauth"],
-        json!({"clientId": "1601185624273.8899143856786", "callbackPort": 3118})
+        json!({"clientId": "1601.8899", "callbackPort": 3118})
     );
-    let again = themis_core::plugins::mcp_server_from_standard("slack", &written).unwrap();
-    assert_eq!(again.oauth, Some(oauth("slack")));
+    let again = themis_core::plugins::mcp_server_from_standard("registered", &written).unwrap();
+    assert_eq!(again.oauth, Some(oauth("registered")));
+}
+
+#[test]
+fn a_sign_in_set_up_for_claude_keeps_the_connection_out_and_says_so() {
+    // The blocks of mongodb-atlas, render and slack, as they ship: signing in with them would
+    // present Themis as Claude to the provider, so the rest of the plugin installs without them.
+    for (name, url, oauth) in [
+        (
+            "mongodb-atlas",
+            "https://mcp.mongodb.com/",
+            json!({"clientId": "https://claude.ai/oauth/claude-code-client-metadata"}),
+        ),
+        (
+            "render",
+            "https://mcp.render.com/mcp",
+            json!({"clientId": "claude"}),
+        ),
+        (
+            "slack",
+            "https://mcp.slack.com/mcp",
+            json!({"clientId": "1601185624273.8899143856786", "callbackPort": 3118}),
+        ),
+    ] {
+        let preview =
+            import_mcp(json!({name: {"type": "http", "url": url, "oauth": oauth}})).unwrap();
+        assert!(preview.spec.mcp.is_empty(), "{name} stayed in");
+        let issue = &preview.spec.import_issues[0];
+        assert_eq!(
+            issue.field.as_deref(),
+            Some(format!("mcpServers.{name}.oauth.clientId").as_str())
+        );
+        assert!(
+            format!("{issue:?}").contains("set up for Claude"),
+            "{issue:?}"
+        );
+        assert_ne!(preview.report.status, "supported", "{name}");
+    }
 }
 
 #[test]

@@ -154,4 +154,7 @@ nothing about ours.
 | `cloudinary` (four OAuth servers) | registered by Themis | HTTP 201 | Cloudinary's console login | not tried | the code exchange |
 | `datadog` (with `DD_MCP_DOMAIN=mcp.datadoghq.com`) | registered by Themis | HTTP 201 | Datadog's log in | not tried | the code exchange |
 
+`render`, `mongodb-atlas` and `slack` were probed before their connections were switched off: their
+clients were registered for Claude, so Themis now keeps those connections out.
+
 `cloudinary-mediaflows` publishes no OAuth metadata: it takes only its three header values.
