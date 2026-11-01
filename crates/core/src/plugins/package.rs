@@ -91,7 +91,8 @@ pub(super) fn digest(entries: &[Entry]) -> anyhow::Result<String> {
     let mut buffer = vec![0u8; 64 * 1024];
     for entry in entries {
         hash.update(entry.relative.as_bytes());
-        hash.update([0, u8::from(entry.executable)]);
+        // Windows has no executable bit: a kept file reads back without one.
+        hash.update([0, u8::from(entry.executable && cfg!(unix))]);
         hash.update(entry.bytes.to_le_bytes());
         let mut file = fs::File::open(&entry.path)?;
         loop {
@@ -247,7 +248,7 @@ fn matches(path: &Path, entry: &Entry) -> anyhow::Result<bool> {
     };
     Ok(metadata.is_file()
         && metadata.len() == entry.bytes
-        && is_executable(&metadata) == entry.executable
+        && (!cfg!(unix) || is_executable(&metadata) == entry.executable)
         && same_content(path, &entry.path)?)
 }
 
@@ -534,7 +535,10 @@ mod tests {
         assert_eq!(hash("a", b"x", false), base);
         assert_ne!(hash("b", b"x", false), base);
         assert_ne!(hash("a", b"y", false), base);
+        #[cfg(unix)]
         assert_ne!(hash("a", b"x", true), base);
+        #[cfg(not(unix))]
+        assert_eq!(hash("a", b"x", true), base);
     }
 
     #[test]
