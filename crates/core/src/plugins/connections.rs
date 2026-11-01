@@ -231,6 +231,11 @@ impl McpServer {
             .chain(self.env.values().map(String::as_str))
             .chain(self.bearer_env.as_deref())
             .chain(headers)
+            .chain(
+                self.oauth
+                    .as_ref()
+                    .and_then(|oauth| oauth.client_secret_env.as_deref()),
+            )
         {
             if !names.iter().any(|known| known == name) {
                 names.push(name.to_owned());
@@ -251,6 +256,18 @@ impl McpServer {
                 || super::keys::value(name).is_some()
         };
         self.bearer_env.is_some() || self.headers.values().any(filled)
+    }
+    /// Where this server's secrets would go, as its definition writes it and never filled in (a
+    /// secret may stand in the address): a remote host, or the local program it runs.
+    pub fn secret_destination(&self) -> String {
+        match (&self.url, &self.command) {
+            (Some(url), _) => {
+                let rest = url.split_once("://").map_or(url.as_str(), |(_, rest)| rest);
+                rest.split(['/', '?']).next().unwrap_or(rest).to_owned()
+            }
+            (None, Some(command)) => format!("the program {command}"),
+            (None, None) => String::new(),
+        }
     }
     /// The server's address with its secrets filled in, as a connection reaches it; `None` for a
     /// local server or while a secret it needs is missing.

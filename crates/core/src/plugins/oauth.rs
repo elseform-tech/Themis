@@ -170,6 +170,9 @@ struct AuthServer {
     scopes: Vec<String>,
     /// What the token is for: the protected resource the server names, or its own address.
     resource: String,
+    /// The hosts a person's client secret may go to: the server's and the authorization servers
+    /// it declares. Not a plugin's metadata address, nor where that metadata points.
+    secret_hosts: Vec<String>,
 }
 
 /// `https://host[:port]/.well-known/<name>` with the URL's path after it (RFC 8414 / 9728).
@@ -308,6 +311,17 @@ async fn discover(
             .await
         }
     };
+    let mut secret_hosts: Vec<String> = url.host_str().map(str::to_owned).into_iter().collect();
+    secret_hosts.extend(
+        metadata
+            .as_ref()
+            .and_then(|m| m["authorization_servers"].as_array())
+            .into_iter()
+            .flatten()
+            .filter_map(Value::as_str)
+            .filter_map(|server| reqwest::Url::parse(server).ok())
+            .filter_map(|server| server.host_str().map(str::to_owned)),
+    );
     let named = metadata.as_ref().and_then(|m| m["resource"].as_str());
     let token_resource = resource_for(&url, named).with_context(|| {
         "This server's sign-in metadata is for another server, so Themis won't use it"
@@ -387,6 +401,7 @@ async fn discover(
             .map(str::to_owned),
         scopes,
         resource: token_resource,
+        secret_hosts,
     })
 }
 
@@ -481,6 +496,14 @@ pub async fn sign_in(
         None => register(&client, &server, &redirect).await?,
     };
     if let Some(name) = &settings.client_secret_env {
+        // The person allowed this secret for the server. Its token endpoint must be the server or
+        // an authorization server it declares; redirects aren't followed, so it stays there.
+        let endpoint_host = reqwest::Url::parse(&server.token_endpoint)?
+            .host_str()
+            .map(str::to_owned);
+        if !endpoint_host.is_some_and(|host| server.secret_hosts.contains(&host)) {
+            bail!("Themis won't send {name} to this sign-in's token address: it isn't this server's or an authorization server it declares");
+        }
         client_secret = Some(
             super::keys::value(name)
                 .ok_or_else(|| super::keys::missing_error(std::slice::from_ref(name)))?,

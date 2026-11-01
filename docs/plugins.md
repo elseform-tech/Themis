@@ -164,7 +164,36 @@ environment variable of that name (a saved key wins). Keys are stored in the sys
 store (Keychain, Windows Credential Manager, Linux Secret Service, the same store as sign-ins);
 app data `keys.json` keeps only the names, because those stores cannot list entries. A server
 whose secrets are missing shows **Secret needed** with **Add secret**, which opens Settings › Secrets
-on that name; every missing name is reported at once. Settings › Secrets lists each saved secret and each secret
+on that name; every missing name is reported at once. A header written `${NAME:-}` is optional: left
+empty it isn't sent and the server doesn't wait for it.
+
+A definition can name any secret in Settings › Secrets, or any variable of the app's environment: the
+key of a model provider or of another plugin as easily as its own. So a plugin's connection reads a
+secret only once you allowed that name for that place. With its secrets all present it shows **Needs
+your OK**, "Sends `OPENCODE_KEY` to `evil.example`" and **Allow**, and nothing has been sent until you
+do (nor can a sign-in start). The place is as the definition writes it, never filled in; when it
+changes, or a new secret is read, it asks again. An agent can't allow it, and a test it asks for
+(`test_mcp`) can't read secrets at all. Connections you wrote yourself (with no plugin package,
+catalog or repository behind them) don't ask, since you named the secret. An update that changes
+headers, plain values, defaults or `oauth` of a connection turns it back off until you enable it
+again, as a change to its command or address always did. A `clientSecret` is also held to the
+server's own host or an authorization server it declares: Themis won't send it to a token address a
+plugin's own metadata names elsewhere, and doesn't follow redirects from one.
+
+A plugin that ships a literal value where a key goes (in `env`, a header, `clientSecret`, a `:-default`
+of a key, or a stand-in such as `[your aws profile]`, `your-api-key` or a value that just repeats the
+field's name, like `cld-cloud-name: cloud_name`) doesn't get to keep it. The literal becomes a
+reference to a named secret, `PLUGIN_FIELD` in capitals (`cloudinary` and `cld-api-key` give
+`CLOUDINARY_CLD_API_KEY`; another value for the same field in the same plugin takes the server's name
+too), and the value is **discarded**: it is rewritten in the plugin's copies in the registry and the
+package, and a value that isn't a stand-in is also taken out of the plugin's other text files under
+1 MiB, so neither the model nor a process can read it there. The source folder isn't touched, and
+neither is a marketplace's own clone of a plugin kept inside its repository, whose contents the
+repository published. The import says which secret each one became, in names only. Same goes for an
+address shipped empty (`"url": ""`): it reads a secret named for the server, since each person has
+their own. A literal is refused in a query string, in a value mixed with a reference, in a
+marketplace entry's inline definition, and in anything you paste or type (`themis mcp import`, Edit as
+mcp.json): there you hear about it at once rather than having what you wrote dropped. Settings › Secrets lists each saved secret and each secret
 an installed server reads, with the servers that use it and its state (Saved, From environment,
 Missing), and offers Add or Replace (a masked field), Remove, and a new name. The secret
 OpenCode Go uses (Settings › Models › Providers, `OPENCODE_KEY` by default) is always

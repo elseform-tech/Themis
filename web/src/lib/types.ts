@@ -799,7 +799,9 @@ export interface ThreadChange {
 }
 
 export type McpConnections = Record<string, {
-  status: "connecting" | "connected" | "failed" | "needs_sign_in" | "needs_key";
+  status: "connecting" | "connected" | "failed" | "needs_sign_in" | "needs_key" | "needs_secret_ok";
+  /** needs_secret_ok: each secret a plugin's connection reads, and where it would go. */
+  secrets?: { name: string; host: string }[];
   reason?: string;
   /** needs_key: the missing key names, to add in Settings › Keys. */
   keys?: string[];

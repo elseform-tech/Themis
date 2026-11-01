@@ -11,6 +11,12 @@
 //! answer (YOLO or an allow rule), or missing from the file does not start until
 //! a person enables it again. The file has no integrity protection, like the
 //! plugin registry beside it.
+//!
+//! A definition can name any secret in Settings › Secrets or any variable of the app's environment,
+//! the keys of model providers and of other plugins among them, and send it where it likes. So a
+//! plugin's connection also needs each secret it reads allowed for where it goes (`secret_ok`): the
+//! person sees the secret's name and the host, and allows that pair. Connections a person wrote
+//! themselves name their own secrets, and need no second word.
 
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
@@ -36,6 +42,9 @@ struct ConsentFile {
     version: u32,
     #[serde(default)]
     approved: BTreeMap<String, String>,
+    /// By connection: the secrets the person allowed it, and where each may go.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    secret_ok: BTreeMap<String, BTreeMap<String, String>>,
 }
 
 impl Default for ConsentFile {
@@ -43,6 +52,7 @@ impl Default for ConsentFile {
         Self {
             version: VERSION,
             approved: BTreeMap::new(),
+            secret_ok: BTreeMap::new(),
         }
     }
 }
@@ -67,6 +77,27 @@ pub(super) fn definition_digest(
         server.cwd
     ]);
     hasher.update(definition.to_string().as_bytes());
+    // What else decides where its secrets go. Only when there is any: a definition without them
+    // keeps the approval it has.
+    let mut more = serde_json::Map::new();
+    if !server.headers.is_empty() {
+        more.insert("headers".into(), json!(server.headers));
+    }
+    if !server.header_values.is_empty() {
+        more.insert("header_values".into(), json!(server.header_values));
+    }
+    if !server.env_values.is_empty() {
+        more.insert("env_values".into(), json!(server.env_values));
+    }
+    if !server.defaults.is_empty() {
+        more.insert("defaults".into(), json!(server.defaults));
+    }
+    if let Some(oauth) = &server.oauth {
+        more.insert("oauth".into(), json!(oauth));
+    }
+    if !more.is_empty() {
+        hasher.update(serde_json::Value::Object(more).to_string().as_bytes());
+    }
     for (path, content) in files {
         hasher.update([0]);
         hasher.update(path.as_bytes());
@@ -99,6 +130,25 @@ pub(super) fn mcp_namespace(plugin: &Plugin, name: &str, server: &McpServer) -> 
         plugin.skill_id(name),
         plugin_digest(plugin, server).unwrap_or_default()
     )
+}
+
+/// A plugin's secret waiting for the person's word, and where it would go.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub(super) struct SecretUse {
+    pub(super) name: String,
+    pub(super) host: String,
+}
+
+/// Whether the person wrote this connection themselves: not from a plugin package, a catalog or a
+/// repository's `.themis/plugins/`.
+fn personal(plugin: &Plugin) -> bool {
+    plugin.scope == "global"
+        && plugin.source.is_none()
+        && plugin
+            .spec
+            .origin
+            .as_ref()
+            .is_none_or(|origin| origin.kind == "mcp-json")
 }
 
 fn consent_key(root: &Path, scope: &str, plugin: &str, server: &str) -> String {
@@ -194,6 +244,92 @@ impl AppState {
             .approved
             .get(&consent_key(root, &plugin.scope, &plugin.spec.name, name))
             .is_some_and(|approved| *approved == digest)
+    }
+
+    /// The secrets this connection would read that exist and that the person hasn't allowed it
+    /// for where it sends them. While one it reads is missing there is nothing to ask yet: the
+    /// connection stops at that, before anything is sent.
+    pub(super) fn secrets_awaiting_ok(
+        &self,
+        root: &Path,
+        plugin: &Plugin,
+        name: &str,
+        server: &McpServer,
+    ) -> Vec<SecretUse> {
+        let names = server.key_names();
+        let available = |secret: &String| {
+            themis_core::plugins::keys::value(secret).is_some()
+                || server.defaults.contains_key(secret)
+        };
+        if personal(plugin) || !names.iter().all(available) {
+            return Vec::new();
+        }
+        let host = server.secret_destination();
+        let _guard = themis_core::chat_grants::WRITE_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let file = self.load_consent();
+        let allowed =
+            file.secret_ok
+                .get(&consent_key(root, &plugin.scope, &plugin.spec.name, name));
+        names
+            .into_iter()
+            // Nothing of the person's goes out for one only a plugin's own default fills.
+            .filter(|secret| themis_core::plugins::keys::value(secret).is_some())
+            .filter(|secret| allowed.and_then(|map| map.get(secret)) != Some(&host))
+            .map(|name| SecretUse {
+                name,
+                host: host.clone(),
+            })
+            .collect()
+    }
+
+    /// The person allows the connection the secrets they were shown. `shown` must be what is
+    /// waiting now, so a definition that changed since isn't allowed by this answer.
+    pub(super) fn allow_mcp_secrets(
+        &self,
+        root: &Path,
+        scope: &str,
+        plugin_name: &str,
+        name: &str,
+        shown: &[String],
+    ) -> Result<(), String> {
+        let plugin = self
+            .plugin_store(root_option(root))
+            .list()
+            .map_err(|e| e.to_string())?
+            .into_iter()
+            .find(|plugin| plugin.scope == scope && plugin.spec.name == plugin_name)
+            .ok_or("No such plugin")?;
+        let server = plugin.spec.mcp.get(name).ok_or("No such connection")?;
+        let waiting = self.secrets_awaiting_ok(root, &plugin, name, server);
+        let mut wanted: Vec<&str> = shown.iter().map(String::as_str).collect();
+        let mut current: Vec<&str> = waiting.iter().map(|use_| use_.name.as_str()).collect();
+        wanted.sort_unstable();
+        current.sort_unstable();
+        if wanted != current {
+            return Err("What this connection reads has changed; look at it again".to_owned());
+        }
+        let _guard = themis_core::chat_grants::WRITE_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let mut file = self.load_consent();
+        let allowed = file
+            .secret_ok
+            .entry(consent_key(root, scope, plugin_name, name))
+            .or_default();
+        for use_ in waiting {
+            allowed.insert(use_.name, use_.host);
+        }
+        self.save_consent(&file);
+        // Metadata only: how many.
+        let _ = self.inner.diagnostics.append(
+            "approval",
+            "mcp_secrets_allowed",
+            "info",
+            json!({"count": shown.len()}),
+        );
+        Ok(())
     }
 
     /// Whether stored consent already covers `server` of a plugin about to change.
@@ -404,6 +540,39 @@ mod tests {
             )
             .unwrap();
         assert!(!consented(&state, &root, &store));
+    }
+
+    #[test]
+    fn whatever_decides_where_secrets_go_needs_approval_when_it_changes() {
+        let plain: McpServer =
+            serde_json::from_value(json!({"url": "https://a.example/mcp"})).unwrap();
+        let digest = |server: &McpServer| definition_digest(server, &BTreeMap::new(), &[]).unwrap();
+        // A definition with none of these keeps the digest it always had.
+        let mut old = Sha256::new();
+        old.update(
+            json!([null, [], "https://a.example/mcp", {}, null, null])
+                .to_string()
+                .as_bytes(),
+        );
+        let old: String = old.finalize().iter().map(|b| format!("{b:02x}")).collect();
+        assert_eq!(digest(&plain), old);
+        for change in [
+            json!({"headers": {"X-Stolen": "${OPENCODE_KEY}"}}),
+            json!({"header_values": {"X-Plain": "a"}}),
+            json!({"defaults": {"BASE": "https://evil.example"}}),
+            json!({"oauth": {"auth_server_metadata_url": "https://evil.example/m"}}),
+        ] {
+            let mut changed = json!({"url": "https://a.example/mcp"});
+            for (field, value) in change.as_object().unwrap() {
+                changed[field] = value.clone();
+            }
+            let changed: McpServer = serde_json::from_value(changed).unwrap();
+            assert_ne!(digest(&plain), digest(&changed), "{change}");
+        }
+        let local: McpServer = serde_json::from_value(json!({"command": "run"})).unwrap();
+        let with_value: McpServer =
+            serde_json::from_value(json!({"command": "run", "env_values": {"A": "b"}})).unwrap();
+        assert_ne!(digest(&local), digest(&with_value));
     }
 
     #[test]

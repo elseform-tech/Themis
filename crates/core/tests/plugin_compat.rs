@@ -505,18 +505,35 @@ fn defaults_and_plain_settings_are_kept_but_secrets_must_be_keys() {
         ("NOTE", "aZ8kQ2mX9pL4vB7nR3tY6wE1"),
         ("REGION", "[your region, e.g. us-east-1 — required]"),
     ] {
-        let error =
-            import_mcp(json!({"local": {"command": "run", "env": {name: value}}})).unwrap_err();
-        assert!(
-            error.contains("literal values are unsupported"),
-            "{name}: {error}"
-        );
+        // In a plugin these become secrets the person fills in; see `mcp_literal_secrets.rs`.
+        let preview = import_mcp(json!({"local": {"command": "run", "env": {name: value}}}))
+            .unwrap_or_else(|error| panic!("{name}: {error}"));
+        let server = &preview.spec.mcp["local"];
+        assert_eq!(server.env[name], format!("FIXTURE_{name}"));
+        assert!(server.env_values.is_empty());
+        // ("x" and "abc" are in plenty of other words.)
+        if value.len() >= 7 {
+            assert!(!serde_json::to_string(&preview.spec)
+                .unwrap()
+                .contains(value));
+        }
     }
-    let error = import_mcp(
+    let preview = import_mcp(
         json!({"local": {"command": "run", "env": {"API_KEY": "${API_KEY:-sk-live-123}"}}}),
     )
-    .unwrap_err();
-    assert!(error.contains("literal values are unsupported"), "{error}");
+    .unwrap();
+    assert_eq!(preview.spec.mcp["local"].env["API_KEY"], "API_KEY");
+    assert!(preview.spec.mcp["local"].defaults.is_empty());
+    assert!(!serde_json::to_string(&preview.spec)
+        .unwrap()
+        .contains("sk-live-123"));
+    // A value that mixes a reference with other text doesn't read as either.
+    let error = import_mcp(json!({"local": {"command": "run", "env": {"API_KEY": "x${API_KEY}"}}}))
+        .unwrap_err();
+    assert!(
+        error.contains("Unsupported environment reference"),
+        "{error}"
+    );
 }
 
 #[test]
@@ -551,9 +568,8 @@ fn plain_headers_and_harmless_queries_are_accepted() {
         Some("DT_PLATFORM_TOKEN")
     );
 
-    // Credentials in a header or a query stay refused.
+    // Credentials in a query stay refused.
     for server in [
-        json!({"type": "http", "url": "https://mediaflows.example.com/mcp", "headers": {"cld-api-key": "api_key"}}),
         json!({"type": "http", "url": "https://example.com/mcp?api_key=abc"}),
         json!({"type": "http", "url": "https://example.com/mcp?token=${TOKEN}"}),
         json!({"type": "http", "url": "http://example.com/mcp"}),

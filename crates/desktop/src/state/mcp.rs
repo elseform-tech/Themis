@@ -39,6 +39,9 @@ const SIGN_IN_CANCELLED: &str = "Sign-in cancelled";
 /// The connection failure that means "sign in", kept apart from other failures.
 const NEEDS_SIGN_IN: &str = "Sign in to use this server.";
 
+/// A plugin's connection reads a secret the person hasn't allowed it. Nothing has been sent.
+const NEEDS_SECRET_OK: &str = "This connection reads secrets you haven't allowed it.";
+
 pub(super) const NEEDS_CONSENT: &str =
     "Needs your approval: enable this connection yourself in Integrations or the CLI";
 
@@ -50,6 +53,8 @@ pub(super) struct McpEntry {
     remote: Option<String>,
     /// That address with its secrets filled in: what a sign-in is kept under.
     remote_filled: Option<String>,
+    /// The secrets it is waiting to be allowed, and where they would go.
+    secrets_waiting: Vec<super::mcp_consent::SecretUse>,
     result: tokio::sync::watch::Receiver<Option<SessionResult>>,
     task: tokio::task::JoinHandle<()>,
 }
@@ -87,6 +92,9 @@ impl McpEntry {
             Some(Ok(_)) => {
                 json!({"status":"failed","reason":"Connection closed. Refresh to reconnect."})
             }
+            Some(Err(reason)) if reason == NEEDS_SECRET_OK => {
+                json!({"status":"needs_secret_ok","reason":reason,"secrets":self.secrets_waiting})
+            }
             Some(Err(reason)) if reason == NEEDS_SIGN_IN => {
                 json!({"status":"needs_sign_in","reason":reason})
             }
@@ -113,6 +121,10 @@ impl AppState {
         blocked: Option<&'static str>,
         retry: bool,
     ) -> Arc<McpEntry> {
+        let secrets_waiting = plugin.spec.mcp.get(name).map_or_else(Vec::new, |written| {
+            self.secrets_awaiting_ok(root, plugin, name, written)
+        });
+        let blocked = blocked.or((!secrets_waiting.is_empty()).then_some(NEEDS_SECRET_OK));
         let key = format!("{}:{}:mcp:{name}", plugin.scope, plugin.spec.name);
         let remote_url = server.url.clone().filter(|_| !server.has_credentials());
         let signed_in_at = server.filled_url();
@@ -192,6 +204,7 @@ impl AppState {
             fingerprint,
             remote: remote_url,
             remote_filled: signed_in_at,
+            secrets_waiting,
             result,
             task,
         });
@@ -281,6 +294,12 @@ impl AppState {
         if !self.mcp_consented(root, plugin, name, &plugin.spec.mcp[name]) {
             anyhow::bail!("MCP startup needs your approval");
         }
+        if !self
+            .secrets_awaiting_ok(root, plugin, name, &plugin.spec.mcp[name])
+            .is_empty()
+        {
+            anyhow::bail!("{NEEDS_SECRET_OK}");
+        }
         if let Some(policy) = startup_rules {
             if connections::startup_denied(&plugin.skill_id(name), &server, policy)? {
                 anyhow::bail!("MCP startup denied");
@@ -338,6 +357,9 @@ impl AppState {
     /// installed are accepted.
     pub(super) async fn mcp_sign_in(&self, root: &Path, url: &str) -> Result<Value, String> {
         let server = self.installed_mcp_url(root, url)?;
+        if self.mcp_url_awaits_secret_ok(root, url)? {
+            return Err(NEEDS_SECRET_OK.to_owned());
+        }
         let filled = sign_in_address(&server)?;
         // The person may close the browser tab instead of finishing: Cancel (in Integrations)
         // stops the wait at once instead of leaving it until the time limit.
@@ -380,6 +402,22 @@ impl AppState {
         let server = self.installed_mcp_url(root, url)?;
         themis_core::plugins::oauth::sign_out(&sign_in_address(&server)?)?;
         self.mcp_status(root, true)
+    }
+
+    /// Whether a plugin connection at this address still waits for the person to allow a secret.
+    fn mcp_url_awaits_secret_ok(&self, root: &Path, url: &str) -> Result<bool, String> {
+        let plugins = self
+            .plugin_store(Some(root.to_owned()))
+            .list()
+            .map_err(|e| e.to_string())?;
+        Ok(plugins.iter().any(|plugin| {
+            plugin.spec.mcp.iter().any(|(name, server)| {
+                server.url.as_deref() == Some(url)
+                    && !self
+                        .secrets_awaiting_ok(root, plugin, name, server)
+                        .is_empty()
+            })
+        }))
     }
 
     /// The installed server at this address as it is written (`${NAME}` and all).
