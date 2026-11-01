@@ -1046,6 +1046,12 @@ async fn run_task_with_evidence_inner(
                 return Err(anyhow!(error));
             }
         };
+        // The guard reads the reply as it came; everything after it, and the model's next request,
+        // has what the person saw.
+        let reply_as_sent = text.clone();
+        let text = text
+            .map(|reply| turn_end::before_written_call(&reply))
+            .filter(|reply| !reply.is_empty());
         check_stopped(&stopped, &events).await?;
         // A message steered in while the model wrote its answer keeps the run
         // going: the answer stays, and the next request reads the message.
@@ -1162,10 +1168,11 @@ async fn run_task_with_evidence_inner(
             // announces its next step or writes a tool call as text (a free model's goal run,
             // 3 of 6 checked turns). Asked once, it continues or sums up. The last request
             // ends the run with what it has.
-            let unfinished =
-                (!llm_tools.is_empty() && turn < policy.total_turns && !nudge_off("turn_summary"))
-                    .then(|| turn_end_guard.check(text.as_deref().unwrap_or_default(), used_tools))
-                    .flatten();
+            let unfinished = (!llm_tools.is_empty()
+                && turn < policy.total_turns
+                && !nudge_off("turn_summary"))
+            .then(|| turn_end_guard.check(reply_as_sent.as_deref().unwrap_or_default(), used_tools))
+            .flatten();
             if let Some(reason) = unfinished {
                 let answer = text.unwrap_or_default();
                 let note = if reason == turn_end::Unfinished::ProgressLine {
@@ -1723,6 +1730,7 @@ async fn request_answer_inner(
         }
         let mut published = false;
         let mut attempt_text = String::new();
+        let mut written_calls = turn_end::WrittenCallFilter::default();
         let messages: &[ChatMessage] = &request;
         let attempt = crate::context_metrics::with_attempt(retries as usize, async {
             // Bound handshake, complete stream and non-streaming fallback together.
@@ -1745,6 +1753,10 @@ async fn request_answer_inner(
                                     StreamChunk::Text(delta) => {
                                         attempt_text.push_str(&delta);
                                         text.push_str(&delta);
+                                        let delta = written_calls.push(&delta);
+                                        if delta.is_empty() {
+                                            continue;
+                                        }
                                         let visible = match &mut repeat {
                                             Some(filter) => filter.push(&delta),
                                             None => Some(delta),
@@ -1763,6 +1775,18 @@ async fn request_answer_inner(
                                     _ => {} // Reasoning content is private; only public narration reaches the UI.
                                 }
                             }
+                            // What was held back in case it was a call wasn't one.
+                            let rest = written_calls.finish();
+                            if !rest.is_empty() {
+                                let visible = match &mut repeat {
+                                    Some(filter) => filter.push(&rest),
+                                    None => Some(rest),
+                                };
+                                if let Some(visible) = visible {
+                                    published |= !visible.is_empty();
+                                    events.send(RunEvent::AssistantText(visible)).await.ok();
+                                }
+                            }
                             if let Some(held) = repeat.as_mut().and_then(|f| f.finish()) {
                                 published = true;
                                 events.send(RunEvent::AssistantText(held)).await.ok();
@@ -1778,6 +1802,7 @@ async fn request_answer_inner(
                             let text = response.text().filter(|text| !text.is_empty());
                             if let Some(text) = text.clone() {
                                 attempt_text.push_str(&text);
+                                let text = turn_end::before_written_call(&text);
                                 let visible = match &mut repeat {
                                     Some(filter) => {
                                         let mut visible = filter.push(&text).unwrap_or_default();
