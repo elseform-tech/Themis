@@ -85,6 +85,13 @@ doc = false
 bench = false
 
 [[bin]]
+name = "mcp_sse"
+path = "fuzz_targets/mcp_sse.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
 name = "goal_verdict"
 path = "fuzz_targets/goal_verdict.rs"
 test = false
