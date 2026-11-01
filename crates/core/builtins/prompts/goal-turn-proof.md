@@ -1,4 +1,4 @@
-Proven so far, by the check; leave these alone unless you change what they depend on:
+Done, by the check; leave these alone unless you change what they depend on:
 {{proven}}
-Still to prove:
+Still to do:
 {{open}}

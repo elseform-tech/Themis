@@ -127,12 +127,14 @@ pub fn merge_checklist(
     planned
         .into_iter()
         .map(|item| {
-            let known = current
-                .iter()
-                .find(|old| old.proven && old.what.eq_ignore_ascii_case(&item.what));
+            let known = current.iter().find(|old| {
+                (old.proven || old.broken) && old.what.eq_ignore_ascii_case(&item.what)
+            });
             GoalRequirement {
-                proven: known.is_some(),
+                proven: known.is_some_and(|old| old.proven),
+                broken: known.is_some_and(|old| old.broken),
                 how: known.map_or_else(String::new, |old| old.how.clone()),
+                kind: item.kind,
                 what: item.what,
             }
         })
@@ -143,8 +145,7 @@ pub fn merge_checklist(
 pub fn pending_item(request: &str) -> GoalRequirement {
     GoalRequirement {
         what: one_line(request, MAX_REQUIREMENT_CHARS),
-        proven: false,
-        how: String::new(),
+        ..Default::default()
     }
 }
 
@@ -203,14 +204,43 @@ pub struct GoalVerdict {
 
 /// One thing a goal asks for, as the goal check tracks it from turn to turn. Only the check
 /// writes these, never the agent, so they can carry proof across turns.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub struct GoalRequirement {
     pub what: String,
+    #[serde(default, skip_serializing_if = "GoalItemKind::is_task")]
+    pub kind: GoalItemKind,
     #[serde(default)]
     pub proven: bool,
+    /// A rule the commands show wasn't followed. Only ever said, never repaired.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub broken: bool,
     /// What showed it.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub how: String,
+}
+
+/// Something to finish, or how the work must be done the whole way.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum GoalItemKind {
+    #[default]
+    Task,
+    Rule,
+}
+impl GoalItemKind {
+    fn is_task(&self) -> bool {
+        *self == Self::Task
+    }
+}
+
+impl GoalRequirement {
+    pub fn is_rule(&self) -> bool {
+        self.kind == GoalItemKind::Rule
+    }
+    /// A task not finished yet; a rule is never open.
+    pub fn is_open(&self) -> bool {
+        !self.is_rule() && !self.proven
+    }
 }
 
 /// Reads the first JSON object with a known `verdict` in the checker's reply.
@@ -245,7 +275,7 @@ pub fn parse_verdict(reply: &str) -> Option<GoalVerdict> {
         });
         let requirements = raw.requirements.map_or_else(Vec::new, parse_requirements);
         // A check that lists something as open has not reached the goal, whatever it says.
-        let open = requirements.iter().find(|item| !item.proven);
+        let open = requirements.iter().find(|item| item.is_open());
         let (verdict, reason) = match open {
             Some(open) if raw.verdict == Verdict::Reached => (
                 Verdict::NotYet,
@@ -282,9 +312,16 @@ fn parse_requirements(value: serde_json::Value) -> Vec<GoalRequirement> {
         .iter()
         .filter_map(|item| {
             let what = one_line(item["what"].as_str()?, MAX_REQUIREMENT_CHARS);
+            let rule = item["kind"].as_str() == Some("rule");
             (!what.is_empty()).then(|| GoalRequirement {
                 what,
-                proven: item["proven"].as_bool() == Some(true),
+                kind: if rule {
+                    GoalItemKind::Rule
+                } else {
+                    GoalItemKind::Task
+                },
+                proven: !rule && item["proven"].as_bool() == Some(true),
+                broken: rule && item["broken"].as_bool() == Some(true),
                 how: one_line(
                     item["how"].as_str().unwrap_or_default(),
                     MAX_REQUIREMENT_PROOF_CHARS,
@@ -368,7 +405,12 @@ pub fn check_prompt(
         let list = proof
             .iter()
             .map(|item| {
-                let state = if item.proven { "proven" } else { "open" };
+                let state = match (item.is_rule(), item.broken, item.proven) {
+                    (true, true, _) => "rule, broken",
+                    (true, false, _) => "rule",
+                    (false, _, true) => "proven",
+                    (false, _, false) => "open",
+                };
                 format!("- [{state}] {} ({})", item.what, item.how)
             })
             .collect::<Vec<_>>()
@@ -430,7 +472,7 @@ pub fn turn_message(
     let lines = |proven: bool| {
         let lines: Vec<String> = proof
             .iter()
-            .filter(|item| item.proven == proven)
+            .filter(|item| !item.is_rule() && item.proven == proven)
             .map(|item| match item.how.as_str() {
                 "" => format!("- {}", item.what),
                 how => format!("- {}: {how}", item.what),
@@ -443,12 +485,31 @@ pub fn turn_message(
         }
     };
     let mut state = String::new();
-    if !proof.is_empty() {
+    if proof.iter().any(|item| !item.is_rule()) {
         let list = crate::prompts::fill(
             crate::prompts::GOAL_TURN_PROOF,
             &[("proven", &lines(true)), ("open", &lines(false))],
         );
         state.push_str(&list);
+        state.push('\n');
+    }
+    if let Some(next) = proof.iter().find(|item| item.is_open()) {
+        state.push_str(&crate::prompts::fill(
+            crate::prompts::GOAL_TURN_NEXT,
+            &[("task", &next.what)],
+        ));
+        state.push('\n');
+    }
+    let rules: Vec<String> = proof
+        .iter()
+        .filter(|item| item.is_rule())
+        .map(|item| format!("- {}", item.what))
+        .collect();
+    if !rules.is_empty() {
+        state.push_str(&crate::prompts::fill(
+            crate::prompts::GOAL_TURN_RULES,
+            &[("rules", &rules.join("\n"))],
+        ));
         state.push('\n');
     }
     if !files.is_empty() {
@@ -716,6 +777,8 @@ mod tests {
 
     fn requirement(what: &str, proven: bool, how: &str) -> GoalRequirement {
         GoalRequirement {
+            kind: GoalItemKind::Task,
+            broken: false,
             what: what.to_owned(),
             proven,
             how: how.to_owned(),
@@ -745,6 +808,117 @@ mod tests {
                 requirement("Shooting raises the score", false, ""),
             ]
         );
+    }
+
+    fn rule(what: &str) -> GoalRequirement {
+        GoalRequirement {
+            what: what.into(),
+            kind: GoalItemKind::Rule,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn a_rule_never_holds_a_goal_back_and_a_broken_one_is_kept_as_said() {
+        let verdict = parse_verdict(
+            r#"{"verdict":"reached","reason":"Done.","requirements":[
+            {"what":"Board works","proven":true,"how":"dragged a card"},
+            {"what":"Subagents build the parts","kind":"rule","proven":true,"broken":true,"how":"the main agent wrote them all"},
+            {"what":"No build step","kind":"rule"}]}"#,
+        )
+        .unwrap();
+        assert_eq!(verdict.verdict, Verdict::Reached);
+        let broken = &verdict.requirements[1];
+        assert_eq!(broken.kind, GoalItemKind::Rule);
+        assert!(broken.broken);
+        assert!(!broken.proven, "a rule is never ticked off");
+        assert!(!verdict.requirements[2].broken);
+    }
+
+    #[test]
+    fn only_a_rule_can_be_broken_and_an_unknown_kind_is_a_task() {
+        let verdict = parse_verdict(
+            r#"{"verdict":"not_yet","reason":"","requirements":[{"what":"Board","kind":"mystery","broken":true}]}"#,
+        )
+        .unwrap();
+        assert_eq!(verdict.requirements[0].kind, GoalItemKind::Task);
+        assert!(!verdict.requirements[0].broken);
+    }
+
+    #[test]
+    fn a_turn_names_one_next_task_and_repeats_the_rules_apart() {
+        let proof = vec![
+            requirement("Board", true, "dragged a card"),
+            requirement("Filters", false, ""),
+            requirement("Timeline", false, ""),
+            rule("Use subagents"),
+        ];
+        let text = turn_message(3, "goal", "Not yet.", &proof, &[]);
+        assert!(
+            text.contains("finish it before starting another: Filters"),
+            "{text}"
+        );
+        assert!(!text.contains("starting another: Timeline"), "{text}");
+        let rules = text.find("hold the whole time").expect("rules are listed");
+        assert!(text[rules..].contains("- Use subagents"), "{text}");
+        let still = text.find("Still to do").unwrap();
+        assert!(
+            !text[still..rules].contains("Use subagents"),
+            "a rule is not a task: {text}"
+        );
+    }
+
+    #[test]
+    fn with_every_task_done_no_next_task_is_named() {
+        let proof = vec![
+            requirement("Board", true, "dragged a card"),
+            rule("Use subagents"),
+        ];
+        let text = turn_message(3, "goal", "Not yet.", &proof, &[]);
+        assert!(!text.contains("starting another"), "{text}");
+    }
+
+    #[test]
+    fn a_refreshed_list_keeps_what_was_done_and_what_was_broken() {
+        let mut broken = rule("Use subagents");
+        broken.broken = true;
+        broken.how = "the main agent wrote them".into();
+        let current = vec![requirement("Board", true, "dragged a card"), broken];
+        let merged = merge_checklist(
+            &current,
+            vec![
+                GoalRequirement {
+                    what: "board".into(),
+                    ..Default::default()
+                },
+                rule("use subagents"),
+                rule("No build step"),
+            ],
+        );
+        assert!(merged[0].proven);
+        assert!(merged[1].broken);
+        assert_eq!(merged[1].how, "the main agent wrote them");
+        assert!(!merged[2].broken);
+    }
+
+    #[test]
+    fn the_check_is_shown_each_items_kind() {
+        let mut broken = rule("Use subagents");
+        broken.broken = true;
+        let (_, user) = check_prompt(
+            "goal",
+            &[],
+            &[
+                requirement("Board", false, ""),
+                rule("No build step"),
+                broken,
+            ],
+            "answer",
+            "evidence",
+        );
+        assert!(user.contains("- [open] Board"), "{user}");
+        assert!(user.contains("- [rule] No build step"), "{user}");
+        assert!(user.contains("- [rule, broken] Use subagents"), "{user}");
     }
 
     #[test]
