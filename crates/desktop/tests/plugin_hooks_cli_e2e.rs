@@ -1645,6 +1645,56 @@ async fn a_session_end_hook_keeps_to_deny_rules_and_its_switch() {
     app.serving.abort();
 }
 
+/// In Custom a session's end is asked about once, on the turn that opens the session, so that it
+/// can run later with nobody there. A person's no holds, and it isn't asked again.
+#[tokio::test(flavor = "multi_thread")]
+async fn in_custom_a_session_end_is_asked_about_when_the_session_opens() {
+    let later = Instant::now() + Duration::from_secs(100 * 60 * 60);
+    for (answer, runs) in [("once", 1), ("deny", 0)] {
+        let hooks = logs("SessionEnd", "ended.jsonl");
+        let app = crate::app(hooks, &[], |_| reply("Done.")).await;
+        let (data, thread) = (app.data.path().to_owned(), app.thread.clone());
+        let summaries = tokio::task::spawn_blocking(move || {
+            call(
+                &data,
+                "set_thread_approval_mode",
+                json!({"threadId": thread, "mode": "custom"}),
+            );
+            let mut summaries = Vec::new();
+            for text in ["first", "second"] {
+                call(
+                    &data,
+                    "send_message",
+                    json!({"threadId": thread, "text": text}),
+                );
+                let deadline = Instant::now() + Duration::from_secs(30);
+                while call(&data, "get_thread", json!({"threadId": thread}))["running"] == true {
+                    assert!(Instant::now() < deadline, "the run never finished");
+                    let pending = call(&data, "get_pending_approvals", json!({}));
+                    for approval in pending.as_array().into_iter().flatten() {
+                        summaries.push(approval["summary"].as_str().unwrap_or_default().to_owned());
+                        call(
+                            &data,
+                            "approve_action",
+                            json!({"threadId": thread,
+                                "approvalId": approval["approval_id"], "decision": answer}),
+                        );
+                    }
+                    std::thread::sleep(Duration::from_millis(20));
+                }
+            }
+            summaries
+        })
+        .await
+        .unwrap();
+        assert_eq!(summaries.len(), 1, "{summaries:?}");
+        assert!(summaries[0].starts_with("SessionEnd:"), "{summaries:?}");
+        app.state.end_idle_hook_sessions_at(later).await;
+        assert_eq!(lines(&app, "ended.jsonl").len(), runs, "{answer}");
+        app.serving.abort();
+    }
+}
+
 /// Some hooks hand their work to a detached process and exit at once, as Claude's short budget
 /// makes them. That process must live on.
 #[tokio::test(flavor = "multi_thread")]
