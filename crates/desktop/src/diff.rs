@@ -1216,14 +1216,14 @@ index 5555555..6666666 100644
             changed,
             vec![
                 ChangedFile {
-                    added: None,
-                    removed: None,
+                    added: Some(0),
+                    removed: Some(1),
                     path: "gone.txt".into(),
                     status: DiffStatus::Deleted
                 },
                 ChangedFile {
-                    added: None,
-                    removed: None,
+                    added: Some(1),
+                    removed: Some(0),
                     path: "new.py".into(),
                     status: DiffStatus::Added
                 },
