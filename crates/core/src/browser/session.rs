@@ -1695,6 +1695,57 @@ impl ChatBrowser {
         report
     }
 
+    /// Presses the mouse at one place, moves to another and lets go, as a person drags. The page
+    /// sees real input, whether it listens to mouse events or uses native drag and drop.
+    pub async fn drag(
+        self: &Arc<Self>,
+        from: &DragEnd,
+        to: &DragEnd,
+    ) -> Result<ActionReport, String> {
+        let mut inner = self.inner.lock().await;
+        let browser = inner
+            .browser
+            .clone()
+            .ok_or("no page is open; use browser_open first")?;
+        let session = inner
+            .tabs
+            .get(inner.current)
+            .ok_or("no page is open; use browser_open first")?
+            .session_id
+            .clone();
+        // The far end first: reaching it may scroll, and the near end is read where it then is.
+        let end = self.drag_point(&inner, &browser.cdp, &session, to).await?;
+        let start = self
+            .drag_point(&inner, &browser.cdp, &session, from)
+            .await?;
+        drag_between(&browser.cdp, &session, start, end).await?;
+        *self.pointer.lock().unwrap_or_else(|e| e.into_inner()) = Some(end);
+        self.settle(&inner, false).await;
+        let report = self.report(&mut inner, None).await;
+        drop(inner);
+        self.publish_state().await;
+        report
+    }
+
+    async fn drag_point(
+        &self,
+        inner: &ChatInner,
+        cdp: &Cdp,
+        session: &str,
+        end: &DragEnd,
+    ) -> Result<(f64, f64), String> {
+        match end {
+            DragEnd::Element(reference) => {
+                let (cdp, session, backend) = self.element(inner, reference).await?;
+                element_center(&cdp, &session, backend).await
+            }
+            DragEnd::Point(x, y) => {
+                check_visible_point(cdp, session, *x, *y).await?;
+                Ok((*x, *y))
+            }
+        }
+    }
+
     /// Moves the mouse to a point of the visible page without clicking, for aiming in games and
     /// for hover menus. The page sees real movement.
     pub async fn move_point(self: &Arc<Self>, x: f64, y: f64) -> Result<ActionReport, String> {
@@ -1851,6 +1902,9 @@ impl ChatBrowser {
         hold: Duration,
     ) -> Result<ActionReport, String> {
         let press = parse_key(key).ok_or_else(|| {
+            if key.to_ascii_lowercase().contains("mouse") {
+                return "browser_press presses keys, not mouse buttons; to hold the mouse down and move, use browser_drag".to_owned();
+            }
             format!(
                 "unknown key '{}'; use names like Enter, Escape, Tab, ArrowDown, w, 1 or Control+a",
                 cap(key, 30)
@@ -2801,6 +2855,116 @@ async fn element_center(cdp: &Cdp, session: &str, backend: i64) -> Result<(f64, 
     let x = (quad[0] + quad[2] + quad[4] + quad[6]) / 4.0;
     let y = (quad[1] + quad[3] + quad[5] + quad[7]) / 4.0;
     Ok((x, y))
+}
+
+/// One end of a drag.
+#[derive(Debug, Clone, PartialEq)]
+pub enum DragEnd {
+    /// A ref from the latest snapshot.
+    Element(String),
+    /// CSS pixels of the visible page.
+    Point(f64, f64),
+}
+
+/// Moves between the two ends, enough for a page to see the distance covered.
+const DRAG_STEPS: u32 = 12;
+const DRAG_STEP_PAUSE: Duration = Duration::from_millis(16);
+/// A page starts native drag and drop a moment after the mouse leaves; waits this long at most.
+const DRAG_START_WAIT: Duration = Duration::from_millis(250);
+
+async fn mouse(cdp: &Cdp, session: &str, params: Value) -> Result<(), String> {
+    cdp.call(Some(session), "Input.dispatchMouseEvent", params)
+        .await
+        .map(|_| ())
+}
+
+/// Native drag and drop doesn't follow synthetic mouse events by itself: Chrome hands over the
+/// drag it would have started, and the rest of the gesture goes in as drag events. A page that
+/// listens to mouse events never starts one and simply sees the moves.
+async fn drag_between(
+    cdp: &Cdp,
+    session: &str,
+    from: (f64, f64),
+    to: (f64, f64),
+) -> Result<(), String> {
+    let mut events = cdp.subscribe();
+    cdp.call(
+        Some(session),
+        "Input.setInterceptDrags",
+        json!({"enabled": true}),
+    )
+    .await?;
+    let result = drag_gesture(cdp, session, &mut events, from, to).await;
+    let _ = cdp
+        .call(
+            Some(session),
+            "Input.setInterceptDrags",
+            json!({"enabled": false}),
+        )
+        .await;
+    result
+}
+
+fn drag_started(
+    events: &mut tokio::sync::broadcast::Receiver<super::cdp::CdpEvent>,
+    session: &str,
+) -> Option<Value> {
+    while let Ok(event) = events.try_recv() {
+        if event.method == "Input.dragIntercepted" && event.session.as_deref() == Some(session) {
+            return Some(event.params["data"].clone());
+        }
+    }
+    None
+}
+
+async fn drag_gesture(
+    cdp: &Cdp,
+    session: &str,
+    events: &mut tokio::sync::broadcast::Receiver<super::cdp::CdpEvent>,
+    from: (f64, f64),
+    to: (f64, f64),
+) -> Result<(), String> {
+    mouse(
+        cdp,
+        session,
+        json!({"type": "mouseMoved", "x": from.0, "y": from.1}),
+    )
+    .await?;
+    mouse(cdp, session, json!({"type": "mousePressed", "x": from.0, "y": from.1, "button": "left", "buttons": 1, "clickCount": 1})).await?;
+    let mut intercepted = None;
+    for step in 1..=DRAG_STEPS {
+        let share = f64::from(step) / f64::from(DRAG_STEPS);
+        let (x, y) = (
+            from.0 + (to.0 - from.0) * share,
+            from.1 + (to.1 - from.1) * share,
+        );
+        mouse(
+            cdp,
+            session,
+            json!({"type": "mouseMoved", "x": x, "y": y, "button": "left", "buttons": 1}),
+        )
+        .await?;
+        tokio::time::sleep(DRAG_STEP_PAUSE).await;
+        intercepted = drag_started(events, session);
+        if intercepted.is_some() {
+            break;
+        }
+    }
+    if intercepted.is_none() {
+        tokio::time::sleep(DRAG_START_WAIT).await;
+        intercepted = drag_started(events, session);
+    }
+    if let Some(data) = intercepted {
+        for kind in ["dragEnter", "dragOver", "drop"] {
+            cdp.call(
+                Some(session),
+                "Input.dispatchDragEvent",
+                json!({"type": kind, "x": to.0, "y": to.1, "data": data}),
+            )
+            .await?;
+        }
+    }
+    mouse(cdp, session, json!({"type": "mouseReleased", "x": to.0, "y": to.1, "button": "left", "buttons": 0, "clickCount": 1})).await
 }
 
 async fn click_at(cdp: &Cdp, session: &str, x: f64, y: f64, clicks: u32) -> Result<(), String> {

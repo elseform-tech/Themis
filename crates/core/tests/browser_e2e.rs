@@ -1185,3 +1185,113 @@ async fn the_person_is_never_held_up_by_an_agent_action_in_progress() {
     assert!(started.elapsed() < quick, "took {:?}", started.elapsed());
     hub.close_chat("chat-busy").await;
 }
+
+/// Dragging is real mouse input the page can't tell from a person's, whichever way the page
+/// listens: native HTML5 drag and drop, or plain mouse events.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_agent_drags_with_the_mouse_on_html5_and_mouse_event_pages() {
+    let _browser = ONE_BROWSER.lock().await;
+    let data = tempfile::tempdir().unwrap();
+    let Some(hub) = hub(data.path()) else { return };
+    let site = MockServer::builder().start().await;
+    Mock::given(path("/board"))
+        .respond_with(ResponseTemplate::new(200).set_body_raw(
+            r#"<!doctype html><title>Board</title><body style="margin:0">
+<button id="card" draggable="true" style="position:fixed;left:20px;top:20px;width:120px;height:40px">Card one</button>
+<button id="done" style="position:fixed;left:300px;top:20px;width:200px;height:200px">Done column</button>
+<p id="out" style="position:fixed;top:300px">waiting</p>
+<script>
+const out = document.getElementById('out'), done = document.getElementById('done');
+document.getElementById('card').addEventListener('dragstart', e => { e.dataTransfer.setData('text/plain', 'card-1'); });
+done.addEventListener('dragover', e => e.preventDefault());
+done.addEventListener('drop', e => { e.preventDefault(); out.textContent = 'dropped ' + e.dataTransfer.getData('text/plain') + ' trusted ' + e.isTrusted; });
+</script></body>"#,
+            "text/html",
+        ))
+        .mount(&site)
+        .await;
+    Mock::given(path("/slider"))
+        .respond_with(ResponseTemplate::new(200).set_body_raw(
+            r#"<!doctype html><title>Slider</title><body style="margin:0;height:500px">
+<div id="knob" style="position:fixed;left:50px;top:50px;width:30px;height:30px;background:#888"></div>
+<p id="out" style="position:fixed;top:300px">waiting</p>
+<script>
+let held = false, moves = 0;
+const knob = document.getElementById('knob'), out = document.getElementById('out');
+knob.addEventListener('mousedown', e => { held = true; });
+document.addEventListener('mousemove', e => { if (held && e.buttons === 1) { moves++; knob.style.left = e.clientX + 'px'; } });
+document.addEventListener('mouseup', e => { if (held) out.textContent = 'let go at ' + e.clientX + ' after moves ' + (moves > 1 ? 'many' : moves) + ' trusted ' + e.isTrusted; held = false; });
+</script></body>"#,
+            "text/html",
+        ))
+        .mount(&site)
+        .await;
+    let project = tempfile::tempdir().unwrap();
+    let chat = hub.chat("chat-drag", project.path());
+    let tools = themis_core::browser::tools::browser_tools(
+        Arc::new(FnHook::new(|_: &ToolAction| Approval::AllowOnce)),
+        themis_core::browser::tools::BrowserScope {
+            permissions: themis_core::tools::site_permissions::SitePermissions::new(
+                Default::default(),
+                None,
+            ),
+            chat: Arc::clone(&chat),
+            cancel: None,
+            media: None,
+        },
+    );
+    let tool = |name: &str| tools.iter().find(|tool| tool.name() == name).unwrap();
+
+    // By refs, on a page using native drag and drop.
+    let opened = tool("browser_open")
+        .execute(json!({"url": format!("{}/board", site.uri())}))
+        .await
+        .unwrap();
+    let snapshot = opened["snapshot"].as_str().unwrap();
+    let (card, done) = (
+        ref_of(snapshot, "Card one\""),
+        ref_of(snapshot, "Done column\""),
+    );
+    let dropped = tool("browser_drag")
+        .execute(json!({"from_reference": card, "to_reference": done}))
+        .await
+        .unwrap();
+    let text = dropped["snapshot"].as_str().unwrap();
+    assert!(text.contains("dropped card-1 trusted true"), "{text}");
+
+    // By points, on a page using plain mouse events; a model's zero points beside refs are ignored.
+    tool("browser_open")
+        .execute(json!({"url": format!("{}/slider", site.uri())}))
+        .await
+        .unwrap();
+    let slid = tool("browser_drag")
+        .execute(json!({"from_x": 65, "from_y": 65, "to_x": 400, "to_y": 65}))
+        .await
+        .unwrap();
+    let text = slid["snapshot"].as_str().unwrap();
+    assert!(
+        text.contains("let go at 400 after moves many trusted true"),
+        "{text}"
+    );
+
+    // Nothing to go on, half a point, or a point off the page: told, and nothing happens.
+    for args in [
+        json!({}),
+        json!({"from_x": 10, "from_y": 10}),
+        json!({"from_x": 10, "to_x": 20, "to_y": 20}),
+        json!({"from_x": 10, "from_y": 10, "to_x": 99999, "to_y": 10}),
+    ] {
+        assert!(
+            tool("browser_drag").execute(args.clone()).await.is_err(),
+            "{args}"
+        );
+    }
+
+    // A mouse button named to browser_press points at the tool that does it.
+    let refused = tool("browser_press")
+        .execute(json!({"key": "mouseDown"}))
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(refused.contains("browser_drag"), "{refused}");
+}
