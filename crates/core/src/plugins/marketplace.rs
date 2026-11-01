@@ -2987,6 +2987,9 @@ fn read_hook_options(raw: &Value, windows: bool) -> Result<HookOptions, String> 
     for (key, value) in fields {
         match key.as_str() {
             "type" | "command" | "timeout" => {}
+            // A `prompt` hook's question. It runs on the chat's model, whichever it names, and a
+            // no always reaches the agent, as `continueOnBlock` asks.
+            "prompt" | "model" | "continueOnBlock" if raw["type"] == "prompt" => {}
             // Text for Claude's spinner.
             "statusMessage" => {}
             "async" => options.background |= value.as_bool() == Some(true),
@@ -3113,6 +3116,8 @@ fn quoted_command(program: &str, args: &[String]) -> String {
 /// What an imported hook gets when it asks for no time limit: Claude's scripts are written for
 /// more than a native hook's ten seconds.
 const IMPORTED_HOOK_TIMEOUT: u64 = 60;
+/// How long a `prompt` hook's request has when it asks for no limit, as in Claude.
+const PROMPT_HOOK_TIMEOUT: u64 = 30;
 
 /// Whether a `PermissionRequest` hook's worth is answering yes, going by its command and the script
 /// it runs. Hooks never grant permissions, so such a hook can't do what it is for, and the plugin
@@ -3213,8 +3218,26 @@ fn import_hooks(value: &Value, root: &Path, spec: &mut PluginSpec) -> anyhow::Re
         );
         for group in groups.as_array().context("Invalid hook groups")? {
             for raw in group["hooks"].as_array().context("Invalid hook list")? {
-                if raw["type"] != "command" {
-                    // Nothing here asks a model or a web address whether a tool may run.
+                // A `prompt` hook asks the chat's model; only where Claude has them and their answer
+                // can mean something here. Nothing here asks a web address or starts an agent.
+                let question = (raw["type"] == "prompt"
+                    && matches!(
+                        event.as_str(),
+                        "PreToolUse"
+                            | "PostToolUse"
+                            | "PostToolUseFailure"
+                            | "UserPromptSubmit"
+                            | "UserPromptExpansion"
+                            | "Stop"
+                            | "PostToolBatch"
+                            | "TaskCreated"
+                            | "TaskCompleted"
+                    ))
+                .then(|| raw["prompt"].as_str())
+                .flatten()
+                .map(str::trim)
+                .filter(|text| !text.is_empty() && text.len() <= super::hooks::PROMPT_HOOK_BYTES);
+                if raw["type"] != "command" && question.is_none() {
                     let kind = raw["type"].as_str().unwrap_or("other");
                     spec.unsupported
                         .push(format!("{event}: {kind} hook has no Themis equivalent"));
@@ -3283,7 +3306,11 @@ fn import_hooks(value: &Value, root: &Path, spec: &mut PluginSpec) -> anyhow::Re
                     _ if moments.is_some() || matcher_ignored => None,
                     other => other.map(str::to_owned),
                 };
-                let command = raw["command"].as_str().context("Missing hook command")?;
+                let command = if question.is_some() {
+                    ""
+                } else {
+                    raw["command"].as_str().context("Missing hook command")?
+                };
                 if event == "PermissionRequest" && answers_allow(command, root) {
                     spec.unsupported.push(format!(
                         "{event}: answers allow, and hooks never grant permissions"
@@ -3304,6 +3331,8 @@ fn import_hooks(value: &Value, root: &Path, spec: &mut PluginSpec) -> anyhow::Re
                 // Nobody waits for one that reports back, and a review takes its time.
                 let default_timeout = if rewake.is_some() {
                     super::hooks::MAX_TIMEOUT_SECONDS
+                } else if question.is_some() {
+                    PROMPT_HOOK_TIMEOUT
                 } else {
                     IMPORTED_HOOK_TIMEOUT
                 };
@@ -3318,9 +3347,12 @@ fn import_hooks(value: &Value, root: &Path, spec: &mut PluginSpec) -> anyhow::Re
                     background,
                     command_prefix,
                     command_glob,
+                    prompt: question.map(str::to_owned),
                     // Claude's way to refuse; a SessionStart hook can't stop a turn there either.
-                    // One that reports back says so the same way, whatever it runs at.
-                    exit_two_blocks: event != "SessionStart" || rewake.is_some(),
+                    // One that reports back says so the same way, whatever it runs at. A question
+                    // is asked once a call, whatever it touches: each asking costs.
+                    exit_two_blocks: question.is_none()
+                        && (event != "SessionStart" || rewake.is_some()),
                     rewake,
                     timeout_seconds: raw["timeout"]
                         .as_u64()
@@ -3526,6 +3558,7 @@ mod imported_hook_name_tests {
                 plugin_data: None,
                 env_file: None,
                 moment_matcher: None,
+                prompt: None,
                 runtime_identity: None,
             })
             .collect()

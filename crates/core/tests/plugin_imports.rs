@@ -650,6 +650,7 @@ async fn real_public_plugin_and_skill_import_acceptance() {
             plugin_data: None,
             env_file: None,
             moment_matcher: None,
+            prompt: None,
             runtime_identity: None,
         };
         let approvals: std::sync::Arc<dyn themis_core::tools::ApprovalHook> =

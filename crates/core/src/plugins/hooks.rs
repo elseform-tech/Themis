@@ -85,6 +85,10 @@ pub struct Hook {
     /// labelled note. See [`RewakeNote`].
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rewake: Option<HookRewake>,
+    /// A hook that asks the chat's model this instead of running `command`, which is then empty.
+    /// `$ARGUMENTS` stands for its input.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prompt: Option<String>,
     /// For an event that isn't about a tool, what it must be about, in Claude's matcher language:
     /// `resume` on `SessionStart`, a reason on `SessionEnd`, a skill's name on
     /// `UserPromptExpansion` and so on (see [`moment_subject`]). Absent, all of them.
@@ -134,7 +138,7 @@ impl Hook {
     pub fn validate(&self) -> anyhow::Result<()> {
         if !super::safe_name(&self.name)
             || !EVENTS.contains(&canonical_event(&self.event))
-            || self.command.trim().is_empty()
+            || self.command.trim().is_empty() == self.prompt.is_none()
             || !(1..=MAX_TIMEOUT_SECONDS).contains(&self.timeout_seconds)
         {
             bail!(
@@ -514,16 +518,17 @@ pub fn hook_identity(hook: &Hook) -> String {
 /// Validates a hook and asks whether it may run.
 fn authorize(hook: &Hook, approvals: &Arc<dyn ApprovalHook>) -> anyhow::Result<()> {
     hook.validate()?;
+    let what = hook.prompt.as_deref().unwrap_or(&hook.command);
     let action = ToolAction {
         display: Some(crate::tools::CommandDisplay {
-            argv: vec![hook.command.clone()],
+            argv: vec![what.to_owned()],
             cwd: None,
             background: false,
             sandbox_blocked: None,
         }),
         command: Vec::new(),
         tool: hook_identity(hook),
-        summary: format!("{}: {}", hook.event, hook.command),
+        summary: format!("{}: {what}", hook.event),
         risk: RiskLevel::Execute,
     };
     if approvals.approve(&action).is_denied() {
@@ -786,6 +791,8 @@ pub struct HookSession {
     pub open: Option<OpenSession>,
     /// The chat's model, as `SessionStart` reports it.
     pub model: String,
+    /// What `prompt` hooks ask.
+    pub prompt_model: Option<PromptModel>,
     /// The `bin` folders of this run's plugins, searched after the system's for its commands.
     pub plugin_bins: Vec<std::path::PathBuf>,
     /// The skills the person attached to this turn, in Claude's words: they enter it with no call.
@@ -794,6 +801,81 @@ pub struct HookSession {
     pub skills_seen: Arc<std::sync::Mutex<std::collections::HashSet<String>>>,
     /// Told when a background hook leaves a note, which may outlive this run.
     pub on_rewake: Option<RewakeNotify>,
+}
+
+/// The model `prompt` hooks ask, and how many times they still may in this run. A run and its
+/// subagents share them.
+#[derive(Clone)]
+pub struct PromptModel {
+    pub llm: Arc<dyn autoagents::llm::LLMProvider>,
+    pub calls_left: Arc<std::sync::atomic::AtomicU32>,
+    /// `hooks.prompt_hook_calls` is 0: the person turned these off.
+    pub off: bool,
+}
+
+impl PromptModel {
+    #[must_use]
+    pub fn new(llm: Arc<dyn autoagents::llm::LLMProvider>, calls: u32) -> Self {
+        Self {
+            llm,
+            calls_left: Arc::new(std::sync::atomic::AtomicU32::new(calls)),
+            off: calls == 0,
+        }
+    }
+
+    fn take_call(&self) -> bool {
+        use std::sync::atomic::Ordering;
+        self.calls_left
+            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |left| {
+                left.checked_sub(1)
+            })
+            .is_ok()
+    }
+}
+
+/// Most of a hook's input a `prompt` hook's request carries, in bytes.
+const PROMPT_HOOK_INPUT_BYTES: usize = 32 * 1024;
+/// Most of a plugin's question kept, in bytes.
+pub const PROMPT_HOOK_BYTES: usize = 16 * 1024;
+
+/// What a `prompt` hook's model answered.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PromptVerdict {
+    pub ok: bool,
+    pub reason: Option<String>,
+}
+
+/// Reads a `prompt` hook's answer, which is model output and untrusted: one JSON object with `ok`,
+/// whole, in a code fence or among other text; or text whose last line is only `approve`, which is
+/// how a plugin's question may ask to end. Anything else is `None`, and a guard holds on that.
+#[must_use]
+pub fn parse_prompt_verdict(reply: &str) -> Option<PromptVerdict> {
+    let text = reply.trim();
+    let start = text.find('{');
+    let end = text.rfind('}');
+    let object = match (start, end) {
+        (Some(start), Some(end)) if start < end => {
+            serde_json::from_str::<Value>(&text[start..=end]).ok()
+        }
+        _ => None,
+    };
+    if let Some(ok) = object.as_ref().and_then(|value| value["ok"].as_bool()) {
+        let reason = object
+            .as_ref()
+            .and_then(|value| value["reason"].as_str())
+            .map(str::trim)
+            .filter(|reason| !reason.is_empty())
+            .map(|reason| capped(reason, BLOCK_REASON_LIMIT).to_owned());
+        return Some(PromptVerdict { ok, reason });
+    }
+    let last = text.lines().rev().find(|line| !line.trim().is_empty())?;
+    last.trim()
+        .trim_matches(|c: char| c.is_ascii_punctuation())
+        .eq_ignore_ascii_case("approve")
+        .then_some(PromptVerdict {
+            ok: true,
+            reason: None,
+        })
 }
 
 /// A chat's session, as a run sees it. A session is the chat's continuous use: it opens with the
@@ -1911,6 +1993,115 @@ impl HookRuntime {
         self.emit_collect(event, payload, events).await.map(|_| ())
     }
 
+    /// A `prompt` hook: one request to the chat's model with no tools, within the hook's limit and
+    /// the run's budget. The answer is hook output: a no blocks what a hook here can block, and an
+    /// event past stopping has the agent told. Whatever else happens is a failure, which a guard
+    /// holds on. Metadata only in the logs: never the question, the input or the answer.
+    async fn ask_prompt_hook(
+        &self,
+        hook: &Hook,
+        question: &str,
+        payload: &Value,
+    ) -> anyhow::Result<Value> {
+        use autoagents::llm::chat::{ChatMessage, ChatRole, MessageType};
+        authorize(hook, &self.approvals)?;
+        let log = |outcome: &str, level: &str| {
+            crate::diagnostics::emit(
+                "hook",
+                "prompt_hook",
+                level,
+                json!({"hook": hook.name, "event": hook.event, "outcome": outcome}),
+            );
+        };
+        let Some(model) = &self.session.prompt_model else {
+            log("no_model", "warn");
+            bail!("No model for a prompt hook");
+        };
+        if model.off {
+            log("off", "info");
+            return Ok(json!({"ok": true}));
+        }
+        if !model.take_call() {
+            log("budget_used_up", "warn");
+            bail!("This run has used up its prompt hook requests");
+        }
+        // Only what the event is about: the rest of a hook's input is for scripts.
+        let mut input = payload.clone();
+        if let Some(fields) = input.as_object_mut() {
+            for key in [
+                "transcript_path",
+                "project_root",
+                "cwd",
+                "run_id",
+                "thread_id",
+            ] {
+                fields.remove(key);
+            }
+        }
+        let input = input.to_string();
+        let input = capped(&input, PROMPT_HOOK_INPUT_BYTES)
+            .replace("<<<", "< < <")
+            .replace(">>>", "> > >");
+        let fenced = format!("<<<hook-input\n{input}\n>>>");
+        let user = if question.contains("$ARGUMENTS") {
+            question.replace("$ARGUMENTS", &fenced)
+        } else {
+            format!("{question}\n\n{fenced}")
+        };
+        let messages = [
+            ChatMessage {
+                role: ChatRole::System,
+                message_type: MessageType::Text,
+                content: crate::prompts::HOOK_PROMPT_SYSTEM.to_owned(),
+            },
+            ChatMessage {
+                role: ChatRole::User,
+                message_type: MessageType::Text,
+                content: user,
+            },
+        ];
+        let limit = std::time::Duration::from_secs(hook.timeout_seconds);
+        let reply = match tokio::time::timeout(limit, model.llm.chat(&messages, None)).await {
+            Ok(Ok(reply)) => reply.text().unwrap_or_default(),
+            Ok(Err(_)) => {
+                log("request_failed", "warn");
+                bail!("A prompt hook's request failed");
+            }
+            Err(_) => {
+                log("timed_out", "warn");
+                bail!("Hook timed out");
+            }
+        };
+        let Some(verdict) = parse_prompt_verdict(&reply) else {
+            log("unreadable", "warn");
+            bail!("A prompt hook's answer couldn't be read");
+        };
+        log(if verdict.ok { "ok" } else { "no" }, "info");
+        if verdict.ok {
+            return Ok(json!({"ok": true}));
+        }
+        let reason = verdict.reason;
+        // What's past stopping can only be told: to the agent at its next step, labelled.
+        if matches!(
+            canonical_event(&hook.event),
+            "AfterTool" | "SubagentEnd" | "PostToolBatch"
+        ) && self.agent.is_none()
+        {
+            let output = reason.unwrap_or_else(|| "The plugin's check said no.".to_owned());
+            leave_rewake_note(
+                &self.thread_id,
+                RewakeNote {
+                    hook: hook.name.clone(),
+                    message: None,
+                    summary: first_line(&output),
+                    output,
+                },
+            );
+            return Ok(json!({"ok": false}));
+        }
+        Err(Blocked(reason).into())
+    }
+
     /// Metadata only: how many names a plugin's session hooks wrote and were refused.
     fn env_refusals(&self) {
         let mut seen = std::collections::HashSet::new();
@@ -2026,8 +2217,14 @@ impl HookRuntime {
                 continue;
             }
             // Dropping the running hook ends its process group.
+            let running = async {
+                match &hook.prompt {
+                    Some(question) => self.ask_prompt_hook(hook, question, payload).await,
+                    None => run(hook, &self.root, payload, &self.approvals).await,
+                }
+            };
             let outcome = tokio::select! {
-                outcome = IN_HOOK.scope(true, run(hook, &self.root, payload, &self.approvals)) => outcome,
+                outcome = IN_HOOK.scope(true, running) => outcome,
                 () = stopped(self.session.cancel.clone()) => Err(anyhow::anyhow!("Hook stopped")),
             };
             events
@@ -2345,7 +2542,44 @@ mod tests {
             plugin_data: None,
             env_file: None,
             moment_matcher: None,
+            prompt: None,
             runtime_identity: None,
+        }
+    }
+
+    #[test]
+    fn a_prompt_hooks_answer_is_read_only_when_it_says() {
+        let read = parse_prompt_verdict;
+        assert!(read(r#"{"ok": true}"#).unwrap().ok);
+        assert!(read("```json\n{\"ok\": true}\n```").unwrap().ok);
+        let no = read(r#"Thinking. {"ok": false, "reason": " Not here "} Done."#).unwrap();
+        assert!(!no.ok);
+        assert_eq!(no.reason.as_deref(), Some("Not here"));
+        // How a plugin's own question may ask to end.
+        assert!(read("Nothing to add.\n\napprove\n").unwrap().ok);
+        for unclear in [
+            "",
+            "yes",
+            "I approve of the general idea but",
+            r#"{"ok": "true"}"#,
+            r#"{"reason": "no ok"}"#,
+            "{not json}",
+        ] {
+            assert_eq!(read(unclear), None, "{unclear}");
+        }
+    }
+
+    proptest! {
+        /// Whatever a model says: no panic, a bounded reason, and yes only from an explicit yes.
+        #[test]
+        fn any_prompt_hook_answer_reads_safely(reply in "\\PC{0,200}", long in "[a-z]{0,3000}") {
+            if let Some(verdict) = parse_prompt_verdict(&reply) {
+                prop_assert!(!verdict.ok || reply.contains("true") || reply.to_ascii_lowercase().contains("approve"));
+            }
+            let padded = json!({"ok": false, "reason": long}).to_string();
+            let verdict = parse_prompt_verdict(&padded).unwrap();
+            prop_assert!(!verdict.ok);
+            prop_assert!(verdict.reason.is_none_or(|reason| reason.len() <= BLOCK_REASON_LIMIT));
         }
     }
 
@@ -2940,6 +3174,7 @@ mod tests {
             plugin_data: None,
             env_file: None,
             moment_matcher: None,
+            prompt: None,
             runtime_identity: None,
         };
         let block = |hook: Hook| {

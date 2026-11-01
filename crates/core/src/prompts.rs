@@ -269,6 +269,9 @@ pub const HOOK_WAKE_TURN: &str = include_str!("../builtins/prompts/hook-wake-tur
 /// What a background hook reported when it finished (Claude's `asyncRewake`): the plugin's words,
 /// fenced; not the person's, not instructions. `{{hook}}`, `{{output}}`.
 pub const HOOK_REWAKE_NOTE: &str = include_str!("../builtins/prompts/hook-rewake-note.md");
+/// The system message of a `prompt` hook's one request: the plugin's question is data for a yes or
+/// no, with no tools.
+pub const HOOK_PROMPT_SYSTEM: &str = include_str!("../builtins/prompts/hook-prompt-system.md");
 /// Sent once before a run that read two or more steered messages ends, listing them.
 pub const RUNTIME_STEERS_CHECK: &str = include_str!("../builtins/prompts/runtime-steers-check.md");
 /// Error for a call left out of a batch too large for the context; `{{calls}}`, `{{runnable}}`.
