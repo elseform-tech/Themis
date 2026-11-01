@@ -119,6 +119,8 @@ pub(super) struct SubagentKit {
     web: SubagentWeb,
     /// The chat's skills, as the main agent's system message lists them.
     skills: String,
+    /// The same skills for the `Skill` tool.
+    skill_list: Vec<themis_core::skills::Skill>,
     /// The `bin` folders of the run's plugins.
     plugin_bins: Vec<PathBuf>,
     plugins: Vec<themis_core::plugins::Plugin>,
@@ -194,6 +196,7 @@ impl SubagentKit {
             mcp,
             web,
             skills,
+            skill_list: snapshot.skill_catalog.clone(),
             plugin_bins,
             plugins: snapshot.plugins.clone(),
             llm,
@@ -258,6 +261,7 @@ impl SubagentKit {
                 permissions: Arc::clone(&self.web.permissions),
             },
             skills: self.skills.clone(),
+            skill_list: self.skill_list.clone(),
             plugin_bins: self.plugin_bins.clone(),
             plugins: self.plugins.clone(),
             llm: Arc::clone(&self.llm),
@@ -1079,6 +1083,14 @@ impl SubagentKit {
             Ok(tools) => tools,
             Err(error) => return (Err(anyhow::anyhow!(error)), false),
         };
+        // Reading only, so a profile's narrower list doesn't take it away.
+        if let Some(tool) = themis_core::skills::skill_tool(&self.skill_list) {
+            tools.push(Box::new(super::subagent_tools::StatusField {
+                inner: tool,
+                agent: Arc::clone(agent),
+                report: self.reporter(),
+            }) as Box<dyn ToolT>);
+        }
         let nested = self.nested_kit(agent, &tools);
         if let Some(kit) = &nested {
             let report = self.reporter();
@@ -1200,6 +1212,7 @@ impl SubagentKit {
             .chain(mcp_note.as_deref())
             .chain(web_note.as_deref())
             .chain(left_out_note.as_deref())
+            .chain((!self.skills.is_empty()).then_some(themis_core::prompts::SUBAGENT_SKILLS_NOTE))
             .chain((!self.skills.is_empty()).then_some(self.skills.trim()))
             .chain([themis_core::prompts::SUBAGENT_STATUS_FIELD])
             .collect::<Vec<_>>()

@@ -549,6 +549,7 @@ impl AppState {
                 }
             }
         }
+        tools.extend(themis_core::skills::skill_tool(&snapshot.skill_catalog));
         tools.extend(themis_core::tools::web::web_tools(
             approvals.clone(),
             &web,

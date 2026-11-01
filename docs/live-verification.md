@@ -111,6 +111,7 @@ full tour.
 | `tool:browser_select` | tour | `crates/core/src/browser` | Ask the agent to pick an option on a page with a select box. |
 | `tool:browser_press` | tour | `crates/core/src/browser` | Ask the agent to press Enter or Escape on a page. |
 | `tool:browser_move` | tour | `crates/core/src/browser` | Ask the agent to aim in a first-person page: `dx` turns the view past the page's edge, and a click shoots without turning it. |
+| `tool:Skill` | tour | `crates/core/src/skills.rs` | Ask the agent to load a skill by name; its instructions come back, and a subagent can do the same. |
 | `tool:browser_scroll` | tour | `crates/core/src/browser` | Ask the agent to scroll a long page. |
 | `tool:browser_tabs` | tour | `crates/core/src/browser` | Ask the agent to list and switch tabs. |
 | `tool:browser_screenshot` | tour | `crates/core/src/browser` | Goal screenshots the page. |

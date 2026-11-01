@@ -33,6 +33,8 @@ pub const SYSTEM_SKILL_CATALOG: &str = include_str!("../builtins/prompts/system-
 
 // Subagents.
 /// System message head of a subagent run, instead of the ordinary system instructions.
+/// Before the skill list in a subagent's system message.
+pub const SUBAGENT_SKILLS_NOTE: &str = include_str!("../builtins/prompts/subagent-skills-note.md");
 pub const SUBAGENT_SYSTEM: &str = include_str!("../builtins/prompts/subagent-system.md");
 /// Added to a read-only subagent's system message.
 pub const SUBAGENT_WRITE_PATHS_NOTE: &str =
