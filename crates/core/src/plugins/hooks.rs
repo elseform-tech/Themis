@@ -825,11 +825,19 @@ impl PromptModel {
 
     fn take_call(&self) -> bool {
         use std::sync::atomic::Ordering;
-        self.calls_left
-            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |left| {
-                left.checked_sub(1)
-            })
-            .is_ok()
+        let mut left = self.calls_left.load(Ordering::SeqCst);
+        while left > 0 {
+            match self.calls_left.compare_exchange(
+                left,
+                left - 1,
+                Ordering::SeqCst,
+                Ordering::SeqCst,
+            ) {
+                Ok(_) => return true,
+                Err(now) => left = now,
+            }
+        }
+        false
     }
 }
 
