@@ -104,7 +104,11 @@ export function WorkspacePanel({ projectRoot, threadId, workspace }: { projectRo
         </Tooltip>
       </header>
       <div className={`themis-workspace-body${tab === "browser" ? " is-browser" : ""}`}>
-        {tab === "changes" && <ChangesView threadId={threadId} workspace={workspace} projectRoot={projectRoot} />}
+        {tab === "changes" && <ChangesView threadId={threadId} workspace={workspace} projectRoot={projectRoot} onWantDiffWidth={wanted => {
+          // Widens as far as the panel's limit leaves the chat room; the file list keeps its width.
+          const shown = panel.current?.querySelector(".themis-diff")?.clientWidth ?? wanted;
+          if (wanted > shown) resize(width + wanted - shown);
+        }} />}
         {tab === "files" && <FilesView projectRoot={projectRoot} />}
         {tab === "pulls" && <PullRequestsView projectRoot={projectRoot} />}
         {tab === "tasks" && <TasksView threadId={threadId} />}
@@ -134,7 +138,7 @@ export function BranchIcon({ size = 14 }: { size?: number }) {
 }
 
 /** Uncommitted changes, or what another branch adds; only ever a view, the composer switches. */
-function ChangesView({ threadId, workspace, projectRoot }: { threadId: string; workspace: WorkspaceInfo | null; projectRoot: string }) {
+function ChangesView({ threadId, workspace, projectRoot, onWantDiffWidth }: { threadId: string; workspace: WorkspaceInfo | null; projectRoot: string; onWantDiffWidth: (width: number) => void }) {
   const { state, dispatch } = useApp();
   const liveDiff = state.diffs[threadId];
   const running = state.running[threadId] ?? false;
@@ -204,7 +208,7 @@ function ChangesView({ threadId, workspace, projectRoot }: { threadId: string; w
         : (
           <DiffSplit>
             <FileTree files={files} selectedPath={file.path} onSelect={setSelected} />
-            <DiffView file={file} />
+            <DiffView file={file} onWantWidth={onWantDiffWidth} />
           </DiffSplit>
         )}
     </div>

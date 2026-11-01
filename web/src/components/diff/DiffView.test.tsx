@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
 import type { DiffFile } from "../../lib/types";
-import { DiffView } from "./DiffView";
+import { changedRange, DiffView, SPLIT_MIN_WIDTH } from "./DiffView";
 
 beforeEach(() => {
   const store = new Map<string, string>();
@@ -87,5 +87,37 @@ describe("DiffView", () => {
     unmount();
     render(<DiffView file={file} />);
     expect(screen.getByRole("button", { name: "Split" })).toHaveAttribute("aria-pressed", "true");
+  });
+
+  it("marks just what changed inside a replaced line", () => {
+    expect(changedRange("const total = 1;", "const total = 22;")).toEqual({ oldStart: 14, oldEnd: 15, newStart: 14, newEnd: 16 });
+    expect(changedRange("same", "same")).toBeNull();
+    // Nothing in common isn't worth marking: the whole line is already tinted.
+    expect(changedRange("alpha", "zzzzz")).toBeNull();
+    const file = { path: "a.txt", status: "modified", preexisting: false, added: 1, removed: 1, hunks: [{ old_start: 1, old_lines: 1, new_start: 1, new_lines: 1, lines: [
+      { kind: "del", text: "const total = 1;" }, { kind: "add", text: "const total = 22;" },
+    ] }] } as never;
+    localStorage.setItem("themis:workspaceDiffLayout", JSON.stringify("split"));
+    const { container } = render(<DiffView file={file} />);
+    expect([...container.querySelectorAll(".themis-diff-word")].map(mark => mark.textContent)).toEqual(["1", "22"]);
+  });
+
+  it("uses one column for a file that only has one side", () => {
+    localStorage.setItem("themis:workspaceDiffLayout", JSON.stringify("split"));
+    const file = { path: "new.py", status: "added", preexisting: false, added: 1, removed: 0, hunks: [{ old_start: 0, old_lines: 0, new_start: 1, new_lines: 1, lines: [{ kind: "add", text: "x = 1" }] }] } as never;
+    const { container } = render(<DiffView file={file} />);
+    expect(container.querySelector(".themis-diff-side-row")).toBeNull();
+    expect(container.querySelector(".themis-diff-unified")).not.toBeNull();
+    expect(screen.getByRole("button", { name: "Split" })).toBeDisabled();
+  });
+
+  it("asks for more room when Split is chosen", () => {
+    const onWantWidth = vi.fn();
+    render(<DiffView file={FILE} onWantWidth={onWantWidth} />);
+    fireEvent.click(screen.getByRole("button", { name: "Split" }));
+    expect(onWantWidth).toHaveBeenCalledWith(SPLIT_MIN_WIDTH);
+    onWantWidth.mockClear();
+    fireEvent.click(screen.getByRole("button", { name: "Unified" }));
+    expect(onWantWidth).not.toHaveBeenCalled();
   });
 });
