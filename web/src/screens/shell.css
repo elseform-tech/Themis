@@ -57,9 +57,9 @@
 /* The app is a fixed window: no rubber-band bounce or swipe scrolling of the whole page. */
 html, body, #root { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: none; }
 * { box-sizing: border-box; }
-body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif; -webkit-font-smoothing: antialiased; }
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif; -webkit-font-smoothing: auto; letter-spacing: .004em; }
 button, input, textarea, select { font-family: inherit; }
-.themis-shell { height: 100dvh; border: 0; border-radius: 12px; font-family: inherit; font-size: .875rem; line-height: 1.5; font-optical-sizing: auto; overflow: hidden; }
+.themis-shell { height: 100dvh; border: 0; border-radius: 12px; font-family: inherit; font-size: .8333rem; line-height: 1.5; font-optical-sizing: auto; overflow: hidden; }
 .themis-nav { min-height: 48px; padding: 6px 16px; background: var(--themis-canvas); font-size: .8125rem; }
 .themis-nav-context { display: flex; align-items: center; gap: 10px; min-width: 0; }
 .themis-nav-context > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

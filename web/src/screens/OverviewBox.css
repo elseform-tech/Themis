@@ -38,7 +38,7 @@
 .themis-overview-preview-empty { display: block; height: 110px; }
 .themis-overview-preview-bar {
   position: absolute; left: 0; right: 0; bottom: 0; display: flex; align-items: center; gap: 6px; height: 24px; padding: 0 8px;
-  background: color-mix(in srgb, var(--themis-sidebar-bg) 92%, transparent); color: var(--themis-text-2); font-size: .6875rem; text-align: left;
+  background: color-mix(in srgb, var(--themis-sidebar-bg) 92%, transparent); color: var(--themis-text-2); font-size: .75rem; text-align: left;
 }
 .themis-overview-preview:hover { border-color: var(--themis-accent); }
 .themis-overview-preview + .themis-overview-browser-row { display: none; }

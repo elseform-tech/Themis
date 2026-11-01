@@ -106,7 +106,7 @@ Compatibility badges currently use the following dark color pairs in [`Plugins.c
 
 ## Typography, motion, and accessibility
 
-- Respect the selected local font and supported 12–22px text size. Code remains monospace.
+- Respect the selected local font and supported 10–22px text size (10 by default; no label below 9px at that size). Code remains monospace.
 - Use a restrained heading hierarchy and comfortable reading width. Skill content should not stretch across a wide window.
 - Keep full accessible names for truncated titles. Reveal the complete title on keyboard focus as well as hover; reduced motion wraps it.
 - Animation communicates a transition or real work. No artificial delays, invented progress percentages, or repeated focus-stealing window activation.

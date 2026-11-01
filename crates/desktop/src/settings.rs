@@ -89,6 +89,8 @@ fn legacy_context_cap(value: &serde_json::Value) -> Option<u32> {
     u32::try_from(budget.min(high as u64)).ok()
 }
 
+const OLD_DEFAULT_TEXT_SIZE: u32 = 13;
+
 impl SettingsStore {
     /// Loads settings from `path`, falling back to defaults.
     #[must_use]
@@ -114,6 +116,10 @@ impl SettingsStore {
             .unwrap_or_default();
         if let Some(cap) = cap {
             settings.context_token_cap = cap;
+        }
+        // 13 used to be the default, and saving wrote it down whether or not anyone chose it.
+        if settings.text_size == OLD_DEFAULT_TEXT_SIZE && !settings.text_size_chosen {
+            settings.text_size = crate::types::default_text_size();
         }
         // A cap saved before the 200,000 floor (or a legacy budget below it) becomes Auto.
         let (low, _high) = context_cap_bounds();
@@ -154,10 +160,11 @@ impl SettingsStore {
                 }
             }
             if let Some(size) = patch.text_size {
-                if !(12..=22).contains(&size) {
-                    return Err("Text size must be between 12 and 22".to_owned());
+                if !(10..=22).contains(&size) {
+                    return Err("Text size must be between 10 and 22".to_owned());
                 }
                 current.text_size = size;
+                current.text_size_chosen = true;
             }
             if let Some(palette) = patch.theme_palette {
                 if !THEME_PALETTES.contains(&palette.as_str()) {
@@ -496,6 +503,38 @@ mod tests {
 
 #[cfg(test)]
 mod preference_tests {
+    /// The old default moves to the new one once; a size someone chose stays, and so does 13 once
+    /// they have chosen it.
+    #[tokio::test]
+    async fn text_defaults_to_ten_and_the_old_default_moves_once() {
+        let temp = tempfile::tempdir().unwrap();
+        let fresh = SettingsStore::load(temp.path().join("fresh.json"));
+        assert_eq!(fresh.get().await.text_size, 10);
+        let saved_with = |size: u32| {
+            let mut saved = serde_json::to_value(Settings::default()).unwrap();
+            saved["text_size"] = size.into();
+            saved.as_object_mut().unwrap().remove("text_size_chosen");
+            saved.to_string()
+        };
+        let old = temp.path().join("old.json");
+        std::fs::write(&old, saved_with(13)).unwrap();
+        assert_eq!(SettingsStore::load(old).get().await.text_size, 10);
+        let chosen = temp.path().join("chosen.json");
+        std::fs::write(&chosen, saved_with(18)).unwrap();
+        assert_eq!(SettingsStore::load(chosen).get().await.text_size, 18);
+        let again = temp.path().join("again.json");
+        let store = SettingsStore::load(again.clone());
+        store
+            .update(SettingsPatch {
+                text_size: Some(13),
+                theme: Some(crate::types::ThemeMode::Dark),
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        assert_eq!(SettingsStore::load(again).get().await.text_size, 13);
+    }
+
     use super::*;
     #[tokio::test]
     async fn every_preset_and_font_survives_reload() {
@@ -544,7 +583,7 @@ mod preference_tests {
             .unwrap();
         assert!(store
             .update(SettingsPatch {
-                text_size: Some(10),
+                text_size: Some(9),
                 theme: Some(crate::types::ThemeMode::Dark),
                 ..Default::default()
             })

@@ -86,9 +86,9 @@
 .themis-tool-group[open] > summary > .themis-tool-chevron, .themis-milestone[open] > summary > .themis-tool-chevron, .themis-tool-message[open] .themis-tool-chevron { transform: rotate(90deg); }
 .themis-tool-message { font-size: .75rem; color: var(--themis-text-2); }
 .themis-tool-message summary { display: flex; align-items: center; gap: 8px; cursor: pointer; list-style: none; }
-.themis-tool-status { color: var(--themis-text-3); font-size: .6875rem; }
+.themis-tool-status { color: var(--themis-text-3); font-size: .75rem; }
 .themis-tool-detail { margin: 8px 0 0 20px; }
-.themis-tool-detail strong { font-size: .6875rem; font-weight: 500; }
+.themis-tool-detail strong { font-size: .75rem; font-weight: 500; }
 .themis-tool-detail pre { max-height: 320px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; margin: 6px 0 10px; padding: 8px 12px; border-radius: 12px; background: var(--themis-surface); font-size: .75rem; }
 .themis-run-progress { position: sticky; bottom: 0; z-index: 1; padding: 6px 0; background: var(--themis-canvas); color: var(--themis-text-2); font-size: .8125rem; }
 .themis-run-progress.is-away { align-self: flex-start; padding: 0 8px; border-radius: 999px; background: var(--themis-raised); line-height: 1.4; }
@@ -175,9 +175,9 @@
 .themis-attachment-media iframe { display: block; width: 100%; height: 100%; border: 0; background: white; pointer-events: none; }
 .themis-attachment-preview--media figcaption { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
 .themis-attachment-preview--file { display: flex; align-items: center; gap: 10px; width: 200px; height: 56px; padding: 8px 12px 8px 8px; border-radius: 14px; background: var(--themis-raised); }
-.themis-attachment-ext { display: grid; place-items: center; flex: none; width: 40px; height: 40px; border-radius: 10px; background: color-mix(in srgb, var(--themis-accent) 16%, transparent); color: var(--themis-accent); font-size: .625rem; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; }
+.themis-attachment-ext { display: grid; place-items: center; flex: none; width: 40px; height: 40px; border-radius: 10px; background: color-mix(in srgb, var(--themis-accent) 16%, transparent); color: var(--themis-accent); font-size: .75rem; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; }
 .themis-attachment-text { display: grid; gap: 2px; min-width: 0; flex: 1; }
-.themis-attachment-text small { color: var(--themis-text-3); font-size: .6875rem; }
+.themis-attachment-text small { color: var(--themis-text-3); font-size: .75rem; }
 .themis-attachment-text audio { width: 100%; height: 26px; }
 .themis-composer-attachments .themis-attachment-preview--media { width: 96px; }
 .themis-composer-attachments .themis-attachment-media { height: 64px; border-radius: 12px; }
@@ -219,12 +219,12 @@
 .themis-edited-files { margin: 14px 0 2px; padding: 10px 8px 8px; border-radius: 14px; background: var(--themis-sidebar-bg); }
 .themis-edited-files header { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; padding: 0 6px 6px; }
 .themis-edited-files h3 { margin: 0; color: var(--themis-text); font-size: .8125rem; font-weight: 600; }
-.themis-edited-counts { display: flex; gap: 10px; font-size: .6875rem; color: var(--themis-text-2); }
+.themis-edited-counts { display: flex; gap: 10px; font-size: .75rem; color: var(--themis-text-2); }
 .themis-edited-files ul { display: grid; margin: 0; padding: 0; list-style: none; }
 .themis-edited-files ul.is-expanded { max-height: 288px; overflow-y: auto; overflow-x: hidden; }
 .themis-edited-files li button { display: flex; align-items: center; gap: 10px; width: 100%; min-height: 30px; padding: 0 6px; border: 0; border-radius: 8px; background: transparent; color: var(--themis-text); font: inherit; text-align: left; cursor: pointer; }
 .themis-edited-files li button:hover { background: var(--themis-raised); }
-.themis-edited-status { flex: none; width: 12px; font-size: .6875rem; font-weight: 700; text-align: center; color: var(--themis-text-3); }
+.themis-edited-status { flex: none; width: 12px; font-size: .75rem; font-weight: 700; text-align: center; color: var(--themis-text-3); }
 .themis-edited-path { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: ui-monospace, SFMono-Regular, monospace; font-size: .75rem; }
 .themis-edited-path > span { color: var(--themis-text-3); }
 .themis-edited-more { margin: 4px 6px 0; padding: 4px 0; border: 0; background: transparent; color: var(--themis-text-2); font: inherit; font-size: .75rem; cursor: pointer; }

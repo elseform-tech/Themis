@@ -12,7 +12,7 @@
 .themis-diff-toggle-btn:disabled { color: var(--themis-text-3); opacity: .5; cursor: default; }
 .themis-diff-unified, .themis-diff-side { overflow-x: hidden; overflow-y: auto; padding-bottom: 8px; }
 .themis-diff-hunk + .themis-diff-hunk { margin-top: 2px; }
-.themis-diff-hunk-header { position: sticky; top: 0; z-index: 1; padding: 4px 14px; background: var(--themis-raised); color: var(--themis-text-3); white-space: pre; font-size: .6875rem; }
+.themis-diff-hunk-header { position: sticky; top: 0; z-index: 1; padding: 4px 14px; background: var(--themis-raised); color: var(--themis-text-3); white-space: pre; font-size: .75rem; }
 /* Long lines wrap under their own text column, so nothing scrolls sideways. */
 .themis-diff-line { display: flex; align-items: baseline; }
 .themis-diff-line--add { background-color: var(--themis-add-bg); }

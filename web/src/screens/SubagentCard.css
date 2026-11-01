@@ -9,7 +9,7 @@
   background: color-mix(in srgb, var(--tone) 22%, var(--themis-canvas)); color: var(--tone);
   display: grid; place-items: center; font: inherit; font-size: .75rem; font-weight: 600; cursor: pointer;
 }
-.themis-subagent-dot.is-small { width: 24px; height: 24px; margin: 0; border-radius: 12px; border-color: var(--themis-sidebar-bg); font-size: .6875rem; cursor: inherit; }
+.themis-subagent-dot.is-small { width: 24px; height: 24px; margin: 0; border-radius: 12px; border-color: var(--themis-sidebar-bg); font-size: .75rem; cursor: inherit; }
 .themis-subagent-dot.is-small .themis-subagent-ring { left: -5px; top: -5px; width: 30px; height: 30px; }
 .themis-subagent-dot.is-success { --tone: var(--themis-success); }
 .themis-subagent-dot.is-accent { --tone: var(--themis-accent); }

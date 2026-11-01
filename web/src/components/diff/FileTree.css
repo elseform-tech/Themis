@@ -11,13 +11,13 @@
 .themis-filetree-row { display: flex; align-items: center; gap: 6px; min-height: 32px; padding: 0 4px 0 10px; border-radius: 10px; }
 .themis-filetree-row--selected .themis-filetree-path { color: var(--themis-text); font-weight: 600; }
 .themis-filetree-select { flex: 1; min-width: 0; display: flex; align-items: center; gap: 8px; padding: 0; border: 0; background: transparent; color: var(--themis-text); font: inherit; font-size: .8125rem; text-align: left; cursor: pointer; }
-.themis-filetree-status { flex: none; width: 12px; font-size: .6875rem; font-weight: 700; text-align: center; }
+.themis-filetree-status { flex: none; width: 12px; font-size: .75rem; font-weight: 700; text-align: center; }
 .themis-filetree-status--modified { color: var(--themis-accent); }
 .themis-filetree-status--added { color: var(--themis-success); }
 .themis-filetree-status--deleted { color: var(--themis-danger); }
 .themis-filetree-status--renamed { color: var(--themis-info); }
 .themis-filetree-path { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: ui-monospace, SFMono-Regular, monospace; font-size: .75rem; }
-.themis-filetree-counts { flex: none; display: inline-flex; gap: 5px; margin-left: auto; font-size: .6875rem; font-variant-numeric: tabular-nums; }
+.themis-filetree-counts { flex: none; display: inline-flex; gap: 5px; margin-left: auto; font-size: .75rem; font-variant-numeric: tabular-nums; }
 .themis-filetree-actions { display: flex; gap: 2px; opacity: 0; }
 .themis-filetree-row:hover .themis-filetree-actions, .themis-filetree-row:focus-within .themis-filetree-actions, .themis-filetree-row--selected .themis-filetree-actions { opacity: 1; }
 .themis-filetree-btn { display: grid; place-items: center; width: 26px; height: 26px; padding: 0; border: 0; border-radius: 50%; background: transparent; font-size: .75rem; cursor: pointer; }

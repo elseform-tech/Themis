@@ -143,7 +143,7 @@
 .themis-project-busy { flex: none; width: 7px; height: 7px; border-radius: 50%; background: var(--themis-accent); }
 .themis-thread-group { margin-top: 4px; }
 /* Section label: smaller, dimmer and spaced, so it never reads as a chat row. */
-.themis-sidebar-section { display: flex; align-items: center; justify-content: space-between; margin: 8px 0 6px; padding: 10px 12px 0; border-top: 1px solid var(--themis-border-subtle); color: var(--themis-text-3); font-size: .6875rem; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; }
+.themis-sidebar-section { display: flex; align-items: center; justify-content: space-between; margin: 8px 0 6px; padding: 10px 12px 0; border-top: 1px solid var(--themis-border-subtle); color: var(--themis-text-3); font-size: .75rem; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; }
 .themis-sidebar-section > span { font-weight: 500; letter-spacing: 0; font-variant-numeric: tabular-nums; }
 .themis-show-more { margin: 6px 0 0; padding: 4px 10px; border: 0; background: transparent; color: var(--themis-text-3); font: inherit; font-size: .75rem; cursor: pointer; }
 .themis-show-more:hover { color: var(--themis-text); }

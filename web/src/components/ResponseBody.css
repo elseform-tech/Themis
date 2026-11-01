@@ -1,4 +1,4 @@
-.themis-response { font-size: .875rem; line-height: 1.6; overflow-wrap: anywhere; min-width: 0; }
+.themis-response { font-size: .8333rem; line-height: 1.6; overflow-wrap: anywhere; min-width: 0; }
 /* Prose keeps an even right edge; hyphens stop the gaps justifying can leave between words. */
 .themis-response p, .themis-response li { text-align: justify; hyphens: auto; }
 /* In a narrow chat there is too little on a line to stretch: justifying leaves wide gaps between words. */
@@ -20,7 +20,7 @@
 .themis-code-link code { color: inherit; text-decoration: underline; text-decoration-color: var(--themis-text-3); text-underline-offset: 2px; }
 .themis-code-link:hover code { background: var(--themis-border); }
 .themis-code-panel { margin: 12px 0; border: 1px solid var(--themis-border); border-radius: 8px; overflow: hidden; }
-.themis-code-toolbar { display: flex; justify-content: space-between; align-items: center; padding: 6px 10px; background: var(--themis-surface); font-size: .6875rem; color: var(--themis-text-2); }
+.themis-code-toolbar { display: flex; justify-content: space-between; align-items: center; padding: 6px 10px; background: var(--themis-surface); font-size: .75rem; color: var(--themis-text-2); }
 .themis-code-toolbar button { border: 0; background: none; color: inherit; cursor: pointer; font: inherit; padding: 2px 4px; }
 .themis-code-panel .themis-codeblock { border: 0; border-radius: 0; padding: 10px 12px; }
 .themis-diagram iframe { border: 0; display: block; pointer-events: none; }.themis-diagram-preview { position: relative; overflow: auto; max-height: 560px; }.themis-diagram-expand { position: absolute; top: 8px; right: 8px; width: 32px; height: 32px; display: grid; place-items: center; border: 1px solid var(--themis-border); border-radius: 6px; background: var(--themis-raised); color: var(--themis-text); cursor: pointer; }.themis-diagram-expand:hover { color: var(--themis-accent); }.themis-diagram > details > summary { padding: 6px 10px; cursor: pointer; color: var(--themis-text-2); font-size: .75rem; }
