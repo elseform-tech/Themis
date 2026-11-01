@@ -27,6 +27,8 @@ work in isolation. Open an existing folder through the project actions menu.
 
 ## Secrets
 
+Don't paste keys into a message: it goes to the model provider and stays in the chat. If you do, a line above the composer says so before you send, and the agent reminds you to revoke and rotate it. Keep them here instead, or in an environment variable. In Custom, the agent asks before reading or writing a project's `.env` or a private key, and before staging one in Git; it also keeps `.gitignore` covering them ([details and limits](sandbox.md#sensitive-project-files)).
+
 API keys and tokens are **secrets**, kept in **Settings › Secrets** by name. OpenCode Go
 reads the secret chosen under Settings → Models → Providers → **Secret** (`OPENCODE_KEY`
 unless you pick another); the choice is saved and applies every time Themis opens. Set

@@ -297,6 +297,99 @@ configurable environment map. Imported MCP servers and hooks
 begin disabled and require explicit activation; hook trust remains separate
 from installation.
 
+## Sensitive project files
+
+The sandbox protects secret folders in your home folder. It does **not** protect
+secrets inside the project: a `.env` is an ordinary file to it. So in **Custom**,
+calls that touch a sensitive project file ask first, through the usual **Allow
+once** · **Allow in this chat** · **Deny**, whatever other rules or grants would
+say. This is detection, not a wall.
+
+Sensitive means a file name matching `approval.sensitive_files`: by default
+`.env`, `.env.*`, `*.pem`, `*.key`, `id_rsa`, `credentials.json`, `.npmrc`,
+`.pypirc` and `secrets.*`, except `.env.example`, `.env.sample` and
+`.env.template`. Names match without case, and a symlink counts by what it
+points at. Whether Git ignores the file makes no difference. See
+[configuration](configuration.md) for changing the list.
+
+| Call | What asks |
+| --- | --- |
+| `read_file`, `copy_file` source | Reading an existing sensitive file |
+| `write_file`, `apply_patch`, `move_file`, `delete_file`, `copy_file` target | Writing or removing one, new files included |
+| `shell`, background tasks, `git` | Any word of the command that names one, as far as the words can be read (below) |
+| `git add`, `git stage`, `git commit` | What Git says it would take in: see below |
+| `search_file`, `list_dir` | Nothing: they return names and sizes, never contents |
+
+**Subagents** ask the same way, under their own name. **YOLO** stays open: nothing
+asks, unless a deny rule says otherwise. **Non-Git projects** ask for reads as usual;
+writes there are refused without asking, as for any file.
+
+**"Allow in this chat"** covers that one file and that kind of access (read, write or
+commit), and for a command also that command, as usual: reading `.env` is not writing
+it, a grant on `.env` doesn't cover `.env.local`, and a grant on `write_file` or
+`git add` doesn't cover a sensitive file. Destructive actions still can't be granted.
+Rules decide first, so a deny rule beats a grant. A rule with `"tool": "sensitive_file"`
+decides for these files: `{"tool":"sensitive_file","action":"deny"}` refuses them in
+every mode, YOLO included, and wildcard or risk-only allow rules never cover them. Its
+optional `command` is `["read" | "write" | "commit", path]`. An `allow` rule for a
+program (`["cat"]`) doesn't cover `cat .env`, and a watch's `check_command` that names
+one needs the same approval.
+
+**Shell commands can't be fully detected.** Themis reads the command's words,
+through wrappers such as `sh -c` and `sudo`, following a `cd` in a script, including redirects, pieces of a word
+(`--env-file=.env`, `@.env`, `open('.env')`), globs (`cat .en*`, expanded against the
+folder) and what is directly inside a folder given to `grep -r`, `cp -r`, `tar`, `zip`
+or `rsync`. It does not see:
+
+- a file named at run time: a variable (`F=.env; cat $F`), string building
+  (`cat .e""nv` is read, `cat $(printf .env)` is not), or a list piped in
+  (`echo .env | xargs cat`);
+- a program that finds the file itself: a script (`python read_env.py`, `npm run x`), a
+  framework or `dotenv` loading `.env`, `find . -exec cat`, or `rg --hidden`;
+- a file deeper than the top of a folder given to `grep -r` and the like (`grep -r X .`
+  sees `./.env`, not `./app/.env`), or a hard link;
+- what a command you allowed goes on to do: once `cat .env` runs, its output reaches the
+  model, and an allowed `curl -d @.env` sends the file;
+- MCP tools, plugin hooks and anything else outside the core tools.
+
+It also asks when nothing would leak: `grep .env .gitignore` reads as naming `.env`
+when that file exists. Shell commands usually ask anyway, so this costs one answer.
+
+### Secrets and Git
+
+Before `git add`/`git stage` and `git commit` (also inside `sh -c`), Themis asks Git:
+files `add` would take in that are untracked and not ignored or changed and tracked,
+within the given paths (`git add .`, `-A`, `-u`, a folder), and for `commit` what is
+staged, plus changed files with `-a`. A sensitive file among them asks in Custom, and
+the result tells the agent in every mode, so a grant for `git add` can't stage a `.env`
+unnoticed. In YOLO that note comes after the fact. Each listing is one `git` call with a 2-second deadline and an
+8 MiB output limit, in the scrubbed environment and with `core.fsmonitor` off, so it
+starts no program from the repository's configuration; it runs outside the sandbox.
+If Git doesn't answer in time, the request says so and asks. Git aliases, `git commit`
+of named paths, `git -c` tricks and `git update-index` are not read.
+
+When a run starts, one bounded `git ls-files` call (1.5 seconds; dropped if slower)
+finds secret-looking files anywhere in the repository. Those not ignored get a line in
+the system message to add them to `.gitignore` before any commit; those already
+tracked get a line telling the agent to say that ignoring them won't remove them and
+the key stays in history. Non-Git projects get neither. The system instructions also
+ask the agent to keep `.gitignore` covering secret files whenever it creates or finds
+one, or sets up a project; that part is advice to the model.
+
+`search_file` and `list_dir` do not consider `.gitignore`; see
+[configuration](configuration.md).
+
+### Secrets pasted into a message
+
+A message that looks like it holds a credential (well-known prefixes, a private key,
+a JWT, or `SOME_KEY=` with a long random value) gets a short line above the composer,
+checked on the device, with one dismiss; you can still send. A sent one also adds a
+fixed note to the model request asking the agent to warn you without repeating the
+value, and to tell you to revoke and rotate it. The note holds no part of the value,
+and neither the text nor the match is logged. Hashes, UUIDs and ordinary code are
+meant to stay quiet, so an unusual key format can be missed, and the check reads only
+the first 256 KiB of a message. A subagent's brief is not checked.
+
 ## Shared checkout and secrets
 
 Threads currently share the project checkout, including existing uncommitted
@@ -317,8 +410,10 @@ other private information; inspect exported logs before sharing them.
 1. Deny a pending request or stop the run.
 2. Inspect the worktree and any paths affected by approved programs.
 3. Review the recorded tool events; advanced users can inspect local diagnostic logs.
-4. If a key was pasted into a prompt/file or otherwise exposed, rotate it with
-   the provider and replace the stored key.
+4. If a key was pasted into a prompt/file, committed or otherwise exposed, rotate it
+   with the provider and replace the stored key. It reached the model provider and
+   the saved chat; adding a committed file to `.gitignore` doesn't remove it from
+   history.
 
 ## Background shell tasks
 

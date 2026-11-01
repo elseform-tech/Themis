@@ -244,6 +244,7 @@ combined, and do not grant permissions. There is no implicit instruction globbin
 | `providers` | User file only; at most 16 OpenAI-compatible providers. See [Model providers](#model-providers-and-per-model-overrides) |
 | `models` | At most 256 per-model overrides keyed by model id or `<provider>/<id>`; any layer. See [Model providers](#model-providers-and-per-model-overrides) |
 | `compaction.prompt_file` | Optional UTF-8 Markdown, at most 32 KiB |
+| `approval.sensitive_files` | File-name patterns (at most 128, each 1..128 bytes, `*` and `?`, no case, no paths) of project files that ask first in Custom when read, written, staged or committed. A later pattern wins and `!` exempts. Default: `.env`, `.env.*`, `!.env.example`, `!.env.sample`, `!.env.template`, `*.pem`, `*.key`, `id_rsa`, `credentials.json`, `.npmrc`, `.pypirc`, `secrets.*`. User and run lists replace it, as arrays do, and `[]` turns it off. A project's list only adds: `[]` there changes nothing and a `!` pattern is a validation error that refuses runs. Rules with `"tool": "sensitive_file"` decide for these files (deny works in YOLO too; `command` is `["read" \| "write" \| "commit", path]`). Best effort for shell commands and no wall: see [sandbox](sandbox.md#sensitive-project-files). `approval` / `sensitive_file_asked` logs the tool, the kinds of file (`env`, `key`, `credentials`, `registry`, `custom`) and a count, never a path; a path can name a client or a machine, and it is a tool payload. `approval` / `secret_scan` logs the time and counts of the check when a run starts. `themis permissions` prints the list. |
 | `approval.rules` | At most 256 ordered rules `{tool, action, risk?, command?}`; `command` is an argv-prefix array (see Composer permissions) |
 | `sandbox.enabled` | Boolean, default `true`; only the user file (or no file) can turn it off |
 | `sandbox.backend` | `auto` (default), `seatbelt` (macOS), `bubblewrap` or `landlock` (Linux); a backend of another OS is an error, an unusable named one fails closed |
@@ -428,6 +429,8 @@ Deny rules also match every command a wrapper runs: `sh`/`bash`/`zsh`/`dash`/`ks
 `sh -c "ls && rm x"` and `sudo rm x`. Script files (`sh build.sh`) and other
 interpreters (`python -c`, `node -e`) are not read: this is a tool policy, not a
 sandbox; deny those interpreters if you need to.
+
+`search_file` and `list_dir` do not consider `.gitignore`: `search_file` matches file names only (never contents) and looks at the first 100 entries it walks, `.git` and dependency folders included; `list_dir` leaves out dotfiles. Neither reaches a file's contents, so neither needs an approval for a sensitive file.
 
 Project approval configuration may add deny rules only (including `command` denies). Those restrictions are
 evaluated ahead of user rules; a project cannot grant itself access. Explicit
