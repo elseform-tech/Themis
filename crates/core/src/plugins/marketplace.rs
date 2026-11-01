@@ -2520,14 +2520,13 @@ fn add_defaults(
     }
     Ok(())
 }
-/// Whether `default` for `key` stands where the URL's host goes and can't be one: Datadog writes
+/// Whether `default` for `key` is the whole of the URL's host and can't be one: Datadog writes
 /// `https://${DD_MCP_DOMAIN:-not-setup}/`, which means the value is needed, not that a computer
 /// called `not-setup` is the server.
 fn unusable_host_default(url: &str, key: &str, default: &str) -> bool {
-    let host = url
-        .split_once("://")
-        .map_or(url, |(_, rest)| rest.split('/').next().unwrap_or(rest));
-    host.contains(&format!("${{{key}}}")) && !default.contains('.') && default != "localhost"
+    let rest = url.split_once("://").map_or(url, |(_, rest)| rest);
+    let host = rest.split('/').next().unwrap_or(rest);
+    host == format!("${{{key}}}") && !default.contains('.') && default != "localhost"
 }
 fn import_mcp_server(
     name: &str,

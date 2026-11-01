@@ -631,6 +631,11 @@ fn url_defaults_harmless_fields_and_install_settings() {
         spec.mcp["logfire"].defaults["LOGFIRE_MCP_URL"],
         "https://logfire-us.pydantic.dev/mcp"
     );
+    // A default for a part of the host is fine, as aws-agents-for-devsecops writes its region.
+    let region = import_mcp(json!({"devops": {"type": "http",
+        "url": "https://connect.aidevops.${REGION:-us-east-1}.api.aws/mcp"}}))
+    .unwrap();
+    assert_eq!(region.spec.mcp["devops"].defaults["REGION"], "us-east-1");
     // `not-setup` can't be a host: the value is needed, and no computer of that name is tried.
     assert!(!spec.mcp["datadog"].defaults.contains_key("DD_MCP_DOMAIN"));
     assert_eq!(spec.mcp["datadog"].key_names(), ["DD_MCP_DOMAIN"]);
