@@ -2875,7 +2875,7 @@ async fn checkpoint_cannot_fit_fails_clearly() {
     // About 16k tokens: most of the 24k budget.
     let task = format!(
         "Task MARKER-CANNOT-FIT: review every part file. {}",
-        "Requirement detail for the review, stated at length; ".repeat(1150)
+        "Requirement detail for the review, stated at length; ".repeat(1130)
     );
     let policy = RunPolicy {
         total_turns: 8,
