@@ -15,7 +15,7 @@ import { countTasks } from "./threadTasks";
 import "./WorkspacePanel.css";
 
 type Tab = WorkspaceTab;
-const TABS: Array<[Tab, string]> = [["changes", "Changes"], ["files", "Files"], ["branches", "Branches"], ["pulls", "Pull requests"], ["tasks", "Tasks"], ["goal", "Goal"], ["browser", "Browser"], ["terminal", "Terminal"]];
+const TABS: Array<[Tab, string]> = [["changes", "Changes"], ["files", "Files"], ["pulls", "Pull requests"], ["tasks", "Tasks"], ["goal", "Goal"], ["browser", "Browser"], ["terminal", "Terminal"]];
 const MIN_WIDTH = 300;
 const MAX_WIDTH = 1600;
 /** A share of the space beside the rail, within limits: enough to read a diff, leaving the chat a usable column. */
@@ -105,7 +105,11 @@ export function WorkspacePanel({ projectRoot, threadId, workspace }: { projectRo
         </Tooltip>
       </header>
       <div className={`themis-workspace-body${tab === "browser" || tab === "terminal" ? " is-browser" : ""}`}>
-        {tab === "changes" && <ChangesView threadId={threadId} />}
+        {tab === "changes" && <ChangesView threadId={threadId} workspace={workspace} projectRoot={projectRoot} onWantDiffWidth={wanted => {
+          // Widens as far as the panel's limit leaves the chat room; the file list keeps its width.
+          const shown = panel.current?.querySelector(".themis-diff")?.clientWidth ?? wanted;
+          if (wanted > shown) resize(width + wanted - shown);
+        }} />}
         {tab === "files" && <FilesView projectRoot={projectRoot} />}
         {tab === "pulls" && <PullRequestsView projectRoot={projectRoot} />}
         {tab === "tasks" && <TasksView threadId={threadId} />}

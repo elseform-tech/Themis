@@ -49,8 +49,8 @@ mod threads;
 mod usage;
 mod workspace;
 pub use browser::update_payload as browser_update_payload;
-pub use terminal::TerminalSession;
 pub(crate) use hook_sessions::IDLE_CHECK_EVERY as HOOK_IDLE_CHECK_EVERY;
+pub use terminal::TerminalSession;
 /// Project path resolution, exposed for the `fuzz/` targets; not a stable API.
 #[cfg(feature = "fuzzing")]
 #[doc(hidden)]

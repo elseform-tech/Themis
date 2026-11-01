@@ -318,6 +318,22 @@ async fn closing_leaves_nothing_running() {
     app.serving.abort();
 }
 
+/// A program that leaves the session with `setsid` is still the shell's child, so it goes too.
+#[tokio::test(flavor = "multi_thread")]
+async fn closing_also_stops_what_left_the_session() {
+    let app = app().await;
+    app.open().await;
+    let mut stream = app.stream().await;
+    app.send("set +H\n").await;
+    app.send("python3 -c \"import subprocess; p = subprocess.Popen(['sleep', '3013'], start_new_session=True); print('DETA' + 'CHED=' + str(p.pid), flush=True); p.wait()\" &\n")
+        .await;
+    let pid = stream.number("DETACHED=").await;
+    assert!(alive(&pid), "{}", stream.seen);
+    app.close().await;
+    gone(&pid).await;
+    app.serving.abort();
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn a_shell_that_exits_takes_its_background_jobs_with_it() {
     let app = app().await;

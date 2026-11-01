@@ -261,7 +261,8 @@ is reached; for example `/goal optimize this app to speed up p95`.
   switcher at the top shows another branch's changes without switching to it, which
   only the composer does; binary, generated and secret-looking files are hidden; a
   change too large to show whole, such as a downloaded dataset, shows its first
-  2,000 lines with a note), **Files**, **Branches**, **Pull requests** (needs
+  2,000 lines with a note), **Files** (leaves out what Git ignores and secret-looking
+  files), **Pull requests** (needs
   the GitHub CLI signed in), **Terminal** (your own shell in the project, or the
   chat's worktree when it has one, to look around and run commands; it stays
   running when you switch tab or chat, ends with the project or when you quit

@@ -156,23 +156,55 @@ fn shell_command(root: &Path) -> CommandBuilder {
     command
 }
 
-/// Signals every process of a shell's session: jobs may be in process groups of their own.
+/// Every process of a shell's session (jobs may be in process groups of their own), and everything
+/// descended from those, which is how a program that left the session with `setsid` is found.
 #[cfg(unix)]
-fn signal_session(shell: u32, signal: libc::c_int) {
+fn session_processes(shell: u32) -> Vec<libc::pid_t> {
+    use std::collections::HashSet;
     use sysinfo::{ProcessRefreshKind, ProcessesToUpdate, System};
     if shell <= 1 || shell == std::process::id() {
-        return;
+        return Vec::new();
     }
     let mut system = System::new();
     system.refresh_processes_specifics(ProcessesToUpdate::All, true, ProcessRefreshKind::nothing());
-    for process in system.processes().values() {
-        if process.session_id().is_some_and(|id| id.as_u32() == shell) {
-            let Ok(pid) = libc::pid_t::try_from(process.pid().as_u32()) else {
-                continue;
-            };
-            // SAFETY: `kill` takes plain integers, and a process that has gone is only an error.
-            unsafe { libc::kill(pid, signal) };
+    let mut found: HashSet<u32> = system
+        .processes()
+        .values()
+        .filter(|process| process.session_id().is_some_and(|id| id.as_u32() == shell))
+        .map(|process| process.pid().as_u32())
+        .collect();
+    // Only while it's there: a shell that has gone may have left its number to something else.
+    if system.process(sysinfo::Pid::from_u32(shell)).is_some() {
+        found.insert(shell);
+    }
+    // Each pass adds a generation, and processes can't nest deeper than there are processes.
+    loop {
+        let before = found.len();
+        for process in system.processes().values() {
+            if process
+                .parent()
+                .is_some_and(|parent| found.contains(&parent.as_u32()))
+            {
+                found.insert(process.pid().as_u32());
+            }
         }
+        if found.len() == before {
+            break;
+        }
+    }
+    found
+        .into_iter()
+        .filter(|pid| *pid > 1 && *pid != std::process::id())
+        .filter_map(|pid| libc::pid_t::try_from(pid).ok())
+        .collect()
+}
+
+/// Signals processes found a moment ago.
+#[cfg(unix)]
+fn signal_processes(processes: &[libc::pid_t], signal: libc::c_int) {
+    for pid in processes {
+        // SAFETY: `kill` takes plain integers, and a process that has gone is only an error.
+        unsafe { libc::kill(*pid, signal) };
     }
 }
 
@@ -249,7 +281,7 @@ impl TerminalSession {
             // Nothing owns its jobs now, and they would hold the terminal open.
             #[cfg(unix)]
             if let Some(pid) = session.pid {
-                signal_session(pid, libc::SIGKILL);
+                signal_processes(&session_processes(pid), libc::SIGKILL);
             }
             let waited = Instant::now();
             while !drained.load(Ordering::SeqCst) && waited.elapsed() < DRAIN_GRACE {
@@ -367,9 +399,12 @@ impl TerminalSession {
         self.closing.store(true, Ordering::SeqCst);
         #[cfg(unix)]
         if let Some(pid) = self.pid {
-            signal_session(pid, libc::SIGHUP);
+            // Found first: once the shell goes, what it started belongs to no one.
+            let mut processes = session_processes(pid);
+            signal_processes(&processes, libc::SIGHUP);
             std::thread::sleep(HANGUP_GRACE);
-            signal_session(pid, libc::SIGKILL);
+            processes.extend(session_processes(pid));
+            signal_processes(&processes, libc::SIGKILL);
         }
         #[cfg(not(unix))]
         std::thread::sleep(HANGUP_GRACE);
