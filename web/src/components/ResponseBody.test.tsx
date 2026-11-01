@@ -109,3 +109,14 @@ it("links a file the reply attached as an artifact, by its path or its name", ()
   expect(openFile.mock.calls).toEqual([["out/report.pdf"], ["out/report.pdf"]]);
   expect(screen.queryByRole("button", { name: "data.csv" })).not.toBeInTheDocument();
 });
+it("fits a diagram to the chat's column, in colours that tell groups apart", async () => {
+  render(<ResponseBody text={'```mermaid\nflowchart TD\n A-->B\n```'} />);
+  const frame = await screen.findByTitle("Mermaid diagram");
+  expect(frame.style.width).toBe("100%");
+  expect(frame.style.aspectRatio).not.toBe("");
+  const options = diagram.initialize.mock.lastCall![0] as { theme: string; themeVariables: Record<string, string> };
+  expect(options.theme).toBe("base");
+  expect(options.themeVariables.primaryColor).toBeTruthy();
+  expect(options.themeVariables.secondaryColor).not.toBe(options.themeVariables.primaryColor);
+  expect(options.themeVariables.tertiaryColor).not.toBe(options.themeVariables.primaryColor);
+});
