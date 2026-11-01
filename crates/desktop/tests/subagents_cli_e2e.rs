@@ -212,6 +212,57 @@ fn history_kinds(data: &Path, thread: &str) -> Vec<Value> {
         .collect()
 }
 
+/// A subagent does the work a skill describes, so it needs the list as much as the main agent.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_subagent_can_see_the_skills_the_main_agent_can() {
+    let app = app(None, |body| {
+        if is_subagent(body) {
+            return reply("Done.");
+        }
+        match tool_results(body) {
+            0 => tools(&[(
+                "s1",
+                "spawn_subagents",
+                json!({"subagents": [{"name": "Builder", "brief": "Build it."}]}),
+            )]),
+            _ if mentions(body, "Done.") => reply("All done."),
+            _ => reply("Waiting."),
+        }
+    })
+    .await;
+    let skill = app.project.path().join(".agents/skills/test-first-probe");
+    std::fs::create_dir_all(&skill).unwrap();
+    std::fs::write(
+        skill.join("SKILL.md"),
+        "---\nname: test-first-probe\ndescription: Write the failing test before the code\n---\nTests first.\n",
+    )
+    .unwrap();
+    let (data, thread) = (app.data.path().to_owned(), app.thread.clone());
+    tokio::task::spawn_blocking(move || run(&data, &thread, "build it"))
+        .await
+        .unwrap();
+    let requests = bodies(&app.llm).await;
+    let has_skill = |body: &&Value| {
+        messages(body)
+            .iter()
+            .any(|m| text(m).contains("test-first-probe"))
+    };
+    assert!(
+        requests
+            .iter()
+            .filter(|b| !is_subagent(b))
+            .any(|b| has_skill(&b)),
+        "the main agent's list has the skill"
+    );
+    assert!(
+        requests
+            .iter()
+            .filter(|b| is_subagent(b))
+            .any(|b| has_skill(&b)),
+        "a subagent's list has it too"
+    );
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn the_turn_ends_after_both_subagents_reported_back() {
     let app = app(None, |body| {

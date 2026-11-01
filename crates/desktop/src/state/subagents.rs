@@ -117,6 +117,8 @@ pub(super) struct SubagentKit {
     /// The run's MCP tools.
     pub(super) mcp: SubagentMcp,
     web: SubagentWeb,
+    /// The chat's skills, as the main agent's system message lists them.
+    skills: String,
     /// The `bin` folders of the run's plugins.
     plugin_bins: Vec<PathBuf>,
     plugins: Vec<themis_core::plugins::Plugin>,
@@ -158,6 +160,7 @@ impl SubagentKit {
         prompt_model: themis_core::plugins::hooks::PromptModel,
         mcp: SubagentMcp,
         web: SubagentWeb,
+        skills: String,
         plugin_bins: Vec<PathBuf>,
         llm: Arc<dyn LLMProvider>,
         policy: RunPolicy,
@@ -190,6 +193,7 @@ impl SubagentKit {
             prompt_model,
             mcp,
             web,
+            skills,
             plugin_bins,
             plugins: snapshot.plugins.clone(),
             llm,
@@ -253,6 +257,7 @@ impl SubagentKit {
                 config: self.web.config.clone(),
                 permissions: Arc::clone(&self.web.permissions),
             },
+            skills: self.skills.clone(),
             plugin_bins: self.plugin_bins.clone(),
             plugins: self.plugins.clone(),
             llm: Arc::clone(&self.llm),
@@ -426,9 +431,9 @@ impl SubagentKit {
         self.config.subagents.allow_mcp && !self.mcp.names.is_empty()
     }
 
-    /// The MCP tools a subagent gets: what its profile's list allows, narrowed by what the main
-    /// agent asked for; with no profile, only what was asked for. `asked` holds Themis names or
-    /// `*`. Whatever was named and can't be had is left out, not fatal.
+    /// The MCP tools a subagent gets: all of the chat's, or what its profile's list allows,
+    /// narrowed by what the main agent asked for. `asked` holds Themis names or `*`, and empty
+    /// means none. Whatever was named and can't be had is left out, not fatal.
     pub(super) fn mcp_access(
         &self,
         profile: Option<&NamedProfile>,
@@ -436,9 +441,7 @@ impl SubagentKit {
     ) -> McpAccess {
         let mut access = McpAccess::default();
         let wanted_by_asking = |tool: &str| {
-            asked.map_or(profile.is_some(), |asked| {
-                asked.iter().any(|name| name == "*" || name == tool)
-            })
+            asked.is_none_or(|asked| asked.iter().any(|name| name == "*" || name == tool))
         };
         for (tool, names) in self.mcp.names.iter() {
             if !wanted_by_asking(tool) {
@@ -1197,6 +1200,7 @@ impl SubagentKit {
             .chain(mcp_note.as_deref())
             .chain(web_note.as_deref())
             .chain(left_out_note.as_deref())
+            .chain((!self.skills.is_empty()).then_some(self.skills.trim()))
             .chain([themis_core::prompts::SUBAGENT_STATUS_FIELD])
             .collect::<Vec<_>>()
             .join("\n\n");

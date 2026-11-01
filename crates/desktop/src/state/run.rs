@@ -293,6 +293,7 @@ impl AppState {
             run_id,
         )
         .map_err(|error| format!("failed to materialize skill catalog: {error:#}"))?;
+        let subagent_skills = skill_catalog.clone();
         let workspace = json!({"project_root": snapshot.work_root}).to_string();
         let secrets_note = self
             .project_secrets_note(&run_configuration, &snapshot.work_root, thread_id, run_id)
@@ -610,6 +611,7 @@ impl AppState {
                     config: web,
                     permissions: Arc::clone(&site_permissions),
                 },
+                subagent_skills,
                 plugin_bins.clone(),
                 Arc::clone(&llm),
                 policy,
