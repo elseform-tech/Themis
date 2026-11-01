@@ -114,6 +114,10 @@ it("fits a diagram to the chat's column, in colours that tell groups apart", asy
   const frame = await screen.findByTitle("Mermaid diagram");
   expect(frame.style.width).toBe("100%");
   expect(frame.style.aspectRatio).not.toBe("");
+  // The mock's chart is 120 wide and 80 tall, and the frame's floor makes it 320 by 160: it never
+  // grows past its natural size or the height a reply can give it.
+  expect(parseInt(frame.style.maxWidth, 10)).toBeLessThanOrEqual(344);
+  expect(frame.closest(".themis-code-panel")).toHaveClass("themis-code-panel--diagram");
   const options = diagram.initialize.mock.lastCall![0] as { theme: string; themeVariables: Record<string, string> };
   expect(options.theme).toBe("base");
   expect(options.themeVariables.primaryColor).toBeTruthy();

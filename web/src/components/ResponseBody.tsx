@@ -2,19 +2,19 @@ import { Children, createContext, isValidElement, useContext, useEffect, useId, 
 import Markdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { CodeBlock } from "./CodeBlock";
+import { DIAGRAM_DARK, DIAGRAM_LIGHT } from "../theme/diagram";
 import "./ResponseBody.css";
 
 function CodePanel({ code, language, streaming }: { code: string; language: string; streaming: boolean }) {
   const [copied, setCopied] = useState(false);
   const [copyError, setCopyError] = useState(false);
-  return <div className="themis-code-panel"><div className="themis-code-toolbar"><span>{language || "text"}</span><button onClick={async () => { try { await navigator.clipboard.writeText(code); setCopied(true); setCopyError(false); } catch { setCopyError(true); } }}>{copyError ? "Select to copy" : copied ? "Copied" : "Copy"}</button></div>
+  return <div className={`themis-code-panel${language === "mermaid" && !streaming ? " themis-code-panel--diagram" : ""}`}><div className="themis-code-toolbar"><span>{language || "text"}</span><button onClick={async () => { try { await navigator.clipboard.writeText(code); setCopied(true); setCopyError(false); } catch { setCopyError(true); } }}>{copyError ? "Select to copy" : copied ? "Copied" : "Copy"}</button></div>
     {language === "mermaid" && !streaming ? <Diagram code={code} /> : <CodeBlock code={code} language={language} />}
   </div>;
 }
 
-/** Diagrams can't read the page's tokens from their sandbox: these follow them, three tints that tell groups apart. */
-const DIAGRAM_DARK = { background: "transparent", fontSize: "14px", primaryColor: "#23324d", primaryBorderColor: "#8ab4f8", primaryTextColor: "#e6e6e6", secondaryColor: "#3d3118", secondaryBorderColor: "#d9a73e", secondaryTextColor: "#e6e6e6", tertiaryColor: "#1f3a2a", tertiaryBorderColor: "#81c995", tertiaryTextColor: "#e6e6e6", lineColor: "#a8abb2", textColor: "#e6e6e6", noteBkgColor: "#282a2d", noteTextColor: "#e6e6e6", noteBorderColor: "#34363b" };
-const DIAGRAM_LIGHT = { background: "transparent", fontSize: "14px", primaryColor: "#dfe9fb", primaryBorderColor: "#3a6fd8", primaryTextColor: "#1f2328", secondaryColor: "#f8ecd2", secondaryBorderColor: "#a87a12", secondaryTextColor: "#1f2328", tertiaryColor: "#dcf1e3", tertiaryBorderColor: "#2e8b57", tertiaryTextColor: "#1f2328", lineColor: "#5f6368", textColor: "#1f2328", noteBkgColor: "#f1f3f4", noteTextColor: "#1f2328", noteBorderColor: "#dadce0" };
+/** A chart sits in the reply: never past its own size, nor taller than this. Enlarge shows it all. */
+const DIAGRAM_MAX_HEIGHT = 320;
 
 function Diagram({ code }: { code: string }) {
   const id = `diagram-${useId().replace(/[^a-zA-Z0-9]/g, "")}`;
@@ -53,7 +53,7 @@ function Diagram({ code }: { code: string }) {
   const srcDoc = `<!doctype html><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; img-src data:"><style>body{margin:0;padding:12px;box-sizing:border-box}svg{width:100%!important;max-width:none!important;height:auto!important;display:block}</style>${svg}`;
   const frame = (scale: number) => <iframe title="Mermaid diagram" sandbox="" draggable={false} style={{ width: width * scale + 24, height: height * scale + 24 }} srcDoc={srcDoc} />;
   return <div className="themis-diagram">
-    {svg ? <><div className="themis-diagram-preview"><iframe title="Mermaid diagram" sandbox="" draggable={false} style={{ width: "100%", aspectRatio: `${width + 24} / ${height + 24}` }} srcDoc={srcDoc} /><button className="themis-diagram-expand" aria-label="Enlarge diagram" title="Enlarge diagram" onClick={() => { setZoom(1); setOffset({ x: 0, y: 0 }); setExpanded(true); }}><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M8 3H3v5m13-5h5v5M3 16v5h5m13-5v5h-5"/><path d="M3 3l6 6m12-6-6 6M3 21l6-6m12 6-6-6"/></svg></button></div>
+    {svg ? <><div className="themis-diagram-preview"><iframe title="Mermaid diagram" sandbox="" draggable={false} style={{ width: "100%", maxWidth: Math.min(width + 24, Math.round((DIAGRAM_MAX_HEIGHT * (width + 24)) / (height + 24))), aspectRatio: `${width + 24} / ${height + 24}` }} srcDoc={srcDoc} /><button className="themis-diagram-expand" aria-label="Enlarge diagram" title="Enlarge diagram" onClick={() => { setZoom(1); setOffset({ x: 0, y: 0 }); setExpanded(true); }}><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M8 3H3v5m13-5h5v5M3 16v5h5m13-5v5h-5"/><path d="M3 3l6 6m12-6-6 6M3 21l6-6m12 6-6-6"/></svg></button></div>
       {expanded && <dialog ref={dialog} className="themis-diagram-dialog" onClose={() => setExpanded(false)} aria-label="Enlarged Mermaid diagram">
         <div className="themis-diagram-toolbar"><strong>Diagram</strong><button onClick={() => setZoom(Math.max(.5, +(zoom - .25).toFixed(2)))} aria-label="Zoom out">−</button><span>{Math.round(zoom * 100)}%</span><button onClick={() => setZoom(Math.min(3, +(zoom + .25).toFixed(2)))} aria-label="Zoom in">+</button><button onClick={() => { setZoom(1); setOffset({ x: 0, y: 0 }); }}>100%</button><button onClick={() => { const canvas = dialog.current?.querySelector(".themis-diagram-canvas"); if (canvas) { setZoom(Math.min(3, Math.max(.5, Math.min((canvas.clientWidth - 64) / (width + 24), (canvas.clientHeight - 64) / (height + 24))))); setOffset({ x: 0, y: 0 }); } }}>Fit</button><button onClick={() => setExpanded(false)} aria-label="Close diagram">Close</button></div>
         <div className="themis-diagram-canvas" onPointerDown={(event) => { if (event.button !== 0) return; pan.current = { x: event.clientX, y: event.clientY, left: offset.x, top: offset.y }; event.currentTarget.setPointerCapture(event.pointerId); }} onPointerMove={(event) => { if (!pan.current) return; setOffset({ x: pan.current.left + event.clientX - pan.current.x, y: pan.current.top + event.clientY - pan.current.y }); }} onPointerUp={() => { pan.current = null; }} onPointerCancel={() => { pan.current = null; }}><div className="themis-diagram-stage" style={{ width: width * zoom + 24, height: height * zoom + 24, transform: `translateX(-50%) translate(${offset.x}px, ${offset.y}px)` }}>{frame(zoom)}</div></div>
