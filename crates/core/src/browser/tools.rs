@@ -280,6 +280,11 @@ pub struct SnapshotArgs {
         description = "Only this element's part of the page (a ref like e12); omit for the whole page"
     )]
     pub reference: String,
+    #[serde(default)]
+    #[input(
+        description = "Also return the page's structure: its containers with positions and a selector for each, and whether each canvas drew anything. Use this rather than guessing where something is."
+    )]
+    pub layout: bool,
 }
 
 #[tool(
@@ -304,7 +309,7 @@ impl ToolRuntime for BrowserSnapshot {
                 None,
                 "browser_snapshot".to_owned(),
                 "reading the page".to_owned(),
-                |chat| async move { chat.snapshot(reference.as_deref()).await },
+                |chat| async move { chat.snapshot(reference.as_deref(), args.layout).await },
             )
             .await
     }
@@ -315,7 +320,7 @@ impl ToolRuntime for BrowserSnapshot {
 pub struct ClickArgs {
     #[serde(default, alias = "ref")]
     #[input(
-        description = "The element's ref from the latest snapshot, like e14; omit when clicking a point"
+        description = "The element: a ref from the latest snapshot like e14, a CSS selector, or text=Some text; omit when clicking a point"
     )]
     pub reference: String,
     #[serde(default)]
@@ -514,7 +519,7 @@ pub struct PressArgs {
 
 #[tool(
     name = "browser_press",
-    description = "Press a key in the focused element of the current page (Enter, Escape, Tab, arrows, letters, or shortcuts like Control+a), or hold it with hold_ms. Returns a fresh snapshot.",
+    description = "Press a key in the focused element of the current page (Enter, Escape, Tab, arrows, letters, or shortcuts like Control+a), or hold it with hold_ms. Returns a fresh snapshot. Also mouseDown and mouseUp, to hold the mouse button: browser_move there, mouseDown, browser_move across, mouseUp.",
     input = PressArgs,
 )]
 struct BrowserPress {
@@ -662,7 +667,7 @@ impl ToolRuntime for BrowserMove {
 pub struct DragArgs {
     #[serde(default, alias = "from_ref")]
     #[input(
-        description = "Where to press: an element's ref from the latest snapshot, like e14; or use from_x and from_y"
+        description = "Where to press: a ref from the latest snapshot like e14, a CSS selector like .card, or text=Some text; or use from_x and from_y"
     )]
     pub from_reference: String,
     #[serde(default)]
@@ -677,7 +682,7 @@ pub struct DragArgs {
     pub from_y: Option<f64>,
     #[serde(default, alias = "to_ref")]
     #[input(
-        description = "Where to let go: an element's ref from the latest snapshot; or use to_x and to_y"
+        description = "Where to let go: a ref, a CSS selector like .column, or text=Some text; or use to_x and to_y"
     )]
     pub to_reference: String,
     #[serde(default)]
@@ -718,7 +723,7 @@ fn drag_end(
 
 #[tool(
     name = "browser_drag",
-    description = "Press the mouse at one place, move to another and let go, as a person drags: a card between columns, a slider, a shape on a canvas. Each end is a ref from the latest snapshot or a point of the visible page. It is real input, for pages using native drag and drop and for pages listening to the mouse. The result says what was pressed on, whether anything was dragged, and where it let go.",
+    description = "Press the mouse at one place, move to another and let go, as a person drags: a card between columns, a slider, a shape on a canvas. Each end is a ref from the latest snapshot, a CSS selector, text=Some text, or a point of the visible page. It is real input, for pages using native drag and drop and for pages listening to the mouse. The result says what was pressed on, whether anything was dragged, and where it let go.",
     input = DragArgs,
 )]
 struct BrowserDrag {
