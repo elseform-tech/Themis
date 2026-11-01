@@ -6,7 +6,8 @@ use std::collections::BTreeSet;
 fn server_exposes_all_frontend_backend_commands() {
     let frontend = concat!(
         include_str!("../../../web/src/lib/tauri.ts"),
-        include_str!("../../../web/src/lib/browser.ts")
+        include_str!("../../../web/src/lib/browser.ts"),
+        include_str!("../../../web/src/lib/terminal.ts")
     );
     let server = include_str!("../src/server.rs");
     let native = concat!(
@@ -49,6 +50,9 @@ fn server_exposes_all_frontend_backend_commands() {
             "list_questions",
             // Subagent state for the CLI; the desktop builds its card from chat events.
             "list_subagents",
+            // The desktop's terminal lives until the project or the app goes; the CLI asks and closes.
+            "terminal_state",
+            "terminal_close",
         ])
         .collect();
     let handled: BTreeSet<_> = server

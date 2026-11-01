@@ -2,6 +2,7 @@
 
 use std::collections::HashSet;
 use std::path::{Component, Path, PathBuf};
+use themis_core::tools::sensitive::SensitiveMatcher;
 
 use crate::diff::{
     git_diff_cached, git_diff_head, git_diff_worktree, git_head, git_untracked, is_git_repo,
@@ -70,7 +71,34 @@ pub(super) fn bound_listed_lines(files: &mut [crate::types::DiffFile]) {
     }
 }
 
-fn read_diff(root: &Path, preexisting: &HashSet<String>) -> Result<DiffState, String> {
+impl AppState {
+    /// The project's secret-looking file names, whatever else its configuration gets wrong.
+    pub(super) fn project_secret_matcher(&self, root: &Path) -> SensitiveMatcher {
+        self.runtime_configuration(Some(root), None).map_or_else(
+            |_| themis_core::configuration::ApprovalPolicy::default().sensitive_matcher(None),
+            |resolved| resolved.config.approval.sensitive_matcher(None),
+        )
+    }
+}
+
+/// `3 secret files hidden`, for a listing's note.
+pub(super) fn secrets_hidden_note(count: usize) -> String {
+    format!(
+        "{count} secret file{} hidden",
+        if count == 1 { "" } else { "s" }
+    )
+}
+
+/// Whether a project path's file name looks like a secret.
+pub(super) fn looks_secret(matcher: &SensitiveMatcher, path: &str) -> bool {
+    matcher.is_sensitive(path.rsplit('/').next().unwrap_or(path))
+}
+
+fn read_diff(
+    root: &Path,
+    preexisting: &HashSet<String>,
+    matcher: &SensitiveMatcher,
+) -> Result<DiffState, String> {
     if !is_git_repo(root) {
         return Ok(DiffState {
             available: false,
@@ -82,6 +110,9 @@ fn read_diff(root: &Path, preexisting: &HashSet<String>) -> Result<DiffState, St
     // A path git reports as both changed and untracked counts once, as changed.
     let mut listed: HashSet<String> = files.iter().map(|file| file.path.clone()).collect();
     let before = files.len();
+    files.retain(|file| !looks_secret(matcher, &file.path));
+    let mut secrets = before - files.len();
+    let before = files.len();
     files.retain(|file| is_readable_change(root, &file.path));
     let mut hidden = before - files.len();
     let mut total = files.len();
@@ -89,6 +120,10 @@ fn read_diff(root: &Path, preexisting: &HashSet<String>) -> Result<DiffState, St
     for relative in git_untracked(root)? {
         crate::diff::count_listed_item();
         if listed.contains(&relative) {
+            continue;
+        }
+        if looks_secret(matcher, &relative) {
+            secrets += 1;
             continue;
         }
         if !is_readable_change(root, &relative) {
@@ -122,6 +157,9 @@ fn read_diff(root: &Path, preexisting: &HashSet<String>) -> Result<DiffState, St
             if hidden == 1 { "" } else { "s" }
         ));
     }
+    if secrets > 0 {
+        notes.push(secrets_hidden_note(secrets));
+    }
     let reason = (!notes.is_empty()).then(|| notes.join(" · "));
     Ok(DiffState {
         available: true,
@@ -150,7 +188,8 @@ impl AppState {
             }
         };
         // Git and file reads block, and the live diff asks for this every few seconds.
-        tokio::task::spawn_blocking(move || read_diff(&root, &preexisting))
+        let matcher = self.project_secret_matcher(&root);
+        tokio::task::spawn_blocking(move || read_diff(&root, &preexisting, &matcher))
             .await
             .map_err(|err| err.to_string())?
     }
@@ -311,6 +350,7 @@ impl AppState {
         worktree_path: &Path,
         branch: &str,
     ) {
+        self.close_terminals_under(worktree_path).await;
         let _ = worktree::remove_worktree(checkout, worktree_path);
         if worktree_path.exists() && worktree_path.starts_with(&self.inner.worktrees_root) {
             let _ = std::fs::remove_dir_all(worktree_path);
@@ -347,6 +387,45 @@ mod tests {
         repo
     }
 
+    fn matcher() -> SensitiveMatcher {
+        themis_core::configuration::ApprovalPolicy::default().sensitive_matcher(None)
+    }
+
+    /// A secret-looking file stays out of the list, whether Git tracks it or not, and the count
+    /// says so. Its content never reaches the person's screen from here.
+    #[test]
+    fn listing_leaves_out_secret_looking_files() {
+        let repo = committed_repo();
+        std::fs::write(repo.path().join("server.key"), "first\n").unwrap();
+        let git = |args: &[&str]| {
+            assert!(std::process::Command::new("git")
+                .arg("-C")
+                .arg(repo.path())
+                .args(args)
+                .status()
+                .unwrap()
+                .success());
+        };
+        git(&["add", "server.key"]);
+        git(&[
+            "-c",
+            "user.email=t@t",
+            "-c",
+            "user.name=t",
+            "commit",
+            "-qm",
+            "key",
+        ]);
+        std::fs::write(repo.path().join("server.key"), "changed\n").unwrap();
+        std::fs::write(repo.path().join(".env"), "API_KEY=fake\n").unwrap();
+        std::fs::write(repo.path().join("id.pem"), "fake\n").unwrap();
+        std::fs::write(repo.path().join("new.py"), "print(1)\n").unwrap();
+        let state = read_diff(repo.path(), &HashSet::new(), &matcher()).unwrap();
+        let paths: Vec<&str> = state.files.iter().map(|file| file.path.as_str()).collect();
+        assert_eq!(paths, ["new.py"]);
+        assert_eq!(state.reason.as_deref(), Some("3 secret files hidden"));
+    }
+
     /// Changed files come first, then new ones by name, with both notes counting everything.
     #[test]
     fn listing_keeps_its_order_and_counts_past_the_cap() {
@@ -354,7 +433,7 @@ mod tests {
         std::fs::write(repo.path().join("kept.txt"), "edited\n").unwrap();
         std::fs::write(repo.path().join("cache.pyc"), "generated\n").unwrap();
         let preexisting = HashSet::from(["a00000.txt".to_owned()]);
-        let state = read_diff(repo.path(), &preexisting).unwrap();
+        let state = read_diff(repo.path(), &preexisting, &matcher()).unwrap();
         assert_eq!(state.files.len(), MAX_DIFF_FILES);
         assert_eq!(state.files[0].path, "kept.txt");
         assert_eq!(state.files[0].status, DiffStatus::Modified);
@@ -378,7 +457,7 @@ mod tests {
             let visible = hidden / 10;
             let repo = dirty_repo(hidden, visible);
             take_work();
-            let state = read_diff(repo.path(), &HashSet::new()).unwrap();
+            let state = read_diff(repo.path(), &HashSet::new(), &matcher()).unwrap();
             let work = take_work();
             eprintln!("read_diff {hidden} hidden, {visible} visible: {work:?}");
             assert_eq!(state.files.len(), visible.min(MAX_DIFF_FILES));
@@ -397,7 +476,7 @@ mod tests {
         let samples = measure(&[625, 5000], |visible| {
             let repo = dirty_repo(0, visible);
             take_work();
-            let state = read_diff(repo.path(), &HashSet::new()).unwrap();
+            let state = read_diff(repo.path(), &HashSet::new(), &matcher()).unwrap();
             let work = take_work();
             eprintln!("read_diff {visible} visible: {work:?}");
             assert_eq!(state.files.len(), MAX_DIFF_FILES);

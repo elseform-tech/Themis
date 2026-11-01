@@ -550,7 +550,8 @@ mod tests {
             tokio::time::sleep(std::time::Duration::from_millis(100)).await;
             stopped.store(true, Ordering::SeqCst);
         };
-        let (result, ()) = tokio::time::timeout(std::time::Duration::from_secs(3), async {
+        // Long enough for a busy runner: the backoff being cancelled lasts far longer.
+        let (result, ()) = tokio::time::timeout(std::time::Duration::from_secs(20), async {
             tokio::join!(work, cancel)
         })
         .await

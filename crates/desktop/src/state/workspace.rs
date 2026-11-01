@@ -58,6 +58,17 @@ pub struct DirEntry {
     pub size: Option<u64>,
 }
 
+impl DirEntry {
+    /// The path as `git check-ignore` is asked about it.
+    fn check_path(&self) -> String {
+        if self.is_dir {
+            format!("{}/", self.path)
+        } else {
+            self.path.clone()
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct DirListing {
     pub path: String,
@@ -77,6 +88,32 @@ pub struct FileView {
 
 /// Resolves a project-relative path inside `root`, rejecting absolute paths,
 /// `..` components and symlinks that escape the project.
+/// Refuses a path the listings hide: what Git ignores, or a secret-looking file.
+fn refuse_hidden(
+    root: &Path,
+    target: &Path,
+    is_dir: bool,
+    matcher: &themis_core::tools::sensitive::SensitiveMatcher,
+) -> Result<(), String> {
+    let shown = relative_display(root, target);
+    if shown.is_empty() || shown == "." {
+        return Ok(());
+    }
+    let asked = if is_dir {
+        format!("{shown}/")
+    } else {
+        shown.clone()
+    };
+    if (!is_dir && super::changes::looks_secret(matcher, &shown))
+        || crate::diff::ignored_paths(root, std::slice::from_ref(&asked)).contains(&asked)
+    {
+        return Err(format!(
+            "'{shown}' isn't shown: Workspace leaves out what Git ignores and secret-looking files"
+        ));
+    }
+    Ok(())
+}
+
 pub fn resolve_inside(root: &Path, relative: &str) -> Result<PathBuf, String> {
     let candidate = Path::new(relative);
     if candidate.has_root()
@@ -254,16 +291,25 @@ impl AppState {
         branch: String,
     ) -> Result<DiffState, String> {
         let root = canonical_project_dir(&project_root)?;
+        let matcher = self.project_secret_matcher(&root);
         tokio::task::spawn_blocking(move || {
             known_branch(&root, &branch)?;
             let mut files = crate::diff::git_diff_branch(&root, &branch)?;
+            let before = files.len();
+            files.retain(|file| !super::changes::looks_secret(&matcher, &file.path));
+            let secrets = before - files.len();
             let total = files.len();
-            let reason = (total > crate::diff::MAX_DIFF_FILES).then(|| {
-                format!(
+            let mut notes = Vec::new();
+            if total > crate::diff::MAX_DIFF_FILES {
+                notes.push(format!(
                     "truncated: showing {} of {total} changed files",
                     crate::diff::MAX_DIFF_FILES
-                )
-            });
+                ));
+            }
+            if secrets > 0 {
+                notes.push(super::changes::secrets_hidden_note(secrets));
+            }
+            let reason = (!notes.is_empty()).then(|| notes.join(" · "));
             files.truncate(crate::diff::MAX_DIFF_FILES);
             super::changes::bound_listed_lines(&mut files);
             Ok(DiffState {
@@ -299,9 +345,23 @@ impl AppState {
         let name = branch.clone();
         tokio::task::spawn_blocking(move || {
             known_branch(&target, &name)?;
+            // Outside the sandbox: the repository's hooks and filters get to start nothing.
+            let listing = std::process::Command::new("git")
+                .arg("-C")
+                .arg(&target)
+                .args(themis_core::git_guard::NO_MONITOR)
+                .args(themis_core::git_guard::LIST_FILTERS)
+                .output()
+                .map_err(|err| err.to_string())?;
+            let filters =
+                themis_core::git_guard::filters_off(&String::from_utf8_lossy(&listing.stdout))
+                    .ok_or("this repository's content filters can't be turned off")?;
             let output = std::process::Command::new("git")
                 .arg("-C")
                 .arg(&target)
+                .args(themis_core::git_guard::NO_MONITOR)
+                .args(["-c", "core.hooksPath=/dev/null"])
+                .args(&filters)
                 .args(["switch", "--no-guess", &name])
                 .output()
                 .map_err(|err| err.to_string())?;
@@ -335,6 +395,8 @@ impl AppState {
     ) -> Result<DirListing, String> {
         let root = canonical_project_dir(&project_root)?;
         let directory = resolve_inside(&root, &path)?;
+        let matcher = self.project_secret_matcher(&root);
+        refuse_hidden(&root, &directory, true, &matcher)?;
         let mut entries = Vec::new();
         for entry in std::fs::read_dir(&directory).map_err(|err| err.to_string())? {
             let entry = entry.map_err(|err| err.to_string())?;
@@ -350,6 +412,13 @@ impl AppState {
                 name,
             });
         }
+        // Nothing Git ignores and nothing secret-looking: they aren't what a review is about.
+        entries.retain(|entry: &DirEntry| {
+            entry.is_dir || !super::changes::looks_secret(&matcher, &entry.name)
+        });
+        let asked: Vec<String> = entries.iter().map(DirEntry::check_path).collect();
+        let ignored = crate::diff::ignored_paths(&root, &asked);
+        entries.retain(|entry| !ignored.contains(&entry.check_path()));
         entries.sort_by(|left, right| {
             right
                 .is_dir
@@ -373,6 +442,8 @@ impl AppState {
     ) -> Result<FileView, String> {
         let root = canonical_project_dir(&project_root)?;
         let file = resolve_inside(&root, &path)?;
+        let matcher = self.project_secret_matcher(&root);
+        refuse_hidden(&root, &file, false, &matcher)?;
         let metadata = std::fs::metadata(&file).map_err(|err| err.to_string())?;
         if !metadata.is_file() {
             return Err(format!("'{path}' is not a file"));

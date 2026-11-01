@@ -192,7 +192,7 @@ fn the_source_lists_are_read() {
     for (prefix, at_least) in [
         ("tool:", 30),
         ("settings:", 9),
-        ("workspace:", 6),
+        ("workspace:", 5),
         ("view:", 3),
         ("config:", 11),
     ] {

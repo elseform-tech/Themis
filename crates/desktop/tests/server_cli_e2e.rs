@@ -653,7 +653,10 @@ async fn cli_turn_records_the_files_it_edited_in_history() {
         .find(|item| item["envelope"]["event"]["kind"] == "files_changed")
         .map(|item| item["envelope"]["event"]["files"].clone())
         .unwrap();
-    assert_eq!(files, json!([{"path": "hello.txt", "status": "added"}]));
+    assert_eq!(files[0]["path"], "hello.txt", "{files}");
+    assert_eq!(files[0]["status"], "added", "{files}");
+    assert_eq!(files[0]["removed"], 0, "{files}");
+    assert!(files[0]["added"].as_u64().is_some(), "{files}");
     task.abort();
 }
 

@@ -225,8 +225,81 @@ pub fn change_fingerprint(root: &Path) -> ChangeFingerprint {
     fingerprint
 }
 
+/// Which of `paths` (a folder ends in `/`) Git ignores. Not a repository, or no answer, ignores
+/// nothing.
+#[must_use]
+pub fn ignored_paths(root: &Path, paths: &[String]) -> HashSet<String> {
+    use std::io::Write;
+    if paths.is_empty() {
+        return HashSet::new();
+    }
+    let child = Command::new("git")
+        .arg("-C")
+        .arg(root)
+        .args(themis_core::git_guard::NO_MONITOR)
+        .args(["check-ignore", "-z", "--stdin"])
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .spawn();
+    let Ok(mut child) = child else {
+        return HashSet::new();
+    };
+    let input = paths.join("\0");
+    let stdin = child.stdin.take();
+    // Git answers as it reads, so writing and reading can't take turns on one thread.
+    let writer = std::thread::spawn(move || {
+        if let Some(mut stdin) = stdin {
+            let _ = stdin.write_all(input.as_bytes());
+        }
+    });
+    let output = child.wait_with_output();
+    let _ = writer.join();
+    let Ok(output) = output else {
+        return HashSet::new();
+    };
+    String::from_utf8_lossy(&output.stdout)
+        .split('\0')
+        .filter(|path| !path.is_empty())
+        .map(str::to_owned)
+        .collect()
+}
+
+/// Lines added and removed against `HEAD`, by path, from `git diff --numstat -z`. A binary file
+/// has none to count, and a renamed one is under its new name.
+fn numstat(root: &Path) -> HashMap<String, (u32, u32)> {
+    let Ok(bytes) = git_output(root, &["diff", "HEAD", "--numstat", "-z", "--no-renames"]) else {
+        return HashMap::new();
+    };
+    String::from_utf8_lossy(&bytes)
+        .split('\0')
+        .filter_map(|record| {
+            let mut fields = record.splitn(3, '\t');
+            let added = fields.next()?.parse().ok()?;
+            let removed = fields.next()?.parse().ok()?;
+            Some((fields.next()?.to_owned(), (added, removed)))
+        })
+        .collect()
+}
+
+/// Lines in a new file, up to what the change list would read.
+fn new_file_lines(path: &Path) -> Option<u32> {
+    let metadata = std::fs::metadata(path).ok()?;
+    if !metadata.is_file() || metadata.len() > 16 * 1024 * 1024 {
+        return None;
+    }
+    let bytes = std::fs::read(path).ok()?;
+    if bytes.contains(&0) {
+        return None;
+    }
+    let newlines = bytes.iter().filter(|byte| **byte == b'\n').count();
+    let unterminated = usize::from(bytes.last().is_some_and(|byte| *byte != b'\n'));
+    u32::try_from(newlines + unterminated).ok()
+}
+
 /// Files whose content differs between two captures, sorted by path. A file
-/// that left the capture was restored to `HEAD` (modified) or removed.
+/// that left the capture was restored to `HEAD` (modified) or removed. Line counts are against
+/// the last commit, as the Changes view's are.
 #[must_use]
 pub fn changed_between(
     root: &Path,
@@ -234,12 +307,24 @@ pub fn changed_between(
     after: &ChangeFingerprint,
 ) -> Vec<ChangedFile> {
     let paths: BTreeSet<&String> = before.keys().chain(after.keys()).collect();
+    let mut stats: Option<HashMap<String, (u32, u32)>> = None;
     paths
         .into_iter()
         .filter(|path| {
             before.get(*path).map(|entry| entry.1) != after.get(*path).map(|entry| entry.1)
         })
         .map(|path| {
+            let counted = stats
+                .get_or_insert_with(|| numstat(root))
+                .get(path)
+                .copied();
+            let (added, removed) = match counted {
+                Some((added, removed)) => (Some(added), Some(removed)),
+                None if matches!(after.get(path), Some((b'?', _))) => {
+                    (new_file_lines(&root.join(path)), Some(0))
+                }
+                None => (None, None),
+            };
             let status = match after.get(path) {
                 Some((_, None)) => DiffStatus::Deleted,
                 Some((b'?' | b'A', _)) => DiffStatus::Added,
@@ -250,6 +335,8 @@ pub fn changed_between(
             ChangedFile {
                 path: path.clone(),
                 status,
+                added,
+                removed,
             }
         })
         .collect()
@@ -756,6 +843,51 @@ pub(crate) mod scale_tests;
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn changed_files_carry_their_line_counts() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let git = |args: &[&str]| {
+            assert!(Command::new("git")
+                .arg("-C")
+                .arg(root)
+                .args(args)
+                .status()
+                .unwrap()
+                .success());
+        };
+        git(&["init", "-q"]);
+        std::fs::write(root.join("kept.txt"), "one\ntwo\nthree\n").unwrap();
+        std::fs::write(root.join("gone.txt"), "a\nb\n").unwrap();
+        git(&["add", "."]);
+        git(&[
+            "-c",
+            "user.email=t@t",
+            "-c",
+            "user.name=t",
+            "commit",
+            "-qm",
+            "init",
+        ]);
+        let before = change_fingerprint(root);
+        std::fs::write(root.join("kept.txt"), "one\nTWO\nthree\nfour\n").unwrap();
+        std::fs::remove_file(root.join("gone.txt")).unwrap();
+        std::fs::write(root.join("new.py"), "a = 1\nb = 2").unwrap();
+        let counts: Vec<(String, Option<u32>, Option<u32>)> =
+            changed_between(root, &before, &change_fingerprint(root))
+                .into_iter()
+                .map(|file| (file.path, file.added, file.removed))
+                .collect();
+        assert_eq!(
+            counts,
+            [
+                ("gone.txt".to_owned(), Some(0), Some(2)),
+                ("kept.txt".to_owned(), Some(2), Some(1)),
+                ("new.py".to_owned(), Some(2), Some(0)),
+            ]
+        );
+    }
+
     /// These run in the app, outside the sandbox, where the agent's shell may have written the
     /// repository's configuration: nothing it names may start.
     #[cfg(unix)]
@@ -1084,10 +1216,14 @@ index 5555555..6666666 100644
             changed,
             vec![
                 ChangedFile {
+                    added: Some(0),
+                    removed: Some(1),
                     path: "gone.txt".into(),
                     status: DiffStatus::Deleted
                 },
                 ChangedFile {
+                    added: Some(1),
+                    removed: Some(0),
                     path: "new.py".into(),
                     status: DiffStatus::Added
                 },

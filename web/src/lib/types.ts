@@ -537,6 +537,9 @@ export interface ContextBudget {
 export interface ChangedFile {
   path: string;
   status: DiffStatus;
+  /** Lines added and removed against the last commit; absent when they can't be counted. */
+  added?: number;
+  removed?: number;
 }
 
 /** A recording of the built-in browser in progress. */
