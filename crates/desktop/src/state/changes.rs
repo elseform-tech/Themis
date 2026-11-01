@@ -78,19 +78,29 @@ fn read_diff(root: &Path, preexisting: &HashSet<String>) -> Result<DiffState, St
             files: Vec::new(),
         });
     }
-    let mut hidden = 0usize;
     let mut files = tracked_diff_files(root)?;
-    let mut seen: HashSet<String> = files.iter().map(|file| file.path.clone()).collect();
-    for relative in git_untracked(root)? {
-        if seen.insert(relative.clone()) && is_readable_change(root, &relative) {
-            files.push(untracked_diff_file(root, &relative));
-        } else if !files.iter().any(|file| file.path == relative) {
-            hidden += 1;
-        }
-    }
+    // A path git reports as both changed and untracked counts once, as changed.
+    let mut listed: HashSet<String> = files.iter().map(|file| file.path.clone()).collect();
     let before = files.len();
     files.retain(|file| is_readable_change(root, &file.path));
-    hidden += before - files.len();
+    let mut hidden = before - files.len();
+    let mut total = files.len();
+    // The counts need a look at every new file. Only the ones shown are read in full.
+    for relative in git_untracked(root)? {
+        crate::diff::count_listed_item();
+        if listed.contains(&relative) {
+            continue;
+        }
+        if !is_readable_change(root, &relative) {
+            hidden += 1;
+            continue;
+        }
+        total += 1;
+        if files.len() < MAX_DIFF_FILES {
+            files.push(untracked_diff_file(root, &relative));
+        }
+        listed.insert(relative);
+    }
     for file in &mut files {
         file.preexisting = preexisting.contains(&file.path)
             || file
@@ -98,7 +108,6 @@ fn read_diff(root: &Path, preexisting: &HashSet<String>) -> Result<DiffState, St
                 .as_deref()
                 .is_some_and(|old| preexisting.contains(old));
     }
-    let total = files.len();
     let mut notes = Vec::new();
     if total > MAX_DIFF_FILES {
         files.truncate(MAX_DIFF_FILES);
@@ -320,6 +329,98 @@ impl AppState {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::diff::scale_tests::committed_repo;
+    use crate::diff::take_work;
+    use crate::scale::{growth_rate, measure};
+    use crate::types::DiffStatus;
+
+    /// Visible files sort first, so each hidden one is checked against the whole visible list.
+    fn dirty_repo(hidden: usize, visible: usize) -> tempfile::TempDir {
+        let repo = committed_repo();
+        for index in 0..visible {
+            let line = format!("visible {index}\n");
+            std::fs::write(repo.path().join(format!("a{index:05}.txt")), line).unwrap();
+        }
+        for index in 0..hidden {
+            std::fs::write(repo.path().join(format!("b{index:05}.bin")), [0u8, 1]).unwrap();
+        }
+        repo
+    }
+
+    /// Changed files come first, then new ones by name, with both notes counting everything.
+    #[test]
+    fn listing_keeps_its_order_and_counts_past_the_cap() {
+        let repo = dirty_repo(3, MAX_DIFF_FILES + 5);
+        std::fs::write(repo.path().join("kept.txt"), "edited\n").unwrap();
+        std::fs::write(repo.path().join("cache.pyc"), "generated\n").unwrap();
+        let preexisting = HashSet::from(["a00000.txt".to_owned()]);
+        let state = read_diff(repo.path(), &preexisting).unwrap();
+        assert_eq!(state.files.len(), MAX_DIFF_FILES);
+        assert_eq!(state.files[0].path, "kept.txt");
+        assert_eq!(state.files[0].status, DiffStatus::Modified);
+        assert!(!state.files[0].preexisting);
+        assert_eq!(state.files[1].path, "a00000.txt");
+        assert_eq!(state.files[1].status, DiffStatus::Added);
+        assert_eq!(state.files[1].added, 1);
+        assert!(state.files[1].preexisting);
+        assert_eq!(state.files[199].path, "a00198.txt");
+        assert_eq!(
+            state.reason.as_deref(),
+            Some(
+                "truncated: showing 200 of 206 changed files · 4 binary or generated files hidden"
+            )
+        );
+    }
+
+    #[test]
+    fn listing_many_hidden_files_stays_linear() {
+        let samples = measure(&[625, 5000], |hidden| {
+            let visible = hidden / 10;
+            let repo = dirty_repo(hidden, visible);
+            take_work();
+            let state = read_diff(repo.path(), &HashSet::new()).unwrap();
+            let work = take_work();
+            eprintln!("read_diff {hidden} hidden, {visible} visible: {work:?}");
+            assert_eq!(state.files.len(), visible.min(MAX_DIFF_FILES));
+            assert!(state
+                .reason
+                .unwrap()
+                .contains(&format!("{hidden} binary or generated files hidden")));
+            work.items + work.opens
+        });
+        let rate = growth_rate(&samples);
+        assert!(rate < 1.2, "growth {rate}: {samples:?}");
+    }
+
+    #[test]
+    fn listing_builds_no_more_diffs_than_it_shows() {
+        let samples = measure(&[625, 5000], |visible| {
+            let repo = dirty_repo(0, visible);
+            take_work();
+            let state = read_diff(repo.path(), &HashSet::new()).unwrap();
+            let work = take_work();
+            eprintln!("read_diff {visible} visible: {work:?}");
+            assert_eq!(state.files.len(), MAX_DIFF_FILES);
+            assert_eq!(
+                state.reason.as_deref(),
+                Some(
+                    format!("truncated: showing {MAX_DIFF_FILES} of {visible} changed files")
+                        .as_str()
+                )
+            );
+            assert!(
+                work.built <= MAX_DIFF_FILES as u64,
+                "built {} diffs to show {MAX_DIFF_FILES}",
+                work.built
+            );
+            // One look at each file, then the shown ones read for their text and line count.
+            let most_opens = (visible + 2 * MAX_DIFF_FILES) as u64;
+            assert!(work.opens <= most_opens, "{} opens", work.opens);
+            work.opens
+        });
+        let rate = growth_rate(&samples);
+        assert!(rate < 1.2, "growth {rate}: {samples:?}");
+    }
 
     proptest::proptest! {
         /// Accepted diff paths are relative and never step above the project.
