@@ -139,3 +139,10 @@ it("gives the frame the page's colour scheme, so a dark window has no white box"
   expect(frame.getAttribute("srcdoc")).toContain("color-scheme:dark");
   delete document.documentElement.dataset.theme;
 });
+it("doesn't blow a small chart up past its own size", async () => {
+  diagram.render.mockResolvedValueOnce({ svg: '<svg viewBox="0 0 150 500"></svg>' } as never);
+  render(<ResponseBody text={'```mermaid\nflowchart TD\n A-->D\n```'} />);
+  const frame = await screen.findByTitle("Mermaid diagram");
+  expect(parseInt(frame.style.maxWidth, 10)).toBeLessThanOrEqual(174);
+  expect(frame.style.aspectRatio).toBe("174 / 524");
+});
