@@ -716,6 +716,23 @@ async fn run_task_with_evidence_inner(
             steered.push(text.clone());
             events.send(RunEvent::Steered { text }).await.ok();
         }
+        // What a finished background hook reported joins here too, labelled as the plugin's.
+        for note in crate::plugins::hooks::rewake_notes_for_run() {
+            messages.push(ChatMessage {
+                role: ChatRole::User,
+                message_type: MessageType::Text,
+                content: note.model_text(),
+            });
+            // A row in the chat, so the person sees what the agent was told about.
+            events
+                .send(RunEvent::ToolCallFinished {
+                    tool: format!("hook_{}", note.hook),
+                    ok: true,
+                    output: note.summary,
+                })
+                .await
+                .ok();
+        }
         // Results of subagents (and other notes) join at the same boundary.
         for note in run_notes().map(|notes| notes.take()).unwrap_or_default() {
             reaction_due = true;

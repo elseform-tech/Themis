@@ -43,7 +43,7 @@ fn fixture() -> Fixture {
 
 /// A model that makes the scripted calls one per round, then finishes.
 async fn scripted(calls: Vec<(&'static str, Value)>) -> MockServer {
-    let server = MockServer::start().await;
+    let server = MockServer::builder().start().await;
     Mock::given(method("POST"))
         .respond_with(move |request: &Request| {
             let body: Value = serde_json::from_slice(&request.body).unwrap_or(Value::Null);
@@ -716,7 +716,7 @@ async fn asking_logs_the_kind_and_never_the_path() {
 #[tokio::test(flavor = "multi_thread")]
 async fn a_subagents_request_names_it_and_its_grant_stays_its_own() {
     let fx = fixture();
-    let provider = MockServer::start().await;
+    let provider = MockServer::builder().start().await;
     Mock::given(method("POST"))
         .respond_with(move |request: &Request| {
             let body: Value = serde_json::from_slice(&request.body).unwrap_or(Value::Null);

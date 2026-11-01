@@ -220,7 +220,7 @@ async fn failed_scan_reports_the_underlying_reason_not_just_the_component() {
     fixture(source.path());
     fs::write(
         source.path().join("good/.mcp.json"),
-        r#"{"mcpServers":{"example":{"command":"node","env":{"TOKEN":"synthetic-literal"}}}}"#,
+        r#"{"mcpServers":{"example":{"command":"node","env":{"TOKEN":"synthetic-literal${TOKEN}"}}}}"#,
     )
     .unwrap();
     let store = PluginStore::new(data.path().into(), None);
@@ -229,7 +229,7 @@ async fn failed_scan_reports_the_underlying_reason_not_just_the_component() {
         .unwrap();
     let scan = store.wait_marketplace_scan("reasons", false).await.unwrap();
     assert!(
-        scan.errors["good"].contains("literal values are unsupported"),
+        scan.errors["good"].contains("Unsupported environment reference"),
         "{}",
         scan.errors["good"]
     );

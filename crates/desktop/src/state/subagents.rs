@@ -807,6 +807,8 @@ impl SubagentKit {
                 plugin_bins: self.plugin_bins.clone(),
                 attached_skills: Vec::new(),
                 skills_seen: Arc::default(),
+                // The chat's own run picks up the note, or wakes for it when it ends.
+                on_rewake: None,
             },
         }
     }

@@ -69,6 +69,9 @@ pub(super) struct Entry {
     pub(super) path: PathBuf,
     pub(super) bytes: u64,
     pub(super) executable: bool,
+    /// What it holds instead of the file at `path`: text rewritten in memory, so what a plugin's
+    /// configuration held is never written anywhere on the way.
+    pub(super) content: Option<Vec<u8>>,
 }
 
 /// The bounds a walk keeps to.
@@ -94,6 +97,10 @@ pub(super) fn digest(entries: &[Entry]) -> anyhow::Result<String> {
         // Windows has no executable bit: a kept file reads back without one.
         hash.update([0, u8::from(entry.executable && cfg!(unix))]);
         hash.update(entry.bytes.to_le_bytes());
+        if let Some(content) = &entry.content {
+            hash.update(content);
+            continue;
+        }
         let mut file = fs::File::open(&entry.path)?;
         loop {
             let read = file.read(&mut buffer)?;
@@ -142,7 +149,12 @@ pub(super) fn keep(entries: &[Entry], package: &PackageRef, store: &Path) -> any
         for entry in entries {
             let path = temporary.join(&entry.relative);
             fs::create_dir_all(path.parent().context("Missing parent")?)?;
-            fs::copy(&entry.path, &path)?;
+            match &entry.content {
+                Some(content) => fs::write(&path, content)?,
+                None => {
+                    fs::copy(&entry.path, &path)?;
+                }
+            }
             set_mode(&path, entry.executable)?;
         }
         // Another install of the same package may have got here first; either is complete.
@@ -216,6 +228,7 @@ pub(super) fn verified(store: &Path, package: &PackageRef) -> anyhow::Result<Opt
                     path: entry.path(),
                     bytes: metadata.len(),
                     executable: is_executable(&metadata),
+                    content: None,
                 });
             } else {
                 return Ok(None);
@@ -379,6 +392,7 @@ mod tests {
             path,
             bytes: content.len() as u64,
             executable,
+            content: None,
         }
     }
 

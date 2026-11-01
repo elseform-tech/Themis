@@ -631,6 +631,7 @@ impl AppState {
                     .map(|skill| themis_core::plugins::hooks::skill_label(&skill.id))
                     .collect(),
                 skills_seen: Arc::default(),
+                on_rewake: Some(self.hook_report_notifier(Arc::clone(sink))),
             },
         };
         let skills = snapshot.skills;

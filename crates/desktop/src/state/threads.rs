@@ -250,6 +250,17 @@ impl AppState {
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .contains_key(&run_id);
+        // Sent by no one but the person: goal turns, automations and hook wakes count against
+        // the turns hooks may start.
+        let from_server = self
+            .inner
+            .server_sends
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .contains_key(&run_id);
+        if !from_server && !automation_run {
+            self.reset_hook_wakes(&thread_id);
+        }
         let settings = self.inner.settings.get().await;
         let mut history = Vec::new();
         let project_root = {

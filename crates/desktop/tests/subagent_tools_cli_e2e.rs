@@ -813,6 +813,9 @@ async fn a_scoped_shell_holds_against_every_way_around_it() {
     let touch_js = "require('fs').writeFileSync('escaped','')";
     let shell = |args: Value| ("shell", args);
     let calls: Vec<(&'static str, Value)> = vec![
+        // A shell expands a script's words after the scope has read them.
+        shell(json!({"command": "sh", "args": ["-c", "git status {-c,x}"]})),
+        shell(json!({"command": "sh", "args": ["-c", "git status --short"]})),
         // Interpreter options, bundled and long, beside a pattern with a loose script name.
         shell(json!({"command": "python3", "args": ["-c", touch_py]})),
         shell(json!({"command": "python3", "args": ["-Ic", touch_py]})),
@@ -943,7 +946,6 @@ async fn a_scoped_shell_still_runs_what_it_names() {
         shell(json!({"command": "python3", "args": ["tools/tool.py", "--flag", "-c"]})),
         shell(json!({"command": "git", "args": ["status", "--short"]})),
         shell(json!({"command": "find", "args": [".", "-name", "*.py"]})),
-        shell(json!({"command": "sh", "args": ["-c", "git status --short 2>&1"]})),
     ];
     let count = calls.len();
     let app = app(
