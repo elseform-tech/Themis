@@ -362,7 +362,7 @@ export function goalTurnNumber(text: string): number | undefined {
 /** The marker the runtime puts on the message that starts a turn for a plugin hook's report. */
 export const HOOK_WAKE_MARKER = "[Plugin hook \u2014 runtime, not from the user]";
 
-/** What a plugin says about the report that started a turn, if `text` starts one. */
+/** The runtime's line about the turn it started for a hook's report, if `text` starts one. */
 export function hookWakeSummary(text: string): string | undefined {
   if (!text.startsWith(HOOK_WAKE_MARKER)) return undefined;
   return text.slice(HOOK_WAKE_MARKER.length).split("\n")[0]!.trim();

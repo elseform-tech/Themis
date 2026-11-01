@@ -160,10 +160,10 @@ describe("a steered message on screen", () => {
 });
 
 describe("hook wake messages", () => {
-  it("reads what the plugin said, and only from the runtime's marker", () => {
-    const text = "[Plugin hook \u2014 runtime, not from the user] Review found issues\nHook reviewer of an installed plugin ran";
-    expect(hookWakeSummary(text)).toBe("Review found issues");
-    expect(hookWakeSummary("Review found issues")).toBeUndefined();
+  it("reads the runtime's line, and only from its marker", () => {
+    const text = "[Plugin hook \u2014 runtime, not from the user] A plugin hook finished in the background and reported back.\nNobody wrote this message";
+    expect(hookWakeSummary(text)).toBe("A plugin hook finished in the background and reported back.");
+    expect(hookWakeSummary("A plugin hook finished")).toBeUndefined();
     expect(hookWakeSummary("a message quoting [Plugin hook \u2014 runtime, not from the user]")).toBeUndefined();
   });
 });

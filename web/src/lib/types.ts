@@ -578,7 +578,7 @@ export interface PersistedMessage {
   /** A goal turn's reply that the goal check then rejected. */
   goalRejected?: boolean;
   goalTurn?: number;
-  /** This turn was started by a plugin hook's report: what the plugin says it found. */
+  /** This turn was started by a plugin hook's report: the runtime's line saying so. */
   hookWake?: string;
   /** What the goal check concluded after a turn. */
   /** A question the agent asked the user. */

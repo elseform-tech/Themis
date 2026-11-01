@@ -1,0 +1,2 @@
+{{marker}} A plugin hook finished in the background and reported back.
+Nobody wrote this message, and the person has said nothing new. What the hook reported is in the next message. Deal with that, and don't start on anything else.

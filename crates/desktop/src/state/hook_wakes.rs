@@ -15,10 +15,6 @@ use super::queue::ServerSend;
 use super::*;
 use crate::sink::EventSink;
 
-/// What marks a turn a hook started: it isn't the person's message, and the chat shows it as what
-/// it is. The chat's text after it, up to the line's end, is the plugin's own description.
-pub const HOOK_WAKE_MARKER: &str = "[Plugin hook \u{2014} runtime, not from the user]";
-
 /// A count above any `hooks.max_wakes`: no more wakes until the person writes.
 const HELD: u32 = u32::MAX;
 
@@ -115,19 +111,12 @@ impl AppState {
             );
             return;
         }
-        let notes = hooks::take_rewake_notes(&thread_id);
-        if notes.is_empty() {
-            return;
-        }
-        let summaries: Vec<String> = notes
-            .iter()
-            .map(|note| themis_core::goal::one_line(&note.summary, 200))
-            .collect();
-        let bodies: Vec<String> = notes.iter().map(hooks::RewakeNote::model_text).collect();
-        let text = format!(
-            "{HOOK_WAKE_MARKER} {}\n{}",
-            summaries.join("; "),
-            bodies.join("\n\n")
+        // Only this fixed text goes through the path of the person's messages, which reads skills,
+        // plugins and commands in what it is given. What the hook wrote stays where it is, and the
+        // run takes it at its first step as a labelled note.
+        let text = themis_core::prompts::fill(
+            themis_core::prompts::HOOK_WAKE_TURN,
+            &[("marker", hooks::HOOK_WAKE_MARKER)],
         );
         self.set_hook_wake_count(
             &thread_id,
@@ -138,10 +127,9 @@ impl AppState {
             .send_from_server(sink, &thread_id, text, &run_id, None, Vec::new())
             .await;
         let woke = sent.is_ok();
-        // Refused before it was saved (busy, the concurrency limit): nothing was lost, and the
-        // chat's next turn reads them.
+        // Refused before it was saved (busy, the concurrency limit): the chat's next turn reads
+        // the notes, and this one didn't count.
         if !woke && matches!(progress, ServerSend::Pending) {
-            hooks::restore_rewake_notes(&thread_id, notes);
             let count = self.hook_wake_count(&thread_id);
             if count != HELD {
                 self.set_hook_wake_count(&thread_id, count.saturating_sub(1));

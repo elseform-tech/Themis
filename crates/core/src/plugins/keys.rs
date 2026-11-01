@@ -212,9 +212,8 @@ pub fn literal_secret_name(plugin: &str, field: &str) -> String {
         out.trim_end_matches('_').to_owned()
     };
     let (plugin, field) = (upper(plugin), upper(field));
-    let joined = if field == plugin || field.starts_with(&format!("{plugin}_")) {
-        field
-    } else if plugin.is_empty() {
+    let joined = if plugin.is_empty() || field == plugin || field.starts_with(&format!("{plugin}_"))
+    {
         field
     } else if field.is_empty() {
         plugin

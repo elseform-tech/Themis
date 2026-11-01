@@ -894,6 +894,10 @@ pub const REWAKE_LABEL_LIMIT: usize = 1024;
 /// Notes waiting per chat; a further one pushes out the oldest, with a diagnostics event.
 pub const REWAKE_NOTES_PER_CHAT: usize = 4;
 
+/// What marks the message that starts a turn for a hook's report, whose text is the runtime's own
+/// and never the hook's. The chat shows it as what it is; a saved transcript is read back with it.
+pub const HOOK_WAKE_MARKER: &str = "[Plugin hook \u{2014} runtime, not from the user]";
+
 /// What a finished background hook left for the agent (Claude's `asyncRewake`). It reaches the
 /// chat's next run at its next step, labelled and fenced as the plugin's: not from the person, not
 /// instructions, and it grants nothing.
@@ -937,16 +941,6 @@ fn rewake_notes() -> std::sync::MutexGuard<
     std::collections::HashMap<String, std::collections::VecDeque<RewakeNote>>,
 > {
     REWAKE_NOTES.lock().unwrap_or_else(|e| e.into_inner())
-}
-
-/// Puts `notes` at the front of the chat's waiting ones (a wake that couldn't start).
-pub fn restore_rewake_notes(thread_id: &str, notes: Vec<RewakeNote>) {
-    let mut all = rewake_notes();
-    let waiting = all.entry(thread_id.to_owned()).or_default();
-    for note in notes.into_iter().rev() {
-        waiting.push_front(note);
-    }
-    waiting.truncate(REWAKE_NOTES_PER_CHAT);
 }
 
 fn leave_rewake_note(thread_id: &str, note: RewakeNote) {

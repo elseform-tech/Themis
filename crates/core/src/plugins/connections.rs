@@ -299,16 +299,13 @@ impl McpServer {
         let url = self.url.as_deref()?;
         let known =
             |name: &&str| super::keys::value(name).is_some() || self.defaults.contains_key(*name);
-        super::keys::template_names(url)
-            .iter()
-            .all(|name| known(name))
-            .then(|| {
-                super::keys::fill(url, |name| {
-                    super::keys::value(name)
-                        .or_else(|| self.defaults.get(name).cloned())
-                        .unwrap_or_default()
-                })
+        super::keys::template_names(url).iter().all(known).then(|| {
+            super::keys::fill(url, |name| {
+                super::keys::value(name)
+                    .or_else(|| self.defaults.get(name).cloned())
+                    .unwrap_or_default()
             })
+        })
     }
 }
 /// Why a connection's secrets have nowhere to be allowed to.

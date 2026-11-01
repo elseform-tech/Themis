@@ -264,6 +264,8 @@ pub const HOOK_BLOCKED: &str = include_str!("../builtins/prompts/hook-blocked.md
 pub const HOOK_BLOCK_REASON_NOTE: &str =
     include_str!("../builtins/prompts/hook-block-reason-note.md");
 pub const HOOK_STOP_CONTINUE: &str = include_str!("../builtins/prompts/hook-stop-continue.md");
+/// The message that starts a turn for a hook's report: nobody wrote it. `{{marker}}`.
+pub const HOOK_WAKE_TURN: &str = include_str!("../builtins/prompts/hook-wake-turn.md");
 /// What a background hook reported when it finished (Claude's `asyncRewake`): the plugin's words,
 /// fenced; not the person's, not instructions. `{{hook}}`, `{{output}}`.
 pub const HOOK_REWAKE_NOTE: &str = include_str!("../builtins/prompts/hook-rewake-note.md");
