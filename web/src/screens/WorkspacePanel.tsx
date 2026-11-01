@@ -10,11 +10,12 @@ import type { WorkspaceTab } from "../state/reducer";
 import { GoalView } from "./GoalView";
 import { BrowserView } from "./BrowserView";
 import { TasksView } from "./TasksView";
+import { TerminalView } from "./TerminalView";
 import { countTasks } from "./threadTasks";
 import "./WorkspacePanel.css";
 
 type Tab = WorkspaceTab;
-const TABS: Array<[Tab, string]> = [["changes", "Changes"], ["files", "Files"], ["pulls", "Pull requests"], ["tasks", "Tasks"], ["goal", "Goal"], ["browser", "Browser"]];
+const TABS: Array<[Tab, string]> = [["changes", "Changes"], ["files", "Files"], ["pulls", "Pull requests"], ["tasks", "Tasks"], ["goal", "Goal"], ["browser", "Browser"], ["terminal", "Terminal"]];
 const MIN_WIDTH = 300;
 const MAX_WIDTH = 1600;
 /** A share of the space beside the rail, within limits: enough to read a diff, leaving the chat a usable column. */
@@ -35,7 +36,7 @@ function clampWidth(value: number) {
   return Math.round(Math.max(MIN_WIDTH, Math.min(MAX_WIDTH, value)));
 }
 
-/** Read-only monitor of what agents change (diffs, files, branches, PRs), Stop and Pause for this chat's tasks, and the chat's built-in browser. */
+/** Read-only monitor of what agents change (diffs, files, branches, PRs), Stop and Pause for this chat's tasks, the chat's built-in browser, and the person's own terminal. */
 export function WorkspacePanel({ projectRoot, threadId, workspace }: { projectRoot: string; threadId: string; workspace: WorkspaceInfo | null }) {
   const { state, dispatch } = useApp();
   const goal = state.goals[threadId] ?? null;
@@ -103,7 +104,7 @@ export function WorkspacePanel({ projectRoot, threadId, workspace }: { projectRo
           </button>
         </Tooltip>
       </header>
-      <div className={`themis-workspace-body${tab === "browser" ? " is-browser" : ""}`}>
+      <div className={`themis-workspace-body${tab === "browser" || tab === "terminal" ? " is-browser" : ""}`}>
         {tab === "changes" && <ChangesView threadId={threadId} workspace={workspace} projectRoot={projectRoot} onWantDiffWidth={wanted => {
           // Widens as far as the panel's limit leaves the chat room; the file list keeps its width.
           const shown = panel.current?.querySelector(".themis-diff")?.clientWidth ?? wanted;
@@ -114,6 +115,7 @@ export function WorkspacePanel({ projectRoot, threadId, workspace }: { projectRo
         {tab === "tasks" && <TasksView threadId={threadId} />}
         {tab === "goal" && <GoalView goal={goal} />}
         {tab === "browser" && <BrowserView threadId={threadId} />}
+        {tab === "terminal" && <TerminalView projectRoot={projectRoot} threadId={threadId} />}
       </div>
     </aside>
   );
@@ -129,6 +131,7 @@ function TabIcon({ tab }: { tab: Tab }) {
       {tab === "goal" && <><circle cx="12" cy="12" r="8" /><circle cx="12" cy="12" r="4" /></>}
       {tab === "tasks" && <path d="m4 6 1.5 1.5L8 5M4 12l1.5 1.5L8 11M4 18l1.5 1.5L8 17M12 6h8M12 12h8M12 18h8" />}
       {tab === "browser" && <><circle cx="12" cy="12" r="9" /><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18" /></>}
+      {tab === "terminal" && <path d="m5 7 5 5-5 5M12 18h7" />}
     </svg>
   );
 }

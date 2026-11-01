@@ -176,6 +176,8 @@ impl AppState {
         {
             return Err(RUNNING.to_owned());
         }
+        // Its shell has to go before its folder does.
+        self.close_terminals_under(&root).await;
         move_to_trash(&self.inner.trash_dir, &root)?;
         let ids: Vec<String> = threads
             .iter()

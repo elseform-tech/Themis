@@ -195,6 +195,7 @@ full tour.
 | `workspace:tasks` | tour | `web/src/screens/TasksView.tsx` | Shows the run and the server; Stop and Pause work. |
 | `workspace:goal` | tour | `web/src/screens/GoalView.tsx` | During a goal, the Goal tab sorts the checklist into Pending and Complete; the list appears when the goal is set, a steered request lands in Pending at once, editing the goal redoes the list, items move as checks pass, and the overview box counts them. |
 | `workspace:browser` | tour | `web/src/screens/BrowserView.tsx` | Drive the page by hand while the agent uses it; Capture to message works. |
+| `workspace:terminal` | tour | `web/src/screens/TerminalView.tsx`, `crates/desktop/src/state/terminal.rs` | Open Terminal: a prompt in the project. Run `pwd` and `ls`; `env` shows no `OPENCODE_KEY`. Resize the panel and run `stty size`: it follows. Switch tab and chat and come back: the same shell, with what it printed. Run `exit 3`: the line says code 3, and Restart gives a new shell. Check the light and dark themes. Start `sleep 300 &` and quit the app: `pgrep -f 'sleep 300'` finds nothing. |
 | `view:skills` | tour | `web/src/screens/Skills.tsx`, `web/src/screens/Plugins.tsx` | Create, edit and delete a skill; install, enable and disable a catalog plugin. |
 | `view:automations` | tour | `web/src/screens/Automations.tsx` | Create, run now, pause and delete an automation. |
 | `view:queue` | tour | `web/src/screens/ReviewQueue.tsx` | Items appear and can be cleared. |
