@@ -233,12 +233,6 @@ pub(super) fn split_script(text: &str) -> Option<Vec<Vec<String>>> {
     split_script_with(text, false)
 }
 
-/// [`split_script`], leaving a command's leading `NAME=value` words in place, for a caller that
-/// cares what they change.
-pub(super) fn split_script_keeping_assignments(text: &str) -> Option<Vec<Vec<String>>> {
-    split_script_with(text, true)
-}
-
 fn split_script_with(text: &str, keep_assignments: bool) -> Option<Vec<Vec<String>>> {
     let finish = |command: &mut Vec<String>, commands: &mut Vec<Vec<String>>| {
         finish(command, commands, keep_assignments)

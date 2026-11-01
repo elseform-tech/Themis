@@ -27,9 +27,6 @@ use super::{program_basename, wrapped};
 pub const MAX_PATTERN_CHARS: usize = 200;
 pub const MAX_PATTERNS: usize = 64;
 
-/// Redirections that write nothing.
-const HARMLESS_REDIRECTIONS: [&str; 3] = ["2>&1", "2>/dev/null", ">/dev/null"];
-
 /// Programs whose whole purpose is to run another; none passes, whatever a pattern names.
 const WRAPPERS: [&str; 21] = [
     "env",
@@ -332,29 +329,11 @@ fn class_allows(class: Class, program: &str, command: &[String], pattern: &Patte
 
 /// The one simple command this runs, if it is one: itself, or the only command of a shell script.
 fn simple_command(command: &[String]) -> Option<Vec<String>> {
-    let Some(script) = wrapped::shell_script_text(command) else {
-        return Some(command.to_vec());
-    };
-    let commands = wrapped::split_script_keeping_assignments(script)?;
-    let [words] = commands.as_slice() else {
-        return None;
-    };
-    if words
-        .first()
-        .is_some_and(|word| wrapped::is_assignment(word))
-    {
-        return None;
-    }
-    let words: Vec<String> = words
-        .iter()
-        .filter(|word| !HARMLESS_REDIRECTIONS.contains(&word.as_str()))
-        .cloned()
-        .collect();
-    let plain = !words
-        .iter()
-        .any(|word| word.contains('>') || word.contains('<'));
-    // A script's only command being another script is more wrapping than anyone needs.
-    (plain && wrapped::shell_script_text(&words).is_none()).then_some(words)
+    // A shell expands a script's words after this check has read them, so `{-i,x}` can become an
+    // option. A scope only takes a program and its words directly.
+    wrapped::shell_script_text(command)
+        .is_none()
+        .then(|| command.to_vec())
 }
 
 /// Whether what `argv` runs is one simple command `patterns` names; see the top of this file.
@@ -398,6 +377,30 @@ pub fn command_in_scope(argv: &[String], patterns: &[String]) -> bool {
 
 #[cfg(test)]
 mod tests {
+    /// A shell expands a script's words after this check has read them: `{-i,x}` becomes an
+    /// option. So a scope only takes a program and its words directly.
+    #[test]
+    fn a_shell_script_is_never_in_scope() {
+        let scope = ["git status:*".to_owned(), "sed s/a/b/ *".to_owned()];
+        for script in [
+            "git status",
+            "git status --short",
+            "git status {-c,x}",
+            "sed s/a/b/ {-i,notes.txt}",
+            "git status ~/x",
+            "git status *",
+        ] {
+            for shell in ["sh", "bash", "zsh", "dash", "/bin/sh"] {
+                let argv = [shell.to_owned(), "-c".to_owned(), script.to_owned()];
+                assert!(!command_in_scope(&argv, &scope), "{argv:?}");
+            }
+        }
+        assert!(command_in_scope(
+            &["git".to_owned(), "status".to_owned()],
+            &scope
+        ));
+    }
+
     /// Found in a live run: a free model sends `command: "git status"` as one string. The shell
     /// tool answers that with a hint to split it, so the scope must not refuse it first.
     #[test]
@@ -452,8 +455,8 @@ mod tests {
             &["find", ".", "-name", "x", "-type", "f"],
             &["find * -name * -type *"]
         ));
-        assert!(allowed(&["sh", "-c", "git diff --stat"], GIT_DIFF));
-        assert!(allowed(&["sh", "-c", "git diff 2>&1"], GIT_DIFF));
+        assert!(!allowed(&["sh", "-c", "git diff --stat"], GIT_DIFF));
+        assert!(!allowed(&["sh", "-c", "git diff 2>&1"], GIT_DIFF));
         assert!(allowed(&["git", "log", "-5", "--oneline"], &["git log:*"]));
     }
 
