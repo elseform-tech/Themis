@@ -1,6 +1,6 @@
-import { expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { fileNamedIn, ResponseBody, ResponseFiles, ResponseLinks } from "./ResponseBody";
+import { fileNamedIn, fitScale, flipDirection, ResponseBody, ResponseFiles, ResponseLinks } from "./ResponseBody";
 const diagram = vi.hoisted(() => ({ initialize: vi.fn(), render: vi.fn(async () => ({ svg: '<svg viewBox="0 0 120 80"><text>Start</text></svg>' })) }));
 vi.mock("mermaid", () => ({ default: diagram }));
 it("formats markdown, tables and code, and copies the source", async () => {
@@ -130,14 +130,15 @@ it("gives the frame the page's colour scheme, so a dark window has no white box"
 it("gives every chart the same frame, with the graph fitted inside it", async () => {
   for (const svg of ['<svg viewBox="0 0 150 500"></svg>', '<svg viewBox="0 0 2400 300"></svg>']) {
     diagram.render.mockResolvedValueOnce({ svg } as never);
+    diagram.render.mockResolvedValueOnce({ svg } as never);
     const { unmount } = render(<ResponseBody text={`\`\`\`mermaid\nflowchart TD\n A-->${svg.length}\n\`\`\``} />);
     const frame = await screen.findByTitle("Mermaid diagram");
     expect(frame.style.width).toBe("100%");
     expect(frame.style.height).toBe("280px");
     const page = frame.getAttribute("srcdoc")!;
-    // Whole and centred; a small chart stays at its own size rather than filling the frame.
+    // Whole and centred, growing only so far.
     expect(page).toContain("object-fit:contain");
-    expect(page).toContain("max-width:" + svg.match(/0 0 (\d+)/)![1] + "px");
+    expect(page).toContain("max-width:" + Number(svg.match(/0 0 (\d+)/)![1]) * 1.5 + "px");
     unmount();
   }
   const options = diagram.initialize.mock.lastCall![0] as { themeVariables: Record<string, string> };
@@ -147,6 +148,7 @@ it("gives every chart the same frame, with the graph fitted inside it", async ()
 it("shows the whole chart when enlarged, in its own shape", async () => {
   HTMLDialogElement.prototype.showModal = vi.fn();
   HTMLDialogElement.prototype.close = vi.fn();
+  diagram.render.mockResolvedValueOnce({ svg: '<svg viewBox="0 0 150 500"></svg>' } as never);
   diagram.render.mockResolvedValueOnce({ svg: '<svg viewBox="0 0 150 500"></svg>' } as never);
   const sizes = vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(324);
   const widths = vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
@@ -175,4 +177,33 @@ it("shimmers in the chart's own frame while it's written and drawn, instead of s
   finish({ svg: '<svg viewBox="0 0 120 80"></svg>' });
   expect(await screen.findByTitle("Mermaid diagram")).toBeInTheDocument();
   expect(screen.queryByRole("status", { name: "Drawing chart" })).toBeNull();
+});
+describe("fitting a flowchart to the frame", () => {
+  // Top-down is tall and left-to-right is wide, as real charts are.
+  const sizes = (code: string) => (/flowchart LR/.test(code) ? "0 0 900 240" : "0 0 400 900");
+  it("draws it the way round that comes out largest", () => {
+    expect(fitScale(900, 240, 620, 280)).toBeCloseTo(0.67, 1);
+    expect(fitScale(400, 900, 620, 280)).toBeCloseTo(0.28, 1);
+    expect(flipDirection("flowchart TD\n A-->B")).toBe("flowchart LR\n A-->B");
+    expect(flipDirection("graph LR\n A-->B")).toBe("graph TD\n A-->B");
+    expect(flipDirection("sequenceDiagram\n A->>B: hi")).toBeNull();
+  });
+  it("keeps the wider drawing of a tall flowchart", async () => {
+    diagram.render.mockImplementation((async (_id: string, code: string) => ({ svg: `<svg viewBox="${sizes(code)}" data-code="${code.split("\n")[0]}"></svg>` })) as never);
+    render(<ResponseBody text={'```mermaid\nflowchart TD\n A-->H\n```'} />);
+    const frame = await screen.findByTitle("Mermaid diagram");
+    expect(frame.getAttribute("srcdoc")).toContain('data-code="flowchart LR"');
+    diagram.render.mockReset();
+    diagram.render.mockImplementation((async () => ({ svg: '<svg viewBox="0 0 120 80"><text>ok</text></svg>' })) as never);
+  });
+  it("lets a small chart grow to use the frame, within reason, and lays charts out tightly", async () => {
+    diagram.render.mockResolvedValueOnce({ svg: '<svg viewBox="0 0 200 100"></svg>' } as never);
+    diagram.render.mockResolvedValueOnce({ svg: '<svg viewBox="0 0 200 100"></svg>' } as never);
+    render(<ResponseBody text={'```mermaid\nflowchart TD\n A-->I\n```'} />);
+    const frame = await screen.findByTitle("Mermaid diagram");
+    expect(frame.getAttribute("srcdoc")).toContain("max-width:300px");
+    const options = diagram.initialize.mock.lastCall![0] as { flowchart: { nodeSpacing: number; rankSpacing: number } };
+    expect(options.flowchart.nodeSpacing).toBeLessThan(50);
+    expect(options.flowchart.rankSpacing).toBeLessThan(50);
+  });
 });
