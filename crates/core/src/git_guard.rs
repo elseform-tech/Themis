@@ -5,6 +5,9 @@
 /// Turns off what starts a program whatever the command: goes before the subcommand.
 pub const NO_MONITOR: [&str; 2] = ["-c", "core.fsmonitor=false"];
 
+/// Turns off the repository's hooks, for a command that would run them.
+pub const NO_HOOKS: [&str; 2] = ["-c", "core.hooksPath=/dev/null"];
+
 /// What `git diff` needs on top: no external diff, whichever way it is named, and no text
 /// conversion. A submodule's dirt isn't asked about, since that runs Git under its configuration.
 pub const DIFF_FLAGS: [&str; 3] = [
