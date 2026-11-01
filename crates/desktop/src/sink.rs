@@ -141,6 +141,7 @@ mod tests {
             grantable: true,
             command: None,
             subagent: None,
+            sensitive_files: Vec::new(),
         });
         sink.emit_review_item(&ReviewItem {
             id: "r".to_owned(),

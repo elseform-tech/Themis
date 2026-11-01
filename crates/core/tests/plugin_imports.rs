@@ -641,6 +641,8 @@ async fn real_public_plugin_and_skill_import_acceptance() {
             shell: None,
             background: false,
             command_prefix: None,
+            command_glob: None,
+            rewake: None,
             exit_two_blocks: false,
             timeout_seconds: 10,
             blocking: true,

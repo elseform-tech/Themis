@@ -84,6 +84,13 @@ impl GrantEntry {
                 server: None,
                 risk: risk_label(action.risk).to_owned(),
             }
+        } else if action.tool == crate::tools::sensitive::SENSITIVE_TOOL {
+            Self {
+                tool: action.tool.clone(),
+                command: action.command.clone(),
+                server: None,
+                risk: risk_label(action.risk).to_owned(),
+            }
         } else if crate::tools::is_command_tool(&action.tool) {
             let scope = action.grant_scope_argv()?;
             Self {
@@ -144,6 +151,15 @@ impl GrantEntry {
                 // A stored command must stay exactly as safe as a live grant.
                 if crate::tools::is_destructive_variant(&self.command) {
                     return Err("destructive command");
+                }
+            }
+            (None, crate::tools::sensitive::SENSITIVE_TOOL) => {
+                // One kind of access to one file.
+                let [access, _path] = self.command.as_slice() else {
+                    return Err("sensitive file grant needs an access and a path");
+                };
+                if !matches!(access.as_str(), "read" | "write" | "commit") {
+                    return Err("invalid sensitive file access");
                 }
             }
             (None, "browser" | "fetch_url" | "web_search") => {

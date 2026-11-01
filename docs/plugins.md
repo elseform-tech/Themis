@@ -99,12 +99,14 @@ Options on a command hook:
 | `statusMessage` | Ignored: it is only the text of Claude's spinner. |
 | `async: false`, `asyncRewake: false` | Ignored: they are the defaults. |
 | `async: true` | Stored as `background`. The hook starts and nobody waits; it can't block or add context, as in Claude, and it is asked about before it starts like any hook. Eight run at once at most; past that one is skipped and logged (`hook` / `background_skipped`). Its time limit bounds how long it can outlive the run. |
-| `asyncRewake: true` | The hook is skipped. Its point is to wake the agent with its findings, which Themis can't do. |
+| `asyncRewake: true` | Runs like `async`, with up to 600 seconds unless it asks for less, and Stop ends it. When it exits 2, what it wrote (stderr, else stdout; at most 16 KiB) reaches the agent; see below. `rewakeMessage` goes above it, and `rewakeSummary` (or a `rewakeSummary` in a JSON line on stdout) is what you see. Any other exit says nothing. |
 | `shell: "bash"` | Stored as `shell` and run with `bash -c`. If `bash` is missing the hook fails, so a guard still blocks. Other shells are skipped. |
 | `args` | Joined onto the command, quoted so each reaches the program as written; only `${CLAUDE_PLUGIN_ROOT}` is filled in. Skipped on Windows, where hooks run in `cmd`. |
 | `commandWindows` | Ignored outside Windows, where it never applies. On Windows the hook is skipped: these commands are written for PowerShell. |
-| `if: "Bash(git push *)"` | Stored as `command_prefix`. The hook runs only for a shell or `git` tool call (background or not) running that program with those words among its arguments in order, which also finds `git -C . push` and `sh -c "x && git push"`. A wrapped script that can't be read (a variable as the program, say) and arguments that can't be read count as a match. `background_task` starts nothing (it lists, reads and stops what `shell` started), so only a call that doesn't read as one of those runs the hook. Script files and other interpreters aren't read, as for deny rules. A condition with patterns inside words, or for another tool, is skipped. |
+| `if: "Bash(git push *)"` | Stored as `command_prefix`. The hook runs only for a shell or `git` tool call (background or not) running that program with those words among its arguments in order, which also finds `git -C . push` and `sh -c "x && git push"`. A wrapped script that can't be read (a variable as the program, say) and arguments that can't be read count as a match. `background_task` starts nothing (it lists, reads and stops what `shell` started), so only a call that doesn't read as one of those runs the hook. Script files and other interpreters aren't read, as for deny rules. Patterns inside words (`Bash(git*commit*)`) are matched on the command and its arguments joined by spaces, `*` being any text, and read the same way. Another pattern character, a condition with nothing but `*`, or one for another tool is skipped. |
 | Anything else | The hook is skipped and the option is named. |
+
+What a background hook reports is the plugin's word: the agent gets it fenced and labelled as not from you, not instructions and granting nothing, and the chat shows a row for it. At most four notes wait per chat, the oldest going first (`hook` / `rewake_dropped`), and they don't outlive the app, whose stopping ends the hook too. If a turn is running it reads the note at its next step. If the chat is idle the hook may start a turn, which shows as **Plugin hook** rather than a message of yours, and whose message is the runtime's fixed text: nothing the hook wrote goes through the path of your messages, so it can't attach a skill or a plugin or run a `/` command. The report reaches the agent only as the labelled note, and you see the plugin's summary in a row in the chat. Such a turn happens: at most `hooks.max_wakes` (3 unless `runtime.jsonc` says; 0 for never) in a row until you write again, and none after a turn that failed or that you stopped, in YOLO (nobody would be asked anything, with everything open), or while a goal runs (its next turn reads it). In each of those the note waits for the chat's next turn (`hook` / `rewake_waits` says why). Woken turns keep the chat's approvals, so a tool that asks still asks. This is narrower than Claude, which wakes without a limit of ours: the review plugins that use it say exit 2 is rare and ask to be acknowledged, and a loop that reports every turn stops at the limit.
 
 `prompt`, `agent` and `http` hooks are skipped ("prompt hook has no Themis equivalent"): nothing in Themis asks a model or a web address whether a tool may run.
 
@@ -128,9 +130,31 @@ own browser with PKCE (S256) and the `resource` parameter (RFC 8707). A one-time
 `127.0.0.1` receives the result (five minutes at most); the tokens are stored in the Keychain
 (never in configuration files) and refreshed when they expire. **Sign out** forgets them.
 Sign-in and sign-out are offered only for servers you installed. A server whose sign-in needs a
-client registered by hand (no registration endpoint) is reported as such; use a
-`Bearer ${NAME}` header for it instead. A server that has its own key header never signs in. Imported definitions with an `oauth` setting are
-accepted; the sign-in happens after installing.
+client registered by hand (no registration endpoint, and no client named in its plugin) is reported
+as such; use a `Bearer ${NAME}` header for it instead. A server whose own key header has a value
+never signs in; a header written `${NAME:-}` doesn't count until it has one, so a plugin like that
+takes a key or a sign-in.
+
+An `oauth` block in a plugin's configuration is honoured, and the sign-in happens after installing:
+
+| Field | What it does |
+|---|---|
+| `clientId` | The client to sign in as, instead of registering one (a client registered with the provider, or the address of a client metadata document). The page comes back to `http://localhost:PORT/callback`, since a registered client is held to the exact address it was registered with; a client registered by Themis itself uses `http://127.0.0.1:PORT/callback`. |
+| `callbackPort` | The port the listener takes; a port already in use is reported before any page opens. Absent, any free port. |
+| `scopes` (`scope` in OpenCode's form) | What to ask for, in place of the server's `WWW-Authenticate` scope and then its `scopes_supported`. |
+| `authServerMetadataUrl` | Where the authorization server's metadata is (HTTPS, or HTTP on this computer), in place of discovery. |
+| `clientSecret` | A secret holding the client's secret, as `${NAME}`. |
+
+Any other field keeps that connection out, and is named. The token asks for the protected resource
+the server's metadata names when that covers its address (`https://mcp.slack.com` for
+`https://mcp.slack.com/mcp`), and a refresh names the same one; metadata about another server is
+refused. A preset client its provider registered for Claude (`render`, `mongodb-atlas` and `slack`
+ship one) keeps that connection out, with the reason named: Themis doesn't sign in as another app.
+The rest of those plugins still installs, and a client the provider registers for Themis works like
+any other.
+
+How far each catalog plugin's real provider was checked, without signing in to anything:
+[integrations verification](integrations-verification.md#mcp-sign-in-providers).
 
 ## Keys for MCP servers
 
@@ -145,7 +169,39 @@ environment variable of that name (a saved key wins). Keys are stored in the sys
 store (Keychain, Windows Credential Manager, Linux Secret Service, the same store as sign-ins);
 app data `keys.json` keeps only the names, because those stores cannot list entries. A server
 whose secrets are missing shows **Secret needed** with **Add secret**, which opens Settings › Secrets
-on that name; every missing name is reported at once. Settings › Secrets lists each saved secret and each secret
+on that name; every missing name is reported at once. A header written `${NAME:-}` is optional: left
+empty it isn't sent and the server doesn't wait for it.
+
+A definition can name any secret in Settings › Secrets, or any variable of the app's environment: the
+key of a model provider or of another plugin as easily as its own. So a plugin's connection reads a
+secret only once you allowed that name for that place. With its secrets all present it shows **Needs
+your OK**, "Sends `OPENCODE_KEY` to `evil.example`" and **Allow**, and nothing has been sent until you
+do (nor can a sign-in start). The place is where a connection would really go: the host and any port as the URL parser reads them
+from the address with its values filled in, or for a local program its name, held to its command,
+arguments, folder and the plugin's files. When it changes, also because a value in the address did, or
+a new secret is read, it asks again. A secret where the host goes, or a value that looks like one, is
+refused outright, since connecting would hand it to name lookup; redirects are never followed. An agent can't allow it, and a test it asks for
+(`test_mcp`) can't read secrets at all. Connections you wrote yourself (with no plugin package,
+catalog or repository behind them) don't ask, since you named the secret. An update that changes
+headers, plain values, defaults or `oauth` of a connection turns it back off until you enable it
+again, as a change to its command or address always did. A `clientSecret` is also held to the
+server's own host or an authorization server it declares: Themis won't send it to a token address a
+plugin's own metadata names elsewhere, and doesn't follow redirects from one.
+
+A plugin that ships a literal value where a key goes (in `env`, a header, `clientSecret`, a `:-default`
+of a key, or a stand-in such as `[your aws profile]`, `your-api-key` or a value that just repeats the
+field's name, like `cld-cloud-name: cloud_name`) doesn't get to keep it. The literal becomes a
+reference to a named secret, `PLUGIN_FIELD` in capitals (`cloudinary` and `cld-api-key` give
+`CLOUDINARY_CLD_API_KEY`; another value for the same field in the same plugin takes the server's name
+too), and the value is **discarded**: it is rewritten in the plugin's copies in the registry and the
+package, and a value that isn't a stand-in is also taken out of the plugin's other text files under
+1 MiB, so neither the model nor a process can read it there. The source folder isn't touched, and
+neither is a marketplace's own clone of a plugin kept inside its repository, whose contents the
+repository published. The import says which secret each one became, in names only. Same goes for an
+address shipped empty (`"url": ""`): it reads a secret named for the server, since each person has
+their own. A literal is refused in a query string, in a value mixed with a reference, in a
+marketplace entry's inline definition, and in anything you paste or type (`themis mcp import`, Edit as
+mcp.json): there you hear about it at once rather than having what you wrote dropped. Settings › Secrets lists each saved secret and each secret
 an installed server reads, with the servers that use it and its state (Saved, From environment,
 Missing), and offers Add or Replace (a masked field), Remove, and a new name. The secret
 OpenCode Go uses (Settings › Models › Providers, `OPENCODE_KEY` by default) is always

@@ -16,6 +16,27 @@
   "approval": {
     // When no rule matches: "allow" (run), "ask" (show the approval prompt) or "deny".
     "default": "ask",
+    // Project files that ask first in Custom mode when read, written, staged or committed,
+    // whatever "rules" allows. File names without case, with * and ?. A later pattern wins;
+    // ! exempts. This list replaces the defaults; [] turns it off. A project's
+    // .themis/config.jsonc can only add to it. Best effort for shell commands, and not a
+    // wall: the sandbox doesn't protect these files. At most 128 patterns.
+    // A rule with "tool": "sensitive_file" decides for these files first, e.g. deny them in
+    // every mode, YOLO included; its "command" is ["read" | "write" | "commit", path].
+    "sensitive_files": [
+      ".env",
+      ".env.*",
+      "!.env.example",
+      "!.env.sample",
+      "!.env.template",
+      "*.pem",
+      "*.key",
+      "id_rsa",
+      "credentials.json",
+      ".npmrc",
+      ".pypirc",
+      "secrets.*"
+    ],
     // Checked top to bottom; the first rule that matches decides. At most 256 rules.
     // Each rule:
     //   "tool"    which tool: "*" for every tool, an exact name, or a prefix ending in *.
@@ -168,6 +189,11 @@
     // How often a running turn's new work updates the goal's checklist, in seconds, 0 to 3600.
     // 0 updates it only when the turn ends. Each update is one request on the check's model.
     "checklist_refresh_seconds": 90
+  },
+  // Plugin hooks that report back when they finish in the background. A project file may only
+  // lower this.
+  "hooks": {
+    "max_wakes": 3                            // turns in a row one may start in an idle chat (0-10)
   },
   // Subagents the agent may start for independent parts of a task. A project file may only
   // lower these or turn them off.

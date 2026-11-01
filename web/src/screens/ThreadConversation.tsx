@@ -330,6 +330,8 @@ function Message({ message, threadId, activeRunId, durationMs, skills, plugins }
   if (message.goalCheck) return <div className="themis-thread-msg themis-thread-msg--user"><span className="themis-goal-check-label">Goal check</span><p className="themis-thread-text">{message.text}</p></div>;
   // The check's bubble already marks where a new goal turn starts.
   if (message.goalTurn !== undefined) return null;
+  // Not the person's message: what started this turn, and whose word it is.
+  if (message.hookWake !== undefined) return <div className="themis-thread-msg themis-thread-msg--user"><span className="themis-goal-check-label">Plugin hook</span><p className="themis-thread-text">{message.hookWake}</p></div>;
   const text = message.attachments?.length ? message.text.split("\n\nAttached files (local paths;")[0]! : message.text;
   const isActiveRun = activeRunId !== undefined && message.runId === activeRunId;
   const actionWaiting = isActiveRun && message.role === "assistant" && !message.final && !message.tool;

@@ -20,6 +20,50 @@ pub const MAX_SHOWN_DIFF_LINES: usize = 2_000;
 /// Most diff text in one listing across all its files, in bytes.
 pub const MAX_LISTED_DIFF_BYTES: usize = 2 * 1024 * 1024;
 
+/// File work this thread has done, counted in test builds only: the scale tests read it, and
+/// other builds compile the counting away. See docs/scale-tests.md.
+#[cfg(test)]
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct FileWork {
+    /// Files opened.
+    pub opens: u64,
+    /// Bytes read from them.
+    pub bytes: u64,
+    /// New files built into a full diff.
+    pub built: u64,
+    /// Items looked at while listing changes.
+    pub items: u64,
+}
+
+#[cfg(test)]
+thread_local! {
+    static FILE_WORK: std::cell::Cell<FileWork> = const {
+        std::cell::Cell::new(FileWork { opens: 0, bytes: 0, built: 0, items: 0 })
+    };
+}
+
+/// The work counted so far on this thread, which starts the count again.
+#[cfg(test)]
+pub(crate) fn take_work() -> FileWork {
+    FILE_WORK.take()
+}
+
+macro_rules! count_work {
+    ($($field:ident += $amount:expr),+) => {
+        #[cfg(test)]
+        FILE_WORK.with(|work| {
+            let mut counted = work.get();
+            $(counted.$field += $amount as u64;)+
+            work.set(counted);
+        });
+    };
+}
+
+/// Counts one item looked at while listing changes.
+pub(crate) fn count_listed_item() {
+    count_work!(items += 1);
+}
+
 /// Returns true when `root` is inside a git work tree.
 #[must_use]
 pub fn is_git_repo(root: &Path) -> bool {
@@ -86,6 +130,43 @@ pub fn git_status_names(root: &Path) -> Result<HashSet<String>, String> {
     Ok(names)
 }
 
+/// Largest file whose whole content is hashed for its fingerprint.
+const MAX_FINGERPRINT_READ_BYTES: u64 = 1024 * 1024;
+/// Bytes hashed from each end of a larger file.
+const FINGERPRINT_SAMPLE_BYTES: u64 = 64 * 1024;
+
+/// A hash of a file's content, or `None` when it can't be read. A file over
+/// [`MAX_FINGERPRINT_READ_BYTES`] is judged by its size, modified time and both ends, so an edit
+/// to its middle that keeps its size and modified time goes unseen, and saving it unchanged
+/// counts as a change.
+fn content_fingerprint(path: &Path) -> Option<u64> {
+    use std::hash::{Hash, Hasher};
+    use std::io::{Read, Seek, SeekFrom};
+    let metadata = std::fs::metadata(path).ok()?;
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    if metadata.is_file() && metadata.len() > MAX_FINGERPRINT_READ_BYTES {
+        metadata.len().hash(&mut hasher);
+        metadata.modified().ok().hash(&mut hasher);
+        let mut file = std::fs::File::open(path).ok()?;
+        count_work!(opens += 1);
+        for start in [0, metadata.len() - FINGERPRINT_SAMPLE_BYTES] {
+            let mut sample = Vec::new();
+            file.seek(SeekFrom::Start(start)).ok()?;
+            (&mut file)
+                .take(FINGERPRINT_SAMPLE_BYTES)
+                .read_to_end(&mut sample)
+                .ok()?;
+            count_work!(bytes += sample.len());
+            sample.hash(&mut hasher);
+        }
+    } else {
+        let content = std::fs::read(path).ok()?;
+        count_work!(opens += 1, bytes += content.len());
+        content.hash(&mut hasher);
+    }
+    Some(hasher.finish())
+}
+
 /// Working-tree state of readable changed files: porcelain code and a content
 /// hash (`None` when the file is gone).
 pub type ChangeFingerprint = HashMap<String, (u8, Option<u64>)>;
@@ -95,7 +176,6 @@ pub type ChangeFingerprint = HashMap<String, (u8, Option<u64>)>;
 /// a Git failure yields an empty capture.
 #[must_use]
 pub fn change_fingerprint(root: &Path) -> ChangeFingerprint {
-    use std::hash::{Hash, Hasher};
     let Ok(bytes) = git_output(
         root,
         &["status", "--porcelain", "-z", "--untracked-files=all"],
@@ -116,11 +196,7 @@ pub fn change_fingerprint(root: &Path) -> ChangeFingerprint {
             continue;
         }
         let code = if chunk[0] == b' ' { chunk[1] } else { chunk[0] };
-        let hash = std::fs::read(root.join(&path)).ok().map(|content| {
-            let mut hasher = std::collections::hash_map::DefaultHasher::new();
-            content.hash(&mut hasher);
-            hasher.finish()
-        });
+        let hash = content_fingerprint(&root.join(&path));
         fingerprint.insert(path, (code, hash));
     }
     fingerprint
@@ -242,6 +318,7 @@ pub fn is_readable_change(root: &Path, relative: &str) -> bool {
     };
     let mut sample = vec![0; TEXT_SAMPLE_BYTES];
     let read = std::io::Read::read(&mut file, &mut sample).unwrap_or(0);
+    count_work!(opens += 1, bytes += read);
     sample.truncate(read);
     if sample.contains(&0) {
         return false;
@@ -262,8 +339,10 @@ fn count_lines(path: &Path) -> usize {
         return 0;
     };
     let mut buffer = [0u8; 64 * 1024];
+    count_work!(opens += 1);
     let (mut lines, mut last) = (0, b'\n');
     while let Ok(read) = std::io::Read::read(&mut file, &mut buffer) {
+        count_work!(bytes += read);
         if read == 0 {
             break;
         }
@@ -274,6 +353,7 @@ fn count_lines(path: &Path) -> usize {
 }
 
 pub fn untracked_diff_file(root: &Path, relative: &str) -> DiffFile {
+    count_work!(built += 1);
     let mut bytes = Vec::new();
     let mut too_large = false;
     if let Ok(file) = std::fs::File::open(root.join(relative)) {
@@ -281,6 +361,7 @@ pub fn untracked_diff_file(root: &Path, relative: &str) -> DiffFile {
             &mut std::io::Read::take(file, MAX_SHOWN_FILE_BYTES + 1),
             &mut bytes,
         );
+        count_work!(opens += 1, bytes += bytes.len());
         if bytes.len() as u64 > MAX_SHOWN_FILE_BYTES {
             too_large = true;
             // Keep whole lines only.
@@ -646,6 +727,9 @@ fn decode_octal_escape(first: u8, bytes: &mut std::iter::Peekable<std::str::Byte
     }
     value as u8
 }
+
+#[cfg(test)]
+pub(crate) mod scale_tests;
 
 #[cfg(test)]
 mod tests {

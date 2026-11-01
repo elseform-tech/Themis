@@ -39,6 +39,9 @@ const SIGN_IN_CANCELLED: &str = "Sign-in cancelled";
 /// The connection failure that means "sign in", kept apart from other failures.
 const NEEDS_SIGN_IN: &str = "Sign in to use this server.";
 
+/// A plugin's connection reads a secret the person hasn't allowed it. Nothing has been sent.
+const NEEDS_SECRET_OK: &str = "This connection reads secrets you haven't allowed it.";
+
 pub(super) const NEEDS_CONSENT: &str =
     "Needs your approval: enable this connection yourself in Integrations or the CLI";
 
@@ -48,6 +51,10 @@ pub(super) struct McpEntry {
     fingerprint: String,
     /// A remote server's address when it may use a sign-in (no token variable of its own).
     remote: Option<String>,
+    /// That address with its secrets filled in: what a sign-in is kept under.
+    remote_filled: Option<String>,
+    /// The secrets it is waiting to be allowed, and where they would go.
+    secrets_waiting: Vec<super::mcp_consent::SecretUse>,
     result: tokio::sync::watch::Receiver<Option<SessionResult>>,
     task: tokio::task::JoinHandle<()>,
 }
@@ -72,7 +79,8 @@ impl McpEntry {
     fn status(&self) -> Value {
         let mut status = self.connection_status();
         if let Some(url) = &self.remote {
-            status["signed_in"] = json!(themis_core::plugins::oauth::signed_in(url));
+            let filled = self.remote_filled.as_deref().unwrap_or(url);
+            status["signed_in"] = json!(themis_core::plugins::oauth::signed_in(filled));
             status["url"] = json!(url);
         }
         status
@@ -83,6 +91,9 @@ impl McpEntry {
             Some(Ok(session)) if session.is_connected() => json!({"status":"connected"}),
             Some(Ok(_)) => {
                 json!({"status":"failed","reason":"Connection closed. Refresh to reconnect."})
+            }
+            Some(Err(reason)) if reason == NEEDS_SECRET_OK => {
+                json!({"status":"needs_secret_ok","reason":reason,"secrets":self.secrets_waiting})
             }
             Some(Err(reason)) if reason == NEEDS_SIGN_IN => {
                 json!({"status":"needs_sign_in","reason":reason})
@@ -110,8 +121,23 @@ impl AppState {
         blocked: Option<&'static str>,
         retry: bool,
     ) -> Arc<McpEntry> {
+        let checked = plugin.spec.mcp.get(name).map_or(Ok(Vec::new()), |written| {
+            self.secrets_awaiting_ok(root, plugin, name, written)
+        });
+        let (secrets_waiting, unchecked) = match checked {
+            Ok(waiting) => (waiting, None),
+            Err(reason) => (Vec::new(), Some(reason)),
+        };
+        let blocked = blocked
+            .or(unchecked)
+            .or((!secrets_waiting.is_empty()).then_some(NEEDS_SECRET_OK));
+        // Where the person's answer holds for, read again just before connecting.
+        let bound = (server.url.is_some() && !server.key_names().is_empty())
+            .then(|| server.secret_destination().ok())
+            .flatten();
         let key = format!("{}:{}:mcp:{name}", plugin.scope, plugin.spec.name);
         let remote_url = server.url.clone().filter(|_| !server.has_credentials());
+        let signed_in_at = server.filled_url();
         let fingerprint = format!(
             "{}:{blocked:?}:{}",
             plugin.revision,
@@ -148,6 +174,9 @@ impl AppState {
                 themis_core::diagnostics::ACTIVE.scope(context, async {
                     if let Some(reason) = blocked {
                         return Err(reason.to_owned());
+                    }
+                    if bound.is_some() && server.secret_destination().ok() != bound {
+                        return Err(NEEDS_SECRET_OK.to_owned());
                     }
                     store
                         .materialize(&[plugin], &root)
@@ -187,6 +216,8 @@ impl AppState {
         let entry = Arc::new(McpEntry {
             fingerprint,
             remote: remote_url,
+            remote_filled: signed_in_at,
+            secrets_waiting,
             result,
             task,
         });
@@ -276,6 +307,12 @@ impl AppState {
         if !self.mcp_consented(root, plugin, name, &plugin.spec.mcp[name]) {
             anyhow::bail!("MCP startup needs your approval");
         }
+        if self
+            .secrets_awaiting_ok(root, plugin, name, &plugin.spec.mcp[name])
+            .map_or(true, |waiting| !waiting.is_empty())
+        {
+            anyhow::bail!("{NEEDS_SECRET_OK}");
+        }
         if let Some(policy) = startup_rules {
             if connections::startup_denied(&plugin.skill_id(name), &server, policy)? {
                 anyhow::bail!("MCP startup denied");
@@ -332,7 +369,11 @@ impl AppState {
     /// browser; once they finish, its connection is tried again. Only URLs of servers you have
     /// installed are accepted.
     pub(super) async fn mcp_sign_in(&self, root: &Path, url: &str) -> Result<Value, String> {
-        self.installed_mcp_url(root, url)?;
+        let server = self.installed_mcp_url(root, url)?;
+        if self.mcp_url_awaits_secret_ok(root, url)? {
+            return Err(NEEDS_SECRET_OK.to_owned());
+        }
+        let filled = sign_in_address(&server)?;
         // The person may close the browser tab instead of finishing: Cancel (in Integrations)
         // stops the wait at once instead of leaving it until the time limit.
         let cancel = Arc::new(tokio::sync::Notify::new());
@@ -342,8 +383,9 @@ impl AppState {
             .insert(url.to_owned(), Arc::clone(&cancel));
         let outcome = tokio::select! {
             outcome = themis_core::plugins::oauth::sign_in(
-                url,
-                crate::state::spawn_opener_url,
+                &filled,
+                server.oauth.as_ref(),
+                |page| self.open_url(page),
                 std::time::Duration::from_secs(300),
             ) => outcome.map_err(|e| format!("{e:#}")),
             () = cancel.notified() => Err(SIGN_IN_CANCELLED.to_owned()),
@@ -370,12 +412,29 @@ impl AppState {
 
     /// Forgets the sign-in of an installed remote MCP server.
     pub(super) fn mcp_sign_out(&self, root: &Path, url: &str) -> Result<Value, String> {
-        self.installed_mcp_url(root, url)?;
-        themis_core::plugins::oauth::sign_out(url)?;
+        let server = self.installed_mcp_url(root, url)?;
+        themis_core::plugins::oauth::sign_out(&sign_in_address(&server)?)?;
         self.mcp_status(root, true)
     }
 
-    fn installed_mcp_url(&self, root: &Path, url: &str) -> Result<(), String> {
+    /// Whether a plugin connection at this address still waits for the person to allow a secret.
+    fn mcp_url_awaits_secret_ok(&self, root: &Path, url: &str) -> Result<bool, String> {
+        let plugins = self
+            .plugin_store(Some(root.to_owned()))
+            .list()
+            .map_err(|e| e.to_string())?;
+        Ok(plugins.iter().any(|plugin| {
+            plugin.spec.mcp.iter().any(|(name, server)| {
+                server.url.as_deref() == Some(url)
+                    && self
+                        .secrets_awaiting_ok(root, plugin, name, server)
+                        .map_or(true, |waiting| !waiting.is_empty())
+            })
+        }))
+    }
+
+    /// The installed server at this address as it is written (`${NAME}` and all).
+    fn installed_mcp_url(&self, root: &Path, url: &str) -> Result<McpServer, String> {
         let plugins = self
             .plugin_store(Some(root.to_owned()))
             .list()
@@ -383,8 +442,15 @@ impl AppState {
         plugins
             .iter()
             .flat_map(|plugin| plugin.spec.mcp.values())
-            .any(|server| server.url.as_deref() == Some(url))
-            .then_some(())
+            .find(|server| server.url.as_deref() == Some(url))
+            .cloned()
             .ok_or_else(|| "No installed MCP server has that address".to_owned())
     }
+}
+
+/// The address a server signs in at, its secrets filled in.
+fn sign_in_address(server: &McpServer) -> Result<String, String> {
+    server
+        .filled_url()
+        .ok_or_else(|| "Add the secrets this server's address needs first.".to_owned())
 }

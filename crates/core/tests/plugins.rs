@@ -326,6 +326,8 @@ async fn hooks_require_approval_and_can_block_before_events() {
         shell: None,
         background: false,
         command_prefix: None,
+        command_glob: None,
+        rewake: None,
         exit_two_blocks: false,
         plugin_root: None,
         plugin_data: None,
@@ -414,6 +416,7 @@ fn mcp_startup_is_blocked_only_by_an_explicit_deny_rule() {
     let ask = ApprovalPolicy {
         default: PolicyAction::Ask,
         rules: Vec::new(),
+        ..Default::default()
     };
     assert!(!startup_denied("fixture", &local, &ask).unwrap());
     let deny = ApprovalPolicy {
@@ -424,6 +427,7 @@ fn mcp_startup_is_blocked_only_by_an_explicit_deny_rule() {
             risk: None,
             command: None,
         }],
+        ..Default::default()
     };
     assert!(startup_denied("fixture", &local, &deny).unwrap());
     // The startup action shows its command as structured tokens, not a joined string.
@@ -483,6 +487,8 @@ async fn hook_root_is_data_and_timeout_kills_descendants() {
         shell: None,
         background: false,
         command_prefix: None,
+        command_glob: None,
+        rewake: None,
         exit_two_blocks: false,
         plugin_root: Some(path),
         plugin_data: None,

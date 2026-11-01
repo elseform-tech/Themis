@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { goalTurnNumber, initialState, reducer } from "./reducer";
+import { goalTurnNumber, hookWakeSummary, initialState, reducer } from "./reducer";
 
 const thread = "t1";
 const envelope = (event: object, run_id = "r1") => ({ type: "thread/event" as const, envelope: { thread_id: thread, run_id, event: event as never } });
@@ -156,5 +156,14 @@ describe("a steered message on screen", () => {
     state = reducer(state, { type: "approval/expired", approvalId: "a1", steered: true } as never);
     expect(state.approvals).toEqual([]);
     expect(state.toasts).toEqual([]);
+  });
+});
+
+describe("hook wake messages", () => {
+  it("reads the runtime's line, and only from its marker", () => {
+    const text = "[Plugin hook \u2014 runtime, not from the user] A plugin hook finished in the background and reported back.\nNobody wrote this message";
+    expect(hookWakeSummary(text)).toBe("A plugin hook finished in the background and reported back.");
+    expect(hookWakeSummary("A plugin hook finished")).toBeUndefined();
+    expect(hookWakeSummary("a message quoting [Plugin hook \u2014 runtime, not from the user]")).toBeUndefined();
   });
 });

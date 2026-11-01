@@ -124,6 +124,8 @@
 .themis-composer-ring::after { content: ""; position: absolute; inset: 1.5px; border-radius: inherit; background: var(--themis-composer-bg); }
 @keyframes themis-ring { to { transform: translate(-50%, -50%) rotate(1turn); } }
 .themis-thread-hint { margin: 0; font-size: .75rem; color: var(--themis-text-3); }
+.themis-composer-secret { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; color: var(--themis-text-2); }
+.themis-composer-secret button { flex: none; padding: 0 4px; border: 0; background: none; color: inherit; font: inherit; cursor: pointer; }
 .themis-thread-composer .themis-prompt-editor { min-height: 28px; max-height: 240px; overflow-y: auto; padding: 4px 0; border: 0; border-radius: 0; background: transparent; line-height: 1.5; font-size: .9375rem; }
 .themis-thread-composer--hero .themis-prompt-editor { min-height: 52px; font-size: 1rem; }
 .themis-thread-composer .themis-prompt-editor:focus-visible { outline: none; }

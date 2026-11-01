@@ -17,6 +17,7 @@ pub mod prompts;
 pub mod providers;
 pub mod runtime;
 pub mod sandbox;
+pub mod secret_look;
 pub mod skills;
 pub mod social;
 pub mod tools;

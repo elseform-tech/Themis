@@ -547,6 +547,10 @@ pub struct ApprovalRequest {
     /// Set when a subagent, not the main agent, asks.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub subagent: Option<SubagentLabel>,
+    /// The sensitive project files this action touches: "allow in this chat" covers these
+    /// (and, for a command, that command), not the whole tool.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub sensitive_files: Vec<String>,
 }
 
 /// What a site grant covers (`GrantSite` in types.ts).
@@ -1514,6 +1518,7 @@ mod tests {
             grantable: true,
             command: None,
             subagent: None,
+            sensitive_files: Vec::new(),
         };
         assert_eq!(
             to_value(&request),

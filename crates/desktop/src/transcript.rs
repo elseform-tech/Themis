@@ -10,6 +10,8 @@ use themis_core::runtime::{checkpoint_parts, ChatRole, ConversationRole, Convers
 use crate::types::{ThreadEvent, ThreadEventEnvelope};
 
 pub mod history_pages;
+#[cfg(test)]
+mod scale_tests;
 mod source_exports;
 
 // Items live briefly while being read or saved, and most of them are events.
@@ -57,6 +59,7 @@ impl TranscriptStore {
             )
             .map_err(|e| format!("initialize sessions: {e}"))?;
         connection.execute_batch("CREATE TABLE IF NOT EXISTS context_turns (seq INTEGER PRIMARY KEY, thread_id TEXT NOT NULL, role TEXT NOT NULL, text TEXT NOT NULL); CREATE INDEX IF NOT EXISTS context_turns_thread ON context_turns(thread_id, seq); CREATE TABLE IF NOT EXISTS context_checkpoints (thread_id TEXT PRIMARY KEY, through_seq INTEGER NOT NULL, summary TEXT NOT NULL); CREATE TABLE IF NOT EXISTS context_source_exports (thread_id TEXT NOT NULL,directory TEXT NOT NULL,last_seq INTEGER NOT NULL,last_file TEXT NOT NULL,PRIMARY KEY(thread_id,directory));").map_err(|e| format!("initialize context: {e}"))?;
+        connection.execute_batch("CREATE TABLE IF NOT EXISTS attachment_paths (seq INTEGER PRIMARY KEY,thread_id TEXT NOT NULL,path TEXT NOT NULL,UNIQUE(thread_id,path));").map_err(|e| format!("initialize attachments: {e}"))?;
         connection.execute_batch("CREATE TABLE IF NOT EXISTS document_capsules (thread_id TEXT NOT NULL,source_sha256 TEXT NOT NULL,source_path TEXT NOT NULL,capsule TEXT NOT NULL,PRIMARY KEY(thread_id,source_sha256,source_path));").map_err(|e| format!("initialize document capsules: {e}"))?;
         let version: i64 = connection
             .query_row("PRAGMA user_version", [], |row| row.get(0))
@@ -85,6 +88,9 @@ impl TranscriptStore {
             connection
                 .execute_batch("PRAGMA user_version=1")
                 .map_err(|e| format!("finish context migration: {e}"))?;
+        }
+        if version < 2 {
+            migrate_attachment_paths(&connection)?;
         }
         Ok(Self {
             connection: Mutex::new(connection),
@@ -267,6 +273,10 @@ impl TranscriptStore {
                 )
                 .map_err(|e| format!("save context turn: {e}"))?;
         }
+        if let HistoryItem::User { attachments, .. } = &decoded {
+            remember_attachment_paths(&transaction, thread_id, attachments)
+                .map_err(|e| format!("save attachments: {e}"))?;
+        }
         if let HistoryItem::Event {
             envelope:
                 ThreadEventEnvelope {
@@ -377,23 +387,13 @@ impl TranscriptStore {
     pub fn attachment_paths(&self, thread_id: &str) -> Result<Vec<String>, String> {
         let connection = self.connection.lock().unwrap_or_else(|e| e.into_inner());
         let mut statement = connection
-            .prepare("SELECT item FROM history WHERE thread_id = ?1 AND item LIKE '%\"attachments\"%' ORDER BY seq")
+            .prepare("SELECT path FROM attachment_paths WHERE thread_id = ?1 ORDER BY seq")
             .map_err(|e| format!("read attachments: {e}"))?;
         let rows = statement
             .query_map([thread_id], |row| row.get::<_, String>(0))
             .map_err(|e| format!("read attachments: {e}"))?;
-        let mut paths: Vec<String> = Vec::new();
-        for row in rows {
-            let text = row.map_err(|e| format!("read attachments: {e}"))?;
-            if let Ok(HistoryItem::User { attachments, .. }) = serde_json::from_str(&text) {
-                for path in attachments {
-                    if !paths.contains(&path) {
-                        paths.push(path);
-                    }
-                }
-            }
-        }
-        Ok(paths)
+        rows.map(|row| row.map_err(|e| format!("read attachments: {e}")))
+            .collect()
     }
 
     pub fn history(&self, thread_id: &str) -> Result<Vec<HistoryItem>, String> {
@@ -613,21 +613,24 @@ impl TranscriptStore {
         terms.truncate(12);
         terms.sort();
         terms.dedup();
-        // SQLite searches originals locally; only bounded matching passages reach the model.
-        for term in terms {
-            let mut statement = connection.prepare("SELECT seq,role,max(1,instr(lower(text),?2)-700),substr(text,max(1,instr(lower(text),?2)-700),2400) FROM context_turns WHERE thread_id=?1 AND instr(lower(text),?2)>0 ORDER BY seq DESC LIMIT 4").map_err(|e|e.to_string())?;
-            let rows = statement
-                .query_map(params![thread_id, term], |row| {
-                    Ok((
-                        row.get::<_, i64>(0)?,
-                        row.get::<_, String>(1)?,
-                        row.get::<_, usize>(2)?,
-                        row.get::<_, String>(3)?,
-                    ))
-                })
-                .map_err(|e| e.to_string())?;
-            for row in rows {
-                let (seq, role, offset, text) = row.map_err(|e| e.to_string())?;
+        // Originals are searched locally; only bounded matching passages reach the model.
+        let mut passage = connection.prepare("SELECT seq,role,max(1,instr(lower(text),?2)-700),substr(text,max(1,instr(lower(text),?2)-700),2400) FROM context_turns WHERE seq=?1").map_err(|e|e.to_string())?;
+        for (term, seqs) in
+            terms
+                .iter()
+                .zip(newest_turns_with_terms(&connection, thread_id, &terms)?)
+        {
+            for seq in seqs {
+                let (seq, role, offset, text) = passage
+                    .query_row(params![seq, term], |row| {
+                        Ok((
+                            row.get::<_, i64>(0)?,
+                            row.get::<_, String>(1)?,
+                            row.get::<_, usize>(2)?,
+                            row.get::<_, String>(3)?,
+                        ))
+                    })
+                    .map_err(|e| e.to_string())?;
                 add(seq,role,offset-1,text,"lexical match in original exchange; relevance is not a decision or authorization");
             }
         }
@@ -697,6 +700,12 @@ impl TranscriptStore {
             )
             .map_err(|e| e.to_string())?;
         connection
+            .execute(
+                "DELETE FROM attachment_paths WHERE thread_id=?1",
+                [thread_id],
+            )
+            .map_err(|e| e.to_string())?;
+        connection
             .execute("DELETE FROM history WHERE thread_id = ?1", [thread_id])
             .map_err(|e| format!("delete session: {e}"))?;
         connection
@@ -713,6 +722,91 @@ impl TranscriptStore {
             .map_err(|e| format!("delete checkpoint: {e}"))?;
         Ok(())
     }
+}
+
+/// Most matching turns recalled for one term.
+const RECALL_MATCHES_PER_TERM: usize = 4;
+
+/// For each term, the newest turns containing it, newest first, reading the chat once however
+/// many terms there are and stopping when every term has all its matches. A match is what
+/// `instr(lower(text),term)>0` finds, where SQLite's `lower` only folds ASCII.
+fn newest_turns_with_terms(
+    connection: &Connection,
+    thread_id: &str,
+    terms: &[String],
+) -> Result<Vec<Vec<i64>>, String> {
+    let mut found = vec![Vec::new(); terms.len()];
+    let mut statement = connection
+        .prepare("SELECT seq,text FROM context_turns WHERE thread_id=?1 ORDER BY seq DESC")
+        .map_err(|e| e.to_string())?;
+    let mut rows = statement.query([thread_id]).map_err(|e| e.to_string())?;
+    while found
+        .iter()
+        .any(|seqs| seqs.len() < RECALL_MATCHES_PER_TERM)
+    {
+        let Some(row) = rows.next().map_err(|e| e.to_string())? else {
+            break;
+        };
+        let seq: i64 = row.get(0).map_err(|e| e.to_string())?;
+        let text = row
+            .get_ref(1)
+            .and_then(|text| Ok(text.as_bytes()?))
+            .map_err(|e| e.to_string())?;
+        let lowered = String::from_utf8_lossy(text).to_ascii_lowercase();
+        for (term, seqs) in terms.iter().zip(&mut found) {
+            if seqs.len() < RECALL_MATCHES_PER_TERM && lowered.contains(term.as_str()) {
+                seqs.push(seq);
+            }
+        }
+    }
+    Ok(found)
+}
+
+/// A path keeps the position of its first mention, so a chat's list stays oldest first.
+fn remember_attachment_paths(
+    connection: &Connection,
+    thread_id: &str,
+    paths: &[String],
+) -> rusqlite::Result<()> {
+    for path in paths {
+        connection.execute(
+            "INSERT OR IGNORE INTO attachment_paths(thread_id,path) VALUES (?1,?2)",
+            params![thread_id, path],
+        )?;
+    }
+    Ok(())
+}
+
+/// Fills the attachment list from older history, once, all or nothing.
+fn migrate_attachment_paths(connection: &Connection) -> Result<(), String> {
+    let transaction = connection
+        .unchecked_transaction()
+        .map_err(|e| format!("migrate attachments: {e}"))?;
+    {
+        let mut statement = transaction
+            .prepare(
+                "SELECT thread_id,item FROM history WHERE item LIKE '%\"attachments\"%' ORDER BY seq",
+            )
+            .map_err(|e| format!("migrate attachments: {e}"))?;
+        let rows = statement
+            .query_map([], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            })
+            .map_err(|e| format!("migrate attachments: {e}"))?;
+        for row in rows {
+            let (thread_id, text) = row.map_err(|e| format!("migrate attachments: {e}"))?;
+            if let Ok(HistoryItem::User { attachments, .. }) = serde_json::from_str(&text) {
+                remember_attachment_paths(&transaction, &thread_id, &attachments)
+                    .map_err(|e| format!("migrate attachments: {e}"))?;
+            }
+        }
+    }
+    transaction
+        .execute_batch("PRAGMA user_version=2")
+        .map_err(|e| format!("finish attachment migration: {e}"))?;
+    transaction
+        .commit()
+        .map_err(|e| format!("finish attachment migration: {e}"))
 }
 
 fn role_name(role: &ConversationRole) -> &'static str {
@@ -789,7 +883,8 @@ fn session_checks(
         let version: i64 = transaction
             .query_row("PRAGMA user_version", [], |row| row.get(0))
             .map_err(|_| "Cannot read schema version")?;
-        if version != 1 {
+        // Version 1 is a store this version of the app hasn't opened yet.
+        if !(1..=2).contains(&version) {
             return Err(format!(
                 "Unsupported schema version {version}; migration was not attempted"
             ));
@@ -801,6 +896,11 @@ fn session_checks(
         ] {
             transaction
                 .prepare(sql)
+                .map_err(|_| "Session schema is incomplete")?;
+        }
+        if version >= 2 {
+            transaction
+                .prepare("SELECT thread_id,path FROM attachment_paths LIMIT 0")
                 .map_err(|_| "Session schema is incomplete")?;
         }
         let integrity = if deep {
@@ -823,9 +923,9 @@ fn session_checks(
             "sqlite_integrity",
             Status::Pass,
             if deep {
-                "Full integrity_check passed; schema version 1"
+                format!("Full integrity_check passed; schema version {version}")
             } else {
-                "quick_check passed; schema version 1"
+                format!("quick_check passed; schema version {version}")
             },
             "",
         ));

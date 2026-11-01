@@ -164,8 +164,26 @@ impl DesktopApprovalHook {
 
 impl ApprovalHook for DesktopApprovalHook {
     fn approve(&self, action: &ToolAction) -> Approval {
+        self.ask(action, Vec::new())
+    }
+
+    fn approve_sensitive(
+        &self,
+        action: &ToolAction,
+        access: &themis_core::tools::sensitive::SensitiveAccess,
+    ) -> Approval {
+        self.ask(action, access.names())
+    }
+}
+
+impl DesktopApprovalHook {
+    fn ask(&self, action: &ToolAction, sensitive_files: Vec<String>) -> Approval {
         let escape = action.tool == themis_core::tools::UNSANDBOXED_TOOL;
-        if action.risk == CoreRisk::Read && !self.confirm_reads && !escape {
+        if action.risk == CoreRisk::Read
+            && !self.confirm_reads
+            && !escape
+            && sensitive_files.is_empty()
+        {
             return Approval::AllowOnce;
         }
         // Leaving the sandbox needs a person watching: automations never ask
@@ -206,6 +224,7 @@ impl ApprovalHook for DesktopApprovalHook {
             grantable,
             command: action.display.clone(),
             subagent: self.subagent.clone(),
+            sensitive_files,
         };
         let (sender, receiver) = std::sync::mpsc::channel();
         {

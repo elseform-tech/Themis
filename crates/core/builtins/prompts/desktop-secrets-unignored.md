@@ -1,0 +1,1 @@
+Secret-looking files here are not ignored by Git: {{files}}. Add them to .gitignore before any commit, and keep examples such as .env.example tracked.

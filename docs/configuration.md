@@ -233,6 +233,7 @@ combined, and do not grant permissions. There is no implicit instruction globbin
 | `compaction.summary_max_tokens` | Initial summary-output ceiling, 256–16,384; default 8,192. Retries may use up to twice the effective initial allowance, subject to capacity. |
 | `compaction.summary_model` | Optional model id (1–256 printable bytes, no spaces): any model a connected provider offers, `<provider>/<id>` for one from `providers`; omitted/null keeps automatic routing. Only internal summaries change. A run fails before it starts when the model is not in the captured catalogs (OpenCode Go's and the configured providers'); a model on another provider than the chat's is called with that provider's key. |
 | `goal.check_model` | Optional model id, as `compaction.summary_model`: the model that checks each goal turn; omitted/null checks with the chat's own model. File only (no Settings control); any layer, so a project may choose its own. A model on another provider than the chat's is called with that provider's key. |
+| `hooks.max_wakes` | Integer 0–10, default `3`: how many turns in a row a finished background [plugin hook](plugins.md) may start in an idle chat before you write again. `0` never starts one, and what a hook reports waits for the chat's next turn. Never in YOLO, while a goal runs, or after a turn that failed or that you stopped. A project or run layer may only lower it. |
 | `subagents.enabled` | Boolean, default `true`: offer the subagent tools (`spawn_subagents`, `wait_subagents`, `message_subagent`, `stop_subagent`) to the agent. A project or run layer may only set it to `false`. |
 | `subagents.max_parallel` | Integer 1–6, default `3`: subagents running at once per chat; more wait their turn. A project or run layer may only lower it. |
 | `subagents.max_turns` | Integer 1–1000, default `40`: model requests per subagent; reaching it ends the subagent with its partial result. A project or run layer may only lower it. |
@@ -246,6 +247,7 @@ combined, and do not grant permissions. There is no implicit instruction globbin
 | `providers` | User file only; at most 16 OpenAI-compatible providers. See [Model providers](#model-providers-and-per-model-overrides) |
 | `models` | At most 256 per-model overrides keyed by model id or `<provider>/<id>`; any layer. See [Model providers](#model-providers-and-per-model-overrides) |
 | `compaction.prompt_file` | Optional UTF-8 Markdown, at most 32 KiB |
+| `approval.sensitive_files` | File-name patterns (at most 128, each 1..128 bytes, `*` and `?`, no case, no paths) of project files that ask first in Custom when read, written, staged or committed. A later pattern wins and `!` exempts. Default: `.env`, `.env.*`, `!.env.example`, `!.env.sample`, `!.env.template`, `*.pem`, `*.key`, `id_rsa`, `credentials.json`, `.npmrc`, `.pypirc`, `secrets.*`. User and run lists replace it, as arrays do, and `[]` turns it off. A project's list only adds: `[]` there changes nothing and a `!` pattern is a validation error that refuses runs. Rules with `"tool": "sensitive_file"` decide for these files (deny works in YOLO too; `command` is `["read" \| "write" \| "commit", path]`). Best effort for shell commands and no wall: see [sandbox](sandbox.md#sensitive-project-files). `approval` / `sensitive_file_asked` logs the tool, the kinds of file (`env`, `key`, `credentials`, `registry`, `custom`) and a count, never a path; a path can name a client or a machine, and it is a tool payload. `approval` / `secret_scan` logs the time and counts of the check when a run starts. `themis permissions` prints the list. |
 | `approval.rules` | At most 256 ordered rules `{tool, action, risk?, command?}`; `command` is an argv-prefix array (see Composer permissions) |
 | `sandbox.enabled` | Boolean, default `true`; only the user file (or no file) can turn it off |
 | `sandbox.backend` | `auto` (default), `seatbelt` (macOS), `bubblewrap` or `landlock` (Linux); a backend of another OS is an error, an unusable named one fails closed |
@@ -430,6 +432,8 @@ Deny rules also match every command a wrapper runs: `sh`/`bash`/`zsh`/`dash`/`ks
 `sh -c "ls && rm x"` and `sudo rm x`. Script files (`sh build.sh`) and other
 interpreters (`python -c`, `node -e`) are not read: this is a tool policy, not a
 sandbox; deny those interpreters if you need to.
+
+`search_file` and `list_dir` do not consider `.gitignore`: `search_file` matches file names only (never contents) and looks at the first 100 entries it walks, `.git` and dependency folders included; `list_dir` leaves out dotfiles. Neither reaches a file's contents, so neither needs an approval for a sensitive file.
 
 A deny rule holds across the two tools that run git: one on `shell` also covers the `git` tool, and one on `git` that names a `command` also covers a shell call running it (a `git` rule with no `command` stays about the tool). `git -C . push` is matched as `git push`. Allow and ask rules stay on the tool they name.
 
