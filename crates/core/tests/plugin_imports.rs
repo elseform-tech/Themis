@@ -206,7 +206,7 @@ fn imports_mcp_shapes_without_credentials_or_silent_options() {
         Some("https://mcp.linear.app/mcp")
     );
     for invalid in [
-        json!({"mcpServers":{"x":{"type":"sse","url":"https://example.com"}}}),
+        json!({"mcpServers":{"x":{"type":"websocket","url":"https://example.com"}}}),
         json!({"mcpServers":{"x":{"url":"https://example.com","headers":{"Authorization":"Bearer literal-secret"}}}}),
         json!({"mcpServers":{"x":{"command":"node","env":{"TOKEN":"literal-secret"}}}}),
         json!({"mcpServers":{"x":{"command":"node","retries":3}}}),
@@ -649,7 +649,8 @@ async fn real_public_plugin_and_skill_import_acceptance() {
             plugin_root: Some(resource_root),
             plugin_data: None,
             env_file: None,
-            session_sources: None,
+            moment_matcher: None,
+            prompt: None,
             runtime_identity: None,
         };
         let approvals: std::sync::Arc<dyn themis_core::tools::ApprovalHook> =

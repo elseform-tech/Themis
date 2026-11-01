@@ -113,6 +113,7 @@ pub(super) struct SubagentKit {
     pub(super) catalog: Vec<themis_core::providers::GoModel>,
     pub(super) endpoint_override: bool,
     pub(super) hooks: Vec<themis_core::plugins::hooks::Hook>,
+    prompt_model: themis_core::plugins::hooks::PromptModel,
     /// The run's MCP tools.
     pub(super) mcp: SubagentMcp,
     web: SubagentWeb,
@@ -154,6 +155,7 @@ impl SubagentKit {
         catalog: Vec<themis_core::providers::GoModel>,
         endpoint_override: bool,
         hooks: Vec<themis_core::plugins::hooks::Hook>,
+        prompt_model: themis_core::plugins::hooks::PromptModel,
         mcp: SubagentMcp,
         web: SubagentWeb,
         plugin_bins: Vec<PathBuf>,
@@ -185,6 +187,7 @@ impl SubagentKit {
             catalog,
             endpoint_override,
             hooks,
+            prompt_model,
             mcp,
             web,
             plugin_bins,
@@ -262,6 +265,7 @@ impl SubagentKit {
             notes: RunNotes::new(),
             slots: Arc::clone(&self.nested_slots),
             nested_slots: Arc::clone(&self.nested_slots),
+            prompt_model: self.prompt_model.clone(),
             nested: Some(NestedLimits {
                 parent_id: agent.id.clone(),
                 parent_name: agent.name.clone(),
@@ -885,6 +889,7 @@ impl SubagentKit {
                 agent: Arc::clone(agent),
                 report: self.reporter(),
                 denied: self.denies("todo_write"),
+                plan: std::sync::Mutex::default(),
             }));
         }
         if names(agent, "ask_user") {
@@ -958,7 +963,9 @@ impl SubagentKit {
                 transcript_path: self.transcript_path(agent),
                 permission_mode: super::run::permission_mode(self.mode).to_owned(),
                 cancel: Some(Arc::clone(&agent.stop)),
-                source: "startup".to_owned(),
+                open: None,
+                model: agent.model.clone(),
+                prompt_model: Some(self.prompt_model.clone()),
                 plugin_bins: self.plugin_bins.clone(),
                 attached_skills: Vec::new(),
                 skills_seen: Arc::default(),
@@ -1484,6 +1491,10 @@ impl ApprovalHook for ScopedShell {
         self.inner.approve_sensitive(action, access)
     }
 
+    fn would_ask(&self, action: &ToolAction) -> bool {
+        !self.refuses(action) && self.inner.would_ask(action)
+    }
+
     fn approve(&self, action: &ToolAction) -> Approval {
         if self.refuses(action) {
             // Metadata only: never the command.
@@ -1773,6 +1784,10 @@ struct OwnGrants {
 impl ApprovalHook for OwnGrants {
     fn denied_by_rule(&self, action: &ToolAction) -> bool {
         self.inner.denied_by_rule(action)
+    }
+
+    fn would_ask(&self, action: &ToolAction) -> bool {
+        !self.grants.covers(action) && self.inner.would_ask(action)
     }
 
     fn approve(&self, action: &ToolAction) -> Approval {
