@@ -735,6 +735,7 @@ impl SubagentKit {
                 agent: Arc::clone(agent),
                 report: self.reporter(),
                 denied: self.denies("todo_write"),
+                plan: std::sync::Mutex::default(),
             }));
         }
         if names(agent, "ask_user") {
@@ -802,7 +803,8 @@ impl SubagentKit {
                 transcript_path: self.transcript_path(agent),
                 permission_mode: super::run::permission_mode(self.mode).to_owned(),
                 cancel: Some(Arc::clone(&agent.stop)),
-                source: "startup".to_owned(),
+                open: None,
+                model: agent.model.clone(),
                 plugin_bins: self.plugin_bins.clone(),
                 attached_skills: Vec::new(),
                 skills_seen: Arc::default(),
@@ -1266,6 +1268,10 @@ impl ApprovalHook for ScopedShell {
         self.refuses(action) || self.inner.denied_by_rule(action)
     }
 
+    fn would_ask(&self, action: &ToolAction) -> bool {
+        !self.refuses(action) && self.inner.would_ask(action)
+    }
+
     fn approve(&self, action: &ToolAction) -> Approval {
         if self.refuses(action) {
             // Metadata only: never the command.
@@ -1547,6 +1553,10 @@ struct OwnGrants {
 impl ApprovalHook for OwnGrants {
     fn denied_by_rule(&self, action: &ToolAction) -> bool {
         self.inner.denied_by_rule(action)
+    }
+
+    fn would_ask(&self, action: &ToolAction) -> bool {
+        !self.grants.covers(action) && self.inner.would_ask(action)
     }
 
     fn approve(&self, action: &ToolAction) -> Approval {

@@ -8,7 +8,7 @@ use std::path::Path;
 use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
-pub const EVENTS: [&str; 9] = [
+pub const EVENTS: [&str; 21] = [
     "PromptSubmit",
     "RunStart",
     "BeforeTool",
@@ -18,7 +18,22 @@ pub const EVENTS: [&str; 9] = [
     "RunEnd",
     "SubagentStart",
     "SubagentEnd",
+    "SessionStart",
+    "SessionEnd",
+    "UserPromptExpansion",
+    "PermissionRequest",
+    "PermissionDenied",
+    "PostToolBatch",
+    "PostCompact",
+    "Notification",
+    "TaskCreated",
+    "TaskCompleted",
+    "ConfigChange",
+    "InstructionsLoaded",
 ];
+
+/// Events no run may be there for: what they run was allowed when the session opened.
+const UNATTENDED_EVENTS: [&str; 2] = ["SessionEnd", "Notification"];
 
 fn canonical_event(event: &str) -> &str {
     match event {
@@ -70,10 +85,11 @@ pub struct Hook {
     /// labelled note. See [`RewakeNote`].
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rewake: Option<HookRewake>,
-    /// Only when the chat is at one of these (`resume`: it continues after a restart). Absent, on
-    /// every turn.
+    /// For an event that isn't about a tool, what it must be about, in Claude's matcher language:
+    /// `resume` on `SessionStart`, a reason on `SessionEnd`, a skill's name on
+    /// `UserPromptExpansion` and so on (see [`moment_subject`]). Absent, all of them.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub session_sources: Option<Vec<String>>,
+    pub moment_matcher: Option<String>,
     /// Claude's convention: exit code 2 asks to block, with the reason on stderr.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub exit_two_blocks: bool,
@@ -142,6 +158,11 @@ impl Hook {
         if let Some(pattern) = self.matcher.as_deref().and_then(matcher_regex) {
             compile_matcher(pattern).context("Invalid hook matcher")?;
         }
+        if let Some(pattern) = &self.moment_matcher {
+            if !plain_matcher(pattern) {
+                compile_matcher(pattern).context("Invalid hook matcher")?;
+            }
+        }
         Ok(())
     }
 
@@ -154,10 +175,9 @@ impl Hook {
                 .matcher
                 .as_ref()
                 .is_none_or(|matcher| matcher_covers(matcher, tool, mcp_names))
-            && self.session_sources.as_ref().is_none_or(|sources| {
-                payload["source"]
-                    .as_str()
-                    .is_some_and(|source| sources.iter().any(|wanted| wanted == source))
+            && self.moment_matcher.as_ref().is_none_or(|pattern| {
+                moment_subject(canonical_event(&self.event), payload)
+                    .is_some_and(|subject| moment_matches(pattern, subject))
             })
             && self.command_prefix.as_ref().is_none_or(|prefix| {
                 tool.is_some_and(|tool| {
@@ -174,6 +194,42 @@ impl Hook {
                 })
             })
     }
+}
+
+/// What a matcher on an event that isn't about a tool is tested against: the field Claude's
+/// documentation names for that event.
+fn moment_subject<'a>(event: &str, payload: &'a Value) -> Option<&'a str> {
+    let field = match event {
+        "SessionStart" | "ConfigChange" => "source",
+        "SessionEnd" => "reason",
+        "Notification" => "notification_type",
+        "PostCompact" => "trigger",
+        "UserPromptExpansion" => "command_name",
+        "InstructionsLoaded" => "load_reason",
+        _ => return None,
+    };
+    payload[field].as_str()
+}
+
+/// Whether a matcher is a list of exact names rather than a regular expression, by Claude's rule:
+/// letters, digits, `_` and `|` only.
+fn plain_matcher(pattern: &str) -> bool {
+    pattern
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '|')
+}
+
+/// Whether a matcher takes `subject`. Empty and `*` take everything; a pattern that doesn't compile
+/// takes nothing.
+#[must_use]
+pub fn moment_matches(pattern: &str, subject: &str) -> bool {
+    if pattern.is_empty() || pattern == "*" {
+        return true;
+    }
+    if plain_matcher(pattern) {
+        return pattern.split('|').any(|name| name == subject);
+    }
+    compile_matcher(pattern).is_ok_and(|regex| regex.is_match(subject))
 }
 
 /// What marks the regular expression at the end of a matcher: `shell|re:mcp__.*__query`. It
@@ -422,13 +478,7 @@ fn add_claude_fields(payload: &mut Value, runtime: &HookRuntime) {
     let Some(tool) = payload["tool"].as_str().map(str::to_owned) else {
         return;
     };
-    let name = runtime
-        .mcp_names
-        .get(&tool)
-        .and_then(|names| names.first().cloned())
-        .or_else(|| claude_tool_name(&tool).map(str::to_owned))
-        .unwrap_or_else(|| tool.clone());
-    payload["tool_name"] = name.into();
+    payload["tool_name"] = runtime.claude_name(&tool).into();
     payload["tool_input"] = claude_tool_input(&tool, &payload["arguments"]);
     if let Some(output) = payload["output"].as_str() {
         let response = serde_json::from_str(output).unwrap_or_else(|_| json!(output));
@@ -446,12 +496,24 @@ pub async fn run(
     execute(hook, root, payload).await
 }
 
+/// A hook and its exact definition, as approvals see it: another definition is another hook.
+#[must_use]
+pub fn hook_identity(hook: &Hook) -> String {
+    use std::hash::{Hash, Hasher};
+    let mut definition = std::collections::hash_map::DefaultHasher::new();
+    serde_json::to_string(hook)
+        .unwrap_or_default()
+        .hash(&mut definition);
+    format!(
+        "hook_{}_{:016x}",
+        hook.runtime_identity.as_ref().unwrap_or(&hook.name),
+        definition.finish()
+    )
+}
+
 /// Validates a hook and asks whether it may run.
 fn authorize(hook: &Hook, approvals: &Arc<dyn ApprovalHook>) -> anyhow::Result<()> {
     hook.validate()?;
-    use std::hash::{Hash, Hasher};
-    let mut definition = std::collections::hash_map::DefaultHasher::new();
-    serde_json::to_string(hook)?.hash(&mut definition);
     let action = ToolAction {
         display: Some(crate::tools::CommandDisplay {
             argv: vec![hook.command.clone()],
@@ -460,11 +522,7 @@ fn authorize(hook: &Hook, approvals: &Arc<dyn ApprovalHook>) -> anyhow::Result<(
             sandbox_blocked: None,
         }),
         command: Vec::new(),
-        tool: format!(
-            "hook_{}_{:016x}",
-            hook.runtime_identity.as_ref().unwrap_or(&hook.name),
-            definition.finish()
-        ),
+        tool: hook_identity(hook),
         summary: format!("{}: {}", hook.event, hook.command),
         risk: RiskLevel::Execute,
     };
@@ -550,8 +608,8 @@ async fn execute(hook: &Hook, root: &Path, payload: &Value) -> anyhow::Result<Va
         if !refused.is_empty() {
             command.env("THEMIS_ENV_REFUSED", refused.join(","));
         }
-        // Claude gives it only to session hooks, which import as PromptSubmit.
-        if hook.event == "PromptSubmit" {
+        // Claude gives it only to session hooks.
+        if hook.event == "SessionStart" {
             if let Some(parent) = file.path.parent() {
                 std::fs::create_dir_all(parent)?;
             }
@@ -570,7 +628,7 @@ async fn execute(hook: &Hook, root: &Path, payload: &Value) -> anyhow::Result<Va
         .stderr
         .take()
         .map(|stderr| keep_stderr(stderr, stderr_limit));
-    let _group = ProcessGroup(child.id());
+    let mut group = ProcessGroup(child.id());
     let outcome = tokio::time::timeout(
         std::time::Duration::from_secs(hook.timeout_seconds),
         async {
@@ -631,8 +689,11 @@ async fn execute(hook: &Hook, root: &Path, payload: &Value) -> anyhow::Result<Va
             if text.trim().is_empty() {
                 return Ok(json!({"ok":true}));
             }
-            // A prompt hook may print plain text: that is context for the turn.
-            let prompt = canonical_event(&hook.event) == "PromptSubmit";
+            // These may print plain text: that is context for the turn.
+            let prompt = matches!(
+                canonical_event(&hook.event),
+                "PromptSubmit" | "SessionStart" | "UserPromptExpansion"
+            );
             let value: Value = match serde_json::from_str(&text) {
                 Ok(value) => value,
                 Err(_) if prompt => json!({"context": text}),
@@ -649,7 +710,15 @@ async fn execute(hook: &Hook, root: &Path, payload: &Value) -> anyhow::Result<Va
     )
     .await;
     match outcome {
-        Ok(value) => value,
+        Ok(value) => {
+            // It ended by itself, so what it detached on purpose (a save handed off so that the
+            // hook returns at once, as Claude's short budgets make plugins do) is left alone. A
+            // hook cut short keeps the group and takes everything with it.
+            if matches!(child.try_wait(), Ok(Some(_))) {
+                group.0 = None;
+            }
+            value
+        }
         Err(_) => {
             let _ = child.kill().await;
             bail!("Hook timed out");
@@ -712,8 +781,11 @@ pub struct HookSession {
     pub permission_mode: String,
     /// Stops a hook that is still running (the person's Stop).
     pub cancel: Option<Arc<std::sync::atomic::AtomicBool>>,
-    /// Claude's `source`: `resume` on a chat's first run after the app started, else `startup`.
-    pub source: String,
+    /// The session this chat's run belongs to. A subagent's run has none: it has no session of
+    /// its own, and `SessionStart` is the chat's.
+    pub open: Option<OpenSession>,
+    /// The chat's model, as `SessionStart` reports it.
+    pub model: String,
     /// The `bin` folders of this run's plugins, searched after the system's for its commands.
     pub plugin_bins: Vec<std::path::PathBuf>,
     /// The skills the person attached to this turn, in Claude's words: they enter it with no call.
@@ -722,6 +794,71 @@ pub struct HookSession {
     pub skills_seen: Arc<std::sync::Mutex<std::collections::HashSet<String>>>,
     /// Told when a background hook leaves a note, which may outlive this run.
     pub on_rewake: Option<RewakeNotify>,
+}
+
+/// A chat's session, as a run sees it. A session is the chat's continuous use: it opens with the
+/// chat's first run after the app started (or after it last ended), and ends when the chat is
+/// deleted, the app quits or the chat has sat idle; the app keeps the rest.
+#[derive(Clone, Default)]
+pub struct OpenSession {
+    /// This run opens the session: its instructions count as loaded, and what the plugin's session
+    /// hooks left for the last one goes.
+    pub opening: bool,
+    /// This run opens the session of a chat that already has history.
+    pub resuming: bool,
+    /// Where what `SessionStart` hooks said is kept, so that every turn of the chat has it.
+    pub context_path: std::path::PathBuf,
+    /// The `SessionStart` hooks that have run in this session.
+    pub started: Arc<std::sync::Mutex<std::collections::HashSet<String>>>,
+    /// Whether each hook no run may be there for is allowed to run. It is asked once a session,
+    /// while a run can ask.
+    pub unattended: Arc<std::sync::Mutex<std::collections::HashMap<String, bool>>>,
+    /// Configuration files that changed since the session's last run: Claude's `source`, the path.
+    pub config_changes: Vec<(String, String)>,
+    /// The instruction files this project's configuration loads, by full path.
+    pub instructions: Vec<String>,
+}
+
+/// Why a session ended: Claude's word, then what happened here.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SessionEnding {
+    AppQuit,
+    ChatDeleted,
+    ProjectDeleted,
+    Idle,
+}
+
+impl SessionEnding {
+    /// Claude's documented `reason`: quitting is `prompt_input_exit`, the rest `other`.
+    #[must_use]
+    pub fn reason(self) -> &'static str {
+        match self {
+            Self::AppQuit => "prompt_input_exit",
+            _ => "other",
+        }
+    }
+
+    /// What happened here, for scripts that care and for the diagnostics.
+    #[must_use]
+    pub fn detail(self) -> &'static str {
+        match self {
+            Self::AppQuit => "app_quit",
+            Self::ChatDeleted => "chat_deleted",
+            Self::ProjectDeleted => "project_deleted",
+            Self::Idle => "idle",
+        }
+    }
+}
+
+/// What came of running a session's unattended hooks.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct UnattendedOutcome {
+    pub ran: usize,
+    pub failed: usize,
+    /// Not allowed when the session opened.
+    pub not_allowed: usize,
+    /// Still running when the budget ran out, and stopped.
+    pub cut_short: bool,
 }
 
 /// What `Skill` hooks are told a skill is called, from its id (`g--plugin--revision--name`,
@@ -1013,6 +1150,232 @@ fn added_context(output: &Value) -> Option<&str> {
         .filter(|text| !text.trim().is_empty())
 }
 
+/// Adds what each hook said to `context`, a line apart.
+fn add_context(context: &mut String, outputs: &[Value]) {
+    for output in outputs {
+        if let Some(text) = added_context(output) {
+            if !context.is_empty() {
+                context.push('\n');
+            }
+            context.push_str(text.trim());
+        }
+    }
+}
+
+/// A turn's hook context, within [`PROMPT_CONTEXT_LIMIT`]: the session's, the expansion's, then the
+/// prompt's. This turn's own is kept whole when there's no room for all of it.
+fn prompt_context_of(session: &str, expansion: &str, prompt: &str) -> String {
+    let own = [expansion, prompt]
+        .into_iter()
+        .filter(|text| !text.is_empty())
+        .collect::<Vec<_>>()
+        .join("\n");
+    let own = capped(&own, PROMPT_CONTEXT_LIMIT);
+    let room = PROMPT_CONTEXT_LIMIT.saturating_sub(own.len() + 1);
+    let session = capped(session, room);
+    match (session.is_empty(), own.is_empty()) {
+        (true, _) => own.to_owned(),
+        (false, true) => session.to_owned(),
+        (false, false) => format!("{session}\n{own}"),
+    }
+}
+
+/// What a person wrote beside a skill they attached: its mark reads as its name by now.
+fn command_args(task: &str, skill: &str) -> String {
+    let name = skill.rsplit(':').next().unwrap_or(skill);
+    task.replacen(name, "", 1).trim().to_owned()
+}
+
+/// What `SessionStart` hooks have said in this chat, by hook. Anything unreadable counts as nothing
+/// said: they run again.
+fn read_session_context(path: &Path) -> std::collections::BTreeMap<String, String> {
+    let mut text = String::new();
+    let read = std::fs::File::open(path).and_then(|file| {
+        file.take(SESSION_CONTEXT_FILE_BYTES)
+            .read_to_string(&mut text)
+    });
+    if read.is_err() {
+        return Default::default();
+    }
+    serde_json::from_str(&text).unwrap_or_default()
+}
+
+/// Keeps what `SessionStart` hooks said, readable only by the person: it comes from their plugins
+/// and may hold anything. A failure costs that context on later turns and never stops the work.
+fn write_session_context(path: &Path, said: &std::collections::BTreeMap<String, String>) {
+    use std::io::Write as _;
+    let saved = (|| -> std::io::Result<()> {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        let mut options = std::fs::OpenOptions::new();
+        options.create(true).write(true).truncate(true);
+        #[cfg(unix)]
+        std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o600);
+        let mut file = options.open(path)?;
+        file.write_all(serde_json::to_string(said)?.as_bytes())
+    })();
+    if saved.is_err() {
+        crate::diagnostics::emit("hook", "session_context_unsaved", "warn", json!({}));
+    }
+}
+
+/// Most of the file of what `SessionStart` hooks said that is read back.
+const SESSION_CONTEXT_FILE_BYTES: u64 = 1024 * 1024;
+
+/// Most of one tool's result a `PostToolBatch` hook is told, in bytes.
+const BATCH_RESPONSE_BYTES: usize = 64 * 1024;
+
+/// Most of a checkpoint's summary a `PostCompact` hook is told, in bytes.
+const COMPACT_SUMMARY_BYTES: usize = 256 * 1024;
+
+/// A step's tool calls have all finished and the next model request hasn't gone out: this is
+/// `PostToolBatch`. What it adds is returned for that request; a hook that blocks ends the turn.
+pub async fn post_tool_batch(
+    calls: &[(String, Value, String)],
+    events: &tokio::sync::mpsc::Sender<crate::runtime::RunEvent>,
+) -> anyhow::Result<Option<String>> {
+    if IN_HOOK.try_with(|running| *running).unwrap_or(false) {
+        return Ok(None);
+    }
+    let Ok(runtime) = ACTIVE.try_with(Clone::clone) else {
+        return Ok(None);
+    };
+    if !runtime.listens("PostToolBatch") {
+        return Ok(None);
+    }
+    let tool_calls: Vec<Value> = calls
+        .iter()
+        .map(|(tool, arguments, response)| {
+            let response = capped(response, BATCH_RESPONSE_BYTES);
+            json!({
+                "tool_name": runtime.claude_name(tool),
+                "tool_input": claude_tool_input(tool, arguments),
+                "tool_response": serde_json::from_str(response).unwrap_or_else(|_| json!(response)),
+            })
+        })
+        .collect();
+    let outputs = runtime
+        .emit_collect("PostToolBatch", json!({"tool_calls": tool_calls}), events)
+        .await?;
+    let mut added = String::new();
+    add_context(&mut added, &outputs);
+    Ok((!added.is_empty()).then(|| capped(&added, PROMPT_CONTEXT_LIMIT).to_owned()))
+}
+
+/// A checkpoint is in place: this is `PostCompact`. Themis never compacts on request, so `trigger`
+/// is always `auto`.
+pub async fn post_compact(
+    summary: &str,
+    events: &tokio::sync::mpsc::Sender<crate::runtime::RunEvent>,
+) {
+    let payload =
+        json!({"trigger": "auto", "compact_summary": capped(summary, COMPACT_SUMMARY_BYTES)});
+    emit_current("PostCompact", payload, events).await.ok();
+}
+
+/// The person is about to be asked to approve a tool call: this is `PermissionRequest`, and then
+/// `Notification`. A hook may answer deny, whose message is returned, or say nothing. `allow` is
+/// ignored and logged, whatever it also asks to change: hooks never grant permissions.
+pub async fn permission_request(
+    tool: &str,
+    arguments: &Value,
+    events: &tokio::sync::mpsc::Sender<crate::runtime::RunEvent>,
+) -> Option<String> {
+    if IN_HOOK.try_with(|running| *running).unwrap_or(false) {
+        return None;
+    }
+    let runtime = ACTIVE.try_with(Clone::clone).ok()?;
+    if runtime.listens("PermissionRequest") {
+        let payload = json!({"tool": tool, "arguments": arguments, "permission_suggestions": []});
+        let outputs = runtime
+            .emit_collect("PermissionRequest", payload, events)
+            .await
+            .unwrap_or_default();
+        for output in &outputs {
+            let decision = &output["hookSpecificOutput"]["decision"];
+            match decision["behavior"].as_str() {
+                Some("deny") => {
+                    return Some(
+                        decision["message"]
+                            .as_str()
+                            .map(str::trim)
+                            .filter(|message| !message.is_empty())
+                            .map_or_else(
+                                || "A plugin hook denied this.".to_owned(),
+                                |message| capped(message, BLOCK_REASON_LIMIT).to_owned(),
+                            ),
+                    )
+                }
+                Some("allow") => crate::diagnostics::emit(
+                    "hook",
+                    "permission_allow_ignored",
+                    "info",
+                    json!({"tool": tool}),
+                ),
+                _ => {}
+            }
+        }
+    }
+    if runtime.listens("Notification") {
+        let payload = json!({"message": "Themis needs your permission",
+            "title": "Permission needed", "notification_type": "permission_prompt"});
+        runtime.emit("Notification", payload, events).await.ok();
+    }
+    None
+}
+
+/// An approval refused a tool call: this is `PermissionDenied`. Claude's `retry` isn't read, since
+/// the model is told about a refusal either way.
+pub async fn permission_denied(
+    tool: &str,
+    arguments: &Value,
+    reason: &str,
+    events: &tokio::sync::mpsc::Sender<crate::runtime::RunEvent>,
+) {
+    let payload = json!({"tool": tool, "arguments": arguments, "reason": reason});
+    emit_current("PermissionDenied", payload, events).await.ok();
+}
+
+/// A subagent's plan changed: `TaskCreated` for each new item, `TaskCompleted` for each newly done.
+/// A hook that refuses refuses the change, and the subagent hears why. Items are named by their
+/// words, since a plan has no other ids.
+pub async fn plan_changed(
+    before: &[(String, String)],
+    after: &[(String, String)],
+) -> anyhow::Result<()> {
+    let Ok(runtime) = ACTIVE.try_with(Clone::clone) else {
+        return Ok(());
+    };
+    if !runtime.listens("TaskCreated") && !runtime.listens("TaskCompleted") {
+        return Ok(());
+    }
+    // These are the tool's own business: their outcomes show as its result.
+    let (events, _) = tokio::sync::mpsc::channel(1);
+    let name = runtime.agent.as_ref().map(|agent| agent["name"].clone());
+    for (content, status) in after {
+        let payload = json!({"task_id": task_id(content), "task_subject": content,
+            "teammate_name": name});
+        let known = before.iter().find(|(known, _)| known == content);
+        if known.is_none() {
+            runtime
+                .emit("TaskCreated", payload.clone(), &events)
+                .await?;
+        }
+        if status == "completed" && known.is_none_or(|(_, status)| status != "completed") {
+            runtime.emit("TaskCompleted", payload, &events).await?;
+        }
+    }
+    Ok(())
+}
+
+fn task_id(content: &str) -> String {
+    use std::hash::{Hash, Hasher};
+    let mut hash = std::collections::hash_map::DefaultHasher::new();
+    content.hash(&mut hash);
+    format!("task-{:012x}", hash.finish() & 0xffff_ffff_ffff)
+}
+
 /// `text` cut to at most `limit` bytes on a character boundary.
 fn capped(text: &str, limit: usize) -> &str {
     if text.len() <= limit {
@@ -1232,6 +1595,15 @@ fn entry_text(text: &str) -> &str {
 }
 
 impl HookRuntime {
+    /// A tool's name in Claude's words: its MCP name, its counterpart, or its own.
+    fn claude_name(&self, tool: &str) -> String {
+        self.mcp_names
+            .get(tool)
+            .and_then(|names| names.first().cloned())
+            .or_else(|| claude_tool_name(tool).map(str::to_owned))
+            .unwrap_or_else(|| tool.to_owned())
+    }
+
     /// Adds a line to the chat's transcript, in the shape Claude writes: one JSON object a line,
     /// with `"role":"…"` as hooks grep for it. Only the chat's own run writes there, and a failure
     /// only costs a line: it never stops the work.
@@ -1270,15 +1642,30 @@ impl HookRuntime {
     }
 
     /// The hooks for skills the person attached: they go into the turn with no call, so this is
-    /// when they are taken up. A hook that refuses stops the turn, as a prompt hook does.
+    /// when they are taken up, and when a `/skill` they wrote is expanded. A hook that refuses
+    /// stops the turn, as a prompt hook does. What `UserPromptExpansion` hooks add is returned.
     async fn attached_skill_hooks(
         &self,
+        task: &str,
         events: &tokio::sync::mpsc::Sender<crate::runtime::RunEvent>,
-    ) -> anyhow::Result<()> {
+    ) -> anyhow::Result<String> {
+        let mut added = String::new();
         for skill in &self.session.attached_skills {
             if !self.first_sight_of(skill) {
                 continue;
             }
+            let expansion = json!({
+                "expansion_type": "slash_command",
+                "command_name": skill,
+                "command_args": command_args(task, skill),
+                "command_source": if skill.contains(':') { "plugin" } else { "user" },
+                "prompt": task,
+            });
+            let outputs = self
+                .emit_collect("UserPromptExpansion", expansion, events)
+                .await
+                .map_err(|error| anyhow::anyhow!("Skill {skill} was refused: {error}"))?;
+            add_context(&mut added, &outputs);
             let call = json!({"tool": "Skill", "arguments": {"skill": skill}});
             self.emit("BeforeTool", call, events)
                 .await
@@ -1288,7 +1675,183 @@ impl HookRuntime {
             self.first_sight_of(&format!("after:{skill}"));
             self.emit("AfterTool", done, events).await.ok();
         }
-        Ok(())
+        Ok(added)
+    }
+
+    /// This run's part in the chat's session: starts what hasn't started and asks about what will
+    /// run with no run to ask. A `SessionStart` hook can't stop a turn, in Claude either. Returns
+    /// what the session's hooks have said, for every turn of it.
+    async fn session_hooks(
+        &self,
+        events: &tokio::sync::mpsc::Sender<crate::runtime::RunEvent>,
+    ) -> String {
+        let Some(open) = self.session.open.clone() else {
+            return String::new();
+        };
+        self.ask_about_unattended(&open);
+        if open.opening {
+            let mut seen = std::collections::HashSet::new();
+            for file in self
+                .hooks
+                .iter()
+                .filter(|hook| hook.enabled)
+                .filter_map(|hook| hook.env_file.as_ref())
+            {
+                if seen.insert(&file.path) {
+                    let _ = std::fs::remove_file(&file.path);
+                }
+            }
+        }
+        let mut said = read_session_context(&open.context_path);
+        let mut changed = false;
+        for hook in self
+            .hooks
+            .iter()
+            .filter(|hook| hook.event == "SessionStart")
+        {
+            if !hook.enabled {
+                continue;
+            }
+            let identity = hook_identity(hook);
+            // A hook's first run in a chat is its startup, so one turned on in a chat that's already
+            // going still starts; after that each session is a resume. One written only for
+            // resuming runs when a chat with history opens a session, as that is one.
+            let takes = |source: &str| {
+                hook.moment_matcher
+                    .as_ref()
+                    .is_none_or(|pattern| moment_matches(pattern, source))
+            };
+            let source = if said.contains_key(&identity) || (open.resuming && !takes("startup")) {
+                "resume"
+            } else {
+                "startup"
+            };
+            let wanted = takes(source);
+            if !wanted
+                || !open
+                    .started
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .insert(identity.clone())
+            {
+                continue;
+            }
+            let alone = HookRuntime {
+                hooks: vec![hook.clone()],
+                ..self.clone()
+            };
+            let payload = json!({"source": source, "model": self.session.model});
+            let outputs = alone
+                .emit_collect("SessionStart", payload, events)
+                .await
+                .unwrap_or_default();
+            let mut text = String::new();
+            add_context(&mut text, &outputs);
+            said.insert(identity, capped(&text, PROMPT_CONTEXT_LIMIT).to_owned());
+            changed = true;
+        }
+        if changed {
+            let known: std::collections::HashSet<String> =
+                self.hooks.iter().map(hook_identity).collect();
+            said.retain(|identity, _| known.contains(identity));
+            write_session_context(&open.context_path, &said);
+        }
+        self.env_refusals();
+        for (source, path) in &open.config_changes {
+            let payload = json!({"source": source, "file_path": path});
+            self.emit("ConfigChange", payload, events).await.ok();
+        }
+        if open.opening {
+            for path in &open.instructions {
+                let payload = json!({"file_path": path, "memory_type": "Project",
+                    "load_reason": "session_start"});
+                self.emit("InstructionsLoaded", payload, events).await.ok();
+            }
+        }
+        let mut context = String::new();
+        for hook in self.hooks.iter().filter(|hook| hook.enabled) {
+            if let Some(text) = said
+                .get(&hook_identity(hook))
+                .filter(|text| !text.is_empty())
+            {
+                if !context.is_empty() {
+                    context.push('\n');
+                }
+                context.push_str(text);
+            }
+        }
+        context
+    }
+
+    /// Asks once a session about each hook that will run when there's no run to ask.
+    fn ask_about_unattended(&self, open: &OpenSession) {
+        for hook in self.hooks.iter().filter(|hook| {
+            hook.enabled && UNATTENDED_EVENTS.contains(&canonical_event(&hook.event))
+        }) {
+            let identity = hook_identity(hook);
+            let known = open
+                .unattended
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .contains_key(&identity);
+            if !known {
+                let allowed = authorize(hook, &self.approvals).is_ok();
+                if !allowed {
+                    crate::diagnostics::emit(
+                        "hook",
+                        "unattended_not_allowed",
+                        "warn",
+                        json!({"hook": hook.name, "event": hook.event}),
+                    );
+                }
+                open.unattended
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .insert(identity, allowed);
+            }
+        }
+    }
+
+    /// Runs an event's hooks with no run around them, each within its own limit and all within
+    /// `budget`. Only what was allowed when the session opened runs. It waits for them, whichever
+    /// way they were written: nothing is left to report to, and a report to an ended session goes
+    /// nowhere. Their answers are not read.
+    pub async fn run_unattended(
+        &self,
+        event: &str,
+        payload: Value,
+        allowed: &std::collections::HashMap<String, bool>,
+        budget: std::time::Duration,
+    ) -> UnattendedOutcome {
+        let payload = self.full_payload(event, payload);
+        let mut outcome = UnattendedOutcome::default();
+        let mut waiting = Vec::new();
+        for hook in self.hooks.iter().filter(|hook| {
+            hook.enabled
+                && canonical_event(&hook.event) == canonical_event(event)
+                && hook.applies(&payload, &self.mcp_names)
+        }) {
+            if allowed.get(&hook_identity(hook)) != Some(&true) {
+                outcome.not_allowed += 1;
+                continue;
+            }
+            let mut hook = hook.clone();
+            hook.background = false;
+            hook.rewake = None;
+            let (root, payload) = (self.root.clone(), payload.clone());
+            waiting.push(async move {
+                IN_HOOK
+                    .scope(true, execute(&hook, &root, &payload))
+                    .await
+                    .is_ok()
+            });
+        }
+        outcome.ran = waiting.len();
+        match tokio::time::timeout(budget, futures_util::future::join_all(waiting)).await {
+            Ok(results) => outcome.failed = results.iter().filter(|ok| !**ok).count(),
+            Err(_) => outcome.cut_short = true,
+        }
+        outcome
     }
 
     /// What the agent said, for the transcript.
@@ -1310,10 +1873,19 @@ impl HookRuntime {
         let name = payload["tool_name"].as_str().unwrap_or_default();
         match event {
             "BeforeTool" => {
-                let input = payload["tool_input"].to_string();
+                // An object, as Claude writes it: scripts read fields out of it. One past the bound
+                // keeps what names the call.
+                let input = &payload["tool_input"];
+                let input = if input.to_string().len() <= TRANSCRIPT_ENTRY_BYTES {
+                    input.clone()
+                } else {
+                    let field = |key: &str| input[key].as_str().map(|text| capped(text, 1024));
+                    json!({"command": field("command"), "file_path": field("file_path"),
+                        "truncated": true})
+                };
                 self.write_transcript(
                     "assistant",
-                    json!([{"type": "tool_use", "name": name, "input": entry_text(&input)}]),
+                    json!([{"type": "tool_use", "name": name, "input": input}]),
                 );
             }
             "AfterTool" => {
@@ -1339,34 +1911,15 @@ impl HookRuntime {
         self.emit_collect(event, payload, events).await.map(|_| ())
     }
 
-    /// Runs the `PromptSubmit` hooks for `prompt`. A hook that asks to block stops the turn;
-    /// the context they add is returned, capped at [`PROMPT_CONTEXT_LIMIT`].
-    pub async fn prompt_submit(
-        &self,
-        prompt: &str,
-        events: &tokio::sync::mpsc::Sender<crate::runtime::RunEvent>,
-    ) -> anyhow::Result<String> {
-        self.note_prompt(prompt);
-        // A session hook runs every turn here, so what it wrote last turn goes.
-        let env_files = || {
-            self.hooks
-                .iter()
-                .filter(|hook| hook.enabled)
-                .filter_map(|hook| hook.env_file.as_ref())
-        };
-        for file in env_files() {
-            let _ = std::fs::remove_file(&file.path);
-        }
-        let outputs = self
-            .emit_collect(
-                "PromptSubmit",
-                json!({"prompt": prompt, "source": self.session.source}),
-                events,
-            )
-            .await?;
-        // Metadata only: how many, never the names or values a hook wrote.
+    /// Metadata only: how many names a plugin's session hooks wrote and were refused.
+    fn env_refusals(&self) {
         let mut seen = std::collections::HashSet::new();
-        for file in env_files() {
+        for file in self
+            .hooks
+            .iter()
+            .filter(|hook| hook.enabled)
+            .filter_map(|hook| hook.env_file.as_ref())
+        {
             if seen.insert(&file.path) {
                 let refused = file.read().1.len();
                 if refused > 0 {
@@ -1379,16 +1932,43 @@ impl HookRuntime {
                 }
             }
         }
+    }
+
+    /// Runs the `PromptSubmit` hooks for `prompt`. A hook that asks to block stops the turn;
+    /// the context they add is returned, capped at [`PROMPT_CONTEXT_LIMIT`].
+    pub async fn prompt_submit(
+        &self,
+        prompt: &str,
+        events: &tokio::sync::mpsc::Sender<crate::runtime::RunEvent>,
+    ) -> anyhow::Result<String> {
+        self.note_prompt(prompt);
+        let outputs = self
+            .emit_collect("PromptSubmit", json!({"prompt": prompt}), events)
+            .await?;
         let mut context = String::new();
-        for output in outputs {
-            if let Some(text) = added_context(&output) {
-                if !context.is_empty() {
-                    context.push('\n');
-                }
-                context.push_str(text.trim());
-            }
-        }
+        add_context(&mut context, &outputs);
         Ok(capped(&context, PROMPT_CONTEXT_LIMIT).to_owned())
+    }
+
+    /// `payload` with what every hook of `event` gets.
+    fn full_payload(&self, event: &str, payload: Value) -> Value {
+        let mut payload = payload;
+        payload["event"] = canonical_event(event).into();
+        payload["run_id"] = self.run_id.clone().into();
+        payload["thread_id"] = self.thread_id.clone().into();
+        payload["project_root"] = self.root.to_string_lossy().as_ref().into();
+        if let Some(agent) = &self.agent {
+            payload["agent"] = agent.clone();
+        }
+        add_claude_fields(&mut payload, self);
+        payload
+    }
+
+    /// Whether an enabled hook waits for `event`, to save building what it would be told.
+    fn listens(&self, event: &str) -> bool {
+        self.hooks
+            .iter()
+            .any(|hook| hook.enabled && canonical_event(&hook.event) == event)
     }
 
     /// Runs the matching hooks; returns the output of each one that succeeded.
@@ -1400,15 +1980,7 @@ impl HookRuntime {
     ) -> anyhow::Result<Vec<Value>> {
         let mut outputs = Vec::new();
         let event = canonical_event(event);
-        let mut payload = payload;
-        payload["event"] = event.into();
-        payload["run_id"] = self.run_id.clone().into();
-        payload["thread_id"] = self.thread_id.clone().into();
-        payload["project_root"] = self.root.to_string_lossy().as_ref().into();
-        if let Some(agent) = &self.agent {
-            payload["agent"] = agent.clone();
-        }
-        add_claude_fields(&mut payload, self);
+        let payload = self.full_payload(event, payload);
         self.note_tool(event, &payload);
         // A guard written for Claude looks at one `file_path`: it sees each file a call touches
         // in turn. A native hook gets the arguments, and reads them as it likes.
@@ -1490,7 +2062,14 @@ impl HookRuntime {
             }
             let stoppable = matches!(
                 event,
-                "PromptSubmit" | "RunStart" | "BeforeTool" | "BeforeCompaction"
+                "PromptSubmit"
+                    | "RunStart"
+                    | "BeforeTool"
+                    | "BeforeCompaction"
+                    | "UserPromptExpansion"
+                    | "PostToolBatch"
+                    | "TaskCreated"
+                    | "TaskCompleted"
             );
             let abort = hook.failure_policy == Some(HookFailurePolicy::Abort)
                 || (hook.failure_policy.is_none() && hook.blocking);
@@ -1500,7 +2079,7 @@ impl HookRuntime {
                 Err(error) if stoppable => {
                     if let Some(Blocked(reason)) = error.downcast_ref::<Blocked>() {
                         let reason = reason.as_deref();
-                        if event == "BeforeTool" {
+                        if matches!(event, "BeforeTool" | "TaskCreated" | "TaskCompleted") {
                             bail!(blocked_tool_note(&hook.name, reason));
                         }
                         bail!(blocked_message(&hook.name, reason));
@@ -1668,12 +2247,14 @@ where
             outgoing.send(event).await.ok();
         }
     });
+    // A session opens before anything else in it happens, and what it said stays for every turn.
+    let session = runtime.session_hooks(&events).await;
     // The person's message goes to the PromptSubmit hooks before the first model request.
     let submitted = match runtime.prompt_submit(task, &events).await {
         Ok(context) => runtime
-            .attached_skill_hooks(&events)
+            .attached_skill_hooks(task, &events)
             .await
-            .map(|()| context),
+            .map(|expansion| prompt_context_of(&session, &expansion, &context)),
         Err(error) => Err(error),
     };
     let context = match submitted {
@@ -1763,7 +2344,7 @@ mod tests {
             plugin_root: None,
             plugin_data: None,
             env_file: None,
-            session_sources: None,
+            moment_matcher: None,
             runtime_identity: None,
         }
     }
@@ -2358,7 +2939,7 @@ mod tests {
             plugin_root: None,
             plugin_data: None,
             env_file: None,
-            session_sources: None,
+            moment_matcher: None,
             runtime_identity: None,
         };
         let block = |hook: Hook| {

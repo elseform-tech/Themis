@@ -49,6 +49,18 @@ describe("Hooks by event", () => {
     expect(scroller).toContainElement(screen.getByRole("note"));
   });
 
+  it("shows the rarer events only when a hook uses them, in the order a chat reaches them", () => {
+    const kit = plugin([hook("ends", "SessionEnd"), hook("starts", "SessionStart"), hook("guard", "BeforeTool")]);
+    const rows = kit.spec.hooks.map(item => ({ key: item.name, id: item.name, plugin: kit, enabled: true }));
+    render(<HooksByEvent rows={rows} plugins={[kit]} sourceOf={() => "kit"} disabled={() => false} onToggle={() => {}} onOpen={() => {}} />);
+    const titles = within(screen.getByRole("list", { name: "Hook events in run order" })).getAllByRole("listitem")
+      .map(item => item.querySelector(".themis-hook-title")!.textContent);
+    expect(titles[0]).toBe("Session starts");
+    expect(titles[titles.length - 1]).toBe("Session ends");
+    expect(titles).not.toContain("Notified");
+    expect(titles).not.toContain("After a step's tools");
+  });
+
   it("collapses an event with hooks; an empty event has nothing to collapse", () => {
     const guards = plugin([hook("guard", "BeforeTool"), hook("ticket-context", "PromptSubmit")]);
     const rows = guards.spec.hooks.map(item => ({ key: item.name, id: item.name, plugin: guards, enabled: true }));

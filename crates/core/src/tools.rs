@@ -955,6 +955,12 @@ pub trait ApprovalHook: Send + Sync {
     fn denied_by_rule(&self, _action: &ToolAction) -> bool {
         false
     }
+
+    /// Whether [`approve`](Self::approve) would put the question to a person now, rather than
+    /// answer from a rule, a grant or the mode. It asks nobody.
+    fn would_ask(&self, _action: &ToolAction) -> bool {
+        false
+    }
 }
 
 /// Decision returned by an [`ApprovalHook`].
