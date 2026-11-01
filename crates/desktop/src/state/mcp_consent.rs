@@ -136,7 +136,12 @@ pub(super) fn mcp_namespace(plugin: &Plugin, name: &str, server: &McpServer) -> 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub(super) struct SecretUse {
     pub(super) name: String,
+    /// Where it would go, as the person is told.
     pub(super) host: String,
+    /// What an allowance holds to: the host, and for a local program its command, arguments,
+    /// folder and the plugin's files, since a changed one runs something else.
+    #[serde(skip)]
+    binding: String,
 }
 
 /// Whether the person wrote this connection themselves: not from a plugin package, a catalog or a
@@ -255,16 +260,25 @@ impl AppState {
         plugin: &Plugin,
         name: &str,
         server: &McpServer,
-    ) -> Vec<SecretUse> {
+    ) -> Result<Vec<SecretUse>, &'static str> {
         let names = server.key_names();
         let available = |secret: &String| {
             themis_core::plugins::keys::value(secret).is_some()
                 || server.defaults.contains_key(secret)
         };
         if personal(plugin) || !names.iter().all(available) {
-            return Vec::new();
+            return Ok(Vec::new());
         }
-        let host = server.secret_destination();
+        use themis_core::plugins::connections::UNCHECKABLE_DESTINATION;
+        let host = server
+            .secret_destination()
+            .map_err(|_| UNCHECKABLE_DESTINATION)?;
+        let binding = if server.command.is_some() {
+            let digest = plugin_digest(plugin, server).ok_or(UNCHECKABLE_DESTINATION)?;
+            format!("{host}\0{digest}")
+        } else {
+            host.clone()
+        };
         let _guard = themis_core::chat_grants::WRITE_LOCK
             .lock()
             .unwrap_or_else(|e| e.into_inner());
@@ -272,16 +286,17 @@ impl AppState {
         let allowed =
             file.secret_ok
                 .get(&consent_key(root, &plugin.scope, &plugin.spec.name, name));
-        names
+        Ok(names
             .into_iter()
             // Nothing of the person's goes out for one only a plugin's own default fills.
             .filter(|secret| themis_core::plugins::keys::value(secret).is_some())
-            .filter(|secret| allowed.and_then(|map| map.get(secret)) != Some(&host))
+            .filter(|secret| allowed.and_then(|map| map.get(secret)) != Some(&binding))
             .map(|name| SecretUse {
                 name,
                 host: host.clone(),
+                binding: binding.clone(),
             })
-            .collect()
+            .collect())
     }
 
     /// The person allows the connection the secrets they were shown. `shown` must be what is
@@ -302,7 +317,7 @@ impl AppState {
             .find(|plugin| plugin.scope == scope && plugin.spec.name == plugin_name)
             .ok_or("No such plugin")?;
         let server = plugin.spec.mcp.get(name).ok_or("No such connection")?;
-        let waiting = self.secrets_awaiting_ok(root, &plugin, name, server);
+        let waiting = self.secrets_awaiting_ok(root, &plugin, name, server)?;
         let mut wanted: Vec<&str> = shown.iter().map(String::as_str).collect();
         let mut current: Vec<&str> = waiting.iter().map(|use_| use_.name.as_str()).collect();
         wanted.sort_unstable();
@@ -319,7 +334,7 @@ impl AppState {
             .entry(consent_key(root, scope, plugin_name, name))
             .or_default();
         for use_ in waiting {
-            allowed.insert(use_.name, use_.host);
+            allowed.insert(use_.name, use_.binding);
         }
         self.save_consent(&file);
         // Metadata only: how many.

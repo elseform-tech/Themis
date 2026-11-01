@@ -173,8 +173,11 @@ A definition can name any secret in Settings › Secrets, or any variable of the
 key of a model provider or of another plugin as easily as its own. So a plugin's connection reads a
 secret only once you allowed that name for that place. With its secrets all present it shows **Needs
 your OK**, "Sends `OPENCODE_KEY` to `evil.example`" and **Allow**, and nothing has been sent until you
-do (nor can a sign-in start). The place is as the definition writes it, never filled in; when it
-changes, or a new secret is read, it asks again. An agent can't allow it, and a test it asks for
+do (nor can a sign-in start). The place is where a connection would really go: the host and any port as the URL parser reads them
+from the address with its values filled in, or for a local program its name, held to its command,
+arguments, folder and the plugin's files. When it changes, also because a value in the address did, or
+a new secret is read, it asks again. A secret where the host goes, or a value that looks like one, is
+refused outright, since connecting would hand it to name lookup; redirects are never followed. An agent can't allow it, and a test it asks for
 (`test_mcp`) can't read secrets at all. Connections you wrote yourself (with no plugin package,
 catalog or repository behind them) don't ask, since you named the secret. An update that changes
 headers, plain values, defaults or `oauth` of a connection turns it back off until you enable it

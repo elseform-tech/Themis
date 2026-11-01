@@ -257,17 +257,41 @@ impl McpServer {
         };
         self.bearer_env.is_some() || self.headers.values().any(filled)
     }
-    /// Where this server's secrets would go, as its definition writes it and never filled in (a
-    /// secret may stand in the address): a remote host, or the local program it runs.
-    pub fn secret_destination(&self) -> String {
-        match (&self.url, &self.command) {
-            (Some(url), _) => {
-                let rest = url.split_once("://").map_or(url.as_str(), |(_, rest)| rest);
-                rest.split(['/', '?']).next().unwrap_or(rest).to_owned()
+    /// Where this server's secrets really go, for the person to allow: the host and any port a
+    /// connection would reach, read by the URL parser from the address with its values filled in,
+    /// or the local program it runs. Refused ([`UNCHECKABLE_DESTINATION`]) when a secret stands
+    /// where the host goes, since connecting would already give it away to name lookup, and when
+    /// the address isn't one a connection would use.
+    pub fn secret_destination(&self) -> anyhow::Result<String> {
+        let Some(url) = &self.url else {
+            return Ok(format!(
+                "the program {}",
+                self.command.as_deref().unwrap_or_default()
+            ));
+        };
+        let refused = || anyhow::anyhow!(UNCHECKABLE_DESTINATION);
+        let rest = url.split_once("://").map_or(url.as_str(), |(_, rest)| rest);
+        let authority = rest.split(['/', '?', '#', '\\']).next().unwrap_or(rest);
+        for name in super::keys::template_names(authority) {
+            let value = super::keys::value(name).or_else(|| self.defaults.get(name).cloned());
+            if names_a_credential(name)
+                || value.is_none_or(|value| !super::keys::safe_literal("", &value))
+            {
+                return Err(refused());
             }
-            (None, Some(command)) => format!("the program {command}"),
-            (None, None) => String::new(),
         }
+        let filled = self.filled_url().ok_or_else(refused)?;
+        check_url(&filled).map_err(|_| refused())?;
+        let parsed = reqwest::Url::parse(&filled).map_err(|_| refused())?;
+        let host = parsed
+            .host_str()
+            .ok_or_else(refused)?
+            .trim_end_matches('.')
+            .to_ascii_lowercase();
+        Ok(match parsed.port() {
+            Some(port) => format!("{host}:{port}"),
+            None => host,
+        })
     }
     /// The server's address with its secrets filled in, as a connection reaches it; `None` for a
     /// local server or while a secret it needs is missing.
@@ -287,6 +311,28 @@ impl McpServer {
             })
     }
 }
+/// Why a connection's secrets have nowhere to be allowed to.
+pub const UNCHECKABLE_DESTINATION: &str = "This connection's address reads a secret where its host goes, or can't be read, so Themis won't connect it.";
+
+/// Whether a name says it holds a credential, in the words that don't also name places
+/// (`AUTH0_DOMAIN`, `SESSION_HOST`).
+fn names_a_credential(name: &str) -> bool {
+    let name = name.to_ascii_uppercase();
+    [
+        "KEY",
+        "TOKEN",
+        "SECRET",
+        "PASSWORD",
+        "PASSWD",
+        "PWD",
+        "CREDENTIAL",
+        "COOKIE",
+        "PRIVATE",
+    ]
+    .iter()
+    .any(|word| name.contains(word))
+}
+
 /// A remote MCP address: HTTPS (or HTTP to this computer) with no user name, password or
 /// fragment. A query is allowed when every parameter is plain and none names a credential.
 fn check_url(url: &str) -> anyhow::Result<()> {
@@ -984,4 +1030,96 @@ pub fn tool_identity(namespace: &str, component: &str) -> String {
             .collect::<String>(),
         component.chars().take(32).collect::<String>()
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_secrets_destination_is_where_a_connection_would_really_go() {
+        let at = |url: &str, defaults: &[(&str, &str)]| {
+            McpServer {
+                url: Some(url.to_owned()),
+                defaults: defaults
+                    .iter()
+                    .map(|(name, value)| ((*name).to_owned(), (*value).to_owned()))
+                    .collect(),
+                ..McpServer::default()
+            }
+            .secret_destination()
+            .map_err(|error| error.to_string())
+        };
+        for (url, host) in [
+            ("https://evil.example/mcp", "evil.example"),
+            ("HTTPS://EVIL.EXAMPLE./mcp", "evil.example"),
+            ("https://evil.example:8443/mcp", "evil.example:8443"),
+            ("https://evil.example:443/mcp", "evil.example"),
+            // As the parser that connects reads it: the backslash ends the host.
+            ("https://good.example\\@evil.example/", "good.example"),
+            ("http://127.0.0.1:9000/mcp", "127.0.0.1:9000"),
+        ] {
+            assert_eq!(at(url, &[]).as_deref(), Ok(host), "{url}");
+        }
+        // Filled in, with what it would be filled with.
+        assert_eq!(
+            at("https://${HOST}/mcp", &[("HOST", "a.example")]).as_deref(),
+            Ok("a.example")
+        );
+        assert_eq!(
+            at("${BASE}/mcp", &[("BASE", "https://B.example.:444")]).as_deref(),
+            Ok("b.example:444")
+        );
+        assert_eq!(
+            at(
+                "https://connect.${REGION}.example/mcp",
+                &[("REGION", "eu-1")]
+            )
+            .as_deref(),
+            Ok("connect.eu-1.example")
+        );
+        let refused = Err(UNCHECKABLE_DESTINATION.to_owned());
+        for (url, defaults) in [
+            // A name, in the address, that the connection would resolve on the way.
+            (
+                "https://${OPENCODE_KEY}.evil.example/",
+                &[("OPENCODE_KEY", "abc")][..],
+            ),
+            (
+                "${API_TOKEN}/mcp",
+                &[("API_TOKEN", "https://evil.example")][..],
+            ),
+            (
+                "https://${HOST}.evil.example/",
+                &[("HOST", "aZ8kQ2mX9pL4vB7nR3tY6wE1")][..],
+            ),
+            // Hidden behind a user name, or going nowhere a connection would.
+            ("https://${X}@evil.example/", &[("X", "good.example")][..]),
+            ("https://good.example@evil.example/", &[][..]),
+            ("http://evil.example/mcp", &[][..]),
+            ("https://${MISSING}/mcp", &[][..]),
+            ("not an address", &[][..]),
+        ] {
+            assert_eq!(at(url, defaults), refused, "{url}");
+        }
+        let local = McpServer {
+            command: Some("run".into()),
+            ..McpServer::default()
+        };
+        assert_eq!(local.secret_destination().unwrap(), "the program run");
+    }
+
+    proptest::proptest! {
+        #[test]
+        fn any_address_gives_a_plain_host_or_is_refused(url in "\\PC{0,80}", value in "\\PC{0,40}") {
+            let server = McpServer {
+                url: Some(url),
+                defaults: std::iter::once(("HOST".to_owned(), value)).collect(),
+                ..McpServer::default()
+            };
+            if let Ok(host) = server.secret_destination() {
+                proptest::prop_assert!(!host.contains(['@', '/', '\\']), "{}", host);
+            }
+        }
+    }
 }

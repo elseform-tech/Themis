@@ -121,10 +121,20 @@ impl AppState {
         blocked: Option<&'static str>,
         retry: bool,
     ) -> Arc<McpEntry> {
-        let secrets_waiting = plugin.spec.mcp.get(name).map_or_else(Vec::new, |written| {
+        let checked = plugin.spec.mcp.get(name).map_or(Ok(Vec::new()), |written| {
             self.secrets_awaiting_ok(root, plugin, name, written)
         });
-        let blocked = blocked.or((!secrets_waiting.is_empty()).then_some(NEEDS_SECRET_OK));
+        let (secrets_waiting, unchecked) = match checked {
+            Ok(waiting) => (waiting, None),
+            Err(reason) => (Vec::new(), Some(reason)),
+        };
+        let blocked = blocked
+            .or(unchecked)
+            .or((!secrets_waiting.is_empty()).then_some(NEEDS_SECRET_OK));
+        // Where the person's answer holds for, read again just before connecting.
+        let bound = (server.url.is_some() && !server.key_names().is_empty())
+            .then(|| server.secret_destination().ok())
+            .flatten();
         let key = format!("{}:{}:mcp:{name}", plugin.scope, plugin.spec.name);
         let remote_url = server.url.clone().filter(|_| !server.has_credentials());
         let signed_in_at = server.filled_url();
@@ -164,6 +174,9 @@ impl AppState {
                 themis_core::diagnostics::ACTIVE.scope(context, async {
                     if let Some(reason) = blocked {
                         return Err(reason.to_owned());
+                    }
+                    if bound.is_some() && server.secret_destination().ok() != bound {
+                        return Err(NEEDS_SECRET_OK.to_owned());
                     }
                     store
                         .materialize(&[plugin], &root)
@@ -294,9 +307,9 @@ impl AppState {
         if !self.mcp_consented(root, plugin, name, &plugin.spec.mcp[name]) {
             anyhow::bail!("MCP startup needs your approval");
         }
-        if !self
+        if self
             .secrets_awaiting_ok(root, plugin, name, &plugin.spec.mcp[name])
-            .is_empty()
+            .map_or(true, |waiting| !waiting.is_empty())
         {
             anyhow::bail!("{NEEDS_SECRET_OK}");
         }
@@ -413,9 +426,9 @@ impl AppState {
         Ok(plugins.iter().any(|plugin| {
             plugin.spec.mcp.iter().any(|(name, server)| {
                 server.url.as_deref() == Some(url)
-                    && !self
+                    && self
                         .secrets_awaiting_ok(root, plugin, name, server)
-                        .is_empty()
+                        .map_or(true, |waiting| !waiting.is_empty())
             })
         }))
     }

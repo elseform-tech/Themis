@@ -146,6 +146,18 @@ fn a_package_too_big_for_the_registry_has_its_kept_copy_rewritten() {
     assert!(fs::read_to_string(kept.join("scripts/use.sh"))
         .unwrap()
         .contains("${BIGCO_API_KEY}"));
+    // On the way nothing was written outside the store: not the rewritten text, not the original.
+    let scratch: Vec<_> = fs::read_dir(std::env::temp_dir())
+        .unwrap()
+        .flatten()
+        .filter(|entry| {
+            entry
+                .file_name()
+                .to_string_lossy()
+                .starts_with("themis-scrub")
+        })
+        .collect();
+    assert!(scratch.is_empty(), "{scratch:?}");
     // The same folder gives the same package, so a check and an install agree.
     let (_again, second) = imported(folder.path());
     assert_eq!(second.spec.package.unwrap().hash, package.hash);

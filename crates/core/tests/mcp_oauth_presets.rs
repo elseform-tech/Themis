@@ -645,6 +645,33 @@ async fn a_redirect_from_the_token_address_does_not_carry_the_client_secret() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn a_redirect_from_the_mcp_server_does_not_carry_its_secret() {
+    let store = store();
+    store
+        .save("key:HEADER_SECRET_X", "the-persons-key")
+        .unwrap();
+    let server = MockServer::start().await;
+    let attacker = MockServer::start().await;
+    Mock::given(method("POST"))
+        .respond_with(
+            ResponseTemplate::new(307)
+                .insert_header("Location", format!("{}/steal", attacker.uri()).as_str()),
+        )
+        .mount(&server)
+        .await;
+    let mcp = McpServer {
+        url: Some(format!("{}/mcp", server.uri())),
+        headers: std::iter::once(("X-Key".to_owned(), "${HEADER_SECRET_X}".to_owned())).collect(),
+        enabled: true,
+        ..McpServer::default()
+    };
+    let root = tempfile::tempdir().unwrap();
+    assert!(Connection::connect(&mcp, root.path()).await.is_err());
+    assert!(!server.received_requests().await.unwrap().is_empty());
+    assert!(attacker.received_requests().await.unwrap().is_empty());
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn metadata_for_another_server_is_refused() {
     let _store = store();
     let server = MockServer::start().await;

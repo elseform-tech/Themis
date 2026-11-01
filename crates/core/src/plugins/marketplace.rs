@@ -1455,14 +1455,10 @@ fn import_directory_within(
             .push("Install settings (userConfig) are entered in Settings › Secrets".into());
     }
     import_output_styles(&mut spec)?;
-    let scratch = std::env::temp_dir().join(format!("themis-scrub-{}", super::revision()));
-    let scrubbed = scrub_literals(&literals.replaced, &mut spec, &mut entries, &scratch);
-    let kept = scrubbed.and_then(|()| match (keep_in, &spec.package) {
-        (Some(store), Some(package)) => super::package::keep(&entries, package, store),
-        _ => Ok(()),
-    });
-    let _ = fs::remove_dir_all(&scratch);
-    kept?;
+    scrub_literals(&literals.replaced, &mut spec, &mut entries)?;
+    if let (Some(store), Some(package)) = (keep_in, &spec.package) {
+        super::package::keep(&entries, package, store)?;
+    }
     Ok(spec)
 }
 
@@ -2028,6 +2024,7 @@ impl FileWalk<'_> {
                 path: path.to_owned(),
                 bytes: metadata.len(),
                 executable,
+                content: None,
             });
             if entries.len() > self.limits.files || self.total_bytes > self.limits.total_bytes {
                 bail!(RESOURCE_LIMITS);
@@ -2337,14 +2334,12 @@ fn scrubbed_text(relative: &str, text: &str, replaced: &[ReplacedLiteral]) -> Op
 }
 
 /// Takes what a plugin's configuration held out of everything of it that will be kept: the
-/// registry's copies, and the package's files, read from a rewritten copy under `scratch` (only
-/// files of a size that could hold configuration, and text). The package's hash then describes
-/// what is kept.
+/// registry's copies, and the package's files (only those of a size that could hold configuration,
+/// and text), rewritten in memory. The package's hash then describes what is kept.
 fn scrub_literals(
     replaced: &[ReplacedLiteral],
     spec: &mut PluginSpec,
     entries: &mut [super::package::Entry],
-    scratch: &Path,
 ) -> anyhow::Result<()> {
     if replaced.is_empty() {
         return Ok(());
@@ -2354,7 +2349,7 @@ fn scrub_literals(
             *text = clean;
         }
     }
-    for (index, entry) in entries.iter_mut().enumerate() {
+    for entry in entries.iter_mut() {
         if entry.bytes > super::package::MAX_INLINE_FILE_BYTES {
             continue;
         }
@@ -2362,11 +2357,8 @@ fn scrub_literals(
             continue;
         };
         if let Some(clean) = scrubbed_text(&entry.relative, &text, replaced) {
-            fs::create_dir_all(scratch)?;
-            let path = scratch.join(index.to_string());
-            fs::write(&path, &clean)?;
-            entry.path = path;
             entry.bytes = clean.len() as u64;
+            entry.content = Some(clean.into_bytes());
         }
     }
     if !entries.is_empty() {
