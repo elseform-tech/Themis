@@ -265,6 +265,7 @@ impl SubagentKit {
             notes: RunNotes::new(),
             slots: Arc::clone(&self.nested_slots),
             nested_slots: Arc::clone(&self.nested_slots),
+            prompt_model: self.prompt_model.clone(),
             nested: Some(NestedLimits {
                 parent_id: agent.id.clone(),
                 parent_name: agent.name.clone(),
