@@ -25,6 +25,15 @@ it("walks the tasks in order and marks the one being worked on", () => {
   expect(screen.queryByText(/proven/i)).not.toBeInTheDocument();
 });
 
+it("doesn't repeat why a task further along the trail isn't done", () => {
+  render(<GoalView goal={goal([
+    { what: "Health drops", proven: false, how: "no measured change" },
+    { what: "Score rises", proven: false, how: "not started" },
+  ])} />);
+  expect(screen.getByText("no measured change")).toBeInTheDocument();
+  expect(screen.queryByText("not started")).not.toBeInTheDocument();
+});
+
 it("says Next rather than Now while the goal isn't running", () => {
   render(<GoalView goal={{ ...goal([{ what: "Health drops", proven: false }]), status: "paused" } as Goal} />);
   expect(screen.getByText("Next")).toBeInTheDocument();

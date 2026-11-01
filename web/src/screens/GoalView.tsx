@@ -16,7 +16,7 @@ function Task({ item, current, running }: { item: GoalRequirement; current: bool
       <div className="themis-goal-step-body">
         <span className="themis-goal-what">{item.what}</span>
         {current && <em>{running ? "Now" : "Next"}</em>}
-        {item.how && <small>{item.how}</small>}
+        {item.how && (item.proven || current) && <small>{item.how}</small>}
       </div>
     </li>
   );
