@@ -2158,6 +2158,69 @@ async fn a_prompt_guard_fails_closed() {
     app.serving.abort();
 }
 
+/// A hook whose plugin says it must never block (paypal's) doesn't hold when it gets no answer, or
+/// when the run's checks are used up. Its plain no still refuses, and any other guard still holds.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_prompt_hook_that_says_it_never_blocks_lets_the_call_through_on_no_answer() {
+    const NEVER: &str = "This hook is informational only and must never block or deny an edit.";
+    let hooks = prompt_hook("PreToolUse", "Write", NEVER);
+    let app = crate::app(hooks, &[], |body| {
+        if is_prompt_hook(body) {
+            return ResponseTemplate::new(400).set_body_string("{}");
+        }
+        if tool_results(body).is_empty() {
+            tool_call("c1", "write_file", &writes())
+        } else {
+            reply("Done.")
+        }
+    })
+    .await;
+    run(&app, "write it").await;
+    assert!(exists(&app, "new.txt"), "a failed request held it");
+    app.serving.abort();
+    // Used up.
+    let hooks = prompt_hook("PreToolUse", "Write", NEVER);
+    let app = crate::app(hooks, &[], |body| {
+        if is_prompt_hook(body) {
+            return reply(r#"{"ok": true}"#);
+        }
+        match tool_results(body).len() {
+            0 => tool_call("c1", "write_file", &writes()),
+            1 => tool_call(
+                "c2",
+                "write_file",
+                &json!({"file_path": "second.txt", "content": "x"}),
+            ),
+            _ => reply("Done."),
+        }
+    })
+    .await;
+    std::fs::write(
+        app.data.path().join("runtime.jsonc"),
+        r#"{"hooks": {"prompt_hook_calls": 1}}"#,
+    )
+    .unwrap();
+    run(&app, "write both").await;
+    assert!(exists(&app, "second.txt"), "a used-up budget held it");
+    app.serving.abort();
+    // A clear no is still a no.
+    let hooks = prompt_hook("PreToolUse", "Write", NEVER);
+    let app = crate::app(hooks, &[], |body| {
+        if is_prompt_hook(body) {
+            return reply(r#"{"ok": false, "reason": "no"}"#);
+        }
+        if tool_results(body).is_empty() {
+            tool_call("c1", "write_file", &writes())
+        } else {
+            reply("Done.")
+        }
+    })
+    .await;
+    run(&app, "write it").await;
+    assert!(!exists(&app, "new.txt"), "its no didn't refuse");
+    app.serving.abort();
+}
+
 /// `hooks.prompt_hook_calls: 0` is the person turning these off: nothing is asked and nothing is
 /// refused for it. A project can't do that to them.
 #[tokio::test(flavor = "multi_thread")]

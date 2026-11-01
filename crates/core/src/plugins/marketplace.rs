@@ -2889,6 +2889,11 @@ pub fn mcp_server_to_standard(server: &McpServer) -> Value {
     Value::Object(entry)
 }
 
+/// Whether a prompt hook's question says it must not stop anything, as paypal's does.
+fn says_it_never_blocks(question: &str) -> bool {
+    question.to_lowercase().contains("never block")
+}
+
 /// Themis tools for a Claude tool name in a hook matcher.
 fn themis_tools(claude: &str) -> Option<&'static [&'static str]> {
     Some(match claude {
@@ -3361,7 +3366,11 @@ fn import_hooks(value: &Value, root: &Path, spec: &mut PluginSpec) -> anyhow::Re
                     command,
                     enabled: false,
                     matcher,
-                    failure_policy: None,
+                    // A prompt hook holds when it gets no answer, unless its plugin says it never
+                    // blocks. That can only weaken its own check, and its plain no still refuses.
+                    failure_policy: question
+                        .filter(|question| says_it_never_blocks(question))
+                        .map(|_| crate::plugins::hooks::HookFailurePolicy::Ignore),
                     shell,
                     background,
                     command_prefix,
