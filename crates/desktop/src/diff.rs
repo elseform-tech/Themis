@@ -94,10 +94,33 @@ pub fn git_head(root: &Path) -> Option<String> {
 }
 
 fn git_output(root: &Path, args: &[&str]) -> Result<Vec<u8>, String> {
+    use themis_core::git_guard;
+    // Outside the sandbox, so the repository's configuration gets to start nothing.
+    let listing = Command::new("git")
+        .arg("-C")
+        .arg(root)
+        .args(git_guard::NO_MONITOR)
+        .args(git_guard::LIST_FILTERS)
+        .output()
+        .map_err(|err| format!("failed to run git config: {err}"))?;
+    let filters = git_guard::filters_off(&String::from_utf8_lossy(&listing.stdout))
+        .ok_or("this repository's content filters can't be turned off")?;
+    let (subcommand, rest) = args
+        .split_first()
+        .map_or(("", args), |(first, rest)| (*first, rest));
+    let flags: &[&str] = match subcommand {
+        "diff" => &git_guard::DIFF_FLAGS,
+        "status" => &git_guard::STATUS_FLAGS,
+        _ => &[],
+    };
     let out = Command::new("git")
         .arg("-C")
         .arg(root)
-        .args(args)
+        .args(git_guard::NO_MONITOR)
+        .args(&filters)
+        .arg(subcommand)
+        .args(flags)
+        .args(rest)
         .output()
         .map_err(|err| format!("failed to run git {}: {err}", args.join(" ")))?;
     if !out.status.success() {
@@ -733,6 +756,73 @@ pub(crate) mod scale_tests;
 
 #[cfg(test)]
 mod tests {
+    /// These run in the app, outside the sandbox, where the agent's shell may have written the
+    /// repository's configuration: nothing it names may start.
+    #[cfg(unix)]
+    #[test]
+    fn a_repository_cannot_run_a_program_through_the_change_list() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let git = |args: &[&str]| {
+            assert!(Command::new("git")
+                .arg("-C")
+                .arg(root)
+                .args(args)
+                .status()
+                .unwrap()
+                .success());
+        };
+        git(&["init", "-q"]);
+        std::fs::write(root.join("empty.txt"), "").unwrap();
+        git(&["add", "."]);
+        git(&[
+            "-c",
+            "user.email=t@t",
+            "-c",
+            "user.name=t",
+            "commit",
+            "-qm",
+            "init",
+        ]);
+        let marker = root.join("program-ran");
+        let script = root.join("program.sh");
+        std::fs::write(
+            &script,
+            format!("#!/bin/sh\ntouch '{}'\ncat\n", marker.display()),
+        )
+        .unwrap();
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let program = script.to_string_lossy().into_owned();
+        for key in [
+            "core.fsmonitor",
+            "filter.x.clean",
+            "diff.external",
+            "diff.x.command",
+            "diff.x.textconv",
+        ] {
+            git(&["config", key, &program]);
+        }
+        git(&["config", "filter.x.required", "true"]);
+        std::fs::write(root.join(".gitattributes"), "* filter=x diff=x\n").unwrap();
+        std::fs::write(root.join("empty.txt"), "changed\n").unwrap();
+        let names = git_status_names(root).unwrap();
+        assert!(names.contains("empty.txt"), "{names:?}");
+        let _ = change_fingerprint(root);
+        for (name, files) in [
+            ("head", git_diff_head(root)),
+            ("worktree", git_diff_worktree(root)),
+            ("cached", git_diff_cached(root)),
+        ] {
+            files.unwrap_or_else(|error| panic!("{name}: {error}"));
+        }
+        let _ = git_untracked(root).unwrap();
+        assert!(
+            !marker.exists(),
+            "the repository's configuration ran a program"
+        );
+    }
+
     use super::*;
 
     const MODIFIED: &str = "\

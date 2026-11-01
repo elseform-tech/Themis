@@ -7,12 +7,13 @@ import { describeError, useApp } from "../state/store";
 import { clock, elapsed, subagentLine, subagentState } from "./SubagentCard";
 import { TaskIcon } from "./TaskIcon";
 import { ToolGroup } from "./ThreadConversation";
+import { toolDisplayName } from "../lib/toolNames";
 import type { ChatMessage } from "../state/reducer";
 import "./ThreadView.css";
 import "./SubagentCard.css";
 
 /** A subagent's steps: its own words, its tool calls folded between them, and the main agent's later messages. */
-export type Call = { tool: string; label?: string; summary: string; ok?: boolean };
+export type Call = { tool: string; label?: string; summary: string; ok?: boolean; output?: string };
 export type Step = { kind: "text"; text: string } | { kind: "tools"; calls: Call[] } | { kind: "message"; text: string };
 
 function saidSinceMessage(steps: Step[]): boolean {
@@ -38,7 +39,10 @@ export function stepsOf(events: ThreadEvent[]): Step[] {
       else steps.push({ kind: "tools", calls: [call] });
     } else if (event.kind === "tool_finished" && last?.kind === "tools") {
       const call = last.calls.find(found => found.ok === undefined && found.tool === event.tool);
-      if (call) call.ok = event.ok;
+      if (call) {
+        call.ok = event.ok;
+        if (event.output !== undefined) call.output = event.output;
+      }
     } else if (event.kind === "finished" && !saidSinceMessage(steps) && event.result.trim()) {
       steps.push({ kind: "text", text: event.result });
     }
@@ -47,14 +51,24 @@ export function stepsOf(events: ThreadEvent[]): Step[] {
 }
 
 /** A stretch of tool calls in the shape the chat's folded row reads. */
-function callMessages(calls: Call[], at: number): ChatMessage[] {
+function callMessages(calls: Call[], at: number, runId: string | undefined): ChatMessage[] {
   return calls.map((call, index) => ({
     id: `step-${at}-${index}`,
     role: "assistant",
-    text: "",
-    tool: { name: call.tool, label: call.label, summary: call.summary, ok: call.ok },
+    text: call.summary,
+    runId,
+    tool: { name: call.tool, label: call.label, summary: call.summary, ok: call.ok, output: call.output },
   } as ChatMessage));
 }
+
+/** The tool it is waiting on, if any. */
+function runningCall(steps: Step[]): Call | undefined {
+  const last = steps[steps.length - 1];
+  return last?.kind === "tools" ? last.calls.find(call => call.ok === undefined) : undefined;
+}
+
+/** What marks its calls as still going while it runs. */
+const LIVE_RUN = "live";
 
 /** Longer messages start folded, so a long brief doesn't push the conversation away. */
 const FOLD_AT = 400;
@@ -108,6 +122,7 @@ export function SubagentDetail({ threadId, agent, runLive, onBack }: { threadId:
     time === undefined ? "" : clock(time),
   ].filter(Boolean).join(" · ");
   const steps = stepsOf(events);
+  const waitingOn = runningCall(steps);
   const icon = agentState === "running" ? "running" : agentState === "finished" ? "finished" : "attention";
   return (
     <div className="themis-subagent-detail">
@@ -133,12 +148,12 @@ export function SubagentDetail({ threadId, agent, runLive, onBack }: { threadId:
           : step.kind === "text"
           ? <div key={index} className="themis-thread-msg themis-thread-msg--assistant"><ResponseBody text={step.text} /></div>
           : (
-            <ToolGroup key={index} messages={callMessages(step.calls, index)} activeRunId={live ? "live" : undefined} skills={[]} plugins={[]} />
+            <ToolGroup key={index} messages={callMessages(step.calls, index, live ? LIVE_RUN : undefined)} activeRunId={live ? LIVE_RUN : undefined} skills={[]} plugins={[]} />
           ))}
         {live && (
           <div className="themis-run-progress" role="status">
             <div className="themis-run-status">
-              <span className="themis-shimmer">{agentState === "approval" ? "Waiting for your approval…" : "Thinking…"}</span>
+              <span className="themis-shimmer">{agentState === "approval" ? "Waiting for your approval…" : waitingOn ? `Using ${toolDisplayName(waitingOn.tool, waitingOn.label)}…` : "Thinking…"}</span>
               {time !== undefined && <time aria-label="Elapsed time">{clock(time)}</time>}
             </div>
           </div>

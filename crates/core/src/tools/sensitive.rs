@@ -621,8 +621,17 @@ impl SensitiveMatcher {
                 list.extend(pathspecs.iter().copied());
             }
         }
+        // `--modified` compares contents for a file the index records as empty, through whatever
+        // filter the repository names. Unknown filters mean no answer: the person is asked.
+        let filters = bounded_git(cwd, &crate::git_guard::LIST_FILTERS, GIT_DEADLINE)
+            .and_then(|listing| crate::git_guard::filters_off(&listing));
         for list in lists {
-            match bounded_git(cwd, &list, GIT_DEADLINE) {
+            let guarded = filters.as_ref().map(|filters| {
+                let mut args: Vec<&str> = filters.iter().map(String::as_str).collect();
+                args.extend(&list);
+                args
+            });
+            match guarded.and_then(|args| bounded_git(cwd, &args, GIT_DEADLINE)) {
                 Some(output) => {
                     for path in output.split('\0').filter(|path| !path.is_empty()) {
                         let name = path.rsplit('/').next().unwrap_or(path);
@@ -792,7 +801,7 @@ fn patch_paths(patch: &str) -> Vec<&str> {
 /// off: these listings run outside the sandbox and must start nothing but Git.
 fn bounded_git(cwd: &Path, args: &[&str], deadline: Duration) -> Option<String> {
     let mut child = Command::new("git")
-        .args(["-c", "core.fsmonitor=false"])
+        .args(crate::git_guard::NO_MONITOR)
         .args(args)
         .current_dir(cwd)
         .env_clear()
@@ -1354,6 +1363,54 @@ mod tests {
         );
         assert!(defaults(Some(&root)).scan_project().is_some());
         assert!(!marker.exists(), "the repository's fsmonitor ran");
+    }
+
+    /// A clean filter runs when Git compares contents, which `--modified` does for a file the
+    /// index records as empty. The configuration and the attributes are both the repository's.
+    #[cfg(unix)]
+    #[test]
+    fn a_repository_cannot_run_a_filter_through_the_listing() {
+        let Some((_dir, root)) = git_project() else {
+            return;
+        };
+        let run = |args: &[&str]| {
+            Command::new("git")
+                .args(args)
+                .current_dir(&root)
+                .output()
+                .unwrap()
+        };
+        std::fs::write(root.join("empty.pem"), "").unwrap();
+        run(&["add", "-f", "empty.pem"]);
+        run(&[
+            "-c",
+            "user.email=t@t",
+            "-c",
+            "user.name=t",
+            "commit",
+            "-qm",
+            "empty",
+        ]);
+        let marker = root.join("filter-ran");
+        let script = root.join("filter.sh");
+        std::fs::write(
+            &script,
+            format!("#!/bin/sh\ntouch '{}'\ncat\n", marker.display()),
+        )
+        .unwrap();
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+        run(&["config", "filter.x.clean", &script.to_string_lossy()]);
+        run(&["config", "filter.x.required", "true"]);
+        std::fs::write(root.join(".gitattributes"), "* filter=x\n").unwrap();
+        std::fs::write(root.join("empty.pem"), "secret\n").unwrap();
+        // Still sees the file, with no filter to ask.
+        assert!(
+            git(&root, &["add", "-u"]).contains(&"empty.pem".to_owned()),
+            "{:?}",
+            git(&root, &["add", "-u"])
+        );
+        assert!(!marker.exists(), "the repository's filter ran");
     }
 
     #[test]

@@ -50,6 +50,7 @@
   border-radius: 18px; background: transparent; color: var(--themis-danger); font: inherit; font-size: .8125rem; cursor: pointer;
 }
 .themis-subagent-stop:disabled { opacity: .5; cursor: not-allowed; }
+.themis-subagent-steps .themis-run-progress { position: static; padding: 0; background: none; }
 .themis-subagent-steps { container: themis-thread / inline-size; display: flex; flex-direction: column; gap: 20px; padding: 16px max(0px, calc((100% - 620px) / 2)); overflow-y: auto; }
 .themis-subagent-brief-box { padding: 12px 14px; border-radius: 16px; background: var(--themis-canvas); }
 .themis-subagent-brief-box summary { cursor: pointer; font-size: .75rem; font-weight: 500; color: var(--themis-text-2); }
