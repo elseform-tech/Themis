@@ -93,9 +93,11 @@ pub fn git_head(root: &Path) -> Option<String> {
     Some(String::from_utf8_lossy(&out.stdout).trim().to_owned())
 }
 
-fn git_output(root: &Path, args: &[&str]) -> Result<Vec<u8>, String> {
+/// Git for the app's own use in `root`: it runs outside the sandbox, so nothing the repository's
+/// configuration names gets to start. No monitor, no hooks, and its own content filters off; a
+/// repository whose filters can't be turned off gets an error.
+pub(crate) fn guarded_git(root: &Path) -> Result<Command, String> {
     use themis_core::git_guard;
-    // Outside the sandbox, so the repository's configuration gets to start nothing.
     let listing = Command::new("git")
         .arg("-C")
         .arg(root)
@@ -105,6 +107,18 @@ fn git_output(root: &Path, args: &[&str]) -> Result<Vec<u8>, String> {
         .map_err(|err| format!("failed to run git config: {err}"))?;
     let filters = git_guard::filters_off(&String::from_utf8_lossy(&listing.stdout))
         .ok_or("this repository's content filters can't be turned off")?;
+    let mut git = Command::new("git");
+    git.arg("-C")
+        .arg(root)
+        .args(git_guard::NO_MONITOR)
+        .args(git_guard::NO_HOOKS)
+        .args(&filters);
+    Ok(git)
+}
+
+fn git_output(root: &Path, args: &[&str]) -> Result<Vec<u8>, String> {
+    use themis_core::git_guard;
+    let mut git = guarded_git(root)?;
     let (subcommand, rest) = args
         .split_first()
         .map_or(("", args), |(first, rest)| (*first, rest));
@@ -113,11 +127,7 @@ fn git_output(root: &Path, args: &[&str]) -> Result<Vec<u8>, String> {
         "status" => &git_guard::STATUS_FLAGS,
         _ => &[],
     };
-    let out = Command::new("git")
-        .arg("-C")
-        .arg(root)
-        .args(git_guard::NO_MONITOR)
-        .args(&filters)
+    let out = git
         .arg(subcommand)
         .args(flags)
         .args(rest)

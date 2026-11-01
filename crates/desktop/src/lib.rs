@@ -272,11 +272,57 @@ async fn stdin_closed() {
     let _ = wait.await;
 }
 
+/// Where a crash's place in the code is kept, as the logs keep metadata: never its message, which
+/// may quote what was being worked on.
+const PANIC_LOG: &str = "logs/panics.jsonl";
+const PANIC_LOG_LIMIT: u64 = 64 * 1024;
+
+/// Notes where a panic happened before the default report, once per process.
+fn record_panics(data_dir: &Path) {
+    static INSTALLED: std::sync::Once = std::sync::Once::new();
+    let file = data_dir.join(PANIC_LOG);
+    INSTALLED.call_once(move || {
+        let earlier = std::panic::take_hook();
+        std::panic::set_hook(Box::new(move |info| {
+            let place = info
+                .location()
+                .map(|at| format!("{}:{}", at.file(), at.line()));
+            let thread = std::thread::current().name().map(str::to_owned);
+            append_panic(&file, place.as_deref(), thread.as_deref());
+            earlier(info);
+        }));
+    });
+}
+
+fn append_panic(file: &Path, place: Option<&str>, thread: Option<&str>) {
+    use std::io::Write;
+    if std::fs::metadata(file).is_ok_and(|found| found.len() >= PANIC_LOG_LIMIT) {
+        return;
+    }
+    if let Some(folder) = file.parent() {
+        let _ = std::fs::create_dir_all(folder);
+    }
+    let line = serde_json::json!({
+        "at": chrono::Utc::now().to_rfc3339(),
+        "place": place,
+        "thread": thread,
+        "version": env!("CARGO_PKG_VERSION"),
+    });
+    if let Ok(mut log) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(file)
+    {
+        let _ = writeln!(log, "{line}");
+    }
+}
+
 async fn serve(
     data_dir: PathBuf,
     stop: impl std::future::Future<Output = ()>,
 ) -> Result<(), String> {
     std::fs::create_dir_all(&data_dir).map_err(|error| error.to_string())?;
+    record_panics(&data_dir);
     let lock = std::fs::OpenOptions::new()
         .read(true)
         .write(true)
@@ -506,6 +552,21 @@ fn pdf_thumbnail_renders_and_rejects_escaped_cache() {
     assert!(pdf_thumbnail(source.to_str().unwrap())
         .unwrap_err()
         .contains("Invalid preview directory"));
+}
+
+#[cfg(test)]
+#[test]
+fn a_panics_place_is_kept_and_the_file_stays_small() {
+    let folder = tempfile::tempdir().unwrap();
+    let file = folder.path().join(PANIC_LOG);
+    append_panic(&file, Some("src/a.rs:7"), Some("main"));
+    let line: serde_json::Value =
+        serde_json::from_str(std::fs::read_to_string(&file).unwrap().trim()).unwrap();
+    assert_eq!(line["place"], "src/a.rs:7");
+    assert_eq!(line["thread"], "main");
+    std::fs::write(&file, vec![b'x'; PANIC_LOG_LIMIT as usize]).unwrap();
+    append_panic(&file, Some("src/b.rs:9"), None);
+    assert_eq!(std::fs::metadata(&file).unwrap().len(), PANIC_LOG_LIMIT);
 }
 
 #[cfg(test)]
