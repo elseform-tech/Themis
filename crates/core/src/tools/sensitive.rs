@@ -863,6 +863,10 @@ mod tests {
             .classify("shell", &json!({"command": command, "args": args}))
             .map(|access| access.names())
             .unwrap_or_default()
+            .into_iter()
+            // One spelling for the assertions below, whichever separator the system uses.
+            .map(|name| name.replace('\\', "/"))
+            .collect()
     }
 
     #[test]
