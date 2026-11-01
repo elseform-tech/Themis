@@ -3249,9 +3249,13 @@ pub fn shared_tools(
 pub mod fuzzing {
     /// Commands found inside wrappers such as `sh -c "..."` or `sudo` (see
     /// [`super::commands_run_by`]).
-    pub fn sensitive_names(patterns: &[String], tool: &str, args: &Value) -> Vec<String> {
+    pub fn sensitive_names(
+        patterns: &[String],
+        tool: &str,
+        args: &serde_json::Value,
+    ) -> Vec<String> {
         // No root: names alone, so a fuzzer's paths touch neither the disk nor Git.
-        sensitive::SensitiveMatcher::new(patterns, None)
+        super::sensitive::SensitiveMatcher::new(patterns, None)
             .classify(tool, args)
             .map(|access| access.names())
             .unwrap_or_default()

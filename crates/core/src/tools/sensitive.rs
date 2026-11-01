@@ -1087,7 +1087,7 @@ mod tests {
             assert!(
                 shell(&root, command, &args)
                     .iter()
-                    .all(|name| name == "app/.env.prod" && command == "grep"),
+                    .all(|name| name.replace('\\', "/") == "app/.env.prod" && command == "grep"),
                 "{command} {args:?} is caught now: update docs/sandbox.md"
             );
         }
