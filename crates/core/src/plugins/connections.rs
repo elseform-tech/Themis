@@ -5,7 +5,12 @@ use autoagents::async_trait;
 use autoagents::core::tool::ToolCallError;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use std::{collections::BTreeMap, path::Path, sync::Arc, time::Duration};
+use std::{
+    collections::BTreeMap,
+    path::{Path, PathBuf},
+    sync::Arc,
+    time::Duration,
+};
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 
 #[derive(Debug)]
@@ -113,11 +118,32 @@ pub struct McpServer {
     /// address it names there. See [`SseParser`].
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub sse: bool,
+    /// How long one of this server's tools may run, in seconds; see [`tool_call_deadline`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_timeout_secs: Option<u64>,
     #[serde(default)]
     pub enabled: bool,
 }
+
+/// Starting a server and listing its tools answer quickly, or something is wrong.
+const PROTOCOL_DEADLINE: Duration = Duration::from_secs(30);
+/// Tools do real work: a browser action, a test run, an audit.
+const DEFAULT_TOOL_SECS: u64 = 300;
+const MAX_TOOL_SECS: u64 = 3600;
+
+/// How long one tool call may run before the server is given up on.
+pub fn tool_call_deadline(tool_timeout_secs: Option<u64>) -> Duration {
+    Duration::from_secs(tool_timeout_secs.unwrap_or(DEFAULT_TOOL_SECS))
+}
+
 impl McpServer {
     pub fn validate(&self) -> anyhow::Result<()> {
+        if self
+            .tool_timeout_secs
+            .is_some_and(|secs| !(1..=MAX_TOOL_SECS).contains(&secs))
+        {
+            bail!("MCP tool_timeout_secs must be between 1 and {MAX_TOOL_SECS}");
+        }
         if self.sse && self.url.is_none() {
             bail!("The SSE transport needs a URL");
         }
@@ -359,7 +385,7 @@ fn check_url(url: &str) -> anyhow::Result<()> {
 enum Transport {
     Stdio {
         child: Box<tokio::process::Child>,
-        _group: super::hooks::ProcessGroup,
+        group: super::hooks::ProcessGroup,
         input: tokio::process::ChildStdin,
         output: BufReader<tokio::process::ChildStdout>,
     },
@@ -601,6 +627,7 @@ pub struct Connection {
     next_id: u64,
     protocol: Option<String>,
     instructions: Option<String>,
+    tool_deadline: Duration,
 }
 impl std::fmt::Debug for Connection {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -697,7 +724,7 @@ impl Connection {
             let input = child.stdin.take().context("Missing stdin")?;
             let output = BufReader::new(child.stdout.take().context("Missing stdout")?);
             Transport::Stdio {
-                _group: super::hooks::ProcessGroup(child.id()),
+                group: super::hooks::ProcessGroup(child.id()),
                 child: Box::new(child),
                 input,
                 output,
@@ -746,7 +773,7 @@ impl Connection {
             } else {
                 Transport::Http {
                     client: reqwest::Client::builder()
-                        .timeout(Duration::from_secs(30))
+                        .connect_timeout(PROTOCOL_DEADLINE)
                         .redirect(reqwest::redirect::Policy::none())
                         .build()?,
                     url,
@@ -761,6 +788,7 @@ impl Connection {
             next_id: 1,
             protocol: None,
             instructions: None,
+            tool_deadline: tool_call_deadline(server.tool_timeout_secs),
         };
         let init=result.request("initialize",json!({"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"Themis","version":env!("CARGO_PKG_VERSION")}})).await?;
         if !matches!(
@@ -785,6 +813,7 @@ impl Connection {
         Ok(result)
     }
     async fn send(&mut self, message: Value) -> anyhow::Result<Option<Value>> {
+        let deadline = self.deadline(message["method"].as_str().unwrap_or_default());
         match &mut self.transport {
             Transport::Stdio { input, .. } => {
                 let mut bytes = serde_json::to_vec(&message)?;
@@ -802,6 +831,8 @@ impl Connection {
             } => {
                 let mut request = client
                     .post(url.as_str())
+                    // A backstop for messages sent outside `request`, whose deadline ends first.
+                    .timeout(deadline + Duration::from_secs(5))
                     .header("Accept", "application/json, text/event-stream")
                     .json(&message);
                 if let Some(id) = session.as_ref() {
@@ -918,10 +949,25 @@ impl Connection {
             Transport::Http { .. } => bail!("Missing MCP response"),
         }
     }
+    /// Whether a local server's process has ended.
+    fn stopped(&mut self) -> bool {
+        match &mut self.transport {
+            Transport::Stdio { child, .. } => !matches!(child.try_wait(), Ok(None)),
+            _ => false,
+        }
+    }
+    fn deadline(&self, method: &str) -> Duration {
+        if method == "tools/call" {
+            self.tool_deadline
+        } else {
+            PROTOCOL_DEADLINE
+        }
+    }
     pub async fn request(&mut self, method: &str, params: Value) -> anyhow::Result<Value> {
         let id = self.next_id;
         self.next_id += 1;
-        let outcome = tokio::time::timeout(Duration::from_secs(30), async {
+        let deadline = self.deadline(method);
+        let outcome = tokio::time::timeout(deadline, async {
             let direct = self
                 .send(json!({"jsonrpc":"2.0","id":id,"method":method,"params":params}))
                 .await?;
@@ -945,7 +991,9 @@ impl Connection {
         match outcome {
             Ok(result) => result,
             Err(_) => {
-                if let Transport::Stdio { child, .. } = &mut self.transport {
+                if let Transport::Stdio { child, group, .. } = &mut self.transport {
+                    // Everything the server started goes with it, such as a browser.
+                    *group = super::hooks::ProcessGroup(None);
                     let _ = child.kill().await;
                 }
                 bail!("MCP request timed out");
@@ -1005,6 +1053,8 @@ struct McpTool {
     schema: Value,
     connection: Arc<tokio::sync::Mutex<Connection>>,
     healthy: Arc<std::sync::atomic::AtomicBool>,
+    /// How to start a local server again; a remote one has no process to bring back.
+    restart: Option<Arc<(McpServer, PathBuf)>>,
     approvals: Arc<dyn ApprovalHook>,
 }
 impl std::fmt::Debug for McpTool {
@@ -1025,10 +1075,18 @@ impl ToolRuntime for McpTool {
                 risk: RiskLevel::Network,
             },
         )?;
-        let result = self
-            .connection
-            .lock()
-            .await
+        let mut connection = self.connection.lock().await;
+        if let Some(restart) = &self.restart {
+            if connection.stopped() || !self.healthy.load(std::sync::atomic::Ordering::Relaxed) {
+                *connection = Connection::connect(&restart.0, &restart.1)
+                    .await
+                    .map_err(|e| ToolCallError::RuntimeError(e.to_string().into()))?;
+                self.healthy
+                    .store(true, std::sync::atomic::Ordering::Relaxed);
+                crate::diagnostics::emit("mcp", "server_restarted", "info", json!({}));
+            }
+        }
+        let result = connection
             .request("tools/call", json!({"name":self.remote,"arguments":args}))
             .await
             .map_err(|e| {
@@ -1036,7 +1094,18 @@ impl ToolRuntime for McpTool {
                     self.healthy
                         .store(false, std::sync::atomic::Ordering::Relaxed);
                 }
-                ToolCallError::RuntimeError(e.to_string().into())
+                let timed_out = e.to_string() == "MCP request timed out";
+                ToolCallError::RuntimeError(
+                    if timed_out && self.restart.is_some() {
+                        crate::prompts::fill(
+                            crate::prompts::MCP_TOOL_TIMEOUT,
+                            &[("seconds", &connection.tool_deadline.as_secs().to_string())],
+                        )
+                    } else {
+                        e.to_string()
+                    }
+                    .into(),
+                )
             })?;
         if result["isError"] == true {
             return Err(ToolCallError::RuntimeError(tool_error_text(&result).into()));
@@ -1166,6 +1235,7 @@ pub struct Session {
     metadata: Vec<Value>,
     instructions: Option<String>,
     healthy: Arc<std::sync::atomic::AtomicBool>,
+    restart: Option<Arc<(McpServer, PathBuf)>>,
 }
 impl Session {
     pub async fn connect(server: &McpServer, root: &Path) -> anyhow::Result<Self> {
@@ -1197,6 +1267,10 @@ impl Session {
             connection: Arc::new(tokio::sync::Mutex::new(connection)),
             metadata,
             healthy: Arc::new(std::sync::atomic::AtomicBool::new(true)),
+            restart: server
+                .command
+                .is_some()
+                .then(|| Arc::new((server.clone(), root.to_owned()))),
         })
     }
     pub fn tool_summaries(&self) -> Vec<Value> {
@@ -1216,7 +1290,7 @@ impl Session {
     /// Caller must authorize startup before obtaining the session. Calls still
     /// consult the supplied run's approval hook individually.
     pub fn tools(&self, name: &str, approvals: Arc<dyn ApprovalHook>) -> anyhow::Result<McpTools> {
-        if !self.is_connected() {
+        if self.restart.is_none() && !self.is_connected() {
             bail!("MCP connection closed; reconnect it from Integrations");
         }
         let wire = |remote: &str| format!("mcp_{}", tool_identity(name, remote));
@@ -1240,6 +1314,7 @@ impl Session {
                     schema: tool["inputSchema"].clone(),
                     connection: self.connection.clone(),
                     healthy: self.healthy.clone(),
+                    restart: self.restart.clone(),
                     approvals: approvals.clone(),
                 }) as Box<dyn ToolT>
             })

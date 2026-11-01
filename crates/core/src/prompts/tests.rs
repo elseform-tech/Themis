@@ -44,6 +44,7 @@ const ALL: &[(&str, &str, &[&str])] = &[
     (RUNTIME_PASTED_SECRET, "runtime-pasted-secret", &[]),
     (DESKTOP_VERIFY_BROWSER, "desktop-verify-browser", &[]),
     (DESKTOP_MCP_GUIDANCE, "desktop-mcp-guidance", &[]),
+    (MCP_TOOL_TIMEOUT, "mcp-tool-timeout", &["seconds"]),
     (
         DESKTOP_MCP_UNAVAILABLE,
         "desktop-mcp-unavailable",
