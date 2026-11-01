@@ -146,3 +146,11 @@ it("doesn't blow a small chart up past its own size", async () => {
   expect(parseInt(frame.style.maxWidth, 10)).toBeLessThanOrEqual(174);
   expect(frame.style.aspectRatio).toBe("174 / 524");
 });
+it("centres a chart and labels it in small, plain text", async () => {
+  render(<ResponseBody text={'```mermaid\nflowchart TD\n A-->E\n```'} />);
+  const frame = await screen.findByTitle("Mermaid diagram");
+  expect(frame.style.marginInline).toBe("auto");
+  const options = diagram.initialize.mock.lastCall![0] as { themeVariables: Record<string, string> };
+  expect(options.themeVariables.fontSize).toBe("10px");
+  expect(options.themeVariables.fontFamily).toContain("system-ui");
+});
