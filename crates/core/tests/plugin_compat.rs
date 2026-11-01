@@ -984,6 +984,38 @@ fn lifecycle_events_import_only_where_their_moment_exists() {
     assert!(!notes.contains("Hook event SessionEnd"), "{notes}");
 }
 
+/// `sse` is the older transport and `url` a remote server by its address, which speaks the current
+/// one. Each stays what it is through an import and the mcp.json copy.
+#[test]
+fn remote_transports_import_as_what_they_are() {
+    let plugin = tempfile::tempdir().unwrap();
+    let root = plugin.path();
+    manifest(root, json!({"name": "remote"}));
+    write(
+        root,
+        ".mcp.json",
+        &json!({"mcpServers": {
+            "old": {"type": "sse", "url": "https://mcp.example.com/sse"},
+            "plain": {"type": "url", "url": "https://mcp.example.com"},
+            "bad": {"type": "websocket", "url": "https://mcp.example.com"},
+        }})
+        .to_string(),
+    );
+    let preview = inspect(root);
+    let report = serde_json::to_string(&preview.report).unwrap();
+    assert!(report.contains("Unsupported MCP transport"), "{report}");
+    assert_eq!(report.matches("Unsupported MCP transport").count(), 1);
+    assert!(preview.spec.mcp["old"].sse);
+    assert!(!preview.spec.mcp["plain"].sse);
+    assert!(!preview.spec.mcp.contains_key("bad"));
+    let written = themis_core::plugins::mcp_server_to_standard(&preview.spec.mcp["old"]);
+    assert_eq!(written["type"], "sse");
+    let back = themis_core::plugins::mcp_server_from_standard("old", &written).unwrap();
+    assert!(back.sse);
+    let written = themis_core::plugins::mcp_server_to_standard(&preview.spec.mcp["plain"]);
+    assert_eq!(written["type"], "http");
+}
+
 /// A hook whose worth is answering yes can't work here: hooks never grant. It stays out, and the
 /// plugin says so. One that only watches, or only says no, isn't affected.
 #[test]

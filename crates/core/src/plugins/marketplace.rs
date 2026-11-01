@@ -2594,17 +2594,21 @@ fn import_mcp_server(
         let supported = if opencode {
             ["local", "remote"].contains(&kind)
         } else {
-            ["stdio", "http", "streamable-http"].contains(&kind)
+            // `url` is a remote server named by its address, which speaks the current transport.
+            ["stdio", "http", "streamable-http", "sse", "url"].contains(&kind)
         };
         if !supported {
             compatibility_error = Some(unsupported_mcp(
                 format!("{name}.type"),
                 "Unsupported MCP transport",
-                "Use stdio or Streamable HTTP; SSE is not supported",
+                "Use stdio, Streamable HTTP or SSE",
             ));
         }
     }
-    let mut server = McpServer::default();
+    let mut server = McpServer {
+        sse: !opencode && raw.get("type").and_then(Value::as_str) == Some("sse"),
+        ..McpServer::default()
+    };
     if let Some(block) = raw.get("oauth") {
         match read_oauth(name, block, opencode, literals) {
             Ok(oauth) => server.oauth = oauth,
@@ -2683,7 +2687,8 @@ fn import_mcp_server(
     }
     if let Some(kind) = raw.get("type").and_then(Value::as_str) {
         if (["local", "stdio"].contains(&kind) && server.command.is_none())
-            || (["remote", "http", "streamable-http"].contains(&kind) && server.url.is_none())
+            || (["remote", "http", "streamable-http", "sse", "url"].contains(&kind)
+                && server.url.is_none())
         {
             bail!("MCP transport conflicts with connection configuration");
         }
@@ -2809,7 +2814,10 @@ pub fn mcp_server_to_standard(server: &McpServer) -> Value {
         }
     }
     if let Some(url) = &server.url {
-        entry.insert("type".into(), json!("http"));
+        entry.insert(
+            "type".into(),
+            json!(if server.sse { "sse" } else { "http" }),
+        );
         entry.insert("url".into(), json!(url));
         let mut headers: serde_json::Map<String, Value> = server
             .headers

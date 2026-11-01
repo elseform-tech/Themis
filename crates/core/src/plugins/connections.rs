@@ -109,11 +109,18 @@ pub struct McpServer {
     /// How a remote server signs in; see [`McpOauth`].
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub oauth: Option<McpOauth>,
+    /// A remote server on the older transport: a stream it keeps open, with messages sent to an
+    /// address it names there. See [`SseParser`].
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub sse: bool,
     #[serde(default)]
     pub enabled: bool,
 }
 impl McpServer {
     pub fn validate(&self) -> anyhow::Result<()> {
+        if self.sse && self.url.is_none() {
+            bail!("The SSE transport needs a URL");
+        }
         if let Some(cwd) = &self.cwd {
             let inside = cwd
                 .strip_prefix("${CLAUDE_PLUGIN_ROOT}")
@@ -363,7 +370,232 @@ enum Transport {
         bearer: Option<String>,
         headers: Vec<(String, String)>,
     },
+    Sse {
+        client: reqwest::Client,
+        /// Where messages go: the address the server named, held to its own host and port.
+        endpoint: String,
+        bearer: Option<String>,
+        headers: Vec<(String, String)>,
+        /// What arrives on the stream, until it ends.
+        incoming: tokio::sync::mpsc::Receiver<Value>,
+        _stream: AbortOnDrop,
+    },
 }
+
+/// Most of one server-sent event kept, in bytes; past that the stream is given up on.
+const SSE_EVENT_BYTES: usize = 1024 * 1024;
+/// Events waiting to be read.
+const SSE_BACKLOG: usize = 64;
+
+/// Ends the stream's reader with the connection.
+struct AbortOnDrop(tokio::task::JoinHandle<()>);
+impl Drop for AbortOnDrop {
+    fn drop(&mut self) {
+        self.0.abort();
+    }
+}
+
+/// One server-sent event: its name (`message` when none is given) and its data.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SseEvent {
+    pub event: String,
+    pub data: String,
+}
+
+/// Reads server-sent events from a stream in whatever chunks they arrive. The text is the server's
+/// and untrusted: bounded, and it never fails on what it can't read.
+#[derive(Debug, Default)]
+pub struct SseParser {
+    /// Bytes of the line still arriving.
+    line: Vec<u8>,
+    event: String,
+    data: String,
+    /// A CR ended the last line, so a LF starting this chunk belongs to it.
+    after_cr: bool,
+}
+
+impl SseParser {
+    /// The events `chunk` completes. `Err` once an event is past [`SSE_EVENT_BYTES`].
+    pub fn feed(&mut self, chunk: &[u8]) -> Result<Vec<SseEvent>, &'static str> {
+        let mut events = Vec::new();
+        for &byte in chunk {
+            if std::mem::take(&mut self.after_cr) && byte == b'\n' {
+                continue;
+            }
+            if byte == b'\n' || byte == b'\r' {
+                self.after_cr = byte == b'\r';
+                let line = std::mem::take(&mut self.line);
+                self.line_done(&line, &mut events);
+            } else {
+                self.line.push(byte);
+            }
+            if self.line.len() + self.data.len() > SSE_EVENT_BYTES {
+                return Err("MCP event exceeds 1 MiB");
+            }
+        }
+        Ok(events)
+    }
+
+    fn line_done(&mut self, line: &[u8], events: &mut Vec<SseEvent>) {
+        if line.is_empty() {
+            if !self.data.is_empty() {
+                let event = std::mem::take(&mut self.event);
+                events.push(SseEvent {
+                    event: if event.is_empty() {
+                        "message".to_owned()
+                    } else {
+                        event
+                    },
+                    data: std::mem::take(&mut self.data),
+                });
+            }
+            self.event.clear();
+            return;
+        }
+        let line = String::from_utf8_lossy(line);
+        let (field, value) = line.split_once(':').unwrap_or((&line, ""));
+        let value = value.strip_prefix(' ').unwrap_or(value);
+        match field {
+            "event" => value.clone_into(&mut self.event),
+            "data" => {
+                if !self.data.is_empty() {
+                    self.data.push('\n');
+                }
+                self.data.push_str(value);
+            }
+            _ => {}
+        }
+    }
+}
+
+/// Where a server's stream says to send messages, as an absolute address. It must stay on the
+/// server the person allowed: same scheme, host and port, and no user name to smuggle one in.
+pub fn sse_endpoint(stream_url: &str, named: &str) -> anyhow::Result<String> {
+    let base = reqwest::Url::parse(stream_url).context("Invalid MCP URL")?;
+    let target = base
+        .join(named.trim())
+        .context("Invalid MCP message address")?;
+    if target.scheme() != base.scheme()
+        || target.host_str() != base.host_str()
+        || target.port_or_known_default() != base.port_or_known_default()
+        || !target.username().is_empty()
+        || target.password().is_some()
+    {
+        bail!("The MCP server's message address leaves the server");
+    }
+    Ok(target.to_string())
+}
+
+/// How a server is reached, for the diagnostics.
+fn transport_name(server: &McpServer) -> &'static str {
+    match (server.command.is_some(), server.sse) {
+        (true, _) => "stdio",
+        (false, true) => "sse",
+        (false, false) => "http",
+    }
+}
+
+/// What a failed answer from a remote server means.
+fn http_failure(response: &reqwest::Response) -> anyhow::Error {
+    let status = response.status();
+    crate::diagnostics::emit(
+        "mcp",
+        "http_failed",
+        "warn",
+        json!({"http_status":status.as_u16(),"error_category":if matches!(status.as_u16(),401|403){"authentication"}else{"remote_http"}}),
+    );
+    // A Bearer challenge on 401 is MCP's way to ask for an OAuth sign-in.
+    let challenge = response
+        .headers()
+        .get("www-authenticate")
+        .and_then(|value| value.to_str().ok())
+        .is_some_and(|value| value.to_ascii_lowercase().starts_with("bearer"));
+    if status == reqwest::StatusCode::UNAUTHORIZED && challenge {
+        return anyhow::anyhow!("MCP server needs sign-in");
+    }
+    anyhow::anyhow!("MCP server returned HTTP {status}")
+}
+
+/// Opens a server's stream and waits for the address it names. Whatever comes after arrives on the
+/// receiver, which closes when the stream ends.
+async fn open_sse(
+    url: &str,
+    bearer: Option<&str>,
+    headers: &[(String, String)],
+) -> anyhow::Result<(
+    reqwest::Client,
+    String,
+    tokio::sync::mpsc::Receiver<Value>,
+    AbortOnDrop,
+)> {
+    // No whole-request time limit: the answer to this one is a stream that stays open.
+    let client = reqwest::Client::builder()
+        .connect_timeout(Duration::from_secs(30))
+        .redirect(reqwest::redirect::Policy::none())
+        .build()?;
+    let mut request = client.get(url).header("Accept", "text/event-stream");
+    if let Some(token) = bearer {
+        request = request.bearer_auth(token);
+    }
+    for (name, value) in headers {
+        request = request.header(name.as_str(), value.as_str());
+    }
+    let mut response = tokio::time::timeout(Duration::from_secs(30), request.send())
+        .await
+        .context("MCP connection timed out")?
+        .context("MCP connection failed")?;
+    if !response.status().is_success() {
+        return Err(http_failure(&response));
+    }
+    let streaming = response
+        .headers()
+        .get("content-type")
+        .and_then(|value| value.to_str().ok())
+        .is_some_and(|value| value.to_ascii_lowercase().starts_with("text/event-stream"));
+    if !streaming {
+        bail!("MCP server didn't answer with an event stream");
+    }
+    let mut parser = SseParser::default();
+    let (send, incoming) = tokio::sync::mpsc::channel(SSE_BACKLOG);
+    let (named, endpoint) = tokio::sync::oneshot::channel::<String>();
+    let reader = tokio::spawn(async move {
+        let mut named = Some(named);
+        loop {
+            let Ok(Some(chunk)) = response.chunk().await else {
+                return;
+            };
+            let Ok(events) = parser.feed(&chunk) else {
+                return;
+            };
+            for event in events {
+                match event.event.as_str() {
+                    "endpoint" => {
+                        if let Some(named) = named.take() {
+                            let _ = named.send(event.data);
+                        }
+                    }
+                    "message" => {
+                        // What can't be read as a message is skipped, as a stray line is.
+                        if let Ok(value) = serde_json::from_str::<Value>(&event.data) {
+                            if send.send(value).await.is_err() {
+                                return;
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+    });
+    let reader = AbortOnDrop(reader);
+    let named = tokio::time::timeout(Duration::from_secs(30), endpoint)
+        .await
+        .context("MCP server named no message address")?
+        .context("MCP server disconnected")?;
+    let endpoint = sse_endpoint(url, &named)?;
+    Ok((client, endpoint, incoming, reader))
+}
+
 pub struct Connection {
     transport: Transport,
     next_id: u64,
@@ -387,7 +619,7 @@ impl Connection {
                 "initialization_failed"
             },
             if result.is_ok() { "info" } else { "warn" },
-            json!({"duration_ms":started.elapsed().as_millis(),"transport":if server.command.is_some(){"stdio"}else{"http"},"protocol":result.as_ref().ok().and_then(|c|c.protocol.clone()),"error_category":result.as_ref().err().map(connection_error_category)}),
+            json!({"duration_ms":started.elapsed().as_millis(),"transport":transport_name(server),"protocol":result.as_ref().ok().and_then(|c|c.protocol.clone()),"error_category":result.as_ref().err().map(connection_error_category)}),
         );
         result
     }
@@ -397,7 +629,7 @@ impl Connection {
             "mcp",
             "connection_started",
             "info",
-            json!({"transport":if server.command.is_some(){"stdio"}else{"http"}}),
+            json!({"transport":transport_name(server)}),
         );
         // Every key the server reads, resolved up front so all missing ones are named at once.
         let mut keys = BTreeMap::new();
@@ -500,15 +732,28 @@ impl Connection {
                         .map(|(header, value)| Ok((header.clone(), value.clone()))),
                 )
                 .collect::<anyhow::Result<Vec<_>>>()?;
-            Transport::Http {
-                client: reqwest::Client::builder()
-                    .timeout(Duration::from_secs(30))
-                    .redirect(reqwest::redirect::Policy::none())
-                    .build()?,
-                url,
-                session: None,
-                bearer,
-                headers,
+            if server.sse {
+                let (client, endpoint, incoming, stream) =
+                    open_sse(&url, bearer.as_deref(), &headers).await?;
+                Transport::Sse {
+                    client,
+                    endpoint,
+                    bearer,
+                    headers,
+                    incoming,
+                    _stream: stream,
+                }
+            } else {
+                Transport::Http {
+                    client: reqwest::Client::builder()
+                        .timeout(Duration::from_secs(30))
+                        .redirect(reqwest::redirect::Policy::none())
+                        .build()?,
+                    url,
+                    session: None,
+                    bearer,
+                    headers,
+                }
             }
         };
         let mut result = Self {
@@ -573,22 +818,7 @@ impl Connection {
                 }
                 let mut response = request.send().await.context("MCP connection failed")?;
                 if !response.status().is_success() {
-                    crate::diagnostics::emit(
-                        "mcp",
-                        "http_failed",
-                        "warn",
-                        json!({"http_status":response.status().as_u16(),"error_category":if matches!(response.status().as_u16(),401|403){"authentication"}else{"remote_http"}}),
-                    );
-                    // A Bearer challenge on 401 is MCP's way to ask for an OAuth sign-in.
-                    let challenge = response
-                        .headers()
-                        .get("www-authenticate")
-                        .and_then(|value| value.to_str().ok())
-                        .is_some_and(|value| value.to_ascii_lowercase().starts_with("bearer"));
-                    if response.status() == reqwest::StatusCode::UNAUTHORIZED && challenge {
-                        bail!("MCP server needs sign-in");
-                    }
-                    bail!("MCP server returned HTTP {}", response.status());
+                    return Err(http_failure(&response));
                 }
                 if let Some(id) = response.headers().get("mcp-session-id") {
                     *session = Some(id.to_str()?.into());
@@ -618,21 +848,37 @@ impl Connection {
                 }
                 bail!("MCP response contains no matching JSON-RPC result")
             }
+            Transport::Sse {
+                client,
+                endpoint,
+                bearer,
+                headers,
+                ..
+            } => {
+                let mut request = client
+                    .post(endpoint.as_str())
+                    .timeout(Duration::from_secs(30))
+                    .json(&message);
+                if let Some(token) = bearer {
+                    request = request.bearer_auth(token.as_str());
+                }
+                for (name, value) in headers.iter() {
+                    request = request.header(name.as_str(), value.as_str());
+                }
+                let response = request.send().await.context("MCP connection failed")?;
+                if !response.status().is_success() {
+                    return Err(http_failure(&response));
+                }
+                // The answer comes on the stream.
+                Ok(None)
+            }
         }
     }
-    pub async fn request(&mut self, method: &str, params: Value) -> anyhow::Result<Value> {
-        let id = self.next_id;
-        self.next_id += 1;
-        let outcome = tokio::time::timeout(Duration::from_secs(30), async {
-            let direct = self
-                .send(json!({"jsonrpc":"2.0","id":id,"method":method,"params":params}))
-                .await?;
-            let response = if let Some(value) = direct {
-                value
-            } else {
-                let Transport::Stdio { output, .. } = &mut self.transport else {
-                    bail!("Missing MCP response");
-                };
+
+    /// The answer to request `id`, from what a stream-based transport has received.
+    async fn next_answer(&mut self, id: u64) -> anyhow::Result<Value> {
+        match &mut self.transport {
+            Transport::Stdio { output, .. } => {
                 let mut found = None;
                 for _ in 0..100 {
                     let mut line = Vec::new();
@@ -655,7 +901,34 @@ impl Connection {
                         bail!("Server-initiated MCP requests are unsupported");
                     }
                 }
-                found.context("Too many MCP notifications")?
+                found.context("Too many MCP notifications")
+            }
+            Transport::Sse { incoming, .. } => {
+                for _ in 0..100 {
+                    let value = incoming.recv().await.context("MCP server disconnected")?;
+                    if value.get("id") == Some(&json!(id)) && value.get("method").is_none() {
+                        return Ok(value);
+                    }
+                    if value.get("method").is_some() && value.get("id").is_some() {
+                        bail!("Server-initiated MCP requests are unsupported");
+                    }
+                }
+                bail!("Too many MCP notifications")
+            }
+            Transport::Http { .. } => bail!("Missing MCP response"),
+        }
+    }
+    pub async fn request(&mut self, method: &str, params: Value) -> anyhow::Result<Value> {
+        let id = self.next_id;
+        self.next_id += 1;
+        let outcome = tokio::time::timeout(Duration::from_secs(30), async {
+            let direct = self
+                .send(json!({"jsonrpc":"2.0","id":id,"method":method,"params":params}))
+                .await?;
+            let response = if let Some(value) = direct {
+                value
+            } else {
+                self.next_answer(id).await?
             };
             if response.get("id") != Some(&json!(id)) {
                 bail!("Mismatched MCP response id");
@@ -1107,6 +1380,47 @@ mod tests {
     }
 
     proptest::proptest! {
+        #[test]
+        /// However a stream's bytes are cut up the events are the same, and nothing a server sends
+        /// makes it panic or keep more than the bound.
+        #[test]
+        fn server_sent_events_read_the_same_however_they_are_cut(
+            events in proptest::collection::vec(("[a-z]{0,8}", "[ -~]{0,40}"), 0..8),
+            noise in proptest::collection::vec(proptest::prelude::any::<u8>(), 0..200),
+            cut in 1usize..16,
+        ) {
+            let mut text = String::new();
+            for (name, data) in &events {
+                if !name.is_empty() {
+                    text.push_str(&format!("event: {name}\r\n"));
+                }
+                text.push_str(&format!("data: {data}\n\n"));
+            }
+            let mut whole = SseParser::default();
+            let at_once = whole.feed(text.as_bytes()).unwrap();
+            let mut cut_up = SseParser::default();
+            let mut pieces = Vec::new();
+            for piece in text.as_bytes().chunks(cut) {
+                pieces.extend(cut_up.feed(piece).unwrap());
+            }
+            proptest::prop_assert_eq!(&at_once, &pieces);
+            let mut stray = SseParser::default();
+            let _ = stray.feed(&noise);
+            proptest::prop_assert!(stray.line.len() + stray.data.len() <= SSE_EVENT_BYTES);
+        }
+
+        /// A server can name any address it likes: what comes back is on that server, or nothing.
+        #[test]
+        fn a_message_address_stays_on_its_server_or_is_refused(named in "\\PC{0,60}") {
+            if let Ok(target) = sse_endpoint("https://mcp.example.com:8443/sse", &named) {
+                let target = reqwest::Url::parse(&target).unwrap();
+                proptest::prop_assert_eq!(target.host_str(), Some("mcp.example.com"));
+                proptest::prop_assert_eq!(target.port(), Some(8443));
+                proptest::prop_assert_eq!(target.scheme(), "https");
+                proptest::prop_assert!(target.username().is_empty() && target.password().is_none());
+            }
+        }
+
         #[test]
         fn any_address_gives_a_plain_host_or_is_refused(url in "\\PC{0,80}", value in "\\PC{0,40}") {
             let server = McpServer {
