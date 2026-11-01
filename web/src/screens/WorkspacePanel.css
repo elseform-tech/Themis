@@ -31,7 +31,7 @@
 .themis-workspace-changes-bar .themis-workspace-note { margin-left: auto; }
 .themis-workspace-source { display: inline-flex; align-items: center; gap: 6px; min-width: 0; max-width: 100%; color: var(--themis-text-2); font-size: .8125rem; }
 .themis-workspace-source select { appearance: none; min-width: 0; max-width: 100%; padding: 2px 16px 2px 0; border: 0; background: transparent url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='10' viewBox='0 0 24 24' fill='none' stroke='%23888' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E") no-repeat right center; color: var(--themis-text); font: inherit; text-overflow: ellipsis; cursor: pointer; }
-.themis-workspace-source select:focus-visible { outline: 2px solid var(--themis-accent); outline-offset: 2px; border-radius: 4px; }
+.themis-workspace-source select:focus-visible { outline: 1px solid var(--themis-border); outline-offset: 2px; border-radius: 4px; }
 .themis-workspace-note { margin: 0; color: var(--themis-text-2); font-size: .75rem; }
 .themis-workspace-split { position: relative; flex: 1; min-height: 0; display: grid; grid-template-columns: min(var(--themis-diff-list, 180px), 45%) 12px minmax(0, 1fr); }
 .themis-workspace-split.is-resizing { user-select: none; }

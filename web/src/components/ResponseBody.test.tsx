@@ -118,9 +118,24 @@ it("fits a diagram to the chat's column, in colours that tell groups apart", asy
   // grows past its natural size or the height a reply can give it.
   expect(parseInt(frame.style.maxWidth, 10)).toBeLessThanOrEqual(344);
   expect(frame.closest(".themis-code-panel")).toHaveClass("themis-code-panel--diagram");
+  expect(frame.getAttribute("srcdoc")).toContain("background:transparent");
   const options = diagram.initialize.mock.lastCall![0] as { theme: string; themeVariables: Record<string, string> };
   expect(options.theme).toBe("base");
   expect(options.themeVariables.primaryColor).toBeTruthy();
   expect(options.themeVariables.secondaryColor).not.toBe(options.themeVariables.primaryColor);
   expect(options.themeVariables.tertiaryColor).not.toBe(options.themeVariables.primaryColor);
+});
+it("keeps a tall chart readable instead of shrinking it to the height limit", async () => {
+  diagram.render.mockResolvedValueOnce({ svg: '<svg viewBox="0 0 400 1600"></svg>' } as never);
+  render(<ResponseBody text={'```mermaid\nflowchart TD\n A-->B\n```'} />);
+  const frame = await screen.findByTitle("Mermaid diagram");
+  // At least 70% of its own width, which is about where its labels stop being readable.
+  expect(parseInt(frame.style.maxWidth, 10)).toBeGreaterThanOrEqual(280);
+});
+it("gives the frame the page's colour scheme, so a dark window has no white box", async () => {
+  document.documentElement.dataset.theme = "dark";
+  render(<ResponseBody text={'```mermaid\nflowchart TD\n A-->C\n```'} />);
+  const frame = await screen.findByTitle("Mermaid diagram");
+  expect(frame.getAttribute("srcdoc")).toContain("color-scheme:dark");
+  delete document.documentElement.dataset.theme;
 });
