@@ -183,6 +183,7 @@ pub struct TerminalSession {
     input: SyncSender<Vec<u8>>,
     master: Mutex<Option<Box<dyn MasterPty + Send>>>,
     killer: Mutex<Box<dyn ChildKiller + Send + Sync>>,
+    #[cfg_attr(not(unix), allow(dead_code))]
     pid: Option<u32>,
     /// How it ended, once it has: its exit code, none when it was closed or killed.
     exit: Mutex<Option<Option<i32>>>,

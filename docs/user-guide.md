@@ -260,7 +260,11 @@ is reached; for example `/goal optimize this app to speed up p95`.
   updating live while the agent works; binary and generated files are hidden; a
   change too large to show whole, such as a downloaded dataset, shows its first
   2,000 lines with a note), **Files**, **Branches**, **Pull requests** (needs
-  the GitHub CLI signed in) and **Tasks**. Tasks lists this chat's running work and
+  the GitHub CLI signed in), **Terminal** (your own shell in the project, or the
+  chat's worktree when it has one, to look around and run commands; it stays
+  running when you switch tab or chat, ends with the project or when you quit
+  Themis, and doesn't get the API keys Themis holds, though your shell profile
+  still runs) and **Tasks**. Tasks lists this chat's running work and
   the automations that continue it and programs the agent started in the
   background (dev servers, watchers), with **Stop** (the current run, or one
   background program, with its latest output and a read-only **Full log**) and
