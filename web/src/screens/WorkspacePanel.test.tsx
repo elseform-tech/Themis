@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { initialState } from "../state/reducer";
 import type { WorkspaceInfo } from "../lib/types";
@@ -25,16 +25,16 @@ beforeEach(() => { appState = { ...initialState, diffs: { t1: diff } }; vi.mocke
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 
 describe("WorkspacePanel", () => {
-  it("monitors changes read-only and shows files, branches and pull request availability", async () => {
+  it("monitors changes read-only and shows files and pull request availability", async () => {
     render(<WorkspacePanel projectRoot="/repo" threadId="t1" workspace={workspace} />);
     expect(screen.getByRole("complementary", { name: "Workspace (read-only)" })).toBeInTheDocument();
     expect(screen.queryByRole("checkbox")).toBeNull();
     expect(screen.queryByRole("progressbar")).toBeNull();
     expect(screen.getByText("new")).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /^Accept|^Discard|Merge|Comment|Refresh|Unified|Side-by-side/ })).toBeNull();
+    expect(screen.queryByRole("button", { name: /^Accept|^Discard|Merge|Comment|Refresh/ })).toBeNull();
     const separator = screen.getByRole("separator", { name: "Resize workspace panel" });
     fireEvent.keyDown(separator, { key: "ArrowLeft" });
-    expect(separator).toHaveAttribute("aria-valuenow", "600");
+    expect(separator).toHaveAttribute("aria-valuenow", "680");
     await act(async () => fireEvent.click(screen.getByRole("button", { name: "Files" })));
     // The file view sits beside the tree in the content column, not in the divider's.
     const tree = screen.getByRole("list", { name: "Project files" });
@@ -42,10 +42,14 @@ describe("WorkspacePanel", () => {
     expect(tree.nextElementSibling?.nextElementSibling).toHaveTextContent("Pick a file");
     await act(async () => fireEvent.click(screen.getByRole("button", { name: "README.md" })));
     expect(screen.getByText("hello")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Branches" }));
-    expect(screen.getByRole("list", { name: "Branches" })).toHaveTextContent("maincurrent");
     await act(async () => fireEvent.click(screen.getByRole("button", { name: "Pull requests" })));
     expect(screen.getByText("GitHub CLI (gh) is not installed")).toBeInTheDocument();
+  });
+  it("falls back to Changes when the remembered tab no longer exists", async () => {
+    window.localStorage.setItem("themis:workspaceTab", JSON.stringify("branches"));
+    render(<WorkspacePanel projectRoot="/repo" threadId="t1" workspace={workspace} />);
+    await act(async () => {});
+    expect(screen.getByRole("button", { name: /^Changes/ })).toHaveAttribute("aria-pressed", "true");
   });
   it("falls back to Changes when the remembered Goal tab has no goal in this chat", async () => {
     window.localStorage.setItem("themis-workspace-tab", "goal");
@@ -62,7 +66,7 @@ describe("WorkspacePanel", () => {
     const head = document.querySelector(".themis-workspace-head")!;
     const nav = head.querySelector("nav[aria-label='Workspace views']")!;
     // Each tab is an icon whose name is its tooltip; the only text is a change count.
-    for (const name of ["Changes 1", "Files", "Branches", "Pull requests", "Tasks", "Browser"]) {
+    for (const name of ["Changes 1", "Files", "Pull requests", "Tasks", "Browser"]) {
       const tab = screen.getByRole("button", { name });
       expect(nav.contains(tab)).toBe(true);
       expect(tab.querySelector("svg")).not.toBeNull();
@@ -86,14 +90,14 @@ describe("WorkspacePanel", () => {
     for (let step = 0; step < 10; step += 1) fireEvent.keyDown(panel, { key: "ArrowRight" });
     expect(panel).toHaveAttribute("aria-valuenow", "300");
     const split = screen.getByRole("separator", { name: "Resize file list" });
-    expect(split).toHaveAttribute("aria-valuenow", "200");
+    expect(split).toHaveAttribute("aria-valuenow", "180");
     fireEvent.keyDown(split, { key: "ArrowRight" });
-    expect(split).toHaveAttribute("aria-valuenow", "240");
-    expect(localStorage.getItem("themis:workspaceDiffListWidth")).toBe("240");
+    expect(split).toHaveAttribute("aria-valuenow", "220");
+    expect(localStorage.getItem("themis:workspaceFileListWidth")).toBe("220");
     for (let step = 0; step < 10; step += 1) fireEvent.keyDown(split, { key: "ArrowLeft" });
     expect(split).toHaveAttribute("aria-valuenow", "120");
     fireEvent.doubleClick(split);
-    expect(split).toHaveAttribute("aria-valuenow", "200");
+    expect(split).toHaveAttribute("aria-valuenow", "180");
     // Dragging a divider never starts a text selection (WebKit selects on mousedown).
     expect(fireEvent.mouseDown(panel)).toBe(false);
     expect(fireEvent.mouseDown(split)).toBe(false);
@@ -112,33 +116,37 @@ describe("WorkspacePanel", () => {
     expect(calls()).toBe(initial + 1);
     vi.useRealTimers();
   });
-  it("shows what another branch adds, read-only, and nothing for the current one", async () => {
+  it("shows what another branch adds in Changes, without switching anything", async () => {
     const info = { ...workspace, is_git: true, branch: "main", branches: [
       { name: "main", current: true, upstream: null, track: null, updated: "now" },
       { name: "feature", current: false, upstream: null, track: null, updated: "now" },
     ] };
-    vi.mocked(bridge.branchDiff).mockResolvedValue({ available: true, reason: null, files: [{ path: "new.txt", status: "added", hunks: [] }] } as never);
-    appState = { ...appState, workspaceTabRequest: { tab: "branches", at: 2 } };
+    vi.mocked(bridge.branchDiff).mockResolvedValue({ available: true, reason: null, files: [{ path: "new.txt", status: "added", added: 1, removed: 0, hunks: [] }] } as never);
     render(<WorkspacePanel projectRoot="/repo" threadId="t1" workspace={info as never} />);
-    expect(screen.queryByRole("button", { name: /^main/ })).toBeNull();
-    await act(async () => { fireEvent.click(screen.getByRole("button", { name: /^feature/ })); });
+    await act(async () => {});
+    expect(screen.queryByRole("button", { name: "Branches" })).toBeNull();
+    const source = screen.getByRole("combobox", { name: "Show changes from" });
+    expect([...source.querySelectorAll("option")].map(option => option.textContent)).toEqual(["Uncommitted changes on main", "feature"]);
+    await act(async () => { fireEvent.change(source, { target: { value: "feature" } }); });
     expect(bridge.branchDiff).toHaveBeenCalledWith("/repo", "feature");
-    expect(within(screen.getByRole("region", { name: "Changes in feature" })).getAllByText("new.txt").length).toBeGreaterThan(0);
-    await act(async () => { fireEvent.click(screen.getByRole("button", { name: /^feature/ })); });
-    expect(screen.queryByRole("region", { name: "Changes in feature" })).toBeNull();
+    expect(screen.getAllByText("new.txt").length).toBeGreaterThan(0);
+    expect(screen.queryByText("src/a.ts")).toBeNull();
+    expect(screen.queryByRole("button", { name: /switch/i })).toBeNull();
+    await act(async () => { fireEvent.change(source, { target: { value: "" } }); });
+    expect(screen.queryByText("new.txt")).toBeNull();
   });
   it("drops a branch's comparison when that branch becomes the current one, and rereads the others", async () => {
     const branches = (current: string) => ({ ...workspace, is_git: true, branch: current, branches: ["main", "feature", "other"].map(name => ({ name, current: name === current, upstream: null, track: null, updated: "now" })) });
     vi.mocked(bridge.branchDiff).mockClear();
-    vi.mocked(bridge.branchDiff).mockResolvedValue({ available: true, reason: null, files: [{ path: "new.txt", status: "added", hunks: [] }] } as never);
-    appState = { ...appState, workspaceTabRequest: { tab: "branches", at: 3 } };
+    vi.mocked(bridge.branchDiff).mockResolvedValue({ available: true, reason: null, files: [{ path: "new.txt", status: "added", added: 1, removed: 0, hunks: [] }] } as never);
     const view = render(<WorkspacePanel projectRoot="/repo" threadId="t1" workspace={branches("main") as never} />);
-    await act(async () => { fireEvent.click(screen.getByRole("button", { name: /^other/ })); });
+    await act(async () => {});
+    await act(async () => { fireEvent.change(screen.getByRole("combobox", { name: "Show changes from" }), { target: { value: "other" } }); });
     expect(bridge.branchDiff).toHaveBeenCalledTimes(1);
     await act(async () => { view.rerender(<WorkspacePanel projectRoot="/repo" threadId="t1" workspace={branches("feature") as never} />); });
     expect(bridge.branchDiff).toHaveBeenCalledTimes(2);
     await act(async () => { view.rerender(<WorkspacePanel projectRoot="/repo" threadId="t1" workspace={branches("other") as never} />); });
-    expect(screen.queryByRole("region", { name: "Changes in other" })).toBeNull();
+    expect(screen.getByRole("combobox", { name: "Show changes from" })).toHaveValue("");
   });
   it("shows a Tasks tab with a count and opens it when the indicator asks", async () => {
     const feed = { thread_id: "t1", run: { running: true, awaiting_approval: false }, automations: [], recent: [] };

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { render, screen } from "@testing-library/react";
-import { CodeBlock, tokenizeLine } from "./CodeBlock";
+import { CodeBlock, highlightLines } from "./CodeBlock";
 
 describe("CodeBlock", () => {
   it("renders code text", () => {
@@ -41,20 +41,50 @@ describe("CodeBlock", () => {
     expect(kinds).toContain("themis-codeblock-token--number");
   });
 
-  it("tokenizes python comments and rust keywords", () => {
-    const py = tokenizeLine("x = 1  # done", "python");
-    expect(py.some((t) => t.kind === "comment")).toBe(true);
-    const rs = tokenizeLine("fn main() {", "rust");
-    expect(
-      rs.some((t) => t.kind === "keyword" && t.text === "fn"),
-    ).toBe(true);
+  it("colours what makes Python read as Python", () => {
+    const code = [
+      "@dataclass",
+      "class Person:",
+      '    """A docstring',
+      '    on two lines."""',
+      "    name: str = 'x'",
+      "",
+      "def greet(person: Person) -> str:",
+      "    # a comment",
+      '    return f"Hello {person.name} {1 + 2}"',
+    ].join("\n");
+    const lines = highlightLines(code, "python");
+    expect(lines).toHaveLength(9);
+    const has = (line: number, kind: string, text: string) =>
+      lines[line]!.some(token => token.kind === kind && token.text.includes(text));
+    expect(has(0, "meta", "@dataclass")).toBe(true);
+    expect(has(1, "keyword", "class")).toBe(true);
+    expect(has(1, "title", "Person")).toBe(true);
+    // A docstring stays a string across lines, which a line at a time couldn't do.
+    expect(has(2, "string", "A docstring")).toBe(true);
+    expect(has(3, "string", "on two lines")).toBe(true);
+    expect(has(6, "title", "greet")).toBe(true);
+    expect(has(6, "type", "str")).toBe(true);
+    expect(has(7, "comment", "a comment")).toBe(true);
+    expect(has(8, "string", "Hello")).toBe(true);
+    expect(lines.map(line => line.map(token => token.text).join("")).join("\n")).toBe(code);
   });
 
-  it("falls back to plain text for unknown languages", () => {
-    const tokens = tokenizeLine("hello world 123", "generic");
-    expect(tokens.some((t) => t.kind === "number")).toBe(true);
-    expect(tokens.every((t) => t.kind === "plain" || t.kind === "number")).toBe(
-      true,
-    );
+  it("knows the short names and other languages", () => {
+    expect(highlightLines("x = 1  # done", "py")[0]!.some(t => t.kind === "comment")).toBe(true);
+    expect(highlightLines("fn main() {", "rust")[0]!.some(t => t.kind === "keyword" && t.text === "fn")).toBe(true);
+  });
+
+  it("leaves a language it doesn't know, or a huge block, plain", () => {
+    expect(highlightLines("hello 123", "not-a-language")).toEqual([[{ kind: "plain", text: "hello 123" }]]);
+    expect(highlightLines("hello 123", undefined)).toEqual([[{ kind: "plain", text: "hello 123" }]]);
+    const huge = "x = 1\n".repeat(50_000);
+    expect(highlightLines(huge, "python").every(line => line.every(token => token.kind === "plain"))).toBe(true);
+  });
+
+  it("renders code as text, never as markup", () => {
+    const { container } = render(<CodeBlock code={'x = "<img src=x onerror=alert(1)>"'} language="python" />);
+    expect(container.querySelector("img")).toBeNull();
+    expect(container.textContent).toContain("<img src=x");
   });
 });
