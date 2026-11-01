@@ -5,7 +5,7 @@ description: List, create, change, delete, enable, disable, test and troubleshoo
 
 # Hooks
 
-A hook is a command Themis runs at a set point of a run. The events, in run order, are PromptSubmit, RunStart, BeforeTool, AfterTool, BeforeCompaction and RunEnd. Users configure handlers for these events; they do not create new events.
+A hook is a command Themis runs at a set point of a run. The events, in run order, are PromptSubmit, RunStart, BeforeTool, AfterTool, BeforeCompaction and RunEnd. A chat's session also has SessionStart, once when it opens, and SessionEnd, once when the chat is deleted, the app quits or the chat sits idle. Users configure handlers for these events; they do not create new events.
 
 When the request does not say what to do, list the hooks, say what each one does and whether it is on, and change nothing.
 
