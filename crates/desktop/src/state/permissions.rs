@@ -179,6 +179,7 @@ impl AppState {
                         "default_source": default_source,
                         "rules": rules,
                         "project_rule_count": project_rules,
+                        "sensitive_files": resolved.config.approval.sensitive_files,
                     }),
                     status,
                 )

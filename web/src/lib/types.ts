@@ -610,6 +610,8 @@ export interface ApprovalRequest {
   grant_scope?: { argv: string[]; covers_further_args: boolean };
   /** For web and browser tools: the site "allow in this chat" covers; `tools` is `browser` (every browser action), `fetch_url` or `web_search`. */
   grant_site?: { tools: string; site: string };
+  /** The sensitive project files this action touches: "Allow in this chat" covers these, not the whole tool. */
+  sensitive_files?: string[];
   /** False for destructive actions: they ask every time, so only Allow once and Deny are offered. */
   grantable?: boolean;
   /** Structured command for shell/git approvals; show this instead of the joined summary. */

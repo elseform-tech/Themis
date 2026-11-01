@@ -1,5 +1,6 @@
 //! Versioned runtime configuration and immutable per-run approval policy.
 use crate::chat_grants::ChatGrants;
+use crate::tools::sensitive::{SensitiveAccess, SensitiveMatcher, SENSITIVE_TOOL};
 use crate::tools::{is_destructive_variant, Approval, ApprovalHook, RiskLevel, ToolAction};
 use anyhow::{ensure, Context, Result};
 use serde::{Deserialize, Serialize};
@@ -46,6 +47,9 @@ pub struct ApprovalRule {
 pub struct ApprovalPolicy {
     pub default: PolicyAction,
     pub rules: Vec<ApprovalRule>,
+    /// File-name patterns of sensitive project files, which ask first. Replaces the
+    /// defaults when set; `[]` turns it off; a project may only add to it.
+    pub sensitive_files: Vec<String>,
 }
 impl Default for ApprovalPolicy {
     fn default() -> Self {
@@ -57,6 +61,10 @@ impl Default for ApprovalPolicy {
                 action: PolicyAction::Allow,
                 risk: Some("read".into()),
             }],
+            sensitive_files: crate::tools::sensitive::DEFAULT_SENSITIVE_FILES
+                .iter()
+                .map(|pattern| (*pattern).to_owned())
+                .collect(),
         }
     }
 }
@@ -92,6 +100,7 @@ impl ApprovalPolicy {
                 })
                 .cloned()
                 .collect(),
+            sensitive_files: self.sensitive_files.clone(),
         }
     }
 
@@ -346,10 +355,87 @@ struct ConfiguredHook {
     policy: ApprovalPolicy,
     interactive: Arc<dyn ApprovalHook>,
     grants: Arc<ChatGrants>,
+    sensitive: SensitiveMatcher,
 }
 impl ApprovalHook for ConfiguredHook {
     fn denied_by_rule(&self, action: &ToolAction) -> bool {
         self.rule_denies(action)
+    }
+
+    fn sensitive_access(&self, tool: &str, args: &Value) -> Option<SensitiveAccess> {
+        self.sensitive.classify(tool, args)
+    }
+
+    /// Both must pass: the call as any other (a deny rule, or for a command its own
+    /// approval), and each file. Rules naming `sensitive_file` decide a file before a chat
+    /// grant does; a wildcard allow never covers one, and a deny of any shape refuses it.
+    /// YOLO keeps only the denies. "Allow in this chat" remembers each file and kind of
+    /// access; for a command also the command, so neither stands in for the other.
+    fn approve_sensitive(&self, action: &ToolAction, access: &SensitiveAccess) -> Approval {
+        let files = access.file_actions();
+        let decisions: Vec<PolicyAction> = files
+            .iter()
+            .map(|file| self.policy.sensitive_decision(file))
+            .collect();
+        if decisions.contains(&PolicyAction::Deny) {
+            return Approval::Deny;
+        }
+        if self.mode == ApprovalMode::Yolo {
+            return self.approve(action);
+        }
+        if self.policy.decision(action) == PolicyAction::Deny {
+            return Approval::Deny;
+        }
+        if decisions
+            .iter()
+            .all(|decision| *decision == PolicyAction::Allow)
+        {
+            return self.approve(action);
+        }
+        let command = crate::tools::is_command_tool(&action.tool);
+        let granted = files
+            .iter()
+            .zip(&decisions)
+            .all(|(file, decision)| *decision == PolicyAction::Allow || self.grants.covers(file));
+        if granted {
+            return if command {
+                self.approve(action)
+            } else {
+                Approval::AllowOnce
+            };
+        }
+        crate::diagnostics::emit(
+            "approval",
+            "sensitive_file_asked",
+            "info",
+            serde_json::json!({
+                "tool": action.tool,
+                "kind": access.kinds().join(","),
+                "files": access.files.len(),
+            }),
+        );
+        let asked = ToolAction {
+            summary: format!(
+                "{} (sensitive: {})",
+                action.summary,
+                crate::tools::sensitive::name_list(&access.names())
+            ),
+            ..action.clone()
+        };
+        match self.interactive.approve_sensitive(&asked, access) {
+            Approval::AllowAlways => {
+                if action.grantable() {
+                    for file in &files {
+                        self.grants.remember(file);
+                    }
+                    if command {
+                        self.grants.remember(action);
+                    }
+                }
+                Approval::AllowOnce
+            }
+            decision => decision,
+        }
     }
 
     fn approve(&self, action: &ToolAction) -> Approval {
@@ -423,6 +509,30 @@ impl ConfiguredHook {
 }
 
 impl ApprovalPolicy {
+    /// The patterns of `sensitive_files`, for files under `root`.
+    #[must_use]
+    pub fn sensitive_matcher(&self, root: Option<&std::path::Path>) -> SensitiveMatcher {
+        SensitiveMatcher::new(&self.sensitive_files, root)
+    }
+
+    /// Decision for one sensitive file (see `SensitiveAccess::file_actions`): the first deny
+    /// that matches (normal matching, wildcards included) or the first allow/ask rule whose
+    /// tool is exactly `sensitive_file`, in order; otherwise ask (a `deny` default denies, an
+    /// `allow` default still asks: `default` was not written with secrets in mind).
+    pub fn sensitive_decision(&self, file: &ToolAction) -> PolicyAction {
+        for rule in &self.rules {
+            let exact = rule.tool == SENSITIVE_TOOL;
+            if (rule.action == PolicyAction::Deny || exact) && rule_matches(rule, file) {
+                return rule.action;
+            }
+        }
+        if self.default == PolicyAction::Deny {
+            PolicyAction::Deny
+        } else {
+            PolicyAction::Ask
+        }
+    }
+
     /// Decision for a `shell_unsandboxed` escape: the first deny rule that
     /// matches (normal matching, wildcards included) or the first allow/ask
     /// rule whose tool is exactly `shell_unsandboxed`, in order; otherwise ask
@@ -452,19 +562,33 @@ pub fn configured_hook(
     configured_hook_with_grants(mode, policy, interactive, ChatGrants::in_memory())
 }
 
-/// Like [`configured_hook`], with the chat's grants: stored grants are honored
-/// where the policy asks, and an "allow in this chat" answer is saved to them.
+/// [`configured_hook_for_project`] with nothing to look at on disk: names alone decide.
 pub fn configured_hook_with_grants(
     mode: ApprovalMode,
     policy: ApprovalPolicy,
     interactive: Arc<dyn ApprovalHook>,
     grants: Arc<ChatGrants>,
 ) -> Arc<dyn ApprovalHook> {
+    configured_hook_for_project(mode, policy, interactive, grants, None)
+}
+
+/// Like [`configured_hook`], with the chat's grants: stored grants are honored
+/// where the policy asks, and an "allow in this chat" answer is saved to them.
+/// `root` is the run's project, which relative paths in tool calls start from.
+pub fn configured_hook_for_project(
+    mode: ApprovalMode,
+    policy: ApprovalPolicy,
+    interactive: Arc<dyn ApprovalHook>,
+    grants: Arc<ChatGrants>,
+    root: Option<&std::path::Path>,
+) -> Arc<dyn ApprovalHook> {
+    let sensitive = policy.sensitive_matcher(root);
     Arc::new(ConfiguredHook {
         mode,
         policy,
         interactive,
         grants,
+        sensitive,
     })
 }
 
@@ -1531,6 +1655,7 @@ pub fn resolve(
                     if policy.get("rules").is_none() {
                         policy["rules"] = serde_json::json!([]);
                     }
+                    let added_files = take_project_sensitive_files(&mut policy)?;
                     let policy: ApprovalPolicy = serde_json::from_value(policy)
                         .context("invalid project approval policy")?;
                     ensure!(
@@ -1546,6 +1671,13 @@ pub fn resolve(
                     let mut rules = policy.rules;
                     rules.extend(current.rules);
                     current.rules = rules;
+                    if !added_files.is_empty() {
+                        current.sensitive_files.extend(added_files);
+                        provenance.insert(
+                            "approval.sensitive_files".into(),
+                            "user + project additions".into(),
+                        );
+                    }
                     if policy.default == PolicyAction::Deny {
                         current.rules.insert(
                             0,
@@ -1588,6 +1720,40 @@ pub fn resolve(
         rule_sources,
     })
 }
+/// Takes a project's `approval.sensitive_files`: it adds to the list, and may not exempt.
+fn take_project_sensitive_files(policy: &mut Value) -> Result<Vec<String>> {
+    let Some(files) = policy
+        .as_object_mut()
+        .and_then(|fields| fields.remove("sensitive_files"))
+    else {
+        return Ok(Vec::new());
+    };
+    let files: Vec<String> = serde_json::from_value(files)
+        .context("project approval.sensitive_files must be a list of file names")?;
+    ensure!(
+        files.iter().all(|file| !file.starts_with('!')),
+        "project approval.sensitive_files may only add files, not exempt them"
+    );
+    Ok(files)
+}
+
+fn validate_sensitive_files(files: &[String]) -> Result<()> {
+    ensure!(
+        files.len() <= 128,
+        "approval.sensitive_files lists at most 128 patterns"
+    );
+    for file in files {
+        let glob = file.strip_prefix('!').unwrap_or(file);
+        ensure!(
+            (1..=128).contains(&glob.len())
+                && !glob.contains(['/', '\\'])
+                && !glob.chars().any(char::is_control),
+            "approval.sensitive_files holds file names of 1..128 bytes with * and ?, not paths: '{file}'"
+        );
+    }
+    Ok(())
+}
+
 pub fn validate_relative_paths(paths: &[String]) -> Result<()> {
     ensure!(
         paths.len() <= 32,
@@ -1618,6 +1784,7 @@ pub fn validate_relative_paths(paths: &[String]) -> Result<()> {
 pub fn validate(config: &RuntimeConfig) -> Result<()> {
     crate::sandbox::validate(&config.sandbox)?;
     validate_web(config)?;
+    validate_sensitive_files(&config.approval.sensitive_files)?;
     providers::validate(&config.providers, &config.models)?;
     validate_relative_paths(&config.skills.paths)?;
     validate_relative_paths(&config.instructions)?;
@@ -1762,8 +1929,10 @@ pub fn validate(config: &RuntimeConfig) -> Result<()> {
                 );
             } else {
                 ensure!(
-                    rule.tool == "shell" || rule.tool == crate::tools::UNSANDBOXED_TOOL,
-                    "approval rule command is only valid with tool \"shell\" or \"shell_unsandboxed\", or one site with a web or browser tool"
+                    rule.tool == "shell"
+                        || rule.tool == crate::tools::UNSANDBOXED_TOOL
+                        || rule.tool == SENSITIVE_TOOL,
+                    "approval rule command is only valid with tool \"shell\", \"shell_unsandboxed\" or \"sensitive_file\", or one site with a web or browser tool"
                 );
             }
             ensure!(
@@ -1864,6 +2033,7 @@ fn base_schema() -> Value {
             "total_turns":{"type":"integer","minimum":1,"maximum":2000},
             "approval":{"type":"object","additionalProperties":false,"properties":{
                 "default":{"enum":["allow","ask","deny"],"default":"ask"},
+                "sensitive_files":{"type":"array","maxItems":128,"items":{"type":"string","minLength":1,"maxLength":129}},
                 "rules":{"type":"array","maxItems":256,"items":{"type":"object","additionalProperties":false,"required":["tool","action"],"properties":{
                     "tool":{"type":"string","pattern":"^([A-Za-z0-9_.-]+\\*?|\\*)$"},
                     "action":{"enum":["allow","ask","deny"]},
@@ -2559,6 +2729,7 @@ mod tests {
                 action: PolicyAction::Deny,
                 risk: Some("destructive".into()),
             }],
+            ..Default::default()
         };
         let hook = configured_hook(
             ApprovalMode::Custom,
@@ -2732,6 +2903,7 @@ mod tests {
         let policy = |rule: &str| ApprovalPolicy {
             default: PolicyAction::Allow,
             rules: vec![serde_json::from_str(rule).unwrap()],
+            ..Default::default()
         };
         let shell_rule = policy(r#"{"tool":"shell","command":["git","push"],"action":"deny"}"#);
         let git_rule = policy(r#"{"tool":"git","command":["git","push"],"action":"deny"}"#);
@@ -2774,6 +2946,7 @@ mod tests {
                 r#"{"tool":"shell","command":["git","push"],"action":"allow"}"#,
             )
             .unwrap()],
+            ..Default::default()
         };
         assert_eq!(
             allow.decision(&action("git", &["git", "push"])),

@@ -1,0 +1,1 @@
+Secret-looking files here are already tracked by Git: {{files}}. Tell the person: adding them to .gitignore does not remove them, and the key stays in history, so it should be rotated.

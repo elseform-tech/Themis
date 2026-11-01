@@ -30,9 +30,35 @@ impl ApprovalHook for AuditedApprovals {
         self.inner.denied_by_rule(action)
     }
 
+    fn sensitive_access(
+        &self,
+        tool: &str,
+        args: &serde_json::Value,
+    ) -> Option<themis_core::tools::sensitive::SensitiveAccess> {
+        self.inner.sensitive_access(tool, args)
+    }
+
+    fn approve_sensitive(
+        &self,
+        action: &themis_core::tools::ToolAction,
+        access: &themis_core::tools::sensitive::SensitiveAccess,
+    ) -> themis_core::tools::Approval {
+        self.audited(action, || self.inner.approve_sensitive(action, access))
+    }
+
     fn approve(&self, action: &themis_core::tools::ToolAction) -> themis_core::tools::Approval {
+        self.audited(action, || self.inner.approve(action))
+    }
+}
+
+impl AuditedApprovals {
+    fn audited(
+        &self,
+        action: &themis_core::tools::ToolAction,
+        decide: impl FnOnce() -> themis_core::tools::Approval,
+    ) -> themis_core::tools::Approval {
         let started = std::time::Instant::now();
-        let decision = self.inner.approve(action);
+        let decision = decide();
         let _ = self.context.log.append_with_level("approval", "decided", "info", json!({
             "thread_id":self.context.thread_id,"run_id":self.context.run_id,"operation_id":self.context.run_id,"tool":action.tool,
             "risk":format!("{:?}",action.risk),"outcome":if decision.is_denied() { "denied" } else { "allowed" },"elapsed_ms":started.elapsed().as_millis()
@@ -42,6 +68,54 @@ impl ApprovalHook for AuditedApprovals {
 }
 
 impl AppState {
+    /// Warns the agent about secret-looking files the repository could take in or already
+    /// holds. One bounded `git` call per run; its cost and counts go to the diagnostics.
+    async fn project_secrets_note(
+        &self,
+        config: &themis_core::configuration::RuntimeConfig,
+        root: &std::path::Path,
+        thread_id: &str,
+        run_id: &str,
+    ) -> String {
+        use themis_core::tools::sensitive::name_list;
+        let matcher = config.approval.sensitive_matcher(Some(root));
+        let started = std::time::Instant::now();
+        let scan = tokio::task::spawn_blocking(move || matcher.scan_project())
+            .await
+            .ok()
+            .flatten();
+        let _ = self.inner.diagnostics.append_with_level(
+            "approval",
+            "secret_scan",
+            "info",
+            json!({"thread_id": thread_id, "run_id": run_id,
+                "elapsed_ms": started.elapsed().as_millis(), "checked": scan.is_some(),
+                "unignored": scan.as_ref().map_or(0, |scan| scan.unignored.len()),
+                "tracked": scan.as_ref().map_or(0, |scan| scan.tracked.len())}),
+            Some(&config.logging.level),
+        );
+        let Some(scan) = scan else {
+            return String::new();
+        };
+        let mut note = String::new();
+        for (files, prompt) in [
+            (
+                &scan.unignored,
+                themis_core::prompts::DESKTOP_SECRETS_UNIGNORED,
+            ),
+            (&scan.tracked, themis_core::prompts::DESKTOP_SECRETS_TRACKED),
+        ] {
+            if !files.is_empty() {
+                note.push_str(&themis_core::prompts::fill(
+                    prompt,
+                    &[("files", &name_list(files))],
+                ));
+                note.push('\n');
+            }
+        }
+        note
+    }
+
     /// Resolves the provider, builds tools, and spawns the run task.
     pub(super) async fn spawn_run(
         &self,
@@ -192,11 +266,12 @@ impl AppState {
                 context: diagnostic_context.clone(),
             }),
         };
-        let approvals = themis_core::configuration::configured_hook_with_grants(
+        let approvals = themis_core::configuration::configured_hook_for_project(
             snapshot.approval_mode,
             run_configuration.approval.clone(),
             hook,
             grants,
+            Some(&snapshot.work_root),
         );
         let approvals: Arc<dyn ApprovalHook> = Arc::new(AuditedApprovals {
             inner: approvals,
@@ -215,8 +290,11 @@ impl AppState {
         )
         .map_err(|error| format!("failed to materialize skill catalog: {error:#}"))?;
         let workspace = json!({"project_root": snapshot.work_root}).to_string();
+        let secrets_note = self
+            .project_secrets_note(&run_configuration, &snapshot.work_root, thread_id, run_id)
+            .await;
         skill_catalog = format!(
-            "\n{}\n{}{}",
+            "\n{}\n{}{secrets_note}{}",
             themis_core::prompts::fill(
                 themis_core::prompts::DESKTOP_RUN_WORKSPACE,
                 &[("workspace", &workspace)]

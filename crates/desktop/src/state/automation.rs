@@ -103,7 +103,21 @@ pub fn shell_policy_for(
     if mode == ApprovalMode::Yolo {
         return CheckPolicy::Allow;
     }
+    // A check that reads a sensitive file: an allow rule for the program doesn't cover it.
+    let files = policy
+        .sensitive_matcher(None)
+        .classify_argv(argv)
+        .map(|access| access.file_actions())
+        .unwrap_or_default();
+    let decisions: Vec<PolicyAction> = files
+        .iter()
+        .map(|file| policy.sensitive_decision(file))
+        .collect();
+    if decisions.contains(&PolicyAction::Deny) {
+        return CheckPolicy::Deny;
+    }
     match policy.decision(&check_action(argv)) {
+        PolicyAction::Allow if decisions.contains(&PolicyAction::Ask) => CheckPolicy::Ask,
         PolicyAction::Allow => CheckPolicy::Allow,
         PolicyAction::Ask => CheckPolicy::Ask,
         PolicyAction::Deny => CheckPolicy::Deny,

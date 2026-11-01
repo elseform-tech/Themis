@@ -315,6 +315,23 @@ impl ApprovalHook for CachingApprovals {
         self.inner.denied_by_rule(action)
     }
 
+    fn sensitive_access(
+        &self,
+        tool: &str,
+        args: &serde_json::Value,
+    ) -> Option<crate::tools::sensitive::SensitiveAccess> {
+        self.inner.sensitive_access(tool, args)
+    }
+
+    /// Never answered from the tool-level cache: a grant on `git add` is not one on `.env`.
+    fn approve_sensitive(
+        &self,
+        action: &ToolAction,
+        access: &crate::tools::sensitive::SensitiveAccess,
+    ) -> Approval {
+        self.inner.approve_sensitive(action, access)
+    }
+
     fn approve(&self, action: &ToolAction) -> Approval {
         let key = action.grant_key();
         if self.is_cached(&key) {
@@ -693,6 +710,9 @@ async fn run_task_with_evidence_inner(
                 message_type: MessageType::Text,
                 content: steered_message(&text),
             });
+            if crate::secret_look::looks_like_secret(&text) {
+                messages.push(pasted_secret_note());
+            }
             steered.push(text.clone());
             events.send(RunEvent::Steered { text }).await.ok();
         }
@@ -3129,7 +3149,8 @@ fn calibration_sample(
 }
 
 /// Notes the runtime adds as user messages during a run; none is a new request.
-const RUNTIME_NOTES: [&str; 7] = [
+const RUNTIME_NOTES: [&str; 8] = [
+    crate::prompts::RUNTIME_PASTED_SECRET,
     SUBAGENT_REACTION_NOTE,
     SPEC_CHECK,
     CUT_OFF_NOTE,
@@ -3768,6 +3789,14 @@ pub fn checkpoint_parts(saved: &str) -> (&str, Vec<ChatMessage>) {
     }
 }
 
+fn pasted_secret_note() -> ChatMessage {
+    ChatMessage {
+        role: ChatRole::User,
+        message_type: MessageType::Text,
+        content: crate::prompts::RUNTIME_PASTED_SECRET.to_owned(),
+    }
+}
+
 /// Opens with the shared system instructions and verification habits; the evidence
 /// pointer and skill catalog follow.
 fn initial_messages(history: Vec<ConversationTurn>, task: String) -> Vec<ChatMessage> {
@@ -3806,11 +3835,18 @@ fn initial_messages(history: Vec<ConversationTurn>, task: String) -> Vec<ChatMes
             });
         }
     }
+    // On the device, and only the fixed note goes out: the warning shouldn't rest on the
+    // model noticing. A subagent's brief comes from the main agent, not a person pasting.
+    let pasted =
+        SYSTEM_HEAD.try_with(|_| ()).is_err() && crate::secret_look::looks_like_secret(&task);
     messages.push(ChatMessage {
         role: ChatRole::User,
         message_type: MessageType::Text,
         content: task,
     });
+    if pasted {
+        messages.push(pasted_secret_note());
+    }
     if let Some(context) = crate::plugins::hooks::prompt_context() {
         messages.push(ChatMessage {
             role: ChatRole::User,
@@ -3910,13 +3946,18 @@ async fn execute_call(
     };
     let approval_args: serde_json::Value = serde_json::from_str(args).unwrap_or_default();
     let self_approving = crate::tools::tool_approves_itself(name);
+    let sensitive = if self_approving {
+        None
+    } else {
+        approvals.sensitive_access(name, &approval_args)
+    };
     let decision = if self_approving {
         Approval::AllowOnce
     } else {
         // Saving one command-based MCP server is approved once, by the dialog
         // that shows its exact argv and cannot be remembered for the chat.
         let mcp_command = crate::tools::sole_mcp_command_save(name, &approval_args);
-        let decision = approvals.approve(&ToolAction {
+        let action = ToolAction {
             display: match &mcp_command {
                 Some((_, argv)) => Some(crate::tools::CommandDisplay {
                     argv: argv.clone(),
@@ -3957,7 +3998,11 @@ async fn execute_call(
                 "git" => crate::tools::git_argv(&approval_args).unwrap_or_default(),
                 _ => Vec::new(),
             },
-        });
+        };
+        let decision = match &sensitive {
+            Some(access) => approvals.approve_sensitive(&action, access),
+            None => approvals.approve(&action),
+        };
         events
             .send(RunEvent::ApprovalDecided {
                 tool: name.to_owned(),
@@ -3971,8 +4016,21 @@ async fn execute_call(
         return Err("Stopped by you".to_owned());
     }
     if decision.is_denied() {
+        // Say which files: a shell command's summary may not make it plain.
+        let files = sensitive.as_ref().map_or_else(String::new, |access| {
+            format!(
+                " {}",
+                crate::prompts::fill(
+                    crate::prompts::TOOL_SENSITIVE_DENIED,
+                    &[(
+                        "files",
+                        &crate::tools::sensitive::name_list(&access.names())
+                    )]
+                )
+            )
+        });
         return Err(format!(
-            "approval denied for '{name}': {summary} {}",
+            "approval denied for '{name}': {summary}{files} {}",
             decision.refusal_note()
         ));
     }
@@ -4000,7 +4058,22 @@ async fn execute_call(
         crate::tools::with_dispatch_permit(tool.execute(parsed.clone())).await
     };
     let outcome = match result {
-        Ok(value) => Ok(serde_json::to_string(&value).unwrap_or_else(|_| "{}".to_owned())),
+        Ok(mut value) => {
+            // Staging or committing a secret-looking file: the agent hears about it in
+            // every mode, so the habit doesn't rest on it having looked first.
+            let committing = sensitive
+                .as_ref()
+                .map(crate::tools::sensitive::SensitiveAccess::committing)
+                .unwrap_or_default();
+            if !committing.is_empty() && value.is_object() {
+                value["secret_note"] = crate::prompts::fill(
+                    crate::prompts::TOOL_SENSITIVE_COMMIT,
+                    &[("files", &crate::tools::sensitive::name_list(&committing))],
+                )
+                .into();
+            }
+            Ok(serde_json::to_string(&value).unwrap_or_else(|_| "{}".to_owned()))
+        }
         Err(err) => Err(format!("tool '{name}' failed: {}", tool_failure(&err))),
     };
     crate::plugins::hooks::emit_current("AfterTool", serde_json::json!({"event":"AfterTool","tool":name,"arguments":parsed,"ok":outcome.is_ok(),"output":outcome.as_ref().ok(),"error":outcome.as_ref().err()}), events).await.map_err(|e|e.to_string())?;
@@ -8671,6 +8744,7 @@ mod tests {
                     action: PolicyAction::Deny,
                     risk: Some("destructive".into()),
                 }],
+                ..Default::default()
             },
             Arc::new(crate::tools::AllowAllHook),
         );
