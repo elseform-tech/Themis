@@ -1,4 +1,4 @@
-.themis-goal-view { --goal-node: 18px; display: flex; flex-direction: column; gap: 16px; height: 100%; padding: 18px 20px 24px; overflow-y: auto; }
+.themis-goal-view { --goal-node: 18px; --goal-ground: var(--themis-sidebar-bg); display: flex; flex-direction: column; gap: 16px; height: 100%; padding: 18px 20px 24px; overflow-y: auto; }
 .themis-goal-view-empty { margin: 0; padding: 16px; font-size: .8125rem; color: var(--themis-text-2); }
 
 .themis-goal-head { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; }
@@ -7,7 +7,7 @@
 .themis-goal-more { font-size: .75rem; }
 
 /* One tick per task, not a percentage: how far along, and where, at a glance. */
-.themis-goal-tally { position: sticky; top: -18px; z-index: 1; display: flex; flex-direction: column; gap: 8px; margin: 0 -20px; padding: 10px 20px; background: var(--themis-canvas); }
+.themis-goal-tally { position: sticky; top: -18px; z-index: 1; display: flex; flex-direction: column; gap: 8px; margin: 0 -20px; padding: 10px 20px; background: var(--goal-ground); }
 .themis-goal-count { font-size: .8125rem; color: var(--themis-text-2); font-variant-numeric: tabular-nums; }
 .themis-goal-count strong { margin-right: 1px; font-size: 1.375rem; font-weight: 600; line-height: 1; letter-spacing: -.01em; color: var(--themis-text); }
 .themis-goal-strip { display: flex; gap: 3px; }
@@ -23,7 +23,7 @@
 .themis-goal-step:last-child::before { display: none; }
 .themis-goal-step.is-done::before { background: var(--themis-text-3); }
 
-.themis-goal-node { display: grid; place-items: center; width: var(--goal-node); height: var(--goal-node); border: 1.5px solid var(--themis-border); border-radius: 50%; background: var(--themis-canvas); color: var(--themis-canvas); }
+.themis-goal-node { display: grid; place-items: center; width: var(--goal-node); height: var(--goal-node); border: 1.5px solid var(--themis-border); border-radius: 50%; background: var(--goal-ground); color: var(--goal-ground); }
 .themis-goal-node svg { width: 11px; height: 11px; }
 .is-done > .themis-goal-node { border-color: var(--themis-text-2); background: var(--themis-text-2); }
 .is-current > .themis-goal-node { position: relative; border-color: var(--themis-accent); }

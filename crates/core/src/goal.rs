@@ -156,7 +156,7 @@ pub const GOAL_TURN_MARKER: &str = "[Goal — runtime, not from the user]";
 pub const MAX_GOAL_CHARS: usize = 2000;
 const MAX_REASON_CHARS: usize = 400;
 const MAX_PROGRESS_CHARS: usize = 120;
-const MAX_NEXT_CHARS: usize = 400;
+const MAX_NEXT_CHARS: usize = 600;
 /// Most requirements a check may track, and the length of each one's text.
 const MAX_REQUIREMENTS: usize = 20;
 const MAX_REQUIREMENT_CHARS: usize = 120;
@@ -290,7 +290,7 @@ pub fn parse_verdict(reply: &str) -> Option<GoalVerdict> {
                 .next
                 .as_ref()
                 .and_then(serde_json::Value::as_str)
-                .map(|text| one_line(text, MAX_NEXT_CHARS))
+                .map(whole_sentences)
                 .filter(|text| !text.is_empty()),
             requirements,
             progress: progress
@@ -330,6 +330,20 @@ fn parse_requirements(value: serde_json::Value) -> Vec<GoalRequirement> {
         })
         .take(MAX_REQUIREMENTS)
         .collect()
+}
+
+/// The next step, bounded without leaving it cut off mid-word: it is shown to the person.
+fn whole_sentences(text: &str) -> String {
+    let whole = one_line(text, usize::MAX);
+    if whole.chars().count() <= MAX_NEXT_CHARS {
+        return whole;
+    }
+    let kept: String = whole.chars().take(MAX_NEXT_CHARS - 1).collect();
+    if let Some(end) = kept.rfind(['.', '!', '?']) {
+        return kept[..=end].to_owned();
+    }
+    let word = kept.rfind(' ').map_or(kept.as_str(), |space| &kept[..space]);
+    format!("{word}…")
 }
 
 /// Collapses whitespace, drops control characters and keeps at most `max` characters.
@@ -919,6 +933,22 @@ mod tests {
         assert!(user.contains("- [open] Board"), "{user}");
         assert!(user.contains("- [rule] No build step"), "{user}");
         assert!(user.contains("- [rule, broken] Use subagents"), "{user}");
+    }
+
+    #[test]
+    fn a_long_next_step_ends_at_a_sentence_not_mid_word() {
+        let first = "Do a real mouse drag and read the column counts afterwards. ".repeat(20);
+        let reply = serde_json::json!({"verdict":"not_yet","reason":"x","next":first}).to_string();
+        let next = parse_verdict(&reply).unwrap().next.unwrap();
+        assert!(next.ends_with("afterwards."), "{next}");
+        assert!(next.chars().count() <= MAX_NEXT_CHARS);
+    }
+
+    #[test]
+    fn a_long_next_step_with_no_sentence_end_says_it_was_cut() {
+        let reply = serde_json::json!({"verdict":"not_yet","reason":"x","next":"word ".repeat(400)}).to_string();
+        let next = parse_verdict(&reply).unwrap().next.unwrap();
+        assert!(next.ends_with("word…"), "{next}");
     }
 
     #[test]
