@@ -10,14 +10,16 @@ export const FOLLOW_MARGIN = 64;
 /** How long after a wheel, touch, key or scrollbar press a scroll counts as the person's. */
 const PERSON_MS = 800;
 
+/** Further than this in one step isn't a scrollbar being dragged. */
+const BIG_JUMP = 400;
+
 /**
- * Only a person moving up leaves the latest message. Content growing, a panel opening or a row
- * folding can put the view far from the end, and the browser reports that a moment later, when
- * a position looks like a move up.
+ * Whether the view jumped up with nobody asking. Drawing a chart collapses the page for an instant:
+ * the browser clamps the position to what fits, and the height is back before anything paints, so
+ * no resize is seen. A scrollbar drag reports no input either, but moves in small steps.
  */
-export function stillFollowing({ before, top, distance, following, person }: { before: number; top: number; distance: number; following: boolean; person: boolean }): boolean {
-  if (distance < FOLLOW_MARGIN) return true;
-  return person && top < before ? false : following;
+export function jumpedByItself({ before, top, person }: { before: number; top: number; person: boolean }): boolean {
+  return !person && before - top > BIG_JUMP;
 }
 
 const distanceFromEnd = (element: HTMLElement) => element.scrollHeight - element.scrollTop - element.clientHeight;
@@ -76,7 +78,14 @@ export function useFollowLatest(threadId: string, output: unknown) {
   const onScroll = useCallback((event: UIEvent<HTMLDivElement>) => {
     const element = event.currentTarget;
     const top = element.scrollTop;
-    following.current = stillFollowing({ before: lastTop.current, top, distance: distanceFromEnd(element), following: following.current, person: Date.now() - personAt.current < PERSON_MS });
+    const byPerson = Date.now() - personAt.current < PERSON_MS;
+    if (jumpedByItself({ before: lastTop.current, top, person: byPerson })) {
+      element.scrollTop = following.current ? element.scrollHeight : lastTop.current;
+      lastTop.current = element.scrollTop;
+      return;
+    }
+    const distance = distanceFromEnd(element);
+    following.current = distance < FOLLOW_MARGIN || (following.current && top >= lastTop.current);
     lastTop.current = top;
     setScrolledUp(!following.current);
     if (following.current) places.delete(threadId);
