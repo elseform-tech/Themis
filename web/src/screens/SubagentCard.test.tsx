@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { readFileSync } from "node:fs";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { subagentWaitLine } from "./ThreadConversation";
 import { initialState, reducer } from "../state/reducer";
@@ -267,6 +268,36 @@ describe("subagents in the chat", () => {
     expect(group.querySelector("summary")).toHaveTextContent("1 failed");
     expect(group.querySelectorAll(".themis-tool-message")).toHaveLength(2);
     expect(container.querySelector(".themis-run-progress .themis-shimmer")).not.toBeNull();
+  });
+
+  it("shows each tool call's input and saved output, as the chat does", async () => {
+    vi.mocked(tauri.getSubagentTranscript).mockResolvedValueOnce([
+      { kind: "tool_started", tool: "shell", summary: "call `shell` with {\"command\":\"ls\"}" },
+      { kind: "tool_finished", tool: "hook_g--kit--after", ok: true, output: "{\"ok\":true}" },
+      { kind: "tool_finished", tool: "shell", ok: true, output: "a.txt" },
+    ] as never);
+    const { container } = render(<SubagentDetail threadId={thread} agent={agent({ status: "finished", seconds: 3 })} runLive={false} onBack={() => {}} />);
+    await act(async () => {});
+    const [input, output] = container.querySelectorAll(".themis-tool-detail pre");
+    expect(input).toHaveTextContent('call `shell` with {"command":"ls"}');
+    expect(output).toHaveTextContent("a.txt");
+    expect(container).not.toHaveTextContent("not recorded");
+  });
+
+  it("while a tool runs says so, and that its output is on the way", async () => {
+    vi.mocked(tauri.getSubagentTranscript).mockResolvedValueOnce([
+      { kind: "tool_started", tool: "shell", summary: "call `shell` with {\"command\":\"sleep 9\"}" },
+    ] as never);
+    const { container } = render(<SubagentDetail threadId={thread} agent={agent({})} runLive onBack={() => {}} />);
+    await act(async () => {});
+    expect(container.querySelector(".themis-run-progress")).toHaveTextContent(/^Using .*…/);
+    expect(container.querySelector(".themis-run-progress")).not.toHaveTextContent("Thinking");
+    expect(container.querySelector(".themis-tool-detail")).toHaveTextContent("Waiting for output…");
+  });
+
+  it("puts the status line on the panel, not on a strip of the chat's colour", () => {
+    const css = readFileSync("src/screens/SubagentCard.css", "utf8");
+    expect(css).toMatch(/\.themis-subagent-steps \.themis-run-progress \{[^}]*position: static;[^}]*background: none;/);
   });
 
   it("shows no status line once the subagent has ended", async () => {

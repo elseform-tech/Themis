@@ -506,6 +506,24 @@ describe("Workspace journey", () => {
     expect(screen.getByText("Thinking…")).toBeInTheDocument();
     expect(screen.getByText("Thinking…")).toHaveClass("themis-shimmer");
     expect(screen.getByLabelText("Elapsed time")).toHaveTextContent("0:00");
+    // Scrolled up, the status shrinks to "…", so it doesn't cover what's being read.
+    const stream = document.querySelector(".themis-thread-stream") as HTMLElement;
+    const scrollTo = (top: number) => {
+      Object.defineProperties(stream, {
+        scrollHeight: { configurable: true, value: 2000 },
+        clientHeight: { configurable: true, value: 500 },
+        scrollTop: { configurable: true, writable: true, value: top },
+      });
+      fireEvent.scroll(stream);
+    };
+    await act(async () => scrollTo(100));
+    const away = document.querySelector(".themis-run-progress") as HTMLElement;
+    expect(away).toHaveClass("is-away");
+    expect(away).toHaveTextContent(/^…$/);
+    expect(screen.getByLabelText("Thinking…")).toBeInTheDocument();
+    await act(async () => scrollTo(1500));
+    expect(document.querySelector(".themis-run-progress")).not.toHaveClass("is-away");
+    expect(screen.getByText("Thinking…")).toBeInTheDocument();
     await act(async () => { vi.advanceTimersByTime(12_000); });
     await act(async () => {
       receive({ thread_id: "thread1", run_id: "r", event: { kind: "assistant_text", text: "Milestone: Inspect current files\nI will read the file." } });
