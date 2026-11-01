@@ -611,7 +611,7 @@ pub struct MoveArgs {
 
 #[tool(
     name = "browser_move",
-    description = "Move the mouse without clicking: x and y go to a point of the visible page, as for a hover menu; dx and dy move by a distance from where the mouse is, to aim in a game, where the view turns with the distance moved and a page holding the pointer lock has no edge. A snapshot cannot show what a canvas draws: read where things are with browser_devtools, then act here and with browser_click, since only real input tests the page.",
+    description = "Move the mouse without clicking; `under_mouse` in the result says what it is over. x and y go to a point of the visible page, as for a hover menu; dx and dy move by a distance from where the mouse is, to aim in a game, where the view turns with the distance moved and a page holding the pointer lock has no edge. A snapshot cannot show what a canvas draws: read where things are with browser_devtools, then act here and with browser_click, since only real input tests the page.",
     input = MoveArgs,
 )]
 struct BrowserMove {
@@ -718,7 +718,7 @@ fn drag_end(
 
 #[tool(
     name = "browser_drag",
-    description = "Press the mouse at one place, move to another and let go, as a person drags: a card between columns, a slider, a shape on a canvas. Each end is a ref from the latest snapshot or a point of the visible page. It is real input, and works both for pages using native drag and drop and for pages listening to the mouse.",
+    description = "Press the mouse at one place, move to another and let go, as a person drags: a card between columns, a slider, a shape on a canvas. Each end is a ref from the latest snapshot or a point of the visible page. It is real input, for pages using native drag and drop and for pages listening to the mouse. The result says what was pressed on, whether anything was dragged, and where it let go.",
     input = DragArgs,
 )]
 struct BrowserDrag {

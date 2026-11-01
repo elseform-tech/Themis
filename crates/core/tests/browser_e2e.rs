@@ -1295,3 +1295,100 @@ document.addEventListener('mouseup', e => { if (held) out.textContent = 'let go 
         .to_string();
     assert!(refused.contains("browser_drag"), "{refused}");
 }
+
+/// The agent can't see a pointer, so results say what it is over and what a drag did. Plain
+/// `div`s that can be dragged have no role, and without a ref it could only guess at them.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_agent_reads_what_is_under_the_mouse_and_what_a_drag_did() {
+    let _browser = ONE_BROWSER.lock().await;
+    let data = tempfile::tempdir().unwrap();
+    let Some(hub) = hub(data.path()) else { return };
+    let site = MockServer::builder().start().await;
+    Mock::given(path("/cards"))
+        .respond_with(ResponseTemplate::new(200).set_body_raw(
+            r#"<!doctype html><title>Cards</title><body style="margin:0">
+<div id="todo" class="column" style="position:fixed;left:0;top:0;width:200px;height:300px">
+  <div id="card" class="task-card" draggable="true" style="margin:40px 10px;height:40px">Write the report</div>
+</div>
+<div id="done" class="column" style="position:fixed;left:300px;top:0;width:200px;height:300px">Done</div>
+<script>
+const done = document.getElementById('done'), card = document.getElementById('card');
+card.addEventListener('dragstart', e => e.dataTransfer.setData('text/plain', 'x'));
+done.addEventListener('dragover', e => e.preventDefault());
+done.addEventListener('drop', e => { e.preventDefault(); done.appendChild(card); });
+</script></body>"#,
+            "text/html",
+        ))
+        .mount(&site)
+        .await;
+    let project = tempfile::tempdir().unwrap();
+    let chat = hub.chat("chat-mouse", project.path());
+    let tools = themis_core::browser::tools::browser_tools(
+        Arc::new(FnHook::new(|_: &ToolAction| Approval::AllowOnce)),
+        themis_core::browser::tools::BrowserScope {
+            permissions: themis_core::tools::site_permissions::SitePermissions::new(
+                Default::default(),
+                None,
+            ),
+            chat: Arc::clone(&chat),
+            cancel: None,
+            media: None,
+        },
+    );
+    let tool = |name: &str| tools.iter().find(|tool| tool.name() == name).unwrap();
+    let opened = tool("browser_open")
+        .execute(json!({"url": format!("{}/cards", site.uri())}))
+        .await
+        .unwrap();
+
+    // A draggable div gets a ref it can use, named by its text.
+    let snapshot = opened["snapshot"].as_str().unwrap();
+    assert!(
+        snapshot.contains("draggable \"Write the report\" ["),
+        "{snapshot}"
+    );
+    let card = ref_of(snapshot, "Write the report\"");
+
+    // Over nothing, and over the card: it reads which, without a screenshot.
+    let moved = tool("browser_move")
+        .execute(json!({"x": 100, "y": 60}))
+        .await
+        .unwrap();
+    let under = moved["under_mouse"].as_str().unwrap();
+    assert!(
+        under.contains("task-card") && under.contains("Write the report"),
+        "{under}"
+    );
+    assert!(under.contains("draggable"), "{under}");
+    assert_eq!(chat.state().await.pointer, Some((100.0, 60.0)));
+
+    // A miss says so: it pressed on the column, and no drag began.
+    let missed = tool("browser_drag")
+        .execute(json!({"from_x": 100, "from_y": 250, "to_x": 400, "to_y": 150}))
+        .await
+        .unwrap();
+    let result = missed["drag"].as_str().unwrap();
+    assert!(result.contains("column"), "{result}");
+    assert!(result.contains("nothing was dragged"), "{result}");
+
+    // A hit names both ends and the outcome, by ref.
+    let snapshot = tool("browser_snapshot")
+        .execute(json!({}))
+        .await
+        .unwrap()
+        .to_string();
+    let done = {
+        let after = tool("browser_drag")
+            .execute(json!({"from_reference": card, "to_x": 400, "to_y": 150}))
+            .await
+            .unwrap();
+        after["drag"].as_str().unwrap().to_owned()
+    };
+    assert!(done.contains("Write the report"), "{done} after {snapshot}");
+    assert!(done.contains("native drag"), "{done}");
+    assert!(
+        done.contains("dropped on") && done.contains("column"),
+        "{done}"
+    );
+    assert_eq!(chat.state().await.pointer, Some((400.0, 150.0)));
+}

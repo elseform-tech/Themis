@@ -38,3 +38,7 @@
 .themis-browser-status.is-recording .themis-browser-status-text { font-variant-numeric: tabular-nums; }
 .themis-browser-action.is-danger { color: var(--themis-danger); }
 .themis-browser-page.is-recording { box-shadow: 0 0 0 2px var(--themis-danger); }
+/* Where the agent's mouse is: the stream doesn't draw one. Sits at the page's own coordinates. */
+.themis-browser-cursor { position: absolute; top: 0; left: 0; z-index: 1; pointer-events: none; transition: transform 220ms ease-out; filter: drop-shadow(0 1px 2px rgb(0 0 0 / .5)); }
+.themis-browser-cursor path { fill: var(--themis-accent); stroke: #fff; stroke-width: 1; stroke-linejoin: round; }
+@media (prefers-reduced-motion: reduce) { .themis-browser-cursor { transition: none; } }
