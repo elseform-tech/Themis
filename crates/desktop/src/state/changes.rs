@@ -71,6 +71,22 @@ pub(super) fn bound_listed_lines(files: &mut [crate::types::DiffFile]) {
     }
 }
 
+/// Puts a tracked file back as the last commit has it.
+fn restore_from_head(root: &Path, path: &str) -> Result<(), String> {
+    let out = crate::diff::guarded_git(root)?
+        .args(["checkout", "HEAD", "--", path])
+        .output()
+        .map_err(|err| format!("failed to run git checkout: {err}"))?;
+    if !out.status.success() {
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        return Err(format!(
+            "git checkout failed for '{path}': {}",
+            stderr.trim()
+        ));
+    }
+    Ok(())
+}
+
 impl AppState {
     /// The project's secret-looking file names, whatever else its configuration gets wrong.
     pub(super) fn project_secret_matcher(&self, root: &Path) -> SensitiveMatcher {
@@ -230,27 +246,13 @@ impl AppState {
                 .map_err(|err| format!("cannot delete '{path}': {err}"))?;
         } else if git_head(&root).is_none() {
             // No commits yet: "tracked" means staged-new, so unstage and delete.
-            let _ = std::process::Command::new("git")
-                .arg("-C")
-                .arg(&root)
+            let _ = crate::diff::guarded_git(&root)?
                 .args(["rm", "--cached", "-q", "--", &path])
                 .output();
             std::fs::remove_file(root.join(&path))
                 .map_err(|err| format!("cannot delete '{path}': {err}"))?;
         } else {
-            let out = std::process::Command::new("git")
-                .arg("-C")
-                .arg(&root)
-                .args(["checkout", "HEAD", "--", &path])
-                .output()
-                .map_err(|err| format!("failed to run git checkout: {err}"))?;
-            if !out.status.success() {
-                let stderr = String::from_utf8_lossy(&out.stderr);
-                return Err(format!(
-                    "git checkout failed for '{path}': {}",
-                    stderr.trim()
-                ));
-            }
+            restore_from_head(&root, &path)?;
         }
         if let Some(record) = self.inner.threads.write().await.get_mut(&thread_id) {
             record.accepted.remove(&path);
@@ -368,6 +370,41 @@ impl AppState {
 
 #[cfg(test)]
 mod tests {
+    /// Restoring a file runs outside the sandbox: a smudge filter the repository names doesn't start.
+    #[cfg(unix)]
+    #[test]
+    fn restoring_a_file_starts_none_of_the_repositorys_programs() {
+        use std::os::unix::fs::PermissionsExt;
+        let repo = committed_repo();
+        let marker = repo.path().join("program-ran");
+        let script = repo.path().join(".git/program.sh");
+        std::fs::write(
+            &script,
+            format!("#!/bin/sh\ntouch '{}'\ncat\n", marker.display()),
+        )
+        .unwrap();
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let git = |args: &[&str]| {
+            assert!(std::process::Command::new("git")
+                .arg("-C")
+                .arg(repo.path())
+                .args(args)
+                .status()
+                .unwrap()
+                .success());
+        };
+        git(&["config", "filter.x.smudge", &script.to_string_lossy()]);
+        git(&["config", "filter.x.required", "true"]);
+        std::fs::write(repo.path().join(".git/info/attributes"), "* filter=x\n").unwrap();
+        std::fs::write(repo.path().join("kept.txt"), "edited\n").unwrap();
+        restore_from_head(repo.path(), "kept.txt").unwrap();
+        assert!(!marker.exists(), "restoring ran a program");
+        assert_ne!(
+            std::fs::read_to_string(repo.path().join("kept.txt")).unwrap(),
+            "edited\n"
+        );
+    }
+
     use super::*;
     use crate::diff::scale_tests::committed_repo;
     use crate::diff::take_work;

@@ -273,8 +273,130 @@ fn opens_with_step(sentence: &str, reply: &str, worked: bool) -> bool {
     !reports && (worked || trailing_off || matches!(rest.last(), Some(&"now" | &"next")))
 }
 
+/// How far ahead a special token's closing may be: a longer one isn't a token.
+const CALL_TOKEN_REACH: usize = 64;
+
+/// Holds back what could still turn out to be a tool call written as text, and once one starts
+/// shows nothing more of that reply: models follow one with their private planning. Text inside
+/// code is someone talking about markup, so it passes. Reads each byte once.
+#[derive(Default)]
+pub(super) struct WrittenCallFilter {
+    held: String,
+    in_fence: bool,
+    in_span: bool,
+    cut: bool,
+}
+
+/// What the text at the start of `rest` could be.
+enum Lookahead {
+    Plain,
+    NeedsMore,
+    Call,
+}
+
+fn look_at_markup(rest: &str, at_end: bool) -> Lookahead {
+    let lower = rest
+        .chars()
+        .take(CALL_TOKEN_REACH)
+        .collect::<String>()
+        .to_lowercase();
+    if !lower.starts_with('<') && !lower.starts_with('[') {
+        return Lookahead::Plain;
+    }
+    if CALL_MARKUP.iter().any(|mark| lower.starts_with(mark)) {
+        return Lookahead::Call;
+    }
+    for (open, close) in [("<|", "|>"), ("<\u{ff5c}", "\u{ff5c}>")] {
+        if let Some(after) = lower.strip_prefix(open) {
+            return match after.split_once(close) {
+                Some((name, _)) if CALL_TOKEN_WORDS.iter().any(|word| name.contains(word)) => {
+                    Lookahead::Call
+                }
+                Some(_) => Lookahead::Plain,
+                None if at_end || lower.chars().count() >= CALL_TOKEN_REACH => Lookahead::Plain,
+                None => Lookahead::NeedsMore,
+            };
+        }
+    }
+    let could_grow = CALL_MARKUP
+        .iter()
+        .any(|mark| mark.starts_with(lower.as_str()))
+        || "<|".starts_with(lower.as_str())
+        || "<\u{ff5c}".starts_with(lower.as_str());
+    if could_grow && !at_end {
+        Lookahead::NeedsMore
+    } else {
+        Lookahead::Plain
+    }
+}
+
+impl WrittenCallFilter {
+    /// What can be shown now of a reply's next piece.
+    pub(super) fn push(&mut self, delta: &str) -> String {
+        if self.cut {
+            return String::new();
+        }
+        self.held.push_str(delta);
+        self.drain(false)
+    }
+
+    /// The end of the reply: what was held back wasn't a call after all.
+    pub(super) fn finish(&mut self) -> String {
+        if self.cut {
+            return String::new();
+        }
+        self.drain(true)
+    }
+
+    fn drain(&mut self, at_end: bool) -> String {
+        let text = std::mem::take(&mut self.held);
+        let mut at = 0;
+        while let Some(next) = text[at..].chars().next() {
+            let rest = &text[at..];
+            if next == '`' {
+                // A run of ticks may still be growing; it decides what it opens or closes whole.
+                let ticks = rest.chars().take_while(|tick| *tick == '`').count();
+                if ticks == rest.len() && !at_end {
+                    break;
+                }
+                if ticks >= 3 {
+                    self.in_fence = !self.in_fence;
+                } else if !self.in_fence && ticks == 1 {
+                    self.in_span = !self.in_span;
+                }
+                at += ticks;
+                continue;
+            }
+            if !self.in_fence && !self.in_span {
+                match look_at_markup(rest, at_end) {
+                    Lookahead::Call => {
+                        self.cut = true;
+                        let shown = text[..at].to_owned();
+                        return shown;
+                    }
+                    Lookahead::NeedsMore => break,
+                    Lookahead::Plain => {}
+                }
+            }
+            at += next.len_utf8();
+        }
+        self.held = text[at..].to_owned();
+        let mut shown = text;
+        shown.truncate(at);
+        shown
+    }
+}
+
+/// A whole reply as the person sees it.
+pub(super) fn before_written_call(text: &str) -> String {
+    let mut filter = WrittenCallFilter::default();
+    let mut shown = filter.push(text);
+    shown.push_str(&filter.finish());
+    shown
+}
+
 /// Whether a reply holds a tool call written out as text, and not just talk about one.
-fn writes_tool_call(text: &str) -> bool {
+pub(super) fn writes_tool_call(text: &str) -> bool {
     let prose = outside_code(text).to_lowercase();
     CALL_MARKUP.iter().any(|mark| prose.contains(mark))
         || has_call_token(&prose, "<|", "|>")
@@ -472,6 +594,82 @@ impl RepeatFilter {
 
 #[cfg(test)]
 mod tests {
+    /// As a free model really sent it: a call's text, then its planning. None of it is for the person.
+    const LEAKED: &str = "Committed both.\n\n<|func_arg_name|>args<|func_arg_value|>[\"git\"]\n\nAlso second command\nAnother shell call:";
+
+    fn shown_in_pieces(text: &str, size: usize) -> String {
+        let mut filter = WrittenCallFilter::default();
+        let mut shown = String::new();
+        let chars: Vec<char> = text.chars().collect();
+        for piece in chars.chunks(size.max(1)) {
+            shown.push_str(&filter.push(&piece.iter().collect::<String>()));
+        }
+        shown.push_str(&filter.finish());
+        shown
+    }
+
+    #[test]
+    fn a_written_call_and_what_follows_it_never_reach_the_person() {
+        for size in [1, 2, 3, 7, 1000] {
+            assert_eq!(
+                shown_in_pieces(LEAKED, size),
+                "Committed both.\n\n",
+                "{size}"
+            );
+        }
+        for text in [
+            "Reading it now. <|tool_call_begin|>read_file<|tool_call_end|>",
+            "Reading it now. <tool_call>{\"name\":\"read_file\"}</tool_call>",
+            "Reading it now. <function=read_file>",
+            "Reading it now. [TOOL_CALLS] x",
+            "Reading it now. <\u{ff5c}tool\u{ff5c}> x",
+        ] {
+            assert_eq!(shown_in_pieces(text, 1), "Reading it now. ", "{text}");
+        }
+        assert_eq!(before_written_call(LEAKED), "Committed both.\n\n");
+    }
+
+    #[test]
+    fn talk_about_markup_and_ordinary_text_pass_untouched() {
+        for text in [
+            "I stripped the `<tool_call>` tags from the transcript.",
+            "The stop token is <|im_end|>, which the parser now drops.",
+            "Fixed the parser.\n```\n<|tool_call_begin|>\n```\nIt no longer leaks.",
+            "x < y and a <b> tag, 3 <| 4 and [links](a) with [tool] notes.",
+            "Ends on a partial <",
+            "Ends on a partial <|too",
+            "Ends on a tick `",
+        ] {
+            for size in [1, 2, 3, 1000] {
+                assert_eq!(shown_in_pieces(text, size), text, "{size}: {text}");
+            }
+        }
+    }
+
+    #[test]
+    fn the_written_call_flag_outlives_stripping() {
+        assert!(writes_tool_call(LEAKED));
+        assert!(!writes_tool_call(&before_written_call(LEAKED)));
+    }
+
+    proptest! {
+        /// However it arrives, what's shown is the start of what was sent, and the same whatever
+        /// the pieces; it never shows a call a whole reply wouldn't.
+        #[test]
+        fn pieces_do_not_change_what_is_shown(
+            text in "[a-z <|>`\\[\\]_]{0,80}",
+            call in proptest::sample::select(vec!["", "<|tool_call|>", "<tool_call>", "<|func_arg_name|>"]),
+            tail in "[a-z ]{0,20}",
+            size in 1usize..9,
+        ) {
+            let whole = format!("{text}{call}{tail}");
+            let shown = shown_in_pieces(&whole, size);
+            prop_assert!(whole.starts_with(&shown));
+            prop_assert_eq!(&shown, &shown_in_pieces(&whole, 10_000));
+            prop_assert!(!writes_tool_call(&shown) || !shown.contains(call) || call.is_empty());
+        }
+    }
+
     use super::*;
     use proptest::prelude::*;
 

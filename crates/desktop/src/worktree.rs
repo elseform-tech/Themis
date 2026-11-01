@@ -256,13 +256,19 @@ pub fn merge_patch(
 /// against `rev`, or against nothing when `rev` is `None`.
 fn diff_against(worktree: &Path, rev: Option<&str>) -> Result<(Vec<u8>, Vec<String>), String> {
     let mut diff = git_in(worktree);
-    diff.arg("diff").arg("--no-color");
+    diff.arg("diff")
+        .args(themis_core::git_guard::DIFF_FLAGS)
+        .arg("--no-color");
     if let Some(rev) = rev {
         diff.arg(rev);
     }
     let patch = run_git(&mut diff, "git diff")?;
     let mut names = git_in(worktree);
-    names.arg("diff").arg("--name-only").arg("-z");
+    names
+        .arg("diff")
+        .args(themis_core::git_guard::DIFF_FLAGS)
+        .arg("--name-only")
+        .arg("-z");
     if let Some(rev) = rev {
         names.arg(rev);
     }
@@ -273,11 +279,17 @@ fn diff_against(worktree: &Path, rev: Option<&str>) -> Result<(Vec<u8>, Vec<Stri
 /// Diffs committed `old..new` (no working-tree content).
 fn diff_range(worktree: &Path, old: &str, new: &str) -> Result<(Vec<u8>, Vec<String>), String> {
     let patch = run_git(
-        git_in(worktree).args(["diff", "--no-color", old, new]),
+        git_in(worktree)
+            .arg("diff")
+            .args(themis_core::git_guard::DIFF_FLAGS)
+            .args(["--no-color", old, new]),
         "git diff",
     )?;
     let raw = run_git(
-        git_in(worktree).args(["diff", "--name-only", "-z", old, new]),
+        git_in(worktree)
+            .arg("diff")
+            .args(themis_core::git_guard::DIFF_FLAGS)
+            .args(["--name-only", "-z", old, new]),
         "git diff --name-only",
     )?;
     Ok((patch, split_names(&raw)))
@@ -459,9 +471,12 @@ fn cleanup_after_failed_create(repo: &Path, path: &Path, branch: &str) {
 }
 
 fn git_in(repo: &Path) -> Command {
-    let mut cmd = Command::new("git");
-    cmd.arg("-C").arg(repo);
-    cmd
+    crate::diff::guarded_git(repo).unwrap_or_else(|_| {
+        // Fails with Git's own usage error rather than run with the repository's filters on.
+        let mut refused = Command::new("git");
+        refused.arg("--repository-filters-cannot-be-turned-off");
+        refused
+    })
 }
 
 fn run_git(cmd: &mut Command, what: &str) -> Result<Vec<u8>, String> {
@@ -501,6 +516,59 @@ fn git_with_stdin(dir: &Path, args: &[&str], input: &[u8]) -> Result<std::proces
 
 #[cfg(test)]
 mod tests {
+    /// A repository whose configuration names a program for everything these commands could
+    /// start. They run outside the sandbox, so none may.
+    #[cfg(unix)]
+    fn repo_with_programs(repo: &Path) -> PathBuf {
+        use std::os::unix::fs::PermissionsExt;
+        let marker = repo.join("program-ran");
+        let script = repo.join(".git/program.sh");
+        std::fs::write(
+            &script,
+            format!("#!/bin/sh\ntouch '{}'\ncat\n", marker.display()),
+        )
+        .unwrap();
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let program = script.to_string_lossy().into_owned();
+        for key in [
+            "core.fsmonitor",
+            "filter.x.clean",
+            "filter.x.smudge",
+            "diff.external",
+            "diff.x.command",
+            "diff.x.textconv",
+        ] {
+            git(repo, &["config", key, &program]);
+        }
+        let hooks = repo.join(".git/hooks");
+        std::fs::create_dir_all(&hooks).unwrap();
+        for hook in ["post-checkout", "post-commit", "pre-commit"] {
+            std::fs::copy(&script, hooks.join(hook)).unwrap();
+        }
+        std::fs::write(repo.join(".git/info/attributes"), "* filter=x diff=x\n").unwrap();
+        marker
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn worktree_commands_start_none_of_the_repositorys_programs() {
+        let (_dir, repo) = init_repo();
+        let marker = repo_with_programs(&repo);
+        let holder = tempfile::tempdir().unwrap();
+        let made = create_worktree(&repo, holder.path(), "abc-123").unwrap();
+        assert!(!marker.exists(), "creating a worktree ran a program");
+        std::fs::write(made.path.join("new.txt"), "new\n").unwrap();
+        std::fs::write(made.path.join("empty.txt"), "").unwrap();
+        let (patch, files) = merge_patch(&made.path, &made.base_branch, &made.branch).unwrap();
+        assert!(files.iter().any(|file| file == "new.txt"), "{files:?}");
+        assert!(!patch.is_empty());
+        assert!(!marker.exists(), "reading its changes ran a program");
+        let _ = apply_check(&repo, &patch, &files).unwrap();
+        apply_patch(&repo, &patch).unwrap();
+        assert!(repo.join("new.txt").exists());
+        assert!(!marker.exists(), "applying its changes ran a program");
+    }
+
     use super::*;
 
     fn git(repo: &Path, args: &[&str]) {
