@@ -540,6 +540,18 @@ pub fn render_permissions(view: &Value) -> String {
             let _ = writeln!(out, "  +{added} deny rules from this project");
         }
     }
+    if let Some(files) = approval["sensitive_files"].as_array() {
+        let patterns: Vec<String> = files.iter().map(text).collect();
+        let _ = writeln!(
+            out,
+            "\nSensitive files (ask first in Custom): {}",
+            if patterns.is_empty() {
+                "none".to_owned()
+            } else {
+                patterns.join(" ")
+            }
+        );
+    }
     let sandbox = &view["sandbox"];
     if sandbox.is_object() {
         let _ = writeln!(out, "\nSandbox: {}", text(&sandbox["summary"]));

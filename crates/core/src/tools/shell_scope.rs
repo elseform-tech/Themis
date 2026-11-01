@@ -321,6 +321,10 @@ fn class_allows(class: Class, program: &str, command: &[String], pattern: &Patte
     match (class, first_plain) {
         (Class::Options, _) => every_option(),
         (_, None) => true,
+        // GNU sed reads options after its script too: `sed s/a/b/ -i x` writes.
+        (Class::Script, Some((index, _))) if matches!(program, "sed" | "gsed") => {
+            spelled_out(index, false) && every_option()
+        }
         (Class::Script, Some((index, _))) => spelled_out(index, false),
         (Class::Launcher, Some((index, _))) => spelled_out(index, true),
         (Class::Subcommand, Some((index, _))) => spelled_out(index, true) && every_option(),
@@ -377,6 +381,26 @@ pub fn command_in_scope(argv: &[String], patterns: &[String]) -> bool {
 
 #[cfg(test)]
 mod tests {
+    /// GNU sed reads options after its script too, and `-i`, `-f` and `--expression` write
+    /// files or run more script.
+    #[test]
+    fn sed_options_after_the_script_are_checked_too() {
+        let scope = ["sed s/a/b/ *".to_owned()];
+        let argv = |words: &[&str]| words.iter().map(|w| (*w).to_owned()).collect::<Vec<_>>();
+        assert!(command_in_scope(
+            &argv(&["sed", "s/a/b/", "notes.txt"]),
+            &scope
+        ));
+        for words in [
+            &["sed", "s/a/b/", "-i", "notes.txt"][..],
+            &["sed", "s/a/b/", "--in-place", "notes.txt"],
+            &["sed", "s/a/b/", "-f", "evil.sed"],
+            &["sed", "s/a/b/", "--expression=1e id", "notes.txt"],
+        ] {
+            assert!(!command_in_scope(&argv(words), &scope), "{words:?}");
+        }
+    }
+
     /// A shell expands a script's words after this check has read them: `{-i,x}` becomes an
     /// option. So a scope only takes a program and its words directly.
     #[test]

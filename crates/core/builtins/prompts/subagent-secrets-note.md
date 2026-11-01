@@ -1,0 +1,1 @@
+Read a secret file such as .env only when your brief needs it, refer to variable names and not values, and never repeat a secret in your reply.

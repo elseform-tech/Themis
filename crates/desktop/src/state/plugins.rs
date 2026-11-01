@@ -91,6 +91,25 @@ impl AppState {
                 ),
             );
         }
+        if action == "mcp_allow_secrets" {
+            // The person's word alone: an agent can't give it.
+            if agent_approved.is_some() {
+                return Err("Only you can allow a connection to read a secret".to_owned());
+            }
+            let root = project
+                .as_deref()
+                .ok_or("Choose a project for MCP connections")?;
+            let shown: Vec<String> = serde_json::from_value(args["secrets"].clone())
+                .map_err(|_| "Name the secrets you allow".to_owned())?;
+            self.allow_mcp_secrets(
+                root,
+                scope,
+                name,
+                args["id"].as_str().unwrap_or_default(),
+                &shown,
+            )?;
+            return self.mcp_status(root, true);
+        }
         if action == "mcp_sign_in_cancel" {
             let url = args["url"].as_str().ok_or("Missing MCP server address")?;
             return self.mcp_sign_in_cancel(url);
@@ -311,7 +330,14 @@ impl AppState {
                     serde_json::to_value(store.install_scanned(scope, marketplace, name, args["allowPartial"].as_bool().unwrap_or(false), args["expectedCheck"].as_str()).await?)?
                 },
                 "test_mcp" => {
-                    let spec = serde_json::from_value(args["server"].clone())?;
+                    let spec: themis_core::plugins::McpServer =
+                        serde_json::from_value(args["server"].clone())?;
+                    // A test the agent asks for runs any definition it writes: no secrets in it.
+                    if agent_approved.is_some() && !spec.key_names().is_empty() {
+                        anyhow::bail!(
+                            "A test can't read secrets. Save the connection and have the person enable it."
+                        );
+                    }
                     let root = project
                         .as_ref()
                         .ok_or_else(|| anyhow::anyhow!("Choose a project to test a connection"))?;

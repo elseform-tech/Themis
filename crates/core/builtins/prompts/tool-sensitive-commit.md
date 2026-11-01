@@ -1,0 +1,1 @@
+This command stages or commits secret-looking files: {{files}}. Make sure .gitignore covers them. If one is already committed, tell the person: ignoring it does not remove it, and the key stays in history.

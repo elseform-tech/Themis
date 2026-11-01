@@ -654,11 +654,12 @@ impl SubagentKit {
             inner: Arc::new(dialog),
             grants: ChatGrants::in_memory(),
         });
-        let configured = themis_core::configuration::configured_hook_with_grants(
+        let configured = themis_core::configuration::configured_hook_for_project(
             self.mode,
             self.config.approval.clone(),
             own,
             Arc::clone(&self.grants),
+            Some(&self.work_root),
         );
         // A shell held to named commands refuses the others before anything can allow them, in
         // YOLO too: this is the outermost answer, and a call reaches its tool only through it.
@@ -806,6 +807,8 @@ impl SubagentKit {
                 plugin_bins: self.plugin_bins.clone(),
                 attached_skills: Vec::new(),
                 skills_seen: Arc::default(),
+                // The chat's own run picks up the note, or wakes for it when it ends.
+                on_rewake: None,
             },
         }
     }
@@ -1003,6 +1006,7 @@ impl SubagentKit {
             )
         });
         let head = std::iter::once(themis_core::prompts::SUBAGENT_SYSTEM)
+            .chain([themis_core::prompts::SUBAGENT_SECRETS_NOTE])
             .chain(role.as_deref())
             .chain(names_note.as_deref())
             .chain([access.as_str()])
@@ -1262,6 +1266,25 @@ impl ScopedShell {
 impl ApprovalHook for ScopedShell {
     fn denied_by_rule(&self, action: &ToolAction) -> bool {
         self.refuses(action) || self.inner.denied_by_rule(action)
+    }
+
+    fn sensitive_access(
+        &self,
+        tool: &str,
+        args: &Value,
+    ) -> Option<themis_core::tools::sensitive::SensitiveAccess> {
+        self.inner.sensitive_access(tool, args)
+    }
+
+    fn approve_sensitive(
+        &self,
+        action: &ToolAction,
+        access: &themis_core::tools::sensitive::SensitiveAccess,
+    ) -> Approval {
+        if self.refuses(action) {
+            return self.approve(action);
+        }
+        self.inner.approve_sensitive(action, access)
     }
 
     fn approve(&self, action: &ToolAction) -> Approval {
@@ -1561,6 +1584,36 @@ impl ApprovalHook for OwnGrants {
             decision => decision,
         }
     }
+
+    /// Asks past a grant this subagent has for the tool or command alone, and remembers each
+    /// file with it, in the same place: "allow in this chat" stays its own.
+    fn approve_sensitive(
+        &self,
+        action: &ToolAction,
+        access: &themis_core::tools::sensitive::SensitiveAccess,
+    ) -> Approval {
+        let files = access.file_actions();
+        let command = themis_core::tools::is_command_tool(&action.tool);
+        if files.iter().all(|file| self.grants.covers(file))
+            && (!command || self.grants.covers(action))
+        {
+            return Approval::AllowOnce;
+        }
+        match self.inner.approve_sensitive(action, access) {
+            Approval::AllowAlways => {
+                if action.grantable() {
+                    for file in &files {
+                        self.grants.remember(file);
+                    }
+                    if command {
+                        self.grants.remember(action);
+                    }
+                }
+                Approval::AllowOnce
+            }
+            decision => decision,
+        }
+    }
 }
 
 impl AppState {
@@ -1759,5 +1812,62 @@ mod tests {
         assert!(cut.len() < long.len());
         assert!(cut.ends_with("[cut at 8 KiB]"));
         assert_eq!(bounded("short"), "short");
+    }
+
+    /// A subagent held to named commands still asks about a sensitive file, and its
+    /// scope still refuses first. (A wrapper without these two methods loses the check.)
+    #[test]
+    fn a_scoped_shell_keeps_the_sensitive_file_check() {
+        use themis_core::configuration::{
+            configured_hook_for_project, ApprovalMode, ApprovalPolicy,
+        };
+        use themis_core::tools::{CommandDisplay, FnHook, RiskLevel};
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join(".env"), "A=1\n").unwrap();
+        let asked = Arc::new(AtomicUsize::new(0));
+        let counter = Arc::clone(&asked);
+        let scoped = ScopedShell {
+            inner: configured_hook_for_project(
+                ApprovalMode::Custom,
+                ApprovalPolicy::default(),
+                Arc::new(FnHook::new(move |_: &ToolAction| {
+                    counter.fetch_add(1, Ordering::SeqCst);
+                    Approval::Deny
+                })),
+                ChatGrants::in_memory(),
+                Some(dir.path()),
+            ),
+            scopes: vec!["cat:*".to_owned()],
+            context: themis_core::diagnostics::DiagnosticContext {
+                log: Arc::new(themis_core::diagnostics::DiagnosticLog::new(
+                    dir.path().join("logs"),
+                )),
+                thread_id: "t".to_owned(),
+                run_id: "r".to_owned(),
+                level: "info".to_owned(),
+            },
+        };
+        let action = |argv: &[&str]| ToolAction {
+            display: None::<CommandDisplay>,
+            tool: "shell".to_owned(),
+            summary: String::new(),
+            risk: RiskLevel::Execute,
+            command: argv.iter().map(|word| (*word).to_owned()).collect(),
+        };
+        let call = |argv: &[&str]| json!({"command": argv[0], "args": &argv[1..]});
+        let inside = ["cat", ".env"];
+        let access = scoped
+            .sensitive_access("shell", &call(&inside))
+            .expect("the check reaches through the scope");
+        assert_eq!(access.names(), [".env"]);
+        assert!(scoped
+            .approve_sensitive(&action(&inside), &access)
+            .is_denied());
+        assert_eq!(asked.load(Ordering::SeqCst), 1, "the person was asked");
+        let outside = ["head", ".env"];
+        assert!(scoped
+            .approve_sensitive(&action(&outside), &access)
+            .is_denied());
+        assert_eq!(asked.load(Ordering::SeqCst), 1, "the scope refused first");
     }
 }

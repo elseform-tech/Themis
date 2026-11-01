@@ -578,6 +578,8 @@ export interface PersistedMessage {
   /** A goal turn's reply that the goal check then rejected. */
   goalRejected?: boolean;
   goalTurn?: number;
+  /** This turn was started by a plugin hook's report: the runtime's line saying so. */
+  hookWake?: string;
   /** What the goal check concluded after a turn. */
   /** A question the agent asked the user. */
   question?: Question;
@@ -608,6 +610,8 @@ export interface ApprovalRequest {
   grant_scope?: { argv: string[]; covers_further_args: boolean };
   /** For web and browser tools: the site "allow in this chat" covers; `tools` is `browser` (every browser action), `fetch_url` or `web_search`. */
   grant_site?: { tools: string; site: string };
+  /** The sensitive project files this action touches: "Allow in this chat" covers these, not the whole tool. */
+  sensitive_files?: string[];
   /** False for destructive actions: they ask every time, so only Allow once and Deny are offered. */
   grantable?: boolean;
   /** Structured command for shell/git approvals; show this instead of the joined summary. */
@@ -799,7 +803,9 @@ export interface ThreadChange {
 }
 
 export type McpConnections = Record<string, {
-  status: "connecting" | "connected" | "failed" | "needs_sign_in" | "needs_key";
+  status: "connecting" | "connected" | "failed" | "needs_sign_in" | "needs_key" | "needs_secret_ok";
+  /** needs_secret_ok: each secret a plugin's connection reads, and where it would go. */
+  secrets?: { name: string; host: string }[];
   reason?: string;
   /** needs_key: the missing key names, to add in Settings › Keys. */
   keys?: string[];

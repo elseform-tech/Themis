@@ -483,12 +483,19 @@ impl AppState {
         run_id: String,
         terminal: ThreadEvent,
     ) {
+        // A failed or stopped turn starts no others until the person writes again.
+        if matches!(terminal, ThreadEvent::Failed { .. }) {
+            self.hold_hook_wakes(&thread_id);
+        }
         if self.dispatch_queue(Arc::clone(&sink), &thread_id).await {
             // The goal learns about the turn it was waiting on later.
             self.goal_turn_interrupted(&run_id);
             return;
         }
-        self.goal_after_run(sink, thread_id, run_id, terminal).await;
+        self.goal_after_run(Arc::clone(&sink), thread_id.clone(), run_id, terminal)
+            .await;
+        // A hook that finished while this turn was on its last step.
+        self.wake_for_hook_report(sink, thread_id).await;
     }
 
     /// Sends a message on the server's own behalf (a queued message or a
@@ -572,6 +579,8 @@ impl AppState {
             let effort = self
                 .current_effort(thread_id, next.reasoning_effort.clone())
                 .await;
+            // The person wrote this one.
+            self.reset_hook_wakes(thread_id);
             let (sent, progress) = self
                 .send_from_server(
                     Arc::clone(&sink),
@@ -687,6 +696,7 @@ impl AppState {
     pub(super) fn forget_queues(&self, thread_ids: &[String]) {
         let mut queues = self.inner.queues.lock().unwrap_or_else(|e| e.into_inner());
         for id in thread_ids {
+            self.forget_hook_reports(id);
             queues.remove(id);
             if let Some(path) = self.queue_path(id) {
                 let _ = std::fs::remove_file(path);

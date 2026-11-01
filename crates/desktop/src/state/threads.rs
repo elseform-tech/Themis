@@ -250,6 +250,17 @@ impl AppState {
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .contains_key(&run_id);
+        // Sent by no one but the person: goal turns, automations and hook wakes count against
+        // the turns hooks may start.
+        let from_server = self
+            .inner
+            .server_sends
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .contains_key(&run_id);
+        if !from_server && !automation_run {
+            self.reset_hook_wakes(&thread_id);
+        }
         let settings = self.inner.settings.get().await;
         let mut history = Vec::new();
         let project_root = {
@@ -281,11 +292,20 @@ impl AppState {
         let yolo_sandbox = resolved_configuration.yolo_sandbox();
         let mut runtime_configuration = resolved_configuration.config;
         let context_cap = context_cap(&runtime_configuration, &settings);
-        history.extend(self.inner.transcript.context_for_request(
-            &thread_id,
-            &text,
-            context_cap / 2,
-        )?);
+        // The recall search reads the whole chat, which can be long.
+        let recall_state = self.clone();
+        let recall_thread = thread_id.clone();
+        let recall_request = text.clone();
+        let recalled = tokio::task::spawn_blocking(move || {
+            recall_state.inner.transcript.context_for_request(
+                &recall_thread,
+                &recall_request,
+                context_cap / 2,
+            )
+        })
+        .await
+        .map_err(|e| e.to_string())??;
+        history.extend(recalled);
         if settings.confirm_reads
             && !resolved_configuration
                 .provenance

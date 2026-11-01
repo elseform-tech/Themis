@@ -359,13 +359,24 @@ export function goalTurnNumber(text: string): number | undefined {
   return match ? Number(match[1]) : undefined;
 }
 
+/** The marker the runtime puts on the message that starts a turn for a plugin hook's report. */
+export const HOOK_WAKE_MARKER = "[Plugin hook \u2014 runtime, not from the user]";
+
+/** The runtime's line about the turn it started for a hook's report, if `text` starts one. */
+export function hookWakeSummary(text: string): string | undefined {
+  if (!text.startsWith(HOOK_WAKE_MARKER)) return undefined;
+  return text.slice(HOOK_WAKE_MARKER.length).split("\n")[0]!.trim();
+}
+
 /** A user message row; a goal-turn message becomes a divider row. */
 function userMessage(text: string, runId: string | undefined, attachments?: string[]): ChatMessage {
   const goalTurn = goalTurnNumber(text);
+  const hookWake = hookWakeSummary(text);
   return {
     id: newId("msg"), role: "user", text, runId,
     ...(attachments?.length ? { attachments } : {}),
     ...(goalTurn === undefined ? {} : { goalTurn }),
+    ...(hookWake === undefined ? {} : { hookWake }),
   };
 }
 
@@ -398,16 +409,30 @@ function markTurnRejected(state: AppState, threadId: string): AppState {
   return { ...state, messages: { ...state.messages, [threadId]: marked } };
 }
 
+/** While history replays, the list it is building: nothing else can see it yet, so it grows in place. */
+let replayRows: ChatMessage[] | undefined;
+let replaying = false;
+
+/** A chat's rows to change freely: a copy, except during replay, when it is the list replay owns. */
+function ownedRows(state: AppState, threadId: string): ChatMessage[] {
+  const rows = state.messages[threadId] ?? [];
+  if (!replaying) return [...rows];
+  if (rows !== replayRows) replayRows = [...rows];
+  return replayRows;
+}
+
 function appendMessage(
   state: AppState,
   threadId: string,
   message: ChatMessage,
 ): AppState {
+  const rows = ownedRows(state, threadId);
+  rows.push(message);
   return {
     ...state,
     messages: {
       ...state.messages,
-      [threadId]: [...(state.messages[threadId] ?? []), message],
+      [threadId]: rows,
     },
   };
 }
@@ -484,7 +509,7 @@ export function applyThreadEvent(
         ...state,
         traces: { ...state.traces, [threadId]: entries },
         messages: { ...state.messages, [threadId]: (() => {
-          const rows = [...(state.messages[threadId] ?? [])];
+          const rows = ownedRows(state, threadId);
           for (let i = rows.length - 1; i >= 0; i--) {
             const row = rows[i]!;
             if (row.runId === runId && row.tool?.name === event.tool && row.tool.ok === undefined) {
@@ -928,10 +953,16 @@ export function reducer(state: AppState, action: AppAction): AppState {
         streams: { ...state.streams, [action.threadId]: "" },
         traces: { ...state.traces, [action.threadId]: [] },
       };
-      for (const item of action.history) {
-        if (item.kind === "user") next = appendMessage(next, action.threadId, userMessage(item.text, item.run_id, item.attachments));
-        else if (item.kind === "legacy") next = appendMessage(next, action.threadId, item.message);
-        else next = applyThreadEvent(next, item.envelope, false);
+      replaying = true;
+      try {
+        for (const item of action.history) {
+          if (item.kind === "user") next = appendMessage(next, action.threadId, userMessage(item.text, item.run_id, item.attachments));
+          else if (item.kind === "legacy") next = appendMessage(next, action.threadId, item.message);
+          else next = applyThreadEvent(next, item.envelope, false);
+        }
+      } finally {
+        replaying = false;
+        replayRows = undefined;
       }
       if (next.running[action.threadId] && !action.running) {
         next = appendMessage(next, action.threadId, { id: newId("msg"), role: "system", text: "Run interrupted. Review any changes, then send a follow-up to continue." });

@@ -1,11 +1,12 @@
 import { AttachmentPreview } from "./AttachmentPreview";
 import { PromptInput, type PromptCommand } from "../components/PromptInput";
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { Attachment } from "../lib/tauri";
 import type { PromptPlugin, PromptSkill } from "../lib/prompt";
 import { Button } from "../components/primitives/Button";
 import type { ContextBudget, ThreadInfo } from "../lib/types";
 import { isModeInitial } from "../lib/keyboard";
+import { looksLikeSecret } from "../lib/secretLook";
 import { ContextMeter } from "./ContextMeter";
 
 const COMMANDS: PromptCommand[] = [
@@ -126,6 +127,10 @@ export function ThreadComposer({
     menu?.closest("details")?.removeAttribute("open");
     onDraftChange(`${draft}${draft === "" || draft.endsWith(" ") || draft.endsWith("\n") ? "" : " "}${trigger}`);
   }
+  // Dismissed until the text stops looking like a secret, so the next one speaks up again.
+  const secretLook = useMemo(() => looksLikeSecret(draft), [draft]);
+  const [secretDismissed, setSecretDismissed] = useState(false);
+  if (secretDismissed && !secretLook) setSecretDismissed(false);
   // A rejected key would only fail the run: wait for it to be fixed (queueing still works).
   const sendBlocked = !running && Boolean(keyRejected);
   return (
@@ -144,6 +149,12 @@ export function ThreadComposer({
           <p className="themis-thread-hint" role="alert">
             OpenCode Go rejected the key in {keyRejected}. {" "}
             <Button variant="ghost" size="small" onClick={onOpenSettings}>Model settings</Button>
+          </p>
+        )}
+        {secretLook && !secretDismissed && (
+          <p className="themis-thread-hint themis-composer-secret" role="status">
+            <span>This looks like a secret. It&apos;d be sent to the model provider. If it&apos;s real, use Settings › Secrets, and rotate it if already shared.</span>
+            <button type="button" aria-label="Dismiss" onClick={() => setSecretDismissed(true)}>×</button>
           </p>
         )}
         {attachments.length > 0 && <ul className="themis-composer-attachments" aria-label="Attached files">

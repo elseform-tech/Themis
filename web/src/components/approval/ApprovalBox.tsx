@@ -42,6 +42,9 @@ export function GrantHint({ request }: { request: ApprovalRequest }) {
   if (request.grantable === false) {
     return <>This kind of action always asks, so it cannot be allowed for the chat.</>;
   }
+  if (request.sensitive_files?.length) {
+    return <>Allow in this chat covers these files{request.command ? " and this command" : ""} in later runs of this chat. Other files still ask.</>;
+  }
   const scope = request.grant_scope;
   if (request.tool.startsWith("mcp_")) {
     return <>Allow in this chat covers every tool of this MCP server in later runs of this chat.</>;
@@ -131,6 +134,7 @@ export function ApprovalBox({ request, label, open, onDecide, next, onFold }: Ap
               {request.command.background && " in the background"}
             </p>
           : <p className="themis-approval-summary">{request.tool.startsWith("mcp_") ? request.summary.split(request.tool).join(toolDisplayName(request.tool, label)) : request.summary}</p>}
+        {request.command && request.sensitive_files?.length ? <p className="themis-approval-summary">Sensitive: <TokenList argv={request.sensitive_files} /></p> : null}
         {outside && <p className="themis-approval-summary">The sandbox blocked it{blocked ? <>: <SafeText text={blocked} />.</> : "."} Outside the sandbox it can write anywhere you can, read secret folders and use the network.</p>}
         <div className="themis-approval-actions">
           <Button variant="primary" onClick={() => onDecide("once")}>

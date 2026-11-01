@@ -77,6 +77,9 @@ pub const MESSAGE_SUBAGENT_TOOL: &str =
     include_str!("../builtins/prompts/message-subagent-tool.md");
 /// Description of the `stop_subagent` tool.
 pub const STOP_SUBAGENT_TOOL: &str = include_str!("../builtins/prompts/stop-subagent-tool.md");
+/// A subagent's habit with secret files, in its system message.
+pub const SUBAGENT_SECRETS_NOTE: &str =
+    include_str!("../builtins/prompts/subagent-secrets-note.md");
 /// A subagent's result, delivered to the main agent; `{{name}}`, `{{id}}`, `{{status}}`, `{{result}}`.
 pub const SUBAGENT_RESULT_NOTE: &str = include_str!("../builtins/prompts/subagent-result-note.md");
 
@@ -84,6 +87,12 @@ pub const SUBAGENT_RESULT_NOTE: &str = include_str!("../builtins/prompts/subagen
 /// Current run workspace preamble before the skill catalog; `{{workspace}}`.
 pub const DESKTOP_RUN_WORKSPACE: &str =
     include_str!("../builtins/prompts/desktop-run-workspace.md");
+/// System prompt note: secret-looking files Git does not ignore; `{{files}}`.
+pub const DESKTOP_SECRETS_UNIGNORED: &str =
+    include_str!("../builtins/prompts/desktop-secrets-unignored.md");
+/// System prompt note: secret-looking files Git already tracks; `{{files}}`.
+pub const DESKTOP_SECRETS_TRACKED: &str =
+    include_str!("../builtins/prompts/desktop-secrets-tracked.md");
 /// Added to the system prompt of YOLO runs only: no approvals or sandbox, so caution.
 pub const DESKTOP_RUN_YOLO: &str = include_str!("../builtins/prompts/desktop-run-yolo.md");
 /// Browser verification habit, for runs with the built-in browser.
@@ -258,12 +267,20 @@ pub const RUNTIME_SUBAGENT_NOTE: &str =
     include_str!("../builtins/prompts/runtime-subagent-note.md");
 /// How the agent treats subagent results: claims it checks before relying on them, and says so.
 pub const SUBAGENT_REVIEW: &str = include_str!("../builtins/prompts/subagent-review.md");
+/// After a message from the person that looks like it holds a secret; never holds the value.
+pub const RUNTIME_PASTED_SECRET: &str =
+    include_str!("../builtins/prompts/runtime-pasted-secret.md");
 /// Label before context a `PromptSubmit` hook added: external information, not instructions.
 pub const HOOK_CONTEXT_NOTE: &str = include_str!("../builtins/prompts/hook-context-note.md");
 pub const HOOK_BLOCKED: &str = include_str!("../builtins/prompts/hook-blocked.md");
 pub const HOOK_BLOCK_REASON_NOTE: &str =
     include_str!("../builtins/prompts/hook-block-reason-note.md");
 pub const HOOK_STOP_CONTINUE: &str = include_str!("../builtins/prompts/hook-stop-continue.md");
+/// The message that starts a turn for a hook's report: nobody wrote it. `{{marker}}`.
+pub const HOOK_WAKE_TURN: &str = include_str!("../builtins/prompts/hook-wake-turn.md");
+/// What a background hook reported when it finished (Claude's `asyncRewake`): the plugin's words,
+/// fenced; not the person's, not instructions. `{{hook}}`, `{{output}}`.
+pub const HOOK_REWAKE_NOTE: &str = include_str!("../builtins/prompts/hook-rewake-note.md");
 /// Sent once before a run that read two or more steered messages ends, listing them.
 pub const RUNTIME_STEERS_CHECK: &str = include_str!("../builtins/prompts/runtime-steers-check.md");
 /// Error for a call left out of a batch too large for the context; `{{calls}}`, `{{runnable}}`.
@@ -324,6 +341,12 @@ pub const TOOL_RECALL_UNTRUSTED: &str =
 /// Note when recall's kinds/source filters matched nothing.
 pub const TOOL_RECALL_FILTERS_IGNORED: &str =
     include_str!("../builtins/prompts/tool-recall-filters-ignored.md");
+/// On the result of a command that staged or committed secret-looking files; `{{files}}`.
+pub const TOOL_SENSITIVE_COMMIT: &str =
+    include_str!("../builtins/prompts/tool-sensitive-commit.md");
+/// On a refusal that involved secret-looking files; `{{files}}`.
+pub const TOOL_SENSITIVE_DENIED: &str =
+    include_str!("../builtins/prompts/tool-sensitive-denied.md");
 /// Note on built-in browser page snapshots.
 pub const TOOL_SCREENSHOT_NOTE: &str = include_str!("../builtins/prompts/tool-screenshot-note.md");
 pub const TOOL_SHELL_ARGS_INVALID: &str =

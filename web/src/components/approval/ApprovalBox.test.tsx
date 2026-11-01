@@ -198,6 +198,20 @@ it.each([["manage_integrations_save_Some(Write)_123", "Manage integrations"], ["
   expect(onDecide).toHaveBeenCalledWith("once");
 });
 
+describe("sensitive files", () => {
+  it("names the files for a command, and the grant covers them, not the tool", () => {
+    setup({ ...REQUEST, tool: "shell", sensitive_files: [".env", ".env.local"], command: { argv: ["cat", ".env", ".env.local"] }, grant_scope: { argv: ["cat", ".env", ".env.local"], covers_further_args: false } });
+    expect(screen.getByText(/^Sensitive:/)).toBeInTheDocument();
+    expect(screen.getByRole("tooltip")).toHaveTextContent("Allow in this chat covers these files and this command in later runs of this chat. Other files still ask.");
+  });
+
+  it("does not repeat the file when the summary already names it", () => {
+    setup({ ...REQUEST, tool: "read_file", sensitive_files: [".env"], summary: "read_file .env (sensitive: .env)" });
+    expect(screen.queryByText(/^Sensitive:/)).toBeNull();
+    expect(screen.getByRole("tooltip")).toHaveTextContent("Allow in this chat covers these files in later runs of this chat. Other files still ask.");
+  });
+});
+
 describe("grant hint", () => {
   const shell = (argv: string[], more = false): ApprovalRequest => ({ ...REQUEST, tool: "shell", grant_scope: { argv, covers_further_args: more } });
   const chips = () => Array.from(document.querySelectorAll(".themis-approval-token")).map(el => el.textContent);

@@ -160,6 +160,79 @@ pub fn safe_literal(name: &str, value: &str) -> bool {
     !token_like && !url_credentials
 }
 
+/// Whether `value` for the setting `field` is a stand-in for what the person must fill in, as
+/// documentation writes one: `[your aws profile]`, `<token>`, `your-api-key`, `changeme`, or the
+/// setting's own name (`cld-cloud-name: cloud_name`). Sent as written, it could only fail.
+pub fn placeholder(field: &str, value: &str) -> bool {
+    let value = value.trim();
+    let wrapped = |open: char, close: char| {
+        value.len() > 2 && value.starts_with(open) && value.ends_with(close)
+    };
+    if wrapped('[', ']') || wrapped('<', '>') {
+        return true;
+    }
+    let lower = value.to_ascii_lowercase();
+    let starts_your = lower
+        .strip_prefix("your")
+        .is_some_and(|rest| rest.starts_with([' ', '-', '_']));
+    let filler = [
+        "changeme",
+        "change-me",
+        "change_me",
+        "replace-me",
+        "replace_me",
+        "placeholder",
+        "todo",
+    ]
+    .contains(&lower.as_str())
+        || (lower.len() >= 3 && lower.bytes().all(|b| b == b'x'));
+    let plain = |text: &str| -> String {
+        text.bytes()
+            .filter(u8::is_ascii_alphanumeric)
+            .map(|b| b.to_ascii_lowercase() as char)
+            .collect()
+    };
+    let wanted = plain(value);
+    starts_your || filler || (wanted.len() >= 3 && plain(field).ends_with(&wanted))
+}
+
+/// The secret a plugin's literal value for `field` becomes: `PLUGIN_FIELD` in capitals with other
+/// characters as `_`, without saying the plugin's name twice (`datadog` and `DATADOG_API_KEY` give
+/// `DATADOG_API_KEY`). Always a [`valid_name`]; a very long one ends in a hash of the whole.
+pub fn literal_secret_name(plugin: &str, field: &str) -> String {
+    let upper = |text: &str| -> String {
+        let mut out = String::new();
+        for character in text.chars() {
+            if character.is_ascii_alphanumeric() {
+                out.push(character.to_ascii_uppercase());
+            } else if !out.is_empty() && !out.ends_with('_') {
+                out.push('_');
+            }
+        }
+        out.trim_end_matches('_').to_owned()
+    };
+    let (plugin, field) = (upper(plugin), upper(field));
+    let joined = if plugin.is_empty() || field == plugin || field.starts_with(&format!("{plugin}_"))
+    {
+        field
+    } else if field.is_empty() {
+        plugin
+    } else {
+        format!("{plugin}_{field}")
+    };
+    let joined = if joined.is_empty() {
+        "PLUGIN_SECRET".to_owned()
+    } else {
+        joined
+    };
+    if joined.len() <= 128 {
+        return joined;
+    }
+    use sha2::Digest;
+    let hash = format!("{:x}", sha2::Sha256::digest(joined.as_bytes()));
+    format!("{}_{}", joined[..111].trim_end_matches('_'), &hash[..16])
+}
+
 /// The plugin's own folder, filled in when a connection starts (never a key).
 pub const PLUGIN_ROOTS: [&str; 2] = ["${CLAUDE_PLUGIN_ROOT}", "${PLUGIN_ROOT}"];
 
@@ -267,7 +340,59 @@ mod tests {
         }
     }
 
+    #[test]
+    fn stand_ins_are_told_from_values() {
+        for (field, value) in [
+            ("cld-cloud-name", "cloud_name"),
+            ("cld-api-key", "api_key"),
+            ("AWS_PROFILE", "[your aws profile name, e.g. default]"),
+            ("TOKEN", "<token>"),
+            ("API_KEY", "your-api-key"),
+            ("REGION", "YOUR_REGION"),
+            ("HOST", "changeme"),
+            ("X", "xxxxxxxx"),
+        ] {
+            assert!(placeholder(field, value), "{field}={value}");
+        }
+        for (field, value) in [
+            ("FASTMCP_LOG_LEVEL", "ERROR"),
+            ("x-exa-source", "claude-code-plugin"),
+            (
+                "X_GOOG_PROXY_HEADERS",
+                "{\"User-Agent\":\"datacloud.other\"}",
+            ),
+            ("GRAFANA_URL", "http://localhost:3000"),
+            ("YOUR_FLAG", "yourself"),
+            ("LEVEL", "on"),
+        ] {
+            assert!(!placeholder(field, value), "{field}={value}");
+        }
+    }
+
+    #[test]
+    fn a_secret_name_comes_from_the_plugin_and_the_field() {
+        assert_eq!(literal_secret_name("datadog", "API_KEY"), "DATADOG_API_KEY");
+        assert_eq!(
+            literal_secret_name("datadog", "DATADOG_API_KEY"),
+            "DATADOG_API_KEY"
+        );
+        assert_eq!(
+            literal_secret_name("cloudinary", "cld-api-key"),
+            "CLOUDINARY_CLD_API_KEY"
+        );
+        assert_eq!(
+            literal_secret_name("databases-on-aws", "AWS_REGION"),
+            "DATABASES_ON_AWS_AWS_REGION"
+        );
+    }
+
     proptest::proptest! {
+        #[test]
+        fn any_plugin_and_field_give_a_usable_secret_name(plugin in "\\PC{0,200}", field in "\\PC{0,200}") {
+            proptest::prop_assert!(valid_name(&literal_secret_name(&plugin, &field)));
+            let _ = placeholder(&field, &plugin);
+        }
+
         #[test]
         fn references_never_panic_and_name_valid_keys(text in "\\PC{0,60}") {
             if let Some((name, _)) = reference(&text) {
