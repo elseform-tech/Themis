@@ -90,14 +90,14 @@ describe("WorkspacePanel", () => {
     for (let step = 0; step < 10; step += 1) fireEvent.keyDown(panel, { key: "ArrowRight" });
     expect(panel).toHaveAttribute("aria-valuenow", "300");
     const split = screen.getByRole("separator", { name: "Resize file list" });
-    expect(split).toHaveAttribute("aria-valuenow", "200");
+    expect(split).toHaveAttribute("aria-valuenow", "180");
     fireEvent.keyDown(split, { key: "ArrowRight" });
-    expect(split).toHaveAttribute("aria-valuenow", "240");
-    expect(localStorage.getItem("themis:workspaceDiffListWidth")).toBe("240");
+    expect(split).toHaveAttribute("aria-valuenow", "220");
+    expect(localStorage.getItem("themis:workspaceFileListWidth")).toBe("220");
     for (let step = 0; step < 10; step += 1) fireEvent.keyDown(split, { key: "ArrowLeft" });
     expect(split).toHaveAttribute("aria-valuenow", "120");
     fireEvent.doubleClick(split);
-    expect(split).toHaveAttribute("aria-valuenow", "200");
+    expect(split).toHaveAttribute("aria-valuenow", "180");
     // Dragging a divider never starts a text selection (WebKit selects on mousedown).
     expect(fireEvent.mouseDown(panel)).toBe(false);
     expect(fireEvent.mouseDown(split)).toBe(false);

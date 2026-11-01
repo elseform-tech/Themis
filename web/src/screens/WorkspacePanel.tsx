@@ -25,7 +25,7 @@ const BROWSER_DEFAULT_WIDTH = 760;
 /** The Changes file list beside the diff; the diff keeps at least DIFF_MIN_WIDTH (CSS). */
 const LIST_MIN_WIDTH = 120;
 const LIST_MAX_WIDTH = 640;
-const LIST_DEFAULT_WIDTH = 200;
+const LIST_DEFAULT_WIDTH = 180;
 
 function clampListWidth(value: number) {
   return Math.round(Math.max(LIST_MIN_WIDTH, Math.min(LIST_MAX_WIDTH, value)));
@@ -177,25 +177,28 @@ function ChangesView({ threadId, workspace, projectRoot }: { threadId: string; w
   );
   const diff = branch !== null ? branchChanges : liveDiff;
   if (branch === null && diff === undefined) return <EmptyState title="Loading changes…" />;
-  if (branch !== null && diff === null) return <div className="themis-workspace-changes">{switcher}<EmptyState title="Loading changes…" /></div>;
-  if (typeof diff === "string") return <div className="themis-workspace-changes">{switcher}<EmptyState title="Changes unavailable" hint={diff} /></div>;
-  if (!diff || !diff.available) return <div className="themis-workspace-changes">{switcher}<EmptyState title="Changes unavailable" hint={diff?.reason ?? "This folder has no Git diff."} /></div>;
+  // The bar stays one element whatever the state, so the selector keeps its focus while a branch loads.
+  const bar = (extra?: ReactNode) => (switcher || extra) && <div className="themis-workspace-changes-bar">{switcher}{extra}</div>;
+  if (branch !== null && diff === null) return <div className="themis-workspace-changes">{bar()}<EmptyState title="Loading changes…" /></div>;
+  if (typeof diff === "string") return <div className="themis-workspace-changes">{bar()}<EmptyState title="Changes unavailable" hint={diff} /></div>;
+  if (!diff || !diff.available) return <div className="themis-workspace-changes">{bar()}<EmptyState title="Changes unavailable" hint={diff?.reason ?? "This folder has no Git diff."} /></div>;
   const options = branch === null ? authorOptions(authors, diff.files.map(entry => entry.path)) : [];
   const shownAuthor = options.includes(author) ? author : "";
   const files = shownAuthor ? diff.files.filter(entry => authorOf(entry.path, authors) === shownAuthor) : diff.files;
   const file = files.find(entry => entry.path === selected) ?? files[0] ?? null;
   return (
     <div className="themis-workspace-changes">
-      {switcher}
-      {diff.reason && <p className="themis-workspace-note">{diff.reason}</p>}
-      {options.length > 0 && (
-        <label className="themis-workspace-author">Author
-          <select value={shownAuthor} onChange={event => setAuthor(event.target.value)}>
-            <option value="">All</option>
-            {options.map(option => <option key={option} value={option}>{option}</option>)}
-          </select>
-        </label>
-      )}
+      {bar((options.length > 0 || diff.reason) && <>
+        {options.length > 0 && (
+          <label className="themis-workspace-source">Author
+            <select value={shownAuthor} onChange={event => setAuthor(event.target.value)}>
+              <option value="">All</option>
+              {options.map(option => <option key={option} value={option}>{option}</option>)}
+            </select>
+          </label>
+        )}
+        {diff.reason && <p className="themis-workspace-note">{diff.reason}</p>}
+      </>)}
       {file === null
         ? <EmptyState title="No changes" hint={branch !== null ? `${branch} adds nothing to ${current ?? "the current branch"}.` : "The checkout matches its last commit."} />
         : (
@@ -210,11 +213,11 @@ function ChangesView({ threadId, workspace, projectRoot }: { threadId: string; w
 
 /** File list | diff, with a draggable divider whose position is remembered. */
 export function DiffSplit({ children }: { children: [ReactNode, ReactNode] }) {
-  const [width, setWidth] = useState(() => clampListWidth(Number(readSession("workspaceDiffListWidth", LIST_DEFAULT_WIDTH)) || LIST_DEFAULT_WIDTH));
+  const [width, setWidth] = useState(() => clampListWidth(Number(readSession("workspaceFileListWidth", LIST_DEFAULT_WIDTH)) || LIST_DEFAULT_WIDTH));
   const split = useRef<HTMLDivElement>(null);
   const drag = useRef<{ x: number; width: number } | null>(null);
   const [dragging, setDragging] = useState(false);
-  function resize(next: number) { const value = clampListWidth(next); setWidth(value); writeSession("workspaceDiffListWidth", value); }
+  function resize(next: number) { const value = clampListWidth(next); setWidth(value); writeSession("workspaceFileListWidth", value); }
   // Store what is visible: CSS keeps room for the diff, so a wide value may render narrower.
   function rendered() { return split.current?.firstElementChild?.getBoundingClientRect().width || width; }
   return (
