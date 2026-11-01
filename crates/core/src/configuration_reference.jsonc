@@ -190,10 +190,11 @@
     // 0 updates it only when the turn ends. Each update is one request on the check's model.
     "checklist_refresh_seconds": 90
   },
-  // Plugin hooks that report back when they finish in the background. A project file may only
-  // lower this.
+  // Plugin hooks. A project file may only lower max_wakes, and can't set prompt_hook_calls.
   "hooks": {
-    "max_wakes": 3                            // turns in a row one may start in an idle chat (0-10)
+    "max_wakes": 3,                           // turns in a row one reporting back may start in an idle chat (0-10)
+    "session_idle_minutes": 60,               // idle time that ends a chat's session for hooks (0 never, up to 10080)
+    "prompt_hook_calls": 50                   // model requests prompt hooks may make in a run (0 turns them off, up to 1000)
   },
   // Subagents the agent may start for independent parts of a task. A project file may only
   // lower these or turn them off.
