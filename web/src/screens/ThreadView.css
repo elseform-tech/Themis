@@ -57,7 +57,8 @@
 .themis-starter:disabled { opacity: .5; cursor: not-allowed; }
 
 /* Conversation stream. */
-.themis-thread-stream { flex: 1; overflow-y: auto; overflow-x: hidden; display: flex; flex-direction: column; gap: 20px; padding: 16px max(var(--themis-thread-gutter), calc((100% - var(--themis-thread-column)) / 2)) 24px; }
+.themis-thread-stream { flex: 1; overflow-y: auto; overflow-x: hidden; padding: 16px max(var(--themis-thread-gutter), calc((100% - var(--themis-thread-column)) / 2)) 24px; }
+.themis-thread-stream-content { display: flex; flex-direction: column; gap: 20px; min-width: 0; }
 .themis-thread-start { margin: auto; color: var(--themis-text-2); font-size: .875rem; }
 .themis-thread-msg { max-width: 100%; }
 .themis-thread-msg--user { align-self: flex-end; max-width: 80%; padding: 12px 18px; border-radius: 22px 22px 6px 22px; background: var(--themis-user-message-bg); }
