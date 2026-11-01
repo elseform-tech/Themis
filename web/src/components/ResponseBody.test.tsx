@@ -154,3 +154,21 @@ it("centres a chart and labels it in small, plain text", async () => {
   expect(options.themeVariables.fontSize).toBe("10px");
   expect(options.themeVariables.fontFamily).toContain("system-ui");
 });
+it("shows the whole chart when enlarged, in its own shape", async () => {
+  HTMLDialogElement.prototype.showModal = vi.fn();
+  HTMLDialogElement.prototype.close = vi.fn();
+  diagram.render.mockResolvedValueOnce({ svg: '<svg viewBox="0 0 150 500"></svg>' } as never);
+  const sizes = vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(324);
+  const widths = vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
+  render(<ResponseBody text={'```mermaid\nflowchart TD\n A-->F\n```'} />);
+  await screen.findByTitle("Mermaid diagram");
+  fireEvent.click(screen.getByRole("button", { name: "Enlarge diagram" }));
+  // A chart 500 tall in a 324 tall window, less margins, opens at half size.
+  expect(await screen.findByText("50%")).toBeInTheDocument();
+  const frames = screen.getAllByTitle("Mermaid diagram");
+  const enlarged = frames[frames.length - 1]!;
+  expect(enlarged.style.width).toBe("99px");
+  expect(enlarged.style.height).toBe("274px");
+  sizes.mockRestore();
+  widths.mockRestore();
+});
