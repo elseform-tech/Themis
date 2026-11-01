@@ -586,6 +586,10 @@ impl AppState {
         // Subagents share this run's configuration, rules and grants, and its sandbox made
         // read-only; their results reach this run as notes.
         let mcp_names: themis_core::plugins::hooks::McpNames = Arc::new(mcp_names);
+        let prompt_model = themis_core::plugins::hooks::PromptModel::new(
+            Arc::clone(&llm),
+            run_configuration.hooks.prompt_hook_calls,
+        );
         let run_notes = if run_configuration.subagents.enabled {
             let kit = Arc::new(super::subagents::SubagentKit::new(
                 self.clone(),
@@ -596,6 +600,7 @@ impl AppState {
                 capacity_catalog.clone(),
                 endpoint_override,
                 hooks.clone(),
+                prompt_model.clone(),
                 super::subagents::SubagentMcp {
                     names: Arc::clone(&mcp_names),
                     labels: Arc::new(tool_labels.clone()),
@@ -631,6 +636,7 @@ impl AppState {
                 cancel: Some(Arc::clone(&stopped)),
                 open: Some(open_session),
                 model: snapshot.model.clone(),
+                prompt_model: Some(prompt_model),
                 plugin_bins,
                 attached_skills: snapshot
                     .skills

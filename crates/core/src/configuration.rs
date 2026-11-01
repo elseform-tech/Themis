@@ -716,7 +716,13 @@ pub struct HooksConfig {
     /// Minutes a chat may sit idle before its session ends for plugin hooks (`SessionEnd`, then
     /// `SessionStart` when the person writes again). 0 never ends one for being idle.
     pub session_idle_minutes: u32,
+    /// Model requests `prompt` hooks may make in a run, which is what they cost. A guard that finds
+    /// none left refuses. 0 turns them off, for the person only: nothing is asked or refused.
+    pub prompt_hook_calls: u32,
 }
+
+/// Most `hooks.prompt_hook_calls` may say.
+pub const MAX_PROMPT_HOOK_CALLS: u32 = 1000;
 
 /// Most `hooks.max_wakes` may say.
 pub const MAX_HOOK_WAKES: u32 = 10;
@@ -728,12 +734,18 @@ impl Default for HooksConfig {
         Self {
             max_wakes: 3,
             session_idle_minutes: 60,
+            prompt_hook_calls: 50,
         }
     }
 }
 
-/// A project or run layer may only lower how many turns hooks may start.
+/// A project or run layer may only lower how many turns hooks may start, and can't touch what a
+/// `prompt` hook may spend: lowering it would switch off a guard the person turned on.
 fn check_hooks_restriction(current: &HooksConfig, layer: &Value, origin: &str) -> Result<()> {
+    ensure!(
+        layer.pointer("/hooks/prompt_hook_calls").is_none(),
+        "the {origin} configuration can't set hooks.prompt_hook_calls"
+    );
     if let Some(value) = layer.pointer("/hooks/max_wakes") {
         ensure!(
             value
@@ -1884,6 +1896,10 @@ pub fn validate(config: &RuntimeConfig) -> Result<()> {
         "hooks.session_idle_minutes must be 0..{MAX_HOOK_IDLE_MINUTES}"
     );
     ensure!(
+        config.hooks.prompt_hook_calls <= MAX_PROMPT_HOOK_CALLS,
+        "hooks.prompt_hook_calls must be 0..{MAX_PROMPT_HOOK_CALLS}"
+    );
+    ensure!(
         (1..=6).contains(&config.subagents.max_parallel),
         "subagents.max_parallel must be 1..6"
     );
@@ -2120,7 +2136,8 @@ fn base_schema() -> Value {
             }},
             "hooks":{"type":"object","additionalProperties":false,"properties":{
                 "max_wakes":{"type":"integer","minimum":0,"maximum":10,"default":3,"description":"Turns in a row a finished background plugin hook may start in an idle chat before you write again; 0 never starts one, and what a hook reports waits for the next turn"},
-                "session_idle_minutes":{"type":"integer","minimum":0,"maximum":10080,"default":60,"description":"Minutes a chat may sit idle before its session ends for plugin hooks; writing again starts the next one. 0 never ends one for being idle"}
+                "session_idle_minutes":{"type":"integer","minimum":0,"maximum":10080,"default":60,"description":"Minutes a chat may sit idle before its session ends for plugin hooks; writing again starts the next one. 0 never ends one for being idle"},
+                "prompt_hook_calls":{"type":"integer","minimum":0,"maximum":1000,"default":50,"description":"Model requests prompt hooks may make in a run, each on the chat's model. A guard that finds none left refuses. 0 turns prompt hooks off; only your own runtime.jsonc can set this"}
             }},
             "goal":{"type":"object","additionalProperties":false,"properties":{
                 "check_model":{"type":["string","null"],"minLength":1,"maxLength":256,"default":null,"description":"The model that checks each goal turn; absent, the chat's model. Any model a connected provider offers; <provider>/<id> for one from providers"},

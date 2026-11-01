@@ -1986,6 +1986,211 @@ case "$input" in *'Refuse this'*) echo 'tests are not green' >&2; exit 2 ;; esac
     app.serving.abort();
 }
 
+/// Whether a request is a prompt hook's: its own system message, no tools.
+fn is_prompt_hook(body: &Value) -> bool {
+    body["messages"][0]["content"]
+        .as_str()
+        .unwrap_or_default()
+        .contains("a hook's check")
+}
+
+fn prompt_hook(event: &str, matcher: &str, prompt: &str) -> Value {
+    json!({event: [{"matcher": matcher, "hooks": [{"type": "prompt", "prompt": prompt}]}]})
+}
+
+const WRITES: &str = r#"{"file_path":"new.txt","content":"THE_FILE_TEXT"}"#;
+
+fn writes() -> Value {
+    serde_json::from_str(WRITES).unwrap()
+}
+
+/// A prompt hook asks the chat's model, with no tools, what the plugin wants checked. A guard's no
+/// refuses the call and says why; its plugin's text and the input reach only that request.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_prompt_hook_asks_the_model_and_its_no_refuses_the_call() {
+    let hooks = prompt_hook("PreToolUse", "Write", "Refuse writes of $ARGUMENTS please");
+    let app = crate::app(hooks, &[], |body| {
+        if is_prompt_hook(body) {
+            return reply(r#"{"ok": false, "reason": "not in this folder"}"#);
+        }
+        if tool_results(body).is_empty() {
+            tool_call("c1", "write_file", &writes())
+        } else {
+            reply("Done.")
+        }
+    })
+    .await;
+    run(&app, "write it").await;
+    assert!(!exists(&app, "new.txt"), "the guard said no");
+    assert!(last_tool_result(&app).await.contains("not in this folder"));
+    let all = bodies(&app.llm).await;
+    let asked = all.iter().find(|body| is_prompt_hook(body)).unwrap();
+    assert_eq!(asked["model"], "test-model", "the chat's model");
+    assert!(
+        asked.get("tools").is_none_or(Value::is_null),
+        "read-only: {asked}"
+    );
+    let text = asked.to_string();
+    assert!(text.contains("Refuse writes of"), "{text}");
+    assert!(
+        text.contains("THE_FILE_TEXT"),
+        "$ARGUMENTS is the input: {text}"
+    );
+    assert!(
+        !text.contains("write it"),
+        "not the person's message: {text}"
+    );
+    assert!(!all
+        .iter()
+        .filter(|body| !is_prompt_hook(body))
+        .any(|body| body.to_string().contains("Refuse writes of")));
+    app.serving.abort();
+}
+
+/// A guard that can't get a clear yes holds: an answer that can't be read, a request that fails, or
+/// a budget that's gone all refuse the call.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_prompt_guard_fails_closed() {
+    for (answer, status) in [("I am not sure about this one.", 200), ("{}", 400)] {
+        let hooks = prompt_hook("PreToolUse", "Write", "Check it");
+        let app = crate::app(hooks, &[], move |body| {
+            if is_prompt_hook(body) {
+                return if status == 200 {
+                    reply(answer)
+                } else {
+                    ResponseTemplate::new(status).set_body_string(answer)
+                };
+            }
+            if tool_results(body).is_empty() {
+                tool_call("c1", "write_file", &writes())
+            } else {
+                reply("Done.")
+            }
+        })
+        .await;
+        run(&app, "write it").await;
+        assert!(!exists(&app, "new.txt"), "{answer}");
+        app.serving.abort();
+    }
+    // One call a run: the first write is checked and passes, the second finds nothing left.
+    let hooks = prompt_hook("PreToolUse", "Write", "Check it");
+    let app = crate::app(hooks, &[], |body| {
+        if is_prompt_hook(body) {
+            return reply(r#"{"ok": true}"#);
+        }
+        match tool_results(body).len() {
+            0 => tool_call("c1", "write_file", &writes()),
+            1 => tool_call(
+                "c2",
+                "write_file",
+                &json!({"file_path": "second.txt", "content": "x"}),
+            ),
+            _ => reply("Done."),
+        }
+    })
+    .await;
+    std::fs::write(
+        app.data.path().join("runtime.jsonc"),
+        r#"{"hooks": {"prompt_hook_calls": 1}}"#,
+    )
+    .unwrap();
+    run(&app, "write both").await;
+    assert!(exists(&app, "new.txt"), "a yes lets it through");
+    assert!(!exists(&app, "second.txt"), "no budget, no write");
+    assert_eq!(
+        bodies(&app.llm)
+            .await
+            .iter()
+            .filter(|body| is_prompt_hook(body))
+            .count(),
+        1
+    );
+    app.serving.abort();
+}
+
+/// `hooks.prompt_hook_calls: 0` is the person turning these off: nothing is asked and nothing is
+/// refused for it. A project can't do that to them.
+#[tokio::test(flavor = "multi_thread")]
+async fn prompt_hooks_can_be_turned_off_by_the_person_only() {
+    let hooks = prompt_hook("PreToolUse", "Write", "Check it");
+    let app = crate::app(hooks.clone(), &[], |body| {
+        if is_prompt_hook(body) {
+            return reply(r#"{"ok": false, "reason": "no"}"#);
+        }
+        if tool_results(body).is_empty() {
+            tool_call("c1", "write_file", &writes())
+        } else {
+            reply("Done.")
+        }
+    })
+    .await;
+    std::fs::write(
+        app.data.path().join("runtime.jsonc"),
+        r#"{"hooks": {"prompt_hook_calls": 0}}"#,
+    )
+    .unwrap();
+    run(&app, "write it").await;
+    assert!(exists(&app, "new.txt"));
+    assert!(!bodies(&app.llm).await.iter().any(is_prompt_hook));
+    app.serving.abort();
+
+    let app = crate::app(hooks, &[], |_| reply("Done.")).await;
+    std::fs::create_dir_all(app.project.path().join(".themis")).unwrap();
+    std::fs::write(
+        app.project.path().join(".themis/config.jsonc"),
+        r#"{"hooks": {"prompt_hook_calls": 0}}"#,
+    )
+    .unwrap();
+    let (data, thread) = (app.data.path().to_owned(), app.thread.clone());
+    let refused = tokio::task::spawn_blocking(move || {
+        std::process::Command::new(env!("CARGO_BIN_EXE_themis"))
+            .arg("--data-dir")
+            .arg(&data)
+            .args([
+                "call",
+                "send_message",
+                &json!({"threadId": thread, "text": "hi"}).to_string(),
+            ])
+            .env_remove("OPENCODE_KEY")
+            .output()
+            .unwrap()
+    })
+    .await
+    .unwrap();
+    assert!(!refused.status.success());
+    assert!(String::from_utf8_lossy(&refused.stderr).contains("hooks.prompt_hook_calls"));
+    app.serving.abort();
+}
+
+/// After a call has run, a no can't undo it: the agent hears the plugin's reason, labelled, and
+/// goes on. A yes says nothing.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_prompt_hook_after_a_tool_tells_the_agent() {
+    let hooks = prompt_hook("PostToolUse", "LS", "Was the listing as expected?");
+    let app = crate::app(hooks, &[], |body| {
+        if is_prompt_hook(body) {
+            return reply(r#"{"ok": false, "reason": "Confirm the row count"}"#);
+        }
+        if tool_results(body).is_empty() {
+            tool_call("c1", "list_dir", &json!({"path": "."}))
+        } else {
+            reply("Done.")
+        }
+    })
+    .await;
+    run(&app, "look").await;
+    let all = bodies(&app.llm).await;
+    let last = all
+        .iter()
+        .rev()
+        .find(|body| !is_prompt_hook(body))
+        .unwrap()
+        .to_string();
+    assert!(last.contains("Confirm the row count"), "{last}");
+    assert!(last.contains("not from the person"), "{last}");
+    app.serving.abort();
+}
+
 /// What the desktop notified about, for hooks that want to hear, whether or not a run is going.
 #[tokio::test(flavor = "multi_thread")]
 async fn themis_notifying_runs_the_notification_hooks() {

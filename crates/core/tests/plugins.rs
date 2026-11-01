@@ -333,6 +333,7 @@ async fn hooks_require_approval_and_can_block_before_events() {
         plugin_data: None,
         env_file: None,
         moment_matcher: None,
+        prompt: None,
         runtime_identity: None,
     };
     let deny: std::sync::Arc<dyn ApprovalHook> = std::sync::Arc::new(DenyAllHook);
@@ -494,6 +495,7 @@ async fn hook_root_is_data_and_timeout_kills_descendants() {
         plugin_data: None,
         env_file: None,
         moment_matcher: None,
+        prompt: None,
         runtime_identity: Some("g--personal--rev--root".into()),
     };
     let approvals: std::sync::Arc<dyn ApprovalHook> = std::sync::Arc::new(AllowAllHook);

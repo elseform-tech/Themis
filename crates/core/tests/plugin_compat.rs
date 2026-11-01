@@ -1306,8 +1306,12 @@ fn events_map_only_when_their_meaning_holds() {
         &json!({"hooks": {
             "StopFailure": one, "FileChanged": one, "CwdChanged": one,
             "TeammateIdle": one,
-            "PreToolUse": [{"hooks": [{"type": "prompt", "prompt": "think"},
-                                      {"type": "http", "url": "https://example.com"}]}]
+            "PreToolUse": [{"hooks": [{"type": "prompt", "prompt": "think", "model": "x",
+                                       "continueOnBlock": true, "timeout": 12},
+                                      {"type": "prompt", "prompt": "  "},
+                                      {"type": "http", "url": "https://example.com"},
+                                      {"type": "agent", "prompt": "go"}]}],
+            "SessionEnd": [{"hooks": [{"type": "prompt", "prompt": "think"}]}],
         }})
         .to_string(),
     );
@@ -1318,8 +1322,23 @@ fn events_map_only_when_their_meaning_holds() {
         .iter()
         .map(|h| h.event.as_str())
         .collect();
-    assert_eq!(events, ["RunFailed"]);
+    assert_eq!(events, ["BeforeTool", "RunFailed"]);
+    // A question for the chat's model: a guard, once a call, with the time it asks for.
+    let asks = &preview.spec.hooks[0];
+    assert_eq!(asks.prompt.as_deref(), Some("think"));
+    assert_eq!(asks.command, "");
+    assert!(asks.blocking && !asks.exit_two_blocks);
+    assert_eq!(asks.timeout_seconds, 12);
+    asks.validate().unwrap();
     let notes = preview.spec.unsupported.join("\n");
+    assert!(
+        notes.contains("SessionEnd: prompt hook has no Themis equivalent"),
+        "{notes}"
+    );
+    assert!(
+        notes.contains("PreToolUse: agent hook has no Themis equivalent"),
+        "{notes}"
+    );
     for event in ["FileChanged", "CwdChanged", "TeammateIdle"] {
         assert!(notes.contains(&format!("Hook event {event}")), "{notes}");
     }
