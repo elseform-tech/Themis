@@ -50,7 +50,7 @@ async fn scripted_provider(server: &MockServer) -> Arc<AtomicUsize> {
 
 #[tokio::test]
 async fn every_fixture_compacts_and_answers_through_the_runtime() {
-    let server = MockServer::start().await;
+    let server = MockServer::builder().start().await;
     let summaries = scripted_provider(&server).await;
     let config = ProviderConfig::new(ProviderKind::Go, "mock-key")
         .with_model("mock-model")
@@ -143,7 +143,7 @@ fn malformed_transcripts_are_rejected() {
 
 #[tokio::test]
 async fn failed_compaction_invalidates_the_trial() {
-    let server = MockServer::start().await;
+    let server = MockServer::builder().start().await;
     Mock::given(method("POST"))
         .and(path("/chat/completions"))
         .respond_with(ResponseTemplate::new(400).set_body_string("bad request"))

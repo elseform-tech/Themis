@@ -209,16 +209,12 @@ impl ManagementTool {
             "save" => {
                 serde_json::from_value::<themis_core::plugins::PluginSpec>(args["spec"].clone())
                     .map(|spec| {
+                        let files = spec.approved_files();
                         spec.mcp
                             .into_iter()
                             .filter(|(_, server)| server.enabled)
                             .map(|(name, server)| {
-                                (
-                                    name,
-                                    server,
-                                    spec.files.clone(),
-                                    spec.executable_files.clone(),
-                                )
+                                (name, server, files.clone(), spec.executable_files.clone())
                             })
                             .collect()
                     })
@@ -288,7 +284,8 @@ impl ManagementTool {
             .into_iter()
             .filter(|p| p.scope == scope && Some(p.spec.name.as_str()) == plugin)
             .flat_map(|p| {
-                let (files, executable) = (p.spec.files.clone(), p.spec.executable_files.clone());
+                let (files, executable) =
+                    (p.spec.approved_files(), p.spec.executable_files.clone());
                 p.spec.mcp.into_iter().map(move |(name, mut server)| {
                     server.enabled = true;
                     (name, server, files.clone(), executable.clone())

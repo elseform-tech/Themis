@@ -23,8 +23,8 @@ const tauri = vi.hoisted(() => ({
     { kind: "finished", result: "Bug found at runtime.rs:3496." },
   ]),
   stopSubagent: vi.fn(async () => undefined),
-  getSubagentSettings: vi.fn(async () => ({ settings: { enabled: true, max_parallel: 3, max_turns: 40, model: null, allow_writes: true, allow_mcp: true }, revision: "r1" })),
-  updateSubagentSettings: vi.fn(async (changes: object) => ({ settings: { enabled: true, max_parallel: 3, max_turns: 40, model: null, allow_writes: true, allow_mcp: true, ...changes }, revision: "r2" })),
+  getSubagentSettings: vi.fn(async () => ({ settings: { enabled: true, max_parallel: 3, max_turns: 40, model: null, allow_writes: true, allow_mcp: true, allow_web: true }, revision: "r1" })),
+  updateSubagentSettings: vi.fn(async (changes: object) => ({ settings: { enabled: true, max_parallel: 3, max_turns: 40, model: null, allow_writes: true, allow_mcp: true, allow_web: true, ...changes }, revision: "r2" })),
   listGoModels: vi.fn(async () => [{ id: "glm-5" }, { id: "beam-free" }]),
 }));
 vi.mock("../lib/tauri", () => tauri);
@@ -169,6 +169,12 @@ describe("Settings › Subagents", () => {
     expect(screen.queryByText(/Read only/)).toBeNull();
   });
 
+  it("says when a subagent has the web, or a limited shell", () => {
+    render(<SubagentDetail threadId={thread} agent={agent({ web: true, shellScopes: ["git diff:*", "git log:*", "ls *", "gh *"] })} runLive onBack={() => {}} />);
+    expect(screen.getByText(/Files read only · Web · Shell: git diff:\*, git log:\*, ls \*, …/)).toBeInTheDocument();
+    expect(screen.queryByText(/· Read only/)).toBeNull();
+  });
+
   it("doesn't call a subagent read only when it has connections", () => {
     render(<SubagentDetail threadId={thread} agent={agent({ connections: ["docs", "stats"] })} runLive onBack={() => {}} />);
     expect(screen.getByText(/Files read only · Connections: docs, stats/)).toBeInTheDocument();
@@ -196,6 +202,9 @@ describe("Settings › Subagents", () => {
     fireEvent.click(screen.getByRole("checkbox", { name: "Allow connections" }));
     await act(async () => {});
     expect(tauri.updateSubagentSettings).toHaveBeenLastCalledWith({ allow_mcp: false }, "r2");
+    fireEvent.click(screen.getByRole("checkbox", { name: "Allow web" }));
+    await act(async () => {});
+    expect(tauri.updateSubagentSettings).toHaveBeenLastCalledWith({ allow_web: false }, "r2");
     // Allowed models: added from the list, at most three, removed one by one.
     fireEvent.change(screen.getByRole("combobox", { name: "Add model" }), { target: { value: "glm-5" } });
     await act(async () => {});

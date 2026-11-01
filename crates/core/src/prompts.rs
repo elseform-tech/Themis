@@ -26,6 +26,8 @@ pub const SYSTEM_EVIDENCE_CAUTION: &str =
     include_str!("../builtins/prompts/system-evidence-caution.md");
 /// Opens the instructions of a skill imported from a Claude plugin command.
 pub const SKILL_COMMAND_NOTE: &str = include_str!("../builtins/prompts/skill-command-note.md");
+pub const SKILL_OUTPUT_STYLE_NOTE: &str =
+    include_str!("../builtins/prompts/skill-output-style-note.md");
 /// Skill catalog appended to the system message; `{{skills}}` is the metadata JSON.
 pub const SYSTEM_SKILL_CATALOG: &str = include_str!("../builtins/prompts/system-skill-catalog.md");
 
@@ -39,6 +41,16 @@ pub const SUBAGENT_MCP_NOTE: &str = include_str!("../builtins/prompts/subagent-m
 pub const SUBAGENT_MCP_LEFT_OUT: &str =
     include_str!("../builtins/prompts/subagent-mcp-left-out.md");
 pub const SPAWN_SUBAGENTS_MCP: &str = include_str!("../builtins/prompts/spawn-subagents-mcp.md");
+pub const SUBAGENT_WEB_NOTE: &str = include_str!("../builtins/prompts/subagent-web-note.md");
+pub const SUBAGENT_SHELL_SCOPE_NOTE: &str =
+    include_str!("../builtins/prompts/subagent-shell-scope-note.md");
+pub const SUBAGENT_ASK_NOTE: &str = include_str!("../builtins/prompts/subagent-ask-note.md");
+pub const SUBAGENT_BACKGROUND_NOTE: &str =
+    include_str!("../builtins/prompts/subagent-background-note.md");
+pub const SUBAGENT_CLAUDE_NAMES: &str =
+    include_str!("../builtins/prompts/subagent-claude-names.md");
+pub const SUBAGENT_TODO_TOOL: &str = include_str!("../builtins/prompts/subagent-todo-tool.md");
+pub const SPAWN_SUBAGENTS_WEB: &str = include_str!("../builtins/prompts/spawn-subagents-web.md");
 pub const SUBAGENT_READ_ONLY_NOTE: &str =
     include_str!("../builtins/prompts/subagent-read-only-note.md");
 /// Explains the optional `status` field every subagent tool call accepts.
@@ -263,6 +275,7 @@ pub const HOOK_CONTEXT_NOTE: &str = include_str!("../builtins/prompts/hook-conte
 pub const HOOK_BLOCKED: &str = include_str!("../builtins/prompts/hook-blocked.md");
 pub const HOOK_BLOCK_REASON_NOTE: &str =
     include_str!("../builtins/prompts/hook-block-reason-note.md");
+pub const HOOK_STOP_CONTINUE: &str = include_str!("../builtins/prompts/hook-stop-continue.md");
 /// Sent once before a run that read two or more steered messages ends, listing them.
 pub const RUNTIME_STEERS_CHECK: &str = include_str!("../builtins/prompts/runtime-steers-check.md");
 /// Error for a call left out of a batch too large for the context; `{{calls}}`, `{{runnable}}`.

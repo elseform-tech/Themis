@@ -18,7 +18,7 @@ const SECRET: &str = "ZEPHYR-OTTER-4417";
 
 #[tokio::test]
 async fn recall_finds_a_planted_original_after_compaction() {
-    let server = MockServer::start().await;
+    let server = MockServer::builder().start().await;
     Mock::given(method("POST"))
         .respond_with(|request: &Request| {
             let body: Value = serde_json::from_slice(&request.body).unwrap();
@@ -206,7 +206,7 @@ fn recall_tool_metadata_is_stable() {
 
 async fn run_scripted_recalls(calls: usize, around: bool) -> anyhow::Result<String> {
     use std::sync::atomic::{AtomicUsize, Ordering};
-    let server = MockServer::start().await;
+    let server = MockServer::builder().start().await;
     let counter = Arc::new(AtomicUsize::new(0));
     Mock::given(method("POST"))
         .respond_with(move |_: &Request| {

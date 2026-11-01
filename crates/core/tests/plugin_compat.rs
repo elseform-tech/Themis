@@ -85,7 +85,7 @@ fn symlinks_that_escape_or_loop_are_not_followed() {
 }
 
 #[test]
-fn files_over_one_mib_are_skipped_with_a_notice() {
+fn files_over_one_mib_stay_out_of_the_registry_and_in_the_package() {
     let plugin = tempfile::tempdir().unwrap();
     let root = plugin.path();
     manifest(root, json!({"name": "fixture"}));
@@ -94,10 +94,12 @@ fn files_over_one_mib_are_skipped_with_a_notice() {
     let preview = inspect(root);
     assert_eq!(preview.report.status, "supported");
     assert!(!preview.spec.files.contains_key("docs/big.json"));
-    assert!(preview
-        .spec
-        .notices
-        .contains(&"File too large: docs/big.json".to_string()));
+    assert_eq!(preview.spec.package.as_ref().unwrap().files, 3);
+    assert!(
+        preview.spec.notices.is_empty(),
+        "{:?}",
+        preview.spec.notices
+    );
 }
 
 #[test]
@@ -118,13 +120,10 @@ fn harmless_notes_do_not_make_a_plugin_partial() {
         "{:?}",
         preview.spec.unsupported
     );
-    assert_eq!(preview.spec.notices.len(), 3, "{:?}", preview.spec.notices);
-    assert!(preview
-        .report
-        .components
-        .iter()
-        .any(|c| c.status == "notice"
-            && c.reason.as_deref() == Some("Binary resource omitted: logo.png")));
+    assert_eq!(preview.spec.notices.len(), 2, "{:?}", preview.spec.notices);
+    // The binary file isn't dropped: it is in the package, out of the registry.
+    assert!(!preview.spec.files.contains_key("logo.png"));
+    assert_eq!(preview.spec.package.as_ref().unwrap().files, 3);
 }
 
 #[test]
@@ -272,7 +271,7 @@ fn a_server_declared_in_both_the_manifest_and_mcp_json_is_imported_once() {
 }
 
 #[test]
-fn a_whole_repository_over_the_limits_imports_only_the_plugin_folders() {
+fn a_whole_repository_keeps_every_file_out_of_the_registry() {
     let plugin = tempfile::tempdir().unwrap();
     let root = plugin.path();
     manifest(root, json!({"name": "fixture", "skills": "./extra/skills"}));
@@ -283,18 +282,15 @@ fn a_whole_repository_over_the_limits_imports_only_the_plugin_folders() {
         write(root, &format!("src/module_{index}.py"), "pass");
     }
     let preview = inspect(root);
-    assert_eq!(preview.report.status, "partial", "{:?}", preview.report);
+    // Past a package's own bounds it is still partial: see `size_tests` in marketplace.rs.
+    assert_eq!(preview.report.status, "supported", "{:?}", preview.report);
     assert_eq!(skill_ids(&preview), ["deploy", "review"]);
-    assert!(preview.spec.files.contains_key("scripts/check.sh"));
     assert!(!preview
         .spec
         .files
         .keys()
-        .any(|path| path.starts_with("src/")));
-    assert!(preview
-        .spec
-        .unsupported
-        .contains(&"Large repository: only the plugin's own folders were imported".to_string()));
+        .any(|path| path.starts_with("src/") || path.starts_with("scripts/")));
+    assert_eq!(preview.spec.package.as_ref().unwrap().files, 1005);
 }
 
 mod layouts {
@@ -907,21 +903,12 @@ fn matchers_map_to_themis_tools_and_mcp_regexes_or_stay_out() {
         notes.contains("matcher use_aws has no Themis tool"),
         "{notes}"
     );
+    // `Skill` isn't a tool, but its hooks run when a skill is taken up.
     let (found, notes) = imported_matcher("Skill|Read");
-    assert_eq!(found.as_deref(), Some("read_file"));
-    assert!(
-        notes.contains("matcher Skill has no Themis tool"),
-        "{notes}"
-    );
+    assert_eq!(found.as_deref(), Some("Skill|read_file"));
+    assert_eq!(notes, "");
     // A guard that can't be mapped stays out rather than matching nothing, or everything.
-    for matcher in [
-        "Skill",
-        "Bash.*",
-        "(Edit|Write)",
-        "mcp__(?=x)",
-        "mcp__(",
-        "[a-z]+",
-    ] {
+    for matcher in ["Bash.*", "(Edit|Write)", "mcp__(?=x)", "mcp__(", "[a-z]+"] {
         let (found, notes) = imported_matcher(matcher);
         assert_eq!(found, None, "{matcher}");
         assert!(notes.contains("no Themis tool"), "{matcher}: {notes}");

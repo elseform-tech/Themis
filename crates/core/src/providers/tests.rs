@@ -65,7 +65,7 @@ async fn a_slow_steady_stream_outlasts_the_read_timeout_but_silence_does_not() {
 
 #[tokio::test]
 async fn http_errors_preserve_retry_after_headers() {
-    let server = MockServer::start().await;
+    let server = MockServer::builder().start().await;
     let client = reqwest::Client::new();
     for (index, (status, header, expected)) in [
         (429, Some("45"), Some(45)),
@@ -109,7 +109,7 @@ async fn http_errors_preserve_retry_after_headers() {
 
 #[tokio::test]
 async fn transport_failures_keep_native_retry_classification() {
-    let server = MockServer::start().await;
+    let server = MockServer::builder().start().await;
     Mock::given(method("GET"))
         .respond_with(ResponseTemplate::new(200).set_delay(Duration::from_secs(1)))
         .mount(&server)
@@ -209,7 +209,7 @@ async fn mount_chat(mock: &MockServer, body: Value) {
 async fn responses_reject_incomplete_streams() {
     use futures_util::StreamExt;
     for ending in ["response.failed", "response.incomplete", "response.created"] {
-        let server = MockServer::start().await;
+        let server = MockServer::builder().start().await;
         Mock::given(method("POST"))
             .and(path("/responses"))
             .respond_with(ResponseTemplate::new(200).set_body_raw(
@@ -239,7 +239,7 @@ async fn responses_reject_incomplete_streams() {
 #[tokio::test]
 async fn completed_requests_reach_the_usage_recorder_at_any_metrics_level() {
     use futures_util::StreamExt;
-    let server = MockServer::start().await;
+    let server = MockServer::builder().start().await;
     let events=concat!(
         "data: {\"choices\":[{\"delta\":{\"content\":\"PRIVATE-CONTENT-911\"},\"finish_reason\":\"stop\"}]}\n\n",
         "data: {\"choices\":[],\"usage\":{\"prompt_tokens\":100,\"completion_tokens\":20,\"prompt_tokens_details\":{\"cached_tokens\":80},\"completion_tokens_details\":{\"reasoning_tokens\":12}}}\n\n",
@@ -330,7 +330,7 @@ fn catalog_prices_are_read_leniently_and_estimate_with_cache_and_tiers() {
 #[tokio::test]
 async fn streaming_usage_after_finish_is_captured_without_retaining_content() {
     use futures_util::StreamExt;
-    let server = MockServer::start().await;
+    let server = MockServer::builder().start().await;
     let events=concat!(
         "data: {\"choices\":[{\"delta\":{\"content\":\"PRIVATE-CONTENT-173\"},\"finish_reason\":\"stop\"}]}\n\n",
         "data: {\"choices\":[],\"usage\":{\"prompt_tokens\":100,\"completion_tokens\":20,\"prompt_tokens_details\":{\"cached_tokens\":80},\"completion_tokens_details\":{\"reasoning_tokens\":12}}}\n\n",
@@ -394,7 +394,7 @@ async fn sampling_output_limit_reaches_each_protocol_without_changing_defaults()
             Some(16384),
         ),
     ] {
-        let server = MockServer::start().await;
+        let server = MockServer::builder().start().await;
         Mock::given(method("POST"))
             .and(path(endpoint))
             .respond_with(ResponseTemplate::new(200).set_body_json(response))
@@ -428,7 +428,7 @@ async fn sampling_output_limit_reaches_each_protocol_without_changing_defaults()
 
 #[tokio::test]
 async fn configured_summary_model_routes_without_changing_ordinary_model() {
-    let server = MockServer::start().await;
+    let server = MockServer::builder().start().await;
     Mock::given(method("POST"))
         .respond_with(|request: &wiremock::Request| {
             let response = if request.url.path() == "/responses" {
@@ -507,7 +507,7 @@ async fn configured_summary_model_routes_without_changing_ordinary_model() {
 
 #[tokio::test]
 async fn summary_model_overrides_are_isolated_between_concurrent_runs() {
-    let server = MockServer::start().await;
+    let server = MockServer::builder().start().await;
     Mock::given(method("POST")).respond_with(|request:&wiremock::Request| {
         let response=if request.url.path()=="/responses" {json!({"output":[{"type":"message","content":[{"type":"output_text","text":"summary"}]}]})} else {json!({"choices":[{"message":{"content":"answer"},"finish_reason":"stop"}]})};
         ResponseTemplate::new(200).set_body_json(response)
@@ -571,7 +571,7 @@ async fn compaction_disables_reasoning_or_uses_nonthinking_fallback() {
         "claude-haiku-5-5",
         "unknown-model",
     ] {
-        let server = MockServer::start().await;
+        let server = MockServer::builder().start().await;
         Mock::given(method("POST"))
             .respond_with(|request: &wiremock::Request| {
                 let response = match request.url.path() {
@@ -648,7 +648,7 @@ async fn compaction_disables_reasoning_or_uses_nonthinking_fallback() {
 
 #[tokio::test]
 async fn truncated_output_diagnostics_keep_only_usage_and_size_metadata() {
-    let server = MockServer::start().await;
+    let server = MockServer::builder().start().await;
     Mock::given(method("POST"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
             "choices":[{"message":{"content":null,"reasoning_content":"private reasoning sentinel"},"finish_reason":"length"}],
@@ -712,7 +712,7 @@ async fn providers_identify_output_truncation_without_exposing_response_content(
             json!({"status":"incomplete","incomplete_details":{"reason":"max_output_tokens"},"output":[{"type":"message","content":[{"type":"output_text","text":"Partial private state"}]}]}),
         ),
     ] {
-        let server = MockServer::start().await;
+        let server = MockServer::builder().start().await;
         Mock::given(method("POST"))
             .respond_with(ResponseTemplate::new(200).set_body_json(response))
             .mount(&server)
@@ -782,7 +782,7 @@ fn responses_keep_optional_read_arguments_optional() {
 
 #[tokio::test]
 async fn muse_uses_responses_for_text_and_tool_continuations() {
-    let server = MockServer::start().await;
+    let server = MockServer::builder().start().await;
     Mock::given(method("POST"))
         .and(path("/zen/go/v1/responses"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
@@ -847,7 +847,7 @@ async fn muse_uses_responses_for_text_and_tool_continuations() {
 #[tokio::test]
 async fn muse_streams_responses_text_and_tools() {
     use futures_util::StreamExt;
-    let server = MockServer::start().await;
+    let server = MockServer::builder().start().await;
     let events = [
         json!({"type": "response.output_text.delta", "delta": "Reading."}),
         json!({"type": "response.output_item.added", "output_index": 0, "item": {"type": "function_call", "id": "fc_1", "call_id": "call_1", "name": "read_file", "arguments": ""}}),
@@ -895,7 +895,7 @@ async fn muse_streams_responses_text_and_tools() {
 #[tokio::test]
 async fn qwen_uses_messages_for_tools_and_streaming() {
     use futures_util::StreamExt;
-    let server = MockServer::start().await;
+    let server = MockServer::builder().start().await;
     Mock::given(method("POST")).and(path("/zen/go/v1/messages"))
         .and(wiremock::matchers::body_partial_json(json!({"stream": false})))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
@@ -1006,7 +1006,7 @@ async fn messages_reject_truncated_or_interrupted_responses() {
         ("data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"max_tokens\"}}\n\n".into(), true, "truncated"),
         ("data: {\"type\":\"content_block_delta\",\"delta\":{\"type\":\"text_delta\",\"text\":\"partial\"}}\n\n".into(), true, "ended before completion"),
     ] {
-        let server = MockServer::start().await;
+        let server = MockServer::builder().start().await;
         Mock::given(method("POST")).and(path("/messages"))
             .respond_with(ResponseTemplate::new(200).set_body_raw(body, if streaming { "text/event-stream" } else { "application/json" }))
             .mount(&server).await;
@@ -1023,7 +1023,7 @@ async fn messages_reject_truncated_or_interrupted_responses() {
 // Snapshot of GET /zen/go/v1/models, updated against docs/go on 2026-10-07.
 #[tokio::test]
 async fn every_go_catalog_model_uses_its_wire_protocol() {
-    let server = MockServer::start().await;
+    let server = MockServer::builder().start().await;
     for (path_name, body) in [
         (
             "/responses",
@@ -1154,7 +1154,7 @@ fn kind_display_roundtrips() {
 #[tokio::test]
 async fn streaming_keeps_public_text_and_assembles_tool_arguments() {
     use futures_util::StreamExt;
-    let server = MockServer::start().await;
+    let server = MockServer::builder().start().await;
     let events = [
         json!({"choices":[{"delta":{"content":"I’ll read ","reasoning_content":"private"},"finish_reason":null}]}),
         json!({"choices":[{"delta":{"content":"the file.","tool_calls":[{"index":0,"id":"call1","function":{"name":"read_file","arguments":"{\"file_path\":"}}]},"finish_reason":null}]}),
@@ -1219,7 +1219,7 @@ proptest::proptest! {
 #[tokio::test]
 async fn streamed_calls_without_an_index_stay_separate() {
     use futures_util::StreamExt;
-    let server = MockServer::start().await;
+    let server = MockServer::builder().start().await;
     let events = [
         json!({"choices":[{"delta":{"tool_calls":[{"id":"a","type":"function","function":{"name":"list_dir","arguments":"{\"directory_path\": \"src\"}"}}]},"finish_reason":null}]}),
         json!({"choices":[{"delta":{"tool_calls":[{"id":"b","type":"function","function":{"name":"shell","arguments":"{\"command\":"}}]},"finish_reason":null}]}),
@@ -1270,7 +1270,7 @@ async fn streamed_calls_without_an_index_stay_separate() {
 async fn chat_reasoning_is_replayed_with_its_own_tool_calls_but_not_into_summaries() {
     use futures_util::StreamExt;
     use wiremock::matchers::body_partial_json;
-    let server = MockServer::start().await;
+    let server = MockServer::builder().start().await;
     let events = [
         json!({"choices":[{"delta":{"reasoning_content":"The total is off by "},"finish_reason":null}]}),
         json!({"choices":[{"delta":{"reasoning_content":"one bundle.","tool_calls":[{"index":0,"id":"replay-call-1","function":{"name":"read_file","arguments":"{}"}}]},"finish_reason":"tool_calls"}]}),
@@ -1475,7 +1475,7 @@ async fn thinking_is_on_by_default_for_answers_but_not_for_summaries() {
 #[tokio::test]
 async fn a_final_answers_reasoning_goes_back_with_it_in_later_messages() {
     use futures_util::StreamExt;
-    let server = MockServer::start().await;
+    let server = MockServer::builder().start().await;
     let events = [
         json!({"choices":[{"delta":{"reasoning_content":"Bundles count per SKU."},"finish_reason":null}]}),
         json!({"choices":[{"delta":{"content":"The total is 42."},"finish_reason":"stop"}]}),
@@ -1549,7 +1549,7 @@ fn messages_answers_keep_their_thinking_except_for_claude() {
 #[tokio::test]
 async fn a_streamed_responses_cut_off_is_reported_as_truncated() {
     use futures_util::StreamExt;
-    let server = MockServer::start().await;
+    let server = MockServer::builder().start().await;
     let body = format!(
         "data: {}\n\n",
         json!({"type":"response.incomplete","response":{"status":"incomplete","incomplete_details":{"reason":"max_output_tokens"}}})
@@ -1577,7 +1577,7 @@ async fn a_streamed_responses_cut_off_is_reported_as_truncated() {
 #[tokio::test]
 async fn reasoning_and_its_details_go_back_in_the_fields_they_came_in() {
     use futures_util::StreamExt;
-    let server = MockServer::start().await;
+    let server = MockServer::builder().start().await;
     // As Kimi and Hunyuan stream: `reasoning` text plus `reasoning_details` fragments.
     let events = [
         json!({"choices":[{"delta":{"reasoning":"Add the ","reasoning_details":[{"type":"reasoning.text","text":"Add the ","format":"unknown","index":0}]}}]}),
@@ -1637,7 +1637,7 @@ async fn reasoning_and_its_details_go_back_in_the_fields_they_came_in() {
 #[tokio::test]
 async fn messages_thinking_blocks_return_first_and_unchanged_with_their_tool_uses() {
     use futures_util::StreamExt;
-    let server = MockServer::start().await;
+    let server = MockServer::builder().start().await;
     let events = [
         json!({"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":"","signature":""}}),
         json!({"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"Check the "}}),
@@ -1708,7 +1708,7 @@ async fn messages_thinking_blocks_return_first_and_unchanged_with_their_tool_use
 
 #[tokio::test]
 async fn responses_reasoning_items_return_before_their_function_calls() {
-    let server = MockServer::start().await;
+    let server = MockServer::builder().start().await;
     Mock::given(method("POST"))
         .and(path("/responses"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({"output":[
@@ -1757,7 +1757,7 @@ async fn a_repeated_answer_sends_its_reasoning_item_once() {
     // reasoning with each copy made the Responses API reject every request
     // ("Duplicate item found with id rs_...").
     let answer = "Every planetarium check still passes; nothing left to change.";
-    let server = MockServer::start().await;
+    let server = MockServer::builder().start().await;
     Mock::given(method("POST"))
         .and(path("/responses"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({"output":[
@@ -1798,7 +1798,7 @@ async fn a_repeated_answer_sends_its_reasoning_item_once() {
 
 #[tokio::test]
 async fn reasoning_effort_reaches_wire() {
-    let server = MockServer::start().await;
+    let server = MockServer::builder().start().await;
     Mock::given(method("POST")).and(path("/responses"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({"output": [{"type": "message", "content": [{"type": "output_text", "text": "done"}]}]})))
         .mount(&server).await;
@@ -1821,7 +1821,7 @@ async fn reasoning_effort_reaches_wire() {
 async fn go_prefers_explicit_model_over_env() {
     let _guard = ENV_LOCK.lock().unwrap();
     std::env::set_var(GO_MODEL_ENV_VAR, "env-model");
-    let server = MockServer::start().await;
+    let server = MockServer::builder().start().await;
     mount_chat(&server, chat_ok_body("hi")).await;
 
     let config = ProviderConfig::new(ProviderKind::Go, "key")
@@ -1840,7 +1840,7 @@ async fn go_prefers_explicit_model_over_env() {
 #[tokio::test]
 async fn go_model_falls_back_to_env_then_default() {
     let _guard = ENV_LOCK.lock().unwrap();
-    let server = MockServer::start().await;
+    let server = MockServer::builder().start().await;
     mount_chat(&server, chat_ok_body("hi")).await;
     Mock::given(method("POST"))
         .and(path("/responses"))
@@ -1871,7 +1871,7 @@ async fn go_sends_themis_user_agent_and_session() {
     let _guard = ENV_LOCK.lock().unwrap();
     std::env::set_var(GO_SESSION_ENV_VAR, "thread-42");
     std::env::remove_var(GO_MODEL_ENV_VAR);
-    let server = MockServer::start().await;
+    let server = MockServer::builder().start().await;
     mount_chat(&server, chat_ok_body("hi")).await;
 
     let config = ProviderConfig::new(ProviderKind::Go, "key")
@@ -1900,7 +1900,7 @@ async fn go_session_defaults_when_env_absent() {
     let _guard = ENV_LOCK.lock().unwrap();
     std::env::remove_var(GO_SESSION_ENV_VAR);
     std::env::remove_var(GO_MODEL_ENV_VAR);
-    let server = MockServer::start().await;
+    let server = MockServer::builder().start().await;
     mount_chat(&server, chat_ok_body("hi")).await;
 
     let config = ProviderConfig::new(ProviderKind::Go, "key")
@@ -1929,7 +1929,7 @@ async fn go_session_defaults_when_env_absent() {
 async fn go_per_instance_session_beats_env() {
     let _guard = ENV_LOCK.lock().unwrap();
     std::env::set_var(GO_SESSION_ENV_VAR, "env-session");
-    let server = MockServer::start().await;
+    let server = MockServer::builder().start().await;
     mount_chat(&server, chat_ok_body("hi")).await;
 
     // Per-conversation IDs pass through the constructor (spike option 1).
@@ -1959,7 +1959,7 @@ async fn go_tool_call_roundtrip_through_dyn_handle() {
     let _guard = ENV_LOCK.lock().unwrap();
     std::env::remove_var(GO_MODEL_ENV_VAR);
     std::env::remove_var(GO_SESSION_ENV_VAR);
-    let server = MockServer::start().await;
+    let server = MockServer::builder().start().await;
     mount_chat(&server, tool_call_body()).await;
 
     // Explicit `Arc<dyn LLMProvider>` annotation: this is the exact handle
@@ -2159,7 +2159,7 @@ async fn tool_use_and_result_messages_reach_wire() {
     let _guard = ENV_LOCK.lock().unwrap();
     std::env::remove_var(GO_MODEL_ENV_VAR);
     std::env::remove_var(GO_SESSION_ENV_VAR);
-    let server = MockServer::start().await;
+    let server = MockServer::builder().start().await;
     mount_chat(&server, chat_ok_body("done")).await;
 
     let config = ProviderConfig::new(ProviderKind::Go, "key")
@@ -2216,7 +2216,7 @@ async fn provider_matrix_openai_shaped() {
         std::env::remove_var(var);
     }
     let kind = ProviderKind::Go;
-    let server = MockServer::start().await;
+    let server = MockServer::builder().start().await;
     mount_chat(&server, chat_ok_body("matrix-hi")).await;
 
     let config = ProviderConfig::new(kind, "key")
@@ -2235,7 +2235,7 @@ async fn provider_matrix_openai_shaped() {
 
 #[tokio::test]
 async fn refresh_go_models_success() {
-    let server = MockServer::start().await;
+    let server = MockServer::builder().start().await;
     Mock::given(method("GET"))
         .and(path("/models"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
@@ -2268,7 +2268,7 @@ async fn refresh_go_models_success() {
 
 #[tokio::test]
 async fn refresh_go_models_malformed() {
-    let server = MockServer::start().await;
+    let server = MockServer::builder().start().await;
     Mock::given(method("GET"))
         .and(path("/models"))
         .respond_with(ResponseTemplate::new(200).set_body_string("not json{"))
@@ -2281,7 +2281,7 @@ async fn refresh_go_models_malformed() {
 
 #[tokio::test]
 async fn refresh_go_models_http_error() {
-    let server = MockServer::start().await;
+    let server = MockServer::builder().start().await;
     Mock::given(method("GET"))
         .and(path("/models"))
         .respond_with(ResponseTemplate::new(401).set_body_string("bad key"))
@@ -2298,7 +2298,7 @@ async fn completion_and_embedding_roundtrip() {
     let _guard = ENV_LOCK.lock().unwrap();
     std::env::remove_var(GO_MODEL_ENV_VAR);
     std::env::remove_var(GO_SESSION_ENV_VAR);
-    let server = MockServer::start().await;
+    let server = MockServer::builder().start().await;
     mount_chat(&server, chat_ok_body("completed")).await;
     Mock::given(method("POST"))
         .and(path("/embeddings"))
@@ -2474,7 +2474,7 @@ async fn an_unsupported_model_is_refused_before_any_request() {
         protocol: Some(Protocol::Unsupported),
         ..Default::default()
     }];
-    let server = MockServer::start().await;
+    let server = MockServer::builder().start().await;
     with_catalog_limits(&catalog, async {
         let provider =
             CompatibleProvider::go("k".into(), "strange".into(), Some(server.uri()), None);
@@ -2527,7 +2527,7 @@ async fn a_summary_falls_back_to_the_chat_model_when_go_refuses_the_listed_summa
         (500, false),
         (429, false),
     ] {
-        let server = MockServer::start().await;
+        let server = MockServer::builder().start().await;
         Mock::given(method("POST"))
             .respond_with(move |request: &wiremock::Request| {
                 let body: Value = serde_json::from_slice(&request.body).unwrap();
@@ -2603,7 +2603,7 @@ async fn a_summary_falls_back_to_the_chat_model_when_go_refuses_the_listed_summa
         }
     }
     // An ordinary chat request is never redirected.
-    let server = MockServer::start().await;
+    let server = MockServer::builder().start().await;
     Mock::given(method("POST"))
         .respond_with(ResponseTemplate::new(402))
         .mount(&server)
@@ -2645,7 +2645,7 @@ async fn a_summary_asks_for_the_lowest_effort_the_model_accepts() {
         ("gpt-6-luna", "none"),
         ("grok-4.7", "low"),
     ] {
-        let server = MockServer::start().await;
+        let server = MockServer::builder().start().await;
         Mock::given(method("POST"))
             .respond_with(ResponseTemplate::new(200).set_body_json(json!({
                 "output":[{"type":"message","content":[{"type":"output_text","text":"checkpoint"}]}],
@@ -2737,7 +2737,7 @@ fn gemini_reply(parts: Value) -> Value {
 
 #[tokio::test]
 async fn gemini_round_trip_keeps_the_signature_with_its_call() {
-    let server = MockServer::start().await;
+    let server = MockServer::builder().start().await;
     Mock::given(method("POST"))
         .and(path("/models/gemini-test:generateContent"))
         .respond_with(ResponseTemplate::new(200).set_body_json(gemini_reply(json!([
@@ -2891,7 +2891,7 @@ fn a_gemini_call_without_its_kept_signature_sends_googles_placeholder() {
 #[tokio::test]
 async fn gemini_streams_text_and_whole_tool_calls() {
     use futures_util::StreamExt;
-    let server = MockServer::start().await;
+    let server = MockServer::builder().start().await;
     let events = [
         json!({"candidates": [{"content": {"role": "model", "parts": [{"text": "Look"}]}}]}),
         json!({"candidates": [{"content": {"role": "model", "parts": [{"text": "ing.", "thought": false}, {"text": "private summary", "thought": true}]}}]}),
@@ -3063,7 +3063,7 @@ fn local_endpoint(server: &MockServer) -> CustomEndpoint {
 
 #[tokio::test]
 async fn a_configured_provider_gets_its_own_model_id_key_and_no_opencode_fields() {
-    let server = MockServer::start().await;
+    let server = MockServer::builder().start().await;
     Mock::given(method("POST"))
         .and(path("/v1/chat/completions"))
         .respond_with(ResponseTemplate::new(200).set_body_json(chat_ok_body("hello")))
@@ -3122,9 +3122,9 @@ async fn a_configured_provider_gets_its_own_model_id_key_and_no_opencode_fields(
 
 #[tokio::test]
 async fn a_summary_model_on_another_provider_uses_that_provider_and_key() {
-    let go = MockServer::start().await;
+    let go = MockServer::builder().start().await;
     mount_chat(&go, chat_ok_body("answer")).await;
-    let local = MockServer::start().await;
+    let local = MockServer::builder().start().await;
     Mock::given(method("POST"))
         .and(path("/v1/chat/completions"))
         .respond_with(ResponseTemplate::new(200).set_body_json(chat_ok_body("summary")))
@@ -3287,7 +3287,7 @@ fn a_models_list_keeps_unique_usable_ids_only() {
 
 #[tokio::test]
 async fn a_providers_models_list_is_read_with_its_key_and_errors_hide_the_body() {
-    let server = MockServer::start().await;
+    let server = MockServer::builder().start().await;
     Mock::given(method("GET"))
         .and(path("/v1/models"))
         .and(wiremock::matchers::header(

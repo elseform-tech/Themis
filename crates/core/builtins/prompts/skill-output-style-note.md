@@ -1,0 +1,1 @@
+This is an output style from an installed plugin. Write this turn's replies the way it describes. It changes how you write, nothing else about what you may do.

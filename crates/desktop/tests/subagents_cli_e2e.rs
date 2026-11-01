@@ -129,7 +129,7 @@ async fn app(
     project_config: Option<&str>,
     respond: impl Fn(&Value) -> ResponseTemplate + Send + Sync + 'static,
 ) -> App {
-    let llm = MockServer::start().await;
+    let llm = MockServer::builder().start().await;
     Mock::given(method("POST"))
         .respond_with(move |request: &Request| respond(&request.body_json().unwrap_or(Value::Null)))
         .mount(&llm)
@@ -274,14 +274,19 @@ async fn the_turn_ends_after_both_subagents_reported_back() {
     assert!(mentions(last, NOTE), "results arrive labelled");
     assert!(mentions(last, REVIEW), "and with the request to check them");
     assert!(mentions(last, "A: the notes say hello.") && mentions(last, "B: one file"));
-    // Subagents get only read-only tools with a status field, and no subagent tools.
+    // Subagents get only read-only and web tools with a status field, and no subagent tools.
     for child in &children {
         let names = tool_names(child);
         assert!(
-            names
-                .iter()
-                .all(|name| ["read_file", "list_dir", "search_file", "shell"]
-                    .contains(&name.as_str())),
+            names.iter().all(|name| [
+                "read_file",
+                "list_dir",
+                "search_file",
+                "shell",
+                "fetch_url",
+                "web_search"
+            ]
+            .contains(&name.as_str())),
             "{names:?}"
         );
         let read = child["tools"]
@@ -1375,7 +1380,7 @@ async fn a_project_plugins_subagent_is_kept_in_the_project_and_runs() {
 
 /// An MCP server with one tool, `lookup`.
 async fn lookup_server() -> MockServer {
-    let mcp = MockServer::start().await;
+    let mcp = MockServer::builder().start().await;
     Mock::given(method("POST"))
         .respond_with(|request: &Request| {
             let body: Value = serde_json::from_slice(&request.body).unwrap();
@@ -1452,12 +1457,10 @@ async fn a_tool_list_only_narrows() {
         report
     })
     .await;
-    // Names with no Themis tool are dropped, and that shows.
-    assert_eq!(report["report"]["status"], "partial", "{report}");
+    // Every name here means something, so nothing is dropped.
     let reasons = report["spec"]["unsupported"].to_string();
-    assert!(reasons.contains("WebFetch"), "{reasons}");
     assert!(!reasons.contains("mcp__docs__lookup"), "{reasons}");
-    assert!(reasons.contains("Bash(git diff:*)"), "{reasons}");
+    assert!(!reasons.contains("Bash(git diff:*)"), "{reasons}");
 
     run_in_yolo(&app, "review the project").await;
     let all = bodies(&app.llm).await;
@@ -1478,20 +1481,26 @@ async fn a_tool_list_only_narrows() {
         names
     };
     let reads = ["list_dir", "read_file", "search_file"];
-    // WebFetch is dropped; Bash stays what it was.
+    // What the list names, and no more.
     assert_eq!(
         tools_of("names mcp"),
-        ["list_dir", "read_file", "search_file", "shell"]
+        ["fetch_url", "list_dir", "read_file", "search_file", "shell"]
     );
     assert_eq!(tools_of("omits mcp"), reads);
-    // A scoped Bash(...) can't be honoured, so it is left out rather than widened to all of it.
-    assert_eq!(tools_of("scoped shell"), reads);
+    // A scoped Bash(...) gives the shell, held to its commands (`subagent_tools_cli_e2e`).
+    assert_eq!(
+        tools_of("scoped shell"),
+        ["list_dir", "read_file", "search_file", "shell"]
+    );
     // A list that denies part of the shell loses the shell.
-    assert_eq!(tools_of("denied shell"), reads);
-    // No list: a subagent's usual read-only tools.
+    assert_eq!(
+        tools_of("denied shell"),
+        ["fetch_url", "list_dir", "read_file", "search_file"]
+    );
+    // No list: a subagent's usual read-only tools, and the web (this test has no search address).
     assert_eq!(
         tools_of("no list"),
-        ["list_dir", "read_file", "search_file", "shell"]
+        ["fetch_url", "list_dir", "read_file", "search_file", "shell"]
     );
     app.serving.abort();
 }

@@ -673,6 +673,7 @@ async fn run_task_with_evidence_inner(
     // when a reply with no tool call does not read as the end of the turn.
     let mut used_tools = false;
     let mut turn_end_guard = turn_end::TurnEndGuard::default();
+    let mut stop_hook_rounds = 0usize;
     // The reply just sent back by that guard, which the next reply must not show again.
     let mut sent_back: Option<String> = None;
     // What the run already told the user before a runtime check or note sent it back
@@ -1174,6 +1175,42 @@ async fn run_task_with_evidence_inner(
                 });
                 continue;
             }
+            // The turn would end here. A `Stop` hook may ask it to go on, as a loop plugin does;
+            // each round is a request like any other, so the turn limit and Stop bound it.
+            if turn < policy.total_turns && !stopped.load(Ordering::SeqCst) {
+                let reply = text.clone().unwrap_or_default();
+                let refused =
+                    crate::plugins::hooks::stop_refused(&reply, stop_hook_rounds > 0, &events)
+                        .await;
+                if let Some(keep_going) = refused {
+                    stop_hook_rounds += 1;
+                    crate::context_metrics::activity("stop_hook_rounds");
+                    crate::diagnostics::emit(
+                        "hook",
+                        "stop_kept_going",
+                        "info",
+                        serde_json::json!({"hook":keep_going.hook,"rounds":stop_hook_rounds,"request":turn}),
+                    );
+                    answered = joined(&answered, &reply);
+                    if !reply.trim().is_empty() {
+                        events
+                            .send(RunEvent::AssistantText("\n\n".into()))
+                            .await
+                            .ok();
+                    }
+                    messages.push(ChatMessage {
+                        role: ChatRole::Assistant,
+                        message_type: MessageType::Text,
+                        content: reply,
+                    });
+                    messages.push(ChatMessage {
+                        role: ChatRole::User,
+                        message_type: MessageType::Text,
+                        content: keep_going.note(),
+                    });
+                    continue;
+                }
+            }
             let result = joined(&answered, &text.unwrap_or_default());
             emit(RunEvent::Finished {
                 result: result.clone(),
@@ -1185,6 +1222,9 @@ async fn run_task_with_evidence_inner(
 
         used_tools = true;
         turn_end_guard.tool_ran();
+        if let Some(said) = text.as_deref() {
+            crate::plugins::hooks::note_reply_current(said);
+        }
         // The line a subagent tool carries is said before the tool runs, when the reply had none.
         if text.as_deref().is_none_or(|text| text.trim().is_empty()) && !is_subagent_run() {
             if let Some(line) = said_with_calls(&calls) {
@@ -3926,14 +3966,20 @@ async fn execute_call(
                 // Destructive variants (`git push --force`, `rm -rf`, ...) carry
                 // the destructive risk class, as the git tool's do.
                 crate::tools::shell_risk(&crate::tools::shell_argv(&approval_args))
+            } else if name == "git"
+                && crate::tools::git_argv(&approval_args)
+                    .is_some_and(|argv| crate::tools::is_destructive_variant(&argv))
+            {
+                RiskLevel::Destructive
             } else {
                 crate::tools::integration_risk(name, &approval_args)
                     .unwrap_or_else(|| risk_for(name))
             },
-            command: if name == "shell" {
-                crate::tools::shell_argv(&approval_args)
-            } else {
-                Vec::new()
+            // Rules and grants on a command see it here: the tool's own check is then skipped.
+            command: match name {
+                "shell" => crate::tools::shell_argv(&approval_args),
+                "git" => crate::tools::git_argv(&approval_args).unwrap_or_default(),
+                _ => Vec::new(),
             },
         };
         let decision = match &sensitive {
@@ -3975,6 +4021,9 @@ async fn execute_call(
         Ok(parsed) => parsed,
         Err(err) => return Err(format!("tool '{name}' got invalid arguments: {err}")),
     };
+    crate::plugins::hooks::skill_read_hooks(name, &parsed, None, events)
+        .await
+        .map_err(|e| e.to_string())?;
     crate::plugins::hooks::emit_current(
         "BeforeTool",
         serde_json::json!({"event":"BeforeTool","tool":name,"arguments":parsed}),
@@ -4011,6 +4060,9 @@ async fn execute_call(
         Err(err) => Err(format!("tool '{name}' failed: {}", tool_failure(&err))),
     };
     crate::plugins::hooks::emit_current("AfterTool", serde_json::json!({"event":"AfterTool","tool":name,"arguments":parsed,"ok":outcome.is_ok(),"output":outcome.as_ref().ok(),"error":outcome.as_ref().err()}), events).await.map_err(|e|e.to_string())?;
+    crate::plugins::hooks::skill_read_hooks(name, &parsed, Some(outcome.is_ok()), events)
+        .await
+        .map_err(|e| e.to_string())?;
     outcome
 }
 
@@ -4331,7 +4383,7 @@ mod tests {
     #[tokio::test]
     async fn omitted_input_requires_saved_originals_before_context_replacement() {
         use wiremock::{matchers::method, Mock, MockServer, ResponseTemplate};
-        let server = MockServer::start().await;
+        let server = MockServer::builder().start().await;
         Mock::given(method("POST")).respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({"choices":[{"message":{"role":"assistant","content":"Selected material"},"finish_reason":"stop"}]}))).mount(&server).await;
         let llm = crate::providers::resolve(
             &crate::providers::ProviderConfig::new(crate::providers::ProviderKind::Go, "test-key")
@@ -4444,7 +4496,7 @@ mod tests {
     async fn empty_summary_retries_within_limit_and_never_replaces_state_with_empty_text() {
         use wiremock::{matchers::method, Mock, MockServer, ResponseTemplate};
         for recovers in [true, false] {
-            let server = MockServer::start().await;
+            let server = MockServer::builder().start().await;
             let calls = Arc::new(AtomicUsize::new(0));
             let observed = calls.clone();
             Mock::given(method("POST")).respond_with(move |_: &wiremock::Request| {
@@ -4481,7 +4533,7 @@ mod tests {
         use wiremock::{matchers::method, Mock, MockServer, ResponseTemplate};
         for budget in [24_000, 200_000, 256_000] {
             for truncated in [false, true] {
-                let server = MockServer::start().await;
+                let server = MockServer::builder().start().await;
                 Mock::given(method("POST")).respond_with(ResponseTemplate::new(200).set_body_json(
                     serde_json::json!({"choices":[{"message":{"role":"assistant","content":if truncated {"partial"} else {"Goal/constraints: retain task. Confirmed findings: originals supplied. Completed changes/tests: none. Unresolved work: continue. Next action: State updated"}},"finish_reason":if truncated {"length"} else {"stop"}}]}),
                 )).mount(&server).await;
@@ -4572,7 +4624,7 @@ mod tests {
     #[tokio::test]
     async fn repeated_explicit_summary_failures_never_mutate_or_nest_context() {
         use wiremock::{matchers::method, Mock, MockServer, ResponseTemplate};
-        let server = MockServer::start().await;
+        let server = MockServer::builder().start().await;
         Mock::given(method("POST"))
             .respond_with(ResponseTemplate::new(400))
             .mount(&server)
@@ -4976,7 +5028,7 @@ mod tests {
     #[tokio::test]
     async fn small_context_summary_reserves_space_for_continuation() {
         use wiremock::{matchers::method, Mock, MockServer, ResponseTemplate};
-        let server = MockServer::start().await;
+        let server = MockServer::builder().start().await;
         Mock::given(method("POST")).respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({"choices":[{"message":{"role":"assistant","content":"Goal/constraints: retain task. Confirmed findings: originals supplied. Completed changes/tests: none. Unresolved work: continue. Next action: Goal: repair. Findings: parser defect. Next: edit parser."},"finish_reason":"stop"}]}))).mount(&server).await;
         let llm = crate::providers::resolve(
             &crate::providers::ProviderConfig::new(crate::providers::ProviderKind::Go, "test-key")
@@ -5379,7 +5431,7 @@ mod tests {
         use wiremock::{matchers::method, Mock, MockServer, ResponseTemplate};
         for streaming in [false, true] {
             for recovers in [false, true] {
-                let server = MockServer::start().await;
+                let server = MockServer::builder().start().await;
                 let calls = Arc::new(AtomicUsize::new(0));
                 let observed = calls.clone();
                 Mock::given(method("POST")).respond_with(move |_: &wiremock::Request| {
@@ -5447,7 +5499,7 @@ mod tests {
                 ),
             ),
         ] {
-            let server = MockServer::start().await;
+            let server = MockServer::builder().start().await;
             let calls = Arc::new(AtomicUsize::new(0));
             let observed = calls.clone();
             let responses = model.starts_with("gpt-");
@@ -5488,7 +5540,7 @@ mod tests {
         use wiremock::{matchers::method, Mock, MockServer, ResponseTemplate};
         for streaming in [false, true] {
             for (failures, public) in [(1, false), (3, false), (4, false), (5, false), (1, true)] {
-                let server = MockServer::start().await;
+                let server = MockServer::builder().start().await;
                 let calls = Arc::new(AtomicUsize::new(0));
                 let observed = calls.clone();
                 Mock::given(method("POST")).respond_with(move |_: &wiremock::Request| {
@@ -5594,7 +5646,7 @@ mod tests {
         // Seen live at 32k memory: the cap is already a third of the budget, so a retry
         // cannot give a whole-file write more room; it must change the request instead.
         use wiremock::{matchers::method, Mock, MockServer, ResponseTemplate};
-        let server = MockServer::start().await;
+        let server = MockServer::builder().start().await;
         let calls = Arc::new(AtomicUsize::new(0));
         let observed = calls.clone();
         Mock::given(method("POST"))
@@ -5640,7 +5692,7 @@ mod tests {
     #[tokio::test]
     async fn slow_truncated_attempt_does_not_spend_the_retry_deadline() {
         use wiremock::{matchers::method, Mock, MockServer, ResponseTemplate};
-        let server = MockServer::start().await;
+        let server = MockServer::builder().start().await;
         let calls = Arc::new(AtomicUsize::new(0));
         let observed = calls.clone();
         Mock::given(method("POST")).respond_with(move |_: &wiremock::Request| {
@@ -5789,7 +5841,7 @@ mod tests {
     async fn spec_check_asks_once_after_file_changes() {
         use wiremock::{matchers::method, Mock, MockServer, Request, ResponseTemplate};
         async fn run(nudges_off: Vec<String>, write: bool) -> (String, Vec<serde_json::Value>) {
-            let server = MockServer::start().await;
+            let server = MockServer::builder().start().await;
             Mock::given(method("POST"))
                 .respond_with(move |request: &Request| {
                     let body: serde_json::Value = request.body_json().unwrap();
@@ -5892,7 +5944,7 @@ mod tests {
             tools: bool,
             ending: &'static str,
         ) -> (String, Vec<serde_json::Value>) {
-            let server = MockServer::start().await;
+            let server = MockServer::builder().start().await;
             Mock::given(method("POST"))
                 .respond_with(move |request: &Request| {
                     let body: serde_json::Value = request.body_json().unwrap();
@@ -6014,7 +6066,7 @@ mod tests {
     #[tokio::test]
     async fn an_end_request_finishes_the_run_after_its_tool_batch() {
         use wiremock::{matchers::method, Mock, MockServer, ResponseTemplate};
-        let server = MockServer::start().await;
+        let server = MockServer::builder().start().await;
         let end: EndRequest = Arc::default();
         let tool_end = Arc::clone(&end);
         Mock::given(method("POST"))
@@ -6082,7 +6134,7 @@ mod tests {
             first_calls_tool: bool,
             steers: &'static [&'static str],
         ) -> (String, Vec<serde_json::Value>, Vec<RunEvent>) {
-            let server = MockServer::start().await;
+            let server = MockServer::builder().start().await;
             let inbox: SteerInbox = Arc::default();
             let pushed = Arc::new(AtomicBool::new(false));
             let (server_inbox, server_pushed) = (Arc::clone(&inbox), Arc::clone(&pushed));
@@ -6274,7 +6326,7 @@ mod tests {
             (401, false),
             (400, false),
         ] {
-            let server = MockServer::start().await;
+            let server = MockServer::builder().start().await;
             Mock::given(method("POST"))
                 .respond_with(ResponseTemplate::new(status).insert_header("Retry-After", "45"))
                 .mount(&server)
@@ -6332,7 +6384,7 @@ mod tests {
     async fn summary_recovers_on_third_attempt_without_exceeding_retry_output_reserve() {
         use wiremock::{matchers::method, Mock, MockServer, ResponseTemplate};
         for failure in ["transient", "empty", "truncated", "malformed", "timeout"] {
-            let server = MockServer::start().await;
+            let server = MockServer::builder().start().await;
             let calls = Arc::new(AtomicUsize::new(0));
             let observed = calls.clone();
             Mock::given(method("POST")).respond_with(move |_: &wiremock::Request| {
@@ -6398,7 +6450,7 @@ mod tests {
                 (401, true, 1),
                 (400, true, 1),
             ] {
-                let server = MockServer::start().await;
+                let server = MockServer::builder().start().await;
                 let calls = Arc::new(AtomicUsize::new(0));
                 let observed = Arc::clone(&calls);
                 Mock::given(method("POST")).respond_with(move |request: &wiremock::Request| {
@@ -6450,7 +6502,7 @@ mod tests {
     async fn compaction_deadline_and_stop_cancel_retry_backoff_without_replacing_context() {
         use wiremock::{matchers::method, Mock, MockServer, ResponseTemplate};
         for cancel in [false, true] {
-            let server = MockServer::start().await;
+            let server = MockServer::builder().start().await;
             Mock::given(method("POST"))
                 .respond_with(ResponseTemplate::new(503).insert_header("Retry-After", "45"))
                 .mount(&server)
@@ -6514,7 +6566,7 @@ mod tests {
     #[tokio::test]
     async fn stalled_compaction_times_out_without_replacing_conversation() {
         use wiremock::{matchers::method, Mock, MockServer, ResponseTemplate};
-        let server = MockServer::start().await;
+        let server = MockServer::builder().start().await;
         Mock::given(method("POST"))
             .respond_with(ResponseTemplate::new(200).set_delay(std::time::Duration::from_secs(30)).set_body_json(serde_json::json!({"choices":[{"message":{"role":"assistant","content":"Late checkpoint"},"finish_reason":"stop"}]})))
             .mount(&server).await;
@@ -6724,7 +6776,7 @@ mod tests {
         assert!(ledger_text(&messages, 0, None).is_empty());
         let (request, _, _) =
             prepare_compaction(&messages, "Continue repair", 24_000, 1024).unwrap();
-        let server = MockServer::start().await;
+        let server = MockServer::builder().start().await;
         Mock::given(method("POST")).respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({"choices":[{"message":{"content":"Goal/constraints: preserve. Confirmed findings: check failed. Completed changes/tests: failed test. Unresolved work: fix. Next action: repair."},"finish_reason":"stop"}]}))).mount(&server).await;
         let llm = crate::providers::resolve(
             &crate::providers::ProviderConfig::new(crate::providers::ProviderKind::Go, "synthetic")
@@ -6786,7 +6838,7 @@ mod tests {
         let split = context_split(&messages, &policy);
         let (request, _, _) =
             prepare_compaction(&messages[..split], "Continue repair", 24_000, 1024).unwrap();
-        let server = MockServer::start().await;
+        let server = MockServer::builder().start().await;
         Mock::given(method("POST")).respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({"choices":[{"message":{"content":"Goal/constraints: preserve. Confirmed findings: check failed. Completed changes/tests: failed test. Unresolved work: fix. Next action: repair."},"finish_reason":"stop"}]}))).mount(&server).await;
         let llm = crate::providers::resolve(
             &crate::providers::ProviderConfig::new(crate::providers::ProviderKind::Go, "synthetic")
@@ -6860,7 +6912,7 @@ mod tests {
         let split = context_split(&messages, &policy);
         let (request, _, _) =
             prepare_compaction(&messages[..split], "Analyze shipping", 24000, 1024).unwrap();
-        let server = MockServer::start().await;
+        let server = MockServer::builder().start().await;
         Mock::given(method("POST")).respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({"choices":[{"message":{"content":"Goal/constraints: analyze. Confirmed findings: parcel arrived Tuesday. Completed changes/tests: none. Unresolved work: report. Next action: answer."},"finish_reason":"stop"}]}))).mount(&server).await;
         let llm = crate::providers::resolve(
             &crate::providers::ProviderConfig::new(crate::providers::ProviderKind::Go, "synthetic")
@@ -6891,7 +6943,7 @@ mod tests {
         let (request, _, sampled) =
             prepare_compaction(&messages, "Continue repair", 24_000, 1024).unwrap();
         assert!(!sampled);
-        let server = MockServer::start().await;
+        let server = MockServer::builder().start().await;
         Mock::given(method("POST")).respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({"choices":[{"message":{"content":"Goal/constraints: preserve. Confirmed findings: check failed. Completed changes/tests: failed test. Unresolved work: fix. Next action: repair."},"finish_reason":"stop"}]}))).mount(&server).await;
         let llm = crate::providers::resolve(
             &crate::providers::ProviderConfig::new(crate::providers::ProviderKind::Go, "synthetic")
@@ -6924,7 +6976,7 @@ mod tests {
     #[tokio::test]
     async fn oversized_history_compacts_in_one_request_and_leaves_the_rest_to_originals() {
         use wiremock::{matchers::method, Mock, MockServer, ResponseTemplate};
-        let server = MockServer::start().await;
+        let server = MockServer::builder().start().await;
         Mock::given(method("POST")).respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({"choices":[{"message":{"content":"Goal/constraints: keep going. Unresolved work: continue. Parked work: none. Next action: continue."},"finish_reason":"stop"}]}))).mount(&server).await;
         let llm = crate::providers::resolve(
             &crate::providers::ProviderConfig::new(crate::providers::ProviderKind::Go, "synthetic")
@@ -7080,7 +7132,7 @@ mod tests {
             serde_json::to_value(&messages).unwrap(),
             "provenance must not alter original observations"
         );
-        let provider = MockServer::start().await;
+        let provider = MockServer::builder().start().await;
         Mock::given(method("POST")).respond_with(|request: &wiremock::Request| {
             let body: serde_json::Value = request.body_json().unwrap();
             let input = body["messages"][1]["content"].as_str().unwrap();
@@ -7133,7 +7185,7 @@ mod tests {
                 "old é🙂 context ".repeat(padding)
             );
             let previous = format!("Earlier context checkpoint (historical; later user requests take precedence):\n{expected}");
-            let server = MockServer::start().await;
+            let server = MockServer::builder().start().await;
             Mock::given(method("POST")).respond_with(move |request: &wiremock::Request| {
                 let body: serde_json::Value = serde_json::from_slice(&request.body).unwrap();
                 let input = body["messages"][1]["content"].as_str().unwrap();
@@ -7249,7 +7301,7 @@ mod tests {
     #[tokio::test]
     async fn blocked_checkpoint_event_does_not_replace_context_before_timeout() {
         use wiremock::{matchers::method, Mock, MockServer, ResponseTemplate};
-        let server = MockServer::start().await;
+        let server = MockServer::builder().start().await;
         Mock::given(method("POST")).respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({"choices":[{"message":{"role":"assistant","content":"Short summary"},"finish_reason":"stop"}]}))).mount(&server).await;
         let llm = crate::providers::resolve(
             &crate::providers::ProviderConfig::new(crate::providers::ProviderKind::Go, "test-key")
@@ -7308,7 +7360,7 @@ mod tests {
             .into_iter()
             .chain((!cfg!(windows)).then_some("unwritable"));
         for failure in failures {
-            let server = MockServer::start().await;
+            let server = MockServer::builder().start().await;
             let llm = crate::providers::resolve(
                 &crate::providers::ProviderConfig::new(
                     crate::providers::ProviderKind::Go,
@@ -7380,7 +7432,7 @@ mod tests {
     #[tokio::test]
     async fn obsolete_latest_job_pointer_cannot_block_compaction() {
         use wiremock::{matchers::method, Mock, MockServer, ResponseTemplate};
-        let server = MockServer::start().await;
+        let server = MockServer::builder().start().await;
         Mock::given(method("POST")).respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({"choices":[{"message":{"content":"Goal/constraints: preserve. Confirmed findings: source supplied. Completed changes/tests: none. Unresolved work: continue. Next action: answer."},"finish_reason":"stop"}]}))).mount(&server).await;
         let llm = crate::providers::resolve(
             &crate::providers::ProviderConfig::new(crate::providers::ProviderKind::Go, "test-key")
@@ -7438,7 +7490,7 @@ mod tests {
         // slow disk flush outlasted it, and the run said "Originals were not saved on disk"
         // while the save finished in the background. A zero deadline reproduces that order.
         use wiremock::{matchers::method, Mock, MockServer, ResponseTemplate};
-        let server = MockServer::start().await;
+        let server = MockServer::builder().start().await;
         Mock::given(method("POST"))
             .respond_with(
                 ResponseTemplate::new(200)
@@ -7507,7 +7559,7 @@ mod tests {
             "invalid",
         ] {
             let cancel = case == "cancel";
-            let server = MockServer::start().await;
+            let server = MockServer::builder().start().await;
             let content = if case == "oversized" {
                 "x".repeat(900_000)
             } else if case == "empty" {
@@ -7620,7 +7672,7 @@ mod tests {
     #[tokio::test]
     async fn malformed_nonempty_summary_is_rejected() {
         use wiremock::{matchers::method, Mock, MockServer, ResponseTemplate};
-        let server = MockServer::start().await;
+        let server = MockServer::builder().start().await;
         Mock::given(method("POST")).respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({"choices":[{"message":{"role":"assistant","content":"OK"},"finish_reason":"stop"}]}))).mount(&server).await;
         let llm = crate::providers::resolve(
             &crate::providers::ProviderConfig::new(crate::providers::ProviderKind::Go, "test-key")
@@ -7641,7 +7693,7 @@ mod tests {
     #[tokio::test]
     async fn excerpted_checkpoint_keeps_the_middle_in_originals_after_a_failed_attempt() {
         use wiremock::{matchers::method, Mock, MockServer, ResponseTemplate};
-        let server = MockServer::start().await;
+        let server = MockServer::builder().start().await;
         let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
         let seen = Arc::new(AtomicBool::new(false));
         let count = calls.clone();
@@ -8032,7 +8084,7 @@ mod tests {
         use wiremock::{matchers::method, Mock, MockServer, Request, ResponseTemplate};
         for limit in [4096, 8192] {
             for recovers in [true, false] {
-                let server = MockServer::start().await;
+                let server = MockServer::builder().start().await;
                 let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
                 let observed = Arc::clone(&calls);
                 Mock::given(method("POST")).respond_with(move |_: &Request| {
@@ -8089,7 +8141,7 @@ mod tests {
     #[tokio::test]
     async fn oversized_checkpoint_preserves_original_context() {
         use wiremock::{matchers::method, Mock, MockServer, ResponseTemplate};
-        let server = MockServer::start().await;
+        let server = MockServer::builder().start().await;
         Mock::given(method("POST"))
             .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({"choices":[{"message":{"role":"assistant","content":format!("Goal/constraints: retain task. Confirmed findings: originals supplied. Completed changes/tests: none. Unresolved work: continue. Next action: {}", " apple".repeat(10000))},"finish_reason":"stop"}]})))
             .mount(&server).await;
@@ -8257,7 +8309,7 @@ mod tests {
     #[tokio::test]
     async fn capacity_and_output_reserves_reach_actual_provider_requests_at_each_budget() {
         use wiremock::{matchers::method, Mock, MockServer, ResponseTemplate};
-        let server = MockServer::start().await;
+        let server = MockServer::builder().start().await;
         Mock::given(method("POST")).respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({"choices":[{"message":{"content":"Complete"},"finish_reason":"stop"}]}))).mount(&server).await;
         let llm = crate::providers::resolve(
             &crate::providers::ProviderConfig::new(crate::providers::ProviderKind::Go, "synthetic")

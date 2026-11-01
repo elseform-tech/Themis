@@ -36,7 +36,7 @@ fn cli(dir: &Path, command: &str, args: Value) -> Value {
 async fn a_completed_request_is_recorded_and_summarized_without_content() {
     let data = tempfile::tempdir().unwrap();
     let project = tempfile::tempdir().unwrap();
-    let provider = MockServer::start().await;
+    let provider = MockServer::builder().start().await;
     Mock::given(method("POST"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
             "choices": [{"message": {"role": "assistant", "content": "PRIVATE-REPLY-4471"}, "finish_reason": "stop"}],

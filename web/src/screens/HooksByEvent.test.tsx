@@ -32,7 +32,7 @@ describe("Hooks by event", () => {
     render(<HooksByEvent rows={rows} plugins={[guards]} sourceOf={() => "guards"} disabled={() => false} onToggle={toggle} onOpen={() => {}} />);
     const events = within(screen.getByRole("list", { name: "Hook events in run order" })).getAllByRole("listitem");
     expect(events.map(item => item.querySelector(".themis-hook-title")!.textContent)).toEqual([
-      "Prompt submitted", "Run starts", "Before a tool runs", "After a tool runs", "Subagent starts", "Subagent ends", "Before context is compacted", "Run ends",
+      "Prompt submitted", "Run starts", "Before a tool runs", "After a tool runs", "Subagent starts", "Subagent ends", "Before context is compacted", "Turn would end", "Run ends",
     ]);
     expect(events[1]).toHaveClass("is-empty");
     expect(events[1]).toHaveTextContent("None");

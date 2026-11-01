@@ -6,6 +6,7 @@ pub mod hooks;
 pub mod keys;
 mod marketplace;
 pub mod oauth;
+pub mod package;
 mod scans;
 pub use scans::{catalog_brands, catalog_groups, compatibility_summary, MarketplaceScan};
 
@@ -60,8 +61,15 @@ pub struct PluginSpec {
     /// Profiles `spawn_subagents` can name, from the plugin's `agents/*.md`.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub subagents: Vec<agents::SubagentProfile>,
+    /// `defaultEnabled: false`: it arrives switched off, until the person turns it on.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub starts_disabled: bool,
     #[serde(default)]
     pub files: BTreeMap<String, String>,
+    /// The whole folder, kept on disk, when it doesn't fit in `files`; those are then only its
+    /// components (manifests, skills, commands and subagents).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub package: Option<package::PackageRef>,
     #[serde(default)]
     pub executable_files: Vec<String>,
     #[serde(default)]
@@ -72,6 +80,17 @@ pub struct PluginSpec {
     pub notices: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub import_issues: Vec<ImportComponent>,
+}
+
+impl PluginSpec {
+    /// What consent to start a server covers: its files, and the kept package by its hash.
+    pub fn approved_files(&self) -> BTreeMap<String, String> {
+        let mut files = self.files.clone();
+        if let Some(kept) = &self.package {
+            files.insert("\0package".into(), kept.hash.clone());
+        }
+        files
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -368,7 +387,7 @@ impl PluginStore {
             let plugin = Plugin {
                 scope: scope.into(),
                 revision: revision(),
-                enabled: previous.map(|p| p.enabled).unwrap_or(true),
+                enabled: previous.map_or(!spec.starts_disabled, |p| p.enabled),
                 source: None,
                 spec,
             };
@@ -509,7 +528,19 @@ impl PluginStore {
     pub fn delete(&self, scope: &str, name: &str) -> anyhow::Result<()> {
         self.mutate(scope, |registry| {
             registry.current.remove(name).context("Unknown plugin")?;
+            let _ = fs::remove_dir_all(self.plugin_data_dir(scope, name));
             registry.revisions.retain(|_, p| p.spec.name != name);
+            let referenced: std::collections::BTreeSet<&str> = registry
+                .current
+                .values()
+                .chain(registry.revisions.values())
+                .filter_map(|plugin| plugin.spec.package.as_ref())
+                .map(|package| package.hash.as_str())
+                .collect();
+            package::prune(
+                &self.directory(scope)?.join(package::PACKAGES_DIR),
+                &referenced,
+            );
             Ok(())
         })
     }
@@ -845,12 +876,48 @@ impl PluginStore {
         }
         self.save(scope, spec, expected)
     }
+    /// `CLAUDE_PLUGIN_DATA`: a plugin's own folder, in app data and kept until it is uninstalled.
+    #[must_use]
+    pub fn plugin_data_dir(&self, scope: &str, name: &str) -> PathBuf {
+        self.global
+            .join("plugin-data")
+            .join(format!("{scope}--{name}"))
+    }
     pub fn materialize(&self, plugins: &[Plugin], root: &Path) -> anyhow::Result<()> {
         for plugin in plugins {
+            let directory = root
+                .join(".themis/plugin-files")
+                .join(plugin.skill_id("resources"));
+            // Two runs of one project may start together: one must not remove the other's work.
+            let _materializing = MATERIALIZING.lock().unwrap_or_else(|e| e.into_inner());
+            // A project's copy can be written by a repository or anything outside the sandbox,
+            // so each run checks it all and puts back what was installed.
+            let prepare = |parent: &Path| -> anyhow::Result<()> {
+                safe_create_parent(root, parent)?;
+                crate::skills::ensure_git_excluded(&root.join(".themis/plugin-files"))?;
+                Ok(())
+            };
+            let mut wanted: std::collections::BTreeSet<String> =
+                plugin.spec.files.keys().cloned().collect();
+            if let Some(kept) = &plugin.spec.package {
+                let store = self.directory(&plugin.scope)?.join(package::PACKAGES_DIR);
+                match package::verified(&store, kept)? {
+                    Some(entries) => {
+                        package::copy_to(&entries, &directory, &prepare)?;
+                        wanted.extend(package::names(&entries));
+                    }
+                    // Its components still work, and a hook that needs the rest fails as it
+                    // would for any missing script, so a guard still blocks.
+                    None => crate::diagnostics::emit(
+                        "plugins",
+                        "package_missing",
+                        "warn",
+                        serde_json::json!({"plugin": plugin.spec.name}),
+                    ),
+                }
+            }
+            package::remove_others(&directory, &wanted)?;
             for (relative, content) in &plugin.spec.files {
-                let directory = root
-                    .join(".themis/plugin-files")
-                    .join(plugin.skill_id("resources"));
                 let path = directory.join(relative);
                 let parent = path.parent().context("Missing parent")?;
                 safe_create_parent(root, parent)?;
@@ -862,7 +929,12 @@ impl PluginStore {
                     bail!("Symlink resource target rejected");
                 }
                 // Persistent MCP processes may be reading this revision concurrently.
-                if !fs::read(&path).is_ok_and(|bytes| bytes == content.as_bytes()) {
+                // Not through a link: `fs::read` would follow one and compare what it points at.
+                if !path
+                    .symlink_metadata()
+                    .is_ok_and(|metadata| metadata.is_file())
+                    || !fs::read(&path).is_ok_and(|bytes| bytes == content.as_bytes())
+                {
                     write_bytes(
                         &path,
                         content.as_bytes(),
@@ -879,6 +951,9 @@ impl PluginStore {
         Ok(())
     }
 }
+
+/// Held while a plugin's files are put in place in a project.
+static MATERIALIZING: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 pub fn safe_name(name: &str) -> bool {
     !name.is_empty()
@@ -1011,9 +1086,12 @@ fn validate(spec: &PluginSpec) -> anyhow::Result<()> {
         }
     }
     if spec.files.keys().any(|p| !safe_relative(p))
-        || spec.files.values().map(String::len).sum::<usize>() > 8 * 1024 * 1024
+        || spec.files.values().map(String::len).sum::<usize>() > package::MAX_INLINE_BYTES
     {
         bail!("Unsafe resource path or plugin resources exceed 8 MiB");
+    }
+    if let Some(kept) = &spec.package {
+        kept.validate()?;
     }
     if spec
         .executable_files

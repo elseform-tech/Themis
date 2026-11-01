@@ -250,7 +250,7 @@ mod tests {
 
     #[tokio::test]
     async fn summary_model_and_source_path_changes_preserve_each_suspended_document_job() {
-        let server = MockServer::start().await;
+        let server = MockServer::builder().start().await;
         Mock::given(method("POST"))
             .respond_with(ResponseTemplate::new(429))
             .expect(3)
@@ -333,7 +333,7 @@ mod tests {
 
     #[tokio::test]
     async fn summary_model_override_reuses_only_matching_document_capsules() {
-        let server = MockServer::start().await;
+        let server = MockServer::builder().start().await;
         let summary="Entities/relationships: archivist. Chronology/causality: records tide. Ambiguities: none. Source references: original record 1.";
         Mock::given(method("POST")).respond_with(move |request:&wiremock::Request| {
             let response=if request.url.path()=="/responses" {serde_json::json!({"output":[{"type":"message","content":[{"type":"output_text","text":summary}]}]})} else {serde_json::json!({"choices":[{"message":{"content":summary},"finish_reason":"stop"}]})};
@@ -399,7 +399,7 @@ mod tests {
 
     #[tokio::test]
     async fn each_document_receives_a_fresh_job_deadline() {
-        let server = MockServer::start().await;
+        let server = MockServer::builder().start().await;
         let summary = "Entities/relationships: source supplied. Chronology/causality: complete arc. Ambiguities: none. Source references: original record 1.";
         Mock::given(method("POST"))
             .respond_with(ResponseTemplate::new(200).set_delay(std::time::Duration::from_millis(650)).set_body_json(serde_json::json!({"choices":[{"message":{"content":summary},"finish_reason":"stop"}]})))
@@ -449,7 +449,7 @@ mod tests {
 
     #[tokio::test]
     async fn batch_deadline_still_bounds_fresh_document_jobs_and_retains_completed_work() {
-        let server = MockServer::start().await;
+        let server = MockServer::builder().start().await;
         let summary = "Entities/relationships: supplied. Chronology/causality: complete. Ambiguities: none. Source references: record 1.";
         let body =
             serde_json::json!({"choices":[{"message":{"content":summary},"finish_reason":"stop"}]});
@@ -515,7 +515,7 @@ mod tests {
 
     #[tokio::test]
     async fn stop_cancels_summary_rate_limit_backoff_without_replaying_requests() {
-        let server = MockServer::start().await;
+        let server = MockServer::builder().start().await;
         Mock::given(method("POST"))
             .respond_with(ResponseTemplate::new(429))
             .mount(&server)
@@ -579,7 +579,7 @@ mod tests {
 
     #[tokio::test]
     async fn legacy_capsule_migration_reuses_validated_source_across_execution_setting_changes() {
-        let server = MockServer::start().await;
+        let server = MockServer::builder().start().await;
         let llm = crate::providers::resolve(
             &crate::providers::ProviderConfig::new(crate::providers::ProviderKind::Go, "test-key")
                 .with_model("test-model")
@@ -730,7 +730,7 @@ mod tests {
 
     #[tokio::test]
     async fn partial_batch_failure_reuses_completed_capsules_without_installing_partial_context() {
-        let server = MockServer::start().await;
+        let server = MockServer::builder().start().await;
         Mock::given(method("POST"))
             .respond_with(ResponseTemplate::new(400))
             .mount(&server)

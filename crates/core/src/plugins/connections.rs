@@ -43,11 +43,25 @@ pub struct McpServer {
     /// Values for keys that are not set (`${NAME:-default}`), never credentials.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub defaults: BTreeMap<String, String>,
+    /// Where a local server runs: relative to the project, or `${CLAUDE_PLUGIN_ROOT}/…`. Filled in
+    /// and held inside the project when it starts.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cwd: Option<String>,
     #[serde(default)]
     pub enabled: bool,
 }
 impl McpServer {
     pub fn validate(&self) -> anyhow::Result<()> {
+        if let Some(cwd) = &self.cwd {
+            let inside = cwd
+                .strip_prefix("${CLAUDE_PLUGIN_ROOT}")
+                .or_else(|| cwd.strip_prefix("${PLUGIN_ROOT}"))
+                .map_or(cwd.as_str(), |rest| rest.trim_start_matches('/'));
+            let safe = inside.is_empty() || inside == "." || super::safe_relative(inside);
+            if !safe || self.command.is_none() {
+                bail!("MCP cwd must be a folder inside the project, for a local server");
+            }
+        }
         if self.command.is_some() == self.url.is_some() {
             bail!("Specify exactly one MCP command or URL");
         }
@@ -244,8 +258,21 @@ impl Connection {
         }
         let transport = if let Some(command) = &server.command {
             let mut c = tokio::process::Command::new(command);
+            let folder = match &server.cwd {
+                Some(cwd) => {
+                    let folder = root
+                        .join(cwd)
+                        .canonicalize()
+                        .context("MCP cwd is missing")?;
+                    if !folder.starts_with(root.canonicalize()?) {
+                        bail!("MCP cwd is outside the project");
+                    }
+                    folder
+                }
+                None => root.to_path_buf(),
+            };
             c.args(&server.args)
-                .current_dir(root)
+                .current_dir(folder)
                 .env_clear()
                 .kill_on_drop(true)
                 .stdin(std::process::Stdio::piped())

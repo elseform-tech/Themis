@@ -16,7 +16,7 @@ async fn failed_calendar_run_advances_wall_clock_schedule_and_persists_review() 
     let data = tempfile::tempdir().unwrap();
     let project = tempfile::tempdir().unwrap();
     let state = AppState::new_for_test(data.path().join("settings.json"));
-    let provider = MockServer::start().await;
+    let provider = MockServer::builder().start().await;
     Mock::given(method("POST"))
         .and(path("/chat/completions"))
         .respond_with(ResponseTemplate::new(401).set_body_string("fixture refused"))

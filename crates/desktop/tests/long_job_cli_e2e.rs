@@ -96,7 +96,7 @@ async fn cli_long_job_survives_oversized_batches_and_one_loop_streak() {
         )
         .unwrap();
     }
-    let provider = MockServer::start().await;
+    let provider = MockServer::builder().start().await;
     let requests = Arc::new(Mutex::new(Vec::<Value>::new()));
     let sink = requests.clone();
     Mock::given(method("POST"))
@@ -195,7 +195,7 @@ async fn cli_long_job_survives_oversized_batches_and_one_loop_streak() {
 async fn cli_spec_check_runs_once_after_a_change_and_no_notes_tool_is_offered() {
     let data = tempfile::tempdir().unwrap();
     let project = tempfile::tempdir().unwrap();
-    let provider = MockServer::start().await;
+    let provider = MockServer::builder().start().await;
     let requests = Arc::new(Mutex::new(Vec::<Value>::new()));
     let sink = requests.clone();
     Mock::given(method("POST"))
@@ -294,7 +294,7 @@ async fn cli_spec_check_runs_once_after_a_change_and_no_notes_tool_is_offered() 
 async fn cli_run_waits_out_a_rate_limit() {
     let data = tempfile::tempdir().unwrap();
     let project = tempfile::tempdir().unwrap();
-    let provider = MockServer::start().await;
+    let provider = MockServer::builder().start().await;
     let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let seen = calls.clone();
     Mock::given(method("POST"))
@@ -345,7 +345,7 @@ async fn cli_replays_reasoning_with_its_tool_call_but_never_saves_it() {
     let data = tempfile::tempdir().unwrap();
     let project = tempfile::tempdir().unwrap();
     std::fs::write(project.path().join("notes.txt"), "the answer is 42\n").unwrap();
-    let provider = MockServer::start().await;
+    let provider = MockServer::builder().start().await;
     Mock::given(method("POST"))
         .respond_with(|request: &Request| {
             let body: Value = request.body_json().unwrap();
@@ -424,7 +424,7 @@ fn walk(root: &Path) -> Vec<std::path::PathBuf> {
 async fn cli_retries_a_stream_that_dropped_part_way() {
     let data = tempfile::tempdir().unwrap();
     let project = tempfile::tempdir().unwrap();
-    let provider = MockServer::start().await;
+    let provider = MockServer::builder().start().await;
     let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let seen = calls.clone();
     Mock::given(method("POST"))
@@ -472,7 +472,7 @@ async fn cli_retries_a_stream_that_dropped_part_way() {
 async fn cli_continues_a_reply_cut_off_after_shown_text() {
     let data = tempfile::tempdir().unwrap();
     let project = tempfile::tempdir().unwrap();
-    let provider = MockServer::start().await;
+    let provider = MockServer::builder().start().await;
     let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let seen = calls.clone();
     Mock::given(method("POST"))
@@ -532,7 +532,7 @@ async fn cli_continues_a_reply_cut_off_after_shown_text() {
 async fn cli_asks_to_split_a_write_that_keeps_getting_cut_off() {
     let data = tempfile::tempdir().unwrap();
     let project = tempfile::tempdir().unwrap();
-    let provider = MockServer::start().await;
+    let provider = MockServer::builder().start().await;
     let notes = Arc::new(Mutex::new(Vec::<usize>::new()));
     let seen = notes.clone();
     Mock::given(method("POST"))
@@ -617,7 +617,7 @@ async fn cli_replays_reasoning_details_in_the_fields_they_came_in() {
     let data = tempfile::tempdir().unwrap();
     let project = tempfile::tempdir().unwrap();
     std::fs::write(project.path().join("notes.txt"), "the answer is 42\n").unwrap();
-    let provider = MockServer::start().await;
+    let provider = MockServer::builder().start().await;
     Mock::given(method("POST"))
         .respond_with(|request: &Request| {
             let body: Value = request.body_json().unwrap();
@@ -671,7 +671,7 @@ async fn cli_replays_reasoning_details_in_the_fields_they_came_in() {
 async fn cli_write_without_append_runs_once() {
     let data = tempfile::tempdir().unwrap();
     let project = tempfile::tempdir().unwrap();
-    let provider = MockServer::start().await;
+    let provider = MockServer::builder().start().await;
     Mock::given(method("POST"))
         .respond_with(|request: &Request| {
             let body: Value = request.body_json().unwrap();
@@ -730,7 +730,7 @@ async fn cli_keeps_agent_commands_out_of_the_keychain() {
         r#"{"sandbox":{"allow_keychain":false}}"#,
     )
     .unwrap();
-    let provider = MockServer::start().await;
+    let provider = MockServer::builder().start().await;
     Mock::given(method("POST"))
         .respond_with(|request: &Request| {
             let body: Value = request.body_json().unwrap();

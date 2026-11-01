@@ -33,7 +33,7 @@ fn task_id_in(text: &str) -> String {
 }
 
 async fn mount_script(steps: Vec<Step>) -> MockServer {
-    let server = MockServer::start().await;
+    let server = MockServer::builder().start().await;
     Mock::given(method("POST"))
         .and(path("/chat/completions"))
         .respond_with(move |request: &Request| {

@@ -1415,6 +1415,13 @@ async fn the_checklist_moves_during_a_long_turn_and_cannot_end_the_goal() {
         tokio::time::sleep(std::time::Duration::from_millis(25)).await;
     }
     let goal = moved.expect("the checklist never moved during the turn");
+    let mid_turn = logged(_data.path());
+    assert!(
+        mid_turn
+            .lines()
+            .any(|line| line.contains("checklist_updated") && line.contains("\"mid_turn\":true")),
+        "{mid_turn}"
+    );
     assert_eq!(goal.status, GoalStatus::Running, "{goal:?}");
     goal_until(&state, &thread, |status| status == GoalStatus::Reached).await;
 }
@@ -1482,6 +1489,82 @@ async fn asked_to_remove_the_goal_the_agent_removes_it() {
     settle(&state, &thread).await;
     assert!(state.goal_for(&thread).is_none());
     assert_eq!(checks.load(Ordering::SeqCst), 0);
+}
+
+/// Every diagnostics line under a chat's app data.
+fn logged(data: &std::path::Path) -> String {
+    let mut text = String::new();
+    for entry in std::fs::read_dir(data.join("logs"))
+        .into_iter()
+        .flatten()
+        .flatten()
+    {
+        text.push_str(&std::fs::read_to_string(entry.path()).unwrap_or_default());
+    }
+    text
+}
+
+/// A script that changed the page can't prove a goal, and that refusal and each checklist update
+/// are logged, as counts and with no text of the goal's.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_refused_script_proof_and_checklist_updates_are_logged_as_metadata() {
+    let server = MockServer::builder().start().await;
+    Mock::given(method("POST"))
+        .respond_with(|request: &Request| {
+            let body = body(request);
+            if is_checklist(&body) {
+                return reply(
+                    r#"{"requirements":[{"what":"SECRET-ITEM-TEXT"},{"what":"Another"}]}"#,
+                );
+            }
+            if is_check(&body) {
+                return reply(r#"{"verdict":"reached","reason":"Done.","told_user":true}"#);
+            }
+            let used_tool = body["messages"]
+                .as_array()
+                .is_some_and(|messages| messages.iter().any(|m| m["role"] == "tool"));
+            if used_tool {
+                reply("It is done.")
+            } else {
+                calls("browser_devtools", json!({"expression": "player.x = 1"}))
+            }
+        })
+        .mount(&server)
+        .await;
+    let (state, data, _project, thread) = chat(&server).await;
+    let (sink, _rx) = ChannelSink::channel();
+    state
+        .send_message(
+            Arc::new(sink),
+            thread.clone(),
+            "/goal finish the thing".into(),
+        )
+        .await
+        .unwrap();
+    for _ in 0..400 {
+        let text = logged(data.path());
+        if text.contains("script_proof_refused") && text.contains("checklist_updated") {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+    let text = logged(data.path());
+    let refused = text
+        .lines()
+        .find(|line| line.contains("script_proof_refused"));
+    assert!(refused.is_some(), "not logged: {text}");
+    let updated = text
+        .lines()
+        .find(|line| line.contains("checklist_updated"))
+        .expect("the checklist update is logged");
+    assert!(updated.contains("\"items\":2"), "{updated}");
+    assert!(updated.contains("\"mid_turn\":false"), "{updated}");
+    assert!(
+        !text.contains("SECRET-ITEM-TEXT"),
+        "item text reached the log"
+    );
+    state.stop_thread(thread.clone()).await.ok();
+    settle(&state, &thread).await;
 }
 
 /// A goal keeps going until it is reached: the agent can't talk itself out of a

@@ -281,6 +281,22 @@ const ALL: &[(&str, &str, &[&str])] = &[
     (SUBAGENT_MCP_NOTE, "subagent-mcp-note", &["tools"]),
     (SUBAGENT_MCP_LEFT_OUT, "subagent-mcp-left-out", &["tools"]),
     (SPAWN_SUBAGENTS_MCP, "spawn-subagents-mcp", &[]),
+    (SUBAGENT_WEB_NOTE, "subagent-web-note", &["tools"]),
+    (
+        HOOK_STOP_CONTINUE,
+        "hook-stop-continue",
+        &["hook", "reason"],
+    ),
+    (
+        SUBAGENT_SHELL_SCOPE_NOTE,
+        "subagent-shell-scope-note",
+        &["scopes"],
+    ),
+    (SUBAGENT_ASK_NOTE, "subagent-ask-note", &[]),
+    (SUBAGENT_BACKGROUND_NOTE, "subagent-background-note", &[]),
+    (SUBAGENT_CLAUDE_NAMES, "subagent-claude-names", &["names"]),
+    (SUBAGENT_TODO_TOOL, "subagent-todo-tool", &[]),
+    (SPAWN_SUBAGENTS_WEB, "spawn-subagents-web", &[]),
     (
         SUBAGENT_WRITE_PATHS_NOTE,
         "subagent-write-paths-note",
@@ -317,6 +333,7 @@ const ALL: &[(&str, &str, &[&str])] = &[
         &["name", "id", "status", "result"],
     ),
     (SKILL_COMMAND_NOTE, "skill-command-note", &[]),
+    (SKILL_OUTPUT_STYLE_NOTE, "skill-output-style-note", &[]),
     (EVAL_ANSWER_PROBE, "eval-answer-probe", &["question"]),
     (
         EVAL_RECALL_TASK,

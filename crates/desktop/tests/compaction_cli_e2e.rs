@@ -134,7 +134,7 @@ fn project() -> tempfile::TempDir {
 async fn cli_long_chat_compacts_recalls_an_original_and_greets_without_recap() {
     let data = tempfile::tempdir().unwrap();
     let project = project();
-    let provider = MockServer::start().await;
+    let provider = MockServer::builder().start().await;
     let summaries = Arc::new(AtomicUsize::new(0));
     let ordinary = Arc::new(Mutex::new(Vec::<Value>::new()));
     let (count, sink) = (summaries.clone(), ordinary.clone());
@@ -277,7 +277,7 @@ async fn cli_long_chat_compacts_recalls_an_original_and_greets_without_recap() {
 async fn cli_failed_checkpoint_keeps_the_working_context_and_the_next_run_still_has_it() {
     let data = tempfile::tempdir().unwrap();
     let project = project();
-    let provider = MockServer::start().await;
+    let provider = MockServer::builder().start().await;
     let summaries = Arc::new(Mutex::new(Vec::<Value>::new()));
     let sink = summaries.clone();
     Mock::given(method("POST"))
@@ -359,7 +359,7 @@ async fn cli_checkpoint_uses_the_chat_model_when_go_refuses_the_listed_summarize
     // "Endpoint is unavailable", and every checkpoint failed the run.
     let data = tempfile::tempdir().unwrap();
     let project = project();
-    let provider = MockServer::start().await;
+    let provider = MockServer::builder().start().await;
     let summaries = Arc::new(Mutex::new(Vec::<String>::new()));
     let sink = summaries.clone();
     Mock::given(method("POST"))

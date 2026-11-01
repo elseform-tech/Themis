@@ -8,7 +8,7 @@ use wiremock::matchers::{header, method, query_param};
 use wiremock::{Mock, MockServer, Request, ResponseTemplate};
 
 async fn mcp() -> MockServer {
-    let server = MockServer::start().await;
+    let server = MockServer::builder().start().await;
     Mock::given(method("POST"))
         .and(header("x-exa-source", "claude-code-plugin"))
         .and(query_param("client", "claude-code-plugin"))

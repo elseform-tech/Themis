@@ -16,6 +16,7 @@ pub mod background;
 mod patch;
 pub mod recall;
 pub mod sensitive;
+pub mod shell_scope;
 pub mod site_permissions;
 pub mod web;
 mod wrapped;
@@ -113,8 +114,10 @@ pub fn tool_approves_itself(name: &str) -> bool {
     // approve per site, and only they know the site (the browser's current page).
     // The subagent tools change nothing themselves: each subagent's own actions
     // are approved as they happen.
-    matches!(name, "manage_automations" | "set_goal" | "ask_user")
-        || crate::skills::SUBAGENT_TOOLS.contains(&name)
+    matches!(
+        name,
+        "manage_automations" | "set_goal" | "ask_user" | "todo_write"
+    ) || crate::skills::SUBAGENT_TOOLS.contains(&name)
         || is_site_tool(name)
 }
 
@@ -416,23 +419,28 @@ fn positionals(args: &[String]) -> impl Iterator<Item = &str> {
         .filter(|arg| !arg.starts_with('-'))
 }
 
+/// Git's global options that take their value as the next word.
+const GIT_VALUE_OPTIONS: &[&str] = &[
+    "-C",
+    "-c",
+    "--git-dir",
+    "--work-tree",
+    "--namespace",
+    "--config-env",
+    "--super-prefix",
+    "--attr-source",
+];
+
+/// A `git` argv (without the program name) from its subcommand on: `-C . push` is `push`.
+pub(crate) fn git_from_subcommand(args: &[String]) -> &[String] {
+    first_subcommand(args, GIT_VALUE_OPTIONS).map_or(args, |(at, _)| &args[at..])
+}
+
 /// Whether a `git` argv (without the program name) is a destructive,
 /// history-rewriting or working-tree-discarding variant that must not share a
 /// grant or an allow rule with its harmless siblings.
 fn git_destructive(args: &[String]) -> bool {
-    let Some((at, sub)) = first_subcommand(
-        args,
-        &[
-            "-C",
-            "-c",
-            "--git-dir",
-            "--work-tree",
-            "--namespace",
-            "--config-env",
-            "--super-prefix",
-            "--attr-source",
-        ],
-    ) else {
+    let Some((at, sub)) = first_subcommand(args, GIT_VALUE_OPTIONS) else {
         return false;
     };
     let rest = &args[at + 1..];
@@ -829,6 +837,33 @@ pub fn shell_argv(args: &serde_json::Value) -> Vec<String> {
         return Vec::new();
     }
     argv
+}
+
+/// Whether [`shell_argv`] reads all of a call's arguments as the tool would: a program, and
+/// `args` as a list of strings or the text of one. Anything else makes the tool fail, and a
+/// guard shouldn't treat what it can't read as harmless.
+pub fn shell_arguments_readable(args: &serde_json::Value) -> bool {
+    args.get("command").is_some_and(Value::is_string) && args_list(args.get("args")).is_some()
+}
+
+/// `git` and its arguments, from a `git` tool call; `None` when its `args` can't be read.
+pub fn git_argv(args: &serde_json::Value) -> Option<Vec<String>> {
+    let rest = args.get("args").filter(|args| !args.is_null())?;
+    let rest = args_list(Some(rest))?;
+    Some(std::iter::once("git".to_owned()).chain(rest).collect())
+}
+
+/// A list of strings, or the JSON text of one; nothing at all is an empty list.
+fn args_list(args: Option<&Value>) -> Option<Vec<String>> {
+    match args {
+        None | Some(Value::Null) => Some(Vec::new()),
+        Some(Value::Array(rest)) => rest
+            .iter()
+            .map(|value| value.as_str().map(str::to_owned))
+            .collect(),
+        Some(Value::String(text)) => argv_text(text),
+        Some(_) => None,
+    }
 }
 
 /// A list of arguments from JSON text. Models often leave raw line breaks and tabs inside a
@@ -2052,6 +2087,8 @@ async fn run_command_with_timeout(
     cancel: Option<Arc<AtomicBool>>,
     sandbox: Option<Arc<SandboxPlan>>,
 ) -> Result<CommandOutput, ToolCallError> {
+    // Read here: the worker thread is outside the run's scope.
+    let plugin_bins = crate::plugins::hooks::plugin_bins();
     tokio::task::spawn_blocking(move || {
         run_command_blocking(
             &program,
@@ -2061,6 +2098,7 @@ async fn run_command_with_timeout(
             timeout,
             cancel.as_deref(),
             sandbox.as_deref(),
+            &plugin_bins,
         )
     })
     .await
@@ -2108,6 +2146,7 @@ impl Drain {
 /// chatty child never wedges on a full pipe buffer while we poll `try_wait`.
 /// After the child exits, output is collected for at most [`PIPE_GRACE`]: a
 /// grandchild that kept the pipes open no longer hangs the call.
+#[allow(clippy::too_many_arguments)]
 fn run_command_blocking(
     program: &str,
     args: &[String],
@@ -2116,8 +2155,9 @@ fn run_command_blocking(
     timeout: Duration,
     cancel: Option<&AtomicBool>,
     sandbox: Option<&SandboxPlan>,
+    plugin_bins: &[PathBuf],
 ) -> Result<CommandOutput, ToolCallError> {
-    let prepared = prepare_command(program, args, sandbox)
+    let prepared = prepare_command(program, args, sandbox, plugin_bins)
         .map_err(|e| tool_error(format!("{tool}: {}", spawn_failure(program, args, &e))))?;
     let mut command = prepared.command();
     command
@@ -2127,6 +2167,9 @@ fn run_command_blocking(
         .stderr(Stdio::piped())
         .env_clear()
         .envs(scrubbed_env());
+    if let Some(path) = child_path(plugin_bins) {
+        command.env("PATH", path);
+    }
     // Own process group so a timeout can take down grandchildren too.
     #[cfg(unix)]
     std::os::unix::process::CommandExt::process_group(&mut command, 0);
@@ -2196,17 +2239,32 @@ fn run_command_blocking(
     Ok(output)
 }
 
+/// The child's `PATH`: the scrubbed one, then the `bin` folders of the run's plugins, so a plugin's
+/// program is found but never comes ahead of a system one of the same name.
+pub(crate) fn child_path(plugin_bins: &[PathBuf]) -> Option<std::ffi::OsString> {
+    let system = scrubbed_env()
+        .into_iter()
+        .find(|(name, _)| name.to_string_lossy().eq_ignore_ascii_case("PATH"))
+        .map(|(_, value)| value);
+    if plugin_bins.is_empty() {
+        return system;
+    }
+    let all = system
+        .iter()
+        .flat_map(std::env::split_paths)
+        .chain(plugin_bins.iter().cloned());
+    std::env::join_paths(all).ok().or(system)
+}
+
 /// `program args` wrapped for `sandbox` (unchanged without one). The program is
 /// resolved against the scrubbed child `PATH`, the one the child would use.
 pub(crate) fn prepare_command(
     program: &str,
     args: &[String],
     sandbox: Option<&SandboxPlan>,
+    plugin_bins: &[PathBuf],
 ) -> std::io::Result<crate::sandbox::Prepared> {
-    let path = scrubbed_env()
-        .into_iter()
-        .find(|(name, _)| name.to_string_lossy().eq_ignore_ascii_case("PATH"))
-        .map(|(_, value)| value);
+    let path = child_path(plugin_bins);
     match sandbox {
         Some(plan) => plan.prepare(program, args, path.as_deref()),
         None => crate::sandbox::SandboxPlan::unsandboxed(program, args),

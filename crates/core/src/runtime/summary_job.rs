@@ -638,7 +638,7 @@ mod tests {
     #[tokio::test]
     async fn stage_cache_binds_output_policy_and_preserves_ambiguous_old_stages() {
         use wiremock::{matchers::method, Mock, MockServer, ResponseTemplate};
-        let server = MockServer::start().await;
+        let server = MockServer::builder().start().await;
         let summary = "Goal/constraints: preserve. Confirmed findings: original source. Completed changes/tests: none. Unresolved work: continue. Next action: answer.";
         Mock::given(method("POST"))
             .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
@@ -704,7 +704,7 @@ mod tests {
     #[tokio::test]
     async fn exact_legacy_document_stage_is_promoted_and_survives_execution_setting_changes() {
         use wiremock::{matchers::method, Mock, MockServer, ResponseTemplate};
-        let server = MockServer::start().await;
+        let server = MockServer::builder().start().await;
         Mock::given(method("POST"))
             .respond_with(ResponseTemplate::new(400))
             .mount(&server)
@@ -878,7 +878,7 @@ mod tests {
     #[tokio::test]
     async fn stage_cache_rejects_symlink_escape_and_cannot_truncate_originals() {
         use wiremock::{matchers::method, Mock, MockServer, ResponseTemplate};
-        let server = MockServer::start().await;
+        let server = MockServer::builder().start().await;
         // Accepted decoded text can expand sixfold when cached as JSON.
         let summary = format!("Goal/constraints: preserve. Confirmed findings: source supplied. Completed changes/tests: none. Unresolved work: continue. Next action: answer.{}", "\u{0001}".repeat(1700));
         Mock::given(method("POST")).respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({"choices":[{"message":{"content":summary},"finish_reason":"stop"}]}))).mount(&server).await;
@@ -935,7 +935,7 @@ mod tests {
     #[tokio::test]
     async fn stage_deadline_includes_retry_backoff() {
         use wiremock::{matchers::method, Mock, MockServer, ResponseTemplate};
-        let server = MockServer::start().await;
+        let server = MockServer::builder().start().await;
         Mock::given(method("POST"))
             .respond_with(ResponseTemplate::new(429).insert_header("Retry-After", "60"))
             .mount(&server)

@@ -125,7 +125,7 @@ struct App {
 }
 
 async fn app(respond: impl Fn(&Value) -> ResponseTemplate + Send + Sync + 'static) -> App {
-    let llm = MockServer::start().await;
+    let llm = MockServer::builder().start().await;
     Mock::given(method("POST"))
         .respond_with(move |request: &Request| respond(&request.body_json().unwrap_or(Value::Null)))
         .mount(&llm)

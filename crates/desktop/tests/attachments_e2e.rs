@@ -101,7 +101,7 @@ async fn cli_summary_override_rejects_unlisted_model_before_preparation() {
         "A fictional archivist records the tide.\n".repeat(6000),
     )
     .unwrap();
-    let provider = MockServer::start().await;
+    let provider = MockServer::builder().start().await;
     Mock::given(method("GET"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({"data":[{"id":"model-a"}]})))
         .expect(1)
@@ -203,7 +203,7 @@ async fn cli_large_narrative_is_semantically_prepared_before_ordinary_generation
     std::fs::write(&source, &text).unwrap();
     let small = project.path().join("witness.md");
     std::fs::write(&small, "Mica is the witness, not the captain.").unwrap();
-    let provider = MockServer::start().await;
+    let provider = MockServer::builder().start().await;
     let requests = Arc::new(Mutex::new(Vec::<Value>::new()));
     let observed = requests.clone();
     Mock::given(method("POST")).respond_with(move |request: &Request| {
@@ -365,7 +365,7 @@ async fn cli_stop_during_document_preparation_emits_one_terminal_and_allows_next
     std::fs::write(&source, &text).unwrap();
     let small = project.path().join("witness.md");
     std::fs::write(&small, "Mica is the witness, not the captain.").unwrap();
-    let provider = MockServer::start().await;
+    let provider = MockServer::builder().start().await;
     let requests = Arc::new(Mutex::new(Vec::<Value>::new()));
     let observed = requests.clone();
     Mock::given(method("POST")).respond_with(move |request: &Request| {
@@ -544,7 +544,7 @@ async fn cli_original_derived_reads_reach_summary_after_delivery_and_maintenance
     .unwrap();
     let source = json!({"role":"User","evidence_kind":"original","content":format!("ACQUIRED_ORIGINAL_FAILURE\n{}", "source observation ".repeat(4000))}).to_string();
     std::fs::write(folder.join("original.jsonl"), &source).unwrap();
-    let provider = MockServer::start().await;
+    let provider = MockServer::builder().start().await;
     let calls = Arc::new(AtomicUsize::new(0));
     let ordinary_calls = calls.clone();
     let supplied = Arc::new(AtomicBool::new(false));
@@ -655,7 +655,7 @@ async fn cli_plain_and_shell_evidence_survives_maintenance_and_reaches_summary()
     );
     let source_path = project.path().join("story.txt");
     std::fs::write(&source_path, &source).unwrap();
-    let provider = MockServer::start().await;
+    let provider = MockServer::builder().start().await;
     let calls = Arc::new(AtomicUsize::new(0));
     let ordinary_calls = calls.clone();
     let supplied = Arc::new(AtomicUsize::new(0));
@@ -773,7 +773,7 @@ async fn cli_answer_retries_empty_and_transient_responses_without_replaying_comp
         r#"{"context_token_budget":24000,"recent_messages":2,"total_turns":10}"#,
     )
     .unwrap();
-    let provider = MockServer::start().await;
+    let provider = MockServer::builder().start().await;
     let times = Arc::new(std::sync::Mutex::new(Vec::new()));
     let observed = times.clone();
     let summary_limits = Arc::new(std::sync::Mutex::new(Vec::new()));
@@ -898,7 +898,7 @@ async fn cli_bounds_alternating_unchanged_reads_by_the_turn_limit() {
     .unwrap();
     std::fs::write(project.path().join("a.txt"), "A").unwrap();
     std::fs::write(project.path().join("b.txt"), "B").unwrap();
-    let provider = MockServer::start().await;
+    let provider = MockServer::builder().start().await;
     let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let observed_calls = calls.clone();
     Mock::given(method("POST")).respond_with(move |request: &Request| {
@@ -997,7 +997,7 @@ async fn cli_recovers_from_malformed_shell_arguments_after_compaction() {
         )
         .unwrap();
         let malformed = r#"{"command":"python3","args":["-c","from pathlib import Path; Path(\'unsafe.txt\').write_text(\'unsafe\')"]}"#;
-        let provider = MockServer::start().await;
+        let provider = MockServer::builder().start().await;
         Mock::given(method("POST")).respond_with(move |request: &Request| {
             let body: Value = request.body_json().unwrap();
             let messages = body["messages"].as_array().unwrap();
@@ -1121,7 +1121,7 @@ async fn cli_maintenance_resumes_prepared_action_with_public_intent() {
         r#"{"schema_version":1,"context_token_budget":24000,"recent_messages":2,"total_turns":10}"#,
     )
     .unwrap();
-    let provider = MockServer::start().await;
+    let provider = MockServer::builder().start().await;
     Mock::given(method("POST")).respond_with(move |request: &Request| {
         let body: Value = request.body_json().unwrap();
         let messages = body["messages"].as_array().unwrap();
@@ -1217,7 +1217,7 @@ async fn cli_recent_script_receipt_survives_stale_summary_without_replaying_edit
         r#"{"context_token_budget":24000,"recent_messages":2,"total_turns":1}"#,
     )
     .unwrap();
-    let provider = MockServer::start().await;
+    let provider = MockServer::builder().start().await;
     let script = format!(
         "# {}\nfrom pathlib import Path\nPath('result.txt').write_text('x')\nprint('written')",
         "padding".repeat(600)
@@ -1317,7 +1317,7 @@ async fn cli_checkpoint_keeps_the_goal_and_budget_events_reach_clients() {
         r#"{"context_token_budget":25000,"recent_messages":2,"total_turns":12}"#,
     )
     .unwrap();
-    let provider = MockServer::start().await;
+    let provider = MockServer::builder().start().await;
     let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let observed = calls.clone();
     Mock::given(method("POST")).respond_with(move |request: &Request| {
@@ -1440,7 +1440,7 @@ async fn cli_mcp_inventory_and_large_response_use_bounded_context() {
     let project = project_parent.path().join(".themis/project");
     std::fs::create_dir_all(&project).unwrap();
     std::fs::write(project.join("bulk.jsonl"), "{\"item\":1}\n".repeat(10_000)).unwrap();
-    let mcp = MockServer::start().await;
+    let mcp = MockServer::builder().start().await;
     let original = format!("{}MCP_TARGET_753", "x".repeat(900_000));
     let output = original.clone();
     Mock::given(method("POST")).respond_with(move |request: &Request| {
@@ -1455,7 +1455,7 @@ async fn cli_mcp_inventory_and_large_response_use_bounded_context() {
         };
         ResponseTemplate::new(200).set_body_json(json!({"jsonrpc":"2.0","id":body["id"],"result":result}))
     }).mount(&mcp).await;
-    let provider = MockServer::start().await;
+    let provider = MockServer::builder().start().await;
     Mock::given(method("POST")).respond_with(move |request: &Request| {
         let body: Value = request.body_json().unwrap();
         assert!(!body["messages"][0]["content"].as_str().unwrap().contains("You summarize agent context"), "ordinary inventory and selective retrieval must not compact");
@@ -1607,7 +1607,7 @@ async fn cli_mcp_inventory_and_large_response_use_bounded_context() {
 async fn cli_cold_effort_validation_reports_catalog_load_failure() {
     let data = tempfile::tempdir().unwrap();
     let project = tempfile::tempdir().unwrap();
-    let provider = MockServer::start().await;
+    let provider = MockServer::builder().start().await;
     Mock::given(method("GET"))
         .respond_with(ResponseTemplate::new(503))
         .expect(2)
@@ -1670,7 +1670,7 @@ async fn cli_fitting_compaction_uses_one_update_and_keeps_originals() {
         r#"{"compaction":{"semantic_threshold_ratio":0.88}}"#,
     )
     .unwrap();
-    let provider = MockServer::start().await;
+    let provider = MockServer::builder().start().await;
     let updates = Arc::new(Mutex::new(Vec::new()));
     let observed = Arc::clone(&updates);
     let summary_attempts = Arc::new(std::sync::atomic::AtomicUsize::new(0));
@@ -1840,7 +1840,7 @@ async fn cli_suspends_after_required_summary_failure_without_degraded_continuati
     );
     assert!(text.len().div_ceil(4) > 200_000);
     std::fs::write(&source, &text).unwrap();
-    let provider = MockServer::start().await;
+    let provider = MockServer::builder().start().await;
     Mock::given(method("POST"))
         .respond_with(move |request: &Request| {
             let body: Value = request.body_json().unwrap();
@@ -1967,7 +1967,7 @@ async fn cli_large_source_checkpoint_excerpts_once_and_preserves_restart_recover
         std::fs::write(sources.path().join(name), binary).unwrap();
     }
     let state = AppState::new_for_test(data.path().join("settings.json"));
-    let provider = MockServer::start().await;
+    let provider = MockServer::builder().start().await;
     let summaries = Arc::new(Mutex::new(Vec::new()));
     let captured = summaries.clone();
     let attempts = Arc::new(Mutex::new(
@@ -2496,7 +2496,7 @@ async fn cli_completed_tool_original_survives_restart_without_compaction() {
         "observed source line\n".repeat(5000)
     );
     std::fs::write(project.path().join("observation.txt"), &original).unwrap();
-    let provider = MockServer::start().await;
+    let provider = MockServer::builder().start().await;
     Mock::given(method("POST")).respond_with(|request: &Request| {
         let body: Value = serde_json::from_slice(&request.body).unwrap();
         let tool = body["messages"].as_array().unwrap().iter().any(|message| message["role"] == "tool");

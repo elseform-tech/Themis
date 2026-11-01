@@ -52,7 +52,7 @@ async fn request_after_large_output() -> Value {
         r#"{"context_token_budget":24000,"recent_messages":2,"total_turns":12}"#,
     )
     .unwrap();
-    let provider = MockServer::start().await;
+    let provider = MockServer::builder().start().await;
     let seen: Arc<Mutex<Vec<Value>>> = Arc::default();
     let recorded = Arc::clone(&seen);
     Mock::given(method("POST"))

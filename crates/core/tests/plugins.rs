@@ -132,7 +132,7 @@ async fn marketplace_import_keeps_resources_and_disables_executable_components()
 
 async fn mcp_with_instructions(instructions: Option<serde_json::Value>) -> wiremock::MockServer {
     use wiremock::{matchers::body_partial_json, Mock, MockServer, ResponseTemplate};
-    let server = MockServer::start().await;
+    let server = MockServer::builder().start().await;
     let mut result = json!({"protocolVersion":"2025-03-26","capabilities":{},"serverInfo":{"name":"fixture","version":"1"}});
     if let Some(instructions) = instructions {
         result["instructions"] = instructions;
@@ -328,6 +328,9 @@ async fn hooks_require_approval_and_can_block_before_events() {
         command_prefix: None,
         exit_two_blocks: false,
         plugin_root: None,
+        plugin_data: None,
+        env_file: None,
+        session_sources: None,
         runtime_identity: None,
     };
     let deny: std::sync::Arc<dyn ApprovalHook> = std::sync::Arc::new(DenyAllHook);
@@ -484,6 +487,9 @@ async fn hook_root_is_data_and_timeout_kills_descendants() {
         command_prefix: None,
         exit_two_blocks: false,
         plugin_root: Some(path),
+        plugin_data: None,
+        env_file: None,
+        session_sources: None,
         runtime_identity: Some("g--personal--rev--root".into()),
     };
     let approvals: std::sync::Arc<dyn ApprovalHook> = std::sync::Arc::new(AllowAllHook);

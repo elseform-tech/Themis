@@ -19,7 +19,7 @@ mod common;
 async fn streamed_text_before_a_failure_is_persisted_before_the_failed_event() {
     let chunk = json!({"choices":[{"delta":{"content":"Partial answer so far"},"index":0}]});
     let body = format!("data: {chunk}\n\ndata: {{not json\n\n");
-    let server = MockServer::start().await;
+    let server = MockServer::builder().start().await;
     Mock::given(method("POST"))
         .and(path("/chat/completions"))
         .respond_with(ResponseTemplate::new(200).set_body_raw(body, "text/event-stream"))

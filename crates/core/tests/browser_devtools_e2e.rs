@@ -82,7 +82,7 @@ async fn the_agent_debugs_a_local_app_with_the_devtools_toolset() {
         eprintln!("skipping: no Chromium browser installed");
         return;
     }
-    let site = MockServer::start().await;
+    let site = MockServer::builder().start().await;
     Mock::given(path("/app"))
         .respond_with(ResponseTemplate::new(200).set_body_raw(PAGE, "text/html"))
         .mount(&site)
@@ -416,7 +416,7 @@ async fn a_download_the_agent_starts_lands_in_the_settings_folder() {
         eprintln!("skipping: no Chromium browser installed");
         return;
     }
-    let site = MockServer::start().await;
+    let site = MockServer::builder().start().await;
     Mock::given(path("/files"))
         .respond_with(ResponseTemplate::new(200).set_body_raw(
             r#"<!doctype html><title>Files</title><a href="/report.csv" download>Get the report</a>"#,
@@ -491,7 +491,7 @@ async fn a_download_nobody_allowed_is_cancelled() {
         eprintln!("skipping: no Chromium browser installed");
         return;
     }
-    let site = MockServer::start().await;
+    let site = MockServer::builder().start().await;
     Mock::given(path("/files"))
         .respond_with(ResponseTemplate::new(200).set_body_raw(
             r#"<!doctype html><title>Files</title><a id="get" href="/report.csv" download>Get</a>"#,

@@ -32,7 +32,7 @@ fn call(data: &Path, command: &str, args: Value) -> Value {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn cli_the_provider_key_is_a_settings_key_that_mcp_servers_can_use() {
-    let mcp = MockServer::start().await;
+    let mcp = MockServer::builder().start().await;
     Mock::given(method("POST"))
         .and(header("authorization", "Bearer go-test-key"))
         .respond_with(|request: &Request| {
@@ -50,7 +50,7 @@ async fn cli_the_provider_key_is_a_settings_key_that_mcp_servers_can_use() {
         .mount(&mcp)
         .await;
     // OpenCode Go checks keys on its chat endpoint (the model list accepts any key).
-    let go = MockServer::start().await;
+    let go = MockServer::builder().start().await;
     Mock::given(method("POST"))
         .and(header("authorization", "Bearer go-test-key"))
         .respond_with(ResponseTemplate::new(400))
