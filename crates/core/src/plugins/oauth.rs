@@ -15,6 +15,8 @@ use serde_json::{json, Value};
 use sha2::Digest;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
+use super::connections::McpOauth;
+
 /// Where the app keeps tokens (the Keychain in the desktop app; memory in tests).
 pub trait TokenStore: Send + Sync {
     fn load(&self, key: &str) -> Option<String>;
@@ -54,6 +56,9 @@ struct Tokens {
     #[serde(default)]
     client_secret: Option<String>,
     token_endpoint: String,
+    /// The resource the sign-in named, which a refresh names again.
+    #[serde(default)]
+    resource: Option<String>,
 }
 
 fn key(resource: &str) -> String {
@@ -112,7 +117,13 @@ pub async fn access_token(resource: &str) -> Option<String> {
         ("grant_type", "refresh_token".to_owned()),
         ("refresh_token", refresh),
         ("client_id", tokens.client_id.clone()),
-        ("resource", resource.to_owned()),
+        (
+            "resource",
+            tokens
+                .resource
+                .clone()
+                .unwrap_or_else(|| resource.to_owned()),
+        ),
     ];
     if let Some(secret) = &tokens.client_secret {
         form.push(("client_secret", secret.clone()));
@@ -157,6 +168,11 @@ struct AuthServer {
     token_endpoint: String,
     registration_endpoint: Option<String>,
     scopes: Vec<String>,
+    /// What the token is for: the protected resource the server names, or its own address.
+    resource: String,
+    /// The hosts a person's client secret may go to: the server's and the authorization servers
+    /// it declares. Not a plugin's metadata address, nor where that metadata points.
+    secret_hosts: Vec<String>,
 }
 
 /// `https://host[:port]/.well-known/<name>` with the URL's path after it (RFC 8414 / 9728).
@@ -176,12 +192,62 @@ fn port_suffix(url: &reqwest::Url) -> String {
         .unwrap_or_default()
 }
 
+/// The value of `name="..."` in a `WWW-Authenticate: Bearer ...` header. It starts a parameter, so
+/// `name` inside another one's value doesn't count.
+fn challenge_value(header: &str, name: &str) -> Option<String> {
+    let wanted = format!("{name}=");
+    let start = header
+        .match_indices(&wanted)
+        .find(|(at, _)| *at == 0 || header[..*at].ends_with([' ', ',']))?
+        .0
+        + wanted.len();
+    let rest = &header[start..];
+    let value = match rest.strip_prefix('"') {
+        Some(quoted) => &quoted[..quoted.find('"')?],
+        None => &rest[..rest.find([',', ' ']).unwrap_or(rest.len())],
+    };
+    Some(value.to_owned()).filter(|value| !value.is_empty())
+}
+
 /// `resource_metadata="..."` from a `WWW-Authenticate: Bearer ...` header.
 fn resource_metadata(header: &str) -> Option<String> {
-    let start = header.find("resource_metadata=")? + "resource_metadata=".len();
-    let rest = header[start..].trim_start_matches('"');
-    let end = rest.find(['"', ',', ' ']).unwrap_or(rest.len());
-    Some(rest[..end].to_owned()).filter(|url| !url.is_empty())
+    challenge_value(header, "resource_metadata")
+}
+
+/// `url` without its query and fragment: what names a server.
+fn bare(url: &reqwest::Url) -> String {
+    let mut bare = url.clone();
+    bare.set_query(None);
+    bare.set_fragment(None);
+    bare.to_string()
+}
+
+/// What to ask a token for: the protected resource the server's metadata names when that covers
+/// this address (RFC 9728), else the address itself. `None` when it names another server, whose
+/// metadata says nothing about this one.
+fn resource_for(url: &reqwest::Url, named: Option<&str>) -> Option<String> {
+    let own = bare(url);
+    let Some(named) = named else {
+        return Some(own);
+    };
+    let parsed = reqwest::Url::parse(named).ok()?;
+    let inside = parsed.origin() == url.origin()
+        && parsed.query().is_none()
+        && url
+            .path()
+            .trim_end_matches('/')
+            .strip_prefix(parsed.path().trim_end_matches('/'))
+            .is_some_and(|rest| rest.is_empty() || rest.starts_with('/'));
+    inside.then(|| named.to_owned())
+}
+
+/// Whether an address the provider gave may be used: HTTPS, or HTTP on this computer.
+fn usable_endpoint(value: &str) -> bool {
+    reqwest::Url::parse(value).is_ok_and(|parsed| {
+        parsed.scheme() == "https"
+            || (parsed.scheme() == "http"
+                && matches!(parsed.host_str(), Some("127.0.0.1" | "localhost")))
+    })
 }
 
 async fn get_json(client: &reqwest::Client, url: &str) -> Option<Value> {
@@ -224,6 +290,7 @@ async fn discover(
     client: &reqwest::Client,
     resource: &str,
     challenge: &str,
+    settings: &McpOauth,
 ) -> anyhow::Result<AuthServer> {
     let url = reqwest::Url::parse(resource).context("The MCP server URL is not valid")?;
     // Its protected-resource metadata names the authorization server and the scopes.
@@ -244,6 +311,21 @@ async fn discover(
             .await
         }
     };
+    let mut secret_hosts: Vec<String> = url.host_str().map(str::to_owned).into_iter().collect();
+    secret_hosts.extend(
+        metadata
+            .as_ref()
+            .and_then(|m| m["authorization_servers"].as_array())
+            .into_iter()
+            .flatten()
+            .filter_map(Value::as_str)
+            .filter_map(|server| reqwest::Url::parse(server).ok())
+            .filter_map(|server| server.host_str().map(str::to_owned)),
+    );
+    let named = metadata.as_ref().and_then(|m| m["resource"].as_str());
+    let token_resource = resource_for(&url, named).with_context(|| {
+        "This server's sign-in metadata is for another server, so Themis won't use it"
+    })?;
     let issuer = metadata
         .as_ref()
         .and_then(|m| m["authorization_servers"][0].as_str().map(str::to_owned))
@@ -256,37 +338,51 @@ async fn discover(
                 port_suffix(&url)
             )
         });
-    let scopes: Vec<String> = metadata
-        .as_ref()
-        .and_then(|m| m["scopes_supported"].as_array())
-        .map(|scopes| {
-            scopes
-                .iter()
-                .filter_map(|s| s.as_str().map(str::to_owned))
-                .collect()
-        })
-        .unwrap_or_default();
-    let issuer_url =
-        reqwest::Url::parse(&issuer).context("The authorization server URL is not valid")?;
-    let server = match get_json(
-        client,
-        &well_known(&issuer_url, "oauth-authorization-server"),
-    )
-    .await
+    // The plugin's own choice, then the challenge's, then everything the server lists (the MCP
+    // authorization spec's order).
+    let scopes: Vec<String> = match settings
+        .scopes
+        .clone()
+        .or_else(|| challenge_value(challenge, "scope"))
     {
-        Some(server) => server,
-        None => get_json(client, &well_known(&issuer_url, "openid-configuration"))
+        Some(scopes) => scopes.split_whitespace().map(str::to_owned).collect(),
+        None => metadata
+            .as_ref()
+            .and_then(|m| m["scopes_supported"].as_array())
+            .map(|scopes| {
+                scopes
+                    .iter()
+                    .filter_map(|s| s.as_str().map(str::to_owned))
+                    .collect()
+            })
+            .unwrap_or_default(),
+    };
+    let server = match &settings.auth_server_metadata_url {
+        Some(address) => get_json(client, address)
             .await
-            .context("The MCP server's authorization server publishes no OAuth metadata")?,
+            .context("The plugin's authorization server metadata could not be read")?,
+        None => {
+            let issuer_url = reqwest::Url::parse(&issuer)
+                .context("The authorization server URL is not valid")?;
+            match get_json(
+                client,
+                &well_known(&issuer_url, "oauth-authorization-server"),
+            )
+            .await
+            {
+                Some(server) => server,
+                None => get_json(client, &well_known(&issuer_url, "openid-configuration"))
+                    .await
+                    .context("The MCP server's authorization server publishes no OAuth metadata")?,
+            }
+        }
     };
     let endpoint = |name: &str| -> anyhow::Result<String> {
         let value = server[name]
             .as_str()
             .with_context(|| format!("The authorization server names no {name}"))?;
-        let parsed = reqwest::Url::parse(value).with_context(|| format!("Invalid {name}"))?;
-        if parsed.scheme() != "https"
-            && !matches!(parsed.host_str(), Some("127.0.0.1" | "localhost"))
-        {
+        reqwest::Url::parse(value).with_context(|| format!("Invalid {name}"))?;
+        if !usable_endpoint(value) {
             bail!("The authorization server's {name} is not https");
         }
         Ok(value.to_owned())
@@ -299,8 +395,13 @@ async fn discover(
     Ok(AuthServer {
         authorization_endpoint: endpoint("authorization_endpoint")?,
         token_endpoint: endpoint("token_endpoint")?,
-        registration_endpoint: server["registration_endpoint"].as_str().map(str::to_owned),
+        registration_endpoint: server["registration_endpoint"]
+            .as_str()
+            .filter(|address| usable_endpoint(address))
+            .map(str::to_owned),
         scopes,
+        resource: token_resource,
+        secret_hosts,
     })
 }
 
@@ -317,26 +418,17 @@ fn challenge_for(verifier: &str) -> String {
         .encode(sha2::Sha256::digest(verifier.as_bytes()))
 }
 
-/// Signs in to the MCP server at `resource`: discovery, client registration, the person
-/// signing in through `open` (their browser), and the code exchange. Gives up after `limit`.
-pub async fn sign_in(
-    resource: &str,
-    open: impl FnOnce(&str) -> Result<(), String>,
-    limit: Duration,
-) -> anyhow::Result<()> {
-    let client = client()?;
-    let challenge_header = needs_sign_in(resource).await?.unwrap_or_default();
-    let server = discover(&client, resource, &challenge_header).await?;
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
-    let redirect = format!(
-        "http://127.0.0.1:{}/callback",
-        listener.local_addr()?.port()
-    );
-    // A client of its own for this sign-in (the redirect's port differs each time).
+/// A client of Themis's own for this sign-in (the redirect's port differs each time): its id and
+/// any secret the provider gave it.
+async fn register(
+    client: &reqwest::Client,
+    server: &AuthServer,
+    redirect: &str,
+) -> anyhow::Result<(String, Option<String>)> {
     let registration = server.registration_endpoint.as_deref().context(
-        "This server's sign-in needs a client set up by hand, which Themis does not support yet",
+        "This server's sign-in needs a client set up by hand, and its plugin names none",
     )?;
-    let registered: Value = client
+    let answer = client
         .post(registration)
         .json(&json!({
             "client_name": "Themis",
@@ -347,16 +439,76 @@ pub async fn sign_in(
         }))
         .send()
         .await
-        .context("Registering Themis with the authorization server failed")?
-        .error_for_status()
-        .context("The authorization server refused to register Themis")?
-        .json()
-        .await?;
+        .context("Registering Themis with the authorization server failed")?;
+    if !answer.status().is_success() {
+        bail!(
+            "The authorization server refused to register Themis (HTTP {})",
+            answer.status().as_u16()
+        );
+    }
+    let registered: Value = answer.json().await?;
     let client_id = registered["client_id"]
         .as_str()
         .context("The registration answer has no client_id")?
         .to_owned();
-    let client_secret = registered["client_secret"].as_str().map(str::to_owned);
+    Ok((
+        client_id,
+        registered["client_secret"].as_str().map(str::to_owned),
+    ))
+}
+
+/// Signs in to the MCP server at `resource`: discovery, the plugin's client or a registered one,
+/// the person signing in through `open` (their browser), and the code exchange. Gives up after
+/// `limit`.
+pub async fn sign_in(
+    resource: &str,
+    settings: Option<&McpOauth>,
+    open: impl FnOnce(&str) -> Result<(), String>,
+    limit: Duration,
+) -> anyhow::Result<()> {
+    let settings = settings.cloned().unwrap_or_default();
+    let client = client()?;
+    let challenge_header = needs_sign_in(resource).await?.unwrap_or_default();
+    let server = discover(&client, resource, &challenge_header, &settings).await?;
+    if settings.client_id.is_none() && server.registration_endpoint.is_none() {
+        bail!("This server's sign-in needs a client set up by hand, and its plugin names none");
+    }
+    let port = settings.callback_port.unwrap_or(0);
+    let listener = tokio::net::TcpListener::bind(("127.0.0.1", port))
+        .await
+        .map_err(|error| match error.kind() {
+            std::io::ErrorKind::AddrInUse => anyhow::anyhow!(
+                "Port {port}, which this server's sign-in comes back to, is in use. Close what is using it and try again."
+            ),
+            _ => error.into(),
+        })?;
+    let port = listener.local_addr()?.port();
+    // A preset client was registered with an exact address, usually `localhost`. One
+    // registered here says the loopback address, as RFC 8252 recommends.
+    let host = if settings.client_id.is_some() {
+        "localhost"
+    } else {
+        "127.0.0.1"
+    };
+    let redirect = format!("http://{host}:{port}/callback");
+    let (client_id, mut client_secret) = match &settings.client_id {
+        Some(id) => (id.clone(), None),
+        None => register(&client, &server, &redirect).await?,
+    };
+    if let Some(name) = &settings.client_secret_env {
+        // The person allowed this secret for the server. Its token endpoint must be the server or
+        // an authorization server it declares; redirects aren't followed, so it stays there.
+        let endpoint_host = reqwest::Url::parse(&server.token_endpoint)?
+            .host_str()
+            .map(str::to_owned);
+        if !endpoint_host.is_some_and(|host| server.secret_hosts.contains(&host)) {
+            bail!("Themis won't send {name} to this sign-in's token address: it isn't this server's or an authorization server it declares");
+        }
+        client_secret = Some(
+            super::keys::value(name)
+                .ok_or_else(|| super::keys::missing_error(std::slice::from_ref(name)))?,
+        );
+    }
     let verifier = random_token();
     let state = random_token();
     let mut authorize = reqwest::Url::parse(&server.authorization_endpoint)?;
@@ -369,7 +521,7 @@ pub async fn sign_in(
             .append_pair("code_challenge", &challenge_for(&verifier))
             .append_pair("code_challenge_method", "S256")
             .append_pair("state", &state)
-            .append_pair("resource", resource);
+            .append_pair("resource", &server.resource);
         if !server.scopes.is_empty() {
             query.append_pair("scope", &server.scopes.join(" "));
         }
@@ -384,7 +536,7 @@ pub async fn sign_in(
         ("redirect_uri", redirect.clone()),
         ("client_id", client_id.clone()),
         ("code_verifier", verifier),
-        ("resource", resource.to_owned()),
+        ("resource", server.resource.clone()),
     ];
     if let Some(secret) = &client_secret {
         form.push(("client_secret", secret.clone()));
@@ -411,6 +563,7 @@ pub async fn sign_in(
             client_id,
             client_secret,
             token_endpoint: server.token_endpoint,
+            resource: Some(server.resource),
         },
     )?;
     save(resource, &tokens)
@@ -572,6 +725,75 @@ mod tests {
             Some("https://a.example/.well-known/oauth-protected-resource")
         );
         assert_eq!(resource_metadata("Bearer"), None);
+    }
+
+    #[test]
+    fn the_challenge_parameters_are_read_exactly() {
+        let header = r#"Bearer resource_metadata="https://a/x", scope="read write", realm=z"#;
+        assert_eq!(
+            challenge_value(header, "scope").as_deref(),
+            Some("read write")
+        );
+        assert_eq!(challenge_value(header, "realm").as_deref(), Some("z"));
+        assert_eq!(challenge_value("Bearer x_scope=\"no\"", "scope"), None);
+        assert_eq!(challenge_value("Bearer scope=\"open", "scope"), None);
+    }
+
+    #[test]
+    fn the_token_names_the_resource_the_server_names_when_it_covers_the_address() {
+        let url = |text: &str| reqwest::Url::parse(text).unwrap();
+        // As the real servers answer: Slack and Wingspan name their origin, Datadog its path.
+        for (address, named) in [
+            ("https://mcp.slack.com/mcp", "https://mcp.slack.com"),
+            (
+                "https://api.wingspan.app/v3/mcp",
+                "https://api.wingspan.app",
+            ),
+            ("https://mcp.mongodb.com/", "https://mcp.mongodb.com"),
+            (
+                "https://d.example/v1/mcp?referrer=x",
+                "https://d.example/v1/mcp",
+            ),
+        ] {
+            assert_eq!(
+                resource_for(&url(address), Some(named)).as_deref(),
+                Some(named)
+            );
+        }
+        // Nothing named: the address, without its query.
+        assert_eq!(
+            resource_for(&url("https://d.example/v1/mcp?referrer=x"), None).as_deref(),
+            Some("https://d.example/v1/mcp")
+        );
+        for (address, named) in [
+            ("https://a.example/mcp", "https://b.example/mcp"),
+            ("https://a.example/mcp", "http://a.example/mcp"),
+            ("https://a.example/mcpx", "https://a.example/mcp"),
+            ("https://a.example/mcp", "https://a.example/mcp/deeper"),
+            ("https://a.example/mcp", "not an address"),
+        ] {
+            assert_eq!(resource_for(&url(address), Some(named)), None, "{named}");
+        }
+    }
+
+    proptest::proptest! {
+        #[test]
+        fn any_challenge_and_any_named_resource_read_cleanly(
+            header in "\\PC{0,200}",
+            named in "\\PC{0,80}",
+        ) {
+            let _ = challenge_value(&header, "scope");
+            let _ = resource_metadata(&header);
+            let url = reqwest::Url::parse("https://mcp.example.com/v1/mcp").unwrap();
+            if let Some(resource) = resource_for(&url, Some(&named)) {
+                // Whatever it is, the token is only ever asked for this server's own origin.
+                proptest::prop_assert_eq!(
+                    reqwest::Url::parse(&resource).unwrap().origin(),
+                    url.origin()
+                );
+            }
+            let _ = usable_endpoint(&named);
+        }
     }
 
     #[test]

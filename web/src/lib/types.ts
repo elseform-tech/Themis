@@ -578,6 +578,8 @@ export interface PersistedMessage {
   /** A goal turn's reply that the goal check then rejected. */
   goalRejected?: boolean;
   goalTurn?: number;
+  /** This turn was started by a plugin hook's report: the runtime's line saying so. */
+  hookWake?: string;
   /** What the goal check concluded after a turn. */
   /** A question the agent asked the user. */
   question?: Question;
@@ -799,7 +801,9 @@ export interface ThreadChange {
 }
 
 export type McpConnections = Record<string, {
-  status: "connecting" | "connected" | "failed" | "needs_sign_in" | "needs_key";
+  status: "connecting" | "connected" | "failed" | "needs_sign_in" | "needs_key" | "needs_secret_ok";
+  /** needs_secret_ok: each secret a plugin's connection reads, and where it would go. */
+  secrets?: { name: string; host: string }[];
   reason?: string;
   /** needs_key: the missing key names, to add in Settings › Keys. */
   keys?: string[];

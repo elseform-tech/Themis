@@ -273,6 +273,8 @@ const ALL: &[(&str, &str, &[&str])] = &[
         "hook-stop-continue",
         &["hook", "reason"],
     ),
+    (HOOK_REWAKE_NOTE, "hook-rewake-note", &["hook", "output"]),
+    (HOOK_WAKE_TURN, "hook-wake-turn", &["marker"]),
     (
         SUBAGENT_SHELL_SCOPE_NOTE,
         "subagent-shell-scope-note",

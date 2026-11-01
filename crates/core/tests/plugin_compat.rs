@@ -397,6 +397,121 @@ fn install_time_settings_become_keys() {
 }
 
 #[test]
+fn the_oauth_blocks_the_catalog_ships_are_kept_as_written() {
+    // Wingspan's block as it is, and a preset client like one a provider registered for Themis.
+    let preview = import_mcp(json!({
+        "registered": {"type": "http", "url": "https://mcp.example/mcp",
+            "oauth": {"clientId": "1601.8899", "callbackPort": 3118}},
+        "wingspan": {"type": "http", "url": "https://api.wingspan.app/v3/mcp",
+            "oauth": {"scopes": "offline_access",
+                "authServerMetadataUrl": "https://api.wingspan.app/.well-known/oauth-authorization-server"}},
+    }))
+    .unwrap();
+    assert_eq!(preview.report.status, "supported", "{:?}", preview.report);
+    let oauth = |name: &str| preview.spec.mcp[name].oauth.clone().unwrap();
+    assert_eq!(oauth("registered").client_id.as_deref(), Some("1601.8899"));
+    assert_eq!(oauth("registered").callback_port, Some(3118));
+    assert_eq!(oauth("wingspan").scopes.as_deref(), Some("offline_access"));
+    assert!(oauth("wingspan").auth_server_metadata_url.is_some());
+    // And `Edit as mcp.json` writes them back as they came.
+    let written = themis_core::plugins::mcp_server_to_standard(&preview.spec.mcp["registered"]);
+    assert_eq!(
+        written["oauth"],
+        json!({"clientId": "1601.8899", "callbackPort": 3118})
+    );
+    let again = themis_core::plugins::mcp_server_from_standard("registered", &written).unwrap();
+    assert_eq!(again.oauth, Some(oauth("registered")));
+}
+
+#[test]
+fn a_sign_in_set_up_for_claude_keeps_the_connection_out_and_says_so() {
+    // The blocks of mongodb-atlas, render and slack, as they ship: signing in with them would
+    // present Themis as Claude to the provider, so the rest of the plugin installs without them.
+    for (name, url, oauth) in [
+        (
+            "mongodb-atlas",
+            "https://mcp.mongodb.com/",
+            json!({"clientId": "https://claude.ai/oauth/claude-code-client-metadata"}),
+        ),
+        (
+            "render",
+            "https://mcp.render.com/mcp",
+            json!({"clientId": "claude"}),
+        ),
+        (
+            "slack",
+            "https://mcp.slack.com/mcp",
+            json!({"clientId": "1601185624273.8899143856786", "callbackPort": 3118}),
+        ),
+    ] {
+        let preview =
+            import_mcp(json!({name: {"type": "http", "url": url, "oauth": oauth}})).unwrap();
+        assert!(preview.spec.mcp.is_empty(), "{name} stayed in");
+        let issue = &preview.spec.import_issues[0];
+        assert_eq!(
+            issue.field.as_deref(),
+            Some(format!("mcpServers.{name}.oauth.clientId").as_str())
+        );
+        assert!(
+            format!("{issue:?}").contains("set up for Claude"),
+            "{issue:?}"
+        );
+        assert_ne!(preview.report.status, "supported", "{name}");
+    }
+}
+
+#[test]
+fn an_oauth_block_it_would_not_honour_is_named_or_refused() {
+    // A field it doesn't know: the connection stays out and the field is named.
+    let preview = import_mcp(json!({"a": {"type": "http", "url": "https://a.example/mcp",
+        "oauth": {"clientId": "x", "pkce": false}}}))
+    .unwrap();
+    assert!(preview.spec.mcp.is_empty());
+    assert_eq!(
+        preview.spec.import_issues[0].field.as_deref(),
+        Some("mcpServers.a.oauth.pkce")
+    );
+    // Nothing to connect to, or nothing that could be meant.
+    for block in [
+        json!({"command": "run", "oauth": {"clientId": "x"}}),
+        json!({"url": "https://a.example/mcp", "oauth": "yes"}),
+        json!({"url": "https://a.example/mcp", "oauth": {"callbackPort": 80}}),
+        json!({"url": "https://a.example/mcp", "oauth": {"callbackPort": 70000}}),
+        json!({"url": "https://a.example/mcp", "oauth": {"clientId": ""}}),
+        json!({"url": "https://a.example/mcp", "oauth": {"clientId": 7}}),
+        json!({"url": "https://a.example/mcp", "oauth": {"scopes": 7}}),
+        json!({"url": "https://a.example/mcp", "oauth": {"authServerMetadataUrl": "http://a.example/m"}}),
+        json!({"url": "https://a.example/mcp", "oauth": {"authServerMetadataUrl": "not an address"}}),
+    ] {
+        assert!(import_mcp(json!({"a": block.clone()})).is_err(), "{block}");
+    }
+    // Empty or off: discovery decides.
+    for block in [json!({}), json!(false)] {
+        let preview =
+            import_mcp(json!({"a": {"url": "https://a.example/mcp", "oauth": block}})).unwrap();
+        assert_eq!(preview.spec.mcp["a"].oauth, None);
+    }
+}
+
+proptest::proptest! {
+    #[test]
+    fn any_oauth_block_imports_or_is_refused_cleanly(
+        field in proptest::sample::select(vec!["clientId", "callbackPort", "scopes", "authServerMetadataUrl", "clientSecret", "other"]),
+        text in "\\PC{0,40}",
+        port in proptest::num::i64::ANY,
+    ) {
+        for value in [json!(text), json!(port), json!([text]), json!({"x": text})] {
+            let result = import_mcp(json!({"a": {"url": "https://a.example/mcp", "oauth": {field: value}}}));
+            if let Ok(preview) = result {
+                if let Some(server) = preview.spec.mcp.get("a") {
+                    proptest::prop_assert!(server.validate().is_ok());
+                }
+            }
+        }
+    }
+}
+
+#[test]
 fn defaults_and_plain_settings_are_kept_but_secrets_must_be_keys() {
     let preview = import_mcp(json!({"grafana": {
         "command": "docker",
@@ -424,18 +539,35 @@ fn defaults_and_plain_settings_are_kept_but_secrets_must_be_keys() {
         ("NOTE", "aZ8kQ2mX9pL4vB7nR3tY6wE1"),
         ("REGION", "[your region, e.g. us-east-1 — required]"),
     ] {
-        let error =
-            import_mcp(json!({"local": {"command": "run", "env": {name: value}}})).unwrap_err();
-        assert!(
-            error.contains("literal values are unsupported"),
-            "{name}: {error}"
-        );
+        // In a plugin these become secrets the person fills in; see `mcp_literal_secrets.rs`.
+        let preview = import_mcp(json!({"local": {"command": "run", "env": {name: value}}}))
+            .unwrap_or_else(|error| panic!("{name}: {error}"));
+        let server = &preview.spec.mcp["local"];
+        assert_eq!(server.env[name], format!("FIXTURE_{name}"));
+        assert!(server.env_values.is_empty());
+        // ("x" and "abc" are in plenty of other words.)
+        if value.len() >= 7 {
+            assert!(!serde_json::to_string(&preview.spec)
+                .unwrap()
+                .contains(value));
+        }
     }
-    let error = import_mcp(
+    let preview = import_mcp(
         json!({"local": {"command": "run", "env": {"API_KEY": "${API_KEY:-sk-live-123}"}}}),
     )
-    .unwrap_err();
-    assert!(error.contains("literal values are unsupported"), "{error}");
+    .unwrap();
+    assert_eq!(preview.spec.mcp["local"].env["API_KEY"], "API_KEY");
+    assert!(preview.spec.mcp["local"].defaults.is_empty());
+    assert!(!serde_json::to_string(&preview.spec)
+        .unwrap()
+        .contains("sk-live-123"));
+    // A value that mixes a reference with other text doesn't read as either.
+    let error = import_mcp(json!({"local": {"command": "run", "env": {"API_KEY": "x${API_KEY}"}}}))
+        .unwrap_err();
+    assert!(
+        error.contains("Unsupported environment reference"),
+        "{error}"
+    );
 }
 
 #[test]
@@ -470,9 +602,8 @@ fn plain_headers_and_harmless_queries_are_accepted() {
         Some("DT_PLATFORM_TOKEN")
     );
 
-    // Credentials in a header or a query stay refused.
+    // Credentials in a query stay refused.
     for server in [
-        json!({"type": "http", "url": "https://mediaflows.example.com/mcp", "headers": {"cld-api-key": "api_key"}}),
         json!({"type": "http", "url": "https://example.com/mcp?api_key=abc"}),
         json!({"type": "http", "url": "https://example.com/mcp?token=${TOKEN}"}),
         json!({"type": "http", "url": "http://example.com/mcp"}),
@@ -534,10 +665,17 @@ fn url_defaults_harmless_fields_and_install_settings() {
         spec.mcp["logfire"].defaults["LOGFIRE_MCP_URL"],
         "https://logfire-us.pydantic.dev/mcp"
     );
-    assert_eq!(spec.mcp["datadog"].defaults["DD_MCP_DOMAIN"], "not-setup");
+    // A default for a part of the host is fine, as aws-agents-for-devsecops writes its region.
+    let region = import_mcp(json!({"devops": {"type": "http",
+        "url": "https://connect.aidevops.${REGION:-us-east-1}.api.aws/mcp"}}))
+    .unwrap();
+    assert_eq!(region.spec.mcp["devops"].defaults["REGION"], "us-east-1");
+    // `not-setup` can't be a host: the value is needed, and no computer of that name is tried.
+    assert!(!spec.mcp["datadog"].defaults.contains_key("DD_MCP_DOMAIN"));
+    assert_eq!(spec.mcp["datadog"].key_names(), ["DD_MCP_DOMAIN"]);
     assert_eq!(spec.notices.len(), 2, "{:?}", spec.notices);
 
-    // A preset OAuth client (registered for another app) stays a real gap.
+    // A preset OAuth client is kept, and a plugin's install settings are noted.
     let global = tempfile::tempdir().unwrap();
     let plugin = tempfile::tempdir().unwrap();
     let root = plugin.path();
@@ -554,7 +692,7 @@ fn url_defaults_harmless_fields_and_install_settings() {
     let preview = PluginStore::new(global.path().into(), None)
         .inspect_path(root, Some("fixture"))
         .unwrap();
-    assert_eq!(preview.report.status, "partial", "{:?}", preview.report);
+    assert_eq!(preview.report.status, "supported", "{:?}", preview.report);
     assert!(preview
         .spec
         .notices
@@ -778,20 +916,54 @@ fn shell_is_honoured_or_the_hook_stays_out() {
 }
 
 #[test]
-fn async_runs_in_the_background_and_rewake_stays_out() {
+fn async_runs_in_the_background_and_rewake_reports_back() {
     let (hook, notes) = import_hook(json!({"async": true}));
     let hook = hook.expect("imported");
     assert!(hook.background && !hook.blocking);
+    assert!(hook.rewake.is_none());
     assert_eq!(notes, "");
-    // Waking the agent with the hook's findings is what the hook is for, and Themis can't.
     for options in [
         json!({"asyncRewake": true}),
         json!({"async": true, "asyncRewake": true, "rewakeMessage": "x", "rewakeSummary": "y"}),
     ] {
+        let labelled = options.get("rewakeMessage").is_some();
         let (hook, notes) = import_hook(options);
-        assert!(hook.is_none());
-        assert!(notes.contains("PreToolUse: asyncRewake"), "{notes}");
+        let hook = hook.expect("imported");
+        assert_eq!(notes, "");
+        assert!(hook.background && !hook.blocking && hook.exit_two_blocks);
+        let rewake = hook.rewake.expect("reports back");
+        assert_eq!(rewake.message.is_some(), labelled);
+        assert_eq!(rewake.summary.is_some(), labelled);
+        // Nobody waits for it, so it gets the longest a hook may have unless it asks for less.
+        assert_eq!(
+            hook.timeout_seconds,
+            themis_core::plugins::hooks::MAX_TIMEOUT_SECONDS
+        );
     }
+    let (hook, _) = import_hook(json!({"asyncRewake": true, "timeout": 10}));
+    assert_eq!(hook.unwrap().timeout_seconds, 10);
+    // Written out but false: nothing changes.
+    let (hook, _) = import_hook(json!({"asyncRewake": false, "rewakeMessage": "x"}));
+    let hook = hook.unwrap();
+    assert!(!hook.background && hook.rewake.is_none());
+    // A long label is cut, and the hook still imports.
+    let (hook, _) = import_hook(json!({"asyncRewake": true, "rewakeMessage": "é".repeat(4096)}));
+    let hook = hook.unwrap();
+    assert!(hook.validate().is_ok());
+    assert!(
+        hook.rewake.unwrap().message.unwrap().len()
+            <= themis_core::plugins::hooks::REWAKE_LABEL_LIMIT
+    );
+    // A session hook's exit 2 stops nothing, but one that reports back reports.
+    let plugin = tempfile::tempdir().unwrap();
+    manifest(plugin.path(), json!({"name": "fixture"}));
+    write(
+        plugin.path(),
+        "hooks/hooks.json",
+        &json!({"hooks": {"SessionStart": [{"hooks": [{"type": "command", "command": "x", "asyncRewake": true}]}]}}).to_string(),
+    );
+    let session = inspect(plugin.path());
+    assert!(session.spec.hooks[0].exit_two_blocks);
 }
 
 #[test]
@@ -805,13 +977,28 @@ fn if_names_a_command_or_the_hook_stays_out() {
         );
         assert_eq!(notes, "");
     }
+    // Patterns inside words, as security-guidance and claude-security write them.
     for rule in [
         "Bash(git*push*)",
         "Bash(py* *x*scripts/*.py *)",
+        "Bash(gt*)",
+    ] {
+        let (hook, notes) = import_hook(json!({"if": rule}));
+        let hook = hook.expect("imported");
+        assert_eq!(hook.command_prefix, None);
+        assert_eq!(
+            hook.command_glob.as_deref(),
+            rule.strip_prefix("Bash(").unwrap().strip_suffix(')')
+        );
+        assert_eq!(notes, "");
+    }
+    for rule in [
+        "Bash(git?push)",
         "Read(*.env)",
         "Bash",
         "Bash()",
         "Bash(*)",
+        "Bash(* *)",
     ] {
         let (hook, notes) = import_hook(json!({"if": rule}));
         assert!(hook.is_none(), "{rule}");
