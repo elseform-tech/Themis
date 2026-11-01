@@ -1,5 +1,8 @@
 import { useCallback, useEffect, useRef, useState, type UIEvent } from "react";
-import { readSession, writeSession } from "../state/session";
+
+/** Where the person had scrolled up to, by chat, while the app is open. Not kept across restarts:
+ *  a pixel position from another session means little, and a chat reopens at its latest. */
+const places = new Map<string, number>();
 
 /** Within this many pixels of the end still counts as reading the latest message. */
 export const FOLLOW_MARGIN = 64;
@@ -40,11 +43,11 @@ export function useFollowLatest(threadId: string, output: unknown) {
 
   useEffect(toEnd, [output, toEnd]);
 
-  // A saved place means the person had scrolled up; without one the chat opens at its latest.
+  // A place means the person had scrolled up; without one the chat opens at its latest.
   useEffect(() => {
     const element = scrollRef.current;
     if (!element) return;
-    element.scrollTop = readSession(`scroll:${threadId}`, element.scrollHeight);
+    element.scrollTop = places.get(threadId) ?? element.scrollHeight;
     lastTop.current = element.scrollTop;
     following.current = distanceFromEnd(element) < FOLLOW_MARGIN;
     setScrolledUp(!following.current);
@@ -76,7 +79,8 @@ export function useFollowLatest(threadId: string, output: unknown) {
     following.current = stillFollowing({ before: lastTop.current, top, distance: distanceFromEnd(element), following: following.current, person: Date.now() - personAt.current < PERSON_MS });
     lastTop.current = top;
     setScrolledUp(!following.current);
-    writeSession(`scroll:${threadId}`, following.current ? null : top);
+    if (following.current) places.delete(threadId);
+    else places.set(threadId, top);
   }, [threadId]);
 
   return { scrollRef, contentRef, endRef, scrolledUp, onScroll };

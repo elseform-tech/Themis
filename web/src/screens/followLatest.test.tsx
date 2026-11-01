@@ -7,11 +7,6 @@ let resized: Array<() => void> = [];
 
 beforeEach(() => {
   resized = [];
-  const saved = new Map<string, string>();
-  vi.stubGlobal("localStorage", {
-    getItem: (key: string) => saved.get(key) ?? null,
-    setItem: (key: string, value: string) => { saved.set(key, value); },
-  });
   vi.stubGlobal("ResizeObserver", class {
     constructor(private readonly callback: () => void) {}
     observe() { resized.push(this.callback); }
@@ -70,7 +65,7 @@ it("stays on the latest message when something above changes height", () => {
 });
 
 it("leaves the view alone once the person has scrolled up", () => {
-  const { getByTestId } = render(<Chat threadId="a" />);
+  const { getByTestId } = render(<Chat threadId="reading" />);
   const scroller = getByTestId("scroller");
   sized(scroller, 2000, 1500);
   scrollTo(scroller, 1500);
@@ -82,25 +77,25 @@ it("leaves the view alone once the person has scrolled up", () => {
 });
 
 it("coming back to a chat that was on the latest message opens at the latest, however much it grew", () => {
-  const first = render(<Chat threadId="a" />);
+  const first = render(<Chat threadId="latest" />);
   const scroller = first.getByTestId("scroller");
   sized(scroller, 2000, 1500);
   scrollTo(scroller, 1500);
   first.unmount();
   const spy = vi.spyOn(HTMLElement.prototype, "scrollHeight", "get").mockReturnValue(9000);
-  const second = render(<Chat threadId="a" />);
+  const second = render(<Chat threadId="latest" />);
   expect(second.getByTestId("scroller").scrollTop).toBe(9000);
   spy.mockRestore();
 });
 
 it("coming back to a chat the person had scrolled up in keeps their place", () => {
-  const first = render(<Chat threadId="a" />);
+  const first = render(<Chat threadId="place" />);
   const scroller = first.getByTestId("scroller");
   sized(scroller, 2000, 1500);
   scrollTo(scroller, 1500);
   personScrollsTo(scroller, 700);
   first.unmount();
-  const second = render(<Chat threadId="a" />);
+  const second = render(<Chat threadId="place" />);
   expect(second.getByTestId("scroller").scrollTop).toBe(700);
 });
 
