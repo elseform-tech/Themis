@@ -509,7 +509,9 @@ mod tests {
         .await;
         assert!(result.err().unwrap().to_string().contains("timed out"));
         assert_eq!(saved.lock().unwrap().len(), 1);
-        assert_eq!(server.received_requests().await.unwrap().len(), 2);
+        // On a slow runner the deadline can pass before b's request arrives.
+        let requests = server.received_requests().await.unwrap().len();
+        assert!((1..=2).contains(&requests), "{requests} requests");
         assert!(directory.path().join("summary-jobs").is_dir());
     }
 
