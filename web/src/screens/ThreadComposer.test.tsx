@@ -2,6 +2,7 @@
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup } from "@testing-library/react";
+import samples from "../lib/secretSamples.json";
 import type { ThreadInfo } from "../lib/types";
 import { ThreadComposer } from "./ThreadComposer";
 
@@ -24,6 +25,47 @@ function composer(running:boolean,draft="",composerDisabled=running) {
   const props={thread,draft,composerDisabled,readOnly:false,running,stopping:false,sendError:undefined,secretConfigured:true,onDraftChange:vi.fn(),onSend,onStop,onNewThread:vi.fn(),onOpenSettings:vi.fn(),skills:[{id:"review",name:"Review",description:"Review",plugin:"review"}],plugins:[{id:"g--drive",name:"Drive",description:"Drive",origin:"Global",enabled:true}]};
   return {...render(<ThreadComposer {...props} />),onStop,onSend,props};
 }
+
+describe("ThreadComposer secret warning", () => {
+  const key = samples.secrets[4].join("");
+  const warning = /This looks like a secret\./;
+
+  it("says so above the composer and still lets the person send", () => {
+    const view = composer(false, `use ${key}`);
+    expect(screen.getByRole("status")).toHaveTextContent("This looks like a secret. It'd be sent to the model provider. If it's real, use Settings › Secrets, and rotate it if already shared.");
+    const send = screen.getByRole("button", { name: "Send" });
+    expect(send).toBeEnabled();
+    fireEvent.click(send);
+    expect(view.onSend).toHaveBeenCalledTimes(1);
+  });
+
+  it("stays quiet for ordinary text, code and hashes", () => {
+    for (const text of samples.ordinary) {
+      const view = composer(false, text);
+      expect(screen.queryByText(warning)).toBeNull();
+      view.unmount();
+    }
+  });
+
+  it("dismisses once for this text and comes back for a new secret", () => {
+    const view = composer(false, `use ${key}`);
+    fireEvent.click(screen.getByRole("button", { name: "Dismiss" }));
+    expect(screen.queryByText(warning)).toBeNull();
+    view.rerender(<ThreadComposer {...view.props} draft={`use ${key} please`} />);
+    expect(screen.queryByText(warning)).toBeNull();
+    view.rerender(<ThreadComposer {...view.props} draft="something else" />);
+    expect(screen.queryByText(warning)).toBeNull();
+    view.rerender(<ThreadComposer {...view.props} draft={`again ${key}`} />);
+    expect(screen.getByText(warning)).toBeInTheDocument();
+  });
+
+  it("never shows or logs the value", () => {
+    const logged = (["log", "info", "warn", "error", "debug"] as const).map(method => vi.spyOn(console, method));
+    composer(false, `use ${key}`);
+    expect(screen.getByRole("status").textContent).not.toContain(key);
+    for (const spy of logged) expect(spy).not.toHaveBeenCalled();
+  });
+});
 
 describe("ThreadComposer", () => {
   it("keeps preparation stoppable without showing a stale connect hint", () => {
