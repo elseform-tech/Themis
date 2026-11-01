@@ -332,6 +332,10 @@ impl ApprovalHook for CachingApprovals {
         self.inner.approve_sensitive(action, access)
     }
 
+    fn would_ask(&self, action: &ToolAction) -> bool {
+        !self.is_cached(&action.grant_key()) && self.inner.would_ask(action)
+    }
+
     fn approve(&self, action: &ToolAction) -> Approval {
         let key = action.grant_key();
         if self.is_cached(&key) {
@@ -1261,6 +1265,18 @@ async fn run_task_with_evidence_inner(
             policy.context_token_budget.saturating_mul(4) / 8,
         )
         .await?;
+        // What `PostToolBatch` hooks hear about, as the tools answered.
+        let batch: Vec<(String, serde_json::Value, String)> = calls
+            .iter()
+            .zip(&results)
+            .map(|(call, result)| {
+                (
+                    call.function.name.clone(),
+                    serde_json::from_str(&call.function.arguments).unwrap_or_default(),
+                    result.function.arguments.clone(),
+                )
+            })
+            .collect();
         for (call, result) in calls.iter().zip(&mut results) {
             // Actions on a page change it, so its results never look unchanged: a run that kept
             // clicking the same spot went unnoticed. These count by the call itself.
@@ -1403,6 +1419,23 @@ async fn run_task_with_evidence_inner(
             message_type: MessageType::ToolResult(results),
             content: String::new(),
         });
+        match crate::plugins::hooks::post_tool_batch(&batch, &events).await {
+            Ok(Some(context)) => messages.push(ChatMessage {
+                role: ChatRole::User,
+                message_type: MessageType::Text,
+                content: hook_context_note(&context),
+            }),
+            Ok(None) => {}
+            Err(error) => {
+                let error = error.to_string();
+                emit(RunEvent::Failed {
+                    error: error.clone(),
+                })
+                .await
+                .ok();
+                return Err(anyhow!(error));
+            }
+        }
         if let Some(result) = take_end_request() {
             emit(RunEvent::Finished {
                 result: result.clone(),
@@ -2777,6 +2810,13 @@ async fn compact_context_with_evidence(
                 "info",
                 serde_json::json!({"duration_ms":started.elapsed().as_millis(),"estimated_output_tokens":estimated_tokens(messages),"fallback":false}),
             );
+            // Out of the summary's deadline: a slow hook can't fail a checkpoint already made.
+            if installed {
+                if let Some(summary) = prior_checkpoint(messages) {
+                    let summary = summary.split_once(":\n").map_or(summary, |(_, text)| text);
+                    crate::plugins::hooks::post_compact(summary, events).await;
+                }
+            }
             Ok(installed)
         }
         failure => {
@@ -3920,6 +3960,16 @@ fn mcp_tool_meant<'a>(name: &str, available: &[&'a str]) -> Option<&'a str> {
     matches.next().is_none().then_some(*meant)
 }
 
+/// What the model is told when a plugin's hook denied a tool call: the plugin's words, fenced and
+/// labelled so they can't pose as anything else.
+fn hook_refusal(reason: &str) -> String {
+    let fenced = reason.replace("<<<", "< < <").replace(">>>", "> > >");
+    format!(
+        "{}\n<<<hook-reason\n{fenced}\n>>>",
+        crate::prompts::HOOK_BLOCK_REASON_NOTE
+    )
+}
+
 /// Approval-checks and executes one tool call.
 ///
 /// Returns the result text for the model on success, or the error text (denial,
@@ -3999,6 +4049,19 @@ async fn execute_call(
                 _ => Vec::new(),
             },
         };
+        // A plugin may say no before the person is asked, never yes.
+        let hook_denied = if approvals.would_ask(&action) {
+            crate::plugins::hooks::permission_request(name, &approval_args, events).await
+        } else {
+            None
+        };
+        if let Some(reason) = hook_denied {
+            crate::plugins::hooks::permission_denied(name, &approval_args, &reason, events).await;
+            return Err(format!(
+                "approval denied for '{name}': {}",
+                hook_refusal(&reason)
+            ));
+        }
         let decision = match &sensitive {
             Some(access) => approvals.approve_sensitive(&action, access),
             None => approvals.approve(&action),
@@ -4029,10 +4092,9 @@ async fn execute_call(
                 )
             )
         });
-        return Err(format!(
-            "approval denied for '{name}': {summary}{files} {}",
-            decision.refusal_note()
-        ));
+        let reason = format!("{summary}{files} {}", decision.refusal_note());
+        crate::plugins::hooks::permission_denied(name, &approval_args, &reason, events).await;
+        return Err(format!("approval denied for '{name}': {reason}"));
     }
     let parsed: serde_json::Value = match serde_json::from_str(args) {
         Ok(parsed) => parsed,
@@ -5040,6 +5102,76 @@ mod tests {
         assert!(checkpoint.content.contains("parser.py"));
         assert!(checkpoint.content.contains("Ran 16 tests. OK"));
         assert!(checkpoint.content.contains("/tmp/progress.jsonl"));
+    }
+
+    /// A checkpoint in place is what `PostCompact` hears about, with its summary and not the
+    /// conversation. Only a checkpoint that went in: a failed one has nothing to report.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_checkpoint_in_place_runs_the_post_compact_hook() {
+        use wiremock::{matchers::method, Mock, MockServer, ResponseTemplate};
+        let server = MockServer::builder().start().await;
+        Mock::given(method("POST")).respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({"choices":[{"message":{"role":"assistant","content":"Goal/constraints: retain task. Confirmed findings: originals supplied. Completed changes/tests: none. Unresolved work: continue. Next action: Goal: repair. Findings: parser defect. Next: edit parser."},"finish_reason":"stop"}]}))).mount(&server).await;
+        let llm = crate::providers::resolve(
+            &crate::providers::ProviderConfig::new(crate::providers::ProviderKind::Go, "test-key")
+                .with_model("test-model")
+                .with_base_url(server.uri()),
+        )
+        .await
+        .unwrap();
+        let mut messages = initial_messages(
+            vec![ConversationTurn {
+                role: ConversationRole::User,
+                text: "AN_OLD_PROMPT_ONLY ".repeat(8000),
+            }],
+            "Continue".into(),
+        );
+        let root = tempfile::tempdir().unwrap();
+        let hook: crate::plugins::hooks::Hook = serde_json::from_value(serde_json::json!({
+            "name": "after", "event": "PostCompact", "command": "cat > compacted.json",
+            "enabled": true, "timeout_seconds": 5,
+        }))
+        .unwrap();
+        let runtime = crate::plugins::hooks::HookRuntime {
+            hooks: vec![hook],
+            run_id: "run".into(),
+            thread_id: "thread".into(),
+            root: root.path().into(),
+            approvals: Arc::new(crate::tools::AllowAllHook),
+            agent: None,
+            mcp_names: Arc::default(),
+            session: Default::default(),
+        };
+        let (tx, _rx) = tokio::sync::mpsc::channel(8);
+        let directory = tempfile::tempdir().unwrap();
+        crate::plugins::hooks::ACTIVE
+            .scope(
+                runtime,
+                compact_context(
+                    &llm,
+                    &mut messages,
+                    &RunPolicy {
+                        total_turns: 20,
+                        context_token_budget: 16_000,
+                        recent_messages: 2,
+                    },
+                    &tx,
+                    &AtomicBool::new(false),
+                    Some(directory.path()),
+                ),
+            )
+            .await
+            .unwrap();
+        let seen: serde_json::Value = serde_json::from_slice(
+            &std::fs::read(root.path().join("compacted.json")).expect("the hook didn't run"),
+        )
+        .unwrap();
+        assert_eq!(seen["hook_event_name"], "PostCompact");
+        assert_eq!(seen["trigger"], "auto");
+        let summary = seen["compact_summary"].as_str().unwrap();
+        assert!(summary.contains("parser defect"), "{summary}");
+        assert!(!summary.contains("Earlier context checkpoint"), "{summary}");
+        assert!(!seen.to_string().contains("AN_OLD_PROMPT_ONLY"), "{seen}");
     }
 
     #[tokio::test]

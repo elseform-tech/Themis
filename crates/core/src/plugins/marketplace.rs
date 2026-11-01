@@ -1411,7 +1411,7 @@ fn import_directory_within(
     }
     for value in declared("hooks") {
         if value.is_object() {
-            import_hooks(value, &mut spec)?;
+            import_hooks(value, root, &mut spec)?;
         } else {
             hook_files.extend(declared_paths(
                 &[value],
@@ -1430,7 +1430,7 @@ fn import_directory_within(
     }
     for path in unique(hook_files) {
         if let Some(raw) = spec.files.get(&path) {
-            import_hooks(&serde_json::from_str::<Value>(raw)?, &mut spec)?;
+            import_hooks(&serde_json::from_str::<Value>(raw)?, root, &mut spec)?;
         }
     }
     spec.starts_disabled = manifest.get("defaultEnabled") == Some(&Value::Bool(false));
@@ -2594,17 +2594,21 @@ fn import_mcp_server(
         let supported = if opencode {
             ["local", "remote"].contains(&kind)
         } else {
-            ["stdio", "http", "streamable-http"].contains(&kind)
+            // `url` is a remote server named by its address, which speaks the current transport.
+            ["stdio", "http", "streamable-http", "sse", "url"].contains(&kind)
         };
         if !supported {
             compatibility_error = Some(unsupported_mcp(
                 format!("{name}.type"),
                 "Unsupported MCP transport",
-                "Use stdio or Streamable HTTP; SSE is not supported",
+                "Use stdio, Streamable HTTP or SSE",
             ));
         }
     }
-    let mut server = McpServer::default();
+    let mut server = McpServer {
+        sse: !opencode && raw.get("type").and_then(Value::as_str) == Some("sse"),
+        ..McpServer::default()
+    };
     if let Some(block) = raw.get("oauth") {
         match read_oauth(name, block, opencode, literals) {
             Ok(oauth) => server.oauth = oauth,
@@ -2683,7 +2687,8 @@ fn import_mcp_server(
     }
     if let Some(kind) = raw.get("type").and_then(Value::as_str) {
         if (["local", "stdio"].contains(&kind) && server.command.is_none())
-            || (["remote", "http", "streamable-http"].contains(&kind) && server.url.is_none())
+            || (["remote", "http", "streamable-http", "sse", "url"].contains(&kind)
+                && server.url.is_none())
         {
             bail!("MCP transport conflicts with connection configuration");
         }
@@ -2809,7 +2814,10 @@ pub fn mcp_server_to_standard(server: &McpServer) -> Value {
         }
     }
     if let Some(url) = &server.url {
-        entry.insert("type".into(), json!("http"));
+        entry.insert(
+            "type".into(),
+            json!(if server.sse { "sse" } else { "http" }),
+        );
         entry.insert("url".into(), json!(url));
         let mut headers: serde_json::Map<String, Value> = server
             .headers
@@ -2879,6 +2887,11 @@ pub fn mcp_server_to_standard(server: &McpServer) -> Value {
         entry.insert("env".into(), Value::Object(env));
     }
     Value::Object(entry)
+}
+
+/// Whether a prompt hook's question says it must not stop anything, as paypal's does.
+fn says_it_never_blocks(question: &str) -> bool {
+    question.to_lowercase().contains("never block")
 }
 
 /// Themis tools for a Claude tool name in a hook matcher.
@@ -2998,6 +3011,9 @@ fn read_hook_options(raw: &Value, windows: bool) -> Result<HookOptions, String> 
     for (key, value) in fields {
         match key.as_str() {
             "type" | "command" | "timeout" => {}
+            // A `prompt` hook's question. It runs on the chat's model, whichever it names, and a
+            // no always reaches the agent, as `continueOnBlock` asks.
+            "prompt" | "model" | "continueOnBlock" if raw["type"] == "prompt" => {}
             // Text for Claude's spinner.
             "statusMessage" => {}
             "async" => options.background |= value.as_bool() == Some(true),
@@ -3124,8 +3140,40 @@ fn quoted_command(program: &str, args: &[String]) -> String {
 /// What an imported hook gets when it asks for no time limit: Claude's scripts are written for
 /// more than a native hook's ten seconds.
 const IMPORTED_HOOK_TIMEOUT: u64 = 60;
+/// How long a `prompt` hook's request has when it asks for no limit, as in Claude.
+const PROMPT_HOOK_TIMEOUT: u64 = 30;
 
-fn import_hooks(value: &Value, spec: &mut PluginSpec) -> anyhow::Result<()> {
+/// Whether a `PermissionRequest` hook's worth is answering yes, going by its command and the script
+/// it runs. Hooks never grant permissions, so such a hook can't do what it is for, and the plugin
+/// has to say so. Only text can be read: a compiled program that answers allow still has it
+/// ignored when it runs, and logged.
+fn answers_allow(command: &str, root: &Path) -> bool {
+    static ALLOW: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+        regex::Regex::new(r#"behavior[\\"']*\s*[:=]\s*[\\"']*allow"#).expect("valid pattern")
+    });
+    if ALLOW.is_match(command) {
+        return true;
+    }
+    const ROOT: &str = "${CLAUDE_PLUGIN_ROOT}/";
+    let Ok(folder) = root.canonicalize() else {
+        return false;
+    };
+    command.match_indices(ROOT).any(|(at, _)| {
+        let rest = &command[at + ROOT.len()..];
+        let path = rest
+            .split(|c: char| c.is_whitespace() || matches!(c, '"' | '\'' | ';' | '|' | '&'))
+            .next()
+            .unwrap_or_default();
+        let Ok(script) = root.join(path).canonicalize() else {
+            return false;
+        };
+        script.starts_with(&folder)
+            && fs::metadata(&script).is_ok_and(|meta| meta.len() <= 1024 * 1024)
+            && fs::read(&script).is_ok_and(|bytes| ALLOW.is_match(&String::from_utf8_lossy(&bytes)))
+    })
+}
+
+fn import_hooks(value: &Value, root: &Path, spec: &mut PluginSpec) -> anyhow::Result<()> {
     let events = value
         .get("hooks")
         .unwrap_or(value)
@@ -3133,9 +3181,19 @@ fn import_hooks(value: &Value, spec: &mut PluginSpec) -> anyhow::Result<()> {
         .context("Invalid hook configuration")?;
     for (event, groups) in events {
         let mapped = match event.as_str() {
-            // Its output is context for the model, which only PromptSubmit delivers: it runs
-            // on every turn instead of once per session.
-            "SessionStart" => "PromptSubmit",
+            // Themis has these moments under the same names; see `hooks::EVENTS`.
+            "SessionStart" => "SessionStart",
+            "SessionEnd" => "SessionEnd",
+            "UserPromptExpansion" => "UserPromptExpansion",
+            "PermissionRequest" => "PermissionRequest",
+            "PermissionDenied" => "PermissionDenied",
+            "PostToolBatch" => "PostToolBatch",
+            "PostCompact" => "PostCompact",
+            "Notification" => "Notification",
+            "TaskCreated" => "TaskCreated",
+            "TaskCompleted" => "TaskCompleted",
+            "ConfigChange" => "ConfigChange",
+            "InstructionsLoaded" => "InstructionsLoaded",
             // Fires only when the run failed; `Stop` also runs then, as RunEnd always does.
             "StopFailure" => "RunFailed",
             "PreToolUse" => "BeforeTool",
@@ -3154,39 +3212,89 @@ fn import_hooks(value: &Value, spec: &mut PluginSpec) -> anyhow::Result<()> {
         };
         let tool_event = matches!(
             event.as_str(),
-            "PreToolUse" | "PostToolUse" | "PostToolUseFailure"
+            "PreToolUse"
+                | "PostToolUse"
+                | "PostToolUseFailure"
+                | "PermissionRequest"
+                | "PermissionDenied"
+        );
+        // What each event can be about here, and so what a matcher on it can ever match. An empty
+        // list takes any name (a skill's). Claude takes no matcher on the last group.
+        let moments: Option<&[&str]> = match event.as_str() {
+            "SessionStart" => Some(&["startup", "resume"]),
+            "SessionEnd" => Some(&["prompt_input_exit", "other"]),
+            "PostCompact" => Some(&["auto"]),
+            "Notification" => Some(&[
+                "permission_prompt",
+                "goal_reached",
+                "goal_stuck",
+                "goal_waiting",
+                "goal_quota",
+            ]),
+            "ConfigChange" => Some(&["user_settings", "project_settings"]),
+            "InstructionsLoaded" => Some(&["session_start"]),
+            "UserPromptExpansion" => Some(&[]),
+            _ => None,
+        };
+        let matcher_ignored = matches!(
+            event.as_str(),
+            "PostToolBatch" | "TaskCreated" | "TaskCompleted"
         );
         for group in groups.as_array().context("Invalid hook groups")? {
             for raw in group["hooks"].as_array().context("Invalid hook list")? {
-                if raw["type"] != "command" {
-                    // Nothing here asks a model or a web address whether a tool may run.
+                // A `prompt` hook asks the chat's model; only where Claude has them and their answer
+                // can mean something here. Nothing here asks a web address or starts an agent.
+                let question = (raw["type"] == "prompt"
+                    && matches!(
+                        event.as_str(),
+                        "PreToolUse"
+                            | "PostToolUse"
+                            | "PostToolUseFailure"
+                            | "UserPromptSubmit"
+                            | "UserPromptExpansion"
+                            | "Stop"
+                            | "PostToolBatch"
+                            | "TaskCreated"
+                            | "TaskCompleted"
+                    ))
+                .then(|| raw["prompt"].as_str())
+                .flatten()
+                .map(str::trim)
+                .filter(|text| !text.is_empty() && text.len() <= super::hooks::PROMPT_HOOK_BYTES);
+                if raw["type"] != "command" && question.is_none() {
                     let kind = raw["type"].as_str().unwrap_or("other");
                     spec.unsupported
                         .push(format!("{event}: {kind} hook has no Themis equivalent"));
                     continue;
                 }
-                // Every Claude session starts with "startup", which here is every turn; `resume` is
-                // a chat's first run after the app started. Clearing and compacting have no
-                // equivalent.
-                let session_matcher = (event == "SessionStart")
-                    .then(|| group["matcher"].as_str())
-                    .flatten()
-                    .filter(|matcher| !matcher.is_empty() && *matcher != "*");
-                let mut session_sources = None;
-                if let Some(matcher) = session_matcher {
-                    let has =
-                        |wanted: &str| matcher.split('|').any(|source| source.trim() == wanted);
-                    if has("resume") && !has("startup") {
-                        session_sources = Some(vec!["resume".to_owned()]);
-                    } else if !has("startup") {
+                // Clearing, compacting and logging out have no equivalent: a matcher naming only
+                // those would never run, which isn't the same as working.
+                let mut moment_matcher = None;
+                if let (Some(moments), Some(matcher)) = (
+                    moments,
+                    group["matcher"]
+                        .as_str()
+                        .filter(|matcher| !matcher.is_empty() && *matcher != "*"),
+                ) {
+                    let reachable = moments.is_empty()
+                        || moments
+                            .iter()
+                            .any(|moment| super::hooks::moment_matches(matcher, moment));
+                    let compiles = matcher
+                        .chars()
+                        .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '|')
+                        || super::hooks::compile_matcher(matcher).is_ok();
+                    if !reachable || !compiles {
                         spec.unsupported.push(format!(
-                            "SessionStart: matcher {matcher} has no Themis equivalent"
+                            "{event}: matcher {matcher} has no Themis equivalent"
                         ));
                         continue;
                     }
+                    moment_matcher = Some(matcher.to_owned());
                 }
                 if !tool_event
-                    && event != "SessionStart"
+                    && moments.is_none()
+                    && !matcher_ignored
                     && group["matcher"]
                         .as_str()
                         .is_some_and(|matcher| !matcher.is_empty() && matcher != "*")
@@ -3219,10 +3327,20 @@ fn import_hooks(value: &Value, spec: &mut PluginSpec) -> anyhow::Result<()> {
                         }
                         mapped_tools
                     }
-                    _ if event == "SessionStart" => None,
+                    _ if moments.is_some() || matcher_ignored => None,
                     other => other.map(str::to_owned),
                 };
-                let command = raw["command"].as_str().context("Missing hook command")?;
+                let command = if question.is_some() {
+                    ""
+                } else {
+                    raw["command"].as_str().context("Missing hook command")?
+                };
+                if event == "PermissionRequest" && answers_allow(command, root) {
+                    spec.unsupported.push(format!(
+                        "{event}: answers allow, and hooks never grant permissions"
+                    ));
+                    continue;
+                }
                 let command = match &options.args {
                     Some(args) => quoted_command(command, args),
                     None => command.to_owned(),
@@ -3237,6 +3355,8 @@ fn import_hooks(value: &Value, spec: &mut PluginSpec) -> anyhow::Result<()> {
                 // Nobody waits for one that reports back, and a review takes its time.
                 let default_timeout = if rewake.is_some() {
                     super::hooks::MAX_TIMEOUT_SECONDS
+                } else if question.is_some() {
+                    PROMPT_HOOK_TIMEOUT
                 } else {
                     IMPORTED_HOOK_TIMEOUT
                 };
@@ -3246,14 +3366,21 @@ fn import_hooks(value: &Value, spec: &mut PluginSpec) -> anyhow::Result<()> {
                     command,
                     enabled: false,
                     matcher,
-                    failure_policy: None,
+                    // A prompt hook holds when it gets no answer, unless its plugin says it never
+                    // blocks. That can only weaken its own check, and its plain no still refuses.
+                    failure_policy: question
+                        .filter(|question| says_it_never_blocks(question))
+                        .map(|_| crate::plugins::hooks::HookFailurePolicy::Ignore),
                     shell,
                     background,
                     command_prefix,
                     command_glob,
+                    prompt: question.map(str::to_owned),
                     // Claude's way to refuse; a SessionStart hook can't stop a turn there either.
-                    // One that reports back says so the same way, whatever it runs at.
-                    exit_two_blocks: event != "SessionStart" || rewake.is_some(),
+                    // One that reports back says so the same way, whatever it runs at. A question
+                    // is asked once a call, whatever it touches: each asking costs.
+                    exit_two_blocks: question.is_none()
+                        && (event != "SessionStart" || rewake.is_some()),
                     rewake,
                     timeout_seconds: raw["timeout"]
                         .as_u64()
@@ -3264,7 +3391,7 @@ fn import_hooks(value: &Value, spec: &mut PluginSpec) -> anyhow::Result<()> {
                     plugin_root: None,
                     plugin_data: None,
                     env_file: None,
-                    session_sources,
+                    moment_matcher,
                     runtime_identity: None,
                 });
             }
@@ -3306,7 +3433,18 @@ fn imported_hook_name(event: &str, matcher: Option<&str>, command: &str, taken: 
         ("ToolCallFailed", Some(tool)) => format!("{tool}-failed").replace('_', "-"),
         ("BeforeTool", None) => "before-tool".into(),
         ("AfterTool", None) => "after-tool".into(),
-        _ => "tool-failed".into(),
+        ("ToolCallFailed", None) => "tool-failed".into(),
+        // `SessionEnd` is `session-end`.
+        (other, _) => {
+            let mut name = String::new();
+            for letter in other.chars() {
+                if letter.is_ascii_uppercase() && !name.is_empty() {
+                    name.push('-');
+                }
+                name.push(letter.to_ascii_lowercase());
+            }
+            name
+        }
     });
     let mut name = base.clone();
     let mut number = 1;
@@ -3447,7 +3585,8 @@ mod imported_hook_name_tests {
                 plugin_root: None,
                 plugin_data: None,
                 env_file: None,
-                session_sources: None,
+                moment_matcher: None,
+                prompt: None,
                 runtime_identity: None,
             })
             .collect()

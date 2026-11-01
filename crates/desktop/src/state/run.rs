@@ -46,6 +46,10 @@ impl ApprovalHook for AuditedApprovals {
         self.audited(action, || self.inner.approve_sensitive(action, access))
     }
 
+    fn would_ask(&self, action: &themis_core::tools::ToolAction) -> bool {
+        self.inner.would_ask(action)
+    }
+
     fn approve(&self, action: &themis_core::tools::ToolAction) -> themis_core::tools::Approval {
         self.audited(action, || self.inner.approve(action))
     }
@@ -352,14 +356,18 @@ impl AppState {
             run_configuration.approval.clone()
         };
         let session_dir = self.hook_session_dir(thread_id);
-        // A chat with history that hasn't run since the app started is one being continued.
-        let resumed = self
-            .inner
-            .chats_run
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .insert(thread_id.to_owned())
-            && !snapshot.history.is_empty();
+        let open_session = self.open_hook_session(
+            thread_id,
+            &snapshot.work_root,
+            permission_mode(snapshot.approval_mode),
+            run_configuration.hooks.session_idle_minutes,
+            run_configuration
+                .instructions
+                .iter()
+                .map(|file| snapshot.work_root.join(file).to_string_lossy().into_owned())
+                .collect(),
+            !snapshot.history.is_empty(),
+        );
         let mut plugin_bins = Vec::new();
         let mut hooks = Vec::new();
         let mut setup_events = Vec::new();
@@ -460,15 +468,13 @@ impl AppState {
                 }
             }
             for hook in &plugin.spec.hooks {
-                let mut hook = hook.clone();
-                hook.runtime_identity = Some(plugin.skill_id(&hook.name));
-                hook.plugin_root = Some(resource_root.clone());
-                hook.plugin_data = Some(store.plugin_data_dir(&plugin.scope, &plugin.spec.name));
-                hook.env_file = Some(themis_core::plugins::hooks::PluginEnvFile {
-                    path: session_dir.join(format!("env-{}", plugin.skill_id("hooks"))),
-                    prefix: themis_core::plugins::hooks::env_prefix(&plugin.spec.name),
-                });
-                hooks.push(hook);
+                hooks.push(super::hook_sessions::prepared_hook(
+                    hook,
+                    plugin,
+                    &store,
+                    &snapshot.work_root,
+                    &session_dir,
+                ));
             }
         }
         let mut hook_names = std::collections::HashSet::new();
@@ -580,6 +586,10 @@ impl AppState {
         // Subagents share this run's configuration, rules and grants, and its sandbox made
         // read-only; their results reach this run as notes.
         let mcp_names: themis_core::plugins::hooks::McpNames = Arc::new(mcp_names);
+        let prompt_model = themis_core::plugins::hooks::PromptModel::new(
+            Arc::clone(&llm),
+            run_configuration.hooks.prompt_hook_calls,
+        );
         let run_notes = if run_configuration.subagents.enabled {
             let kit = Arc::new(super::subagents::SubagentKit::new(
                 self.clone(),
@@ -590,6 +600,7 @@ impl AppState {
                 capacity_catalog.clone(),
                 endpoint_override,
                 hooks.clone(),
+                prompt_model.clone(),
                 super::subagents::SubagentMcp {
                     names: Arc::clone(&mcp_names),
                     labels: Arc::new(tool_labels.clone()),
@@ -623,7 +634,9 @@ impl AppState {
                 transcript_path: Some(session_dir.join("transcript.jsonl")),
                 permission_mode: permission_mode(snapshot.approval_mode).to_owned(),
                 cancel: Some(Arc::clone(&stopped)),
-                source: if resumed { "resume" } else { "startup" }.to_owned(),
+                open: Some(open_session),
+                model: snapshot.model.clone(),
+                prompt_model: Some(prompt_model),
                 plugin_bins,
                 attached_skills: snapshot
                     .skills
@@ -952,7 +965,7 @@ impl AppState {
 const HOOK_SESSIONS_DIR: &str = "hook-sessions";
 
 impl AppState {
-    fn hook_session_dir(&self, thread_id: &str) -> std::path::PathBuf {
+    pub(super) fn hook_session_dir(&self, thread_id: &str) -> std::path::PathBuf {
         self.app_data_dir().join(HOOK_SESSIONS_DIR).join(thread_id)
     }
 
@@ -967,6 +980,7 @@ impl AppState {
 
     /// Marks a run idle, releases its concurrency permit, and persists.
     pub(super) async fn finish_run(&self, thread_id: &str) {
+        self.touch_hook_session(thread_id);
         self.close_steer_inbox(thread_id);
         self.stop_subagents(thread_id);
         // A recording the agent left running ends with its run, and so do its breakpoints,

@@ -10,20 +10,32 @@ export interface HookRow {
 }
 
 /** Hook events in the order a run reaches them (board 24). */
-export const HOOK_EVENTS: Array<{ title: string; events: string[] }> = [
+export const HOOK_EVENTS: Array<{ title: string; events: string[]; onlyWhenUsed?: boolean }> = [
+  { title: "Session starts", events: ["SessionStart"], onlyWhenUsed: true },
+  { title: "Instructions loaded", events: ["InstructionsLoaded"], onlyWhenUsed: true },
+  { title: "Configuration changed", events: ["ConfigChange"], onlyWhenUsed: true },
   { title: "Prompt submitted", events: ["PromptSubmit"] },
+  { title: "Skill used in a prompt", events: ["UserPromptExpansion"], onlyWhenUsed: true },
   { title: "Run starts", events: ["RunStart"] },
+  { title: "Approval about to be asked", events: ["PermissionRequest"], onlyWhenUsed: true },
+  { title: "Approval refused", events: ["PermissionDenied"], onlyWhenUsed: true },
   { title: "Before a tool runs", events: ["BeforeTool", "BeforeToolCall"] },
   { title: "After a tool runs", events: ["AfterTool", "AfterToolCall", "ToolCallFailed"] },
+  { title: "After a step's tools", events: ["PostToolBatch"], onlyWhenUsed: true },
   { title: "Subagent starts", events: ["SubagentStart"] },
+  { title: "Subagent plan item added", events: ["TaskCreated"], onlyWhenUsed: true },
+  { title: "Subagent plan item done", events: ["TaskCompleted"], onlyWhenUsed: true },
   { title: "Subagent ends", events: ["SubagentEnd"] },
   { title: "Before context is compacted", events: ["BeforeCompaction"] },
+  { title: "After context is compacted", events: ["PostCompact"], onlyWhenUsed: true },
+  { title: "Notified", events: ["Notification"], onlyWhenUsed: true },
   { title: "Turn would end", events: ["Stop"] },
   { title: "Run ends", events: ["RunEnd", "RunFinished"] },
+  { title: "Session ends", events: ["SessionEnd"], onlyWhenUsed: true },
 ];
 
 /** Claude hook events, so a plugin's skipped hooks can be told from its other notes. */
-const CLAUDE_EVENTS = /^(PreToolUse|PostToolUse|PostToolUseFailure|UserPromptSubmit|SessionStart|SessionEnd|Stop|SubagentStart|SubagentStop|PreCompact|Notification|PermissionRequest|PostToolBatch|UserPromptExpansion)\b/;
+const CLAUDE_EVENTS = /^(PreToolUse|PostToolUse|PostToolUseFailure|UserPromptSubmit|SessionStart|SessionEnd|Stop|SubagentStart|SubagentStop|PreCompact|PostCompact|Notification|PermissionRequest|PermissionDenied|PostToolBatch|UserPromptExpansion|TaskCreated|TaskCompleted|ConfigChange|InstructionsLoaded)\b/;
 
 /** One plain reason for a skipped hook, or null for a note that is not about hooks. */
 export function skipReason(note: string): string | null {
@@ -57,8 +69,9 @@ export function hookMeta(row: HookRow, source: string): string {
   ].filter(Boolean).join(" · ");
 }
 
-/** Installed › Hooks: every event in run order with its hooks, empty ones dimmed, and one line
- *  per plugin for the hooks it could not bring. Read-only apart from each hook's switch. */
+/** Installed › Hooks: the events in run order with their hooks, empty ones dimmed (the rarer ones
+ *  appear only with a hook), and one line per plugin for the hooks it could not bring. Read-only
+ *  apart from each hook's switch. */
 export function HooksByEvent({ rows, plugins, sourceOf, disabled, onToggle, onOpen }: {
   rows: HookRow[];
   plugins: Plugin[];
@@ -79,11 +92,12 @@ export function HooksByEvent({ rows, plugins, sourceOf, disabled, onToggle, onOp
     const unique = [...new Set(reasons)];
     return [`${reasons.length} hook${reasons.length === 1 ? "" : "s"} skipped (${plugin.spec.name}): ${unique.join("; ")}.`];
   });
+  const hooksOf = (events: string[]) => rows.filter(row => events.includes(row.plugin.spec.hooks.find(hook => hook.name === row.id)?.event ?? ""));
   return (
     <div className="themis-integrations-list">
       <ol className="themis-hook-events" aria-label="Hook events in run order">
-        {HOOK_EVENTS.map((step, index) => {
-          const hooks = rows.filter(row => step.events.includes(row.plugin.spec.hooks.find(hook => hook.name === row.id)?.event ?? ""));
+        {HOOK_EVENTS.filter(step => !step.onlyWhenUsed || hooksOf(step.events).length > 0).map((step, index) => {
+          const hooks = hooksOf(step.events);
           const open = !collapsed.has(step.title);
           const heading = <>
             <span className="themis-hook-step" aria-hidden="true">{index + 1}</span>

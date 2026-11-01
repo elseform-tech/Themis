@@ -119,7 +119,7 @@ async fn shared_configuration_partial_import_and_diagnostics_survive_restart() {
         )["approval_mode"],
         "yolo"
     );
-    let input = json!({"mcpServers":{"good":{"command":"node","args":[]},"legacy":{"type":"sse","url":"https://example.com/mcp"}}}).to_string();
+    let input = json!({"mcpServers":{"good":{"command":"node","args":[]},"legacy":{"type":"websocket","url":"https://example.com/mcp"}}}).to_string();
     let preview = cli(
         directory.path(),
         "plugin_action",
@@ -358,7 +358,7 @@ async fn cli_catalog_inspection_distinguishes_partial_and_unsupported() {
         std::fs::create_dir_all(market.path().join(name)).unwrap();
         std::fs::write(
             market.path().join(name).join(".mcp.json"),
-            r#"{"mcpServers":{"legacy":{"type":"sse","url":"https://example.com/events"}}}"#,
+            r#"{"mcpServers":{"legacy":{"type":"websocket","url":"https://example.com/events"}}}"#,
         )
         .unwrap();
     }
