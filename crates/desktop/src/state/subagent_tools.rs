@@ -44,6 +44,7 @@ pub(super) fn tools(kit: &Arc<SubagentKit>) -> Vec<Box<dyn ToolT>> {
                 models: !others.is_empty(),
                 profiles: !kit.profiles.is_empty(),
                 mcp: kit.offers_mcp(),
+                nested: kit.nested.is_some(),
             }) as Box<dyn ToolT>
         })
         .collect()
@@ -140,6 +141,8 @@ struct SubagentTool {
     profiles: bool,
     /// The spawn tool offers `mcp_tools` (this run has some, and they are allowed).
     mcp: bool,
+    /// A subagent has these tools, not the main agent.
+    nested: bool,
 }
 
 impl std::fmt::Debug for SubagentTool {
@@ -243,6 +246,17 @@ fn parse_briefs(args: &Value) -> Result<Vec<Brief>, ToolCallError> {
 }
 
 impl SubagentTool {
+    /// The schema of a call that says what it does: the main agent's line for the person. A
+    /// subagent's calls show only in its own detail, with their `status` line.
+    fn with_say(&self, mut properties: Value, required: &[&str]) -> Value {
+        let mut names: Vec<&str> = required.to_vec();
+        if !self.nested {
+            properties["say"] = say_field();
+            names.insert(0, "say");
+        }
+        json!({"type":"object","properties":properties,"required":names,"additionalProperties":false})
+    }
+
     fn agent(&self, args: &Value) -> Result<Arc<Subagent>, ToolCallError> {
         let id = args["id"]
             .as_str()
@@ -273,6 +287,13 @@ impl SubagentTool {
                     }
                     (asked, _) => pick_model(asked, &default, &others).map_err(error)?,
                 };
+                if profile.is_none() && self.kit.profile_required() {
+                    return Err(error(format!(
+                        "name a `profile` for '{}': you may start only these: {}",
+                        brief.name,
+                        self.kit.profiles.listing().0
+                    )));
+                }
                 Ok((brief, model, profile))
             })
             .collect::<Result<Vec<_>, ToolCallError>>()?;
@@ -510,20 +531,22 @@ impl ToolT for SubagentTool {
                     item["properties"]["mcp_tools"] =
                         json!({"type":"array","items":{"type":"string"},"maxItems":MAX_MCP_TOOLS});
                 }
-                json!({"type":"object","properties":{
-                    "say":say_field(),
-                    "subagents":{"type":"array","minItems":1,"maxItems":MAX_PER_CALL,"items":item}
-                },"required":["say","subagents"],"additionalProperties":false})
+                let subagents =
+                    json!({"type":"array","minItems":1,"maxItems":MAX_PER_CALL,"items":item});
+                self.with_say(json!({"subagents": subagents}), &["subagents"])
             }
-            Kind::Wait => json!({"type":"object","properties":{
-                "ids":{"type":"array","items":{"type":"string"}},
-                "any":{"type":"boolean"},
-                "timeout_seconds":{"type":"integer","minimum":1,"maximum":MAX_WAIT_SECONDS},
-                "say":say_field()
-            },"required":["say"],"additionalProperties":false}),
-            Kind::Message => json!({"type":"object","properties":{
-                "id":{"type":"string"},"message":{"type":"string"},"say":say_field()
-            },"required":["say","id","message"],"additionalProperties":false}),
+            Kind::Wait => self.with_say(
+                json!({
+                    "ids":{"type":"array","items":{"type":"string"}},
+                    "any":{"type":"boolean"},
+                    "timeout_seconds":{"type":"integer","minimum":1,"maximum":MAX_WAIT_SECONDS}
+                }),
+                &[],
+            ),
+            Kind::Message => self.with_say(
+                json!({"id":{"type":"string"},"message":{"type":"string"}}),
+                &["id", "message"],
+            ),
             Kind::Stop => json!({"type":"object","properties":{
                 "id":{"type":"string"}
             },"required":["id"],"additionalProperties":false}),

@@ -570,6 +570,8 @@ pub struct SubagentsConfig {
     pub allow_mcp: bool,
     /// `false` gives no subagent the web tools, whatever a profile names.
     pub allow_web: bool,
+    /// Whether a subagent whose profile names `Agent` or `Task` may start subagents of its own.
+    pub allow_nested: bool,
 }
 
 /// Most models `subagents.models` may list.
@@ -585,6 +587,7 @@ impl Default for SubagentsConfig {
             allow_writes: true,
             allow_mcp: true,
             allow_web: true,
+            allow_nested: true,
         }
     }
 }
@@ -596,7 +599,13 @@ fn check_subagents_restriction(
     layer: &Value,
     origin: &str,
 ) -> Result<()> {
-    for field in ["enabled", "allow_writes", "allow_mcp", "allow_web"] {
+    for field in [
+        "enabled",
+        "allow_writes",
+        "allow_mcp",
+        "allow_web",
+        "allow_nested",
+    ] {
         if let Some(value) = layer.pointer(&format!("/subagents/{field}")) {
             ensure!(
                 value == &Value::Bool(false),
@@ -1882,7 +1891,8 @@ fn base_schema() -> Value {
                 "models":{"type":"array","maxItems":3,"uniqueItems":true,"items":{"type":"string","minLength":1,"maxLength":256},"default":[],"description":"Up to three more models the agent may give a subagent; any other is refused"},
                 "allow_writes":{"type":"boolean","default":true,"description":"false keeps every subagent read-only"},
                 "allow_mcp":{"type":"boolean","default":true,"description":"false gives no subagent MCP tools"},
-                "allow_web":{"type":"boolean","default":true,"description":"false gives no subagent the web tools"}
+                "allow_web":{"type":"boolean","default":true,"description":"false gives no subagent the web tools"},
+                "allow_nested":{"type":"boolean","default":true,"description":"false stops subagents starting subagents, whatever a plugin's profile names. A project or run layer may only set it to false."}
             }},
             "goal":{"type":"object","additionalProperties":false,"properties":{
                 "check_model":{"type":["string","null"],"minLength":1,"maxLength":256,"default":null,"description":"The model that checks each goal turn; absent, the chat's model. Any model a connected provider offers; <provider>/<id> for one from providers"},

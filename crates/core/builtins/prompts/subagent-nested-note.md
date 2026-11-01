@@ -1,0 +1,1 @@
+You can start helpers of your own with spawn_subagents and collect them with wait_subagents. They can do no more than you can, they can't start helpers themselves, and only you see their results, so put what matters in your final reply.

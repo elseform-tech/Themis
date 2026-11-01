@@ -268,6 +268,7 @@ const ALL: &[(&str, &str, &[&str])] = &[
     (SUBAGENT_MCP_LEFT_OUT, "subagent-mcp-left-out", &["tools"]),
     (SPAWN_SUBAGENTS_MCP, "spawn-subagents-mcp", &[]),
     (SUBAGENT_WEB_NOTE, "subagent-web-note", &["tools"]),
+    (SUBAGENT_NESTED_NOTE, "subagent-nested-note", &[]),
     (
         HOOK_STOP_CONTINUE,
         "hook-stop-continue",
