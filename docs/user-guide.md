@@ -540,7 +540,7 @@ Preferences persisted to `settings.json`:
 | `completion_haptic` | Trackpad feedback when a reply you started finishes (macOS) | `false` |
 | `goal_notifications` | Desktop notification when a goal is reached or pauses while Themis is in the background (macOS) | `true` |
 | `projects_directory` | Fixed parent folder for new projects | `~/ThemisOS/Projects` |
-| `text_size` | Text size across the app (10–22 px) | `10` |
+| `text_size` | Text size across the app (10–22 px) | `12` |
 | `sidebar_hover` | Reveal collapsed navigation on edge hover | `true` |
 | `check_sources_for_updates` | Look for plugin updates in sources not checked today when the app opens | `true` |
 | `config_editor` | Editor Settings → Permissions opens `runtime.jsonc` with (`""` = system text editor; or `vscode`, `cursor`, `windsurf`, `antigravity`, `zed`, `sublime`, `bbedit`, `xcode`) | `""` |

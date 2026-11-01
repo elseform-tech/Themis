@@ -1,7 +1,7 @@
 import { expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 
-it("sets body text to the chosen size, and no label smaller than 90% of it at the default", () => {
+it("sets body text to the chosen size, and no label below 9px even at the smallest size", () => {
   const shell = readFileSync("src/screens/shell.css", "utf8");
   expect(shell).toMatch(/\.themis-shell \{[^}]*font-size: \.8333rem/);
   expect(shell).toContain("-webkit-font-smoothing: auto");

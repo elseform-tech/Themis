@@ -1123,7 +1123,7 @@ fn default_appearance_choice() -> String {
 }
 
 pub(crate) const fn default_text_size() -> u32 {
-    10
+    12
 }
 
 const fn default_completion_sound() -> bool {
@@ -1728,7 +1728,7 @@ mod tests {
             to_value(&settings),
             json!({
                 "projects_directory": default_projects_directory(),
-                "text_size": 10,
+                "text_size": 12,
                 "text_size_chosen": false,
                 "theme_palette": "system",
                 "font_family": "system",

@@ -506,10 +506,10 @@ mod preference_tests {
     /// The old default moves to the new one once; a size someone chose stays, and so does 13 once
     /// they have chosen it.
     #[tokio::test]
-    async fn text_defaults_to_ten_and_the_old_default_moves_once() {
+    async fn text_defaults_to_twelve_and_the_old_default_moves_once() {
         let temp = tempfile::tempdir().unwrap();
         let fresh = SettingsStore::load(temp.path().join("fresh.json"));
-        assert_eq!(fresh.get().await.text_size, 10);
+        assert_eq!(fresh.get().await.text_size, 12);
         let saved_with = |size: u32| {
             let mut saved = serde_json::to_value(Settings::default()).unwrap();
             saved["text_size"] = size.into();
@@ -518,7 +518,7 @@ mod preference_tests {
         };
         let old = temp.path().join("old.json");
         std::fs::write(&old, saved_with(13)).unwrap();
-        assert_eq!(SettingsStore::load(old).get().await.text_size, 10);
+        assert_eq!(SettingsStore::load(old).get().await.text_size, 12);
         let chosen = temp.path().join("chosen.json");
         std::fs::write(&chosen, saved_with(18)).unwrap();
         assert_eq!(SettingsStore::load(chosen).get().await.text_size, 18);
