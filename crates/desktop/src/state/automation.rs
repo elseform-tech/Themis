@@ -117,9 +117,7 @@ pub fn shell_policy_for(
         return CheckPolicy::Deny;
     }
     match policy.decision(&check_action(argv)) {
-        PolicyAction::Allow if decisions.iter().any(|d| *d == PolicyAction::Ask) => {
-            CheckPolicy::Ask
-        }
+        PolicyAction::Allow if decisions.contains(&PolicyAction::Ask) => CheckPolicy::Ask,
         PolicyAction::Allow => CheckPolicy::Allow,
         PolicyAction::Ask => CheckPolicy::Ask,
         PolicyAction::Deny => CheckPolicy::Deny,

@@ -435,7 +435,17 @@ impl SensitiveMatcher {
             .map(|(word, _)| *word)
             .filter(|word| !word.starts_with('-'))
             .collect();
+        // The first word after a search program is its pattern, so checking `.gitignore` with
+        // `grep .env .gitignore` doesn't ask. With -e or -f every word may be a file.
+        let searches = matches!(program.as_str(), "grep" | "egrep" | "fgrep" | "rg" | "ag")
+            && !words
+                .iter()
+                .any(|(word, _)| has_flag(word, &["regexp", "file"], "ef"));
+        let pattern = plain.get(1).copied().filter(|_| searches);
         for (word, _) in &words {
+            if pattern.is_some_and(|pattern| std::ptr::eq(pattern, *word)) {
+                continue;
+            }
             let (access, creates) = access_of(&program, word, &plain);
             self.note_word(word, cwd, access, creates, found);
         }
@@ -975,6 +985,9 @@ mod tests {
             ("head", vec!["-n1", ".env"]),
             ("tail", vec![".env"]),
             ("grep", vec!["TOKEN", ".env"]),
+            ("grep", vec![".env", ".env"]),
+            ("grep", vec!["-e", "TOKEN", ".env"]),
+            ("grep", vec!["-f", ".env", "notes.txt"]),
             ("base64", vec![".env"]),
             ("cp", vec![".env", "out.txt"]),
             ("source", vec![".env"]),
@@ -1008,6 +1021,12 @@ mod tests {
         for (command, args) in [
             ("echo", vec![".env"]),
             ("ls", vec!["-la", ".env"]),
+            ("grep", vec![".env", ".gitignore"]),
+            ("grep", vec!["-q", ".env", ".gitignore"]),
+            (
+                "sh",
+                vec!["-c", "grep -qx .env .gitignore || echo .env >> .gitignore"],
+            ),
             ("sh", vec!["-c", "echo .env >> .gitignore"]),
             ("git", vec!["check-ignore", ".env"]),
             ("git", vec!["rm", "--cached", ".env"]),

@@ -352,8 +352,9 @@ or `rsync`. It does not see:
   model, and an allowed `curl -d @.env` sends the file;
 - MCP tools, plugin hooks and anything else outside the core tools.
 
-It also asks when nothing would leak: `grep .env .gitignore` reads as naming `.env`
-when that file exists. Shell commands usually ask anyway, so this costs one answer.
+It can also ask when nothing would leak: `jq .env notes.json` reads as naming `.env` when
+that file exists. Shell commands usually ask anyway, so this costs one answer. The first
+word after `grep` and the like is its pattern, so `grep .env .gitignore` doesn't ask.
 
 ### Secrets and Git
 

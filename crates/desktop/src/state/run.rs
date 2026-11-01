@@ -290,8 +290,11 @@ impl AppState {
         )
         .map_err(|error| format!("failed to materialize skill catalog: {error:#}"))?;
         let workspace = json!({"project_root": snapshot.work_root}).to_string();
+        let secrets_note = self
+            .project_secrets_note(&run_configuration, &snapshot.work_root, thread_id, run_id)
+            .await;
         skill_catalog = format!(
-            "\n{}\n{}{}",
+            "\n{}\n{}{secrets_note}{}",
             themis_core::prompts::fill(
                 themis_core::prompts::DESKTOP_RUN_WORKSPACE,
                 &[("workspace", &workspace)]
@@ -302,16 +305,7 @@ impl AppState {
             } else {
                 String::new()
             },
-            format!(
-                "{}{skill_catalog}",
-                self.project_secrets_note(
-                    &run_configuration,
-                    &snapshot.work_root,
-                    thread_id,
-                    run_id
-                )
-                .await
-            ),
+            skill_catalog
         );
         materialize_scripts(&snapshot.skills, &snapshot.work_root).map_err(|e| e.to_string())?;
         // The sandbox is captured once per run like the rest of the
