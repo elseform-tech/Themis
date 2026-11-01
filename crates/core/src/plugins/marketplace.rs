@@ -2975,7 +2975,9 @@ struct HookOptions {
     shell: Option<String>,
     background: bool,
     command_prefix: Option<Vec<String>>,
+    command_glob: Option<String>,
     args: Option<Vec<String>>,
+    rewake: Option<crate::plugins::hooks::HookRewake>,
 }
 
 /// A hook's options, or why the hook has to stay out because its meaning wouldn't hold.
@@ -2988,12 +2990,25 @@ fn read_hook_options(raw: &Value, windows: bool) -> Result<HookOptions, String> 
             "type" | "command" | "timeout" => {}
             // Text for Claude's spinner.
             "statusMessage" => {}
-            "async" => options.background = value.as_bool() == Some(true),
-            // Waking the agent with the findings is the point of these; it can't be done here.
-            "asyncRewake" if value.as_bool() == Some(true) => {
-                return Err("asyncRewake needs a way to wake the agent".to_owned());
+            "async" => options.background |= value.as_bool() == Some(true),
+            // Runs in the background, and what it reports reaches the agent.
+            "asyncRewake" => {
+                if value.as_bool() == Some(true) {
+                    let label = |field: &str| {
+                        raw[field]
+                            .as_str()
+                            .map(str::trim)
+                            .filter(|text| !text.is_empty())
+                            .map(|text| capped_label(text).to_owned())
+                    };
+                    options.background = true;
+                    options.rewake = Some(crate::plugins::hooks::HookRewake {
+                        message: label("rewakeMessage"),
+                        summary: label("rewakeSummary"),
+                    });
+                }
             }
-            "asyncRewake" | "rewakeMessage" | "rewakeSummary" => {}
+            "rewakeMessage" | "rewakeSummary" => {}
             "shell" => match value.as_str() {
                 Some("bash") => options.shell = Some("bash".to_owned()),
                 other => return Err(format!("shell {} is not available", other.unwrap_or("?"))),
@@ -3018,10 +3033,15 @@ fn read_hook_options(raw: &Value, windows: bool) -> Result<HookOptions, String> 
             }
             "if" => {
                 let rule = value.as_str().unwrap_or_default();
-                options.command_prefix = Some(
-                    condition_prefix(rule)
-                        .ok_or_else(|| format!("condition {rule} can't be checked"))?,
-                );
+                match condition_prefix(rule) {
+                    Some(words) => options.command_prefix = Some(words),
+                    None => {
+                        options.command_glob = Some(
+                            condition_glob(rule)
+                                .ok_or_else(|| format!("condition {rule} can't be checked"))?,
+                        );
+                    }
+                }
             }
             other => return Err(format!("option {other} has no Themis equivalent")),
         }
@@ -3040,6 +3060,24 @@ fn condition_prefix(rule: &str) -> Option<Vec<String>> {
     let plain = |word: &str| !word.contains(['*', '?', '[', ']', '(', ')', '"', '\'', '\\', '$']);
     let words: Vec<String> = words.split_whitespace().map(str::to_owned).collect();
     (!words.is_empty() && words.iter().all(|word| plain(word))).then_some(words)
+}
+
+/// The pattern in an `if` rule that has `*` inside words: `Bash(git*commit*)`. Something other
+/// than `*` must say what it is about, and `*` is the only pattern character checked.
+fn condition_glob(rule: &str) -> Option<String> {
+    let inner = rule.strip_prefix("Bash(")?.strip_suffix(')')?;
+    let says_something = inner.bytes().any(|byte| byte.is_ascii_alphanumeric());
+    let plain = !inner.contains(['?', '[', ']', '(', ')', '"', '\'', '\\', '$']);
+    (says_something && plain && inner.contains('*')).then(|| inner.to_owned())
+}
+
+/// `text`, cut to what a hook's report label may hold.
+fn capped_label(text: &str) -> &str {
+    let mut end = text.len().min(crate::plugins::hooks::REWAKE_LABEL_LIMIT);
+    while !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    &text[..end]
 }
 
 /// A program and its arguments as one line for a POSIX shell, each word reaching the program as
@@ -3179,8 +3217,19 @@ fn import_hooks(value: &Value, spec: &mut PluginSpec) -> anyhow::Result<()> {
                     Some(args) => quoted_command(command, args),
                     None => command.to_owned(),
                 };
-                let (shell, background, command_prefix) =
-                    (options.shell, options.background, options.command_prefix);
+                let (shell, background, command_prefix, command_glob, rewake) = (
+                    options.shell,
+                    options.background,
+                    options.command_prefix,
+                    options.command_glob,
+                    options.rewake,
+                );
+                // Nobody waits for one that reports back, and a review takes its time.
+                let default_timeout = if rewake.is_some() {
+                    super::hooks::MAX_TIMEOUT_SECONDS
+                } else {
+                    IMPORTED_HOOK_TIMEOUT
+                };
                 spec.hooks.push(Hook {
                     name: imported_hook_name(mapped, matcher.as_deref(), &command, &spec.hooks),
                     event: mapped.into(),
@@ -3191,11 +3240,14 @@ fn import_hooks(value: &Value, spec: &mut PluginSpec) -> anyhow::Result<()> {
                     shell,
                     background,
                     command_prefix,
+                    command_glob,
                     // Claude's way to refuse; a SessionStart hook can't stop a turn there either.
-                    exit_two_blocks: event != "SessionStart",
+                    // One that reports back says so the same way, whatever it runs at.
+                    exit_two_blocks: event != "SessionStart" || rewake.is_some(),
+                    rewake,
                     timeout_seconds: raw["timeout"]
                         .as_u64()
-                        .unwrap_or(IMPORTED_HOOK_TIMEOUT)
+                        .unwrap_or(default_timeout)
                         .clamp(1, super::hooks::MAX_TIMEOUT_SECONDS),
                     // A broken session hook must not stop every turn.
                     blocking: event == "PreToolUse" && !background,
@@ -3377,6 +3429,8 @@ mod imported_hook_name_tests {
                 shell: None,
                 background: false,
                 command_prefix: None,
+                command_glob: None,
+                rewake: None,
                 exit_two_blocks: false,
                 timeout_seconds: 10,
                 blocking: false,

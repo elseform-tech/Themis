@@ -16,6 +16,7 @@ pub(crate) mod configuration;
 pub(crate) mod editors;
 mod goal;
 mod goal_tool;
+mod hook_wakes;
 mod integration_tools;
 mod keys;
 mod mcp;
@@ -279,6 +280,8 @@ struct AppStateInner {
     removals: tokio::sync::RwLock<HashMap<String, AutomationRemoval>>,
     removals_path: PathBuf,
     /// Automations the scheduler is processing right now (check or spawn).
+    /// Turns hooks have started in each chat since the person last wrote; see `hook_wakes.rs`.
+    hook_wakes: std::sync::Mutex<HashMap<String, u32>>,
     /// Stands in for the person's browser in tests; absent, the system opens addresses.
     url_opener: std::sync::Mutex<Option<UrlOpener>>,
     watch_inflight: std::sync::Mutex<HashSet<String>>,
@@ -570,6 +573,7 @@ impl AppState {
                 removals: tokio::sync::RwLock::new(removals),
                 removals_path,
                 url_opener: std::sync::Mutex::new(None),
+                hook_wakes: std::sync::Mutex::new(HashMap::new()),
                 watch_inflight: std::sync::Mutex::new(HashSet::new()),
                 automation_runs: std::sync::Mutex::new(HashMap::new()),
                 scheduler_sink: std::sync::Mutex::new(None),

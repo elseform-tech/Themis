@@ -877,20 +877,54 @@ fn shell_is_honoured_or_the_hook_stays_out() {
 }
 
 #[test]
-fn async_runs_in_the_background_and_rewake_stays_out() {
+fn async_runs_in_the_background_and_rewake_reports_back() {
     let (hook, notes) = import_hook(json!({"async": true}));
     let hook = hook.expect("imported");
     assert!(hook.background && !hook.blocking);
+    assert!(hook.rewake.is_none());
     assert_eq!(notes, "");
-    // Waking the agent with the hook's findings is what the hook is for, and Themis can't.
     for options in [
         json!({"asyncRewake": true}),
         json!({"async": true, "asyncRewake": true, "rewakeMessage": "x", "rewakeSummary": "y"}),
     ] {
+        let labelled = options.get("rewakeMessage").is_some();
         let (hook, notes) = import_hook(options);
-        assert!(hook.is_none());
-        assert!(notes.contains("PreToolUse: asyncRewake"), "{notes}");
+        let hook = hook.expect("imported");
+        assert_eq!(notes, "");
+        assert!(hook.background && !hook.blocking && hook.exit_two_blocks);
+        let rewake = hook.rewake.expect("reports back");
+        assert_eq!(rewake.message.is_some(), labelled);
+        assert_eq!(rewake.summary.is_some(), labelled);
+        // Nobody waits for it, so it gets the longest a hook may have unless it asks for less.
+        assert_eq!(
+            hook.timeout_seconds,
+            themis_core::plugins::hooks::MAX_TIMEOUT_SECONDS
+        );
     }
+    let (hook, _) = import_hook(json!({"asyncRewake": true, "timeout": 10}));
+    assert_eq!(hook.unwrap().timeout_seconds, 10);
+    // Written out but false: nothing changes.
+    let (hook, _) = import_hook(json!({"asyncRewake": false, "rewakeMessage": "x"}));
+    let hook = hook.unwrap();
+    assert!(!hook.background && hook.rewake.is_none());
+    // A long label is cut, and the hook still imports.
+    let (hook, _) = import_hook(json!({"asyncRewake": true, "rewakeMessage": "é".repeat(4096)}));
+    let hook = hook.unwrap();
+    assert!(hook.validate().is_ok());
+    assert!(
+        hook.rewake.unwrap().message.unwrap().len()
+            <= themis_core::plugins::hooks::REWAKE_LABEL_LIMIT
+    );
+    // A session hook's exit 2 stops nothing, but one that reports back reports.
+    let plugin = tempfile::tempdir().unwrap();
+    manifest(plugin.path(), json!({"name": "fixture"}));
+    write(
+        plugin.path(),
+        "hooks/hooks.json",
+        &json!({"hooks": {"SessionStart": [{"hooks": [{"type": "command", "command": "x", "asyncRewake": true}]}]}}).to_string(),
+    );
+    let session = inspect(plugin.path());
+    assert!(session.spec.hooks[0].exit_two_blocks);
 }
 
 #[test]
@@ -904,13 +938,28 @@ fn if_names_a_command_or_the_hook_stays_out() {
         );
         assert_eq!(notes, "");
     }
+    // Patterns inside words, as security-guidance and claude-security write them.
     for rule in [
         "Bash(git*push*)",
         "Bash(py* *x*scripts/*.py *)",
+        "Bash(gt*)",
+    ] {
+        let (hook, notes) = import_hook(json!({"if": rule}));
+        let hook = hook.expect("imported");
+        assert_eq!(hook.command_prefix, None);
+        assert_eq!(
+            hook.command_glob.as_deref(),
+            rule.strip_prefix("Bash(").unwrap().strip_suffix(')')
+        );
+        assert_eq!(notes, "");
+    }
+    for rule in [
+        "Bash(git?push)",
         "Read(*.env)",
         "Bash",
         "Bash()",
         "Bash(*)",
+        "Bash(* *)",
     ] {
         let (hook, notes) = import_hook(json!({"if": rule}));
         assert!(hook.is_none(), "{rule}");

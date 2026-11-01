@@ -572,6 +572,39 @@ pub struct SubagentsConfig {
     pub allow_web: bool,
 }
 
+/// Plugin hooks (`hooks`); the hooks themselves are in the plugin registry, this is how they may
+/// act on a chat.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct HooksConfig {
+    /// How many turns in a row a finished background hook may start in an idle chat before the
+    /// person writes again. 0 never starts one: what a hook reports waits for the next turn.
+    pub max_wakes: u32,
+}
+
+/// Most `hooks.max_wakes` may say.
+pub const MAX_HOOK_WAKES: u32 = 10;
+
+impl Default for HooksConfig {
+    fn default() -> Self {
+        Self { max_wakes: 3 }
+    }
+}
+
+/// A project or run layer may only lower how many turns hooks may start.
+fn check_hooks_restriction(current: &HooksConfig, layer: &Value, origin: &str) -> Result<()> {
+    if let Some(value) = layer.pointer("/hooks/max_wakes") {
+        ensure!(
+            value
+                .as_u64()
+                .is_some_and(|value| value <= u64::from(current.max_wakes)),
+            "the {origin} configuration may only lower hooks.max_wakes (at most {})",
+            current.max_wakes
+        );
+    }
+    Ok(())
+}
+
 /// Most models `subagents.models` may list.
 pub const MAX_SUBAGENT_MODELS: usize = 3;
 impl Default for SubagentsConfig {
@@ -944,6 +977,8 @@ pub struct RuntimeConfig {
     pub goal: GoalConfig,
     /// Subagents; see [`SubagentsConfig`].
     pub subagents: SubagentsConfig,
+    /// Plugin hooks; see [`HooksConfig`].
+    pub hooks: HooksConfig,
     /// `web_search` backend; see [`WebConfig`].
     pub web: WebConfig,
     /// The built-in browser; see [`BrowserConfig`].
@@ -976,6 +1011,7 @@ impl Default for RuntimeConfig {
             compaction: CompactionConfig::default(),
             goal: GoalConfig::default(),
             subagents: SubagentsConfig::default(),
+            hooks: HooksConfig::default(),
             web: WebConfig::default(),
             browser: BrowserConfig::default(),
             providers: Vec::new(),
@@ -1480,6 +1516,9 @@ pub fn resolve(
                 let subagents: SubagentsConfig = serde_json::from_value(value["subagents"].clone())
                     .context("invalid subagents configuration")?;
                 check_subagents_restriction(&subagents, &layer, origin)?;
+                let hooks: HooksConfig = serde_json::from_value(value["hooks"].clone())
+                    .context("invalid hooks configuration")?;
+                check_hooks_restriction(&hooks, &layer, origin)?;
                 providers::check_provider_restriction(&layer, origin)?;
                 let current: BrowserConfig = serde_json::from_value(value["browser"].clone())
                     .context("invalid browser configuration")?;
@@ -1652,6 +1691,10 @@ pub fn validate(config: &RuntimeConfig) -> Result<()> {
             providers::check_model_prefix(&config.providers, field, model, false)?;
         }
     }
+    ensure!(
+        config.hooks.max_wakes <= MAX_HOOK_WAKES,
+        "hooks.max_wakes must be 0..{MAX_HOOK_WAKES}"
+    );
     ensure!(
         (1..=6).contains(&config.subagents.max_parallel),
         "subagents.max_parallel must be 1..6"
@@ -1883,6 +1926,9 @@ fn base_schema() -> Value {
                 "allow_writes":{"type":"boolean","default":true,"description":"false keeps every subagent read-only"},
                 "allow_mcp":{"type":"boolean","default":true,"description":"false gives no subagent MCP tools"},
                 "allow_web":{"type":"boolean","default":true,"description":"false gives no subagent the web tools"}
+            }},
+            "hooks":{"type":"object","additionalProperties":false,"properties":{
+                "max_wakes":{"type":"integer","minimum":0,"maximum":10,"default":3,"description":"Turns in a row a finished background plugin hook may start in an idle chat before you write again; 0 never starts one, and what a hook reports waits for the next turn"}
             }},
             "goal":{"type":"object","additionalProperties":false,"properties":{
                 "check_model":{"type":["string","null"],"minLength":1,"maxLength":256,"default":null,"description":"The model that checks each goal turn; absent, the chat's model. Any model a connected provider offers; <provider>/<id> for one from providers"},
@@ -2249,6 +2295,8 @@ mod tests {
             r#"{"subagents":{"models":["a","b","c","d"]}}"#,
             r#"{"subagents":{"models":["nope/model"]}}"#,
             r#"{"subagents":{"unknown":1}}"#,
+            r#"{"hooks":{"max_wakes":11}}"#,
+            r#"{"hooks":{"unknown":1}}"#,
         ] {
             assert!(resolve(Some(user), None, None).is_err(), "{user}");
         }

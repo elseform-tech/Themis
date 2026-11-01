@@ -359,13 +359,24 @@ export function goalTurnNumber(text: string): number | undefined {
   return match ? Number(match[1]) : undefined;
 }
 
+/** The marker the runtime puts on the message that starts a turn for a plugin hook's report. */
+export const HOOK_WAKE_MARKER = "[Plugin hook \u2014 runtime, not from the user]";
+
+/** What a plugin says about the report that started a turn, if `text` starts one. */
+export function hookWakeSummary(text: string): string | undefined {
+  if (!text.startsWith(HOOK_WAKE_MARKER)) return undefined;
+  return text.slice(HOOK_WAKE_MARKER.length).split("\n")[0]!.trim();
+}
+
 /** A user message row; a goal-turn message becomes a divider row. */
 function userMessage(text: string, runId: string | undefined, attachments?: string[]): ChatMessage {
   const goalTurn = goalTurnNumber(text);
+  const hookWake = hookWakeSummary(text);
   return {
     id: newId("msg"), role: "user", text, runId,
     ...(attachments?.length ? { attachments } : {}),
     ...(goalTurn === undefined ? {} : { goalTurn }),
+    ...(hookWake === undefined ? {} : { hookWake }),
   };
 }
 
