@@ -114,7 +114,7 @@
 .themis-thread-composer { position: relative; display: flex; flex-direction: column; gap: 6px; width: min(calc(100% - 2 * var(--themis-thread-gutter)), var(--themis-thread-column)); margin: 4px auto 20px; padding: 12px 12px 10px 20px; border-radius: var(--themis-radius-composer); background: var(--themis-composer-bg); isolation: isolate; z-index: 2; }
 /* A narrow chat keeps the composer's controls as icons; names stay in tooltips and accessible labels. */
 .themis-thread-composer { container: themis-composer / inline-size; }
-@container themis-composer (max-width: 420px) {
+@container themis-composer (max-width: 380px) {
   .themis-thread-composer .themis-composer-label { display: none; }
   .themis-composer-location > svg:not(:first-child) { margin-left: 2px; }
 }

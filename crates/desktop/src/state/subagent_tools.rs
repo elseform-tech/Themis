@@ -567,6 +567,8 @@ pub(super) struct TodoTool {
     pub(super) report: Reporter,
     /// A deny rule covers it.
     pub(super) denied: bool,
+    /// The plan as last accepted, each item's words and status, for what changed.
+    pub(super) plan: std::sync::Mutex<Vec<(String, String)>>,
 }
 
 impl std::fmt::Debug for TodoTool {
@@ -592,6 +594,7 @@ impl ToolRuntime for TodoTool {
         let mut done = 0;
         let mut pending = 0;
         let mut current = None;
+        let mut plan = Vec::with_capacity(items.len());
         for item in items {
             let content: String = item["content"]
                 .as_str()
@@ -601,13 +604,21 @@ impl ToolRuntime for TodoTool {
                 .chars()
                 .take(MAX_TODO_CHARS)
                 .collect();
-            match item["status"].as_str().unwrap_or("pending") {
+            let status = item["status"].as_str().unwrap_or("pending");
+            plan.push((content.clone(), status.to_owned()));
+            match status {
                 "completed" => done += 1,
                 "in_progress" => current = current.take().or(Some(content)),
                 "pending" => pending += 1,
                 other => return Err(error(format!("unknown status '{other}'"))),
             }
         }
+        // A plugin's `TaskCreated` and `TaskCompleted` hooks may refuse: the plan stays as it was.
+        let before = self.plan.lock().unwrap_or_else(|e| e.into_inner()).clone();
+        themis_core::plugins::hooks::plan_changed(&before, &plan)
+            .await
+            .map_err(|refused| error(refused.to_string()))?;
+        *self.plan.lock().unwrap_or_else(|e| e.into_inner()) = plan;
         if let Some(current) = &current {
             self.agent.set_status(current);
             (self.report)(&self.agent);

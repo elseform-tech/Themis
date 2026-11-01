@@ -153,12 +153,28 @@ impl AppState {
                 .canonicalize()
                 .map_or(candidate == root, |path| path == root)
         };
+        const RUNNING: &str = "Stop the running chat in this project before deleting it";
+        let ending: Vec<String> = {
+            let threads = self.inner.threads.read().await;
+            if threads
+                .values()
+                .any(|record| record.running && belongs(&record.project_root))
+            {
+                return Err(RUNNING.to_owned());
+            }
+            threads
+                .iter()
+                .filter(|(_, record)| belongs(&record.project_root))
+                .map(|(id, _)| id.clone())
+                .collect()
+        };
+        self.end_project_sessions(&ending).await;
         let mut threads = self.inner.threads.write().await;
         if threads
             .values()
             .any(|record| record.running && belongs(&record.project_root))
         {
-            return Err("Stop the running chat in this project before deleting it".to_owned());
+            return Err(RUNNING.to_owned());
         }
         // Its shell has to go before its folder does.
         self.close_terminals_under(&root).await;

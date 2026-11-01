@@ -256,8 +256,10 @@ is reached; for example `/goal optimize this app to speed up p95`.
   box back. The chevron folds it to icons only, as does a narrow chat. Rows with
   nothing to show are left out, and a chat with nothing to show has no box.
 - **Workspace** in a thread's header opens a monitor of the project:
-  **Changes** (readable changed files and their wrapped, highlighted diff,
-  updating live while the agent works; binary and generated files are hidden; a
+  **Changes** (readable changed files with line counts and their wrapped,
+  highlighted diff, Unified or Split, updating live while the agent works; a
+  switcher at the top shows another branch's changes without switching to it, which
+  only the composer does; binary, generated and secret-looking files are hidden; a
   change too large to show whole, such as a downloaded dataset, shows its first
   2,000 lines with a note), **Files**, **Branches**, **Pull requests** (needs
   the GitHub CLI signed in), **Terminal** (your own shell in the project, or the

@@ -163,6 +163,20 @@ impl DesktopApprovalHook {
 }
 
 impl ApprovalHook for DesktopApprovalHook {
+    fn would_ask(&self, action: &ToolAction) -> bool {
+        let escape = action.tool == themis_core::tools::UNSANDBOXED_TOOL;
+        if action.risk == CoreRisk::Read && !self.confirm_reads && !escape {
+            return false;
+        }
+        let integration = action.tool.starts_with("mcp_")
+            || action.tool.starts_with("hook_")
+            || action.tool.starts_with("manage_integrations_")
+            || action.tool.starts_with("manage_automations_")
+            || matches!(action.tool.as_str(), "list_plugins" | "save_skill");
+        (self.is_git || (!escape && (action.risk == CoreRisk::Read || integration)))
+            && !(self.unattended && (escape || !action.grantable()))
+    }
+
     fn approve(&self, action: &ToolAction) -> Approval {
         self.ask(action, Vec::new())
     }

@@ -5145,6 +5145,7 @@ dependencies = [
  "block2",
  "chrono",
  "chrono-tz",
+ "futures-util",
  "keyring",
  "libc",
  "objc2",

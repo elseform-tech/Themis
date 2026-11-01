@@ -282,23 +282,28 @@ const STATUS_LETTER: Record<ChangedFile["status"], string> = { added: "A", modif
 const EDITED_PREVIEW = 5;
 
 /** The files one turn changed, in a card under its response; a row opens that file's diff. Long lists show five until expanded. */
+function LineCounts({ added, removed }: { added: number; removed: number }) {
+  return <span className="themis-edited-counts" aria-label={`${added} added, ${removed} removed`}><span className="themis-edited-status--added">+{added}</span> <span className="themis-edited-status--deleted">-{removed}</span></span>;
+}
+
 function EditedFiles({ files }: { files: ChangedFile[] }) {
   const { dispatch } = useApp();
   const [expanded, setExpanded] = useState(false);
-  const counts = (["added", "modified", "deleted", "renamed"] as const)
-    .map(status => [status, files.filter(file => file.status === status).length] as const)
-    .filter(([, count]) => count > 0);
+  const counted = files.filter(file => file.added !== undefined || file.removed !== undefined);
+  const totalAdded = counted.reduce((sum, file) => sum + (file.added ?? 0), 0);
+  const totalRemoved = counted.reduce((sum, file) => sum + (file.removed ?? 0), 0);
   const shown = expanded ? files : files.slice(0, EDITED_PREVIEW);
   return <section className="themis-edited-files" aria-label="Files edited in this turn">
     <header>
       <h3>Edited {files.length} file{files.length === 1 ? "" : "s"}</h3>
-      <span className="themis-edited-counts">{counts.map(([status, count]) => <span key={status} className={`themis-edited-status--${status}`}>{count} {status}</span>)}</span>
+      {counted.length > 0 && <LineCounts added={totalAdded} removed={totalRemoved} />}
     </header>
     <ul className={expanded ? "is-expanded" : undefined}>{shown.map(file => {
       const slash = file.path.lastIndexOf("/");
       return <li key={file.path}><button type="button" title={`${file.path} · show diff`} onClick={() => dispatch({ type: "ui/diff-panel", open: true, focus: file.path })}>
         <span className={`themis-edited-status themis-edited-status--${file.status}`} aria-label={file.status}>{STATUS_LETTER[file.status]}</span>
         <span className="themis-edited-path">{slash >= 0 && <span>{file.path.slice(0, slash + 1)}</span>}{file.path.slice(slash + 1)}</span>
+        {(file.added !== undefined || file.removed !== undefined) && <LineCounts added={file.added ?? 0} removed={file.removed ?? 0} />}
       </button></li>;
     })}</ul>
     {files.length > EDITED_PREVIEW && <button type="button" className="themis-edited-more" aria-expanded={expanded} onClick={() => setExpanded(value => !value)}>{expanded ? "Show fewer" : `Show all ${files.length}`}</button>}

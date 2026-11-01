@@ -57,7 +57,7 @@
 .themis-goal-elapsed { display: inline-flex; align-items: center; gap: 5px; font-variant-numeric: tabular-nums; border-radius: 6px; }
 .themis-goal-elapsed:focus-visible { outline: 2px solid var(--themis-accent); outline-offset: 2px; }
 /* A narrow chat leaves the sentence no room beside the controls: it takes its own line below them. */
-@container themis-composer (max-width: 420px) {
+@container themis-composer (max-width: 380px) {
   .themis-goal-bar:not(.is-editing) { flex-wrap: wrap; align-items: center; gap: 0 4px; }
   .themis-goal-bar .themis-goal-icon { width: 30px; height: 30px; }
   .themis-goal-bar:not(.is-editing) .themis-goal-text { order: 1; flex-basis: 100%; padding-top: 0; }

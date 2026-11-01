@@ -156,3 +156,113 @@ async fn cli_change_list_shows_only_readable_files_and_counts_hidden_ones() {
         .unwrap();
     serving.await.unwrap().unwrap();
 }
+
+/// Workspace lists what's worth reviewing: nothing Git ignores, nothing secret-looking, tracked
+/// or not, and the file view won't open those either. New ordinary files stay listed.
+#[tokio::test(flavor = "multi_thread")]
+async fn cli_workspace_hides_ignored_and_secret_files() {
+    let data = tempfile::tempdir().unwrap();
+    let parent = tempfile::tempdir().unwrap();
+    let project = parent.path().join("repo");
+    std::fs::create_dir_all(project.join("build")).unwrap();
+    std::fs::create_dir_all(project.join("src")).unwrap();
+    std::fs::write(project.join(".gitignore"), "build/\nnotes.log\n").unwrap();
+    std::fs::write(project.join("src/a.txt"), "alpha\n").unwrap();
+    std::fs::write(project.join("tracked.key"), "committed secret\n").unwrap();
+    git(&project, &["init", "-q", "-b", "main"]);
+    git(&project, &["add", "."]);
+    git(
+        &project,
+        &[
+            "-c",
+            "user.email=t@t",
+            "-c",
+            "user.name=t",
+            "commit",
+            "-qm",
+            "init",
+        ],
+    );
+    git(&project, &["checkout", "-q", "-b", "other"]);
+    std::fs::write(project.join("other.txt"), "other\n").unwrap();
+    std::fs::write(project.join("branch.pem"), "branch secret\n").unwrap();
+    git(&project, &["add", "."]);
+    git(
+        &project,
+        &[
+            "-c",
+            "user.email=t@t",
+            "-c",
+            "user.name=t",
+            "commit",
+            "-qm",
+            "other",
+        ],
+    );
+    git(&project, &["checkout", "-q", "main"]);
+    std::fs::write(project.join(".env"), "API_KEY=fake\n").unwrap();
+    std::fs::write(project.join("new.pem"), "fake\n").unwrap();
+    std::fs::write(project.join("notes.log"), "ignored\n").unwrap();
+    std::fs::write(project.join("build/out.txt"), "ignored\n").unwrap();
+    std::fs::write(project.join("brand_new.py"), "print(1)\n").unwrap();
+
+    let state = AppState::new_for_test(data.path().join("settings.json"));
+    let server = Server::bind(state, data.path()).await.unwrap();
+    let serving = tokio::spawn(server.run());
+    let root = cli(data.path(), "open_project", json!({"path": project}))["root"].clone();
+    let listing = cli(
+        data.path(),
+        "list_project_dir",
+        json!({"projectRoot": root, "path": ""}),
+    );
+    let names: Vec<&str> = listing["entries"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|entry| entry["name"].as_str().unwrap())
+        .collect();
+    assert_eq!(names, vec!["src", ".gitignore", "brand_new.py"]);
+    let client = Client::new(data.path().into());
+    for path in [
+        ".env",
+        "new.pem",
+        "tracked.key",
+        "notes.log",
+        "build/out.txt",
+    ] {
+        let error = client
+            .call(
+                "read_project_file",
+                json!({"projectRoot": root, "path": path}),
+            )
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("isn't shown"), "{path}: {error}");
+    }
+    let error = client
+        .call(
+            "list_project_dir",
+            json!({"projectRoot": root, "path": "build"}),
+        )
+        .await
+        .unwrap_err();
+    assert!(error.to_string().contains("isn't shown"), "{error}");
+    let branch = cli(
+        data.path(),
+        "branch_diff",
+        json!({"projectRoot": root, "branch": "other"}),
+    );
+    let paths: Vec<&str> = branch["files"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|file| file["path"].as_str().unwrap())
+        .collect();
+    assert_eq!(paths, vec!["other.txt"]);
+    assert!(branch["reason"]
+        .as_str()
+        .unwrap()
+        .contains("1 secret file hidden"));
+    client.call("shutdown", json!({})).await.unwrap();
+    serving.await.unwrap().unwrap();
+}

@@ -339,6 +339,20 @@ impl Server {
                 }
             }
         });
+        // Chats left alone end their plugin hook sessions.
+        let sessions = self.state.clone();
+        let mut sessions_stop = self.shutdown.subscribe();
+        tokio::spawn(async move {
+            let mut every = tokio::time::interval(crate::state::HOOK_IDLE_CHECK_EVERY);
+            loop {
+                tokio::select! {
+                    _ = every.tick() => {
+                        sessions.end_idle_hook_sessions_at(std::time::Instant::now()).await;
+                    }
+                    _ = sessions_stop.recv() => break,
+                }
+            }
+        });
         let mut stopped = self.shutdown.subscribe();
         let mut termination = Termination::install();
         tokio::pin!(stop);
@@ -358,6 +372,8 @@ impl Server {
                 let _ = serve_connection(stream, state, token, tx, sink, shutdown).await;
             });
         }
+        // Open plugin hook sessions end here, within a short budget.
+        self.state.end_all_hook_sessions().await;
         // Background programs belong to this server: stop them with it.
         self.state.shutdown_background_tasks().await;
         self.state.shutdown_terminals().await;
