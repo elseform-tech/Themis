@@ -206,7 +206,7 @@ fn imports_mcp_shapes_without_credentials_or_silent_options() {
         Some("https://mcp.linear.app/mcp")
     );
     for invalid in [
-        json!({"mcpServers":{"x":{"type":"sse","url":"https://example.com"}}}),
+        json!({"mcpServers":{"x":{"type":"websocket","url":"https://example.com"}}}),
         json!({"mcpServers":{"x":{"url":"https://example.com","headers":{"Authorization":"Bearer literal-secret"}}}}),
         json!({"mcpServers":{"x":{"command":"node","env":{"TOKEN":"literal-secret"}}}}),
         json!({"mcpServers":{"x":{"command":"node","retries":3}}}),
