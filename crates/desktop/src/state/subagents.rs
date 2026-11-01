@@ -16,7 +16,7 @@ use serde_json::{json, Value};
 use themis_core::chat_grants::ChatGrants;
 use themis_core::configuration::{ApprovalMode, RuntimeConfig};
 use themis_core::plugins::agents::{
-    NamedProfile, ProfileCatalog, READ_ONLY_TOOLS, WEB_TOOLS, WRITE_TOOLS,
+    NamedProfile, ProfileCatalog, READ_ONLY_TOOLS, SPAWN_TOOL, WEB_TOOLS, WRITE_TOOLS,
 };
 use themis_core::runtime::{
     ConversationRole, ConversationTurn, LLMProvider, RunEvent, RunNotes, RunPolicy, SteerInbox,
@@ -80,6 +80,20 @@ pub(super) struct WebAccess {
     pub(super) left_out: Vec<String>,
 }
 
+/// What a subagent hands down to the subagents it starts: they can do no more than it can.
+pub(super) struct NestedLimits {
+    parent_id: String,
+    parent_name: String,
+    /// The tools it has: theirs are chosen as usual, then held to these.
+    tools: Vec<String>,
+    /// Theirs must lie inside these.
+    write_paths: Vec<String>,
+    /// What its shell is limited to; empty is no limit.
+    shell_scopes: Vec<String>,
+    /// Its list says which profiles it may start, so it can't start a plain subagent.
+    profile_required: bool,
+}
+
 /// Names one diagnostics event may list, and how long each may be.
 const LOGGED_NAMES: usize = 20;
 const LOGGED_NAME_CHARS: usize = 80;
@@ -117,6 +131,11 @@ pub(super) struct SubagentKit {
     pub(super) stopped: Arc<AtomicBool>,
     pub(super) notes: Arc<RunNotes>,
     pub(super) slots: Arc<tokio::sync::Semaphore>,
+    /// Slots of subagents other subagents start. Apart from `slots`: a subagent keeps its slot
+    /// while it waits for its own, so sharing them could wait forever.
+    nested_slots: Arc<tokio::sync::Semaphore>,
+    /// Set when a subagent, not the main agent, is starting these.
+    pub(super) nested: Option<NestedLimits>,
     /// The profiles of this run's enabled plugins.
     pub(super) profiles: ProfileCatalog,
     /// Subagents this run started, in order.
@@ -149,6 +168,9 @@ impl SubagentKit {
         let slots = Arc::new(tokio::sync::Semaphore::new(
             config.subagents.max_parallel.max(1),
         ));
+        let nested_slots = Arc::new(tokio::sync::Semaphore::new(
+            config.subagents.max_parallel.max(1),
+        ));
         Self {
             state,
             sink,
@@ -178,9 +200,102 @@ impl SubagentKit {
             stopped,
             notes: RunNotes::new(),
             slots,
+            nested_slots,
+            nested: None,
             profiles: ProfileCatalog::from_plugins(&snapshot.plugins),
             started: Mutex::new(Vec::new()),
             other_llms: tokio::sync::Mutex::new(HashMap::new()),
+        }
+    }
+
+    /// The kit `agent` starts its own subagents with, when it may: its profile's list names
+    /// `Agent` or `Task`, the setting allows it, and the main agent started it, so nesting stops
+    /// at one level. It has the tools in `tools`, and those are all its subagents can have.
+    fn nested_kit(&self, agent: &Subagent, tools: &[Box<dyn ToolT>]) -> Option<Arc<SubagentKit>> {
+        if !self.may_nest(agent) {
+            return None;
+        }
+        let spawnable = agent
+            .profile
+            .as_ref()
+            .map(|named| named.profile.spawn_profiles.as_slice())
+            .unwrap_or_default();
+        let mut names = HashMap::new();
+        let mut labels = HashMap::new();
+        for tool in &agent.mcp.tools {
+            if let Some(found) = self.mcp.names.get(tool) {
+                names.insert(tool.clone(), found.clone());
+            }
+            if let Some(found) = self.mcp.labels.get(tool) {
+                labels.insert(tool.clone(), found.clone());
+            }
+        }
+        Some(Arc::new(Self {
+            state: self.state.clone(),
+            sink: Arc::clone(&self.sink),
+            thread_id: self.thread_id.clone(),
+            run_id: self.run_id.clone(),
+            work_root: self.work_root.clone(),
+            is_git: self.is_git,
+            mode: self.mode,
+            approval_timeout: self.approval_timeout,
+            unattended: self.unattended,
+            config: self.config.clone(),
+            catalog: self.catalog.clone(),
+            endpoint_override: self.endpoint_override,
+            hooks: self.hooks.clone(),
+            mcp: SubagentMcp {
+                names: Arc::new(names),
+                labels: Arc::new(labels),
+                startup_rules: self.mcp.startup_rules.clone(),
+            },
+            web: SubagentWeb {
+                config: self.web.config.clone(),
+                permissions: Arc::clone(&self.web.permissions),
+            },
+            plugin_bins: self.plugin_bins.clone(),
+            plugins: self.plugins.clone(),
+            llm: Arc::clone(&self.llm),
+            model: self.model.clone(),
+            policy: self.policy,
+            sandbox: Arc::clone(&self.sandbox),
+            grants: Arc::clone(&self.grants),
+            // Stopping it stops them, and its result reaches only its own run.
+            stopped: Arc::clone(&agent.stop),
+            notes: RunNotes::new(),
+            slots: Arc::clone(&self.nested_slots),
+            nested_slots: Arc::clone(&self.nested_slots),
+            nested: Some(NestedLimits {
+                parent_id: agent.id.clone(),
+                parent_name: agent.name.clone(),
+                tools: tools.iter().map(|tool| tool.name().to_owned()).collect(),
+                write_paths: agent.write_paths.clone(),
+                shell_scopes: agent.shell_scopes().to_vec(),
+                profile_required: !spawnable.is_empty(),
+            }),
+            profiles: self.profiles.only(spawnable),
+            started: Mutex::new(Vec::new()),
+            other_llms: tokio::sync::Mutex::new(HashMap::new()),
+        }))
+    }
+
+    /// Whether this subagent gets to start subagents.
+    fn may_nest(&self, agent: &Subagent) -> bool {
+        self.nested.is_none() && self.config.subagents.allow_nested && names(agent, SPAWN_TOOL)
+    }
+
+    /// Whether the agent must name a profile for each subagent it starts.
+    pub(super) fn profile_required(&self) -> bool {
+        self.nested
+            .as_ref()
+            .is_some_and(|nested| nested.profile_required)
+    }
+
+    /// What this subagent's shell is held to: its own list, else the one it inherited.
+    fn shell_limit(&self, agent: &Subagent) -> Vec<String> {
+        match (agent.shell_scopes(), &self.nested) {
+            ([], Some(nested)) => nested.shell_scopes.clone(),
+            (own, _) => own.to_vec(),
         }
     }
 
@@ -216,6 +331,14 @@ impl SubagentKit {
             for raw in paths {
                 let path =
                     themis_core::sandbox::normalize_write_path(&self.work_root, raw, &protected)?;
+                if let Some(nested) = &self.nested {
+                    if !nested.write_paths.iter().any(|own| path_inside(own, &path)) {
+                        return Err(format!(
+                            "'{path}' isn't among the paths {} may change",
+                            nested.parent_name
+                        ));
+                    }
+                }
                 if let Some((other, owner)) = taken
                     .iter()
                     .find(|(other, _)| themis_core::sandbox::write_paths_overlap(other, &path))
@@ -513,8 +636,26 @@ impl SubagentKit {
         profile: Option<Arc<NamedProfile>>,
         mcp: McpAccess,
     ) -> Arc<Subagent> {
-        let web = self.web_access(profile.as_deref());
+        let mut web = self.web_access(profile.as_deref());
+        // A list naming `Agent` where nesting doesn't reach is told, and it shows in the log.
+        if (self.nested.is_some() || !self.config.subagents.allow_nested)
+            && profile
+                .as_ref()
+                .is_some_and(|named| named.profile.names(SPAWN_TOOL))
+        {
+            web.left_out.push(SPAWN_TOOL.to_owned());
+            let _ = self.state.inner.diagnostics.append_with_level(
+                "subagents",
+                "nesting_left_out",
+                "info",
+                json!({"thread_id": self.thread_id, "run_id": self.run_id,
+                    "reason": if self.nested.is_some() { "one_level" } else { "setting" }}),
+                Some(&self.config.logging.level),
+            );
+        }
+        let parent = self.nested.as_ref().map(|nested| nested.parent_id.clone());
         let agent = Arc::new(Subagent {
+            parent: parent.clone(),
             id: uuid::Uuid::new_v4().simple().to_string()[..12].to_owned(),
             name,
             task: Mutex::new(brief.clone()),
@@ -548,7 +689,11 @@ impl SubagentKit {
             write_paths: agent.write_paths.clone(),
             connections: agent.mcp.connections.clone(),
             web: !agent.web.tools.is_empty(),
-            shell_scopes: agent.shell_scopes().to_vec(),
+            shell_scopes: self.shell_limit(&agent),
+            started_by: self
+                .nested
+                .as_ref()
+                .map(|nested| nested.parent_name.clone()),
             at: chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
         });
         let _ = self.state.inner.diagnostics.append_with_level(
@@ -560,6 +705,7 @@ impl SubagentKit {
                 "write_paths": agent.write_paths.len(),
                 "mcp_tools": agent.mcp.tools.len(),
                 "web_tools": agent.web.tools.len(),
+                "started_by": parent,
                 "profile": agent.profile.as_ref().map(|named| &named.profile.name)}),
             Some(&self.config.logging.level),
         );
@@ -666,20 +812,23 @@ impl SubagentKit {
         );
         // A shell held to named commands refuses the others before anything can allow them, in
         // YOLO too: this is the outermost answer, and a call reaches its tool only through it.
-        let scopes = agent
-            .profile
+        // A subagent another one started is held to both lists.
+        let inherited = self
+            .nested
             .as_ref()
-            .map(|named| named.profile.shell_scopes.clone())
+            .map(|nested| nested.shell_scopes.clone())
             .unwrap_or_default();
-        let inner: Arc<dyn ApprovalHook> = if scopes.is_empty() {
-            configured
-        } else {
-            Arc::new(ScopedShell {
-                inner: configured,
-                scopes,
-                context: context.clone(),
-            })
-        };
+        let own = agent.shell_scopes().to_vec();
+        let inner = [own, inherited]
+            .into_iter()
+            .filter(|scopes| !scopes.is_empty())
+            .fold(configured, |inner, scopes| -> Arc<dyn ApprovalHook> {
+                Arc::new(ScopedShell {
+                    inner,
+                    scopes,
+                    context: context.clone(),
+                })
+            });
         Arc::new(AuditedApprovals { inner, context })
     }
 
@@ -780,6 +929,12 @@ impl SubagentKit {
                     stop: Arc::clone(&agent.stop),
                 }) as Box<dyn ToolT>
             }))
+            // Started by another subagent: nothing that one doesn't have.
+            .filter(|tool| {
+                self.nested
+                    .as_ref()
+                    .is_none_or(|nested| nested.tools.iter().any(|name| name == tool.name()))
+            })
             .map(|tool| {
                 Box::new(super::subagent_tools::StatusField {
                     inner: tool,
@@ -916,10 +1071,24 @@ impl SubagentKit {
                 label.map_or_else(|| tool.name().to_owned(), Clone::clone)
             })
             .collect();
-        let tools = match self.tools(agent, Arc::clone(&approvals), mcp_tools) {
+        let mut tools = match self.tools(agent, Arc::clone(&approvals), mcp_tools) {
             Ok(tools) => tools,
             Err(error) => return (Err(anyhow::anyhow!(error)), false),
         };
+        let nested = self.nested_kit(agent, &tools);
+        if let Some(kit) = &nested {
+            let report = self.reporter();
+            tools.extend(super::subagent_tools::tools(kit).into_iter().map(|tool| {
+                Box::new(super::subagent_tools::StatusField {
+                    inner: tool,
+                    agent: Arc::clone(agent),
+                    report: Arc::clone(&report),
+                }) as Box<dyn ToolT>
+            }));
+        }
+        let notes = nested
+            .as_ref()
+            .map_or_else(RunNotes::new, |kit| Arc::clone(&kit.notes));
         let (events_tx, events_rx) = tokio::sync::mpsc::channel::<RunEvent>(1024);
         let pump = tokio::spawn(pump_events(
             events_rx,
@@ -981,12 +1150,16 @@ impl SubagentKit {
                 &[("tools", &agent.web.tools.join(", "))],
             )
         });
-        let shell_note = (!agent.shell_scopes().is_empty()).then(|| {
+        let shell_limit = self.shell_limit(agent);
+        let shell_note = (!shell_limit.is_empty()).then(|| {
             themis_core::prompts::fill(
                 themis_core::prompts::SUBAGENT_SHELL_SCOPE_NOTE,
-                &[("scopes", &agent.shell_scopes().join(", "))],
+                &[("scopes", &shell_limit.join(", "))],
             )
         });
+        let nested_note = nested
+            .as_ref()
+            .map(|_| themis_core::prompts::SUBAGENT_NESTED_NOTE);
         let ask_note = names(agent, "ask_user").then_some(themis_core::prompts::SUBAGENT_ASK_NOTE);
         let background_note = names(agent, "background_task")
             .then_some(themis_core::prompts::SUBAGENT_BACKGROUND_NOTE);
@@ -1019,6 +1192,7 @@ impl SubagentKit {
             .chain(shell_note.as_deref())
             .chain(background_note)
             .chain(ask_note)
+            .chain(nested_note)
             .chain(mcp_note.as_deref())
             .chain(web_note.as_deref())
             .chain(left_out_note.as_deref())
@@ -1068,7 +1242,13 @@ impl SubagentKit {
                                     hooks.clone(),
                                     themis_core::runtime::with_steer_inbox(
                                         Arc::clone(&agent.inbox),
-                                        themis_core::runtime::with_system_head(head, Box::pin(run)),
+                                        themis_core::runtime::with_run_notes(
+                                            notes,
+                                            themis_core::runtime::with_system_head(
+                                                head,
+                                                Box::pin(run),
+                                            ),
+                                        ),
                                     ),
                                 ),
                             ),
@@ -1079,6 +1259,20 @@ impl SubagentKit {
         )
         .await;
         done.store(true, Ordering::SeqCst);
+        // Nothing owns what it started once it is over.
+        if let Some(kit) = &nested {
+            let left: Vec<Arc<Subagent>> = kit
+                .started
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .iter()
+                .filter(|child| !child.ended())
+                .cloned()
+                .collect();
+            for child in left {
+                kit.stop(&child);
+            }
+        }
         let incomplete = pump.await.unwrap_or(false);
         (outcome, incomplete)
     }
@@ -1164,6 +1358,7 @@ impl SubagentKit {
 
     /// Finds a subagent of this chat, from this run or an earlier one.
     pub(super) fn find_in_chat(&self, id: &str) -> Option<Arc<Subagent>> {
+        let owner = self.nested.as_ref().map(|nested| nested.parent_id.as_str());
         self.find(id).or_else(|| {
             self.state
                 .inner
@@ -1172,6 +1367,8 @@ impl SubagentKit {
                 .unwrap_or_else(|e| e.into_inner())
                 .get(&self.thread_id)
                 .and_then(|list| list.iter().find(|agent| agent.id == id).cloned())
+                // Each agent answers for the ones it started.
+                .filter(|agent| agent.parent.as_deref() == owner)
         })
     }
 
@@ -1317,6 +1514,8 @@ impl ApprovalHook for ScopedShell {
 /// One subagent's live state.
 pub(super) struct Subagent {
     pub(super) id: String,
+    /// The subagent that started it; none when the main agent did.
+    pub(super) parent: Option<String>,
     pub(super) name: String,
     pub(super) brief: String,
     pub(super) model: String,
@@ -1357,6 +1556,11 @@ pub(super) struct Progress {
     pub(super) fallback_reason: String,
 }
 
+/// Whether a normalized write path lies inside another: the same file, or under a folder.
+fn path_inside(own: &str, path: &str) -> bool {
+    own == path || (own.ends_with('/') && path.starts_with(own))
+}
+
 /// Whether its profile's list names this tool.
 fn names(agent: &Subagent, tool: &str) -> bool {
     agent
@@ -1367,7 +1571,7 @@ fn names(agent: &Subagent, tool: &str) -> bool {
 
 /// Claude's names for the tools it has, for instructions written for Claude.
 fn claude_names(tools: &[Box<dyn ToolT>]) -> Vec<String> {
-    const NAMES: [(&str, &str); 13] = [
+    const NAMES: [(&str, &str); 14] = [
         ("read_file", "Read"),
         ("search_file", "Grep"),
         ("list_dir", "LS and Glob"),
@@ -1381,6 +1585,7 @@ fn claude_names(tools: &[Box<dyn ToolT>]) -> Vec<String> {
         ("ask_user", "AskUserQuestion"),
         ("create_dir", "mkdir"),
         ("recall", "recall"),
+        (SPAWN_TOOL, "Agent and Task"),
     ];
     NAMES
         .iter()
@@ -1675,7 +1880,8 @@ impl AppState {
                             .ended
                             .unwrap_or_else(|| ("running".into(), String::new()));
                         json!({"id": agent.id, "name": agent.name, "brief": agent.brief,
-                            "model": agent.model, "write_paths": agent.write_paths, "connections": agent.mcp.connections, "web": !agent.web.tools.is_empty(), "shell_scopes": agent.shell_scopes(), "confined": agent.confined, "profile": agent.profile.as_ref().map(|named| &named.profile.name), "ran_on": progress.ran_on, "status": status, "text": progress.status,
+                            "model": agent.model, "write_paths": agent.write_paths, "connections": agent.mcp.connections, "web": !agent.web.tools.is_empty(),
+                    "parent": agent.parent, "shell_scopes": agent.shell_scopes(), "confined": agent.confined, "profile": agent.profile.as_ref().map(|named| &named.profile.name), "ran_on": progress.ran_on, "status": status, "text": progress.status,
                             "result": result, "tool_calls": agent.tool_calls.load(Ordering::SeqCst),
                             "seconds": agent.started.lock().unwrap_or_else(|e| e.into_inner()).elapsed().as_secs()})
                     })
@@ -1686,6 +1892,22 @@ impl AppState {
 
     fn stop_one_subagent(&self, sink: &dyn EventSink, thread_id: &str, agent: &Subagent) {
         agent.stop.store(true, Ordering::SeqCst);
+        // What it started stops with it, approvals included.
+        let mut stopping = vec![agent.id.clone()];
+        if let Some(list) = self
+            .inner
+            .subagents
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get(thread_id)
+        {
+            for child in list {
+                if child.parent.as_deref() == Some(agent.id.as_str()) {
+                    child.stop.store(true, Ordering::SeqCst);
+                    stopping.push(child.id.clone());
+                }
+            }
+        }
         let mut pending = self.inner.pending.lock().unwrap_or_else(|e| e.into_inner());
         pending.retain(|approval_id, approval| {
             let mine = approval.thread_id == thread_id
@@ -1693,7 +1915,7 @@ impl AppState {
                     .request
                     .subagent
                     .as_ref()
-                    .is_some_and(|label| label.id == agent.id);
+                    .is_some_and(|label| stopping.contains(&label.id));
             if mine {
                 let _ = approval.sender.send(Approval::Deny);
                 sink.emit_approval_expired(&ApprovalExpired {

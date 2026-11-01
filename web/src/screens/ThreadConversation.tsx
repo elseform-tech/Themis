@@ -60,6 +60,8 @@ export function ThreadConversation({
   const scrollRef = useRef<HTMLDivElement>(null);
   const followOutput = useRef(true);
   const endRef = useRef<HTMLDivElement>(null);
+  /** Away from the latest output: the status shrinks, so it doesn't cover what's being read. */
+  const [scrolledUp, setScrolledUp] = useState(false);
   const [now, setNow] = useState(Date.now());
   const toolPending = traces.find(entry => entry.ok === undefined && !entry.summary.startsWith("approval "));
   const media = useMemo(() => messages.flatMap(message => message.media ?? []), [messages]);
@@ -95,9 +97,18 @@ export function ThreadConversation({
 
   useEffect(() => {
     const element = scrollRef.current;
-    if (element) element.scrollTop = readSession(`scroll:${threadId}`, element.scrollHeight);
+    if (!element) return;
+    element.scrollTop = readSession(`scroll:${threadId}`, element.scrollHeight);
+    setScrolledUp(element.scrollHeight - element.scrollTop - element.clientHeight >= 64);
   }, [threadId]);
 
+  const progressLine = stopping
+    ? "Stopping…"
+    : compacting
+      ? "Compacting context…"
+      : toolPending
+        ? subagentWaitLine(toolPending.tool, messages) ?? `Using ${toolDisplayName(toolPending.tool, toolPending.label)}…`
+        : "Thinking…";
   return (
     <MediaGallery.Provider value={gallery}>
     <ResponseLinks.Provider value={openLink}>
@@ -109,6 +120,7 @@ export function ThreadConversation({
       onScroll={event => {
         const element = event.currentTarget;
         followOutput.current = element.scrollHeight - element.scrollTop - element.clientHeight < 64;
+        setScrolledUp(!followOutput.current);
         writeSession(`scroll:${threadId}`, element.scrollTop);
       }}
     >
@@ -132,18 +144,12 @@ export function ThreadConversation({
         </div>
       )}
       {(running || sending) && (
-        <div className="themis-run-progress" role="status">
+        <div className={`themis-run-progress${scrolledUp ? " is-away" : ""}`} role="status">
           <div className="themis-run-status">
-            <span className={stopping || compacting ? "" : "themis-shimmer"}>
-              {stopping
-                ? "Stopping…"
-                : compacting
-                  ? "Compacting context…"
-                  : toolPending
-                    ? subagentWaitLine(toolPending.tool, messages) ?? `Using ${toolDisplayName(toolPending.tool, toolPending.label)}…`
-                    : "Thinking…"}
-            </span>
-            <time aria-label="Elapsed time">{Math.floor(elapsed / 60)}:{String(elapsed % 60).padStart(2, "0")}</time>
+            {scrolledUp
+              ? <span className="themis-shimmer" aria-label={progressLine}>…</span>
+              : <span className={stopping || compacting ? "" : "themis-shimmer"}>{progressLine}</span>}
+            {!scrolledUp && <time aria-label="Elapsed time">{Math.floor(elapsed / 60)}:{String(elapsed % 60).padStart(2, "0")}</time>}
           </div>
         </div>
       )}

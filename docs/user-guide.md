@@ -78,7 +78,7 @@ levels are listed.
   Completed replies offer
   **Copy** beside the model and the run's duration. Public text streams as it
   arrives; the model's private reasoning is never shown.
-  Thinking/using-tool status and elapsed time remain visible during gaps.
+  Thinking/using-tool status and elapsed time remain visible during gaps. Scrolled up to read, the status shrinks to "…" so it covers nothing.
 - **Stop** requests cancellation at the next safe boundary. A request or tool
   already executing finishes first; completed edits remain available to review.
   Pressing **Esc twice** does the same: after the first press, "Press Esc again to stop"

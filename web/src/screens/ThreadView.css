@@ -91,6 +91,7 @@
 .themis-tool-detail strong { font-size: .6875rem; font-weight: 500; }
 .themis-tool-detail pre { max-height: 320px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; margin: 6px 0 10px; padding: 8px 12px; border-radius: 12px; background: var(--themis-surface); font-size: .75rem; }
 .themis-run-progress { position: sticky; bottom: 0; z-index: 1; padding: 6px 0; background: var(--themis-canvas); color: var(--themis-text-2); font-size: .8125rem; }
+.themis-run-progress.is-away { align-self: flex-start; padding: 0 8px; border-radius: 999px; background: var(--themis-raised); line-height: 1.4; }
 .themis-run-status { display: flex; align-items: center; gap: 12px; }
 .themis-run-status time { font-size: .75rem; font-variant-numeric: tabular-nums; color: var(--themis-text-3); }
 .themis-shimmer { background: linear-gradient(100deg, var(--themis-shimmer-base) 30%, var(--themis-shimmer-highlight) 50%, var(--themis-shimmer-base) 70%); background-size: 250% 100%; background-clip: text; -webkit-background-clip: text; color: transparent; animation: themis-shimmer 2.4s linear infinite; }

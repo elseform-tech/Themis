@@ -23,6 +23,10 @@ pub const WEB_TOOLS: [&str; 2] = ["fetch_url", "web_search"];
 /// and a plain one has no use for them.
 pub const NAMED_ONLY_TOOLS: [&str; 3] = ["background_task", "todo_write", "ask_user"];
 
+/// What `Agent` and `Task` stand for. Never implied, not even by `*`: a profile has it only when
+/// its list names it, and a subagent started by another subagent doesn't get it at all.
+pub const SPAWN_TOOL: &str = "spawn_subagents";
+
 const MAX_FRONTMATTER_BYTES: usize = 64 * 1024;
 const MAX_DESCRIPTION_BYTES: usize = 1024;
 const MAX_MODEL_BYTES: usize = 100;
@@ -88,6 +92,10 @@ pub struct SubagentProfile {
     /// `shell` in `tools` is the whole shell.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub shell_scopes: Vec<String>,
+    /// What `Agent(a, b)` entries name, as `name` or `plugin:name`: when any, it can start only
+    /// these. Empty with [`SPAWN_TOOL`] in `tools` is any.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub spawn_profiles: Vec<String>,
 }
 
 impl SubagentProfile {
@@ -149,6 +157,7 @@ impl SubagentProfile {
                     && !WRITE_TOOLS.contains(&tool.as_str())
                     && !WEB_TOOLS.contains(&tool.as_str())
                     && !NAMED_ONLY_TOOLS.contains(&tool.as_str())
+                    && tool != SPAWN_TOOL
             })
         }) {
             bail!("Subagent tools must be tools a subagent can have");
@@ -169,6 +178,15 @@ impl SubagentProfile {
             model.len() > MAX_MODEL_BYTES || model.chars().any(char::is_control)
         }) {
             bail!("Invalid subagent model");
+        }
+        if self.spawn_profiles.len() > MAX_TOOL_NAMES
+            || self.spawn_profiles.iter().any(|name| {
+                name.is_empty()
+                    || name.chars().count() > MAX_DROPPED_NAME_CHARS
+                    || name.chars().any(char::is_control)
+            })
+        {
+            bail!("Invalid subagent profiles to start");
         }
         if self.dropped_tools.len() > MAX_DROPPED_NAMES {
             bail!("Too many dropped subagent tools");
@@ -444,6 +462,7 @@ fn mapped(name: &str) -> Option<&'static [&'static str]> {
             Some(&["background_task"])
         }
         "AskUserQuestion" => Some(&["ask_user"]),
+        "Agent" | "Task" => Some(&[SPAWN_TOOL]),
         _ => None,
     }
 }
@@ -508,8 +527,28 @@ fn shell_patterns(name: &str) -> Option<Vec<String>> {
     .then_some(patterns)
 }
 
+/// What `Agent(a, b)` or `Task(a, b)` names, if it is that. An empty one names nothing.
+fn spawn_patterns(name: &str) -> Option<Vec<String>> {
+    let inner = name
+        .strip_prefix("Agent(")
+        .or_else(|| name.strip_prefix("Task("))?
+        .strip_suffix(')')?;
+    let names: Vec<String> = inner
+        .split(',')
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+        .map(str::to_owned)
+        .collect();
+    (!names.is_empty()
+        && names.iter().all(|name| {
+            name.chars().count() <= MAX_DROPPED_NAME_CHARS && !name.chars().any(char::is_control)
+        }))
+    .then_some(names)
+}
+
 /// What a tool list and a deny list come to.
 struct ResolvedTools {
+    spawn_profiles: Vec<String>,
     shell_scopes: Vec<String>,
     tools: Option<Vec<String>>,
     dropped: Vec<String>,
@@ -527,7 +566,12 @@ fn resolve_tools(listed: Option<&[String]>, denied: &[String]) -> ResolvedTools 
         .iter()
         .chain(WRITE_TOOLS.iter())
         .chain(WEB_TOOLS.iter());
-    let all = everyday.clone().chain(NAMED_ONLY_TOOLS.iter());
+    let all = everyday
+        .clone()
+        .chain(NAMED_ONLY_TOOLS.iter())
+        .chain(std::iter::once(&SPAWN_TOOL));
+    let mut spawn_profiles: Vec<String> = Vec::new();
+    let mut any_profile = false;
     let mut shell_scopes: Vec<String> = Vec::new();
     let mut whole_shell = false;
     let everything = listed.is_none_or(|names| names.iter().any(|name| name == "*"));
@@ -538,12 +582,17 @@ fn resolve_tools(listed: Option<&[String]>, denied: &[String]) -> ResolvedTools 
     if !everything {
         for name in listed.unwrap_or_default() {
             whole_shell |= name == "Bash";
+            any_profile |= name == "Agent" || name == "Task";
             match mapped(name) {
                 Some(tools) => kept.extend(tools.iter().copied()),
                 None if is_mcp_name(name) => mcp.push(name.clone()),
                 None if shell_patterns(name).is_some() => {
                     kept.insert("shell");
                     shell_scopes.extend(shell_patterns(name).unwrap_or_default());
+                }
+                None if spawn_patterns(name).is_some() => {
+                    kept.insert(SPAWN_TOOL);
+                    spawn_profiles.extend(spawn_patterns(name).unwrap_or_default());
                 }
                 None => dropped.push(name.chars().take(MAX_DROPPED_NAME_CHARS).collect()),
             }
@@ -574,12 +623,17 @@ fn resolve_tools(listed: Option<&[String]>, denied: &[String]) -> ResolvedTools 
     if !kept.contains("shell") {
         shell_scopes.clear();
     }
+    if any_profile || !kept.contains(SPAWN_TOOL) {
+        spawn_profiles.clear();
+    }
+    spawn_profiles.truncate(MAX_TOOL_NAMES);
     let tools = (!everything || kept.len() != before).then(|| {
         all.filter(|tool| kept.contains(**tool))
             .map(|tool| (*tool).to_owned())
             .collect()
     });
     ResolvedTools {
+        spawn_profiles,
         shell_scopes,
         tools,
         dropped,
@@ -653,6 +707,7 @@ pub fn parse_profile(content: &str) -> anyhow::Result<ParsedProfile> {
                 && !model.chars().any(char::is_control)
         }),
         dropped_tools: resolved.dropped,
+        spawn_profiles: resolved.spawn_profiles,
         mcp_tools: resolved.mcp,
         denied_mcp_tools: resolved.denied_mcp,
         shell_scopes: resolved.shell_scopes,
@@ -757,6 +812,25 @@ impl ProfileCatalog {
 
     pub fn is_empty(&self) -> bool {
         self.profiles.is_empty()
+    }
+
+    /// The profiles `names` lists, each as `name` or `plugin:name`; every one when it lists none.
+    pub fn only(&self, names: &[String]) -> Self {
+        let listed = |named: &Arc<NamedProfile>| {
+            names.is_empty()
+                || names.iter().any(|name| match name.split_once(':') {
+                    Some((plugin, name)) => named.plugin == plugin && named.profile.name == name,
+                    None => named.profile.name == *name,
+                })
+        };
+        Self {
+            profiles: self
+                .profiles
+                .iter()
+                .filter(|named| listed(named))
+                .cloned()
+                .collect(),
+        }
     }
 
     /// The name to ask for it by: its own, or `plugin:name` when several plugins use that name.
@@ -897,12 +971,72 @@ mod tests {
     }
 
     #[test]
-    fn names_with_no_tool_stay_out_and_nesting_is_one_of_them() {
-        // Subagents don't start subagents.
-        let names = "Task, Agent, Task(a, b), Agent(c), Workflow, Skill, fullstory:x";
+    fn names_with_no_tool_stay_out() {
+        let names = "Workflow, Skill, fullstory:x, Agent(), Task( )";
         let profile = with_tools(&format!("tools: Read, {names}"));
         assert_eq!(profile.tools.as_deref().unwrap(), READS);
         assert_eq!(profile.dropped_tools.join(", "), names);
+    }
+
+    #[test]
+    fn naming_agent_or_task_lets_a_profile_start_subagents() {
+        for form in ["Task", "Agent"] {
+            let any = with_tools(&format!("tools: Read, {form}"));
+            assert!(any.names(SPAWN_TOOL), "{form}");
+            assert!(any.spawn_profiles.is_empty(), "{form}");
+            assert!(any.dropped_tools.is_empty(), "{:?}", any.dropped_tools);
+        }
+        let some = with_tools("tools: Read, Task(a, b), Agent(kit:c)");
+        assert!(some.names(SPAWN_TOOL));
+        assert_eq!(some.spawn_profiles, ["a", "b", "kit:c"]);
+        assert!(some.dropped_tools.is_empty(), "{:?}", some.dropped_tools);
+        // A plain `Agent` beside named ones is all of them.
+        assert!(with_tools("tools: Agent(a), Agent")
+            .spawn_profiles
+            .is_empty());
+    }
+
+    #[test]
+    fn starting_subagents_is_never_implied() {
+        assert!(!with_tools("tools: *").names(SPAWN_TOOL));
+        assert!(!with_tools("tools: Read").allows(SPAWN_TOOL));
+        let denied = parse_profile(
+            "---\nname: a\ndescription: d\ntools: Read, Agent(x), Task\ndisallowedTools: Agent\n---\nBody\n",
+        )
+        .unwrap()
+        .profile;
+        assert!(!denied.names(SPAWN_TOOL));
+        assert!(denied.spawn_profiles.is_empty());
+    }
+
+    #[test]
+    fn a_catalog_narrows_to_the_profiles_a_list_names() {
+        let plugin = |name: &str, profiles: &[&str]| -> Vec<Arc<NamedProfile>> {
+            profiles
+                .iter()
+                .map(|profile| {
+                    let mut parsed = with_tools("tools: Read");
+                    parsed.name = (*profile).to_owned();
+                    Arc::new(NamedProfile {
+                        plugin: name.to_owned(),
+                        profile: parsed,
+                    })
+                })
+                .collect()
+        };
+        let mut profiles = plugin("kit", &["a", "b"]);
+        profiles.extend(plugin("other", &["a", "c"]));
+        let catalog = ProfileCatalog { profiles };
+        let all = catalog.only(&[]);
+        assert_eq!(all.profiles.len(), 4);
+        let only = catalog.only(&["kit:a".to_owned(), "c".to_owned()]);
+        let found: Vec<(&str, &str)> = only
+            .profiles
+            .iter()
+            .map(|named| (named.plugin.as_str(), named.profile.name.as_str()))
+            .collect();
+        assert_eq!(found, [("kit", "a"), ("other", "c")]);
+        assert!(only.find("b").is_err());
     }
 
     #[test]
@@ -1141,6 +1275,7 @@ mod tests {
                 subagents: profiles
                     .iter()
                     .map(|(name, description)| SubagentProfile {
+                        spawn_profiles: Vec::new(),
                         name: (*name).into(),
                         description: (*description).into(),
                         instructions: format!("{scope} {name}"),

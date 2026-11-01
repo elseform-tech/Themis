@@ -974,3 +974,440 @@ async fn a_scoped_shell_still_runs_what_it_names() {
     }
     app.serving.abort();
 }
+
+// Subagents starting subagents.
+
+const INNER: &str = "Inner work.";
+const NESTED_NOTE: &str = "You can start helpers of your own";
+
+fn is_inner(body: &Value) -> bool {
+    is_subagent(body) && mentions(body, INNER)
+}
+
+/// The main agent starts `outer`, which starts `inner` (a subagent's brief with its name, or a
+/// spec of its own), which answers with `child` and then reports.
+fn nesting(
+    outer: &'static str,
+    inner: Value,
+    child: impl Fn(&Value) -> ResponseTemplate + Send + Sync + 'static,
+) -> impl Fn(&Value) -> ResponseTemplate + Send + Sync + 'static {
+    spawning(Some(outer), move |body| {
+        if is_inner(body) {
+            return child(body);
+        }
+        if results(body).is_empty() {
+            return tool_call(
+                "n1",
+                "spawn_subagents",
+                &json!({"subagents": [inner.clone()]}),
+            );
+        }
+        if mentions(body, "INNER-RESULT") {
+            reply("Outer is done.")
+        } else if results(body).iter().any(|result| {
+            result.contains("error")
+                || result.contains("isn't among")
+                || result.contains("name a `profile`")
+                || result.contains("Unknown subagent")
+        }) {
+            reply("Outer gave up.")
+        } else {
+            reply("Waiting.")
+        }
+    })
+}
+
+fn inner_spec(extra: Value) -> Value {
+    let mut spec = json!({"name": "Inner", "brief": INNER});
+    spec.as_object_mut()
+        .unwrap()
+        .extend(extra.as_object().cloned().unwrap_or_default());
+    spec
+}
+
+fn reporting(_: &Value) -> ResponseTemplate {
+    reply("INNER-RESULT")
+}
+
+async fn subagent_list(app: &App) -> Value {
+    let (data, thread) = (app.data.path().to_owned(), app.thread.clone());
+    tokio::task::spawn_blocking(move || call(&data, "list_subagents", json!({"threadId": thread})))
+        .await
+        .unwrap()
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_profile_naming_agent_starts_one_level_and_only_it_sees_the_result() {
+    let app = app(
+        Setup {
+            // One slot: a parent keeps its own while it waits, so this would hang if shared.
+            config: Some(r#"{"subagents": {"max_parallel": 1}}"#),
+            agents: &[
+                ("outer", "tools: Read, Bash, Agent"),
+                ("inner", "tools: Read, Bash, Agent"),
+            ],
+            ..Setup::default()
+        },
+        nesting("outer", inner_spec(json!({"profile": "inner"})), reporting),
+    )
+    .await;
+    run(&app, "yolo", "go").await;
+    let all = bodies(&app.llm).await;
+    let outer = all
+        .iter()
+        .find(|body| is_subagent(body) && !is_inner(body))
+        .unwrap();
+    let inner = all.iter().find(|body| is_inner(body)).unwrap();
+    assert!(tool_names(outer)
+        .iter()
+        .any(|tool| tool == "spawn_subagents"));
+    assert!(text(&messages(outer)[0]).contains(NESTED_NOTE));
+    assert!(text(&messages(outer)[0]).contains("spawn_subagents for Agent and Task"));
+    // It stops there, and says so.
+    for tool in [
+        "spawn_subagents",
+        "wait_subagents",
+        "message_subagent",
+        "stop_subagent",
+    ] {
+        assert!(!tool_names(inner).iter().any(|name| name == tool), "{tool}");
+    }
+    let inner_system = text(&messages(inner)[0]);
+    assert!(!inner_system.contains(NESTED_NOTE));
+    assert!(inner_system.contains("aren't available"), "{inner_system}");
+    assert!(inner_system.contains("spawn_subagents"), "{inner_system}");
+    // The result goes to the one that asked, not over its head.
+    assert!(all
+        .iter()
+        .any(|body| is_subagent(body) && !is_inner(body) && mentions(body, "INNER-RESULT")));
+    assert!(!all
+        .iter()
+        .any(|body| !is_subagent(body) && mentions(body, "INNER-RESULT")));
+    let listed = subagent_list(&app).await;
+    let by_name = |name: &str| {
+        listed
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|agent| agent["name"] == name)
+            .unwrap()
+            .clone()
+    };
+    assert_eq!(by_name("Helper")["parent"], Value::Null, "{listed}");
+    assert_eq!(
+        by_name("Inner")["parent"],
+        by_name("Helper")["id"],
+        "{listed}"
+    );
+    assert_eq!(by_name("Inner")["status"], "finished", "{listed}");
+    app.serving.abort();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn starting_subagents_is_never_implied() {
+    for (profile, frontmatter) in [
+        (None, ""),
+        (Some("plain"), ""),
+        (Some("star"), "tools: *"),
+        (Some("reader"), "tools: Read"),
+    ] {
+        let app = app(
+            Setup {
+                agents: &[("star", "tools: *"), ("reader", "tools: Read")],
+                ..Setup::default()
+            },
+            spawning(profile, calling(vec![])),
+        )
+        .await;
+        run(&app, "yolo", "go").await;
+        let (tools, system) = child_request(&app).await;
+        assert!(
+            !tools.iter().any(|tool| tool == "spawn_subagents"),
+            "{frontmatter}: {tools:?}"
+        );
+        assert!(!system.contains(NESTED_NOTE));
+        app.serving.abort();
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn the_setting_off_keeps_a_profile_from_starting_subagents_and_says_so() {
+    let app = app(
+        Setup {
+            config: Some(r#"{"subagents": {"allow_nested": false}}"#),
+            agents: &[("outer", "tools: Read, Agent")],
+            ..Setup::default()
+        },
+        spawning(Some("outer"), calling(vec![])),
+    )
+    .await;
+    run(&app, "yolo", "go").await;
+    let (tools, system) = child_request(&app).await;
+    assert!(
+        !tools.iter().any(|tool| tool == "spawn_subagents"),
+        "{tools:?}"
+    );
+    assert!(
+        system.contains("aren't available") && system.contains("spawn_subagents"),
+        "{system}"
+    );
+    app.serving.abort();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_nested_subagent_has_nothing_its_parent_lacks() {
+    let app = app(
+        Setup {
+            agents: &[("outer", "tools: Read, Agent")],
+            ..Setup::default()
+        },
+        nesting("outer", inner_spec(json!({})), reporting),
+    )
+    .await;
+    run(&app, "yolo", "go").await;
+    let all = bodies(&app.llm).await;
+    let inner = all.iter().find(|body| is_inner(body)).unwrap();
+    let tools = tool_names(inner);
+    assert!(tools.iter().any(|tool| tool == "read_file"), "{tools:?}");
+    for tool in ["shell", "fetch_url", "web_search", "write_file"] {
+        assert!(!tools.iter().any(|name| name == tool), "{tool}: {tools:?}");
+    }
+    app.serving.abort();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_nested_subagent_is_held_to_its_parents_shell_limit() {
+    let app = app(
+        Setup {
+            agents: &[("outer", "tools: Read, Bash(git status:*), Agent")],
+            ..Setup::default()
+        },
+        nesting(
+            "outer",
+            inner_spec(json!({})),
+            |body: &Value| match results(body).len() {
+                0 => tool_call(
+                    "i1",
+                    "shell",
+                    &json!({"command": ["touch", "escaped.txt"], "status": "Trying."}),
+                ),
+                _ => reply("INNER-RESULT"),
+            },
+        ),
+    )
+    .await;
+    run(&app, "yolo", "go").await;
+    assert!(!app.project.path().join("escaped.txt").exists());
+    let all = bodies(&app.llm).await;
+    let inner = all.iter().rfind(|body| is_inner(body)).unwrap();
+    assert!(text(&messages(inner)[0]).contains("git status"));
+    assert!(results(inner)[0].contains("denied"), "{:?}", results(inner));
+    app.serving.abort();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_read_only_parent_cannot_hand_out_write_paths() {
+    let app = app(
+        Setup {
+            agents: &[("outer", "tools: Read, Edit, Agent")],
+            ..Setup::default()
+        },
+        nesting(
+            "outer",
+            inner_spec(json!({"write_paths": ["src/"]})),
+            reporting,
+        ),
+    )
+    .await;
+    run(&app, "yolo", "go").await;
+    let all = bodies(&app.llm).await;
+    assert!(!all.iter().any(is_inner), "it started");
+    assert!(
+        all.iter().any(|body| results(body)
+            .iter()
+            .any(|result| result.contains("isn't among"))),
+        "not refused"
+    );
+    app.serving.abort();
+}
+
+/// The main agent gives `outer` these write paths; it hands the nested one `inner_paths`.
+fn nesting_with_paths(
+    outer_paths: Value,
+    inner_paths: Value,
+) -> impl Fn(&Value) -> ResponseTemplate + Send + Sync + 'static {
+    move |body| {
+        if !is_subagent(body) {
+            if results(body).is_empty() {
+                return tool_call(
+                    "s1",
+                    "spawn_subagents",
+                    &json!({"say": "Starting.", "subagents": [
+                        {"name": "Helper", "brief": "Do the work.", "profile": "outer", "write_paths": outer_paths}
+                    ]}),
+                );
+            }
+            return if mentions(body, NOTE) {
+                reply("Done.")
+            } else {
+                reply("Waiting.")
+            };
+        }
+        if is_inner(body) {
+            return reply("INNER-RESULT");
+        }
+        if results(body).is_empty() {
+            return tool_call(
+                "n1",
+                "spawn_subagents",
+                &json!({"subagents": [inner_spec(json!({"write_paths": inner_paths}))]}),
+            );
+        }
+        if mentions(body, "INNER-RESULT") || results(body)[0].contains("isn't among") {
+            reply("Outer is done.")
+        } else {
+            reply("Waiting.")
+        }
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn nested_write_paths_stay_inside_the_parents() {
+    let setup = || Setup {
+        agents: &[("outer", "tools: Read, Edit, Agent")],
+        ..Setup::default()
+    };
+    let inside = app(
+        setup(),
+        nesting_with_paths(json!(["src/"]), json!(["src/part/"])),
+    )
+    .await;
+    run(&inside, "yolo", "go").await;
+    let all = bodies(&inside.llm).await;
+    let inner = all.iter().find(|body| is_inner(body)).expect("it started");
+    assert!(tool_names(inner).iter().any(|tool| tool == "write_file"));
+    inside.serving.abort();
+    let outside = app(
+        setup(),
+        nesting_with_paths(json!(["src/"]), json!(["other/"])),
+    )
+    .await;
+    run(&outside, "yolo", "go").await;
+    assert!(
+        !bodies(&outside.llm).await.iter().any(is_inner),
+        "it started"
+    );
+    outside.serving.abort();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_list_of_profiles_is_all_it_can_start() {
+    for inner in [json!({}), json!({"profile": "other"})] {
+        let app = app(
+            Setup {
+                agents: &[
+                    ("outer", "tools: Read, Agent(allowed)"),
+                    ("allowed", "tools: Read"),
+                    ("other", "tools: Read"),
+                ],
+                ..Setup::default()
+            },
+            nesting("outer", inner_spec(inner.clone()), reporting),
+        )
+        .await;
+        run(&app, "yolo", "go").await;
+        assert!(
+            !bodies(&app.llm).await.iter().any(is_inner),
+            "{inner} started"
+        );
+        app.serving.abort();
+    }
+    let app = app(
+        Setup {
+            agents: &[
+                ("outer", "tools: Read, Agent(allowed)"),
+                ("allowed", "tools: Read"),
+            ],
+            ..Setup::default()
+        },
+        nesting(
+            "outer",
+            inner_spec(json!({"profile": "allowed"})),
+            reporting,
+        ),
+    )
+    .await;
+    run(&app, "yolo", "go").await;
+    assert!(
+        bodies(&app.llm).await.iter().any(is_inner),
+        "the named one didn't start"
+    );
+    app.serving.abort();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn stopping_a_subagent_stops_what_it_started() {
+    let app = app(
+        Setup {
+            agents: &[("outer", "tools: Read, Bash, Agent")],
+            ..Setup::default()
+        },
+        nesting("outer", inner_spec(json!({})), |_: &Value| {
+            tool_call(
+                "i1",
+                "shell",
+                &json!({"command": ["sleep", "30"], "status": "Sleeping."}),
+            )
+        }),
+    )
+    .await;
+    let (data, thread) = (app.data.path().to_owned(), app.thread.clone());
+    let started = Instant::now();
+    tokio::task::spawn_blocking(move || {
+        call(
+            &data,
+            "set_thread_approval_mode",
+            json!({"threadId": thread, "mode": "yolo"}),
+        );
+        call(
+            &data,
+            "send_message",
+            json!({"threadId": thread, "text": "go"}),
+        );
+        let deadline = Instant::now() + Duration::from_secs(20);
+        let id = loop {
+            let list = call(&data, "list_subagents", json!({"threadId": thread}));
+            let both = list.as_array().is_some_and(|list| list.len() == 2);
+            if both {
+                break list
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .find(|agent| agent["name"] == "Helper")
+                    .unwrap()["id"]
+                    .as_str()
+                    .unwrap()
+                    .to_owned();
+            }
+            assert!(Instant::now() < deadline, "never both running");
+            std::thread::sleep(Duration::from_millis(50));
+        };
+        call(
+            &data,
+            "stop_subagent",
+            json!({"threadId": thread, "subagentId": id}),
+        );
+        while call(&data, "get_thread", json!({"threadId": thread}))["running"] == true {
+            assert!(Instant::now() < deadline, "the run never finished");
+            std::thread::sleep(Duration::from_millis(50));
+        }
+    })
+    .await
+    .unwrap();
+    assert!(started.elapsed() < Duration::from_secs(25));
+    let listed = subagent_list(&app).await;
+    for agent in listed.as_array().unwrap() {
+        assert_eq!(agent["status"], "stopped", "{listed}");
+    }
+    app.serving.abort();
+}

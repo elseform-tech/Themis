@@ -42,6 +42,8 @@ pub const SUBAGENT_MCP_LEFT_OUT: &str =
     include_str!("../builtins/prompts/subagent-mcp-left-out.md");
 pub const SPAWN_SUBAGENTS_MCP: &str = include_str!("../builtins/prompts/spawn-subagents-mcp.md");
 pub const SUBAGENT_WEB_NOTE: &str = include_str!("../builtins/prompts/subagent-web-note.md");
+/// Tells a subagent whose profile names `Agent` that it can start helpers.
+pub const SUBAGENT_NESTED_NOTE: &str = include_str!("../builtins/prompts/subagent-nested-note.md");
 pub const SUBAGENT_SHELL_SCOPE_NOTE: &str =
     include_str!("../builtins/prompts/subagent-shell-scope-note.md");
 pub const SUBAGENT_ASK_NOTE: &str = include_str!("../builtins/prompts/subagent-ask-note.md");

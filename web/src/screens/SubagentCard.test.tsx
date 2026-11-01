@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { readFileSync } from "node:fs";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { subagentWaitLine } from "./ThreadConversation";
 import { initialState, reducer } from "../state/reducer";
@@ -23,8 +24,8 @@ const tauri = vi.hoisted(() => ({
     { kind: "finished", result: "Bug found at runtime.rs:3496." },
   ]),
   stopSubagent: vi.fn(async () => undefined),
-  getSubagentSettings: vi.fn(async () => ({ settings: { enabled: true, max_parallel: 3, max_turns: 40, model: null, allow_writes: true, allow_mcp: true, allow_web: true }, revision: "r1" })),
-  updateSubagentSettings: vi.fn(async (changes: object) => ({ settings: { enabled: true, max_parallel: 3, max_turns: 40, model: null, allow_writes: true, allow_mcp: true, allow_web: true, ...changes }, revision: "r2" })),
+  getSubagentSettings: vi.fn(async () => ({ settings: { enabled: true, max_parallel: 3, max_turns: 40, model: null, allow_writes: true, allow_mcp: true, allow_web: true, allow_nested: true }, revision: "r1" })),
+  updateSubagentSettings: vi.fn(async (changes: object) => ({ settings: { enabled: true, max_parallel: 3, max_turns: 40, model: null, allow_writes: true, allow_mcp: true, allow_web: true, allow_nested: true, ...changes }, revision: "r2" })),
   listGoModels: vi.fn(async () => [{ id: "glm-5" }, { id: "beam-free" }]),
 }));
 vi.mock("../lib/tauri", () => tauri);
@@ -118,6 +119,15 @@ describe("subagent models", () => {
     expect(modelNote(agent({ model: "claude-haiku", ranOn: "glm-5" }), "glm-5")).toBe("claude-haiku → glm-5");
   });
 
+  it("says in the detail which subagent started it", async () => {
+    const state = reducer(initialState, envelope({ kind: "subagent_started", id: "a1", name: "Inner", brief: "b", model: "glm-5", confined: true, started_by: "Helper" }));
+    const entry = state.messages[thread]!.find(row => row.subagents)!.subagents![0]!;
+    expect(entry.startedBy).toBe("Helper");
+    render(<SubagentDetail threadId={thread} agent={agent({ model: "glm-5", startedBy: entry.startedBy, status: "finished", seconds: 9 })} runLive={false} onBack={() => {}} />);
+    await act(async () => {});
+    expect(screen.getByText(/^glm-5 · Started by Helper · Read only/)).toBeInTheDocument();
+  });
+
   it("says in the detail which model it fell back to", async () => {
     render(<SubagentDetail threadId={thread} agent={agent({ model: "claude-haiku", ranOn: "glm-5", status: "finished", seconds: 9 })} runLive={false} onBack={() => {}} />);
     await act(async () => {});
@@ -205,6 +215,9 @@ describe("Settings › Subagents", () => {
     fireEvent.click(screen.getByRole("checkbox", { name: "Allow web" }));
     await act(async () => {});
     expect(tauri.updateSubagentSettings).toHaveBeenLastCalledWith({ allow_web: false }, "r2");
+    fireEvent.click(screen.getByRole("checkbox", { name: "Allow subagents to start subagents" }));
+    await act(async () => {});
+    expect(tauri.updateSubagentSettings).toHaveBeenLastCalledWith({ allow_nested: false }, "r2");
     // Allowed models: added from the list, at most three, removed one by one.
     fireEvent.change(screen.getByRole("combobox", { name: "Add model" }), { target: { value: "glm-5" } });
     await act(async () => {});
@@ -267,6 +280,36 @@ describe("subagents in the chat", () => {
     expect(group.querySelector("summary")).toHaveTextContent("1 failed");
     expect(group.querySelectorAll(".themis-tool-message")).toHaveLength(2);
     expect(container.querySelector(".themis-run-progress .themis-shimmer")).not.toBeNull();
+  });
+
+  it("shows each tool call's input and saved output, as the chat does", async () => {
+    vi.mocked(tauri.getSubagentTranscript).mockResolvedValueOnce([
+      { kind: "tool_started", tool: "shell", summary: "call `shell` with {\"command\":\"ls\"}" },
+      { kind: "tool_finished", tool: "hook_g--kit--after", ok: true, output: "{\"ok\":true}" },
+      { kind: "tool_finished", tool: "shell", ok: true, output: "a.txt" },
+    ] as never);
+    const { container } = render(<SubagentDetail threadId={thread} agent={agent({ status: "finished", seconds: 3 })} runLive={false} onBack={() => {}} />);
+    await act(async () => {});
+    const [input, output] = container.querySelectorAll(".themis-tool-detail pre");
+    expect(input).toHaveTextContent('call `shell` with {"command":"ls"}');
+    expect(output).toHaveTextContent("a.txt");
+    expect(container).not.toHaveTextContent("not recorded");
+  });
+
+  it("while a tool runs says so, and that its output is on the way", async () => {
+    vi.mocked(tauri.getSubagentTranscript).mockResolvedValueOnce([
+      { kind: "tool_started", tool: "shell", summary: "call `shell` with {\"command\":\"sleep 9\"}" },
+    ] as never);
+    const { container } = render(<SubagentDetail threadId={thread} agent={agent({})} runLive onBack={() => {}} />);
+    await act(async () => {});
+    expect(container.querySelector(".themis-run-progress")).toHaveTextContent(/^Using .*…/);
+    expect(container.querySelector(".themis-run-progress")).not.toHaveTextContent("Thinking");
+    expect(container.querySelector(".themis-tool-detail")).toHaveTextContent("Waiting for output…");
+  });
+
+  it("puts the status line on the panel, not on a strip of the chat's colour", () => {
+    const css = readFileSync("src/screens/SubagentCard.css", "utf8");
+    expect(css).toMatch(/\.themis-subagent-steps \.themis-run-progress \{[^}]*position: static;[^}]*background: none;/);
   });
 
   it("shows no status line once the subagent has ended", async () => {
