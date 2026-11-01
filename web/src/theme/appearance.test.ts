@@ -4,7 +4,7 @@ import { readFileSync } from "node:fs";
 it("sets body text to the chosen size, and no label below 9px even at the smallest size", () => {
   const shell = readFileSync("src/screens/shell.css", "utf8");
   expect(shell).toMatch(/\.themis-shell \{[^}]*font-size: \.8333rem/);
-  expect(shell).toContain("-webkit-font-smoothing: auto");
+  expect(shell).toContain("-webkit-font-smoothing: antialiased");
   const source = readFileSync("src/theme/appearance.ts", "utf8");
   expect(source).toContain("settings.text_size * 1.2");
   // At 10, a rem is 12px: .75rem is 9px.
