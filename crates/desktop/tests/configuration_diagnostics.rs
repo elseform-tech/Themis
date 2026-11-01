@@ -425,7 +425,7 @@ async fn cli_retries_required_summary_automatically_and_exposes_usage() {
     let project = tempfile::tempdir().unwrap();
     std::fs::create_dir(project.path().join(".themis")).unwrap();
     std::fs::write(project.path().join(".themis/config.jsonc"), r#"{"context_token_budget":24000,"recent_messages":4,"compaction":{"timeout_seconds":120,"request_timeout_seconds":60,"max_stages":64},"logging":{"context_metrics":"detailed"}}"#).unwrap();
-    let provider = MockServer::start().await;
+    let provider = MockServer::builder().start().await;
     let summaries = Arc::new(AtomicUsize::new(0));
     let counter = summaries.clone();
     Mock::given(method("POST")).respond_with(move |request: &wiremock::Request| {

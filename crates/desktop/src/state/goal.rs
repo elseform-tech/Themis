@@ -78,6 +78,11 @@ const PAGE_CHANGING_CALLS: [&str; 11] = [
     "innerHTML",
 ];
 
+/// How many items a checklist has, and how many of them are proven.
+fn checklist_counts(items: &[core_goal::GoalRequirement]) -> (usize, usize) {
+    (items.len(), items.iter().filter(|item| item.proven).count())
+}
+
 /// Whether a devtools script changed the page instead of reading it. This is a screen for a
 /// plain mistake, not a sandbox: a read that looks like a write only costs the agent a reload.
 fn marks_page_change(tool: &str, summary: &str) -> bool {
@@ -696,6 +701,8 @@ impl AppState {
                 );
                 return;
             };
+            let counts = checklist_counts(&planned);
+            let mut updated = false;
             state.update_goal(sink.as_ref(), &thread_id, |current| {
                 if current.started_at == goal.started_at
                     && current.text == goal.text
@@ -703,8 +710,12 @@ impl AppState {
                     && current.proof == goal.proof
                 {
                     current.proof = planned;
+                    updated = true;
                 }
             });
+            if updated {
+                state.log_checklist_updated(&thread_id, counts, false);
+            }
         });
     }
 
@@ -772,6 +783,8 @@ impl AppState {
                 if verdict.requirements.is_empty() {
                     continue;
                 }
+                let counts = checklist_counts(&verdict.requirements);
+                let mut updated = false;
                 state.update_goal(sink.as_ref(), &thread_id, |current| {
                     if current.started_at == started_at
                         && current.checked_seq == goal.checked_seq
@@ -780,8 +793,12 @@ impl AppState {
                         && current.added == goal.added
                     {
                         current.proof = verdict.requirements;
+                        updated = true;
                     }
                 });
+                if updated {
+                    state.log_checklist_updated(&thread_id, counts, true);
+                }
             }
             state
                 .inner
@@ -790,6 +807,21 @@ impl AppState {
                 .unwrap_or_else(|e| e.into_inner())
                 .remove(&watching);
         });
+    }
+
+    /// Metadata only: how many items, never what they say.
+    fn log_checklist_updated(
+        &self,
+        thread_id: &str,
+        (items, proven): (usize, usize),
+        mid_turn: bool,
+    ) {
+        let _ = self.inner.diagnostics.append(
+            "goal",
+            "checklist_updated",
+            "info",
+            json!({"thread_id": thread_id, "items": items, "proven": proven, "mid_turn": mid_turn}),
+        );
     }
 
     /// How often the chat's project wants the checklist refreshed during a turn, if at all.
@@ -1118,6 +1150,12 @@ impl AppState {
         };
         // However sure the check is: proof from a page a script changed isn't proof.
         let verdict = if page_spoiled && verdict.verdict == Verdict::Reached {
+            let _ = self.inner.diagnostics.append(
+                "goal",
+                "script_proof_refused",
+                "info",
+                json!({"thread_id": thread_id}),
+            );
             core_goal::GoalVerdict {
                 verdict: Verdict::NotYet,
                 reason: themis_core::prompts::GOAL_NOTE_SCRIPT_PROOF.to_owned(),

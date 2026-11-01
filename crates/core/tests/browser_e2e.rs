@@ -83,7 +83,7 @@ async fn the_agent_fills_a_form_reads_notes_and_navigates_in_a_real_browser() {
     let _browser = ONE_BROWSER.lock().await;
     let data = tempfile::tempdir().unwrap();
     let Some(hub) = hub(data.path()) else { return };
-    let site = MockServer::start().await;
+    let site = MockServer::builder().start().await;
     Mock::given(path("/signup"))
         .respond_with(ResponseTemplate::new(200).set_body_raw(FORM, "text/html; charset=utf-8"))
         .mount(&site)
@@ -465,7 +465,7 @@ async fn the_agent_moves_the_mouse_and_reopening_a_page_reuses_its_tab() {
     let _browser = ONE_BROWSER.lock().await;
     let data = tempfile::tempdir().unwrap();
     let Some(hub) = hub(data.path()) else { return };
-    let site = MockServer::start().await;
+    let site = MockServer::builder().start().await;
     Mock::given(path("/aim"))
         .respond_with(ResponseTemplate::new(200).set_body_raw(
             r#"<!doctype html><title>Aim</title><body style="margin:0;height:600px"><p id="out">still</p>
@@ -532,7 +532,7 @@ async fn a_locked_page_turns_past_the_edge_and_clicking_does_not_turn_it() {
     let _browser = ONE_BROWSER.lock().await;
     let data = tempfile::tempdir().unwrap();
     let Some(hub) = hub(data.path()) else { return };
-    let site = MockServer::start().await;
+    let site = MockServer::builder().start().await;
     Mock::given(path("/look"))
         .respond_with(ResponseTemplate::new(200).set_body_raw(
             r#"<!doctype html><title>Look</title><body style="margin:0;height:100vh"><p id="out">0,0,0</p>
@@ -631,7 +631,7 @@ async fn a_frozen_page_stops_drawing_until_the_next_action() {
     let _browser = ONE_BROWSER.lock().await;
     let data = tempfile::tempdir().unwrap();
     let Some(hub) = hub(data.path()) else { return };
-    let site = MockServer::start().await;
+    let site = MockServer::builder().start().await;
     Mock::given(path("/game"))
         .respond_with(ResponseTemplate::new(200).set_body_raw(
             r#"<!doctype html><title>Game</title><p id="out">none</p><script>
@@ -724,7 +724,7 @@ async fn a_page_can_lock_the_pointer_and_read_mouse_movement() {
     let _browser = ONE_BROWSER.lock().await;
     let data = tempfile::tempdir().unwrap();
     let Some(hub) = hub(data.path()) else { return };
-    let site = MockServer::start().await;
+    let site = MockServer::builder().start().await;
     Mock::given(path("/fps"))
         .respond_with(ResponseTemplate::new(200).set_body_raw(
             r#"<!doctype html><title>Fps</title><body style="margin:0">
@@ -784,7 +784,7 @@ async fn the_agent_holds_a_key_named_as_a_page_names_it_and_sees_the_page_size()
     let _browser = ONE_BROWSER.lock().await;
     let data = tempfile::tempdir().unwrap();
     let Some(hub) = hub(data.path()) else { return };
-    let site = MockServer::start().await;
+    let site = MockServer::builder().start().await;
     Mock::given(path("/keys"))
         .respond_with(ResponseTemplate::new(200).set_body_raw(
             r#"<!doctype html><title>Keys</title><body><p id="out">no key yet</p>
@@ -846,7 +846,7 @@ async fn the_agent_clicks_a_point_of_a_canvas_seen_in_a_screenshot() {
     let _browser = ONE_BROWSER.lock().await;
     let data = tempfile::tempdir().unwrap();
     let Some(hub) = hub(data.path()) else { return };
-    let site = MockServer::start().await;
+    let site = MockServer::builder().start().await;
     Mock::given(path("/board"))
         .respond_with(ResponseTemplate::new(200).set_body_raw(
             r#"<!doctype html><title>Board</title><body style="margin:0">
@@ -972,7 +972,7 @@ async fn the_view_shows_the_page_after_a_first_open_was_refused() {
     let _browser = ONE_BROWSER.lock().await;
     let data = tempfile::tempdir().unwrap();
     let Some(hub) = hub(data.path()) else { return };
-    let site = MockServer::start().await;
+    let site = MockServer::builder().start().await;
     Mock::given(path("/game"))
         .respond_with(ResponseTemplate::new(200).set_body_raw(
             "<!doctype html><title>Game</title><body style=\"margin:0;background:rgb(0,160,0)\"><h1>Game</h1>",
@@ -1032,7 +1032,7 @@ async fn the_stream_and_title_follow_the_person_to_another_site() {
     let _browser = ONE_BROWSER.lock().await;
     let data = tempfile::tempdir().unwrap();
     let Some(hub) = hub(data.path()) else { return };
-    let site = MockServer::start().await;
+    let site = MockServer::builder().start().await;
     for (page, title) in [("/a", "First site"), ("/b", "Second site")] {
         Mock::given(path(page))
             .respond_with(ResponseTemplate::new(200).set_body_raw(
@@ -1102,7 +1102,7 @@ async fn the_person_is_never_held_up_by_an_agent_action_in_progress() {
     let _browser = ONE_BROWSER.lock().await;
     let data = tempfile::tempdir().unwrap();
     let Some(hub) = hub(data.path()) else { return };
-    let site = MockServer::start().await;
+    let site = MockServer::builder().start().await;
     // A busy page: it polls for six seconds, so its network never goes quiet while the
     // agent's open settles.
     Mock::given(path("/busy"))

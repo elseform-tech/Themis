@@ -100,7 +100,7 @@ impl Fixture {
 
 /// Provider that issues one `sh -c SCRIPT` call per round, then answers.
 async fn mount_scripts(scripts: Vec<String>) -> MockServer {
-    let server = MockServer::start().await;
+    let server = MockServer::builder().start().await;
     Mock::given(method("POST"))
         .and(path("/chat/completions"))
         .respond_with(move |request: &Request| {

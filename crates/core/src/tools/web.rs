@@ -1044,7 +1044,7 @@ mod tests {
     #[tokio::test]
     async fn fetch_url_approves_the_site_reads_once_and_pages_from_cache() {
         use wiremock::{matchers::path, Mock, MockServer, ResponseTemplate};
-        let server = MockServer::start().await;
+        let server = MockServer::builder().start().await;
         let long = format!(
             "<html><body><article><h1>Doc</h1><p>{}</p></article></body></html>",
             "word ".repeat(3000)
@@ -1077,7 +1077,7 @@ mod tests {
     #[tokio::test]
     async fn fetch_url_stops_at_a_redirect_to_another_site_and_denials_fetch_nothing() {
         use wiremock::{matchers::path, Mock, MockServer, ResponseTemplate};
-        let server = MockServer::start().await;
+        let server = MockServer::builder().start().await;
         Mock::given(path("/same"))
             .respond_with(ResponseTemplate::new(302).insert_header("location", "/final"))
             .mount(&server)
@@ -1131,7 +1131,7 @@ mod tests {
             matchers::{path, query_param},
             Mock, MockServer, ResponseTemplate,
         };
-        let server = MockServer::start().await;
+        let server = MockServer::builder().start().await;
         Mock::given(path("/ok/search"))
             .and(query_param("format", "json"))
             .respond_with(ResponseTemplate::new(200).set_body_json(json!({
@@ -1179,7 +1179,7 @@ mod tests {
             matchers::{path, query_param},
             Mock, MockServer, ResponseTemplate,
         };
-        let server = MockServer::start().await;
+        let server = MockServer::builder().start().await;
         Mock::given(path("/search"))
             .and(query_param("q", "ok"))
             .and(query_param("format", "json"))

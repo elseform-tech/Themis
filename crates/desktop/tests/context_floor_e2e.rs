@@ -62,7 +62,7 @@ async fn a_budget_too_small_for_the_work_stops_with_advice() {
         )
         .unwrap();
     }
-    let provider = MockServer::start().await;
+    let provider = MockServer::builder().start().await;
     let reads = Arc::new(AtomicUsize::new(0));
     let counter = Arc::clone(&reads);
     Mock::given(method("POST"))

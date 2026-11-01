@@ -1,0 +1,1 @@
+Subagents can also search and read the web, unless a profile's list leaves those tools out.

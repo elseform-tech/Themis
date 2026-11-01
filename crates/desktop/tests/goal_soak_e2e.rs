@@ -241,7 +241,7 @@ async fn soak() -> Soak {
     std::env::set_var("USERPROFILE", home.path());
     // The scripted provider gets the synthetic key only, never one from the environment.
     std::env::remove_var("OPENCODE_KEY");
-    let llm = MockServer::start().await;
+    let llm = MockServer::builder().start().await;
     let script = Arc::new(Mutex::new(Script {
         hold_after: 2,
         ..Script::default()

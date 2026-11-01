@@ -317,6 +317,13 @@ fn resolved_server(plugin: &Plugin, name: &str, root: &Path) -> McpServer {
     server.command.iter_mut().for_each(fill);
     server.args.iter_mut().for_each(fill);
     server.env_values.values_mut().for_each(fill);
+    // Relative to the project, so it stays as checkable as the stored form.
+    if let Some(cwd) = &mut server.cwd {
+        let relative = format!(".themis/plugin-files/{}", plugin.skill_id("resources"));
+        *cwd = cwd
+            .replace("${CLAUDE_PLUGIN_ROOT}", &relative)
+            .replace("${PLUGIN_ROOT}", &relative);
+    }
     server
 }
 

@@ -25,8 +25,9 @@ use super::AppState;
 
 const VERSION: u32 = 1;
 const MAX_ENTRIES: usize = 4096;
-/// Resource files hashed into a fingerprint; more than this fails closed.
-const MAX_FILES: usize = 256;
+/// Resource files hashed into a fingerprint; more than this fails closed. The importer's own bound
+/// on a plugin's text files is 1,000, and consent must be possible for whatever it accepts.
+const MAX_FILES: usize = 1024;
 const MAX_FILE_BYTES: usize = 8 * 1024 * 1024;
 
 #[derive(Serialize, Deserialize)]
@@ -62,7 +63,8 @@ pub(super) fn definition_digest(
         server.args,
         server.url,
         server.env,
-        server.bearer_env
+        server.bearer_env,
+        server.cwd
     ]);
     hasher.update(definition.to_string().as_bytes());
     for (path, content) in files {
@@ -82,7 +84,11 @@ pub(super) fn definition_digest(
 }
 
 pub(super) fn plugin_digest(plugin: &Plugin, server: &McpServer) -> Option<String> {
-    definition_digest(server, &plugin.spec.files, &plugin.spec.executable_files)
+    definition_digest(
+        server,
+        &plugin.spec.approved_files(),
+        &plugin.spec.executable_files,
+    )
 }
 
 /// Namespace for a connection's generated tool names. It includes the approved

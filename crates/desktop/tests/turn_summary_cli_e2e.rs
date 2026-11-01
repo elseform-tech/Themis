@@ -37,7 +37,7 @@ fn reply(message: Value) -> ResponseTemplate {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn cli_a_turn_that_stops_on_a_progress_line_ends_with_its_summary() {
-    let llm = MockServer::start().await;
+    let llm = MockServer::builder().start().await;
     Mock::given(method("POST"))
         .respond_with(|request: &Request| {
             let body: Value = request.body_json().unwrap();

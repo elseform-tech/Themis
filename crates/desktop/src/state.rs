@@ -320,6 +320,8 @@ struct AppStateInner {
     goal_turn_runs: std::sync::Mutex<HashSet<String>>,
     /// Goals, as (chat, start time), whose checklist is being kept current during turns.
     goal_checklist_watches: std::sync::Mutex<HashSet<(String, i64)>>,
+    /// Chats that have run since the app started.
+    chats_run: std::sync::Mutex<HashSet<String>>,
     /// Bumped whenever a waiting goal timer must no longer fire.
     goal_generations: std::sync::Mutex<HashMap<String, u64>>,
     /// Runs the server itself sends (queued messages, goal turns), by run id:
@@ -593,6 +595,7 @@ impl AppState {
                 goal_lock: std::sync::Mutex::new(()),
                 goal_turn_runs: std::sync::Mutex::new(HashSet::new()),
                 goal_checklist_watches: std::sync::Mutex::new(HashSet::new()),
+                chats_run: std::sync::Mutex::new(HashSet::new()),
                 goal_generations: std::sync::Mutex::new(HashMap::new()),
                 server_sends: std::sync::Mutex::new(HashMap::new()),
             }),
@@ -1510,7 +1513,7 @@ mod tests {
                 .set_secret("go".into(), "synthetic-test-key".into())
                 .await
                 .unwrap();
-            let server = MockServer::start().await;
+            let server = MockServer::builder().start().await;
             Mock::given(method("GET"))
                 .and(path("/models"))
                 .respond_with(ResponseTemplate::new(503))
@@ -1562,7 +1565,7 @@ mod tests {
             .set_secret("go".into(), "synthetic-test-key".into())
             .await
             .unwrap();
-        let server = MockServer::start().await;
+        let server = MockServer::builder().start().await;
         Mock::given(method("GET"))
             .and(path("/models"))
             .respond_with(ResponseTemplate::new(503).set_delay(std::time::Duration::from_secs(30)))
@@ -1616,7 +1619,7 @@ mod tests {
             .set_secret("go".into(), "synthetic-test-key".into())
             .await
             .unwrap();
-        let server = MockServer::start().await;
+        let server = MockServer::builder().start().await;
         state.set_go_base_url_override(Some(server.uri()));
         let thread = state
             .create_thread(

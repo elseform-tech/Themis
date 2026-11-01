@@ -58,7 +58,7 @@ fn automation_input(project_root: &str, task: &str) -> AutomationInput {
 
 /// The model always answers with final text (no tool calls).
 async fn mount_final_text_llm(answer: &str) -> MockServer {
-    let server = MockServer::start().await;
+    let server = MockServer::builder().start().await;
     let body = json!({
         "choices": [{
             "message": {"role": "assistant", "content": answer},

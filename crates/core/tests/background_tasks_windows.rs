@@ -36,6 +36,7 @@ fn stopping_a_background_task_kills_its_grandchild_on_windows() {
     let marker = "3102";
     let started = registry
         .start(StartSpec {
+            plugin_bins: Vec::new(),
             thread_id: "t1".into(),
             run_id: None,
             program: "cmd".into(),

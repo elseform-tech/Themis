@@ -181,7 +181,7 @@ mod tests {
         std::fs::write(root.path().join("story.txt"), &source).unwrap();
         let tools =
             crate::tools::boxed_tools(root.path(), Arc::new(crate::tools::AllowAllHook)).unwrap();
-        let server = MockServer::start().await;
+        let server = MockServer::builder().start().await;
         Mock::given(method("POST")).respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({"choices":[{"message":{"content":"Observed."},"finish_reason":"stop"}]}))).mount(&server).await;
         let llm = crate::providers::resolve(
             &crate::providers::ProviderConfig::new(crate::providers::ProviderKind::Go, "synthetic")

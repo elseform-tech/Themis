@@ -12,6 +12,8 @@ use crate::types::{ThreadEvent, ThreadEventEnvelope};
 pub mod history_pages;
 mod source_exports;
 
+// Items live briefly while being read or saved, and most of them are events.
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum HistoryItem {

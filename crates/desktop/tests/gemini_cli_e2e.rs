@@ -44,7 +44,7 @@ async fn cli_gemini_chat_reads_a_file_and_returns_the_signature() {
     let data = tempfile::tempdir().unwrap();
     let project = tempfile::tempdir().unwrap();
     std::fs::write(project.path().join("note.txt"), "hello gemini\n").unwrap();
-    let provider = MockServer::start().await;
+    let provider = MockServer::builder().start().await;
     Mock::given(method("POST"))
         .respond_with(|request: &Request| {
             let body: Value = request.body_json().unwrap();

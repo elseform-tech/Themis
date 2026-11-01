@@ -26,7 +26,7 @@ type Script = Vec<(&'static str, Vec<Vec<&'static str>>)>;
 /// Mock provider: the last user message picks a script by substring and its
 /// shell calls run one per round; the answer follows once all produced results.
 async fn mount_script(script: Script) -> MockServer {
-    let server = MockServer::start().await;
+    let server = MockServer::builder().start().await;
     Mock::given(method("POST"))
         .and(path("/chat/completions"))
         .respond_with(move |request: &Request| {
@@ -269,7 +269,7 @@ async fn mcp_server_starts_without_a_prompt_and_one_grant_covers_its_other_tools
     let data = tempfile::tempdir().unwrap();
     let project = tempfile::tempdir().unwrap();
     let state = AppState::new_for_test(data.path().join("settings.json"));
-    let mcp = MockServer::start().await;
+    let mcp = MockServer::builder().start().await;
     Mock::given(method("POST"))
         .respond_with(|request: &Request| {
             let body: Value = serde_json::from_slice(&request.body).unwrap();
@@ -286,7 +286,7 @@ async fn mcp_server_starts_without_a_prompt_and_one_grant_covers_its_other_tools
         })
         .mount(&mcp)
         .await;
-    let llm = MockServer::start().await;
+    let llm = MockServer::builder().start().await;
     Mock::given(method("POST"))
         .and(path("/chat/completions"))
         .respond_with(|request: &Request| {
@@ -364,7 +364,7 @@ async fn an_explicit_deny_rule_still_blocks_mcp_startup() {
     let data = tempfile::tempdir().unwrap();
     let project = tempfile::tempdir().unwrap();
     let state = AppState::new_for_test(data.path().join("settings.json"));
-    let mcp = MockServer::start().await;
+    let mcp = MockServer::builder().start().await;
     Mock::given(method("POST"))
         .respond_with(ResponseTemplate::new(500))
         .mount(&mcp)

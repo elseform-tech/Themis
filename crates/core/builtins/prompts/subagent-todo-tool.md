@@ -1,0 +1,1 @@
+Keep your plan for this piece of work. Send the whole list each time, each item with `content` and `status` (pending, in_progress or completed); the item in progress is shown to the person watching.

@@ -48,7 +48,7 @@ fn tool_results(body: &Value) -> Vec<String> {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn cli_run_searches_reads_an_allowed_site_and_is_refused_a_denied_one() {
-    let web = MockServer::start().await;
+    let web = MockServer::builder().start().await;
     let port = web.address().port();
     Mock::given(path("/search"))
         .and(query_param("q", "tokio runtime"))
@@ -67,7 +67,7 @@ async fn cli_run_searches_reads_an_allowed_site_and_is_refused_a_denied_one() {
         .mount(&web)
         .await;
 
-    let llm = MockServer::start().await;
+    let llm = MockServer::builder().start().await;
     Mock::given(method("POST"))
         .respond_with(move |request: &Request| {
             let body: Value = request.body_json().unwrap_or(Value::Null);
@@ -175,7 +175,7 @@ async fn cli_run_searches_reads_an_allowed_site_and_is_refused_a_denied_one() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn without_a_search_url_only_fetch_url_is_offered() {
-    let llm = MockServer::start().await;
+    let llm = MockServer::builder().start().await;
     Mock::given(method("POST"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
             "choices": [{"message": {"role": "assistant", "content": "ok"}, "finish_reason": "stop"}]

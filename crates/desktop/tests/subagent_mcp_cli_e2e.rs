@@ -124,7 +124,7 @@ fn wire_name(body: &Value, tail: &str) -> Option<String> {
 
 /// An MCP server with the tools `lookup` and `other`; a call answers after `delay`.
 async fn mcp_server(delay: Duration) -> MockServer {
-    let mcp = MockServer::start().await;
+    let mcp = MockServer::builder().start().await;
     Mock::given(method("POST"))
         .respond_with(move |request: &Request| {
             let body: Value = serde_json::from_slice(&request.body).unwrap();
@@ -230,7 +230,7 @@ async fn app(
     setup: Setup<'_>,
     respond: impl Fn(&Value) -> ResponseTemplate + Send + Sync + 'static,
 ) -> (App, Value) {
-    let llm = MockServer::start().await;
+    let llm = MockServer::builder().start().await;
     Mock::given(method("POST"))
         .respond_with(move |request: &Request| respond(&request.body_json().unwrap_or(Value::Null)))
         .mount(&llm)

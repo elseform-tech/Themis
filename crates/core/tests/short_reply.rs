@@ -66,7 +66,7 @@ async fn run(packets: usize, message: &str) -> Outcome {
 /// flag comes from the real `is_short_reply` on `message`, as the desktop computes it.
 async fn run_script(packets: usize, message: &str, bodies: Vec<serde_json::Value>) -> Outcome {
     let short = is_short_reply(message, false);
-    let server = MockServer::start().await;
+    let server = MockServer::builder().start().await;
     common::mount_script_with_summary(&server, bodies, Some(SUMMARY)).await;
     let project = tempfile::tempdir().unwrap();
     std::fs::write(

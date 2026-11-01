@@ -29,7 +29,7 @@ fn text(answer: &str) -> Value {
 
 /// Plain model: always answers with final text.
 async fn plain_provider() -> MockServer {
-    let server = MockServer::start().await;
+    let server = MockServer::builder().start().await;
     Mock::given(method("POST"))
         .and(path("/chat/completions"))
         .respond_with(ResponseTemplate::new(200).set_body_json(text("looked at it")))
@@ -391,7 +391,7 @@ async fn a_changed_check_that_cannot_start_the_model_is_not_rerun_every_tick() {
 /// Scripted model: creates a watch on the first user turn and completes it
 /// when a watch run (whose prompt carries the watch id) asks.
 async fn scripted_agent(with_check: bool) -> MockServer {
-    let server = MockServer::start().await;
+    let server = MockServer::builder().start().await;
     Mock::given(method("POST"))
         .and(path("/chat/completions"))
         .respond_with(move |request: &Request| {

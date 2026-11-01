@@ -113,7 +113,7 @@ fn is_check(request: &Request) -> bool {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn cli_starts_a_goal_queues_a_message_and_reads_the_goal_back() {
-    let llm = MockServer::start().await;
+    let llm = MockServer::builder().start().await;
     let gate = Gate::default();
     let held = gate.clone();
     Mock::given(method("POST"))
@@ -220,7 +220,7 @@ async fn cli_starts_a_goal_queues_a_message_and_reads_the_goal_back() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_model_switch_mid_run_applies_next_turn_without_foreign_reasoning() {
-    let llm = MockServer::start().await;
+    let llm = MockServer::builder().start().await;
     let gate = Gate::default();
     let held = gate.clone();
     Mock::given(method("POST"))
@@ -320,7 +320,7 @@ async fn a_model_switch_mid_run_applies_next_turn_without_foreign_reasoning() {
 /// model; the turns stay on the chat's model.
 #[tokio::test(flavor = "multi_thread")]
 async fn the_goal_check_uses_goal_check_model_and_turns_use_the_chats_model() {
-    let llm = MockServer::start().await;
+    let llm = MockServer::builder().start().await;
     Mock::given(method("POST"))
         .respond_with(|request: &Request| {
             if is_check(request) {
@@ -400,7 +400,7 @@ async fn the_goal_check_uses_goal_check_model_and_turns_use_the_chats_model() {
 /// (`get_goal` shows it under `added`) and shown to the goal check.
 #[tokio::test(flavor = "multi_thread")]
 async fn cli_a_steer_during_a_goal_is_added_to_it() {
-    let llm = MockServer::start().await;
+    let llm = MockServer::builder().start().await;
     let gate = Gate::default();
     let held = gate.clone();
     Mock::given(method("POST"))
@@ -477,7 +477,7 @@ async fn cli_a_steer_during_a_goal_is_added_to_it() {
 /// that already says so gets no extra goal turn or announcement.
 #[tokio::test(flavor = "multi_thread")]
 async fn cli_a_message_that_finishes_the_goal_is_not_repeated() {
-    let llm = MockServer::start().await;
+    let llm = MockServer::builder().start().await;
     let gate = Gate::default();
     let held = gate.clone();
     Mock::given(method("POST"))

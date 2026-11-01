@@ -98,8 +98,10 @@ export function SubagentDetail({ threadId, agent, runLive, onBack }: { threadId:
   const time = elapsed(agent, now);
   const meta = [
     agent.ranOn ? `${agent.ranOn} (${agent.model} unavailable)` : agent.model,
-    agent.writePaths.length ? `Writes ${agent.writePaths.join(", ")}` : agent.connections?.length ? "Files read only" : "Read only",
+    agent.writePaths.length ? `Writes ${agent.writePaths.join(", ")}` : agent.connections?.length || agent.web ? "Files read only" : "Read only",
     agent.connections?.length ? `Connections: ${agent.connections.join(", ")}` : "",
+    agent.web ? "Web" : "",
+    agent.shellScopes?.length ? `Shell: ${agent.shellScopes.slice(0, 3).join(", ")}${agent.shellScopes.length > 3 ? ", …" : ""}` : "",
     agent.confined ? "" : "Shell not confined",
     `${agent.toolCalls} tool ${agent.toolCalls === 1 ? "call" : "calls"}`,
     time === undefined ? "" : clock(time),

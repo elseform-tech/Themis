@@ -100,6 +100,20 @@ fn lower(arg: &str) -> String {
 /// `sh -c SCRIPT`, including clusters such as `-lc` or `-ec` and fish's
 /// `--command`. Without `-c` the shell runs a file or stdin, which is not ours to read.
 fn shell_script(args: &[String]) -> Unwrapped {
+    match script_argument(args) {
+        ScriptArgument::Inline(text) => script(text),
+        ScriptArgument::Next(text) => script(text),
+        ScriptArgument::None => Unwrapped::Plain,
+    }
+}
+
+enum ScriptArgument<'a> {
+    Inline(&'a str),
+    Next(&'a str),
+    None,
+}
+
+fn script_argument(args: &[String]) -> ScriptArgument<'_> {
     let mut at = 0;
     let mut wants_script = false;
     while let Some(arg) = args.get(at) {
@@ -108,7 +122,7 @@ fn shell_script(args: &[String]) -> Unwrapped {
             break;
         }
         if let Some(inline) = arg.strip_prefix("--command=") {
-            return script(inline);
+            return ScriptArgument::Inline(inline);
         }
         let flag = arg.len() > 1 && (arg.starts_with('-') || arg.starts_with('+'));
         if !flag {
@@ -129,8 +143,23 @@ fn shell_script(args: &[String]) -> Unwrapped {
         at += 1;
     }
     match (wants_script, args.get(at)) {
-        (true, Some(text)) => script(text),
-        _ => Unwrapped::Plain,
+        (true, Some(text)) => ScriptArgument::Next(text),
+        _ => ScriptArgument::None,
+    }
+}
+
+/// The script of `sh -c SCRIPT` and its kin; `None` for anything else.
+pub(super) fn shell_script_text(command: &[String]) -> Option<&str> {
+    let (program, args) = command.split_first()?;
+    if !matches!(
+        program_basename(program).as_str(),
+        "sh" | "bash" | "zsh" | "dash" | "ksh" | "mksh" | "ash" | "fish"
+    ) {
+        return None;
+    }
+    match script_argument(args) {
+        ScriptArgument::Inline(text) | ScriptArgument::Next(text) => Some(text),
+        ScriptArgument::None => None,
     }
 }
 
@@ -175,7 +204,7 @@ fn prefix(args: &[String], value_flags: &[&str], assignments: bool, duration: bo
     }
 }
 
-fn is_assignment(word: &str) -> bool {
+pub(super) fn is_assignment(word: &str) -> bool {
     word.split_once('=').is_some_and(|(name, _)| {
         !name.is_empty()
             && !name.starts_with(|c: char| c.is_ascii_digit())
@@ -201,6 +230,19 @@ const KEYWORDS: &[&str] = &[
 /// substitutions become commands of their own. `None` when the script cannot
 /// be read reliably.
 pub(super) fn split_script(text: &str) -> Option<Vec<Vec<String>>> {
+    split_script_with(text, false)
+}
+
+/// [`split_script`], leaving a command's leading `NAME=value` words in place, for a caller that
+/// cares what they change.
+pub(super) fn split_script_keeping_assignments(text: &str) -> Option<Vec<Vec<String>>> {
+    split_script_with(text, true)
+}
+
+fn split_script_with(text: &str, keep_assignments: bool) -> Option<Vec<Vec<String>>> {
+    let finish = |command: &mut Vec<String>, commands: &mut Vec<Vec<String>>| {
+        finish(command, commands, keep_assignments)
+    };
     let mut commands = Vec::new();
     let mut command: Vec<String> = Vec::new();
     let mut word = String::new();
@@ -281,11 +323,15 @@ pub(super) fn split_script(text: &str) -> Option<Vec<Vec<String>>> {
 
 /// Close one simple command: drop leading keywords and `NAME=value`
 /// assignments; refuse a program that is only known at run time (`$CMD`).
-fn finish(command: &mut Vec<String>, commands: &mut Vec<Vec<String>>) -> Option<()> {
+fn finish(
+    command: &mut Vec<String>,
+    commands: &mut Vec<Vec<String>>,
+    keep_assignments: bool,
+) -> Option<()> {
     let words = std::mem::take(command);
     let start = words
         .iter()
-        .position(|w| !KEYWORDS.contains(&w.as_str()) && !is_assignment(w))
+        .position(|w| !KEYWORDS.contains(&w.as_str()) && (keep_assignments || !is_assignment(w)))
         .unwrap_or(words.len());
     let words = &words[start..];
     if let Some(program) = words.first() {

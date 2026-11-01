@@ -92,7 +92,7 @@ async fn check_restart(checkpoint_after_restart: bool) {
         "source observation\n".repeat(9000),
     )
     .unwrap();
-    let provider = MockServer::start().await;
+    let provider = MockServer::builder().start().await;
     let ordinary = Arc::new(AtomicUsize::new(0));
     let summaries = Arc::new(AtomicUsize::new(0));
     let calls = ordinary.clone();

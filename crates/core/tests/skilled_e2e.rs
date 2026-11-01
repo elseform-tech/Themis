@@ -76,7 +76,7 @@ fn first_user_text(request: &Value) -> String {
 
 #[tokio::test]
 async fn skilled_run_sends_composed_instructions_and_filtered_tools() {
-    let server = MockServer::start().await;
+    let server = MockServer::builder().start().await;
     let received: Arc<Mutex<Vec<Value>>> = Arc::new(Mutex::new(Vec::new()));
     mount_capturing_final_text(&server, Arc::clone(&received), "done").await;
 
@@ -149,7 +149,7 @@ async fn skilled_run_sends_composed_instructions_and_filtered_tools() {
 #[tokio::test]
 async fn empty_skills_match_plain_run_task() {
     for skilled in [false, true] {
-        let server = MockServer::start().await;
+        let server = MockServer::builder().start().await;
         let received: Arc<Mutex<Vec<Value>>> = Arc::new(Mutex::new(Vec::new()));
         mount_capturing_final_text(&server, Arc::clone(&received), "done").await;
 

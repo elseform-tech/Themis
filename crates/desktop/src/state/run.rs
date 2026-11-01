@@ -273,6 +273,16 @@ impl AppState {
         } else {
             run_configuration.approval.clone()
         };
+        let session_dir = self.hook_session_dir(thread_id);
+        // A chat with history that hasn't run since the app started is one being continued.
+        let resumed = self
+            .inner
+            .chats_run
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(thread_id.to_owned())
+            && !snapshot.history.is_empty();
+        let mut plugin_bins = Vec::new();
         let mut hooks = Vec::new();
         let mut setup_events = Vec::new();
         let mut tool_labels = std::collections::HashMap::new();
@@ -282,6 +292,9 @@ impl AppState {
                 .work_root
                 .join(".themis/plugin-files")
                 .join(plugin.skill_id("resources"));
+            if resource_root.join("bin").is_dir() {
+                plugin_bins.push(resource_root.join("bin"));
+            }
             for (name, server) in &plugin.spec.mcp {
                 if !server.enabled {
                     continue;
@@ -372,6 +385,11 @@ impl AppState {
                 let mut hook = hook.clone();
                 hook.runtime_identity = Some(plugin.skill_id(&hook.name));
                 hook.plugin_root = Some(resource_root.clone());
+                hook.plugin_data = Some(store.plugin_data_dir(&plugin.scope, &plugin.spec.name));
+                hook.env_file = Some(themis_core::plugins::hooks::PluginEnvFile {
+                    path: session_dir.join(format!("env-{}", plugin.skill_id("hooks"))),
+                    prefix: themis_core::plugins::hooks::env_prefix(&plugin.spec.name),
+                });
                 hooks.push(hook);
             }
         }
@@ -401,6 +419,7 @@ impl AppState {
             run_id: run_id.to_owned(),
             run: check_approval.clone(),
             end: Arc::clone(&end_request),
+            subagent: None,
         }));
         tools.push(Box::new(super::media_tool::AttachFileTool {
             state: self.clone(),
@@ -498,6 +517,11 @@ impl AppState {
                     labels: Arc::new(tool_labels.clone()),
                     startup_rules: startup_rules.clone(),
                 },
+                super::subagents::SubagentWeb {
+                    config: web,
+                    permissions: Arc::clone(&site_permissions),
+                },
+                plugin_bins.clone(),
                 Arc::clone(&llm),
                 policy,
                 &sandbox,
@@ -517,6 +541,19 @@ impl AppState {
             approvals: approvals.clone(),
             agent: None,
             mcp_names,
+            session: themis_core::plugins::hooks::HookSession {
+                transcript_path: Some(session_dir.join("transcript.jsonl")),
+                permission_mode: permission_mode(snapshot.approval_mode).to_owned(),
+                cancel: Some(Arc::clone(&stopped)),
+                source: if resumed { "resume" } else { "startup" }.to_owned(),
+                plugin_bins,
+                attached_skills: snapshot
+                    .skills
+                    .iter()
+                    .map(|skill| themis_core::plugins::hooks::skill_label(&skill.id))
+                    .collect(),
+                skills_seen: Arc::default(),
+            },
         };
         let skills = snapshot.skills;
 
@@ -832,7 +869,23 @@ impl AppState {
     }
 }
 
+/// App-data folder of what hooks read about a chat (`hook-sessions/<chat id>/`).
+const HOOK_SESSIONS_DIR: &str = "hook-sessions";
+
 impl AppState {
+    fn hook_session_dir(&self, thread_id: &str) -> std::path::PathBuf {
+        self.app_data_dir().join(HOOK_SESSIONS_DIR).join(thread_id)
+    }
+
+    /// Forgets what hooks read about deleted chats.
+    pub(super) fn forget_hook_sessions(&self, thread_ids: &[String]) {
+        for id in thread_ids {
+            if super::chat_grants::safe_chat_id(id) {
+                let _ = std::fs::remove_dir_all(self.hook_session_dir(id));
+            }
+        }
+    }
+
     /// Marks a run idle, releases its concurrency permit, and persists.
     pub(super) async fn finish_run(&self, thread_id: &str) {
         self.close_steer_inbox(thread_id);
@@ -868,6 +921,14 @@ impl AppState {
             );
         }
         self.persist_registry().await;
+    }
+}
+
+/// The mode in the words Claude's hooks read.
+pub(super) fn permission_mode(mode: themis_core::configuration::ApprovalMode) -> &'static str {
+    match mode {
+        themis_core::configuration::ApprovalMode::Yolo => "bypassPermissions",
+        themis_core::configuration::ApprovalMode::Custom => "default",
     }
 }
 

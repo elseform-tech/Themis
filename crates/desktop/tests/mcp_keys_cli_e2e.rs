@@ -50,7 +50,7 @@ fn settled(dir: &Path, project: &Path, retry: bool) -> Value {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn cli_a_server_key_is_saved_used_and_removed() {
-    let mcp = MockServer::start().await;
+    let mcp = MockServer::builder().start().await;
     Mock::given(method("POST"))
         .and(header("x-api-key", "Token secret-123"))
         .respond_with(|request: &Request| {

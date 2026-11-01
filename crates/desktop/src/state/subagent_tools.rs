@@ -65,6 +65,9 @@ fn spawn_description(kit: &SubagentKit, others: &[String]) -> String {
     if kit.offers_mcp() {
         parts.push(themis_core::prompts::SPAWN_SUBAGENTS_MCP.to_owned());
     }
+    if kit.offers_web() {
+        parts.push(themis_core::prompts::SPAWN_SUBAGENTS_WEB.to_owned());
+    }
     if !kit.profiles.is_empty() {
         let (listing, more) = kit.profiles.listing();
         parts.push(themis_core::prompts::fill(
@@ -525,6 +528,83 @@ impl ToolT for SubagentTool {
                 "id":{"type":"string"}
             },"required":["id"],"additionalProperties":false}),
         }
+    }
+    fn output_schema(&self) -> Option<Value> {
+        None
+    }
+}
+
+/// Most items a subagent's plan may hold, and how long each may be.
+const MAX_TODOS: usize = 100;
+const MAX_TODO_CHARS: usize = 500;
+
+/// `TodoWrite`: a subagent's own plan. The item in progress becomes its status line.
+pub(super) struct TodoTool {
+    pub(super) agent: Arc<Subagent>,
+    pub(super) report: Reporter,
+    /// A deny rule covers it.
+    pub(super) denied: bool,
+}
+
+impl std::fmt::Debug for TodoTool {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("TodoTool").finish_non_exhaustive()
+    }
+}
+
+#[async_trait]
+impl ToolRuntime for TodoTool {
+    async fn execute(&self, args: Value) -> Result<Value, ToolCallError> {
+        if self.denied {
+            return Err(error(
+                "approval denied for 'todo_write': the approval rules deny it",
+            ));
+        }
+        let items = args["todos"]
+            .as_array()
+            .ok_or_else(|| error("todo_write needs `todos`: a list of {content, status}"))?;
+        if items.len() > MAX_TODOS {
+            return Err(error(format!("todo_write keeps at most {MAX_TODOS} items")));
+        }
+        let mut done = 0;
+        let mut pending = 0;
+        let mut current = None;
+        for item in items {
+            let content: String = item["content"]
+                .as_str()
+                .map(str::trim)
+                .filter(|content| !content.is_empty())
+                .ok_or_else(|| error("each item needs `content`"))?
+                .chars()
+                .take(MAX_TODO_CHARS)
+                .collect();
+            match item["status"].as_str().unwrap_or("pending") {
+                "completed" => done += 1,
+                "in_progress" => current = current.take().or(Some(content)),
+                "pending" => pending += 1,
+                other => return Err(error(format!("unknown status '{other}'"))),
+            }
+        }
+        if let Some(current) = &current {
+            self.agent.set_status(current);
+            (self.report)(&self.agent);
+        }
+        Ok(json!({"kept": items.len(), "done": done, "pending": pending, "in_progress": current}))
+    }
+}
+
+impl ToolT for TodoTool {
+    fn name(&self) -> &str {
+        "todo_write"
+    }
+    fn description(&self) -> &str {
+        themis_core::prompts::SUBAGENT_TODO_TOOL
+    }
+    fn args_schema(&self) -> Value {
+        json!({"type":"object","properties":{"todos":{"type":"array","maxItems":MAX_TODOS,"items":{
+            "type":"object","properties":{"content":{"type":"string"},
+            "status":{"type":"string","enum":["pending","in_progress","completed"]}},
+            "required":["content","status"]}}},"required":["todos"],"additionalProperties":false})
     }
     fn output_schema(&self) -> Option<Value> {
         None

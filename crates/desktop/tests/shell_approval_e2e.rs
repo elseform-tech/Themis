@@ -22,7 +22,7 @@ mod common;
 /// Mock provider that issues the scripted `shell` calls one per round, then
 /// a final text answer once every call has produced a tool message.
 async fn mount_shell_script(calls: Vec<Vec<&'static str>>) -> MockServer {
-    let server = MockServer::start().await;
+    let server = MockServer::builder().start().await;
     Mock::given(method("POST"))
         .and(path("/chat/completions"))
         .respond_with(move |request: &Request| {

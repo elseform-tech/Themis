@@ -64,7 +64,7 @@ pub(super) fn final_text_body() -> Value {
 }
 
 pub(super) async fn mount_scripted_llm() -> MockServer {
-    let server = MockServer::start().await;
+    let server = MockServer::builder().start().await;
     Mock::given(method("POST"))
         .and(path("/chat/completions"))
         .respond_with(|request: &Request| {
