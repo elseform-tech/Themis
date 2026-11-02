@@ -98,6 +98,10 @@ pub struct TodoItem {
     /// agent that hadn't seen that revision yet can't take it off by leaving it out.
     #[serde(default, skip_serializing_if = "is_zero")]
     pub since: u64,
+    /// Themis put this request in progress because the turn started on it, not the agent; it
+    /// goes back to pending when the turn ends unless the agent has given it a status since.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub marked_for_turn: bool,
 }
 
 fn is_zero(value: &u64) -> bool {
@@ -252,6 +256,10 @@ impl TodoList {
             if next.status != item.status {
                 next.accepted = false;
             }
+            // The agent gave it a status of its own: from here on that stands.
+            if item.status != TodoStatus::InProgress {
+                next.marked_for_turn = false;
+            }
             next.status = item.status;
             next.outcome = if item.status == TodoStatus::Completed {
                 item.outcome
@@ -318,6 +326,40 @@ impl TodoList {
         true
     }
 
+    /// A turn starts on the person's message: their pending request in those words is in
+    /// progress for the turn. False when there is no such pending request.
+    pub fn start_request(&mut self, words: &str) -> bool {
+        let details = bounded_text(words, MAX_REQUEST_CHARS);
+        let Some(item) = self.items.iter_mut().find(|item| {
+            item.source == TodoSource::Person
+                && item.status == TodoStatus::Pending
+                && item.details == details
+        }) else {
+            return false;
+        };
+        item.status = TodoStatus::InProgress;
+        item.marked_for_turn = true;
+        self.bump();
+        true
+    }
+
+    /// The turn ended: requests Themis put in progress for it, and the agent left in progress,
+    /// go back to pending. Nothing is completed for the agent. False when nothing changed.
+    pub fn end_turn(&mut self) -> bool {
+        let mut changed = false;
+        for item in self.items.iter_mut().filter(|item| item.marked_for_turn) {
+            item.marked_for_turn = false;
+            if item.status == TodoStatus::InProgress {
+                item.status = TodoStatus::Pending;
+            }
+            changed = true;
+        }
+        if changed {
+            self.bump();
+        }
+        changed
+    }
+
     /// The goal check reopens an item it doesn't accept; false when there is no such item.
     pub fn reopen(&mut self, id: &str, reason: &str) -> bool {
         let Some(index) = self.items.iter().position(|item| item.id == id) else {
@@ -327,6 +369,7 @@ impl TodoList {
         let item = &mut self.items[index];
         item.status = TodoStatus::Pending;
         item.accepted = false;
+        item.marked_for_turn = false;
         item.outcome.clear();
         item.reopened = Some(one_line(reason, MAX_REOPEN_CHARS)).filter(|r| !r.is_empty());
         if item.reopened.is_none() {
@@ -594,6 +637,77 @@ mod tests {
         assert_eq!(summary.requests_removed, 0);
         assert_eq!(list.items[1].details, "Also add dark mode");
         assert!(list.revision > seen);
+    }
+
+    #[test]
+    fn a_delivered_request_is_in_progress_for_its_turn_and_back_to_pending_after() {
+        let mut list = TodoList::default();
+        write(&mut list, json!([{"title":"Board","status":"pending"}]));
+        list.add_request("Also add dark mode");
+        assert!(
+            !list.start_request("Something nobody asked"),
+            "no such item"
+        );
+        assert!(!list.start_request("Board"), "only the person's requests");
+        let before = list.revision;
+        assert!(list.start_request("  Also add dark mode "));
+        assert!(list.revision > before);
+        assert_eq!(list.items[1].status, TodoStatus::InProgress);
+        assert!(!list.start_request("Also add dark mode"), "already started");
+        let before = list.revision;
+        assert!(list.end_turn());
+        assert!(list.revision > before);
+        assert_eq!(list.items[1].status, TodoStatus::Pending);
+        assert!(!list.items[1].marked_for_turn);
+        assert!(!list.end_turn(), "nothing left to settle");
+    }
+
+    #[test]
+    fn the_agents_status_wins_and_nothing_is_completed_for_it() {
+        let mut list = TodoList::default();
+        list.add_request("Add dark mode");
+        list.add_request("Add a CSV export");
+        list.add_request("Fix the footer");
+        for words in ["Add dark mode", "Add a CSV export", "Fix the footer"] {
+            assert!(list.start_request(words));
+        }
+        // The agent finishes one, sets one back to pending and keeps the third in progress.
+        write(
+            &mut list,
+            json!([{"id":"t1","title":"Dark mode","status":"completed","outcome":"done"},
+                   {"id":"t2","title":"CSV","status":"pending"},
+                   {"id":"t3","title":"Footer","status":"in_progress"}]),
+        );
+        list.end_turn();
+        assert_eq!(list.items[0].status, TodoStatus::Completed);
+        assert_eq!(list.items[1].status, TodoStatus::Pending);
+        assert_eq!(
+            list.items[2].status,
+            TodoStatus::Pending,
+            "only marked by Themis, never claimed done"
+        );
+        // Started by the agent itself: its own status stands.
+        write(
+            &mut list,
+            json!([{"id":"t1","title":"Dark mode","status":"completed"},
+                   {"id":"t2","title":"CSV","status":"in_progress"},
+                   {"id":"t3","title":"Footer","status":"pending"}]),
+        );
+        assert!(!list.end_turn());
+        assert_eq!(list.items[1].status, TodoStatus::InProgress);
+        // A completed request is never started again.
+        assert!(!list.start_request("Add dark mode"));
+    }
+
+    #[test]
+    fn a_reopened_request_is_no_longer_marked() {
+        let mut list = TodoList::default();
+        list.add_request("Add dark mode");
+        list.start_request("Add dark mode");
+        list.reopen("t1", "not tried");
+        assert!(!list.items[0].marked_for_turn);
+        assert!(!list.end_turn());
+        assert_eq!(list.items[0].status, TodoStatus::Pending);
     }
 
     #[test]
