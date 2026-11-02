@@ -23,6 +23,7 @@ fn transcript_survives_reopen_and_keeps_threads_separate() {
                 tool: "read_file".into(),
                 ok: true,
                 output: "saved tool result".into(),
+                media: None,
             },
         })
         .unwrap();

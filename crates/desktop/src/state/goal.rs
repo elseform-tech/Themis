@@ -1515,7 +1515,9 @@ impl AppState {
                             format!("$ {tool}: {summary}\n")
                         }
                     }
-                    ThreadEvent::ToolFinished { tool, ok, output } => {
+                    ThreadEvent::ToolFinished {
+                        tool, ok, output, ..
+                    } => {
                         if ok && tool == "browser_screenshot" {
                             if let Some(path) = screenshot_path(&output) {
                                 screenshots.push_back(path);

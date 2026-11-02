@@ -811,6 +811,16 @@ impl AppState {
                     if let ThreadEvent::ToolStarted { tool, label, .. } = &mut captured_event {
                         *label = tool_labels.get(tool.as_str()).cloned();
                     }
+                    if let ThreadEvent::ToolFinished {
+                        tool,
+                        ok,
+                        output,
+                        media,
+                    } = &mut captured_event
+                    {
+                        // A few file checks, and only for a screenshot or recording step.
+                        *media = super::media_tool::tool_media(&pump_root, tool, *ok, output);
+                    }
                     if let ThreadEvent::Finished { model, .. }
                     | ThreadEvent::Incomplete { model, .. } = &mut captured_event
                     {
