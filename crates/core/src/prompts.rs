@@ -144,6 +144,9 @@ pub const GOAL_TURN_NEXT: &str = include_str!("../builtins/prompts/goal-turn-nex
 /// The goal's rules, in a goal turn; `{{rules}}`.
 pub const GOAL_TURN_RULES: &str = include_str!("../builtins/prompts/goal-turn-rules.md");
 pub const GOAL_TURN_FILES: &str = include_str!("../builtins/prompts/goal-turn-files.md");
+/// A subagent in the goal check's evidence; `{{name}}`, `{{status}}`, `{{paths}}`, `{{result}}`.
+pub const GOAL_EVIDENCE_SUBAGENT: &str =
+    include_str!("../builtins/prompts/goal-evidence-subagent.md");
 pub const GOAL_EVIDENCE_SCRIPT: &str = include_str!("../builtins/prompts/goal-evidence-script.md");
 pub const GOAL_NOTE_SCRIPT_PROOF: &str =
     include_str!("../builtins/prompts/goal-note-script-proof.md");
