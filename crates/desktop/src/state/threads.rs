@@ -361,17 +361,11 @@ impl AppState {
         let (resolved_text, inline_skills, selected_plugins) = store
             .resolve_prompt(&text, &legacy)
             .map_err(|e| e.to_string())?;
-        let instructions =
-            themis_core::configuration::load_instructions(&runtime_configuration, &project_root)
-                .map_err(|e| format!("repository instructions: {e:#}"))?;
-        let resolved_text = if instructions.is_empty() {
-            format!("{resolved_text}{manifest}")
-        } else {
-            format!(
-                "{resolved_text}{manifest}\n\n{}\n{instructions}",
-                themis_core::prompts::DESKTOP_REPOSITORY_GUIDANCE
-            )
-        };
+        // Files someone asked for by name must exist; each run then reads them into its system
+        // message, so a long chat holds no copies and a turn follows the latest version.
+        themis_core::configuration::load_instructions(&runtime_configuration, &project_root)
+            .map_err(|e| format!("repository instructions: {e:#}"))?;
+        let resolved_text = format!("{resolved_text}{manifest}");
         let display_text = format!("{text}{manifest}");
         let mut plugins: Vec<_> = store
             .list()
