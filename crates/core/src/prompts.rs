@@ -53,6 +53,9 @@ pub const SUBAGENT_CLAUDE_NAMES: &str =
     include_str!("../builtins/prompts/subagent-claude-names.md");
 pub const SUBAGENT_TODO_TOOL: &str = include_str!("../builtins/prompts/subagent-todo-tool.md");
 pub const SPAWN_SUBAGENTS_WEB: &str = include_str!("../builtins/prompts/spawn-subagents-web.md");
+/// Told to the main agent when it starts subagents without write paths; `{{names}}`.
+pub const SPAWN_SUBAGENTS_ONLY_READ: &str =
+    include_str!("../builtins/prompts/spawn-subagents-only-read.md");
 pub const SUBAGENT_READ_ONLY_NOTE: &str =
     include_str!("../builtins/prompts/subagent-read-only-note.md");
 /// Explains the optional `status` field every subagent tool call accepts.
