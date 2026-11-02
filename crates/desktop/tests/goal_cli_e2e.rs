@@ -110,7 +110,12 @@ fn finishes_requests(request: &Request) -> Option<ResponseTemplate> {
         .as_str()?;
     let open: Vec<Value> = note
         .lines()
-        .filter(|line| line.starts_with("- t") && line.contains("[pending; the person asked]"))
+        // A request whose turn this is reads as in progress.
+        .filter(|line| {
+            line.starts_with("- t")
+                && (line.contains("[pending; the person asked]")
+                    || line.contains("[in progress; the person asked]"))
+        })
         .filter_map(|line| line[2..].split(' ').next())
         .map(|id| json!({"id": id, "title": "Done as asked", "status": "completed"}))
         .collect();

@@ -126,7 +126,7 @@ function TodoSection({ todo, collapsed, onOpen }: { todo: NonNullable<Overview["
   return <>
     {!collapsed && (
       <button type="button" className="themis-overview-todo" aria-label={`${summary}${current ? `, now ${current.title}` : ""}${brokenText}. Opens the To-do tab`} onClick={onOpen}>
-        <span className="themis-overview-todo-head">To-do<span className="themis-overview-todo-count">{done} of {items.length}</span>{dot}</span>
+        <span className="themis-overview-todo-head">To-do{done < items.length && <span className="themis-overview-todo-count">{done} of {items.length}</span>}{dot}</span>
         <TodoWindow items={items} />
       </button>
     )}
