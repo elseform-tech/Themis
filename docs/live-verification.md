@@ -177,6 +177,7 @@ full tour.
 | `feature:usage` | tour | `crates/desktop/src/usage.rs` | Tokens and cost under the reply match Settings › Usage. |
 | `feature:sound-and-notifications` | tour | `web/src/lib/completionSound.ts`, `crates/desktop/src/notifications.rs` | Sound off by default; switched on, it plays when a reply finishes. |
 | `feature:projects-and-chats` | tour | `web/src/screens/Sidebar.tsx` | Create, switch and rename a project; rename and remove a chat. |
+| `feature:sidebar-running` | tour | `web/src/screens/Sidebar.tsx`, `web/src/screens/Sidebar.css` | With no run going there is no Running group. Start a run in one chat and open another: the first moves into Running (count 1) with gold dots walking round a square in place of its bubble. In Custom, let it ask for approval: a breathing gold pause sign of dots, still in Running. Approve; when it finishes it returns to its place in Chats with a bright, bold title and no tick, plain again once opened. A failed run shows a still red cross of dots in Chats. With reduced motion on, the dots don't move. |
 | `feature:search` | tour | `web/src/screens/Palette.tsx` | ⌘K finds a chat and a command. |
 | `feature:help` | tour | `web/src/screens/Sidebar.tsx` | Help opens the shortcuts. |
 | `feature:companion` | tour | `web/src/components/KnightCompanion.tsx` | The companion shows state notes and can be resized and moved. |

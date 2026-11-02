@@ -87,21 +87,21 @@
 .themis-row-menu button:disabled { opacity: .5; cursor: not-allowed; }
 @media (pointer: coarse) { .themis-thread-row-actions, .themis-project-heading > .themis-button { opacity: 1; } .themis-sidebar-row { min-height: 44px; } }
 
-.themis-thread-status { display: grid; place-items: center; flex-shrink: 0; width: 16px; height: 16px; }
-.themis-thread-status svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; overflow: visible; }
+/* Chat status replaces the bubble in the icon slot: a 3×3 dot grid whose lit dots draw the sign, the rest faint. */
+.themis-thread-status { display: grid; place-items: center; flex: 0 0 18px; width: 18px; height: 16px; }
+.themis-thread-status svg { width: 18px; height: 16px; fill: currentColor; overflow: visible; }
+.themis-thread-status circle { opacity: .16; }
+.themis-thread-status circle.is-lit { opacity: 1; }
+/* Working: the eight edge dots light one after another, so the light walks round the square. */
 .themis-thread-status--working { color: var(--themis-gradient-2); }
-.themis-thread-status--working .themis-status-track { stroke: var(--themis-border); }
-.themis-thread-status--working .themis-status-arc { stroke-dasharray: 10 28; transform-origin: 8px 8px; animation: themis-thread-spin 1s linear infinite; }
+.themis-thread-status--working circle { opacity: .18; animation: themis-status-walk 1.2s linear infinite; }
 .themis-thread-status--needs-approval { color: var(--themis-accent); }
-.themis-thread-status--needs-approval .themis-status-halo { fill: color-mix(in srgb, var(--themis-accent) 18%, transparent); stroke: none; transform-origin: 8px 8px; animation: themis-status-pulse 1.8s ease-in-out infinite; }
+.themis-thread-status--needs-approval circle.is-lit { animation: themis-status-breathe 1.8s ease-in-out infinite; }
 .themis-thread-status--failed { color: var(--themis-danger); }
-.themis-thread-status--failed .themis-status-fill { fill: color-mix(in srgb, var(--themis-danger) 20%, transparent); stroke: none; }
-.themis-thread-status--failed path { stroke-width: 1.9; }
-.themis-thread-status--done { color: var(--themis-success); animation: themis-status-in 300ms ease-out both; }
-.themis-thread-status--done path { stroke-width: 2; }
-@keyframes themis-status-pulse { 0%, 100% { transform: scale(.85); opacity: .7; } 50% { transform: scale(1.25); opacity: 1; } }
-@keyframes themis-status-in { from { opacity: 0; transform: scale(.6); } to { opacity: 1; transform: none; } }
-@keyframes themis-thread-spin { to { transform: rotate(360deg); } }
+@keyframes themis-status-walk { 0% { opacity: 1; } 60%, 100% { opacity: .18; } }
+@keyframes themis-status-breathe { 50% { opacity: .45; } }
+/* A run that finished while another chat was on screen keeps a bright, bold title until opened. */
+.themis-thread-row.is-unseen { color: var(--themis-text); font-weight: 600; }
 .themis-sidebar-recent { margin: 20px 0; }
 .themis-sidebar-recent > h2 { margin-bottom: 6px; }
 .themis-sidebar-note { margin: 0; padding: 8px 12px; color: var(--themis-text-2); font-size: .75rem; }
@@ -126,7 +126,12 @@
 .themis-help dt { color: var(--themis-text); }
 .themis-help dd { display: flex; gap: 4px; margin: 0; }
 .themis-help kbd { display: inline-grid; place-items: center; min-width: 24px; height: 24px; padding: 0 6px; border-radius: 6px; background: var(--themis-raised); color: var(--themis-text-2); font: inherit; font-size: .75rem; }
-@media (prefers-reduced-motion: reduce) { .themis-thread-status, .themis-thread-status *, .themis-wordmark { animation: none !important; } }
+@media (prefers-reduced-motion: reduce) {
+  .themis-thread-status *, .themis-wordmark { animation: none !important; }
+  /* Still working sign: the square dimly lit, its first dot bright. */
+  .themis-thread-status--working circle { opacity: .45; }
+  .themis-thread-status--working circle:first-child { opacity: 1; }
+}
 
 /* Project switcher: the dock shows only the chosen project's chats. */
 .themis-project-switcher { position: relative; margin: 0 0 10px; }
