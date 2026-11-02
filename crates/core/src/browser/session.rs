@@ -298,7 +298,7 @@ impl BrowserHub {
                 pointer: Mutex::new(None),
                 held: Mutex::new(None),
                 ui_stream: AtomicBool::new(false),
-                preview_width: Mutex::new(None),
+                frame_target: Mutex::new(None),
                 recording: Mutex::new(None),
                 viewport: Mutex::new(Viewport::default()),
                 muted: AtomicBool::new(true),
@@ -498,19 +498,49 @@ struct Viewport {
     scale: f64,
 }
 
-/// The largest frame the screencast sends: the page's full size for the
-/// Browser tab, or `preview` wide (same aspect) for the chat's small preview.
-fn frame_size(viewport: Viewport, preview: Option<u32>) -> (u32, u32) {
-    match preview {
-        Some(width) => (
+/// Device pixels per CSS pixel the page is drawn at: the view's own, from 1 to 3.
+fn clamp_scale(scale: f64) -> f64 {
+    if scale.is_finite() {
+        scale.clamp(1.0, 3.0)
+    } else {
+        1.0
+    }
+}
+
+/// The largest Browser tab frame, in device pixels: a 4K screen's worth.
+const MAX_FRAME: (u32, u32) = (3840, 2400);
+
+/// Where the screencast's frames go, which decides their size.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum FrameTarget {
+    /// The Browser tab, whose page area is this many device pixels.
+    Panel(u32, u32),
+    /// The chat's small preview, frames this wide.
+    Preview(u32),
+}
+
+/// The largest frame the screencast sends. Chrome scales a frame down to fit both
+/// limits and keeps its shape. The Browser tab gets at most its page area in device
+/// pixels (a page laid out larger than the panel comes at the panel's density, not
+/// its own), the preview `preview` wide, and a recording the page's full size: it
+/// is encoded from these frames at their whole-number ratio to the page.
+fn frame_size(viewport: Viewport, target: Option<FrameTarget>, recording: bool) -> (u32, u32) {
+    let full = (
+        (f64::from(viewport.width) * viewport.scale) as u32,
+        (f64::from(viewport.height) * viewport.scale) as u32,
+    );
+    match target {
+        _ if recording => full,
+        Some(FrameTarget::Preview(width)) => (
             width,
             (u64::from(width) * u64::from(viewport.height) / u64::from(viewport.width.max(1)))
                 as u32,
         ),
-        None => (
-            (f64::from(viewport.width) * viewport.scale) as u32,
-            (f64::from(viewport.height) * viewport.scale) as u32,
+        Some(FrameTarget::Panel(width, height)) => (
+            full.0.min(width.clamp(1, MAX_FRAME.0)),
+            full.1.min(height.clamp(1, MAX_FRAME.1)),
         ),
+        None => full,
     }
 }
 
@@ -541,9 +571,9 @@ pub struct ChatBrowser {
     screencast: Mutex<Option<String>>,
     /// The Workspace view is showing the stream (frames go to it).
     ui_stream: AtomicBool,
-    /// The stream feeds the chat's small preview: frames at most this wide,
-    /// the page left at its own size. `None` while the Browser tab streams.
-    preview_width: Mutex<Option<u32>>,
+    /// Who the stream's frames are for: the Browser tab (frames at its pixel density) or
+    /// the chat's small preview (small frames; the page left at its own size).
+    frame_target: Mutex<Option<FrameTarget>>,
     recording: Mutex<Option<Recording>>,
     viewport: Mutex<Viewport>,
     /// The Workspace speaker is off (the default): pages play no sound.
@@ -1158,11 +1188,10 @@ impl ChatBrowser {
     /// Returns whether this froze them.
     pub async fn freeze_pages(&self) -> bool {
         let watching = self.ui_stream.load(Ordering::SeqCst)
-            && self
-                .preview_width
-                .lock()
-                .unwrap_or_else(|e| e.into_inner())
-                .is_none();
+            && !matches!(
+                *self.frame_target.lock().unwrap_or_else(|e| e.into_inner()),
+                Some(FrameTarget::Preview(_))
+            );
         let recording = self
             .recording
             .lock()
@@ -2412,17 +2441,30 @@ impl ChatBrowser {
         })
     }
 
-    /// Streams the current tab to the Workspace view at the view's size.
+    /// Streams the current tab to the Workspace view, whose page area is `width` × `height`
+    /// CSS pixels at `scale` device pixels each. Frames come at that density. With `resize`
+    /// the page is also laid out at the view's size (the person resized the view, or nobody
+    /// is using the page); without it the page keeps its layout size, so an agent mid-task
+    /// keeps its coordinates, and the view shows it scaled to fit.
     pub async fn start_screencast(
         &self,
         width: u32,
         height: u32,
         scale: f64,
+        resize: bool,
     ) -> Result<(), String> {
         self.ui_stream.store(true, Ordering::SeqCst);
-        *self.preview_width.lock().unwrap_or_else(|e| e.into_inner()) = None;
+        let scale = clamp_scale(scale);
+        *self.frame_target.lock().unwrap_or_else(|e| e.into_inner()) = Some(FrameTarget::Panel(
+            (f64::from(width) * scale).round() as u32,
+            (f64::from(height) * scale).round() as u32,
+        ));
         self.thaw_pages().await;
-        self.run_screencast(width, height, scale).await
+        if resize {
+            return self.run_screencast(width, height, scale).await;
+        }
+        let page = *self.viewport.lock().unwrap_or_else(|e| e.into_inner());
+        self.run_screencast(page.width, page.height, scale).await
     }
 
     /// Streams small frames for the chat's preview without resizing the page:
@@ -2430,7 +2472,8 @@ impl ChatBrowser {
     pub async fn start_preview(&self, max_width: u32) -> Result<(), String> {
         self.ui_stream.store(true, Ordering::SeqCst);
         let preview = max_width.clamp(160, 1280);
-        *self.preview_width.lock().unwrap_or_else(|e| e.into_inner()) = Some(preview);
+        *self.frame_target.lock().unwrap_or_else(|e| e.into_inner()) =
+            Some(FrameTarget::Preview(preview));
         let viewport = *self.viewport.lock().unwrap_or_else(|e| e.into_inner());
         self.run_screencast(viewport.width, viewport.height, viewport.scale)
             .await?;
@@ -2438,7 +2481,8 @@ impl ChatBrowser {
         // at the preview's size (the page's own size would be several times the bytes).
         if self.frozen.load(Ordering::SeqCst) {
             if let Some((cdp, session)) = self.view().current() {
-                let (width, height) = frame_size(viewport, Some(preview));
+                let (width, height) =
+                    frame_size(viewport, Some(FrameTarget::Preview(preview)), false);
                 // A clip is in page coordinates: start it where the page is scrolled to.
                 let metrics = cdp
                     .call(Some(&session), "Page.getLayoutMetrics", json!({}))
@@ -2475,11 +2519,7 @@ impl ChatBrowser {
             *viewport = Viewport {
                 width: width.clamp(320, 3840),
                 height: height.clamp(240, 2400),
-                scale: if scale.is_finite() {
-                    scale.clamp(1.0, 3.0)
-                } else {
-                    1.0
-                },
+                scale: clamp_scale(scale),
             };
         }
         let _one = self.stream_start.lock().await;
@@ -2508,9 +2548,15 @@ impl ChatBrowser {
                 .await;
         }
         STREAM_STARTS.fetch_add(1, Ordering::Relaxed);
+        let recording = self
+            .recording
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .is_some();
         let (max_width, max_height) = frame_size(
             viewport,
-            *self.preview_width.lock().unwrap_or_else(|e| e.into_inner()),
+            *self.frame_target.lock().unwrap_or_else(|e| e.into_inner()),
+            recording,
         );
         cdp.call(
             Some(&session_id),
@@ -2637,7 +2683,10 @@ impl ChatBrowser {
                 Some(_) => recording.take().expect("checked above"),
             }
         };
-        if !self.ui_stream.load(Ordering::SeqCst) {
+        if self.ui_stream.load(Ordering::SeqCst) {
+            // A recording takes frames at the page's full size; the view's are smaller again.
+            self.restart_screencast().await;
+        } else {
             self.end_screencast().await;
         }
         self.publish_state().await;
@@ -3533,8 +3582,39 @@ mod tests {
             height: 800,
             scale: 2.0,
         };
-        assert_eq!(super::frame_size(page, None), (2560, 1600));
-        assert_eq!(super::frame_size(page, Some(440)), (440, 275));
+        assert_eq!(super::frame_size(page, None, false), (2560, 1600));
+        let preview = Some(super::FrameTarget::Preview(440));
+        assert_eq!(super::frame_size(page, preview, false), (440, 275));
+        // A recording needs the page's full size, whoever watches.
+        assert_eq!(super::frame_size(page, preview, true), (2560, 1600));
+    }
+
+    #[test]
+    fn the_browser_tab_gets_frames_at_its_own_pixel_density_never_more() {
+        let page = super::Viewport {
+            width: 1280,
+            height: 800,
+            scale: 2.0,
+        };
+        // A page laid out larger than a 744 × 560 panel on a Retina screen: at most the
+        // panel's device pixels (Chrome fits the frame inside both and keeps its shape).
+        let panel = Some(super::FrameTarget::Panel(1488, 1120));
+        assert_eq!(super::frame_size(page, panel, false), (1488, 1120));
+        // A panel larger than the page never asks for more than the page has.
+        let wide = Some(super::FrameTarget::Panel(4000, 3000));
+        assert_eq!(super::frame_size(page, wide, false), (2560, 1600));
+        // Bounded on a huge screen.
+        let huge = super::Viewport {
+            width: 3840,
+            height: 2400,
+            scale: 3.0,
+        };
+        let all = Some(super::FrameTarget::Panel(11_520, 7_200));
+        assert_eq!(super::frame_size(huge, all, false), super::MAX_FRAME);
+        assert_eq!(super::clamp_scale(f64::NAN), 1.0);
+        assert_eq!(super::clamp_scale(0.5), 1.0);
+        assert_eq!(super::clamp_scale(4.0), 3.0);
+        assert_eq!(super::clamp_scale(1.5), 1.5);
     }
 
     use super::*;

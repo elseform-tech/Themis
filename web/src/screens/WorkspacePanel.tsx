@@ -118,7 +118,7 @@ export function WorkspacePanel({ projectRoot, threadId, workspace }: { projectRo
         {tab === "pulls" && <PullRequestsView projectRoot={projectRoot} />}
         {tab === "tasks" && <TasksView threadId={threadId} />}
         {tab === "todo" && <TodoView key={threadId} goal={goal} todo={todo} />}
-        {tab === "browser" && <BrowserView threadId={threadId} />}
+        {tab === "browser" && <BrowserView threadId={threadId} running={state.running[threadId] ?? false} />}
         {tab === "terminal" && <TerminalView projectRoot={projectRoot} threadId={threadId} />}
       </div>
     </aside>

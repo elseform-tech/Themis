@@ -1228,6 +1228,7 @@ async fn dispatch_command(
                     arg(&args, "width")?,
                     arg(&args, "height")?,
                     arg(&args, "scale")?,
+                    arg(&args, "resize")?,
                 )
                 .await
         ),

@@ -47,8 +47,9 @@ function invoke<T>(command: string, args: Record<string, unknown>): Promise<T> {
 }
 
 export const browserState = (threadId: string) => invoke<BrowserState>("browser_state", { threadId });
-export const browserScreencast = (threadId: string, width: number, height: number, scale: number) =>
-  invoke<void>("browser_screencast", { threadId, width: Math.round(width), height: Math.round(height), scale });
+/** Streams the chat's tab at the panel's pixel density; `resize` also lays the page out at the panel's size. */
+export const browserScreencast = (threadId: string, width: number, height: number, scale: number, resize: boolean) =>
+  invoke<void>("browser_screencast", { threadId, width: Math.round(width), height: Math.round(height), scale, resize });
 export const browserScreencastStop = (threadId: string) => invoke<void>("browser_screencast_stop", { threadId });
 /** Small frames for the chat's preview; the page keeps its size. */
 export const browserPreview = (threadId: string, width: number) => invoke<void>("browser_preview", { threadId, width: Math.round(width) });

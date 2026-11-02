@@ -104,17 +104,19 @@ impl AppState {
         Ok(value)
     }
 
-    /// Starts streaming the chat's current tab at the view's size.
+    /// Starts streaming the chat's current tab at the view's pixel density; with `resize`
+    /// the page is also laid out at the view's size.
     pub async fn browser_screencast(
         &self,
         thread_id: &str,
         width: u32,
         height: u32,
         scale: f64,
+        resize: bool,
     ) -> Result<(), String> {
         self.chat_browser(thread_id)
             .await?
-            .start_screencast(width, height, scale)
+            .start_screencast(width, height, scale, resize)
             .await
     }
 

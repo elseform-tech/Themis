@@ -3,7 +3,7 @@ import { act, cleanup, fireEvent, render, screen } from "@testing-library/react"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as bridge from "../lib/browser";
 import type { BrowserState, BrowserUpdate } from "../lib/browser";
-import { BrowserView } from "./BrowserView";
+import { BrowserView, pageRect } from "./BrowserView";
 
 let push: (update: BrowserUpdate) => void = () => undefined;
 vi.mock("../lib/browser", async importOriginal => ({
@@ -164,5 +164,66 @@ describe("BrowserView", () => {
     act(() => push({ kind: "state", state: { ...page, muted: false } }));
     await act(async () => fireEvent.click(screen.getByRole("button", { name: "Turn sound off" })));
     expect(bridge.browserSetMuted).toHaveBeenCalledWith("t1", true);
+  });
+});
+
+describe("a crisp Browser tab", () => {
+  let resized: (() => void) | null = null;
+  const panelRect = { left: 100, top: 50, width: 744, height: 560, right: 844, bottom: 610, x: 100, y: 50, toJSON: () => ({}) };
+  beforeEach(() => {
+    vi.stubGlobal("ResizeObserver", class { constructor(callback: () => void) { resized = callback; } observe() {} disconnect() {} });
+    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockReturnValue(panelRect as DOMRect);
+    vi.stubGlobal("devicePixelRatio", 2);
+    vi.useFakeTimers();
+  });
+  afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks(); resized = null; });
+
+  it("streams at the panel's pixel density and leaves the agent's page its size mid-task", async () => {
+    await act(async () => { render(<BrowserView threadId="t1" running />); });
+    await act(async () => { vi.advanceTimersByTime(200); });
+    expect(bridge.browserScreencast).toHaveBeenCalledTimes(1);
+    expect(bridge.browserScreencast).toHaveBeenLastCalledWith("t1", 744, 560, 2, false);
+    // The person drags the panel: once it settles, the page follows it.
+    act(() => { resized?.(); resized?.(); });
+    await act(async () => { vi.advanceTimersByTime(100); });
+    expect(bridge.browserScreencast).toHaveBeenCalledTimes(1);
+    await act(async () => { vi.advanceTimersByTime(200); });
+    expect(bridge.browserScreencast).toHaveBeenCalledTimes(2);
+    expect(bridge.browserScreencast).toHaveBeenLastCalledWith("t1", 744, 560, 2, true);
+  });
+
+  it("lays the page out at the panel's size when no run is going", async () => {
+    vi.stubGlobal("devicePixelRatio", 4);
+    await act(async () => { render(<BrowserView threadId="t1" running={false} />); });
+    await act(async () => { vi.advanceTimersByTime(200); });
+    // At most three device pixels per CSS pixel.
+    expect(bridge.browserScreencast).toHaveBeenLastCalledWith("t1", 744, 560, 3, true);
+  });
+
+  it("draws a page laid out larger than the panel scaled to fit, and aims at the page's own pixels", async () => {
+    vi.mocked(bridge.browserState).mockResolvedValue({ ...page, pointer: [640, 400] });
+    await act(async () => { render(<BrowserView threadId="t1" running />); });
+    await act(async () => { vi.advanceTimersByTime(200); });
+    act(() => push({ kind: "frame", data: "BIG", width: 1280, height: 800 }));
+    const img = document.querySelector<HTMLImageElement>(".themis-browser-page img")!;
+    // 1280 × 800 into 744 × 560: 744 × 465 at the top, never stretched.
+    expect([img.style.left, img.style.top, img.style.width, img.style.height]).toEqual(["0px", "0px", "744px", "465px"]);
+    const [x, y] = screen.getByTestId("agent-cursor").style.transform.match(/[\d.]+/g)!.map(Number);
+    expect(x).toBeCloseTo(372);
+    expect(y).toBeCloseTo(232.5);
+    const view = screen.getByLabelText("Page: Sign up");
+    fireEvent.mouseDown(view, { clientX: 100 + 372, clientY: 50 + 232.5, button: 0, detail: 1 });
+    const sent = vi.mocked(bridge.browserInput).mock.lastCall![1] as { kind: string; x: number; y: number };
+    expect(sent.kind).toBe("down");
+    expect(sent.x).toBeCloseTo(640);
+    expect(sent.y).toBeCloseTo(400);
+  });
+
+  it("never draws a page larger than it is", () => {
+    // A page smaller than the panel stays at its size, centred across, at the top.
+    expect(pageRect({ width: 744, height: 560 }, { width: 600, height: 400 })).toEqual({ left: 72, top: 0, width: 600, height: 400, scale: 1 });
+    // A tall page fits the height and is centred across.
+    expect(pageRect({ width: 744, height: 560 }, { width: 800, height: 1120 })).toEqual({ left: 172, top: 0, width: 400, height: 560, scale: 0.5 });
+    expect(pageRect(null, { width: 800, height: 600 }).scale).toBe(1);
   });
 });
