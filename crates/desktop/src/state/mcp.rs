@@ -151,7 +151,9 @@ impl AppState {
                 entry.connection_status()["status"].as_str(),
                 Some("connected" | "connecting")
             );
-            if entry.fingerprint == fingerprint && !(retry && !up) {
+            // A session that ended, such as a server stopped for running too long, is not kept.
+            let ended = matches!(entry.result.borrow().as_ref(), Some(Ok(session)) if !session.is_connected());
+            if entry.fingerprint == fingerprint && !(retry && !up) && !ended {
                 return entry.clone();
             }
         }

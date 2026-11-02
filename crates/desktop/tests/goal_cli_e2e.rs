@@ -396,6 +396,81 @@ async fn the_goal_check_uses_goal_check_model_and_turns_use_the_chats_model() {
     task.abort();
 }
 
+/// The check judges "subagents build the parts" from what they were given and what they said, not
+/// from the main agent's commands alone.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_goal_check_sees_what_subagents_were_given_and_reported() {
+    let llm = MockServer::builder().start().await;
+    Mock::given(method("POST"))
+        .respond_with(|request: &Request| {
+            let body = String::from_utf8_lossy(&request.body).into_owned();
+            if is_check(request) {
+                reply(r#"{"verdict":"reached","reason":"Done.","progress":"done"}"#)
+            } else if body.contains("You are a subagent") {
+                reply("Built the board in notes/board.js.")
+            } else if body.contains("Built the board") {
+                reply("Did it.")
+            } else if body.contains("\"role\":\"tool\"") {
+                reply("Waiting for it.")
+            } else {
+                ResponseTemplate::new(200).set_body_json(json!({"choices": [{"message": {
+                    "role": "assistant", "content": null, "tool_calls": [{"id": "s1", "type": "function",
+                    "function": {"name": "spawn_subagents", "arguments": json!({"subagents": [
+                        {"name": "Builder", "brief": "Build it.", "write_paths": ["notes/"]}
+                    ]}).to_string()}}]}, "finish_reason": "tool_calls"}]}))
+            }
+        })
+        .mount(&llm)
+        .await;
+    let data = tempfile::tempdir().unwrap();
+    let project = tempfile::tempdir().unwrap();
+    let state = AppState::new_for_test(data.path().join("settings.json"));
+    state
+        .set_secret("go".into(), "synthetic-test-key".into())
+        .await
+        .unwrap();
+    state.set_go_base_url_override(Some(llm.uri()));
+    let thread = state
+        .create_thread(
+            project.path().to_string_lossy().into(),
+            ProviderKind::Go,
+            Some("test-model".into()),
+        )
+        .await
+        .unwrap();
+    let server = Server::bind(state.clone(), data.path()).await.unwrap();
+    let task = tokio::spawn(server.run());
+    let data_dir = data.path().to_owned();
+    let thread_id = thread.id.clone();
+    tokio::task::spawn_blocking(move || {
+        call(
+            &data_dir,
+            "send_message",
+            json!({"threadId": thread_id, "text": "/goal build it"}),
+        );
+        let deadline = std::time::Instant::now() + Duration::from_secs(60);
+        while call(&data_dir, "get_goal", json!({"threadId": thread_id}))["status"] != "reached" {
+            assert!(std::time::Instant::now() < deadline, "goal never reached");
+            std::thread::sleep(Duration::from_millis(200));
+        }
+    })
+    .await
+    .unwrap();
+    let requests = llm.received_requests().await.unwrap();
+    let check = requests.iter().rfind(|r| is_check(r)).expect("a check");
+    let body = String::from_utf8_lossy(&check.body);
+    assert!(
+        body.contains("Builder") && body.contains("notes/"),
+        "{body}"
+    );
+    assert!(
+        body.contains("Built the board in notes/board.js."),
+        "{body}"
+    );
+    settle(&state, &thread.id).await;
+    task.abort();
+}
+
 /// Through the CLI: a request steered in while a goal runs is kept on the goal
 /// (`get_goal` shows it under `added`) and shown to the goal check.
 #[tokio::test(flavor = "multi_thread")]

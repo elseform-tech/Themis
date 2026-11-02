@@ -33,6 +33,8 @@ pub const SYSTEM_SKILL_CATALOG: &str = include_str!("../builtins/prompts/system-
 
 // Subagents.
 /// System message head of a subagent run, instead of the ordinary system instructions.
+/// Before the skill list in a subagent's system message.
+pub const SUBAGENT_SKILLS_NOTE: &str = include_str!("../builtins/prompts/subagent-skills-note.md");
 pub const SUBAGENT_SYSTEM: &str = include_str!("../builtins/prompts/subagent-system.md");
 /// Added to a read-only subagent's system message.
 pub const SUBAGENT_WRITE_PATHS_NOTE: &str =
@@ -53,6 +55,9 @@ pub const SUBAGENT_CLAUDE_NAMES: &str =
     include_str!("../builtins/prompts/subagent-claude-names.md");
 pub const SUBAGENT_TODO_TOOL: &str = include_str!("../builtins/prompts/subagent-todo-tool.md");
 pub const SPAWN_SUBAGENTS_WEB: &str = include_str!("../builtins/prompts/spawn-subagents-web.md");
+/// Told to the main agent when it starts subagents without write paths; `{{names}}`.
+pub const SPAWN_SUBAGENTS_ONLY_READ: &str =
+    include_str!("../builtins/prompts/spawn-subagents-only-read.md");
 pub const SUBAGENT_READ_ONLY_NOTE: &str =
     include_str!("../builtins/prompts/subagent-read-only-note.md");
 /// Explains the optional `status` field every subagent tool call accepts.
@@ -102,6 +107,8 @@ pub const DESKTOP_VERIFY_BROWSER: &str =
     include_str!("../builtins/prompts/desktop-verify-browser.md");
 /// Label before an MCP server's own instructions in the system message.
 pub const DESKTOP_MCP_GUIDANCE: &str = include_str!("../builtins/prompts/desktop-mcp-guidance.md");
+/// An MCP tool ran past its limit and its local server was stopped; `{{seconds}}`.
+pub const MCP_TOOL_TIMEOUT: &str = include_str!("../builtins/prompts/mcp-tool-timeout.md");
 /// Integration status for an MCP connection that failed; `{{plugin}}`, `{{name}}`, `{{reason}}`.
 pub const DESKTOP_MCP_UNAVAILABLE: &str =
     include_str!("../builtins/prompts/desktop-mcp-unavailable.md");
@@ -134,7 +141,14 @@ pub const GOAL_CONTEXT: &str = include_str!("../builtins/prompts/goal-context.md
 /// Message that starts a goal turn; `{{goal_turn_marker}}`, `{{turn}}`, `{{goal}}`, `{{note}}`.
 pub const GOAL_TURN: &str = include_str!("../builtins/prompts/goal-turn.md");
 pub const GOAL_TURN_PROOF: &str = include_str!("../builtins/prompts/goal-turn-proof.md");
+/// The one task to work on now, in a goal turn; `{{task}}`.
+pub const GOAL_TURN_NEXT: &str = include_str!("../builtins/prompts/goal-turn-next.md");
+/// The goal's rules, in a goal turn; `{{rules}}`.
+pub const GOAL_TURN_RULES: &str = include_str!("../builtins/prompts/goal-turn-rules.md");
 pub const GOAL_TURN_FILES: &str = include_str!("../builtins/prompts/goal-turn-files.md");
+/// A subagent in the goal check's evidence; `{{name}}`, `{{status}}`, `{{paths}}`, `{{result}}`.
+pub const GOAL_EVIDENCE_SUBAGENT: &str =
+    include_str!("../builtins/prompts/goal-evidence-subagent.md");
 pub const GOAL_EVIDENCE_SCRIPT: &str = include_str!("../builtins/prompts/goal-evidence-script.md");
 pub const GOAL_NOTE_SCRIPT_PROOF: &str =
     include_str!("../builtins/prompts/goal-note-script-proof.md");

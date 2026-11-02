@@ -87,7 +87,7 @@ export function WorkspacePanel({ projectRoot, threadId, workspace }: { projectRo
       <header className="themis-workspace-head">
         <nav className="themis-workspace-tabs" aria-label="Workspace views">
           {TABS.filter(([value]) => value !== "goal" || goal).map(([value, label]) => {
-            const count = value === "changes" ? changed : value === "tasks" ? taskCount : value === "goal" ? (goal?.proof ?? []).filter(item => !item.proven).length : 0;
+            const count = value === "changes" ? changed : value === "tasks" ? taskCount : value === "goal" ? (goal?.proof ?? []).filter(item => item.kind !== "rule" && !item.proven).length : 0;
             return (
               <Tooltip key={value} content={label} below>
                 <button type="button" aria-label={count > 0 ? `${label} ${count}` : label} aria-pressed={tab === value} onClick={() => choose(value)}>

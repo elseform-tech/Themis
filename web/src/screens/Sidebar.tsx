@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState } from "react";
 import { Badge, Button, Dialog, Input, Tooltip } from "../components";
-import { createProject, deleteProject, getSettings, renameProject, renameThread } from "../lib/tauri";
+import { createProject, deleteProject, getSettings, pluginAction, renameProject, renameThread } from "../lib/tauri";
+import { unseenOff } from "../lib/integrations";
 import { describeError, toast, useApp, type MainView } from "../state/store";
 import { useNewThread, useDiscardThread } from "./actions";
-import type { ThreadInfo } from "../lib/types";
+import type { Plugin, ThreadInfo } from "../lib/types";
 import { readSession, writeSession } from "../state/session";
 import { MovingText } from "../components/MovingText";
 import { SettingsNav } from "./SettingsNav";
@@ -108,9 +109,19 @@ export function Sidebar({ collapsed: folded, companionControl }: { collapsed: bo
     const unseen = finished.has(thread.id) && !isLive(status);
     return <li key={thread.id} className="themis-sidebar-thread"><button type="button" className={`themis-sidebar-row themis-thread-row ${active ? "themis-sidebar-row--active" : ""} ${unseen ? "is-unseen" : ""}`} title={thread.title} aria-label={thread.title} aria-current={active ? "true" : undefined} onClick={() => activeRoot && dispatch({ type: "thread/selected", projectRoot: activeRoot, threadId: thread.id })}><ThreadStatus status={status} /><MovingText>{thread.title}</MovingText></button><details className="themis-thread-row-actions"><summary aria-label={`Options for ${thread.title}`} title="Thread options"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="12" cy="5" r="1.7" /><circle cx="12" cy="12" r="1.7" /><circle cx="12" cy="19" r="1.7" /></svg></summary><div className="themis-row-menu"><button type="button" aria-label={`Edit ${thread.title}`} disabled={locked} onClick={event => { event.currentTarget.closest("details")?.removeAttribute("open"); setEditError(""); setEditing({ ...thread, projectRoot: activeRoot! }); }}>Rename</button><button type="button" className="is-danger" aria-label={`Remove ${thread.title}`} disabled={locked} onClick={event => { event.currentTarget.closest("details")?.removeAttribute("open"); setRemoving({ ...thread, projectRoot: activeRoot! }); }}>Remove</button></div></details></li>;
   }
+  // Installed parts still off: the mark stays until they've been seen in the Installed list.
+  const [partsOff, setPartsOff] = useState(false);
+  useEffect(() => {
+    let live = true;
+    const check = () => void pluginAction<Plugin[]>({ action: "list", projectRoot: activeRoot }).then(list => { if (live && Array.isArray(list)) setPartsOff(unseenOff(list)); }).catch(() => undefined);
+    check();
+    window.addEventListener("themis-plugins-changed", check);
+    window.addEventListener("themis-off-seen", check);
+    return () => { live = false; window.removeEventListener("themis-plugins-changed", check); window.removeEventListener("themis-off-seen", check); };
+  }, [activeRoot]);
   function nav(view: MainView, label: string) {
     return <Tooltip key={view} content={label}><button type="button" className={`themis-sidebar-row ${state.mainView === view ? "themis-sidebar-row--active" : ""}`} aria-label={view === "queue" && pending > 0 ? `${label} ${pending}` : label} aria-current={state.mainView === view ? "page" : undefined} onClick={() => dispatch({ type: "ui/view", view })}>
-      <SidebarIcon name={viewIcons[view]} /><span className="themis-sidebar-name">{label}</span>{view === "queue" && pending > 0 && <Badge tone="warning">{pending}</Badge>}
+      <SidebarIcon name={viewIcons[view]} /><span className="themis-sidebar-name">{label}</span>{view === "queue" && pending > 0 && <Badge tone="warning">{pending}</Badge>}{view === "skills" && partsOff && <i className="themis-off-dot themis-sidebar-off" aria-hidden="true" data-testid="parts-off" />}
     </button></Tooltip>;
   }
   return <>

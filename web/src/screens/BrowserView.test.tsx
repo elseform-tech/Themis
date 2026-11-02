@@ -52,6 +52,21 @@ describe("BrowserView", () => {
     expect(screen.queryByRole("button", { name: "Take over" })).toBeNull();
   });
 
+  it("shows where the agent's mouse is, and hides it while the person is in the page", async () => {
+    vi.mocked(bridge.browserState).mockResolvedValue({ ...page, pointer: [120, 45] });
+    render(<BrowserView threadId="t1" />);
+    const cursor = await screen.findByTestId("agent-cursor");
+    expect(cursor.style.transform).toBe("translate(120px, 45px)");
+    fireEvent.mouseMove(screen.getByLabelText(/^Page:/), { clientX: 10, clientY: 10 });
+    expect(screen.queryByTestId("agent-cursor")).toBeNull();
+  });
+
+  it("has no cursor before the agent has used the mouse", async () => {
+    render(<BrowserView threadId="t1" />);
+    await screen.findByLabelText(/^Page:/);
+    expect(screen.queryByTestId("agent-cursor")).toBeNull();
+  });
+
   it("forwards input in page coordinates while the agent keeps working", async () => {
     await act(async () => { render(<BrowserView threadId="t1" />); });
     const view = screen.getByLabelText("Page: Sign up");
