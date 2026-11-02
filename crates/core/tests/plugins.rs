@@ -31,7 +31,10 @@ fn init_is_a_short_built_in_skill_described_by_its_frontmatter() {
         .expect("built-in init skill");
     assert_eq!(init.scope, "built-in");
     assert_eq!(init.name, "Init");
-    assert!(SKILL.contains(&format!("\ndescription: {}\n", init.description)));
+    // A Windows checkout may give the file CRLF line endings.
+    assert!(SKILL
+        .replace("\r\n", "\n")
+        .contains(&format!("\ndescription: {}\n", init.description)));
     let (text, skills, _) = store.resolve_prompt("[[skill:init]]", &[]).unwrap();
     assert_eq!(text, "Init");
     assert_eq!(skills[0].instructions, SKILL);
