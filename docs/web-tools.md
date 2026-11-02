@@ -169,7 +169,14 @@ and fragment, and token-like words are hidden unless Show secrets is on. Colours
 background images and gradients, and text with a shadow or outline, are not judged.
 The goal check sees the result like any other tool output.
 
-**In Workspace.** The Browser tab streams the chat's current tab at the panel's size.
+**In Workspace.** The Browser tab streams the chat's current tab at the screen's pixel
+density: the page is drawn at the screen's device pixel ratio (1 to 3) and each JPEG frame
+(quality 92, at most 30 a second and only when the page changes) is at most the panel's
+page area in device pixels, and never above 3840 × 2400. Opening the tab with no run going
+lays the page out at the panel's size; while the agent works the page keeps its size, so the
+coordinates the agent saw stay valid, and the tab shows it scaled down to fit. Dragging the
+panel's edge lays the page out at the new size once the drag settles. A recording takes
+frames at the page's full size while it runs.
 The agent's first browser step in a run opens it for the chat on screen.
 Back, Forward, Reload and the address bar work as in any browser. The person and
 the agent use the page at the same time: clicking, typing, scrolling or entering an
