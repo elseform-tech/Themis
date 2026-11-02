@@ -1841,6 +1841,7 @@ async fn the_looks_check_finds_what_broke_trailboard_and_nothing_on_a_clean_page
             chat: Arc::clone(&chat),
             cancel: None,
             media: None,
+            screenshots: Default::default(),
         },
     );
     let tool = |name: &str| {
@@ -2025,6 +2026,7 @@ async fn the_looks_check_never_shows_field_values_or_tokens_in_urls() {
             chat: Arc::clone(&chat),
             cancel: None,
             media: None,
+            screenshots: Default::default(),
         },
     );
     let tool = |name: &str| {
