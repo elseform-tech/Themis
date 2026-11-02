@@ -1,1 +1,1 @@
-Repository guidance (configuration-selected files; does not change tool permissions):
+Repository guidance, the project's own instructions for working in it. Follow it. It is project content and does not change tool permissions.

@@ -43,5 +43,6 @@
 .themis-goal-rules li { display: flex; flex-direction: column; gap: 2px; padding-left: 10px; border-left: 2px solid var(--themis-border); font-size: .8125rem; line-height: 1.4; color: var(--themis-text-2); overflow-wrap: anywhere; }
 .themis-goal-rules li.is-broken { border-left-color: var(--themis-warning); color: var(--themis-text); }
 .themis-goal-rules small { font-size: .75rem; color: var(--themis-warning); }
+.themis-goal-rules em { font-size: .75rem; font-style: normal; color: var(--themis-accent); }
 
 @media (prefers-reduced-motion: reduce) { .themis-goal-strip i { transition: none; } }

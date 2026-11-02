@@ -298,8 +298,10 @@ impl AppState {
         let secrets_note = self
             .project_secrets_note(&run_configuration, &snapshot.work_root, thread_id, run_id)
             .await;
+        let project_guidance =
+            themis_core::configuration::project_guidance(&run_configuration, &snapshot.work_root);
         skill_catalog = format!(
-            "\n{}\n{}{secrets_note}{}",
+            "\n{}\n{project_guidance}\n{}{secrets_note}{}",
             themis_core::prompts::fill(
                 themis_core::prompts::DESKTOP_RUN_WORKSPACE,
                 &[("workspace", &workspace)]
@@ -613,6 +615,7 @@ impl AppState {
                     permissions: Arc::clone(&site_permissions),
                 },
                 subagent_skills,
+                project_guidance,
                 plugin_bins.clone(),
                 Arc::clone(&llm),
                 policy,
