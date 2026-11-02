@@ -617,6 +617,29 @@ impl MemoryStore {
     }
 }
 
+/// What a run is told about memory: the global and this project's indexes under the memory
+/// note, or nothing when neither holds a memory.
+pub fn run_note(global_index: &str, project_index: &str) -> String {
+    if global_index.trim().is_empty() && project_index.trim().is_empty() {
+        return String::new();
+    }
+    let lines = |index: &str| {
+        let index = index.trim_end();
+        if index.is_empty() {
+            "(none)".to_owned()
+        } else {
+            index.to_owned()
+        }
+    };
+    crate::prompts::fill(
+        crate::prompts::SYSTEM_MEMORY,
+        &[
+            ("global", &lines(global_index)),
+            ("project", &lines(project_index)),
+        ],
+    )
+}
+
 /// Today's date as memories record it.
 pub fn today() -> String {
     chrono::Local::now().format("%Y-%m-%d").to_string()
@@ -670,6 +693,18 @@ mod tests {
         ] {
             assert!(parse(&bad).is_err(), "accepted {bad:?}");
         }
+    }
+
+    #[test]
+    fn the_run_note_carries_both_indexes_or_nothing() {
+        assert_eq!(run_note("", "\n"), "");
+        let note = run_note("", "- a (project, 2026-11-02): A fact\n");
+        assert!(note.starts_with("Memory from earlier chats"), "{note}");
+        assert!(note.contains("can be out of date"), "{note}");
+        assert!(
+            note.ends_with("Everywhere:\n(none)\nThis project:\n- a (project, 2026-11-02): A fact"),
+            "{note}"
+        );
     }
 
     #[test]

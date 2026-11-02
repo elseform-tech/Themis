@@ -1,0 +1,1 @@
+Read one of your saved memories in full, by the name and scope ("project" or "global") the memory index shows.

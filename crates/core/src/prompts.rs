@@ -198,6 +198,15 @@ pub const ASK_USER_BLOCKING: &str = include_str!("../builtins/prompts/ask-user-b
 pub const ASK_USER_WAITING: &str = include_str!("../builtins/prompts/ask-user-waiting.md");
 /// `ask_user` refusal when too many questions are open; `{{max}}`.
 pub const ASK_USER_LIMIT: &str = include_str!("../builtins/prompts/ask-user-limit.md");
+
+// Memory across chats.
+/// The memory index at the start of a run (main agent and subagents); `{{global}}`,
+/// `{{project}}`.
+pub const SYSTEM_MEMORY: &str = include_str!("../builtins/prompts/system-memory.md");
+/// Description of the main agent's `memory` tool.
+pub const MEMORY_TOOL: &str = include_str!("../builtins/prompts/memory-tool.md");
+/// Description of a subagent's read-only `memory` tool.
+pub const MEMORY_TOOL_READ: &str = include_str!("../builtins/prompts/memory-tool-read.md");
 /// The message that delivers the user's answer; `{{question}}`, `{{assumption}}`, `{{answer}}`.
 pub const QUESTION_ANSWER: &str = include_str!("../builtins/prompts/question-answer.md");
 /// `note` field of the set_goal tool result.
