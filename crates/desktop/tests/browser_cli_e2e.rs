@@ -96,6 +96,10 @@ async fn cli_run_drives_the_browser_and_the_workspace_commands_see_it() {
                 5 => tool_call("c6", "browser_click", json!({"x": 5, "y": 5})),
                 6 => tool_call("c7", "browser_click", json!({"x": 5, "y": 100_000})),
                 7 => tool_call("c8", "browser_check_looks", json!({})),
+                // A short recording of its own, which the chat shows as a video.
+                8 => tool_call("c9", "browser_record", json!({"action": "start"})),
+                9 => tool_call("c10", "browser_click", json!({"x": 5, "y": 5})),
+                10 => tool_call("c11", "browser_record", json!({"action": "stop"})),
                 _ => ResponseTemplate::new(200).set_body_json(json!({
                     "choices": [{"message": {"role": "assistant", "content": "Clicked it."}, "finish_reason": "stop"}]
                 })),
@@ -157,7 +161,7 @@ async fn cli_run_drives_the_browser_and_the_workspace_commands_see_it() {
             .await
             .unwrap_or_default()
             .iter()
-            .any(|request| tool_results(&request.body_json().unwrap_or(Value::Null)).len() >= 8);
+            .any(|request| tool_results(&request.body_json().unwrap_or(Value::Null)).len() >= 11);
         if done && !state.get_thread(&thread.id).await.is_ok_and(|t| t.running) {
             break;
         }
@@ -237,6 +241,9 @@ async fn cli_run_drives_the_browser_and_the_workspace_commands_see_it() {
         "{}",
         results[7]
     );
+    let recording = results[10]["path"].as_str().unwrap().to_owned();
+    assert!(recording.ends_with(".mp4"), "{}", results[10]);
+    let shot = shot.to_owned();
 
     tokio::task::spawn_blocking(move || {
         let browser = call(&data_dir, "browser_state", json!({"threadId": thread_id}));
@@ -280,6 +287,29 @@ async fn cli_run_drives_the_browser_and_the_workspace_commands_see_it() {
             history.contains("media_attached") && history.contains("Counter at one"),
             "{history}"
         );
+        // The screenshot and recording steps carry what they saved as structured media,
+        // so the chat shows them without reading the tool's output.
+        let history: Value = serde_json::from_str(&history).unwrap();
+        let media_of = |tool: &str| {
+            history
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|item| &item["envelope"]["event"])
+                .rfind(|event| event["kind"] == "tool_finished" && event["tool"] == tool)
+                .map(|event| event["media"].clone())
+                .unwrap_or(Value::Null)
+        };
+        let shot_media = media_of("browser_screenshot");
+        assert_eq!(shot_media["kind"], "image", "{shot_media}");
+        assert_eq!(shot_media["path"], shot.as_str(), "{shot_media}");
+        assert!(shot_media["width"].as_u64().unwrap() > 0, "{shot_media}");
+        assert!(shot_media["height"].as_u64().unwrap() > 0, "{shot_media}");
+        let video_media = media_of("browser_record");
+        assert_eq!(video_media["kind"], "video", "{video_media}");
+        assert_eq!(video_media["path"], recording.as_str(), "{video_media}");
+        // Other steps carry none.
+        assert!(media_of("browser_open").is_null());
         // The person's Capture and Record save files the composer can attach.
         let captured = call(&data_dir, "browser_capture", json!({"threadId": thread_id}));
         assert!(

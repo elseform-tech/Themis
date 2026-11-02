@@ -1,7 +1,8 @@
 //! `attach_file`: the agent shows images, videos and PDFs inline in its reply.
 //! Files come from the project (screenshots and recordings are saved there
 //! already); anything outside the attachments folder is copied into it, so the
-//! reply keeps showing it after the original changes.
+//! reply keeps showing it after the original changes. Also names what a
+//! screenshot or recording step saved ([`tool_media`]), shown in that step's row.
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -12,7 +13,7 @@ use themis_core::tools::{async_trait, ToolCallError, ToolRuntime, ToolT};
 
 use super::AppState;
 use crate::sink::EventSink;
-use crate::types::{AttachedMedia, ThreadEvent, ThreadEventEnvelope};
+use crate::types::{AttachedMedia, ThreadEvent, ThreadEventEnvelope, ToolMedia};
 
 /// Media one reply may carry.
 pub const MAX_PER_REPLY: usize = 12;
@@ -46,6 +47,42 @@ pub fn media_kind(path: &Path) -> Option<&'static str> {
         "mp4" | "m4v" | "mov" | "webm" => "video",
         "pdf" => "pdf",
         _ => return None,
+    })
+}
+
+/// Tools whose result names a file they saved for the person to see.
+const MEDIA_TOOLS: [&str; 2] = ["browser_screenshot", "browser_record"];
+/// Largest pixel side taken from a result; anything bigger is not a real size.
+const MAX_SIDE: u64 = 100_000;
+
+/// What a finished `browser_screenshot` or `browser_record` call saved, for the chat to
+/// show: an existing image or video inside `root`'s `.themis/attachments`. The tool's own
+/// JSON result is read here, so clients never parse tool output; `None` for every other
+/// tool, a failed call or a file that doesn't qualify.
+pub fn tool_media(root: &Path, tool: &str, ok: bool, output: &str) -> Option<ToolMedia> {
+    if !ok || !MEDIA_TOOLS.contains(&tool) {
+        return None;
+    }
+    let result: Value = serde_json::from_str(output).ok()?;
+    let saved = Path::new(result["path"].as_str()?);
+    let kind = media_kind(saved).filter(|kind| *kind != "pdf")?;
+    let root = root.canonicalize().ok()?;
+    let storage = root.join(".themis/attachments").canonicalize().ok()?;
+    let saved = saved.canonicalize().ok()?;
+    if !storage.starts_with(&root) || !saved.starts_with(&storage) || !saved.is_file() {
+        return None;
+    }
+    let side = |key: &str| {
+        result[key]
+            .as_u64()
+            .filter(|side| (1..=MAX_SIDE).contains(side))
+            .and_then(|side| u32::try_from(side).ok())
+    };
+    Some(ToolMedia {
+        path: saved.to_string_lossy().into_owned(),
+        kind: kind.to_owned(),
+        width: side("width"),
+        height: side("height"),
     })
 }
 
@@ -200,6 +237,105 @@ mod tests {
         assert_eq!(media_kind(Path::new("report.pdf")), Some("pdf"));
         assert_eq!(media_kind(Path::new("notes.txt")), None);
         assert_eq!(media_kind(Path::new("noextension")), None);
+    }
+
+    #[test]
+    fn tool_media_names_only_saved_screenshots_and_recordings_in_storage() {
+        let project = tempfile::tempdir().unwrap();
+        let storage =
+            super::super::attachments::project_storage_directory(project.path(), &["attachments"])
+                .unwrap();
+        let folder = storage.join("one");
+        std::fs::create_dir(&folder).unwrap();
+        let shot = folder.join("screenshot-1.png");
+        std::fs::write(&shot, b"png").unwrap();
+        let video = folder.join("recording-1.mp4");
+        std::fs::write(&video, b"mp4").unwrap();
+        let result = |path: &Path| {
+            json!({"path": path, "width": 1280, "height": 800, "note": "for the model"}).to_string()
+        };
+        let shown =
+            |tool: &str, ok: bool, output: &str| tool_media(project.path(), tool, ok, output);
+        assert_eq!(
+            shown("browser_screenshot", true, &result(&shot)),
+            Some(ToolMedia {
+                path: shot.to_string_lossy().into_owned(),
+                kind: "image".into(),
+                width: Some(1280),
+                height: Some(800),
+            })
+        );
+        let recorded = json!({"path": video, "seconds": 2.0}).to_string();
+        assert_eq!(
+            shown("browser_record", true, &recorded),
+            Some(ToolMedia {
+                path: video.to_string_lossy().into_owned(),
+                kind: "video".into(),
+                width: None,
+                height: None,
+            })
+        );
+        // Sizes that are not real are left out, not trusted.
+        let odd = json!({"path": shot, "width": 0, "height": 10_000_000}).to_string();
+        let media = shown("browser_screenshot", true, &odd).unwrap();
+        assert_eq!((media.width, media.height), (None, None));
+        // Another tool, a failed call, a result that isn't JSON or names no file.
+        assert!(shown("read_file", true, &result(&shot)).is_none());
+        assert!(shown("browser_screenshot", false, &result(&shot)).is_none());
+        assert!(shown("browser_screenshot", true, "screenshot saved").is_none());
+        assert!(shown("browser_record", true, r#"{"recording":true}"#).is_none());
+        // A missing file, one outside the attachments folder, or a path escaping it.
+        assert!(shown(
+            "browser_screenshot",
+            true,
+            &result(&folder.join("gone.png"))
+        )
+        .is_none());
+        let loose = project.path().join("loose.png");
+        std::fs::write(&loose, b"png").unwrap();
+        assert!(shown("browser_screenshot", true, &result(&loose)).is_none());
+        let escape = folder.join("../../../loose.png");
+        assert!(shown("browser_screenshot", true, &result(&escape)).is_none());
+        let outside = tempfile::Builder::new().suffix(".png").tempfile().unwrap();
+        assert!(shown("browser_screenshot", true, &result(outside.path())).is_none());
+        // Not an image or video.
+        let notes = folder.join("notes.txt");
+        std::fs::write(&notes, b"text").unwrap();
+        assert!(shown("browser_screenshot", true, &result(&notes)).is_none());
+        #[cfg(unix)]
+        {
+            // A link in storage that points out of the project.
+            let link = folder.join("link.png");
+            std::os::unix::fs::symlink(outside.path(), &link).unwrap();
+            assert!(shown("browser_screenshot", true, &result(&link)).is_none());
+        }
+    }
+
+    proptest::proptest! {
+        #![proptest_config(proptest::prelude::ProptestConfig::with_cases(128))]
+
+        /// Any result text or path never panics, and anything named is a file in storage.
+        #[test]
+        fn tool_media_only_ever_names_files_in_storage(
+            text in proptest::prelude::any::<String>(),
+            path in "(\\.\\./|[a-z]{1,6}/|/){0,5}[a-z]{0,6}(\\.png|\\.mp4|\\.pdf)?",
+            width in proptest::prelude::any::<i64>(),
+        ) {
+            let project = tempfile::tempdir().unwrap();
+            let storage = super::super::attachments::project_storage_directory(
+                project.path(),
+                &["attachments"],
+            )
+            .unwrap();
+            std::fs::write(storage.join("a.png"), b"png").unwrap();
+            let _ = tool_media(project.path(), "browser_screenshot", true, &text);
+            let output = json!({"path": storage.join(&path), "width": width}).to_string();
+            if let Some(media) = tool_media(project.path(), "browser_screenshot", true, &output) {
+                proptest::prop_assert!(Path::new(&media.path).starts_with(&storage));
+                proptest::prop_assert!(Path::new(&media.path).is_file());
+                proptest::prop_assert!(media.width.is_none_or(|w| (1..=MAX_SIDE).contains(&u64::from(w))));
+            }
+        }
     }
 
     #[test]

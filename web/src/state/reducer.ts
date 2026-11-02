@@ -513,7 +513,7 @@ export function applyThreadEvent(
           for (let i = rows.length - 1; i >= 0; i--) {
             const row = rows[i]!;
             if (row.runId === runId && row.tool?.name === event.tool && row.tool.ok === undefined) {
-              rows[i] = { ...row, tool: { ...row.tool, ok: event.ok, output: event.output } }; break;
+              rows[i] = { ...row, tool: { ...row.tool, ok: event.ok, output: event.output, ...(event.media ? { media: event.media } : {}) } }; break;
             }
           }
           return rows;
