@@ -572,3 +572,135 @@ async fn the_check_closes_items_an_agent_that_never_writes_its_list_left_open() 
     assert!(logs.contains("\"closed\":2"), "{logs}");
     assert!(!logs.contains("sessionStorage"), "no item text in the logs");
 }
+
+/// Waits on the event stream for a `todo_changed` whose list holds `words` with `status`.
+async fn todo_event(events: &mut tokio::net::TcpStream, id: &str, words: &str, status: &str) {
+    tokio::time::timeout(Duration::from_secs(120), async {
+        loop {
+            let item = Client::next_event(events).await.unwrap();
+            let event = &item["payload"]["event"];
+            if item["name"] != "thread-event"
+                || item["payload"]["thread_id"] != id
+                || event["kind"] != "todo_changed"
+            {
+                continue;
+            }
+            if event["todo"]["items"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .any(|item| item["details"] == words && item["status"] == status)
+            {
+                return;
+            }
+        }
+    })
+    .await
+    .unwrap_or_else(|_| panic!("no todo_changed with the request {status}"));
+}
+
+/// The person's request in `list`, by their words.
+fn request_item(list: &Value, words: &str) -> Value {
+    list["items"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .find(|item| item["details"] == words)
+        .cloned()
+        .unwrap_or_else(|| panic!("the request is on the list: {list}"))
+}
+
+/// A queued request of the person's is in progress while the turn it started runs, even with a
+/// model that never calls `todo_write`, and back to pending (never done) once that turn ends.
+#[tokio::test(flavor = "multi_thread")]
+async fn cli_a_delivered_request_is_in_progress_for_its_turn_and_pending_after() {
+    const REQUEST: &str = "Also add a dark mode toggle to the settings page.";
+    let data = tempfile::tempdir().unwrap();
+    let project = tempfile::tempdir().unwrap();
+    let provider = MockServer::builder().start().await;
+    let first_gate = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let request_gate = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let (first, held) = (Arc::clone(&first_gate), Arc::clone(&request_gate));
+    let wait = |gate: &std::sync::atomic::AtomicBool| {
+        let waited = std::time::Instant::now();
+        while !gate.load(Ordering::SeqCst) && waited.elapsed() < Duration::from_secs(60) {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    };
+    let requests = Arc::new(Mutex::new(Vec::<Value>::new()));
+    let seen = Arc::clone(&requests);
+    Mock::given(method("POST"))
+        .respond_with(move |request: &Request| {
+            let body: Value = request.body_json().unwrap();
+            if is_check(&body) {
+                return text_reply(
+                    r#"{"verdict":"not_yet","reason":"Keep going.","progressed":true}"#,
+                );
+            }
+            seen.lock().unwrap().push(body.clone());
+            let last_user = body["messages"]
+                .as_array()
+                .and_then(|messages| messages.iter().rev().find(|m| m["role"] == "user"))
+                .and_then(|message| message["content"].as_str())
+                .unwrap_or_default()
+                .to_owned();
+            if last_user.starts_with("/goal") {
+                wait(&first);
+            } else if last_user.starts_with(REQUEST) {
+                wait(&held);
+            }
+            // The model never touches its list.
+            text_reply("Working on it.")
+        })
+        .mount(&provider)
+        .await;
+    let (mut events, serving) = start(&provider, data.path()).await;
+    let thread = cli(
+        data.path(),
+        "create_thread",
+        json!({"projectRoot":project.path(),"provider":"go","model":"test-model"}),
+    );
+    let id = thread["id"].as_str().unwrap().to_owned();
+    cli(
+        data.path(),
+        "send_message",
+        json!({"threadId": id, "text": "/goal Build the settings page.", "reasoningEffort": null}),
+    );
+    // The goal's first turn is running: the request waits in the queue.
+    cli(
+        data.path(),
+        "enqueue_message",
+        json!({"threadId": id, "text": REQUEST}),
+    );
+    first_gate.store(true, Ordering::SeqCst);
+
+    // The queue delivers it: its turn starts and the request is on the list, in progress.
+    todo_event(&mut events, &id, REQUEST, "in_progress").await;
+    let list = cli(data.path(), "get_todo", json!({"threadId": id}));
+    let item = request_item(&list, REQUEST);
+    assert_eq!(item["source"], "person");
+    assert_eq!(item["status"], "in_progress", "{list}");
+
+    // Its turn ends without the model ever calling todo_write: back to pending, not done.
+    request_gate.store(true, Ordering::SeqCst);
+    todo_event(&mut events, &id, REQUEST, "pending").await;
+    let list = cli(data.path(), "get_todo", json!({"threadId": id}));
+    let item = request_item(&list, REQUEST);
+    assert_eq!(item["status"], "pending", "{list}");
+    assert!(item.get("marked_for_turn").is_none(), "{item}");
+    // The turn's model read the request as the one in progress.
+    let task = requests
+        .lock()
+        .unwrap()
+        .iter()
+        .filter_map(|body| {
+            body["messages"].as_array()?.last()?["content"]
+                .as_str()
+                .map(str::to_owned)
+        })
+        .find(|text| text.starts_with(REQUEST))
+        .expect("the request's turn reached the model");
+    assert!(task.contains("[in progress; the person asked]"), "{task}");
+    cli(data.path(), "pause_goal", json!({"threadId": id}));
+    serving.abort();
+}

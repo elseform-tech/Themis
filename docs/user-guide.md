@@ -205,7 +205,11 @@ is reached; for example `/goal optimize this app to speed up p95`.
   "you asked", and holds the goal until it is done. None is ever dropped; when you
   cancel or change an earlier request, the agent takes the old item off, and the
   check puts it back if nothing you said cancelled it. Answers to the agent's
-  questions are not requests. `themis call get_todo` shows the list.
+  questions are not requests. While the turn your request started (or was
+  steered into) runs, its item shows in progress even if the agent never updates
+  its list; when that turn ends it goes back to pending unless the agent marked
+  it done. Themis never marks it done for the agent. `themis call get_todo`
+  shows the list.
 - **The agent says where it stands.** There is no status box after a turn: each
   goal turn opens with the agent saying, in its own words, where the goal stands
   and what it will do next. Once the check finds the goal reached, one short

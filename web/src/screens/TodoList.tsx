@@ -15,14 +15,31 @@ export function currentTodo(items: TodoItem[]): number {
 
 export const doneCount = (items: TodoItem[]) => items.filter(item => item.status === "completed").length;
 
-/** What the overview box shows: the current item with up to two before it, at most five rows;
- *  finished items before them fold into "N done" and the rest into "N more". */
-export function todoWindow(items: TodoItem[]): { foldedDone: number; shown: TodoItem[]; more: number } {
-  const current = currentTodo(items);
-  const from = Math.max(0, (current >= 0 ? current : items.length) - WINDOW_BEFORE);
-  const shown = items.slice(from, from + WINDOW_ROWS);
-  return { foldedDone: doneCount(items.slice(0, from)), shown, more: items.length - from - shown.length };
+export interface TodoWindowRows {
+  /** Items above the rows: finished ones, and ones still to do (the agent started a later one). */
+  before: { done: number; open: number };
+  shown: TodoItem[];
+  /** Items below the rows. */
+  more: number;
+  /** Every item is finished: the box says so in one line instead of rows. */
+  allDone: boolean;
 }
+
+/** What the overview box shows: the current item with up to two before it, at most five rows;
+ *  items above them are counted ("N done · N to do") and the rest fold into "N more", so the
+ *  counts and rows always add up to the whole list. */
+export function todoWindow(items: TodoItem[]): TodoWindowRows {
+  const current = currentTodo(items);
+  if (current < 0) return { before: { done: items.length, open: 0 }, shown: [], more: 0, allDone: items.length > 0 };
+  const from = Math.max(0, current - WINDOW_BEFORE);
+  const shown = items.slice(from, from + WINDOW_ROWS);
+  const done = doneCount(items.slice(0, from));
+  return { before: { done, open: from - done }, shown, more: items.length - from - shown.length, allDone: false };
+}
+
+/** The line for the items above the rows, or nothing when there are none. */
+const beforeText = ({ done, open }: TodoWindowRows["before"]) =>
+  [done > 0 ? `${done} done` : "", open > 0 ? `${open} to do` : ""].filter(Boolean).join(" · ");
 
 const STATUS_WORDS: Partial<Record<TodoItem["status"], string>> = { completed: "Done: ", in_progress: "In progress: " };
 const STATE_CLASS: Partial<Record<TodoItem["status"], string>> = { completed: " is-done", in_progress: " is-current" };
@@ -79,13 +96,16 @@ export function TodoItems({ items }: { items: TodoItem[] }) {
   );
 }
 
-/** The overview box's few rows, as phrasing content inside its button. */
+/** The overview box's few rows, as phrasing content inside its button; a finished list is one
+ *  quiet line (the To-do tab keeps the whole list). */
 export function TodoWindow({ items }: { items: TodoItem[] }) {
   const arrived = useArrivals(items);
-  const { foldedDone, shown, more } = todoWindow(items);
+  const { before, shown, more, allDone } = todoWindow(items);
+  if (allDone) return <span className="themis-todo is-compact"><span className="themis-todo-more is-all-done">{items.length} of {items.length} done</span></span>;
+  const above = beforeText(before);
   return (
     <span className="themis-todo is-compact">
-      {foldedDone > 0 && <span className="themis-todo-more">{foldedDone} done</span>}
+      {above && <span className="themis-todo-more">{above}</span>}
       {shown.map(item => <span key={item.id} className={todoClass(item, arrived(item))}><span className="themis-todo-line"><TodoLine item={item} /></span></span>)}
       {more > 0 && <span className="themis-todo-more">{more} more</span>}
     </span>

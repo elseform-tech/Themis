@@ -587,6 +587,7 @@ impl AppState {
             self.mark_goal_turn(run_id);
         } else if !is_turn {
             self.note_added_request(sink, thread_id, text);
+            self.start_request_on_todo(sink, thread_id, text);
             match self.goal_for(thread_id).map(|goal| goal.status) {
                 // An answer to another question leaves the goal waiting on
                 // the blocking one; any other reply resumes it.

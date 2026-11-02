@@ -2,6 +2,7 @@
 import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, expect, it } from "vitest";
 import type { Goal, TodoItem } from "../lib/types";
+import { todoWindow } from "./TodoList";
 import { TodoView } from "./TodoView";
 
 afterEach(cleanup);
@@ -94,4 +95,30 @@ it("says so while a goal has no list yet", () => {
   expect(screen.queryByRole("list", { name: "To-do" })).toBeNull();
   expect(document.querySelector(".themis-todo-tally")).toBeNull();
   expect(screen.getByText("The agent hasn't written its list yet.")).toBeInTheDocument();
+});
+
+it("keeps the whole finished list in the tab", () => {
+  const done = items.map(item => ({ ...item, status: "completed" as const }));
+  render(<TodoView goal={null} todo={{ revision: 5, items: done }} />);
+  expect(within(screen.getByRole("list", { name: "To-do" })).getAllByRole("listitem")).toHaveLength(6);
+});
+
+it("the overview window accounts for every item of every list up to eight long", () => {
+  const statuses = ["pending", "in_progress", "completed"] as const;
+  for (let length = 0; length <= 8; length++) {
+    for (let code = 0; code < 3 ** length; code++) {
+      const list: TodoItem[] = Array.from({ length }, (_, index) => ({ id: `${index}`, title: `Item ${index}`, status: statuses[Math.floor(code / 3 ** index) % 3]! }));
+      const { before, shown, more, allDone } = todoWindow(list);
+      expect(shown.length).toBeLessThanOrEqual(5);
+      expect(allDone).toBe(length > 0 && list.every(item => item.status === "completed"));
+      if (allDone) {
+        expect(shown).toHaveLength(0);
+        continue;
+      }
+      expect(before.done + before.open + shown.length + more).toBe(length);
+      // An open item before the window is counted as still to do, never as done.
+      const folded = list.slice(0, length - more - shown.length);
+      expect(folded.filter(item => item.status !== "completed")).toHaveLength(before.open);
+    }
+  }
 });

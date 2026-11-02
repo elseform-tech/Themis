@@ -292,6 +292,8 @@ impl AppState {
         // and is denied without a box (see `DesktopApprovalHook`).
         let denied = self.deny_approvals_for_new_message(&thread_id);
         self.note_added_request(sink.as_ref(), &thread_id, &steered);
+        // The running turn takes it up now.
+        self.start_request_on_todo(sink.as_ref(), &thread_id, &steered);
         let _ = self.inner.diagnostics.append(
             "queue",
             "steered",
@@ -486,6 +488,8 @@ impl AppState {
         if matches!(terminal, ThreadEvent::Failed { .. }) {
             self.hold_hook_wakes(&thread_id);
         }
+        // Before the next turn or the goal check: what this turn started is no longer going.
+        self.end_todo_turn(sink.as_ref(), &thread_id);
         if self.dispatch_queue(Arc::clone(&sink), &thread_id).await {
             // The goal learns about the turn it was waiting on later.
             self.goal_turn_interrupted(&run_id);
