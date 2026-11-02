@@ -13,6 +13,7 @@ pub mod context_window;
 pub mod diagnostics;
 pub mod git_guard;
 pub mod goal;
+pub mod memory;
 pub mod plugins;
 pub mod prompts;
 pub mod providers;
