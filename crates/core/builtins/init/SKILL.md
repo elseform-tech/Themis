@@ -20,7 +20,7 @@ Use these sections, in this order:
 Two or three sentences on what this project is.
 
 ## Project structure
-The main folders and what belongs in each.
+The main folders and what belongs in each, then the 5 to 10 files to open first, one line each.
 
 ## Build, test and lint
 Commands that actually exist here, as the manifests and CI show them.
