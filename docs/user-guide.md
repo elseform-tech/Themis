@@ -232,8 +232,9 @@ is reached; for example `/goal optimize this app to speed up p95`.
 - **What you add joins the goal.** A request you send while the goal is open
   (steered in, queued or typed) goes on the to-do list in your own words, tagged
   "you asked", and holds the goal until it is done. So does one you steered in or
-  queued after asking for the goal but before the agent set it (the last eight at
-  most). None is ever dropped; when you
+  queued after asking for the goal but before the agent set it, while its runs
+  were still going (the last eight at most; once the chat goes idle, your next
+  message starts afresh). None is ever dropped; when you
   cancel or change an earlier request, the agent takes the old item off, and the
   check puts it back if nothing you said cancelled it. Answers to the agent's
   questions are not requests. While the turn your request started (or was

@@ -29,6 +29,8 @@ const MAX_CHAIN_REQUESTS: usize = 8;
 #[derive(Default)]
 pub(super) struct RequestChain {
     later: Vec<(String, String)>,
+    /// A run of the chain is going, or a queued message of the person's follows one.
+    open: bool,
 }
 
 fn error(message: impl ToString) -> ToolCallError {
@@ -152,14 +154,31 @@ impl AppState {
             .lock()
             .unwrap_or_else(|e| e.into_inner());
         let chain = chains.entry(thread_id.to_owned()).or_default();
-        if !continues {
+        // A message that reaches a chat whose runs had all ended (even one queued there and sent
+        // at once) opens a new chain; only one sent while the chain's runs go on continues it.
+        if !continues || !chain.open {
             chain.later.clear();
+            chain.open = true;
             return;
         }
         if chain.later.len() >= MAX_CHAIN_REQUESTS {
             chain.later.remove(0);
         }
         chain.later.push((run_id.to_owned(), text.to_owned()));
+    }
+
+    /// The chat's run ended with nothing of the person's queued after it: the chain is over,
+    /// and the next message opens a new one. What it holds waits for that message.
+    pub(super) fn close_request_chain(&self, thread_id: &str) {
+        if let Some(chain) = self
+            .inner
+            .request_chains
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get_mut(thread_id)
+        {
+            chain.open = false;
+        }
     }
 
     /// A goal was just set for a chat that had none open: the person's messages after the
@@ -433,7 +452,13 @@ mod chain_tests {
         state.chain_request(THREAD, "r2", "Something else", false);
         assert!(chained(&state).is_empty());
         state.chain_request(THREAD, "r2", "Also this", true);
-        state.chain_request(THREAD, "r2", "Also this", true);
+        // The runs ended with nothing queued: a message queued to the idle chat (sent by the
+        // server at once) opens a new chain rather than joining the old one.
+        state.close_request_chain(THREAD);
+        state.chain_request(THREAD, "r3", "Queued while idle", true);
+        assert!(chained(&state).is_empty());
+        state.chain_request(THREAD, "r3", "Also this", true);
+        state.chain_request(THREAD, "r3", "Also this", true);
 
         // A new goal takes them on, the same words once, and spends the chain.
         state.begin_goal(&sink, THREAD, "Build it");

@@ -732,18 +732,24 @@ async fn cli_a_delivered_request_is_in_progress_for_its_turn_and_pending_after()
 /// sent "Also add a category filter…", which reached the agent first. Requests the person sent
 /// after the message that set the goal, in the same run or the queued runs that followed it,
 /// join the list as "you asked" once the goal exists; the goal message itself does not.
+/// Each case runs with the request sent at once (on a slow runner it lands before the run's
+/// first model call, and the model reads both messages together) and sent only after that call.
+/// The model is scripted on what it has read, not on which message came last.
 #[tokio::test(flavor = "multi_thread")]
 async fn cli_requests_sent_before_set_goal_in_the_same_chain_join_the_list() {
     const ASK: &str = "Set a goal: build the board.";
     const STEERED: &str = "Also add a category filter to the board.";
     const QUEUED: &str = "And show the due dates in ISO format.";
-    for queued in [false, true] {
+    for (queued, after_first_call) in [(false, false), (false, true), (true, false), (true, true)] {
         let request = if queued { QUEUED } else { STEERED };
         let data = tempfile::tempdir().unwrap();
         let project = tempfile::tempdir().unwrap();
         let provider = MockServer::builder().start().await;
         let gate = Arc::new(std::sync::atomic::AtomicBool::new(false));
         let held = Arc::clone(&gate);
+        let calls = Arc::new(AtomicUsize::new(0));
+        let called = Arc::clone(&calls);
+        let goal_set = Arc::new(std::sync::atomic::AtomicBool::new(false));
         Mock::given(method("POST"))
             .respond_with(move |request: &Request| {
                 let body: Value = request.body_json().unwrap();
@@ -752,31 +758,28 @@ async fn cli_requests_sent_before_set_goal_in_the_same_chain_join_the_list() {
                         r#"{"verdict":"not_yet","reason":"Keep going.","progressed":true}"#,
                     );
                 }
+                called.fetch_add(1, Ordering::SeqCst);
                 if last_is_tool(&body) {
                     return text_reply("On it.");
                 }
-                let last_user = body["messages"]
-                    .as_array()
-                    .and_then(|messages| messages.iter().rev().find(|m| m["role"] == "user"))
-                    .and_then(|message| message["content"].as_str())
-                    .unwrap_or_default()
-                    .to_owned();
-                let set_goal = call("set_goal", json!({"goal": "Build the board"}));
-                if last_user.starts_with(ASK) {
-                    let waited = std::time::Instant::now();
-                    while !held.load(Ordering::SeqCst) && waited.elapsed() < Duration::from_secs(60)
-                    {
-                        std::thread::sleep(Duration::from_millis(10));
-                    }
-                    // Steered: the agent sets the goal in this run. Queued: in the next one.
-                    return if queued {
-                        text_reply("Planning the board.")
-                    } else {
-                        set_goal
-                    };
+                // What the model has read so far, whatever order it arrived in.
+                let said = |words: &str| {
+                    body["messages"].as_array().into_iter().flatten().any(|m| {
+                        m["role"] == "user"
+                            && m["content"]
+                                .as_str()
+                                .is_some_and(|text| text.starts_with(words))
+                    })
+                };
+                // The first call waits until the test has sent the request.
+                let waited = std::time::Instant::now();
+                while !held.load(Ordering::SeqCst) && waited.elapsed() < Duration::from_secs(60) {
+                    std::thread::sleep(Duration::from_millis(10));
                 }
-                if last_user.starts_with(QUEUED) {
-                    return set_goal;
+                // Steered: the agent sets the goal in the asking run. Queued: in the next one.
+                let sets = if queued { said(QUEUED) } else { said(ASK) };
+                if sets && !goal_set.swap(true, Ordering::SeqCst) {
+                    return call("set_goal", json!({"goal": "Build the board"}));
                 }
                 text_reply("Working.")
             })
@@ -794,6 +797,12 @@ async fn cli_requests_sent_before_set_goal_in_the_same_chain_join_the_list() {
             "send_message",
             json!({"threadId": id, "text": ASK, "reasoningEffort": null}),
         );
+        if after_first_call {
+            let waited = std::time::Instant::now();
+            while calls.load(Ordering::SeqCst) == 0 && waited.elapsed() < Duration::from_secs(60) {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        }
         let waiting = cli(
             data.path(),
             "enqueue_message",

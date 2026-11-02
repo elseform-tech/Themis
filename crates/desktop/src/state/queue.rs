@@ -498,6 +498,8 @@ impl AppState {
             self.goal_turn_interrupted(&run_id);
             return;
         }
+        // Nothing of the person's follows this run: their next message starts a new chain.
+        self.close_request_chain(&thread_id);
         self.goal_after_run(Arc::clone(&sink), thread_id.clone(), run_id, terminal)
             .await;
         // A hook that finished while this turn was on its last step.
