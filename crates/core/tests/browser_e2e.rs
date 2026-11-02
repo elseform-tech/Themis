@@ -760,7 +760,12 @@ requestAnimationFrame(draw);
     })
     .await
     .expect("no frame for a frozen page");
-    assert!(!framed.is_empty());
+    // At the preview's size, not the page's.
+    let (_, width, height) = frame_colour(&framed);
+    assert!(
+        (400..=440).contains(&width) && height > 0 && height < width,
+        "{width}x{height}"
+    );
     chat.stop_screencast().await;
     // The action thaws the page, and drawing carries on; each round needs its own freeze.
     for round in 0..3 {
@@ -776,6 +781,137 @@ requestAnimationFrame(draw);
         chat.freeze_pages().await;
         tokio::time::sleep(Duration::from_millis(2000)).await;
     }
+}
+
+/// The mean colour of a base64 JPEG frame, and its size.
+fn frame_colour(data: &str) -> ([u8; 3], usize, usize) {
+    use base64::Engine;
+    let jpeg = base64::engine::general_purpose::STANDARD
+        .decode(data)
+        .unwrap();
+    let (rgb, width, height) = themis_core::browser::media::decode_jpeg(&jpeg).unwrap();
+    let mut sum = [0u64; 3];
+    for pixel in rgb.as_chunks::<3>().0 {
+        for (total, value) in sum.iter_mut().zip(pixel) {
+            *total += u64::from(*value);
+        }
+    }
+    let count = (width * height).max(1) as u64;
+    (sum.map(|total| (total / count) as u8), width, height)
+}
+
+/// Waits up to `limit` for a frame of the stream that `matches`; returns how many came.
+async fn frame_where(
+    updates: &mut tokio::sync::broadcast::Receiver<themis_core::browser::BrowserUpdate>,
+    limit: Duration,
+    matches: impl Fn([u8; 3], usize, usize) -> bool,
+) -> Result<usize, usize> {
+    let mut seen = 0;
+    let found = tokio::time::timeout(limit, async {
+        loop {
+            match updates.recv().await {
+                Ok(themis_core::browser::BrowserUpdate::Frame { data, .. }) => {
+                    seen += 1;
+                    let (colour, width, height) = frame_colour(&data);
+                    if matches(colour, width, height) {
+                        return;
+                    }
+                }
+                Ok(_) | Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {}
+                Err(error) => panic!("{error}"),
+            }
+        }
+    })
+    .await;
+    found.map(|()| seen).map_err(|_| seen)
+}
+
+/// Closing Workspace stops its stream as the chat's preview starts. The stop waits for an
+/// agent action in progress, so it can land after the preview began: the preview must keep
+/// following the page (owner report: it stayed on "Click the circles…" after "All done").
+#[tokio::test(flavor = "multi_thread")]
+async fn the_preview_follows_the_page_when_a_late_stop_from_workspace_lands() {
+    let _browser = ONE_BROWSER.lock().await;
+    let data = tempfile::tempdir().unwrap();
+    let Some(hub) = hub(data.path()) else { return };
+    let site = MockServer::builder().start().await;
+    Mock::given(path("/game"))
+        .respond_with(ResponseTemplate::new(200).set_body_raw(
+            r#"<!doctype html><title>Circles</title>
+<body style="margin:0;background:rgb(200,30,30)"><h1 id="say">Click the circles</h1>
+<button id="finish" onclick="document.body.style.background='rgb(30,200,30)';document.getElementById('say').textContent='All done'">Finish</button></body>"#,
+            "text/html",
+        ))
+        .mount(&site)
+        .await;
+    let project = tempfile::tempdir().unwrap();
+    let chat = hub.chat("chat-preview-late-stop", project.path());
+    let tools = themis_core::browser::tools::browser_tools(
+        Arc::new(FnHook::new(|_: &ToolAction| Approval::AllowOnce)),
+        themis_core::browser::tools::BrowserScope {
+            permissions: themis_core::tools::site_permissions::SitePermissions::new(
+                Default::default(),
+                None,
+            ),
+            chat: Arc::clone(&chat),
+            cancel: None,
+            media: None,
+            screenshots: Default::default(),
+        },
+    );
+    let tools = Arc::new(tools);
+    let tool = |tools: &[Box<dyn themis_core::tools::ToolT>], name: &str| {
+        tools.iter().position(|tool| tool.name() == name).unwrap()
+    };
+    let open = tool(&tools, "browser_open");
+    tools[open]
+        .execute(json!({"url": format!("{}/game", site.uri())}))
+        .await
+        .unwrap();
+    // The person watched in Workspace.
+    chat.start_screencast(800, 600, 1.0).await.unwrap();
+    let mut updates = chat.subscribe();
+    // The agent is busy: a held key keeps its action going for a while.
+    let press = tool(&tools, "browser_press");
+    let busy = {
+        let tools = Arc::clone(&tools);
+        tokio::spawn(async move {
+            tools[press]
+                .execute(json!({"key": "x", "hold_ms": 2500}))
+                .await
+        })
+    };
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    // Workspace closes: its stop is sent first, the preview's start a moment later.
+    let stop = {
+        let chat = Arc::clone(&chat);
+        tokio::spawn(async move { chat.stop_screencast().await })
+    };
+    tokio::time::sleep(Duration::from_millis(250)).await;
+    chat.start_preview(440).await.unwrap();
+    busy.await.unwrap().unwrap();
+    stop.await.unwrap();
+    // The preview is small, and the page still the red one.
+    let red = |[r, g, _]: [u8; 3], width: usize, _| width <= 440 && r > 150 && g < 80;
+    frame_where(&mut updates, Duration::from_secs(5), red)
+        .await
+        .expect("the preview never drew the page");
+    // The game ends; the preview must show it.
+    let snapshot = chat.snapshot(None, false).await.unwrap().snapshot;
+    let finish = ref_of(&snapshot, "\"Finish\"");
+    tools[tool(&tools, "browser_click")]
+        .execute(json!({"ref": finish}))
+        .await
+        .unwrap();
+    let green = |[r, g, _]: [u8; 3], width: usize, _| width <= 440 && g > 150 && r < 80;
+    let followed = frame_where(&mut updates, Duration::from_secs(5), green).await;
+    assert!(
+        followed.is_ok(),
+        "the preview kept the old page: {followed:?} frames after the change; {:?}",
+        themis_core::browser::stream_stats()
+    );
+    chat.stop_screencast().await;
+    hub.close_chat("chat-preview-late-stop").await;
 }
 
 /// First-person pages lock the pointer; this browser refuses that, so a stand-in does it.

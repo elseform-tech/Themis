@@ -2429,26 +2429,38 @@ impl ChatBrowser {
     /// the agent keeps the viewport it had, only the frames are scaled down.
     pub async fn start_preview(&self, max_width: u32) -> Result<(), String> {
         self.ui_stream.store(true, Ordering::SeqCst);
-        *self.preview_width.lock().unwrap_or_else(|e| e.into_inner()) =
-            Some(max_width.clamp(160, 1280));
+        let preview = max_width.clamp(160, 1280);
+        *self.preview_width.lock().unwrap_or_else(|e| e.into_inner()) = Some(preview);
         let viewport = *self.viewport.lock().unwrap_or_else(|e| e.into_inner());
         self.run_screencast(viewport.width, viewport.height, viewport.scale)
             .await?;
-        // A frozen page draws nothing, so the stream sends no frame: show how it was left.
+        // A frozen page draws nothing, so the stream sends no frame: show how it was left,
+        // at the preview's size (the page's own size would be several times the bytes).
         if self.frozen.load(Ordering::SeqCst) {
             if let Some((cdp, session)) = self.view().current() {
+                let (width, height) = frame_size(viewport, Some(preview));
+                // A clip is in page coordinates: start it where the page is scrolled to.
+                let metrics = cdp
+                    .call(Some(&session), "Page.getLayoutMetrics", json!({}))
+                    .await
+                    .unwrap_or_default();
+                let at = |key: &str| metrics["cssVisualViewport"][key].as_f64().unwrap_or(0.0);
                 let shot = cdp
                     .call(
                         Some(&session),
                         "Page.captureScreenshot",
-                        json!({"format": "jpeg", "quality": 60}),
+                        json!({"format": "jpeg", "quality": 60, "clip": {
+                            "x": at("pageX"), "y": at("pageY"),
+                            "width": viewport.width, "height": viewport.height,
+                            "scale": f64::from(width) / f64::from(viewport.width.max(1)) / viewport.scale,
+                        }}),
                     )
                     .await?;
                 if let Some(data) = shot["data"].as_str() {
                     let _ = self.updates.send(BrowserUpdate::Frame {
                         data: data.to_owned(),
-                        width: viewport.width,
-                        height: viewport.height,
+                        width,
+                        height,
                     });
                 }
             }
@@ -2526,18 +2538,19 @@ impl ChatBrowser {
         self.freeze_pages().await;
     }
 
+    /// Stops the protocol screencast. In turn with starts (`stream_start`) and never behind
+    /// an agent action: a stop that waited for one landed after the chat's preview had
+    /// started on the same tab, and ended the preview's stream (or made its start fail).
     async fn end_screencast(&self) {
+        let _one = self.stream_start.lock().await;
         let session = self
             .screencast
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .take();
-        let inner = self.inner.lock().await;
-        if let (Some(session), Some(browser)) = (session.filter(|s| !s.is_empty()), &inner.browser)
-        {
+        if let (Some(session), Some(cdp)) = (session.filter(|s| !s.is_empty()), self.view().cdp) {
             STREAM_STOPS.fetch_add(1, Ordering::Relaxed);
-            let _ = browser
-                .cdp
+            let _ = cdp
                 .call(Some(&session), "Page.stopScreencast", json!({}))
                 .await;
         }
