@@ -243,10 +243,15 @@ project content, so a cloned repository's guidance reaches the agent, but it nev
 | `compaction.summary_max_tokens` | Initial summary-output ceiling, 256–16,384; default 8,192. Retries may use up to twice the effective initial allowance, subject to capacity. |
 | `compaction.summary_model` | Optional model id (1–256 printable bytes, no spaces): any model a connected provider offers, `<provider>/<id>` for one from `providers`; omitted/null keeps automatic routing. Only internal summaries change. A run fails before it starts when the model is not in the captured catalogs (OpenCode Go's and the configured providers'); a model on another provider than the chat's is called with that provider's key. |
 | `goal.check_model` | Optional model id, as `compaction.summary_model`: the model that checks each goal turn; omitted/null checks with the chat's own model. File only (no Settings control); any layer, so a project may choose its own. A model on another provider than the chat's is called with that provider's key. |
+| `goal.seed_todo` | Boolean, default `false`: when a goal starts (by `/goal` or the agent's `set_goal`) and its to-do list holds nothing but the person's requests, one request on the summary model (`compaction.summary_model`, else the chat's model) fills it before the first turn: at most two real preliminary steps (setting up a new project, or reading the docs and planning in one that already has files), then one item per thing the goal asks for, then "Verify end to end". Items are tagged `goal` ("from the goal"); an agent that hadn't seen them can't drop them by leaving them out. A failed or unreadable answer leaves the list as it was. File only; any layer. Diagnostics: `todo` / `seed` with outcome, item count, input bytes and tokens. |
 | `hooks.max_wakes` | Integer 0–10, default `3`: how many turns in a row a finished background [plugin hook](plugins.md) may start in an idle chat before you write again. `0` never starts one, and what a hook reports waits for the chat's next turn. Never in YOLO, while a goal runs, or after a turn that failed or that you stopped. A project or run layer may only lower it. |
 | `hooks.session_idle_minutes` | Integer 0–10080, default `60`: minutes a chat may sit idle before its session ends for [plugin hooks](plugins.md#sessions) (`SessionEnd`, then `SessionStart` when you write again). `0` never ends one for being idle. Captured when a run starts, so a change applies from the chat's next turn. |
 | `hooks.prompt_hook_calls` | Integer 0–1000, default `50`: model requests [prompt hooks](plugins.md#prompt-hooks) may make in a run, shared with its subagents. A guard that finds none left refuses the call. `0` turns prompt hooks off. Your own `runtime.jsonc` only: a project or run layer that sets it is refused. |
+| `hooks.built_in.skills_at_start` | Boolean, default `false`: each turn of the main agent and each subagent carries the short To-do skill (`crates/core/builtins/todo/SKILL.md`) and, while memory is on, the Memory skill (`crates/core/builtins/memory/SKILL.md`), each under 1.5 KiB, in its system message; a subagent is also told its memory tool only reads and to pass facts on in its reply. Integrations › Hooks lists it under Session starts as "Themis (built-in)". Any layer. |
+| `hooks.built_in.still_open` | Boolean, default `false`: when a turn changed files (the `files_changed` check) while the chat's to-do list has open items, the next turn starts with a "Still open" note naming up to 8 of them (the rest counted); once, then it is gone. A subagent that may write gets the same from its own list on its next turn. Listed under Run ends. Any layer. |
+| `hooks.built_in.save_reminder` | Boolean, default `false`, effective only while memory is on: once before each context checkpoint, when one is near (the context is within two steps' growth, or a tenth of the budget, of the checkpoint threshold) and the step takes none, the agent gets a one-line reminder to save anything worth remembering; a subagent is told to put it in its final reply instead. A checkpoint reached in one jump gets no reminder. Listed under Before context is compacted. Any layer. |
 | `memory.enabled` | Boolean, default `true`: the agent may save memories across chats with its `memory` tool and every run (and subagent) starts with the memory index. `false`: no index and no `memory` tool (for the main agent and subagents); saved memories are kept. Settings › Memory's switch writes it in your `runtime.jsonc` in place. A project or run layer may only set it to `false`. See [Memory](#memory). |
+| `memory.auto` | Boolean, default `false`, effective only while `memory.enabled`: after a turn that ended (finished or incomplete) in which the person wrote (their message or what they steered in; not a goal turn, a hook's wake or an automation), one request with no tools on the summary model reads that turn (the person's words, at most 8 KiB, and the agent's final reply, at most 4 KiB) and both memory indexes, and saves or updates at most 3 memories through the memory store, with the usual "Remembered · …" line. It runs on its own task after the turn and never holds up the next message, and skips a turn in which the agent saved or updated a memory itself. Settings › Memory's "Notice what's worth remembering" writes it in your `runtime.jsonc` in place. A project or run layer may only set it to `false`. See [Memory](#memory). |
 | `subagents.enabled` | Boolean, default `true`: offer the subagent tools (`spawn_subagents`, `wait_subagents`, `message_subagent`, `stop_subagent`) to the agent. A project or run layer may only set it to `false`. |
 | `subagents.max_parallel` | Integer 1–6, default `3`: subagents running at once per chat; more wait their turn. A project or run layer may only lower it. |
 | `subagents.max_turns` | Integer 1–1000, default `40`: model requests per subagent; reaching it ends the subagent with its partial result. A project or run layer may only lower it. |
@@ -858,11 +863,38 @@ memories), but a deny rule on `memory` still wins, YOLO included.
 Shared-server commands: `list_memories {scope, projectRoot}` returns the scope's memories,
 `index_lines`, `max_lines`, `skipped`, `enabled` and a `revision`; `delete_memory {scope,
 projectRoot, name, revision}` refuses a stale revision; `get_memory_settings` and
-`update_memory_settings {enabled, revision}` read and write `memory.enabled`. A save,
+`update_memory_settings {enabled?, auto?, revision}` read and write `memory.enabled` and
+`memory.auto`. A save,
 update or delete by the agent is a saved `memory_changed` chat event (`action` `saved`,
 `updated` or `forgot`, `scope`, `name`, `description`, `project_root`). Diagnostics log
 `memory` / `saved`, `updated` or `deleted` with the scope, type, the scope's count and who
-did it (`agent` or `settings`), never a memory's name or text.
+did it (`agent`, `auto` or `settings`), never a memory's name or text.
+
+### Noticing what to remember (`memory.auto`)
+
+The background pass is one request on the summary model with the prompts
+`memory-auto-system.md` and `memory-auto-user.md`: the indexes and the turn go in as fenced
+data, and the answer must be `{"memories":[{action, scope, name, type, description, body,
+why?, how_to_apply?}]}` (at most 16 KiB; at most 3 entries are used). The answer is
+untrusted: an entry with an unknown action or type, a bad name or no text is dropped; one that
+holds a secret (anything the secret redaction would hide) is refused outright, not saved
+redacted; a `project` or `reference` memory proposed for every project is refused. Against the
+indexes, a save of a name the scope already has becomes an update, an update of a name it lacks
+becomes a save, and an entry whose name and description are already there, or whose description
+another memory already has, is a duplicate and skipped. The pass's input is bounded: the two
+indexes (each at most 24 KiB) plus 12 KiB of the turn, whatever the turn's length or the
+number of memories. Diagnostics: `memory` / `auto_pass` with the outcome (`saved`, `nothing`,
+`request_failed`, `timed_out`, `unreadable`, `too_long`), counts (`proposed`, `saved`,
+`updated`, `duplicate`, `sensitive`, `scope`, `invalid`, `over_limit`, `failed`), input bytes,
+provider token counts and time; `memory` / `auto_pass_skipped` with the reason
+(`memory_off`, `no_person_message`, `saved_in_turn`). Its tokens are recorded as summary usage.
+
+### Built-in hooks
+
+`get_built_in_hooks` returns each built-in hook (`id`, `event`, `title`, `description`,
+`enabled`) and a `revision`; `update_built_in_hook {id, enabled, revision}` writes
+`hooks.built_in.<id>` in your `runtime.jsonc` in place and refuses a stale revision. Each use
+logs `hook` / `built_in` with the hook and its event, never the text.
 
 ## Shared-server event stream additions
 

@@ -188,6 +188,23 @@ rules the whole team shares still belong in the project's `AGENTS.md`.
   up to date itself; there is nothing to arrange. **Remember things across chats** off
   stops all saving and reading and keeps what was saved (`memory.enabled` in
   `runtime.jsonc`; see [configuration](configuration.md#memory)).
+- **Notice what's worth remembering** (off by default, under the first switch): after each
+  reply to you, Themis asks the summary model once whether you said something worth keeping
+  (a preference mentioned in passing, a correction, a decision) and saves it without your
+  saying "remember". It saves rarely, never secrets, and nothing it already has; the same
+  **Remembered** line shows where it did. It runs after the reply, so it never holds up your
+  next message (`memory.auto`).
+
+### Themis's built-in hooks
+
+Integrations › Hooks lists three hooks of Themis's own under their events, marked
+**Themis (built-in)**, each off until you switch it on: **To-do and Memory skills** (every
+turn, and every subagent, carries short instructions for keeping a to-do list and saving
+memories), **Save before compaction** (a one-line reminder to save what's worth remembering
+just before the context is compacted) and **Still open** (after a turn that changed files
+while to-do items are open, the next turn starts by naming them). They run no command, ask
+nothing and grant nothing; the switches are saved under `hooks.built_in` in your
+`runtime.jsonc`.
 
 ### Goals
 
@@ -220,7 +237,10 @@ is reached; for example `/goal optimize this app to speed up p95`.
   start and end), never the agent's claims, and referees the agent's own to-do
   list: it can reopen an item it doesn't accept as done, with a short reason
   ("reopened by the check"), or add one the goal asks for and the list lacks. The
-  goal is reached only when the check agrees and nothing on the list is open. How the work must be done (a technology, an approach, who does which part) sits apart as rules in Workspace › To-do: they are never ticked off, and one that wasn't followed says so. A turn's
+  goal is reached only when the check agrees and nothing on the list is open.
+  With `goal.seed_todo` on in `runtime.jsonc` (off by default), a new goal's list is filled
+  before its first turn: a setup or read-and-plan step when one is really needed, one item
+  per thing the goal asks for, then "Verify end to end", each tagged "from the goal". How the work must be done (a technology, an approach, who does which part) sits apart as rules in Workspace › To-do: they are never ticked off, and one that wasn't followed says so. A turn's
   replies dim when the check rejects them, so a claim the check didn't accept
   doesn't read as a result. A browser script that changes the page instead of using it (setting a value, clicking from code) rules out reaching the goal until the page is reloaded and the whole thing shown again with real input. The check also says whether the turn moved the work forward (a turn
   that changed files always did); after three turns that only re-check, the next
