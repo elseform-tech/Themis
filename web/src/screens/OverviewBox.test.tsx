@@ -167,11 +167,25 @@ describe("the to-do list in the overview box", () => {
     expect(folds()).toEqual([]);
     expect(rows()).toHaveLength(3);
     expect(document.querySelector(".themis-overview-todo .themis-dot-spinner")).toBeNull();
-    cleanup();
-    // All done: the last items stay in view.
+  });
+
+  it("collapses a finished list to one quiet line", () => {
+    appState = initialState;
     render(<OverviewBox threadId="t1" overview={{ ...overview, todo: { items: list(Array(8).fill("completed")), broken: false } }} onOpenMedia={vi.fn()} />);
-    expect(folds()).toEqual(["6 done"]);
-    expect(rows()).toHaveLength(2);
+    expect(rows()).toEqual([]);
+    expect(folds()).toEqual(["8 of 8 done"]);
+    // The line says it; the header doesn't repeat the count.
+    expect(document.querySelector(".themis-overview-todo-count")).toBeNull();
+    expect(screen.getByRole("button", { name: "To-do: 8 of 8 done. Opens the To-do tab" })).toBeInTheDocument();
+  });
+
+  it("counts open items before the current one instead of dropping them", () => {
+    appState = initialState;
+    // The agent put an item in progress below items it hasn't started.
+    const items = list(["pending", "pending", "completed", "pending", "pending", "pending", "pending", "in_progress", "pending", "pending"]);
+    render(<OverviewBox threadId="t1" overview={{ ...overview, todo: { items, broken: false } }} onOpenMedia={vi.fn()} />);
+    expect(folds()).toEqual(["1 done · 4 to do"]);
+    expect(rows().map(text => text?.replace(/^(Done|In progress): /, ""))).toEqual(["Item 6", "Item 7", "Item 8", "Item 9", "Item 10"]);
   });
 
   it("never shows more than five items", () => {
