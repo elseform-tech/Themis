@@ -65,6 +65,10 @@ export function BrowserView({ threadId }: { threadId: string }) {
   }, [threadId, apply]);
 
   const open = state?.open ?? false;
+  // The stream has no pointer in it. The person's own mouse takes over until the agent moves again.
+  const [personAt, setPersonAt] = useState<string | null>(null);
+  const pointerKey = state?.pointer ? state.pointer.join() : null;
+  const agentCursor = pointerKey && pointerKey !== personAt ? state?.pointer ?? null : null;
   // The page is laid out at the view's size, so input coordinates map one to one.
   useEffect(() => {
     const element = viewport.current;
@@ -208,11 +212,12 @@ export function BrowserView({ threadId }: { threadId: string }) {
       {error && <p className="themis-workspace-note" role="alert">{error}</p>}
       {open ? (
         <div ref={viewport} className={`themis-browser-page${recording ? " is-recording" : ""}`} tabIndex={0} aria-label={`Page: ${state.title || state.url}`}
-          onMouseDown={event => { event.preventDefault(); mouse("down", event); }} onMouseUp={event => mouse("up", event)} onMouseMove={event => mouse("move", event)}
+          onMouseDown={event => { event.preventDefault(); mouse("down", event); }} onMouseUp={event => mouse("up", event)} onMouseMove={event => { setPersonAt(pointerKey); mouse("move", event); }}
           onContextMenu={event => event.preventDefault()}
           onKeyDown={event => key("down", event)} onKeyUp={event => key("up", event)}
           onPaste={event => { event.preventDefault(); const text = event.clipboardData.getData("text"); if (text) send({ type: "text", text }); }}>
           {frame && <img src={frame} alt="" draggable={false} />}
+          {agentCursor && <svg className="themis-browser-cursor" data-testid="agent-cursor" style={{ transform: `translate(${agentCursor[0]}px, ${agentCursor[1]}px)` }} width="18" height="18" viewBox="0 0 18 18" aria-hidden="true"><path d="M2 1.5v13l3.6-3.2 2.4 5.2 2.6-1.2-2.4-5.1h4.8Z" /></svg>}
         </div>
       ) : (
         <EmptyState title="No page open" hint="Pages the agent opens show here too." />

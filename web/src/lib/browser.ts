@@ -23,6 +23,8 @@ export interface BrowserState {
   loading: boolean;
   /** The speaker is off (the default): pages play no sound. */
   muted: boolean;
+  /** Where the agent last left the mouse, in the page's CSS pixels. */
+  pointer?: [number, number] | null;
   /** A recording in progress. */
   recording?: { by: "agent" | "user"; seconds: number; max_seconds: number } | null;
 }

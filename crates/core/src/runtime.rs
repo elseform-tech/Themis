@@ -2251,7 +2251,12 @@ const REPEATED_ACTION_NOTE_AT: u32 = 5;
 fn is_repeatable_action(name: &str) -> bool {
     matches!(
         name,
-        "browser_click" | "browser_move" | "browser_press" | "browser_type" | "browser_scroll"
+        "browser_click"
+            | "browser_move"
+            | "browser_drag"
+            | "browser_press"
+            | "browser_type"
+            | "browser_scroll"
     )
 }
 
