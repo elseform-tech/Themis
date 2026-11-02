@@ -28,6 +28,8 @@ pub const SYSTEM_EVIDENCE_CAUTION: &str =
 pub const SKILL_COMMAND_NOTE: &str = include_str!("../builtins/prompts/skill-command-note.md");
 pub const SKILL_OUTPUT_STYLE_NOTE: &str =
     include_str!("../builtins/prompts/skill-output-style-note.md");
+/// Instructions of the built-in `/init` skill: write or improve the project's AGENTS.md.
+pub const SKILL_INIT: &str = include_str!("../builtins/prompts/skill-init.md");
 /// Skill catalog appended to the system message; `{{skills}}` is the metadata JSON.
 pub const SYSTEM_SKILL_CATALOG: &str = include_str!("../builtins/prompts/system-skill-catalog.md");
 

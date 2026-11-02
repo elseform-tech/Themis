@@ -338,6 +338,7 @@ const ALL: &[(&str, &str, &[&str])] = &[
     ),
     (SKILL_COMMAND_NOTE, "skill-command-note", &[]),
     (SKILL_OUTPUT_STYLE_NOTE, "skill-output-style-note", &[]),
+    (SKILL_INIT, "skill-init", &[]),
     (EVAL_ANSWER_PROBE, "eval-answer-probe", &["question"]),
     (
         EVAL_RECALL_TASK,
@@ -757,4 +758,18 @@ fn task_additions_and_eval_prompts_are_byte_identical() {
         fill(EVAL_RECALL_TASK, &[("evidence", evidence), ("max_calls", &max_calls.to_string()), ("question", question)]),
         format!("Memory check. Earlier material in this conversation was compacted; the saved originals are under {} (project-relative). Answer the question below. The checkpoint is only a lossy summary: when it does not state the exact detail, search and read the saved originals with your tools (at most {max_calls} tool calls) instead of guessing. Reply as you would to the user: the answer in one short sentence, or exactly UNKNOWN if the original material never says. For a quote question copy the wording exactly. Do not mention files, paths, record numbers or how you searched.\n\nQuestion: {question}", evidence)
     );
+}
+
+#[test]
+fn init_prompt_stays_short_and_names_its_cap() {
+    assert!(SKILL_INIT.len() < 2048, "{} bytes", SKILL_INIT.len());
+    for needed in [
+        "AGENTS.md",
+        "CLAUDE.md",
+        "keep the person's own rules",
+        "`.env`",
+        "12 KB",
+    ] {
+        assert!(SKILL_INIT.contains(needed), "{needed}");
+    }
 }

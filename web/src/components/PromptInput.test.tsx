@@ -66,6 +66,7 @@ const builtinSkills=[
   ["hooks","Hooks"],
   ["automations","Automations"],
   ["browser-use","Browser use"],
+  ["init","Init"],
 ].map(([id,name])=>({id,name,description:"Manage capabilities",plugin:"Themis"}));
 
 it.each(builtinSkills.flatMap(skill=>["Enter","Tab"].map(key=>({skill,key}))))("selects /$skill.id with $key using its canonical command",({skill,key})=>{

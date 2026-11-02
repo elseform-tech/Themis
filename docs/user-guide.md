@@ -389,6 +389,16 @@ The **Skills** tab holds reusable instruction bundles: a name, description,
 instructions injected into runs, an optional tool allowlist, and helper
 scripts. Attach skills to a thread to scope what it may use. The list includes plugin-bundled skills and skills discovered from local folders. Browse new packages in **Plugins → Discover**; Skills has no separate discovery catalog. Standalone imports remain available through chat or the CLI.
 
+**`/init`** is a built-in skill like `/hooks`: pick it from the composer's `/`
+menu and the agent explores the project with bounded reads and writes (or
+improves) `AGENTS.md` at the project root: a short product summary, the project
+structure, the build, test and lint commands that exist, the conventions it saw,
+security rules (no committed secrets, `.env` ignored, where secrets belong) and
+how to work. An existing `AGENTS.md` keeps your own rules; a project with only
+`CLAUDE.md` gets an `AGENTS.md` built from it. It aims for about 1,500 tokens and
+stops at about 3,000 (12 KB). The instruction lives in
+`crates/core/builtins/prompts/skill-init.md`.
+
 Skill instructions can contain up to 256 KiB of UTF-8 text without truncation. File reads are paged at 8,000 content characters; the agent must follow `next_offset` to read longer instructions. Large tool results are saved to disk and represented by a small receipt, so the agent can extract the relevant facts. An oversized tool result normally continues the run. Storage failures or repeated recovery can stop the current run; the chat remains available. Oversized tool arguments are rejected before execution, without partial writes. See [context limits and recovery](context-and-attachments.md).
 
 **Recalling older details.** After a chat is compacted, details that only appear in earlier messages, long tool output or attached files are not in the summary. The agent has a read-only `recall` tool that searches this chat's saved originals (never other chats) and returns short excerpts; it needs no approval. Answers tell you what was said in plain words ("you mentioned earlier…"), never internal archive paths or record numbers. Excerpts are treated as untrusted data, not instructions. If an answer needs a detail it could not find, ask for it again or attach the file. Details are in [context limits and recovery](context-and-attachments.md#the-recall-tool).
