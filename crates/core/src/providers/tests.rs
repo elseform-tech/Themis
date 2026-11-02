@@ -3355,3 +3355,217 @@ fn the_usage_ledger_records_a_configured_providers_own_id() {
     let local = CompatibleProvider::custom(&endpoint, "k".into(), "local/qwen3".into());
     assert_eq!(local.provider_id(), "local");
 }
+
+#[test]
+fn the_catalog_reads_which_models_accept_images() {
+    let catalog: CatalogRoot = serde_json::from_value(json!({
+        "opencode-go": {
+            "npm": "@ai-sdk/openai-compatible",
+            "models": {
+                "muse-spark-1.3-contributor": {"modalities": {"input": ["text", "image"], "output": ["text"]}},
+                "iceman-contributor-free": {"modalities": {"input": ["text"], "output": ["text"]}},
+                "odd": {"modalities": {"input": "image"}},
+                "broken": {"modalities": 7},
+                "bare": {}
+            }
+        }
+    }))
+    .unwrap();
+    let ids = [
+        "muse-spark-1.3-contributor",
+        "iceman-contributor-free",
+        "odd",
+        "broken",
+        "bare",
+        "unlisted",
+    ];
+    let models = join_go_catalog(ids.map(String::from).to_vec(), catalog);
+    let images: Vec<_> = models.iter().map(|m| (m.id.as_str(), m.images)).collect();
+    assert_eq!(
+        images,
+        vec![
+            ("muse-spark-1.3-contributor", true),
+            ("iceman-contributor-free", false),
+            // Anything malformed reads as text only, and never hides the model.
+            ("odd", false),
+            ("broken", false),
+            ("bare", false),
+            ("unlisted", false),
+        ]
+    );
+    assert!(model_accepts_images(&models, "muse-spark-1.3-contributor"));
+    assert!(!model_accepts_images(&models, "iceman-contributor-free"));
+    assert!(!model_accepts_images(&models, "not-in-the-catalog"));
+    // Inside a run the loaded catalog answers; with none loaded nothing accepts images.
+    assert!(!accepts_images("muse-spark-1.3-contributor"));
+    let scoped = MODEL_ROUTES.sync_scope(route_table(&models), || {
+        (
+            accepts_images("muse-spark-1.3-contributor"),
+            accepts_images("iceman-contributor-free"),
+            accepts_images("unknown"),
+        )
+    });
+    assert_eq!(scoped, (true, false, false));
+    // The person's `models` override may turn image input off, or on for a model the
+    // catalog does not describe.
+    let overrides: std::collections::BTreeMap<String, crate::configuration::ModelOverride> =
+        serde_json::from_value(json!({
+            "muse-spark-1.3-contributor": {"images": false},
+            "go/bare": {"images": true},
+        }))
+        .unwrap();
+    let applied = apply_model_overrides(&models, &overrides);
+    assert!(!applied[0].images && applied[4].images && !applied[1].images);
+}
+
+/// A tool call to `browser_screenshot`, its result, and the image message after it.
+fn screenshot_history(image: &[u8]) -> Vec<ChatMessage> {
+    let call = ToolCall {
+        id: "shot-1".into(),
+        call_type: "function".into(),
+        function: FunctionCall {
+            name: "browser_screenshot".into(),
+            arguments: "{}".into(),
+        },
+    };
+    vec![
+        ChatMessage {
+            role: ChatRole::System,
+            message_type: MessageType::Text,
+            content: "system".into(),
+        },
+        user_message("look at the page"),
+        ChatMessage {
+            role: ChatRole::Assistant,
+            message_type: MessageType::ToolUse(vec![call.clone()]),
+            content: String::new(),
+        },
+        ChatMessage {
+            role: ChatRole::Tool,
+            message_type: MessageType::ToolResult(vec![ToolCall {
+                function: FunctionCall {
+                    name: "browser_screenshot".into(),
+                    arguments: r#"{"path":"/p/shot.png"}"#.into(),
+                },
+                ..call
+            }]),
+            content: String::new(),
+        },
+        ChatMessage {
+            role: ChatRole::User,
+            message_type: MessageType::Image((
+                autoagents::llm::chat::ImageMime::JPEG,
+                image.to_vec(),
+            )),
+            content: "The screenshot.".into(),
+        },
+    ]
+}
+
+fn request_body(model: &str, images: bool, messages: &[ChatMessage]) -> Result<Value, LLMError> {
+    let catalog = [GoModel {
+        id: model.into(),
+        images,
+        ..GoModel::default()
+    }];
+    MODEL_ROUTES.sync_scope(route_table(&catalog), || {
+        let provider = CompatibleProvider::go("k".into(), model.into(), None, None);
+        let request = provider
+            .chat_request(messages, None, false, None)?
+            .build()
+            .unwrap();
+        Ok(serde_json::from_slice(request.body().unwrap().as_bytes().unwrap()).unwrap())
+    })
+}
+
+#[test]
+fn an_image_goes_to_an_image_model_in_each_protocols_own_shape() {
+    use base64::Engine;
+    let image = b"\xff\xd8\xff-jpeg-bytes".to_vec();
+    let data = base64::engine::general_purpose::STANDARD.encode(&image);
+    let url = format!("data:image/jpeg;base64,{data}");
+    let messages = screenshot_history(&image);
+
+    // Chat Completions: the tool result stays a string; the image follows in a user message.
+    let body = request_body("mimo-v2.6-flash", true, &messages).unwrap();
+    let wire = body["messages"].as_array().unwrap();
+    assert_eq!(wire.len(), 5);
+    assert_eq!(wire[3]["role"], "tool");
+    assert_eq!(wire[3]["content"], r#"{"path":"/p/shot.png"}"#);
+    assert_eq!(
+        wire[4],
+        json!({"role":"user","content":[
+            {"type":"text","text":"The screenshot."},
+            {"type":"image_url","image_url":{"url":url}}
+        ]})
+    );
+
+    // Responses: an input_image part in a user message after the function output.
+    let body = request_body("muse-spark-1.3-contributor", true, &messages).unwrap();
+    let input = body["input"].as_array().unwrap();
+    let last = input.last().unwrap();
+    assert_eq!(input[input.len() - 2]["type"], "function_call_output");
+    assert_eq!(
+        *last,
+        json!({"role":"user","content":[
+            {"type":"input_text","text":"The screenshot."},
+            {"type":"input_image","image_url":url}
+        ]})
+    );
+
+    // Messages: the image joins the user turn that carries the tool result, after it.
+    let body = request_body("claude-haiku-4-5", true, &messages).unwrap();
+    let turns = body["messages"].as_array().unwrap();
+    let last = turns.last().unwrap();
+    assert_eq!(last["role"], "user");
+    assert_eq!(last["content"][0]["type"], "tool_result");
+    assert_eq!(
+        last["content"][1],
+        json!({"type":"text","text":"The screenshot."})
+    );
+    assert_eq!(
+        last["content"][2],
+        json!({"type":"image","source":{"type":"base64","media_type":"image/jpeg","data":data}})
+    );
+
+    // Gemini: inline data in a user turn after the function response.
+    let body = request_body("gemini-4-argon-contributor", true, &messages).unwrap();
+    let contents = body["contents"].as_array().unwrap();
+    let last = contents.last().unwrap();
+    assert_eq!(
+        *last,
+        json!({"role":"user","parts":[
+            {"text":"The screenshot."},
+            {"inlineData":{"mimeType":"image/jpeg","data":data}}
+        ]})
+    );
+    assert!(contents[contents.len() - 2]["parts"][0]["functionResponse"].is_object());
+}
+
+#[test]
+fn a_model_that_cannot_see_images_is_never_sent_one() {
+    let messages = screenshot_history(b"jpeg");
+    for model in [
+        "mimo-v2.6-flash",
+        "muse-spark-1.3-contributor",
+        "claude-haiku-4-5",
+        "gemini-4-argon-contributor",
+    ] {
+        let error = request_body(model, false, &messages).unwrap_err();
+        assert!(
+            error.to_string().contains("cannot read images"),
+            "{model}: {error}"
+        );
+    }
+    // Without images the same model's request is unchanged.
+    let body = request_body("mimo-v2.6-flash", false, &messages[..4]).unwrap();
+    let wire = body["messages"].as_array().unwrap();
+    assert_eq!(wire.len(), 4);
+    assert!(wire
+        .iter()
+        .all(|m| m["content"].is_string() || m["content"].is_null()));
+    // PDFs are still refused everywhere.
+    let mut pdf = messages.clone();
+    pdf[4].message_type = MessageType::Pdf(b"%PDF".to_vec());
+    assert!(request_body("mimo-v2.6-flash", true, &pdf).is_err());
+}

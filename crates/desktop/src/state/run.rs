@@ -578,6 +578,11 @@ impl AppState {
                         root: snapshot.work_root.clone(),
                     })),
                     permissions: Arc::clone(&site_permissions),
+                    screenshots: super::browser::screenshots_to_model(
+                        &run_configuration,
+                        &capacity_catalog,
+                        &snapshot.model,
+                    ),
                 },
             ));
         }

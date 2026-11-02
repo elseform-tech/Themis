@@ -293,6 +293,32 @@ impl themis_core::browser::media::MediaSink for ProjectMedia {
     }
 }
 
+/// What a run's screenshots give its model: nothing with `browser.screenshots_to_model`
+/// off; the image when the model reads images; otherwise, when a separate
+/// `goal.check_model` may read them, a kept copy for the goal check, while the run's model
+/// gets the text result as before.
+pub(super) fn screenshots_to_model(
+    config: &themis_core::configuration::RuntimeConfig,
+    catalog: &[themis_core::providers::GoModel],
+    model: &str,
+) -> themis_core::browser::tools::ScreenshotsToModel {
+    use themis_core::browser::tools::ScreenshotsToModel;
+    if !config.browser.screenshots_to_model {
+        ScreenshotsToModel::Off
+    } else if themis_core::providers::model_accepts_images(catalog, model) {
+        ScreenshotsToModel::Seen
+    } else if config
+        .goal
+        .check_model
+        .as_deref()
+        .is_some_and(|check| check != model)
+    {
+        ScreenshotsToModel::Kept
+    } else {
+        ScreenshotsToModel::Off
+    }
+}
+
 /// A saved file as the composer's attachments list holds it.
 fn attachment_value(path: &str, size: usize) -> Value {
     let name = std::path::Path::new(path)
@@ -337,5 +363,40 @@ pub(super) fn allow_site(
         Permission::Browsing => exception.browsing = Some(SiteAccess::Allow),
         Permission::Downloads => exception.downloads = Some(SiteAccess::Allow),
         Permission::Debugging => exception.debugging = Some(SiteAccess::Allow),
+    }
+}
+
+#[cfg(test)]
+mod screenshot_tests {
+    use super::*;
+    use themis_core::browser::tools::ScreenshotsToModel;
+
+    #[test]
+    fn screenshots_go_where_a_model_can_read_them() {
+        let catalog = [themis_core::providers::GoModel {
+            id: "seer".into(),
+            images: true,
+            ..Default::default()
+        }];
+        let mut config = themis_core::configuration::RuntimeConfig::default();
+        assert_eq!(
+            screenshots_to_model(&config, &catalog, "seer"),
+            ScreenshotsToModel::Seen
+        );
+        assert_eq!(
+            screenshots_to_model(&config, &catalog, "reader"),
+            ScreenshotsToModel::Off,
+            "no other model would ever see a copy"
+        );
+        config.goal.check_model = Some("seer".into());
+        assert_eq!(
+            screenshots_to_model(&config, &catalog, "reader"),
+            ScreenshotsToModel::Kept
+        );
+        config.browser.screenshots_to_model = false;
+        assert_eq!(
+            screenshots_to_model(&config, &catalog, "seer"),
+            ScreenshotsToModel::Off
+        );
     }
 }

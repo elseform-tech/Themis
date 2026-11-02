@@ -2655,6 +2655,28 @@ impl ChatBrowser {
         reference: Option<&str>,
         full_page: bool,
     ) -> Result<(Vec<u8>, u32, u32), String> {
+        self.capture(reference, full_page, None).await
+    }
+
+    /// The same view as [`Self::screenshot`] as a model sees it: a JPEG at most `max_side`
+    /// pixels on its longest side, scaled by the browser itself.
+    pub async fn screenshot_for_model(
+        &self,
+        reference: Option<&str>,
+        full_page: bool,
+        max_side: u32,
+    ) -> Result<Vec<u8>, String> {
+        Ok(self.capture(reference, full_page, Some(max_side)).await?.0)
+    }
+
+    /// A PNG in CSS pixels, or with `fit`, a JPEG scaled down to at most `fit` pixels on its
+    /// longest side.
+    async fn capture(
+        &self,
+        reference: Option<&str>,
+        full_page: bool,
+        fit: Option<u32>,
+    ) -> Result<(Vec<u8>, u32, u32), String> {
         use base64::Engine;
         let inner = self.inner.lock().await;
         let browser = inner
@@ -2750,6 +2772,15 @@ impl ChatBrowser {
                 (w, h)
             }
         };
+        if let Some(fit) = fit {
+            let longest = width.max(height).max(1.0);
+            let shrink = (f64::from(fit) / longest).min(1.0);
+            if let Some(clip_scale) = params["clip"]["scale"].as_f64() {
+                params["clip"]["scale"] = json!(clip_scale * shrink);
+            }
+            params["format"] = json!("jpeg");
+            params["quality"] = json!(75);
+        }
         let shot = cdp
             .call_with_timeout(
                 Some(&session),

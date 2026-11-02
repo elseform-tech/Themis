@@ -32,6 +32,22 @@ pub struct BrowserScope {
     pub media: Option<Arc<dyn MediaSink>>,
     /// Settings › Browser: what the agent may do on each site.
     pub permissions: Arc<SitePermissions>,
+    /// What screenshots give a model (`browser.screenshots_to_model` and whether the run's
+    /// model reads images).
+    pub screenshots: ScreenshotsToModel,
+}
+
+/// What a screenshot gives a model besides the PNG saved for the person.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum ScreenshotsToModel {
+    /// Nothing: the text result only (`browser.screenshots_to_model` is off).
+    #[default]
+    Off,
+    /// A model copy is kept for the goal check, whose model may read images; the run's
+    /// model reads text only and gets the text result, as with `Off`.
+    Kept,
+    /// The run's model reads images: it gets the model copy after the tool result.
+    Seen,
 }
 
 /// The browser tools for one run.
@@ -76,7 +92,12 @@ pub fn browser_tools(approvals: Arc<dyn ApprovalHook>, scope: BrowserScope) -> V
     ];
     tools.extend(devtools::devtools(&base));
     if base.scope.media.is_some() {
-        tools.push(Box::new(BrowserScreenshot { base: base.clone() }));
+        let screenshot = BrowserScreenshot { base: base.clone() };
+        if base.scope.screenshots == ScreenshotsToModel::Seen {
+            tools.push(Box::new(SeeingScreenshot(screenshot)));
+        } else {
+            tools.push(Box::new(screenshot));
+        }
         tools.push(Box::new(BrowserRecord { base }));
     }
     tools
@@ -852,14 +873,77 @@ impl ToolRuntime for BrowserScreenshot {
         let path = media
             .save(&media_name("screenshot", "png"), &png)
             .map_err(|e| tool_error(format!("browser_screenshot: {e}")))?;
-        Ok(json!({
+        let screenshots = self.base.scope.screenshots;
+        // The model's copy: the same view, scaled down by the browser. It is kept in memory
+        // only (see `crate::vision`); the runtime attaches it after this result.
+        let kept = screenshots != ScreenshotsToModel::Off
+            && match chat
+                .screenshot_for_model(
+                    reference.as_deref(),
+                    args.full_page,
+                    crate::vision::MAX_SIDE,
+                )
+                .await
+            {
+                Ok(jpeg) => crate::vision::keep(
+                    &path,
+                    crate::vision::Image {
+                        mime: autoagents::llm::chat::ImageMime::JPEG,
+                        bytes: jpeg,
+                    },
+                ),
+                Err(_) => false,
+            };
+        let mut result = json!({
             "path": path,
             "width": width,
             "height": height,
-            // True of every model while the provider wire rejects images (`providers/wire.rs`);
-            // sending screenshots to a vision model has to make this conditional.
-            "note": crate::prompts::TOOL_SCREENSHOT_NOTE,
-        }))
+            "note": screenshot_note(screenshots, kept),
+        });
+        if screenshots == ScreenshotsToModel::Seen && kept {
+            result["image_attached"] = json!(true);
+        }
+        Ok(result)
+    }
+}
+
+/// The note on a screenshot result: a model that reads text only gets the note it always
+/// had; one that reads images is told the image follows, or that this one was too large.
+fn screenshot_note(screenshots: ScreenshotsToModel, kept: bool) -> &'static str {
+    match (screenshots, kept) {
+        (ScreenshotsToModel::Seen, true) => crate::prompts::TOOL_SCREENSHOT_SEEN_NOTE,
+        (ScreenshotsToModel::Seen, false) => crate::prompts::TOOL_SCREENSHOT_UNATTACHED_NOTE,
+        _ => crate::prompts::TOOL_SCREENSHOT_NOTE,
+    }
+}
+
+/// `browser_screenshot` for a model that reads images: described as a tool whose image the
+/// model gets, with no advice on when to use it; otherwise the same tool.
+#[derive(Debug)]
+struct SeeingScreenshot(BrowserScreenshot);
+
+impl ToolT for SeeingScreenshot {
+    fn name(&self) -> &str {
+        self.0.name()
+    }
+
+    fn description(&self) -> &str {
+        crate::prompts::TOOL_SCREENSHOT_SEEING_DESCRIPTION
+    }
+
+    fn args_schema(&self) -> Value {
+        self.0.args_schema()
+    }
+
+    fn output_schema(&self) -> Option<Value> {
+        self.0.output_schema()
+    }
+}
+
+#[async_trait]
+impl ToolRuntime for SeeingScreenshot {
+    async fn execute(&self, args: Value) -> Result<Value, ToolCallError> {
+        self.0.execute(args).await
     }
 }
 
@@ -1039,6 +1123,7 @@ mod tests {
                 chat: hub.chat("schema-test", &std::env::temp_dir()),
                 cancel: None,
                 media: Some(Arc::new(NoMedia)),
+                screenshots: ScreenshotsToModel::Off,
             },
         );
         let sample = |schema: &Value| match schema["type"].as_str() {
@@ -1066,5 +1151,60 @@ mod tests {
         let click: ClickArgs =
             parse_tool_args("browser_click", json!({"reference": "e5"})).unwrap();
         assert_eq!(click.reference, "e5");
+    }
+
+    /// A model that reads text only sees `browser_screenshot` exactly as before; one that
+    /// reads images gets the tool described as giving it the image, and its result says
+    /// whether the image follows.
+    #[test]
+    fn the_screenshot_tool_tells_each_model_what_it_gets() {
+        let hub = super::super::BrowserHub::new(super::super::BrowserConfig {
+            root: std::env::temp_dir(),
+            executable: None,
+            headless: true,
+        });
+        let description = |screenshots| {
+            let tools = browser_tools(
+                Arc::new(crate::tools::AllowAllHook),
+                BrowserScope {
+                    permissions: crate::tools::site_permissions::SitePermissions::new(
+                        Default::default(),
+                        None,
+                    ),
+                    chat: hub.chat("screenshot-test", &std::env::temp_dir()),
+                    cancel: None,
+                    media: Some(Arc::new(NoMedia)),
+                    screenshots,
+                },
+            );
+            let tool = tools
+                .iter()
+                .find(|tool| tool.name() == "browser_screenshot")
+                .expect("offered");
+            (tool.description().to_owned(), tool.args_schema())
+        };
+        let (text, text_schema) = description(ScreenshotsToModel::Off);
+        assert!(text.contains("You cannot see it yourself"), "{text}");
+        assert_eq!(description(ScreenshotsToModel::Kept).0, text);
+        let (seeing, seeing_schema) = description(ScreenshotsToModel::Seen);
+        assert_eq!(seeing, crate::prompts::TOOL_SCREENSHOT_SEEING_DESCRIPTION);
+        assert!(!seeing.contains("cannot see"));
+        assert_eq!(seeing_schema, text_schema);
+        assert_eq!(
+            screenshot_note(ScreenshotsToModel::Off, false),
+            crate::prompts::TOOL_SCREENSHOT_NOTE
+        );
+        assert_eq!(
+            screenshot_note(ScreenshotsToModel::Kept, true),
+            crate::prompts::TOOL_SCREENSHOT_NOTE
+        );
+        assert_eq!(
+            screenshot_note(ScreenshotsToModel::Seen, true),
+            crate::prompts::TOOL_SCREENSHOT_SEEN_NOTE
+        );
+        assert_eq!(
+            screenshot_note(ScreenshotsToModel::Seen, false),
+            crate::prompts::TOOL_SCREENSHOT_UNATTACHED_NOTE
+        );
     }
 }

@@ -13,6 +13,46 @@ pub(super) struct WireMessage {
     /// A thinking model's reasoning for these tool calls, when replay is on.
     #[serde(flatten)]
     pub(super) reasoning: super::reasoning::WireReasoning,
+    /// An image after `content` (a user message); each protocol writes it its own way.
+    #[serde(skip)]
+    pub(super) image: Option<WireImage>,
+}
+
+/// An image for a model that reads images: its media type and base64 bytes.
+pub(super) struct WireImage {
+    pub(super) mime: &'static str,
+    pub(super) data: String,
+}
+
+impl WireImage {
+    /// The `data:` URL the OpenAI shapes take.
+    pub(super) fn data_url(&self) -> String {
+        format!("data:{};base64,{}", self.mime, self.data)
+    }
+}
+
+/// `true` when `messages` hold an image (only models that read images may get them).
+pub(super) fn has_images(messages: &[ChatMessage]) -> bool {
+    messages
+        .iter()
+        .any(|message| matches!(message.message_type, MessageType::Image(_)))
+}
+
+/// One Chat Completions message as JSON. A message with an image carries content parts:
+/// its text, then the image as a `data:` URL. Tool-role messages cannot carry images in the
+/// OpenAI-compatible APIs, so the runtime puts each image in a user message right after the
+/// tool results.
+pub(super) fn chat_message_value(message: WireMessage) -> Result<serde_json::Value, LLMError> {
+    let image = message.image.as_ref().map(WireImage::data_url);
+    let text = message.content.clone().unwrap_or_default();
+    let mut value = serde_json::to_value(message)?;
+    if let Some(url) = image {
+        value["content"] = serde_json::json!([
+            {"type": "text", "text": text},
+            {"type": "image_url", "image_url": {"url": url}},
+        ]);
+    }
+    Ok(value)
 }
 
 /// OpenAI chat-completions request body.
@@ -21,7 +61,7 @@ pub(super) struct WireChatRequest<'a> {
     pub(super) model: &'a str,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(super) reasoning_effort: Option<&'a str>,
-    pub(super) messages: Vec<WireMessage>,
+    pub(super) messages: Vec<serde_json::Value>,
     pub(super) stream: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(super) max_tokens: Option<u32>,
@@ -76,8 +116,9 @@ pub(super) struct WireChoiceMessage {
 /// Converts SDK messages to the OpenAI wire shape.
 ///
 /// Text becomes a plain message; `ToolUse` becomes an assistant message carrying
-/// tool calls; each `ToolResult` entry becomes a `tool`-role message. Image and
-/// PDF inputs are rejected: this provider is text-first for the coding agent.
+/// tool calls; each `ToolResult` entry becomes a `tool`-role message. An image becomes a
+/// user message with the image beside its text; only requests to a model that reads images
+/// may hold one (see `chat_request`). PDF and image-link inputs are rejected.
 pub(super) fn to_wire_messages(messages: &[ChatMessage]) -> Result<Vec<WireMessage>, LLMError> {
     let mut wire = Vec::with_capacity(messages.len());
     for message in messages {
@@ -100,6 +141,7 @@ pub(super) fn to_wire_messages(messages: &[ChatMessage]) -> Result<Vec<WireMessa
                             .then(|| super::reasoning::replay_answer(&message.content))
                             .flatten(),
                     ),
+                    image: None,
                 });
             }
             MessageType::ToolUse(calls) => wire.push(WireMessage {
@@ -133,6 +175,7 @@ pub(super) fn to_wire_messages(messages: &[ChatMessage]) -> Result<Vec<WireMessa
                 reasoning: super::reasoning::WireReasoning::from_kept(super::reasoning::replay(
                     calls,
                 )),
+                image: None,
             }),
             MessageType::ToolResult(results) => {
                 for result in results {
@@ -142,12 +185,27 @@ pub(super) fn to_wire_messages(messages: &[ChatMessage]) -> Result<Vec<WireMessa
                         tool_calls: None,
                         tool_call_id: Some(result.id.clone()),
                         reasoning: Default::default(),
+                        image: None,
                     });
                 }
             }
-            MessageType::Image(_) | MessageType::Pdf(_) | MessageType::ImageURL(_) => {
+            MessageType::Image((mime, bytes)) => {
+                use base64::Engine;
+                wire.push(WireMessage {
+                    role: "user",
+                    content: Some(message.content.clone()),
+                    tool_calls: None,
+                    tool_call_id: None,
+                    reasoning: Default::default(),
+                    image: Some(WireImage {
+                        mime: mime.mime_type(),
+                        data: base64::engine::general_purpose::STANDARD.encode(bytes),
+                    }),
+                });
+            }
+            MessageType::Pdf(_) | MessageType::ImageURL(_) => {
                 return Err(LLMError::invalid_request(
-                    "CompatibleProvider supports text and tool messages only".to_string(),
+                    "CompatibleProvider supports text, image and tool messages only".to_string(),
                 ));
             }
         }

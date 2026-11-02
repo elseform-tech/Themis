@@ -10,15 +10,49 @@ use super::*;
 
 tokio::task_local! { pub(super) static MODEL_LIMITS: HashMap<String, (Option<usize>, Option<usize>)>; }
 tokio::task_local! { pub(super) static MODEL_THINKING: HashMap<String, Thinking>; }
-tokio::task_local! { static MODEL_ROUTES: HashMap<String, Route>; }
+tokio::task_local! { pub(super) static MODEL_ROUTES: HashMap<String, Route>; }
 
 /// How a loaded model is called: its protocol, its endpoint (`None`: Go's default for the
-/// protocol), and the configured provider serving it (`None`: OpenCode Go).
+/// protocol), the configured provider serving it (`None`: OpenCode Go), and whether it
+/// reads images.
 #[derive(Clone)]
-struct Route {
+pub(super) struct Route {
     protocol: Protocol,
     endpoint: Option<String>,
     provider: Option<String>,
+    images: bool,
+}
+
+/// The route table [`with_catalog_limits`] scopes for `models`.
+pub(super) fn route_table(models: &[GoModel]) -> HashMap<String, Route> {
+    models
+        .iter()
+        .map(|m| {
+            (
+                m.id.clone(),
+                Route {
+                    protocol: m.protocol(),
+                    endpoint: m.endpoint.clone(),
+                    provider: m.provider.clone(),
+                    images: m.images,
+                },
+            )
+        })
+        .collect()
+}
+
+/// Whether the loaded catalog says `model` reads images. A model it does not describe, or
+/// no loaded catalog, reads text only.
+pub(crate) fn accepts_images(model: &str) -> bool {
+    MODEL_ROUTES
+        .try_with(|routes| routes.get(model).is_some_and(|route| route.images))
+        .unwrap_or(false)
+}
+
+/// Whether `models` (a catalog with the person's `models` overrides applied) says `model`
+/// reads images; an unknown model reads text only.
+pub fn model_accepts_images(models: &[GoModel], model: &str) -> bool {
+    models.iter().any(|entry| entry.id == model && entry.images)
 }
 
 /// A loaded model's thinking options: the catalog's switch and efforts, and the person's
@@ -188,22 +222,7 @@ pub async fn with_catalog_limits<F: std::future::Future>(
                 .collect(),
             MODEL_THINKING.scope(
                 thinking_table(models),
-                MODEL_ROUTES.scope(
-                    models
-                        .iter()
-                        .map(|m| {
-                            (
-                                m.id.clone(),
-                                Route {
-                                    protocol: m.protocol(),
-                                    endpoint: m.endpoint.clone(),
-                                    provider: m.provider.clone(),
-                                },
-                            )
-                        })
-                        .collect(),
-                    future,
-                ),
+                MODEL_ROUTES.scope(route_table(models), future),
             ),
         )
         .await
@@ -388,6 +407,10 @@ pub struct GoModel {
     /// The `models` override's thinking on or off, when the model has a thinking switch.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub thinking: Option<bool>,
+    /// The model reads images: the catalog lists `image` among its input modalities, or the
+    /// person's `models` override says so.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub images: bool,
 }
 
 /// A model's published list price in US dollars per million tokens (models.dev `cost`).
@@ -518,6 +541,18 @@ struct CatalogModel {
     /// List price; read leniently so a malformed price never hides the model.
     #[serde(default)]
     cost: serde_json::Value,
+    /// Input and output kinds (`{"input": ["text", "image"]}`), read leniently too.
+    #[serde(default)]
+    modalities: serde_json::Value,
+}
+
+impl CatalogModel {
+    /// The catalog lists `image` among the model's input modalities.
+    fn reads_images(&self) -> bool {
+        self.modalities["input"]
+            .as_array()
+            .is_some_and(|kinds| kinds.iter().any(|kind| kind == "image"))
+    }
 }
 
 /// How a catalog entry is reached: the AI SDK package (naming the protocol) and endpoint.
@@ -596,6 +631,11 @@ pub(super) fn join_go_catalog(ids: Vec<String>, catalog: CatalogRoot) -> Vec<GoM
                 .models
                 .get(&id)
                 .and_then(|model| ModelPrice::from_catalog(&model.cost));
+            let images = catalog
+                .go
+                .models
+                .get(&id)
+                .is_some_and(CatalogModel::reads_images);
             GoModel {
                 id,
                 effort_levels,
@@ -606,6 +646,7 @@ pub(super) fn join_go_catalog(ids: Vec<String>, catalog: CatalogRoot) -> Vec<GoM
                 endpoint,
                 unavailable_reason,
                 price,
+                images,
                 ..GoModel::default()
             }
         })
@@ -811,6 +852,7 @@ pub fn apply_model_overrides(
                 output_tokens: cap(model.output_tokens, entry.output_tokens),
                 default_effort: entry.reasoning_effort.filter(effort_offered),
                 thinking: entry.thinking.filter(|_| model.thinking_toggle),
+                images: entry.images.unwrap_or(model.images),
                 ..model.clone()
             }
         })
