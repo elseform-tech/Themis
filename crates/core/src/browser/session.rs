@@ -1465,6 +1465,13 @@ impl ChatBrowser {
                 json!({"width": viewport.width, "height": viewport.height, "deviceScaleFactor": viewport.scale, "mobile": false}),
             )
             .await;
+        let _ = cdp
+            .call(
+                Some(&session_id),
+                "Page.addScriptToEvaluateOnNewDocument",
+                json!({"source": include_str!("no_bounce.js")}),
+            )
+            .await;
         // The stand-in is a convenience: a page that refuses it just has no pointer lock.
         if self.hub.upgrade().is_some_and(|hub| hub.headless()) {
             let _ = cdp
