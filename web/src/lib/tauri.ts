@@ -1,7 +1,7 @@
 // Typed Tauri bridge client. All frontend code reaches the backend through
 // these functions — never raw invoke() with stringly-typed payloads elsewhere.
 import { convertFileSrc, invoke as tauriInvoke } from '@tauri-apps/api/core';
-import type { BrowserHistoryEntry, BrowserSettings, BrowserSettingsView, SubagentSettings } from "./types";
+import type { BrowserHistoryEntry, BrowserSettings, BrowserSettingsView, MemoryList, MemoryScope, SubagentSettings } from "./types";
 import type { PromptSkill } from './prompt';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import type {
@@ -289,6 +289,26 @@ export function getSubagentTranscript(threadId: string, subagentId: string): Pro
 /** Stops one subagent; the main agent gets what it had so far. */
 export function stopSubagent(threadId: string, subagentId: string): Promise<void> {
   return invoke('stop_subagent', { threadId, subagentId });
+}
+
+/** Settings › Memory's switch (`memory.enabled` in the user runtime.jsonc). */
+export function getMemorySettings(): Promise<{ settings: { enabled: boolean }; revision: string }> {
+  return invoke('get_memory_settings');
+}
+
+/** Turns memory on or off, refused when the file changed since `revision`. */
+export function updateMemorySettings(enabled: boolean, revision: string): Promise<{ settings: { enabled: boolean }; revision: string }> {
+  return invoke('update_memory_settings', { enabled, revision });
+}
+
+/** One scope's memories (a project scope needs the project). */
+export function listMemories(scope: MemoryScope, projectRoot: string | null): Promise<MemoryList> {
+  return invoke('list_memories', { scope, projectRoot });
+}
+
+/** Deletes a memory, refused when the scope changed since `revision`. */
+export function deleteMemory(scope: MemoryScope, projectRoot: string | null, name: string, revision: string): Promise<{ revision: string }> {
+  return invoke('delete_memory', { scope, projectRoot, name, revision });
 }
 
 /** Settings › Subagents, read from and saved to the user runtime.jsonc (`subagents`). */

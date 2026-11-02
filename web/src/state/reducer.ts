@@ -633,6 +633,10 @@ export function applyThreadEvent(
       return { ...state, runChanges: { ...state.runChanges, [runId]: event.files } };
     case "browser_changed":
       return { ...state, browsers: { ...state.browsers, [threadId]: { controller: event.controller, recording: event.recording, at: Date.now() } } };
+    case "memory_changed": {
+      const { kind: _kind, ...memory } = event;
+      return appendMessage(state, threadId, { id: newId("memory"), role: "system", text: "", runId, memory });
+    }
     case "media_attached": {
       const previous = state.runMedia[runId] ?? [];
       const added = event.files.filter(file => !previous.some(seen => seen.path === file.path));

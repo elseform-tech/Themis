@@ -1,0 +1,34 @@
+/* Settings › Memory: the switch, the scope choice, then memories grouped by kind. */
+.themis-memory-switch > .themis-settings-name { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; white-space: normal; }
+
+.themis-memory-scopes { display: inline-flex; padding: 2px; border-radius: 9px; background: var(--themis-raised); }
+.themis-memory-scopes button { font: inherit; font-size: .78rem; border: 0; padding: 4px 10px; border-radius: 7px; background: transparent; color: var(--themis-text-2); cursor: pointer; max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.themis-memory-scopes button[aria-pressed="true"] { background: var(--themis-surface); color: var(--themis-text); }
+.themis-memory-scopes button:focus-visible { outline: 2px solid var(--themis-accent); outline-offset: 2px; }
+
+.themis-memory-head { display: flex; justify-content: space-between; gap: 12px; margin: 10px 4px 0; color: var(--themis-text-2); font-size: .8rem; }
+.themis-memory-meter { color: var(--themis-text-3); font-size: .75rem; font-variant-numeric: tabular-nums; }
+.themis-memory-empty { margin: 0; color: var(--themis-text-3); }
+
+.themis-settings-card > .themis-memory { padding-block: 0; margin-inline: -16px; }
+.themis-memory summary { list-style: none; display: flex; align-items: flex-start; gap: 12px; padding: 11px 16px; cursor: pointer; }
+.themis-memory summary::-webkit-details-marker { display: none; }
+.themis-memory summary:hover { background: color-mix(in srgb, var(--themis-text) 3%, transparent); }
+.themis-memory summary:focus-visible { outline: 2px solid var(--themis-accent); outline-offset: -2px; }
+.themis-memory-text { flex: 1; min-width: 0; }
+.themis-memory-text b { font-weight: 500; }
+.themis-memory-text small { display: block; color: var(--themis-text-3); font-size: .78rem; margin-top: 2px; line-height: 1.4; overflow-wrap: anywhere; }
+.themis-memory-when { flex: none; color: var(--themis-text-3); font-size: .75rem; font-variant-numeric: tabular-nums; padding-top: 1px; }
+.themis-memory-from { display: inline-block; margin-left: 6px; padding: 0 6px; border-radius: 6px; background: var(--themis-raised); color: var(--themis-text-2); font-size: .7rem; }
+.themis-memory-body { padding: 0 16px 14px; display: grid; gap: 10px; }
+.themis-memory-body pre { margin: 0; padding: 10px 12px; border-radius: 10px; background: var(--themis-canvas); color: var(--themis-text-2); font: .78rem/1.5 var(--themis-font-mono, ui-monospace, "SF Mono", Menlo, monospace); white-space: pre-wrap; overflow-wrap: anywhere; }
+.themis-memory-actions { display: flex; gap: 8px; justify-content: flex-end; align-items: center; flex-wrap: wrap; }
+.themis-memory-question { color: var(--themis-text-2); font-size: .78rem; margin-right: auto; }
+.themis-danger-action { color: var(--themis-danger); }
+
+/* In the chat: a slim line where the agent saved or deleted a memory. */
+.themis-memory-line { display: inline-flex; align-items: center; gap: 8px; align-self: flex-start; max-width: 100%; color: var(--themis-text-3); font-size: .8rem; }
+.themis-memory-line svg { flex: none; width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.themis-memory-line button { min-width: 0; padding: 0; border: 0; background: transparent; font: inherit; color: var(--themis-text-2); text-decoration: underline; text-decoration-color: var(--themis-border); text-underline-offset: 3px; cursor: pointer; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.themis-memory-line button:hover { color: var(--themis-text); }
+.themis-memory-line button:focus-visible { outline: 2px solid var(--themis-accent); outline-offset: 2px; }
