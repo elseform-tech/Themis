@@ -121,6 +121,8 @@ full tour.
 | `tool:browser_devtools` | tour | `crates/core/src/browser/tools/devtools.rs` | Only with Developer mode on: read the console. Off: the tool is not offered. |
 | `tool:set_goal` | tour | `crates/desktop/src/state/goal_tool.rs` | `/goal` sets the goal; the goal bar shows it. More › Remove goal removes it; asking in the chat to pause or remove it does the same. |
 | `feature:goal-proof` | tour | `crates/desktop/src/state/goal.rs` | Run a goal over several turns: a rejected turn's replies dim, and the next turn doesn't re-prove what is listed. A passing "Checking…" shows during a check, then a "Goal check" bubble saying what is wrong, what to change and what is pending, and the agent answers it. |
+| `tool:memory` | tour | `crates/desktop/src/state/memory.rs`, `crates/core/src/memory.rs` | Say "from now on, use the free model for test runs": the agent saves a feedback memory and the chat shows "Remembered · …". In a new chat in the same project ask which model to use for tests: it answers from memory without being told. Ask it to look at a web page and remember a fact from it: the memory is project-scoped with its source. Ask it to forget one: "Forgot · …". A chat in another project sees only the global memories. |
+| `feature:memory-line` | tour | `web/src/screens/MemorySettings.tsx`, `web/src/screens/ThreadConversation.tsx` | The "Remembered · <name>" line sits in the reply where the save happened, survives a restart, and clicking the name opens Settings › Memory on that memory; "Forgot · <name>" is plain text. |
 | `tool:ask_user` | tour | `crates/desktop/src/state/question_tool.rs` | The separator question appears on the composer after any approval, answered inline. |
 | `tool:spawn_subagents` | tour | `crates/desktop/src/state/subagent_tools.rs` | Ask for a review of two separate areas: two read-only subagents start, both results reach the reply, and the turn ends only after both. |
 | `tool:attach_file` | tour | `crates/desktop/src/state/media_tool.rs` | The screenshot is attached to the reply. |
@@ -193,6 +195,7 @@ full tour.
 | `settings:Subagents` | tour | `web/src/screens/SubagentSettings.tsx` | Set Maximum subagents to 2; `runtime.jsonc` shows `max_parallel: 2` and the next spawn runs two at a time. |
 | `settings:Usage` | tour | `web/src/screens/UsageSettings.tsx` | Today's chats appear with their tokens. |
 | `settings:Secrets` | tour | `web/src/screens/SecretsSettings.tsx` | Add then remove a dummy secret. |
+| `settings:Memory` | tour | `web/src/screens/MemorySettings.tsx` | After the `tool:memory` step, Settings › Memory lists the memory under its kind with today's date (a web-page one tagged "from a web page"); click it to read it; Delete asks inline, then it is gone and "index N of 200 lines" drops by one. Everywhere shows the global ones. Switch memory off: `runtime.jsonc` shows `"memory": {"enabled": false}`, the list is replaced by the off note, and a new chat's agent neither sees nor saves memories. |
 | `settings:Permissions` | tour | `web/src/screens/PermissionsView.tsx` | The config file reads as valid; Open opens it; the default mode applies to a new chat. |
 | `settings:Browser` | tour | `web/src/screens/BrowserSettings.tsx` | Turn Developer mode on and off; `browser_devtools` follows. |
 | `settings:Web` | tour | `web/src/screens/WebSettings.tsx` | Check the search server. |
@@ -211,6 +214,7 @@ full tour.
 | `config:sandbox` | tour | `crates/core/src/sandbox.rs` | With `"network": "block"` a shell `curl` fails. |
 | `config:browser` | tour | `crates/core/src/configuration.rs` | Set by Settings › Browser; the file shows the change. |
 | `config:web` | tour | `crates/core/src/configuration.rs` | Set by Settings › Web; the file shows the change. |
+| `config:memory` | tour | `crates/core/src/configuration.rs`, `crates/desktop/src/state/memory.rs` | Set by Settings › Memory; with `"memory": {"enabled": false}` in a project's `.themis/config.jsonc` that project's chats get no memory index, and `"enabled": true` there is refused. |
 | `config:skills` | tour | `crates/core/src/skills.rs` | A skill under a configured path is found. |
 | `config:hooks` | tour | `crates/core/src/configuration.rs`, `crates/desktop/src/state/hook_wakes.rs` | With `"hooks": {"max_wakes": 0}`, a local plugin whose `Stop` hook has `asyncRewake` and exits 2 starts no turn on its own, and the next message's turn reads what it reported. `session_idle_minutes` and `prompt_hook_calls` are checked under `feature:hook-sessions` and `feature:hook-questions`. |
 | `config:subagents` | tour | `crates/core/src/configuration.rs` | With `"enabled": false` in the project's `.themis/config.jsonc` the agent offers no subagents. |

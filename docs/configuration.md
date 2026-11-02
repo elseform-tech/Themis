@@ -246,6 +246,7 @@ project content, so a cloned repository's guidance reaches the agent, but it nev
 | `hooks.max_wakes` | Integer 0–10, default `3`: how many turns in a row a finished background [plugin hook](plugins.md) may start in an idle chat before you write again. `0` never starts one, and what a hook reports waits for the chat's next turn. Never in YOLO, while a goal runs, or after a turn that failed or that you stopped. A project or run layer may only lower it. |
 | `hooks.session_idle_minutes` | Integer 0–10080, default `60`: minutes a chat may sit idle before its session ends for [plugin hooks](plugins.md#sessions) (`SessionEnd`, then `SessionStart` when you write again). `0` never ends one for being idle. Captured when a run starts, so a change applies from the chat's next turn. |
 | `hooks.prompt_hook_calls` | Integer 0–1000, default `50`: model requests [prompt hooks](plugins.md#prompt-hooks) may make in a run, shared with its subagents. A guard that finds none left refuses the call. `0` turns prompt hooks off. Your own `runtime.jsonc` only: a project or run layer that sets it is refused. |
+| `memory.enabled` | Boolean, default `true`: the agent may save memories across chats with its `memory` tool and every run (and subagent) starts with the memory index. `false`: no index, and the tool refuses; saved memories are kept. Settings › Memory's switch writes it in your `runtime.jsonc` in place. A project or run layer may only set it to `false`. See [Memory](#memory). |
 | `subagents.enabled` | Boolean, default `true`: offer the subagent tools (`spawn_subagents`, `wait_subagents`, `message_subagent`, `stop_subagent`) to the agent. A project or run layer may only set it to `false`. |
 | `subagents.max_parallel` | Integer 1–6, default `3`: subagents running at once per chat; more wait their turn. A project or run layer may only lower it. |
 | `subagents.max_turns` | Integer 1–1000, default `40`: model requests per subagent; reaching it ends the subagent with its partial result. A project or run layer may only lower it. |
@@ -826,6 +827,46 @@ themis usage          # the same windows, models and chats as plain text
 themis usage --json   # get_usage_summary
 themis call get_chat_usage '{"threadId":"THREAD"}'
 ```
+
+## Memory
+
+Memories live in the app data folder, never in a project (the project's shared rules stay
+in its `AGENTS.md`): `memory/global/` for memories that apply everywhere and
+`memory/projects/<hash>/` per project, where the hash is the first 16 hex digits of the
+SHA-256 of the project's canonical path (renaming a project keeps its memories). Each memory
+is one Markdown file, `<name>.md`, with a header of `name` (lowercase kebab-case, at most 64
+characters), `description` (one line, at most 160), `type` (`user`, `feedback`, `project` or
+`reference`), `saved` (`YYYY-MM-DD`) and an optional `source` (at most 200; the web page or
+file it was built from), then the text (at most 4 KiB; feedback and project memories end with
+`Why:` and `How to apply:` lines). Files are read as untrusted: a file with another key, a
+key twice, a bad name or date, control characters or more than 8 KiB is skipped, and
+symlinks are never followed, for the folder or a file.
+
+Beside them, `MEMORY.md` is the index: one line per memory (`- name (type, date[, from
+source]): description`), newest first, at most 200 lines and 24 KiB. It is rewritten
+atomically on every save and delete, and it, not the files, is what a run reads: the global
+index and the current project's (never another project's) go into the system message of
+the main agent and of every subagent, under the note in
+`crates/core/builtins/prompts/system-memory.md`. Nothing is added while both are empty.
+
+The main agent's `memory` tool saves, updates, deletes and reads (`action`, `name`,
+`scope`, `type`, `description`, `body`, `why`, `how_to_apply`, `source`). Its scope is
+`project` unless it says `global`, and only `user` and `feedback` memories may be global;
+`project` and `reference` memories are refused there. A scope holds at most 200 memories.
+Everything saved first goes through the browser tools' secret redaction and the composer's
+secret check (token-like words and values after names such as `password=` become
+`[hidden: N chars]`). A subagent's `memory` tool only reads, and only subagents without a
+plugin profile get it. The tool asks no approval (it changes nothing but the person's own
+memories), but a deny rule on `memory` still wins, YOLO included.
+
+Shared-server commands: `list_memories {scope, projectRoot}` returns the scope's memories,
+`index_lines`, `max_lines`, `skipped`, `enabled` and a `revision`; `delete_memory {scope,
+projectRoot, name, revision}` refuses a stale revision; `get_memory_settings` and
+`update_memory_settings {enabled, revision}` read and write `memory.enabled`. A save,
+update or delete by the agent is a saved `memory_changed` chat event (`action` `saved`,
+`updated` or `forgot`, `scope`, `name`, `description`, `project_root`). Diagnostics log
+`memory` / `saved`, `updated` or `deleted` with the scope, type, the scope's count and who
+did it (`agent` or `settings`), never a memory's name or text.
 
 ## Shared-server event stream additions
 

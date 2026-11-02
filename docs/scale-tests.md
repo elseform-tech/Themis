@@ -26,6 +26,7 @@ To fill a chat quickly, turn off `synchronous` on the test's own store, as `chat
 | One page of history | `one_history_page_costs_the_same…` | Flat |
 | Change fingerprints at each end of a run | `fingerprint_reads_do_not_grow…` | At most 1 MiB per file. Above that a file is judged by its size, modified time and first and last 64 KiB, so saving it unchanged counts as an edit, and an edit to its middle that keeps its size and modified time goes unseen |
 | Diff listing, every 1.5 seconds | `listing_many_hidden_files_stays_linear`, `listing_builds_no_more_diffs_than_it_shows` | One short look at each new file for the counts, and full reads only for the 200 shown |
+| Memory index: rebuilt on each save or delete, read at the start of each run | `index_work_stays_linear_and_its_read_bounded` (`crates/core/src/memory.rs`) | Rebuilding reads each memory file once (10 vs 200 memories: files and bytes grow linearly). The run-start read is one file of at most 24 KiB, whatever the count |
 | Replaying a chat's history in the web app | `replaying a chat's history stays linear…` | Linear: the list being built grows in place |
 
 The diff listing still runs `git diff` over every tracked change and still counts the lines of each shown new file in full, so a very large new file costs a full read on each listing.
