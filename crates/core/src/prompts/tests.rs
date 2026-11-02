@@ -120,6 +120,9 @@ const ALL: &[(&str, &str, &[&str])] = &[
     (ASK_USER_BLOCKING, "ask-user-blocking", &[]),
     (ASK_USER_WAITING, "ask-user-waiting", &[]),
     (ASK_USER_LIMIT, "ask-user-limit", &["max"]),
+    (SYSTEM_MEMORY, "system-memory", &["global", "project"]),
+    (MEMORY_TOOL, "memory-tool", &[]),
+    (MEMORY_TOOL_READ, "memory-tool-read", &[]),
     (
         QUESTION_ANSWER,
         "question-answer",

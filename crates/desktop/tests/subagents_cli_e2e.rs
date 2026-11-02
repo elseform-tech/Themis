@@ -491,7 +491,9 @@ async fn the_turn_ends_after_both_subagents_reported_back() {
                     "search_file",
                     "shell",
                     "fetch_url",
-                    "web_search"
+                    "web_search",
+                    // Reading a memory in full; saving is the main agent's.
+                    "memory"
                 ]
                 .contains(&name.as_str())),
             "{names:?}"

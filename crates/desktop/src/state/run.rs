@@ -300,8 +300,15 @@ impl AppState {
             .await;
         let project_guidance =
             themis_core::configuration::project_guidance(&run_configuration, &snapshot.work_root);
+        // The global and this project's memory indexes, read once per run.
+        let memory_note = self.memory_note(run_configuration.memory.enabled, &snapshot.work_root);
+        let memory_line = if memory_note.is_empty() {
+            String::new()
+        } else {
+            format!("{memory_note}\n")
+        };
         skill_catalog = format!(
-            "\n{}\n{project_guidance}\n{}{secrets_note}{}",
+            "\n{}\n{project_guidance}\n{memory_line}{}{secrets_note}{}",
             themis_core::prompts::fill(
                 themis_core::prompts::DESKTOP_RUN_WORKSPACE,
                 &[("workspace", &workspace)]
@@ -508,6 +515,19 @@ impl AppState {
             end: Arc::clone(&end_request),
             subagent: None,
         }));
+        // Memory off: no tool at all, so its description costs nothing.
+        if run_configuration.memory.enabled {
+            tools.push(Box::new(super::memory::MemoryTool {
+                state: self.clone(),
+                sink: Arc::clone(sink),
+                thread_id: thread_id.to_owned(),
+                run_id: run_id.to_owned(),
+                project_root: snapshot.work_root.clone(),
+                enabled: true,
+                run: check_approval.clone(),
+                read_only: false,
+            }));
+        }
         // The agent's to-do list: the run opened with it as it stood, and a checkpoint reads it
         // back as it stands then.
         let todo_seen = Arc::new(std::sync::atomic::AtomicU64::new(
@@ -658,7 +678,12 @@ impl AppState {
                     permissions: Arc::clone(&site_permissions),
                 },
                 subagent_skills,
-                project_guidance,
+                // Subagents start with the same memory index; they may only read memories.
+                if memory_note.is_empty() {
+                    project_guidance
+                } else {
+                    format!("{}\n\n{memory_note}", project_guidance.trim_end())
+                },
                 plugin_bins.clone(),
                 Arc::clone(&llm),
                 policy,

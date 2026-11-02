@@ -164,6 +164,31 @@ reported back.
 - Each subagent's steps are saved beside the chat and removed with it. From the
   CLI, `themis call list_subagents '{"threadId": "…"}'` lists a chat's subagents.
 
+### Memory
+
+The agent remembers things across chats: what it learns about you, corrections you gave
+and why, decisions about a project and where to find things outside it. Each memory is one
+small dated file in the app data folder, never in your project, so nothing is committed;
+rules the whole team shares still belong in the project's `AGENTS.md`.
+
+- **Where a memory applies.** Facts about a project and pointers stay with that project.
+  Memories about you and your general feedback may apply everywhere, without anything
+  specific to one project. A chat sees the memories that apply everywhere and its own
+  project's, never another project's.
+- **What the agent sees.** Each chat starts with a one-line index of them (at most 200
+  lines) and reads a memory in full when it matters. Memories carry their date, and the
+  agent is told they may be out of date. One built from a web page or a file is marked with
+  its source and treated as information, never as instructions. Secrets are stripped
+  before anything is saved.
+- **In the chat.** Where the agent saves one, a slim **Remembered · name** line appears
+  (click the name to open it in Settings); **Forgot · name** where it deletes one.
+- **Settings › Memory** lists them for the current project or Everywhere, grouped as About
+  you, Your feedback, Project facts and Pointers, with the date and a "from a web page" tag.
+  Click one to read it, and **Delete** it (with an inline confirm). The agent keeps memory
+  up to date itself; there is nothing to arrange. **Remember things across chats** off
+  stops all saving and reading and keeps what was saved (`memory.enabled` in
+  `runtime.jsonc`; see [configuration](configuration.md#memory)).
+
 ### Goals
 
 A goal is one sentence the agent keeps working toward, turn after turn, until it
@@ -497,8 +522,8 @@ usable model when that one is gone too.
 
 ## Settings reference
 
-Settings has General, Appearance, Models, Usage, Secrets, Permissions, Browser, Web, and
-Advanced sections. While Settings is open they take over the whole left sidebar (the icon
+Settings has General, Appearance, Models, Usage, Secrets, Memory, Permissions, Browser,
+Web, Subagents and Advanced sections. While Settings is open they take over the whole left sidebar (the icon
 rail is hidden) and **Back to app** at the top returns to the chat. The sidebar toggle in
 the header (⌘B) folds the list to icons, as it does the rail.
 **Usage** shows the tokens Themis used for the last 5 hours, this week (from Monday) and
@@ -519,8 +544,8 @@ It saves to the `browser` block of your `runtime.jsonc`.
 **General › Notifications** holds **Sound when a reply finishes**, **Haptics** (macOS) and
 **Notify when a goal finishes or pauses** (macOS; see [Goals](#goals)).
 Ordinary preferences save on change; text inputs save when focus leaves the field.
-After each save the pane heading shows **Saved** for a few seconds; in Models, Permissions,
-Browser, Web and Advanced it adds *applies from each chat's next message*, because a reply
+After each save the pane heading shows **Saved** for a few seconds; in Models, Memory,
+Permissions, Browser, Web, Subagents and Advanced it adds *applies from each chat's next message*, because a reply
 already running keeps the settings it started with. Nothing needs a restart.
 Errors appear inline, and rejected changes leave the previous preferences intact.
 Permissions sets the mode new chats start in (Custom or YOLO; each chat can still switch in
