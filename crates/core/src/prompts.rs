@@ -136,6 +136,10 @@ pub const GOAL_CONTEXT: &str = include_str!("../builtins/prompts/goal-context.md
 /// Message that starts a goal turn; `{{goal_turn_marker}}`, `{{turn}}`, `{{goal}}`, `{{note}}`.
 pub const GOAL_TURN: &str = include_str!("../builtins/prompts/goal-turn.md");
 pub const GOAL_TURN_PROOF: &str = include_str!("../builtins/prompts/goal-turn-proof.md");
+/// The one task to work on now, in a goal turn; `{{task}}`.
+pub const GOAL_TURN_NEXT: &str = include_str!("../builtins/prompts/goal-turn-next.md");
+/// The goal's rules, in a goal turn; `{{rules}}`.
+pub const GOAL_TURN_RULES: &str = include_str!("../builtins/prompts/goal-turn-rules.md");
 pub const GOAL_TURN_FILES: &str = include_str!("../builtins/prompts/goal-turn-files.md");
 pub const GOAL_EVIDENCE_SCRIPT: &str = include_str!("../builtins/prompts/goal-evidence-script.md");
 pub const GOAL_NOTE_SCRIPT_PROOF: &str =
