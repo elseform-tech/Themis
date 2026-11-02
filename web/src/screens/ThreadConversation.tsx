@@ -8,12 +8,12 @@ import { browserOpenUrl } from "../lib/browser";
 import { ANSWER_MARKER, type ChangedFile, type Question } from "../lib/types";
 import { QuestionNote, useNowAt } from "./QuestionBox";
 import { placeQuestion, questionOnComposer, QUESTION_OPEN_MS, usePlacements } from "../state/composerSlot";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { GoalWait } from "./GoalWait";
 import { ResponseBody, ResponseFiles, ResponseLinks } from "../components/ResponseBody";
 import "./GoalBar.css";
 import type { ChatMessage, ToolTraceEntry } from "../state/reducer";
-import { readSession, writeSession } from "../state/session";
+import { useFollowLatest } from "./followLatest";
 import { groupConversation, toolDisplayName, type ConversationRow } from "./conversation";
 import { describeTools } from "./toolActivity";
 import { OverviewBox, type Overview } from "./OverviewBox";
@@ -57,11 +57,7 @@ export function ThreadConversation({
 }: ThreadConversationProps) {
   const project = useActiveProject();
   const { skills, plugins } = usePromptSkills(project?.root, running);
-  const scrollRef = useRef<HTMLDivElement>(null);
-  const followOutput = useRef(true);
-  const endRef = useRef<HTMLDivElement>(null);
-  /** Away from the latest output: the status shrinks, so it doesn't cover what's being read. */
-  const [scrolledUp, setScrolledUp] = useState(false);
+  const { scrollRef, contentRef, endRef, scrolledUp, onScroll } = useFollowLatest(threadId, useMemo(() => [messages, stream], [messages, stream]));
   const [now, setNow] = useState(Date.now());
   const toolPending = traces.find(entry => entry.ok === undefined && !entry.summary.startsWith("approval "));
   const media = useMemo(() => messages.flatMap(message => message.media ?? []), [messages]);
@@ -90,18 +86,6 @@ export function ThreadConversation({
     return () => clearInterval(timer);
   }, [running, threadId]);
 
-  // New output scrolls into view while following.
-  useEffect(() => {
-    if (followOutput.current) endRef.current?.scrollIntoView({ block: "end" });
-  }, [messages, stream]);
-
-  useEffect(() => {
-    const element = scrollRef.current;
-    if (!element) return;
-    element.scrollTop = readSession(`scroll:${threadId}`, element.scrollHeight);
-    setScrolledUp(element.scrollHeight - element.scrollTop - element.clientHeight >= 64);
-  }, [threadId]);
-
   const progressLine = stopping
     ? "Stopping…"
     : compacting
@@ -117,13 +101,9 @@ export function ThreadConversation({
       ref={scrollRef}
       className="themis-thread-stream"
       aria-live="polite"
-      onScroll={event => {
-        const element = event.currentTarget;
-        followOutput.current = element.scrollHeight - element.scrollTop - element.clientHeight < 64;
-        setScrolledUp(!followOutput.current);
-        writeSession(`scroll:${threadId}`, element.scrollTop);
-      }}
+      onScroll={onScroll}
     >
+      <div ref={contentRef} className="themis-thread-stream-content">
       {messages.length === 0 && stream === "" ? (
         <p className="themis-thread-start">Describe what you’d like to build or change.</p>
       ) : (
@@ -155,6 +135,7 @@ export function ThreadConversation({
       )}
       {!running && !sending && <GoalWait checking={goalChecking} retryAt={goalRetryAt} />}
       <div ref={endRef} />
+      </div>
     </div>
     {overview && <OverviewBox threadId={threadId} overview={overview} onOpenMedia={openMedia} />}
     {viewing !== null && media[viewing] && <MediaViewer threadId={threadId} items={media} index={viewing} onIndex={setViewing} onClose={() => setViewing(null)} />}

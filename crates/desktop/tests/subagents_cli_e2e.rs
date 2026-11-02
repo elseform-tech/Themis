@@ -415,8 +415,6 @@ async fn a_stopped_subagent_ends_and_a_waited_result_is_not_repeated() {
     app.serving.abort();
 }
 
-/// Two read-only subagents and one that owns `notes/`: it writes there and nowhere else, in
-/// YOLO too, and the others stay read-only. Overlaps and escapes are refused before any start.
 /// A call too big for a subagent's context, such as a whole file written through a heredoc, is
 /// refused and saved as for the main agent, rather than ending the subagent.
 #[tokio::test(flavor = "multi_thread")]
@@ -454,6 +452,58 @@ async fn a_very_long_tool_call_doesnt_end_a_subagent() {
     assert!(!mentions(last, "exceeds the delivery allowance"), "{last}");
 }
 
+/// A model that leaves out `write_paths` learns at once what that means, rather than from a
+/// subagent coming back unable to build anything.
+#[tokio::test(flavor = "multi_thread")]
+async fn starting_a_subagent_says_when_it_can_only_read() {
+    let app = app(None, |body| {
+        if is_subagent(body) {
+            return reply("Done.");
+        }
+        match tool_results(body) {
+            0 => tools(&[(
+                "s1",
+                "spawn_subagents",
+                json!({"subagents": [
+                    {"name": "Looker", "brief": "Look around."},
+                    {"name": "Builder", "brief": "Build it.", "write_paths": ["notes/"]}
+                ]}),
+            )]),
+            1 => tools(&[(
+                "s2",
+                "spawn_subagents",
+                json!({"subagents": [
+                    {"name": "Maker", "brief": "Make it.", "write_paths": ["more/"]}
+                ]}),
+            )]),
+            _ if mentions(body, "Done.") => reply("All done."),
+            _ => reply("Waiting."),
+        }
+    })
+    .await;
+    let (data, thread) = (app.data.path().to_owned(), app.thread.clone());
+    tokio::task::spawn_blocking(move || run(&data, &thread, "build it"))
+        .await
+        .unwrap();
+    let requests = bodies(&app.llm).await;
+    let last = requests.iter().rfind(|b| !is_subagent(b)).unwrap();
+    let results: Vec<&str> = messages(last)
+        .iter()
+        .filter(|m| m["role"] == "tool")
+        .map(text)
+        .filter(|text| text.contains("started"))
+        .collect();
+    assert!(
+        results[0].contains("Looker can only read"),
+        "{}",
+        results[0]
+    );
+    assert!(results[0].contains("write_paths") && !results[0].contains("Builder can only"));
+    assert!(!results[1].contains("can only read"), "{}", results[1]);
+}
+
+/// Two read-only subagents and one that owns `notes/`: it writes there and nowhere else, in
+/// YOLO too, and the others stay read-only. Overlaps and escapes are refused before any start.
 #[tokio::test(flavor = "multi_thread")]
 async fn write_paths_hold_a_subagent_to_its_own_folder() {
     let app = app(None, |body| {
