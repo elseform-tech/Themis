@@ -342,7 +342,9 @@ fn whole_sentences(text: &str) -> String {
     if let Some(end) = kept.rfind(['.', '!', '?']) {
         return kept[..=end].to_owned();
     }
-    let word = kept.rfind(' ').map_or(kept.as_str(), |space| &kept[..space]);
+    let word = kept
+        .rfind(' ')
+        .map_or(kept.as_str(), |space| &kept[..space]);
     format!("{word}…")
 }
 
@@ -946,7 +948,9 @@ mod tests {
 
     #[test]
     fn a_long_next_step_with_no_sentence_end_says_it_was_cut() {
-        let reply = serde_json::json!({"verdict":"not_yet","reason":"x","next":"word ".repeat(400)}).to_string();
+        let reply =
+            serde_json::json!({"verdict":"not_yet","reason":"x","next":"word ".repeat(400)})
+                .to_string();
         let next = parse_verdict(&reply).unwrap().next.unwrap();
         assert!(next.ends_with("word…"), "{next}");
     }
