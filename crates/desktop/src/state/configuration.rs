@@ -677,6 +677,24 @@ fn revision_of(settings: &impl serde::Serialize) -> String {
     format!("{:016x}", hasher.finish())
 }
 
+/// Refusal when Integrations › Hooks changes a built-in hook from a stale view.
+const STALE_BUILT_IN_HOOKS: &str =
+    "built-in hooks changed since they were read; reload and try again";
+
+/// Each built-in hook with its switch, and the revision a change names.
+fn built_in_hooks_view(built_in: &configuration::BuiltInHooks) -> Value {
+    let switches = built_in.switches();
+    let hooks: Vec<Value> = themis_core::built_in_hooks::ALL
+        .iter()
+        .map(|hook| {
+            let enabled = switches.iter().any(|(name, on)| *name == hook.id && *on);
+            json!({"id": hook.id, "event": hook.event, "title": hook.title,
+                "description": hook.description, "enabled": enabled})
+        })
+        .collect();
+    json!({"hooks": hooks, "revision": revision_of(built_in)})
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -800,22 +818,4 @@ mod tests {
         let records = state.query_diagnostic_logs(Default::default()).unwrap();
         assert!(records.iter().any(|r| r.event == "user_level_proof"));
     }
-}
-
-/// Refusal when Integrations › Hooks changes a built-in hook from a stale view.
-const STALE_BUILT_IN_HOOKS: &str =
-    "built-in hooks changed since they were read; reload and try again";
-
-/// Each built-in hook with its switch, and the revision a change names.
-fn built_in_hooks_view(built_in: &configuration::BuiltInHooks) -> Value {
-    let switches = built_in.switches();
-    let hooks: Vec<Value> = themis_core::built_in_hooks::ALL
-        .iter()
-        .map(|hook| {
-            let enabled = switches.iter().any(|(name, on)| *name == hook.id && *on);
-            json!({"id": hook.id, "event": hook.event, "title": hook.title,
-                "description": hook.description, "enabled": enabled})
-        })
-        .collect();
-    json!({"hooks": hooks, "revision": revision_of(built_in)})
 }
