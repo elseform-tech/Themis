@@ -281,6 +281,11 @@ const ALL: &[(&str, &str, &[&str])] = &[
     (SUBAGENT_REVIEW, "subagent-review", &[]),
     (SUBAGENT_SYSTEM, "subagent-system", &[]),
     (SUBAGENT_READ_ONLY_NOTE, "subagent-read-only-note", &[]),
+    (
+        SPAWN_SUBAGENTS_ONLY_READ,
+        "spawn-subagents-only-read",
+        &["names"],
+    ),
     (SUBAGENT_MCP_NOTE, "subagent-mcp-note", &["tools"]),
     (SUBAGENT_MCP_LEFT_OUT, "subagent-mcp-left-out", &["tools"]),
     (SPAWN_SUBAGENTS_MCP, "spawn-subagents-mcp", &[]),
