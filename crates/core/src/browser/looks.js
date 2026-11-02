@@ -55,15 +55,21 @@
     const first = typeof element.className === 'string' ? element.className.trim().split(/\s+/)[0] : '';
     return first ? `${name}.${first}` : name;
   }
+  // A field's value never leaves this script, whatever the field: only whether it is filled
+  // (passwords, tokens and card numbers live in fields the page may not mark as secret).
+  const filled = (field) => field.tagName !== 'SELECT' && String(field.value || '').length > 0;
   function describe(element) {
     if (!element) return 'the page';
     if (element === document.body) return 'body';
     if (element === document.documentElement) return 'html';
-    const name = element.getAttribute('aria-label') || clip(element.innerText, 50)
-      || element.getAttribute('placeholder') || (element.tagName === 'INPUT' ? element.value : '')
-      || element.getAttribute('title') || element.getAttribute('alt') || '';
-    const label = clip(name, 50);
-    return label ? `${role(element)} "${label}"` : role(element);
+    const field = element.matches('input, textarea, select');
+    const label = field && element.labels && element.labels[0] ? element.labels[0].innerText : '';
+    const name = element.getAttribute('aria-label') || (field ? label : clip(element.innerText, 50))
+      || element.getAttribute('placeholder') || element.getAttribute('title')
+      || element.getAttribute('alt') || '';
+    const shown = clip(name, 50);
+    const described = shown ? `${role(element)} "${shown}"` : role(element);
+    return field && filled(element) ? `${described} (filled)` : described;
   }
 
   // Colours.
@@ -181,11 +187,11 @@
     // Text against what is behind it.
     const isField = element.matches('input, textarea, select');
     const hasText = isField
-      ? Boolean((element.value || '').trim() || (element.getAttribute('placeholder') || '').trim())
+      ? filled(element) || Boolean((element.getAttribute('placeholder') || '').trim())
       : directText(element);
     if (hasText && (!s.textShadow || s.textShadow === 'none') && parseFloat(s.webkitTextStrokeWidth || '0') === 0) {
-      const fieldText = isField && !(element.value || '').trim();
-      const ink = parse(fieldText ? getComputedStyle(element, '::placeholder').color : s.color);
+      const placeholderOnly = isField && !filled(element);
+      const ink = parse(placeholderOnly ? getComputedStyle(element, '::placeholder').color : s.color);
       const behind = background(element);
       if (ink && behind) {
         const shown = over(ink, behind);

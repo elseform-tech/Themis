@@ -183,12 +183,33 @@ async fn run_scheme(
     Ok((report, nodes))
 }
 
+/// `text` with every URL's query and fragment cut off (they can carry tokens), and token-like
+/// words hidden unless Show secrets is on. Every page-supplied string goes through this.
+fn shown(text: &str, show_secrets: bool) -> String {
+    let text: String = text
+        .split_inclusive(char::is_whitespace)
+        .map(|word| match (word.contains("://"), word.find(['?', '#'])) {
+            (true, Some(end)) => {
+                let space = &word[word.trim_end().len()..];
+                format!("{}{space}", &word[..end])
+            }
+            _ => word.to_owned(),
+        })
+        .collect();
+    if show_secrets {
+        text
+    } else {
+        redact::redact_text(&text)
+    }
+}
+
 /// One scheme's report as lines; elements get the snapshot's refs (new ones when the snapshot
 /// had none for them).
 fn lines_of(
     report: Value,
     nodes: &[Option<i64>],
     refs: &mut RefMap,
+    show_secrets: bool,
 ) -> Result<SchemeLines, String> {
     let report: SchemeReport = serde_json::from_value(report)
         .map_err(|_| "the page's check returned something unreadable".to_owned())?;
@@ -203,7 +224,7 @@ fn lines_of(
         .chain(&report.dropped)
         .filter_map(Value::as_str)
         .take(LISTED)
-        .map(|line| cap(line, LINE_CHARS))
+        .map(|line| cap(&shown(line, show_secrets), LINE_CHARS))
         .collect();
     for kind in KINDS {
         let items: Vec<Item> = report
@@ -215,35 +236,30 @@ fn lines_of(
             .take(PER_KIND)
             .filter_map(|item| Item::deserialize(item).ok())
             .collect();
-        let shown = items.len();
+        let listed = items.len();
         for item in &items {
             let node = usize::try_from(item.el)
                 .ok()
                 .and_then(|index| nodes.get(index).copied().flatten());
-            let what = cap(&item.describe, 80);
+            let what = cap(&shown(&item.describe, show_secrets), 80);
+            let text = cap(&shown(&item.text, show_secrets), 140);
             let line = match node {
-                Some(node) => format!("{}: {what} [e{}]", cap(&item.text, 140), refs.assign(node)),
-                None => format!("{}: {what}", cap(&item.text, 140)),
+                Some(node) => format!("{text}: {what} [e{}]", refs.assign(node)),
+                None => format!("{text}: {what}"),
             };
             lines.elements.push(line);
         }
         let found = report.counts.get(kind).and_then(Value::as_u64).unwrap_or(0);
         lines.unlisted = lines
             .unlisted
-            .saturating_add(found.saturating_sub(shown as u64));
+            .saturating_add(found.saturating_sub(listed as u64));
     }
     Ok(lines)
 }
 
 /// Resources of the current page that failed to load, and its console errors.
 fn page_log(tab: &TabState, show_secrets: bool) -> Vec<String> {
-    let shown = |text: &str| {
-        if show_secrets {
-            text.to_owned()
-        } else {
-            redact::redact_text(text)
-        }
-    };
+    let safe = |text: &str| shown(text, show_secrets);
     let failed: Vec<String> = tab
         .requests
         .iter()
@@ -259,7 +275,7 @@ fn page_log(tab: &TabState, show_secrets: bool) -> Vec<String> {
             Some(format!(
                 "{} failed to load: {} ({why})",
                 request.kind.to_lowercase(),
-                shown(&short_url(&request.url))
+                safe(&short_url(&request.url))
             ))
         })
         .collect();
@@ -270,7 +286,7 @@ fn page_log(tab: &TabState, show_secrets: bool) -> Vec<String> {
         .filter(|entry| matches!(entry.level.as_str(), "error" | "exception" | "assert"))
         // The failed request is listed already.
         .filter(|entry| !entry.text.starts_with("Failed to load resource"))
-        .map(|entry| format!("console error: {}", cap(&shown(&entry.text), 200)))
+        .map(|entry| format!("console error: {}", cap(&safe(&entry.text), 200)))
         .collect();
     let mut log = Vec::new();
     for (lines, limit, what) in [
@@ -397,7 +413,7 @@ impl ChatBrowser {
         tab.forget_refs_of_old_page(document);
         let mut lines = Vec::new();
         for (report, nodes) in runs {
-            lines.push(lines_of(report, &nodes, &mut tab.refs)?);
+            lines.push(lines_of(report, &nodes, &mut tab.refs, show_secrets)?);
         }
         let dark = lines.pop().unwrap_or_default();
         let light = lines.pop().unwrap_or_default();
@@ -421,11 +437,11 @@ mod tests {
         let mut refs = RefMap::default();
         refs.assign(7);
         let item = |text: &str| json!({"contrast": [{"text": text, "describe": "button \"Add task\"", "el": 0}]});
-        let light = lines_of(report(item("invisible text")), &[Some(7)], &mut refs).unwrap();
+        let light = lines_of(report(item("invisible text")), &[Some(7)], &mut refs, false).unwrap();
         assert_eq!(light.elements, ["invisible text: button \"Add task\" [e1]"]);
-        let dark = lines_of(report(item("invisible text")), &[Some(9)], &mut refs).unwrap();
+        let dark = lines_of(report(item("invisible text")), &[Some(9)], &mut refs, false).unwrap();
         assert_eq!(dark.elements, ["invisible text: button \"Add task\" [e2]"]);
-        let same = lines_of(report(item("invisible text")), &[Some(7)], &mut refs).unwrap();
+        let same = lines_of(report(item("invisible text")), &[Some(7)], &mut refs, false).unwrap();
         let merged = merge(light, same, vec!["console error: boom".into()]);
         assert_eq!(merged["problems"], 2, "{merged}");
         assert_eq!(
@@ -461,6 +477,28 @@ mod tests {
     }
 
     #[test]
+    fn page_strings_lose_url_queries_and_hide_tokens_unless_secrets_are_shown() {
+        let line = "failed: http://a.test/x.css?token=abc#f and http://b.test/y.css#frag next";
+        assert_eq!(
+            shown(line, true),
+            "failed: http://a.test/x.css and http://b.test/y.css next"
+        );
+        let token = "textbox \"sk9f8e7d6c5b4a39281706f5e4d3c2b1a0zz\"";
+        assert!(!shown(token, false).contains("sk9f8e7d6c5b4a39281706f5e4d3c2b1a0zz"));
+        assert!(shown(token, true).contains("sk9f8e7d6c5b4a39281706f5e4d3c2b1a0zz"));
+        let mut refs = RefMap::default();
+        let report = json!({
+            "page": ["password=hunter2-secret-x on http://a.test/s.css?k=v"],
+            "items": {"contrast": [{"text": "api_key=plain-0454", "describe": "textbox", "el": -1}]},
+        });
+        let lines = lines_of(report, &[], &mut refs, false).unwrap();
+        let all = format!("{lines:?}");
+        for secret in ["hunter2-secret-x", "k=v", "plain-0454"] {
+            assert!(!all.contains(secret), "{secret} in {all}");
+        }
+    }
+
+    #[test]
     fn a_clean_page_reports_no_problems() {
         let clean = || SchemeLines {
             checked: 12,
@@ -493,12 +531,13 @@ mod tests {
                 "counts": {"contrast": count},
             });
             let nodes = vec![Some(1); 3];
-            let light = lines_of(report.clone(), &nodes, &mut refs).unwrap();
-            let dark = lines_of(report, &nodes, &mut refs).unwrap();
+            let light = lines_of(report.clone(), &nodes, &mut refs, false).unwrap();
+            let dark = lines_of(report, &nodes, &mut refs, false).unwrap();
             let merged = merge(light, dark, Vec::new());
             prop_assert!(merged.to_string().len() < 40_000);
-            let _ = lines_of(json!(text), &nodes, &mut refs);
-            let _ = lines_of(json!({"items": {"contrast": [text]}}), &nodes, &mut refs);
+            let _ = lines_of(json!(text), &nodes, &mut refs, false);
+            let _ = lines_of(json!({"items": {"contrast": [text]}}), &nodes, &mut refs, true);
+            let _ = shown(&text, false);
         }
     }
 }

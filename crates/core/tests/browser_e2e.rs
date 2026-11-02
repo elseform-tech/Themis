@@ -1439,3 +1439,85 @@ async fn the_looks_check_finds_what_broke_trailboard_and_nothing_on_a_clean_page
     );
     hub.close_chat("chat-looks").await;
 }
+
+/// Secrets on a page with problems: a filled password field and secret-looking text fields,
+/// all unreadable, and stylesheets whose URLs carry a token.
+const SECRET_FORM: &str = r#"<!doctype html><html><head><title>Secrets</title>
+<link rel="stylesheet" href="/sec/style.css?token=tok-stylesheet-0451">
+<link rel="stylesheet" href="/sec/gone.css?token=tok-missing-0452#frag-0453">
+</head><body>
+<input type="password" value="hunter2-looks-secret" class="hush">
+<input name="note" value="sk9f8e7d6c5b4a39281706f5e4d3c2b1a0zz" class="hush">
+<input name="api_key" value="plainish-key-value-0454" class="hush">
+</body></html>"#;
+
+const SECRET_CSS: &str =
+    "// a comment line\n.gone { color: red; }\n.hush { color: #ffffff; background: #ffffff; border: 1px solid #000000; }\n";
+
+#[tokio::test(flavor = "multi_thread")]
+async fn the_looks_check_never_shows_field_values_or_tokens_in_urls() {
+    let _browser = ONE_BROWSER.lock().await;
+    let data = tempfile::tempdir().unwrap();
+    let Some(hub) = hub(data.path()) else { return };
+    let site = MockServer::builder().start().await;
+    Mock::given(path("/sec/"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_raw(SECRET_FORM, "text/html; charset=utf-8"),
+        )
+        .mount(&site)
+        .await;
+    Mock::given(path("/sec/style.css"))
+        .respond_with(ResponseTemplate::new(200).set_body_raw(SECRET_CSS, "text/css"))
+        .mount(&site)
+        .await;
+    Mock::given(path("/sec/gone.css"))
+        .respond_with(ResponseTemplate::new(404))
+        .mount(&site)
+        .await;
+    let project = tempfile::tempdir().unwrap();
+    let chat = hub.chat("chat-looks-secrets", project.path());
+    let tools = themis_core::browser::tools::browser_tools(
+        Arc::new(FnHook::new(|_: &ToolAction| Approval::AllowOnce)),
+        themis_core::browser::tools::BrowserScope {
+            permissions: themis_core::tools::site_permissions::SitePermissions::new(
+                Default::default(),
+                None,
+            ),
+            chat: Arc::clone(&chat),
+            cancel: None,
+            media: None,
+        },
+    );
+    let tool = |name: &str| {
+        tools
+            .iter()
+            .find(|tool| tool.name() == name)
+            .unwrap_or_else(|| panic!("{name}"))
+    };
+    tool("browser_open")
+        .execute(json!({"url": format!("{}/sec/", site.uri())}))
+        .await
+        .unwrap();
+    let looks = tool("browser_check_looks")
+        .execute(json!({}))
+        .await
+        .unwrap();
+    let text = looks.to_string();
+    for secret in [
+        "hunter2",
+        "sk9f8e7d6c5b4a39281706f5e4d3c2b1a0zz",
+        "plainish-key-value-0454",
+        "tok-stylesheet-0451",
+        "tok-missing-0452",
+        "frag-0453",
+    ] {
+        assert!(!text.contains(secret), "{secret} leaked: {looks:#}");
+    }
+    // The problems are still reported.
+    assert!(text.matches("invisible text").count() >= 3, "{looks:#}");
+    assert!(
+        text.contains("style.css line 1") && text.contains("gone.css (HTTP 404)"),
+        "{looks:#}"
+    );
+    hub.close_chat("chat-looks-secrets").await;
+}

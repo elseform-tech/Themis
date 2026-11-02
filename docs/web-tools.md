@@ -161,7 +161,9 @@ Problems found in both schemes are listed once under `both`; the rest under `lig
 or `dark_only`, after the whole-page ones under `page`. Elements carry refs like the
 snapshot. The result is bounded: each list shows at most 15 lines (`not_shown` counts
 the rest), the page script looks at the first 5,000 elements and text nodes and at most
-20 stylesheets of 300 KB, and it is untrusted, like every page result. Colours over
+20 stylesheets of 300 KB, and it is untrusted, like every page result. Field values never
+leave the page (a field is named by its label and marked `(filled)`), URLs lose their query
+and fragment, and token-like words are hidden unless Show secrets is on. Colours over
 background images and gradients, and text with a shadow or outline, are not judged.
 The goal check sees the result like any other tool output.
 
