@@ -132,7 +132,7 @@ export function MemorySettingsSection({ focusKey, onSaved }: { focusKey?: string
         <span className="themis-settings-name">Remember things across chats<small>The agent saves what it learns about you and your projects, and reads it back in new chats. Nothing here is committed to the project.</small></span>
         <Switch checked={settings.enabled} onChange={event => void toggle(event.target.checked)} />
       </label>
-      {settings.enabled && <div className="themis-settings-control">
+      {settings.enabled && <div className="themis-settings-control themis-memory-showing">
         <span>Showing</span>
         <span className="themis-memory-scopes" role="group" aria-label="Which memories">
           <button type="button" aria-pressed={scope === "project"} onClick={() => pick("project")}>{projectLabel}</button>
