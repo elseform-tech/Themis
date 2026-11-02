@@ -193,10 +193,7 @@
 
   // ─── GOALS ───────────────────────────────────────────────────────────────────────────
   "goal": {
-    // "check_model": "glm-5.3",             // checks each goal turn; absent: the chat's model
-    // How often a running turn's new work updates the goal's checklist, in seconds, 0 to 3600.
-    // 0 updates it only when the turn ends. Each update is one request on the check's model.
-    "checklist_refresh_seconds": 90
+    // "check_model": "glm-5.3"              // checks each goal turn; absent: the chat's model
   },
   // Plugin hooks. A project file may only lower max_wakes, and can't set prompt_hook_calls.
   "hooks": {

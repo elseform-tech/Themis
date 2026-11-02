@@ -95,8 +95,30 @@ fn reply(text: &str) -> ResponseTemplate {
     }))
 }
 
-fn is_checklist(request: &Request) -> bool {
-    String::from_utf8_lossy(&request.body).contains("what a goal asks for")
+/// The agent's turn when the to-do note it opened with lists requests of the person's still
+/// open: it finishes them all with `todo_write`, as a real agent finishing the work would.
+fn finishes_requests(request: &Request) -> Option<ResponseTemplate> {
+    let body: Value = request.body_json().ok()?;
+    let messages = body["messages"].as_array()?;
+    if messages.last()?["role"] == "tool" {
+        return None;
+    }
+    let note = messages
+        .iter()
+        .rev()
+        .find(|message| message["role"] == "user")?["content"]
+        .as_str()?;
+    let open: Vec<Value> = note
+        .lines()
+        .filter(|line| line.starts_with("- t") && line.contains("[pending; the person asked]"))
+        .filter_map(|line| line[2..].split(' ').next())
+        .map(|id| json!({"id": id, "title": "Done as asked", "status": "completed"}))
+        .collect();
+    (!open.is_empty()).then(|| {
+        ResponseTemplate::new(200).set_body_json(json!({"choices":[{"message":{"role":"assistant","content":null,
+            "tool_calls":[{"id":"todo","type":"function","function":{"name":"todo_write","arguments":json!({"todos": open}).to_string()}}]},
+            "finish_reason":"tool_calls"}]}))
+    })
 }
 
 fn is_check(request: &Request) -> bool {
@@ -120,6 +142,8 @@ async fn cli_starts_a_goal_queues_a_message_and_reads_the_goal_back() {
         .respond_with(move |request: &Request| {
             if is_check(request) {
                 reply(r#"{"verdict":"reached","reason":"The README has a title.","progress":"title present"}"#)
+            } else if let Some(finish) = finishes_requests(request) {
+                finish
             } else {
                 held.wait();
                 reply("Added a title.")
@@ -208,7 +232,7 @@ async fn cli_starts_a_goal_queues_a_message_and_reads_the_goal_back() {
     let requests = llm.received_requests().await.unwrap();
     let turns: Vec<Value> = requests
         .iter()
-        .filter(|request| !is_check(request) && !is_checklist(request))
+        .filter(|request| !is_check(request))
         .map(|request| request.body_json().unwrap())
         .collect();
     assert!(turns
@@ -381,7 +405,7 @@ async fn the_goal_check_uses_goal_check_model_and_turns_use_the_chats_model() {
     let checks: Vec<String> = requests.iter().filter(|r| is_check(r)).map(model).collect();
     let turns: Vec<String> = requests
         .iter()
-        .filter(|r| !is_check(r) && !is_checklist(r))
+        .filter(|r| !is_check(r))
         .map(model)
         .collect();
     assert!(
@@ -471,8 +495,9 @@ async fn the_goal_check_sees_what_subagents_were_given_and_reported() {
     task.abort();
 }
 
-/// Through the CLI: a request steered in while a goal runs is kept on the goal
-/// (`get_goal` shows it under `added`) and shown to the goal check.
+/// Through the CLI: a request steered in while a goal runs lands on the to-do list in the
+/// person's words (`get_todo` shows it), holds the goal until it is finished, and is shown to
+/// the goal check.
 #[tokio::test(flavor = "multi_thread")]
 async fn cli_a_steer_during_a_goal_is_added_to_it() {
     let llm = MockServer::builder().start().await;
@@ -482,6 +507,8 @@ async fn cli_a_steer_during_a_goal_is_added_to_it() {
         .respond_with(move |request: &Request| {
             if is_check(request) {
                 reply(r#"{"verdict":"reached","reason":"Title and license line are there.","progress":""}"#)
+            } else if let Some(finish) = finishes_requests(request) {
+                finish
             } else {
                 held.wait();
                 reply("Added a title and a license line.")
@@ -525,8 +552,12 @@ async fn cli_a_steer_during_a_goal_is_added_to_it() {
             "steer_queued_message",
             json!({"threadId": thread_id, "messageId": queued["id"]}),
         );
-        let goal = call(&data_dir, "get_goal", json!({"threadId": thread_id}));
-        assert_eq!(goal["added"], json!(["also add a license line"]), "{goal}");
+        let list = call(&data_dir, "get_todo", json!({"threadId": thread_id}));
+        assert_eq!(
+            list["items"][0]["details"], "also add a license line",
+            "{list}"
+        );
+        assert_eq!(list["items"][0]["source"], "person", "{list}");
         gate.open();
         let deadline = std::time::Instant::now() + Duration::from_secs(60);
         while call(&data_dir, "get_goal", json!({"threadId": thread_id}))["status"] != "reached" {
@@ -543,7 +574,10 @@ async fn cli_a_steer_during_a_goal_is_added_to_it() {
         .map(|request| request.body_json::<Value>().unwrap())
         .unwrap();
     let input = check["messages"][1]["content"].as_str().unwrap();
-    assert!(input.contains("1. also add a license line"), "{input}");
+    assert!(
+        input.contains("- t1 [pending; the person asked] also add a license line"),
+        "{input}"
+    );
     task.abort();
     settle(&state, &thread.id).await;
 }
@@ -559,6 +593,8 @@ async fn cli_a_message_that_finishes_the_goal_is_not_repeated() {
         .respond_with(move |request: &Request| {
             if is_check(request) {
                 reply(r#"{"verdict":"reached","reason":"The title is there.","told_user":true}"#)
+            } else if let Some(finish) = finishes_requests(request) {
+                finish
             } else {
                 held.wait();
                 reply("Added the title; the goal is done.")
@@ -610,14 +646,14 @@ async fn cli_a_message_that_finishes_the_goal_is_not_repeated() {
     let requests = llm.received_requests().await.unwrap();
     let mut agent: Vec<Value> = requests
         .iter()
-        .filter(|request| !is_check(request) && !is_checklist(request))
+        .filter(|request| !is_check(request))
         .map(|request| request.body_json::<Value>().unwrap())
         .collect();
     agent.dedup();
     assert_eq!(
         agent.len(),
-        2,
-        "the /goal run and the message, nothing after"
+        3,
+        "the /goal run and the message's run (which finishes the request on its list), nothing after"
     );
     assert!(!agent
         .iter()

@@ -92,13 +92,10 @@
 .themis-thread-status svg { width: 18px; height: 16px; fill: currentColor; overflow: visible; }
 .themis-thread-status circle { opacity: .16; }
 .themis-thread-status circle.is-lit { opacity: 1; }
-/* Working: the eight edge dots light one after another, so the light walks round the square. */
-.themis-thread-status--working { color: var(--themis-gradient-2); }
-.themis-thread-status--working circle { opacity: .18; animation: themis-status-walk 1.2s linear infinite; }
+/* Working is the shared DotSpinner (components/DotSpinner.css): the light walks round the square. */
 .themis-thread-status--needs-approval { color: var(--themis-accent); }
 .themis-thread-status--needs-approval circle.is-lit { animation: themis-status-breathe 1.8s ease-in-out infinite; }
 .themis-thread-status--failed { color: var(--themis-danger); }
-@keyframes themis-status-walk { 0% { opacity: 1; } 60%, 100% { opacity: .18; } }
 @keyframes themis-status-breathe { 50% { opacity: .45; } }
 /* A run that finished while another chat was on screen keeps a bright, bold title until opened. */
 .themis-thread-row.is-unseen { color: var(--themis-text); font-weight: 600; }
@@ -128,9 +125,6 @@
 .themis-help kbd { display: inline-grid; place-items: center; min-width: 24px; height: 24px; padding: 0 6px; border-radius: 6px; background: var(--themis-raised); color: var(--themis-text-2); font: inherit; font-size: .75rem; }
 @media (prefers-reduced-motion: reduce) {
   .themis-thread-status *, .themis-wordmark { animation: none !important; }
-  /* Still working sign: the square dimly lit, its first dot bright. */
-  .themis-thread-status--working circle { opacity: .45; }
-  .themis-thread-status--working circle:first-child { opacity: 1; }
 }
 
 /* Project switcher: the dock shows only the chosen project's chats. */

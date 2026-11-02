@@ -54,10 +54,6 @@ fn is_check(body: &Value) -> bool {
         .is_some_and(|text| text.contains(CHECK_MARKER))
 }
 
-fn is_checklist(body: &Value) -> bool {
-    body.to_string().contains("what a goal asks for")
-}
-
 fn tool_results(body: &Value) -> Vec<Value> {
     body["messages"]
         .as_array()
@@ -81,7 +77,7 @@ async fn requests_for(provider: &MockServer, model: &str) -> (Vec<Value>, Vec<Va
         .into_iter()
         .filter(|request| request.url.path() == "/v1/chat/completions")
         .filter_map(|request| request.body_json::<Value>().ok())
-        .filter(|body| body["model"] == model && !is_checklist(body))
+        .filter(|body| body["model"] == model)
         .filter(|body| {
             !body
                 .to_string()
@@ -143,11 +139,6 @@ async fn screenshots_reach_only_a_model_that_reads_images() {
             if is_check(&body) {
                 return ResponseTemplate::new(200).set_body_json(json!({
                     "choices": [{"message": {"role": "assistant", "content": r#"{"verdict":"reached","reason":"The heading is red.","progress":"red"}"#}, "finish_reason": "stop"}]
-                }));
-            }
-            if is_checklist(&body) {
-                return ResponseTemplate::new(200).set_body_json(json!({
-                    "choices": [{"message": {"role": "assistant", "content": r#"{"requirements":[{"what":"name the heading's colour","proven":false,"how":""}]}"#}, "finish_reason": "stop"}]
                 }));
             }
             match tool_results(&body).len() {

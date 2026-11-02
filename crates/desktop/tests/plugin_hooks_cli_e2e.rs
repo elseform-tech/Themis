@@ -1971,8 +1971,8 @@ case "$input" in *'Refuse this'*) echo 'tests are not green' >&2; exit 2 ;; esac
     });
     let plan = |status_read: &str, status_write: &str| {
         json!({"todos": [
-            {"content": "Read the code", "status": status_read},
-            {"content": "Refuse this", "status": status_write},
+            {"title": "Read the code", "status": status_read},
+            {"title": "Refuse this", "status": status_write},
         ]})
     };
     let (first, second, third) = (

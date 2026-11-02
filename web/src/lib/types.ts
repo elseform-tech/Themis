@@ -337,6 +337,8 @@ export type ThreadEvent =
   | { kind: 'user_message'; text: string; attachments?: string[] }
   | { kind: 'queue_changed'; queue: QueuedMessage[] }
   | { kind: 'goal_changed'; goal: Goal | null }
+  /** The main agent's to-do list changed. */
+  | { kind: 'todo_changed'; todo: TodoList }
   | { kind: 'goal_note'; outcome: GoalNoteKind; reason: string }
   /** The agent asked the user a question, or updated one still open (same id). */
   | { kind: 'question_asked'; question: Question }
@@ -448,24 +450,43 @@ export interface Goal {
   stalls: number;
   progress?: string;
   failures: number;
-  /** What the goal asks for and what is proven, from the last decided check. */
-  proof?: GoalRequirement[];
+  /** How the work must be done the whole way; read-only, from the goal check. */
+  rules?: GoalRule[];
   /** The goal check is reading the turn that just ended. */
   checking?: boolean;
   /** Unix milliseconds when the next turn is due, while the goal waits to retry. */
   retry_at?: number;
 }
 
-export interface GoalRequirement {
+/** A rule the goal's work keeps to the whole way; never ticked off. */
+export interface GoalRule {
   what: string;
-  /** Something to finish (the default), or how the work must be done the whole way. */
-  kind?: "task" | "rule";
-  proven: boolean;
-  /** A rule's step that hasn't happened yet and holds the goal open. */
-  pending?: boolean;
   /** A rule that wasn't followed. */
   broken?: boolean;
+  /** A step the rule asks for that hasn't happened yet and holds the goal open. */
+  pending?: boolean;
   how?: string;
+}
+
+export type TodoStatus = "pending" | "in_progress" | "completed";
+
+/** One item of the main agent's own to-do list for a chat. */
+export interface TodoItem {
+  id: string;
+  title: string;
+  details?: string;
+  status: TodoStatus;
+  outcome?: string;
+  /** Who added it when the agent didn't: a request the person sent during a goal, or the goal check. */
+  source?: "person" | "check";
+  /** The goal check's short reason for reopening it. */
+  reopened?: string;
+}
+
+/** The main agent's to-do list for a chat (normal chats and goals). */
+export interface TodoList {
+  revision: number;
+  items: TodoItem[];
 }
 
 export interface ThreadEventEnvelope {

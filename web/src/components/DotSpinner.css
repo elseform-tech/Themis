@@ -1,0 +1,9 @@
+/* Working: the eight edge dots of the 3×3 grid light one after another, about 1.2 s a lap. */
+.themis-dot-spinner { color: var(--themis-gradient-2); fill: currentColor; overflow: visible; }
+.themis-dot-spinner .themis-dot-spinner-dot { opacity: .18; animation: themis-dot-spinner-walk 1.2s linear infinite; }
+@keyframes themis-dot-spinner-walk { 0% { opacity: 1; } 60%, 100% { opacity: .18; } }
+@media (prefers-reduced-motion: reduce) {
+  /* Still: the square dimly lit, its first dot bright. */
+  .themis-dot-spinner .themis-dot-spinner-dot { animation: none; opacity: .45; }
+  .themis-dot-spinner .themis-dot-spinner-dot:first-child { opacity: 1; }
+}

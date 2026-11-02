@@ -3,6 +3,7 @@ import { act, cleanup, fireEvent, render, renderHook, screen } from "@testing-li
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { initialState } from "../state/reducer";
 import type { ChatMessage } from "../state/reducer";
+import type { TodoItem, TodoStatus } from "../lib/types";
 import { diffTotals, OverviewBox, useOverview } from "./OverviewBox";
 
 const dispatch = vi.fn();
@@ -121,13 +122,73 @@ describe("chat overview box", () => {
   });
 });
 
-describe("the goal in the overview box", () => {
+describe("the to-do list in the overview box", () => {
   beforeEach(() => { dispatch.mockClear(); });
-  const overview = { changes: null, tasks: null, subagents: null, browser: null, media: [], visible: true, collapsed: false, setCollapsed: vi.fn() };
-  it("counts the checklist and opens the Goal tab", () => {
+  const overview = { changes: null, tasks: null, subagents: null, todo: null, browser: null, media: [], visible: true, collapsed: false, setCollapsed: vi.fn() };
+  const list = (statuses: TodoStatus[]): TodoItem[] => statuses.map((status, index) => ({ id: `i${index}`, title: `Item ${index + 1}`, status }));
+  const rows = () => [...document.querySelectorAll(".themis-overview-todo .themis-todo-item")].map(row => row.textContent);
+  const folds = () => [...document.querySelectorAll(".themis-overview-todo .themis-todo-more")].map(row => row.textContent);
+
+  it("comes from the chat's list, hidden while the list is empty", async () => {
+    appState = { ...initialState, todos: { t1: { revision: 1, items: list(["completed", "in_progress"]) } } };
+    const { result } = renderHook(() => useOverview("t1", []));
+    await act(async () => {});
+    expect(result.current.todo?.items).toHaveLength(2);
+    expect(result.current.visible).toBe(true);
+    appState = { ...initialState, todos: { t1: { revision: 2, items: [] } } };
+    const { browserState } = await import("../lib/browser");
+    vi.mocked(browserState).mockResolvedValueOnce({ open: false, url: "about:blank" } as never);
+    const empty = renderHook(() => useOverview("t1", []));
+    await act(async () => {});
+    expect(empty.result.current.todo).toBeNull();
+    expect(empty.result.current.visible).toBe(false);
+  });
+
+  it("shows the current item with two before it, folds earlier finished items and what comes after", () => {
     appState = initialState;
-    render(<OverviewBox threadId="t1" overview={{ ...overview, goal: { complete: 7, total: 8 } }} onOpenMedia={vi.fn()} />);
-    fireEvent.click(screen.getByRole("button", { name: "Goal: 7 of 8 complete" }));
-    expect(dispatch).toHaveBeenLastCalledWith({ type: "ui/diff-panel", open: true, tab: "goal" });
+    const items = list(["completed", "completed", "completed", "completed", "in_progress", "pending", "pending", "pending", "pending"]);
+    render(<OverviewBox threadId="t1" overview={{ ...overview, todo: { items, broken: false } }} onOpenMedia={vi.fn()} />);
+    expect(document.querySelector(".themis-overview-todo-head")).toHaveTextContent("To-do4 of 9");
+    expect(folds()).toEqual(["2 done", "2 more"]);
+    expect(rows().map(text => text?.replace(/^(Done|In progress): /, ""))).toEqual(["Item 3", "Item 4", "Item 5", "Item 6", "Item 7"]);
+    // Only the current item spins; finished ones are crossed off with no tick.
+    const shown = [...document.querySelectorAll(".themis-overview-todo .themis-todo-item")];
+    expect(shown.map(row => row.querySelector(".themis-dot-spinner") !== null)).toEqual([false, false, true, false, false]);
+    expect(shown[0]).toHaveClass("is-done");
+    expect(shown[0]!.querySelector("svg")).toBeNull();
+    // The whole section opens the To-do tab; it names the current item for a screen reader.
+    fireEvent.click(screen.getByRole("button", { name: "To-do: 4 of 9 done, now Item 5. Opens the To-do tab" }));
+    expect(dispatch).toHaveBeenLastCalledWith({ type: "ui/diff-panel", open: true, tab: "todo" });
+  });
+
+  it("starts at the first pending item when none is in progress, and needs no folds for a short list", () => {
+    appState = initialState;
+    render(<OverviewBox threadId="t1" overview={{ ...overview, todo: { items: list(["completed", "pending", "pending"]), broken: false } }} onOpenMedia={vi.fn()} />);
+    expect(folds()).toEqual([]);
+    expect(rows()).toHaveLength(3);
+    expect(document.querySelector(".themis-overview-todo .themis-dot-spinner")).toBeNull();
+    cleanup();
+    // All done: the last items stay in view.
+    render(<OverviewBox threadId="t1" overview={{ ...overview, todo: { items: list(Array(8).fill("completed")), broken: false } }} onOpenMedia={vi.fn()} />);
+    expect(folds()).toEqual(["6 done"]);
+    expect(rows()).toHaveLength(2);
+  });
+
+  it("never shows more than five items", () => {
+    appState = initialState;
+    render(<OverviewBox threadId="t1" overview={{ ...overview, todo: { items: list(Array(12).fill("pending")), broken: false } }} onOpenMedia={vi.fn()} />);
+    expect(rows()).toHaveLength(5);
+    expect(folds()).toEqual(["7 more"]);
+  });
+
+  it("folds to one icon row that spins while an item is in progress, with a dot for a broken rule", () => {
+    appState = initialState;
+    render(<OverviewBox threadId="t1" overview={{ ...overview, collapsed: true, todo: { items: list(["completed", "in_progress"]), broken: true } }} onOpenMedia={vi.fn()} />);
+    expect(document.querySelector(".themis-overview-todo")).toBeNull();
+    const row = screen.getByRole("button", { name: "To-do: 1 of 2 done, a rule wasn't followed" });
+    expect(row.querySelector(".themis-dot-spinner")).not.toBeNull();
+    expect(row.querySelector(".themis-overview-dot.is-attention")).not.toBeNull();
+    fireEvent.click(row);
+    expect(dispatch).toHaveBeenLastCalledWith({ type: "ui/diff-panel", open: true, tab: "todo" });
   });
 });

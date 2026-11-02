@@ -897,11 +897,13 @@ impl SubagentKit {
         web.retain(|tool| agent.web.tools.iter().any(|wanted| wanted == tool.name()));
         let mut named: Vec<Box<dyn ToolT>> = Vec::new();
         if names(agent, "todo_write") {
-            named.push(Box::new(super::subagent_tools::TodoTool {
-                agent: Arc::clone(agent),
-                report: self.reporter(),
+            named.push(Box::new(super::todo::TodoTool {
+                owner: super::todo::TodoOwner::Subagent {
+                    agent: Arc::clone(agent),
+                    report: self.reporter(),
+                    list: std::sync::Mutex::default(),
+                },
                 denied: self.denies("todo_write"),
-                plan: std::sync::Mutex::default(),
             }));
         }
         if names(agent, "ask_user") {
