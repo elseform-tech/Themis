@@ -1314,7 +1314,7 @@ async fn cli_checkpoint_keeps_the_goal_and_budget_events_reach_clients() {
     std::fs::create_dir(project.path().join(".themis")).unwrap();
     std::fs::write(
         project.path().join(".themis/config.jsonc"),
-        r#"{"context_token_budget":25000,"recent_messages":2,"total_turns":12}"#,
+        r#"{"context_token_budget":28000,"recent_messages":2,"total_turns":12}"#,
     )
     .unwrap();
     let provider = MockServer::builder().start().await;
