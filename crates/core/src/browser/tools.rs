@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
 use super::media::{media_name, MediaSink, Recorder, RECORD_DEFAULT, RECORD_MAX};
-use super::session::{site_of, ActionReport, ChatBrowser};
+use super::session::{site_of, ActionReport, ChatBrowser, DragEnd};
 use crate::tools::site_permissions::{Permission, SitePermissions};
 use crate::tools::web::checked_url;
 use crate::tools::{
@@ -71,6 +71,7 @@ pub fn browser_tools(approvals: Arc<dyn ApprovalHook>, scope: BrowserScope) -> V
         Box::new(BrowserPress { base: base.clone() }),
         Box::new(BrowserScroll { base: base.clone() }),
         Box::new(BrowserMove { base: base.clone() }),
+        Box::new(BrowserDrag { base: base.clone() }),
         Box::new(BrowserTabs { base: base.clone() }),
         Box::new(BrowserCheckLooks { base: base.clone() }),
     ];
@@ -280,6 +281,11 @@ pub struct SnapshotArgs {
         description = "Only this element's part of the page (a ref like e12); omit for the whole page"
     )]
     pub reference: String,
+    #[serde(default)]
+    #[input(
+        description = "Also return the page's structure: its containers with positions and a selector for each, and whether each canvas drew anything. Use this rather than guessing where something is."
+    )]
+    pub layout: bool,
 }
 
 #[tool(
@@ -304,7 +310,7 @@ impl ToolRuntime for BrowserSnapshot {
                 None,
                 "browser_snapshot".to_owned(),
                 "reading the page".to_owned(),
-                |chat| async move { chat.snapshot(reference.as_deref()).await },
+                |chat| async move { chat.snapshot(reference.as_deref(), args.layout).await },
             )
             .await
     }
@@ -357,7 +363,7 @@ impl ToolRuntime for BrowserCheckLooks {
 pub struct ClickArgs {
     #[serde(default, alias = "ref")]
     #[input(
-        description = "The element's ref from the latest snapshot, like e14; omit when clicking a point"
+        description = "The element: a ref from the latest snapshot like e14, a CSS selector, or text=Some text; omit when clicking a point"
     )]
     pub reference: String,
     #[serde(default)]
@@ -556,7 +562,7 @@ pub struct PressArgs {
 
 #[tool(
     name = "browser_press",
-    description = "Press a key in the focused element of the current page (Enter, Escape, Tab, arrows, letters, or shortcuts like Control+a), or hold it with hold_ms. Returns a fresh snapshot.",
+    description = "Press a key in the focused element of the current page (Enter, Escape, Tab, arrows, letters, or shortcuts like Control+a), or hold it with hold_ms. Returns a fresh snapshot. Also mouseDown and mouseUp, to hold the mouse button: browser_move there, mouseDown, browser_move across, mouseUp.",
     input = PressArgs,
 )]
 struct BrowserPress {
@@ -653,7 +659,7 @@ pub struct MoveArgs {
 
 #[tool(
     name = "browser_move",
-    description = "Move the mouse without clicking: x and y go to a point of the visible page, as for a hover menu; dx and dy move by a distance from where the mouse is, to aim in a game, where the view turns with the distance moved and a page holding the pointer lock has no edge. A snapshot cannot show what a canvas draws: read where things are with browser_devtools, then act here and with browser_click, since only real input tests the page.",
+    description = "Move the mouse without clicking; `under_mouse` in the result says what it is over. x and y go to a point of the visible page, as for a hover menu; dx and dy move by a distance from where the mouse is, to aim in a game, where the view turns with the distance moved and a page holding the pointer lock has no edge. A snapshot cannot show what a canvas draws: read where things are with browser_devtools, then act here and with browser_click, since only real input tests the page.",
     input = MoveArgs,
 )]
 struct BrowserMove {
@@ -694,6 +700,98 @@ impl ToolRuntime for BrowserMove {
                         chat.move_point(first, second).await
                     }
                 },
+            )
+            .await
+    }
+}
+
+/// Arguments for `browser_drag`.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, ToolInput)]
+pub struct DragArgs {
+    #[serde(default, alias = "from_ref")]
+    #[input(
+        description = "Where to press: a ref from the latest snapshot like e14, a CSS selector like .card, or text=Some text; or use from_x and from_y"
+    )]
+    pub from_reference: String,
+    #[serde(default)]
+    #[input(
+        description = "Where to press: CSS pixels from the left of the visible page; goes with from_y"
+    )]
+    pub from_x: Option<f64>,
+    #[serde(default)]
+    #[input(
+        description = "Where to press: CSS pixels from the top of the visible page; goes with from_x"
+    )]
+    pub from_y: Option<f64>,
+    #[serde(default, alias = "to_ref")]
+    #[input(
+        description = "Where to let go: a ref, a CSS selector like .column, or text=Some text; or use to_x and to_y"
+    )]
+    pub to_reference: String,
+    #[serde(default)]
+    #[input(
+        description = "Where to let go: CSS pixels from the left of the visible page; goes with to_y"
+    )]
+    pub to_x: Option<f64>,
+    #[serde(default)]
+    #[input(
+        description = "Where to let go: CSS pixels from the top of the visible page; goes with to_x"
+    )]
+    pub to_y: Option<f64>,
+}
+
+/// One end of a drag from what a model gave for it.
+fn drag_end(
+    which: &str,
+    reference: &str,
+    x: Option<f64>,
+    y: Option<f64>,
+) -> Result<DragEnd, ToolCallError> {
+    let reference = model_reference(reference);
+    match (x, y) {
+        // Models fill every field: a zero point beside a ref means no point.
+        (Some(x), Some(y)) if x == 0.0 && y == 0.0 && !reference.is_empty() => {
+            Ok(DragEnd::Element(reference))
+        }
+        (None, None) if !reference.is_empty() => Ok(DragEnd::Element(reference)),
+        (Some(x), Some(y)) if reference.is_empty() => Ok(DragEnd::Point(x, y)),
+        (Some(_), Some(_)) => Err(tool_error(format!(
+            "browser_drag: give {which} as a ref or a point, not both"
+        ))),
+        _ => Err(tool_error(format!(
+            "browser_drag: give {which} as a ref, or both its x and y"
+        ))),
+    }
+}
+
+#[tool(
+    name = "browser_drag",
+    description = "Press the mouse at one place, move to another and let go, as a person drags: a card between columns, a slider, a shape on a canvas. Each end is a ref from the latest snapshot, a CSS selector, text=Some text, or a point of the visible page. It is real input, for pages using native drag and drop and for pages listening to the mouse. The result says what was pressed on, whether anything was dragged, and where it let go.",
+    input = DragArgs,
+)]
+struct BrowserDrag {
+    base: Base,
+}
+
+#[async_trait]
+impl ToolRuntime for BrowserDrag {
+    async fn execute(&self, args: Value) -> Result<Value, ToolCallError> {
+        let args: DragArgs = parse_tool_args("browser_drag", args)?;
+        let from = drag_end("the start", &args.from_reference, args.from_x, args.from_y)?;
+        let to = drag_end("the end", &args.to_reference, args.to_x, args.to_y)?;
+        let name = |end: &DragEnd| match end {
+            DragEnd::Element(reference) => reference.clone(),
+            DragEnd::Point(x, y) => format!("({}, {})", x.round(), y.round()),
+        };
+        let label = format!("from {} to {}", name(&from), name(&to));
+        self.base
+            .act(
+                "browser_drag",
+                RiskLevel::Network,
+                None,
+                format!("browser_drag {label}"),
+                format!("dragging {label}"),
+                |chat| async move { chat.drag(&from, &to).await },
             )
             .await
     }
@@ -955,6 +1053,7 @@ mod tests {
             "browser_press" => parse_tool_args::<PressArgs>(tool, args).map(|_| ()),
             "browser_scroll" => parse_tool_args::<ScrollArgs>(tool, args).map(|_| ()),
             "browser_move" => parse_tool_args::<MoveArgs>(tool, args).map(|_| ()),
+            "browser_drag" => parse_tool_args::<DragArgs>(tool, args).map(|_| ()),
             "browser_tabs" => parse_tool_args::<TabsArgs>(tool, args).map(|_| ()),
             "browser_screenshot" => parse_tool_args::<ScreenshotArgs>(tool, args).map(|_| ()),
             "browser_record" => parse_tool_args::<RecordArgs>(tool, args).map(|_| ()),

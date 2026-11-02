@@ -210,7 +210,7 @@ async fn the_agent_fills_a_form_reads_notes_and_navigates_in_a_real_browser() {
         .execute(json!({"ref": email, "text": "grace@example.com", "clear": true, "submit": true}))
         .await
         .unwrap();
-    let state = chat.snapshot(None).await.unwrap();
+    let state = chat.snapshot(None, false).await.unwrap();
     assert!(
         state.snapshot.contains("Welcome grace@example.com"),
         "{}",
@@ -270,7 +270,7 @@ async fn the_agent_fills_a_form_reads_notes_and_navigates_in_a_real_browser() {
     // The browser renders at Retina scale, but the model gets CSS pixels.
     let png_width = u32::from_be_bytes(png[16..20].try_into().unwrap());
     assert_eq!(u64::from(png_width), shot["width"].as_u64().unwrap());
-    let state = chat.snapshot(None).await.unwrap();
+    let state = chat.snapshot(None, false).await.unwrap();
     let heading_button = ref_of(&state.snapshot, "\"Create account\"");
     let part = tool("browser_screenshot")
         .execute(json!({"ref": heading_button}))
@@ -411,10 +411,13 @@ async fn the_workspace_stream_sends_frames_and_the_person_and_agent_act_together
     .unwrap();
     // The person's input never takes the browser from the agent.
     assert_eq!(chat.state().await.controller, "idle");
-    tokio::time::timeout(std::time::Duration::from_secs(5), chat.snapshot(None))
-        .await
-        .expect("the agent acts right after the person")
-        .unwrap();
+    tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        chat.snapshot(None, false),
+    )
+    .await
+    .expect("the agent acts right after the person")
+    .unwrap();
     let devtools = chat.devtools_url().await.unwrap();
     assert!(devtools.starts_with("http://127.0.0.1:"), "{devtools}");
     chat.stop_screencast().await;
@@ -433,7 +436,7 @@ async fn the_speaker_starts_off_and_turns_on_for_current_and_new_pages() {
         let chat = Arc::clone(&chat);
         async move {
             for _ in 0..40 {
-                let outline = chat.snapshot(None).await.unwrap().snapshot;
+                let outline = chat.snapshot(None, false).await.unwrap().snapshot;
                 if outline.contains(text) {
                     return;
                 }
@@ -441,7 +444,7 @@ async fn the_speaker_starts_off_and_turns_on_for_current_and_new_pages() {
             }
             panic!(
                 "the page never showed {text:?}: {}",
-                chat.snapshot(None).await.unwrap().snapshot
+                chat.snapshot(None, false).await.unwrap().snapshot
             );
         }
     };
@@ -460,6 +463,58 @@ async fn the_speaker_starts_off_and_turns_on_for_current_and_new_pages() {
 }
 
 /// The agent can aim without clicking, and opening the same page again reuses its tab.
+/// On a Mac a page otherwise follows a scroll past its edge and springs back, and a trackpad can
+/// wobble even a page with nothing to scroll. The page's own choice wins, and its DOM is untouched.
+#[tokio::test(flavor = "multi_thread")]
+async fn pages_dont_bounce_at_their_edges_unless_they_ask_to() {
+    let _browser = ONE_BROWSER.lock().await;
+    let data = tempfile::tempdir().unwrap();
+    let Some(hub) = hub(data.path()) else { return };
+    let site = MockServer::builder().start().await;
+    const REPORT: &str = r#"<p id="out"></p><script>out.textContent = 'overscroll ' + getComputedStyle(document.documentElement).overscrollBehaviorY + ' styles ' + document.querySelectorAll('style').length;</script>"#;
+    Mock::given(path("/plain"))
+        .respond_with(ResponseTemplate::new(200).set_body_raw(
+            format!("<!doctype html><title>Plain</title><body>{REPORT}</body>"),
+            "text/html",
+        ))
+        .mount(&site)
+        .await;
+    Mock::given(path("/own"))
+        .respond_with(ResponseTemplate::new(200).set_body_raw(
+            format!("<!doctype html><title>Own</title><style>html{{overscroll-behavior:contain}}</style><body>{REPORT}</body>"),
+            "text/html",
+        ))
+        .mount(&site)
+        .await;
+    let project = tempfile::tempdir().unwrap();
+    let chat = hub.chat("chat-bounce", project.path());
+    let tools = themis_core::browser::tools::browser_tools(
+        Arc::new(FnHook::new(|_: &ToolAction| Approval::AllowOnce)),
+        themis_core::browser::tools::BrowserScope {
+            permissions: themis_core::tools::site_permissions::SitePermissions::new(
+                Default::default(),
+                None,
+            ),
+            chat: Arc::clone(&chat),
+            cancel: None,
+            media: None,
+        },
+    );
+    let tool = |name: &str| tools.iter().find(|tool| tool.name() == name).unwrap();
+    let read = |page: &'static str| {
+        let (open, snapshot) = (tool("browser_open"), tool("browser_snapshot"));
+        let url = format!("{}/{page}", site.uri());
+        async move {
+            open.execute(json!({"url": url})).await.unwrap();
+            snapshot.execute(json!({})).await.unwrap().to_string()
+        }
+    };
+    let plain = read("plain").await;
+    assert!(plain.contains("overscroll none styles 0"), "{plain}");
+    let own = read("own").await;
+    assert!(own.contains("overscroll contain styles 1"), "{own}");
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn the_agent_moves_the_mouse_and_reopening_a_page_reuses_its_tab() {
     let _browser = ONE_BROWSER.lock().await;
@@ -947,7 +1002,7 @@ async fn an_animated_page_streams_at_about_thirty_frames_a_second() {
     if !(10..=70).contains(&frames) {
         let after = themis_core::browser::stream_stats();
         let page = chat
-            .snapshot(None)
+            .snapshot(None, false)
             .await
             .map(|s| s.snapshot)
             .unwrap_or_else(|e| e);
@@ -1171,7 +1226,7 @@ async fn the_person_is_never_held_up_by_an_agent_action_in_progress() {
         "took {:?}",
         opened.elapsed()
     );
-    let typed = chat.snapshot(None).await.unwrap().snapshot;
+    let typed = chat.snapshot(None, false).await.unwrap().snapshot;
     assert!(
         typed.contains("hello"),
         "the person's typing reached the page:\n{typed}"
@@ -1184,6 +1239,478 @@ async fn the_person_is_never_held_up_by_an_agent_action_in_progress() {
         .unwrap();
     assert!(started.elapsed() < quick, "took {:?}", started.elapsed());
     hub.close_chat("chat-busy").await;
+}
+
+/// Dragging is real mouse input the page can't tell from a person's, whichever way the page
+/// listens: native HTML5 drag and drop, or plain mouse events.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_agent_drags_with_the_mouse_on_html5_and_mouse_event_pages() {
+    let _browser = ONE_BROWSER.lock().await;
+    let data = tempfile::tempdir().unwrap();
+    let Some(hub) = hub(data.path()) else { return };
+    let site = MockServer::builder().start().await;
+    Mock::given(path("/board"))
+        .respond_with(ResponseTemplate::new(200).set_body_raw(
+            r#"<!doctype html><title>Board</title><body style="margin:0">
+<button id="card" draggable="true" style="position:fixed;left:20px;top:20px;width:120px;height:40px">Card one</button>
+<button id="done" style="position:fixed;left:300px;top:20px;width:200px;height:200px">Done column</button>
+<p id="out" style="position:fixed;top:300px">waiting</p>
+<script>
+const out = document.getElementById('out'), done = document.getElementById('done');
+document.getElementById('card').addEventListener('dragstart', e => { e.dataTransfer.setData('text/plain', 'card-1'); });
+done.addEventListener('dragover', e => e.preventDefault());
+done.addEventListener('drop', e => { e.preventDefault(); out.textContent = 'dropped ' + e.dataTransfer.getData('text/plain') + ' trusted ' + e.isTrusted; });
+</script></body>"#,
+            "text/html",
+        ))
+        .mount(&site)
+        .await;
+    Mock::given(path("/slider"))
+        .respond_with(ResponseTemplate::new(200).set_body_raw(
+            r#"<!doctype html><title>Slider</title><body style="margin:0;height:500px">
+<div id="knob" style="position:fixed;left:50px;top:50px;width:30px;height:30px;background:#888"></div>
+<p id="out" style="position:fixed;top:300px">waiting</p>
+<script>
+let held = false, moves = 0;
+const knob = document.getElementById('knob'), out = document.getElementById('out');
+knob.addEventListener('mousedown', e => { held = true; });
+document.addEventListener('mousemove', e => { if (held && e.buttons === 1) { moves++; knob.style.left = e.clientX + 'px'; } });
+document.addEventListener('mouseup', e => { if (held) out.textContent = 'let go at ' + e.clientX + ' after moves ' + (moves > 1 ? 'many' : moves) + ' trusted ' + e.isTrusted; held = false; });
+</script></body>"#,
+            "text/html",
+        ))
+        .mount(&site)
+        .await;
+    let project = tempfile::tempdir().unwrap();
+    let chat = hub.chat("chat-drag", project.path());
+    let tools = themis_core::browser::tools::browser_tools(
+        Arc::new(FnHook::new(|_: &ToolAction| Approval::AllowOnce)),
+        themis_core::browser::tools::BrowserScope {
+            permissions: themis_core::tools::site_permissions::SitePermissions::new(
+                Default::default(),
+                None,
+            ),
+            chat: Arc::clone(&chat),
+            cancel: None,
+            media: None,
+        },
+    );
+    let tool = |name: &str| tools.iter().find(|tool| tool.name() == name).unwrap();
+
+    // By refs, on a page using native drag and drop.
+    let opened = tool("browser_open")
+        .execute(json!({"url": format!("{}/board", site.uri())}))
+        .await
+        .unwrap();
+    let snapshot = opened["snapshot"].as_str().unwrap();
+    let (card, done) = (
+        ref_of(snapshot, "Card one\""),
+        ref_of(snapshot, "Done column\""),
+    );
+    let dropped = tool("browser_drag")
+        .execute(json!({"from_reference": card, "to_reference": done}))
+        .await
+        .unwrap();
+    let text = dropped["snapshot"].as_str().unwrap();
+    assert!(text.contains("dropped card-1 trusted true"), "{text}");
+
+    // By points, on a page using plain mouse events; a model's zero points beside refs are ignored.
+    tool("browser_open")
+        .execute(json!({"url": format!("{}/slider", site.uri())}))
+        .await
+        .unwrap();
+    let slid = tool("browser_drag")
+        .execute(json!({"from_x": 65, "from_y": 65, "to_x": 400, "to_y": 65}))
+        .await
+        .unwrap();
+    let text = slid["snapshot"].as_str().unwrap();
+    assert!(
+        text.contains("let go at 400 after moves many trusted true"),
+        "{text}"
+    );
+
+    // Nothing to go on, half a point, or a point off the page: told, and nothing happens.
+    for args in [
+        json!({}),
+        json!({"from_x": 10, "from_y": 10}),
+        json!({"from_x": 10, "to_x": 20, "to_y": 20}),
+        json!({"from_x": 10, "from_y": 10, "to_x": 99999, "to_y": 10}),
+    ] {
+        assert!(
+            tool("browser_drag").execute(args.clone()).await.is_err(),
+            "{args}"
+        );
+    }
+
+    // Holding the button needs somewhere to hold it, and letting go needs a press.
+    let up = tool("browser_press")
+        .execute(json!({"key": "mouseUp"}))
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(up.contains("mouseDown"), "{up}");
+}
+
+/// The agent can't see a pointer, so results say what it is over and what a drag did. Plain
+/// `div`s that can be dragged have no role, and without a ref it could only guess at them.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_agent_reads_what_is_under_the_mouse_and_what_a_drag_did() {
+    let _browser = ONE_BROWSER.lock().await;
+    let data = tempfile::tempdir().unwrap();
+    let Some(hub) = hub(data.path()) else { return };
+    let site = MockServer::builder().start().await;
+    Mock::given(path("/cards"))
+        .respond_with(ResponseTemplate::new(200).set_body_raw(
+            r#"<!doctype html><title>Cards</title><body style="margin:0">
+<div id="todo" class="column" style="position:fixed;left:0;top:0;width:200px;height:300px">
+  <div id="card" class="task-card" draggable="true" style="margin:40px 10px;height:40px">Write the report</div>
+</div>
+<div id="done" class="column" style="position:fixed;left:300px;top:0;width:200px;height:300px">Done</div>
+<script>
+const done = document.getElementById('done'), card = document.getElementById('card');
+card.addEventListener('dragstart', e => e.dataTransfer.setData('text/plain', 'x'));
+done.addEventListener('dragover', e => e.preventDefault());
+done.addEventListener('drop', e => { e.preventDefault(); done.appendChild(card); });
+</script></body>"#,
+            "text/html",
+        ))
+        .mount(&site)
+        .await;
+    let project = tempfile::tempdir().unwrap();
+    let chat = hub.chat("chat-mouse", project.path());
+    let tools = themis_core::browser::tools::browser_tools(
+        Arc::new(FnHook::new(|_: &ToolAction| Approval::AllowOnce)),
+        themis_core::browser::tools::BrowserScope {
+            permissions: themis_core::tools::site_permissions::SitePermissions::new(
+                Default::default(),
+                None,
+            ),
+            chat: Arc::clone(&chat),
+            cancel: None,
+            media: None,
+        },
+    );
+    let tool = |name: &str| tools.iter().find(|tool| tool.name() == name).unwrap();
+    let opened = tool("browser_open")
+        .execute(json!({"url": format!("{}/cards", site.uri())}))
+        .await
+        .unwrap();
+
+    // A draggable div gets a ref it can use, named by its text.
+    let snapshot = opened["snapshot"].as_str().unwrap();
+    assert!(
+        snapshot.contains("draggable \"Write the report\" ["),
+        "{snapshot}"
+    );
+    let card = ref_of(snapshot, "Write the report\"");
+
+    // Over nothing, and over the card: it reads which, without a screenshot.
+    let moved = tool("browser_move")
+        .execute(json!({"x": 100, "y": 60}))
+        .await
+        .unwrap();
+    let under = moved["under_mouse"].as_str().unwrap();
+    assert!(
+        under.contains("task-card") && under.contains("Write the report"),
+        "{under}"
+    );
+    assert!(under.contains("draggable"), "{under}");
+    assert_eq!(chat.state().await.pointer, Some((100.0, 60.0)));
+
+    // A miss says so: it pressed on the column, and no drag began.
+    let missed = tool("browser_drag")
+        .execute(json!({"from_x": 100, "from_y": 250, "to_x": 400, "to_y": 150}))
+        .await
+        .unwrap();
+    let result = missed["drag"].as_str().unwrap();
+    assert!(result.contains("column"), "{result}");
+    assert!(result.contains("nothing was dragged"), "{result}");
+
+    // A hit names both ends and the outcome, by ref.
+    let snapshot = tool("browser_snapshot")
+        .execute(json!({}))
+        .await
+        .unwrap()
+        .to_string();
+    let done = {
+        let after = tool("browser_drag")
+            .execute(json!({"from_reference": card, "to_x": 400, "to_y": 150}))
+            .await
+            .unwrap();
+        after["drag"].as_str().unwrap().to_owned()
+    };
+    assert!(done.contains("Write the report"), "{done} after {snapshot}");
+    assert!(done.contains("native drag"), "{done}");
+    assert!(
+        done.contains("dropped on") && done.contains("column"),
+        "{done}"
+    );
+    assert_eq!(chat.state().await.pointer, Some((400.0, 150.0)));
+}
+
+const BOARD: &str = r#"<!doctype html><title>Board</title><body style="margin:0">
+<div class="column todo" style="position:fixed;left:0;top:0;width:200px;height:300px"><h3>To Do</h3>
+  <div id="card" class="task-card" draggable="true" style="height:40px">Write the report</div></div>
+<div id="done" class="column" style="position:fixed;left:300px;top:0;width:200px;height:300px"><h3>Done</h3></div>
+<p id="out" style="position:fixed;top:320px">card in To Do</p>
+<script>
+const done = document.getElementById('done'), card = document.getElementById('card'), out = document.getElementById('out');
+card.addEventListener('dragstart', e => e.dataTransfer.setData('text/plain', 'x'));
+done.addEventListener('dragover', e => e.preventDefault());
+done.addEventListener('drop', e => { e.preventDefault(); done.appendChild(card); out.textContent = 'card in Done'; });
+</script></body>"#;
+
+/// What agents reach for, taken from what one tried in a real run: elements by selector or text,
+/// as Playwright takes them, and the mouse held down by hand.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_agent_aims_by_selector_and_can_hold_the_mouse_down() {
+    let _browser = ONE_BROWSER.lock().await;
+    let data = tempfile::tempdir().unwrap();
+    let Some(hub) = hub(data.path()) else { return };
+    let site = MockServer::builder().start().await;
+    Mock::given(path("/board"))
+        .respond_with(ResponseTemplate::new(200).set_body_raw(BOARD, "text/html"))
+        .mount(&site)
+        .await;
+    let project = tempfile::tempdir().unwrap();
+    let chat = hub.chat("chat-aim-selector", project.path());
+    let tools = themis_core::browser::tools::browser_tools(
+        Arc::new(FnHook::new(|_: &ToolAction| Approval::AllowOnce)),
+        themis_core::browser::tools::BrowserScope {
+            permissions: themis_core::tools::site_permissions::SitePermissions::new(
+                Default::default(),
+                None,
+            ),
+            chat: Arc::clone(&chat),
+            cancel: None,
+            media: None,
+        },
+    );
+    let tool = |name: &str| tools.iter().find(|tool| tool.name() == name).unwrap();
+    let url = format!("{}/board", site.uri());
+    let open = || async {
+        tool("browser_open")
+            .execute(json!({"url": url}))
+            .await
+            .unwrap()
+    };
+
+    // By text and by CSS, for either end.
+    open().await;
+    let moved = tool("browser_drag")
+        .execute(json!({"from_reference": "text=Write the report", "to_reference": "#done"}))
+        .await
+        .unwrap();
+    assert!(
+        moved["snapshot"].as_str().unwrap().contains("card in Done"),
+        "{moved}"
+    );
+
+    tool("browser_navigate")
+        .execute(json!({"action": "reload"}))
+        .await
+        .unwrap();
+    let moved = tool("browser_drag")
+        .execute(json!({"from_reference": ".task-card", "to_reference": "text=Done"}))
+        .await
+        .unwrap();
+    assert!(
+        moved["snapshot"].as_str().unwrap().contains("card in Done"),
+        "{moved}"
+    );
+
+    // Nothing matching says so, and names what to do.
+    let missing = tool("browser_drag")
+        .execute(json!({"from_reference": "text=No such card", "to_reference": "#done"}))
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(
+        missing.contains("No such card") && missing.contains("browser_snapshot"),
+        "{missing}"
+    );
+
+    // Clicking takes them too.
+    tool("browser_navigate")
+        .execute(json!({"action": "reload"}))
+        .await
+        .unwrap();
+    tool("browser_click")
+        .execute(json!({"reference": "text=Write the report"}))
+        .await
+        .unwrap();
+
+    // The mouse by hand, as the agent tried: move, press, move, let go.
+    tool("browser_navigate")
+        .execute(json!({"action": "reload"}))
+        .await
+        .unwrap();
+    tool("browser_move")
+        .execute(json!({"x": 100, "y": 80}))
+        .await
+        .unwrap();
+    let down = tool("browser_press")
+        .execute(json!({"key": "mouseDown"}))
+        .await
+        .unwrap();
+    assert!(
+        down["under_mouse"]
+            .as_str()
+            .unwrap()
+            .contains("Write the report"),
+        "{down}"
+    );
+    tool("browser_move")
+        .execute(json!({"x": 400, "y": 150}))
+        .await
+        .unwrap();
+    let up = tool("browser_press")
+        .execute(json!({"key": "mouseUp"}))
+        .await
+        .unwrap();
+    assert!(
+        up["snapshot"].as_str().unwrap().contains("card in Done"),
+        "{up}"
+    );
+    assert!(up["drag"].as_str().unwrap().contains("native drag"), "{up}");
+
+    // Having let go, moving is just moving again, with no button held.
+    tool("browser_move")
+        .execute(json!({"x": 10, "y": 10}))
+        .await
+        .unwrap();
+}
+
+const SKELETON: &str = r#"<!doctype html><title>Skeleton</title><body style="margin:0">
+<main class="board" style="position:fixed;left:0;top:50px;width:600px;height:300px">
+  <section class="column todo" style="position:absolute;left:0;top:0;width:200px;height:300px"><h3>To Do</h3>
+    <div id="card" class="task-card" draggable="true" style="height:40px">Write the report</div></section>
+  <section class="column" style="position:absolute;left:300px;top:0;width:200px;height:300px"><h3>Done</h3></section>
+</main>
+<div style="display:none" class="never-shown">Hidden words</div>
+<input type="password" class="secret" value="hunter2-secret" style="position:fixed;top:0;left:0">
+<canvas id="empty"></canvas><canvas id="blank" width="50" height="50"></canvas>
+<canvas id="drawn" width="50" height="50"></canvas>
+<p id="out" style="position:fixed;top:400px">card in To Do</p>
+<script>
+document.getElementById('empty').width = 0; document.getElementById('empty').height = 0;
+const pen = document.getElementById('drawn').getContext('2d'); pen.fillStyle = 'red'; pen.fillRect(5, 5, 10, 10);
+const done = document.querySelectorAll('.column')[1], card = document.getElementById('card');
+card.addEventListener('dragstart', e => e.dataTransfer.setData('text/plain', 'x'));
+done.addEventListener('dragover', e => e.preventDefault());
+done.addEventListener('drop', e => { e.preventDefault(); done.appendChild(card); document.getElementById('out').textContent = 'card in Done'; });
+</script></body>"#;
+
+/// The page's containers, where they are and how to name them, so nothing has to be guessed;
+/// and whether a canvas drew anything, which a model that can't see has no other way to tell.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_agent_reads_the_pages_structure_instead_of_guessing() {
+    let _browser = ONE_BROWSER.lock().await;
+    let data = tempfile::tempdir().unwrap();
+    let Some(hub) = hub(data.path()) else { return };
+    let site = MockServer::builder().start().await;
+    Mock::given(path("/skeleton"))
+        .respond_with(ResponseTemplate::new(200).set_body_raw(SKELETON, "text/html"))
+        .mount(&site)
+        .await;
+    let many = format!(
+        "<!doctype html><title>Many</title><body>{}</body>",
+        "<div class=\"row\">x</div>".repeat(5000)
+    );
+    Mock::given(path("/many"))
+        .respond_with(ResponseTemplate::new(200).set_body_raw(many, "text/html"))
+        .mount(&site)
+        .await;
+    let project = tempfile::tempdir().unwrap();
+    let chat = hub.chat("chat-skeleton", project.path());
+    let tools = themis_core::browser::tools::browser_tools(
+        Arc::new(FnHook::new(|_: &ToolAction| Approval::AllowOnce)),
+        themis_core::browser::tools::BrowserScope {
+            permissions: themis_core::tools::site_permissions::SitePermissions::new(
+                Default::default(),
+                None,
+            ),
+            chat: Arc::clone(&chat),
+            cancel: None,
+            media: None,
+        },
+    );
+    let tool = |name: &str| tools.iter().find(|tool| tool.name() == name).unwrap();
+    let opened = tool("browser_open")
+        .execute(json!({"url": format!("{}/skeleton", site.uri())}))
+        .await
+        .unwrap();
+    assert!(opened.get("layout").is_none(), "only when asked: {opened}");
+
+    let read = tool("browser_snapshot")
+        .execute(json!({"layout": true}))
+        .await
+        .unwrap();
+    let layout = read["layout"].as_str().unwrap();
+    let line = |needle: &str| {
+        layout
+            .lines()
+            .find(|line| line.contains(needle))
+            .unwrap_or_else(|| panic!("no line with {needle} in:\n{layout}"))
+            .to_owned()
+    };
+
+    // Containers the outline leaves out, nested, with where they are.
+    assert!(line("section.column").contains("(0,50"), "{layout}");
+    let done = line("\"Done\"");
+    assert!(
+        done.contains("(300,50") && done.contains("200×300"),
+        "{layout}"
+    );
+    assert!(line("task-card").contains("(draggable)"), "{layout}");
+    assert!(
+        line("task-card").starts_with("    "),
+        "nested under its column:\n{layout}"
+    );
+
+    // Canvases say what they drew.
+    assert!(
+        line("canvas#empty").contains("0×0") && line("canvas#empty").contains("nothing drawn"),
+        "{layout}"
+    );
+    assert!(line("canvas#blank").contains("blank"), "{layout}");
+    assert!(line("canvas#drawn").contains("has drawing"), "{layout}");
+
+    // What is hidden isn't listed, and a field's value never appears.
+    assert!(!layout.contains("Hidden words"), "{layout}");
+    assert!(!layout.contains("hunter2"), "{layout}");
+
+    // The selector printed for a line is one the tools take.
+    let selector = done.rsplit("→ ").next().unwrap().trim().to_owned();
+    let moved = tool("browser_drag")
+        .execute(json!({"from_reference": "#card", "to_reference": selector}))
+        .await
+        .unwrap();
+    assert!(
+        moved["snapshot"].as_str().unwrap().contains("card in Done"),
+        "{moved}"
+    );
+
+    // A huge page stays bounded, and says so.
+    tool("browser_open")
+        .execute(json!({"url": format!("{}/many", site.uri())}))
+        .await
+        .unwrap();
+    let read = tool("browser_snapshot")
+        .execute(json!({"layout": true}))
+        .await
+        .unwrap();
+    let layout = read["layout"].as_str().unwrap();
+    assert!(
+        layout.lines().count() <= 202,
+        "{} lines",
+        layout.lines().count()
+    );
+    assert!(
+        layout.contains("more not shown"),
+        "{}",
+        &layout[layout.len().saturating_sub(120)..]
+    );
 }
 
 /// Trailboard as an agent built it: a comment line before the doctype (shown on the page, and

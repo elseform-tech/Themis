@@ -52,7 +52,7 @@ pub enum BrowserUpdate {
 }
 
 /// What the Workspace Browser tab shows.
-#[derive(Debug, Clone, Default, Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, Serialize, PartialEq)]
 pub struct BrowserState {
     pub open: bool,
     pub tabs: Vec<TabInfo>,
@@ -71,6 +71,8 @@ pub struct BrowserState {
     pub muted: bool,
     /// A recording in progress.
     pub recording: Option<RecordingInfo>,
+    /// Where the agent last left the mouse, in the page's CSS pixels.
+    pub pointer: Option<(f64, f64)>,
 }
 
 /// A recording in progress, for the Browser tab and the thread header.
@@ -294,6 +296,7 @@ impl BrowserHub {
                 screencast: Mutex::new(None),
                 frozen: AtomicBool::new(false),
                 pointer: Mutex::new(None),
+                held: Mutex::new(None),
                 ui_stream: AtomicBool::new(false),
                 preview_width: Mutex::new(None),
                 recording: Mutex::new(None),
@@ -532,6 +535,8 @@ pub struct ChatBrowser {
     frozen: AtomicBool,
     /// Where the mouse last went on the visible page, for moves relative to it.
     pointer: Mutex<Option<(f64, f64)>>,
+    /// The mouse button held down by `browser_press`.
+    held: Mutex<Option<HeldMouse>>,
     /// Session id of the tab being streamed to the Workspace view.
     screencast: Mutex<Option<String>>,
     /// The Workspace view is showing the stream (frames go to it).
@@ -581,6 +586,15 @@ pub struct ActionReport {
     pub new_since_last_action: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub snapshot_note: Option<String>,
+    /// What the mouse is over after moving: the agent has no pointer to look at.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub under_mouse: Option<String>,
+    /// What a drag pressed on, whether anything was dragged, and where it let go.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub drag: Option<String>,
+    /// The page's structure, when asked for: containers, positions and selectors.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub layout: Option<String>,
 }
 
 /// A key press, parsed from `Enter`, `Control+a`, `Meta+Shift+k`.
@@ -1356,6 +1370,7 @@ impl ChatBrowser {
             console_errors: errors,
             loading,
             muted: self.muted.load(Ordering::SeqCst),
+            pointer: *self.pointer.lock().unwrap_or_else(|e| e.into_inner()),
             recording: self
                 .recording
                 .lock()
@@ -1477,6 +1492,13 @@ impl ChatBrowser {
                 Some(&session_id),
                 "Emulation.setDeviceMetricsOverride",
                 json!({"width": viewport.width, "height": viewport.height, "deviceScaleFactor": viewport.scale, "mobile": false}),
+            )
+            .await;
+        let _ = cdp
+            .call(
+                Some(&session_id),
+                "Page.addScriptToEvaluateOnNewDocument",
+                json!({"source": include_str!("no_bounce.js")}),
             )
             .await;
         // The stand-in is a convenience: a page that refuses it just has no pointer lock.
@@ -1617,12 +1639,35 @@ impl ChatBrowser {
     pub async fn snapshot(
         self: &Arc<Self>,
         reference: Option<&str>,
+        layout: bool,
     ) -> Result<ActionReport, String> {
         let mut inner = self.inner.lock().await;
         if inner.tabs.is_empty() {
             return Err("no page is open; use browser_open first".into());
         }
-        self.report(&mut inner, reference).await
+        let report = self.report(&mut inner, reference).await?;
+        if !layout {
+            return Ok(report);
+        }
+        let browser = inner.browser.clone().ok_or("no page is open")?;
+        let session = inner
+            .tabs
+            .get(inner.current)
+            .ok_or("no page is open")?
+            .session_id
+            .clone();
+        let read = browser
+            .cdp
+            .call(
+                Some(&session),
+                "Runtime.evaluate",
+                json!({"expression": include_str!("layout.js"), "returnByValue": true}),
+            )
+            .await?;
+        Ok(ActionReport {
+            layout: read["result"]["value"].as_str().map(str::to_owned),
+            ..report
+        })
     }
 
     /// The accessible name of a ref from the last snapshot, for labels.
@@ -1647,6 +1692,10 @@ impl ChatBrowser {
             .tabs
             .get(inner.current)
             .ok_or("no page is open; use browser_open first")?;
+        if !is_ref(reference) {
+            let backend = selected_element(&browser.cdp, &tab.session_id, reference).await?;
+            return Ok((Arc::clone(&browser.cdp), tab.session_id.clone(), backend));
+        }
         let backend = tab.refs.resolve(reference).ok_or_else(|| {
             format!("no element {reference} on this page; take a new browser_snapshot and use a ref from it")
         })?;
@@ -1663,6 +1712,7 @@ impl ChatBrowser {
         let (cdp, session, backend) = self.element(&inner, reference).await?;
         let (x, y) = element_center(&cdp, &session, backend).await?;
         click_at(&cdp, &session, x, y, if double { 2 } else { 1 }).await?;
+        *self.pointer.lock().unwrap_or_else(|e| e.into_inner()) = Some((x, y));
         self.settle(&inner, false).await;
         let report = self.report(&mut inner, None).await;
         drop(inner);
@@ -1709,6 +1759,62 @@ impl ChatBrowser {
         report
     }
 
+    /// Presses the mouse at one place, moves to another and lets go, as a person drags. The page
+    /// sees real input, whether it listens to mouse events or uses native drag and drop.
+    pub async fn drag(
+        self: &Arc<Self>,
+        from: &DragEnd,
+        to: &DragEnd,
+    ) -> Result<ActionReport, String> {
+        let mut inner = self.inner.lock().await;
+        let browser = inner
+            .browser
+            .clone()
+            .ok_or("no page is open; use browser_open first")?;
+        let session = inner
+            .tabs
+            .get(inner.current)
+            .ok_or("no page is open; use browser_open first")?
+            .session_id
+            .clone();
+        // The far end first: reaching it may scroll, and the near end is read where it then is.
+        let end = self.drag_point(&inner, &browser.cdp, &session, to).await?;
+        let start = self
+            .drag_point(&inner, &browser.cdp, &session, from)
+            .await?;
+        let pressed = under_point(&browser.cdp, &session, start).await;
+        let target = under_point(&browser.cdp, &session, end).await;
+        let native = drag_between(&browser.cdp, &session, start, end).await?;
+        *self.pointer.lock().unwrap_or_else(|e| e.into_inner()) = Some(end);
+        self.settle(&inner, false).await;
+        let report = self.report(&mut inner, None).await;
+        drop(inner);
+        self.publish_state().await;
+        report.map(|report| ActionReport {
+            drag: Some(drag_outcome(&pressed, &target, native)),
+            ..report
+        })
+    }
+
+    async fn drag_point(
+        &self,
+        inner: &ChatInner,
+        cdp: &Cdp,
+        session: &str,
+        end: &DragEnd,
+    ) -> Result<(f64, f64), String> {
+        match end {
+            DragEnd::Element(reference) => {
+                let (cdp, session, backend) = self.element(inner, reference).await?;
+                element_center(&cdp, &session, backend).await
+            }
+            DragEnd::Point(x, y) => {
+                check_visible_point(cdp, session, *x, *y).await?;
+                Ok((*x, *y))
+            }
+        }
+    }
+
     /// Moves the mouse to a point of the visible page without clicking, for aiming in games and
     /// for hover menus. The page sees real movement.
     pub async fn move_point(self: &Arc<Self>, x: f64, y: f64) -> Result<ActionReport, String> {
@@ -1724,20 +1830,154 @@ impl ChatBrowser {
             .session_id
             .clone();
         check_visible_point(&browser.cdp, &session, x, y).await?;
+        let holding = self
+            .held
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .is_some();
+        if holding {
+            let from = self
+                .pointer
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .unwrap_or((x, y));
+            self.move_holding(&browser.cdp, &session, from, (x, y))
+                .await?;
+        } else {
+            browser
+                .cdp
+                .call(
+                    Some(&session),
+                    "Input.dispatchMouseEvent",
+                    json!({"type": "mouseMoved", "x": x, "y": y}),
+                )
+                .await?;
+        }
+        *self.pointer.lock().unwrap_or_else(|e| e.into_inner()) = Some((x, y));
+        self.settle(&inner, false).await;
+        let over = under_point(&browser.cdp, &session, (x, y)).await;
+        let report = self.report(&mut inner, None).await;
+        drop(inner);
+        self.publish_state().await;
+        report.map(|report| ActionReport {
+            under_mouse: Some(over),
+            ..report
+        })
+    }
+
+    /// Moves with the button held, in steps a page can follow, watching for a native drag.
+    async fn move_holding(
+        &self,
+        cdp: &Cdp,
+        session: &str,
+        from: (f64, f64),
+        to: (f64, f64),
+    ) -> Result<(), String> {
+        for step in 1..=DRAG_STEPS {
+            let share = f64::from(step) / f64::from(DRAG_STEPS);
+            let (x, y) = (
+                from.0 + (to.0 - from.0) * share,
+                from.1 + (to.1 - from.1) * share,
+            );
+            mouse(
+                cdp,
+                session,
+                json!({"type": "mouseMoved", "x": x, "y": y, "button": "left", "buttons": 1}),
+            )
+            .await?;
+            tokio::time::sleep(DRAG_STEP_PAUSE).await;
+            let mut held = self.held.lock().unwrap_or_else(|e| e.into_inner());
+            if let Some(held) = held.as_mut() {
+                if held.dragging.is_none() {
+                    held.dragging = drag_started(&mut held.events, session);
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Holds the button down where the mouse is, for `browser_press` with `mouseDown`.
+    async fn mouse_down(self: &Arc<Self>) -> Result<ActionReport, String> {
+        let mut inner = self.inner.lock().await;
+        let browser = inner
+            .browser
+            .clone()
+            .ok_or("no page is open; use browser_open first")?;
+        let session = inner
+            .tabs
+            .get(inner.current)
+            .ok_or("no page is open; use browser_open first")?
+            .session_id
+            .clone();
+        let at = (*self.pointer.lock().unwrap_or_else(|e| e.into_inner()))
+            .ok_or("the mouse isn't anywhere yet: put it there with browser_move first")?;
+        let pressed = under_point(&browser.cdp, &session, at).await;
+        let events = browser.cdp.subscribe();
         browser
             .cdp
             .call(
                 Some(&session),
-                "Input.dispatchMouseEvent",
-                json!({"type": "mouseMoved", "x": x, "y": y}),
+                "Input.setInterceptDrags",
+                json!({"enabled": true}),
             )
             .await?;
-        *self.pointer.lock().unwrap_or_else(|e| e.into_inner()) = Some((x, y));
+        mouse(&browser.cdp, &session, json!({"type": "mousePressed", "x": at.0, "y": at.1, "button": "left", "buttons": 1, "clickCount": 1})).await?;
+        *self.held.lock().unwrap_or_else(|e| e.into_inner()) = Some(HeldMouse {
+            events,
+            dragging: None,
+            pressed: pressed.clone(),
+        });
+        let report = self.report(&mut inner, None).await;
+        drop(inner);
+        self.publish_state().await;
+        report.map(|report| ActionReport {
+            under_mouse: Some(pressed),
+            ..report
+        })
+    }
+
+    /// Lets go of the button, for `browser_press` with `mouseUp`.
+    async fn mouse_up(self: &Arc<Self>) -> Result<ActionReport, String> {
+        let mut inner = self.inner.lock().await;
+        let browser = inner
+            .browser
+            .clone()
+            .ok_or("no page is open; use browser_open first")?;
+        let session = inner
+            .tabs
+            .get(inner.current)
+            .ok_or("no page is open; use browser_open first")?
+            .session_id
+            .clone();
+        let held = self.held.lock().unwrap_or_else(|e| e.into_inner()).take();
+        let Some(mut held) = held else {
+            return Err("nothing is held: press mouseDown first".to_owned());
+        };
+        let at = (*self.pointer.lock().unwrap_or_else(|e| e.into_inner())).unwrap_or((0.0, 0.0));
+        if held.dragging.is_none() {
+            tokio::time::sleep(DRAG_START_WAIT).await;
+            held.dragging = drag_started(&mut held.events, &session);
+        }
+        let target = under_point(&browser.cdp, &session, at).await;
+        let native = held.dragging.is_some();
+        let released = finish_drag(&browser.cdp, &session, held.dragging.take(), at).await;
+        let _ = browser
+            .cdp
+            .call(
+                Some(&session),
+                "Input.setInterceptDrags",
+                json!({"enabled": false}),
+            )
+            .await;
+        released?;
         self.settle(&inner, false).await;
         let report = self.report(&mut inner, None).await;
         drop(inner);
         self.publish_state().await;
-        report
+        report.map(|report| ActionReport {
+            drag: Some(drag_outcome(&held.pressed, &target, native)),
+            ..report
+        })
     }
 
     /// Moves the mouse by a distance from where it is. While the page holds the pointer lock
@@ -1864,6 +2104,15 @@ impl ChatBrowser {
         key: &str,
         hold: Duration,
     ) -> Result<ActionReport, String> {
+        match key
+            .to_ascii_lowercase()
+            .replace(['_', '-', ' '], "")
+            .as_str()
+        {
+            "mousedown" => return self.mouse_down().await,
+            "mouseup" => return self.mouse_up().await,
+            _ => {}
+        }
         let press = parse_key(key).ok_or_else(|| {
             format!(
                 "unknown key '{}'; use names like Enter, Escape, Tab, ArrowDown, w, 1 or Control+a",
@@ -2109,6 +2358,14 @@ impl ChatBrowser {
                 limit: 0,
             },
         );
+        let text = if root.is_none() {
+            draggable_lines(cdp, &tab.session_id, &mut tab.refs)
+                .await
+                .into_iter()
+                .fold(text, |text, line| format!("{text}\n{line}"))
+        } else {
+            text
+        };
         for node in &nodes {
             if let Some(backend) = node.backend_id {
                 if !node.name.is_empty() && tab.refs.of(backend).is_some() {
@@ -2146,6 +2403,9 @@ impl ChatBrowser {
             snapshot: if text.is_empty() { "(empty page)".to_owned() } else { text },
             visible_page,
             new_since_last_action: notes,
+            under_mouse: None,
+            drag: None,
+            layout: None,
             snapshot_note: truncated.then(|| {
                 format!("{omitted_lines} more lines not shown; use browser_snapshot with a ref to read one part, or browser_scroll")
             }),
@@ -2243,7 +2503,7 @@ impl ChatBrowser {
         cdp.call(
             Some(&session_id),
             "Page.startScreencast",
-            json!({"format": "jpeg", "quality": 85, "maxWidth": max_width, "maxHeight": max_height, "everyNthFrame": 1}),
+            json!({"format": "jpeg", "quality": STREAM_QUALITY, "maxWidth": max_width, "maxHeight": max_height, "everyNthFrame": 1}),
         )
         .await?;
         Ok(())
@@ -2811,6 +3071,270 @@ async fn element_center(cdp: &Cdp, session: &str, backend: i64) -> Result<(f64, 
     let x = (quad[0] + quad[2] + quad[4] + quad[6]) / 4.0;
     let y = (quad[1] + quad[3] + quad[5] + quad[7]) / 4.0;
     Ok((x, y))
+}
+
+/// JPEG quality of the Browser tab's stream: lower visibly softens the edges of text.
+const STREAM_QUALITY: u32 = 92;
+/// Draggable elements given a ref in one snapshot.
+const MAX_DRAGGABLE: usize = 40;
+
+/// What is at a point, in a few words: the agent has no pointer to look at, and a screenshot is
+/// no use to a model that can't read images. It is page text, capped, in a result that already
+/// says page content is untrusted.
+async fn under_point(cdp: &Cdp, session: &str, (x, y): (f64, f64)) -> String {
+    let expression = format!(
+        r#"(function(){{const e=document.elementFromPoint({x},{y});if(!e)return "nothing";const d=e.closest('[draggable="true"]');const t=d||e;const c=typeof t.className==="string"&&t.className.trim()?"."+t.className.trim().split(/\s+/)[0]:"";const n=(t.innerText||"").trim().replace(/\s+/g," ").slice(0,60).replace(/"/g,"'");return t.tagName.toLowerCase()+c+(n?' "'+n+'"':"")+(d?" (draggable)":"");}})()"#
+    );
+    cdp.call(
+        Some(session),
+        "Runtime.evaluate",
+        json!({"expression": expression, "returnByValue": true}),
+    )
+    .await
+    .ok()
+    .and_then(|value| value["result"]["value"].as_str().map(|text| cap(text, 120)))
+    .unwrap_or_else(|| "something unreadable".to_owned())
+}
+
+/// Lines for draggable elements the outline doesn't already give a ref: a plain `div` has no role,
+/// so the accessibility tree leaves it out and only a guessed point could reach it.
+async fn draggable_lines(cdp: &Cdp, session: &str, refs: &mut RefMap) -> Vec<String> {
+    const SELECTOR: &str = r#"[draggable="true"]"#;
+    let names = cdp
+        .call(
+            Some(session),
+            "Runtime.evaluate",
+            json!({"expression": format!(r#"[...document.querySelectorAll('{SELECTOR}')].map(e=>(e.innerText||"").trim().replace(/\s+/g," "))"#), "returnByValue": true}),
+        )
+        .await;
+    let names: Vec<String> = names
+        .ok()
+        .and_then(|value| serde_json::from_value(value["result"]["value"].clone()).ok())
+        .unwrap_or_default();
+    if names.is_empty() {
+        return Vec::new();
+    }
+    let Ok(document) = cdp.call(Some(session), "DOM.getDocument", json!({})).await else {
+        return Vec::new();
+    };
+    let Ok(found) = cdp
+        .call(
+            Some(session),
+            "DOM.querySelectorAll",
+            json!({"nodeId": document["root"]["nodeId"], "selector": SELECTOR}),
+        )
+        .await
+    else {
+        return Vec::new();
+    };
+    let mut lines = Vec::new();
+    let ids = found["nodeIds"].as_array().cloned().unwrap_or_default();
+    for (id, name) in ids.iter().zip(&names).take(MAX_DRAGGABLE) {
+        let Ok(node) = cdp
+            .call(Some(session), "DOM.describeNode", json!({"nodeId": id}))
+            .await
+        else {
+            continue;
+        };
+        let Some(backend) = node["node"]["backendNodeId"].as_i64() else {
+            continue;
+        };
+        if refs.of(backend).is_none() {
+            refs.assign(backend);
+            if let Some(reference) = refs.of(backend) {
+                lines.push(format!(
+                    "- draggable \"{}\" [{reference}]",
+                    cap(name, 60).replace('"', "'")
+                ));
+            }
+        }
+    }
+    lines
+}
+
+/// The button held down by hand, between `mouseDown` and `mouseUp`.
+struct HeldMouse {
+    events: tokio::sync::broadcast::Receiver<super::cdp::CdpEvent>,
+    /// The native drag Chrome handed over, once one starts.
+    dragging: Option<Value>,
+    /// What the button came down on.
+    pressed: String,
+}
+
+fn drag_outcome(pressed: &str, target: &str, native: bool) -> String {
+    if native {
+        format!("pressed on {pressed}; a native drag started and was dropped on {target}")
+    } else {
+        format!("pressed on {pressed}; no native drag started, so nothing was dragged unless this page follows the mouse itself; let go over {target}. browser_snapshot with layout shows where everything is")
+    }
+}
+
+/// Whether this names a snapshot's ref (`e12`) rather than a selector.
+fn is_ref(reference: &str) -> bool {
+    reference
+        .strip_prefix('e')
+        .is_some_and(|rest| !rest.is_empty() && rest.bytes().all(|b| b.is_ascii_digit()))
+}
+
+/// An element by `text=…` or a CSS selector, as agents write them for Playwright. Text finds the
+/// innermost element holding it, so a drop lands on what is named and bubbles to its container.
+async fn selected_element(cdp: &Cdp, session: &str, selector: &str) -> Result<i64, String> {
+    let missing = || {
+        format!(
+            "nothing on this page matches {}; take a new browser_snapshot and use a ref from it, a CSS selector or text=...",
+            cap(selector, 80)
+        )
+    };
+    let quoted = |text: &str| serde_json::to_string(text).unwrap_or_else(|_| "\"\"".to_owned());
+    let expression = match selector.strip_prefix("text=") {
+        Some(text) => format!(
+            r#"(function(t){{let f=null;for(const e of document.body.querySelectorAll("*")){{if(e.offsetParent!==null&&(e.innerText||"").includes(t))f=e;}}return f;}})({})"#,
+            quoted(text.trim().trim_matches('"').trim_matches('\''))
+        ),
+        None => format!(
+            r#"(function(s){{try{{return document.querySelector(s);}}catch(e){{return null;}}}})({})"#,
+            quoted(selector.strip_prefix("css=").unwrap_or(selector))
+        ),
+    };
+    let found = cdp
+        .call(
+            Some(session),
+            "Runtime.evaluate",
+            json!({"expression": expression}),
+        )
+        .await?;
+    let object = found["result"]["objectId"].as_str().ok_or_else(missing)?;
+    let node = cdp
+        .call(
+            Some(session),
+            "DOM.describeNode",
+            json!({"objectId": object}),
+        )
+        .await
+        .map_err(|_| missing())?;
+    node["node"]["backendNodeId"].as_i64().ok_or_else(missing)
+}
+
+/// Finishes a gesture at `at`: the handed-over drag goes in as drag events, then the button lifts.
+async fn finish_drag(
+    cdp: &Cdp,
+    session: &str,
+    dragging: Option<Value>,
+    at: (f64, f64),
+) -> Result<(), String> {
+    if let Some(data) = dragging {
+        for kind in ["dragEnter", "dragOver", "drop"] {
+            cdp.call(
+                Some(session),
+                "Input.dispatchDragEvent",
+                json!({"type": kind, "x": at.0, "y": at.1, "data": data}),
+            )
+            .await?;
+        }
+    }
+    mouse(cdp, session, json!({"type": "mouseReleased", "x": at.0, "y": at.1, "button": "left", "buttons": 0, "clickCount": 1})).await
+}
+
+/// One end of a drag.
+#[derive(Debug, Clone, PartialEq)]
+pub enum DragEnd {
+    /// A ref from the latest snapshot.
+    Element(String),
+    /// CSS pixels of the visible page.
+    Point(f64, f64),
+}
+
+/// Moves between the two ends, enough for a page to see the distance covered.
+const DRAG_STEPS: u32 = 12;
+const DRAG_STEP_PAUSE: Duration = Duration::from_millis(16);
+/// A page starts native drag and drop a moment after the mouse leaves; waits this long at most.
+const DRAG_START_WAIT: Duration = Duration::from_millis(250);
+
+async fn mouse(cdp: &Cdp, session: &str, params: Value) -> Result<(), String> {
+    cdp.call(Some(session), "Input.dispatchMouseEvent", params)
+        .await
+        .map(|_| ())
+}
+
+/// Native drag and drop doesn't follow synthetic mouse events by itself: Chrome hands over the
+/// drag it would have started, and the rest of the gesture goes in as drag events. A page that
+/// listens to mouse events never starts one and simply sees the moves.
+async fn drag_between(
+    cdp: &Cdp,
+    session: &str,
+    from: (f64, f64),
+    to: (f64, f64),
+) -> Result<bool, String> {
+    let mut events = cdp.subscribe();
+    cdp.call(
+        Some(session),
+        "Input.setInterceptDrags",
+        json!({"enabled": true}),
+    )
+    .await?;
+    let result = drag_gesture(cdp, session, &mut events, from, to).await;
+    let _ = cdp
+        .call(
+            Some(session),
+            "Input.setInterceptDrags",
+            json!({"enabled": false}),
+        )
+        .await;
+    result
+}
+
+fn drag_started(
+    events: &mut tokio::sync::broadcast::Receiver<super::cdp::CdpEvent>,
+    session: &str,
+) -> Option<Value> {
+    while let Ok(event) = events.try_recv() {
+        if event.method == "Input.dragIntercepted" && event.session.as_deref() == Some(session) {
+            return Some(event.params["data"].clone());
+        }
+    }
+    None
+}
+
+async fn drag_gesture(
+    cdp: &Cdp,
+    session: &str,
+    events: &mut tokio::sync::broadcast::Receiver<super::cdp::CdpEvent>,
+    from: (f64, f64),
+    to: (f64, f64),
+) -> Result<bool, String> {
+    mouse(
+        cdp,
+        session,
+        json!({"type": "mouseMoved", "x": from.0, "y": from.1}),
+    )
+    .await?;
+    mouse(cdp, session, json!({"type": "mousePressed", "x": from.0, "y": from.1, "button": "left", "buttons": 1, "clickCount": 1})).await?;
+    let mut intercepted = None;
+    for step in 1..=DRAG_STEPS {
+        let share = f64::from(step) / f64::from(DRAG_STEPS);
+        let (x, y) = (
+            from.0 + (to.0 - from.0) * share,
+            from.1 + (to.1 - from.1) * share,
+        );
+        mouse(
+            cdp,
+            session,
+            json!({"type": "mouseMoved", "x": x, "y": y, "button": "left", "buttons": 1}),
+        )
+        .await?;
+        tokio::time::sleep(DRAG_STEP_PAUSE).await;
+        intercepted = drag_started(events, session);
+        if intercepted.is_some() {
+            break;
+        }
+    }
+    if intercepted.is_none() {
+        tokio::time::sleep(DRAG_START_WAIT).await;
+        intercepted = drag_started(events, session);
+    }
+    let native = intercepted.is_some();
+    finish_drag(cdp, session, intercepted, to).await?;
+    Ok(native)
 }
 
 async fn click_at(cdp: &Cdp, session: &str, x: f64, y: f64, clicks: u32) -> Result<(), String> {

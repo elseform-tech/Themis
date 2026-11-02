@@ -55,6 +55,35 @@ function expectNoConfiguration() {
   expect(vi.mocked(pluginAction).mock.calls.every(([args]) => ["mcp_tools", "list", "marketplaces", "updates", "scan_marketplace", "catalog", "inspect_marketplace", "inspect_repository", "enable", "disable", "set_component_enabled", "install", "import_repository", "delete", "remove_component"].includes(String(args.action)))).toBe(true);
 }
 describe("Integration browsing and lifecycle", () => {
+  it("says what an installed plugin left off, and turns it on in one click", async () => {
+    installed[0].spec.mcp = { filesystem: { ...installed[0].spec.mcp.filesystem, enabled: false } };
+    installed[0].spec.hooks = [{ name: "session-start", event: "SessionStart", command: "true", enabled: false } as never];
+    render(<Plugins />);
+    const row = (await screen.findByRole("button", { name: "View docs" })).closest("li") as HTMLElement;
+    expect(within(row).getByText("1 connection and 1 hook off")).toBeVisible();
+    fireEvent.click(within(row).getByRole("button", { name: "Turn on docs's connection and hook" }));
+    await waitFor(() => expect(pluginAction).toHaveBeenCalledWith(expect.objectContaining({ action: "set_component_enabled", kind: "hook", id: "session-start", enabled: true })));
+    expect(pluginAction).toHaveBeenCalledWith(expect.objectContaining({ action: "set_component_enabled", kind: "mcp", id: "filesystem", enabled: true }));
+    await waitFor(() => expect(within(row).queryByText(/ off$/)).toBeNull());
+  });
+  it("says nothing when every part of a plugin is on", async () => {
+    installed[0].spec.hooks = [];
+    installed[0].spec.mcp = { filesystem: { ...installed[0].spec.mcp.filesystem, enabled: true } };
+    render(<Plugins />);
+    await screen.findByRole("button", { name: "View docs" });
+    expect(screen.queryByText(/ off$/)).toBeNull();
+  });
+  it("says at install what was left off", async () => {
+    installed[0].spec.hooks = [{ name: "session-start", event: "SessionStart", command: "true", enabled: false } as never];
+    installed[0].spec.mcp = {};
+    render(<Plugins />);
+    fireEvent.click(await screen.findByRole("button", { name: "Discover" }));
+    const view = await screen.findByRole("button", { name: "View public-docs" });
+    const card = view.closest("li") as HTMLElement;
+    fireEvent.click(await within(card).findByRole("button", { name: "Install" }));
+    await waitFor(() => expect(toast).toHaveBeenCalledWith(dispatch, "public-docs installed. 1 hook is off: turn it on in Installed.", "warning"));
+    expect(await within(card).findByText("1 hook off")).toBeVisible();
+  });
   it("shows actual MCP connection state separately from its activation switch", async () => {
     mcpConnections = { "global:docs:mcp:filesystem": { status: "failed", reason: "Process could not start" } };
     const view = render(<Plugins />);
@@ -365,7 +394,7 @@ describe("Integration browsing and lifecycle", () => {
     expect(screen.queryByRole("dialog")).toBeNull();
     await act(async () => finish());
     expect(screen.getByRole("button", { name: "✓ Installed" })).toBeDisabled();
-    expect(toast).toHaveBeenCalledExactlyOnceWith(dispatch, "public-docs installed.", "success");
+    expect(toast).toHaveBeenCalledExactlyOnceWith(dispatch, "public-docs installed. 1 hook is off: turn it on in Installed.", "warning");
     expect(screen.queryByText("public-docs installed.")).toBeNull();
     expect(vi.mocked(pluginAction).mock.calls.filter(([args]) => args.action === "install")).toHaveLength(1);
   });

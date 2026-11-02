@@ -200,6 +200,7 @@ async fn skilled_run_filters_tools_composes_instructions_and_materializes() {
             "ask_user",
             // Showing project files under the reply comes with `read_file`.
             "attach_file",
+            "Skill",
             "list_plugins",
             "save_skill",
             "manage_integrations",
