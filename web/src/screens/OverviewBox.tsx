@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
 import { browserPreview, browserScreencastStop, browserState, browserStream, type BrowserState } from "../lib/browser";
-import type { AttachedMedia, DiffState } from "../lib/types";
+import type { AttachedMedia, DiffState, TodoItem } from "../lib/types";
+import { DotSpinner } from "../components/DotSpinner";
+import { currentTodo, doneCount, TodoWindow } from "./TodoList";
 import type { ChatMessage, WorkspaceTab } from "../state/reducer";
 import { readSession, writeSession } from "../state/session";
 import { useApp } from "../state/store";
@@ -15,8 +17,8 @@ export interface Overview {
   tasks: { running: number; attention: number; queued: number } | null;
   /** Subagents of the current run that are still working. */
   subagents: { running: number; approval: number } | null;
-  /** The goal's checklist, once a check has listed it. */
-  goal?: { complete: number; total: number; broken?: boolean } | null;
+  /** The main agent's to-do list while it has items, and whether a goal rule wasn't followed. */
+  todo: { items: TodoItem[]; broken: boolean } | null;
   browser: { label: string; agent: boolean; activity: string | null } | null;
   media: AttachedMedia[];
   /** Something to show: the box (and the room the chat leaves for it) appears only then. */
@@ -66,12 +68,11 @@ export function useOverview(threadId: string, messages: ChatMessage[]): Overview
   const media = messages.flatMap(message => message.media ?? []);
   const shownBrowser = browser?.open && browser.url !== "about:blank" ? { label: browserLabel(browser), agent: browser.controller === "agent", activity: browser.activity } : null;
   const setCollapsed = (value: boolean) => { setCollapsedState(value); writeSession(COLLAPSED_KEY, value); };
-  const checklist = state.goals[threadId]?.proof ?? [];
-  const goalTasks = checklist.filter(item => item.kind !== "rule");
-  const goal = goalTasks.length ? { complete: goalTasks.filter(item => item.proven).length, total: goalTasks.length, broken: checklist.some(item => item.broken) } : null;
+  const todoItems = state.todos[threadId]?.items ?? [];
+  const todo = todoItems.length ? { items: todoItems, broken: (state.goals[threadId]?.rules ?? []).some(rule => rule.broken) } : null;
   return {
-    changes, tasks, subagents, goal, browser: shownBrowser, media,
-    visible: !!(changes || tasks || subagents || goal || shownBrowser || media.length),
+    changes, tasks, subagents, todo, browser: shownBrowser, media,
+    visible: !!(changes || tasks || subagents || todo || shownBrowser || media.length),
     collapsed, setCollapsed,
   };
 }
@@ -112,12 +113,38 @@ function BrowserPreview({ threadId, label, agent, onOpen }: { threadId: string; 
   );
 }
 
+/** The agent's to-do list: what it is on now and what comes next, opening Workspace › To-do.
+ *  Folded or in a narrow chat it is one icon row, the dot spinner while an item is in progress. */
+function TodoSection({ todo, collapsed, onOpen }: { todo: NonNullable<Overview["todo"]>; collapsed: boolean; onOpen: () => void }) {
+  const { items, broken } = todo;
+  const done = doneCount(items);
+  const current = items[currentTodo(items)];
+  const working = current?.status === "in_progress";
+  const summary = `To-do: ${done} of ${items.length} done`;
+  const brokenText = broken ? ", a rule wasn't followed" : "";
+  const dot = broken && <span className="themis-overview-dot is-attention" aria-hidden="true" />;
+  return <>
+    {!collapsed && (
+      <button type="button" className="themis-overview-todo" aria-label={`${summary}${current ? `, now ${current.title}` : ""}${brokenText}. Opens the To-do tab`} onClick={onOpen}>
+        <span className="themis-overview-todo-head">To-do<span className="themis-overview-todo-count">{done} of {items.length}</span>{dot}</span>
+        <TodoWindow items={items} />
+      </button>
+    )}
+    <button type="button" className="themis-overview-row themis-overview-todo-row themis-icon-tip" data-tooltip="To-do" aria-label={`${summary}${brokenText}`} onClick={onOpen}>
+      {working
+        ? <DotSpinner className="themis-overview-spinner" />
+        : <svg className="themis-overview-glyph" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden="true"><circle cx="5" cy="6" r="1.5" /><circle cx="5" cy="12" r="1.5" /><circle cx="5" cy="18" r="1.5" /><path d="M10 6h10M10 12h10M10 18h10" /></svg>}
+      <span className="themis-overview-value">{done} of {items.length} done</span>
+      {dot}
+    </button>
+  </>;
+}
 
 /** A compact summary of the chat's workspace over the top right of the chat. Every row opens
  *  the Workspace on its tab; the Workspace's own button and Close bring this box back. */
 export function OverviewBox({ threadId, overview, onOpenMedia }: { threadId: string; overview: Overview; onOpenMedia: (path: string) => void }) {
   const { dispatch } = useApp();
-  const { changes, tasks, subagents, goal, browser, media, collapsed, setCollapsed } = overview;
+  const { changes, tasks, subagents, todo, browser, media, collapsed, setCollapsed } = overview;
   const open = (tab?: WorkspaceTab) => dispatch({ type: "ui/diff-panel", open: true, ...(tab ? { tab } : {}) });
   const subagentText = subagents ? [subagents.running ? `${subagents.running} running` : "", subagents.approval ? `${subagents.approval} approval${subagents.approval === 1 ? "" : "s"}` : ""].filter(Boolean).join(" · ") : "";
   const taskText = tasks ? [tasks.running ? `${tasks.running} running` : "", tasks.attention ? `${tasks.attention} need a look` : "", tasks.queued ? `${tasks.queued} queued` : ""].filter(Boolean).join(" · ") : "";
@@ -160,13 +187,7 @@ export function OverviewBox({ threadId, overview, onOpenMedia }: { threadId: str
           {tasks.attention > 0 && <span className="themis-overview-dot is-attention" aria-hidden="true" />}
         </button>
       )}
-      {goal && (
-        <button type="button" className="themis-overview-row themis-icon-tip" data-tooltip="Goal" aria-label={`Goal: ${goal.complete} of ${goal.total} complete${goal.broken ? ", a rule wasn't followed" : ""}`} onClick={() => open("goal")}>
-          <svg className="themis-overview-glyph" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden="true"><circle cx="12" cy="12" r="8" /><circle cx="12" cy="12" r="4" /></svg>
-          <span className="themis-overview-value">{goal.complete} of {goal.total} complete</span>
-          {goal.broken && <span className="themis-overview-dot is-attention" aria-hidden="true" />}
-        </button>
-      )}
+      {todo && <TodoSection key={threadId} todo={todo} collapsed={collapsed} onOpen={() => open("todo")} />}
       {media.length > 0 && (
         <button type="button" className="themis-overview-row themis-icon-tip" data-tooltip="Artifacts" aria-label={`Artifacts: ${media.length}. Opens the latest, ${media[media.length - 1]!.name}`} onClick={() => onOpenMedia(media[media.length - 1]!.path)}>
           <svg className="themis-overview-glyph" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><rect x="4" y="4" width="16" height="16" rx="2" /><circle cx="9" cy="9" r="1.5" /><path d="m20 15-5-5-9 9" /></svg>

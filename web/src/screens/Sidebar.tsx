@@ -7,6 +7,7 @@ import { useNewThread, useDiscardThread } from "./actions";
 import type { Plugin, ThreadInfo } from "../lib/types";
 import { readSession, writeSession } from "../state/session";
 import { MovingText } from "../components/MovingText";
+import { DOT_GRID, DotSpinner } from "../components/DotSpinner";
 import { SettingsNav } from "./SettingsNav";
 import "./Sidebar.css";
 
@@ -291,10 +292,6 @@ function useFreshlyFinished(running: Record<string, boolean>, viewing: string | 
 
 const isLive = (status: ThreadState) => status === "Working" || status === "Needs approval";
 
-/** The 3×3 dot grid every status icon is drawn on, in a 24-unit box; cells 0–8 row by row. */
-const GRID = Array.from({ length: 9 }, (_, cell) => [5 + 7 * (cell % 3), 5 + 7 * Math.floor(cell / 3)] as const);
-/** The edge cells clockwise from the top-left; the working light walks round them. */
-const SQUARE = [0, 1, 2, 5, 8, 7, 6, 3];
 /** Lit cells: a pause sign while waiting for you, a cross for a failure. */
 const LIT: Partial<Record<ThreadState, readonly number[]>> = { "Needs approval": [0, 2, 3, 5, 6, 8], Failed: [0, 2, 4, 6, 8] };
 const LABEL: Partial<Record<ThreadState, string>> = { Working: "Working", "Needs approval": "Waiting for you", Failed: "Failed" };
@@ -305,10 +302,8 @@ function ThreadStatus({ status }: { status: ThreadState }) {
   if (!label) return <SidebarIcon name="chat" />;
   const lit = LIT[status];
   return <span role="img" aria-label={label} title={label} className={`themis-thread-status themis-thread-status--${status.toLowerCase().replace(/ /g, "-")}`}>
-    <svg viewBox="0 0 24 24" aria-hidden="true">
-      {lit
-        ? GRID.map(([cx, cy], cell) => <circle key={cell} className={lit.includes(cell) ? "is-lit" : undefined} cx={cx} cy={cy} r="2.1" />)
-        : SQUARE.map((cell, step) => <circle key={cell} cx={GRID[cell]![0]} cy={GRID[cell]![1]} r="2.1" style={{ animationDelay: `${(step * 0.15 - 1.2).toFixed(2)}s` }} />)}
-    </svg>
+    {lit
+      ? <svg viewBox="0 0 24 24" aria-hidden="true">{DOT_GRID.map(([cx, cy], cell) => <circle key={cell} className={lit.includes(cell) ? "is-lit" : undefined} cx={cx} cy={cy} r="2.1" />)}</svg>
+      : <DotSpinner />}
   </span>;
 }

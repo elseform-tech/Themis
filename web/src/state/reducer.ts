@@ -25,6 +25,7 @@ import type {
   ThreadTasks,
   QueuedMessage,
   Goal,
+  TodoList,
 } from "../lib/types";
 import type { ToastItem, ToastTone } from "../components";
 import { reduceCollectionActions } from "./reducer/collections";
@@ -149,12 +150,14 @@ export interface AppState {
   queues: Record<string, QueuedMessage[]>;
   /** Each chat's goal (`null` when it has none). */
   goals: Record<string, Goal | null>;
+  /** Each chat's to-do list, kept by its main agent. */
+  todos: Record<string, TodoList>;
   paletteOpen: boolean;
   projectDialogOpen: boolean;
 }
 
 /** The Workspace panel's views. */
-export type WorkspaceTab = "changes" | "files" | "pulls" | "tasks" | "goal" | "browser" | "terminal";
+export type WorkspaceTab = "changes" | "files" | "pulls" | "tasks" | "todo" | "browser" | "terminal";
 
 export type AppAction =
   | { type: "mcp/status"; connections: McpConnections }
@@ -175,6 +178,7 @@ export type AppAction =
   | { type: "thread/send-cleared"; threadId: string }
   | { type: "queue/loaded"; threadId: string; queue: QueuedMessage[] }
   | { type: "goal/loaded"; threadId: string; goal: Goal | null }
+  | { type: "todo/loaded"; threadId: string; todo: TodoList }
   | {
       type: "threads/restored";
       projects: ProjectInfo[];
@@ -287,6 +291,7 @@ export const initialState: AppState = {
   tasks: {},
   queues: {},
   goals: {},
+  todos: {},
   paletteOpen: false,
   projectDialogOpen: false,
 };
@@ -567,6 +572,8 @@ export function applyThreadEvent(
       return { ...state, queues: { ...state.queues, [threadId]: event.queue } };
     case "goal_changed":
       return { ...state, goals: { ...state.goals, [threadId]: event.goal } };
+    case "todo_changed":
+      return { ...state, todos: { ...state.todos, [threadId]: event.todo } };
     case "goal_note": {
       // The check's verdict is the next thing the agent hears, so it gets a small bubble.
       if (event.outcome === "not_yet" || event.outcome === "reached") {
@@ -904,6 +911,8 @@ export function reducer(state: AppState, action: AppAction): AppState {
       return { ...state, queues: { ...state.queues, [action.threadId]: action.queue } };
     case "goal/loaded":
       return { ...state, goals: { ...state.goals, [action.threadId]: action.goal } };
+    case "todo/loaded":
+      return { ...state, todos: { ...state.todos, [action.threadId]: action.todo } };
     case "thread/send-cleared": {
       const rest = { ...state.sendErrors };
       delete rest[action.threadId];
