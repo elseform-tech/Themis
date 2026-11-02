@@ -206,6 +206,32 @@ pub const SYSTEM_MEMORY: &str = include_str!("../builtins/prompts/system-memory.
 pub const MEMORY_TOOL: &str = include_str!("../builtins/prompts/memory-tool.md");
 /// Description of a subagent's read-only `memory` tool.
 pub const MEMORY_TOOL_READ: &str = include_str!("../builtins/prompts/memory-tool-read.md");
+/// System prompt of the background memory pass after a turn (`memory.auto`).
+pub const MEMORY_AUTO_SYSTEM: &str = include_str!("../builtins/prompts/memory-auto-system.md");
+/// The memory pass's request: `{{global}}`, `{{project}}` (indexes), `{{person}}` (the
+/// person's messages that turn) and `{{reply}}` (the agent's final reply).
+pub const MEMORY_AUTO_USER: &str = include_str!("../builtins/prompts/memory-auto-user.md");
+/// The one-line reminder before a context checkpoint (`hooks.built_in.save_reminder`).
+pub const RUNTIME_SAVE_REMINDER: &str =
+    include_str!("../builtins/prompts/runtime-save-reminder.md");
+/// System prompt of the request that seeds a new goal's to-do list (`goal.seed_todo`).
+pub const TODO_SEED_SYSTEM: &str = include_str!("../builtins/prompts/todo-seed-system.md");
+/// The seeding request; `{{project}}` (one of the two lines below) and `{{goal}}`.
+pub const TODO_SEED_USER: &str = include_str!("../builtins/prompts/todo-seed-user.md");
+/// Where a seeded goal's work happens: a project with nothing in it yet.
+pub const TODO_SEED_NEW_PROJECT: &str =
+    include_str!("../builtins/prompts/todo-seed-new-project.md");
+/// Where a seeded goal's work happens: a project that already has files.
+pub const TODO_SEED_EXISTING_PROJECT: &str =
+    include_str!("../builtins/prompts/todo-seed-existing-project.md");
+/// Title of the item a seeded list ends with.
+pub const TODO_SEED_VERIFY: &str = include_str!("../builtins/prompts/todo-seed-verify.md");
+/// Details of the item a seeded list ends with.
+pub const TODO_SEED_VERIFY_DETAILS: &str =
+    include_str!("../builtins/prompts/todo-seed-verify-details.md");
+/// The note a turn starts with when files changed last turn with to-do items open
+/// (`hooks.built_in.still_open`); `{{items}}`.
+pub const RUNTIME_STILL_OPEN: &str = include_str!("../builtins/prompts/runtime-still-open.md");
 /// The message that delivers the user's answer; `{{question}}`, `{{assumption}}`, `{{answer}}`.
 pub const QUESTION_ANSWER: &str = include_str!("../builtins/prompts/question-answer.md");
 /// `note` field of the set_goal tool result.

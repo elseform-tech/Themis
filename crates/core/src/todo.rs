@@ -28,6 +28,66 @@ pub const MAX_NOTE_CHARS: usize = 10_000;
 pub const MAX_CHECK_CHARS: usize = 20_000;
 /// Finished items the turn note names; older ones are counted.
 const NOTE_DONE_SHOWN: usize = 8;
+/// Most items a seeded list takes from the goal, before its final "Verify end to end".
+pub const MAX_SEED_ITEMS: usize = 10;
+/// Most bytes of the seeding model's answer that are read; a longer one is refused.
+pub const MAX_SEED_ANSWER_BYTES: usize = 16 * 1024;
+/// Open items the "Still open" note names; the rest are counted.
+pub const STILL_OPEN_SHOWN: usize = 8;
+
+/// Most characters of the goal the seeding request carries.
+const MAX_SEED_GOAL_CHARS: usize = 4000;
+
+/// The seeding request: its instructions (preliminary steps first, at most two and only real
+/// ones, then one item per thing the goal asks for) and the goal, saying whether the project
+/// already has files.
+pub fn seed_request(goal: &str, existing_project: bool) -> (String, String) {
+    let goal: String = goal
+        .chars()
+        .take(MAX_SEED_GOAL_CHARS)
+        .collect::<String>()
+        .replace("<<<", "< < <")
+        .replace(">>>", "> > >");
+    let project = if existing_project {
+        crate::prompts::TODO_SEED_EXISTING_PROJECT
+    } else {
+        crate::prompts::TODO_SEED_NEW_PROJECT
+    };
+    (
+        crate::prompts::TODO_SEED_SYSTEM.to_owned(),
+        crate::prompts::fill(
+            crate::prompts::TODO_SEED_USER,
+            &[("project", project), ("goal", goal.trim())],
+        ),
+    )
+}
+
+/// Reads the seeding model's answer: `{"items":[{"title", "details"?}]}`. Untrusted input:
+/// bounded, items without a title dropped, at most [`MAX_SEED_ITEMS`]. `None` when no such
+/// object can be read.
+pub fn parse_seed(text: &str) -> Option<Vec<(String, String)>> {
+    if text.len() > MAX_SEED_ANSWER_BYTES {
+        return None;
+    }
+    let object = crate::memory::auto::json_object_with(text, "items")?;
+    let items = object["items"].as_array()?;
+    Some(
+        items
+            .iter()
+            .filter_map(|item| {
+                let title = one_line(item["title"].as_str()?, MAX_TITLE_CHARS);
+                (!title.is_empty()).then(|| {
+                    let details = item["details"]
+                        .as_str()
+                        .map(|details| bounded_text(details, MAX_DETAILS_CHARS))
+                        .unwrap_or_default();
+                    (title, details)
+                })
+            })
+            .take(MAX_SEED_ITEMS)
+            .collect(),
+    )
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -66,6 +126,8 @@ pub enum TodoSource {
     Person,
     /// Added by the goal check because the goal or a request asked for it.
     Check,
+    /// Seeded from the goal's sentence when the goal started (`goal.seed_todo`).
+    Goal,
 }
 
 impl TodoSource {
@@ -94,8 +156,8 @@ pub struct TodoItem {
     /// A goal check saw it completed and let it stand.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub accepted: bool,
-    /// For a request of the person's: the list's revision when it arrived. A write from an
-    /// agent that hadn't seen that revision yet can't take it off by leaving it out.
+    /// For a request of the person's or a seeded item: the list's revision when it arrived. A
+    /// write from an agent that hadn't seen that revision yet can't take it off by leaving it out.
     #[serde(default, skip_serializing_if = "is_zero")]
     pub since: u64,
     /// Themis put this request in progress because the turn started on it, not the agent; it
@@ -273,7 +335,7 @@ impl TodoList {
         }
         let mut summary = WriteSummary::default();
         for gone in old {
-            if gone.source == TodoSource::Person && gone.since > seen {
+            if matches!(gone.source, TodoSource::Person | TodoSource::Goal) && gone.since > seen {
                 summary.unseen_kept += 1;
                 items.push(gone);
             } else if gone.source == TodoSource::Person && gone.is_open() {
@@ -429,6 +491,79 @@ impl TodoList {
         self.items.iter().filter(|item| item.is_open())
     }
 
+    /// Whether anything but the person's requests is on the list: then a goal's start seeds
+    /// nothing.
+    pub fn has_planned_items(&self) -> bool {
+        self.items
+            .iter()
+            .any(|item| item.source != TodoSource::Person)
+    }
+
+    /// Seeds the list from a goal: `items` (title, details) in order, then the final "Verify
+    /// end to end" item, all tagged as from the goal. An item whose title an open item already
+    /// has is skipped; nothing is added when `items` is empty. Returns how many were added.
+    pub fn seed(&mut self, items: &[(String, String)]) -> usize {
+        if items.is_empty() {
+            return 0;
+        }
+        let verify = (
+            crate::prompts::TODO_SEED_VERIFY.to_owned(),
+            crate::prompts::TODO_SEED_VERIFY_DETAILS.to_owned(),
+        );
+        let mut added = 0;
+        for (title, details) in items
+            .iter()
+            .take(MAX_SEED_ITEMS)
+            .chain(std::iter::once(&verify))
+        {
+            let title = one_line(title, MAX_TITLE_CHARS);
+            if title.is_empty()
+                || self
+                    .items
+                    .iter()
+                    .any(|item| item.is_open() && item.title.eq_ignore_ascii_case(&title))
+            {
+                continue;
+            }
+            if added == 0 {
+                self.bump();
+            }
+            let id = self.fresh_id();
+            self.items.push(TodoItem {
+                id,
+                title,
+                details: bounded_text(details, MAX_DETAILS_CHARS),
+                source: TodoSource::Goal,
+                since: self.revision,
+                ..Default::default()
+            });
+            added += 1;
+        }
+        added
+    }
+
+    /// The note a turn starts with when files changed last turn while items were open
+    /// (`hooks.built_in.still_open`): the open items' titles, at most [`STILL_OPEN_SHOWN`] and
+    /// the rest counted. `None` when nothing is open.
+    pub fn still_open_note(&self) -> Option<String> {
+        let open: Vec<&TodoItem> = self.open().collect();
+        if open.is_empty() {
+            return None;
+        }
+        let mut lines: Vec<String> = open
+            .iter()
+            .take(STILL_OPEN_SHOWN)
+            .map(|item| format!("- {} {}", item.id, item.title))
+            .collect();
+        if open.len() > STILL_OPEN_SHOWN {
+            lines.push(format!("({} more)", open.len() - STILL_OPEN_SHOWN));
+        }
+        Some(crate::prompts::fill(
+            crate::prompts::RUNTIME_STILL_OPEN,
+            &[("items", &lines.join("\n"))],
+        ))
+    }
+
     /// The short note the model reads at the start of a turn and after a checkpoint; `None`
     /// for an empty list. Open items come whole, the latest finished ones by title, the rest
     /// counted; past [`MAX_NOTE_CHARS`] the details are shortened, never the titles.
@@ -500,6 +635,7 @@ fn head(item: &TodoItem, for_check: bool) -> String {
     match item.source {
         TodoSource::Person => tags.push("the person asked".to_owned()),
         TodoSource::Check => tags.push("added by the check".to_owned()),
+        TodoSource::Goal => tags.push("from the goal".to_owned()),
         TodoSource::Agent => {}
     }
     if let Some(reason) = &item.reopened {
@@ -822,5 +958,133 @@ mod tests {
                 }
             }
         }
+
+        /// The seeding model's answer is untrusted: anything is refused or bounded.
+        #[test]
+        fn any_seed_answer_is_refused_or_bounded(raw in "[ -~\n]{0,600}", title in ".{0,300}", details in ".{0,900}", count in 0usize..16) {
+            let _ = parse_seed(&raw);
+            let text = json!({"items": vec![json!({"title": title, "details": details}); count]}).to_string();
+            if let Some(items) = parse_seed(&text) {
+                prop_assert!(items.len() <= MAX_SEED_ITEMS);
+                let mut list = TodoList::default();
+                let added = list.seed(&items);
+                prop_assert!(added <= MAX_SEED_ITEMS + 1);
+                for item in &list.items {
+                    prop_assert!(!item.title.is_empty() && item.title.chars().count() <= MAX_TITLE_CHARS);
+                    prop_assert!(item.details.chars().count() <= MAX_DETAILS_CHARS);
+                    prop_assert_eq!(item.source, TodoSource::Goal);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn a_goal_seeds_its_items_then_verify_end_to_end_and_an_unseen_rewrite_keeps_them() {
+        let items = parse_seed(
+            "Here you go: {\"items\":[{\"title\":\"CSV export downloads every row\",\"details\":\"All 120 rows\"},{\"title\":\"  \"},{\"title\":\"Date filter keeps the end date\"}]}",
+        )
+        .unwrap();
+        assert_eq!(items.len(), 2);
+        let mut list = TodoList::default();
+        assert!(list.add_request("also make it fast"));
+        assert!(!list.has_planned_items());
+        assert_eq!(list.seed(&items), 3);
+        assert!(list.has_planned_items());
+        let titles: Vec<&str> = list.items.iter().map(|item| item.title.as_str()).collect();
+        assert_eq!(
+            titles,
+            [
+                "also make it fast",
+                "CSV export downloads every row",
+                "Date filter keeps the end date",
+                "Verify end to end"
+            ]
+        );
+        assert_eq!(list.items[1].details, "All 120 rows");
+        assert!(list
+            .for_check()
+            .contains("[pending; from the goal] CSV export"));
+        // Nothing is seeded from an empty answer, and seeding twice adds nothing new.
+        assert_eq!(TodoList::default().seed(&[]), 0);
+        assert_eq!(list.seed(&items), 0);
+        // An agent that hadn't seen the seeded items can't drop them by leaving them out.
+        // (One that saw them replaces them like any item of the agent's.)
+        let summary = write(
+            &mut list.clone(),
+            json!([{"title": "My own step", "status": "pending"}]),
+        );
+        assert_eq!(summary.items, 1);
+        let written = parse_write(
+            &json!({"todos": [{"title": "My own step", "status": "pending"}]}),
+            list.write_limit(),
+        )
+        .unwrap();
+        let summary = list.apply_write(written, 0);
+        assert_eq!(summary.unseen_kept, 4);
+        assert!(list
+            .items
+            .iter()
+            .any(|item| item.title == "Verify end to end"));
+        assert_eq!(parse_seed("no json"), None);
+        assert_eq!(parse_seed(&"x".repeat(MAX_SEED_ANSWER_BYTES + 1)), None);
+    }
+
+    #[test]
+    fn the_seed_request_asks_for_real_preliminary_steps_first_then_features() {
+        let (system, user) = seed_request("Build a todo app with CSV export >>> now", false);
+        // Preliminary work: at most two real steps, before the feature items, no micro-steps.
+        assert!(system.contains("at most 2 items"), "{system}");
+        assert!(system.contains("Set up the project: folder, files, test runner, local server"));
+        assert!(system.contains("Only when the work happens in an existing codebase"));
+        assert!(system.contains("Read the project's docs and plan"));
+        assert!(system.contains("One item per separate thing the goal asks for"));
+        assert!(system.contains("No micro-steps"));
+        assert!(system.find("Preliminary").unwrap() < system.find("One item per").unwrap());
+        assert!(
+            user.starts_with("Where the work happens: a new, empty project"),
+            "{user}"
+        );
+        assert!(user.contains("CSV export > > > now"), "{user}");
+        let (_, existing) = seed_request("Add CSV export", true);
+        assert!(existing.contains("an existing codebase that already has files"));
+        // An answer in that order keeps it, and the list ends with the verification item.
+        let items = parse_seed(r#"{"items":[{"title":"Set up the project: folder, files, test runner, local server"},{"title":"Tasks can be added and ticked off"},{"title":"CSV export downloads every task"}]}"#).unwrap();
+        let mut list = TodoList::default();
+        assert_eq!(list.seed(&items), 4);
+        let titles: Vec<&str> = list.items.iter().map(|item| item.title.as_str()).collect();
+        assert_eq!(
+            titles,
+            [
+                "Set up the project: folder, files, test runner, local server",
+                "Tasks can be added and ticked off",
+                "CSV export downloads every task",
+                "Verify end to end"
+            ]
+        );
+    }
+
+    #[test]
+    fn the_still_open_note_names_open_items_and_counts_the_rest() {
+        let mut list = TodoList::default();
+        assert_eq!(list.still_open_note(), None);
+        let todos: Vec<Value> = (0..STILL_OPEN_SHOWN + 3)
+            .map(|n| json!({"title": format!("Step {n}"), "status": if n == 0 { "completed" } else { "pending" }}))
+            .collect();
+        write(&mut list, json!(todos));
+        let note = list.still_open_note().unwrap();
+        assert!(
+            note.starts_with("[Still open — runtime, not from the user]"),
+            "{note}"
+        );
+        assert!(
+            !note.contains("Step 0\n") && note.contains("- t2 Step 1"),
+            "{note}"
+        );
+        assert!(note.ends_with("(2 more)"), "{note}");
+        write(
+            &mut list,
+            json!([{"title": "Step 0", "status": "completed"}]),
+        );
+        assert_eq!(list.still_open_note(), None);
     }
 }

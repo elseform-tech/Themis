@@ -703,6 +703,8 @@ async fn run_task_with_evidence_inner(
     let mut turn = 0;
     let mut action_counts = std::collections::HashMap::new();
     let mut reaction_due = false;
+    // The save reminder went out since the last checkpoint.
+    let mut save_reminded = false;
     // Screenshots this run's model may see, when it reads images (none otherwise).
     let mut recent_images =
         crate::vision::RecentImages::new(if crate::providers::accepts_images(llm.model()) {
@@ -859,7 +861,9 @@ async fn run_task_with_evidence_inner(
                     .map(|ratio| (ratio * 1000.0).round() as u32),
             }
         };
-        if !defer_for_short_reply && (forced || calibrated_now > semantic_threshold) {
+        let compacting_now =
+            !defer_for_short_reply && (forced || calibrated_now > semantic_threshold);
+        if compacting_now {
             // Report the size that triggered the checkpoint (including this turn's new
             // input), so its divider reads "before → after" rather than the last turn's size.
             if policy.context_token_budget != usize::MAX {
@@ -920,6 +924,29 @@ async fn run_task_with_evidence_inner(
                     return Err(anyhow!(error));
                 }
             }
+        }
+        // `hooks.built_in.save_reminder`: a checkpoint is near (within about two steps' growth)
+        // and this step takes none, so the agent is told once per checkpoint, before it.
+        if compacting_now {
+            save_reminded = false;
+        } else if !save_reminded
+            && policy.context_token_budget != usize::MAX
+            && SAVE_REMINDER.try_with(|on| *on).unwrap_or(false)
+            && calibrated_now.saturating_add(calibrated_growth.saturating_mul(2))
+                > semantic_threshold
+        {
+            save_reminded = true;
+            messages.push(ChatMessage {
+                role: ChatRole::User,
+                message_type: MessageType::Text,
+                content: crate::prompts::RUNTIME_SAVE_REMINDER.to_owned(),
+            });
+            crate::diagnostics::emit(
+                "hook",
+                "built_in",
+                "info",
+                serde_json::json!({"hook": "save_reminder", "event": "BeforeCompaction"}),
+            );
         }
         if calibrated_tokens(&calibration, &messages, schema_tokens) > input_budget {
             let error = "Context still exceeds the request budget after one compaction; originals preserved".to_owned();
@@ -2630,6 +2657,14 @@ pub async fn with_system_head<F: std::future::Future>(head: String, future: F) -
 }
 
 tokio::task_local! { static CHECKPOINT_NOTE: CheckpointNote; }
+tokio::task_local! { static SAVE_REMINDER: bool; }
+
+/// Runs `future` with the save reminder on (`hooks.built_in.save_reminder` while memory is on):
+/// once before each context checkpoint, when one is near, the agent is reminded to save
+/// anything worth remembering.
+pub async fn with_save_reminder<F: std::future::Future>(on: bool, future: F) -> F::Output {
+    SAVE_REMINDER.scope(on, future).await
+}
 
 /// Gives the note read back right after a context checkpoint, such as the chat's to-do list as
 /// it stands then; `None` adds nothing.
@@ -3285,8 +3320,9 @@ fn calibration_sample(
 }
 
 /// Notes the runtime adds as user messages during a run; none is a new request.
-const RUNTIME_NOTES: [&str; 8] = [
+const RUNTIME_NOTES: [&str; 9] = [
     crate::prompts::RUNTIME_PASTED_SECRET,
+    crate::prompts::RUNTIME_SAVE_REMINDER,
     SUBAGENT_REACTION_NOTE,
     SPEC_CHECK,
     CUT_OFF_NOTE,
