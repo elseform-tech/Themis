@@ -39,7 +39,7 @@ const KIND: Record<string, Kind> = {
   read_file: "read", write_file: "edit", apply_patch: "edit", copy_file: "edit", move_file: "edit",
   delete_file: "edit", create_dir: "edit", list_dir: "list", search_file: "search", shell: "run",
   spawn_subagents: "subagents", wait_subagents: "subagents", message_subagent: "subagents", stop_subagent: "subagents",
-  git: "git", web_search: "web", fetch_url: "fetch", recall: "recall", goal_checklist: "checklist",
+  git: "git", web_search: "web", fetch_url: "fetch", recall: "recall", todo_write: "checklist",
 };
 
 function kindOf(name: string): Kind {
@@ -93,7 +93,7 @@ function phrase(kind: Kind, calls: { name: string; summary: string; label?: stri
     }
     case "browser": return "Used the browser";
     case "recall": return "Looked back at earlier work";
-    case "checklist": return "Updated the checklist";
+    case "checklist": return "Updated the to-do list";
     case "other": {
       const names = unique(calls.map(call => toolDisplayName(call.name, call.label)));
       return names.length === 1 ? `Used ${names[0]}` : `Used ${names.length} tools`;

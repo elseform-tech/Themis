@@ -192,19 +192,20 @@ is reached; for example `/goal optimize this app to speed up p95`.
   the goal, that number is the bar; without one, the check decides when further
   gains are not worth it and says why.
   The check reads the commands of the turn it judges (long outputs keep their
-  start and end), never the agent's claims, and keeps a list of what the goal asks
-  for and what is proven, so proof carries from turn to turn; an item goes back to
-  open when later work could have broken it. The overview box counts them ("2 of 5
-  complete"), and Workspace › Goal shows the tasks as one trail in working order, with the current one marked and what showed each finished one. How the work must be done (a technology, an approach, who does which part) sits apart as rules: they are never ticked off, and one that wasn't followed says so. A turn's
+  start and end), never the agent's claims, and referees the agent's own to-do
+  list: it can reopen an item it doesn't accept as done, with a short reason
+  ("reopened by the check"), or add one the goal asks for and the list lacks. The
+  goal is reached only when the check agrees and nothing on the list is open. How the work must be done (a technology, an approach, who does which part) sits apart as rules in Workspace › To-do: they are never ticked off, and one that wasn't followed says so. A turn's
   replies dim when the check rejects them, so a claim the check didn't accept
   doesn't read as a result. A browser script that changes the page instead of using it (setting a value, clicking from code) rules out reaching the goal until the page is reloaded and the whole thing shown again with real input. The check also says whether the turn moved the work forward (a turn
   that changed files always did); after three turns that only re-check, the next
   one is told to step back and try a different approach.
 - **What you add joins the goal.** A request you send while the goal is open
-  (steered in, queued or typed) is kept with the goal, and the check reaches the
-  goal only when those requests are done too. Answers to the agent's questions are
-  not requests. Up to 20 are kept (the oldest drop off); `/goal` again starts a
-  fresh list. `themis call get_goal` shows them under `added`.
+  (steered in, queued or typed) goes on the to-do list in your own words, tagged
+  "you asked", and holds the goal until it is done. None is ever dropped; when you
+  cancel or change an earlier request, the agent takes the old item off, and the
+  check puts it back if nothing you said cancelled it. Answers to the agent's
+  questions are not requests. `themis call get_todo` shows the list.
 - **The agent says where it stands.** There is no status box after a turn: each
   goal turn opens with the agent saying, in its own words, where the goal stands
   and what it will do next. Once the check finds the goal reached, one short
