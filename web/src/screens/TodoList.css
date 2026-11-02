@@ -1,0 +1,38 @@
+/* The main agent's to-do list, shared by the overview box and Workspace › To-do. */
+.themis-todo { display: grid; gap: 1px; margin: 0; padding: 0; list-style: none; }
+.themis-todo-item { display: block; border-radius: 8px; color: var(--themis-text-2); }
+.themis-todo-line {
+  display: flex; align-items: flex-start; gap: 9px; width: 100%; box-sizing: border-box; padding: 7px 8px;
+  border: 0; border-radius: 8px; background: transparent; color: inherit; font: inherit; font-size: .8125rem; line-height: 1.4; text-align: left;
+}
+button.themis-todo-line { cursor: pointer; }
+button.themis-todo-line:hover { background: color-mix(in srgb, var(--themis-text) 5%, transparent); }
+button.themis-todo-line:focus-visible { outline: 2px solid var(--themis-accent); outline-offset: -2px; }
+.themis-todo-mark { display: grid; place-items: center; flex: none; width: 14px; height: 14px; margin-top: 2px; }
+.themis-todo-mark .themis-dot-spinner { width: 14px; height: 14px; }
+/* Still to do: a small hollow dot. Done: a faint filled one. */
+.themis-todo-pending { width: 6px; height: 6px; box-sizing: border-box; border: 1.5px solid var(--themis-text-3); border-radius: 50%; }
+.themis-todo-text { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.themis-todo-tag { font-size: .75rem; font-weight: 400; color: var(--themis-text-3); }
+.themis-todo-tag.is-reopened { color: var(--themis-accent); }
+/* Finished items are crossed off and dimmed; there is no tick. */
+.themis-todo-item.is-done { color: var(--themis-text-3); }
+.themis-todo-item.is-done .themis-todo-title { text-decoration: line-through; text-decoration-thickness: 1px; text-decoration-color: color-mix(in srgb, var(--themis-text-3) 80%, transparent); }
+.themis-todo-item.is-done .themis-todo-pending { width: 4px; height: 4px; border: 0; background: var(--themis-text-3); opacity: .6; }
+.themis-todo-item.is-current { background: color-mix(in srgb, var(--themis-text) 4%, transparent); color: var(--themis-text); }
+.themis-todo-item.is-current .themis-todo-title { font-weight: 550; }
+.themis-todo-item.is-fresh { animation: themis-todo-arrive .8s ease-out; }
+@keyframes themis-todo-arrive { from { background: color-mix(in srgb, var(--themis-accent) 18%, transparent); } }
+
+/* An opened item: its details, outcome and why the check reopened it. */
+.themis-todo-info { display: grid; gap: 4px; padding: 0 8px 8px 31px; font-size: .75rem; line-height: 1.45; color: var(--themis-text-2); }
+.themis-todo-info p { margin: 0; overflow-wrap: anywhere; white-space: pre-wrap; }
+.themis-todo-label { margin-right: 6px; color: var(--themis-text-3); }
+.themis-todo-info .is-reopened .themis-todo-label { color: var(--themis-accent); }
+
+/* The overview box: compact rows and the folded counts. */
+.themis-todo.is-compact { display: grid; }
+.themis-todo.is-compact .themis-todo-line { padding: 4px; }
+.themis-todo-more { display: block; padding: 3px 4px 2px 27px; font-size: .75rem; color: var(--themis-text-3); }
+
+@media (prefers-reduced-motion: reduce) { .themis-todo-item.is-fresh { animation: none; } }

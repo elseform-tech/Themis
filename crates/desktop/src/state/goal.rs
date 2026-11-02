@@ -41,20 +41,14 @@ const MAX_BACKOFF: Duration = Duration::from_secs(15 * 60);
 pub(super) const BANK_INTERVAL: Duration = Duration::from_secs(60);
 /// Wait before retrying a goal turn the concurrency limit turned away.
 const BUSY_RETRY: Duration = Duration::from_secs(20);
-/// Most requests added during a goal the check reads (the oldest are dropped).
-const MAX_ADDED_REQUESTS: usize = 20;
-/// Longest added request the check reads, in characters.
-const MAX_ADDED_CHARS: usize = 2000;
 /// Most command evidence the goal check reads, in characters.
 const MAX_EVIDENCE_CHARS: usize = 32_000;
 /// Most changed files a goal remembers, the latest ones.
 const MAX_GOAL_FILES: usize = 30;
 /// Longest paragraph of a goal note.
 const MAX_NOTE_PART_CHARS: usize = 800;
-/// Most pending items a check's message names; Workspace › Goal has them all.
-const MAX_PENDING_SHOWN: usize = 5;
-/// How soon to look again at a chat whose project has the live checklist switched off.
-const CHECKLIST_OFF_RECHECK: Duration = Duration::from_secs(60);
+/// Most reopened items a check's message names; Workspace › To-do has them all.
+const MAX_REOPENED_SHOWN: usize = 5;
 /// A long command output keeps its start and its end (where results and
 /// summaries are), in characters.
 const OUTPUT_HEAD_CHARS: usize = 2_000;
@@ -77,15 +71,6 @@ const PAGE_CHANGING_CALLS: [&str; 11] = [
     "force",
     "innerHTML",
 ];
-
-/// How many items a checklist has, and how many of them are proven.
-fn checklist_counts(items: &[core_goal::GoalRequirement]) -> (usize, usize) {
-    let tasks = items.iter().filter(|item| !item.is_rule());
-    (
-        tasks.clone().count(),
-        tasks.filter(|item| item.proven).count(),
-    )
-}
 
 /// Whether a devtools script changed the page instead of reading it. This is a screen for a
 /// plain mistake, not a sandbox: a read that looks like a write only costs the agent a reload.
@@ -130,30 +115,31 @@ fn page_spoiled_after(spoiled: bool, tool: &str, summary: &str) -> bool {
     spoiled || marks_page_change(tool, summary)
 }
 
-/// What the goal check tells the chat: what is wrong, what to change, and what is left.
-fn check_message(verdict: &core_goal::GoalVerdict) -> String {
+/// What the goal check tells the chat: what is wrong, what to change, which finished items it
+/// reopened (named from `list`) and which rule wasn't followed.
+fn check_message(verdict: &core_goal::GoalVerdict, list: &themis_core::todo::TodoList) -> String {
     let mut parts = vec![verdict.reason.clone()];
     parts.extend(verdict.next.clone());
-    let pending: Vec<&str> = verdict
-        .requirements
+    let reopened: Vec<&str> = verdict
+        .reopen
         .iter()
-        .filter(|item| item.is_open())
-        .map(|item| item.what.as_str())
+        .filter_map(|(id, _)| list.items.iter().find(|item| &item.id == id))
+        .map(|item| item.title.as_str())
         .collect();
-    if !pending.is_empty() {
-        let shown = pending[..pending.len().min(MAX_PENDING_SHOWN)].join(", ");
-        let more = pending.len().saturating_sub(MAX_PENDING_SHOWN);
+    if !reopened.is_empty() {
+        let shown = reopened[..reopened.len().min(MAX_REOPENED_SHOWN)].join(", ");
+        let more = reopened.len().saturating_sub(MAX_REOPENED_SHOWN);
         parts.push(if more > 0 {
-            format!("Still pending: {shown} and {more} more")
+            format!("Reopened: {shown} and {more} more")
         } else {
-            format!("Still pending: {shown}")
+            format!("Reopened: {shown}")
         });
     }
     let broken: Vec<&str> = verdict
-        .requirements
+        .rules
         .iter()
-        .filter(|item| item.broken)
-        .map(|item| item.what.as_str())
+        .filter(|rule| rule.broken)
+        .map(|rule| rule.what.as_str())
         .collect();
     if !broken.is_empty() {
         parts.push(format!("Not followed: {}", broken.join(", ")));
@@ -364,8 +350,7 @@ impl AppState {
                 .transcript
                 .last_activity_seq(thread_id)
                 .unwrap_or(0),
-            added: Vec::new(),
-            proof: Vec::new(),
+            rules: Vec::new(),
             files: Vec::new(),
             checking: false,
             retry_at: None,
@@ -389,8 +374,8 @@ impl AppState {
             .goal_for(&thread_id)
             .filter(|goal| goal.status != GoalStatus::Reached);
         let mut goal = self.begin_goal(sink.as_ref(), &thread_id, &text);
-        // Rewording an open goal continues it: its time, turn count and the
-        // requests added to it carry over.
+        // Rewording an open goal continues it: its time, turn count and files carry over, and
+        // its to-do list stays; the next check finds the new sentence's rules.
         if let Some(previous) = previous {
             let stretch = previous.running_since.map_or(0, |since| {
                 u64::try_from(now_ms().saturating_sub(since)).unwrap_or(0)
@@ -398,15 +383,11 @@ impl AppState {
             if let Some(updated) = self.update_goal(sink.as_ref(), &thread_id, |goal| {
                 goal.active_ms = previous.active_ms.saturating_add(stretch);
                 goal.turns = previous.turns;
-                goal.added = previous.added;
-                goal.proof = previous.proof;
                 goal.files = previous.files;
             }) {
                 goal = updated;
             }
         }
-        self.refresh_checklist(Arc::clone(&sink), &thread_id);
-        self.watch_checklist(Arc::clone(&sink), &thread_id);
         if !running {
             self.start_goal_turn(
                 sink,
@@ -430,11 +411,12 @@ impl AppState {
         let goal = self
             .update_goal(sink.as_ref(), &thread_id, |goal| {
                 goal.text = text;
-                // A changed goal gets a fresh look: old stalls no longer apply.
+                // A changed goal gets a fresh look: old stalls and the old sentence's rules no
+                // longer apply; the next check finds the new one's.
                 goal.stalls = 0;
+                goal.rules.clear();
             })
             .ok_or_else(|| "This chat has no goal".to_owned())?;
-        self.refresh_checklist(sink, &thread_id);
         Ok(goal)
     }
 
@@ -641,219 +623,22 @@ impl AppState {
         })
     }
 
-    /// Remembers a request the user sent while the chat's goal is open (not
-    /// reached), so the goal check counts it. Answers to the agent's questions
-    /// and runtime goal turns are not requests; a steer that comes back as the
-    /// next message is counted once.
+    /// Puts a request the user sent while the chat's goal is open (not reached) on the to-do
+    /// list in their words, so the agent and the goal check count it. Answers to the agent's
+    /// questions and runtime goal turns are not requests; a steer that comes back as the next
+    /// message is counted once.
     pub(super) fn note_added_request(&self, sink: &dyn EventSink, thread_id: &str, text: &str) {
         let text = text.trim();
         if text.is_empty()
             || text.starts_with(super::questions::ANSWER_MARKER)
             || core_goal::turn_number(text).is_some()
+            || !self
+                .goal_for(thread_id)
+                .is_some_and(|goal| goal.status != GoalStatus::Reached)
         {
             return;
         }
-        let open = self.goal_for(thread_id).is_some_and(|goal| {
-            goal.status != GoalStatus::Reached && !goal.added.iter().any(|seen| seen == text)
-        });
-        if !open {
-            return;
-        }
-        let request: String = text.chars().take(MAX_ADDED_CHARS).collect();
-        self.update_goal(sink, thread_id, |goal| {
-            let item = core_goal::pending_item(&request);
-            if !goal.proof.iter().any(|known| known.what == item.what) {
-                goal.proof.push(item);
-            }
-            goal.added.push(request);
-            if goal.added.len() > MAX_ADDED_REQUESTS {
-                goal.added.remove(0);
-            }
-        });
-    }
-
-    /// Lists what the goal asks for, in the background, so the checklist follows the goal as it
-    /// is set, edited and added to. Dropped if the goal moved on meanwhile; a failure leaves the
-    /// list as it was, and the next check fills it anyway.
-    pub(super) fn refresh_checklist(&self, sink: Arc<dyn EventSink>, thread_id: &str) {
-        let Some(goal) = self.goal_for(thread_id) else {
-            return;
-        };
-        if goal.status == GoalStatus::Reached {
-            return;
-        }
-        let state = self.clone();
-        let thread_id = thread_id.to_owned();
-        tokio::spawn(async move {
-            let planned = match state.goal_check_config(&thread_id).await {
-                Ok((config, catalog, _)) => themis_core::providers::with_catalog_limits(
-                    &catalog,
-                    themis_core::context_metrics::with_usage_recorder(
-                        state.usage_recorder(&thread_id, ""),
-                        themis_core::context_metrics::with_usage_kind(
-                            themis_core::context_metrics::UsageKind::GoalCheck,
-                            core_goal::plan_checklist_with_config(
-                                &config,
-                                &goal.text,
-                                &goal.added,
-                                &goal.proof,
-                            ),
-                        ),
-                    ),
-                )
-                .await
-                .map_err(|error| format!("{error:#}")),
-                Err(error) => Err(error),
-            };
-            let Ok(planned) = planned else {
-                let _ = state.inner.diagnostics.append(
-                    "goal",
-                    "checklist_failed",
-                    "warn",
-                    json!({"thread_id": thread_id}),
-                );
-                return;
-            };
-            let counts = checklist_counts(&planned);
-            let mut updated = false;
-            state.update_goal(sink.as_ref(), &thread_id, |current| {
-                if current.started_at == goal.started_at
-                    && current.text == goal.text
-                    && current.added == goal.added
-                    && current.proof == goal.proof
-                {
-                    current.proof = planned;
-                    updated = true;
-                }
-            });
-            if updated {
-                state.log_checklist_updated(&thread_id, counts, false);
-            }
-        });
-    }
-
-    /// Keeps a running goal's checklist moving during long turns: every so often, if the turn
-    /// has done something new, the check reads it and updates the list. It never decides the
-    /// goal, which only happens when a turn ends. One loop per chat, until the goal is over.
-    pub(super) fn watch_checklist(&self, sink: Arc<dyn EventSink>, thread_id: &str) {
-        let Some(started_at) = self.goal_for(thread_id).map(|goal| goal.started_at) else {
-            return;
-        };
-        let watching = (thread_id.to_owned(), started_at);
-        if !self
-            .inner
-            .goal_checklist_watches
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .insert(watching.clone())
-        {
-            return;
-        }
-        let state = self.clone();
-        let thread_id = thread_id.to_owned();
-        tokio::spawn(async move {
-            let mut read_through = 0;
-            loop {
-                let wait = state.checklist_refresh_every(&thread_id).await;
-                tokio::time::sleep(wait.unwrap_or(CHECKLIST_OFF_RECHECK)).await;
-                let Some(goal) = state
-                    .goal_for(&thread_id)
-                    .filter(|goal| goal.started_at == started_at)
-                else {
-                    break;
-                };
-                if goal.status == GoalStatus::Reached {
-                    break;
-                }
-                let idle = !matches!(state.require_thread(&thread_id).await, Ok(true));
-                if wait.is_none() || goal.status != GoalStatus::Running || goal.checking || idle {
-                    continue;
-                }
-                let (evidence, _, through, spoiled, _) =
-                    state.turn_evidence(&thread_id, goal.checked_seq);
-                if spoiled || through == read_through || evidence.trim().is_empty() {
-                    continue;
-                }
-                read_through = through;
-                let checked = state
-                    .run_goal_check(
-                        &thread_id,
-                        "",
-                        &goal,
-                        themis_core::prompts::GOAL_CHECK_MIDTURN,
-                        &evidence,
-                        &[],
-                    )
-                    .await;
-                let Ok(verdict) = checked else {
-                    let _ = state.inner.diagnostics.append(
-                        "goal",
-                        "checklist_failed",
-                        "warn",
-                        json!({"thread_id": thread_id}),
-                    );
-                    continue;
-                };
-                if verdict.requirements.is_empty() {
-                    continue;
-                }
-                let counts = checklist_counts(&verdict.requirements);
-                let mut updated = false;
-                state.update_goal(sink.as_ref(), &thread_id, |current| {
-                    if current.started_at == started_at
-                        && current.checked_seq == goal.checked_seq
-                        && !current.checking
-                        && current.text == goal.text
-                        && current.added == goal.added
-                    {
-                        current.proof = verdict.requirements;
-                        updated = true;
-                    }
-                });
-                if updated {
-                    state.log_checklist_updated(&thread_id, counts, true);
-                }
-            }
-            state
-                .inner
-                .goal_checklist_watches
-                .lock()
-                .unwrap_or_else(|e| e.into_inner())
-                .remove(&watching);
-        });
-    }
-
-    /// Metadata only: how many items, never what they say.
-    fn log_checklist_updated(
-        &self,
-        thread_id: &str,
-        (items, proven): (usize, usize),
-        mid_turn: bool,
-    ) {
-        let _ = self.inner.diagnostics.append(
-            "goal",
-            "checklist_updated",
-            "info",
-            json!({"thread_id": thread_id, "items": items, "proven": proven, "mid_turn": mid_turn}),
-        );
-    }
-
-    /// How often the chat's project wants the checklist refreshed during a turn, if at all.
-    async fn checklist_refresh_every(&self, thread_id: &str) -> Option<Duration> {
-        let project_root = self
-            .inner
-            .threads
-            .read()
-            .await
-            .get(thread_id)
-            .map(|record| record.project_root.clone())?;
-        let seconds = self
-            .runtime_configuration(Some(&project_root), None)
-            .ok()?
-            .config
-            .goal
-            .checklist_refresh_seconds;
-        (seconds > 0).then(|| Duration::from_secs(u64::from(seconds)))
+        self.add_request_to_todo(sink, thread_id, text);
     }
 
     /// One request to the goal check, on its model, recorded as a goal check. The turn's
@@ -906,8 +691,8 @@ impl AppState {
                     core_goal::check_with_config(
                         &config,
                         &goal.text,
-                        &goal.added,
-                        &goal.proof,
+                        &goal.rules,
+                        &self.todo_for(thread_id),
                         answer,
                         evidence,
                         &guidance,
@@ -1054,7 +839,7 @@ impl AppState {
             return;
         }
         let note = self.with_open_questions(&thread_id, note);
-        let text = core_goal::turn_message(goal.turns, &goal.text, &note, &goal.proof, &goal.files);
+        let text = core_goal::turn_message(goal.turns, &goal.text, &note, &goal.rules, &goal.files);
         let run_id = uuid::Uuid::new_v4().to_string();
         self.mark_goal_turn(&run_id);
         let (sent, progress) = self
@@ -1155,6 +940,8 @@ impl AppState {
             goal.files.drain(..excess);
         });
         let checked_goal = goal.started_at;
+        // The removed requests this check reads; it judges them whatever it decides.
+        let removals_read = self.todo_for(&thread_id).removed_requests.len();
         let verdict = self
             .run_goal_check(&thread_id, &run_id, &goal, &answer, &evidence, &screenshots)
             .await;
@@ -1183,15 +970,7 @@ impl AppState {
                 } else {
                     "The goal check could not decide this time; continuing."
                 };
-                core_goal::GoalVerdict {
-                    verdict: Verdict::NotYet,
-                    reason: reason.into(),
-                    next: None,
-                    requirements: Vec::new(),
-                    progress: None,
-                    progressed: None,
-                    told_user: None,
-                }
+                core_goal::GoalVerdict::undecided(reason)
             }
         };
         // However sure the check is: proof from a page a script changed isn't proof.
@@ -1220,26 +999,48 @@ impl AppState {
         } else {
             verdict
         };
+        // A decided check has judged this evidence; a failed one has not, so
+        // the next check reads it again.
+        // Only for the goal that was checked: one set while the check ran keeps
+        // its own starting point. The check referees the agent's list: what it reopens or adds
+        // lands there, and the goal is reached only when nothing on it is open.
+        let mut verdict = verdict;
+        let mut list = self.todo_for(&thread_id);
+        if !check_failed
+            && self
+                .goal_for(&thread_id)
+                .is_some_and(|goal| goal.started_at == checked_goal)
+        {
+            self.update_goal(sink.as_ref(), &thread_id, |goal| {
+                goal.checked_seq = through_seq;
+                if !verdict.rules.is_empty() {
+                    goal.rules = verdict.rules.clone();
+                }
+            });
+            let ((reopened, added), updated) = {
+                let (updated, counts) = self.update_todo(sink.as_ref(), &thread_id, |list| {
+                    let counts = verdict.referee(list);
+                    list.judged_removals(removals_read);
+                    counts
+                });
+                (counts, updated)
+            };
+            list = updated;
+            if reopened > 0 || added > 0 {
+                let _ = self.inner.diagnostics.append(
+                    "todo",
+                    "check_refereed",
+                    "info",
+                    json!({"thread_id": thread_id, "run_id": run_id, "reopened": reopened, "added": added}),
+                );
+            }
+        }
         let _ = self.inner.diagnostics.append(
             "goal",
             "checked",
             "info",
-            json!({"thread_id": thread_id, "run_id": run_id, "verdict": verdict.verdict}),
+            json!({"thread_id": thread_id, "run_id": run_id, "verdict": verdict.verdict, "open_items": list.open().count()}),
         );
-        // A decided check has judged this evidence; a failed one has not, so
-        // the next check reads it again.
-        // Only for the goal that was checked: one set while the check ran keeps
-        // its own starting point.
-        if !check_failed {
-            self.update_goal(sink.as_ref(), &thread_id, |goal| {
-                if goal.started_at == checked_goal {
-                    goal.checked_seq = through_seq;
-                    if !verdict.requirements.is_empty() {
-                        goal.proof = verdict.requirements.clone();
-                    }
-                }
-            });
-        }
         match verdict.verdict {
             Verdict::Reached => {
                 let Some(goal) = self.update_goal(sink.as_ref(), &thread_id, |goal| {
@@ -1294,7 +1095,7 @@ impl AppState {
                         goal.progress = verdict.progress.clone();
                     }
                 });
-                let shown_message = check_message(&verdict);
+                let shown_message = check_message(&verdict, &list);
                 let agent_note = match &verdict.next {
                     Some(next) => format!("{} {next}", verdict.reason),
                     None => verdict.reason.clone(),
@@ -1664,9 +1465,6 @@ impl AppState {
             let Some(goal) = self.goal_for(&thread_id) else {
                 continue;
             };
-            if goal.status != GoalStatus::Reached {
-                self.watch_checklist(Arc::clone(&sink), &thread_id);
-            }
             // A check the app closed during is not still going.
             if goal.checking {
                 self.update_goal(sink.as_ref(), &thread_id, |goal| goal.checking = false);
@@ -1785,64 +1583,35 @@ mod tests {
     }
 
     #[test]
-    fn the_check_names_a_broken_rule_and_never_lists_a_rule_as_pending() {
-        let verdict = core_goal::GoalVerdict {
-            verdict: Verdict::NotYet,
-            reason: "Not yet.".to_owned(),
-            next: None,
-            requirements: vec![
-                core_goal::GoalRequirement {
-                    what: "No build step".into(),
-                    kind: core_goal::GoalItemKind::Rule,
-                    ..Default::default()
-                },
-                core_goal::GoalRequirement {
-                    what: "Use subagents".into(),
-                    kind: core_goal::GoalItemKind::Rule,
-                    broken: true,
-                    ..Default::default()
-                },
-            ],
-            progress: None,
-            progressed: None,
-            told_user: None,
-        };
+    fn the_check_says_what_is_wrong_what_to_change_what_it_reopened_and_what_wasnt_followed() {
+        let mut list = themis_core::todo::TodoList::default();
+        list.add_from_check("Health", "");
+        list.add_from_check("Score", "");
+        let mut verdict = core_goal::GoalVerdict::undecided("Shooting doesn't raise the score.");
+        verdict.next = Some("Fix how bullets hit enemies, then show the score rising.".into());
+        verdict.reopen = vec![
+            ("t2".into(), "never shown".into()),
+            ("t9".into(), "gone".into()),
+        ];
+        verdict.rules = vec![
+            core_goal::GoalRule {
+                what: "No build step".into(),
+                ..Default::default()
+            },
+            core_goal::GoalRule {
+                what: "Use subagents".into(),
+                broken: true,
+                ..Default::default()
+            },
+        ];
         assert_eq!(
-            check_message(&verdict),
-            "Not yet.\n\nNot followed: Use subagents"
-        );
-        assert_eq!(checklist_counts(&verdict.requirements), (0, 0));
-    }
-
-    #[test]
-    fn the_check_says_what_is_wrong_what_to_change_and_what_is_left() {
-        let item = |what: &str, proven| core_goal::GoalRequirement {
-            what: what.to_owned(),
-            proven,
-            ..Default::default()
-        };
-        let verdict = |next: Option<&str>, requirements| core_goal::GoalVerdict {
-            verdict: Verdict::NotYet,
-            reason: "Shooting doesn't raise the score.".to_owned(),
-            next: next.map(str::to_owned),
-            requirements,
-            progress: None,
-            progressed: None,
-            told_user: None,
-        };
-        assert_eq!(
-            check_message(&verdict(
-                Some("Fix how bullets hit enemies, then show the score rising."),
-                vec![item("Health", true), item("Score", false), item("Restart", false)],
-            )),
-            "Shooting doesn't raise the score.\n\nFix how bullets hit enemies, then show the score rising.\n\nStill pending: Score, Restart"
+            check_message(&verdict, &list),
+            "Shooting doesn't raise the score.\n\nFix how bullets hit enemies, then show the score rising.\n\nReopened: Score\n\nNot followed: Use subagents"
         );
         assert_eq!(
-            check_message(&verdict(None, Vec::new())),
-            "Shooting doesn't raise the score."
+            check_message(&core_goal::GoalVerdict::undecided("Not yet."), &list),
+            "Not yet."
         );
-        let many: Vec<_> = (0..8).map(|n| item(&format!("Item {n}"), false)).collect();
-        assert!(check_message(&verdict(None, many)).ends_with("Item 4 and 3 more"));
     }
 
     #[test]
@@ -1877,8 +1646,7 @@ mod tests {
             progress: None,
             failures: 0,
             checked_seq: 0,
-            added: Vec::new(),
-            proof: Vec::new(),
+            rules: Vec::new(),
             files: Vec::new(),
             checking: false,
             retry_at: None,

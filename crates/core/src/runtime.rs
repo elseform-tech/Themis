@@ -2629,6 +2629,28 @@ pub async fn with_system_head<F: std::future::Future>(head: String, future: F) -
     SYSTEM_HEAD.scope(head, future).await
 }
 
+tokio::task_local! { static CHECKPOINT_NOTE: CheckpointNote; }
+
+/// Gives the note read back right after a context checkpoint, such as the chat's to-do list as
+/// it stands then; `None` adds nothing.
+pub type CheckpointNote = Arc<dyn Fn() -> Option<String> + Send + Sync>;
+
+/// Runs `future` with `note` added after each context checkpoint it installs.
+pub async fn with_checkpoint_note<F: std::future::Future>(
+    note: CheckpointNote,
+    future: F,
+) -> F::Output {
+    CHECKPOINT_NOTE.scope(note, future).await
+}
+
+/// Whether a user message is the to-do note, which is never the person's request.
+fn is_todo_note(text: &str) -> bool {
+    let marker = crate::prompts::RUNTIME_TODO_NOTE
+        .split_once(']')
+        .map_or("", |(marker, _)| marker);
+    !marker.is_empty() && text.starts_with(marker)
+}
+
 tokio::task_local! { static FIRST_REQUEST: String; }
 
 /// Runs `future` with the chat's first user message, which every context checkpoint
@@ -3037,6 +3059,14 @@ async fn compact_context_inner(
         evidence.as_ref().map(|(_, path)| path.as_path()),
     )
     .await?;
+    // What the checkpoint can't be trusted to keep exactly, read back as it stands now.
+    if let Some(note) = CHECKPOINT_NOTE.try_with(|note| note()).ok().flatten() {
+        messages.push(ChatMessage {
+            role: ChatRole::User,
+            message_type: MessageType::Text,
+            content: note,
+        });
+    }
     Ok(true)
 }
 
@@ -3279,6 +3309,7 @@ fn active_request_index(messages: &[ChatMessage]) -> Option<usize> {
                 .starts_with(crate::prompts::RUNTIME_SUBAGENT_NOTE)
             // Hook context is never the person's request.
             && !message.content.starts_with(crate::prompts::HOOK_CONTEXT_NOTE)
+            && !is_todo_note(&message.content)
     })
 }
 

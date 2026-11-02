@@ -53,7 +53,10 @@ pub const SUBAGENT_BACKGROUND_NOTE: &str =
     include_str!("../builtins/prompts/subagent-background-note.md");
 pub const SUBAGENT_CLAUDE_NAMES: &str =
     include_str!("../builtins/prompts/subagent-claude-names.md");
-pub const SUBAGENT_TODO_TOOL: &str = include_str!("../builtins/prompts/subagent-todo-tool.md");
+/// Description of `todo_write`, the to-do list of the main agent and of subagents.
+pub const TODO_TOOL: &str = include_str!("../builtins/prompts/todo-tool.md");
+/// The to-do list read back at the start of each run and after a checkpoint; `{{items}}`.
+pub const RUNTIME_TODO_NOTE: &str = include_str!("../builtins/prompts/runtime-todo-note.md");
 pub const SPAWN_SUBAGENTS_WEB: &str = include_str!("../builtins/prompts/spawn-subagents-web.md");
 /// Told to the main agent when it starts subagents without write paths; `{{names}}`.
 pub const SPAWN_SUBAGENTS_ONLY_READ: &str =
@@ -134,8 +137,12 @@ pub const DESKTOP_WATCH_CHECK: &str = include_str!("../builtins/prompts/desktop-
 pub const GOAL_CHECK_SYSTEM: &str = include_str!("../builtins/prompts/goal-check-system.md");
 /// User message of the goal check; `{{goal}}`, `{{answer}}`, `{{evidence}}` are fenced data.
 pub const GOAL_CHECK_USER: &str = include_str!("../builtins/prompts/goal-check-user.md");
-/// Appended to the goal check's input when the user added requests while the goal ran.
-pub const GOAL_CHECK_ADDED: &str = include_str!("../builtins/prompts/goal-check-added.md");
+/// The agent's to-do list as the goal check reads it; `{{items}}`.
+pub const GOAL_CHECK_TODO: &str = include_str!("../builtins/prompts/goal-check-todo.md");
+/// The person's requests the agent took off its list, for the goal check; `{{requests}}`.
+pub const GOAL_CHECK_REMOVED: &str = include_str!("../builtins/prompts/goal-check-removed.md");
+/// The goal's rules as earlier checks found them; `{{rules}}`.
+pub const GOAL_CHECK_RULES: &str = include_str!("../builtins/prompts/goal-check-rules.md");
 /// Text with each screenshot the goal check sees; `{{index}}`, `{{count}}`.
 pub const GOAL_CHECK_SCREENSHOTS: &str =
     include_str!("../builtins/prompts/goal-check-screenshots.md");
@@ -143,9 +150,6 @@ pub const GOAL_CHECK_SCREENSHOTS: &str =
 pub const GOAL_CONTEXT: &str = include_str!("../builtins/prompts/goal-context.md");
 /// Message that starts a goal turn; `{{goal_turn_marker}}`, `{{turn}}`, `{{goal}}`, `{{note}}`.
 pub const GOAL_TURN: &str = include_str!("../builtins/prompts/goal-turn.md");
-pub const GOAL_TURN_PROOF: &str = include_str!("../builtins/prompts/goal-turn-proof.md");
-/// The one task to work on now, in a goal turn; `{{task}}`.
-pub const GOAL_TURN_NEXT: &str = include_str!("../builtins/prompts/goal-turn-next.md");
 /// The goal's rules, in a goal turn; `{{rules}}`.
 pub const GOAL_TURN_RULES: &str = include_str!("../builtins/prompts/goal-turn-rules.md");
 pub const GOAL_TURN_FILES: &str = include_str!("../builtins/prompts/goal-turn-files.md");
@@ -155,10 +159,6 @@ pub const GOAL_EVIDENCE_SUBAGENT: &str =
 pub const GOAL_EVIDENCE_SCRIPT: &str = include_str!("../builtins/prompts/goal-evidence-script.md");
 pub const GOAL_NOTE_SCRIPT_PROOF: &str =
     include_str!("../builtins/prompts/goal-note-script-proof.md");
-pub const GOAL_CHECKLIST_SYSTEM: &str =
-    include_str!("../builtins/prompts/goal-checklist-system.md");
-pub const GOAL_CHECKLIST_USER: &str = include_str!("../builtins/prompts/goal-checklist-user.md");
-pub const GOAL_CHECK_MIDTURN: &str = include_str!("../builtins/prompts/goal-check-midturn.md");
 pub const GOAL_CONTEXT_OVER: &str = include_str!("../builtins/prompts/goal-context-over.md");
 pub const GOAL_CONTEXT_PAUSED: &str = include_str!("../builtins/prompts/goal-context-paused.md");
 /// The project's guidance as the goal check sees it; `{{guidance}}`.
@@ -166,7 +166,6 @@ pub const GOAL_CHECK_GUIDANCE: &str = include_str!("../builtins/prompts/goal-che
 /// The map of a project's other documents; `{{docs}}`.
 pub const PROJECT_GUIDANCE_DOCS: &str =
     include_str!("../builtins/prompts/project-guidance-docs.md");
-pub const GOAL_CHECK_PROOF: &str = include_str!("../builtins/prompts/goal-check-proof.md");
 /// Message that tells the user a checked goal is reached; `{{goal_turn_marker}}`,
 /// `{{turn}}`, `{{goal}}`, `{{reason}}`.
 pub const GOAL_REACHED_TURN: &str = include_str!("../builtins/prompts/goal-reached-turn.md");

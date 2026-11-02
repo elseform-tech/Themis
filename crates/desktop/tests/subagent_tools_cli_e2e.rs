@@ -689,8 +689,8 @@ async fn a_plain_subagent_has_none_of_these_tools_unless_named() {
 #[tokio::test(flavor = "multi_thread")]
 async fn a_todo_list_is_kept_and_shows_what_it_is_doing() {
     let todos = json!({"todos": [
-        {"content": "Read the code", "status": "completed"},
-        {"content": "Write the report", "status": "in_progress"}
+        {"title": "Read the code", "status": "completed"},
+        {"title": "Write the report", "status": "in_progress"}
     ]});
     let app = app(
         Setup {

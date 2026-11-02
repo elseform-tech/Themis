@@ -51,14 +51,35 @@ describe("WorkspacePanel", () => {
     await act(async () => {});
     expect(screen.getByRole("button", { name: /^Changes/ })).toHaveAttribute("aria-pressed", "true");
   });
-  it("falls back to Changes when the remembered Goal tab has no goal in this chat", async () => {
-    window.localStorage.setItem("themis-workspace-tab", "goal");
-    appState = { ...appState, workspaceTabRequest: { tab: "goal", at: 1 } } as typeof appState;
+  it("falls back to Changes when the remembered To-do tab has neither a goal nor a list in this chat", async () => {
+    appState = { ...appState, todos: { t1: { revision: 1, items: [] } }, workspaceTabRequest: { tab: "todo", at: 1 } } as typeof appState;
     render(<WorkspacePanel projectRoot="/repo" threadId="t1" workspace={workspace} />);
     await act(async () => {});
-    expect(screen.queryByText("This chat has no goal.")).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /^Goal/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^To-do/ })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: /^Changes/ })).toHaveAttribute("aria-pressed", "true");
+  });
+
+  it("shows the To-do tab for a chat's list without a goal, counting open items", async () => {
+    const items = [
+      { id: "a", title: "Find the old names", status: "completed" as const },
+      { id: "b", title: "Rename the screens", status: "in_progress" as const },
+      { id: "c", title: "Update the tests", status: "pending" as const },
+    ];
+    appState = { ...appState, todos: { t1: { revision: 1, items } }, workspaceTabRequest: { tab: "todo", at: 1 } } as typeof appState;
+    render(<WorkspacePanel projectRoot="/repo" threadId="t1" workspace={workspace} />);
+    await act(async () => {});
+    const tab = screen.getByRole("button", { name: "To-do 2" });
+    expect(tab).toHaveAttribute("aria-pressed", "true");
+    expect(tab.parentElement).toHaveAttribute("data-tooltip", "To-do");
+    expect(screen.getByRole("list", { name: "To-do" })).toHaveTextContent("Rename the screens");
+  });
+
+  it("shows the To-do tab for a goal before its list exists", async () => {
+    appState = { ...appState, goals: { t1: { text: "Ship it", status: "running", started_at: 0, active_ms: 0, turns: 1, stalls: 0, failures: 0 } }, workspaceTabRequest: { tab: "todo", at: 1 } } as typeof appState;
+    render(<WorkspacePanel projectRoot="/repo" threadId="t1" workspace={workspace} />);
+    await act(async () => {});
+    expect(screen.getByRole("button", { name: "To-do" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByText("Ship it")).toBeInTheDocument();
   });
 
   it("keeps a lean header: icon tabs named by tooltips, and Close", () => {

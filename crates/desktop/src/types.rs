@@ -282,6 +282,10 @@ pub enum ThreadEvent {
     GoalChanged {
         goal: Option<Goal>,
     },
+    /// The chat's to-do list changed. Live only; `run_id` is empty.
+    TodoChanged {
+        todo: themis_core::todo::TodoList,
+    },
     /// What the goal check (or the goal supervisor) concluded after a turn.
     GoalNote {
         outcome: GoalNoteKind,
@@ -461,13 +465,10 @@ pub struct Goal {
     /// check reads only what came after.
     #[serde(default)]
     pub checked_seq: i64,
-    /// Requests the user sent while the goal ran (steered, queued or typed),
-    /// oldest first; the goal check counts them as part of the goal.
+    /// How the work must be done, as the last decided check saw it. The tasks themselves are
+    /// the agent's to-do list.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub added: Vec<String>,
-    /// What the goal asks for and what is proven, as the last decided check saw it.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub proof: Vec<themis_core::goal::GoalRequirement>,
+    pub rules: Vec<themis_core::goal::GoalRule>,
     /// Files changed while working on this goal, so a new turn knows where its work is.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub files: Vec<String>,

@@ -516,28 +516,14 @@ impl AppState {
         };
         // `/goal` sets the goal, a reply resumes a goal waiting for the user;
         // every run while a goal runs is told about it.
-        let goal_before = self.goal_for(&thread_id);
+        // Every run reads the chat's to-do list as it stands, after any goal context.
         let resolved_text = match self.goal_for_message(sink.as_ref(), &thread_id, &text, &run_id) {
-            Ok(context) => format!("{resolved_text}{context}"),
+            Ok(context) => format!("{resolved_text}{context}{}", self.todo_note(&thread_id)),
             Err(error) => {
                 self.finish_run(&thread_id).await;
                 return Err(error);
             }
         };
-        // A new goal or an added request changes the checklist.
-        let goal_after = self.goal_for(&thread_id);
-        if goal_after
-            .as_ref()
-            .map(|goal| (goal.started_at, goal.added.len()))
-            != goal_before
-                .as_ref()
-                .map(|goal| (goal.started_at, goal.added.len()))
-        {
-            self.refresh_checklist(Arc::clone(&sink), &thread_id);
-        }
-        if goal_after.is_some() {
-            self.watch_checklist(Arc::clone(&sink), &thread_id);
-        }
         let shown_attachments = attachments.clone();
         if let Err(error) = self.inner.transcript.append_user_with_attachments(
             &thread_id,
@@ -694,6 +680,7 @@ impl AppState {
         self.forget_chat_grants(std::slice::from_ref(&thread_id));
         self.forget_queues(std::slice::from_ref(&thread_id));
         self.forget_goals(std::slice::from_ref(&thread_id));
+        self.forget_todos(std::slice::from_ref(&thread_id));
         self.forget_questions(std::slice::from_ref(&thread_id));
         self.forget_subagents(std::slice::from_ref(&thread_id));
         self.end_deleted_chat_session(&thread_id);

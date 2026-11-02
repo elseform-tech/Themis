@@ -1,0 +1,2 @@
+The agent's to-do list, which it keeps itself. Items the person asked for carry their own words as details. Judge each finished item against its details and the evidence; one an earlier check accepted stays accepted unless this turn changed what it depends on:
+{{items}}
