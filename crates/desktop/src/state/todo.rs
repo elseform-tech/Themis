@@ -35,7 +35,7 @@ impl AppState {
         if let Some(list) = todos.get(thread_id) {
             return list.clone();
         }
-        let list = match self.todo_path(thread_id).map(std::fs::read_to_string) {
+        let mut list = match self.todo_path(thread_id).map(std::fs::read_to_string) {
             Some(Ok(text)) => serde_json::from_str(&text).unwrap_or_else(|_| {
                 let _ = self.inner.diagnostics.append(
                     "todo",
@@ -47,6 +47,8 @@ impl AppState {
             }),
             _ => TodoList::default(),
         };
+        // Saved by an earlier start of the app: no turn of this one is working on a request.
+        list.end_turn();
         todos.insert(thread_id.to_owned(), list.clone());
         list
     }
@@ -117,6 +119,25 @@ impl AppState {
         let (list, added) = self.update_todo(sink, thread_id, |list| list.add_request(text));
         if added {
             self.log_todo(thread_id, "request_added", "person", &list);
+        }
+    }
+
+    /// A turn works on the person's message: their pending request in those words shows in
+    /// progress until the turn ends (see [`Self::end_todo_turn`]).
+    pub(super) fn start_request_on_todo(&self, sink: &dyn EventSink, thread_id: &str, text: &str) {
+        let (list, started) =
+            self.update_todo(sink, thread_id, |list| list.start_request(text.trim()));
+        if started {
+            self.log_todo(thread_id, "request_started", "runtime", &list);
+        }
+    }
+
+    /// The turn ended: requests Themis put in progress for it go back to pending unless the
+    /// agent gave them a status itself. Never completes anything.
+    pub(super) fn end_todo_turn(&self, sink: &dyn EventSink, thread_id: &str) {
+        let (list, settled) = self.update_todo(sink, thread_id, TodoList::end_turn);
+        if settled {
+            self.log_todo(thread_id, "request_turn_ended", "runtime", &list);
         }
     }
 
