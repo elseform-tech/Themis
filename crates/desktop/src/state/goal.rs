@@ -1003,8 +1003,8 @@ impl AppState {
         // A decided check has judged this evidence; a failed one has not, so
         // the next check reads it again.
         // Only for the goal that was checked: one set while the check ran keeps
-        // its own starting point. The check referees the agent's list: what it reopens or adds
-        // lands there, and the goal is reached only when nothing on it is open.
+        // its own starting point. The check referees the agent's list: what it reopens, adds,
+        // completes or closes lands there, and the goal is reached only when nothing is open.
         let mut verdict = verdict;
         let mut list = self.todo_for(&thread_id);
         if !check_failed
@@ -1018,21 +1018,19 @@ impl AppState {
                     goal.rules = verdict.rules.clone();
                 }
             });
-            let ((reopened, added), updated) = {
-                let (updated, counts) = self.update_todo(sink.as_ref(), &thread_id, |list| {
-                    let counts = verdict.referee(list);
-                    list.judged_removals(removals_read);
-                    counts
-                });
-                (counts, updated)
-            };
+            let (updated, counts) = self.update_todo(sink.as_ref(), &thread_id, |list| {
+                let counts = verdict.referee(list);
+                list.judged_removals(removals_read);
+                counts
+            });
             list = updated;
-            if reopened > 0 || added > 0 {
+            if counts.any() {
                 let _ = self.inner.diagnostics.append(
                     "todo",
                     "check_refereed",
                     "info",
-                    json!({"thread_id": thread_id, "run_id": run_id, "reopened": reopened, "added": added}),
+                    json!({"thread_id": thread_id, "run_id": run_id, "reopened": counts.reopened,
+                        "added": counts.added, "confirmed": counts.confirmed, "closed": counts.closed}),
                 );
             }
         }

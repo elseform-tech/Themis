@@ -519,6 +519,8 @@ export interface TodoItem {
   source?: "person" | "check";
   /** The goal check's short reason for reopening it. */
   reopened?: string;
+  /** The goal check, not the agent, finished it: shown done, cancelled by a later request, or a question answered. */
+  closed?: "confirmed" | "cancelled" | "answered";
 }
 
 /** The main agent's to-do list for a chat (normal chats and goals). */

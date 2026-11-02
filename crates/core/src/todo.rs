@@ -68,6 +68,37 @@ pub enum TodoSource {
     Check,
 }
 
+/// How the goal check closed an item the agent left open.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CheckClosure {
+    /// The turn's evidence shows it done; the outcome says what showed it.
+    Confirmed,
+    /// A later request of the person's cancelled it.
+    Cancelled,
+    /// It only asked a question, and the chat answered it.
+    Answered,
+}
+
+impl CheckClosure {
+    pub fn parse(text: &str) -> Option<Self> {
+        match text {
+            "cancelled" => Some(Self::Cancelled),
+            "answered" => Some(Self::Answered),
+            _ => None,
+        }
+    }
+
+    /// What the check did, as the agent and the check read it.
+    fn words(self) -> &'static str {
+        match self {
+            Self::Confirmed => "confirmed",
+            Self::Cancelled => "cancelled by a later request",
+            Self::Answered => "answered",
+        }
+    }
+}
+
 impl TodoSource {
     fn is_agent(&self) -> bool {
         *self == Self::Agent
@@ -94,6 +125,9 @@ pub struct TodoItem {
     /// A goal check saw it completed and let it stand.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub accepted: bool,
+    /// The goal check, not the agent, finished it, and how.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub closed: Option<CheckClosure>,
     /// For a request of the person's: the list's revision when it arrived. A write from an
     /// agent that hadn't seen that revision yet can't take it off by leaving it out.
     #[serde(default, skip_serializing_if = "is_zero")]
@@ -253,18 +287,21 @@ impl TodoList {
                     next.details = details;
                 }
             }
-            if next.status != item.status {
+            let unchanged = next.status == item.status;
+            if !unchanged {
                 next.accepted = false;
+                next.closed = None;
             }
             // The agent gave it a status of its own: from here on that stands.
             if item.status != TodoStatus::InProgress {
                 next.marked_for_turn = false;
             }
             next.status = item.status;
-            next.outcome = if item.status == TodoStatus::Completed {
-                item.outcome
-            } else {
-                String::new()
+            next.outcome = match item.status {
+                // Rewriting what the check closed without an outcome keeps the check's.
+                TodoStatus::Completed if unchanged && item.outcome.is_empty() => next.outcome,
+                TodoStatus::Completed => item.outcome,
+                _ => String::new(),
             };
             if item.status == TodoStatus::Completed {
                 next.reopened = None;
@@ -369,12 +406,40 @@ impl TodoList {
         let item = &mut self.items[index];
         item.status = TodoStatus::Pending;
         item.accepted = false;
+        item.closed = None;
         item.marked_for_turn = false;
         item.outcome.clear();
         item.reopened = Some(one_line(reason, MAX_REOPEN_CHARS)).filter(|r| !r.is_empty());
         if item.reopened.is_none() {
             item.reopened = Some("not shown done".to_owned());
         }
+        true
+    }
+
+    /// The goal check closes an open item: done when the evidence shows it (`note` says what
+    /// showed it and is required), or not needed because a later request cancelled it or it was
+    /// a question the chat answered. The person's words stay as they are. False when there is no
+    /// such open item or a confirmation says nothing.
+    pub fn close_from_check(&mut self, id: &str, how: CheckClosure, note: &str) -> bool {
+        let note = one_line(note, MAX_OUTCOME_CHARS);
+        if how == CheckClosure::Confirmed && note.is_empty() {
+            return false;
+        }
+        let Some(index) = self
+            .items
+            .iter()
+            .position(|item| item.id == id && item.is_open())
+        else {
+            return false;
+        };
+        self.bump();
+        let item = &mut self.items[index];
+        item.status = TodoStatus::Completed;
+        item.outcome = note;
+        item.closed = Some(how);
+        item.marked_for_turn = false;
+        item.accepted = true;
+        item.reopened = None;
         true
     }
 
@@ -490,13 +555,22 @@ struct Line {
 }
 
 fn head(item: &TodoItem, for_check: bool) -> String {
-    let mut tags = vec![match item.status {
-        TodoStatus::Pending => "pending",
-        TodoStatus::InProgress => "in progress",
-        TodoStatus::Completed if for_check && item.accepted => "done, accepted by an earlier check",
-        TodoStatus::Completed => "done",
-    }
-    .to_owned()];
+    let by = if for_check { "a check" } else { "the check" };
+    let mut tags = vec![match (item.status, item.closed) {
+        (TodoStatus::Pending, _) => "pending".to_owned(),
+        (TodoStatus::InProgress, _) => "in progress".to_owned(),
+        (TodoStatus::Completed, Some(CheckClosure::Confirmed)) if for_check => {
+            "done, confirmed by an earlier check".to_owned()
+        }
+        (TodoStatus::Completed, Some(CheckClosure::Confirmed)) => {
+            "done, confirmed by the check".to_owned()
+        }
+        (TodoStatus::Completed, Some(how)) => format!("closed by {by}: {}", how.words()),
+        (TodoStatus::Completed, None) if for_check && item.accepted => {
+            "done, accepted by an earlier check".to_owned()
+        }
+        (TodoStatus::Completed, None) => "done".to_owned(),
+    }];
     match item.source {
         TodoSource::Person => tags.push("the person asked".to_owned()),
         TodoSource::Check => tags.push("added by the check".to_owned()),
@@ -749,6 +823,96 @@ mod tests {
         );
         assert_eq!(list.items[0].reopened, None);
         assert_eq!(list.items[1].source, TodoSource::Check);
+    }
+
+    /// Live: a free model never called `todo_write`, so the person's requests stayed pending
+    /// though the work was built, and the goal looped. The check closes them on evidence.
+    #[test]
+    fn the_check_confirms_an_open_item_and_closes_a_cancelled_or_answered_one() {
+        let mut list = TodoList::default();
+        list.add_request("Add a currency selector");
+        list.add_request(
+            "Side question: what's the difference between localStorage and sessionStorage?",
+        );
+        list.add_request("Build the budget table");
+        let before = list.revision;
+        assert!(list.close_from_check(
+            "t3",
+            CheckClosure::Confirmed,
+            "the table renders; its test passed"
+        ));
+        assert!(list.close_from_check("t1", CheckClosure::Cancelled, ""));
+        assert!(list.close_from_check("t2", CheckClosure::Answered, "explained in the reply"));
+        assert!(list.revision > before);
+        assert!(list.items.iter().all(|item| !item.is_open()));
+        assert_eq!(list.items[2].closed, Some(CheckClosure::Confirmed));
+        assert_eq!(list.items[2].outcome, "the table renders; its test passed");
+        assert!(list.items[2].accepted);
+        assert_eq!(list.items[0].closed, Some(CheckClosure::Cancelled));
+        assert_eq!(
+            list.items[0].details, "Add a currency selector",
+            "their words stay"
+        );
+        assert_eq!(list.items[1].closed, Some(CheckClosure::Answered));
+        // Only open items, only known ids, and a confirmation needs what shows it.
+        assert!(
+            !list.close_from_check("t3", CheckClosure::Cancelled, ""),
+            "already finished"
+        );
+        assert!(!list.close_from_check("t9", CheckClosure::Confirmed, "x"));
+        list.add_request("Add dark mode");
+        assert!(!list.close_from_check("t4", CheckClosure::Confirmed, "  "));
+        assert!(list.items[3].is_open());
+        // The check and the agent each read who closed it and why.
+        let check = list.for_check();
+        assert!(check.contains("- t3 [done, confirmed by an earlier check; the person asked] Build the budget table — outcome: the table renders"), "{check}");
+        assert!(
+            check.contains(
+                "- t1 [closed by a check: cancelled by a later request; the person asked]"
+            ),
+            "{check}"
+        );
+        assert!(
+            check.contains("- t2 [closed by a check: answered; the person asked]"),
+            "{check}"
+        );
+        let note = list.note().unwrap();
+        assert!(
+            note.contains(
+                "[done, confirmed by the check; the person asked] Build the budget table"
+            ),
+            "{note}"
+        );
+        assert!(note.contains("[closed by the check: cancelled by a later request; the person asked] Add a currency selector"), "{note}");
+        // Reopening clears how the check closed it.
+        assert!(list.reopen("t1", "the person asked for it again"));
+        assert_eq!(list.items[0].closed, None);
+    }
+
+    #[test]
+    fn the_agent_rewriting_a_closed_item_keeps_or_clears_how_it_closed() {
+        let mut list = TodoList::default();
+        write(
+            &mut list,
+            json!([{"title":"Board","status":"pending"},{"title":"Export","status":"pending"}]),
+        );
+        list.close_from_check("t1", CheckClosure::Confirmed, "cards drag");
+        list.close_from_check("t2", CheckClosure::Cancelled, "");
+        write(
+            &mut list,
+            json!([{"id":"t1","title":"Board","status":"completed"},{"id":"t2","title":"Export","status":"pending"}]),
+        );
+        assert_eq!(
+            list.items[0].closed,
+            Some(CheckClosure::Confirmed),
+            "still the check's"
+        );
+        assert_eq!(
+            list.items[0].outcome, "cards drag",
+            "an empty outcome doesn't wipe it"
+        );
+        assert_eq!(list.items[1].closed, None, "the agent opened it again");
+        assert!(list.items[1].is_open());
     }
 
     #[test]
