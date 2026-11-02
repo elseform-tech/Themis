@@ -112,6 +112,7 @@ without its sandbox, the only way it runs there.
 | `browser_move` | Moves the mouse without clicking: `x` and `y` go to a point; `dx` and `dy` move by a distance, with no edge while the page holds the pointer lock. A click on a locked page stays where the mouse is, so it doesn't turn the view |
 | `browser_scroll` | Scrolls the page or one element |
 | `browser_tabs` | Lists, switches or closes this chat's tabs |
+| `browser_check_looks` | Measures how the current page looks, without seeing it (below) |
 
 Every action waits for the page to settle (loaded after a navigation, network quiet
 for half a second; a loaded page whose network never goes quiet, such as analytics or
@@ -134,6 +135,35 @@ Password fields are always masked. Each result also lists what is
 answers and failed requests of pages, fetches and XHRs (URLs without query strings),
 and dialogs. Alerts are accepted; confirm and prompt dialogs are dismissed, so a
 page never gets a "yes" the agent did not give. Everything is untrusted data.
+
+**Checking how a page looks.** Models get text only, so `browser_check_looks` measures
+what a computer can about the current page, once with the page emulating a light colour
+scheme and once dark (`prefers-color-scheme` over the DevTools protocol; the page shows
+each scheme briefly in Workspace and is put back afterwards, also when the run is stopped).
+It lists:
+
+- text whose contrast against the colour behind it (ancestors' backgrounds blended down
+  to the page canvas) is below 1.5:1, and control text below 3:1;
+- buttons with no readable text, picture or edge, and fields with no visible edge;
+- elements cut off by or off the right side of the page (not inside a container that
+  scrolls), text cut off by its own box (not with an ellipsis or line clamp), and a page
+  that scrolls sideways;
+- text outside `pre`/`code` that starts like source code (`//`, `/*`, `<!--`, `{`,
+  `function`, `import … from`, `const x =` and the like);
+- quirks mode (`document.compatMode` is `BackCompat`);
+- top-level CSS rules of the page's own stylesheets whose selector the browser rejects,
+  which drops the whole rule silently, with the file, line and first line (a `//` line
+  says CSS has no `//` comments); rules with `-moz-`, `-ms-` or `-o-` prefixes are skipped;
+- stylesheets, scripts, images and fonts of the current page that failed to load, and its
+  console errors (secrets hidden unless Show secrets is on).
+
+Problems found in both schemes are listed once under `both`; the rest under `light_only`
+or `dark_only`, after the whole-page ones under `page`. Elements carry refs like the
+snapshot. The result is bounded: each list shows at most 15 lines (`not_shown` counts
+the rest), the page script looks at the first 5,000 elements and text nodes and at most
+20 stylesheets of 300 KB, and it is untrusted, like every page result. Colours over
+background images and gradients, and text with a shadow or outline, are not judged.
+The goal check sees the result like any other tool output.
 
 **In Workspace.** The Browser tab streams the chat's current tab at the panel's size.
 The agent's first browser step in a run opens it for the chat on screen.
