@@ -408,6 +408,8 @@ Transient integration errors and installation confirmations use the shared side 
 
 Background startup is bounded to 30 seconds per connection. Disabled connections never start; explicit user/project approval denials block automatic startup. Enabling authorizes connection setup only, not tool execution. Changes reconcile existing connections; old transports referenced by active runs retain their snapshot until the run releases them. Connections are held in memory by the shared app server, without a second writable registry.
 
+Connections and hooks install off, because they run on your computer, and many plugins do little without them. So the install message says what stayed off, the plugin's Discover card and its Installed row say so in amber, and the row's **Turn on** switches them all on in one click. Integrations in the sidebar carries an amber dot until you have seen the new ones in Installed; a part you choose to keep off doesn't keep it lit.
+
 A tool call may run for 5 minutes. Set `tool_timeout_secs` (1 to 3600) on a server in `mcp.json` to change that for its tools. When the time runs out the agent is told. A local server stops and starts again at its next tool call, so anything it held in memory, such as an open browser, is gone. A local server that exits on its own comes back the same way, and a remote connection that ended reconnects at the next run, without a Refresh. Starting a server and listing its tools stay limited to 30 seconds.
 
 Open an MCP connection’s details to see its exposed tool count, names and descriptions. This reads cached discovery metadata; it does not execute a tool. Tools appear after the connection completes.
