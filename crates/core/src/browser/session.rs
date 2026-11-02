@@ -108,6 +108,8 @@ struct TabState {
     requests: VecDeque<devtools::RequestEntry>,
     /// Numbers console messages and requests, so a tool can read only newer ones.
     log_seq: u64,
+    /// `log_seq` when the current document committed: later entries belong to this page.
+    document_seq: u64,
     /// The debugger's pause (`Debugger.paused` params) while the page is stopped.
     paused: Option<Value>,
     /// Counts pauses, so a stale auto-resume does not resume a later one.
@@ -127,6 +129,17 @@ struct Tab {
     watcher: tokio::task::JoinHandle<()>,
     /// The new-document script that applies the speaker setting.
     audio_script: Option<String>,
+}
+
+impl Tab {
+    /// Refs name nodes of one document; a new one starts them again.
+    fn forget_refs_of_old_page(&mut self, document: u64) {
+        if document != self.seen_document {
+            self.refs.clear();
+            self.names.clear();
+            self.seen_document = document;
+        }
+    }
 }
 
 impl Drop for Tab {
@@ -1033,6 +1046,7 @@ fn handle_tab_event(
             // A new document: the old page's title no longer applies (read again on load).
             tab.title.clear();
             tab.document += 1;
+            tab.document_seq = tab.log_seq;
             tab.console_errors = 0;
         }
         "Page.navigatedWithinDocument" if main_frame(&params["frameId"]) => {
@@ -2314,11 +2328,7 @@ impl ChatBrowser {
                 std::mem::take(&mut state.notes),
             )
         };
-        if document != tab.seen_document {
-            tab.refs.clear();
-            tab.names.clear();
-            tab.seen_document = document;
-        }
+        tab.forget_refs_of_old_page(document);
         let root = match reference {
             Some(reference) => Some(tab.refs.resolve(reference).ok_or_else(|| {
                 format!("no element {reference} on this page; take a new browser_snapshot")
@@ -3646,5 +3656,6 @@ mod tests {
 
 mod devtools;
 mod downloads;
+mod looks;
 pub use devtools::{ConsoleEntry, RequestEntry};
 pub use downloads::{default_downloads_directory, DownloadGate, DownloadPolicy};

@@ -89,6 +89,7 @@ pub fn browser_tools(approvals: Arc<dyn ApprovalHook>, scope: BrowserScope) -> V
         Box::new(BrowserMove { base: base.clone() }),
         Box::new(BrowserDrag { base: base.clone() }),
         Box::new(BrowserTabs { base: base.clone() }),
+        Box::new(BrowserCheckLooks { base: base.clone() }),
     ];
     tools.extend(devtools::devtools(&base));
     if base.scope.media.is_some() {
@@ -333,6 +334,48 @@ impl ToolRuntime for BrowserSnapshot {
                 |chat| async move { chat.snapshot(reference.as_deref(), args.layout).await },
             )
             .await
+    }
+}
+
+/// Arguments for `browser_check_looks` (none).
+#[derive(Debug, Clone, Default, Serialize, Deserialize, ToolInput)]
+pub struct CheckLooksArgs {}
+
+#[tool(
+    name = "browser_check_looks",
+    description = "Measure how the current page looks, in both light and dark colour schemes (the page switches briefly and is put back): text or controls too faint to see against what is behind them, buttons and fields with no visible text or edge, content cut off or off the side of the page, source code showing as page text, CSS rules the browser dropped as invalid, quirks mode, stylesheets, scripts, images or fonts that failed to load, and console errors. Elements carry refs like the snapshot. It finds what can be computed, not every visual problem: colours over images and gradients are not checked.",
+    input = CheckLooksArgs,
+)]
+struct BrowserCheckLooks {
+    base: Base,
+}
+
+#[async_trait]
+impl ToolRuntime for BrowserCheckLooks {
+    async fn execute(&self, args: Value) -> Result<Value, ToolCallError> {
+        let _: CheckLooksArgs = parse_tool_args("browser_check_looks", args)?;
+        let chat = Arc::clone(&self.base.scope.chat);
+        let site = chat
+            .current_site()
+            .await
+            .unwrap_or_else(|| BLANK_SITE.to_owned());
+        self.base.gate(
+            "browser_check_looks",
+            &site,
+            format!("browser_check_looks on {site}"),
+            RiskLevel::Read,
+        )?;
+        chat.thaw_pages().await;
+        chat.set_activity(Some("checking how the page looks".to_owned()))
+            .await;
+        let secrets = self.base.scope.permissions.config().show_secrets;
+        let result =
+            until_stopped(self.base.scope.cancel.as_deref(), chat.check_looks(secrets)).await;
+        chat.set_activity(None).await;
+        let mut value = result.map_err(|e| tool_error(format!("browser_check_looks: {e}")))?;
+        value["untrusted"] = json!(true);
+        value["note"] = json!(UNTRUSTED_NOTE);
+        Ok(value)
     }
 }
 
@@ -1098,6 +1141,7 @@ mod tests {
             "browser_tabs" => parse_tool_args::<TabsArgs>(tool, args).map(|_| ()),
             "browser_screenshot" => parse_tool_args::<ScreenshotArgs>(tool, args).map(|_| ()),
             "browser_record" => parse_tool_args::<RecordArgs>(tool, args).map(|_| ()),
+            "browser_check_looks" => parse_tool_args::<CheckLooksArgs>(tool, args).map(|_| ()),
             "browser_devtools" => parse_tool_args::<devtools::DevtoolsArgs>(tool, args).map(|_| ()),
             other => panic!("untested tool {other}"),
         }
@@ -1145,7 +1189,7 @@ mod tests {
             let parsed = parses(tool.name(), Value::Object(args));
             assert!(parsed.is_ok(), "{}: {parsed:?} from {schema}", tool.name());
         }
-        assert_eq!(tools.len(), 14);
+        assert_eq!(tools.len(), 15);
         let click: ClickArgs = parse_tool_args("browser_click", json!({"ref": "e4"})).unwrap();
         assert_eq!(click.reference, "e4");
         let click: ClickArgs =
