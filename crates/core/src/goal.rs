@@ -17,9 +17,10 @@ pub async fn check_with_config(
     proof: &[GoalRequirement],
     answer: &str,
     evidence: &str,
+    guidance: &str,
 ) -> anyhow::Result<GoalVerdict> {
     let llm = crate::providers::resolve(config).await?;
-    check(llm.as_ref(), goal, added, proof, answer, evidence).await
+    check(llm.as_ref(), goal, added, proof, answer, evidence, guidance).await
 }
 
 /// Runs the goal check with `llm`: one request, retried once when the reply
@@ -31,8 +32,9 @@ pub async fn check(
     proof: &[GoalRequirement],
     answer: &str,
     evidence: &str,
+    guidance: &str,
 ) -> anyhow::Result<GoalVerdict> {
-    let (system, user) = check_prompt(goal, added, proof, answer, evidence);
+    let (system, user) = check_prompt_with_guidance(goal, added, proof, answer, evidence, guidance);
     let messages = [
         ChatMessage {
             role: ChatRole::System,
@@ -50,7 +52,7 @@ pub async fn check(
         match llm.chat(&messages, None).await {
             Ok(reply) => {
                 if let Some(verdict) = reply.text().as_deref().and_then(parse_verdict) {
-                    return Ok(verdict);
+                    return Ok(with_rules_kept(verdict, proof));
                 }
             }
             Err(error) => last_error = anyhow::anyhow!("goal check request failed: {error}"),
@@ -128,11 +130,13 @@ pub fn merge_checklist(
         .into_iter()
         .map(|item| {
             let known = current.iter().find(|old| {
-                (old.proven || old.broken) && old.what.eq_ignore_ascii_case(&item.what)
+                (old.proven || old.broken || old.pending)
+                    && old.what.eq_ignore_ascii_case(&item.what)
             });
             GoalRequirement {
                 proven: known.is_some_and(|old| old.proven),
                 broken: known.is_some_and(|old| old.broken),
+                pending: known.is_some_and(|old| old.pending),
                 how: known.map_or_else(String::new, |old| old.how.clone()),
                 kind: item.kind,
                 what: item.what,
@@ -214,6 +218,10 @@ pub struct GoalRequirement {
     /// A rule the commands show wasn't followed. Only ever said, never repaired.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub broken: bool,
+    /// A rule asking for a step that hasn't happened and still can, such as a review before
+    /// finishing. The goal can't be reached until it has.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub pending: bool,
     /// What showed it.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub how: String,
@@ -240,6 +248,60 @@ impl GoalRequirement {
     /// A task not finished yet; a rule is never open.
     pub fn is_open(&self) -> bool {
         !self.is_rule() && !self.proven
+    }
+    /// Whether this keeps the goal from being reached.
+    fn holds_goal(&self) -> bool {
+        self.is_open() || self.pending
+    }
+}
+
+/// How alike two wordings must be to count as the same rule.
+const SAME_RULE_SHARE: f32 = 0.6;
+
+/// Whether two wordings say the same thing: most of their words are shared.
+fn same_item(one: &str, other: &str) -> bool {
+    let words = |text: &str| -> std::collections::HashSet<String> {
+        text.split(|c: char| !c.is_alphanumeric())
+            .filter(|word| !word.is_empty())
+            .map(str::to_lowercase)
+            .collect()
+    };
+    let (one, other) = (words(one), words(other));
+    let all = one.union(&other).count();
+    all > 0 && one.intersection(&other).count() as f32 / all as f32 >= SAME_RULE_SHARE
+}
+
+/// A check's list, with any rule it left out put back. Only the checklist refresh, which reads the
+/// goal and the person's requests, can drop a rule; a check that forgets one mustn't lose it.
+fn keep_rules(earlier: &[GoalRequirement], now: Vec<GoalRequirement>) -> Vec<GoalRequirement> {
+    let lost: Vec<GoalRequirement> = earlier
+        .iter()
+        .filter(|old| old.is_rule() && !now.iter().any(|item| same_item(&item.what, &old.what)))
+        .cloned()
+        .collect();
+    now.into_iter().chain(lost).collect()
+}
+
+/// A verdict after putting back the rules its list left out, one of which may hold the goal.
+fn with_rules_kept(mut verdict: GoalVerdict, earlier: &[GoalRequirement]) -> GoalVerdict {
+    if verdict.requirements.is_empty() {
+        return verdict;
+    }
+    verdict.requirements = keep_rules(earlier, std::mem::take(&mut verdict.requirements));
+    if verdict.verdict == Verdict::Reached {
+        if let Some(open) = verdict.requirements.iter().find(|item| item.holds_goal()) {
+            verdict.reason = holding_reason(open);
+            verdict.verdict = Verdict::NotYet;
+        }
+    }
+    verdict
+}
+
+fn holding_reason(item: &GoalRequirement) -> String {
+    if item.is_rule() {
+        format!("\"{}\" is still to do.", item.what)
+    } else {
+        format!("\"{}\" isn't proven yet.", item.what)
     }
 }
 
@@ -275,12 +337,11 @@ pub fn parse_verdict(reply: &str) -> Option<GoalVerdict> {
         });
         let requirements = raw.requirements.map_or_else(Vec::new, parse_requirements);
         // A check that lists something as open has not reached the goal, whatever it says.
-        let open = requirements.iter().find(|item| item.is_open());
+        let open = requirements.iter().find(|item| item.holds_goal());
         let (verdict, reason) = match open {
-            Some(open) if raw.verdict == Verdict::Reached => (
-                Verdict::NotYet,
-                format!("\"{}\" isn't proven yet.", open.what),
-            ),
+            Some(open) if raw.verdict == Verdict::Reached => {
+                (Verdict::NotYet, holding_reason(open))
+            }
             _ => (raw.verdict, raw.reason.unwrap_or_default()),
         };
         return Some(GoalVerdict {
@@ -322,6 +383,9 @@ fn parse_requirements(value: serde_json::Value) -> Vec<GoalRequirement> {
                 },
                 proven: !rule && item["proven"].as_bool() == Some(true),
                 broken: rule && item["broken"].as_bool() == Some(true),
+                pending: rule
+                    && item["pending"].as_bool() == Some(true)
+                    && item["broken"].as_bool() != Some(true),
                 how: one_line(
                     item["how"].as_str().unwrap_or_default(),
                     MAX_REQUIREMENT_PROOF_CHARS,
@@ -396,6 +460,18 @@ pub fn check_prompt(
     answer: &str,
     evidence: &str,
 ) -> (String, String) {
+    check_prompt_with_guidance(goal, added, proof, answer, evidence, "")
+}
+
+/// The same, with the project's own guidance, which the work must follow too.
+pub fn check_prompt_with_guidance(
+    goal: &str,
+    added: &[String],
+    proof: &[GoalRequirement],
+    answer: &str,
+    evidence: &str,
+    guidance: &str,
+) -> (String, String) {
     let system = crate::prompts::GOAL_CHECK_SYSTEM.to_owned();
     let answer = fenced(if answer.trim().is_empty() {
         "(no answer)"
@@ -423,6 +499,7 @@ pub fn check_prompt(
             .map(|item| {
                 let state = match (item.is_rule(), item.broken, item.proven) {
                     (true, true, _) => "rule, broken",
+                    (true, false, _) if item.pending => "rule, still to do",
                     (true, false, _) => "rule",
                     (false, _, true) => "proven",
                     (false, _, false) => "open",
@@ -436,6 +513,15 @@ pub fn check_prompt(
             &[("requirements", &fenced(&list))],
         );
         format!("{user}\n\n{proof}")
+    };
+    let user = if guidance.trim().is_empty() {
+        user
+    } else {
+        let guidance = crate::prompts::fill(
+            crate::prompts::GOAL_CHECK_GUIDANCE,
+            &[("guidance", &fenced(guidance))],
+        );
+        format!("{user}\n\n{guidance}")
     };
     if added.is_empty() {
         return (system, user);
@@ -798,6 +884,7 @@ mod tests {
             what: what.to_owned(),
             proven,
             how: how.to_owned(),
+            ..Default::default()
         }
     }
 
@@ -953,6 +1040,67 @@ mod tests {
                 .to_string();
         let next = parse_verdict(&reply).unwrap().next.unwrap();
         assert!(next.ends_with("word…"), "{next}");
+    }
+
+    #[test]
+    fn a_rule_that_can_still_be_followed_holds_the_goal_open() {
+        let verdict = parse_verdict(
+            r#"{"verdict":"reached","reason":"Done.","requirements":[
+            {"what":"Board works","proven":true,"how":"dragged a card"},
+            {"what":"Code review before finishing","kind":"rule","pending":true}]}"#,
+        )
+        .unwrap();
+        assert_eq!(verdict.verdict, Verdict::NotYet);
+        assert!(
+            verdict.reason.contains("Code review before finishing"),
+            "{}",
+            verdict.reason
+        );
+        assert!(verdict.requirements[1].pending);
+    }
+
+    #[test]
+    fn a_broken_rule_doesnt_hold_the_goal_but_a_rule_never_quietly_disappears() {
+        let mut review = rule("Have a code review subagent review the work");
+        review.pending = true;
+        let earlier = vec![
+            requirement("Board", true, "dragged"),
+            review,
+            rule("No build step"),
+        ];
+        let now = vec![requirement("Board", true, "dragged"), rule("no build step")];
+        let kept = keep_rules(&earlier, now);
+        assert_eq!(kept.len(), 3, "{kept:?}");
+        assert!(kept[2].what.contains("code review") && kept[2].pending);
+        assert_eq!(
+            kept.iter()
+                .filter(|item| item.what.eq_ignore_ascii_case("no build step"))
+                .count(),
+            1
+        );
+    }
+
+    #[test]
+    fn rewording_a_rule_doesnt_keep_the_old_wording_too() {
+        let earlier = vec![rule("Write each feature test first using the TDD skill")];
+        let now = vec![rule("Write each feature's test first with the TDD skill")];
+        assert_eq!(keep_rules(&earlier, now).len(), 1);
+    }
+
+    #[test]
+    fn the_check_is_shown_the_projects_guidance_as_what_the_work_must_follow() {
+        let (_, user) = check_prompt_with_guidance("goal", &[], &[], "answer", "", "HOUSE RULE 77");
+        assert!(user.contains("HOUSE RULE 77"), "{user}");
+        let (_, without) = check_prompt_with_guidance("goal", &[], &[], "answer", "", "");
+        assert!(!without.contains("guidance"), "{without}");
+    }
+
+    #[test]
+    fn the_check_is_shown_a_rule_still_to_do() {
+        let mut review = rule("Code review");
+        review.pending = true;
+        let (_, user) = check_prompt("goal", &[], &[review], "answer", "");
+        assert!(user.contains("- [rule, still to do] Code review"), "{user}");
     }
 
     #[test]

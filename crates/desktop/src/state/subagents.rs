@@ -119,6 +119,8 @@ pub(super) struct SubagentKit {
     web: SubagentWeb,
     /// The chat's skills, as the main agent's system message lists them.
     skills: String,
+    /// What the project says about working in it, as the main agent read it.
+    project_guidance: String,
     /// The same skills for the `Skill` tool.
     skill_list: Vec<themis_core::skills::Skill>,
     /// The `bin` folders of the run's plugins.
@@ -163,6 +165,7 @@ impl SubagentKit {
         mcp: SubagentMcp,
         web: SubagentWeb,
         skills: String,
+        project_guidance: String,
         plugin_bins: Vec<PathBuf>,
         llm: Arc<dyn LLMProvider>,
         policy: RunPolicy,
@@ -196,6 +199,7 @@ impl SubagentKit {
             mcp,
             web,
             skills,
+            project_guidance,
             skill_list: snapshot.skill_catalog.clone(),
             plugin_bins,
             plugins: snapshot.plugins.clone(),
@@ -261,6 +265,7 @@ impl SubagentKit {
                 permissions: Arc::clone(&self.web.permissions),
             },
             skills: self.skills.clone(),
+            project_guidance: self.project_guidance.clone(),
             skill_list: self.skill_list.clone(),
             plugin_bins: self.plugin_bins.clone(),
             plugins: self.plugins.clone(),
@@ -1212,6 +1217,7 @@ impl SubagentKit {
             .chain(mcp_note.as_deref())
             .chain(web_note.as_deref())
             .chain(left_out_note.as_deref())
+            .chain((!self.project_guidance.is_empty()).then_some(self.project_guidance.trim()))
             .chain((!self.skills.is_empty()).then_some(themis_core::prompts::SUBAGENT_SKILLS_NOTE))
             .chain((!self.skills.is_empty()).then_some(self.skills.trim()))
             .chain([themis_core::prompts::SUBAGENT_STATUS_FIELD])

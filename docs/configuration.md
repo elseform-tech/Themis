@@ -208,7 +208,17 @@ else fails validation with a message naming the field.
 user discovery. Skill and instruction paths must be relative, without parent
 traversal, and remain inside the project after canonicalization. Each list permits
 at most 32 paths. Instructions are UTF-8 project guidance, limited to 64 KiB
-combined, and do not grant permissions. There is no implicit instruction globbing.
+combined, and do not grant permissions.
+
+`project_guidance` (default `true`) reads the project root's `AGENTS.md`, or `CLAUDE.md`
+when there is no `AGENTS.md`, at the start of each run and puts it in the system message of the
+agent and its subagents, and the goal check is held to it as well. They also get a map of up to 40
+other documents (`.md`, `.mdx`, `.rst`), nearest the root first, three folders deep at most, with
+hidden and generated folders skipped and links not followed; these are named, not loaded, and a
+guidance file in a subfolder applies to work in that folder. A file over the 64 KiB limit is cut;
+one that can't be read is left out without failing the run. Set it to `false` to keep only the files
+listed in `instructions`, which always load, reach subagents as well, and must exist. All of this is
+project content, so a cloned repository's guidance reaches the agent, but it never grants permissions.
 
 ## Supported limits
 
@@ -521,6 +531,8 @@ each result tells the agent a new message came and it may ask again. The dialog'
 `approval-expired` event carries `steered: true` (no expiry warning). Grants and rules do not change,
 and neither a plain queued message nor an answer to `ask_user` denies anything. Diagnostics record
 `queue`/`steered` with `approvals_denied`, a count.
+A rule may be `pending`: it asks for a step that hasn't happened and still can, such as a review before finishing, and it holds the goal open until it has happened or is marked broken. A broken rule doesn't hold the goal, and still applies to the work left. The goal check can't lose a rule: one its reply leaves out is put back, and only the checklist refresh can drop one. The check also reads the project's guidance (see `project_guidance`).
+
 A goal's `proof` is its checklist, of tasks (things to finish, in working order) and rules (`kind: "rule"`, how the work must be done). Only tasks count toward reaching the goal. A rule is never proven; the check marks it `broken` only when it is too late to follow, and that is reported rather than repaired; something not done yet stays open. A condition for showing something works goes in the wording of its task, since only tasks hold the goal back. Each goal turn names the first open task as the one to work on and repeats the rules. a background request lists it when the goal is set, edited or added to (on the check's model, usage counted as a goal check; `checklist_updated` logs the item counts and whether it was mid-turn, `script_proof_refused` logs a goal held back by a page a script changed, both with none of the goal's text, and `checklist_failed` is logged if it fails, and the list stays), and only the goal check marks items complete. `files` lists the files changed for it, up to 30. `checking` is true while a check runs.
 A goal's `added` lists the requests the user sent while it was open (steered, queued or typed;
 not answers to `ask_user` or goal turns), oldest first, at most 20 of up to 2,000 characters;
