@@ -7,6 +7,8 @@
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
+pub mod auto;
+
 use serde::{Deserialize, Serialize};
 use sha2::Digest;
 

@@ -416,3 +416,20 @@ A tool call may run for 5 minutes. Set `tool_timeout_secs` (1 to 3600) on a serv
 Open an MCP connection’s details to see its exposed tool count, names and descriptions. This reads cached discovery metadata; it does not execute a tool. Tools appear after the connection completes.
 
 Agent inventory (`list_plugins` and `manage_integrations` with `action: "list"`) returns metadata only: `{total, counts: {mcp: {total, enabled}}, items, next_offset}`. It accepts `kind` (`plugin`, `skill`, `mcp`, `hook`), `offset` (default 0), and `limit` (default 25, range 1–100). Totals/counts cover the filtered inventory before pagination; `total` counts packages, while `counts.mcp` counts server definitions. An enabled server requires both its package and component enabled; this does not establish connection health. File bodies, instruction bodies, scripts and MCP environment/command configuration are omitted. Full package inspection remains available through the existing UI/CLI `plugin_action` list API; `plugin_action` with `action: "inventory"` exposes the compact result for local shell processing. Results from inspection or mutation still pass through the shared bounded agent delivery boundary described in [context checkpoints](context-and-attachments.md).
+
+## Built-in hooks
+
+Themis has three hooks of its own, listed in Integrations › Hooks under their events as
+"Themis (built-in)", each with a switch and all off by default. They are native: no command
+runs, nothing is asked, and they never grant permissions; each only adds a short piece of text
+for the model, for the main agent and for subagents alike.
+
+| Hook (`hooks.built_in.…`) | Event | What it adds |
+|---|---|---|
+| To-do and Memory skills (`skills_at_start`) | Session starts | The short To-do and Memory skills in each turn's system message (Memory only while memory is on) |
+| Save before compaction (`save_reminder`) | Before context is compacted | A one-line reminder, once before each checkpoint, to save anything worth remembering (while memory is on) |
+| Still open (`still_open`) | Run ends | After a turn that changed files while to-do items are open, the next turn starts by naming them |
+
+Their switches live in `runtime.jsonc` (see [configuration](configuration.md)), not in the
+plugin registry: they are settings, not integration definitions. The switch writes your own
+file in place; a project's `.themis/config.jsonc` may set them too.

@@ -1295,6 +1295,35 @@ pub async fn resolve(config: &ProviderConfig) -> Result<Arc<dyn LLMProvider>> {
     Ok(Arc::new(compatible(config)?))
 }
 
+/// One request with no tools (Themis's own background requests: the memory pass, goal
+/// seeding): the reply's text and the provider's (prompt, completion) token counts when it
+/// reported them.
+pub async fn ask_once(
+    config: &ProviderConfig,
+    system: &str,
+    user: &str,
+) -> Result<(String, Option<(u32, u32)>)> {
+    use autoagents::llm::chat::{ChatMessage, ChatRole, MessageType};
+    let llm = resolve(config).await?;
+    let messages = [
+        ChatMessage {
+            role: ChatRole::System,
+            message_type: MessageType::Text,
+            content: system.to_owned(),
+        },
+        ChatMessage {
+            role: ChatRole::User,
+            message_type: MessageType::Text,
+            content: user.to_owned(),
+        },
+    ];
+    let reply = llm.chat(&messages, None).await?;
+    let usage = reply
+        .usage()
+        .map(|usage| (usage.prompt_tokens, usage.completion_tokens));
+    Ok((reply.text().unwrap_or_default(), usage))
+}
+
 fn compatible(config: &ProviderConfig) -> Result<CompatibleProvider> {
     require_api_key(config)?;
     let model = effective_model(config).unwrap_or_else(|| GO_DEFAULT_MODEL.to_owned());

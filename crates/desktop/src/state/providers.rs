@@ -212,7 +212,7 @@ impl AppState {
         Ok(provider)
     }
 
-    async fn single_provider_config(
+    pub(super) async fn single_provider_config(
         &self,
         config: &RuntimeConfig,
         model: &str,

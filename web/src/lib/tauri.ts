@@ -1,7 +1,7 @@
 // Typed Tauri bridge client. All frontend code reaches the backend through
 // these functions — never raw invoke() with stringly-typed payloads elsewhere.
 import { convertFileSrc, invoke as tauriInvoke } from '@tauri-apps/api/core';
-import type { BrowserHistoryEntry, BrowserSettings, BrowserSettingsView, MemoryList, MemoryScope, SubagentSettings } from "./types";
+import type { BrowserHistoryEntry, BrowserSettings, BrowserSettingsView, BuiltInHooks, MemoryList, MemoryScope, MemorySwitches, SubagentSettings } from "./types";
 import type { PromptSkill } from './prompt';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import type {
@@ -297,14 +297,24 @@ export function stopSubagent(threadId: string, subagentId: string): Promise<void
   return invoke('stop_subagent', { threadId, subagentId });
 }
 
-/** Settings › Memory's switch (`memory.enabled` in the user runtime.jsonc). */
-export function getMemorySettings(): Promise<{ settings: { enabled: boolean }; revision: string }> {
+/** Settings › Memory's switches (`memory.enabled` and `memory.auto` in the user runtime.jsonc). */
+export function getMemorySettings(): Promise<{ settings: MemorySwitches; revision: string }> {
   return invoke('get_memory_settings');
 }
 
-/** Turns memory on or off, refused when the file changed since `revision`. */
-export function updateMemorySettings(enabled: boolean, revision: string): Promise<{ settings: { enabled: boolean }; revision: string }> {
-  return invoke('update_memory_settings', { enabled, revision });
+/** Turns memory, or noticing what to remember, on or off; refused when the file changed since `revision`. */
+export function updateMemorySettings(changes: Partial<MemorySwitches>, revision: string): Promise<{ settings: MemorySwitches; revision: string }> {
+  return invoke('update_memory_settings', { ...changes, revision });
+}
+
+/** Integrations › Hooks' built-in hooks (`hooks.built_in` in the user runtime.jsonc). */
+export function getBuiltInHooks(): Promise<BuiltInHooks> {
+  return invoke('get_built_in_hooks');
+}
+
+/** Turns one built-in hook on or off; refused when the file changed since `revision`. */
+export function updateBuiltInHook(id: string, enabled: boolean, revision: string): Promise<BuiltInHooks> {
+  return invoke('update_built_in_hook', { id, enabled, revision });
 }
 
 /** One scope's memories (a project scope needs the project). */

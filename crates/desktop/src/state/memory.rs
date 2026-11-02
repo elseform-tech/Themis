@@ -91,8 +91,36 @@ impl AppState {
         Ok(json!({"revision": store.revision()}))
     }
 
+    /// Puts "Remembered · …" / "Forgot · …" in the chat at `run_id`'s reply, saved with it.
+    pub(super) fn announce_memory(
+        &self,
+        sink: &dyn EventSink,
+        (thread_id, run_id): (&str, &str),
+        action: &str,
+        scope: MemoryScope,
+        memory: &Memory,
+        project_root: &Path,
+    ) {
+        let envelope = ThreadEventEnvelope {
+            thread_id: thread_id.to_owned(),
+            run_id: run_id.to_owned(),
+            event: ThreadEvent::MemoryChanged {
+                action: action.to_owned(),
+                scope: scope.as_str().to_owned(),
+                name: memory.name.clone(),
+                description: memory.description.clone(),
+                project_root: (scope == MemoryScope::Project)
+                    .then(|| project_root.to_string_lossy().into_owned()),
+            },
+        };
+        if let Err(problem) = self.inner.transcript.append_event(&envelope) {
+            self.record_error("save_thread_event", problem);
+        }
+        sink.emit_thread_event(&envelope);
+    }
+
     /// One bounded diagnostics line: what happened, where and how many remain.
-    fn note_memory(
+    pub(super) fn note_memory(
         &self,
         event: &str,
         scope: MemoryScope,
@@ -122,6 +150,8 @@ pub(super) struct MemoryTool {
     pub(super) run: RunApproval,
     /// A subagent's copy: `read` only.
     pub(super) read_only: bool,
+    /// Set when this run saved or updated a memory: the memory pass after it then skips.
+    pub(super) saved: Arc<std::sync::atomic::AtomicBool>,
 }
 
 impl std::fmt::Debug for MemoryTool {
@@ -194,22 +224,14 @@ impl MemoryTool {
     }
 
     fn announce(&self, action: &str, scope: MemoryScope, memory: &Memory) {
-        let envelope = ThreadEventEnvelope {
-            thread_id: self.thread_id.clone(),
-            run_id: self.run_id.clone(),
-            event: ThreadEvent::MemoryChanged {
-                action: action.to_owned(),
-                scope: scope.as_str().to_owned(),
-                name: memory.name.clone(),
-                description: memory.description.clone(),
-                project_root: (scope == MemoryScope::Project)
-                    .then(|| self.project_root.to_string_lossy().into_owned()),
-            },
-        };
-        if let Err(problem) = self.state.inner.transcript.append_event(&envelope) {
-            self.state.record_error("save_thread_event", problem);
-        }
-        self.sink.emit_thread_event(&envelope);
+        self.state.announce_memory(
+            self.sink.as_ref(),
+            (&self.thread_id, &self.run_id),
+            action,
+            scope,
+            memory,
+            &self.project_root,
+        );
     }
 }
 
@@ -293,6 +315,7 @@ impl ToolRuntime for MemoryTool {
                     SaveMode::Update
                 };
                 let count = store.save(&memory, mode).map_err(error)?;
+                self.saved.store(true, std::sync::atomic::Ordering::SeqCst);
                 let verb = if action == "save" { "saved" } else { "updated" };
                 self.state
                     .note_memory(verb, scope, memory.kind, &store, "agent");

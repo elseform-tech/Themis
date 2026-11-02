@@ -124,6 +124,10 @@
     // (never the project) and reads an index of it at the start of each chat. false: nothing
     // is saved or read; saved memories are kept. A project file may only set false.
     "enabled": true,
+    // After a turn in which you wrote, one request on the summary model (the chat's model
+    // unless compaction.summary_model says otherwise) notices what is worth remembering and
+    // saves it; the chat shows "Remembered · …". A project file may only set false.
+    "auto": false,
   },
 
   // ─── SKILLS AND INSTRUCTIONS ──────────────────────────────────────────────────────────
@@ -202,12 +206,19 @@
   // ─── GOALS ───────────────────────────────────────────────────────────────────────────
   "goal": {
     // "check_model": "glm-5.3"              // checks each goal turn; absent: the chat's model
+    "seed_todo": false                        // a new goal on an empty to-do list gets one item per thing it asks for (one summary-model request)
   },
   // Plugin hooks. A project file may only lower max_wakes, and can't set prompt_hook_calls.
   "hooks": {
     "max_wakes": 3,                           // turns in a row one reporting back may start in an idle chat (0-10)
     "session_idle_minutes": 60,               // idle time that ends a chat's session for hooks (0 never, up to 10080)
-    "prompt_hook_calls": 50                   // model requests prompt hooks may make in a run (0 turns them off, up to 1000)
+    "prompt_hook_calls": 50,                  // model requests prompt hooks may make in a run (0 turns them off, up to 1000)
+    // Themis's own hooks (Integrations › Hooks, "Themis (built-in)"): no command, no approval.
+    "built_in": {
+      "skills_at_start": false,               // session start: runs carry the short To-do and Memory skills
+      "still_open": false,                    // run end: files changed with open to-do items → the next turn starts with "Still open: …"
+      "save_reminder": false                  // before compaction: a one-line reminder to save anything worth remembering
+    }
   },
   // Subagents the agent may start for independent parts of a task. A project file may only
   // lower these or turn them off.

@@ -80,18 +80,19 @@ function MemoryRow({ memory, open, onToggle, onDelete }: { memory: Memory; open:
 }
 
 /** Settings › Memory: what the agent remembers for this project or everywhere, read and
- *  delete, and one switch (`memory.enabled`, saved in place in the user runtime.jsonc). */
+ *  delete, and two switches (`memory.enabled` and `memory.auto`, saved in place in the user
+ *  runtime.jsonc). */
 export function MemorySettingsSection({ focusKey, onSaved }: { focusKey?: string; onSaved?: () => void } = {}) {
   const { state } = useApp();
   const project = useActiveProject();
   const focusScope = focusKey?.split(":")[0] as MemoryScope | undefined;
   const [scope, setScope] = useState<MemoryScope>(focusScope === "global" ? "global" : "project");
   const [open, setOpen] = useState<string | null>(focusKey?.split(":").slice(1).join(":") ?? null);
-  const [settings, setSettings] = useState<{ enabled: boolean; revision: string } | null>(null);
+  const [settings, setSettings] = useState<{ enabled: boolean; auto: boolean; revision: string } | null>(null);
   const [list, setList] = useState<MemoryList | null>(null);
   const [error, setError] = useState("");
   const root = state.activeProjectRoot;
-  const loadSettings = () => getMemorySettings().then(view => setSettings({ enabled: view.settings.enabled, revision: view.revision })).catch(reason => setError(describeError(reason)));
+  const loadSettings = () => getMemorySettings().then(view => setSettings({ enabled: view.settings.enabled, auto: view.settings.auto, revision: view.revision })).catch(reason => setError(describeError(reason)));
   const loadList = (which: MemoryScope) => {
     if (which === "project" && !root) { setList(null); return Promise.resolve(); }
     return listMemories(which, which === "project" ? root : null).then(setList).catch(reason => setError(describeError(reason)));
@@ -100,11 +101,11 @@ export function MemorySettingsSection({ focusKey, onSaved }: { focusKey?: string
   useEffect(() => { void loadList(scope); }, [scope, root]); // eslint-disable-line react-hooks/exhaustive-deps
   if (!settings) return error ? <p role="alert" className="themis-form-error">{error}</p> : null;
 
-  const toggle = async (enabled: boolean) => {
+  const toggle = async (changes: { enabled?: boolean; auto?: boolean }) => {
     setError("");
     try {
-      const view = await updateMemorySettings(enabled, settings.revision);
-      setSettings({ enabled: view.settings.enabled, revision: view.revision });
+      const view = await updateMemorySettings(changes, settings.revision);
+      setSettings({ enabled: view.settings.enabled, auto: view.settings.auto, revision: view.revision });
       onSaved?.();
     } catch (reason) {
       setError(describeError(reason));
@@ -130,8 +131,12 @@ export function MemorySettingsSection({ focusKey, onSaved }: { focusKey?: string
     <SettingsGroup>
       <label className="themis-settings-check themis-memory-switch">
         <span className="themis-settings-name">Remember things across chats<small>The agent saves what it learns about you and your projects, and reads it back in new chats. Nothing here is committed to the project.</small></span>
-        <Switch checked={settings.enabled} onChange={event => void toggle(event.target.checked)} />
+        <Switch checked={settings.enabled} onChange={event => void toggle({ enabled: event.target.checked })} />
       </label>
+      {settings.enabled && <label className="themis-settings-check themis-memory-switch">
+        <span className="themis-settings-name">Notice what's worth remembering<small>After each reply to you, Themis asks the summary model once whether you said something worth keeping, and saves it without being asked.</small></span>
+        <Switch checked={settings.auto} onChange={event => void toggle({ auto: event.target.checked })} />
+      </label>}
       {settings.enabled && <div className="themis-settings-control themis-memory-showing">
         <span>Showing</span>
         <span className="themis-memory-scopes" role="group" aria-label="Which memories">
