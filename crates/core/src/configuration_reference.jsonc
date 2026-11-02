@@ -125,6 +125,9 @@
   // Project files whose text the agent always reads, e.g. ["AGENTS.md"] (64 KiB in all).
   // They guide; they never grant permissions.
   "instructions": [],
+  // Read the project's AGENTS.md (or else CLAUDE.md) at the start of each run, for agents,
+  // subagents and the goal check, and list its other docs. It never grants permissions.
+  "project_guidance": true,
 
   // ─── MODEL PROVIDERS (listed in Settings › Models) ────────────────────────────────────
   // OpenCode Go is built in. Add OpenAI-compatible providers (Chat Completions) here; only

@@ -161,6 +161,11 @@ pub const GOAL_CHECKLIST_USER: &str = include_str!("../builtins/prompts/goal-che
 pub const GOAL_CHECK_MIDTURN: &str = include_str!("../builtins/prompts/goal-check-midturn.md");
 pub const GOAL_CONTEXT_OVER: &str = include_str!("../builtins/prompts/goal-context-over.md");
 pub const GOAL_CONTEXT_PAUSED: &str = include_str!("../builtins/prompts/goal-context-paused.md");
+/// The project's guidance as the goal check sees it; `{{guidance}}`.
+pub const GOAL_CHECK_GUIDANCE: &str = include_str!("../builtins/prompts/goal-check-guidance.md");
+/// The map of a project's other documents; `{{docs}}`.
+pub const PROJECT_GUIDANCE_DOCS: &str =
+    include_str!("../builtins/prompts/project-guidance-docs.md");
 pub const GOAL_CHECK_PROOF: &str = include_str!("../builtins/prompts/goal-check-proof.md");
 /// Message that tells the user a checked goal is reached; `{{goal_turn_marker}}`,
 /// `{{turn}}`, `{{goal}}`, `{{reason}}`.

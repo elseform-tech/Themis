@@ -895,6 +895,7 @@ impl AppState {
                 }),
             );
         }
+        let guidance = self.project_guidance_for(thread_id).await;
         // The same per-model routes and limits real runs use.
         themis_core::providers::with_catalog_limits(
             &catalog,
@@ -909,6 +910,7 @@ impl AppState {
                         &goal.proof,
                         answer,
                         evidence,
+                        &guidance,
                         &images,
                     ),
                 ),
@@ -1598,6 +1600,23 @@ impl AppState {
     /// The provider for the goal check (`goal.check_model`, else the chat's current model,
     /// from OpenCode Go or a provider in runtime.jsonc) and the catalog its routes and
     /// limits come from.
+    /// What the chat's project says about working in it, read fresh for each check.
+    async fn project_guidance_for(&self, thread_id: &str) -> String {
+        let root = self
+            .inner
+            .threads
+            .read()
+            .await
+            .get(thread_id)
+            .map(|record| record.project_root.clone());
+        let Some(root) = root else {
+            return String::new();
+        };
+        self.runtime_configuration(Some(&root), None)
+            .map(|resolved| themis_core::configuration::project_guidance(&resolved.config, &root))
+            .unwrap_or_default()
+    }
+
     async fn goal_check_config(
         &self,
         thread_id: &str,

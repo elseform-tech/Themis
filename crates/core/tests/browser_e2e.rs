@@ -499,6 +499,7 @@ async fn pages_dont_bounce_at_their_edges_unless_they_ask_to() {
             chat: Arc::clone(&chat),
             cancel: None,
             media: None,
+            screenshots: Default::default(),
         },
     );
     let tool = |name: &str| tools.iter().find(|tool| tool.name() == name).unwrap();
@@ -1300,6 +1301,7 @@ document.addEventListener('mouseup', e => { if (held) out.textContent = 'let go 
             chat: Arc::clone(&chat),
             cancel: None,
             media: None,
+            screenshots: Default::default(),
         },
     );
     let tool = |name: &str| tools.iter().find(|tool| tool.name() == name).unwrap();
@@ -1395,6 +1397,7 @@ done.addEventListener('drop', e => { e.preventDefault(); done.appendChild(card);
             chat: Arc::clone(&chat),
             cancel: None,
             media: None,
+            screenshots: Default::default(),
         },
     );
     let tool = |name: &str| tools.iter().find(|tool| tool.name() == name).unwrap();
@@ -1491,6 +1494,7 @@ async fn the_agent_aims_by_selector_and_can_hold_the_mouse_down() {
             chat: Arc::clone(&chat),
             cancel: None,
             media: None,
+            screenshots: Default::default(),
         },
     );
     let tool = |name: &str| tools.iter().find(|tool| tool.name() == name).unwrap();
@@ -1640,6 +1644,7 @@ async fn the_agent_reads_the_pages_structure_instead_of_guessing() {
             chat: Arc::clone(&chat),
             cancel: None,
             media: None,
+            screenshots: Default::default(),
         },
     );
     let tool = |name: &str| tools.iter().find(|tool| tool.name() == name).unwrap();

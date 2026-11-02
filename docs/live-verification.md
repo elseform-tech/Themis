@@ -181,6 +181,7 @@ full tour.
 | `feature:search` | tour | `web/src/screens/Palette.tsx` | ⌘K finds a chat and a command. |
 | `feature:help` | tour | `web/src/screens/Sidebar.tsx` | Help opens the shortcuts. |
 | `feature:companion` | tour | `web/src/components/KnightCompanion.tsx` | The companion shows state notes and can be resized and moved. |
+| `config:project_guidance` | tour | `crates/core/src/configuration.rs`, `crates/desktop/src/state/subagents.rs`, `crates/core/src/goal.rs` | In a project with an `AGENTS.md` and a `docs/` folder, the agent and a subagent follow a rule from it without being told, the goal check names a violation, a rule asking for a review before finishing shows "Still to do" and holds the goal open, and rules from the goal end up in `AGENTS.md`. |
 | `feature:cli` | tour | `crates/desktop/src/cli.rs` | `themis status`, `themis thread list` and `themis doctor` work against the running app. |
 | `settings:General` | tour | `web/src/screens/Settings.tsx` | Toggle the reply sound; it takes effect on the next reply. |
 | `settings:Appearance` | tour | `web/src/screens/Appearance.tsx` | Preview, revert and apply a theme. |
