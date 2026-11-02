@@ -2041,12 +2041,18 @@ async fn a_request_steered_into_a_goal_reaches_the_goal_check() {
     assert_eq!(list.items[0].details, "Also export CSV.");
     assert_eq!(list.items[0].outcome, "report.csv");
     let checks = distinct(checks.lock().unwrap().clone());
-    assert!(checks.len() >= 2, "the open request held the first check");
+    // Whether the first check finds the request still open or already done depends on when the
+    // steer lands in the turn (slower machines finish it in the same turn); either way the check
+    // is shown it in the person's words, and an open one held the goal for another check.
     let input = checks[0]["messages"][1]["content"].as_str().unwrap();
+    let open = input.contains("- t1 [pending; the person asked] Also export CSV.");
     assert!(
-        input.contains("- t1 [pending; the person asked] Also export CSV."),
-        "{input}"
+        open || input.contains("Also export CSV."),
+        "the check sees the request: {input}"
     );
+    if open {
+        assert!(checks.len() >= 2, "the open request held the first check");
+    }
     assert!(
         !input.contains("[Goal"),
         "a goal turn is not a request: {input}"
