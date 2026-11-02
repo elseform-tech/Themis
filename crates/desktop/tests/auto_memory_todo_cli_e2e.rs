@@ -124,6 +124,14 @@ fn main_answer(body: &Value) -> ResponseTemplate {
             "spawn_subagents",
             json!({"say":"Starting a helper.","subagents":[{"name":"Helper","brief":"Look around."}]}),
         ),
+        // A rewrite that puts back an item the check completed, as a stale agent would.
+        _ if user.starts_with("redo-list") => call(
+            "todo_write",
+            json!({"todos":[
+                {"id":"t1","title":"Tasks can be added and ticked off","status":"completed","outcome":"added and ticked three"},
+                {"id":"t2","title":"CSV export downloads every task","status":"completed","outcome":"downloaded 3 rows"},
+                {"id":"t3","title":"Verify end to end","status":"pending"}]}),
+        ),
         _ if user.starts_with("plan-it") => call(
             "todo_write",
             json!({"todos":[{"title":"Write the parser","status":"in_progress"},{"title":"Write its tests","status":"pending"}]}),
@@ -476,6 +484,25 @@ async fn a_seeded_goal_reads_its_list_and_is_reached_once_its_items_are_done() {
     assert_eq!(items[2]["title"], "Verify end to end");
     assert!(!items[2]["closed"].is_null(), "{list}");
     assert!(items[0]["closed"].is_null(), "{list}");
+    // An agent's later rewrite can't put it back: the check's status stands and the agent is
+    // told why.
+    h.send(&id, "redo-list", Duration::from_millis(300)).await;
+    let list = h.cli("get_todo", json!({"threadId": id}));
+    assert_eq!(list["items"][2]["status"], "completed", "{list}");
+    assert!(!list["items"][2]["closed"].is_null(), "{list}");
+    let result = h
+        .requests
+        .lock()
+        .unwrap()
+        .iter()
+        .rev()
+        .find(|body| last(body)["role"] == "tool")
+        .map(|body| last(body)["content"].to_string())
+        .unwrap_or_default();
+    assert!(
+        result.contains("t3 was confirmed by the check; only the check can reopen it."),
+        "{result}"
+    );
     let seeded = h.logged("todo", "seed", 1).await;
     assert_eq!(fields(&seeded[0])["outcome"], "seeded");
     assert_eq!(fields(&seeded[0])["items"], 3);

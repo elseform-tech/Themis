@@ -250,6 +250,9 @@ pub struct WriteSummary {
     pub removals_forgotten: usize,
     /// The person's requests the write left out because the agent hadn't seen them yet.
     pub unseen_kept: usize,
+    /// Items the goal check completed or closed that the write tried to give another status:
+    /// they keep the check's, as only the check reopens them.
+    pub check_kept: usize,
 }
 
 /// Collapses whitespace and control characters and keeps at most `max` characters.
@@ -330,7 +333,8 @@ impl TodoList {
         self.bump();
         let mut old = std::mem::take(&mut self.items);
         let mut items = Vec::with_capacity(written.len());
-        for item in written {
+        let mut check_kept = 0;
+        for mut item in written {
             let known = item
                 .id
                 .as_ref()
@@ -343,6 +347,12 @@ impl TodoList {
                     ..Default::default()
                 },
             };
+            // What the check completed or closed stays so: only the check reopens it.
+            if next.closed.is_some() && item.status != TodoStatus::Completed {
+                check_kept += 1;
+                item.status = TodoStatus::Completed;
+                item.outcome = String::new();
+            }
             next.title = item.title;
             if next.source != TodoSource::Person {
                 if let Some(details) = item.details {
@@ -370,7 +380,10 @@ impl TodoList {
             }
             items.push(next);
         }
-        let mut summary = WriteSummary::default();
+        let mut summary = WriteSummary {
+            check_kept,
+            ..WriteSummary::default()
+        };
         for gone in old {
             if matches!(gone.source, TodoSource::Person | TodoSource::Goal) && gone.since > seen {
                 summary.unseen_kept += 1;
@@ -1026,7 +1039,7 @@ mod tests {
     }
 
     #[test]
-    fn the_agent_rewriting_a_closed_item_keeps_or_clears_how_it_closed() {
+    fn the_agent_rewriting_a_closed_item_keeps_how_it_closed() {
         let mut list = TodoList::default();
         write(
             &mut list,
@@ -1047,8 +1060,9 @@ mod tests {
             list.items[0].outcome, "cards drag",
             "an empty outcome doesn't wipe it"
         );
-        assert_eq!(list.items[1].closed, None, "the agent opened it again");
-        assert!(list.items[1].is_open());
+        // Only the check reopens what it closed; the agent's pending doesn't.
+        assert_eq!(list.items[1].closed, Some(CheckClosure::Cancelled));
+        assert!(!list.items[1].is_open());
     }
 
     #[test]
@@ -1225,6 +1239,37 @@ mod tests {
                 "Verify end to end"
             ]
         );
+    }
+
+    #[test]
+    fn a_rewrite_cannot_reopen_what_the_check_completed_or_closed() {
+        let mut list = TodoList::default();
+        write(
+            &mut list,
+            json!([
+                {"title": "Build it", "status": "completed", "outcome": "built"},
+                {"title": "Verify end to end", "status": "pending"},
+                {"title": "Old ask", "status": "pending"}]),
+        );
+        assert!(list.close_from_check("t2", CheckClosure::Confirmed, "clicked through it"));
+        assert!(list.close_from_check("t3", CheckClosure::Cancelled, ""));
+        let summary = write(
+            &mut list,
+            json!([
+                {"id": "t1", "title": "Build it", "status": "completed", "outcome": "built"},
+                {"id": "t2", "title": "Verify end to end", "status": "pending"},
+                {"id": "t3", "title": "Old ask", "status": "in_progress"}]),
+        );
+        assert_eq!(summary.check_kept, 2);
+        for id in ["t2", "t3"] {
+            let item = list.items.iter().find(|item| item.id == id).unwrap();
+            assert_eq!(item.status, TodoStatus::Completed, "{id}");
+            assert!(item.closed.is_some() && item.accepted, "{id}");
+        }
+        assert_eq!(list.items[1].outcome, "clicked through it");
+        // The check itself may still reopen one.
+        assert!(list.reopen("t2", "not shown"));
+        assert_eq!(list.items[1].status, TodoStatus::Pending);
     }
 
     #[test]

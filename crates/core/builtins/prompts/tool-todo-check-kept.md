@@ -1,0 +1,1 @@
+{{id}} was {{how}} by the check; only the check can reopen it.

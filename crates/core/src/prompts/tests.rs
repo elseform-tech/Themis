@@ -151,6 +151,7 @@ const ALL: &[(&str, &str, &[&str])] = &[
     (TODO_SEED_VERIFY, "todo-seed-verify", &[]),
     (TODO_SEED_VERIFY_DETAILS, "todo-seed-verify-details", &[]),
     (RUNTIME_STILL_OPEN, "runtime-still-open", &["items"]),
+    (TOOL_TODO_CHECK_KEPT, "tool-todo-check-kept", &["id", "how"]),
     (
         QUESTION_ANSWER,
         "question-answer",

@@ -372,6 +372,27 @@ impl ToolRuntime for TodoTool {
             before.items.iter().map(|item| item.id.clone()).collect();
         let sent: std::collections::HashSet<String> =
             written.iter().filter_map(|item| item.id.clone()).collect();
+        // Items the check completed or closed that this write gives another status: they keep
+        // the check's, and the agent is told why.
+        let check_kept: Vec<String> = written
+            .iter()
+            .filter(|item| item.status != core_todo::TodoStatus::Completed)
+            .filter_map(|item| {
+                let known = before
+                    .items
+                    .iter()
+                    .find(|known| Some(&known.id) == item.id.as_ref())?;
+                let how = match known.closed? {
+                    core_todo::CheckClosure::Confirmed => "confirmed",
+                    core_todo::CheckClosure::Cancelled => "closed as cancelled",
+                    core_todo::CheckClosure::Answered => "closed as answered",
+                };
+                Some(themis_core::prompts::fill(
+                    themis_core::prompts::TOOL_TODO_CHECK_KEPT,
+                    &[("id", &known.id), ("how", how)],
+                ))
+            })
+            .collect();
         let (list, summary) = self.apply(written);
         // The ids the agent doesn't know yet: its new items and requests it hadn't seen.
         let new: Vec<Value> = list
@@ -380,12 +401,16 @@ impl ToolRuntime for TodoTool {
             .filter(|item| !known.contains(&item.id) || !sent.contains(&item.id))
             .map(|item| json!({"id": item.id, "title": item.title, "status": item.status}))
             .collect();
-        Ok(json!({
+        let mut result = json!({
             "kept": summary.items,
             "open": summary.open,
             "done": summary.completed,
             "new_ids": new,
-        }))
+        });
+        if !check_kept.is_empty() {
+            result["note"] = check_kept.join(" ").into();
+        }
+        Ok(result)
     }
 }
 

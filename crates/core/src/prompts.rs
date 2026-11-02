@@ -235,6 +235,9 @@ pub const TODO_SEED_VERIFY: &str = include_str!("../builtins/prompts/todo-seed-v
 /// Details of the item a seeded list ends with.
 pub const TODO_SEED_VERIFY_DETAILS: &str =
     include_str!("../builtins/prompts/todo-seed-verify-details.md");
+/// `todo_write` result note when a rewrite tried to change the status of an item the goal
+/// check completed or closed; `{{id}}`, `{{how}}` ("confirmed", "closed as cancelled", …).
+pub const TOOL_TODO_CHECK_KEPT: &str = include_str!("../builtins/prompts/tool-todo-check-kept.md");
 /// The note a turn starts with when files changed last turn with to-do items open
 /// (`hooks.built_in.still_open`); `{{items}}`.
 pub const RUNTIME_STILL_OPEN: &str = include_str!("../builtins/prompts/runtime-still-open.md");
