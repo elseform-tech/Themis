@@ -416,15 +416,16 @@ async fn the_turn_ends_after_both_subagents_reported_back() {
     for child in &children {
         let names = tool_names(child);
         assert!(
-            names.iter().all(|name| [
-                "read_file",
-                "list_dir",
-                "search_file",
-                "shell",
-                "fetch_url",
-                "web_search"
-            ]
-            .contains(&name.as_str())),
+            names.iter().all(|name| name == "Skill"
+                || [
+                    "read_file",
+                    "list_dir",
+                    "search_file",
+                    "shell",
+                    "fetch_url",
+                    "web_search"
+                ]
+                .contains(&name.as_str())),
             "{names:?}"
         );
         let read = child["tools"]
@@ -1384,8 +1385,10 @@ fn spawn_result(all: &[Value]) -> String {
         .unwrap_or_default()
 }
 
+/// The tools a list or a profile gives. `Skill` depends on the skills this machine's user has.
 fn sorted_tools(body: &Value) -> Vec<String> {
     let mut names = tool_names(body);
+    names.retain(|name| name != "Skill");
     names.sort();
     names
 }
