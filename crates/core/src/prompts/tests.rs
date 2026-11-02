@@ -87,6 +87,11 @@ const ALL: &[(&str, &str, &[&str])] = &[
     (GOAL_CONTEXT_OVER, "goal-context-over", &[]),
     (GOAL_CONTEXT_PAUSED, "goal-context-paused", &["goal"]),
     (GOAL_EVIDENCE_SCRIPT, "goal-evidence-script", &[]),
+    (
+        GOAL_EVIDENCE_SUBAGENT,
+        "goal-evidence-subagent",
+        &["name", "status", "paths", "result"],
+    ),
     (GOAL_NOTE_SCRIPT_PROOF, "goal-note-script-proof", &[]),
     (GOAL_CHECKLIST_SYSTEM, "goal-checklist-system", &[]),
     (

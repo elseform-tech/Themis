@@ -1438,6 +1438,7 @@ impl AppState {
         let mut spoiled = false;
         let mut evidence = String::new();
         let mut changed = Vec::new();
+        let mut subagents = std::collections::HashMap::new();
         let mut through = after_seq;
         while let Ok(page) =
             self.inner
@@ -1465,6 +1466,39 @@ impl AppState {
                     ThreadEvent::ToolFinished { ok, output, .. } => {
                         let output = clip_output(&output);
                         format!("{}{output}\n\n", if ok { "" } else { "(failed) " })
+                    }
+                    ThreadEvent::SubagentStarted {
+                        id,
+                        name,
+                        write_paths,
+                        ..
+                    } => {
+                        subagents.insert(id, (name, write_paths));
+                        continue;
+                    }
+                    ThreadEvent::SubagentEnded {
+                        id, status, result, ..
+                    } => {
+                        // One started before the last check isn't in this stretch of history.
+                        let (name, paths) = match subagents.remove(&id) {
+                            Some((name, paths)) if paths.is_empty() => {
+                                (name, "nothing, it could only read".to_owned())
+                            }
+                            Some((name, paths)) => (name, paths.join(", ")),
+                            None => (id, "what it was given earlier".to_owned()),
+                        };
+                        format!(
+                            "{}\n\n",
+                            themis_core::prompts::fill(
+                                themis_core::prompts::GOAL_EVIDENCE_SUBAGENT,
+                                &[
+                                    ("name", &name),
+                                    ("status", &status),
+                                    ("paths", &paths),
+                                    ("result", &clip_output(&result)),
+                                ],
+                            )
+                        )
                     }
                     ThreadEvent::FilesChanged { files } => {
                         changed.extend(files.iter().map(|file| file.path.clone()));
