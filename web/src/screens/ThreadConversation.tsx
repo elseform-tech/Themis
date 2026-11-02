@@ -1,11 +1,11 @@
 import { AttachmentPreview } from "./AttachmentPreview";
-import { MediaGallery, MediaStrip, MediaViewer } from "./MediaStrip";
+import { MediaGallery, MediaStrip, MediaViewer, ToolMediaPreview } from "./MediaStrip";
 import type { PromptPlugin, PromptSkill } from "../lib/prompt";
 import { PromptText } from "../components/PromptInput";
 import { usePromptSkills } from "../lib/usePromptSkills";
 import { describeError, toast, useActiveProject, useApp } from "../state/store";
 import { browserOpenUrl } from "../lib/browser";
-import { ANSWER_MARKER, type ChangedFile, type Question } from "../lib/types";
+import { ANSWER_MARKER, type AttachedMedia, type ChangedFile, type Question } from "../lib/types";
 import { QuestionNote, useNowAt } from "./QuestionBox";
 import { placeQuestion, questionOnComposer, QUESTION_OPEN_MS, usePlacements } from "../state/composerSlot";
 import { useCallback, useEffect, useMemo, useState } from "react";
@@ -63,7 +63,9 @@ export function ThreadConversation({
   const media = useMemo(() => messages.flatMap(message => message.media ?? []), [messages]);
   const [viewing, setViewing] = useState<number | null>(null);
   const openMedia = useCallback((path: string) => { const index = media.findIndex(file => file.path === path); if (index >= 0) setViewing(index); }, [media]);
-  const gallery = useMemo(() => ({ threadId, items: media, open: openMedia }), [threadId, media, openMedia]);
+  // A tool step's screenshot opens on its own, outside the replies' "2 of 9".
+  const [single, setSingle] = useState<AttachedMedia | null>(null);
+  const gallery = useMemo(() => ({ threadId, items: media, open: openMedia, show: setSingle }), [threadId, media, openMedia]);
   const { state: { diffs }, dispatch } = useApp();
   // Links in replies open in this chat's browser, shown in the Workspace Browser tab.
   const openLink = useCallback((url: string) => {
@@ -139,6 +141,7 @@ export function ThreadConversation({
     </div>
     {overview && <OverviewBox threadId={threadId} overview={overview} onOpenMedia={openMedia} />}
     {viewing !== null && media[viewing] && <MediaViewer threadId={threadId} items={media} index={viewing} onIndex={setViewing} onClose={() => setViewing(null)} />}
+    {single && <MediaViewer threadId={threadId} items={[single]} index={0} onIndex={() => {}} onClose={() => setSingle(null)} />}
     </ResponseFiles.Provider>
     </ResponseLinks.Provider>
     </MediaGallery.Provider>
@@ -347,7 +350,9 @@ function Message({ message, threadId, activeRunId, durationMs, skills, plugins }
             <strong>Input</strong>
             <pre>{message.text}</pre>
             <strong>Output</strong>
-            <pre>{message.tool.output ?? (message.tool.ok === undefined && isActiveRun ? "Waiting for output…" : "Output was not recorded for this older call.")}</pre>
+            {message.tool.media
+              ? <ToolMediaPreview media={message.tool.media}><pre>{message.tool.output}</pre></ToolMediaPreview>
+              : <pre>{message.tool.output ?? (message.tool.ok === undefined && isActiveRun ? "Waiting for output…" : "Output was not recorded for this older call.")}</pre>}
           </div>
         </details>
       ) : message.text.startsWith("Run failed:") ? (
