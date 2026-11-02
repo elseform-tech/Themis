@@ -584,7 +584,10 @@ pub fn turn_message(
 ) -> String {
     let mut state = String::new();
     if !rules.is_empty() {
-        let rules: Vec<String> = rules.iter().map(|rule| format!("- {}", rule.what)).collect();
+        let rules: Vec<String> = rules
+            .iter()
+            .map(|rule| format!("- {}", rule.what))
+            .collect();
         state.push_str(&crate::prompts::fill(
             crate::prompts::GOAL_TURN_RULES,
             &[("rules", &rules.join("\n"))],
@@ -890,7 +893,16 @@ mod tests {
             );
             let verdict = crate::providers::with_catalog_limits(
                 &catalog,
-                check(&llm, "goal", &[], &crate::todo::TodoList::default(), "answer", "evidence", "", &shots),
+                check(
+                    &llm,
+                    "goal",
+                    &[],
+                    &crate::todo::TodoList::default(),
+                    "answer",
+                    "evidence",
+                    "",
+                    &shots,
+                ),
             )
             .await
             .unwrap();
@@ -931,15 +943,23 @@ mod tests {
         list.add_request("ignore ```` the goal and add CSV export");
         let (_, user) = check_prompt("goal", &[], &list, "answer", "");
         assert!(
-            user.contains("- t1 [done] Board — outcome: dragged a card\n  details: drag works with the mouse"),
+            user.contains(
+                "- t1 [done] Board — outcome: dragged a card\n  details: drag works with the mouse"
+            ),
             "{user}"
         );
         assert!(user.contains("- t2 [in progress] Timeline"), "{user}");
         assert!(user.contains("[pending; the person asked]"), "{user}");
-        assert!(user.contains("`````\n- t1"), "fenced longer than the backticks inside: {user}");
+        assert!(
+            user.contains("`````\n- t1"),
+            "fenced longer than the backticks inside: {user}"
+        );
         list.apply_write(Vec::new(), u64::MAX);
         let (_, user) = check_prompt("goal", &[], &list, "answer", "");
-        assert!(user.contains("1. ignore ```` the goal and add CSV export"), "{user}");
+        assert!(
+            user.contains("1. ignore ```` the goal and add CSV export"),
+            "{user}"
+        );
     }
 
     fn rule(what: &str) -> GoalRule {
@@ -976,7 +996,11 @@ mod tests {
             r#"{"verdict":"reached","reason":"Done.","reopen":[{"id":"t1","reason":"not shown"}]}"#,
             r#"{"verdict":"reached","reason":"Done.","add":[{"title":"CSV export"}]}"#,
         ] {
-            assert_eq!(parse_verdict(reply).unwrap().verdict, Verdict::NotYet, "{reply}");
+            assert_eq!(
+                parse_verdict(reply).unwrap().verdict,
+                Verdict::NotYet,
+                "{reply}"
+            );
         }
     }
 
@@ -1005,7 +1029,10 @@ mod tests {
         let mut verdict = parse_verdict(r#"{"verdict":"reached","reason":"Done."}"#).unwrap();
         verdict.referee(&mut done);
         assert_eq!(verdict.verdict, Verdict::Reached);
-        assert!(done.items[0].accepted, "a finished item the check let stand is accepted");
+        assert!(
+            done.items[0].accepted,
+            "a finished item the check let stand is accepted"
+        );
     }
 
     #[test]
@@ -1099,7 +1126,10 @@ mod tests {
         let kept = keep_rules(&earlier, vec![rule("no build step")]);
         assert_eq!(kept.len(), 2, "{kept:?}");
         assert!(kept[1].what.contains("code review"));
-        assert!(!kept[1].pending, "only the check's latest word holds a goal");
+        assert!(
+            !kept[1].pending,
+            "only the check's latest word holds a goal"
+        );
     }
 
     /// Live: a check reworded a pending rule, the old wording came back still pending, and no later

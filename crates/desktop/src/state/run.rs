@@ -508,6 +508,44 @@ impl AppState {
             end: Arc::clone(&end_request),
             subagent: None,
         }));
+        // The agent's to-do list: the run opened with it as it stood, and a checkpoint reads it
+        // back as it stands then.
+        let todo_seen = Arc::new(std::sync::atomic::AtomicU64::new(
+            self.todo_for(thread_id).revision,
+        ));
+        tools.push(Box::new(super::todo::TodoTool {
+            owner: super::todo::TodoOwner::Chat {
+                state: self.clone(),
+                sink: Arc::clone(sink),
+                thread_id: thread_id.to_owned(),
+                seen: Arc::clone(&todo_seen),
+            },
+            denied: {
+                let action = themis_core::tools::ToolAction {
+                    display: None,
+                    command: Vec::new(),
+                    tool: "todo_write".to_owned(),
+                    summary: "todo_write".to_owned(),
+                    risk: themis_core::tools::RiskLevel::Read,
+                };
+                let decision =
+                    if check_approval.mode == themis_core::configuration::ApprovalMode::Yolo {
+                        check_approval.policy.yolo_decision(&action)
+                    } else {
+                        check_approval.policy.decision(&action)
+                    };
+                decision == themis_core::configuration::PolicyAction::Deny
+            },
+        }));
+        let checkpoint_note: themis_core::runtime::CheckpointNote = {
+            let state = self.clone();
+            let thread_id = thread_id.to_owned();
+            Arc::new(move || {
+                let list = state.todo_for(&thread_id);
+                todo_seen.store(list.revision, std::sync::atomic::Ordering::SeqCst);
+                list.note()
+            })
+        };
         tools.push(Box::new(super::media_tool::AttachFileTool {
             state: self.clone(),
             sink: Arc::clone(sink),
@@ -911,7 +949,7 @@ impl AppState {
                                                 }
                                                 // Boxed: the run's future is large, and the
                                                 // steer scope must not copy it on the stack.
-                                                themis_core::runtime::with_first_request(first_request, themis_core::runtime::with_end_request(end_request, themis_core::runtime::with_steer_inbox(steer_inbox, themis_core::runtime::with_run_notes(run_notes, Box::pin(run_task_with_evidence(
+                                                themis_core::runtime::with_checkpoint_note(checkpoint_note, themis_core::runtime::with_first_request(first_request, themis_core::runtime::with_end_request(end_request, themis_core::runtime::with_steer_inbox(steer_inbox, themis_core::runtime::with_run_notes(run_notes, Box::pin(run_task_with_evidence(
                                                 llm,
                                                 if yolo {
                                                     tools
@@ -928,7 +966,7 @@ impl AppState {
                                                 stopped,
                                                 skill_catalog,
                                                 Some(evidence_directory),
-                                            )))))).await
+                                            ))))))).await
                                             }))
                                         },
                                     ),

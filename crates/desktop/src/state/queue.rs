@@ -292,7 +292,6 @@ impl AppState {
         // and is denied without a box (see `DesktopApprovalHook`).
         let denied = self.deny_approvals_for_new_message(&thread_id);
         self.note_added_request(sink.as_ref(), &thread_id, &steered);
-        self.refresh_checklist(Arc::clone(&sink), &thread_id);
         let _ = self.inner.diagnostics.append(
             "queue",
             "steered",

@@ -169,9 +169,9 @@ fn bounded_text(text: &str, max: usize) -> String {
 /// Reads a `todo_write` call: `{"todos":[{"id"?, "title", "details"?, "status", "outcome"?}]}`.
 /// `limit` is the most items it may hold. Anything malformed is an error the agent sees.
 pub fn parse_write(args: &Value, limit: usize) -> Result<Vec<WrittenItem>, String> {
-    let items = args["todos"].as_array().ok_or(
-        "todo_write needs `todos`: the whole list, each item with a title and a status",
-    )?;
+    let items = args["todos"]
+        .as_array()
+        .ok_or("todo_write needs `todos`: the whole list, each item with a title and a status")?;
     if items.len() > limit {
         return Err(format!("todo_write keeps at most {limit} items"));
     }
@@ -285,7 +285,7 @@ impl TodoList {
 
     /// Adds a request the person sent while a goal ran, in their words. Sending the same words
     /// again adds nothing. Nothing of theirs is ever dropped: a full list makes room by letting
-    /// go of its oldest finished item, and grows past the limit when nothing is finished.
+    /// go of its oldest finished item of the agent's, and grows past the limit when there is none.
     pub fn add_request(&mut self, words: &str) -> bool {
         let details = bounded_text(words, MAX_REQUEST_CHARS);
         if details.is_empty()
@@ -297,7 +297,11 @@ impl TodoList {
             return false;
         }
         if self.items.len() >= MAX_ITEMS {
-            if let Some(index) = self.items.iter().position(|item| !item.is_open()) {
+            if let Some(index) = self
+                .items
+                .iter()
+                .position(|item| !item.is_open() && item.source != TodoSource::Person)
+            {
                 self.items.remove(index);
             }
         }
@@ -355,7 +359,11 @@ impl TodoList {
 
     /// Completed items a check let stand count as accepted from then on.
     pub fn accept_completed(&mut self) {
-        if self.items.iter().any(|item| !item.is_open() && !item.accepted) {
+        if self
+            .items
+            .iter()
+            .any(|item| !item.is_open() && !item.accepted)
+        {
             self.bump();
         }
         for item in &mut self.items {
@@ -497,7 +505,11 @@ fn render(lines: Vec<Line>, max: usize) -> String {
             let details: String = if count <= budget {
                 line.details.replace('\n', "\n    ")
             } else {
-                let cut: String = line.details.chars().take(budget.saturating_sub(1)).collect();
+                let cut: String = line
+                    .details
+                    .chars()
+                    .take(budget.saturating_sub(1))
+                    .collect();
                 format!("{}…", cut.replace('\n', "\n    "))
             };
             text.push_str("\n  details: ");
@@ -536,7 +548,10 @@ mod tests {
         assert_eq!(list.items[0].details, "AGENTS.md and docs/", "details kept");
         assert_eq!(list.items[0].outcome, "two rules found");
         assert_eq!(list.items[1].status, TodoStatus::InProgress);
-        let summary = write(&mut list, json!([{"title":"Something else","status":"pending"}]));
+        let summary = write(
+            &mut list,
+            json!([{"title":"Something else","status":"pending"}]),
+        );
         assert_eq!(summary.items, 1);
         assert_eq!(list.items[0].id, "t3", "a new item never reuses an id");
     }
@@ -545,7 +560,10 @@ mod tests {
     fn the_persons_words_stay_theirs_and_an_unfinished_request_taken_off_is_remembered() {
         let mut list = TodoList::default();
         assert!(list.add_request("Can you also add a CSV export?"));
-        assert!(!list.add_request("Can you also add a CSV export?"), "counted once");
+        assert!(
+            !list.add_request("Can you also add a CSV export?"),
+            "counted once"
+        );
         let id = list.items[0].id.clone();
         write(
             &mut list,
@@ -566,7 +584,11 @@ mod tests {
         write(&mut list, json!([{"title":"Board","status":"in_progress"}]));
         let seen = list.revision;
         list.add_request("Also add dark mode");
-        let items = parse_write(&json!({"todos":[{"id":"t1","title":"Board","status":"completed"}]}), 50).unwrap();
+        let items = parse_write(
+            &json!({"todos":[{"id":"t1","title":"Board","status":"completed"}]}),
+            50,
+        )
+        .unwrap();
         let summary = list.apply_write(items, seen);
         assert_eq!(summary.unseen_kept, 1);
         assert_eq!(summary.requests_removed, 0);
@@ -585,14 +607,21 @@ mod tests {
         assert_eq!(list.items.len(), MAX_ITEMS);
         assert!(!list.items.iter().any(|item| item.title == "step 0"));
         list.add_request("second");
-        assert_eq!(list.items.len(), MAX_ITEMS + 1, "nothing finished to let go of");
+        assert_eq!(
+            list.items.len(),
+            MAX_ITEMS + 1,
+            "nothing finished to let go of"
+        );
         assert_eq!(list.write_limit(), MAX_ITEMS + 1);
     }
 
     #[test]
     fn the_check_reopens_and_adds_and_completing_again_clears_the_reason() {
         let mut list = TodoList::default();
-        write(&mut list, json!([{"title":"Verify in the browser","status":"completed"}]));
+        write(
+            &mut list,
+            json!([{"title":"Verify in the browser","status":"completed"}]),
+        );
         assert!(list.reopen("t1", "the import with a wrong file was never tried"));
         assert!(!list.reopen("t9", "x"));
         assert!(list.items[0].is_open());
@@ -626,8 +655,14 @@ mod tests {
             .collect();
         write(&mut list, Value::Array(todos));
         let note = list.note().unwrap();
-        assert!(note.starts_with("[To-do — runtime, not from the user]"), "{note}");
-        assert!(note.contains("[in progress] Now\n  details: what done means"), "{note}");
+        assert!(
+            note.starts_with("[To-do — runtime, not from the user]"),
+            "{note}"
+        );
+        assert!(
+            note.contains("[in progress] Now\n  details: what done means"),
+            "{note}"
+        );
         assert!(!note.contains("step 3"), "{note}");
         assert!(note.contains("step 11"), "{note}");
         assert!(note.contains("(4 earlier items done)"), "{note}");
@@ -640,7 +675,11 @@ mod tests {
             list.add_request(&format!("request {n} {}", "words ".repeat(300)));
         }
         let note = list.note().unwrap();
-        assert!(note.chars().count() <= MAX_NOTE_CHARS + 200, "{}", note.len());
+        assert!(
+            note.chars().count() <= MAX_NOTE_CHARS + 200,
+            "{}",
+            note.len()
+        );
         let check = list.for_check();
         assert!(check.chars().count() <= MAX_CHECK_CHARS, "{}", check.len());
         for n in 0..MAX_ITEMS {

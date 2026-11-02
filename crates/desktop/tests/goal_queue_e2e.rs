@@ -59,10 +59,29 @@ fn distinct(bodies: Vec<Value>) -> Vec<Value> {
         .collect()
 }
 
-fn is_checklist(body: &Value) -> bool {
-    body["messages"][0]["content"]
-        .as_str()
-        .is_some_and(|text| text.contains("what a goal asks for"))
+/// The agent's step when the to-do note its run opened with lists requests of the person's
+/// still open and it hasn't written its list yet: it finishes them all with `todo_write`, as a
+/// real agent finishing the work would.
+fn finishes_requests(body: &Value) -> Option<ResponseTemplate> {
+    let messages = body["messages"].as_array()?;
+    let wrote = messages
+        .iter()
+        .any(|message| message["tool_calls"].to_string().contains("todo_write"));
+    if wrote {
+        return None;
+    }
+    let note = messages
+        .iter()
+        .rev()
+        .find(|message| message["role"] == "user")?["content"]
+        .as_str()?;
+    let open: Vec<Value> = note
+        .lines()
+        .filter(|line| line.starts_with("- t") && line.contains("[pending; the person asked]"))
+        .filter_map(|line| line[2..].split(' ').next())
+        .map(|id| json!({"id": id, "title": "Done as asked", "status": "completed"}))
+        .collect();
+    (!open.is_empty()).then(|| calls("todo_write", json!({ "todos": open })))
 }
 
 fn is_check(body: &Value) -> bool {
@@ -423,10 +442,7 @@ async fn a_goal_runs_turn_after_turn_until_the_check_finds_it_reached() {
             .map(body)
             .collect(),
     );
-    let turns: Vec<&Value> = bodies
-        .iter()
-        .filter(|body| !is_check(body) && !is_checklist(body))
-        .collect();
+    let turns: Vec<&Value> = bodies.iter().filter(|body| !is_check(body)).collect();
     assert_eq!(turns.len(), 3);
     assert_eq!(
         checks.load(Ordering::SeqCst),
@@ -936,6 +952,9 @@ async fn a_message_run_that_finishes_the_goal_is_checked_and_nothing_repeats_it(
                 seen_checks.fetch_add(1, Ordering::SeqCst);
                 return reply(r#"{"verdict":"reached","reason":"PASS4 shows four lines.","progressed":true,"told_user":true}"#);
             }
+            if let Some(finish) = finishes_requests(&body) {
+                return finish;
+            }
             if calls.fetch_add(1, Ordering::SeqCst) == 0 {
                 held.wait();
                 reply("Wrote three lines.")
@@ -979,13 +998,15 @@ async fn a_message_run_that_finishes_the_goal_is_checked_and_nothing_repeats_it(
             .map(body)
             .collect(),
     );
-    let turns: Vec<&Value> = bodies
-        .iter()
-        .filter(|body| !is_check(body) && !is_checklist(body))
-        .collect();
-    assert_eq!(turns.len(), 2, "no goal turn and no announcement followed");
+    let turns: Vec<&Value> = bodies.iter().filter(|body| !is_check(body)).collect();
+    // The message's run finishes the request on its list, then answers.
+    assert_eq!(turns.len(), 3, "no goal turn and no announcement followed");
     assert!(!turns.iter().any(|body| mentions(body, "[Goal — runtime")));
     assert_eq!(state.goal_for(&thread).unwrap().turns, 1);
+}
+
+fn calls_tool(name: &str, arguments: Value) -> ResponseTemplate {
+    calls(name, arguments)
 }
 
 fn calls(name: &str, arguments: Value) -> ResponseTemplate {
@@ -1054,10 +1075,10 @@ async fn asked_to_stop_the_agent_pauses_the_goal_and_no_check_or_turn_follows() 
     assert_eq!(checks.load(Ordering::SeqCst), 0);
 }
 
-/// What a check found proven survives into the next check and turn, which see it, and the
+/// The rules a check found survive into the next check and turn, which see them, and the
 /// next turn knows which files the work is in.
 #[tokio::test(flavor = "multi_thread")]
-async fn proof_and_files_carry_from_turn_to_turn() {
+async fn rules_and_files_carry_from_turn_to_turn() {
     let server = MockServer::builder().start().await;
     let checks = Arc::new(AtomicUsize::new(0));
     let seen_checks = Arc::clone(&checks);
@@ -1071,10 +1092,10 @@ async fn proof_and_files_carry_from_turn_to_turn() {
             let sent = body["messages"].to_string();
             if is_check(&body) {
                 return if seen_checks.fetch_add(1, Ordering::SeqCst) == 0 {
-                    reply(r#"{"verdict":"not_yet","reason":"The health part isn't shown yet.","next":"Run check_health.py next.","requirements":[{"what":"Score rises","proven":true,"how":"0 to 10 after a real click"},{"what":"Health drops","proven":false}]}"#)
+                    reply(r#"{"verdict":"not_yet","reason":"The health part isn't shown yet.","next":"Run check_health.py next.","rules":[{"what":"Score is kept in score.txt","how":"0 to 10 after a real click"}]}"#)
                 } else {
                     *seen_later_check.lock().unwrap() = sent;
-                    reply(r#"{"verdict":"reached","reason":"Both are shown.","requirements":[{"what":"Score rises","proven":true,"how":"0 to 10 after a real click"},{"what":"Health drops","proven":true,"how":"100 to 90"}]}"#)
+                    reply(r#"{"verdict":"reached","reason":"Both are shown."}"#)
                 };
             }
             if mentions(&body, "A separate check found the goal reached") {
@@ -1114,16 +1135,21 @@ async fn proof_and_files_carry_from_turn_to_turn() {
         .unwrap();
     goal_until(&state, &thread, |status| status == GoalStatus::Reached).await;
     let goal = state.goal_for(&thread).unwrap();
-    assert_eq!(goal.proof.len(), 2, "{goal:?}");
-    assert!(goal.proof.iter().all(|item| item.proven), "{goal:?}");
+    assert_eq!(
+        goal.rules.len(),
+        1,
+        "a rule the check left out stays: {goal:?}"
+    );
     assert_eq!(goal.files, vec!["score.txt".to_owned()], "{goal:?}");
     let turn = later_turn.lock().unwrap().clone();
-    assert!(turn.contains("Score rises"), "{turn}");
-    assert!(turn.contains("0 to 10 after a real click"), "{turn}");
+    assert!(turn.contains("- Score is kept in score.txt"), "{turn}");
     assert!(turn.contains("score.txt"), "{turn}");
     assert!(turn.contains("Run check_health.py next."), "{turn}");
     let check = later_check.lock().unwrap().clone();
-    assert!(check.contains("0 to 10 after a real click"), "{check}");
+    assert!(
+        check.contains("- [kept so far] Score is kept in score.txt (0 to 10 after a real click)"),
+        "{check}"
+    );
     let mut seen = Vec::new();
     until(
         &mut rx,
@@ -1144,12 +1170,11 @@ async fn proof_and_files_carry_from_turn_to_turn() {
             .any(|note| note.contains("health part isn't shown yet")),
         "{notes:?}"
     );
-    // The person sees what the agent is told: what's wrong, what to change, what's left.
+    // The person sees what the agent is told: what's wrong and what to change.
     assert!(
         notes
             .iter()
-            .any(|note| note
-                .contains("\n\nRun check_health.py next.\n\nStill pending: Health drops")),
+            .any(|note| note.ends_with("isn't shown yet.\n\nRun check_health.py next.")),
         "{notes:?}"
     );
 }
@@ -1197,129 +1222,13 @@ async fn a_goal_reached_without_a_closing_turn_still_says_so_in_the_chat() {
     assert!(note.contains("Score and health both change"), "{note}");
 }
 
-/// The checklist is live: it appears when the goal is set, takes a steered requirement at once,
-/// and follows an edited goal, and refreshing it can never complete an item.
-#[tokio::test(flavor = "multi_thread")]
-async fn the_checklist_follows_the_goal_as_it_changes() {
-    let server = MockServer::builder().start().await;
-    Mock::given(method("POST"))
-        .respond_with(move |request: &Request| {
-            let body = body(request);
-            let sent = body["messages"].to_string();
-            if is_check(&body) {
-                return reply(r#"{"verdict":"not_yet","reason":"Keep going."}"#);
-            }
-            if body["messages"][0]["content"].as_str().is_some_and(|text| text.contains("what a goal asks for")) {
-                return if sent.contains("in Rust") {
-                    reply(r#"{"requirements":[{"what":"Written in Rust","proven":true}]}"#)
-                } else if sent.contains("Also add a README") {
-                    reply(r#"{"requirements":[{"what":"The game runs"},{"what":"A README exists","proven":true}]}"#)
-                        .set_delay(std::time::Duration::from_secs(1))
-                } else {
-                    reply(r#"{"requirements":[{"what":"The game runs"}]}"#)
-                };
-            }
-            // Long enough to stay running through the test, without blocking the mock server.
-            reply("Working on it.").set_delay(std::time::Duration::from_secs(6))
-        })
-        .mount(&server)
-        .await;
-    let (state, _data, _project, thread) = chat(&server).await;
-    let (sink, _rx) = ChannelSink::channel();
-    let sink = Arc::new(sink);
-    async fn checklist_until(
-        state: &AppState,
-        thread: &str,
-        done: impl Fn(&[(String, bool)]) -> bool,
-    ) -> Vec<(String, bool)> {
-        for _ in 0..200 {
-            let list: Vec<_> = state
-                .goal_for(thread)
-                .map(|goal| goal.proof)
-                .unwrap_or_default()
-                .into_iter()
-                .map(|item| (item.what, item.proven))
-                .collect();
-            if done(&list) {
-                return list;
-            }
-            tokio::time::sleep(std::time::Duration::from_millis(25)).await;
-        }
-        panic!("checklist never got there: {:?}", state.goal_for(thread));
-    }
-    state
-        .send_message(sink.clone(), thread.clone(), "/goal make the game".into())
-        .await
-        .unwrap();
-    // Set: listed before any check has run.
-    checklist_until(&state, &thread, |list| {
-        list == [("The game runs".to_owned(), false)]
-    })
-    .await;
-
-    let request = state
-        .enqueue_message(
-            sink.clone(),
-            thread.clone(),
-            "Also add a README".into(),
-            None,
-            vec![],
-        )
-        .await
-        .unwrap();
-    state
-        .steer_queued_message(sink.clone(), thread.clone(), request.id)
-        .await
-        .unwrap();
-    // Steered: pending at once, in the person's words, before the refresh's reply arrives.
-    let now = state.goal_for(&thread).unwrap().proof;
-    assert!(
-        now.iter()
-            .any(|item| item.what == "Also add a README" && !item.proven),
-        "{now:?}"
-    );
-    // Refreshed: tidied into the list, and the model's "proven" is ignored.
-    let list = checklist_until(&state, &thread, |list| {
-        list.iter().any(|item| item.0 == "A README exists")
-    })
-    .await;
-    assert_eq!(
-        list,
-        [
-            ("The game runs".to_owned(), false),
-            ("A README exists".to_owned(), false)
-        ]
-    );
-
-    // Edited: the list follows the new goal, and dropped items go.
-    state
-        .edit_goal(sink.clone(), thread.clone(), "make the game in Rust".into())
-        .await
-        .unwrap();
-    let list = checklist_until(&state, &thread, |list| {
-        list.iter().any(|item| item.0 == "Written in Rust")
-    })
-    .await;
-    assert_eq!(list, [("Written in Rust".to_owned(), false)]);
-    state
-        .remove_goal(sink.clone(), thread.clone())
-        .await
-        .unwrap();
-    settle(&state, &thread).await;
-}
-
 /// A failed turn waits with a countdown the chat can show, and leaves no note behind that
 /// would go out of date.
 #[tokio::test(flavor = "multi_thread")]
 async fn a_failed_turn_counts_down_instead_of_leaving_a_note() {
     let server = MockServer::builder().start().await;
     Mock::given(method("POST"))
-        .respond_with(|request: &Request| {
-            if is_checklist(&body(request)) {
-                return reply(r#"{"requirements":[{"what":"The thing"}]}"#);
-            }
-            ResponseTemplate::new(400).set_body_string("bad request")
-        })
+        .respond_with(|_: &Request| ResponseTemplate::new(400).set_body_string("bad request"))
         .mount(&server)
         .await;
     let (state, _data, _project, thread) = chat(&server).await;
@@ -1360,81 +1269,6 @@ async fn a_failed_turn_counts_down_instead_of_leaving_a_note() {
         .remove_goal(sink.clone(), thread.clone())
         .await
         .unwrap();
-}
-
-/// While a long turn runs, the checklist moves as evidence comes in. These passes only ever
-/// update the list: even a check saying "reached" can't end the goal in the middle of a turn.
-#[tokio::test(flavor = "multi_thread")]
-async fn the_checklist_moves_during_a_long_turn_and_cannot_end_the_goal() {
-    let server = MockServer::builder().start().await;
-    Mock::given(method("POST"))
-        .respond_with(|request: &Request| {
-            let body = body(request);
-            let sent = body["messages"].to_string();
-            if is_checklist(&body) {
-                return reply(r#"{"requirements":[{"what":"Notes exist"}]}"#);
-            }
-            if is_check(&body) {
-                return reply(r#"{"verdict":"reached","reason":"Done.","told_user":true,"requirements":[{"what":"Notes exist","proven":true,"how":"written"}]}"#);
-            }
-            if sent.contains("notes.txt") {
-                // The turn stays open a while after the work that can be checked.
-                return reply("All written.").set_delay(std::time::Duration::from_secs(5));
-            }
-            calls("write_file", json!({"file_path": "notes.txt", "content": "hello"}))
-        })
-        .mount(&server)
-        .await;
-    let (state, _data, project, thread) = chat(&server).await;
-    std::fs::create_dir_all(project.path().join(".themis")).unwrap();
-    std::fs::write(
-        project.path().join(".themis/config.jsonc"),
-        r#"{"goal":{"checklist_refresh_seconds":1}}"#,
-    )
-    .unwrap();
-    state
-        .set_thread_approval_mode(
-            thread.clone(),
-            themis_core::configuration::ApprovalMode::Yolo,
-        )
-        .await
-        .unwrap();
-    let (sink, _rx) = ChannelSink::channel();
-    let sink = Arc::new(sink);
-    state
-        .send_message(sink.clone(), thread.clone(), "/goal write the notes".into())
-        .await
-        .unwrap();
-    let mut moved = None;
-    for _ in 0..160 {
-        let goal = state.goal_for(&thread).unwrap();
-        if goal.proof.iter().any(|item| item.proven) {
-            moved = Some(goal);
-            break;
-        }
-        tokio::time::sleep(std::time::Duration::from_millis(25)).await;
-    }
-    let goal = moved.expect("the checklist never moved during the turn");
-    // The checklist shows before its log line is written, so give the line a moment.
-    let mut mid_turn = String::new();
-    for _ in 0..200 {
-        mid_turn = logged(_data.path());
-        if mid_turn
-            .lines()
-            .any(|line| line.contains("checklist_updated") && line.contains("\"mid_turn\":true"))
-        {
-            break;
-        }
-        tokio::time::sleep(std::time::Duration::from_millis(25)).await;
-    }
-    assert!(
-        mid_turn
-            .lines()
-            .any(|line| line.contains("checklist_updated") && line.contains("\"mid_turn\":true")),
-        "{mid_turn}"
-    );
-    assert_eq!(goal.status, GoalStatus::Running, "{goal:?}");
-    goal_until(&state, &thread, |status| status == GoalStatus::Reached).await;
 }
 
 /// Asked in the chat to remove the goal, the agent removes it: no goal is left, and
@@ -1515,29 +1349,27 @@ fn logged(data: &std::path::Path) -> String {
     text
 }
 
-/// A script that changed the page can't prove a goal, and that refusal and each checklist update
-/// are logged, as counts and with no text of the goal's.
+/// A script that changed the page can't prove a goal, and that refusal and each to-do update
+/// are logged, as counts and with no text of the list's.
 #[tokio::test(flavor = "multi_thread")]
-async fn a_refused_script_proof_and_checklist_updates_are_logged_as_metadata() {
+async fn a_refused_script_proof_and_todo_updates_are_logged_as_metadata() {
     let server = MockServer::builder().start().await;
     Mock::given(method("POST"))
         .respond_with(|request: &Request| {
             let body = body(request);
-            if is_checklist(&body) {
-                return reply(
-                    r#"{"requirements":[{"what":"SECRET-ITEM-TEXT"},{"what":"Another"}]}"#,
-                );
-            }
             if is_check(&body) {
                 return reply(r#"{"verdict":"reached","reason":"Done.","told_user":true}"#);
             }
-            let used_tool = body["messages"]
+            let tools = body["messages"]
                 .as_array()
-                .is_some_and(|messages| messages.iter().any(|m| m["role"] == "tool"));
-            if used_tool {
-                reply("It is done.")
-            } else {
-                calls("browser_devtools", json!({"expression": "player.x = 1"}))
+                .map_or(0, |messages| messages.iter().filter(|m| m["role"] == "tool").count());
+            match tools {
+                0 => calls(
+                    "todo_write",
+                    json!({"todos":[{"title":"SECRET-ITEM-TEXT","status":"completed"},{"title":"Another","status":"completed"}]}),
+                ),
+                1 => calls("browser_devtools", json!({"expression": "player.x = 1"})),
+                _ => reply("It is done."),
             }
         })
         .mount(&server)
@@ -1554,7 +1386,7 @@ async fn a_refused_script_proof_and_checklist_updates_are_logged_as_metadata() {
         .unwrap();
     for _ in 0..400 {
         let text = logged(data.path());
-        if text.contains("script_proof_refused") && text.contains("checklist_updated") {
+        if text.contains("script_proof_refused") && text.contains("\"updated\"") {
             break;
         }
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
@@ -1566,10 +1398,10 @@ async fn a_refused_script_proof_and_checklist_updates_are_logged_as_metadata() {
     assert!(refused.is_some(), "not logged: {text}");
     let updated = text
         .lines()
-        .find(|line| line.contains("checklist_updated"))
-        .expect("the checklist update is logged");
+        .find(|line| line.contains("\"todo\"") && line.contains("\"updated\""))
+        .expect("the to-do update is logged");
     assert!(updated.contains("\"items\":2"), "{updated}");
-    assert!(updated.contains("\"mid_turn\":false"), "{updated}");
+    assert!(updated.contains("\"by\":\"agent\""), "{updated}");
     assert!(
         !text.contains("SECRET-ITEM-TEXT"),
         "item text reached the log"
@@ -1698,6 +1530,8 @@ async fn the_check_sees_work_done_since_the_last_check_and_never_waits_without_a
                 .to_owned();
             if last_user.contains("list the folder") && !tool_done {
                 ResponseTemplate::new(200).set_body_json(json!({"choices":[{"message":{"role":"assistant","content":null,"tool_calls":[{"id":"l","type":"function","function":{"name":"list_dir","arguments":"{\"path\":\".\"}"}}]},"finish_reason":"tool_calls"}]}))
+            } else if let Some(finish) = finishes_requests(&body) {
+                finish
             } else if last_user.contains("list the folder") {
                 reply("Listed the folder.")
             } else if last_user.contains("/goal") {
@@ -2144,9 +1978,9 @@ async fn a_goal_with_a_small_context_window_warns_once() {
     settle(&state, &thread).await;
 }
 
-/// A request steered in while a goal runs is part of the goal: the goal keeps
-/// it and the goal check is shown it. A goal turn and an answer to the
-/// agent's question are not requests.
+/// A request steered in while a goal runs is part of the goal: it lands on the to-do list in
+/// the person's words, holds the goal until the agent finishes it, and the goal check is
+/// shown it. A goal turn is not a request.
 #[tokio::test(flavor = "multi_thread")]
 async fn a_request_steered_into_a_goal_reaches_the_goal_check() {
     let server = MockServer::builder().start().await;
@@ -2163,11 +1997,14 @@ async fn a_request_steered_into_a_goal_reaches_the_goal_check() {
                 seen.lock().unwrap().push(body);
                 return reply(r#"{"verdict":"reached","reason":"The report and the CSV export are done.","progress":"","progressed":true}"#);
             }
+            if body["messages"].as_array().and_then(|m| m.last()).is_some_and(|m| m["role"] == "tool") {
+                return reply("Report written and exported as CSV.");
+            }
             if calls.fetch_add(1, Ordering::SeqCst) == 0 {
                 held.wait();
                 reply("Report written.")
             } else {
-                reply("Report written and exported as CSV.")
+                calls_tool("todo_write", json!({"todos":[{"id":"t1","title":"Export CSV","status":"completed","outcome":"report.csv"}]}))
             }
         })
         .mount(&server)
@@ -2200,15 +2037,16 @@ async fn a_request_steered_into_a_goal_reaches_the_goal_check() {
     gate.open();
     goal_until(&state, &thread, |status| status == GoalStatus::Reached).await;
 
-    let goal = state.goal_for(&thread).unwrap();
-    assert_eq!(goal.added, ["Also export CSV."]);
+    let list = state.todo_for(&thread);
+    assert_eq!(list.items[0].details, "Also export CSV.");
+    assert_eq!(list.items[0].outcome, "report.csv");
     let checks = distinct(checks.lock().unwrap().clone());
+    assert!(checks.len() >= 2, "the open request held the first check");
     let input = checks[0]["messages"][1]["content"].as_str().unwrap();
     assert!(
-        input.contains("Requests the user added while this goal ran."),
+        input.contains("- t1 [pending; the person asked] Also export CSV."),
         "{input}"
     );
-    assert!(input.contains("1. Also export CSV."), "{input}");
     assert!(
         !input.contains("[Goal"),
         "a goal turn is not a request: {input}"
@@ -2646,9 +2484,6 @@ async fn a_message_after_a_goal_is_told_the_goal_is_not_running() {
     Mock::given(method("POST"))
         .respond_with(|request: &Request| {
             let body = body(request);
-            if is_checklist(&body) {
-                return reply(r#"{"requirements":[{"what":"The thing"}]}"#);
-            }
             if is_check(&body) {
                 return reply(r#"{"verdict":"not_yet","reason":"Keep going."}"#);
             }
@@ -2663,7 +2498,7 @@ async fn a_message_after_a_goal_is_told_the_goal_is_not_running() {
         bodies
             .iter()
             .map(body)
-            .rfind(|body| !is_check(body) && !is_checklist(body))
+            .rfind(|body| !is_check(body))
             .unwrap()["messages"]
             .to_string()
     };
