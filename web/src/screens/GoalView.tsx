@@ -54,8 +54,8 @@ export function GoalView({ goal }: { goal: Goal | null }) {
           </>}
           {rules.length > 0 && (
             <section className="themis-goal-rules">
-              <h3>How to work</h3>
-              <ul aria-label="How to work">
+              <h3>Rules</h3>
+              <ul aria-label="Rules">
                 {rules.map(item => (
                   <li key={item.what} className={item.broken ? "is-broken" : ""}>
                     <span>{item.what}</span>

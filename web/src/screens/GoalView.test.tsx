@@ -47,7 +47,7 @@ it("keeps rules apart from the tasks, never ticked, and says plainly when one wa
     { what: "Subagents build the parts", proven: false, kind: "rule", broken: true, how: "the main agent wrote them all" },
   ])} />);
   expect(screen.getByRole("list", { name: "Tasks, 1 of 1 complete" })).not.toHaveTextContent("No build step");
-  const rules = screen.getByRole("list", { name: "How to work" });
+  const rules = screen.getByRole("list", { name: "Rules" });
   expect(within(rules).getByText("No build step")).toBeInTheDocument();
   const broken = within(rules).getByText("Subagents build the parts").closest("li") as HTMLElement;
   expect(within(broken).getByText("Not followed: the main agent wrote them all")).toBeInTheDocument();
@@ -56,7 +56,7 @@ it("keeps rules apart from the tasks, never ticked, and says plainly when one wa
 
 it("has no rules section without rules, and no current task when all are done", () => {
   render(<GoalView goal={goal([{ what: "Board works", proven: true }])} />);
-  expect(screen.queryByRole("list", { name: "How to work" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("list", { name: "Rules" })).not.toBeInTheDocument();
   expect(document.querySelector("[aria-current]")).toBeNull();
 });
 
