@@ -2562,6 +2562,7 @@ fn import_mcp_server(
             "bearer_env",
             "cwd",
             "oauth",
+            "tool_timeout_secs",
             // Accepted without effect: descriptions and notes, Claude's own switch (imported
             // servers start disabled), its timeout and auto-approval (Themis's apply).
             "description",
@@ -2618,6 +2619,12 @@ fn import_mcp_server(
     }
     if let Some(cwd) = raw.get("cwd") {
         server.cwd = Some(cwd.as_str().context("MCP cwd must be text")?.to_owned());
+    }
+    if let Some(secs) = raw.get("tool_timeout_secs") {
+        server.tool_timeout_secs = Some(
+            secs.as_u64()
+                .context("MCP tool_timeout_secs must be a whole number of seconds")?,
+        );
     }
     if let Some(command) = raw.get("command") {
         if opencode {
@@ -2865,6 +2872,9 @@ pub fn mcp_server_to_standard(server: &McpServer) -> Value {
             );
             entry.insert("oauth".into(), Value::Object(block));
         }
+    }
+    if let Some(secs) = server.tool_timeout_secs {
+        entry.insert("tool_timeout_secs".into(), json!(secs));
     }
     if !server.env.is_empty() || !server.env_values.is_empty() {
         let env: serde_json::Map<String, Value> = server

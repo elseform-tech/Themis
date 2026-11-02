@@ -458,7 +458,11 @@ export interface Goal {
 
 export interface GoalRequirement {
   what: string;
+  /** Something to finish (the default), or how the work must be done the whole way. */
+  kind?: "task" | "rule";
   proven: boolean;
+  /** A rule that wasn't followed. */
+  broken?: boolean;
   how?: string;
 }
 

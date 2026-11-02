@@ -463,6 +463,58 @@ async fn the_speaker_starts_off_and_turns_on_for_current_and_new_pages() {
 }
 
 /// The agent can aim without clicking, and opening the same page again reuses its tab.
+/// On a Mac a page otherwise follows a scroll past its edge and springs back, and a trackpad can
+/// wobble even a page with nothing to scroll. The page's own choice wins, and its DOM is untouched.
+#[tokio::test(flavor = "multi_thread")]
+async fn pages_dont_bounce_at_their_edges_unless_they_ask_to() {
+    let _browser = ONE_BROWSER.lock().await;
+    let data = tempfile::tempdir().unwrap();
+    let Some(hub) = hub(data.path()) else { return };
+    let site = MockServer::builder().start().await;
+    const REPORT: &str = r#"<p id="out"></p><script>out.textContent = 'overscroll ' + getComputedStyle(document.documentElement).overscrollBehaviorY + ' styles ' + document.querySelectorAll('style').length;</script>"#;
+    Mock::given(path("/plain"))
+        .respond_with(ResponseTemplate::new(200).set_body_raw(
+            format!("<!doctype html><title>Plain</title><body>{REPORT}</body>"),
+            "text/html",
+        ))
+        .mount(&site)
+        .await;
+    Mock::given(path("/own"))
+        .respond_with(ResponseTemplate::new(200).set_body_raw(
+            format!("<!doctype html><title>Own</title><style>html{{overscroll-behavior:contain}}</style><body>{REPORT}</body>"),
+            "text/html",
+        ))
+        .mount(&site)
+        .await;
+    let project = tempfile::tempdir().unwrap();
+    let chat = hub.chat("chat-bounce", project.path());
+    let tools = themis_core::browser::tools::browser_tools(
+        Arc::new(FnHook::new(|_: &ToolAction| Approval::AllowOnce)),
+        themis_core::browser::tools::BrowserScope {
+            permissions: themis_core::tools::site_permissions::SitePermissions::new(
+                Default::default(),
+                None,
+            ),
+            chat: Arc::clone(&chat),
+            cancel: None,
+            media: None,
+        },
+    );
+    let tool = |name: &str| tools.iter().find(|tool| tool.name() == name).unwrap();
+    let read = |page: &'static str| {
+        let (open, snapshot) = (tool("browser_open"), tool("browser_snapshot"));
+        let url = format!("{}/{page}", site.uri());
+        async move {
+            open.execute(json!({"url": url})).await.unwrap();
+            snapshot.execute(json!({})).await.unwrap().to_string()
+        }
+    };
+    let plain = read("plain").await;
+    assert!(plain.contains("overscroll none styles 0"), "{plain}");
+    let own = read("own").await;
+    assert!(own.contains("overscroll contain styles 1"), "{own}");
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn the_agent_moves_the_mouse_and_reopening_a_page_reuses_its_tab() {
     let _browser = ONE_BROWSER.lock().await;

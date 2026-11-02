@@ -212,6 +212,144 @@ fn history_kinds(data: &Path, thread: &str) -> Vec<Value> {
         .collect()
 }
 
+/// A subagent does the work a skill describes, so it needs the list as much as the main agent.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_subagent_can_see_the_skills_the_main_agent_can() {
+    let app = app(None, |body| {
+        if is_subagent(body) {
+            return reply("Done.");
+        }
+        match tool_results(body) {
+            0 => tools(&[(
+                "s1",
+                "spawn_subagents",
+                json!({"subagents": [{"name": "Builder", "brief": "Build it."}]}),
+            )]),
+            _ if mentions(body, "Done.") => reply("All done."),
+            _ => reply("Waiting."),
+        }
+    })
+    .await;
+    let skill = app.project.path().join(".agents/skills/test-first-probe");
+    std::fs::create_dir_all(&skill).unwrap();
+    std::fs::write(
+        skill.join("SKILL.md"),
+        "---\nname: test-first-probe\ndescription: Write the failing test before the code\n---\nTests first.\n",
+    )
+    .unwrap();
+    let (data, thread) = (app.data.path().to_owned(), app.thread.clone());
+    tokio::task::spawn_blocking(move || run(&data, &thread, "build it"))
+        .await
+        .unwrap();
+    let requests = bodies(&app.llm).await;
+    let has_skill = |body: &&Value| {
+        messages(body)
+            .iter()
+            .any(|m| text(m).contains("test-first-probe"))
+    };
+    assert!(
+        requests
+            .iter()
+            .filter(|b| !is_subagent(b))
+            .any(|b| has_skill(&b)),
+        "the main agent's list has the skill"
+    );
+    assert!(
+        requests
+            .iter()
+            .filter(|b| is_subagent(b))
+            .any(|b| has_skill(&b)),
+        "a subagent's list has it too"
+    );
+}
+
+/// What superpowers and similar plugins tell agents to call. Loading a skill must be the easy way,
+/// for an agent and a subagent, by the plugin's name for it or the skill's own.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_skill_tool_loads_a_skill_for_an_agent_and_a_subagent() {
+    let results: Arc<Mutex<Vec<String>>> = Arc::default();
+    let seen = Arc::clone(&results);
+    let app = app(None, move |body| {
+        let done = tool_results(body);
+        if is_subagent(body) {
+            assert!(
+                mentions(body, "load it with the Skill tool"),
+                "told it applies"
+            );
+            return match done {
+                0 => tools(&[(
+                    "b1",
+                    "Skill",
+                    json!({"skill": "test-first-probe", "status": "Loading"}),
+                )]),
+                _ => {
+                    seen.lock().unwrap().extend(
+                        messages(body)
+                            .iter()
+                            .filter(|m| m["role"] == "tool")
+                            .map(|m| text(m).to_owned()),
+                    );
+                    reply("Done.")
+                }
+            };
+        }
+        match done {
+            0 => tools(&[(
+                "a1",
+                "Skill",
+                json!({"skill": "superpowers:test-first-probe"}),
+            )]),
+            1 => tools(&[("a2", "Skill", json!({"skill": "no-such-skill"}))]),
+            2 => tools(&[(
+                "s1",
+                "spawn_subagents",
+                json!({"subagents": [{"name": "Builder", "brief": "Build it."}]}),
+            )]),
+            _ if mentions(body, "Done.") => {
+                seen.lock().unwrap().extend(
+                    messages(body)
+                        .iter()
+                        .filter(|m| m["role"] == "tool")
+                        .map(|m| text(m).to_owned()),
+                );
+                reply("All done.")
+            }
+            _ => reply("Waiting."),
+        }
+    })
+    .await;
+    let skill = app.project.path().join(".agents/skills/test-first-probe");
+    std::fs::create_dir_all(&skill).unwrap();
+    std::fs::write(
+        skill.join("SKILL.md"),
+        "---\nname: test-first-probe\ndescription: Write the failing test before the code\n---\nALWAYS WRITE THE TEST FIRST.\n",
+    )
+    .unwrap();
+    let (data, thread) = (app.data.path().to_owned(), app.thread.clone());
+    tokio::task::spawn_blocking(move || run(&data, &thread, "build it"))
+        .await
+        .unwrap();
+    let requests = bodies(&app.llm).await;
+    let main = requests.iter().find(|b| !is_subagent(b)).unwrap();
+    assert!(
+        tool_names(main).iter().any(|n| n == "Skill"),
+        "{:?}",
+        tool_names(main)
+    );
+    let child = requests.iter().find(|b| is_subagent(b)).unwrap();
+    assert!(
+        tool_names(child).iter().any(|n| n == "Skill"),
+        "{:?}",
+        tool_names(child)
+    );
+    let results = results.lock().unwrap().join("\n");
+    assert!(results.contains("ALWAYS WRITE THE TEST FIRST"), "{results}");
+    assert!(
+        results.contains("no-such-skill") && results.contains("test-first-probe"),
+        "says what exists: {results}"
+    );
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn the_turn_ends_after_both_subagents_reported_back() {
     let app = app(None, |body| {
@@ -278,15 +416,16 @@ async fn the_turn_ends_after_both_subagents_reported_back() {
     for child in &children {
         let names = tool_names(child);
         assert!(
-            names.iter().all(|name| [
-                "read_file",
-                "list_dir",
-                "search_file",
-                "shell",
-                "fetch_url",
-                "web_search"
-            ]
-            .contains(&name.as_str())),
+            names.iter().all(|name| name == "Skill"
+                || [
+                    "read_file",
+                    "list_dir",
+                    "search_file",
+                    "shell",
+                    "fetch_url",
+                    "web_search"
+                ]
+                .contains(&name.as_str())),
             "{names:?}"
         );
         let read = child["tools"]
@@ -413,6 +552,93 @@ async fn a_stopped_subagent_ends_and_a_waited_result_is_not_repeated() {
     .await
     .unwrap();
     app.serving.abort();
+}
+
+/// A call too big for a subagent's context, such as a whole file written through a heredoc, is
+/// refused and saved as for the main agent, rather than ending the subagent.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_very_long_tool_call_doesnt_end_a_subagent() {
+    let app = app(Some(r#"{"context_token_budget":20000}"#), |body| {
+        if is_subagent(body) {
+            return match tool_results(body) {
+                0 => tools(&[(
+                    "c1",
+                    "shell",
+                    json!({"command": format!("cat << 'EOF' > notes/a.txt\n{}\nEOF", "line ".repeat(30_000))}),
+                )]),
+                _ => reply("Reviewed it all."),
+            };
+        }
+        match tool_results(body) {
+            0 => tools(&[(
+                "s1",
+                "spawn_subagents",
+                json!({"subagents": [{"name": "Big", "brief": "Run it.", "write_paths": ["notes/"]}]}),
+            )]),
+            _ if mentions(body, "Reviewed it all.") => reply("All done."),
+            _ if mentions(body, "exceeds the delivery allowance") => reply("It failed."),
+            _ => tools(&[("w1", "wait_subagents", json!({"timeout_seconds": 30}))]),
+        }
+    })
+    .await;
+    let (data, thread) = (app.data.path().to_owned(), app.thread.clone());
+    tokio::task::spawn_blocking(move || run(&data, &thread, "build it"))
+        .await
+        .unwrap();
+    let requests = bodies(&app.llm).await;
+    let last = requests.iter().rfind(|b| !is_subagent(b)).unwrap();
+    assert!(mentions(last, "Reviewed it all."), "{last}");
+    assert!(!mentions(last, "exceeds the delivery allowance"), "{last}");
+}
+
+/// A model that leaves out `write_paths` learns at once what that means, rather than from a
+/// subagent coming back unable to build anything.
+#[tokio::test(flavor = "multi_thread")]
+async fn starting_a_subagent_says_when_it_can_only_read() {
+    let app = app(None, |body| {
+        if is_subagent(body) {
+            return reply("Done.");
+        }
+        match tool_results(body) {
+            0 => tools(&[(
+                "s1",
+                "spawn_subagents",
+                json!({"subagents": [
+                    {"name": "Looker", "brief": "Look around."},
+                    {"name": "Builder", "brief": "Build it.", "write_paths": ["notes/"]}
+                ]}),
+            )]),
+            1 => tools(&[(
+                "s2",
+                "spawn_subagents",
+                json!({"subagents": [
+                    {"name": "Maker", "brief": "Make it.", "write_paths": ["more/"]}
+                ]}),
+            )]),
+            _ if mentions(body, "Done.") => reply("All done."),
+            _ => reply("Waiting."),
+        }
+    })
+    .await;
+    let (data, thread) = (app.data.path().to_owned(), app.thread.clone());
+    tokio::task::spawn_blocking(move || run(&data, &thread, "build it"))
+        .await
+        .unwrap();
+    let requests = bodies(&app.llm).await;
+    let last = requests.iter().rfind(|b| !is_subagent(b)).unwrap();
+    let results: Vec<&str> = messages(last)
+        .iter()
+        .filter(|m| m["role"] == "tool")
+        .map(text)
+        .filter(|text| text.contains("started"))
+        .collect();
+    assert!(
+        results[0].contains("Looker can only read"),
+        "{}",
+        results[0]
+    );
+    assert!(results[0].contains("write_paths") && !results[0].contains("Builder can only"));
+    assert!(!results[1].contains("can only read"), "{}", results[1]);
 }
 
 /// Two read-only subagents and one that owns `notes/`: it writes there and nowhere else, in
@@ -1246,8 +1472,10 @@ fn spawn_result(all: &[Value]) -> String {
         .unwrap_or_default()
 }
 
+/// The tools a list or a profile gives. `Skill` depends on the skills this machine's user has.
 fn sorted_tools(body: &Value) -> Vec<String> {
     let mut names = tool_names(body);
+    names.retain(|name| name != "Skill");
     names.sort();
     names
 }

@@ -456,7 +456,8 @@ async fn the_main_agent_gives_a_plain_subagent_its_mcp_tools() {
             |body| {
                 let lookup = wire_name(body, "_lookup").expect("the main agent's tool");
                 json!([
-                    {"brief": "brief-none"},
+                    {"brief": "brief-default"},
+                    {"brief": "brief-none", "mcp_tools": []},
                     {"brief": "brief-one", "mcp_tools": [lookup]},
                     {"brief": "brief-all", "mcp_tools": ["*"]},
                     {"brief": "brief-unknown", "mcp_tools": ["mcp_nothing_like_it"]}
@@ -481,6 +482,7 @@ async fn the_main_agent_gives_a_plain_subagent_its_mcp_tools() {
             .is_object(),
         "{spawn}"
     );
+    assert_eq!(mcp_tools(child(&all, "brief-default")), ["lookup", "other"]);
     assert!(mcp_tools(child(&all, "brief-none")).is_empty());
     assert_eq!(mcp_tools(child(&all, "brief-one")), ["lookup"]);
     assert_eq!(mcp_tools(child(&all, "brief-all")), ["lookup", "other"]);

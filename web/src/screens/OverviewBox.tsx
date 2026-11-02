@@ -16,7 +16,7 @@ export interface Overview {
   /** Subagents of the current run that are still working. */
   subagents: { running: number; approval: number } | null;
   /** The goal's checklist, once a check has listed it. */
-  goal?: { complete: number; total: number } | null;
+  goal?: { complete: number; total: number; broken?: boolean } | null;
   browser: { label: string; agent: boolean; activity: string | null } | null;
   media: AttachedMedia[];
   /** Something to show: the box (and the room the chat leaves for it) appears only then. */
@@ -67,7 +67,8 @@ export function useOverview(threadId: string, messages: ChatMessage[]): Overview
   const shownBrowser = browser?.open && browser.url !== "about:blank" ? { label: browserLabel(browser), agent: browser.controller === "agent", activity: browser.activity } : null;
   const setCollapsed = (value: boolean) => { setCollapsedState(value); writeSession(COLLAPSED_KEY, value); };
   const checklist = state.goals[threadId]?.proof ?? [];
-  const goal = checklist.length ? { complete: checklist.filter(item => item.proven).length, total: checklist.length } : null;
+  const goalTasks = checklist.filter(item => item.kind !== "rule");
+  const goal = goalTasks.length ? { complete: goalTasks.filter(item => item.proven).length, total: goalTasks.length, broken: checklist.some(item => item.broken) } : null;
   return {
     changes, tasks, subagents, goal, browser: shownBrowser, media,
     visible: !!(changes || tasks || subagents || goal || shownBrowser || media.length),
@@ -160,9 +161,10 @@ export function OverviewBox({ threadId, overview, onOpenMedia }: { threadId: str
         </button>
       )}
       {goal && (
-        <button type="button" className="themis-overview-row themis-icon-tip" data-tooltip="Goal" aria-label={`Goal: ${goal.complete} of ${goal.total} complete`} onClick={() => open("goal")}>
+        <button type="button" className="themis-overview-row themis-icon-tip" data-tooltip="Goal" aria-label={`Goal: ${goal.complete} of ${goal.total} complete${goal.broken ? ", a rule wasn't followed" : ""}`} onClick={() => open("goal")}>
           <svg className="themis-overview-glyph" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden="true"><circle cx="12" cy="12" r="8" /><circle cx="12" cy="12" r="4" /></svg>
           <span className="themis-overview-value">{goal.complete} of {goal.total} complete</span>
+          {goal.broken && <span className="themis-overview-dot is-attention" aria-hidden="true" />}
         </button>
       )}
       {media.length > 0 && (
