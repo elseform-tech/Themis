@@ -672,7 +672,7 @@ pub struct GoalConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct MemoryConfig {
-    /// Save and read memories. Off, runs get no index and the memory tool refuses; saved
+    /// Save and read memories. Off, runs get no index and no memory tool; saved
     /// memories are kept. A project or run layer may only set it to false.
     pub enabled: bool,
 }

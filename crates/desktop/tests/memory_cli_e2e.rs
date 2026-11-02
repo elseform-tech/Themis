@@ -458,11 +458,16 @@ async fn memories_saved_in_one_chat_reach_the_next_and_follow_updates_deletes_an
     let config = std::fs::read_to_string(h.data.path().join("runtime.jsonc")).unwrap();
     assert!(config.contains("\"memory\""), "{config}");
     h.send(&second, "try-off").await;
-    assert!(!system(&h.first_request_of("try-off")).contains(NOTE));
+    let request = h.first_request_of("try-off");
+    assert!(!system(&request).contains(NOTE));
+    // The tool isn't offered, so nothing can be saved or read.
     assert!(
-        h.tool_result().contains("memory is off"),
-        "{}",
-        h.tool_result()
+        !request["tools"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|tool| tool["function"]["name"] == "memory"),
+        "memory tool offered while off"
     );
     assert!(!project_dir.join("while-off.md").exists());
     assert!(project_dir.join("burndown-layout.md").exists());

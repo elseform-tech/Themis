@@ -515,16 +515,19 @@ impl AppState {
             end: Arc::clone(&end_request),
             subagent: None,
         }));
-        tools.push(Box::new(super::memory::MemoryTool {
-            state: self.clone(),
-            sink: Arc::clone(sink),
-            thread_id: thread_id.to_owned(),
-            run_id: run_id.to_owned(),
-            project_root: snapshot.work_root.clone(),
-            enabled: run_configuration.memory.enabled,
-            run: check_approval.clone(),
-            read_only: false,
-        }));
+        // Memory off: no tool at all, so its description costs nothing.
+        if run_configuration.memory.enabled {
+            tools.push(Box::new(super::memory::MemoryTool {
+                state: self.clone(),
+                sink: Arc::clone(sink),
+                thread_id: thread_id.to_owned(),
+                run_id: run_id.to_owned(),
+                project_root: snapshot.work_root.clone(),
+                enabled: true,
+                run: check_approval.clone(),
+                read_only: false,
+            }));
+        }
         // The agent's to-do list: the run opened with it as it stood, and a checkpoint reads it
         // back as it stands then.
         let todo_seen = Arc::new(std::sync::atomic::AtomicU64::new(
