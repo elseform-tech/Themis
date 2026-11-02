@@ -95,6 +95,10 @@ pub struct ModelOverride {
     /// Thinking on or off, for a model whose catalog lists a thinking switch.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub thinking: Option<bool>,
+    /// Whether the model reads images (browser screenshots go to it); unset follows the
+    /// catalog, where a model it does not describe reads text only.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub images: Option<bool>,
 }
 
 impl ModelOverride {
@@ -108,6 +112,7 @@ impl ModelOverride {
                 .clone()
                 .or_else(|| fallback.reasoning_effort.clone()),
             thinking: self.thinking.or(fallback.thinking),
+            images: self.images.or(fallback.images),
         }
     }
 }
@@ -377,7 +382,8 @@ pub(super) fn schema() -> (Value, Value) {
         "context_tokens":tokens(CONTEXT_RANGE.0, CONTEXT_RANGE.1),
         "output_tokens":tokens(OUTPUT_RANGE.0, OUTPUT_RANGE.1),
         "reasoning_effort":{"enum":REASONING_EFFORTS},
-        "thinking":{"type":"boolean"}
+        "thinking":{"type":"boolean"},
+        "images":{"type":"boolean","description":"The model reads images (browser screenshots go to it); unset follows the catalog"}
     }}});
     (providers, models)
 }

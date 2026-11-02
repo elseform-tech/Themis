@@ -364,6 +364,7 @@ Arrays replace earlier arrays, so the list is the user file's. Provenance report
 | `models.<id>.output_tokens` | 256–1,000,000; caps the model's output limit, never raises it |
 | `models.<id>.reasoning_effort` | `none`, `minimal`, `low`, `medium`, `high`, `xhigh` or `max`: the effort when the chat chose none. An OpenCode Go model must offer it (a run on that model fails otherwise); a configured provider's model receives it as `reasoning_effort` |
 | `models.<id>.thinking` | `true` or `false`, for a model whose catalog lists a thinking switch: `false` sends thinking disabled instead of turning it on. A run on a model without a switch fails |
+| `models.<id>.images` | `true` or `false`: whether the model reads images, so a browser screenshot it takes reaches it (see `browser.screenshots_to_model`). Unset follows the models.dev catalog (`image` among the model's input modalities); a model the catalog does not describe, such as a configured provider's, reads text only until this says `true` |
 
 `models` keys may be a bare id (`glm-5.3`, or `qwen3-coder` for every provider
 offering it: a bare key applies to that id from every provider) or

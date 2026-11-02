@@ -144,7 +144,9 @@
   // optional: "context_tokens" and "output_tokens" cap the model's limits (never raise
   // them); "reasoning_effort" is the effort when a chat chose none ("none", "minimal",
   // "low", "medium", "high", "xhigh" or "max", one the model offers); "thinking" true or
-  // false, for models with a thinking switch. A project may set these too.
+  // false, for models with a thinking switch; "images" true or false, whether the model
+  // reads images (unset follows the models.dev catalog; an unknown model reads text only).
+  // A project may set these too.
   "models": {
     // "glm-5.3": { "context_tokens": 128000, "thinking": false },
   },
