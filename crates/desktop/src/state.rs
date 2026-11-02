@@ -24,6 +24,7 @@ mod mcp;
 mod mcp_consent;
 mod mcp_file;
 mod media_tool;
+mod memory;
 mod permissions;
 mod plugins;
 mod preferences;

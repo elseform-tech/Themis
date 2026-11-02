@@ -9,6 +9,7 @@ import { PermissionsSettings } from "./PermissionsView";
 import { BrowserSettingsSection } from "./BrowserSettings";
 import { WebSettingsSection } from "./WebSettings";
 import { SubagentSettingsSection } from "./SubagentSettings";
+import { MemorySettingsSection } from "./MemorySettings";
 import { SecretsSettings } from "./SecretsSettings";
 import { ModelsSettings } from "./ModelsSettings";
 import { UsageSettingsSection } from "./UsageSettings";
@@ -111,7 +112,7 @@ function NotificationSettings({ form, save }: { form: Settings; save: (patch: Pa
 
 const SAVED_NOTE_MS = 3000;
 /** Sections whose settings change what agents do; the rest apply at once. */
-const RUN_SECTIONS = new Set(["Models", "Permissions", "Browser", "Web", "Subagents", "Advanced"]);
+const RUN_SECTIONS = new Set(["Models", "Memory", "Permissions", "Browser", "Web", "Subagents", "Advanced"]);
 
 export function SettingsScreen() {
   const { state, dispatch } = useApp();
@@ -213,6 +214,7 @@ export function SettingsScreen() {
       {section === "Usage" && <UsageSettingsSection />}
       {section === "Permissions" && <PermissionsSettings editor={state.settings.config_editor ?? ""} onEditor={editor => void save({ config_editor: editor })} prefs={{ default_approval_mode: state.settings.default_approval_mode, approval_timeout_seconds: state.settings.approval_timeout_seconds }} onPrefs={patch => void save(patch)} />}
       {section === "Secrets" && <SecretsSettings focusKey={state.settingsFocus?.key} />}
+      {section === "Memory" && <MemorySettingsSection key={state.settingsFocus?.key ?? ""} focusKey={state.settingsFocus?.key} onSaved={flashSaved} />}
       {section === "Browser" && <BrowserSettingsSection onSaved={flashSaved} />}
       {section === "Web" && <WebSettingsSection onSaved={flashSaved} />}
       {section === "Subagents" && <SubagentSettingsSection onSaved={flashSaved} />}

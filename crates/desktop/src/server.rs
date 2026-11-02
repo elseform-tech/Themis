@@ -804,6 +804,34 @@ async fn dispatch_command(
                 state.patch_user_browser_config(changes, revision.as_deref())?;
             output!(json!({"settings": settings, "revision": revision}))
         }
+        "get_memory_settings" => output!({
+            let (settings, revision) = state.user_memory_view()?;
+            json!({"settings": settings, "revision": revision})
+        }),
+        "update_memory_settings" => {
+            let enabled: bool = arg(&args, "enabled")?;
+            let revision: Option<String> = arg(&args, "revision")?;
+            let (settings, revision) =
+                state.set_user_memory_enabled(enabled, revision.as_deref())?;
+            output!(json!({"settings": settings, "revision": revision}))
+        }
+        "list_memories" => {
+            let scope: String = arg(&args, "scope")?;
+            let project_root: Option<String> = arg(&args, "projectRoot")?;
+            output!(state.list_memories(&scope, project_root.as_deref())?)
+        }
+        "delete_memory" => {
+            let scope: String = arg(&args, "scope")?;
+            let project_root: Option<String> = arg(&args, "projectRoot")?;
+            let name: String = arg(&args, "name")?;
+            let revision: Option<String> = arg(&args, "revision")?;
+            output!(state.delete_memory(
+                &scope,
+                project_root.as_deref(),
+                &name,
+                revision.as_deref()
+            )?)
+        }
         "get_subagent_settings" => output!({
             let (settings, revision) = state.user_subagents_view()?;
             json!({"settings": settings, "revision": revision})

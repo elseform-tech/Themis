@@ -118,6 +118,14 @@
     // "search_url": "http://127.0.0.1:8888",
   },
 
+  // ─── MEMORY (also in Settings › Memory) ───────────────────────────────────────────────
+  "memory": {
+    // The agent saves what it learns about you and your projects in the app data folder
+    // (never the project) and reads an index of it at the start of each chat. false: nothing
+    // is saved or read; saved memories are kept. A project file may only set false.
+    "enabled": true,
+  },
+
   // ─── SKILLS AND INSTRUCTIONS ──────────────────────────────────────────────────────────
   // Where a project's skills are found (relative to the project, at most 32). Your own
   // skills in ~/.agents/skills, ~/.codex/skills and ~/.claude/skills are always found.

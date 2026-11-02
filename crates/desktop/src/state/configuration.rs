@@ -414,6 +414,37 @@ impl AppState {
         Ok((saved.subagents, revision))
     }
 
+    /// The person's memory settings with the revision a later edit must name (Settings ›
+    /// Memory).
+    pub fn user_memory_view(&self) -> Result<(configuration::MemoryConfig, String), String> {
+        let user_path = settings_app_dir(self.inner.settings.path()).join("runtime.jsonc");
+        let user = read_optional(&user_path)?;
+        let memory = configuration::resolve(user.as_deref(), None, None)
+            .map(|resolved| resolved.config.memory)
+            .map_err(|e| format!("runtime configuration: {e:#}"))?;
+        let revision = revision_of(&memory);
+        Ok((memory, revision))
+    }
+
+    /// Saves `memory.enabled` in the user `runtime.jsonc`, in place, refusing a stale
+    /// `revision` like Settings › Subagents.
+    pub fn set_user_memory_enabled(
+        &self,
+        enabled: bool,
+        revision: Option<&str>,
+    ) -> Result<(configuration::MemoryConfig, String), String> {
+        let saved = self.update_user_block("memory", |config| {
+            if revision.is_some_and(|expected| expected != revision_of(&config.memory)) {
+                return Err(STALE_MEMORY_SETTINGS.to_owned());
+            }
+            let mut memory = config.memory.clone();
+            memory.enabled = enabled;
+            serde_json::to_value(&memory).map_err(|e| e.to_string())
+        })?;
+        let revision = revision_of(&saved.memory);
+        Ok((saved.memory, revision))
+    }
+
     /// The `web` settings from the user `runtime.jsonc` (Settings › Web).
     pub fn user_web_config(&self) -> Result<configuration::WebConfig, String> {
         let user_path = settings_app_dir(self.inner.settings.path()).join("runtime.jsonc");
@@ -588,6 +619,8 @@ pub(crate) const STALE_BROWSER_SETTINGS: &str =
 /// A short, stable fingerprint of browser settings as resolved from the file.
 pub(crate) const STALE_SUBAGENT_SETTINGS: &str =
     "Subagent settings changed in runtime.jsonc since this page loaded; showing the latest";
+pub(crate) const STALE_MEMORY_SETTINGS: &str =
+    "Memory settings changed in runtime.jsonc since this page loaded; showing the latest";
 
 fn browser_revision(browser: &configuration::BrowserConfig) -> String {
     revision_of(browser)

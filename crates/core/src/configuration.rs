@@ -668,6 +668,32 @@ pub struct GoalConfig {
     pub check_model: Option<String>,
 }
 
+/// Memory across chats (`memory`, Settings › Memory); see [`crate::memory`].
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct MemoryConfig {
+    /// Save and read memories. Off, runs get no index and no memory tool; saved
+    /// memories are kept. A project or run layer may only set it to false.
+    pub enabled: bool,
+}
+
+impl Default for MemoryConfig {
+    fn default() -> Self {
+        Self { enabled: true }
+    }
+}
+
+/// A project or run layer may only turn memory off: memories are the person's own.
+fn check_memory_restriction(layer: &Value, origin: &str) -> Result<()> {
+    if let Some(value) = layer.pointer("/memory/enabled") {
+        ensure!(
+            value == &Value::Bool(false),
+            "the {origin} configuration may only set memory.enabled to false"
+        );
+    }
+    Ok(())
+}
+
 /// Subagents (`subagents`): child runs the agent may start; see the subagents design.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
@@ -1140,6 +1166,8 @@ pub struct RuntimeConfig {
     pub subagents: SubagentsConfig,
     /// Plugin hooks; see [`HooksConfig`].
     pub hooks: HooksConfig,
+    /// Memory across chats; see [`MemoryConfig`].
+    pub memory: MemoryConfig,
     /// `web_search` backend; see [`WebConfig`].
     pub web: WebConfig,
     /// The built-in browser; see [`BrowserConfig`].
@@ -1174,6 +1202,7 @@ impl Default for RuntimeConfig {
             goal: GoalConfig::default(),
             subagents: SubagentsConfig::default(),
             hooks: HooksConfig::default(),
+            memory: MemoryConfig::default(),
             web: WebConfig::default(),
             browser: BrowserConfig::default(),
             providers: Vec::new(),
@@ -1681,6 +1710,7 @@ pub fn resolve(
                 let hooks: HooksConfig = serde_json::from_value(value["hooks"].clone())
                     .context("invalid hooks configuration")?;
                 check_hooks_restriction(&hooks, &layer, origin)?;
+                check_memory_restriction(&layer, origin)?;
                 providers::check_provider_restriction(&layer, origin)?;
                 let current: BrowserConfig = serde_json::from_value(value["browser"].clone())
                     .context("invalid browser configuration")?;
@@ -2205,6 +2235,9 @@ pub fn schema() -> Value {
     schema["properties"]["models"] = models;
     // Here because one more key in the base schema's macro reaches the compiler's recursion limit.
     schema["properties"]["project_guidance"] = serde_json::json!({"type":"boolean","default":true});
+    schema["properties"]["memory"] = serde_json::json!({"type":"object","additionalProperties":false,"properties":{
+        "enabled":{"type":"boolean","default":true,"description":"Save and read memories across chats (Settings › Memory). A project or run layer may only set it to false."}
+    }});
     schema
 }
 
@@ -2629,6 +2662,24 @@ mod tests {
             .is_err());
         }
     }
+    #[test]
+    fn memory_is_on_by_default_and_projects_may_only_turn_it_off() {
+        assert!(RuntimeConfig::default().memory.enabled);
+        let off = resolve(Some(r#"{"memory":{"enabled":false}}"#), None, None).unwrap();
+        assert!(!off.config.memory.enabled);
+        assert_eq!(off.provenance["memory.enabled"], "user");
+        let project = resolve(None, Some(r#"{"memory":{"enabled":false}}"#), None).unwrap();
+        assert!(!project.config.memory.enabled);
+        assert!(resolve(
+            Some(r#"{"memory":{"enabled":false}}"#),
+            Some(r#"{"memory":{"enabled":true}}"#),
+            None
+        )
+        .is_err());
+        assert!(resolve(None, None, Some(r#"{"memory":{"enabled":true}}"#)).is_err());
+        assert!(resolve(Some(r#"{"memory":{"other":1}}"#), None, None).is_err());
+    }
+
     #[test]
     fn subagent_settings_resolve_and_projects_may_only_lower_them() {
         let resolved = resolve(

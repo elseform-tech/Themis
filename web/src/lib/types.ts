@@ -321,6 +321,8 @@ export type ThreadEvent =
   | { kind: 'files_changed'; files: ChangedFile[] }
   /** Images, videos or PDFs the agent attached to this run's reply, in order. */
   | { kind: 'media_attached'; files: AttachedMedia[] }
+  /** The agent saved, updated or deleted a memory. */
+  | ({ kind: 'memory_changed' } & MemoryNote)
   /** Who drives the chat's built-in browser, and any recording (live only). */
   | { kind: 'browser_changed'; controller: string; recording?: BrowserRecording }
   | { kind: 'incomplete'; result: string; model?: string }
@@ -384,6 +386,42 @@ export interface SubagentEntry {
   ranOn?: string;
   /** When it was started (RFC 3339), from the saved event. */
   at?: string;
+}
+
+/** Where a memory applies: the current project, or everywhere. */
+export type MemoryScope = 'project' | 'global';
+/** About you, Your feedback, Project facts, Pointers. */
+export type MemoryKind = 'user' | 'feedback' | 'project' | 'reference';
+
+/** One saved memory (a file in the app data folder). */
+export interface Memory {
+  name: string;
+  description: string;
+  type: MemoryKind;
+  /** `YYYY-MM-DD`. */
+  saved: string;
+  /** The web page or file it was built from, when not from the person. */
+  source?: string;
+  body: string;
+}
+
+/** One scope's memories for Settings › Memory. */
+export interface MemoryList {
+  memories: Memory[];
+  skipped: number;
+  index_lines: number;
+  max_lines: number;
+  revision: string;
+  enabled: boolean;
+}
+
+/** A save, update or delete the agent made, as the chat shows it. */
+export interface MemoryNote {
+  action: 'saved' | 'updated' | 'forgot';
+  scope: MemoryScope;
+  name: string;
+  description: string;
+  project_root?: string;
 }
 
 /** Settings › Subagents (the `subagents` block of the user runtime.jsonc). */
@@ -628,6 +666,8 @@ export interface PersistedMessage {
   question?: Question;
   /** Subagents started together in this run, shown as one card. */
   subagents?: SubagentEntry[];
+  /** A memory the agent saved, updated or deleted here: one slim line. */
+  memory?: MemoryNote;
 }
 
 export type HistoryItem =
