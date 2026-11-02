@@ -13,7 +13,7 @@ let installed: Plugin[];
 let projectRoot: string | null;
 let mcpConnections = initialState.mcpConnections;
 vi.mock("../state/store", async original => ({ ...await original<typeof import("../state/store")>(), toast: vi.fn(), useApp: () => ({ state: { ...initialState, mcpConnections, activeProjectRoot: projectRoot }, dispatch }) }));
-vi.mock("../lib/tauri", () => ({ pluginAction: vi.fn() }));
+vi.mock("../lib/tauri", () => ({ pluginAction: vi.fn(), getBuiltInHooks: vi.fn(async () => ({ hooks: [], revision: "b" })), updateBuiltInHook: vi.fn() }));
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 beforeEach(() => {
   vi.clearAllMocks();
@@ -692,6 +692,19 @@ describe("Integration browsing and lifecycle", () => {
     expect(screen.getByRole("dialog")).toHaveTextContent("RunStart");
     expect(screen.getByRole("dialog")).toHaveTextContent("Disabled");
     expectNoConfiguration();
+  });
+  it("lists Themis's built-in hooks under Hooks and switches one through its own command", async () => {
+    const bridge = await import("../lib/tauri");
+    const hook = { id: "still_open", event: "RunEnd", title: "Still open", description: "Names open items", enabled: false };
+    vi.mocked(bridge.getBuiltInHooks).mockResolvedValueOnce({ hooks: [hook], revision: "b1" });
+    vi.mocked(bridge.updateBuiltInHook).mockResolvedValueOnce({ hooks: [{ ...hook, enabled: true }], revision: "b2" });
+    render(<Plugins />);
+    await screen.findByRole("button", { name: "View docs" });
+    fireEvent.click(screen.getByRole("button", { name: "Hooks" }));
+    expect(screen.getByText("Still open").closest(".themis-hook-row")).toHaveTextContent("Themis (built-in)");
+    await act(async () => { fireEvent.click(screen.getByRole("switch", { name: "Still open enabled" })); });
+    expect(bridge.updateBuiltInHook).toHaveBeenCalledWith("still_open", true, "b1");
+    expect(screen.getByRole("switch", { name: "Still open enabled" })).toHaveAttribute("aria-checked", "true");
   });
   it("shows an icon URL nowhere: browsing makes no image requests", async () => {
     installed[0].spec.icon = "https://example.com/missing.svg";

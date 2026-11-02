@@ -33,7 +33,7 @@ const GLOBAL: MemoryList = {
 };
 
 function setup(enabled = true) {
-  vi.mocked(bridge.getMemorySettings).mockResolvedValue({ settings: { enabled }, revision: "s1" });
+  vi.mocked(bridge.getMemorySettings).mockResolvedValue({ settings: { enabled, auto: false }, revision: "s1" });
   vi.mocked(bridge.listMemories).mockImplementation(async scope => scope === "global" ? GLOBAL : PROJECT);
 }
 
@@ -86,15 +86,27 @@ describe("Settings › Memory", () => {
 
   it("turns memory off in place and then shows no list", async () => {
     setup();
-    vi.mocked(bridge.updateMemorySettings).mockResolvedValue({ settings: { enabled: false }, revision: "s2" });
+    vi.mocked(bridge.updateMemorySettings).mockResolvedValue({ settings: { enabled: false, auto: false }, revision: "s2" });
     const saved = vi.fn();
     await act(async () => { render(<MemorySettingsSection onSaved={saved} />); });
     await act(async () => { fireEvent.click(screen.getByRole("checkbox", { name: /Remember things across chats/ })); });
-    expect(bridge.updateMemorySettings).toHaveBeenCalledWith(false, "s1");
+    expect(bridge.updateMemorySettings).toHaveBeenCalledWith({ enabled: false }, "s1");
     expect(saved).toHaveBeenCalled();
     expect(screen.getByText(/Memory is off/)).toBeVisible();
     expect(screen.queryByText("2 memories")).toBeNull();
     expect(screen.queryByRole("button", { name: "Everywhere" })).toBeNull();
+    expect(screen.queryByRole("checkbox", { name: /Notice what's worth remembering/ })).toBeNull();
+  });
+
+  it("turns noticing what to remember on in place, off by default", async () => {
+    setup();
+    vi.mocked(bridge.updateMemorySettings).mockResolvedValue({ settings: { enabled: true, auto: true }, revision: "s2" });
+    await act(async () => { render(<MemorySettingsSection />); });
+    const notice = screen.getByRole("checkbox", { name: /Notice what's worth remembering/ });
+    expect(notice).not.toBeChecked();
+    await act(async () => { fireEvent.click(notice); });
+    expect(bridge.updateMemorySettings).toHaveBeenCalledWith({ auto: true }, "s1");
+    expect(screen.getByRole("checkbox", { name: /Notice what's worth remembering/ })).toBeChecked();
   });
 });
 

@@ -56,6 +56,7 @@ export function TodoLine({ item }: { item: TodoItem }) {
       <span className="themis-todo-title">{item.title}</span>
       {item.source === "person" && <span className="themis-todo-tag"> · you asked</span>}
       {item.source === "check" && <span className="themis-todo-tag"> · added by the check</span>}
+      {item.source === "goal" && <span className="themis-todo-tag"> · from the goal</span>}
       {item.reopened && <span className="themis-todo-tag is-reopened"> · reopened by the check</span>}
     </span>
   </>;
