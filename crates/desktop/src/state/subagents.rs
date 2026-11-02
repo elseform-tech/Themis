@@ -1330,7 +1330,9 @@ impl SubagentKit {
                                         Arc::clone(&agent.inbox),
                                         themis_core::runtime::with_run_notes(
                                             notes,
-                                            themis_core::runtime::with_save_reminder(
+                                            // Boxed: nested subagents stack these futures, and
+                                            // unboxed they overflow a runtime worker's stack.
+                                            Box::pin(themis_core::runtime::with_save_reminder(
                                                 (built_in.save_reminder
                                                     && self.config.memory.enabled)
                                                     .then(|| {
@@ -1341,7 +1343,7 @@ impl SubagentKit {
                                                     head,
                                                     Box::pin(run),
                                                 ),
-                                            ),
+                                            )),
                                         ),
                                     ),
                                 ),
