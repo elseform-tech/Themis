@@ -91,6 +91,7 @@ export function BrowserSettingsSection({ onSaved }: { onSaved?: () => void } = {
           <button type="button" className="themis-text-action" onClick={() => void chooseBrowser()}>Choose…</button>
         </span>
       </label>}
+      {settings.enabled && <label className="themis-settings-check" title="The agent's screenshots also go to its model when the model can see images; other models get text only">Show screenshots to models that read images<Switch checked={settings.screenshots_to_model} onChange={event => patch({ screenshots_to_model: event.target.checked })} /></label>}
     </SettingsGroup>
 
     <SettingsGroup title="Agent permissions" hint="Allow runs without asking, Ask shows a prompt (YOLO allows it), Block is refused in every mode. Local apps are always allowed.">

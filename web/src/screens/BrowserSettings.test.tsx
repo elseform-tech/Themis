@@ -21,6 +21,7 @@ const SETTINGS: BrowserSettings = {
   site_exceptions: [{ site: "paypal.com", browsing: "block" }],
   show_secrets: false,
   open_workspace: true,
+  screenshots_to_model: true,
 };
 vi.mock("../lib/tauri", () => ({
   getBrowserSettings: vi.fn(),
@@ -61,6 +62,21 @@ describe("Settings › Browser", () => {
     expect(Object.keys(saved())).toEqual(["permissions"]);
     expect(vi.mocked(bridge.updateBrowserSettings).mock.lastCall![1]).toBe("r1");
     expect(dispatch).toHaveBeenCalledWith({ type: "browser/opens-workspace", value: true });
+  });
+
+  it("turns screenshots for models that read images off and on, saving only that field", async () => {
+    await renderSection();
+    const toggle = screen.getByRole("checkbox", { name: "Show screenshots to models that read images" });
+    expect(toggle).toBeChecked();
+    await act(async () => { fireEvent.click(toggle); });
+    expect(saved()).toEqual({ screenshots_to_model: false });
+    expect(screen.getByRole("checkbox", { name: "Show screenshots to models that read images" })).not.toBeChecked();
+  });
+
+  it("hides the screenshot switch while the built-in browser is off", async () => {
+    vi.mocked(bridge.getBrowserSettings).mockResolvedValueOnce({ settings: { ...structuredClone(SETTINGS), enabled: false }, revision: "r1", browsers: [], default_downloads_directory: "/Users/me/Downloads", starter_sites: [] });
+    await renderSection();
+    expect(screen.queryByRole("checkbox", { name: "Show screenshots to models that read images" })).toBeNull();
   });
 
   it("names the built-in engine as the automatic browser", async () => {
