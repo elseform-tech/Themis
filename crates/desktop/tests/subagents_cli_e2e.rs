@@ -263,6 +263,74 @@ async fn a_subagent_can_see_the_skills_the_main_agent_can() {
     );
 }
 
+/// The project's own guidance reaches an agent and a subagent without anyone configuring it, with a
+/// map of the other docs, since AGENTS.md is often thin.
+#[tokio::test(flavor = "multi_thread")]
+async fn agents_and_subagents_read_the_projects_guidance_and_get_a_map_of_its_docs() {
+    let app = app(None, |body| {
+        if is_subagent(body) {
+            return reply("Done.");
+        }
+        match tool_results(body) {
+            0 => tools(&[(
+                "s1",
+                "spawn_subagents",
+                json!({"subagents": [{"name": "Builder", "brief": "Build it."}]}),
+            )]),
+            _ if mentions(body, "Done.") => reply("All done."),
+            _ => reply("Waiting."),
+        }
+    })
+    .await;
+    let root = app.project.path();
+    std::fs::write(root.join("AGENTS.md"), "HOUSE RULE 77: tests first.").unwrap();
+    std::fs::create_dir_all(root.join("docs")).unwrap();
+    std::fs::write(root.join("docs/guide.md"), "UNLOADED GUIDE BODY").unwrap();
+    std::fs::write(root.join("README.md"), "UNLOADED README BODY").unwrap();
+    std::fs::create_dir_all(root.join("part/deep")).unwrap();
+    std::fs::write(root.join("part/AGENTS.md"), "UNLOADED PART RULES").unwrap();
+    std::fs::create_dir_all(root.join("node_modules/x")).unwrap();
+    std::fs::write(root.join("node_modules/x/README.md"), "dependency").unwrap();
+    let (data, thread) = (app.data.path().to_owned(), app.thread.clone());
+    tokio::task::spawn_blocking(move || run(&data, &thread, "build it"))
+        .await
+        .unwrap();
+    let requests = bodies(&app.llm).await;
+    for body in [
+        requests.iter().find(|b| !is_subagent(b)).unwrap(),
+        requests.iter().find(|b| is_subagent(b)).unwrap(),
+    ] {
+        assert!(mentions(body, "HOUSE RULE 77"), "AGENTS.md is read");
+        assert!(mentions(body, "docs/guide.md"), "the docs are on the map");
+        assert!(mentions(body, "README.md") && mentions(body, "part/AGENTS.md"));
+        assert!(
+            !mentions(body, "UNLOADED"),
+            "the map names them and doesn't load them"
+        );
+        assert!(!mentions(body, "node_modules"), "not a dependency's docs");
+    }
+}
+
+/// CLAUDE.md is read when there is no AGENTS.md, and the setting turns all of this off.
+#[tokio::test(flavor = "multi_thread")]
+async fn claude_md_stands_in_and_the_setting_turns_guidance_off() {
+    let app_on = app(None, |_| reply("Done.")).await;
+    std::fs::write(app_on.project.path().join("CLAUDE.md"), "CLAUDE RULE 88").unwrap();
+    let (data, thread) = (app_on.data.path().to_owned(), app_on.thread.clone());
+    tokio::task::spawn_blocking(move || run(&data, &thread, "hello"))
+        .await
+        .unwrap();
+    assert!(mentions(&bodies(&app_on.llm).await[0], "CLAUDE RULE 88"));
+
+    let app_off = app(Some(r#"{"project_guidance":false}"#), |_| reply("Done.")).await;
+    std::fs::write(app_off.project.path().join("AGENTS.md"), "OFF RULE 99").unwrap();
+    let (data, thread) = (app_off.data.path().to_owned(), app_off.thread.clone());
+    tokio::task::spawn_blocking(move || run(&data, &thread, "hello"))
+        .await
+        .unwrap();
+    assert!(!mentions(&bodies(&app_off.llm).await[0], "OFF RULE 99"));
+}
+
 /// What superpowers and similar plugins tell agents to call. Loading a skill must be the easy way,
 /// for an agent and a subagent, by the plugin's name for it or the skill's own.
 #[tokio::test(flavor = "multi_thread")]

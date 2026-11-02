@@ -60,6 +60,7 @@ export function GoalView({ goal }: { goal: Goal | null }) {
                   <li key={item.what} className={item.broken ? "is-broken" : ""}>
                     <span>{item.what}</span>
                     {item.broken && <small>{item.how ? `Not followed: ${item.how}` : "Not followed"}</small>}
+                    {item.pending && <em>Still to do</em>}
                   </li>
                 ))}
               </ul>

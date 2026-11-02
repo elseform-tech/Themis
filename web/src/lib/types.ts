@@ -461,6 +461,8 @@ export interface GoalRequirement {
   /** Something to finish (the default), or how the work must be done the whole way. */
   kind?: "task" | "rule";
   proven: boolean;
+  /** A rule's step that hasn't happened yet and holds the goal open. */
+  pending?: boolean;
   /** A rule that wasn't followed. */
   broken?: boolean;
   how?: string;

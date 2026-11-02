@@ -66,3 +66,14 @@ it("says so before the checklist has come through, and without a goal", () => {
   rerender(<GoalView goal={null} />);
   expect(screen.getByText("This chat has no goal.")).toBeInTheDocument();
 });
+
+it("shows a rule's step that is still to do, without counting it as a task", () => {
+  render(<GoalView goal={goal([
+    { what: "Board works", proven: true },
+    { what: "Code review before finishing", kind: "rule", proven: false, pending: true },
+    { what: "No build step", kind: "rule", proven: false },
+  ])} />);
+  const rules = screen.getByRole("list", { name: "Rules" });
+  expect(within(rules).getAllByText("Still to do")).toHaveLength(1);
+  expect(screen.getByRole("list", { name: "Tasks, 1 of 1 complete" })).toBeInTheDocument();
+});
