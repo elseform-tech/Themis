@@ -573,6 +573,29 @@ async fn the_check_closes_items_an_agent_that_never_writes_its_list_left_open() 
     assert!(!logs.contains("sessionStorage"), "no item text in the logs");
 }
 
+/// Waits on the event stream for a `todo_changed` whose list holds `words`, in any state.
+async fn todo_event_any(events: &mut tokio::net::TcpStream, id: &str, words: &str) {
+    tokio::time::timeout(Duration::from_secs(120), async {
+        loop {
+            let item = Client::next_event(events).await.unwrap();
+            let event = &item["payload"]["event"];
+            if item["name"] == "thread-event"
+                && item["payload"]["thread_id"] == id
+                && event["kind"] == "todo_changed"
+                && event["todo"]["items"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .any(|item| item["details"] == words)
+            {
+                return;
+            }
+        }
+    })
+    .await
+    .unwrap_or_else(|_| panic!("no todo_changed with the request"));
+}
+
 /// Waits on the event stream for a `todo_changed` whose list holds `words` with `status`.
 async fn todo_event(events: &mut tokio::net::TcpStream, id: &str, words: &str, status: &str) {
     tokio::time::timeout(Duration::from_secs(120), async {
@@ -790,8 +813,10 @@ async fn cli_requests_sent_before_set_goal_in_the_same_chain_join_the_list() {
         );
         gate.store(true, Ordering::SeqCst);
 
-        // The run the request reached sets the goal: the request is on the list, in progress.
-        todo_event(&mut events, &id, request, "in_progress").await;
+        // The run the request reached sets the goal: the request joins the list. Whether its
+        // in-progress mark is still on when the event is read depends on timing (a slow runner
+        // may already have ended that run), so wait for the item itself.
+        todo_event_any(&mut events, &id, request).await;
         let goal = cli(data.path(), "get_goal", json!({"threadId": id}));
         assert_eq!(goal["text"], "Build the board", "{goal}");
         let list = cli(data.path(), "get_todo", json!({"threadId": id}));
