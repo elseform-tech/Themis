@@ -302,7 +302,7 @@ When a rule asks, an **Approval needed** box appears on that chat's composer,
 before any question (see **Questions from the agent**). Only that action waits:
 the chat stays readable. Once you decide, the box goes away and leaves nothing in
 the chat (the call itself still shows in its step list). Another chat that waits for
-you shows **Needs approval** in the sidebar. The box shows the tool, summary,
+you sits in the sidebar's **Running** group with a pause sign (**Waiting for you**). The box shows the tool, summary,
 and risk, with the choices in one row:
 
 - **Allow once (1)** — allow this call only.
@@ -660,7 +660,7 @@ Automation editors keep destination, timezone and enabled/paused status visible 
 
 After a backend event gap or reconnect, Themis reloads completed histories and pending approvals. Active streams keep their current live text and reconcile durable history when the run finishes; missed streaming fragments can remain absent until then. Failed recovery displays a warning and retries. Recovery preserves the selected conversation and local drafts.
 
-The collapsible sidebar lists the chosen project's **Chats** (most recent first; older chats behind **Show more**). A small icon marks a chat that is working, waiting for your approval, failed, or finished in the background since you last looked. Projects with live work are marked in the switcher. Drag the sidebar’s right edge to resize it between 240 and 560 px (double-click resets it); the width is remembered. Opening **Workspace** on a smaller window folds the sidebar to its icons until you close Workspace. Focus the edge and use Left/Right arrows or Home/End to resize with the keyboard. Ordering uses saved conversation events and survives app restarts; opening a chat alone does not change its position, and empty chats remain in their project until they have activity.
+The collapsible sidebar lists the chosen project's **Chats** (most recent first; older chats behind **Show more**). While a chat is working or waiting for you, it moves up into a **Running** group above Chats, and goes back when its run ends; with nothing running there is no Running group. A chat's icon shows its state as a small grid of dots: dots walking round a square while it works, a breathing pause sign while it waits for you, a red cross after a failure, and the usual speech bubble otherwise. A chat that finished in the background since you last looked has a bold title until you open it. Projects with live work are marked in the switcher. Drag the sidebar’s right edge to resize it between 240 and 560 px (double-click resets it); the width is remembered. Opening **Workspace** on a smaller window folds the sidebar to its icons until you close Workspace. Focus the edge and use Left/Right arrows or Home/End to resize with the keyboard. Ordering uses saved conversation events and survives app restarts; opening a chat alone does not change its position, and empty chats remain in their project until they have activity.
 
 When a turn ends, its reply lists the files that turn edited; select one to open its diff in **Workspace**.
 
