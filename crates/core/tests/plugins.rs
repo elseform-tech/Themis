@@ -2,6 +2,42 @@ use serde_json::json;
 use themis_core::plugins::{PluginSpec, PluginStore};
 
 #[test]
+fn init_is_a_short_built_in_skill_described_by_its_frontmatter() {
+    const SKILL: &str = include_str!("../builtins/init/SKILL.md");
+    assert!(SKILL.len() < 2048, "{} bytes", SKILL.len());
+    for needed in [
+        "## Product",
+        "## Project structure",
+        "## Build, test and lint",
+        "## Coding conventions",
+        "## Security",
+        "## How to work",
+        "bounded reads",
+        "keep the person's own rules",
+        "CLAUDE.md",
+        "`.env`",
+        "1,500 tokens",
+        "12 KB",
+    ] {
+        assert!(SKILL.contains(needed), "{needed}");
+    }
+    let global = tempfile::tempdir().unwrap();
+    let store = PluginStore::new(global.path().to_path_buf(), None);
+    let init = store
+        .available_skills()
+        .unwrap()
+        .into_iter()
+        .find(|skill| skill.id == "init")
+        .expect("built-in init skill");
+    assert_eq!(init.scope, "built-in");
+    assert_eq!(init.name, "Init");
+    assert!(SKILL.contains(&format!("\ndescription: {}\n", init.description)));
+    let (text, skills, _) = store.resolve_prompt("[[skill:init]]", &[]).unwrap();
+    assert_eq!(text, "Init");
+    assert_eq!(skills[0].instructions, SKILL);
+}
+
+#[test]
 fn plugin_revisions_preserve_saved_prompts_and_reject_stale_edits() {
     let global = tempfile::tempdir().unwrap();
     let project = tempfile::tempdir().unwrap();

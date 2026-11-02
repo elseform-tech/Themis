@@ -1,5 +1,5 @@
-//! `/init` through the real server and CLI: the composer lists it, its instruction reaches the
-//! model, and the run it starts writes the project's AGENTS.md.
+//! `/init` through the real server and CLI: the composer lists it, every run's skill catalog
+//! offers it, its SKILL.md reaches the model, and the run writes the project's AGENTS.md.
 
 use std::path::Path;
 use std::time::{Duration, Instant};
@@ -26,6 +26,7 @@ fn call(data: &Path, command: &str, args: Value) -> Value {
     serde_json::from_slice(&output.stdout).unwrap_or(Value::Null)
 }
 
+const SKILL: &str = include_str!("../../core/builtins/init/SKILL.md");
 const WRITTEN: &str = "# AGENTS.md\n\nRun `cargo test` before claiming a change works.\n";
 
 #[tokio::test(flavor = "multi_thread")]
@@ -34,10 +35,19 @@ async fn init_sends_its_instruction_and_the_run_writes_agents_md() {
     Mock::given(method("POST"))
         .respond_with(move |request: &Request| {
             let body: Value = request.body_json().unwrap_or(Value::Null);
-            let wrote = body["messages"]
-                .as_array()
-                .is_some_and(|all| all.iter().any(|m| m["role"] == "tool"));
-            if wrote {
+            let messages = body["messages"].as_array().cloned().unwrap_or_default();
+            let wrote = messages.iter().any(|m| m["role"] == "tool");
+            let asked = messages
+                .iter()
+                .rev()
+                .find(|m| m["role"] == "user")
+                .and_then(|m| m["content"].as_str())
+                .is_some_and(|text| text.contains("## Skill: Init"));
+            if !asked {
+                ResponseTemplate::new(200).set_body_json(json!({
+                    "choices": [{"message": {"role": "assistant", "content": "Noted."}, "finish_reason": "stop"}]
+                }))
+            } else if wrote {
                 ResponseTemplate::new(200).set_body_json(json!({
                     "choices": [{"message": {"role": "assistant", "content": "Wrote AGENTS.md."}, "finish_reason": "stop"}]
                 }))
@@ -83,15 +93,13 @@ async fn init_sends_its_instruction_and_the_run_writes_agents_md() {
     let (dir, id) = (data.path().to_owned(), thread.clone());
     let (listed, history) = tokio::task::spawn_blocking(move || {
         let listed = call(&dir, "list_prompt_skills", json!({"projectRoot": null}));
-        call(
-            &dir,
-            "send_message",
-            json!({"threadId": id, "text": "[[skill:init]]"}),
-        );
-        let deadline = Instant::now() + Duration::from_secs(30);
-        while call(&dir, "get_thread", json!({"threadId": id}))["running"] == true {
-            assert!(Instant::now() < deadline, "the run never finished");
-            std::thread::sleep(Duration::from_millis(50));
+        for text in ["Hello", "[[skill:init]]"] {
+            call(&dir, "send_message", json!({"threadId": id, "text": text}));
+            let deadline = Instant::now() + Duration::from_secs(30);
+            while call(&dir, "get_thread", json!({"threadId": id}))["running"] == true {
+                assert!(Instant::now() < deadline, "the run never finished");
+                std::thread::sleep(Duration::from_millis(50));
+            }
         }
         (
             listed,
@@ -111,10 +119,29 @@ async fn init_sends_its_instruction_and_the_run_writes_agents_md() {
         .unwrap_or_else(|| panic!("no init skill in {listed}"));
     assert_eq!(init["scope"], "built-in");
     assert_eq!(init["name"], "Init");
+    let description = SKILL
+        .lines()
+        .find_map(|line| line.strip_prefix("description: "))
+        .expect("SKILL.md frontmatter has a description");
+    assert_eq!(init["description"], description);
+    for trigger in ["AGENTS.md", "CLAUDE.md", "/init"] {
+        assert!(description.contains(trigger), "{trigger}: {description}");
+    }
 
-    // The instruction reaches the model in the person's message, word for word.
+    // An ordinary message's run offers it in the system message's skill catalog with that
+    // description, so the model can load it unprompted.
     let requests = llm.received_requests().await.unwrap();
-    let first: Value = requests[0].body_json().unwrap();
+    let plain: Value = requests[0].body_json().unwrap();
+    let system = plain["messages"][0]["content"].as_str().unwrap_or_default();
+    assert!(system.contains("Available skills"), "{system}");
+    assert!(system.contains(r#""id":"init""#), "{system}");
+    assert!(
+        system.contains(&serde_json::to_string(description).unwrap()),
+        "init's description missing from the skill catalog: {system}"
+    );
+
+    // `/init` puts the SKILL.md into the person's message, word for word.
+    let first: Value = requests[1].body_json().unwrap();
     let user = first["messages"]
         .as_array()
         .unwrap()
@@ -125,7 +152,7 @@ async fn init_sends_its_instruction_and_the_run_writes_agents_md() {
         .unwrap_or_default()
         .to_owned();
     assert!(
-        user.contains(themis_core::prompts::SKILL_INIT),
+        user.contains(SKILL),
         "init prompt missing from the request: {user}"
     );
     assert!(!user.contains("[[skill:init]]"), "{user}");

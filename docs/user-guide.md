@@ -396,8 +396,9 @@ structure, the build, test and lint commands that exist, the conventions it saw,
 security rules (no committed secrets, `.env` ignored, where secrets belong) and
 how to work. An existing `AGENTS.md` keeps your own rules; a project with only
 `CLAUDE.md` gets an `AGENTS.md` built from it. It aims for about 1,500 tokens and
-stops at about 3,000 (12 KB). The instruction lives in
-`crates/core/builtins/prompts/skill-init.md`.
+stops at about 3,000 (12 KB). The agent also loads it by itself when you ask it
+to write or improve `AGENTS.md` or `CLAUDE.md`. It lives in
+`crates/core/builtins/init/SKILL.md`.
 
 Skill instructions can contain up to 256 KiB of UTF-8 text without truncation. File reads are paged at 8,000 content characters; the agent must follow `next_offset` to read longer instructions. Large tool results are saved to disk and represented by a small receipt, so the agent can extract the relevant facts. An oversized tool result normally continues the run. Storage failures or repeated recovery can stop the current run; the chat remains available. Oversized tool arguments are rejected before execution, without partial writes. See [context limits and recovery](context-and-attachments.md).
 

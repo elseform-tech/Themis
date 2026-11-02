@@ -797,6 +797,7 @@ impl PluginStore {
                 "Browser use",
                 include_str!("../builtins/browser-use/SKILL.md"),
             ),
+            ("init", "Init", include_str!("../builtins/init/SKILL.md")),
         ] {
             skills.push(Skill {
                 id: id.into(),
@@ -818,15 +819,6 @@ impl PluginStore {
                 },
             });
         }
-        // `/init`: its instructions are a prompt file, so its description is kept here.
-        skills.push(Skill {
-            id: "init".into(),
-            name: "Init".into(),
-            description: "Write or improve this project's AGENTS.md".into(),
-            instructions: crate::prompts::SKILL_INIT.into(),
-            allowed_tools: vec![],
-            scripts: vec![],
-        });
         skills
     }
     pub fn save_skill(
