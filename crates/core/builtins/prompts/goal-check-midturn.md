@@ -1,1 +1,0 @@
-(The turn is still running. Judge only what has been shown so far.)
