@@ -1,0 +1,1 @@
+The skills below are for you too: when one fits your part of the work, load it with the Skill tool and follow it before you start, unless your brief says otherwise.

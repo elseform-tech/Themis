@@ -910,7 +910,7 @@ async fn cli_stop_releases_stalled_compaction_and_restores_chat() {
     // request still triggers compaction. A budget this small comes from runtime.jsonc.
     std::fs::write(
         data.path().join("runtime.jsonc"),
-        r#"{"schema_version":1,"context_token_budget":12000}"#,
+        r#"{"schema_version":1,"context_token_budget":16000}"#,
     )
     .unwrap();
     let provider = MockServer::builder().start().await;

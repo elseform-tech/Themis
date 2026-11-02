@@ -6,6 +6,7 @@
 //! [`crate::runtime::run_task_skilled`]; the CLI loads them from a JSON file
 //! via `--skills-file`.
 
+use autoagents_derive::{tool, ToolInput};
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
@@ -343,6 +344,70 @@ pub fn catalog_prompt(skills: &[Skill], root: &Path) -> String {
         "\n\n{}",
         crate::prompts::fill(crate::prompts::SYSTEM_SKILL_CATALOG, &[("skills", &skills)])
     )
+}
+
+/// Arguments for the `Skill` tool.
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize, ToolInput)]
+pub struct SkillToolArgs {
+    #[input(
+        description = "The skill's name from the list of available skills, like test-driven-development"
+    )]
+    pub skill: String,
+}
+
+#[tool(
+    name = "Skill",
+    description = "Load a skill's full instructions by name, to follow them. Do this before starting work a skill applies to.",
+    input = SkillToolArgs,
+)]
+struct SkillTool {
+    skills: Vec<Skill>,
+}
+
+/// Names agents use: the skill's id or name, with or without a plugin's `plugin:` in front.
+fn find_skill<'a>(skills: &'a [Skill], asked: &str) -> Option<&'a Skill> {
+    let asked = asked.trim();
+    let bare = asked.rsplit(':').next().unwrap_or(asked);
+    skills
+        .iter()
+        .find(|skill| skill.id == asked || skill.name == asked)
+        .or_else(|| {
+            skills.iter().find(|skill| {
+                skill.name == bare || skill.id == bare || skill.id.ends_with(&format!("--{bare}"))
+            })
+        })
+}
+
+#[autoagents::async_trait]
+impl crate::tools::ToolRuntime for SkillTool {
+    async fn execute(
+        &self,
+        args: serde_json::Value,
+    ) -> Result<serde_json::Value, autoagents::core::tool::ToolCallError> {
+        let args: SkillToolArgs = crate::tools::parse_tool_args("Skill", args)?;
+        let Some(skill) = find_skill(&self.skills, &args.skill) else {
+            let known: Vec<&str> = self
+                .skills
+                .iter()
+                .map(|skill| skill.name.as_str())
+                .collect();
+            return Err(crate::tools::tool_error(format!(
+                "no skill named {}; these exist: {}",
+                args.skill,
+                known.join(", ")
+            )));
+        };
+        Ok(serde_json::json!({"skill": skill.name, "instructions": skill.instructions}))
+    }
+}
+
+/// The tool that loads a skill, for a run with any: superpowers and others tell agents to call it.
+pub fn skill_tool(skills: &[Skill]) -> Option<Box<dyn autoagents::core::tool::ToolT>> {
+    (!skills.is_empty()).then(|| {
+        Box::new(SkillTool {
+            skills: skills.to_vec(),
+        }) as Box<dyn autoagents::core::tool::ToolT>
+    })
 }
 
 #[cfg(test)]

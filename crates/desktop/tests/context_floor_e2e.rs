@@ -52,7 +52,7 @@ async fn a_budget_too_small_for_the_work_stops_with_advice() {
     std::fs::create_dir(project.path().join(".themis")).unwrap();
     std::fs::write(
         project.path().join(".themis/config.jsonc"),
-        r#"{"context_token_budget":16000,"recent_messages":2,"total_turns":60}"#,
+        r#"{"context_token_budget":19000,"recent_messages":2,"total_turns":60}"#,
     )
     .unwrap();
     for index in 0..40 {

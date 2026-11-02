@@ -110,6 +110,8 @@ without its sandbox, the only way it runs there.
 | `browser_select` | Chooses `<select>` options by value or label |
 | `browser_press` | Presses a key: `Enter`, `Escape`, `Tab`, arrows, letters, `Control+a`; `hold_ms` keeps it down (up to 5 s) for games |
 | `browser_move` | Moves the mouse without clicking: `x` and `y` go to a point; `dx` and `dy` move by a distance, with no edge while the page holds the pointer lock. A click on a locked page stays where the mouse is, so it doesn't turn the view |
+| `browser_snapshot` with `layout` | Adds the page's structure, which the accessibility outline leaves out: visible containers, nested, with position, size and a selector the tools accept, at most 200 lines. Each canvas says `nothing drawn`, `blank` or `has drawing`, which needs no vision. A field's value is never read |
+| `browser_drag` | Presses the mouse at one place, moves to another and lets go. Each end is a ref or a point. Real input, for pages using native drag and drop and for pages listening to the mouse. `drag` in the result says what was pressed on, whether anything was dragged and where it let go; `browser_move` returns `under_mouse`. Elements with `draggable="true"` get refs even with no role. By hand: `browser_press` with `mouseDown` and `mouseUp` hold and release the button, and `browser_move` between them follows with it held. Tools that name an element also take a CSS selector or `text=Some text` |
 | `browser_scroll` | Scrolls the page or one element |
 | `browser_tabs` | Lists, switches or closes this chat's tabs |
 

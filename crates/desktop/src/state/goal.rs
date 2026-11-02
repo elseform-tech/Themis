@@ -80,7 +80,11 @@ const PAGE_CHANGING_CALLS: [&str; 11] = [
 
 /// How many items a checklist has, and how many of them are proven.
 fn checklist_counts(items: &[core_goal::GoalRequirement]) -> (usize, usize) {
-    (items.len(), items.iter().filter(|item| item.proven).count())
+    let tasks = items.iter().filter(|item| !item.is_rule());
+    (
+        tasks.clone().count(),
+        tasks.filter(|item| item.proven).count(),
+    )
 }
 
 /// Whether a devtools script changed the page instead of reading it. This is a screen for a
@@ -133,7 +137,7 @@ fn check_message(verdict: &core_goal::GoalVerdict) -> String {
     let pending: Vec<&str> = verdict
         .requirements
         .iter()
-        .filter(|item| !item.proven)
+        .filter(|item| item.is_open())
         .map(|item| item.what.as_str())
         .collect();
     if !pending.is_empty() {
@@ -144,6 +148,15 @@ fn check_message(verdict: &core_goal::GoalVerdict) -> String {
         } else {
             format!("Still pending: {shown}")
         });
+    }
+    let broken: Vec<&str> = verdict
+        .requirements
+        .iter()
+        .filter(|item| item.broken)
+        .map(|item| item.what.as_str())
+        .collect();
+    if !broken.is_empty() {
+        parts.push(format!("Not followed: {}", broken.join(", ")));
     }
     parts.join("\n\n")
 }
@@ -1438,6 +1451,7 @@ impl AppState {
         let mut spoiled = false;
         let mut evidence = String::new();
         let mut changed = Vec::new();
+        let mut subagents = std::collections::HashMap::new();
         let mut through = after_seq;
         while let Ok(page) =
             self.inner
@@ -1465,6 +1479,39 @@ impl AppState {
                     ThreadEvent::ToolFinished { ok, output, .. } => {
                         let output = clip_output(&output);
                         format!("{}{output}\n\n", if ok { "" } else { "(failed) " })
+                    }
+                    ThreadEvent::SubagentStarted {
+                        id,
+                        name,
+                        write_paths,
+                        ..
+                    } => {
+                        subagents.insert(id, (name, write_paths));
+                        continue;
+                    }
+                    ThreadEvent::SubagentEnded {
+                        id, status, result, ..
+                    } => {
+                        // One started before the last check isn't in this stretch of history.
+                        let (name, paths) = match subagents.remove(&id) {
+                            Some((name, paths)) if paths.is_empty() => {
+                                (name, "nothing, it could only read".to_owned())
+                            }
+                            Some((name, paths)) => (name, paths.join(", ")),
+                            None => (id, "what it was given earlier".to_owned()),
+                        };
+                        format!(
+                            "{}\n\n",
+                            themis_core::prompts::fill(
+                                themis_core::prompts::GOAL_EVIDENCE_SUBAGENT,
+                                &[
+                                    ("name", &name),
+                                    ("status", &status),
+                                    ("paths", &paths),
+                                    ("result", &clip_output(&result)),
+                                ],
+                            )
+                        )
                     }
                     ThreadEvent::FilesChanged { files } => {
                         changed.extend(files.iter().map(|file| file.path.clone()));
@@ -1654,11 +1701,41 @@ mod tests {
     }
 
     #[test]
+    fn the_check_names_a_broken_rule_and_never_lists_a_rule_as_pending() {
+        let verdict = core_goal::GoalVerdict {
+            verdict: Verdict::NotYet,
+            reason: "Not yet.".to_owned(),
+            next: None,
+            requirements: vec![
+                core_goal::GoalRequirement {
+                    what: "No build step".into(),
+                    kind: core_goal::GoalItemKind::Rule,
+                    ..Default::default()
+                },
+                core_goal::GoalRequirement {
+                    what: "Use subagents".into(),
+                    kind: core_goal::GoalItemKind::Rule,
+                    broken: true,
+                    ..Default::default()
+                },
+            ],
+            progress: None,
+            progressed: None,
+            told_user: None,
+        };
+        assert_eq!(
+            check_message(&verdict),
+            "Not yet.\n\nNot followed: Use subagents"
+        );
+        assert_eq!(checklist_counts(&verdict.requirements), (0, 0));
+    }
+
+    #[test]
     fn the_check_says_what_is_wrong_what_to_change_and_what_is_left() {
         let item = |what: &str, proven| core_goal::GoalRequirement {
             what: what.to_owned(),
             proven,
-            how: String::new(),
+            ..Default::default()
         };
         let verdict = |next: Option<&str>, requirements| core_goal::GoalVerdict {
             verdict: Verdict::NotYet,

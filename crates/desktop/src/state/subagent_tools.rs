@@ -328,6 +328,7 @@ impl SubagentTool {
                 .any(|(brief, _, _)| !brief.write_paths.is_empty());
         // Every path is checked before any subagent starts.
         let write_paths = self.kit.check_write_paths(&asked).map_err(error)?;
+        let mut only_read = Vec::new();
         let started: Vec<Value> = briefs
             .into_iter()
             .zip(write_paths)
@@ -338,6 +339,9 @@ impl SubagentTool {
                 let agent = self
                     .kit
                     .start(brief.name, brief.brief, model, paths, profile, mcp);
+                if agent.write_paths.is_empty() {
+                    only_read.push(agent.name.clone());
+                }
                 let mut started = json!({"id": agent.id, "name": agent.name, "model": agent.model,
                     "write_paths": agent.write_paths});
                 if !agent.mcp.tools.is_empty() {
@@ -354,6 +358,11 @@ impl SubagentTool {
         if refused_writes {
             output["read_only"] =
                 json!("Subagents are set to read-only here: write_paths were ignored.");
+        } else if !only_read.is_empty() {
+            output["note"] = json!(themis_core::prompts::fill(
+                themis_core::prompts::SPAWN_SUBAGENTS_ONLY_READ,
+                &[("names", &only_read.join(", "))],
+            ));
         }
         Ok(output)
     }

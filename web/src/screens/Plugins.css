@@ -213,3 +213,7 @@
 .themis-card-tile-small { width: 1.5rem; height: 1.5rem; border-radius: 7px; font-size: .75rem; }
 .themis-card-brand { background: var(--themis-raised); color: var(--themis-text); }
 .themis-card-brand svg { width: 60%; height: 60%; }
+/* A part of an installed plugin that's still off: said in words, amber because it needs a decision. */
+.themis-off-parts { display: inline-flex; align-items: center; gap: 6px; font-size: .75rem; color: var(--themis-warning); }
+.themis-off-parts > svg { flex: none; width: 13px; height: 13px; }
+.themis-off-parts > .themis-button, .themis-off-parts > button { margin-left: 6px; }
