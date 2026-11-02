@@ -144,29 +144,32 @@ describe("the to-do list in the overview box", () => {
     expect(empty.result.current.visible).toBe(false);
   });
 
-  it("shows the current item with two before it, folds earlier finished items and what comes after", () => {
+  it("shows the item in progress and what comes next, folding the rest into N more and finished ones into N done", () => {
     appState = initialState;
-    const items = list(["completed", "completed", "completed", "completed", "in_progress", "pending", "pending", "pending", "pending"]);
+    const items = list(["completed", "completed", "pending", "completed", "in_progress", "pending", "pending", "pending", "pending"]);
     render(<OverviewBox threadId="t1" overview={{ ...overview, todo: { items, broken: false } }} onOpenMedia={vi.fn()} />);
-    expect(document.querySelector(".themis-overview-todo-head")).toHaveTextContent("To-do4 of 9");
-    expect(folds()).toEqual(["2 done", "2 more"]);
-    expect(rows().map(text => text?.replace(/^(Done|In progress): /, ""))).toEqual(["Item 3", "Item 4", "Item 5", "Item 6", "Item 7"]);
-    // Only the current item spins; finished ones are crossed off with no tick.
+    expect(document.querySelector(".themis-overview-todo-head")).toHaveTextContent("To-do3 of 9");
+    // In progress first, then pending in plan order; the sixth open item folds, finished ones sit at the bottom.
+    expect(rows().map(text => text?.replace(/^(Done|In progress): /, ""))).toEqual(["Item 5", "Item 3", "Item 6", "Item 7", "Item 8"]);
+    expect(folds()).toEqual(["1 more", "3 done"]);
     const shown = [...document.querySelectorAll(".themis-overview-todo .themis-todo-item")];
-    expect(shown.map(row => row.querySelector(".themis-dot-spinner") !== null)).toEqual([false, false, true, false, false]);
-    expect(shown[0]).toHaveClass("is-done");
-    expect(shown[0]!.querySelector("svg")).toBeNull();
+    expect(shown.map(row => row.querySelector(".themis-dot-spinner") !== null)).toEqual([true, false, false, false, false]);
+    expect(shown.some(row => row.classList.contains("is-done"))).toBe(false);
     // The whole section opens the To-do tab; it names the current item for a screen reader.
-    fireEvent.click(screen.getByRole("button", { name: "To-do: 4 of 9 done, now Item 5. Opens the To-do tab" }));
+    fireEvent.click(screen.getByRole("button", { name: "To-do: 3 of 9 done, now Item 5. Opens the To-do tab" }));
     expect(dispatch).toHaveBeenLastCalledWith({ type: "ui/diff-panel", open: true, tab: "todo" });
   });
 
-  it("starts at the first pending item when none is in progress, and needs no folds for a short list", () => {
+  it("starts at the first pending item when none is in progress, and folds only what it hides", () => {
     appState = initialState;
     render(<OverviewBox threadId="t1" overview={{ ...overview, todo: { items: list(["completed", "pending", "pending"]), broken: false } }} onOpenMedia={vi.fn()} />);
-    expect(folds()).toEqual([]);
-    expect(rows()).toHaveLength(3);
+    expect(rows().map(text => text?.replace(/^(Done|In progress): /, ""))).toEqual(["Item 2", "Item 3"]);
+    expect(folds()).toEqual(["1 done"]);
     expect(document.querySelector(".themis-overview-todo .themis-dot-spinner")).toBeNull();
+    cleanup();
+    render(<OverviewBox threadId="t1" overview={{ ...overview, todo: { items: list(["pending", "in_progress"]), broken: false } }} onOpenMedia={vi.fn()} />);
+    expect(folds()).toEqual([]);
+    expect(rows()).toHaveLength(2);
   });
 
   it("collapses a finished list to one quiet line", () => {
@@ -179,13 +182,12 @@ describe("the to-do list in the overview box", () => {
     expect(screen.getByRole("button", { name: "To-do: 8 of 8 done. Opens the To-do tab" })).toBeInTheDocument();
   });
 
-  it("counts open items before the current one instead of dropping them", () => {
+  it("lifts an item in progress above open items the agent hasn't started", () => {
     appState = initialState;
-    // The agent put an item in progress below items it hasn't started.
     const items = list(["pending", "pending", "completed", "pending", "pending", "pending", "pending", "in_progress", "pending", "pending"]);
     render(<OverviewBox threadId="t1" overview={{ ...overview, todo: { items, broken: false } }} onOpenMedia={vi.fn()} />);
-    expect(folds()).toEqual(["1 done · 4 to do"]);
-    expect(rows().map(text => text?.replace(/^(Done|In progress): /, ""))).toEqual(["Item 6", "Item 7", "Item 8", "Item 9", "Item 10"]);
+    expect(rows().map(text => text?.replace(/^(Done|In progress): /, ""))).toEqual(["Item 8", "Item 1", "Item 2", "Item 4", "Item 5"]);
+    expect(folds()).toEqual(["4 more", "1 done"]);
   });
 
   it("never shows more than five items", () => {
