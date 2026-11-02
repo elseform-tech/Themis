@@ -482,7 +482,8 @@ async fn an_explicit_tool_list_narrows_the_web_tools_too() {
     run(&app, "yolo", "go").await;
     let (tools, _) = child_request(&app).await;
     // Only what it names: no shell, no files, no search.
-    assert_eq!(tools, ["fetch_url"], "{tools:?}");
+    // Loading a skill only reads instructions, so a list doesn't take it away.
+    assert_eq!(tools, ["fetch_url", "Skill"], "{tools:?}");
     // The plugin's hook fired for it, naming the subagent.
     let seen: Value =
         serde_json::from_slice(&std::fs::read(app.project.path().join("web-hook.json")).unwrap())
