@@ -236,7 +236,11 @@ is reached; for example `/goal optimize this app to speed up p95`.
   The check reads the commands of the turn it judges (long outputs keep their
   start and end), never the agent's claims, and referees the agent's own to-do
   list: it can reopen an item it doesn't accept as done, with a short reason
-  ("reopened by the check"), or add one the goal asks for and the list lacks. The
+  ("reopened by the check"), or add one the goal asks for and the list lacks. When
+  the agent left finished work unticked, the check ticks it off itself on what the
+  commands showed ("confirmed by the check"), and closes a request a later one
+  cancelled ("cancelled by your later request") or a question the reply answered
+  ("answered"); your words stay as you sent them. The
   goal is reached only when the check agrees and nothing on the list is open.
   With `goal.seed_todo` on in `runtime.jsonc` (off by default), a new goal's list is filled
   before its first turn: a setup or read-and-plan step when one is really needed, one item

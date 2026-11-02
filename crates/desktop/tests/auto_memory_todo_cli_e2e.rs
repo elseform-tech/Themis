@@ -132,13 +132,14 @@ fn main_answer(body: &Value) -> ResponseTemplate {
             "write_file",
             json!({"file_path": format!("{}.txt", user.lines().next().unwrap_or_default().replace(' ', "-")), "content":"x", "append": false}),
         ),
-        // A goal turn finishes what its list (read at the turn's start) holds.
-        _ if wire.contains("from the goal") && !wire.contains("\"completed\"") => call(
+        // A goal turn finishes the features on its list (read at the turn's start), and leaves
+        // the last item for the check.
+        _ if wire.contains("[pending; from the goal] Tasks can be added") => call(
             "todo_write",
             json!({"todos":[
                 {"id":"t1","title":"Tasks can be added and ticked off","status":"completed","outcome":"added and ticked three"},
                 {"id":"t2","title":"CSV export downloads every task","status":"completed","outcome":"downloaded 3 rows"},
-                {"id":"t3","title":"Verify end to end","status":"completed","outcome":"clicked through it"}]}),
+                {"id":"t3","title":"Verify end to end","status":"pending"}]}),
         ),
         _ if user.starts_with("filler") => text_reply("Noted."),
         _ => text_reply("Fixed the build."),
@@ -187,8 +188,9 @@ impl Harness {
                     return text_reply(r#"{"items":[{"title":"Tasks can be added and ticked off"},{"title":"CSV export downloads every task","details":"every row"}]}"#);
                 }
                 if head.contains(CHECK) {
+                    // The check completes the seeded verification item on the turn's evidence.
                     return text_reply(
-                        r#"{"verdict":"reached","reason":"Everything works.","progressed":true}"#,
+                        r#"{"verdict":"reached","reason":"Everything works.","progressed":true,"complete":[{"id":"t3","outcome":"clicked through every feature"}]}"#,
                     );
                 }
                 if head.contains(SUMMARY) {
@@ -470,6 +472,10 @@ async fn a_seeded_goal_reads_its_list_and_is_reached_once_its_items_are_done() {
         items.iter().all(|item| item["status"] == "completed"),
         "{list}"
     );
+    // The agent ticked the features; the check completed "Verify end to end" itself.
+    assert_eq!(items[2]["title"], "Verify end to end");
+    assert!(!items[2]["closed"].is_null(), "{list}");
+    assert!(items[0]["closed"].is_null(), "{list}");
     let seeded = h.logged("todo", "seed", 1).await;
     assert_eq!(fields(&seeded[0])["outcome"], "seeded");
     assert_eq!(fields(&seeded[0])["items"], 3);

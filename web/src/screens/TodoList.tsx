@@ -47,17 +47,26 @@ const STATE_CLASS: Partial<Record<TodoItem["status"], string>> = { completed: " 
 /** The item's class names: its status, and whether it arrived after the list was first shown. */
 export const todoClass = (item: TodoItem, fresh = false) => `themis-todo-item${STATE_CLASS[item.status] ?? ""}${fresh ? " is-fresh" : ""}`;
 
-/** The mark, the status in words for a screen reader, the title and who added or reopened it, as text. */
+/** How the goal check closed an item the agent left open. */
+const CLOSED_WORDS: Record<NonNullable<TodoItem["closed"]>, string> = {
+  confirmed: "confirmed by the check",
+  cancelled: "cancelled by your later request",
+  answered: "answered",
+};
+
+/** The mark, the status in words for a screen reader, the title and who added, reopened or closed it, as text. */
 export function TodoLine({ item }: { item: TodoItem }) {
+  const status = item.closed && item.closed !== "confirmed" ? "Closed: " : STATUS_WORDS[item.status];
   return <>
     <span className="themis-todo-mark" aria-hidden="true">{item.status === "in_progress" ? <DotSpinner /> : <span className="themis-todo-pending" />}</span>
     <span className="themis-todo-text">
-      {STATUS_WORDS[item.status] && <span className="themis-sr-only">{STATUS_WORDS[item.status]}</span>}
+      {status && <span className="themis-sr-only">{status}</span>}
       <span className="themis-todo-title">{item.title}</span>
       {item.source === "person" && <span className="themis-todo-tag"> · you asked</span>}
       {item.source === "check" && <span className="themis-todo-tag"> · added by the check</span>}
       {item.source === "goal" && <span className="themis-todo-tag"> · from the goal</span>}
       {item.reopened && <span className="themis-todo-tag is-reopened"> · reopened by the check</span>}
+      {item.closed && item.status === "completed" && <span className="themis-todo-tag"> · {CLOSED_WORDS[item.closed]}</span>}
     </span>
   </>;
 }

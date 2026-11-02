@@ -4,7 +4,9 @@
 //! A goal is one sentence. After each goal turn a separate model call with a
 //! fresh context reads the goal, the agent's to-do list, the turn's final answer
 //! and the commands it ran, and answers with a small JSON verdict: it may reopen
-//! a finished item or add a missing one. Everything it reads is data.
+//! a finished item, add a missing one, complete an open one the evidence shows done,
+//! or close one a later request cancelled or that was a question already answered.
+//! Everything it reads is data.
 
 use autoagents::llm::chat::{ChatMessage, ChatRole, MessageType};
 use autoagents::llm::LLMProvider;
@@ -123,9 +125,10 @@ const MAX_NEXT_CHARS: usize = 600;
 const MAX_RULES: usize = 20;
 const MAX_RULE_CHARS: usize = 120;
 const MAX_RULE_HOW_CHARS: usize = 240;
-/// Most items one check may reopen or add.
+/// Most items one check may reopen, add, or complete or close.
 const MAX_REOPEN: usize = 20;
 const MAX_ADD: usize = 10;
+const MAX_CLOSE: usize = 20;
 
 /// What the goal check decided about the turn that just ended.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -160,6 +163,12 @@ pub struct GoalVerdict {
     /// What the goal or a request asks for and the list lacks: (title, details).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub add: Vec<(String, String)>,
+    /// Open to-do items the turn's evidence shows done: (id, what showed it).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub complete: Vec<(String, String)>,
+    /// Open to-do items that need no work: (id, cancelled or answered).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub close: Vec<(String, crate::todo::CheckClosure)>,
     /// One short measured fact (for example `p95 238 ms`), shown on the goal.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub progress: Option<String>,
@@ -183,6 +192,8 @@ impl GoalVerdict {
             rules: Vec::new(),
             reopen: Vec::new(),
             add: Vec::new(),
+            complete: Vec::new(),
+            close: Vec::new(),
             progress: None,
             progressed: None,
             told_user: None,
@@ -191,8 +202,22 @@ impl GoalVerdict {
 
     /// Applies what the check said about the list and decides whether the goal can end: it is
     /// reached only when the check says so and nothing on the list is still open afterwards.
-    /// Returns how many items were reopened and added.
-    pub fn referee(&mut self, list: &mut crate::todo::TodoList) -> (usize, usize) {
+    /// An item the check both reopens and closes stays open. Returns what changed.
+    pub fn referee(&mut self, list: &mut crate::todo::TodoList) -> Refereed {
+        use crate::todo::CheckClosure;
+        let reopening = |id: &String| self.reopen.iter().any(|(other, _)| other == id);
+        let confirmed = self
+            .complete
+            .iter()
+            .filter(|(id, outcome)| {
+                !reopening(id) && list.close_from_check(id, CheckClosure::Confirmed, outcome)
+            })
+            .count();
+        let closed = self
+            .close
+            .iter()
+            .filter(|(id, how)| !reopening(id) && list.close_from_check(id, *how, ""))
+            .count();
         let reopened = self
             .reopen
             .iter()
@@ -210,7 +235,29 @@ impl GoalVerdict {
                 self.reason = format!("\"{}\" isn't done yet.", open.title);
             }
         }
-        (reopened, added)
+        Refereed {
+            reopened,
+            added,
+            confirmed,
+            closed,
+        }
+    }
+}
+
+/// What one check changed on the to-do list, for diagnostics (counts only).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct Refereed {
+    pub reopened: usize,
+    pub added: usize,
+    /// Open items the check completed on the evidence.
+    pub confirmed: usize,
+    /// Open items the check closed as cancelled or answered.
+    pub closed: usize,
+}
+
+impl Refereed {
+    pub fn any(&self) -> bool {
+        *self != Self::default()
     }
 }
 
@@ -301,6 +348,10 @@ pub fn parse_verdict(reply: &str) -> Option<GoalVerdict> {
         reopen: Option<serde_json::Value>,
         #[serde(default)]
         add: Option<serde_json::Value>,
+        #[serde(default)]
+        complete: Option<serde_json::Value>,
+        #[serde(default)]
+        close: Option<serde_json::Value>,
     }
     for (start, _) in reply.match_indices('{') {
         let mut values = serde_json::Deserializer::from_str(&reply[start..]).into_iter::<Raw>();
@@ -321,6 +372,22 @@ pub fn parse_verdict(reply: &str) -> Option<GoalVerdict> {
             crate::todo::MAX_TITLE_CHARS,
             crate::todo::MAX_DETAILS_CHARS,
         );
+        // A completion must say what showed it.
+        let complete = pairs(
+            raw.complete,
+            ("id", "outcome"),
+            MAX_CLOSE,
+            40,
+            crate::todo::MAX_OUTCOME_CHARS,
+        )
+        .into_iter()
+        .filter(|(_, outcome)| !outcome.is_empty())
+        .collect();
+        let close = pairs(raw.close, ("id", "why"), usize::MAX, 40, 40)
+            .into_iter()
+            .filter_map(|(id, why)| Some((id, crate::todo::CheckClosure::parse(&why)?)))
+            .take(MAX_CLOSE)
+            .collect();
         // A check that holds something open has not reached the goal, whatever it says.
         let held = rules
             .iter()
@@ -351,6 +418,8 @@ pub fn parse_verdict(reply: &str) -> Option<GoalVerdict> {
             rules,
             reopen,
             add,
+            complete,
+            close,
             progress: progress
                 .map(|text| one_line(&text, MAX_PROGRESS_CHARS))
                 .filter(|text| !text.is_empty()),
@@ -755,6 +824,8 @@ mod tests {
                 rules: Vec::new(),
                 reopen: Vec::new(),
                 add: Vec::new(),
+                complete: Vec::new(),
+                close: Vec::new(),
                 verdict: Verdict::NotYet,
                 reason: "p95 is 238 ms; /api/report is slow.".into(),
                 progress: Some("p95 238 ms".into()),
@@ -1019,7 +1090,8 @@ mod tests {
             r#"{"verdict":"not_yet","reason":"Drag fails.","reopen":[{"id":"t1","reason":"drag fails in Safari"}],"add":[{"title":"Dark mode"}]}"#,
         )
         .unwrap();
-        assert_eq!(verdict.referee(&mut list), (1, 1));
+        let counts = verdict.referee(&mut list);
+        assert_eq!((counts.reopened, counts.added), (1, 1));
         assert_eq!(
             list.items[0].reopened.as_deref(),
             Some("drag fails in Safari")
@@ -1033,6 +1105,67 @@ mod tests {
             done.items[0].accepted,
             "a finished item the check let stand is accepted"
         );
+    }
+
+    /// Live: the agent never ticked its list off, and the check could only reopen or add, so a
+    /// goal whose work was built never ended. The check now closes items on evidence.
+    #[test]
+    fn the_check_completes_items_the_evidence_shows_and_closes_cancelled_or_answered_ones() {
+        use crate::todo::CheckClosure;
+        let verdict = parse_verdict(
+            r#"{"verdict":"reached","reason":"Built and tested.",
+            "complete":[{"id":"t1","outcome":"the table renders; 4 tests passed"},{"id":"t5"},{"outcome":"no id"},7],
+            "close":[{"id":"t2","why":"cancelled"},{"id":"t3","why":"answered"},{"id":"t4","why":"done anyway"},{"why":"answered"}]}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            verdict.verdict,
+            Verdict::Reached,
+            "closing holds nothing open"
+        );
+        assert_eq!(
+            verdict.complete,
+            [(
+                "t1".to_owned(),
+                "the table renders; 4 tests passed".to_owned()
+            )],
+            "a completion says what shows it"
+        );
+        assert_eq!(
+            verdict.close,
+            [
+                ("t2".to_owned(), CheckClosure::Cancelled),
+                ("t3".to_owned(), CheckClosure::Answered)
+            ]
+        );
+        let mut list = crate::todo::TodoList::default();
+        list.add_request("Build the budget table");
+        list.add_request("Add a currency selector");
+        list.add_request(
+            "Side question: what's the difference between localStorage and sessionStorage?",
+        );
+        let mut reached = verdict.clone();
+        let counts = reached.referee(&mut list);
+        assert_eq!((counts.confirmed, counts.closed), (1, 2));
+        assert_eq!(reached.verdict, Verdict::Reached, "{}", reached.reason);
+        assert!(list.items.iter().all(|item| !item.is_open()));
+
+        // Without the check's word the open requests still hold the goal.
+        let mut list = crate::todo::TodoList::default();
+        list.add_request("Build the budget table");
+        let mut plain = parse_verdict(r#"{"verdict":"reached","reason":"Done."}"#).unwrap();
+        plain.referee(&mut list);
+        assert_eq!(plain.verdict, Verdict::NotYet);
+
+        // An id the check also reopens is not closed.
+        let mut list = list_with(serde_json::json!([{"title":"Board","status":"pending"}]));
+        let mut both = parse_verdict(
+            r#"{"verdict":"not_yet","reason":"x","reopen":[{"id":"t1","reason":"not tried"}],"complete":[{"id":"t1","outcome":"done"}]}"#,
+        )
+        .unwrap();
+        let counts = both.referee(&mut list);
+        assert_eq!(counts.confirmed, 0);
+        assert!(list.items[0].is_open());
     }
 
     #[test]
@@ -1215,6 +1348,31 @@ mod tests {
             }
             prop_assert!(verdict.verdict == Verdict::Reached || !verdict.reopen.is_empty() || !verdict.add.is_empty());
             prop_assert!(verdict.reopen.is_empty() && verdict.add.is_empty() || verdict.verdict == Verdict::NotYet);
+        }
+
+        /// The check's answer comes from a model: whatever it says to complete or close stays
+        /// bounded, only open items with known ids change, the person's words never do, and a
+        /// completion always carries what showed it.
+        #[test]
+        fn any_complete_or_close_stays_bounded_and_touches_only_open_items(id in "(t[0-9]{1,2}|.{0,60})", text in ".{0,400}", why in "(cancelled|answered|done|.{0,12})", count in 1usize..40) {
+            let reply = serde_json::json!({"verdict": "reached", "reason": "r",
+                "complete": vec![serde_json::json!({"id": id, "outcome": text}); count],
+                "close": vec![serde_json::json!({"id": id, "why": why}); count]});
+            let mut verdict = parse_verdict(&reply.to_string()).unwrap();
+            prop_assert!(verdict.complete.len() <= MAX_CLOSE && verdict.close.len() <= MAX_CLOSE);
+            for (id, outcome) in &verdict.complete {
+                prop_assert!(!id.is_empty() && id.chars().count() <= 40);
+                prop_assert!(!outcome.is_empty() && outcome.chars().count() <= crate::todo::MAX_OUTCOME_CHARS);
+            }
+            let mut list = list_with(serde_json::json!([{"title":"Done already","status":"completed","outcome":"kept"}]));
+            list.add_request(&format!("words {text}"));
+            let words = list.items[1].details.clone();
+            verdict.referee(&mut list);
+            prop_assert_eq!(&list.items[0].outcome, "kept");
+            prop_assert_eq!(list.items[0].closed, None);
+            prop_assert_eq!(&list.items[1].details, &words);
+            prop_assert!(list.items[1].outcome.chars().count() <= crate::todo::MAX_OUTCOME_CHARS);
+            prop_assert_eq!(list.items[1].is_open(), list.items[1].closed.is_none());
         }
 
         #[test]

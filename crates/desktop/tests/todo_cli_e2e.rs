@@ -408,6 +408,171 @@ async fn the_check_referees_the_list_and_a_request_sent_mid_goal_becomes_an_item
     assert!(!logs.contains("ISO format"), "no item text in the logs");
 }
 
+/// Live: a free model never called `todo_write`, so every request the person sent stayed
+/// pending though the work was built, and the goal looped. Here the agent never touches its
+/// list: the check confirms what the evidence shows done, closes a request a later one
+/// cancelled and a side question the reply answered, and the goal is reached. The person's
+/// words stay as they sent them, and every closed item says why.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_check_closes_items_an_agent_that_never_writes_its_list_left_open() {
+    use themis_core::todo::{CheckClosure, TodoSource, TodoStatus};
+    const SELECTOR: &str = "Add a currency selector to the budget page.";
+    const QUESTION: &str = "Side question, no need to change anything: what's the difference between localStorage and sessionStorage?";
+    const CANCEL: &str = "Actually, drop the currency selector.";
+    let server = MockServer::builder().start().await;
+    let checks = Arc::new(Mutex::new(Vec::<Value>::new()));
+    let checked = Arc::clone(&checks);
+    let gate = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let held = Arc::clone(&gate);
+    let tool_calls = Arc::new(AtomicUsize::new(0));
+    let called = Arc::clone(&tool_calls);
+    Mock::given(method("POST"))
+        .respond_with(move |request: &Request| {
+            let body: Value = request.body_json().unwrap();
+            if is_check(&body) {
+                let count = {
+                    let mut checks = checked.lock().unwrap();
+                    checks.push(body);
+                    checks.len()
+                };
+                return text_reply(match count {
+                    1 => r#"{"verdict":"not_yet","reason":"The budget table isn't shown working yet.","next":"Run the table's test.",
+                        "add":[{"title":"Budget table","details":"the table renders the entries"}],
+                        "close":[{"id":"t1","why":"cancelled"},{"id":"t2","why":"answered"}],
+                        "complete":[{"id":"t3","outcome":"the selector was never built, nothing to undo"}],"progressed":true}"#,
+                    _ => r#"{"verdict":"reached","reason":"The table renders and its test passed.",
+                        "complete":[{"id":"t4","outcome":"table test: 1 passed"}],"progressed":true,"told_user":true}"#,
+                });
+            }
+            if last_is_tool(&body) {
+                called.fetch_add(1, Ordering::SeqCst);
+            }
+            // The agent answers in words only and never writes its list.
+            let waited = std::time::Instant::now();
+            while !held.load(Ordering::SeqCst) && waited.elapsed() < Duration::from_secs(60) {
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            text_reply("Built the budget table. localStorage keeps data after the browser closes; sessionStorage is cleared when the tab closes. The table's test: 1 passed.")
+        })
+        .mount(&server)
+        .await;
+    let (state, data, _project, thread) = chat(&server).await;
+    let (sink, _rx) = ChannelSink::channel();
+    let sink = Arc::new(sink);
+    state
+        .send_message(
+            sink.clone(),
+            thread.clone(),
+            "/goal Build the budget page.".into(),
+        )
+        .await
+        .unwrap();
+    for words in [SELECTOR, QUESTION, CANCEL] {
+        let steer = state
+            .enqueue_message(sink.clone(), thread.clone(), words.into(), None, vec![])
+            .await
+            .unwrap();
+        state
+            .steer_queued_message(sink.clone(), thread.clone(), steer.id)
+            .await
+            .unwrap();
+    }
+    let list = state.todo_for(&thread);
+    let ids: Vec<(&str, &str)> = list
+        .items
+        .iter()
+        .map(|item| (item.id.as_str(), item.details.as_str()))
+        .collect();
+    assert_eq!(
+        ids,
+        [("t1", SELECTOR), ("t2", QUESTION), ("t3", CANCEL)],
+        "each request is on the list in their words"
+    );
+    gate.store(true, Ordering::SeqCst);
+
+    goal_until(&state, &thread, GoalStatus::Reached).await;
+    let checks = checks.lock().unwrap().clone();
+    assert_eq!(
+        checks.len(),
+        2,
+        "the first check held the goal for the table"
+    );
+    let system = checks[0]["messages"][0]["content"].as_str().unwrap();
+    assert!(system.contains("\"close\":[{\"id\""), "{system}");
+    assert!(
+        system.contains("the agent saying so is not evidence"),
+        "{system}"
+    );
+    // The second check reads who closed each item and why.
+    let second = checks[1]["messages"][1]["content"].as_str().unwrap();
+    assert!(
+        second.contains("- t1 [closed by a check: cancelled by a later request; the person asked]"),
+        "{second}"
+    );
+    assert!(
+        second.contains("- t2 [closed by a check: answered; the person asked]"),
+        "{second}"
+    );
+    assert!(
+        second.contains("- t4 [pending; added by the check] Budget table"),
+        "{second}"
+    );
+
+    let list = state.todo_for(&thread);
+    assert_eq!(
+        tool_calls.load(Ordering::SeqCst),
+        0,
+        "the agent never called a tool"
+    );
+    assert!(
+        list.items
+            .iter()
+            .all(|item| item.status == TodoStatus::Completed),
+        "{list:?}"
+    );
+    let closed: Vec<(Option<CheckClosure>, &str)> = list
+        .items
+        .iter()
+        .map(|item| (item.closed, item.outcome.as_str()))
+        .collect();
+    assert_eq!(
+        closed,
+        [
+            (Some(CheckClosure::Cancelled), ""),
+            (Some(CheckClosure::Answered), ""),
+            (
+                Some(CheckClosure::Confirmed),
+                "the selector was never built, nothing to undo"
+            ),
+            (Some(CheckClosure::Confirmed), "table test: 1 passed"),
+        ]
+    );
+    assert_eq!(list.items[0].details, SELECTOR, "their words stay intact");
+    assert_eq!(list.items[1].details, QUESTION);
+    assert_eq!(list.items[3].source, TodoSource::Check);
+    // Saved with the chat, so the closed states survive a restart.
+    let saved: Value = serde_json::from_str(
+        &std::fs::read_to_string(data.path().join("todos").join(format!("{thread}.json"))).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(saved["items"][0]["closed"], "cancelled", "{saved}");
+    assert_eq!(saved["items"][1]["closed"], "answered", "{saved}");
+    assert_eq!(saved["items"][3]["closed"], "confirmed", "{saved}");
+    // Metadata only in the logs: counts, never the words.
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    let logs = std::fs::read_dir(data.path().join("logs"))
+        .map(|entries| {
+            entries
+                .flatten()
+                .map(|entry| std::fs::read_to_string(entry.path()).unwrap_or_default())
+                .collect::<String>()
+        })
+        .unwrap_or_default();
+    assert!(logs.contains("\"confirmed\":1"), "{logs}");
+    assert!(logs.contains("\"closed\":2"), "{logs}");
+    assert!(!logs.contains("sessionStorage"), "no item text in the logs");
+}
+
 /// Waits on the event stream for a `todo_changed` whose list holds `words` with `status`.
 async fn todo_event(events: &mut tokio::net::TcpStream, id: &str, words: &str, status: &str) {
     tokio::time::timeout(Duration::from_secs(120), async {

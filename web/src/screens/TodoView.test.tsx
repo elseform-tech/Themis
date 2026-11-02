@@ -2,7 +2,7 @@
 import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, expect, it } from "vitest";
 import type { Goal, TodoItem } from "../lib/types";
-import { todoWindow } from "./TodoList";
+import { TodoWindow, todoWindow } from "./TodoList";
 import { TodoView } from "./TodoView";
 
 afterEach(cleanup);
@@ -70,6 +70,30 @@ it("opens an item to show its details, outcome and why the check reopened it", (
   expect(screen.queryByText("Plan in PLAN.md")).toBeNull();
   // An item with nothing more to show is not a button.
   expect(screen.queryByRole("button", { name: /Write the README/ })).toBeNull();
+});
+
+it("says when the check, not the agent, finished or closed an item, and why", () => {
+  const closed: TodoItem[] = [
+    { id: "t1", title: "Build the budget table", status: "completed", source: "person", closed: "confirmed", outcome: "table test: 1 passed" },
+    { id: "t2", title: "Add a currency selector", status: "completed", source: "person", closed: "cancelled" },
+    { id: "t3", title: "localStorage or sessionStorage?", status: "completed", source: "person", closed: "answered" },
+    { id: "t4", title: "Write the README", status: "completed" },
+  ];
+  render(<TodoView goal={goal()} todo={{ revision: 2, items: closed }} />);
+  const row = (title: string) => screen.getByText(title).closest("li");
+  expect(row("Build the budget table")).toHaveTextContent(/^Done: Build the budget table · you asked · confirmed by the check$/);
+  expect(row("Add a currency selector")).toHaveTextContent(/^Closed: Add a currency selector · you asked · cancelled by your later request$/);
+  expect(row("localStorage or sessionStorage?")).toHaveTextContent(/^Closed: localStorage or sessionStorage\? · you asked · answered$/);
+  expect(row("Write the README")).not.toHaveTextContent("check");
+  for (const title of ["Build the budget table", "Add a currency selector", "localStorage or sessionStorage?"]) expect(row(title)).toHaveClass("is-done");
+  // The check's outcome opens like the agent's.
+  fireEvent.click(screen.getByRole("button", { name: /Build the budget table/ }));
+  expect(screen.getByText("table test: 1 passed")).toBeInTheDocument();
+  // The overview box's rows carry the same words.
+  cleanup();
+  render(<TodoWindow items={[closed[1], closed[2], { id: "t5", title: "Polish", status: "pending" }]} />);
+  expect(screen.getByText("Add a currency selector").closest(".themis-todo-item")).toHaveTextContent("· cancelled by your later request");
+  expect(screen.getByText("localStorage or sessionStorage?").closest(".themis-todo-item")).toHaveTextContent("· answered");
 });
 
 it("lists the goal's rules read-only, only when it has some", () => {
