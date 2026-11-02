@@ -925,8 +925,10 @@ async fn run_task_with_evidence_inner(
                 }
             }
         }
-        // `hooks.built_in.save_reminder`: a checkpoint is near (within about two steps' growth)
-        // and this step takes none, so the agent is told once per checkpoint, before it.
+        // `hooks.built_in.save_reminder`: a checkpoint is near (within two steps' growth, or a
+        // tenth of the budget: a run's first step has no growth yet) and this step takes none,
+        // so the agent is told once per checkpoint, before it.
+        let near = calibrated_growth.saturating_mul(2).max(input_budget / 10);
         if compacting_now {
             save_reminded = false;
         } else if let Some(note) =
@@ -937,8 +939,7 @@ async fn run_task_with_evidence_inner(
                 .filter(|_| {
                     !save_reminded
                         && policy.context_token_budget != usize::MAX
-                        && calibrated_now.saturating_add(calibrated_growth.saturating_mul(2))
-                            > semantic_threshold
+                        && calibrated_now.saturating_add(near) > semantic_threshold
                 })
         {
             save_reminded = true;

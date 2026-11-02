@@ -107,7 +107,7 @@ pub struct PassCounts {
     /// Already remembered (same name and description, or the same description elsewhere).
     pub duplicate: usize,
     /// Held something that looks like a secret.
-    pub secret: usize,
+    pub sensitive: usize,
     /// A project fact or pointer proposed for every project.
     pub scope: usize,
     /// Malformed: unknown action or type, bad name, missing text.
@@ -181,7 +181,7 @@ pub fn parse_answer(text: &str, today: &str) -> Result<(Vec<Proposal>, PassCount
     for entry in entries.iter().take(MAX_CHANGES) {
         match proposal(entry, today) {
             Ok(proposal) => proposals.push(proposal),
-            Err(Refused::Secret) => counts.secret += 1,
+            Err(Refused::Secret) => counts.sensitive += 1,
             Err(Refused::Scope) => counts.scope += 1,
             Err(Refused::Invalid) => counts.invalid += 1,
         }
@@ -406,7 +406,7 @@ mod tests {
         )
         .unwrap();
         assert!(proposals.is_empty());
-        assert_eq!((counts.secret, counts.scope), (2, 1));
+        assert_eq!((counts.sensitive, counts.scope), (2, 1));
         let (proposals, counts) = parse_answer(
             &answer(serde_json::json!([
                 bad_name,
@@ -540,7 +540,7 @@ mod tests {
         fn parsing_never_panics_and_keeps_only_valid_bounded_memories(text in "[ -~\n]{0,600}") {
             if let Ok((proposals, counts)) = parse_answer(&text, TODAY) {
                 prop_assert!(proposals.len() <= MAX_CHANGES);
-                prop_assert!(proposals.len() + counts.secret + counts.scope + counts.invalid <= counts.proposed.min(MAX_CHANGES));
+                prop_assert!(proposals.len() + counts.sensitive + counts.scope + counts.invalid <= counts.proposed.min(MAX_CHANGES));
                 for proposal in &proposals {
                     prop_assert!(proposal.memory.validate().is_ok());
                     prop_assert!(proposal.scope == MemoryScope::Project || proposal.memory.kind.may_be_global());
