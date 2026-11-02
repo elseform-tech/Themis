@@ -1,0 +1,1 @@
+The tool ran past its {{seconds}} second limit, so its server was stopped. It restarts on your next call to one of its tools. Anything it held in memory, such as an open browser page, is gone, so start again from there.
