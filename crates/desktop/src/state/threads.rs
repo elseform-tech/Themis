@@ -512,13 +512,17 @@ impl AppState {
                 skill_catalog,
                 short_reply: themis_core::runtime::is_short_reply(&text, !attachments.is_empty()),
                 automation_run,
+                person_text: (!automation_run
+                    && themis_core::goal::turn_number(&text).is_none()
+                    && !text.starts_with(themis_core::plugins::hooks::HOOK_WAKE_MARKER))
+                .then(|| text.clone()),
             }
         };
         // `/goal` sets the goal, a reply resumes a goal waiting for the user;
         // every run while a goal runs is told about it.
         // Every run reads the chat's to-do list as it stands, after any goal context.
-        let resolved_text = match self.goal_for_message(sink.as_ref(), &thread_id, &text, &run_id) {
-            Ok(context) => format!("{resolved_text}{context}{}", self.todo_note(&thread_id)),
+        let goal_context = match self.goal_for_message(sink.as_ref(), &thread_id, &text, &run_id) {
+            Ok(context) => context,
             Err(error) => {
                 self.finish_run(&thread_id).await;
                 return Err(error);
@@ -555,6 +559,28 @@ impl AppState {
                 attachments: shown_attachments,
             },
         });
+        // A goal this message just set may get its to-do list first (`goal.seed_todo`); the
+        // message already shows, and the turn reads the seeded list.
+        if themis_core::goal::parse_goal_command(&text).is_some_and(|goal| !goal.is_empty()) {
+            if let Some(goal) = self.goal_for(&thread_id) {
+                self.seed_goal_todo(
+                    sink.as_ref(),
+                    (&thread_id, &run_id),
+                    &goal.text,
+                    &runtime_configuration,
+                    &snapshot.model,
+                    &snapshot.work_root,
+                )
+                .await;
+            }
+        }
+        // Every run reads the chat's to-do list as it stands, after any goal context, and the
+        // "Still open" note when the last turn left one (`hooks.built_in.still_open`).
+        let resolved_text = format!(
+            "{resolved_text}{goal_context}{}{}",
+            self.todo_note(&thread_id),
+            self.take_still_open_note(&thread_id)
+        );
         self.persist_registry().await;
         let policy = RunPolicy {
             total_turns: runtime_configuration

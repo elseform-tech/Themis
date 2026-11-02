@@ -141,6 +141,96 @@ impl AppState {
         }
     }
 
+    /// `goal.seed_todo`: a goal that just started on a list with nothing planned gets one item
+    /// per thing it asks for (after at most two real preliminary steps) and a final "Verify end
+    /// to end", from one bounded request on the summary model. Anything that goes wrong leaves
+    /// the list as it was; diagnostics carry the outcome, counts and tokens only.
+    pub(super) async fn seed_goal_todo(
+        &self,
+        sink: &dyn EventSink,
+        (thread_id, run_id): (&str, &str),
+        goal: &str,
+        config: &themis_core::configuration::RuntimeConfig,
+        chat_model: &str,
+        project_root: &std::path::Path,
+    ) {
+        if !config.goal.seed_todo || self.todo_for(thread_id).has_planned_items() {
+            return;
+        }
+        let started = std::time::Instant::now();
+        let (system, user) = core_todo::seed_request(goal, has_project_files(project_root));
+        let answer = self
+            .summary_model_request(config, chat_model, (thread_id, run_id), &system, &user)
+            .await;
+        let mut log = json!({"thread_id": thread_id, "run_id": run_id,
+            "input_bytes": system.len() + user.len()});
+        let outcome = match answer {
+            Err(reason) => reason,
+            Ok((text, usage)) => {
+                if let Some((prompt, completion)) = usage {
+                    log["prompt_tokens"] = prompt.into();
+                    log["completion_tokens"] = completion.into();
+                }
+                match core_todo::parse_seed(&text) {
+                    None => "unreadable".to_owned(),
+                    Some(items) => {
+                        let (list, added) = self.update_todo(sink, thread_id, |list| {
+                            // A list planned meanwhile is left alone.
+                            if list.has_planned_items() {
+                                0
+                            } else {
+                                list.seed(&items)
+                            }
+                        });
+                        log["items"] = added.into();
+                        if added > 0 {
+                            self.log_todo(thread_id, "seeded", "goal", &list);
+                            "seeded".to_owned()
+                        } else {
+                            "nothing".to_owned()
+                        }
+                    }
+                }
+            }
+        };
+        log["outcome"] = outcome.clone().into();
+        log["elapsed_ms"] = (started.elapsed().as_millis() as u64).into();
+        let level = if ["seeded", "nothing"].contains(&outcome.as_str()) {
+            "info"
+        } else {
+            "warn"
+        };
+        let _ = self.inner.diagnostics.append("todo", "seed", level, log);
+    }
+
+    /// `hooks.built_in.still_open`, at the end of a turn that changed files: when the list has
+    /// open items, the chat's next turn starts by naming them.
+    pub(super) fn leave_still_open_note(&self, thread_id: &str) {
+        if let Some(note) = self.todo_for(thread_id).still_open_note() {
+            self.inner
+                .still_open
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .insert(thread_id.to_owned(), note);
+            let _ = self.inner.diagnostics.append(
+                "hook",
+                "built_in",
+                "info",
+                json!({"thread_id": thread_id, "hook": "still_open", "event": "RunEnd"}),
+            );
+        }
+    }
+
+    /// The "Still open" note waiting for this chat's turn, taken (empty when there is none).
+    pub(super) fn take_still_open_note(&self, thread_id: &str) -> String {
+        self.inner
+            .still_open
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(thread_id)
+            .map_or_else(String::new, |note| format!("\n\n{note}"))
+    }
+
     /// Removes the lists of deleted chats.
     pub(super) fn forget_todos(&self, thread_ids: &[String]) {
         let mut todos = self.inner.todos.lock().unwrap_or_else(|e| e.into_inner());
@@ -151,6 +241,18 @@ impl AppState {
             }
         }
     }
+}
+
+/// Whether the project already has files of its own (anything but hidden entries such as
+/// `.git` and `.themis`): then a seeded goal starts by reading and planning rather than by
+/// setting up. Reads one directory listing, at most 64 entries.
+fn has_project_files(root: &std::path::Path) -> bool {
+    std::fs::read_dir(root).is_ok_and(|entries| {
+        entries
+            .flatten()
+            .take(64)
+            .any(|entry| !entry.file_name().to_string_lossy().starts_with('.'))
+    })
 }
 
 /// Whose list a `todo_write` keeps.
@@ -167,7 +269,6 @@ pub(super) enum TodoOwner {
     Subagent {
         agent: Arc<Subagent>,
         report: Reporter,
-        list: std::sync::Mutex<TodoList>,
     },
 }
 
@@ -197,8 +298,8 @@ impl TodoTool {
             TodoOwner::Chat {
                 state, thread_id, ..
             } => state.todo_for(thread_id),
-            TodoOwner::Subagent { list, .. } => {
-                list.lock().unwrap_or_else(|e| e.into_inner()).clone()
+            TodoOwner::Subagent { agent, .. } => {
+                agent.todo.lock().unwrap_or_else(|e| e.into_inner()).clone()
             }
         }
     }
@@ -228,12 +329,8 @@ impl TodoTool {
                 }
                 (list, summary)
             }
-            TodoOwner::Subagent {
-                agent,
-                report,
-                list,
-            } => {
-                let mut list = list.lock().unwrap_or_else(|e| e.into_inner());
+            TodoOwner::Subagent { agent, report } => {
+                let mut list = agent.todo.lock().unwrap_or_else(|e| e.into_inner());
                 let summary = list.apply_write(written, u64::MAX);
                 if let Some(current) = list
                     .items

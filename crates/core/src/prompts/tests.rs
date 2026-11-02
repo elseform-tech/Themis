@@ -130,6 +130,16 @@ const ALL: &[(&str, &str, &[&str])] = &[
         &["global", "project", "person", "reply"],
     ),
     (RUNTIME_SAVE_REMINDER, "runtime-save-reminder", &[]),
+    (
+        RUNTIME_SAVE_REMINDER_SUBAGENT,
+        "runtime-save-reminder-subagent",
+        &[],
+    ),
+    (
+        SUBAGENT_MEMORY_SKILL_NOTE,
+        "subagent-memory-skill-note",
+        &[],
+    ),
     (TODO_SEED_SYSTEM, "todo-seed-system", &[]),
     (TODO_SEED_USER, "todo-seed-user", &["project", "goal"]),
     (TODO_SEED_NEW_PROJECT, "todo-seed-new-project", &[]),

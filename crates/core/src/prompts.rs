@@ -214,6 +214,12 @@ pub const MEMORY_AUTO_USER: &str = include_str!("../builtins/prompts/memory-auto
 /// The one-line reminder before a context checkpoint (`hooks.built_in.save_reminder`).
 pub const RUNTIME_SAVE_REMINDER: &str =
     include_str!("../builtins/prompts/runtime-save-reminder.md");
+/// The save reminder as a subagent gets it: it passes facts on in its reply.
+pub const RUNTIME_SAVE_REMINDER_SUBAGENT: &str =
+    include_str!("../builtins/prompts/runtime-save-reminder-subagent.md");
+/// After the Memory skill in a subagent's system message: its memory tool only reads.
+pub const SUBAGENT_MEMORY_SKILL_NOTE: &str =
+    include_str!("../builtins/prompts/subagent-memory-skill-note.md");
 /// System prompt of the request that seeds a new goal's to-do list (`goal.seed_todo`).
 pub const TODO_SEED_SYSTEM: &str = include_str!("../builtins/prompts/todo-seed-system.md");
 /// The seeding request; `{{project}}` (one of the two lines below) and `{{goal}}`.

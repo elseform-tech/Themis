@@ -929,17 +929,23 @@ async fn run_task_with_evidence_inner(
         // and this step takes none, so the agent is told once per checkpoint, before it.
         if compacting_now {
             save_reminded = false;
-        } else if !save_reminded
-            && policy.context_token_budget != usize::MAX
-            && SAVE_REMINDER.try_with(|on| *on).unwrap_or(false)
-            && calibrated_now.saturating_add(calibrated_growth.saturating_mul(2))
-                > semantic_threshold
+        } else if let Some(note) =
+            SAVE_REMINDER
+                .try_with(Clone::clone)
+                .ok()
+                .flatten()
+                .filter(|_| {
+                    !save_reminded
+                        && policy.context_token_budget != usize::MAX
+                        && calibrated_now.saturating_add(calibrated_growth.saturating_mul(2))
+                            > semantic_threshold
+                })
         {
             save_reminded = true;
             messages.push(ChatMessage {
                 role: ChatRole::User,
                 message_type: MessageType::Text,
-                content: crate::prompts::RUNTIME_SAVE_REMINDER.to_owned(),
+                content: note,
             });
             crate::diagnostics::emit(
                 "hook",
@@ -2657,13 +2663,16 @@ pub async fn with_system_head<F: std::future::Future>(head: String, future: F) -
 }
 
 tokio::task_local! { static CHECKPOINT_NOTE: CheckpointNote; }
-tokio::task_local! { static SAVE_REMINDER: bool; }
+tokio::task_local! { static SAVE_REMINDER: Option<String>; }
 
-/// Runs `future` with the save reminder on (`hooks.built_in.save_reminder` while memory is on):
-/// once before each context checkpoint, when one is near, the agent is reminded to save
-/// anything worth remembering.
-pub async fn with_save_reminder<F: std::future::Future>(on: bool, future: F) -> F::Output {
-    SAVE_REMINDER.scope(on, future).await
+/// Runs `future` with `note` as its save reminder (`hooks.built_in.save_reminder` while memory
+/// is on; `None` is off): once before each context checkpoint, when one is near, the agent is
+/// reminded to keep anything worth remembering.
+pub async fn with_save_reminder<F: std::future::Future>(
+    note: Option<String>,
+    future: F,
+) -> F::Output {
+    SAVE_REMINDER.scope(note, future).await
 }
 
 /// Gives the note read back right after a context checkpoint, such as the chat's to-do list as
@@ -3320,9 +3329,10 @@ fn calibration_sample(
 }
 
 /// Notes the runtime adds as user messages during a run; none is a new request.
-const RUNTIME_NOTES: [&str; 9] = [
+const RUNTIME_NOTES: [&str; 10] = [
     crate::prompts::RUNTIME_PASTED_SECRET,
     crate::prompts::RUNTIME_SAVE_REMINDER,
+    crate::prompts::RUNTIME_SAVE_REMINDER_SUBAGENT,
     SUBAGENT_REACTION_NOTE,
     SPEC_CHECK,
     CUT_OFF_NOTE,
