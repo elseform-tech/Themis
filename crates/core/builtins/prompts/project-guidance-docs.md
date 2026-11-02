@@ -1,0 +1,2 @@
+The project's other documents, nearest the root first, not loaded here. Before working on a part, read the ones that bear on it, and look here first when the guidance above doesn't cover something. A guidance file inside a folder applies to work in that folder:
+{{docs}}
