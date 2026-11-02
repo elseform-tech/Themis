@@ -19,6 +19,18 @@ use crate::types::{ThreadEvent, ThreadEventEnvelope};
 /// Directory name under the app data directory.
 pub(super) const TODOS_DIR: &str = "todos";
 
+/// Most later messages a request chain keeps; the oldest go first.
+const MAX_CHAIN_REQUESTS: usize = 8;
+
+/// The person's messages since they last wrote to an idle chat, after that opening message:
+/// what they steered in or queued while the chain's runs went on, each with the run it reached.
+/// A goal the agent sets in the chain (with `set_goal`, usually on the opening message) takes
+/// them on as requests. In memory only, and dropped once a goal took them.
+#[derive(Default)]
+pub(super) struct RequestChain {
+    later: Vec<(String, String)>,
+}
+
 fn error(message: impl ToString) -> ToolCallError {
     ToolCallError::RuntimeError(message.to_string().into())
 }
@@ -122,6 +134,63 @@ impl AppState {
         }
     }
 
+    /// Notes a message of the person's that reached run `run_id`: one that `continues` the
+    /// chain (steered in, or queued while a run went on) joins it; one written to an idle chat
+    /// opens a new chain. Answers to the agent's questions and a plugin hook's wake-up turn are
+    /// not requests.
+    pub(super) fn chain_request(&self, thread_id: &str, run_id: &str, text: &str, continues: bool) {
+        let text = text.trim();
+        if text.is_empty()
+            || text.starts_with(super::questions::ANSWER_MARKER)
+            || text.starts_with(themis_core::plugins::hooks::HOOK_WAKE_MARKER)
+        {
+            return;
+        }
+        let mut chains = self
+            .inner
+            .request_chains
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let chain = chains.entry(thread_id.to_owned()).or_default();
+        if !continues {
+            chain.later.clear();
+            return;
+        }
+        if chain.later.len() >= MAX_CHAIN_REQUESTS {
+            chain.later.remove(0);
+        }
+        chain.later.push((run_id.to_owned(), text.to_owned()));
+    }
+
+    /// A goal was just set for a chat that had none open: the person's messages after the
+    /// one that opened this chain become "you asked" items (the opener asked for the goal);
+    /// one that reached the running turn shows in progress for it. Words already on the list
+    /// are not added again.
+    pub(super) fn requests_join_new_goal(&self, sink: &dyn EventSink, thread_id: &str) {
+        let Some(chain) = self
+            .inner
+            .request_chains
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(thread_id)
+        else {
+            return;
+        };
+        let running = self
+            .inner
+            .steer_inboxes
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get(thread_id)
+            .map(|entry| entry.run_id.clone());
+        for (run_id, text) in &chain.later {
+            self.note_added_request(sink, thread_id, text);
+            if running.as_deref() == Some(run_id.as_str()) {
+                self.start_request_on_todo(sink, thread_id, text);
+            }
+        }
+    }
+
     /// A turn works on the person's message: their pending request in those words shows in
     /// progress until the turn ends (see [`Self::end_todo_turn`]).
     pub(super) fn start_request_on_todo(&self, sink: &dyn EventSink, thread_id: &str, text: &str) {
@@ -144,8 +213,14 @@ impl AppState {
     /// Removes the lists of deleted chats.
     pub(super) fn forget_todos(&self, thread_ids: &[String]) {
         let mut todos = self.inner.todos.lock().unwrap_or_else(|e| e.into_inner());
+        let mut chains = self
+            .inner
+            .request_chains
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         for id in thread_ids {
             todos.remove(id);
+            chains.remove(id);
             if let Some(path) = self.todo_path(id) {
                 let _ = std::fs::remove_file(path);
             }
@@ -311,6 +386,75 @@ impl ToolT for TodoTool {
     }
     fn output_schema(&self) -> Option<Value> {
         None
+    }
+}
+
+#[cfg(test)]
+mod chain_tests {
+    use super::*;
+
+    const THREAD: &str = "5d1c7a2e-8f40-4b6a-9e13-2c7b9d0a6f58";
+
+    fn chained(state: &AppState) -> Vec<String> {
+        state
+            .inner
+            .request_chains
+            .lock()
+            .unwrap()
+            .get(THREAD)
+            .map(|chain| chain.later.iter().map(|(_, text)| text.clone()).collect())
+            .unwrap_or_default()
+    }
+
+    #[tokio::test]
+    async fn a_chain_keeps_the_latest_requests_restarts_on_an_idle_message_and_joins_a_new_goal_once(
+    ) {
+        let data = tempfile::tempdir().unwrap();
+        let state = AppState::new_for_test(data.path().join("settings.json"));
+        let (sink, _rx) = crate::sink::ChannelSink::channel();
+        state.chain_request(THREAD, "r1", "Set a goal: build it", false);
+        // Answers are not requests; blank messages are nothing.
+        let answer = format!("{} yes", super::super::questions::ANSWER_MARKER);
+        state.chain_request(THREAD, "r1", &answer, true);
+        state.chain_request(THREAD, "r1", "   ", true);
+        let wake = format!(
+            "{} A plugin hook finished.",
+            themis_core::plugins::hooks::HOOK_WAKE_MARKER
+        );
+        state.chain_request(THREAD, "r1", &wake, true);
+        assert!(chained(&state).is_empty());
+        for n in 0..12 {
+            state.chain_request(THREAD, "r1", &format!("request {n}"), true);
+        }
+        let kept = chained(&state);
+        assert_eq!(kept.len(), MAX_CHAIN_REQUESTS);
+        assert_eq!(kept.first().unwrap(), "request 4");
+        // A message to an idle chat starts over.
+        state.chain_request(THREAD, "r2", "Something else", false);
+        assert!(chained(&state).is_empty());
+        state.chain_request(THREAD, "r2", "Also this", true);
+        state.chain_request(THREAD, "r2", "Also this", true);
+
+        // A new goal takes them on, the same words once, and spends the chain.
+        state.begin_goal(&sink, THREAD, "Build it");
+        state.requests_join_new_goal(&sink, THREAD);
+        let list = state.todo_for(THREAD);
+        assert_eq!(
+            list.items
+                .iter()
+                .map(|item| item.details.as_str())
+                .collect::<Vec<_>>(),
+            ["Also this"]
+        );
+        assert!(state
+            .inner
+            .request_chains
+            .lock()
+            .unwrap()
+            .get(THREAD)
+            .is_none());
+        state.requests_join_new_goal(&sink, THREAD);
+        assert_eq!(state.todo_for(THREAD).items.len(), 1);
     }
 }
 

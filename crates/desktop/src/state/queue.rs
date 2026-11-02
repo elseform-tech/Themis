@@ -286,11 +286,14 @@ impl AppState {
                 .lock()
                 .unwrap_or_else(|e| e.into_inner())
                 .push_back(text.clone());
-            Ok(text)
+            Ok((text, entry.run_id.clone()))
         })?;
+        let (steered, run_id) = steered;
         // After the inbox: an approval asked from here on sees the message there
         // and is denied without a box (see `DesktopApprovalHook`).
         let denied = self.deny_approvals_for_new_message(&thread_id);
+        // Before a goal exists, a goal the agent sets in this run takes it on.
+        self.chain_request(&thread_id, &run_id, &steered, true);
         self.note_added_request(sink.as_ref(), &thread_id, &steered);
         // The running turn takes it up now.
         self.start_request_on_todo(sink.as_ref(), &thread_id, &steered);
