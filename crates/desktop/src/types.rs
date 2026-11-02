@@ -223,6 +223,21 @@ pub enum ThreadEvent {
     MediaAttached {
         files: Vec<AttachedMedia>,
     },
+    /// The agent saved, updated or deleted a memory (`memory` tool); the chat shows a slim
+    /// "Remembered" or "Forgot" line that opens it in Settings › Memory.
+    MemoryChanged {
+        /// `saved`, `updated` or `forgot`.
+        action: String,
+        /// `project` or `global`.
+        scope: String,
+        /// The memory's name (its file).
+        name: String,
+        /// Its one-line description.
+        description: String,
+        /// The project a project memory belongs to.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        project_root: Option<String>,
+    },
     /// Who controls the chat's built-in browser and whether it is recording
     /// changed. Live only; `run_id` is empty.
     BrowserChanged {

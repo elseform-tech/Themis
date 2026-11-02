@@ -489,8 +489,8 @@ impl MemoryStore {
         let Some(dir) = self.checked_dir(false)? else {
             return Ok(Listing::default());
         };
-        let entries =
-            std::fs::read_dir(&dir).map_err(|_| MemoryError("memory folder is unreadable".into()))?;
+        let entries = std::fs::read_dir(&dir)
+            .map_err(|_| MemoryError("memory folder is unreadable".into()))?;
         let mut listing = Listing::default();
         for entry in entries.flatten() {
             let file_name = entry.file_name();
@@ -667,7 +667,10 @@ mod tests {
         let mut saved = memory("free-model-for-tests");
         saved.source = Some("web page https://example.com/post".to_owned());
         let text = serialize(&saved);
-        assert!(text.starts_with("---\nname: free-model-for-tests\n"), "{text}");
+        assert!(
+            text.starts_with("---\nname: free-model-for-tests\n"),
+            "{text}"
+        );
         assert_eq!(parse(&text).unwrap(), saved);
         assert_eq!(parse(&text.replace('\n', "\r\n")).unwrap(), saved);
     }
@@ -685,7 +688,8 @@ mod tests {
             good.replace("type: feedback\n", "type: feedback\ntype: user\n"),
             good.replace("type: feedback\n", "type: feedback\nextra: 1\n"),
             good.replace("type: feedback\n", ""),
-            good.replacen("---\n", "", 2).replacen("name", "---\nname", 1),
+            good.replacen("---\n", "", 2)
+                .replacen("name", "---\nname", 1),
             good.replace("Use the free model for test runs.\n", "\u{7}bell\n"),
             format!("{good}{}", "x".repeat(MAX_FILE_BYTES as usize)),
             "---\nname: a\ndescription: d\ntype: user\nsaved: 2026-11-02\n".to_owned(),
@@ -700,7 +704,11 @@ mod tests {
         assert_eq!(run_note("", "\n"), "");
         let note = run_note("", "- a (project, 2026-11-02): A fact\n");
         assert!(note.starts_with("Memory from earlier chats"), "{note}");
-        assert!(note.contains("can be out of date"), "{note}");
+        assert!(note.contains("may be out of date"), "{note}");
+        assert!(
+            note.contains("Read one in full with the memory tool"),
+            "{note}"
+        );
         assert!(
             note.ends_with("Everywhere:\n(none)\nThis project:\n- a (project, 2026-11-02): A fact"),
             "{note}"
@@ -712,7 +720,18 @@ mod tests {
         for good in ["a", "free-model-2", "x1-y2"] {
             assert!(valid_name(good), "{good}");
         }
-        for bad in ["", "-a", "a-", "a--b", "A", "a_b", "a/b", "..", "a.b", &"a".repeat(65)] {
+        for bad in [
+            "",
+            "-a",
+            "a-",
+            "a--b",
+            "A",
+            "a_b",
+            "a/b",
+            "..",
+            "a.b",
+            &"a".repeat(65),
+        ] {
             assert!(!valid_name(bad), "{bad}");
         }
     }
@@ -828,7 +847,11 @@ mod tests {
         let store = MemoryStore::new(root.path(), GLOBAL_FOLDER).unwrap();
         for item in many.iter().take(MAX_MEMORIES) {
             std::fs::create_dir_all(store.dir()).unwrap();
-            std::fs::write(store.dir().join(format!("{}.md", item.name)), serialize(item)).unwrap();
+            std::fs::write(
+                store.dir().join(format!("{}.md", item.name)),
+                serialize(item),
+            )
+            .unwrap();
         }
         assert!(store
             .save(&memory("one-more"), SaveMode::Create)
@@ -847,8 +870,11 @@ mod tests {
             std::fs::create_dir_all(store.dir()).unwrap();
             for index in 0..count {
                 let item = memory(&format!("m-{index}"));
-                std::fs::write(store.dir().join(format!("{}.md", item.name)), serialize(&item))
-                    .unwrap();
+                std::fs::write(
+                    store.dir().join(format!("{}.md", item.name)),
+                    serialize(&item),
+                )
+                .unwrap();
             }
             WORK.with(|work| work.set((0, 0)));
             let listing = store.list().unwrap();

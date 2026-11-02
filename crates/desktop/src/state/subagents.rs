@@ -904,6 +904,25 @@ impl SubagentKit {
                 plan: std::sync::Mutex::default(),
             }));
         }
+        // Every subagent starts with the memory index. One without a plugin profile (which
+        // picks its own tools) may also read a memory in full.
+        if self.config.memory.enabled && (agent.profile.is_none() || names(agent, "memory")) {
+            named.push(Box::new(super::memory::MemoryTool {
+                state: self.state.clone(),
+                sink: Arc::clone(&self.sink),
+                thread_id: self.thread_id.clone(),
+                run_id: self.run_id.clone(),
+                project_root: self.work_root.clone(),
+                enabled: true,
+                run: super::integration_tools::RunApproval {
+                    mode: self.mode,
+                    policy: self.config.approval.clone(),
+                    interactive: Arc::clone(&approvals_for_web),
+                    grants: Arc::clone(&self.grants),
+                },
+                read_only: true,
+            }));
+        }
         if names(agent, "ask_user") {
             named.push(Box::new(super::question_tool::QuestionTool {
                 state: self.state.clone(),

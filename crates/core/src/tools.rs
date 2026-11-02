@@ -110,13 +110,14 @@ pub fn integration_risk(name: &str, args: &Value) -> Option<RiskLevel> {
 #[must_use]
 pub fn tool_approves_itself(name: &str) -> bool {
     // `set_goal` only sets the calling chat's goal and `ask_user` only adds a
-    // question to it; their deny rules apply inside. Web and browser tools
+    // question to it; `memory` only keeps the person's own memories (Settings ›
+    // Memory turns it off); their deny rules apply inside. Web and browser tools
     // approve per site, and only they know the site (the browser's current page).
     // The subagent tools change nothing themselves: each subagent's own actions
     // are approved as they happen.
     matches!(
         name,
-        "manage_automations" | "set_goal" | "ask_user" | "todo_write"
+        "manage_automations" | "set_goal" | "ask_user" | "todo_write" | "memory"
     ) || crate::skills::SUBAGENT_TOOLS.contains(&name)
         || is_site_tool(name)
 }
