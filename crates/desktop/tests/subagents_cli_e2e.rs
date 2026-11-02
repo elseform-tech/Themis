@@ -417,6 +417,43 @@ async fn a_stopped_subagent_ends_and_a_waited_result_is_not_repeated() {
 
 /// Two read-only subagents and one that owns `notes/`: it writes there and nowhere else, in
 /// YOLO too, and the others stay read-only. Overlaps and escapes are refused before any start.
+/// A call too big for a subagent's context, such as a whole file written through a heredoc, is
+/// refused and saved as for the main agent, rather than ending the subagent.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_very_long_tool_call_doesnt_end_a_subagent() {
+    let app = app(Some(r#"{"context_token_budget":20000}"#), |body| {
+        if is_subagent(body) {
+            return match tool_results(body) {
+                0 => tools(&[(
+                    "c1",
+                    "shell",
+                    json!({"command": format!("cat << 'EOF' > notes/a.txt\n{}\nEOF", "line ".repeat(30_000))}),
+                )]),
+                _ => reply("Reviewed it all."),
+            };
+        }
+        match tool_results(body) {
+            0 => tools(&[(
+                "s1",
+                "spawn_subagents",
+                json!({"subagents": [{"name": "Big", "brief": "Run it.", "write_paths": ["notes/"]}]}),
+            )]),
+            _ if mentions(body, "Reviewed it all.") => reply("All done."),
+            _ if mentions(body, "exceeds the delivery allowance") => reply("It failed."),
+            _ => tools(&[("w1", "wait_subagents", json!({"timeout_seconds": 30}))]),
+        }
+    })
+    .await;
+    let (data, thread) = (app.data.path().to_owned(), app.thread.clone());
+    tokio::task::spawn_blocking(move || run(&data, &thread, "build it"))
+        .await
+        .unwrap();
+    let requests = bodies(&app.llm).await;
+    let last = requests.iter().rfind(|b| !is_subagent(b)).unwrap();
+    assert!(mentions(last, "Reviewed it all."), "{last}");
+    assert!(!mentions(last, "exceeds the delivery allowance"), "{last}");
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn write_paths_hold_a_subagent_to_its_own_folder() {
     let app = app(None, |body| {

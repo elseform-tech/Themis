@@ -1211,6 +1211,12 @@ impl SubagentKit {
             total_turns: self.config.subagents.max_turns,
             ..self.policy
         };
+        // Without it, one call or result too big for the context would end the subagent.
+        let evidence_directory = super::attachments::project_storage_directory(
+            &self.work_root,
+            &["context", &self.thread_id, "subagents", &agent.id],
+        )
+        .ok();
         let run = themis_core::runtime::run_task_with_evidence(
             llm,
             tools,
@@ -1225,7 +1231,7 @@ impl SubagentKit {
             events_tx,
             Arc::clone(&agent.stop),
             format!("\n{workspace}\n"),
-            None,
+            evidence_directory,
         );
         let outcome = themis_core::providers::with_catalog_limits(
             &self.catalog,
