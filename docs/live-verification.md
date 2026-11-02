@@ -117,6 +117,7 @@ full tour.
 | `tool:browser_tabs` | tour | `crates/core/src/browser` | Ask the agent to list and switch tabs. |
 | `tool:browser_screenshot` | tour | `crates/core/src/browser` | Goal screenshots the page. |
 | `tool:browser_record` | tour | `crates/core/src/browser` | Ask for a short recording; it plays in the media viewer. |
+| `tool:browser_check_looks` | tour | `crates/core/src/browser/session/looks.rs` | Ask the agent to check how a served page with a same-colour button and a `//` line atop its CSS looks: it names the button (light only) and the dropped rule, and the page ends in the scheme it started in. |
 | `tool:browser_devtools` | tour | `crates/core/src/browser/tools/devtools.rs` | Only with Developer mode on: read the console. Off: the tool is not offered. |
 | `tool:set_goal` | tour | `crates/desktop/src/state/goal_tool.rs` | `/goal` sets the goal; the goal bar shows it. More › Remove goal removes it; asking in the chat to pause or remove it does the same. |
 | `feature:goal-proof` | tour | `crates/desktop/src/state/goal.rs` | Run a goal over several turns: a rejected turn's replies dim, and the next turn doesn't re-prove what is listed. A passing "Checking…" shows during a check, then a "Goal check" bubble saying what is wrong, what to change and what is pending, and the agent answers it. |
