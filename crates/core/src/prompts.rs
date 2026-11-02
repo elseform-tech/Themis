@@ -102,6 +102,8 @@ pub const DESKTOP_VERIFY_BROWSER: &str =
     include_str!("../builtins/prompts/desktop-verify-browser.md");
 /// Label before an MCP server's own instructions in the system message.
 pub const DESKTOP_MCP_GUIDANCE: &str = include_str!("../builtins/prompts/desktop-mcp-guidance.md");
+/// An MCP tool ran past its limit and its local server was stopped; `{{seconds}}`.
+pub const MCP_TOOL_TIMEOUT: &str = include_str!("../builtins/prompts/mcp-tool-timeout.md");
 /// Integration status for an MCP connection that failed; `{{plugin}}`, `{{name}}`, `{{reason}}`.
 pub const DESKTOP_MCP_UNAVAILABLE: &str =
     include_str!("../builtins/prompts/desktop-mcp-unavailable.md");
