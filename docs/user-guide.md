@@ -194,7 +194,11 @@ is reached; for example `/goal optimize this app to speed up p95`.
   The check reads the commands of the turn it judges (long outputs keep their
   start and end), never the agent's claims, and referees the agent's own to-do
   list: it can reopen an item it doesn't accept as done, with a short reason
-  ("reopened by the check"), or add one the goal asks for and the list lacks. The
+  ("reopened by the check"), or add one the goal asks for and the list lacks. When
+  the agent left finished work unticked, the check ticks it off itself on what the
+  commands showed ("confirmed by the check"), and closes a request a later one
+  cancelled ("cancelled by your later request") or a question the reply answered
+  ("answered"); your words stay as you sent them. The
   goal is reached only when the check agrees and nothing on the list is open. How the work must be done (a technology, an approach, who does which part) sits apart as rules in Workspace › To-do: they are never ticked off, and one that wasn't followed says so. A turn's
   replies dim when the check rejects them, so a claim the check didn't accept
   doesn't read as a result. A browser script that changes the page instead of using it (setting a value, clicking from code) rules out reaching the goal until the page is reloaded and the whole thing shown again with real input. The check also says whether the turn moved the work forward (a turn
