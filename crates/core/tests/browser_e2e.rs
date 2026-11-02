@@ -1185,3 +1185,257 @@ async fn the_person_is_never_held_up_by_an_agent_action_in_progress() {
     assert!(started.elapsed() < quick, "took {:?}", started.elapsed());
     hub.close_chat("chat-busy").await;
 }
+
+/// Trailboard as an agent built it: a comment line before the doctype (shown on the page, and
+/// the page drops to quirks mode), the same `//` line first in its stylesheet (which kills the
+/// first rule, the columns' background), an "Add task" button whose text is its background
+/// colour in light mode only, a stylesheet that is missing and a console error.
+const TRAILBOARD: &str = r#"// part of the project
+<!doctype html><html><head><title>Trailboard</title>
+<link rel="stylesheet" href="/trail/style.css">
+<link rel="stylesheet" href="/trail/theme.css">
+</head><body>
+<main class="board">
+  <section class="column"><h2>To do</h2><p>Plan the route</p></section>
+  <section class="column"><h2>Done</h2><p>Buy boots</p></section>
+</main>
+<button class="add">Add task</button>
+<script>console.error('board state failed to load');</script>
+</body></html>"#;
+
+const TRAILBOARD_CSS: &str = r#"// part of the project
+.column { background: #e8eefc; padding: 8px; }
+body { font-family: sans-serif; background: #ffffff; color: #1f2937; }
+.board { display: flex; gap: 12px; }
+button.add { background: #2563eb; color: #2563eb; border: none; padding: 8px 12px; }
+@media (prefers-color-scheme: dark) {
+  body { background: #111827; color: #e5e7eb; }
+  button.add { color: #ffffff; }
+}
+"#;
+
+/// The same board done right, with things that only look like problems: a code sample, a
+/// visually hidden label, a strip that scrolls sideways on purpose and a dark mode.
+const CLEAN_BOARD: &str = r#"<!doctype html><html><head><title>Clean board</title>
+<meta name="color-scheme" content="light dark">
+<style>
+body { font-family: sans-serif; background: #ffffff; color: #1f2937; margin: 16px; }
+.column { background: #e8eefc; padding: 8px; }
+.board { display: flex; gap: 12px; }
+button.add { background: #2563eb; color: #ffffff; border: none; padding: 8px 12px; }
+.visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+.strip { overflow-x: auto; white-space: nowrap; width: 300px; }
+.strip span { display: inline-block; width: 200px; }
+input { border: 1px solid #6b7280; background: #ffffff; color: #111827; }
+@media (prefers-color-scheme: dark) {
+  body { background: #111827; color: #e5e7eb; }
+  .column { background: #1f2937; }
+  input { background: #1f2937; color: #f9fafb; border-color: #9ca3af; }
+}
+</style></head><body>
+<main class="board">
+  <section class="column"><h2>To do</h2><p>Plan the route</p></section>
+  <section class="column"><h2>Done</h2><p>Buy boots</p></section>
+</main>
+<label><span class="visually-hidden">New task</span><input placeholder="New task"></label>
+<button class="add">Add task</button>
+<pre><code>// part of the project
+function add() {}</code></pre>
+<div class="strip"><span>One</span><span>Two</span><span>Three</span></div>
+</body></html>"#;
+
+/// The other kinds of problem the check measures, one each.
+const CUT_OFF: &str = r#"<!doctype html><html><head><title>Cut off</title><style>
+body { margin: 0; background: #ffffff; color: #111827; font-family: sans-serif; }
+.banner { width: 3000px; background: #fde68a; }
+.note { height: 18px; width: 120px; overflow: hidden; }
+.ghost { background: transparent; border: 0; color: transparent; width: 60px; height: 30px; }
+.bare { border: 0; background: #ffffff; color: #111827; }
+.faint { background: #ffffff; color: #b0b0b0; border: 1px solid #111827; }
+</style></head><body>
+<div class="banner">Spring sale banner</div>
+<p class="note">This note is far too long to fit inside its small box, so most of it is hidden from view.</p>
+<button class="ghost">Save</button>
+<input class="bare" aria-label="Search">
+<button class="faint">Cancel</button>
+</body></html>"#;
+
+#[tokio::test(flavor = "multi_thread")]
+async fn the_looks_check_finds_what_broke_trailboard_and_nothing_on_a_clean_page() {
+    let _browser = ONE_BROWSER.lock().await;
+    let data = tempfile::tempdir().unwrap();
+    let Some(hub) = hub(data.path()) else { return };
+    let site = MockServer::builder().start().await;
+    Mock::given(path("/trail/"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_raw(TRAILBOARD, "text/html; charset=utf-8"),
+        )
+        .mount(&site)
+        .await;
+    Mock::given(path("/trail/style.css"))
+        .respond_with(ResponseTemplate::new(200).set_body_raw(TRAILBOARD_CSS, "text/css"))
+        .mount(&site)
+        .await;
+    Mock::given(path("/trail/theme.css"))
+        .respond_with(ResponseTemplate::new(404))
+        .mount(&site)
+        .await;
+    Mock::given(path("/cut/"))
+        .respond_with(ResponseTemplate::new(200).set_body_raw(CUT_OFF, "text/html; charset=utf-8"))
+        .mount(&site)
+        .await;
+    Mock::given(path("/clean/"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_raw(CLEAN_BOARD, "text/html; charset=utf-8"),
+        )
+        .mount(&site)
+        .await;
+    let project = tempfile::tempdir().unwrap();
+    let chat = hub.chat("chat-looks", project.path());
+    let tools = themis_core::browser::tools::browser_tools(
+        Arc::new(FnHook::new(|_: &ToolAction| Approval::AllowOnce)),
+        themis_core::browser::tools::BrowserScope {
+            permissions: themis_core::tools::site_permissions::SitePermissions::new(
+                Default::default(),
+                None,
+            ),
+            chat: Arc::clone(&chat),
+            cancel: None,
+            media: None,
+        },
+    );
+    let tool = |name: &str| {
+        tools
+            .iter()
+            .find(|tool| tool.name() == name)
+            .unwrap_or_else(|| panic!("{name}"))
+    };
+    let dark = "window.matchMedia('(prefers-color-scheme: dark)').matches";
+    let scheme =
+        || async { chat.dev_console(Some(dark), 0, false).await.unwrap()["value"].clone() };
+
+    let opened = tool("browser_open")
+        .execute(json!({"url": format!("{}/trail/", site.uri())}))
+        .await
+        .unwrap();
+    let before = scheme().await;
+    let looks = tool("browser_check_looks")
+        .execute(json!({}))
+        .await
+        .unwrap();
+    let text = looks.to_string();
+    assert_eq!(looks["untrusted"], true, "{looks:#}");
+    assert!(looks["problems"].as_u64().unwrap() >= 6, "{looks:#}");
+    // One list of the result as plain text.
+    let list = |name: &str| {
+        looks[name]
+            .as_array()
+            .map(|lines| {
+                lines
+                    .iter()
+                    .filter_map(Value::as_str)
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            })
+            .unwrap_or_default()
+    };
+    let page = list("page");
+    assert!(page.contains("quirks mode"), "{looks:#}");
+    assert!(
+        page.contains("theme.css") && page.contains("404"),
+        "{looks:#}"
+    );
+    assert!(page.contains("board state failed to load"), "{looks:#}");
+    // The dropped rule names its file, line and the line itself.
+    assert!(
+        page.contains("style.css")
+            && page.contains("line 1")
+            && page.contains("// part of the project"),
+        "{looks:#}"
+    );
+    // The comment line shown as page text, whatever the colour scheme.
+    let both = list("both");
+    assert!(
+        both.contains("source code") && both.contains("// part of the project"),
+        "{looks:#}"
+    );
+    // The button is unreadable in light mode only, and named the way the snapshot names it.
+    let light = list("light_only");
+    let snapshot = opened["snapshot"].as_str().unwrap();
+    let add = ref_of(snapshot, "\"Add task\"");
+    assert!(
+        light.contains("button \"Add task\"") && light.contains(&format!("[{add}]")),
+        "{looks:#}"
+    );
+    assert!(!list("dark_only").contains("Add task"), "{looks:#}");
+    assert!(!both.contains("Add task"), "{looks:#}");
+    assert!(text.len() < 8_000, "bounded: {} bytes", text.len());
+    // The page is back in the scheme it had.
+    assert_eq!(scheme().await, before);
+
+    tool("browser_open")
+        .execute(json!({"url": format!("{}/cut/", site.uri())}))
+        .await
+        .unwrap();
+    let cut = tool("browser_check_looks")
+        .execute(json!({}))
+        .await
+        .unwrap();
+    let found = cut["both"]
+        .as_array()
+        .map(|lines| {
+            lines
+                .iter()
+                .filter_map(Value::as_str)
+                .collect::<Vec<_>>()
+                .join("\n")
+        })
+        .unwrap_or_default();
+    for expected in [
+        "past it): div.banner \"Spring sale banner\"",
+        "text cut off",
+        "control with no visible text or edge: button \"Save\"",
+        "field with no visible edge: textbox \"Search\"",
+        "faint control text",
+    ] {
+        assert!(found.contains(expected), "{expected} in {cut:#}");
+    }
+    assert!(
+        cut["page"].to_string().contains("scrolls sideways"),
+        "{cut:#}"
+    );
+
+    tool("browser_open")
+        .execute(json!({"url": format!("{}/clean/", site.uri())}))
+        .await
+        .unwrap();
+    let clean = tool("browser_check_looks")
+        .execute(json!({}))
+        .await
+        .unwrap();
+    assert_eq!(clean["problems"], 0, "{clean:#}");
+    assert_eq!(scheme().await, before);
+
+    // A big page is looked at only up to the cap, and says so.
+    let big = format!(
+        "<!doctype html><title>Big</title>{}",
+        "<p>row</p>".repeat(6_000)
+    );
+    Mock::given(path("/big/"))
+        .respond_with(ResponseTemplate::new(200).set_body_raw(big, "text/html"))
+        .mount(&site)
+        .await;
+    tool("browser_open")
+        .execute(json!({"url": format!("{}/big/", site.uri())}))
+        .await
+        .unwrap();
+    let big = tool("browser_check_looks")
+        .execute(json!({}))
+        .await
+        .unwrap();
+    assert_eq!(
+        big["checked"], "the first 5000 elements, in light and dark",
+        "{big:#}"
+    );
+    hub.close_chat("chat-looks").await;
+}
