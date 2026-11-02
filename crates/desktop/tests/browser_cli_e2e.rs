@@ -1,8 +1,8 @@
 //! The built-in browser through the real shared server and the `themis` CLI:
 //! a scripted model opens a local page, clicks a ref from the snapshot and a
-//! point of the page, a site rule refuses another host, and the Workspace
-//! commands (state, open an address, sound) answer for the same chat. Skipped
-//! without a Chromium.
+//! point of the page, checks how the page looks, a site rule refuses another
+//! host, and the Workspace commands (state, open an address, sound) answer for
+//! the same chat. Skipped without a Chromium.
 
 use std::path::Path;
 use std::time::Duration;
@@ -95,6 +95,7 @@ async fn cli_run_drives_the_browser_and_the_workspace_commands_see_it() {
                 // A point of the page, as a canvas game would need, and one outside it.
                 5 => tool_call("c6", "browser_click", json!({"x": 5, "y": 5})),
                 6 => tool_call("c7", "browser_click", json!({"x": 5, "y": 100_000})),
+                7 => tool_call("c8", "browser_check_looks", json!({})),
                 _ => ResponseTemplate::new(200).set_body_json(json!({
                     "choices": [{"message": {"role": "assistant", "content": "Clicked it."}, "finish_reason": "stop"}]
                 })),
@@ -156,7 +157,7 @@ async fn cli_run_drives_the_browser_and_the_workspace_commands_see_it() {
             .await
             .unwrap_or_default()
             .iter()
-            .any(|request| tool_results(&request.body_json().unwrap_or(Value::Null)).len() >= 7);
+            .any(|request| tool_results(&request.body_json().unwrap_or(Value::Null)).len() >= 8);
         if done && !state.get_thread(&thread.id).await.is_ok_and(|t| t.running) {
             break;
         }
@@ -187,6 +188,7 @@ async fn cli_run_drives_the_browser_and_the_workspace_commands_see_it() {
         "browser_type",
         "browser_snapshot",
         "browser_tabs",
+        "browser_check_looks",
     ] {
         assert!(
             offered.contains(&format!("\"{name}\"")),
@@ -224,6 +226,16 @@ async fn cli_run_drives_the_browser_and_the_workspace_commands_see_it() {
         results[6].to_string().contains("outside the visible page"),
         "{}",
         results[6]
+    );
+    // The plain counter page looks right in both colour schemes.
+    assert_eq!(results[7]["problems"], 0, "{}", results[7]);
+    assert!(
+        results[7]["checked"]
+            .as_str()
+            .unwrap()
+            .ends_with("in light and dark"),
+        "{}",
+        results[7]
     );
 
     tokio::task::spawn_blocking(move || {
