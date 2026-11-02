@@ -703,6 +703,13 @@ async fn run_task_with_evidence_inner(
     let mut turn = 0;
     let mut action_counts = std::collections::HashMap::new();
     let mut reaction_due = false;
+    // Screenshots this run's model may see, when it reads images (none otherwise).
+    let mut recent_images =
+        crate::vision::RecentImages::new(if crate::providers::accepts_images(llm.model()) {
+            crate::vision::KEPT_IMAGES
+        } else {
+            0
+        });
     while turn < policy.total_turns {
         turn += 1;
         check_stopped(&stopped, &events).await?;
@@ -939,13 +946,24 @@ async fn run_task_with_evidence_inner(
         );
         previous_size = estimated_tokens(&messages);
         usage_sink.store(0, Ordering::SeqCst);
+        // The latest screenshots go with this request only; the history keeps their text.
+        let (request_messages, attached) = recent_images.request(&messages);
+        if attached.images > 0 {
+            crate::diagnostics::emit(
+                "vision",
+                "images_sent",
+                "info",
+                serde_json::json!({"model": llm.model(), "image_count": attached.images, "bytes": attached.bytes}),
+            );
+        }
+        let image_tokens = attached.images * crate::calibration::IMAGE_TOKENS;
         let (text, calls) = match crate::context_metrics::with_usage_sink(
             usage_sink.clone(),
             SENT_BACK_REPLY.scope(
                 sent_back.clone(),
                 request_answer(
                     &llm,
-                    &messages,
+                    &request_messages,
                     if reacting { &[] } else { &llm_tools },
                     &events,
                     &stopped,
@@ -957,7 +975,9 @@ async fn run_task_with_evidence_inner(
             Ok(answer) => {
                 sent_back = None;
                 overflow_retried = false;
-                let raw_request = previous_size.saturating_add(schema_tokens);
+                let raw_request = previous_size
+                    .saturating_add(schema_tokens)
+                    .saturating_add(image_tokens);
                 let reported = usage_sink.load(Ordering::SeqCst);
                 let sample = calibration_sample(&mut calibration, raw_request, reported);
                 last_reported_input = (reported > 0).then_some(reported);
@@ -1416,6 +1436,22 @@ async fn run_task_with_evidence_inner(
                 && serde_json::from_str::<serde_json::Value>(&result.function.arguments)
                     .is_ok_and(|value| value["success"] == true)
         });
+        // Screenshots the tool kept for this model join the next requests (see `vision`).
+        for result in &results {
+            if result.function.name != "browser_screenshot" {
+                continue;
+            }
+            let Some(path) = crate::vision::attached_path(&result.function.arguments) else {
+                continue;
+            };
+            if let Some(image) = crate::vision::copy_of(&path) {
+                let note = crate::prompts::fill(
+                    crate::prompts::RUNTIME_SCREENSHOT_IMAGE,
+                    &[("path", &path)],
+                );
+                recent_images.push(&result.id, note, image);
+            }
+        }
         messages.push(ChatMessage {
             role: ChatRole::Assistant,
             message_type: MessageType::ToolUse(delivered_calls),

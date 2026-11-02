@@ -680,6 +680,12 @@ impl CompatibleProvider {
                 self.model
             )));
         }
+        if has_images(messages) && !accepts_images(&self.model) {
+            return Err(LLMError::invalid_request(format!(
+                "Model '{}' cannot read images; screenshots go only to models that do",
+                self.model
+            )));
+        }
         if self.protocol() == Protocol::Gemini {
             return self.gemini_request(messages, tools, stream, sampling);
         }
@@ -696,7 +702,10 @@ impl CompatibleProvider {
         } else {
             serde_json::to_value(WireChatRequest {
                 model: self.wire_model(),
-                messages: to_wire_messages(messages)?,
+                messages: to_wire_messages(messages)?
+                    .into_iter()
+                    .map(chat_message_value)
+                    .collect::<Result<_, _>>()?,
                 stream,
                 reasoning_effort: self.reasoning_effort.as_deref(),
                 max_tokens: None,
@@ -1174,7 +1183,10 @@ impl CompletionProvider for CompatibleProvider {
         let body = WireChatRequest {
             reasoning_effort: self.reasoning_effort.as_deref(),
             model: self.wire_model(),
-            messages: to_wire_messages(std::slice::from_ref(&message))?,
+            messages: to_wire_messages(std::slice::from_ref(&message))?
+                .into_iter()
+                .map(chat_message_value)
+                .collect::<Result<_, _>>()?,
             stream: false,
             max_tokens: request.max_tokens,
             temperature: request.temperature,

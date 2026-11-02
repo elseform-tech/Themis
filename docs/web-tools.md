@@ -105,7 +105,7 @@ without its sandbox, the only way it runs there.
 | `browser_open` | Opens a URL (optionally in a new tab) |
 | `browser_navigate` | Back, forward or reload |
 | `browser_snapshot` | Reads the page again (or one element's part) |
-| `browser_click` | Clicks an element by ref, or a point of the visible page by `x`/`y` in CSS pixels of the visible page (a canvas, map or game; a point outside the page is refused). Models get text only, so screenshots are for the person, not for the model to look at; `double` for a double-click |
+| `browser_click` | Clicks an element by ref, or a point of the visible page by `x`/`y` in CSS pixels of the visible page (a canvas, map or game; a point outside the page is refused). A model that reads text only gets no picture, so its screenshots are for the person, not for it to look at (see [Screenshots for models that read images](#screenshots-for-models-that-read-images)); `double` for a double-click |
 | `browser_type` | Types into a field (`clear` first, `submit` with Enter) |
 | `browser_select` | Chooses `<select>` options by value or label |
 | `browser_press` | Presses a key: `Enter`, `Escape`, `Tab`, arrows, letters, `Control+a`; `hold_ms` keeps it down (up to 5 s) for games |
@@ -194,7 +194,7 @@ submissions, and ask the user to sign in in the Browser tab when a login is need
 
 | Tool | Does |
 | --- | --- |
-| `browser_screenshot` | Saves a PNG of the visible page, the whole page (`full_page`, up to 16,384 px tall) or one element (`ref`) and returns its path |
+| `browser_screenshot` | Saves a PNG of the visible page, the whole page (`full_page`, up to 16,384 px tall) or one element (`ref`) and returns its path; a model that reads images also gets the picture |
 | `browser_record` | `start` records the current tab (default 30 s, at most 120 s); `stop` saves an H.264 MP4 and returns its path and length |
 | `attach_file` | Shows images, videos and PDFs from the project under the reply: `files: [{path, caption?}]`, at most 12 per reply, 200 MB each |
 
@@ -222,6 +222,32 @@ the same way. While anything records, a red line above the page reads "Recording
 0:12 · started by you · stops at 2:00" with **Stop**, the page has a red frame, and the
 thread header shows a red pill with the time on every Workspace tab and with Workspace
 closed; the pill opens the Browser tab.
+
+### Screenshots for models that read images
+
+A model reads images when the models.dev catalog lists `image` among its input
+modalities (for example `muse-spark-1.3-contributor` on OpenCode Go;
+`iceman-contributor-free` is text only), or when `models.<id>.images` in
+runtime.jsonc says so; a model the catalog does not describe reads text only. With
+**Settings › Browser › Show screenshots to models that read images** on
+(`browser.screenshots_to_model`, the default), such a model gets `browser_screenshot`
+described as giving it the picture, with no advice on when to take one: it decides.
+Each screenshot it takes also reaches it as a JPEG the browser scales to at most
+1,280 pixels on its longest side (at most 1.5 MB; a larger one goes as text, and the
+result says so), in a user message right after the tool result, since
+OpenAI-compatible APIs take no image in a tool-role message (Anthropic Messages gets
+it inside the tool-result turn; Gemini as inline data). Each request carries only the
+latest two screenshots; older ones, and any a checkpoint folded away, go back as their
+text result, so a long run never resends every picture. The copies live in memory only
+(the latest eight), never in transcripts, checkpoints or summaries; the PNG saved for
+the person is unchanged.
+
+The goal check gets the turn's latest two screenshots the same way when its model
+(`goal.check_model`, else the chat's) reads images. A model that reads text only, or
+the switch turned off, keeps the text result and description it always had; a request
+holding an image is refused for a model that cannot read it. Diagnostics record
+`vision`/`images_sent` and `goal`/`check_images_sent` with the model, image count and
+bytes, never the image.
 
 ## Permissions (Settings › Browser)
 

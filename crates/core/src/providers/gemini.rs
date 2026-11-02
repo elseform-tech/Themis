@@ -123,6 +123,15 @@ pub(super) fn gemini_body(
             )
         } else if message.role == "assistant" {
             ("model", model_parts(message.content, message.tool_calls)?)
+        } else if let Some(image) = &message.image {
+            let text = message.content.clone().unwrap_or_default();
+            (
+                "user",
+                vec![
+                    json!({"text": text}),
+                    json!({"inlineData": {"mimeType": image.mime, "data": image.data}}),
+                ],
+            )
         } else {
             let text = message.content.unwrap_or_default();
             ("user", vec![json!({"text": text})])

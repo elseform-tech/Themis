@@ -848,6 +848,8 @@ export interface BrowserSettings {
   show_secrets: boolean;
   downloads_directory?: string;
   open_workspace: boolean;
+  /** Screenshots the agent takes also go to its model when the model reads images. */
+  screenshots_to_model: boolean;
 }
 
 export interface BrowserSettingsView {

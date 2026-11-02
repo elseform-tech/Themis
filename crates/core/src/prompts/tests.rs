@@ -71,6 +71,11 @@ const ALL: &[(&str, &str, &[&str])] = &[
     (GOAL_CHECK_SYSTEM, "goal-check-system", &[]),
     (GOAL_CHECK_ADDED, "goal-check-added", &["requests"]),
     (
+        GOAL_CHECK_SCREENSHOTS,
+        "goal-check-screenshots",
+        &["index", "count"],
+    ),
+    (
         GOAL_CHECK_USER,
         "goal-check-user",
         &["goal", "answer", "evidence"],
@@ -280,6 +285,22 @@ const ALL: &[(&str, &str, &[&str])] = &[
         &[],
     ),
     (TOOL_SCREENSHOT_NOTE, "tool-screenshot-note", &[]),
+    (TOOL_SCREENSHOT_SEEN_NOTE, "tool-screenshot-seen-note", &[]),
+    (
+        TOOL_SCREENSHOT_UNATTACHED_NOTE,
+        "tool-screenshot-unattached-note",
+        &[],
+    ),
+    (
+        TOOL_SCREENSHOT_SEEING_DESCRIPTION,
+        "tool-screenshot-seeing-description",
+        &[],
+    ),
+    (
+        RUNTIME_SCREENSHOT_IMAGE,
+        "runtime-screenshot-image",
+        &["path"],
+    ),
     (TOOL_SHELL_ARGS_INVALID, "tool-shell-args-invalid", &[]),
     (TOOL_BROWSER_UNTRUSTED, "tool-browser-untrusted", &[]),
     (TOOL_DEVTOOLS_PAUSED, "tool-devtools-paused", &[]),

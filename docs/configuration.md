@@ -275,6 +275,7 @@ project content, so a cloned repository's guidance reaches the agent, but it nev
 | `browser.show_secrets` | Boolean, default `false`: show cookie values, auth headers and token-like values to the agent; projects may only set `false` |
 | `browser.downloads_directory` | Optional absolute folder for downloads; user file only. Unset: the system Downloads folder |
 | `browser.open_workspace` | Boolean, default `false`: open Workspace on the Browser tab when the agent starts browsing (otherwise the chat's overview box shows a live preview); user file only |
+| `browser.screenshots_to_model` | Boolean, default `true`: when the run's model reads images (`models.<id>.images`, else the models.dev catalog), a `browser_screenshot` it takes also reaches it as an image, at most 1,280 pixels on the longest side and 1.5 MB, in a user message right after the tool result; each request carries only the latest two, older ones go as their text result. The goal check's model gets the turn's latest two the same way when it reads images. `false`, or a model that reads text only, keeps the text result. Projects may only set `false` |
 
 `prompt_file` supplements the built-in compaction guidance; it does not replace
 the compaction algorithm. It resolves within the directory of the configuration
@@ -374,6 +375,7 @@ Arrays replace earlier arrays, so the list is the user file's. Provenance report
 | `models.<id>.output_tokens` | 256–1,000,000; caps the model's output limit, never raises it |
 | `models.<id>.reasoning_effort` | `none`, `minimal`, `low`, `medium`, `high`, `xhigh` or `max`: the effort when the chat chose none. An OpenCode Go model must offer it (a run on that model fails otherwise); a configured provider's model receives it as `reasoning_effort` |
 | `models.<id>.thinking` | `true` or `false`, for a model whose catalog lists a thinking switch: `false` sends thinking disabled instead of turning it on. A run on a model without a switch fails |
+| `models.<id>.images` | `true` or `false`: whether the model reads images, so a browser screenshot it takes reaches it (see `browser.screenshots_to_model`). Unset follows the models.dev catalog (`image` among the model's input modalities); a model the catalog does not describe, such as a configured provider's, reads text only until this says `true` |
 
 `models` keys may be a bare id (`glm-5.3`, or `qwen3-coder` for every provider
 offering it: a bare key applies to that id from every provider) or

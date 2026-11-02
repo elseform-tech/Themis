@@ -10,13 +10,32 @@ pub(super) fn messages_body(
 ) -> Result<serde_json::Value, LLMError> {
     use serde_json::json;
     let mut system = Vec::new();
-    let mut input = Vec::new();
+    let mut input: Vec<serde_json::Value> = Vec::new();
     for message in to_wire_messages(messages)? {
         if message.role == "system" {
             system.push(message.content.unwrap_or_default());
             continue;
         }
         let mut content = Vec::new();
+        if let Some(image) = &message.image {
+            // The image joins the user turn holding the tool results it follows (a tool result
+            // turn may carry more blocks after its results), else starts its own user turn.
+            let blocks = [
+                json!({"type": "text", "text": message.content.as_deref().unwrap_or_default()}),
+                json!({"type": "image", "source": {"type": "base64", "media_type": image.mime, "data": image.data}}),
+            ];
+            match input.last_mut() {
+                Some(last) if last["role"] == "user" => {
+                    if let Some(known) = last["content"].as_array_mut() {
+                        known.extend(blocks);
+                        continue;
+                    }
+                }
+                _ => {}
+            }
+            input.push(json!({"role": "user", "content": blocks}));
+            continue;
+        }
         if let Some(id) = message.tool_call_id {
             content.push(json!({"type": "tool_result", "tool_use_id": id, "content": message.content.unwrap_or_default()}));
         } else {

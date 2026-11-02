@@ -169,10 +169,17 @@ fn serialized_len(message: &ChatMessage) -> usize {
 const CACHE_LIMIT: usize = 8192;
 thread_local! { static SIZE_CACHE: RefCell<HashMap<u64, usize>> = RefCell::new(HashMap::new()); }
 
-/// Raw estimate of one message: serialized bytes / 4 plus 16 per message.
-/// Unchanged messages are measured once; the cache keys on content, so
-/// edited messages always re-measure.
+/// What one image costs a model, whatever its bytes: a screenshot at most 1,280 pixels on
+/// its longest side is about 1,100–1,600 tokens at the common providers.
+pub const IMAGE_TOKENS: usize = 1600;
+
+/// Raw estimate of one message: serialized bytes / 4 plus 16 per message; an image counts
+/// [`IMAGE_TOKENS`] plus its text, never its bytes. Unchanged messages are measured once;
+/// the cache keys on content, so edited messages always re-measure.
 pub fn message_tokens(message: &ChatMessage) -> usize {
+    if matches!(message.message_type, MessageType::Image(_)) {
+        return message.content.len().div_ceil(4) + 16 + IMAGE_TOKENS;
+    }
     let Some(key) = fingerprint(message) else {
         return serialized_len(message).div_ceil(4) + 16;
     };
@@ -343,6 +350,20 @@ mod tests {
                 assert_eq!(message_tokens(message), expected);
             }
         }
+    }
+
+    #[test]
+    fn an_image_counts_a_fixed_cost_not_its_bytes() {
+        let image = |bytes: usize| ChatMessage {
+            role: ChatRole::User,
+            message_type: MessageType::Image((
+                autoagents::llm::chat::ImageMime::JPEG,
+                vec![7; bytes],
+            )),
+            content: "shot".into(),
+        };
+        assert_eq!(message_tokens(&image(10)), 1 + 16 + IMAGE_TOKENS);
+        assert_eq!(message_tokens(&image(500_000)), message_tokens(&image(10)));
     }
 
     #[test]

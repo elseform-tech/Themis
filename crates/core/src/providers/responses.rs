@@ -100,7 +100,13 @@ pub(super) fn responses_body(
                     input.extend(once(kept.items));
                 }
             }
-            if let Some(content) = message.content {
+            if let Some(image) = &message.image {
+                // An image goes as an input_image part beside its text, in a user message.
+                input.push(serde_json::json!({"role":"user", "content":[
+                    {"type":"input_text","text":message.content.as_deref().unwrap_or_default()},
+                    {"type":"input_image","image_url":image.data_url()},
+                ]}));
+            } else if let Some(content) = message.content {
                 input.push(serde_json::json!({"role":message.role, "content":content}));
             }
             let calls = message.tool_calls.unwrap_or_default();
