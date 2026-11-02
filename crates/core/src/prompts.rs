@@ -129,6 +129,9 @@ pub const GOAL_CHECK_SYSTEM: &str = include_str!("../builtins/prompts/goal-check
 pub const GOAL_CHECK_USER: &str = include_str!("../builtins/prompts/goal-check-user.md");
 /// Appended to the goal check's input when the user added requests while the goal ran.
 pub const GOAL_CHECK_ADDED: &str = include_str!("../builtins/prompts/goal-check-added.md");
+/// Text with each screenshot the goal check sees; `{{index}}`, `{{count}}`.
+pub const GOAL_CHECK_SCREENSHOTS: &str =
+    include_str!("../builtins/prompts/goal-check-screenshots.md");
 /// Active-goal context appended to every run in a chat with a running goal; `{{goal}}`.
 pub const GOAL_CONTEXT: &str = include_str!("../builtins/prompts/goal-context.md");
 /// Message that starts a goal turn; `{{goal_turn_marker}}`, `{{turn}}`, `{{goal}}`, `{{note}}`.
@@ -354,6 +357,18 @@ pub const TOOL_SENSITIVE_DENIED: &str =
     include_str!("../builtins/prompts/tool-sensitive-denied.md");
 /// Note on built-in browser page snapshots.
 pub const TOOL_SCREENSHOT_NOTE: &str = include_str!("../builtins/prompts/tool-screenshot-note.md");
+/// Note on a screenshot whose image goes to a model that reads images.
+pub const TOOL_SCREENSHOT_SEEN_NOTE: &str =
+    include_str!("../builtins/prompts/tool-screenshot-seen-note.md");
+/// Note on a screenshot too large to show a model that reads images.
+pub const TOOL_SCREENSHOT_UNATTACHED_NOTE: &str =
+    include_str!("../builtins/prompts/tool-screenshot-unattached-note.md");
+/// `browser_screenshot`'s description for a model that reads images.
+pub const TOOL_SCREENSHOT_SEEING_DESCRIPTION: &str =
+    include_str!("../builtins/prompts/tool-screenshot-seeing-description.md");
+/// Text with a screenshot image in a request; `{{path}}`.
+pub const RUNTIME_SCREENSHOT_IMAGE: &str =
+    include_str!("../builtins/prompts/runtime-screenshot-image.md");
 pub const TOOL_SHELL_ARGS_INVALID: &str =
     include_str!("../builtins/prompts/tool-shell-args-invalid.md");
 pub const TOOL_BROWSER_UNTRUSTED: &str =

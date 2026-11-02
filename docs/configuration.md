@@ -265,6 +265,7 @@ combined, and do not grant permissions. There is no implicit instruction globbin
 | `browser.show_secrets` | Boolean, default `false`: show cookie values, auth headers and token-like values to the agent; projects may only set `false` |
 | `browser.downloads_directory` | Optional absolute folder for downloads; user file only. Unset: the system Downloads folder |
 | `browser.open_workspace` | Boolean, default `false`: open Workspace on the Browser tab when the agent starts browsing (otherwise the chat's overview box shows a live preview); user file only |
+| `browser.screenshots_to_model` | Boolean, default `true`: when the run's model reads images (`models.<id>.images`, else the models.dev catalog), a `browser_screenshot` it takes also reaches it as an image, at most 1,280 pixels on the longest side and 1.5 MB, in a user message right after the tool result; each request carries only the latest two, older ones go as their text result. The goal check's model gets the turn's latest two the same way when it reads images. `false`, or a model that reads text only, keeps the text result. Projects may only set `false` |
 
 `prompt_file` supplements the built-in compaction guidance; it does not replace
 the compaction algorithm. It resolves within the directory of the configuration

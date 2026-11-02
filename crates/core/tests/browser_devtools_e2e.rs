@@ -51,6 +51,7 @@ fn tools_for(
             chat: Arc::clone(chat),
             cancel: None,
             media: Some(Arc::new(TempMedia(media.to_path_buf()))),
+            screenshots: Default::default(),
         },
     )
 }

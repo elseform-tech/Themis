@@ -106,6 +106,9 @@
     // "downloads_directory": "/Users/you/Downloads",
     // Open Workspace on the Browser tab when the agent starts browsing.
     "open_workspace": false,
+    // A screenshot the agent takes also goes to its model when the model reads images
+    // (and to the goal check's model when that one does). false: text result only.
+    "screenshots_to_model": true,
   },
 
   // ─── WEB SEARCH (also in Settings › Web) ──────────────────────────────────────────────

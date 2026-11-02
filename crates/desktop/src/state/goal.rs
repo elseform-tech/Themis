@@ -673,7 +673,7 @@ impl AppState {
         let thread_id = thread_id.to_owned();
         tokio::spawn(async move {
             let planned = match state.goal_check_config(&thread_id).await {
-                Ok((config, catalog)) => themis_core::providers::with_catalog_limits(
+                Ok((config, catalog, _)) => themis_core::providers::with_catalog_limits(
                     &catalog,
                     themis_core::context_metrics::with_usage_recorder(
                         state.usage_recorder(&thread_id, ""),
@@ -756,7 +756,7 @@ impl AppState {
                 if wait.is_none() || goal.status != GoalStatus::Running || goal.checking || idle {
                     continue;
                 }
-                let (evidence, _, through, spoiled) =
+                let (evidence, _, through, spoiled, _) =
                     state.turn_evidence(&thread_id, goal.checked_seq);
                 if spoiled || through == read_through || evidence.trim().is_empty() {
                     continue;
@@ -769,6 +769,7 @@ impl AppState {
                         &goal,
                         themis_core::prompts::GOAL_CHECK_MIDTURN,
                         &evidence,
+                        &[],
                     )
                     .await;
                 let Ok(verdict) = checked else {
@@ -842,7 +843,9 @@ impl AppState {
         (seconds > 0).then(|| Duration::from_secs(u64::from(seconds)))
     }
 
-    /// One request to the goal check, on its model, recorded as a goal check.
+    /// One request to the goal check, on its model, recorded as a goal check. The turn's
+    /// latest `screenshots` (saved paths, oldest first) go with it as images when the check's
+    /// model reads images and `browser.screenshots_to_model` is on.
     async fn run_goal_check(
         &self,
         thread_id: &str,
@@ -850,8 +853,35 @@ impl AppState {
         goal: &Goal,
         answer: &str,
         evidence: &str,
+        screenshots: &[String],
     ) -> Result<core_goal::GoalVerdict, String> {
-        let (config, catalog) = self.goal_check_config(thread_id).await?;
+        let (config, catalog, to_model) = self.goal_check_config(thread_id).await?;
+        let model = config.model.clone().unwrap_or_default();
+        let images: Vec<themis_core::vision::Image> =
+            if to_model && themis_core::providers::model_accepts_images(&catalog, &model) {
+                let start = screenshots
+                    .len()
+                    .saturating_sub(core_goal::MAX_CHECK_SCREENSHOTS);
+                screenshots[start..]
+                    .iter()
+                    .filter_map(|path| themis_core::vision::copy_of(path))
+                    .collect()
+            } else {
+                Vec::new()
+            };
+        if !images.is_empty() {
+            let _ = self.inner.diagnostics.append(
+                "goal",
+                "check_images_sent",
+                "info",
+                json!({
+                    "thread_id": thread_id,
+                    "model": model,
+                    "image_count": images.len(),
+                    "bytes": images.iter().map(|image| image.bytes.len()).sum::<usize>(),
+                }),
+            );
+        }
         // The same per-model routes and limits real runs use.
         themis_core::providers::with_catalog_limits(
             &catalog,
@@ -866,6 +896,7 @@ impl AppState {
                         &goal.proof,
                         answer,
                         evidence,
+                        &images,
                     ),
                 ),
             ),
@@ -1097,7 +1128,7 @@ impl AppState {
         }
         // A passing status line says so while the check reads the turn.
         self.update_goal(sink.as_ref(), &thread_id, |goal| goal.checking = true);
-        let (evidence, turn_files, through_seq, page_spoiled) =
+        let (evidence, turn_files, through_seq, page_spoiled, screenshots) =
             self.turn_evidence(&thread_id, goal.checked_seq);
         let changed_files = !turn_files.is_empty();
         self.update_goal(sink.as_ref(), &thread_id, |goal| {
@@ -1110,7 +1141,7 @@ impl AppState {
         });
         let checked_goal = goal.started_at;
         let verdict = self
-            .run_goal_check(&thread_id, &run_id, &goal, &answer, &evidence)
+            .run_goal_check(&thread_id, &run_id, &goal, &answer, &evidence, &screenshots)
             .await;
         let check_failed = verdict.is_err();
         self.update_goal(sink.as_ref(), &thread_id, |goal| goal.checking = false);
@@ -1434,10 +1465,16 @@ impl AppState {
     /// history position read through. History after `after_seq` is read in
     /// pages; only the newest evidence text is kept, but every item counts
     /// toward "changed files" and the position.
-    fn turn_evidence(&self, thread_id: &str, after_seq: i64) -> (String, Vec<String>, i64, bool) {
+    fn turn_evidence(
+        &self,
+        thread_id: &str,
+        after_seq: i64,
+    ) -> (String, Vec<String>, i64, bool, Vec<String>) {
         let mut spoiled = false;
         let mut evidence = String::new();
         let mut changed = Vec::new();
+        // The paths of the turn's latest screenshots, oldest first.
+        let mut screenshots = std::collections::VecDeque::new();
         let mut through = after_seq;
         while let Ok(page) =
             self.inner
@@ -1462,7 +1499,15 @@ impl AppState {
                             format!("$ {tool}: {summary}\n")
                         }
                     }
-                    ThreadEvent::ToolFinished { ok, output, .. } => {
+                    ThreadEvent::ToolFinished { tool, ok, output } => {
+                        if ok && tool == "browser_screenshot" {
+                            if let Some(path) = screenshot_path(&output) {
+                                screenshots.push_back(path);
+                                if screenshots.len() > core_goal::MAX_CHECK_SCREENSHOTS {
+                                    screenshots.pop_front();
+                                }
+                            }
+                        }
                         let output = clip_output(&output);
                         format!("{}{output}\n\n", if ok { "" } else { "(failed) " })
                     }
@@ -1500,7 +1545,7 @@ impl AppState {
                     .collect::<String>()
             );
         }
-        (evidence, changed, through, spoiled)
+        (evidence, changed, through, spoiled, screenshots.into())
     }
 
     /// The provider for the goal check (`goal.check_model`, else the chat's current model,
@@ -1513,6 +1558,7 @@ impl AppState {
         (
             themis_core::providers::ProviderConfig,
             Vec<themis_core::providers::GoModel>,
+            bool,
         ),
         String,
     > {
@@ -1535,7 +1581,7 @@ impl AppState {
             .provider_config_for(&runtime, &model, thread_id)
             .await?;
         let catalog = self.run_catalog(&runtime, &[model.as_str()]).await;
-        Ok((config, catalog))
+        Ok((config, catalog, runtime.browser.screenshots_to_model))
     }
 
     /// On start: goals that were running carry on (the cut-off turn is
@@ -1607,6 +1653,13 @@ impl AppState {
     }
 }
 
+/// Where a `browser_screenshot` result saved its PNG.
+fn screenshot_path(output: &str) -> Option<String> {
+    serde_json::from_str::<serde_json::Value>(output).ok()?["path"]
+        .as_str()
+        .map(str::to_owned)
+}
+
 /// A long command output without its middle, marked where it was cut.
 fn clip_output(output: &str) -> String {
     let count = output.chars().count();
@@ -1622,6 +1675,16 @@ fn clip_output(output: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_screenshot_result_names_its_saved_file() {
+        assert_eq!(
+            screenshot_path(r#"{"path":"/p/.themis/attachments/a/shot.png","width":1}"#).as_deref(),
+            Some("/p/.themis/attachments/a/shot.png")
+        );
+        assert_eq!(screenshot_path("browser_screenshot: no page is open"), None);
+        assert_eq!(screenshot_path(r#"{"path":7}"#), None);
+    }
 
     #[test]
     fn small_window_note_groups_the_token_count() {

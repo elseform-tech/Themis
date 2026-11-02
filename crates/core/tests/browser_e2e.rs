@@ -114,6 +114,7 @@ async fn the_agent_fills_a_form_reads_notes_and_navigates_in_a_real_browser() {
             chat: Arc::clone(&chat),
             cancel: None,
             media: Some(Arc::new(TempMedia(media_dir.path().to_path_buf()))),
+            screenshots: Default::default(),
         },
     );
     let tool = |name: &str| {
@@ -486,6 +487,7 @@ async fn the_agent_moves_the_mouse_and_reopening_a_page_reuses_its_tab() {
             chat: Arc::clone(&chat),
             cancel: None,
             media: None,
+            screenshots: Default::default(),
         },
     );
     let tool = |name: &str| tools.iter().find(|tool| tool.name() == name).unwrap();
@@ -559,6 +561,7 @@ document.addEventListener('mousedown', () => {
             chat: Arc::clone(&chat),
             cancel: None,
             media: None,
+            screenshots: Default::default(),
         },
     );
     let tool = |name: &str| tools.iter().find(|tool| tool.name() == name).unwrap();
@@ -662,6 +665,7 @@ requestAnimationFrame(draw);
             chat: Arc::clone(&chat),
             cancel: None,
             media: None,
+            screenshots: Default::default(),
         },
     );
     let tool = |name: &str| tools.iter().find(|tool| tool.name() == name).unwrap();
@@ -753,6 +757,7 @@ document.addEventListener('mousemove', e => { if (document.pointerLockElement) {
             chat: Arc::clone(&chat),
             cancel: None,
             media: None,
+            screenshots: Default::default(),
         },
     );
     let tool = |name: &str| tools.iter().find(|tool| tool.name() == name).unwrap();
@@ -809,6 +814,7 @@ document.addEventListener('keyup', e => { document.getElementById('out').textCon
             chat: Arc::clone(&chat),
             cancel: None,
             media: None,
+            screenshots: Default::default(),
         },
     );
     let tool = |name: &str| tools.iter().find(|tool| tool.name() == name).unwrap();
@@ -870,6 +876,7 @@ async fn the_agent_clicks_a_point_of_a_canvas_seen_in_a_screenshot() {
             chat: Arc::clone(&chat),
             cancel: None,
             media: None,
+            screenshots: Default::default(),
         },
     );
     let tool = |name: &str| tools.iter().find(|tool| tool.name() == name).unwrap();

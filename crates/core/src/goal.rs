@@ -9,6 +9,9 @@ use autoagents::llm::chat::{ChatMessage, ChatRole, MessageType};
 use autoagents::llm::LLMProvider;
 use serde::{Deserialize, Serialize};
 
+/// Screenshots the goal check sees at most: the turn's latest.
+pub const MAX_CHECK_SCREENSHOTS: usize = 2;
+
 /// Runs the goal check with the provider `config` describes.
 pub async fn check_with_config(
     config: &crate::providers::ProviderConfig,
@@ -17,13 +20,25 @@ pub async fn check_with_config(
     proof: &[GoalRequirement],
     answer: &str,
     evidence: &str,
+    screenshots: &[crate::vision::Image],
 ) -> anyhow::Result<GoalVerdict> {
     let llm = crate::providers::resolve(config).await?;
-    check(llm.as_ref(), goal, added, proof, answer, evidence).await
+    check(
+        llm.as_ref(),
+        goal,
+        added,
+        proof,
+        answer,
+        evidence,
+        screenshots,
+    )
+    .await
 }
 
 /// Runs the goal check with `llm`: one request, retried once when the reply
-/// is unusable. An error means the check could not decide.
+/// is unusable. An error means the check could not decide. `screenshots` (the turn's,
+/// oldest first) go with it only when the check's model reads images, at most
+/// [`MAX_CHECK_SCREENSHOTS`] of the latest.
 pub async fn check(
     llm: &dyn LLMProvider,
     goal: &str,
@@ -31,20 +46,15 @@ pub async fn check(
     proof: &[GoalRequirement],
     answer: &str,
     evidence: &str,
+    screenshots: &[crate::vision::Image],
 ) -> anyhow::Result<GoalVerdict> {
     let (system, user) = check_prompt(goal, added, proof, answer, evidence);
-    let messages = [
-        ChatMessage {
-            role: ChatRole::System,
-            message_type: MessageType::Text,
-            content: system,
-        },
-        ChatMessage {
-            role: ChatRole::User,
-            message_type: MessageType::Text,
-            content: user,
-        },
-    ];
+    let screenshots = if crate::providers::accepts_images(llm.model()) {
+        screenshots
+    } else {
+        &[]
+    };
+    let messages = check_messages(system, user, screenshots);
     let mut last_error = anyhow::anyhow!("the goal check gave no usable answer");
     for _ in 0..2 {
         match llm.chat(&messages, None).await {
@@ -57,6 +67,42 @@ pub async fn check(
         }
     }
     Err(last_error)
+}
+
+/// The goal check's request: its instructions, the turn as data, then the turn's latest
+/// screenshots, each with a line saying which it is.
+pub fn check_messages(
+    system: String,
+    user: String,
+    screenshots: &[crate::vision::Image],
+) -> Vec<ChatMessage> {
+    let latest = &screenshots[screenshots.len().saturating_sub(MAX_CHECK_SCREENSHOTS)..];
+    let mut messages = vec![
+        ChatMessage {
+            role: ChatRole::System,
+            message_type: MessageType::Text,
+            content: system,
+        },
+        ChatMessage {
+            role: ChatRole::User,
+            message_type: MessageType::Text,
+            content: user,
+        },
+    ];
+    for (index, image) in latest.iter().enumerate() {
+        messages.push(ChatMessage {
+            role: ChatRole::User,
+            message_type: MessageType::Image((image.mime, image.bytes.clone())),
+            content: crate::prompts::fill(
+                crate::prompts::GOAL_CHECK_SCREENSHOTS,
+                &[
+                    ("index", &(index + 1).to_string()),
+                    ("count", &latest.len().to_string()),
+                ],
+            ),
+        });
+    }
+    messages
 }
 
 /// Lists what a goal asks for, keeping what `current` already found complete. An error leaves
@@ -690,6 +736,77 @@ mod tests {
             Failure::Transient
         );
         assert_eq!(classify_failure("agent run panicked: boom"), Failure::Other);
+    }
+
+    #[test]
+    fn the_check_sees_at_most_the_turns_latest_screenshots() {
+        let shot = |byte: u8| crate::vision::Image {
+            mime: autoagents::llm::chat::ImageMime::JPEG,
+            bytes: vec![byte; 3],
+        };
+        let none = check_messages("s".into(), "u".into(), &[]);
+        assert_eq!(none.len(), 2);
+        let messages = check_messages("s".into(), "u".into(), &[shot(1), shot(2), shot(3)]);
+        assert_eq!(messages.len(), 2 + MAX_CHECK_SCREENSHOTS);
+        let images: Vec<_> = messages[2..]
+            .iter()
+            .map(|message| match &message.message_type {
+                MessageType::Image((_, bytes)) => (bytes[0], message.content.clone()),
+                _ => panic!("an image"),
+            })
+            .collect();
+        assert_eq!(images[0].0, 2, "the oldest is dropped");
+        assert_eq!(images[1].0, 3);
+        assert!(images[0].1.contains("screenshot 1 of 2"), "{}", images[0].1);
+        assert!(images[1].1.contains("screenshot 2 of 2"));
+        assert_eq!(messages[1].content, "u");
+    }
+
+    /// A check model that reads text only never gets the screenshots; one that reads
+    /// images gets them in its request.
+    #[tokio::test]
+    async fn screenshots_reach_only_a_check_model_that_reads_images() {
+        use wiremock::matchers::method;
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "choices":[{"message":{"role":"assistant","content":"{\"verdict\":\"not_yet\",\"reason\":\"not yet\",\"next\":\"keep going\"}"},"finish_reason":"stop"}]
+            })))
+            .mount(&server)
+            .await;
+        let shots = [crate::vision::Image {
+            mime: autoagents::llm::chat::ImageMime::JPEG,
+            bytes: b"jpeg".to_vec(),
+        }];
+        for (images, expected) in [(true, true), (false, false)] {
+            let catalog = [crate::providers::GoModel {
+                id: "checker".into(),
+                protocol: Some(crate::providers::Protocol::ChatCompletions),
+                images,
+                ..Default::default()
+            }];
+            let llm = crate::providers::CompatibleProvider::go(
+                "k".into(),
+                "checker".into(),
+                Some(server.uri()),
+                None,
+            );
+            let verdict = crate::providers::with_catalog_limits(
+                &catalog,
+                check(&llm, "goal", &[], &[], "answer", "evidence", &shots),
+            )
+            .await
+            .unwrap();
+            assert_eq!(verdict.verdict, Verdict::NotYet);
+            let requests = server.received_requests().await.unwrap();
+            let body: serde_json::Value = requests.last().unwrap().body_json().unwrap();
+            assert_eq!(
+                body.to_string().contains("data:image/jpeg;base64,"),
+                expected,
+                "{body}"
+            );
+        }
     }
 
     #[test]

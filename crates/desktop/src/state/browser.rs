@@ -293,6 +293,24 @@ impl themis_core::browser::media::MediaSink for ProjectMedia {
     }
 }
 
+/// What a run's screenshots give its model: nothing with `browser.screenshots_to_model`
+/// off; the image when the model reads images; otherwise a kept copy for a goal check whose
+/// model may read them, while the run's model gets the text result as before.
+pub(super) fn screenshots_to_model(
+    browser: &themis_core::configuration::BrowserConfig,
+    catalog: &[themis_core::providers::GoModel],
+    model: &str,
+) -> themis_core::browser::tools::ScreenshotsToModel {
+    use themis_core::browser::tools::ScreenshotsToModel;
+    if !browser.screenshots_to_model {
+        ScreenshotsToModel::Off
+    } else if themis_core::providers::model_accepts_images(catalog, model) {
+        ScreenshotsToModel::Seen
+    } else {
+        ScreenshotsToModel::Kept
+    }
+}
+
 /// A saved file as the composer's attachments list holds it.
 fn attachment_value(path: &str, size: usize) -> Value {
     let name = std::path::Path::new(path)

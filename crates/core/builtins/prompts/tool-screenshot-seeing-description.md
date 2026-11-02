@@ -1,0 +1,1 @@
+Take a screenshot of the current page (or one element, or the whole page). It is saved as a PNG for the user, and you get the image too. Returns its path; to show it to the user, call attach_file with that path.

@@ -899,6 +899,9 @@ pub struct BrowserConfig {
     pub downloads_directory: Option<String>,
     /// Open Workspace on the Browser tab when the agent starts browsing.
     pub open_workspace: bool,
+    /// A screenshot the agent takes also goes to its model when the model reads images (and
+    /// to the goal check's, when that one does). Off, every model gets the text result only.
+    pub screenshots_to_model: bool,
 }
 impl Default for BrowserConfig {
     fn default() -> Self {
@@ -912,6 +915,7 @@ impl Default for BrowserConfig {
             show_secrets: false,
             downloads_directory: None,
             open_workspace: false,
+            screenshots_to_model: true,
         }
     }
 }
@@ -1003,7 +1007,12 @@ fn check_web_restriction(layer: &Value, origin: &str) -> Result<()> {
             "browser.{field} may only be set in the user runtime.jsonc, not the {origin} configuration"
         );
     }
-    for field in ["enabled", "developer_mode", "show_secrets"] {
+    for field in [
+        "enabled",
+        "developer_mode",
+        "show_secrets",
+        "screenshots_to_model",
+    ] {
         if let Some(value) = layer.pointer(&format!("/browser/{field}")) {
             ensure!(
                 value == &Value::Bool(false),
@@ -2114,7 +2123,8 @@ fn base_schema() -> Value {
                 }}},
                 "show_secrets":{"type":"boolean","default":false},
                 "downloads_directory":{"type":"string","maxLength":1024,"description":"Absolute folder for downloads; user file only"},
-                "open_workspace":{"type":"boolean","default":false}
+                "open_workspace":{"type":"boolean","default":false},
+                "screenshots_to_model":{"type":"boolean","default":true,"description":"Screenshots the agent takes also go to its model when the model reads images; projects may only set false"}
             }},
             "compaction":{"type":"object","additionalProperties":false,"properties":{
                 "timeout_seconds":{"type":"integer","minimum":1,"maximum":1800,"default":900},
@@ -2371,6 +2381,8 @@ mod tests {
         let resolved = resolve(None, None, None).unwrap().config.browser;
         // Workspace stays closed when the agent browses; the overview box previews it.
         assert!(resolved.developer_mode && !resolved.open_workspace && !resolved.show_secrets);
+        // Screenshots reach a model that reads images unless the person turns it off.
+        assert!(resolved.screenshots_to_model);
         assert_eq!(resolved.permissions.debugging, SiteAccess::Block);
         assert_eq!(resolved.site_exceptions.len(), STARTER_BLOCKED_SITES.len());
         // The user's list replaces the starter list, so entries can be removed.
@@ -2393,12 +2405,21 @@ mod tests {
         assert_eq!(resolved.site_restrictions[0].site, "admin.example.com");
         assert_eq!(resolved.permissions.downloads, SiteAccess::Block);
         assert!(!resolved.developer_mode);
+        let off = r#"{"browser":{"screenshots_to_model":false}}"#;
+        assert!(
+            !resolve(Some(user), Some(off), None)
+                .unwrap()
+                .config
+                .browser
+                .screenshots_to_model
+        );
         // It may not loosen anything.
         for loosen in [
             r#"{"browser":{"permissions":{"debugging":"allow"}}}"#,
             r#"{"browser":{"site_exceptions":[{"site":"paypal.com","browsing":"allow"}]}}"#,
             r#"{"browser":{"developer_mode":true}}"#,
             r#"{"browser":{"show_secrets":true}}"#,
+            r#"{"browser":{"screenshots_to_model":true}}"#,
             r#"{"browser":{"downloads_directory":"/tmp"}}"#,
             r#"{"browser":{"open_workspace":true}}"#,
             r#"{"browser":{"site_restrictions":[]}}"#,
