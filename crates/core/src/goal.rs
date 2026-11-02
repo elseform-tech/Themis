@@ -255,10 +255,15 @@ impl GoalRequirement {
     }
 }
 
-/// How alike two wordings must be to count as the same rule.
+/// How much of two wordings must be shared for them to count as the same rule.
 const SAME_RULE_SHARE: f32 = 0.6;
+/// A wording this many words or more, with nearly all of them in the other, is the same rule put
+/// more briefly.
+const SHORTER_WORDING_WORDS: usize = 4;
+const SHORTER_WORDING_SHARE: f32 = 0.8;
 
-/// Whether two wordings say the same thing: most of their words are shared.
+/// Whether two wordings say the same thing: most of their words are shared, or one is the other put
+/// more briefly.
 fn same_item(one: &str, other: &str) -> bool {
     let words = |text: &str| -> std::collections::HashSet<String> {
         text.split(|c: char| !c.is_alphanumeric())
@@ -267,32 +272,33 @@ fn same_item(one: &str, other: &str) -> bool {
             .collect()
     };
     let (one, other) = (words(one), words(other));
+    let shared = one.intersection(&other).count() as f32;
     let all = one.union(&other).count();
-    all > 0 && one.intersection(&other).count() as f32 / all as f32 >= SAME_RULE_SHARE
+    let shorter = one.len().min(other.len());
+    (all > 0 && shared / all as f32 >= SAME_RULE_SHARE)
+        || (shorter >= SHORTER_WORDING_WORDS && shared / shorter as f32 >= SHORTER_WORDING_SHARE)
 }
 
-/// A check's list, with any rule it left out put back. Only the checklist refresh, which reads the
-/// goal and the person's requests, can drop a rule; a check that forgets one mustn't lose it.
+/// A check's list, with any rule it left out put back so it stays in sight. Only the checklist
+/// refresh, which reads the goal and the person's requests, can drop a rule. A rule put back holds
+/// nothing, because only what the check just said may hold a goal: a hold nobody restates could
+/// never be cleared.
 fn keep_rules(earlier: &[GoalRequirement], now: Vec<GoalRequirement>) -> Vec<GoalRequirement> {
     let lost: Vec<GoalRequirement> = earlier
         .iter()
         .filter(|old| old.is_rule() && !now.iter().any(|item| same_item(&item.what, &old.what)))
-        .cloned()
+        .map(|old| GoalRequirement {
+            pending: false,
+            ..old.clone()
+        })
         .collect();
     now.into_iter().chain(lost).collect()
 }
 
-/// A verdict after putting back the rules its list left out, one of which may hold the goal.
+/// A verdict after putting back the rules its list left out.
 fn with_rules_kept(mut verdict: GoalVerdict, earlier: &[GoalRequirement]) -> GoalVerdict {
-    if verdict.requirements.is_empty() {
-        return verdict;
-    }
-    verdict.requirements = keep_rules(earlier, std::mem::take(&mut verdict.requirements));
-    if verdict.verdict == Verdict::Reached {
-        if let Some(open) = verdict.requirements.iter().find(|item| item.holds_goal()) {
-            verdict.reason = holding_reason(open);
-            verdict.verdict = Verdict::NotYet;
-        }
+    if !verdict.requirements.is_empty() {
+        verdict.requirements = keep_rules(earlier, std::mem::take(&mut verdict.requirements));
     }
     verdict
 }
@@ -1071,13 +1077,44 @@ mod tests {
         let now = vec![requirement("Board", true, "dragged"), rule("no build step")];
         let kept = keep_rules(&earlier, now);
         assert_eq!(kept.len(), 3, "{kept:?}");
-        assert!(kept[2].what.contains("code review") && kept[2].pending);
+        assert!(kept[2].what.contains("code review"));
+        assert!(
+            !kept[2].pending,
+            "only the check's latest word holds a goal"
+        );
         assert_eq!(
             kept.iter()
                 .filter(|item| item.what.eq_ignore_ascii_case("no build step"))
                 .count(),
             1
         );
+    }
+
+    /// Live: a check reworded a pending rule, the old wording came back still pending, and no later
+    /// check could clear it, so the goal never finished with nothing left to do.
+    #[test]
+    fn a_rule_the_check_left_out_cant_hold_the_goal() {
+        let mut old = rule("Do code review before finishing");
+        old.pending = true;
+        let verdict = parse_verdict(
+            r#"{"verdict":"reached","reason":"Done.","requirements":[
+            {"what":"Board works","proven":true,"how":"dragged a card"},
+            {"what":"A pr-review subagent reviews the two modules","kind":"rule"}]}"#,
+        )
+        .unwrap();
+        let verdict = with_rules_kept(verdict, &[old]);
+        assert_eq!(verdict.verdict, Verdict::Reached, "{}", verdict.reason);
+        assert_eq!(verdict.requirements.len(), 3);
+        assert!(verdict.requirements.iter().all(|item| !item.pending));
+    }
+
+    #[test]
+    fn a_shorter_wording_of_a_rule_is_the_same_rule() {
+        let earlier = vec![rule("Do code review before finishing")];
+        let now = vec![rule(
+            "Do code review before finishing and fix what it finds",
+        )];
+        assert_eq!(keep_rules(&earlier, now).len(), 1);
     }
 
     #[test]
