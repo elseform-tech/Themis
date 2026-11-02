@@ -24,3 +24,7 @@
 .themis-media-viewer-stage iframe { width: 100%; height: 72vh; border: 0; border-radius: 8px; background: #fff; }
 .themis-media-step { flex: none; display: grid; place-items: center; width: 44px; height: 44px; border: 0; border-radius: 50%; background: var(--themis-surface); color: var(--themis-text); cursor: pointer; }
 .themis-media-step:hover { background: var(--themis-raised); }
+/* A screenshot or recording step's output: a small thumbnail at its own shape; a tall page is cut, top first. */
+.themis-tool-media { margin: 6px 0 10px; }
+.themis-tool-media .themis-media-frame { width: 160px; height: auto; min-width: 0; max-height: 120px; aspect-ratio: 16 / 10; }
+.themis-tool-media .themis-media-frame img, .themis-tool-media .themis-media-frame video { width: 100%; max-width: none; height: 100%; object-fit: cover; object-position: top; }

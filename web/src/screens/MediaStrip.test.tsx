@@ -9,7 +9,7 @@ vi.mock("../lib/tauri", () => ({ attachmentFile: vi.fn(async (_thread: string, p
 const file = (name: string, kind: AttachedMedia["kind"] = "image", caption?: string): AttachedMedia => ({ path: `/p/.themis/attachments/${name}`, name, kind, caption });
 
 function renderStrip(files: AttachedMedia[], open = vi.fn()) {
-  render(<MediaGallery.Provider value={{ threadId: "t1", items: files, open }}><MediaStrip files={files} /></MediaGallery.Provider>);
+  render(<MediaGallery.Provider value={{ threadId: "t1", items: files, open, show: vi.fn() }}><MediaStrip files={files} /></MediaGallery.Provider>);
   return open;
 }
 

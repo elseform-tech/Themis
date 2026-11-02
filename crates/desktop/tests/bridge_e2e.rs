@@ -230,7 +230,10 @@ async fn scripted_write_file_run_finishes_and_shows_in_diff() {
     };
     assert_eq!(tool, "write_file");
     assert_eq!(*decision, ApprovalDecision::Once);
-    let ThreadEvent::ToolFinished { tool, ok, output } = events[4] else {
+    let ThreadEvent::ToolFinished {
+        tool, ok, output, ..
+    } = events[4]
+    else {
         panic!("expected tool_finished, got {:?}", events[4]);
     };
     assert_eq!(tool, "write_file");

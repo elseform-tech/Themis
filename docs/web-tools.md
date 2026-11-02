@@ -216,6 +216,16 @@ preview, two to four as tiles with their captions, five or more as three tiles a
 the viewer, which steps through every attached item of the chat with Previous/Next
 or the arrow keys and closes with Escape.
 
+**In the step.** Opening a `browser_screenshot` or `browser_record` step in the chat
+shows what it saved as a small thumbnail (160 px wide, its own shape; a tall page is
+cut at the top) with its size ("1280 × 800") under a screenshot, instead of the result
+the model reads. Clicking it opens the same viewer on that file alone; it is not
+counted among the reply's attached media. The app server puts the file on the step's
+`tool_finished` event as `media` (`path`, `kind` `image` or `video`, `width` and
+`height` when known), only when it is an existing image or video inside the project's
+`.themis/attachments`; clients never read the tool's output for it, and the event
+carries no image bytes.
+
 **In the Browser tab.** **Capture** saves the visible page and adds it to the message
 you are writing; **Record** starts a recording and, when you stop it, adds the video
 the same way. While anything records, a red line above the page reads "Recording

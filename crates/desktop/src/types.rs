@@ -181,6 +181,10 @@ pub enum ThreadEvent {
         tool: String,
         ok: bool,
         output: String,
+        /// The screenshot or recording a browser tool saved, so the chat shows it
+        /// instead of the raw result.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        media: Option<ToolMedia>,
     },
     ApprovalDecided {
         tool: String,
@@ -487,9 +491,12 @@ impl From<RunEvent> for ThreadEvent {
                 summary,
                 label: None,
             },
-            RunEvent::ToolCallFinished { tool, ok, output } => {
-                Self::ToolFinished { tool, ok, output }
-            }
+            RunEvent::ToolCallFinished { tool, ok, output } => Self::ToolFinished {
+                tool,
+                ok,
+                output,
+                media: None,
+            },
             RunEvent::ApprovalDecided { tool, decision } => Self::ApprovalDecided {
                 tool,
                 decision: ApprovalDecision::from(decision),
@@ -625,6 +632,21 @@ pub struct AttachedMedia {
     pub caption: Option<String>,
     /// `image`, `video` or `pdf`.
     pub kind: String,
+}
+
+/// A screenshot or recording a tool call saved (`ToolMedia` in types.ts):
+/// metadata only, never the file's bytes.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ToolMedia {
+    /// Absolute path inside the project's `.themis/attachments`.
+    pub path: String,
+    /// `image` or `video`.
+    pub kind: String,
+    /// Pixel size, when the tool reported it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub width: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub height: Option<u32>,
 }
 
 /// File change status (`DiffStatus` in types.ts).
@@ -1376,6 +1398,7 @@ mod tests {
                     tool: "shell".to_owned(),
                     ok: true,
                     output: "result".to_owned(),
+                    media: None,
                 },
                 json!({"kind": "tool_finished", "tool": "shell", "ok": true, "output": "result"}),
             ),
@@ -1455,6 +1478,7 @@ mod tests {
                 tool: "t".to_owned(),
                 ok: false,
                 output: "failed".to_owned(),
+                media: None,
             }
         );
         for (core, wire) in [

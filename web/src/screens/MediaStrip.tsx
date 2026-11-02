@@ -1,14 +1,15 @@
-import { createContext, useContext, useEffect, useState } from "react";
+import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
 import { Dialog } from "../components";
 import { attachmentFile } from "../lib/tauri";
-import type { AttachedMedia } from "../lib/types";
+import type { AttachedMedia, ToolMedia } from "../lib/types";
 import "./MediaStrip.css";
 
 /** Tiles shown before the rest fold into a "+N" tile. */
 const SHOWN = 3;
 
-/** Every media item of the chat's replies, so the viewer can step through all of them. */
-export const MediaGallery = createContext<{ threadId: string; items: AttachedMedia[]; open: (path: string) => void } | null>(null);
+/** Every media item of the chat's replies, so the viewer can step through all of them;
+ *  `show` opens the viewer on one file outside that list (a tool step's screenshot). */
+export const MediaGallery = createContext<{ threadId: string; items: AttachedMedia[]; open: (path: string) => void; show: (file: AttachedMedia) => void } | null>(null);
 
 function useMediaUrl(threadId: string, path: string) {
   const [url, setUrl] = useState("");
@@ -60,6 +61,32 @@ function MediaTile({ file }: { file: AttachedMedia }) {
           : file.kind === "pdf" ? <span className="themis-media-missing">PDF</span> : null}
       </span>
       <span className="themis-media-caption">{label(file)}</span>
+    </button>
+  );
+}
+
+/** What a screenshot or recording step saved, in its tool row: a small thumbnail with the
+ *  pixel size under it, opening the viewer on that file alone. Without a chat's gallery
+ *  (no viewer to open) it shows `children`, the plain output. */
+export function ToolMediaPreview({ media, children }: { media: ToolMedia; children: ReactNode }) {
+  const gallery = useContext(MediaGallery);
+  return gallery ? <ToolMediaThumb threadId={gallery.threadId} media={media} show={gallery.show} /> : <>{children}</>;
+}
+
+function ToolMediaThumb({ threadId, media, show }: { threadId: string; media: ToolMedia; show: (file: AttachedMedia) => void }) {
+  const { url, failed } = useMediaUrl(threadId, media.path);
+  const video = media.kind === "video";
+  const size = media.width && media.height ? `${media.width} × ${media.height}` : "";
+  const file: AttachedMedia = { path: media.path, name: media.path.split(/[\\/]/).pop() ?? "", kind: media.kind, caption: video ? "Recording" : "Screenshot" };
+  return (
+    <button type="button" className="themis-media-tile themis-tool-media" aria-label={video ? "Play recording" : "Open screenshot"} onClick={() => show(file)}>
+      <span className="themis-media-frame" style={size ? { aspectRatio: `${media.width} / ${media.height}` } : undefined}>
+        {failed ? <span className="themis-media-missing">Preview unavailable</span>
+          : url && !video ? <img src={url} alt="" />
+          : url && video ? <><video src={`${url}#t=0.1`} preload="metadata" muted playsInline aria-hidden="true" tabIndex={-1} /><span className="themis-media-play" aria-hidden="true"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z" /></svg></span></>
+          : null}
+      </span>
+      {size && <span className="themis-media-caption">{size}</span>}
     </button>
   );
 }
