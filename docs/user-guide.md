@@ -50,8 +50,9 @@ levels are listed.
 
 ## Projects, threads, runs
 
-- **Project actions → Open existing folder** opens an existing project. In Custom mode, non-Git
-  folders disable sending; YOLO allows runs (see [sandbox](sandbox.md)).
+- **Project actions → Open existing folder** opens an existing project. A folder without Git
+  chats as usual; in Custom mode the agent's changes there are refused (only reads
+  and integrations run), and YOLO allows them (see [sandbox](sandbox.md)).
 - The **+** beside a project starts a thread with your default provider and model.
   Threads share the selected project checkout; they do not automatically create
   separate branches or worktrees.
@@ -658,9 +659,10 @@ Entered keys stay in macOS Keychain until you forget them. Go also reads
 `OPENCODE_KEY` from the environment. Keys are not written to SQLite or settings.
 
 **Why is my project read-only?**
-Custom mode disables the desktop composer for non-Git folders. The shield
-remains available; selecting YOLO enables sending (with no approvals and no
-sandbox walls; only Themis' own settings stay protected).
+In a folder without Git, Custom mode lets you chat but refuses the agent's
+writes and commands (reads and integrations still run). Selecting YOLO in the
+shield allows them (with no approvals and no sandbox walls; only Themis' own
+settings stay protected).
 See [sandbox](sandbox.md) for backend policy and the limits of tool-level
 restrictions.
 

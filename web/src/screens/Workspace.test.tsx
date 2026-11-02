@@ -193,18 +193,18 @@ describe("Workspace journey", () => {
     await waitFor(() => expect(vi.mocked(bridge.getThreadHistory).mock.calls.filter(call => call[0] === "idle").length).toBe(2), { timeout: 5000 });
   }, 10000);
 
-  it("permits YOLO selection and sending in a non-Git project",async()=>{
-    const project={name:"NonGit QA",root:"/tmp/non-git-qa",is_git:false};
+  it("lets a Custom chat in a non-Git project send",async()=>{
+    // A project folder holding only .themis/ (no Git repository) still chats in
+    // Custom; the backend refuses its writes there, not the conversation.
+    const project={name:"ping",root:"/tmp/ping",is_git:false};
     const thread={id:"non-git-thread",title:"NonGit thread",provider:"go" as const,model:"test-model",running:false,worktree_path:null,branch:null,base_branch:null,recovered:false,skill_ids:[]};
     vi.mocked(bridge.getDefaultProject).mockResolvedValueOnce(project);
     vi.mocked(bridge.listThreads).mockResolvedValue([thread]);vi.mocked(bridge.getThread).mockResolvedValue(thread);
-    vi.mocked(bridge.setThreadApprovalMode).mockResolvedValueOnce({...thread,approval_mode:"yolo"});
     await mount();await act(async()=>fireEvent.click(screen.getByRole("button",{name:/^NonGit thread/})));
-    expect(screen.getByLabelText("Message")).toHaveAttribute("aria-disabled","true");
-    fireEvent.click(screen.getByLabelText("Permissions: Custom"));
-    expect(screen.getByRole("combobox",{name:"Approval mode"})).toBeEnabled();
-    await act(async()=>fireEvent.change(screen.getByRole("combobox",{name:"Approval mode"}),{target:{value:"yolo"}}));
+    expect(screen.getByLabelText("Permissions: Custom")).toBeInTheDocument();
     expect(screen.getByLabelText("Message")).toHaveAttribute("aria-disabled","false");
+    expect(screen.queryByText(/Start a new thread to continue/)).toBeNull();
+    expect(document.querySelector("[data-placeholder*='Start a new thread'],[aria-placeholder*='Start a new thread']")).toBeNull();
     fireEvent.input(screen.getByLabelText("Message"),{target:{textContent:"Inspect project"}});
     expect(screen.getByRole("button",{name:"Send"})).toBeEnabled();
     await act(async()=>fireEvent.click(screen.getByRole("button",{name:"Send"})));
