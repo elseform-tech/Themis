@@ -439,6 +439,20 @@ impl TranscriptStore {
         .collect()
     }
 
+    /// The chat's latest checkpoint summary, if it has one.
+    pub fn checkpoint_summary(&self, thread_id: &str) -> Option<String> {
+        let connection = self.connection.lock().unwrap_or_else(|e| e.into_inner());
+        connection
+            .query_row(
+                "SELECT summary FROM context_checkpoints WHERE thread_id=?1",
+                [thread_id],
+                |row| row.get(0),
+            )
+            .optional()
+            .ok()
+            .flatten()
+    }
+
     pub fn context(
         &self,
         thread_id: &str,

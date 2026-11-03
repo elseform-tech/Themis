@@ -402,6 +402,13 @@ impl AppState {
                 for item in &goal.evidence {
                     content.push_str(&format!("\n- {}: {}", item.requirement, item.proof));
                 }
+                // What the work ran into (the latest checkpoint), where its lessons are.
+                if let Some(summary) = self.inner.transcript.checkpoint_summary(&thread_id) {
+                    let notes: String = summary.chars().take(5000).collect();
+                    content.push_str(&format!(
+                        "\nNotes from the work (its latest checkpoint):\n{notes}"
+                    ));
+                }
                 self.spawn_memory_event(
                     Arc::clone(&sink),
                     (&thread_id, ""),
