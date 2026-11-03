@@ -93,8 +93,13 @@ the error quotes the browser's last few output lines.
 The browser runs headless with its own profile in app data
 (`browser/profiles/<project>/`): logins persist across a project's chats and never
 touch your own browser profile, Keychain or saved passwords. One browser serves a
-project; each chat has its own tabs (at most 8). Downloads are saved to the downloads folder (below). Discarding
-a chat closes its tabs; the browser exits when no chat of the project uses it.
+project; each chat has one page. A link or script that opens a new window loads its address in
+that page instead, and a window that never gets an address is closed after 3 seconds. At most 3
+chats keep their page open at once (`OPEN_PAGES`): opening one more closes the page of the chat
+used least recently, unless someone is watching, recording or acting in it, and that chat
+reopens it at the same address the next time it browses (the agent is told, and takes a new
+snapshot). Downloads are saved to the downloads folder (below). Discarding a chat closes its
+page; the browser exits when no chat of the project uses it.
 It never outlives Themis: if Themis crashes or is force-quit, a small guard
 process (macOS, Linux) or a kill-on-close job (Windows) ends the browser and its
 helpers within seconds. Run as root (as in many Linux containers), Chromium starts
@@ -102,7 +107,7 @@ without its sandbox, the only way it runs there.
 
 | Tool | Does |
 | --- | --- |
-| `browser_open` | Opens a URL (optionally in a new tab) |
+| `browser_open` | Opens a URL in the chat's page |
 | `browser_navigate` | Back, forward or reload |
 | `browser_snapshot` | Reads the page again (or one element's part) |
 | `browser_click` | Clicks an element by ref, or a point of the visible page by `x`/`y` in CSS pixels of the visible page (a canvas, map or game; a point outside the page is refused). A model that reads text only gets no picture, so its screenshots are for the person, not for it to look at (see [Screenshots for models that read images](#screenshots-for-models-that-read-images)); `double` for a double-click |
@@ -113,7 +118,6 @@ without its sandbox, the only way it runs there.
 | `browser_snapshot` with `layout` | Adds the page's structure, which the accessibility outline leaves out: visible containers, nested, with position, size and a selector the tools accept, at most 200 lines. Each canvas says `nothing drawn`, `blank` or `has drawing`, which needs no vision. A field's value is never read |
 | `browser_drag` | Presses the mouse at one place, moves to another and lets go. Each end is a ref or a point. Real input, for pages using native drag and drop and for pages listening to the mouse. `drag` in the result says what was pressed on, whether anything was dragged and where it let go; `browser_move` returns `under_mouse`. Elements with `draggable="true"` get refs even with no role. By hand: `browser_press` with `mouseDown` and `mouseUp` hold and release the button, and `browser_move` between them follows with it held. Tools that name an element also take a CSS selector or `text=Some text` |
 | `browser_scroll` | Scrolls the page or one element |
-| `browser_tabs` | Lists, switches or closes this chat's tabs |
 | `browser_check_looks` | Measures how the current page looks, without seeing it (below) |
 
 Every action waits for the page to settle (loaded after a navigation, network quiet
@@ -280,7 +284,7 @@ and each value is **Allow** (no prompt), **Ask** (an approval prompt) or **Block
 
 | Permission | Covers | Default |
 | --- | --- | --- |
-| Browsing | open, navigate, click, type, press, select, scroll, snapshot, screenshot, record, tabs | Allow |
+| Browsing | open, navigate, click, type, press, select, scroll, snapshot, screenshot, record | Allow |
 | Downloads | saving a file a page or an agent action downloads | Allow |
 | Debugging | the debugging tools (console, elements, network, debugger, storage, profiling) | Block |
 

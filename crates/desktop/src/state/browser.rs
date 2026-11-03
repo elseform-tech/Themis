@@ -236,24 +236,7 @@ impl AppState {
         Ok(ProjectMedia { root })
     }
 
-    /// The person switched to or closed a tab (1-based).
-    pub async fn browser_tab(
-        &self,
-        thread_id: &str,
-        action: &str,
-        tab: usize,
-    ) -> Result<(), String> {
-        if !matches!(action, "switch" | "close") {
-            return Err("action must be switch or close".into());
-        }
-        self.chat_browser(thread_id)
-            .await?
-            .tabs(action, Some(tab))
-            .await
-            .map(|_| ())
-    }
-
-    /// The DevTools page for the current tab, if one is open.
+    /// The DevTools page for the chat's page, if one is open.
     pub async fn browser_devtools_url(&self, thread_id: &str) -> Result<Option<String>, String> {
         Ok(match self.inner.browsers.existing(thread_id) {
             Some(chat) => chat.devtools_url().await,

@@ -1,4 +1,4 @@
-//! The agent's browser tools. Each acts on the chat's own tabs, approves per
+//! The agent's browser tools. Each acts on the chat's own page, approves per
 //! site (the current page's host, or the target of `browser_open`), waits
 //! while the person controls the browser, and answers with a fresh snapshot.
 
@@ -88,7 +88,6 @@ pub fn browser_tools(approvals: Arc<dyn ApprovalHook>, scope: BrowserScope) -> V
         Box::new(BrowserScroll { base: base.clone() }),
         Box::new(BrowserMove { base: base.clone() }),
         Box::new(BrowserDrag { base: base.clone() }),
-        Box::new(BrowserTabs { base: base.clone() }),
         Box::new(BrowserCheckLooks { base: base.clone() }),
     ];
     tools.extend(devtools::devtools(&base));
@@ -199,7 +198,7 @@ impl Base {
             if self.scope.permissions.decide(Permission::Browsing, &landed)
                 == crate::configuration::SiteAccess::Block
             {
-                let _ = chat.open("about:blank", false).await;
+                let _ = chat.open("about:blank").await;
                 return Err(tool_error(format!(
                     "{tool}: the page went to {landed}, which is blocked in Settings › Browser, so the tab was cleared. {}",
                     crate::tools::REFUSAL_NOTE
@@ -221,9 +220,6 @@ impl Base {
 pub struct OpenArgs {
     #[input(description = "Full http or https URL")]
     pub url: String,
-    #[serde(default)]
-    #[input(description = "Open in a new tab instead of the current one")]
-    pub new_tab: bool,
 }
 
 #[tool(
@@ -249,7 +245,7 @@ impl ToolRuntime for BrowserOpen {
                 Some(site.clone()),
                 format!("browser_open {target}"),
                 format!("opening {site}"),
-                |chat| async move { chat.open(&target, args.new_tab).await },
+                |chat| async move { chat.open(&target).await },
             )
             .await
     }
@@ -818,54 +814,6 @@ impl ToolRuntime for BrowserDrag {
     }
 }
 
-/// Arguments for `browser_tabs`.
-#[derive(Debug, Clone, Default, Serialize, Deserialize, ToolInput)]
-pub struct TabsArgs {
-    #[input(description = "list, switch or close")]
-    pub action: String,
-    #[serde(default)]
-    #[input(description = "Tab number from list (for switch and close)")]
-    pub tab: u64,
-}
-
-#[tool(
-    name = "browser_tabs",
-    description = "List this chat's browser tabs, switch to one, or close one (by its number from list).",
-    input = TabsArgs,
-)]
-struct BrowserTabs {
-    base: Base,
-}
-
-#[async_trait]
-impl ToolRuntime for BrowserTabs {
-    async fn execute(&self, args: Value) -> Result<Value, ToolCallError> {
-        let args: TabsArgs = parse_tool_args("browser_tabs", args)?;
-        let action = args.action.trim().to_ascii_lowercase();
-        let chat = Arc::clone(&self.base.scope.chat);
-        let risk = if action == "close" {
-            RiskLevel::Network
-        } else {
-            RiskLevel::Read
-        };
-        let site = chat
-            .current_site()
-            .await
-            .unwrap_or_else(|| BLANK_SITE.to_owned());
-        self.base.gate(
-            "browser_tabs",
-            &site,
-            format!("browser_tabs {action} on {site}"),
-            risk,
-        )?;
-        self.base.scope.chat.thaw_pages().await;
-        let tab = usize::try_from(args.tab).ok().filter(|tab| *tab > 0);
-        chat.tabs(&action, tab)
-            .await
-            .map_err(|e| tool_error(format!("browser_tabs: {e}")))
-    }
-}
-
 /// Arguments for `browser_screenshot`.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, ToolInput)]
 pub struct ScreenshotArgs {
@@ -1138,7 +1086,6 @@ mod tests {
             "browser_scroll" => parse_tool_args::<ScrollArgs>(tool, args).map(|_| ()),
             "browser_move" => parse_tool_args::<MoveArgs>(tool, args).map(|_| ()),
             "browser_drag" => parse_tool_args::<DragArgs>(tool, args).map(|_| ()),
-            "browser_tabs" => parse_tool_args::<TabsArgs>(tool, args).map(|_| ()),
             "browser_screenshot" => parse_tool_args::<ScreenshotArgs>(tool, args).map(|_| ()),
             "browser_record" => parse_tool_args::<RecordArgs>(tool, args).map(|_| ()),
             "browser_check_looks" => parse_tool_args::<CheckLooksArgs>(tool, args).map(|_| ()),
@@ -1189,7 +1136,7 @@ mod tests {
             let parsed = parses(tool.name(), Value::Object(args));
             assert!(parsed.is_ok(), "{}: {parsed:?} from {schema}", tool.name());
         }
-        assert_eq!(tools.len(), 15);
+        assert_eq!(tools.len(), 14);
         let click: ClickArgs = parse_tool_args("browser_click", json!({"ref": "e4"})).unwrap();
         assert_eq!(click.reference, "e4");
         let click: ClickArgs =

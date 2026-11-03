@@ -191,7 +191,6 @@ async fn cli_run_drives_the_browser_and_the_workspace_commands_see_it() {
         "browser_click",
         "browser_type",
         "browser_snapshot",
-        "browser_tabs",
         "browser_check_looks",
     ] {
         assert!(
