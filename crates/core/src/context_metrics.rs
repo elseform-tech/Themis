@@ -23,6 +23,8 @@ pub enum UsageKind {
     Summary,
     /// The separate goal-mode check after a goal turn.
     GoalCheck,
+    /// A memory job (the pass after a turn, or an idle consolidation) on the memory models.
+    Memory,
 }
 
 impl UsageKind {
@@ -31,6 +33,7 @@ impl UsageKind {
             Self::Answer => "answer",
             Self::Summary => "summary",
             Self::GoalCheck => "goal_check",
+            Self::Memory => "memory",
         }
     }
 }

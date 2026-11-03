@@ -1324,6 +1324,16 @@ pub async fn ask_once(
     Ok((reply.text().unwrap_or_default(), usage))
 }
 
+/// Whether a failed request was refused for its rate (HTTP 429), anywhere in its error chain.
+pub fn is_rate_limited(error: &anyhow::Error) -> bool {
+    error.chain().any(|cause| {
+        matches!(
+            cause.downcast_ref::<LLMError>(),
+            Some(LLMError::RateLimitError { .. })
+        )
+    })
+}
+
 fn compatible(config: &ProviderConfig) -> Result<CompatibleProvider> {
     require_api_key(config)?;
     let model = effective_model(config).unwrap_or_else(|| GO_DEFAULT_MODEL.to_owned());

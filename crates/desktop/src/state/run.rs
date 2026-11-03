@@ -130,6 +130,8 @@ impl AppState {
         task: String,
         policy: RunPolicy,
     ) -> Result<(), String> {
+        // Idle memory work waits for the app to be quiet again.
+        self.note_memory_activity();
         // What already differs from HEAD before this run, so the end of the run
         // can report only the files this turn changed.
         let changes_before = {
@@ -300,32 +302,23 @@ impl AppState {
             .await;
         let project_guidance =
             themis_core::configuration::project_guidance(&run_configuration, &snapshot.work_root);
-        // The global and this project's memory indexes, read once per run.
-        let memory_note = self.memory_note(run_configuration.memory.enabled, &snapshot.work_root);
+        // The global and this project's memory indexes and the memories relevant to this
+        // message, read once per run.
+        let memory_note = self.memory_note(
+            run_configuration.memory.enabled,
+            &snapshot.work_root,
+            snapshot.person_text.as_deref().unwrap_or(&task),
+        );
         // With memory off the main agent is told so, and doesn't promise to remember.
-        let mut memory_line = if !run_configuration.memory.enabled {
+        let memory_line = if !run_configuration.memory.enabled {
             format!("{}\n", themis_core::prompts::SYSTEM_MEMORY_OFF)
         } else if memory_note.is_empty() {
             String::new()
         } else {
             format!("{memory_note}\n")
         };
-        // `hooks.built_in.skills_at_start`: the short To-do (and, with memory on, Memory) skill.
-        let built_in = &run_configuration.hooks.built_in;
-        if built_in.skills_at_start {
-            memory_line.push_str(&themis_core::built_in_hooks::skills_text(
-                run_configuration.memory.enabled,
-            ));
-            memory_line.push('\n');
-            let _ = self.inner.diagnostics.append(
-                "hook",
-                "built_in",
-                "info",
-                json!({"thread_id": thread_id, "run_id": run_id, "hook": "skills_at_start", "event": "SessionStart"}),
-            );
-        }
-        let still_open_hook = built_in.still_open;
-        let save_reminder = built_in.save_reminder && run_configuration.memory.enabled;
+        // The context meter shows it as its own part, counted from the request that carries it.
+        let memory_block = memory_note.clone();
         skill_catalog = format!(
             "\n{}\n{project_guidance}\n{memory_line}{}{secrets_note}{}",
             themis_core::prompts::fill(
@@ -534,29 +527,12 @@ impl AppState {
             end: Arc::clone(&end_request),
             subagent: None,
         }));
-        // What the memory pass after this turn reads (`memory.auto`).
-        let memory_saved = Arc::new(AtomicBool::new(false));
+        // What the memory pass after this turn reads.
         let memory_turn = super::memory_auto::MemoryTurn {
             project_root: snapshot.work_root.clone(),
             config: run_configuration.clone(),
-            chat_model: snapshot.model.clone(),
             person: snapshot.person_text.clone().into_iter().collect(),
-            saved: Arc::clone(&memory_saved),
         };
-        // Memory off: no tool at all, so its description costs nothing.
-        if run_configuration.memory.enabled {
-            tools.push(Box::new(super::memory::MemoryTool {
-                state: self.clone(),
-                sink: Arc::clone(sink),
-                thread_id: thread_id.to_owned(),
-                run_id: run_id.to_owned(),
-                project_root: snapshot.work_root.clone(),
-                enabled: true,
-                run: check_approval.clone(),
-                read_only: false,
-                saved: Arc::clone(&memory_saved),
-            }));
-        }
         // The agent's to-do list: the run opened with it as it stood, and a checkpoint reads it
         // back as it stands then.
         let todo_seen = Arc::new(std::sync::atomic::AtomicU64::new(
@@ -707,7 +683,7 @@ impl AppState {
                     permissions: Arc::clone(&site_permissions),
                 },
                 subagent_skills,
-                // Subagents start with the same memory index; they may only read memories.
+                // Subagents start with the same memory block.
                 if memory_note.is_empty() {
                     project_guidance
                 } else {
@@ -891,9 +867,6 @@ impl AppState {
                         })
                         .await
                         .unwrap_or_default();
-                        if !files.is_empty() && still_open_hook {
-                            pump_state.leave_still_open_note(&pump_thread);
-                        }
                         if !files.is_empty() {
                             let changed = ThreadEventEnvelope {
                                 thread_id: pump_thread.clone(),
@@ -948,7 +921,7 @@ impl AppState {
                     pump_sink.emit_thread_event(&envelope);
                     if let RunEvent::Finished { result } | RunEvent::Incomplete { result } = &event
                     {
-                        // `memory.auto`: on its own task, never holding up what comes next.
+                        // The memory pass: on its own task, never holding up what comes next.
                         pump_state.spawn_memory_pass(
                             Arc::clone(&pump_sink),
                             pump_thread.clone(),
@@ -1034,7 +1007,7 @@ impl AppState {
                                                 }
                                                 // Boxed: the run's future is large, and the
                                                 // steer scope must not copy it on the stack.
-                                                themis_core::runtime::with_save_reminder(save_reminder.then(|| themis_core::prompts::RUNTIME_SAVE_REMINDER.to_owned()), themis_core::runtime::with_checkpoint_note(checkpoint_note, themis_core::runtime::with_first_request(first_request, themis_core::runtime::with_end_request(end_request, themis_core::runtime::with_steer_inbox(steer_inbox, themis_core::runtime::with_run_notes(run_notes, Box::pin(run_task_with_evidence(
+                                                themis_core::runtime::with_memory_block(memory_block, themis_core::runtime::with_checkpoint_note(checkpoint_note, themis_core::runtime::with_first_request(first_request, themis_core::runtime::with_end_request(end_request, themis_core::runtime::with_steer_inbox(steer_inbox, themis_core::runtime::with_run_notes(run_notes, Box::pin(run_task_with_evidence(
                                                 llm,
                                                 if yolo {
                                                     tools

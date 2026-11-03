@@ -806,22 +806,15 @@ async fn dispatch_command(
         }
         "get_memory_settings" => output!({
             let (settings, revision) = state.user_memory_view()?;
-            json!({"settings": settings, "revision": revision})
+            json!({"settings": settings, "revision": revision, "waiting": state.memory_waiting()})
         }),
         "update_memory_settings" => {
             let enabled: Option<bool> = arg(&args, "enabled")?;
-            let auto: Option<bool> = arg(&args, "auto")?;
+            let models: Option<Vec<String>> = arg(&args, "models")?;
             let revision: Option<String> = arg(&args, "revision")?;
             let (settings, revision) =
-                state.set_user_memory_settings(enabled, auto, revision.as_deref())?;
+                state.set_user_memory_settings(enabled, models, revision.as_deref())?;
             output!(json!({"settings": settings, "revision": revision}))
-        }
-        "get_built_in_hooks" => output!(state.user_built_in_hooks()?),
-        "update_built_in_hook" => {
-            let id: String = arg(&args, "id")?;
-            let enabled: bool = arg(&args, "enabled")?;
-            let revision: Option<String> = arg(&args, "revision")?;
-            output!(state.set_user_built_in_hook(&id, enabled, revision.as_deref())?)
         }
         "list_memories" => {
             let scope: String = arg(&args, "scope")?;

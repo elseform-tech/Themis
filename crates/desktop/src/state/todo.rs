@@ -291,34 +291,6 @@ impl AppState {
         let _ = self.inner.diagnostics.append("todo", "seed", level, log);
     }
 
-    /// `hooks.built_in.still_open`, at the end of a turn that changed files: when the list has
-    /// open items, the chat's next turn starts by naming them.
-    pub(super) fn leave_still_open_note(&self, thread_id: &str) {
-        if let Some(note) = self.todo_for(thread_id).still_open_note() {
-            self.inner
-                .still_open
-                .lock()
-                .unwrap_or_else(|e| e.into_inner())
-                .insert(thread_id.to_owned(), note);
-            let _ = self.inner.diagnostics.append(
-                "hook",
-                "built_in",
-                "info",
-                json!({"thread_id": thread_id, "hook": "still_open", "event": "RunEnd"}),
-            );
-        }
-    }
-
-    /// The "Still open" note waiting for this chat's turn, taken (empty when there is none).
-    pub(super) fn take_still_open_note(&self, thread_id: &str) -> String {
-        self.inner
-            .still_open
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .remove(thread_id)
-            .map_or_else(String::new, |note| format!("\n\n{note}"))
-    }
-
     /// Removes the lists of deleted chats.
     pub(super) fn forget_todos(&self, thread_ids: &[String]) {
         let mut todos = self.inner.todos.lock().unwrap_or_else(|e| e.into_inner());

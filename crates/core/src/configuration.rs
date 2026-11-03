@@ -675,35 +675,94 @@ pub struct GoalConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct MemoryConfig {
-    /// Save and read memories. Off, runs get no index and no memory tool; saved
-    /// memories are kept. A project or run layer may only set it to false.
+    /// Keep memories. On, a background pass on the memory models saves, updates and removes
+    /// them after each turn, and every run starts with them; off, nothing is saved or read and
+    /// saved memories are kept. A project or run layer may only set it to false.
     pub enabled: bool,
-    /// After a turn in which the person wrote, one request on the summary model notices what
-    /// is worth remembering and saves it (Settings › Memory's "Notice what's worth
-    /// remembering"). A project or run layer may only set it to false.
-    pub auto: bool,
+    /// The models that run memory jobs, tried in order (Settings › Models › Memory models): a
+    /// job moves to the next on a provider error, a time-out, a rate limit, an answer it can't
+    /// read, or the daily cap. At least [`MIN_MEMORY_MODELS`]; user file only.
+    pub models: Vec<String>,
+    /// Estimated dollars (list prices) the memory models may spend in a day, all together;
+    /// past it a job waits for tomorrow. Free models are never held back. User file only.
+    pub daily_budget_usd: f64,
+    /// At most one consolidation (merge duplicates, drop stale memories) this often, when the
+    /// app is idle. User file only.
+    pub consolidate_every_hours: u32,
 }
+
+/// Fewest models `memory.models` may list.
+pub const MIN_MEMORY_MODELS: usize = 3;
+/// Most models `memory.models` may list.
+pub const MAX_MEMORY_MODELS: usize = 8;
+/// Highest `memory.daily_budget_usd`.
+pub const MAX_MEMORY_BUDGET_USD: f64 = 100.0;
+/// Longest `memory.consolidate_every_hours`: a month.
+pub const MAX_CONSOLIDATE_HOURS: u32 = 720;
+
+/// The default memory models: cheap OpenCode Go models on three different wire protocols
+/// (Responses, Messages, Chat Completions), so one protocol's outage leaves two.
+pub const DEFAULT_MEMORY_MODELS: [&str; 3] = [
+    "muse-spark-1.3-contributor",
+    "claude-haiku-5-5",
+    "deepseek-v4.1-flash",
+];
 
 impl Default for MemoryConfig {
     fn default() -> Self {
         Self {
             enabled: true,
-            auto: false,
+            models: DEFAULT_MEMORY_MODELS.map(str::to_owned).to_vec(),
+            daily_budget_usd: 0.5,
+            consolidate_every_hours: 24,
         }
     }
 }
 
-/// A project or run layer may only turn memory (or noticing what to remember) off: memories are
-/// the person's own.
+/// A project or run layer may only turn memory off; which models run it and what they may
+/// spend are the person's own.
 fn check_memory_restriction(layer: &Value, origin: &str) -> Result<()> {
-    for field in ["enabled", "auto"] {
-        if let Some(value) = layer.pointer(&format!("/memory/{field}")) {
-            ensure!(
-                value == &Value::Bool(false),
-                "the {origin} configuration may only set memory.{field} to false"
-            );
-        }
+    if let Some(value) = layer.pointer("/memory/enabled") {
+        ensure!(
+            value == &Value::Bool(false),
+            "the {origin} configuration may only set memory.enabled to false"
+        );
     }
+    for field in ["models", "daily_budget_usd", "consolidate_every_hours"] {
+        ensure!(
+            layer.pointer(&format!("/memory/{field}")).is_none(),
+            "the {origin} configuration can't set memory.{field}"
+        );
+    }
+    Ok(())
+}
+
+fn validate_memory(config: &RuntimeConfig) -> Result<()> {
+    let memory = &config.memory;
+    ensure!(
+        (MIN_MEMORY_MODELS..=MAX_MEMORY_MODELS).contains(&memory.models.len()),
+        "memory.models lists {MIN_MEMORY_MODELS} to {MAX_MEMORY_MODELS} models"
+    );
+    for (index, model) in memory.models.iter().enumerate() {
+        ensure!(
+            valid_model_id(model),
+            "memory.models must list model ids (<provider>/<id> for a model from providers)"
+        );
+        ensure!(
+            !memory.models[..index].contains(model),
+            "memory.models lists {model} twice"
+        );
+        providers::check_model_prefix(&config.providers, "memory.models", model, false)?;
+    }
+    ensure!(
+        memory.daily_budget_usd.is_finite()
+            && (0.0..=MAX_MEMORY_BUDGET_USD).contains(&memory.daily_budget_usd),
+        "memory.daily_budget_usd must be 0..{MAX_MEMORY_BUDGET_USD}"
+    );
+    ensure!(
+        (1..=MAX_CONSOLIDATE_HOURS).contains(&memory.consolidate_every_hours),
+        "memory.consolidate_every_hours must be 1..{MAX_CONSOLIDATE_HOURS}"
+    );
     Ok(())
 }
 
@@ -748,35 +807,6 @@ pub struct HooksConfig {
     /// Model requests `prompt` hooks may make in a run, which is what they cost. A guard that finds
     /// none left refuses. 0 turns them off, for the person only: nothing is asked or refused.
     pub prompt_hook_calls: u32,
-    /// Themis's own hooks (Integrations › Hooks, "Themis (built-in)"): native, no command, no
-    /// approval, and they never grant permissions.
-    pub built_in: BuiltInHooks,
-}
-
-/// Themis's built-in hooks, each off by default.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(default, deny_unknown_fields)]
-pub struct BuiltInHooks {
-    /// Session start: runs carry the short To-do and Memory skills (Memory only while memory
-    /// is on).
-    pub skills_at_start: bool,
-    /// Run end: when files changed while the to-do list has open items, the next turn starts
-    /// with a "Still open: …" note.
-    pub still_open: bool,
-    /// Before compaction: when a context checkpoint is near, the agent gets a one-line reminder
-    /// to save anything worth remembering (while memory is on).
-    pub save_reminder: bool,
-}
-
-impl BuiltInHooks {
-    /// Each switch's name (as in `hooks.built_in`) and value.
-    pub fn switches(&self) -> [(&'static str, bool); 3] {
-        [
-            ("skills_at_start", self.skills_at_start),
-            ("still_open", self.still_open),
-            ("save_reminder", self.save_reminder),
-        ]
-    }
 }
 
 /// Most `hooks.prompt_hook_calls` may say.
@@ -793,7 +823,6 @@ impl Default for HooksConfig {
             max_wakes: 3,
             session_idle_minutes: 60,
             prompt_hook_calls: 50,
-            built_in: BuiltInHooks::default(),
         }
     }
 }
@@ -1952,6 +1981,7 @@ pub fn validate(config: &RuntimeConfig) -> Result<()> {
         config.compaction.retry_limit <= 2,
         "compaction.retry_limit must be 0..2"
     );
+    validate_memory(config)?;
     for (field, model) in [
         ("compaction.summary_model", &compaction.summary_model),
         ("goal.check_model", &config.goal.check_model),
@@ -2279,15 +2309,12 @@ pub fn schema() -> Value {
     // Here because one more key in the base schema's macro reaches the compiler's recursion limit.
     schema["properties"]["project_guidance"] = serde_json::json!({"type":"boolean","default":true});
     schema["properties"]["memory"] = serde_json::json!({"type":"object","additionalProperties":false,"properties":{
-        "enabled":{"type":"boolean","default":true,"description":"Save and read memories across chats (Settings › Memory). A project or run layer may only set it to false."},
-        "auto":{"type":"boolean","default":false,"description":"After a turn in which you wrote, one request on the summary model notices what is worth remembering and saves it. A project or run layer may only set it to false."}
+        "enabled":{"type":"boolean","default":true,"description":"Keep memories across chats (Settings › Memory): saved, updated and removed in the background after each turn. A project or run layer may only set it to false."},
+        "models":{"type":"array","minItems":MIN_MEMORY_MODELS,"maxItems":MAX_MEMORY_MODELS,"uniqueItems":true,"items":{"type":"string","minLength":1,"maxLength":200},"default":DEFAULT_MEMORY_MODELS,"description":"Models that run memory jobs, tried in order (Settings › Models). User file only."},
+        "daily_budget_usd":{"type":"number","minimum":0,"maximum":MAX_MEMORY_BUDGET_USD,"default":0.5,"description":"Estimated dollars the memory models may spend in a day, together. User file only."},
+        "consolidate_every_hours":{"type":"integer","minimum":1,"maximum":MAX_CONSOLIDATE_HOURS,"default":24,"description":"At most one idle consolidation (merge duplicates, drop stale memories) this often. User file only."}
     }});
     schema["properties"]["goal"]["properties"]["seed_todo"] = serde_json::json!({"type":"boolean","default":false,"description":"When a goal starts on an empty to-do list, one request on the summary model fills it from the goal, ending with \"Verify end to end\""});
-    schema["properties"]["hooks"]["properties"]["built_in"] = serde_json::json!({"type":"object","additionalProperties":false,"properties":{
-        "skills_at_start":{"type":"boolean","default":false,"description":"Session start: runs carry the short To-do and Memory skills"},
-        "still_open":{"type":"boolean","default":false,"description":"Run end: when files changed while the to-do list has open items, the next turn starts with a Still open note"},
-        "save_reminder":{"type":"boolean","default":false,"description":"Before compaction: a one-line reminder to save anything worth remembering when a checkpoint is near"}
-    }});
     schema
 }
 
@@ -2713,45 +2740,68 @@ mod tests {
         }
     }
     #[test]
-    fn auto_memory_goal_seeding_and_built_in_hooks_are_off_by_default_and_switchable() {
-        let defaults = RuntimeConfig::default();
-        assert!(!defaults.memory.auto);
-        assert!(!defaults.goal.seed_todo);
-        assert_eq!(defaults.hooks.built_in, BuiltInHooks::default());
-        assert!(defaults.hooks.built_in.switches().iter().all(|(_, on)| !on));
-        let on = resolve(
-            Some(
-                r#"{"memory":{"auto":true},"goal":{"seed_todo":true},"hooks":{"built_in":{"skills_at_start":true,"still_open":true,"save_reminder":true}}}"#,
-            ),
-            None,
-            None,
-        )
-        .unwrap();
-        assert!(on.config.memory.auto && on.config.goal.seed_todo);
-        assert!(on
-            .config
-            .hooks
-            .built_in
-            .switches()
-            .iter()
-            .all(|(_, on)| *on));
-        assert_eq!(on.provenance["memory.auto"], "user");
+    fn goal_seeding_is_off_by_default_and_switchable() {
+        assert!(!RuntimeConfig::default().goal.seed_todo);
+        let on = resolve(Some(r#"{"goal":{"seed_todo":true}}"#), None, None).unwrap();
+        assert!(on.config.goal.seed_todo);
         assert_eq!(on.provenance["goal.seed_todo"], "user");
-        assert_eq!(on.provenance["hooks.built_in.still_open"], "user");
-        // A project may turn noticing off, never on; it may set the built-in hooks either way.
-        let user = r#"{"memory":{"auto":true}}"#;
-        let off = resolve(Some(user), Some(r#"{"memory":{"auto":false}}"#), None).unwrap();
-        assert!(!off.config.memory.auto);
-        assert!(resolve(None, Some(r#"{"memory":{"auto":true}}"#), None).is_err());
-        assert!(resolve(None, None, Some(r#"{"memory":{"auto":true}}"#)).is_err());
-        let project = resolve(
+        let project = resolve(None, Some(r#"{"goal":{"seed_todo":true}}"#), None).unwrap();
+        assert!(project.config.goal.seed_todo);
+        // The built-in hooks and the memory switch are gone, not kept as aliases.
+        assert!(resolve(
+            Some(r#"{"hooks":{"built_in":{"still_open":true}}}"#),
             None,
-            Some(r#"{"hooks":{"built_in":{"still_open":true}},"goal":{"seed_todo":true}}"#),
+            None
+        )
+        .is_err());
+        assert!(resolve(Some(r#"{"memory":{"auto":true}}"#), None, None).is_err());
+    }
+
+    #[test]
+    fn memory_models_default_to_three_cheap_models_and_are_the_persons_own() {
+        let defaults = RuntimeConfig::default().memory;
+        assert_eq!(
+            defaults.models,
+            [
+                "muse-spark-1.3-contributor",
+                "claude-haiku-5-5",
+                "deepseek-v4.1-flash"
+            ]
+        );
+        assert!((defaults.daily_budget_usd - 0.5).abs() < f64::EPSILON);
+        assert_eq!(defaults.consolidate_every_hours, 24);
+        let user = resolve(
+            Some(r#"{"memory":{"models":["a","b","c","d"],"daily_budget_usd":2,"consolidate_every_hours":6}}"#),
+            None,
             None,
         )
         .unwrap();
-        assert!(project.config.hooks.built_in.still_open && project.config.goal.seed_todo);
-        assert!(resolve(Some(r#"{"hooks":{"built_in":{"other":true}}}"#), None, None).is_err());
+        assert_eq!(user.config.memory.models, ["a", "b", "c", "d"]);
+        assert_eq!(user.provenance["memory.models"], "user");
+        assert_eq!(user.config.memory.consolidate_every_hours, 6);
+        // Fewer than three, a duplicate, a bad id, a bad budget or interval: refused.
+        for bad in [
+            r#"{"memory":{"models":["a","b"]}}"#,
+            r#"{"memory":{"models":[]}}"#,
+            r#"{"memory":{"models":["a","b","a"]}}"#,
+            r#"{"memory":{"models":["a","b","has space"]}}"#,
+            r#"{"memory":{"models":["a","b","c","d","e","f","g","h","i"]}}"#,
+            r#"{"memory":{"models":["a","b","local/c"]}}"#,
+            r#"{"memory":{"daily_budget_usd":-1}}"#,
+            r#"{"memory":{"daily_budget_usd":1000}}"#,
+            r#"{"memory":{"consolidate_every_hours":0}}"#,
+        ] {
+            assert!(resolve(Some(bad), None, None).is_err(), "{bad}");
+        }
+        // A project or a run may not change the models, the cap or the interval.
+        for field in [
+            r#"{"memory":{"models":["a","b","c"]}}"#,
+            r#"{"memory":{"daily_budget_usd":0.1}}"#,
+            r#"{"memory":{"consolidate_every_hours":48}}"#,
+        ] {
+            assert!(resolve(None, Some(field), None).is_err(), "{field}");
+            assert!(resolve(None, None, Some(field)).is_err(), "{field}");
+        }
     }
 
     #[test]

@@ -574,12 +574,10 @@ impl AppState {
                 .await;
             }
         }
-        // Every run reads the chat's to-do list as it stands, after any goal context, and the
-        // "Still open" note when the last turn left one (`hooks.built_in.still_open`).
+        // Every run reads the chat's to-do list as it stands, after any goal context.
         let resolved_text = format!(
-            "{resolved_text}{goal_context}{}{}",
-            self.todo_note(&thread_id),
-            self.take_still_open_note(&thread_id)
+            "{resolved_text}{goal_context}{}",
+            self.todo_note(&thread_id)
         );
         self.persist_registry().await;
         let policy = RunPolicy {

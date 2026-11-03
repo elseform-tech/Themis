@@ -89,6 +89,7 @@ fn kind_from(name: &str) -> UsageKind {
     match name {
         "summary" => UsageKind::Summary,
         "goal_check" => UsageKind::GoalCheck,
+        "memory" => UsageKind::Memory,
         _ => UsageKind::Answer,
     }
 }

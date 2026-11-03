@@ -1,13 +1,7 @@
-//! The experiment switches for automatic memory and to-do lists, through the shared server and
-//! the `themis` CLI with a scripted model (no real model is called):
-//! - `memory.auto`: after a turn, the memory pass saves a preference the person mentioned in
-//!   passing (no "remember") with the right scope and the chat's "Remembered" line; it saves
-//!   nothing when nothing is new, refuses a secret, doesn't duplicate, skips a turn in which the
-//!   agent saved, and is off by default.
-//! - `goal.seed_todo`: a new goal's list is seeded before its first turn, which reads it, and
-//!   the goal is reached once the items are done.
-//! - `hooks.built_in`: each built-in hook adds its text (to the main agent and to subagents) only
-//!   while its switch is on, switched through Integrations › Hooks' commands.
+//! The to-do list experiment switch, through the shared server and the `themis` CLI with a
+//! scripted model (no real model is called): with `goal.seed_todo`, a new goal's list is seeded
+//! before its first turn, which reads it, and the goal is reached once the items are done.
+//! (Automatic memory is covered by `memory_cli_e2e.rs`.)
 
 use std::path::Path;
 use std::sync::{Arc, Mutex};
@@ -18,17 +12,10 @@ use themis_desktop::server::{Client, Server};
 use themis_desktop::state::AppState;
 use wiremock::{matchers::method, Mock, MockServer, Request, ResponseTemplate};
 
-const PASS: &str = "You decide what an assistant should remember";
 const SEED: &str = "You turn a goal into a short to-do list";
 const CHECK: &str = "You decide whether an agent has reached a goal";
 const SUBAGENT: &str = "You are a subagent";
 const SUMMARY: &str = "You summarize agent context";
-const TODO_SKILL: &str = "# To-do list";
-const MEMORY_SKILL: &str = "# Memory\n";
-const SUBAGENT_MEMORY_NOTE: &str = "As a subagent, your memory tool only reads.";
-const STILL_OPEN: &str = "[Still open — runtime, not from the user]";
-const REMINDER: &str = "[Memory reminder — runtime, not from the user]";
-const SECRET: &str = "ghp_abcdefghijklmnopqrstuvwxyz0123456789AB";
 
 fn cli(dir: &Path, command: &str, args: Value) -> Value {
     use std::io::Write;
@@ -90,23 +77,6 @@ fn last_user(body: &Value) -> String {
         .to_owned()
 }
 
-/// What the memory pass answers, by what the person said that turn.
-fn pass_answer(body: &Value) -> String {
-    let user = body["messages"][1]["content"].as_str().unwrap_or_default();
-    let person = user.split("<<<person").nth(1).unwrap_or_default();
-    if person.contains("pnpm") {
-        json!({"memories":[{"action":"save","scope":"global","name":"uses-pnpm","type":"user",
-            "description":"Uses pnpm, not npm","body":"The person uses pnpm for JavaScript projects."}]})
-        .to_string()
-    } else if person.contains("deploy token") {
-        json!({"memories":[{"action":"save","scope":"project","name":"deploy-token","type":"project",
-            "description":"How to deploy","body":format!("Deploy with token {SECRET}")}]})
-        .to_string()
-    } else {
-        r#"{"memories":[]}"#.to_owned()
-    }
-}
-
 /// What the main agent does with each message.
 fn main_answer(body: &Value) -> ResponseTemplate {
     if last(body)["role"] == "tool" {
@@ -115,11 +85,6 @@ fn main_answer(body: &Value) -> ResponseTemplate {
     let user = last_user(body);
     let wire = body["messages"].to_string();
     match () {
-        _ if user.starts_with("remember-it") => call(
-            "memory",
-            json!({"action":"save","scope":"global","name":"short-replies","type":"feedback",
-                "description":"Keep replies short","body":"Keep replies short."}),
-        ),
         _ if user.starts_with("spawn-one") => call(
             "spawn_subagents",
             json!({"say":"Starting a helper.","subagents":[{"name":"Helper","brief":"Look around."}]}),
@@ -189,9 +154,6 @@ impl Harness {
                 let body: Value = request.body_json().unwrap();
                 seen.lock().unwrap().push(body.clone());
                 let head = system(&body);
-                if head.starts_with(PASS) {
-                    return text_reply(&pass_answer(&body));
-                }
                 if head.starts_with(SEED) {
                     return text_reply(r#"{"items":[{"title":"Tasks can be added and ticked off"},{"title":"CSV export downloads every task","details":"every row"}]}"#);
                 }
@@ -346,99 +308,6 @@ fn fields(line: &Value) -> &Value {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn the_memory_pass_notices_a_preference_and_skips_refuses_and_dedupes() {
-    let mut h = Harness::start(Some(r#"{"memory":{"auto":true}}"#), None).await;
-    let id = h.new_chat();
-
-    // A preference said in passing, with no "remember": saved for every project, with its line.
-    let lines = h
-        .send(
-            &id,
-            "By the way, I always use pnpm. Please fix the build.",
-            Duration::from_secs(5),
-        )
-        .await;
-    assert_eq!(lines.len(), 1, "{lines:?}");
-    assert_eq!(lines[0]["action"], "saved");
-    assert_eq!(lines[0]["scope"], "global");
-    assert_eq!(lines[0]["name"], "uses-pnpm");
-    let saved = std::fs::read_to_string(h.data.path().join("memory/global/uses-pnpm.md")).unwrap();
-    assert!(saved.contains("type: user"), "{saved}");
-    // The pass read the turn and the (empty) indexes, as data.
-    let passes = h.requests_of(PASS);
-    assert_eq!(passes.len(), 1);
-    let user = passes[0]["messages"][1]["content"].as_str().unwrap();
-    assert!(
-        user.contains("<<<person\nBy the way, I always use pnpm."),
-        "{user}"
-    );
-    assert!(
-        user.contains("<<<assistant-reply\nFixed the build.\n>>>"),
-        "{user}"
-    );
-    assert!(passes[0]["tools"].is_null(), "the pass offers no tools");
-    let logged = h.logged("memory", "auto_pass", 1).await;
-    let first = fields(&logged[0]);
-    assert_eq!(first["outcome"], "saved", "{first}");
-    assert_eq!(first["counts"]["saved"], 1);
-    assert_eq!(first["prompt_tokens"], 321);
-    // The next chat knows it.
-    let next = h.new_chat();
-    h.send(&next, "hello", Duration::from_millis(500)).await;
-    assert!(system(&h.first_request_of("hello")).contains("uses-pnpm"));
-
-    // Nothing new: nothing saved.
-    let lines = h
-        .send(&id, "Thanks, that looks right.", Duration::from_secs(3))
-        .await;
-    assert!(lines.is_empty(), "{lines:?}");
-    // A secret: refused, never written.
-    let lines = h
-        .send(
-            &id,
-            &format!("The deploy token is {SECRET}, use it."),
-            Duration::from_secs(3),
-        )
-        .await;
-    assert!(lines.is_empty(), "{lines:?}");
-    // The same preference again: no duplicate.
-    let lines = h
-        .send(&id, "Again, pnpm please.", Duration::from_secs(3))
-        .await;
-    assert!(lines.is_empty(), "{lines:?}");
-    let logged = h.logged("memory", "auto_pass", 5).await;
-    let outcomes: Vec<&Value> = logged.iter().map(|line| &fields(line)["outcome"]).collect();
-    assert_eq!(outcomes[2], "nothing", "{logged:?}");
-    assert_eq!(fields(&logged[3])["counts"]["sensitive"], 1, "{logged:?}");
-    assert_eq!(fields(&logged[4])["counts"]["duplicate"], 1, "{logged:?}");
-    let global: Vec<_> = std::fs::read_dir(h.data.path().join("memory/global"))
-        .unwrap()
-        .flatten()
-        .map(|entry| entry.file_name().to_string_lossy().into_owned())
-        .collect();
-    assert_eq!(global.len(), 2, "one memory and the index: {global:?}");
-    let project_dir = h.data.path().join("memory/projects");
-    let all = format!(
-        "{:?}",
-        std::fs::read_dir(&project_dir)
-            .map(|entries| entries.flatten().count())
-            .unwrap_or(0)
-    );
-    assert_eq!(all, "0", "the secret was never saved anywhere");
-
-    // A turn in which the agent saved: the pass skips it.
-    let before = h.requests_of(PASS).len();
-    let lines = h.send(&id, "remember-it", Duration::from_secs(2)).await;
-    assert_eq!(lines.len(), 1, "only the agent's own save: {lines:?}");
-    assert_eq!(h.requests_of(PASS).len(), before);
-    let skipped = h.logged("memory", "auto_pass_skipped", 1).await;
-    assert_eq!(fields(&skipped[0])["reason"], "saved_in_turn");
-    // Metadata only: never what was said or saved.
-    let (_, text) = h.logs("memory", "auto_pass");
-    assert!(!text.contains("pnpm") && !text.contains(SECRET), "{text}");
-}
-
-#[tokio::test(flavor = "multi_thread")]
 async fn a_seeded_goal_reads_its_list_and_is_reached_once_its_items_are_done() {
     let mut h = Harness::start(Some(r#"{"goal":{"seed_todo":true}}"#), None).await;
     let id = h.new_chat();
@@ -513,140 +382,4 @@ async fn a_seeded_goal_reads_its_list_and_is_reached_once_its_items_are_done() {
     off.send(&other, "/goal Build it", Duration::from_millis(300))
         .await;
     assert!(off.requests_of(SEED).is_empty());
-}
-
-#[tokio::test(flavor = "multi_thread")]
-async fn built_in_hooks_add_their_text_to_agents_and_subagents_only_while_switched_on() {
-    let mut h = Harness::start(None, None).await;
-    let id = h.new_chat();
-    let view = h.cli("get_built_in_hooks", json!({}));
-    let hooks = view["hooks"].as_array().unwrap();
-    assert_eq!(hooks.len(), 3, "{view}");
-    assert!(hooks.iter().all(|hook| hook["enabled"] == false), "{view}");
-
-    // All off (the default): no skills, no note, and no memory pass.
-    h.send(&id, "hello", Duration::from_millis(300)).await;
-    assert!(!system(&h.first_request_of("hello")).contains(TODO_SKILL));
-    h.send(&id, "spawn-one", Duration::from_millis(500)).await;
-    let sub = h.requests_of(SUBAGENT);
-    assert!(!sub.is_empty());
-    assert!(!system(&sub[0]).contains(TODO_SKILL));
-    h.send(&id, "plan-it", Duration::from_millis(300)).await;
-    h.send(&id, "write-file one", Duration::from_millis(300))
-        .await;
-    h.send(&id, "next one", Duration::from_millis(300)).await;
-    assert!(!last_user(&h.first_request_of("next one")).contains(STILL_OPEN));
-    assert!(
-        h.requests_of(PASS).is_empty(),
-        "the memory pass is off by default"
-    );
-
-    // Switched on through Integrations › Hooks: saved in runtime.jsonc, with a fresh revision.
-    let mut revision = view["revision"].clone();
-    for hook in ["skills_at_start", "still_open"] {
-        let view = h.cli(
-            "update_built_in_hook",
-            json!({"id": hook, "enabled": true, "revision": revision}),
-        );
-        revision = view["revision"].clone();
-    }
-    let config = std::fs::read_to_string(h.data.path().join("runtime.jsonc")).unwrap();
-    assert!(config.contains("\"skills_at_start\": true"), "{config}");
-    let stale = std::process::Command::new(env!("CARGO_BIN_EXE_themis"))
-        .arg("--data-dir")
-        .arg(h.data.path())
-        .args([
-            "call",
-            "update_built_in_hook",
-            r#"{"id":"save_reminder","enabled":true,"revision":"stale"}"#,
-        ])
-        .env("HOME", h.data.path())
-        .output()
-        .unwrap();
-    assert!(!stale.status.success(), "a stale revision is refused");
-
-    h.send(&id, "hello again", Duration::from_millis(300)).await;
-    let main = system(&h.first_request_of("hello again")).to_owned();
-    assert!(
-        main.contains(TODO_SKILL) && main.contains(MEMORY_SKILL),
-        "{main}"
-    );
-    let before = h.requests_of(SUBAGENT).len();
-    h.send(&id, "spawn-one again", Duration::from_millis(500))
-        .await;
-    let sub = h.requests_of(SUBAGENT);
-    assert!(sub.len() > before);
-    let sub_system = system(&sub[before]);
-    assert!(sub_system.contains(TODO_SKILL), "{sub_system}");
-    assert!(sub_system.contains(MEMORY_SKILL), "{sub_system}");
-    assert!(sub_system.contains(SUBAGENT_MEMORY_NOTE), "{sub_system}");
-    // Files changed while items are open: the next turn starts by naming them.
-    h.send(&id, "plan-it again", Duration::from_millis(300))
-        .await;
-    h.send(&id, "write-file two", Duration::from_millis(300))
-        .await;
-    h.send(&id, "next two", Duration::from_millis(300)).await;
-    let opening = last_user(&h.first_request_of("next two"));
-    assert!(opening.contains(STILL_OPEN), "{opening}");
-    assert!(opening.contains("Write its tests"), "{opening}");
-    // Only once, and not after a turn that changed nothing.
-    h.send(&id, "next three", Duration::from_millis(300)).await;
-    assert!(!last_user(&h.first_request_of("next three")).contains(STILL_OPEN));
-    // Off again: nothing.
-    h.cli(
-        "update_built_in_hook",
-        json!({"id": "still_open", "enabled": false, "revision": revision}),
-    );
-    h.send(&id, "write-file three", Duration::from_millis(300))
-        .await;
-    h.send(&id, "next four", Duration::from_millis(300)).await;
-    assert!(!last_user(&h.first_request_of("next four")).contains(STILL_OPEN));
-    let (lines, _) = h.logs("hook", "built_in");
-    assert!(lines
-        .iter()
-        .any(|line| fields(line)["hook"] == "still_open"));
-}
-
-/// With `save_reminder` on, the agent is reminded once before its context is compacted; with
-/// it off, never.
-#[tokio::test(flavor = "multi_thread")]
-async fn the_save_reminder_comes_before_a_checkpoint_only_while_switched_on() {
-    for on in [true, false] {
-        let config = format!(r#"{{"hooks":{{"built_in":{{"save_reminder":{on}}}}}}}"#);
-        let mut h = Harness::start(
-            Some(&config),
-            Some(r#"{"context_token_budget":24000,"recent_messages":4,"total_turns":8}"#),
-        )
-        .await;
-        let id = h.new_chat();
-        for index in 0..40 {
-            let filler = format!(
-                "filler {index}: {}",
-                format!("detail {index} about beds, soil and watering; ").repeat(60)
-            );
-            h.send(&id, &filler, Duration::from_millis(100)).await;
-            if !h.requests_of(SUMMARY).is_empty() {
-                break;
-            }
-        }
-        let requests = h.requests.lock().unwrap().clone();
-        let checkpoint = requests
-            .iter()
-            .position(|body| system(body).contains(SUMMARY))
-            .expect("a checkpoint was taken");
-        let reminded: Vec<usize> = requests
-            .iter()
-            .enumerate()
-            .filter(|(_, body)| body["messages"].to_string().contains(REMINDER))
-            .map(|(index, _)| index)
-            .collect();
-        if on {
-            assert!(
-                reminded.first().is_some_and(|first| *first < checkpoint),
-                "reminded before the checkpoint at {checkpoint}: {reminded:?}"
-            );
-        } else {
-            assert!(reminded.is_empty(), "{reminded:?}");
-        }
-    }
 }

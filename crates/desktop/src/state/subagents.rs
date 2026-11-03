@@ -687,7 +687,6 @@ impl SubagentKit {
             tool_calls: AtomicUsize::new(0),
             progress: Mutex::new(Progress::default()),
             todo: Mutex::default(),
-            still_open: Mutex::default(),
         });
         self.notes.expect(1);
         self.started
@@ -905,26 +904,6 @@ impl SubagentKit {
                     report: self.reporter(),
                 },
                 denied: self.denies("todo_write"),
-            }));
-        }
-        // Every subagent starts with the memory index. One without a plugin profile (which
-        // picks its own tools) may also read a memory in full.
-        if self.config.memory.enabled && (agent.profile.is_none() || names(agent, "memory")) {
-            named.push(Box::new(super::memory::MemoryTool {
-                state: self.state.clone(),
-                sink: Arc::clone(&self.sink),
-                thread_id: self.thread_id.clone(),
-                run_id: self.run_id.clone(),
-                project_root: self.work_root.clone(),
-                enabled: true,
-                run: super::integration_tools::RunApproval {
-                    mode: self.mode,
-                    policy: self.config.approval.clone(),
-                    interactive: Arc::clone(&approvals_for_web),
-                    grants: Arc::clone(&self.grants),
-                },
-                read_only: true,
-                saved: Arc::default(),
             }));
         }
         if names(agent, "ask_user") {
@@ -1228,18 +1207,6 @@ impl SubagentKit {
                 &[("tools", &left_out.join(", "))],
             )
         });
-        // `hooks.built_in.skills_at_start`, as for the main agent; its memory tool only reads, so
-        // the Memory skill comes with how a subagent passes a fact on.
-        let built_in = &self.config.hooks.built_in;
-        let built_in_skills = built_in.skills_at_start.then(|| {
-            let memory = self.config.memory.enabled;
-            let mut text = themis_core::built_in_hooks::skills_text(memory);
-            if memory {
-                text.push_str("\n\n");
-                text.push_str(themis_core::prompts::SUBAGENT_MEMORY_SKILL_NOTE);
-            }
-            text
-        });
         let head = std::iter::once(themis_core::prompts::SUBAGENT_SYSTEM)
             .chain([themis_core::prompts::SUBAGENT_SECRETS_NOTE])
             .chain(role.as_deref())
@@ -1255,7 +1222,6 @@ impl SubagentKit {
             .chain((!self.project_guidance.is_empty()).then_some(self.project_guidance.trim()))
             .chain((!self.skills.is_empty()).then_some(themis_core::prompts::SUBAGENT_SKILLS_NOTE))
             .chain((!self.skills.is_empty()).then_some(self.skills.trim()))
-            .chain(built_in_skills.as_deref())
             .chain([themis_core::prompts::SUBAGENT_STATUS_FIELD])
             .collect::<Vec<_>>()
             .join("\n\n");
@@ -1276,26 +1242,7 @@ impl SubagentKit {
             &["context", &self.thread_id, "subagents", &agent.id],
         )
         .ok();
-        // `hooks.built_in.still_open`: what it changed this turn, when it may change anything.
-        let watch_files = built_in.still_open && !agent.write_paths.is_empty();
-        let changes_before = if watch_files {
-            let root = self.work_root.clone();
-            tokio::task::spawn_blocking(move || crate::diff::change_fingerprint(&root))
-                .await
-                .unwrap_or_default()
-        } else {
-            Default::default()
-        };
-        let mut task = agent.task.lock().unwrap_or_else(|e| e.into_inner()).clone();
-        if let Some(note) = agent
-            .still_open
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .take()
-        {
-            task.push_str("\n\n");
-            task.push_str(&note);
-        }
+        let task = agent.task.lock().unwrap_or_else(|e| e.into_inner()).clone();
         let run = themis_core::runtime::run_task_with_evidence(
             llm,
             tools,
@@ -1332,17 +1279,9 @@ impl SubagentKit {
                                             notes,
                                             // Boxed: nested subagents stack these futures, and
                                             // unboxed they overflow a runtime worker's stack.
-                                            Box::pin(themis_core::runtime::with_save_reminder(
-                                                (built_in.save_reminder
-                                                    && self.config.memory.enabled)
-                                                    .then(|| {
-                                                        themis_core::prompts::RUNTIME_SAVE_REMINDER_SUBAGENT
-                                                            .to_owned()
-                                                    }),
-                                                themis_core::runtime::with_system_head(
-                                                    head,
-                                                    Box::pin(run),
-                                                ),
+                                            Box::pin(themis_core::runtime::with_system_head(
+                                                head,
+                                                Box::pin(run),
                                             )),
                                         ),
                                     ),
@@ -1355,34 +1294,6 @@ impl SubagentKit {
         )
         .await;
         done.store(true, Ordering::SeqCst);
-        if watch_files {
-            let root = self.work_root.clone();
-            let changed = tokio::task::spawn_blocking(move || {
-                !crate::diff::changed_between(
-                    &root,
-                    &changes_before,
-                    &crate::diff::change_fingerprint(&root),
-                )
-                .is_empty()
-            })
-            .await
-            .unwrap_or(false);
-            let note = agent
-                .todo
-                .lock()
-                .unwrap_or_else(|e| e.into_inner())
-                .still_open_note();
-            if let (true, Some(note)) = (changed, note) {
-                *agent.still_open.lock().unwrap_or_else(|e| e.into_inner()) = Some(note);
-                let _ = self.state.inner.diagnostics.append(
-                    "hook",
-                    "built_in",
-                    "info",
-                    json!({"thread_id": self.thread_id, "subagent_id": agent.id,
-                        "hook": "still_open", "event": "SubagentEnd"}),
-                );
-            }
-        }
         // Nothing owns what it started once it is over.
         if let Some(kit) = &nested {
             let left: Vec<Arc<Subagent>> = kit
@@ -1665,8 +1576,6 @@ pub(super) struct Subagent {
     progress: Mutex<Progress>,
     /// Its own to-do list, kept across the turns it is picked up again for.
     pub(super) todo: Mutex<themis_core::todo::TodoList>,
-    /// The "Still open" note its next turn starts with (`hooks.built_in.still_open`).
-    still_open: Mutex<Option<String>>,
 }
 
 #[derive(Clone, Default)]

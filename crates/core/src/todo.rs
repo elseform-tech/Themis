@@ -32,8 +32,6 @@ const NOTE_DONE_SHOWN: usize = 8;
 pub const MAX_SEED_ITEMS: usize = 10;
 /// Most bytes of the seeding model's answer that are read; a longer one is refused.
 pub const MAX_SEED_ANSWER_BYTES: usize = 16 * 1024;
-/// Open items the "Still open" note names; the rest are counted.
-pub const STILL_OPEN_SHOWN: usize = 8;
 
 /// Most characters of the goal the seeding request carries.
 const MAX_SEED_GOAL_CHARS: usize = 4000;
@@ -618,28 +616,6 @@ impl TodoList {
             added += 1;
         }
         added
-    }
-
-    /// The note a turn starts with when files changed last turn while items were open
-    /// (`hooks.built_in.still_open`): the open items' titles, at most [`STILL_OPEN_SHOWN`] and
-    /// the rest counted. `None` when nothing is open.
-    pub fn still_open_note(&self) -> Option<String> {
-        let open: Vec<&TodoItem> = self.open().collect();
-        if open.is_empty() {
-            return None;
-        }
-        let mut lines: Vec<String> = open
-            .iter()
-            .take(STILL_OPEN_SHOWN)
-            .map(|item| format!("- {} {}", item.id, item.title))
-            .collect();
-        if open.len() > STILL_OPEN_SHOWN {
-            lines.push(format!("({} more)", open.len() - STILL_OPEN_SHOWN));
-        }
-        Some(crate::prompts::fill(
-            crate::prompts::RUNTIME_STILL_OPEN,
-            &[("items", &lines.join("\n"))],
-        ))
     }
 
     /// The short note the model reads at the start of a turn and after a checkpoint; `None`
@@ -1270,30 +1246,5 @@ mod tests {
         // The check itself may still reopen one.
         assert!(list.reopen("t2", "not shown"));
         assert_eq!(list.items[1].status, TodoStatus::Pending);
-    }
-
-    #[test]
-    fn the_still_open_note_names_open_items_and_counts_the_rest() {
-        let mut list = TodoList::default();
-        assert_eq!(list.still_open_note(), None);
-        let todos: Vec<Value> = (0..STILL_OPEN_SHOWN + 3)
-            .map(|n| json!({"title": format!("Step {n}"), "status": if n == 0 { "completed" } else { "pending" }}))
-            .collect();
-        write(&mut list, json!(todos));
-        let note = list.still_open_note().unwrap();
-        assert!(
-            note.starts_with("[Still open — runtime, not from the user]"),
-            "{note}"
-        );
-        assert!(
-            !note.contains("Step 0\n") && note.contains("- t2 Step 1"),
-            "{note}"
-        );
-        assert!(note.ends_with("(2 more)"), "{note}");
-        write(
-            &mut list,
-            json!([{"title": "Step 0", "status": "completed"}]),
-        );
-        assert_eq!(list.still_open_note(), None);
     }
 }

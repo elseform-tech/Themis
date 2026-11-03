@@ -426,12 +426,13 @@ impl AppState {
         Ok((memory, revision))
     }
 
-    /// Saves `memory.enabled` and `memory.auto` (each when given) in the user `runtime.jsonc`,
-    /// in place, refusing a stale `revision` like Settings › Subagents.
+    /// Saves `memory.enabled` and `memory.models` (each when given) in the user
+    /// `runtime.jsonc`, in place, refusing a stale `revision` like Settings › Subagents. The
+    /// resolver refuses fewer than three models or one listed twice.
     pub fn set_user_memory_settings(
         &self,
         enabled: Option<bool>,
-        auto: Option<bool>,
+        models: Option<Vec<String>>,
         revision: Option<&str>,
     ) -> Result<(configuration::MemoryConfig, String), String> {
         let saved = self.update_user_block("memory", |config| {
@@ -442,49 +443,13 @@ impl AppState {
             if let Some(enabled) = enabled {
                 memory.enabled = enabled;
             }
-            if let Some(auto) = auto {
-                memory.auto = auto;
+            if let Some(models) = models {
+                memory.models = models;
             }
             serde_json::to_value(&memory).map_err(|e| e.to_string())
         })?;
         let revision = revision_of(&saved.memory);
         Ok((saved.memory, revision))
-    }
-
-    /// Integrations › Hooks' built-in hooks: each with its switch as the user `runtime.jsonc`
-    /// sets it, and the revision a change must name.
-    pub fn user_built_in_hooks(&self) -> Result<Value, String> {
-        let user_path = settings_app_dir(self.inner.settings.path()).join("runtime.jsonc");
-        let user = read_optional(&user_path)?;
-        let built_in = configuration::resolve(user.as_deref(), None, None)
-            .map(|resolved| resolved.config.hooks.built_in)
-            .map_err(|e| format!("runtime configuration: {e:#}"))?;
-        Ok(built_in_hooks_view(&built_in))
-    }
-
-    /// Turns one built-in hook on or off in the user `runtime.jsonc` (`hooks.built_in.<id>`),
-    /// in place, refusing a stale `revision`.
-    pub fn set_user_built_in_hook(
-        &self,
-        id: &str,
-        enabled: bool,
-        revision: Option<&str>,
-    ) -> Result<Value, String> {
-        if !themis_core::built_in_hooks::ALL
-            .iter()
-            .any(|hook| hook.id == id)
-        {
-            return Err(format!("there is no built-in hook named `{id}`"));
-        }
-        let saved = self.update_user_block("hooks", |config| {
-            if revision.is_some_and(|expected| expected != revision_of(&config.hooks.built_in)) {
-                return Err(STALE_BUILT_IN_HOOKS.to_owned());
-            }
-            let mut hooks = serde_json::to_value(&config.hooks).map_err(|e| e.to_string())?;
-            hooks["built_in"][id] = Value::Bool(enabled);
-            Ok(hooks)
-        })?;
-        Ok(built_in_hooks_view(&saved.hooks.built_in))
     }
 
     /// The `web` settings from the user `runtime.jsonc` (Settings › Web).
@@ -675,24 +640,6 @@ fn revision_of(settings: &impl serde::Serialize) -> String {
         .unwrap_or_default()
         .hash(&mut hasher);
     format!("{:016x}", hasher.finish())
-}
-
-/// Refusal when Integrations › Hooks changes a built-in hook from a stale view.
-const STALE_BUILT_IN_HOOKS: &str =
-    "built-in hooks changed since they were read; reload and try again";
-
-/// Each built-in hook with its switch, and the revision a change names.
-fn built_in_hooks_view(built_in: &configuration::BuiltInHooks) -> Value {
-    let switches = built_in.switches();
-    let hooks: Vec<Value> = themis_core::built_in_hooks::ALL
-        .iter()
-        .map(|hook| {
-            let enabled = switches.iter().any(|(name, on)| *name == hook.id && *on);
-            json!({"id": hook.id, "event": hook.event, "title": hook.title,
-                "description": hook.description, "enabled": enabled})
-        })
-        .collect();
-    json!({"hooks": hooks, "revision": revision_of(built_in)})
 }
 
 #[cfg(test)]

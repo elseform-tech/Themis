@@ -156,6 +156,25 @@ pub struct RunHandle {
     pub run_id: String,
 }
 
+/// One memory a memory job saved, updated or removed.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MemoryChange {
+    /// `saved`, `updated` or `removed`.
+    pub action: String,
+    /// `project` or `global`.
+    pub scope: String,
+    /// The memory's name (its file, `memory/<name>.md`).
+    pub name: String,
+    /// Its one-line description (empty for a removed one the job never read).
+    pub description: String,
+    /// The memory model that made the change, and its place in `memory.models` (from 0).
+    pub model: String,
+    pub model_index: usize,
+    /// The project a project memory belongs to.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project_root: Option<String>,
+}
+
 /// Streaming run event (`ThreadEvent` in types.ts).
 ///
 /// Internally tagged on `kind`; variant names match the TS union exactly
@@ -223,20 +242,10 @@ pub enum ThreadEvent {
     MediaAttached {
         files: Vec<AttachedMedia>,
     },
-    /// The agent saved, updated or deleted a memory (`memory` tool); the chat shows a slim
-    /// "Remembered" or "Forgot" line that opens it in Settings › Memory.
+    /// The memory models changed memory after this run's turn: one slim line under the reply,
+    /// whose names open Settings › Memory.
     MemoryChanged {
-        /// `saved`, `updated` or `forgot`.
-        action: String,
-        /// `project` or `global`.
-        scope: String,
-        /// The memory's name (its file).
-        name: String,
-        /// Its one-line description.
-        description: String,
-        /// The project a project memory belongs to.
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        project_root: Option<String>,
+        changes: Vec<MemoryChange>,
     },
     /// Who controls the chat's built-in browser and whether it is recording
     /// changed. Live only; `run_id` is empty.

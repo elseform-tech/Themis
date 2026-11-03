@@ -328,6 +328,8 @@ struct AppStateInner {
     terminals: Arc<terminal::Terminals>,
     /// Serializes question changes.
     question_lock: std::sync::Mutex<()>,
+    /// Memory jobs waiting for the memory models, and when idle work may run.
+    memory_jobs: std::sync::Mutex<memory_auto::MemoryJobs>,
     /// Per-chat goals (`goals/<chat id>.json`), loaded on first use.
     goals: std::sync::Mutex<HashMap<String, Option<crate::types::Goal>>>,
     goals_dir: PathBuf,
@@ -343,8 +345,6 @@ struct AppStateInner {
     /// Per chat, the person's messages since they last wrote to an idle chat (see
     /// `todo::RequestChain`): what a goal the agent sets later in that chain takes on.
     request_chains: std::sync::Mutex<HashMap<String, todo::RequestChain>>,
-    /// "Still open" notes waiting for each chat's next turn (`hooks.built_in.still_open`).
-    still_open: std::sync::Mutex<HashMap<String, String>>,
     /// Open plugin hook sessions, by chat; see `hook_sessions.rs`.
     hook_sessions: std::sync::Mutex<HashMap<String, hook_sessions::OpenHookSession>>,
     /// Bumped whenever a waiting goal timer must no longer fire.
@@ -470,6 +470,13 @@ impl AppState {
             Machine::real(),
         );
         Self::spawn_automation_scheduler(state.clone());
+        // Memory jobs run in the app; headless tests turn them on when they test them.
+        state
+            .inner
+            .memory_jobs
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .enabled = true;
         state.inner.browsers.allow_engine_download();
         state
     }
@@ -618,6 +625,7 @@ impl AppState {
                 subagents: std::sync::Mutex::new(HashMap::new()),
                 terminals: Arc::default(),
                 question_lock: std::sync::Mutex::new(()),
+                memory_jobs: std::sync::Mutex::new(memory_auto::MemoryJobs::new(false)),
                 goals: std::sync::Mutex::new(HashMap::new()),
                 goals_dir: app_dir.join(goal::GOALS_DIR),
                 goal_lock: std::sync::Mutex::new(()),
@@ -626,7 +634,6 @@ impl AppState {
                 todos_dir: app_dir.join(todo::TODOS_DIR),
                 todo_lock: std::sync::Mutex::new(()),
                 request_chains: std::sync::Mutex::new(HashMap::new()),
-                still_open: std::sync::Mutex::new(HashMap::new()),
                 hook_sessions: std::sync::Mutex::new(HashMap::new()),
                 goal_generations: std::sync::Mutex::new(HashMap::new()),
                 server_sends: std::sync::Mutex::new(HashMap::new()),

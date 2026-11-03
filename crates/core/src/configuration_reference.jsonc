@@ -120,14 +120,21 @@
 
   // ─── MEMORY (also in Settings › Memory) ───────────────────────────────────────────────
   "memory": {
-    // The agent saves what it learns about you and your projects in the app data folder
-    // (never the project) and reads an index of it at the start of each chat. false: nothing
-    // is saved or read; saved memories are kept. A project file may only set false.
+    // After each turn, a memory model saves, updates or removes what is worth remembering
+    // about you and your projects in the app data folder (never the project); each chat
+    // starts with them. false: nothing is saved or read; saved memories are kept. A project
+    // file may only set false.
     "enabled": true,
-    // After a turn in which you wrote, one request on the summary model (the chat's model
-    // unless compaction.summary_model says otherwise) notices what is worth remembering and
-    // saves it; the chat shows "Remembered · …". A project file may only set false.
-    "auto": false,
+    // The models that run memory jobs, tried in order (Settings › Models › Memory models):
+    // the next one takes over on an error, a time-out, a rate limit, an unreadable answer or
+    // the daily cap. 3 to 8 models; user file only.
+    "models": ["muse-spark-1.3-contributor", "claude-haiku-5-5", "deepseek-v4.1-flash"],
+    // Estimated dollars (list prices) all memory models may spend in a day (0-100). User
+    // file only.
+    "daily_budget_usd": 0.5,
+    // When the app is idle, merge duplicate memories and drop stale ones at most this
+    // often (1-720 hours). User file only.
+    "consolidate_every_hours": 24,
   },
 
   // ─── SKILLS AND INSTRUCTIONS ──────────────────────────────────────────────────────────
@@ -212,13 +219,7 @@
   "hooks": {
     "max_wakes": 3,                           // turns in a row one reporting back may start in an idle chat (0-10)
     "session_idle_minutes": 60,               // idle time that ends a chat's session for hooks (0 never, up to 10080)
-    "prompt_hook_calls": 50,                  // model requests prompt hooks may make in a run (0 turns them off, up to 1000)
-    // Themis's own hooks (Integrations › Hooks, "Themis (built-in)"): no command, no approval.
-    "built_in": {
-      "skills_at_start": false,               // session start: runs carry the short To-do and Memory skills
-      "still_open": false,                    // run end: files changed with open to-do items → the next turn starts with "Still open: …"
-      "save_reminder": false                  // before compaction: a one-line reminder to save anything worth remembering
-    }
+    "prompt_hook_calls": 50                   // model requests prompt hooks may make in a run (0 turns them off, up to 1000)
   },
   // Subagents the agent may start for independent parts of a task. A project file may only
   // lower these or turn them off.

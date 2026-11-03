@@ -202,26 +202,22 @@ pub const ASK_USER_LIMIT: &str = include_str!("../builtins/prompts/ask-user-limi
 /// The memory index at the start of a run (main agent and subagents); `{{global}}`,
 /// `{{project}}`.
 pub const SYSTEM_MEMORY: &str = include_str!("../builtins/prompts/system-memory.md");
+/// After the index: the memories relevant to the message, in full; `{{memories}}`.
+pub const SYSTEM_MEMORY_RELEVANT: &str =
+    include_str!("../builtins/prompts/system-memory-relevant.md");
 /// The main agent's line in place of the memory index when `memory.enabled` is false.
 pub const SYSTEM_MEMORY_OFF: &str = include_str!("../builtins/prompts/system-memory-off.md");
-/// Description of the main agent's `memory` tool.
-pub const MEMORY_TOOL: &str = include_str!("../builtins/prompts/memory-tool.md");
-/// Description of a subagent's read-only `memory` tool.
-pub const MEMORY_TOOL_READ: &str = include_str!("../builtins/prompts/memory-tool-read.md");
-/// System prompt of the background memory pass after a turn (`memory.auto`).
+/// System prompt of the background memory pass after a turn, on the memory models.
 pub const MEMORY_AUTO_SYSTEM: &str = include_str!("../builtins/prompts/memory-auto-system.md");
 /// The memory pass's request: `{{global}}`, `{{project}}` (indexes), `{{person}}` (the
 /// person's messages that turn) and `{{reply}}` (the agent's final reply).
 pub const MEMORY_AUTO_USER: &str = include_str!("../builtins/prompts/memory-auto-user.md");
-/// The one-line reminder before a context checkpoint (`hooks.built_in.save_reminder`).
-pub const RUNTIME_SAVE_REMINDER: &str =
-    include_str!("../builtins/prompts/runtime-save-reminder.md");
-/// The save reminder as a subagent gets it: it passes facts on in its reply.
-pub const RUNTIME_SAVE_REMINDER_SUBAGENT: &str =
-    include_str!("../builtins/prompts/runtime-save-reminder-subagent.md");
-/// After the Memory skill in a subagent's system message: its memory tool only reads.
-pub const SUBAGENT_MEMORY_SKILL_NOTE: &str =
-    include_str!("../builtins/prompts/subagent-memory-skill-note.md");
+/// System prompt of the idle consolidation of one scope; `{{scope}}`.
+pub const MEMORY_CONSOLIDATE_SYSTEM: &str =
+    include_str!("../builtins/prompts/memory-consolidate-system.md");
+/// The consolidation request: `{{scope}}` and `{{memories}}` (each memory in full).
+pub const MEMORY_CONSOLIDATE_USER: &str =
+    include_str!("../builtins/prompts/memory-consolidate-user.md");
 /// System prompt of the request that seeds a new goal's to-do list (`goal.seed_todo`).
 pub const TODO_SEED_SYSTEM: &str = include_str!("../builtins/prompts/todo-seed-system.md");
 /// The seeding request; `{{project}}` (one of the two lines below) and `{{goal}}`.
@@ -240,9 +236,6 @@ pub const TODO_SEED_VERIFY_DETAILS: &str =
 /// `todo_write` result note when a rewrite tried to change the status of an item the goal
 /// check completed or closed; `{{id}}`, `{{how}}` ("confirmed", "closed as cancelled", …).
 pub const TOOL_TODO_CHECK_KEPT: &str = include_str!("../builtins/prompts/tool-todo-check-kept.md");
-/// The note a turn starts with when files changed last turn with to-do items open
-/// (`hooks.built_in.still_open`); `{{items}}`.
-pub const RUNTIME_STILL_OPEN: &str = include_str!("../builtins/prompts/runtime-still-open.md");
 /// The message that delivers the user's answer; `{{question}}`, `{{assumption}}`, `{{answer}}`.
 pub const QUESTION_ANSWER: &str = include_str!("../builtins/prompts/question-answer.md");
 /// `note` field of the set_goal tool result.

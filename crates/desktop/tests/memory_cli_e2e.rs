@@ -1,10 +1,14 @@
-//! Memory across chats through the shared server and the `themis` CLI, with a scripted model:
-//! a memory saved in one chat is in the next chat's system message (main agent), update and
-//! delete reach the index, a project fact can't be saved globally, a memory built from a web
-//! page keeps its source, secrets are stripped, and with memory off there is no index and the
-//! tool refuses. Settings › Memory's list and delete work through the CLI with revisions.
+//! Memory across chats through the shared server and the `themis` CLI, with a scripted model
+//! (no real model is called). The memory models (`memory.models`) keep memory on their own:
+//! after a turn the pass runs on the first model, falls back to the next when it is rate
+//! limited or fails, records which model did the job, and the chat gets one `memory_changed`
+//! line; the next turn's request carries the index and the relevant memory in full (and the
+//! context meter's Memory part); the chat's model is never offered a memory tool; a job every
+//! model failed waits and is retried; the daily cap holds paid models back; memory off sends
+//! nothing. Settings › Memory and Settings › Models' list work through the CLI with revisions.
 
 use std::path::Path;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -13,9 +17,10 @@ use themis_desktop::server::{Client, Server};
 use themis_desktop::state::AppState;
 use wiremock::{matchers::method, Mock, MockServer, Request, ResponseTemplate};
 
+const PASS: &str = "You keep an assistant's memory";
 const NOTE: &str = "Memory from earlier chats";
 const SUBAGENT: &str = "You are a subagent";
-const SECRET: &str = "ghp_abcdefghijklmnopqrstuvwxyz0123456789AB";
+const MODELS: &str = r#"{"memory":{"models":["mem-one","mem-two","mem-three"]}}"#;
 
 fn cli(dir: &Path, command: &str, args: Value) -> Result<Value, String> {
     use std::io::Write;
@@ -45,9 +50,10 @@ fn cli(dir: &Path, command: &str, args: Value) -> Result<Value, String> {
 }
 
 fn text_reply(text: &str) -> ResponseTemplate {
-    ResponseTemplate::new(200).set_body_json(
-        json!({"choices":[{"message":{"role":"assistant","content":text},"finish_reason":"stop"}]}),
-    )
+    ResponseTemplate::new(200).set_body_json(json!({
+        "choices":[{"message":{"role":"assistant","content":text},"finish_reason":"stop"}],
+        "usage":{"prompt_tokens":321,"completion_tokens":12,"total_tokens":333}
+    }))
 }
 
 fn call(name: &str, arguments: Value) -> ResponseTemplate {
@@ -77,47 +83,32 @@ fn last_user(body: &Value) -> String {
         .to_owned()
 }
 
-/// The tool call each request message makes.
-fn scripted(request: &str) -> Option<Value> {
-    let feedback = json!({"action":"save","scope":"global","name":"free-model-for-tests","type":"feedback",
-        "description":"Use the free model for test runs","body":"Use the free model for test runs.",
-        "why":"said so in chat","how_to_apply":"pick it for any test run"});
-    Some(match request {
-        _ if request.starts_with("remember-feedback") => feedback,
-        _ if request.starts_with("remember-page") => {
-            json!({"action":"save","name":"burndown-layout","type":"reference",
-            "description":"Burndown chart layout from a blog post",
-            "body":format!("X axis days, Y axis open tasks. The post's token was {SECRET} and password=hunter2."),
-            "source":"web page https://example.com/burndown"})
-        }
-        _ if request.starts_with("global-project") => {
-            json!({"action":"save","scope":"global","name":"repo-layout","type":"project",
-            "description":"Where the code lives","body":"crates/ holds the code."})
-        }
-        _ if request.starts_with("update-it") => {
-            json!({"action":"update","scope":"global","name":"free-model-for-tests","type":"feedback",
-            "description":"Use the free model for every test and eval run","body":"Use the free model for tests and evals."})
-        }
-        // A corrected fact: renamed, and the body still carries the old Why line while
-        // `why` gives the new one.
-        _ if request.starts_with("rename-it") => {
-            json!({"action":"update","scope":"global","name":"free-model-for-tests","new_name":"free-model-everywhere",
-            "type":"feedback","description":"Use the free model for every run",
-            "body":"Use the free model for every run.\n\nWhy: said so in chat\nHow to apply: pick it for any test run",
-            "why":"corrected in a later chat","how_to_apply":"pick it for every run"})
-        }
-        _ if request.starts_with("read-it") => {
-            json!({"action":"read","scope":"global","name":"free-model-for-tests"})
-        }
-        _ if request.starts_with("forget-it") => {
-            json!({"action":"delete","scope":"global","name":"free-model-everywhere"})
-        }
-        _ if request.starts_with("try-off") => {
-            json!({"action":"save","name":"while-off","type":"user",
-            "description":"Should not be saved","body":"nothing"})
-        }
-        _ => return None,
-    })
+/// What a memory model answers, by what the person said that turn.
+fn pass_answer(body: &Value) -> String {
+    let user = body["messages"][1]["content"].as_str().unwrap_or_default();
+    let person = user.split("<<<person").nth(1).unwrap_or_default();
+    if person.contains("always use pnpm") {
+        json!({"memories":[{"action":"save","scope":"global","name":"uses-pnpm","type":"user",
+            "description":"Uses pnpm, not npm","body":"The person uses pnpm for JavaScript projects."}]})
+        .to_string()
+    } else if person.contains("forget the pnpm") {
+        json!({"memories":[{"action":"delete","scope":"global","name":"uses-pnpm"}]}).to_string()
+    } else if person.contains("deadline") {
+        json!({"memories":[{"action":"save","scope":"project","name":"launch-deadline","type":"project",
+            "description":"Launch is on Friday","body":"The launch is on Friday."}]})
+        .to_string()
+    } else {
+        r#"{"memories":[]}"#.to_owned()
+    }
+}
+
+/// How each memory model behaves.
+#[derive(Default)]
+struct Script {
+    /// `mem-one` answers 429.
+    first_rate_limited: AtomicBool,
+    /// Every memory model answers 500.
+    all_down: AtomicBool,
 }
 
 struct Harness {
@@ -127,19 +118,32 @@ struct Harness {
     _serving: tokio::task::JoinHandle<Result<(), String>>,
     _provider: MockServer,
     requests: Arc<Mutex<Vec<Value>>>,
+    script: Arc<Script>,
 }
 
 impl Harness {
-    async fn start() -> Self {
+    async fn start(user_config: &str) -> Self {
         let data = tempfile::tempdir().unwrap();
         let project = tempfile::tempdir().unwrap();
+        std::fs::write(data.path().join("runtime.jsonc"), user_config).unwrap();
         let provider = MockServer::builder().start().await;
         let requests = Arc::new(Mutex::new(Vec::<Value>::new()));
-        let seen = Arc::clone(&requests);
+        let script = Arc::new(Script::default());
+        let (seen, behave) = (Arc::clone(&requests), Arc::clone(&script));
         Mock::given(method("POST"))
             .respond_with(move |request: &Request| {
                 let body: Value = request.body_json().unwrap();
                 seen.lock().unwrap().push(body.clone());
+                let model = body["model"].as_str().unwrap_or_default().to_owned();
+                if model.starts_with("mem-") {
+                    if behave.all_down.load(Ordering::SeqCst) {
+                        return ResponseTemplate::new(500).set_body_string("down");
+                    }
+                    if model == "mem-one" && behave.first_rate_limited.load(Ordering::SeqCst) {
+                        return ResponseTemplate::new(429).set_body_string("slow down");
+                    }
+                    return text_reply(&pass_answer(&body));
+                }
                 if system(&body).starts_with(SUBAGENT) {
                     return text_reply("Sub done.");
                 }
@@ -149,13 +153,7 @@ impl Harness {
                         json!({"say":"Starting a helper.","subagents":[{"name":"Helper","brief":"Look around."}]}),
                     );
                 }
-                if last(&body)["role"] == "tool" {
-                    return text_reply("Done.");
-                }
-                match scripted(&last_user(&body)) {
-                    Some(arguments) => call("memory", arguments),
-                    None => text_reply("Hello."),
-                }
+                text_reply("Done.")
             })
             .mount(&provider)
             .await;
@@ -165,6 +163,7 @@ impl Harness {
             .await
             .unwrap();
         state.set_go_base_url_override(Some(provider.uri()));
+        state.set_memory_jobs_for_test(true, 300, 100);
         let server = Server::bind(state, data.path()).await.unwrap();
         let serving = tokio::spawn(server.run());
         let events = Client::new(data.path().into()).subscribe().await.unwrap();
@@ -175,6 +174,7 @@ impl Harness {
             _serving: serving,
             _provider: provider,
             requests,
+            script,
         }
     }
 
@@ -190,175 +190,240 @@ impl Harness {
         thread["id"].as_str().unwrap().to_owned()
     }
 
-    /// Sends one message and waits for its run to end; the memory events it saw.
-    async fn send(&mut self, id: &str, text: &str) -> Vec<Value> {
-        let before = self.requests.lock().unwrap().len();
+    /// Sends one message, waits for its run to end, then up to `settle` for a memory line
+    /// (stopping at the first); the memory lines and context budgets it saw.
+    async fn send(&mut self, id: &str, text: &str, settle: Duration) -> (Vec<Value>, Vec<Value>) {
         self.cli(
             "send_message",
             json!({"threadId":id,"text":text,"reasoningEffort":null}),
         );
-        let memory_events = tokio::time::timeout(Duration::from_secs(120), async {
-            let mut found = Vec::new();
-            loop {
-                let item = Client::next_event(&mut self.events).await.unwrap();
-                if item["name"] != "thread-event" || item["payload"]["thread_id"] != id {
-                    continue;
-                }
-                let event = &item["payload"]["event"];
-                let kind = event["kind"].as_str().unwrap_or_default();
-                if kind == "memory_changed" {
-                    found.push(event.clone());
-                }
-                if ["finished", "failed", "incomplete"].contains(&kind) {
-                    assert_eq!(kind, "finished", "{event}");
-                    return found;
-                }
-            }
-        })
-        .await
-        .expect("the run ended");
-        assert!(self.requests.lock().unwrap().len() > before);
-        memory_events
+        let (lines, budgets) = self.watch(id, settle, true).await;
+        (lines, budgets)
     }
 
-    /// The first request of the latest run.
+    /// Thread events for `id`: until its run ends (when `run`), then up to `settle` for the
+    /// first memory line.
+    async fn watch(&mut self, id: &str, settle: Duration, run: bool) -> (Vec<Value>, Vec<Value>) {
+        let mut lines = Vec::new();
+        let mut budgets = Vec::new();
+        let mut finished = !run;
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(120);
+        loop {
+            let wait = if finished {
+                settle
+            } else {
+                deadline - tokio::time::Instant::now()
+            };
+            let Ok(item) = tokio::time::timeout(wait, Client::next_event(&mut self.events)).await
+            else {
+                assert!(finished, "the run did not end");
+                return (lines, budgets);
+            };
+            let item = item.unwrap();
+            if item["name"] != "thread-event" || item["payload"]["thread_id"] != id {
+                continue;
+            }
+            let event = &item["payload"]["event"];
+            let kind = event["kind"].as_str().unwrap_or_default();
+            match kind {
+                "memory_changed" => {
+                    lines.push(event.clone());
+                    if finished {
+                        return (lines, budgets);
+                    }
+                }
+                "context_budget" => budgets.push(event["budget"].clone()),
+                "finished" | "failed" | "incomplete" if !finished => {
+                    assert_eq!(kind, "finished", "{event}");
+                    finished = true;
+                }
+                _ => {}
+            }
+        }
+    }
+
+    fn memory_requests(&self) -> Vec<Value> {
+        self.requests
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|body| {
+                body["model"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .starts_with("mem-")
+            })
+            .cloned()
+            .collect()
+    }
+
+    /// The first request of the run that `text` started.
     fn first_request_of(&self, text: &str) -> Value {
         self.requests
             .lock()
             .unwrap()
             .iter()
             .rev()
-            .find(|body| last_user(body).starts_with(text) && last(body)["role"] == "user")
+            .find(|body| {
+                body["model"] == "test-model"
+                    && last_user(body).starts_with(text)
+                    && last(body)["role"] == "user"
+            })
             .cloned()
-            .expect("the run's first request")
+            .unwrap_or_else(|| panic!("no request for {text}"))
     }
 
-    /// The tool result the model got back in the latest run.
-    fn tool_result(&self) -> String {
-        let requests = self.requests.lock().unwrap();
-        let body = requests.last().unwrap();
-        assert_eq!(last(body)["role"], "tool", "{}", last(body));
-        last(body)["content"]
-            .as_str()
-            .unwrap_or_default()
-            .to_owned()
+    /// Every diagnostics line of `memory`/`event`, and all the log text.
+    fn logs(&self, event: &str) -> (Vec<Value>, String) {
+        let mut text = String::new();
+        if let Ok(entries) = std::fs::read_dir(self.data.path().join("logs")) {
+            for entry in entries.flatten() {
+                text.push_str(&std::fs::read_to_string(entry.path()).unwrap_or_default());
+            }
+        }
+        let lines = text
+            .lines()
+            .filter_map(|line| serde_json::from_str::<Value>(line).ok())
+            .filter(|line| line["service"] == "memory" && line["event"] == event)
+            .map(|line| line["details"].clone())
+            .collect();
+        (lines, text)
     }
 
-    fn memory_dir(&self) -> std::path::PathBuf {
-        self.data.path().join("memory")
+    /// Waits until there are `count` `memory`/`event` lines.
+    async fn logged(&self, event: &str, count: usize) -> Vec<Value> {
+        let deadline = std::time::Instant::now() + Duration::from_secs(30);
+        loop {
+            let (lines, _) = self.logs(event);
+            if lines.len() >= count || std::time::Instant::now() > deadline {
+                assert!(lines.len() >= count, "memory/{event}: {lines:?}");
+                return lines;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
     }
 }
 
-#[tokio::test(flavor = "multi_thread")]
-async fn memories_saved_in_one_chat_reach_the_next_and_follow_updates_deletes_and_the_switch() {
-    let mut h = Harness::start().await;
-    let first = h.new_chat();
-
-    // A first chat starts with no memory note, but with the memory tool and its description.
-    h.send(&first, "hello").await;
-    let request = h.first_request_of("hello");
-    assert!(!system(&request).contains(NOTE));
-    assert!(!system(&request).contains(themis_core::prompts::SYSTEM_MEMORY_OFF));
-    let tool = request["tools"]
+fn tool_names(body: &Value) -> Vec<String> {
+    body["tools"]
         .as_array()
-        .unwrap()
+        .into_iter()
+        .flatten()
+        .filter_map(|tool| tool["function"]["name"].as_str().map(str::to_owned))
+        .collect()
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn the_memory_models_keep_memory_with_fallback_and_the_next_turn_reads_it() {
+    let mut h = Harness::start(MODELS).await;
+    h.script.first_rate_limited.store(true, Ordering::SeqCst);
+    let id = h.new_chat();
+
+    // A preference said in passing: the first model is rate limited, the second saves it.
+    let (lines, _) = h
+        .send(
+            &id,
+            "By the way, I always use pnpm. Please fix the build.",
+            Duration::from_secs(10),
+        )
+        .await;
+    assert_eq!(lines.len(), 1, "{lines:?}");
+    let changes = lines[0]["changes"].as_array().unwrap();
+    assert_eq!(changes.len(), 1, "{lines:?}");
+    assert_eq!(changes[0]["action"], "saved");
+    assert_eq!(changes[0]["scope"], "global");
+    assert_eq!(changes[0]["name"], "uses-pnpm");
+    assert_eq!(changes[0]["model"], "mem-two");
+    assert_eq!(changes[0]["model_index"], 1);
+    let saved = std::fs::read_to_string(h.data.path().join("memory/global/uses-pnpm.md")).unwrap();
+    assert!(saved.contains("type: user"), "{saved}");
+    // The pass asked mem-one, then mem-two, never mem-three; it read the turn as data.
+    let asked: Vec<String> = h
+        .memory_requests()
         .iter()
-        .find(|tool| tool["function"]["name"] == "memory")
-        .expect("the memory tool is offered")
-        .clone();
-    assert_eq!(
-        tool["function"]["description"],
-        themis_core::prompts::MEMORY_TOOL,
-        "{tool}"
+        .map(|body| body["model"].as_str().unwrap().to_owned())
+        .collect();
+    assert_eq!(asked, ["mem-one", "mem-two"]);
+    let pass = &h.memory_requests()[1];
+    assert!(system(pass).starts_with(PASS), "{}", system(pass));
+    let user = pass["messages"][1]["content"].as_str().unwrap();
+    assert!(
+        user.contains("<<<person\nBy the way, I always use pnpm."),
+        "{user}"
     );
-
-    // Saved globally, with Why and How to apply; the chat shows it.
-    let events = h.send(&first, "remember-feedback").await;
+    assert!(user.contains("<<<assistant-reply\nDone.\n>>>"), "{user}");
+    assert!(pass["tools"].is_null(), "the pass offers no tools");
+    // Which model did the job, as metadata only.
+    let jobs = h.logged("job", 2).await;
     assert_eq!(
-        events.len(),
-        1,
+        (&jobs[0]["model_index"], &jobs[0]["outcome"]),
+        (&json!(0), &json!("rate_limited"))
+    );
+    assert_eq!(
+        (&jobs[1]["model_index"], &jobs[1]["outcome"]),
+        (&json!(1), &json!("answered"))
+    );
+    assert_eq!(jobs[1]["prompt_tokens"], 321);
+    assert_eq!(jobs[1]["kind"], "pass");
+    let done = h.logged("job_done", 1).await;
+    assert_eq!(done[0]["outcome"], "changed");
+    assert_eq!(done[0]["counts"]["saved"], 1);
+    // The chat's model is offered no memory tool, and is told nothing about saving.
+    let first = h.first_request_of("By the way");
+    assert!(!tool_names(&first).is_empty());
+    assert!(
+        !tool_names(&first).iter().any(|name| name == "memory"),
         "{:?}",
-        h.requests.lock().unwrap().last().map(last)
-    );
-    assert_eq!(events[0]["action"], "saved");
-    assert_eq!(events[0]["scope"], "global");
-    assert_eq!(events[0]["name"], "free-model-for-tests");
-    let file =
-        std::fs::read_to_string(h.memory_dir().join("global/free-model-for-tests.md")).unwrap();
-    assert!(file.starts_with("---\nname: free-model-for-tests\ndescription: Use the free model for test runs\ntype: feedback\nsaved: "), "{file}");
-    assert!(
-        file.contains("\nWhy: said so in chat\nHow to apply: pick it for any test run\n"),
-        "{file}"
+        tool_names(&first)
     );
 
-    // Built from a web page: project-scoped, marked with its source, secrets stripped.
-    let events = h.send(&first, "remember-page").await;
-    assert_eq!(events[0]["scope"], "project");
-    let project_dir = std::fs::read_dir(h.memory_dir().join("projects"))
-        .unwrap()
-        .next()
-        .unwrap()
-        .unwrap()
-        .path();
-    let page = std::fs::read_to_string(project_dir.join("burndown-layout.md")).unwrap();
-    assert!(
-        page.contains("\nsource: web page https://example.com/burndown\n"),
-        "{page}"
-    );
-    assert!(
-        !page.contains(SECRET) && !page.contains("hunter2"),
-        "{page}"
-    );
-    assert!(page.contains("X axis days"), "{page}");
-    // Nothing went into the project.
-    assert!(!h.project.path().join(".themis/memory").exists());
-
-    // A project fact may not be saved everywhere.
-    let events = h.send(&first, "global-project").await;
-    assert!(events.is_empty());
-    assert!(
-        h.tool_result().contains("belongs to this project"),
-        "{}",
-        h.tool_result()
-    );
-
-    // The next chat's system message carries both indexes.
-    let second = h.new_chat();
-    h.send(&second, "hello again").await;
-    let note = system(&h.first_request_of("hello again"));
-    // The whole note, as the prompt file says it, around the two indexes.
+    // The next turn's request carries the index and, sharing a word with it, the memory in full;
+    // the meter shows a Memory part, and the parts still add up.
+    h.script.first_rate_limited.store(false, Ordering::SeqCst);
+    let next = h.new_chat();
+    let (_, budgets) = h
+        .send(
+            &next,
+            "Which package manager, pnpm or npm?",
+            Duration::from_secs(3),
+        )
+        .await;
+    let request = h.first_request_of("Which package manager");
+    let note = system(&request);
     let preamble = themis_core::prompts::SYSTEM_MEMORY
         .split("{{global}}")
         .next()
         .unwrap();
     assert!(note.contains(preamble), "{note}");
+    assert!(note.contains("Everywhere:\n- uses-pnpm (user, "), "{note}");
     assert!(
-        note.contains("Everywhere:\n- free-model-for-tests (feedback, "),
+        note.contains("in full:\n### uses-pnpm (user, ")
+            && note.contains("The person uses pnpm for JavaScript projects."),
         "{note}"
     );
-    assert!(
-        note.contains("): Use the free model for test runs"),
-        "{note}"
-    );
-    assert!(
-        note.contains("This project:\n- burndown-layout (reference, "),
-        "{note}"
-    );
-    assert!(
-        note.contains(", from web page https://example.com/burndown): Burndown chart layout"),
-        "{note}"
-    );
-    // The full memory stays out of the prompt until read.
-    assert!(!note.contains("pick it for any test run"), "{note}");
-    h.send(&second, "read-it").await;
-    assert!(
-        h.tool_result().contains("pick it for any test run"),
-        "{}",
-        h.tool_result()
-    );
+    assert!(!tool_names(&request).iter().any(|name| name == "memory"));
+    let budget = budgets.first().expect("a context budget");
+    let breakdown = &budget["breakdown"];
+    assert!(breakdown["memory"].as_u64().unwrap() > 0, "{budget}");
+    let parts: u64 = [
+        "system",
+        "checkpoint",
+        "attachments",
+        "conversation",
+        "tool_activity",
+        "reasoning",
+        "memory",
+    ]
+    .iter()
+    .map(|key| breakdown[*key].as_u64().unwrap_or(0))
+    .sum();
+    assert_eq!(parts, budget["used_tokens"].as_u64().unwrap(), "{budget}");
+    // That turn held nothing new: the model answered, nothing changed, no line.
+    let done = h.logged("job_done", 2).await;
+    assert_eq!(done[1]["outcome"], "nothing");
 
-    // A subagent starts with the same index and only reads memories.
-    h.send(&second, "spawn-one").await;
+    // A subagent starts with the same memory block and no memory tool either.
+    h.send(&next, "spawn-one", Duration::from_millis(500)).await;
     let child = tokio::time::timeout(Duration::from_secs(60), async {
         loop {
             let found = h
@@ -376,178 +441,172 @@ async fn memories_saved_in_one_chat_reach_the_next_and_follow_updates_deletes_an
     })
     .await
     .expect("the subagent asked its model");
-    let child_system = system(&child);
-    assert!(child_system.contains(preamble), "{child_system}");
     assert!(
-        child_system.contains("- free-model-for-tests (feedback, "),
-        "{child_system}"
+        system(&child).contains("- uses-pnpm (user, "),
+        "{}",
+        system(&child)
     );
-    let child_tool = child["tools"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|tool| tool["function"]["name"] == "memory")
-        .expect("the subagent can read memories")
-        .clone();
-    assert_eq!(
-        child_tool["function"]["description"],
-        themis_core::prompts::MEMORY_TOOL_READ
-    );
+    assert!(!tool_names(&child).iter().any(|name| name == "memory"));
 
-    // A chat in another project sees the global memory but not this project's.
-    let other = tempfile::tempdir().unwrap();
-    let elsewhere = h.cli(
-        "create_thread",
-        json!({"projectRoot":other.path(),"provider":"go","model":"test-model"}),
-    )["id"]
-        .as_str()
-        .unwrap()
-        .to_owned();
-    h.send(&elsewhere, "hello elsewhere").await;
-    let note = system(&h.first_request_of("hello elsewhere"));
-    assert!(note.contains("free-model-for-tests"), "{note}");
-    assert!(!note.contains("burndown-layout"), "{note}");
-
-    // Update and delete reach the index.
-    let events = h.send(&second, "update-it").await;
-    assert_eq!(events[0]["action"], "updated");
-    h.send(&second, "after update").await;
-    let note = system(&h.first_request_of("after update"));
+    // A trivial turn: no pass at all.
+    let before = h.memory_requests().len();
+    h.send(&id, "ok", Duration::from_millis(500)).await;
+    let skipped = h.logged("pass_skipped", 1).await;
     assert!(
-        note.contains("Use the free model for every test and eval run"),
-        "{note}"
+        skipped.iter().any(|line| line["reason"] == "trivial"),
+        "{skipped:?}"
     );
+    assert_eq!(h.memory_requests().len(), before);
 
-    // A corrected fact is renamed: one file under the new name, the old one gone, one Why
-    // and one How to apply line (the new ones), and Settings › Memory lists the new name.
-    let events = h.send(&second, "rename-it").await;
-    assert_eq!(events.len(), 1, "{}", h.tool_result());
-    assert_eq!(events[0]["action"], "updated");
-    assert_eq!(events[0]["name"], "free-model-everywhere");
-    let global = h.memory_dir().join("global");
-    assert!(!global.join("free-model-for-tests.md").exists());
-    let renamed = std::fs::read_to_string(global.join("free-model-everywhere.md")).unwrap();
-    assert!(
-        renamed.starts_with("---\nname: free-model-everywhere\n"),
-        "{renamed}"
-    );
-    assert_eq!(renamed.matches("Why:").count(), 1, "{renamed}");
-    assert_eq!(renamed.matches("How to apply:").count(), 1, "{renamed}");
-    assert!(
-        renamed.ends_with(
-            "Use the free model for every run.\n\nWhy: corrected in a later chat\nHow to apply: pick it for every run\n"
-        ),
-        "{renamed}"
-    );
-    let listed = h.cli("list_memories", json!({"scope":"global"}));
-    let names: Vec<&str> = listed["memories"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .map(|memory| memory["name"].as_str().unwrap())
-        .collect();
-    assert_eq!(names, ["free-model-everywhere"], "{listed}");
-    h.send(&second, "after rename").await;
-    let note = system(&h.first_request_of("after rename"));
-    assert!(
-        note.contains("- free-model-everywhere (feedback, "),
-        "{note}"
-    );
-    assert!(!note.contains("free-model-for-tests"), "{note}");
+    // Asked to forget: the memory model removes it, and the line says so.
+    let (lines, _) = h
+        .send(
+            &id,
+            "Please forget the pnpm preference.",
+            Duration::from_secs(10),
+        )
+        .await;
+    assert_eq!(lines[0]["changes"][0]["action"], "removed", "{lines:?}");
+    assert_eq!(lines[0]["changes"][0]["model_index"], 0);
+    assert!(!h.data.path().join("memory/global/uses-pnpm.md").exists());
 
-    let events = h.send(&second, "forget-it").await;
-    assert_eq!(events[0]["action"], "forgot");
-    h.send(&second, "after delete").await;
-    let note = system(&h.first_request_of("after delete"));
-    assert!(!note.contains("free-model-for-tests"), "{note}");
-    assert!(note.contains("Everywhere:\n(none)"), "{note}");
-
-    // The memory events are saved with the chat.
-    let history = h.cli("get_thread_history", json!({"threadId": second}));
+    // The memory lines are saved with the chat.
+    let history = h.cli("get_thread_history", json!({"threadId": id}));
     let saved: Vec<&str> = history
         .as_array()
         .unwrap()
         .iter()
         .filter(|item| item["envelope"]["event"]["kind"] == "memory_changed")
-        .map(|item| item["envelope"]["event"]["action"].as_str().unwrap())
+        .map(|item| {
+            item["envelope"]["event"]["changes"][0]["action"]
+                .as_str()
+                .unwrap()
+        })
         .collect();
-    assert_eq!(saved, ["updated", "updated", "forgot"], "{history}");
+    assert_eq!(saved, ["saved", "removed"], "{history}");
+    // Diagnostics never hold what was said or saved.
+    let (_, text) = h.logs("job");
+    for private in ["pnpm", "JavaScript", "package manager"] {
+        assert!(!text.contains(private), "diagnostics hold {private:?}");
+    }
+}
 
-    // Settings › Memory: list and delete, refused on a stale revision.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_job_every_memory_model_failed_waits_and_is_retried_and_settings_edit_the_list() {
+    let mut h = Harness::start(MODELS).await;
+    h.script.all_down.store(true, Ordering::SeqCst);
+    let id = h.new_chat();
+    let (lines, _) = h
+        .send(
+            &id,
+            "Remember the deadline is Friday.",
+            Duration::from_millis(200),
+        )
+        .await;
+    assert!(lines.is_empty(), "{lines:?}");
+    // All three were asked, each failed, and the job waits; Settings › Memory says so.
+    let waiting = h.logged("job_waiting", 1).await;
+    assert_eq!(
+        waiting[0]["reasons"],
+        json!(["provider_error", "provider_error", "provider_error"])
+    );
+    let settings = h.cli("get_memory_settings", json!({}));
+    assert_eq!(settings["waiting"]["jobs"], 1, "{settings}");
     let root = h.project.path().to_string_lossy().into_owned();
     let listed = h.cli(
         "list_memories",
         json!({"scope":"project","projectRoot":root}),
     );
-    assert_eq!(listed["memories"][0]["name"], "burndown-layout", "{listed}");
-    assert_eq!(
-        listed["memories"][0]["source"],
-        "web page https://example.com/burndown"
+    assert_eq!(listed["waiting"]["jobs"], 1, "{listed}");
+    assert_eq!(listed["memories"].as_array().unwrap().len(), 0);
+
+    // The models come back: once the app is idle the job is tried again, on the first model.
+    h.script.all_down.store(false, Ordering::SeqCst);
+    let (lines, _) = h.watch(&id, Duration::from_secs(20), false).await;
+    assert_eq!(lines.len(), 1, "{lines:?}");
+    assert_eq!(lines[0]["changes"][0]["name"], "launch-deadline");
+    assert_eq!(lines[0]["changes"][0]["scope"], "project");
+    assert_eq!(lines[0]["changes"][0]["model_index"], 0);
+    let settings = h.cli("get_memory_settings", json!({}));
+    assert!(settings["waiting"].is_null(), "{settings}");
+    let listed = h.cli(
+        "list_memories",
+        json!({"scope":"project","projectRoot":root}),
     );
-    assert_eq!(listed["index_lines"], 1);
-    assert_eq!(listed["max_lines"], 200);
-    assert_eq!(listed["enabled"], true);
+    assert_eq!(listed["memories"][0]["name"], "launch-deadline", "{listed}");
+
+    // Settings › Models' list: at least three, in order, written in place.
+    let revision = settings["revision"].clone();
     assert!(cli(
         h.data.path(),
-        "delete_memory",
-        json!({"scope":"project","projectRoot":root,"name":"burndown-layout","revision":"stale"}),
+        "update_memory_settings",
+        json!({"models": ["mem-one", "mem-two"], "revision": revision}),
     )
     .is_err());
+    assert!(cli(
+        h.data.path(),
+        "update_memory_settings",
+        json!({"models": ["mem-one", "mem-two", "mem-one"], "revision": revision}),
+    )
+    .is_err());
+    let saved = h.cli(
+        "update_memory_settings",
+        json!({"models": ["mem-three", "mem-one", "mem-two"], "revision": revision}),
+    );
+    assert_eq!(
+        saved["settings"]["models"],
+        json!(["mem-three", "mem-one", "mem-two"])
+    );
+    assert!(
+        cli(
+            h.data.path(),
+            "update_memory_settings",
+            json!({"enabled": false, "revision": revision}),
+        )
+        .is_err(),
+        "a stale revision is refused"
+    );
+    let config = std::fs::read_to_string(h.data.path().join("runtime.jsonc")).unwrap();
+    assert!(config.contains("\"mem-three\""), "{config}");
 
-    // Memory off: no index, the tool refuses, memories are kept.
+    // The daily cap: at $0 the (unpriced, so paid) models are held back without a request.
+    let capped = r#"{"memory":{"models":["mem-three","mem-one","mem-two"],"daily_budget_usd":0}}"#;
+    std::fs::write(h.data.path().join("runtime.jsonc"), capped).unwrap();
+    let before = h.memory_requests().len();
+    h.send(
+        &id,
+        "Remember the deadline moved to Monday.",
+        Duration::from_millis(300),
+    )
+    .await;
+    let waiting = h.logged("job_waiting", 2).await;
+    assert_eq!(
+        waiting[1]["reasons"],
+        json!(["over_budget", "over_budget", "over_budget"]),
+        "{waiting:?}"
+    );
+    assert_eq!(h.memory_requests().len(), before, "no request past the cap");
+    std::fs::write(h.data.path().join("runtime.jsonc"), &config).unwrap();
+
+    // Memory off: the agent is told, no memory reaches the request, and no job runs.
     let settings = h.cli("get_memory_settings", json!({}));
-    assert_eq!(settings["settings"]["enabled"], true);
     let off = h.cli(
         "update_memory_settings",
         json!({"enabled": false, "revision": settings["revision"]}),
     );
     assert_eq!(off["settings"]["enabled"], false);
-    let config = std::fs::read_to_string(h.data.path().join("runtime.jsonc")).unwrap();
-    assert!(config.contains("\"memory\""), "{config}");
-    h.send(&second, "try-off").await;
-    let request = h.first_request_of("try-off");
+    let before = h.memory_requests().len();
+    h.send(
+        &id,
+        "Another deadline note for later.",
+        Duration::from_millis(500),
+    )
+    .await;
+    let request = h.first_request_of("Another deadline note");
     assert!(!system(&request).contains(NOTE));
-    // The agent is told memory is off, so it doesn't promise to remember.
-    assert!(
-        system(&request).contains(themis_core::prompts::SYSTEM_MEMORY_OFF),
-        "{}",
-        system(&request)
-    );
-    // The tool isn't offered, so nothing can be saved or read.
-    assert!(
-        !request["tools"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|tool| tool["function"]["name"] == "memory"),
-        "memory tool offered while off"
-    );
-    assert!(!project_dir.join("while-off.md").exists());
-    assert!(project_dir.join("burndown-layout.md").exists());
-
-    let deleted = h.cli(
-        "delete_memory",
-        json!({"scope":"project","projectRoot":root,"name":"burndown-layout","revision":listed["revision"]}),
-    );
-    assert!(deleted["revision"].is_string());
-    let listed = h.cli(
-        "list_memories",
-        json!({"scope":"project","projectRoot":root}),
-    );
-    assert_eq!(listed["memories"].as_array().unwrap().len(), 0);
-    assert_eq!(listed["enabled"], false);
-
-    // Diagnostics name scope, type and counts, never a memory's text.
-    let logs = std::fs::read_dir(h.data.path().join("logs"))
-        .map(|entries| {
-            entries
-                .flatten()
-                .map(|entry| std::fs::read_to_string(entry.path()).unwrap_or_default())
-                .collect::<String>()
-        })
-        .unwrap_or_default();
-    assert!(logs.contains("\"memory\""), "no memory diagnostics");
-    for private in ["free model", "Burndown", "X axis", "hunter2", SECRET] {
-        assert!(!logs.contains(private), "diagnostics hold {private:?}");
-    }
+    assert!(system(&request).contains(themis_core::prompts::SYSTEM_MEMORY_OFF));
+    assert_eq!(h.memory_requests().len(), before);
+    // Memories live in the app data folder, never the project.
+    assert!(!h.project.path().join("launch-deadline.md").exists());
+    assert!(!h.project.path().join(".themis/memory").exists());
 }
