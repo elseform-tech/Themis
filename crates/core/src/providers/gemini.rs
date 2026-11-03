@@ -56,7 +56,7 @@ impl CompatibleProvider {
         if let Some(top_p) = sampling.and_then(|sampling| sampling.top_p) {
             config["topP"] = top_p.into();
         }
-        let level = if COMPACTION_REQUEST.try_with(|_| ()).is_ok() {
+        let level = if super::least_thinking() {
             Some("low".to_owned())
         } else {
             self.reasoning_effort

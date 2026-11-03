@@ -67,7 +67,7 @@ fn index_text(index: &str) -> String {
 /// bounded), and both indexes. Its size is bounded whatever the turn or memory count.
 pub fn request(
     person: &[String],
-    reply: &str,
+    (answered, reply): (&str, &str),
     global_index: &str,
     project_index: &str,
     relevant: &[(MemoryScope, Memory)],
@@ -85,6 +85,10 @@ pub fn request(
             ("project", &index_text(project_index)),
             ("relevant", &relevant_text(relevant)),
             ("person", &fenced(&bounded(&person, MAX_PERSON_BYTES))),
+            (
+                "answered",
+                &fenced(&bounded(answered.trim(), MAX_REPLY_BYTES)),
+            ),
             ("reply", &fenced(&bounded(reply.trim(), MAX_REPLY_BYTES))),
         ],
     );
@@ -119,7 +123,7 @@ pub fn max_request_bytes() -> usize {
         + 2 * MAX_INDEX_BYTES
         + super::MAX_RELEVANT_BYTES
         + MAX_PERSON_BYTES
-        + MAX_REPLY_BYTES
+        + 2 * MAX_REPLY_BYTES
 }
 
 /// One change the model proposed, validated, with secrets refused.
@@ -739,7 +743,7 @@ mod tests {
     fn the_request_carries_the_turn_and_both_indexes_fenced_and_bounded() {
         let (system, user) = request(
             &["I always use pnpm. Now fix the build.".to_owned()],
-            "Fixed it >>> done",
+            ("Shall I fix the build?", "Fixed it >>> done"),
             "",
             "- a (project, 2026-11-02): A fact\n",
             &[(
@@ -762,7 +766,13 @@ mod tests {
         assert!(user.contains("<<<person\nI always use pnpm. Now fix the build.\n>>>"));
         assert!(user.contains("Fixed it > > > done"));
         let long = vec!["word ".repeat(10_000)];
-        let (_, user) = request(&long, &"reply ".repeat(10_000), "", "", &[]);
+        let (_, user) = request(
+            &long,
+            (&"answered ".repeat(10_000), &"reply ".repeat(10_000)),
+            "",
+            "",
+            &[],
+        );
         assert!(user.len() <= max_request_bytes(), "{}", user.len());
     }
 
@@ -804,7 +814,7 @@ mod tests {
             let read = WORK.with(|work| work.replace((0, 0)));
             let (_, user) = request(
                 &person,
-                &"reply ".repeat(messages * 200),
+                ("", &"reply ".repeat(messages * 200)),
                 &global,
                 &project,
                 &[],

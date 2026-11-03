@@ -3261,6 +3261,29 @@ fn model_overrides_cap_limits_and_choose_thinking_where_the_catalog_allows() {
         serde_json::from_slice::<Value>(request.body().unwrap().as_bytes().unwrap()).unwrap()
     });
     assert_eq!(body["thinking"], json!({"type":"disabled"}));
+
+    // A short extraction (the memory pass) gets the least thinking, on the model it asked for:
+    // no summary-model swap, unlike a checkpoint summary.
+    let quiet = |model: &str| {
+        MODEL_THINKING.sync_scope(thinking_table(&applied), || {
+            super::LEAST_THINKING.sync_scope((), || {
+                let provider = CompatibleProvider::go("k".into(), model.into(), None, None);
+                let request = provider
+                    .chat_request(&[user_message("hi")], None, false, None)
+                    .unwrap()
+                    .build()
+                    .unwrap();
+                serde_json::from_slice::<Value>(request.body().unwrap().as_bytes().unwrap())
+                    .unwrap()
+            })
+        })
+    };
+    let glm = quiet("glm-5.3");
+    assert_eq!(glm["model"], "glm-5.3");
+    assert_eq!(glm["thinking"], json!({"type":"disabled"}));
+    let muse = quiet("muse");
+    assert_eq!(muse["model"], "muse");
+    assert_ne!(muse["reasoning_effort"], "high", "{muse}");
 }
 
 #[test]

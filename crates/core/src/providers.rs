@@ -80,6 +80,21 @@ use serde::{Deserialize, Serialize};
 // The SDK sampling overrides do not carry request purpose; keep this task-local
 // so internal summary settings cannot leak into concurrent answer requests.
 tokio::task_local! { pub(crate) static COMPACTION_REQUEST: (); }
+
+// Least thinking only (no summary-model swap, unlike COMPACTION_REQUEST).
+tokio::task_local! { static LEAST_THINKING: (); }
+
+/// Runs `future` with the least thinking each model allows (thinking off, or its lowest
+/// effort), as checkpoint summaries get, but on the model asked for: for short extraction jobs
+/// such as the memory pass, where thinking only adds time.
+pub async fn with_least_thinking<F: std::future::Future>(future: F) -> F::Output {
+    LEAST_THINKING.scope((), future).await
+}
+
+/// A summary or a short extraction: thinking as low as the model allows.
+pub(crate) fn least_thinking() -> bool {
+    COMPACTION_REQUEST.try_with(|_| ()).is_ok() || LEAST_THINKING.try_with(|_| ()).is_ok()
+}
 // When provider bytes last arrived for the current answer request (see `note_stream_progress`).
 tokio::task_local! { pub(crate) static STREAM_PROGRESS: Arc<std::sync::Mutex<tokio::time::Instant>>; }
 
@@ -725,7 +740,7 @@ impl CompatibleProvider {
             body["stream_options"] = serde_json::json!({"include_usage":true});
         }
         // A configured provider gets no OpenCode thinking field it may not know.
-        if COMPACTION_REQUEST.try_with(|_| ()).is_ok() && self.custom.is_none() {
+        if least_thinking() && self.custom.is_none() {
             if self.uses_responses() {
                 body["reasoning"] = serde_json::json!({"effort":summary_effort(&self.model)});
             } else {
@@ -755,7 +770,7 @@ impl CompatibleProvider {
             }
         }
         // Thinking on by default for answers (summaries keep it off, above).
-        if COMPACTION_REQUEST.try_with(|_| ()).is_err() {
+        if !least_thinking() {
             let thinking = thinking_default(&self.model);
             if let (None, Some(effort), false) = (
                 &self.reasoning_effort,

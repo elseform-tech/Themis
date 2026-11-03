@@ -109,6 +109,8 @@ struct Script {
     first_rate_limited: AtomicBool,
     /// Every memory model answers 500.
     all_down: AtomicBool,
+    /// Memory models answer after a moment.
+    slow_memory: AtomicBool,
 }
 
 struct Harness {
@@ -144,7 +146,11 @@ impl Harness {
                     if model == "mem-one" && behave.first_rate_limited.load(Ordering::SeqCst) {
                         return ResponseTemplate::new(429).set_body_string("slow down");
                     }
-                    return text_reply(&pass_answer(&body));
+                    let answer = text_reply(&pass_answer(&body));
+                    if behave.slow_memory.load(Ordering::SeqCst) {
+                        return answer.set_delay(Duration::from_millis(1200));
+                    }
+                    return answer;
                 }
                 if system(&body).starts_with(SUBAGENT) {
                     return text_reply("Sub done.");
@@ -369,8 +375,9 @@ async fn the_memory_models_keep_memory_with_fallback_and_the_next_turn_reads_it(
         user.contains("<<<person\nBy the way, I always use pnpm."),
         "{user}"
     );
-    // The pass runs as the person speaks: a chat's first message answers no reply yet.
-    assert!(!user.contains("Done."), "{user}");
+    // After the turn: the reply that ended it; a first message answered no earlier reply.
+    assert!(user.contains("<<<reply-answered\n"), "{user}");
+    assert!(user.contains("<<<assistant-reply\nDone.\n>>>"), "{user}");
     assert!(pass["tools"].is_null(), "the pass offers no tools");
     // Which model did the job, as metadata only.
     let jobs = h.logged("job", 2).await;
@@ -510,20 +517,27 @@ async fn the_memory_models_keep_memory_with_fallback_and_the_next_turn_reads_it(
     }
 }
 
-/// Memory is read back live: what the memory models save while the agent still works reaches
-/// that same run at its next step, as a runtime note (not a subagent report, not the person).
+/// The pass runs once a turn's reply is done; when it finishes while the chat's next run is
+/// already working, that run gets what changed at its next step, as a plain runtime note.
 #[tokio::test(flavor = "multi_thread")]
-async fn a_memory_saved_while_the_agent_works_reaches_the_running_turn() {
+async fn a_memory_saved_while_the_next_run_works_reaches_that_run() {
     let mut h = Harness::start(MODELS).await;
+    h.script.slow_memory.store(true, Ordering::SeqCst);
     let id = h.new_chat();
-    let (lines, _) = h
+    h.send(
+        &id,
+        "By the way, I always use pnpm.",
+        Duration::from_millis(50),
+    )
+    .await;
+    // The next message lands as soon as the first reply is done, while its pass still runs.
+    let (_lines, _) = h
         .send(
             &id,
-            "By the way, I always use pnpm. Please keep working on the build.",
+            "Now please keep working on the build.",
             Duration::from_secs(10),
         )
         .await;
-    assert_eq!(lines.len(), 1, "{lines:?}");
     let main: Vec<Value> = h
         .requests
         .lock()

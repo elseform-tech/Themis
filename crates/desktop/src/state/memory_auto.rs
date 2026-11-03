@@ -42,6 +42,9 @@ pub(super) struct MemoryTurn {
     /// The person's words that started the turn (none for a goal turn, a hook's wake or an
     /// automation), then what they steered in during it.
     pub(super) person: Vec<String>,
+    /// The assistant reply the person's message answered (empty in a new chat): what "yes, go
+    /// with that" refers to.
+    pub(super) answered: String,
 }
 
 /// One memory job.
@@ -257,7 +260,10 @@ impl AppState {
                 recorder,
                 themis_core::context_metrics::with_usage_kind(
                     themis_core::context_metrics::UsageKind::Memory,
-                    themis_core::providers::ask_once(&provider, system, user),
+                    // A short extraction: the least thinking each model allows.
+                    themis_core::providers::with_least_thinking(themis_core::providers::ask_once(
+                        &provider, system, user,
+                    )),
                 ),
             ),
         );
@@ -429,7 +435,7 @@ impl AppState {
                 known.extend(pass::known_from_index(MemoryScope::Project, &project));
                 // The memories the message (and the reply it answers) may touch, in full, so an
                 // update keeps what still holds.
-                let about = format!("{}\n{reply}", turn.person.join("\n"));
+                let about = format!("{}\n{}\n{reply}", turn.person.join("\n"), turn.answered);
                 let relevant: Vec<(MemoryScope, themis_core::memory::Memory)> =
                     themis_core::memory::relevant_names(&about, &global, &project)
                         .into_iter()
@@ -440,7 +446,13 @@ impl AppState {
                         .collect();
                 Some((
                     known,
-                    pass::request(&turn.person, reply, &global, &project, &relevant),
+                    pass::request(
+                        &turn.person,
+                        (&turn.answered, reply),
+                        &global,
+                        &project,
+                        &relevant,
+                    ),
                 ))
             }
             Job::Consolidate { project_root, .. } => {
