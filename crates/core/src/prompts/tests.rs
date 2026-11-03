@@ -81,6 +81,7 @@ const ALL: &[(&str, &str, &[&str])] = &[
     (GOAL_NOTE_FAILED, "goal-note-failed", &["error"]),
     (GOAL_NOTE_INTERRUPTED, "goal-note-interrupted", &[]),
     (GOAL_CREATED_NOTE, "goal-created-note", &[]),
+    (GOAL_COMPLETE_UNREAD, "goal-complete-unread", &[]),
     (GOAL_OPEN_QUESTIONS, "goal-open-questions", &["questions"]),
     (ASK_USER_DESCRIPTION, "ask-user-description", &[]),
     (ASK_USER_ASKED, "ask-user-asked", &["assumption"]),

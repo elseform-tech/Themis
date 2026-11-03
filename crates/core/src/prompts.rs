@@ -200,6 +200,8 @@ pub const UPDATE_GOAL_TOOL: &str = include_str!("../builtins/prompts/tool-update
 pub const CREATE_GOAL_TOOL: &str = include_str!("../builtins/prompts/tool-create-goal.md");
 /// `note` field of the create_goal tool result.
 pub const GOAL_CREATED_NOTE: &str = include_str!("../builtins/prompts/goal-created-note.md");
+/// `update_goal` complete refused because the person queued a message the agent has not read.
+pub const GOAL_COMPLETE_UNREAD: &str = include_str!("../builtins/prompts/goal-complete-unread.md");
 
 // Summaries and compaction.
 /// System prompt of every context checkpoint request.

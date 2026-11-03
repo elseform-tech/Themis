@@ -117,6 +117,12 @@ impl ToolRuntime for UpdateGoalTool {
         if let Some(refused) = denied(&self.state, &self.run, &self.thread_id, "update_goal") {
             return Err(refused);
         }
+        // A message the person queued meanwhile is part of the goal and not read yet.
+        if matches!(update, themis_core::goal::GoalUpdate::Complete(_))
+            && !self.state.queue_for(&self.thread_id).is_empty()
+        {
+            return Err(error(themis_core::prompts::GOAL_COMPLETE_UNREAD));
+        }
         let goal = self
             .state
             .update_goal_status(Arc::clone(&self.sink), self.thread_id.clone(), update)

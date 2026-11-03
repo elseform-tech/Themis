@@ -784,6 +784,87 @@ async fn complete_needs_evidence_and_then_ends_the_goal() {
     assert_eq!(goal_turns, 0);
 }
 
+/// A message the person queued while the goal turn ran must be read before the goal can be
+/// complete: `update_goal` complete is refused while it waits, and the next goal turn carries it
+/// as an "Also asked" line.
+#[tokio::test(flavor = "multi_thread")]
+async fn complete_waits_for_a_message_the_person_queued_meanwhile() {
+    let server = MockServer::builder().start().await;
+    Mock::given(method("POST"))
+        .respond_with(|request: &Request| {
+            let body = body(request);
+            let evidence = |extra: bool| {
+                let mut entries = vec![
+                    json!({"requirement": "calc.py has add", "proof": "python3 test_calc.py: ok"}),
+                ];
+                if extra {
+                    entries.push(
+                        json!({"requirement": "also sub", "proof": "python3 test_calc.py: ok"}),
+                    );
+                }
+                json!({"status": "complete", "evidence": entries})
+            };
+            if called(&body, "update_goal") && mentions(&body, "Also asked: Also add sub") {
+                return reply("Done: add and sub both pass.");
+            }
+            if mentions(&body, "Also asked: Also add sub") {
+                return calls("update_goal", evidence(true));
+            }
+            if called(&body, "update_goal") {
+                return reply("Reading the new request next.");
+            }
+            // The first goal turn takes a moment, so the person's message lands meanwhile.
+            calls("update_goal", evidence(false)).set_delay(std::time::Duration::from_millis(800))
+        })
+        .mount(&server)
+        .await;
+    let (state, _data, _project, thread) = chat(&server).await;
+    let (sink, mut rx) = ChannelSink::channel();
+    let sink: Arc<dyn themis_desktop::sink::EventSink> = Arc::new(sink);
+    state
+        .send_message(sink.clone(), thread.clone(), "/goal calc.py has add".into())
+        .await
+        .unwrap();
+    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    state
+        .enqueue_message(
+            sink.clone(),
+            thread.clone(),
+            "Also add sub".into(),
+            None,
+            Vec::new(),
+        )
+        .await
+        .unwrap();
+    goal_until(&state, &thread, |status| status == GoalStatus::Reached).await;
+    let mut seen = Vec::new();
+    until(&mut rx, &mut seen, |event| {
+        matches!(event, ThreadEvent::Finished { .. })
+    })
+    .await;
+    settle(&state, &thread).await;
+    let refusals: Vec<&String> = seen
+        .iter()
+        .filter_map(|event| match event {
+            ThreadEvent::ToolFinished {
+                tool,
+                ok: false,
+                output,
+                ..
+            } if tool == "update_goal" => Some(output),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(refusals.len(), 1, "{refusals:?}");
+    assert!(refusals[0].contains("not read yet"), "{}", refusals[0]);
+    let goal = state.goal_for(&thread).unwrap();
+    assert_eq!(
+        goal.evidence.len(),
+        2,
+        "completed only after the new request: {goal:?}"
+    );
+}
+
 /// `update_goal` blocked (after the same blocker held for three goal turns) ends the goal's
 /// turns with the reason shown; resuming it starts again with a fresh blocked count.
 #[tokio::test(flavor = "multi_thread")]

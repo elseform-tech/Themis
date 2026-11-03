@@ -236,7 +236,9 @@ Codex, the chat's own model judges its goal: there is no separate check.
   (typed, queued or steered in) is added to the objective word for word as an
   "Also asked" line, so no checkpoint can lose it; the agent decides how it
   bears on the goal. Answers to the agent's questions are not added. The goal row
-  shows the lines when you open it.
+  shows the lines when you open it. The agent cannot mark the goal complete while a
+  message you queued is still waiting: it reads that message in the next goal turn
+  first.
 - **The goal row** at the top of the composer shows the objective (click it to
   read it in full, with its "Also asked" lines) and the goal's total elapsed
   time across all its turns (time spent paused, waiting or with Themis closed does
