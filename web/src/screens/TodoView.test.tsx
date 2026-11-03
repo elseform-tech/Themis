@@ -10,7 +10,7 @@ afterEach(cleanup);
 
 const todoCss = readFileSync("src/screens/TodoList.css", "utf8");
 
-const goal = (rules?: Goal["rules"], text = "Build Trailboard"): Goal => ({ text, status: "running", started_at: 0, active_ms: 0, turns: 1, stalls: 0, failures: 0, rules });
+const goal = (_rules?: unknown, text = "Build Trailboard"): Goal => ({ text, status: "running", started_at: 0, active_ms: 0, turns: 1, failures: 0 });
 const items: TodoItem[] = [
   { id: "1", title: "Read the docs and plan", status: "completed", outcome: "Plan in PLAN.md" },
   { id: "2", title: "Fix drag in Safari", status: "in_progress", details: "Drag drops the card one column left in Safari." },
@@ -119,21 +119,6 @@ it("says when the check, not the agent, finished or closed an item, and why", ()
   render(<TodoWindow items={[closed[1]!, closed[2]!, { id: "t5", title: "Polish", status: "pending" }]} />);
   expect([...document.querySelectorAll(".themis-todo-item")].map(row => row.textContent)).toEqual(["Polish"]);
   expect(document.querySelector(".themis-todo-more")).toHaveTextContent("2 done");
-});
-
-it("lists the goal's rules read-only, only when it has some", () => {
-  const { rerender } = render(<TodoView goal={goal([
-    { what: "No build step" },
-    { what: "Subagents build the parts", broken: true, how: "the main agent wrote them all" },
-    { what: "Code review before finishing", pending: true },
-  ])} todo={todo} />);
-  const rules = screen.getByRole("list", { name: "Rules" });
-  expect(within(rules).getByText("Subagents build the parts").closest("li")).toHaveTextContent("Not followed: the main agent wrote them all");
-  expect(within(rules).getAllByText(/^Not followed/)).toHaveLength(1);
-  expect(within(rules).getAllByText("Still to do")).toHaveLength(1);
-  expect(within(rules).queryByRole("button")).toBeNull();
-  rerender(<TodoView goal={goal([])} todo={todo} />);
-  expect(screen.queryByRole("list", { name: "Rules" })).toBeNull();
 });
 
 it("shows no goal text in a normal chat, and folds a long goal", () => {

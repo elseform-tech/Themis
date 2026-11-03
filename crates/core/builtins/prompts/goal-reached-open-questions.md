@@ -1,1 +1,0 @@
-Also name each open question listed above with the assumption you used, since they stay open for the user.

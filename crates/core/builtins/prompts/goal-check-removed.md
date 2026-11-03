@@ -1,2 +1,0 @@
-Requests of the person's that the agent took off its list unfinished since the last check, in their words. A removal stands only when a later request of theirs cancelled or replaced it; otherwise put the request back with "add":
-{{requests}}

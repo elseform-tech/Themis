@@ -20,7 +20,6 @@ use wiremock::{matchers::method, Mock, MockServer, Request, ResponseTemplate};
 
 const PASS: &str = "You decide what an assistant should remember";
 const SEED: &str = "You turn a goal into a short to-do list";
-const CHECK: &str = "You decide whether an agent has reached a goal";
 const SUBAGENT: &str = "You are a subagent";
 const SUMMARY: &str = "You summarize agent context";
 const TODO_SKILL: &str = "# To-do list";
@@ -194,12 +193,6 @@ impl Harness {
                 }
                 if head.starts_with(SEED) {
                     return text_reply(r#"{"items":[{"title":"Tasks can be added and ticked off"},{"title":"CSV export downloads every task","details":"every row"}]}"#);
-                }
-                if head.contains(CHECK) {
-                    // The check completes the seeded verification item on the turn's evidence.
-                    return text_reply(
-                        r#"{"verdict":"reached","reason":"Everything works.","progressed":true,"complete":[{"id":"t3","outcome":"clicked through every feature"}]}"#,
-                    );
                 }
                 if head.contains(SUMMARY) {
                     return text_reply("Goal/constraints: keep notes. Unresolved work: none. Parked work: none. Next action: carry on.");
@@ -436,83 +429,6 @@ async fn the_memory_pass_notices_a_preference_and_skips_refuses_and_dedupes() {
     // Metadata only: never what was said or saved.
     let (_, text) = h.logs("memory", "auto_pass");
     assert!(!text.contains("pnpm") && !text.contains(SECRET), "{text}");
-}
-
-#[tokio::test(flavor = "multi_thread")]
-async fn a_seeded_goal_reads_its_list_and_is_reached_once_its_items_are_done() {
-    let mut h = Harness::start(Some(r#"{"goal":{"seed_todo":true}}"#), None).await;
-    let id = h.new_chat();
-    h.send(
-        &id,
-        "/goal Build a todo app with CSV export",
-        Duration::from_millis(500),
-    )
-    .await;
-    // One seeding request: the empty project counts as new, so set-up may come first.
-    let seeds = h.requests_of(SEED);
-    assert_eq!(seeds.len(), 1);
-    let user = seeds[0]["messages"][1]["content"].as_str().unwrap();
-    assert!(user.contains("a new, empty project"), "{user}");
-    assert!(user.contains("Build a todo app with CSV export"), "{user}");
-    // The goal's first turn opened with the seeded list.
-    let first = h.first_request_of("/goal Build a todo app");
-    let opening = last_user(&first);
-    assert!(
-        opening.contains("[pending; from the goal] Tasks can be added and ticked off"),
-        "{opening}"
-    );
-    assert!(opening.contains("Verify end to end"), "{opening}");
-    // The agent finishes the items, the check accepts them, and the goal is reached.
-    let deadline = std::time::Instant::now() + Duration::from_secs(60);
-    loop {
-        let goal = h.cli("get_goal", json!({"threadId": id}));
-        if goal["status"] == "reached" {
-            break;
-        }
-        assert!(std::time::Instant::now() < deadline, "{goal}");
-        tokio::time::sleep(Duration::from_millis(100)).await;
-    }
-    let list = h.cli("get_todo", json!({"threadId": id}));
-    let items = list["items"].as_array().unwrap();
-    assert_eq!(items.len(), 3, "{list}");
-    assert!(items.iter().all(|item| item["source"] == "goal"), "{list}");
-    assert!(
-        items.iter().all(|item| item["status"] == "completed"),
-        "{list}"
-    );
-    // The agent ticked the features; the check completed "Verify end to end" itself.
-    assert_eq!(items[2]["title"], "Verify end to end");
-    assert!(!items[2]["closed"].is_null(), "{list}");
-    assert!(items[0]["closed"].is_null(), "{list}");
-    // An agent's later rewrite can't put it back: the check's status stands and the agent is
-    // told why.
-    h.send(&id, "redo-list", Duration::from_millis(300)).await;
-    let list = h.cli("get_todo", json!({"threadId": id}));
-    assert_eq!(list["items"][2]["status"], "completed", "{list}");
-    assert!(!list["items"][2]["closed"].is_null(), "{list}");
-    let result = h
-        .requests
-        .lock()
-        .unwrap()
-        .iter()
-        .rev()
-        .find(|body| last(body)["role"] == "tool")
-        .map(|body| last(body)["content"].to_string())
-        .unwrap_or_default();
-    assert!(
-        result.contains("t3 was confirmed by the check; only the check can reopen it."),
-        "{result}"
-    );
-    let seeded = h.logged("todo", "seed", 1).await;
-    assert_eq!(fields(&seeded[0])["outcome"], "seeded");
-    assert_eq!(fields(&seeded[0])["items"], 3);
-
-    // Seeding is off by default: another chat's goal starts with an empty list.
-    let mut off = Harness::start(None, None).await;
-    let other = off.new_chat();
-    off.send(&other, "/goal Build it", Duration::from_millis(300))
-        .await;
-    assert!(off.requests_of(SEED).is_empty());
 }
 
 #[tokio::test(flavor = "multi_thread")]

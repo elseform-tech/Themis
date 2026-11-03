@@ -133,49 +133,18 @@ pub const DESKTOP_WATCH_COMPLETE: &str =
 pub const DESKTOP_WATCH_CHECK: &str = include_str!("../builtins/prompts/desktop-watch-check.md");
 
 // Goal mode.
-/// System message of the goal check that judges each goal turn.
-pub const GOAL_CHECK_SYSTEM: &str = include_str!("../builtins/prompts/goal-check-system.md");
-/// User message of the goal check; `{{goal}}`, `{{answer}}`, `{{evidence}}` are fenced data.
-pub const GOAL_CHECK_USER: &str = include_str!("../builtins/prompts/goal-check-user.md");
-/// The agent's to-do list as the goal check reads it; `{{items}}`.
-pub const GOAL_CHECK_TODO: &str = include_str!("../builtins/prompts/goal-check-todo.md");
-/// The person's requests the agent took off its list, for the goal check; `{{requests}}`.
-pub const GOAL_CHECK_REMOVED: &str = include_str!("../builtins/prompts/goal-check-removed.md");
-/// The goal's rules as earlier checks found them; `{{rules}}`.
-pub const GOAL_CHECK_RULES: &str = include_str!("../builtins/prompts/goal-check-rules.md");
-/// Text with each screenshot the goal check sees; `{{index}}`, `{{count}}`.
-pub const GOAL_CHECK_SCREENSHOTS: &str =
-    include_str!("../builtins/prompts/goal-check-screenshots.md");
 /// Active-goal context appended to every run in a chat with a running goal; `{{goal}}`.
 pub const GOAL_CONTEXT: &str = include_str!("../builtins/prompts/goal-context.md");
 /// Message that starts a goal turn; `{{goal_turn_marker}}`, `{{turn}}`, `{{goal}}`, `{{note}}`.
 pub const GOAL_TURN: &str = include_str!("../builtins/prompts/goal-turn.md");
-/// The goal's rules, in a goal turn; `{{rules}}`.
-pub const GOAL_TURN_RULES: &str = include_str!("../builtins/prompts/goal-turn-rules.md");
-pub const GOAL_TURN_FILES: &str = include_str!("../builtins/prompts/goal-turn-files.md");
-/// A subagent in the goal check's evidence; `{{name}}`, `{{status}}`, `{{paths}}`, `{{result}}`.
-pub const GOAL_EVIDENCE_SUBAGENT: &str =
-    include_str!("../builtins/prompts/goal-evidence-subagent.md");
-pub const GOAL_EVIDENCE_SCRIPT: &str = include_str!("../builtins/prompts/goal-evidence-script.md");
-pub const GOAL_NOTE_SCRIPT_PROOF: &str =
-    include_str!("../builtins/prompts/goal-note-script-proof.md");
 pub const GOAL_CONTEXT_OVER: &str = include_str!("../builtins/prompts/goal-context-over.md");
 pub const GOAL_CONTEXT_PAUSED: &str = include_str!("../builtins/prompts/goal-context-paused.md");
-/// The project's guidance as the goal check sees it; `{{guidance}}`.
-pub const GOAL_CHECK_GUIDANCE: &str = include_str!("../builtins/prompts/goal-check-guidance.md");
 /// The map of a project's other documents; `{{docs}}`.
 pub const PROJECT_GUIDANCE_DOCS: &str =
     include_str!("../builtins/prompts/project-guidance-docs.md");
-/// Message that tells the user a checked goal is reached; `{{goal_turn_marker}}`,
-/// `{{turn}}`, `{{goal}}`, `{{reason}}`.
-pub const GOAL_REACHED_TURN: &str = include_str!("../builtins/prompts/goal-reached-turn.md");
-pub const GOAL_REACHED_OPEN_QUESTIONS: &str =
-    include_str!("../builtins/prompts/goal-reached-open-questions.md");
-/// Goal-turn note after turns without progress; `{{turns}}`.
-pub const GOAL_NOTE_STALLED: &str = include_str!("../builtins/prompts/goal-note-stalled.md");
-/// Goal-turn note after the user resumes a goal saved as stuck (older versions).
-pub const GOAL_NOTE_RESUMED_STUCK: &str =
-    include_str!("../builtins/prompts/goal-note-resumed-stuck.md");
+/// Goal-turn note after the user resumes a blocked goal.
+pub const GOAL_NOTE_RESUMED_BLOCKED: &str =
+    include_str!("../builtins/prompts/goal-note-resumed-blocked.md");
 /// Goal-turn note after the user stopped the previous turn.
 pub const GOAL_NOTE_STOPPED: &str = include_str!("../builtins/prompts/goal-note-stopped.md");
 /// Goal-turn note after the previous turn failed; `{{error}}`.
@@ -245,6 +214,8 @@ pub const TOOL_TODO_CHECK_KEPT: &str = include_str!("../builtins/prompts/tool-to
 pub const RUNTIME_STILL_OPEN: &str = include_str!("../builtins/prompts/runtime-still-open.md");
 /// The message that delivers the user's answer; `{{question}}`, `{{assumption}}`, `{{answer}}`.
 pub const QUESTION_ANSWER: &str = include_str!("../builtins/prompts/question-answer.md");
+/// Description of the `update_goal` tool.
+pub const UPDATE_GOAL_TOOL: &str = include_str!("../builtins/prompts/tool-update-goal.md");
 /// `note` field of the set_goal tool result.
 pub const GOAL_SET_NOTE: &str = include_str!("../builtins/prompts/goal-set-note.md");
 

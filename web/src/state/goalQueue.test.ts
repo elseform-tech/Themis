@@ -47,7 +47,7 @@ describe("queue and goal events", () => {
 
   it("keeps the queue and goal of each chat", () => {
     let state = reducer(initialState, envelope({ kind: "queue_changed", queue: [{ id: "q", text: "later", attachments: [], held: false }] }, ""));
-    state = reducer(state, envelope({ kind: "goal_changed", goal: { text: "speed up p95", status: "running", started_at: 0, active_ms: 0, turns: 1, stalls: 0, failures: 0 } }, ""));
+    state = reducer(state, envelope({ kind: "goal_changed", goal: { text: "speed up p95", status: "running", started_at: 0, active_ms: 0, turns: 1, failures: 0 } }, ""));
     expect(state.queues[thread]?.map(item => item.text)).toEqual(["later"]);
     expect(state.goals[thread]?.text).toBe("speed up p95");
     state = reducer(state, envelope({ kind: "goal_changed", goal: null }, ""));

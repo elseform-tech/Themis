@@ -106,8 +106,8 @@ doc = false
 bench = false
 
 [[bin]]
-name = "goal_verdict"
-path = "fuzz_targets/goal_verdict.rs"
+name = "goal_update"
+path = "fuzz_targets/goal_update.rs"
 test = false
 doc = false
 bench = false

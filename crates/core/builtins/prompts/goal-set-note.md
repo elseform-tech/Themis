@@ -1,1 +1,1 @@
-The goal is set. When this turn ends, the runtime checks it and keeps starting turns until it is reached. Finish this turn normally.
+The goal is set. When this turn ends, the runtime keeps starting turns for it. Finish this turn normally.

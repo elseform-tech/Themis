@@ -470,8 +470,9 @@ export interface QueuedMessage {
   note?: string;
 }
 
-export type GoalStatus = 'running' | 'paused' | 'waiting' | 'stuck' | 'quota' | 'reached';
-export type GoalNoteKind = 'reached' | 'not_yet' | 'stuck' | 'waiting' | 'quota' | 'failed' | 'status' | 'small_window';
+export type GoalStatus = 'running' | 'paused' | 'waiting' | 'blocked' | 'quota' | 'reached';
+/** `not_yet` only in chats from before goals judged themselves. */
+export type GoalNoteKind = 'reached' | 'not_yet' | 'blocked' | 'waiting' | 'quota' | 'failed' | 'status' | 'small_window';
 
 /** A chat's goal: one sentence the agent keeps working toward. */
 export interface Goal {
@@ -485,25 +486,17 @@ export interface Goal {
   /** Unix milliseconds since the goal last started running. */
   running_since?: number;
   turns: number;
-  stalls: number;
-  progress?: string;
   failures: number;
-  /** How the work must be done the whole way; read-only, from the goal check. */
-  rules?: GoalRule[];
-  /** The goal check is reading the turn that just ended. */
-  checking?: boolean;
   /** Unix milliseconds when the next turn is due, while the goal waits to retry. */
   retry_at?: number;
+  /** What the agent named as proof of each requirement when it marked the goal complete. */
+  evidence?: GoalEvidence[];
 }
 
-/** A rule the goal's work keeps to the whole way; never ticked off. */
-export interface GoalRule {
-  what: string;
-  /** A rule that wasn't followed. */
-  broken?: boolean;
-  /** A step the rule asks for that hasn't happened yet and holds the goal open. */
-  pending?: boolean;
-  how?: string;
+/** One requirement of a complete goal and what proves it. */
+export interface GoalEvidence {
+  requirement: string;
+  proof: string;
 }
 
 export type TodoStatus = "pending" | "in_progress" | "completed";

@@ -713,7 +713,7 @@ impl AppState {
         let level = if record.outcome == NotificationOutcome::Sent {
             let (kind, message) = match record.kind {
                 crate::notifications::GoalNotice::Reached => ("goal_reached", "Goal reached"),
-                crate::notifications::GoalNotice::Stuck => ("goal_stuck", "Goal paused"),
+                crate::notifications::GoalNotice::Blocked => ("goal_blocked", "Goal blocked"),
                 crate::notifications::GoalNotice::Waiting => {
                     ("goal_waiting", "Goal waiting for you")
                 }

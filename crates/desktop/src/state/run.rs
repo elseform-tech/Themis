@@ -524,6 +524,18 @@ impl AppState {
             thread_id: thread_id.to_owned(),
             run: check_approval.clone(),
         }));
+        // Only a chat with an unfinished goal can update it.
+        if self
+            .goal_for(thread_id)
+            .is_some_and(|goal| goal.status != crate::types::GoalStatus::Reached)
+        {
+            tools.push(Box::new(super::goal_tool::UpdateGoalTool {
+                state: self.clone(),
+                sink: Arc::clone(sink),
+                thread_id: thread_id.to_owned(),
+                run: check_approval.clone(),
+            }));
+        }
         let end_request = themis_core::runtime::EndRequest::default();
         tools.push(Box::new(super::question_tool::QuestionTool {
             state: self.clone(),

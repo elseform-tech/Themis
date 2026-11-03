@@ -4,9 +4,7 @@
 //! override says it reads images, the next request carries the screenshot as a JPEG `data:`
 //! URL in a user message right after the tool result, the tool is described as giving the
 //! image, and its result says so. On a model that reads text only, nothing changes: no
-//! image, the same description and note as before. Both chats run as goals: the goal check
-//! (on the chat's model) gets the turn's screenshot only on the model that reads images.
-//! The diagnostics log records how many images and bytes went out, never the image.
+//! image, the same description and note as before. The diagnostics log records how many images and bytes went out, never the image.
 //! Skipped without a Chromium.
 
 use std::path::Path;
@@ -46,14 +44,6 @@ fn tool_call(id: &str, name: &str, arguments: Value) -> ResponseTemplate {
     }))
 }
 
-const CHECK_MARKER: &str = "You decide whether an agent has reached a goal";
-
-fn is_check(body: &Value) -> bool {
-    body["messages"][0]["content"]
-        .as_str()
-        .is_some_and(|text| text.contains(CHECK_MARKER))
-}
-
 fn tool_results(body: &Value) -> Vec<Value> {
     body["messages"]
         .as_array()
@@ -67,9 +57,8 @@ fn tool_results(body: &Value) -> Vec<Value> {
         .collect()
 }
 
-/// The chat requests the mock received for `model`, in order: the first goal turn's, then
-/// the goal checks'. The short turn that closes a reached goal is left out.
-async fn requests_for(provider: &MockServer, model: &str) -> (Vec<Value>, Vec<Value>) {
+/// The chat requests the mock received for `model`, in order.
+async fn requests_for(provider: &MockServer, model: &str) -> Vec<Value> {
     provider
         .received_requests()
         .await
@@ -78,12 +67,7 @@ async fn requests_for(provider: &MockServer, model: &str) -> (Vec<Value>, Vec<Va
         .filter(|request| request.url.path() == "/v1/chat/completions")
         .filter_map(|request| request.body_json::<Value>().ok())
         .filter(|body| body["model"] == model)
-        .filter(|body| {
-            !body
-                .to_string()
-                .contains("A separate check found the goal reached")
-        })
-        .partition(|body| !is_check(body))
+        .collect()
 }
 
 fn screenshot_description(body: &Value) -> String {
@@ -136,11 +120,6 @@ async fn screenshots_reach_only_a_model_that_reads_images() {
         .and(path("/v1/chat/completions"))
         .respond_with(move |request: &Request| {
             let body: Value = request.body_json().unwrap_or(Value::Null);
-            if is_check(&body) {
-                return ResponseTemplate::new(200).set_body_json(json!({
-                    "choices": [{"message": {"role": "assistant", "content": r#"{"verdict":"reached","reason":"The heading is red.","progress":"red"}"#}, "finish_reason": "stop"}]
-                }));
-            }
             match tool_results(&body).len() {
                 0 => tool_call(
                     "c1",
@@ -193,7 +172,7 @@ async fn screenshots_reach_only_a_model_that_reads_images() {
             cli(
                 &dir,
                 "send_message",
-                json!({"threadId": id, "text": "/goal say what colour the heading is", "reasoningEffort": null}),
+                json!({"threadId": id, "text": "say what colour the heading is", "reasoningEffort": null}),
             );
             id
         })
@@ -201,7 +180,7 @@ async fn screenshots_reach_only_a_model_that_reads_images() {
     .await
     .unwrap();
 
-    // Each goal turn finishes, and the check after it reaches the goal.
+    // Each run finishes.
     let mut finished = std::collections::HashSet::new();
     tokio::time::timeout(Duration::from_secs(120), async {
         while finished.len() < ids.len() {
@@ -222,22 +201,8 @@ async fn screenshots_reach_only_a_model_that_reads_images() {
     })
     .await
     .expect("both runs finish");
-    let dir = data.path().to_owned();
-    let goal_ids = ids.clone();
-    tokio::task::spawn_blocking(move || {
-        let deadline = std::time::Instant::now() + Duration::from_secs(60);
-        for id in &goal_ids {
-            while cli(&dir, "get_goal", json!({"threadId": id}))["status"] != "reached" {
-                assert!(std::time::Instant::now() < deadline, "goal never reached");
-                std::thread::sleep(Duration::from_millis(100));
-            }
-        }
-    })
-    .await
-    .unwrap();
-
     // The model that reads images: the screenshot follows its tool result.
-    let (vision, vision_checks) = requests_for(&provider, "vision").await;
+    let vision = requests_for(&provider, "vision").await;
     assert_eq!(vision.len(), 3, "open, screenshot, answer");
     let last = &vision[2];
     let messages = last["messages"].as_array().unwrap();
@@ -267,22 +232,10 @@ async fn screenshots_reach_only_a_model_that_reads_images() {
     );
     // Only requests after the screenshot carry it.
     assert!(!vision[1].to_string().contains("image_url"));
-    // The goal check on the same model sees the turn's screenshot after the turn's text.
-    assert_eq!(vision_checks.len(), 1);
-    let check = vision_checks[0]["messages"].as_array().unwrap();
-    assert_eq!(check.len(), 3, "{}", vision_checks[0]);
-    assert_eq!(check[2]["role"], "user");
-    assert!(check[2]["content"][0]["text"]
-        .as_str()
-        .unwrap()
-        .contains("screenshot 1 of 1"));
-    assert_eq!(check[2]["content"][1]["image_url"]["url"], url);
-
     // The model that reads text only: exactly the text result it always had.
-    let (text, text_checks) = requests_for(&provider, "text").await;
+    let text = requests_for(&provider, "text").await;
     assert_eq!(text.len(), 3);
-    assert_eq!(text_checks.len(), 1);
-    for body in text.iter().chain(&text_checks) {
+    for body in &text {
         assert!(!body.to_string().contains("image_url"), "no image");
         for message in body["messages"].as_array().unwrap() {
             assert!(
@@ -308,13 +261,6 @@ async fn screenshots_reach_only_a_model_that_reads_images() {
     let fields = sent[0].to_string();
     assert!(fields.contains("\"image_count\":1"), "{fields}");
     assert!(fields.contains("local/vision"), "{fields}");
-    let checked: Vec<Value> = log
-        .lines()
-        .filter_map(|line| serde_json::from_str::<Value>(line).ok())
-        .filter(|record| record["event"] == "check_images_sent")
-        .collect();
-    assert_eq!(checked.len(), 1, "only the vision chat's check: {log}");
-    assert_eq!(checked[0]["details"]["image_count"], 1);
     assert!(!log.contains("/9j/"), "no image bytes in the log");
     assert!(!log.contains("local-test-key"));
 

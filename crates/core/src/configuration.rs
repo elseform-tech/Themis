@@ -662,10 +662,6 @@ impl Default for CompactionConfig {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct GoalConfig {
-    /// The model that checks each goal turn; absent, the chat's own model. Any
-    /// model a connected provider offers (`<provider>/<id>` for one from `providers`).
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub check_model: Option<String>,
     /// When a goal starts on an empty list, one request on the summary model fills the to-do
     /// list from the goal's sentence, ending with "Verify end to end".
     pub seed_todo: bool,
@@ -1954,7 +1950,6 @@ pub fn validate(config: &RuntimeConfig) -> Result<()> {
     );
     for (field, model) in [
         ("compaction.summary_model", &compaction.summary_model),
-        ("goal.check_model", &config.goal.check_model),
         ("subagents.model", &config.subagents.model),
     ] {
         if let Some(model) = model {
@@ -2376,9 +2371,7 @@ fn base_schema() -> Value {
                 "session_idle_minutes":{"type":"integer","minimum":0,"maximum":10080,"default":60,"description":"Minutes a chat may sit idle before its session ends for plugin hooks; writing again starts the next one. 0 never ends one for being idle"},
                 "prompt_hook_calls":{"type":"integer","minimum":0,"maximum":1000,"default":50,"description":"Model requests prompt hooks may make in a run, each on the chat's model. A guard that finds none left refuses. 0 turns prompt hooks off; only your own runtime.jsonc can set this"}
             }},
-            "goal":{"type":"object","additionalProperties":false,"properties":{
-                "check_model":{"type":["string","null"],"minLength":1,"maxLength":256,"default":null,"description":"The model that checks each goal turn; absent, the chat's model. Any model a connected provider offers; <provider>/<id> for one from providers"}
-            }}
+            "goal":{"type":"object","additionalProperties":false,"properties":{}}
         }
     })
 }
@@ -2431,7 +2424,6 @@ mod tests {
             "recent_messages",
             "total_turns",
             "summary_model",
-            "check_model",
             "model",
             "prompt_file",
             "command",
@@ -2818,28 +2810,7 @@ mod tests {
     }
 
     #[test]
-    fn goal_check_model_follows_precedence_and_needs_a_known_provider_prefix() {
-        let user = r#"{"goal":{"check_model":"glm-5.3"}}"#;
-        let project = r#"{"goal":{"check_model":"qwen3.8-flash"}}"#;
-        let resolved = resolve(Some(user), Some(project), None).unwrap();
-        assert_eq!(
-            resolved.config.goal.check_model.as_deref(),
-            Some("qwen3.8-flash")
-        );
-        assert_eq!(resolved.provenance["goal.check_model"], "project");
-        let cleared = resolve(Some(user), None, Some(r#"{"goal":{"check_model":null}}"#)).unwrap();
-        assert!(cleared.config.goal.check_model.is_none());
-        assert!(
-            RuntimeConfig::default().goal.check_model.is_none(),
-            "absent: the chat's model"
-        );
-        for bad in [
-            r#"{"goal":{"check_model":"has space"}}"#,
-            r#"{"goal":{"check_model":"nope/model"}}"#,
-            r#"{"goal":{"unknown":1}}"#,
-        ] {
-            assert!(resolve(Some(bad), None, None).is_err(), "{bad}");
-        }
+    fn models_keys_need_a_known_provider_prefix() {
         // A `models` key may also name OpenCode Go as go/<id>; another prefix needs a provider.
         assert!(resolve(
             Some(r#"{"models":{"go/glm-5.3":{"context_tokens":64000}}}"#),
@@ -3021,9 +2992,10 @@ mod tests {
             check_file(r#"{"models":{"a":{"thinking":true},"b":{"thinking":false}}}"#).is_none()
         );
         // A key-like string value does not count as a key.
-        assert!(
-            check_file(r#"{"goal":{"check_model":"goal"},"web":{"search_url":"web"}}"#).is_none()
-        );
+        assert!(check_file(
+            r#"{"compaction":{"summary_model":"compaction"},"web":{"search_url":"web"}}"#
+        )
+        .is_none());
     }
     #[test]
     fn jsonc_layers_and_validation() {

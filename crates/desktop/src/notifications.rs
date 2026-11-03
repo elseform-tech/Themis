@@ -18,10 +18,10 @@ use crate::types::{Goal, GoalStatus, THREAD_EVENT_NAME};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum GoalNotice {
-    /// The goal check found the goal reached.
+    /// The agent marked the goal complete.
     Reached,
-    /// Paused: no progress over several turns, repeated failures, or unreachable.
-    Stuck,
+    /// The agent marked the goal blocked.
+    Blocked,
     /// Paused until you answer a question.
     Waiting,
     /// Paused because the model quota is used up; it retries on its own.
@@ -69,7 +69,7 @@ pub struct GoalWatch {
 
 impl GoalWatch {
     /// Records the chat's goal as the server announced it and returns what to
-    /// notify, if anything. A goal reached, stuck, or waiting for you notifies
+    /// notify, if anything. A goal reached, blocked, or waiting for you notifies
     /// once when it gets there; a quota pause notifies once until the goal
     /// leaves the retry cycle. Running, a pause you made, and a removed goal
     /// never notify.
@@ -89,7 +89,7 @@ impl GoalWatch {
         let notice = match goal.status {
             _ if !changed => None,
             GoalStatus::Reached => Some(GoalNotice::Reached),
-            GoalStatus::Stuck => Some(GoalNotice::Stuck),
+            GoalStatus::Blocked => Some(GoalNotice::Blocked),
             GoalStatus::Waiting => Some(GoalNotice::Waiting),
             GoalStatus::Quota if !quota_noticed => Some(GoalNotice::Quota),
             GoalStatus::Quota | GoalStatus::Running | GoalStatus::Paused => None,
@@ -150,7 +150,7 @@ pub fn notice_text(kind: GoalNotice, chat_title: &str, reason: Option<&str>) -> 
     };
     let body = match kind {
         GoalNotice::Reached => with_reason("Goal reached"),
-        GoalNotice::Stuck => with_reason("Goal paused"),
+        GoalNotice::Blocked => with_reason("Goal blocked"),
         GoalNotice::Waiting => "Goal paused until you answer.".to_owned(),
         GoalNotice::Quota => {
             "Goal paused: the model quota is used up. It tries again every 15 minutes.".to_owned()
@@ -488,15 +488,15 @@ mod tests {
     }
 
     #[test]
-    fn reached_stuck_and_waiting_notify_once_when_the_goal_gets_there() {
-        use GoalStatus::{Reached, Running, Stuck, Waiting};
+    fn reached_blocked_and_waiting_notify_once_when_the_goal_gets_there() {
+        use GoalStatus::{Blocked, Reached, Running, Waiting};
         let mut watch = GoalWatch::default();
         assert_eq!(
             statuses(
                 &mut watch,
                 &[
-                    Running, Running, Waiting, Waiting, Running, Stuck, Stuck, Running, Reached,
-                    Reached
+                    Running, Running, Waiting, Waiting, Running, Blocked, Blocked, Running,
+                    Reached, Reached
                 ]
             ),
             [
@@ -505,7 +505,7 @@ mod tests {
                 Some(GoalNotice::Waiting),
                 None,
                 None,
-                Some(GoalNotice::Stuck),
+                Some(GoalNotice::Blocked),
                 None,
                 None,
                 Some(GoalNotice::Reached),
@@ -578,11 +578,11 @@ mod tests {
     fn only_goal_changed_frames_are_read() {
         let frame = |event: Value| json!({"name": THREAD_EVENT_NAME, "payload": {"thread_id": "t1", "run_id": "", "event": event}});
         let (thread_id, read) = goal_change(&frame(
-            json!({"kind": "goal_changed", "goal": goal(GoalStatus::Stuck)}),
+            json!({"kind": "goal_changed", "goal": goal(GoalStatus::Blocked)}),
         ))
         .unwrap();
         assert_eq!(thread_id, "t1");
-        assert_eq!(read.unwrap().status, GoalStatus::Stuck);
+        assert_eq!(read.unwrap().status, GoalStatus::Blocked);
         assert_eq!(
             goal_change(&frame(json!({"kind": "goal_changed", "goal": null}))),
             Some(("t1".to_owned(), None))
@@ -606,10 +606,10 @@ mod tests {
             )
         );
         assert_eq!(
-            notice_text(GoalNotice::Stuck, "", None),
-            ("Themis".to_owned(), "Goal paused.".to_owned())
+            notice_text(GoalNotice::Blocked, "", None),
+            ("Themis".to_owned(), "Goal blocked.".to_owned())
         );
-        let (_, body) = notice_text(GoalNotice::Stuck, "x", Some(&"word ".repeat(100)));
+        let (_, body) = notice_text(GoalNotice::Blocked, "x", Some(&"word ".repeat(100)));
         assert!(body.chars().count() <= 200, "{body}");
         assert_eq!(
             notice_text(GoalNotice::Waiting, "x", Some("Which port?")).1,

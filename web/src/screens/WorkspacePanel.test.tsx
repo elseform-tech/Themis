@@ -75,7 +75,7 @@ describe("WorkspacePanel", () => {
   });
 
   it("shows the To-do tab for a goal before its list exists", async () => {
-    appState = { ...appState, goals: { t1: { text: "Ship it", status: "running", started_at: 0, active_ms: 0, turns: 1, stalls: 0, failures: 0 } }, workspaceTabRequest: { tab: "todo", at: 1 } } as typeof appState;
+    appState = { ...appState, goals: { t1: { text: "Ship it", status: "running", started_at: 0, active_ms: 0, turns: 1, failures: 0 } }, workspaceTabRequest: { tab: "todo", at: 1 } } as typeof appState;
     render(<WorkspacePanel projectRoot="/repo" threadId="t1" workspace={workspace} />);
     await act(async () => {});
     expect(screen.getByRole("button", { name: "To-do" })).toHaveAttribute("aria-pressed", "true");

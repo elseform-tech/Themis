@@ -69,7 +69,7 @@ export function useOverview(threadId: string, messages: ChatMessage[]): Overview
   const shownBrowser = browser?.open && browser.url !== "about:blank" ? { label: browserLabel(browser), agent: browser.controller === "agent", activity: browser.activity } : null;
   const setCollapsed = (value: boolean) => { setCollapsedState(value); writeSession(COLLAPSED_KEY, value); };
   const todoItems = state.todos[threadId]?.items ?? [];
-  const todo = todoItems.length ? { items: todoItems, broken: (state.goals[threadId]?.rules ?? []).some(rule => rule.broken) } : null;
+  const todo = todoItems.length ? { items: todoItems, broken: false } : null;
   return {
     changes, tasks, subagents, todo, browser: shownBrowser, media,
     visible: !!(changes || tasks || subagents || todo || shownBrowser || media.length),

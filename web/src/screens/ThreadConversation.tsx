@@ -22,7 +22,6 @@ import { MemoryLine } from "./MemorySettings";
 
 interface ThreadConversationProps {
   /** The goal check is reading the turn that just ended. */
-  goalChecking?: boolean;
   /** When the goal's next turn is due, while it waits to retry. */
   goalRetryAt?: number;
   threadId: string;
@@ -42,7 +41,6 @@ interface ThreadConversationProps {
 
 export function ThreadConversation({
   threadId,
-  goalChecking,
   goalRetryAt,
   messages,
   stream,
@@ -136,7 +134,7 @@ export function ThreadConversation({
           </div>
         </div>
       )}
-      {!running && !sending && <GoalWait checking={goalChecking} retryAt={goalRetryAt} />}
+      {!running && !sending && <GoalWait retryAt={goalRetryAt} />}
       <div ref={endRef} />
       </div>
     </div>

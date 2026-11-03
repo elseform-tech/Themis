@@ -23,9 +23,9 @@ const STATUS_LABEL: Record<Goal["status"], string | null> = {
   running: null,
   paused: "Paused",
   waiting: "Waiting for your reply",
-  stuck: "Paused · needs a change",
+  blocked: "Blocked",
   quota: "Paused · quota used up",
-  reached: null,
+  reached: "Complete",
 };
 
 function readExpanded(): boolean {
@@ -42,9 +42,10 @@ interface GoalBarProps {
   onFold?: () => void;
 }
 
-/** The chat's unfinished goal as one row of the composer: its sentence (click to read it
- *  in full), elapsed time, and icons for edit and pause/resume, with remove
- *  under "more". */
+/** The chat's goal as one row of the composer: its sentence (click to read it in full),
+ *  elapsed time, and icons for edit and pause/resume, with remove under "more". A complete
+ *  goal stays until the next message, listing the evidence the agent gave for each
+ *  requirement. */
 export function GoalBar({ goal, onEdit, onPause, onResume, onRemove, onFold }: GoalBarProps) {
   const [now, setNow] = useState(() => Date.now());
   const [expanded, setExpanded] = useState(readExpanded);
@@ -69,12 +70,12 @@ export function GoalBar({ goal, onEdit, onPause, onResume, onRemove, onFold }: G
     setSaving(true);
     try { await onEdit(draft.trim()); setDraft(null); } finally { setSaving(false); }
   }
-  const label = goal.status === "paused" && goal.reason ? `Paused · ${goal.reason}` : STATUS_LABEL[goal.status];
-  const paused = goal.status === "paused" || goal.status === "stuck" || goal.status === "quota";
-  const editable = goal.status !== "waiting";
+  const label = (goal.status === "paused" || goal.status === "blocked") && goal.reason ? `${STATUS_LABEL[goal.status]} · ${goal.reason}` : STATUS_LABEL[goal.status];
+  const paused = goal.status === "paused" || goal.status === "blocked" || goal.status === "quota";
+  const complete = goal.status === "reached";
+  const editable = goal.status !== "waiting" && !complete;
   const elapsed = formatElapsed(goalElapsedMs(goal, now));
-  // A reached goal leaves the composer; its note stays in the conversation.
-  if (goal.status === "reached") return null;
+  const evidence = complete ? goal.evidence ?? [] : [];
 
   if (draft !== null) {
     return (
@@ -98,9 +99,18 @@ export function GoalBar({ goal, onEdit, onPause, onResume, onRemove, onFold }: G
   }
 
   return (
-    <div role="region" aria-label="Goal" className={`themis-goal-bar${expanded ? " is-expanded" : ""}`} data-status={goal.status}>
+    <div role="region" aria-label="Goal" className={`themis-goal-bar${expanded || evidence.length ? " is-expanded" : ""}`} data-status={goal.status}>
       <GoalMark />
-      <button type="button" className="themis-goal-text" aria-expanded={expanded} title={expanded ? "Show less" : goal.text} onClick={toggle}>{goal.text}</button>
+      <div className="themis-goal-body">
+        <button type="button" className="themis-goal-text" aria-expanded={expanded} title={expanded ? "Show less" : goal.text} onClick={toggle}>{goal.text}</button>
+        {evidence.length > 0 && (
+          <ul className="themis-goal-evidence" aria-label="Evidence">
+            {evidence.map((entry, index) => (
+              <li key={index}><span>{entry.requirement}</span> <span className="themis-goal-proof">{entry.proof}</span></li>
+            ))}
+          </ul>
+        )}
+      </div>
       <span className="themis-goal-meta">
         {label && <span className="themis-goal-state">{label}</span>}
         <span className="themis-goal-elapsed themis-icon-tip" data-tooltip="Elapsed" tabIndex={0} aria-label={`Elapsed ${elapsed}`}>

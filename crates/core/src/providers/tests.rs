@@ -269,7 +269,7 @@ async fn completed_requests_reach_the_usage_recorder_at_any_metrics_level() {
                 .await;
             assert!(chunks.iter().all(Result::is_ok));
             crate::context_metrics::with_usage_kind(
-                crate::context_metrics::UsageKind::GoalCheck,
+                crate::context_metrics::UsageKind::Summary,
                 async {
                     // A request that never completes is not recorded.
                     let _ = provider.chat(&[user_message("x")], None).await;
@@ -295,7 +295,7 @@ async fn completed_requests_reach_the_usage_recorder_at_any_metrics_level() {
     assert!(seen
         .iter()
         .skip(1)
-        .all(|record| record.kind == crate::context_metrics::UsageKind::GoalCheck));
+        .all(|record| record.kind == crate::context_metrics::UsageKind::Summary));
 }
 
 #[test]

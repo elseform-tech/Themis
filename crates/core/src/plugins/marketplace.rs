@@ -3237,7 +3237,7 @@ fn import_hooks(value: &Value, root: &Path, spec: &mut PluginSpec) -> anyhow::Re
             "Notification" => Some(&[
                 "permission_prompt",
                 "goal_reached",
-                "goal_stuck",
+                "goal_blocked",
                 "goal_waiting",
                 "goal_quota",
             ]),

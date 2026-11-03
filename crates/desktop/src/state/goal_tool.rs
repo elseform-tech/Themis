@@ -1,6 +1,7 @@
-//! The agent's `set_goal` tool: after the user agrees to make a request a
-//! goal, the agent sets it for its own chat. Like the own-chat automation
-//! lifecycle it needs no approval prompt, but a deny rule still wins.
+//! The agent's goal tools. `set_goal` sets the chat's goal when the user asks for one;
+//! `update_goal` ends it as complete (with evidence for each requirement) or blocked, or pauses
+//! it when the person asked. Like the own-chat automation lifecycle they need no approval
+//! prompt, but a deny rule still wins.
 
 use std::sync::Arc;
 
@@ -25,68 +26,70 @@ impl std::fmt::Debug for GoalTool {
     }
 }
 
+pub(super) struct UpdateGoalTool {
+    pub(super) state: AppState,
+    pub(super) sink: Arc<dyn EventSink>,
+    pub(super) thread_id: String,
+    pub(super) run: RunApproval,
+}
+
+impl std::fmt::Debug for UpdateGoalTool {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("UpdateGoalTool").finish_non_exhaustive()
+    }
+}
+
 fn error(message: impl ToString) -> ToolCallError {
     ToolCallError::RuntimeError(message.to_string().into())
+}
+
+/// Refuses `tool` when an approval rule denies it; otherwise it approves itself.
+fn denied(
+    state: &AppState,
+    run: &RunApproval,
+    thread_id: &str,
+    tool: &str,
+) -> Option<ToolCallError> {
+    let action = ToolAction {
+        display: None,
+        command: Vec::new(),
+        tool: tool.to_owned(),
+        summary: tool.to_owned(),
+        risk: RiskLevel::Write,
+    };
+    let decision = if run.mode == ApprovalMode::Yolo {
+        run.policy.yolo_decision(&action)
+    } else {
+        run.policy.decision(&action)
+    };
+    let _ = state.inner.diagnostics.append(
+        "approval",
+        "auto_decided",
+        "info",
+        json!({"thread_id": thread_id, "tool": tool, "decision": format!("{decision:?}"), "reason": "auto: own-chat goal"}),
+    );
+    (decision == PolicyAction::Deny).then(|| {
+        error(format!(
+            "approval denied for '{tool}': the approval rules deny changing goals"
+        ))
+    })
 }
 
 #[async_trait]
 impl ToolRuntime for GoalTool {
     async fn execute(&self, args: Value) -> Result<Value, ToolCallError> {
-        let pause = args["pause"].as_bool() == Some(true);
-        let goal = args["goal"].as_str().filter(|goal| !goal.trim().is_empty());
-        let remove = args["remove"].as_bool() == Some(true);
-        if goal.is_none() && !pause && !remove {
+        let Some(goal) = args["goal"].as_str().filter(|goal| !goal.trim().is_empty()) else {
             return Err(error("set_goal needs `goal`: the goal in one sentence"));
-        }
-        let action = ToolAction {
-            display: None,
-            command: Vec::new(),
-            tool: "set_goal".to_owned(),
-            summary: "set_goal".to_owned(),
-            risk: RiskLevel::Write,
         };
-        let decision = if self.run.mode == ApprovalMode::Yolo {
-            self.run.policy.yolo_decision(&action)
-        } else {
-            self.run.policy.decision(&action)
-        };
-        let _ = self.state.inner.diagnostics.append(
-            "approval",
-            "auto_decided",
-            "info",
-            json!({"thread_id": self.thread_id, "tool": "set_goal", "decision": format!("{decision:?}"), "reason": "auto: own-chat goal"}),
-        );
-        if decision == PolicyAction::Deny {
-            return Err(error(
-                "approval denied for 'set_goal': the approval rules deny setting goals",
-            ));
-        }
-        if (pause || remove) && !self.state.person_spoke_since_goal_check(&self.thread_id) {
-            let verb = if remove { "removing" } else { "pausing" };
-            return Err(error(format!(
-                "set_goal: {verb} is refused because the person has not asked; keep working toward the goal"
-            )));
-        }
-        if remove {
-            self.state
-                .remove_goal(Arc::clone(&self.sink), self.thread_id.clone())
-                .await
-                .map_err(error)?;
-            return Ok(json!({"status": "removed"}));
-        }
-        if pause {
-            self.state
-                .pause_goal(Arc::clone(&self.sink), self.thread_id.clone())
-                .await
-                .map_err(error)?;
-            return Ok(json!({"status": "paused"}));
+        if let Some(refused) = denied(&self.state, &self.run, &self.thread_id, "set_goal") {
+            return Err(refused);
         }
         let goal = self
             .state
             .set_goal(
                 Arc::clone(&self.sink),
                 self.thread_id.clone(),
-                goal.unwrap_or_default().to_owned(),
+                goal.to_owned(),
             )
             .await
             .map_err(error)?;
@@ -103,10 +106,45 @@ impl ToolT for GoalTool {
         "set_goal"
     }
     fn description(&self) -> &str {
-        "Set this chat's goal: one sentence the runtime keeps working toward, turn after turn, until a separate check finds it reached. Call it straight away when the user asks for a goal in their own words. Otherwise call it only after they agreed to make their request a goal (when a request clearly needs many rounds of work toward a measurable or judgeable outcome, first ask once, in one line: \"Want me to make this a goal and keep working until it's reached?\"). Include any conditions the user added. Never call it for questions or one-step changes. Replaces an existing goal. When the person asks to stop or pause the goal, pass pause: true instead; when they ask to remove, drop or cancel it, pass remove: true. Say it is done only after that succeeds; both are refused unless they asked."
+        "Set this chat's goal: one sentence the runtime keeps working toward, turn after turn, until you mark it complete with update_goal. Call it straight away when the user asks for a goal in their own words. Otherwise call it only after they agreed to make their request a goal (when a request clearly needs many rounds of work toward a measurable or judgeable outcome, first ask once, in one line: \"Want me to make this a goal and keep working until it's reached?\"). Include any conditions the user added. Never call it for questions or one-step changes. Replaces an existing goal."
     }
     fn args_schema(&self) -> Value {
-        json!({"type":"object","properties":{"goal":{"type":"string","description":"The goal in one sentence, in the user's terms."},"pause":{"type":"boolean","description":"True to pause this chat's goal because the person asked."},"remove":{"type":"boolean","description":"True to remove this chat's goal because the person asked."}},"additionalProperties":false})
+        json!({"type":"object","properties":{"goal":{"type":"string","description":"The goal in one sentence, in the user's terms."}},"required":["goal"],"additionalProperties":false})
+    }
+    fn output_schema(&self) -> Option<Value> {
+        None
+    }
+}
+
+#[async_trait]
+impl ToolRuntime for UpdateGoalTool {
+    async fn execute(&self, args: Value) -> Result<Value, ToolCallError> {
+        let update = themis_core::goal::parse_update(&args).map_err(error)?;
+        if let Some(refused) = denied(&self.state, &self.run, &self.thread_id, "update_goal") {
+            return Err(refused);
+        }
+        let goal = self
+            .state
+            .update_goal_status(Arc::clone(&self.sink), self.thread_id.clone(), update)
+            .await
+            .map_err(error)?;
+        Ok(json!({"status": goal.status}))
+    }
+}
+
+impl ToolT for UpdateGoalTool {
+    fn name(&self) -> &str {
+        "update_goal"
+    }
+    fn description(&self) -> &str {
+        themis_core::prompts::UPDATE_GOAL_TOOL
+    }
+    fn args_schema(&self) -> Value {
+        json!({"type":"object","properties":{
+            "status":{"type":"string","enum":["complete","blocked","paused"],"description":"`complete` only when current evidence proves every requirement; `blocked` only after the same blocker held for three goal turns in a row; `paused` only when the user asked."},
+            "evidence":{"type":"array","description":"With complete: one entry per requirement of the objective.","items":{"type":"object","properties":{"requirement":{"type":"string","description":"One requirement, in the objective's terms."},"proof":{"type":"string","description":"What proves it now: a command and its result, a file, a test, a page check."}},"required":["requirement","proof"],"additionalProperties":false}},
+            "reason":{"type":"string","description":"With blocked: the blocker, in one sentence the user can act on."}
+        },"required":["status"],"additionalProperties":false})
     }
     fn output_schema(&self) -> Option<Value> {
         None
