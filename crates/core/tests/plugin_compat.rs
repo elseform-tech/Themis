@@ -934,8 +934,6 @@ fn lifecycle_events_import_only_where_their_moment_exists() {
         ("batch", "PostToolBatch", None),
         ("compacted", "PostCompact", Some("auto")),
         ("told", "Notification", Some("permission_prompt")),
-        ("created", "TaskCreated", None),
-        ("completed", "TaskCompleted", None),
         ("config", "ConfigChange", Some("project_settings")),
         ("loaded", "InstructionsLoaded", Some("session_start")),
     ] {
@@ -964,6 +962,8 @@ fn lifecycle_events_import_only_where_their_moment_exists() {
         "idle",
         "elicit",
         "elicited",
+        "created",
+        "completed",
     ] {
         assert!(find(never).is_none(), "{never} would never run");
     }
@@ -978,6 +978,8 @@ fn lifecycle_events_import_only_where_their_moment_exists() {
         "Hook event TeammateIdle",
         "Hook event Elicitation",
         "Hook event ElicitationResult",
+        "Hook event TaskCreated",
+        "Hook event TaskCompleted",
     ] {
         assert!(notes.contains(reason), "{reason}: {notes}");
     }

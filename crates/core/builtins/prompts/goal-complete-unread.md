@@ -1,0 +1,1 @@
+The user sent a message you have not read yet; it is now part of the goal. The goal stays open: end this turn, read that message in the next goal turn, do what it asks, and only then call update_goal with status "complete".

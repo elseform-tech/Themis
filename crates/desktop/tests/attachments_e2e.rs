@@ -644,7 +644,7 @@ async fn cli_plain_and_shell_evidence_survives_maintenance_and_reaches_summary()
         project.path().join(".themis/config.jsonc"),
         // A read adds about 1k tokens. Maintenance starts well below compaction so one read can't
         // jump past it: at the default 0.83 this test passed or failed by the prompt's size.
-        // The budget leaves room for the tool list (memory and todo_write included).
+        // The budget leaves room for the tool list (memory included).
         r#"{"context_token_budget":25500,"recent_messages":2,"total_turns":30,"compaction":{"maintenance_threshold_ratio":0.7}}"#,
     )
     .unwrap();
@@ -1416,6 +1416,7 @@ async fn cli_checkpoint_keeps_the_goal_and_budget_events_reach_clients() {
             "attachments",
             "conversation",
             "tool_activity",
+            "goal",
         ]
         .iter()
         .map(|key| breakdown[key].as_u64().unwrap())

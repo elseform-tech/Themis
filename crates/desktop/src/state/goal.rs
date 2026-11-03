@@ -1,21 +1,17 @@
-//! Goal mode: one editable sentence per chat, worked on turn after turn
-//! until a separate check finds it reached.
+//! Goal mode: one objective per chat, worked on turn after turn.
 //!
 //! The goal lives in `goals/<chat id>.json` beside `threads.json`. Each goal
 //! turn is an ordinary run. When a run ends and nothing is queued, the
-//! supervisor here runs the goal check and either ends the goal, starts the
-//! next turn, or pauses it. A goal never gives up: it pauses only when it is
-//! reached, waiting for the user, or out of model quota (and retries that);
-//! turns without progress, errors and restarts never stop it. The agent says
-//! where the goal stands at the start of each turn, and once the check finds
-//! it reached, one short turn has the agent tell the user.
+//! supervisor here starts the next turn while the goal runs. A goal never gives up: it pauses
+//! only when it is waiting for the user or out of model quota (and retries that); turns without
+//! progress, errors and restarts never stop it.
 
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
 use serde_json::json;
-use themis_core::goal::{self as core_goal, Failure, Verdict};
+use themis_core::goal::{self as core_goal, Failure};
 
 use super::chat_grants::safe_chat_id;
 use super::AppState;
@@ -24,8 +20,6 @@ use crate::types::{Goal, GoalNoteKind, GoalStatus, ThreadEvent, ThreadEventEnvel
 
 /// Directory name under the app data directory.
 pub(super) const GOALS_DIR: &str = "goals";
-/// Turns without progress before the next turn is told to try a different approach.
-const STALL_TURNS: u32 = 3;
 /// Failed turns in a row before the goal pauses instead of retrying: a provider's bad
 /// spell usually clears within minutes (about 15 of waiting here), other errors won't.
 const TRANSIENT_FAILURES_BEFORE_PAUSE: u32 = 6;
@@ -41,111 +35,10 @@ const MAX_BACKOFF: Duration = Duration::from_secs(15 * 60);
 pub(super) const BANK_INTERVAL: Duration = Duration::from_secs(60);
 /// Wait before retrying a goal turn the concurrency limit turned away.
 const BUSY_RETRY: Duration = Duration::from_secs(20);
-/// Most command evidence the goal check reads, in characters.
-const MAX_EVIDENCE_CHARS: usize = 32_000;
-/// Most changed files a goal remembers, the latest ones.
-const MAX_GOAL_FILES: usize = 30;
 /// Longest paragraph of a goal note.
 const MAX_NOTE_PART_CHARS: usize = 800;
-/// Most reopened items a check's message names; Workspace › To-do has them all.
-const MAX_REOPENED_SHOWN: usize = 5;
-/// A long command output keeps its start and its end (where results and
-/// summaries are), in characters.
-const OUTPUT_HEAD_CHARS: usize = 2_000;
-const OUTPUT_TAIL_CHARS: usize = 4_000;
-/// History items read per page while gathering evidence (memory stays
-/// bounded; the text kept is capped by `MAX_EVIDENCE_CHARS`).
-const EVIDENCE_PAGE_ITEMS: usize = 2_000;
-
-/// Calls that make a page do something rather than report on it.
-const PAGE_CHANGING_CALLS: [&str; 11] = [
-    ".click(",
-    ".set(",
-    ".lookAt(",
-    ".dispatchEvent(",
-    ".submit(",
-    ".remove(",
-    ".translate",
-    ".rotate",
-    "shoot(",
-    "force",
-    "innerHTML",
-];
-
-/// Whether a devtools script changed the page instead of reading it. This is a screen for a
-/// plain mistake, not a sandbox: a read that looks like a write only costs the agent a reload.
-fn marks_page_change(tool: &str, summary: &str) -> bool {
-    if tool != "browser_devtools" {
-        return false;
-    }
-    // A long call's summary is cut short, so this can't parse it as JSON.
-    let script = summary
-        .split_once(r#""expression":""#)
-        .map_or("", |(_, rest)| rest.split(r#"","#).next().unwrap_or(rest));
-    PAGE_CHANGING_CALLS.iter().any(|call| script.contains(call)) || assigns(script)
-}
-
-/// Whether a script assigns to anything but a variable it declares for itself.
-fn assigns(script: &str) -> bool {
-    let bytes = script.as_bytes();
-    script.match_indices('=').any(|(at, _)| {
-        let before = at.checked_sub(1).map(|index| bytes[index]);
-        let after = bytes.get(at + 1).copied();
-        let comparison =
-            matches!(before, Some(b'=' | b'!' | b'<' | b'>')) || matches!(after, Some(b'=' | b'>'));
-        if comparison {
-            return false;
-        }
-        let statement = script[..at]
-            .rsplit([';', '{', '('])
-            .next()
-            .unwrap_or_default();
-        !["const ", "let ", "var "]
-            .iter()
-            .any(|word| statement.trim_start().starts_with(word))
-    })
-}
-
-/// Whether what follows a tool call can't count as real proof, given what came before: a script
-/// changing the page spoils it until the page is opened or reloaded.
-fn page_spoiled_after(spoiled: bool, tool: &str, summary: &str) -> bool {
-    if tool == "browser_open" || (tool == "browser_navigate" && summary.contains("reload")) {
-        return false;
-    }
-    spoiled || marks_page_change(tool, summary)
-}
-
-/// What the goal check tells the chat: what is wrong, what to change, which finished items it
-/// reopened (named from `list`) and which rule wasn't followed.
-fn check_message(verdict: &core_goal::GoalVerdict, list: &themis_core::todo::TodoList) -> String {
-    let mut parts = vec![verdict.reason.clone()];
-    parts.extend(verdict.next.clone());
-    let reopened: Vec<&str> = verdict
-        .reopen
-        .iter()
-        .filter_map(|(id, _)| list.items.iter().find(|item| &item.id == id))
-        .map(|item| item.title.as_str())
-        .collect();
-    if !reopened.is_empty() {
-        let shown = reopened[..reopened.len().min(MAX_REOPENED_SHOWN)].join(", ");
-        let more = reopened.len().saturating_sub(MAX_REOPENED_SHOWN);
-        parts.push(if more > 0 {
-            format!("Reopened: {shown} and {more} more")
-        } else {
-            format!("Reopened: {shown}")
-        });
-    }
-    let broken: Vec<&str> = verdict
-        .rules
-        .iter()
-        .filter(|rule| rule.broken)
-        .map(|rule| rule.what.as_str())
-        .collect();
-    if !broken.is_empty() {
-        parts.push(format!("Not followed: {}", broken.join(", ")));
-    }
-    parts.join("\n\n")
-}
+/// History items read per page while looking for the person's messages.
+const HISTORY_PAGE_ITEMS: usize = 2_000;
 
 fn now_ms() -> i64 {
     chrono::Utc::now().timestamp_millis()
@@ -341,92 +234,48 @@ impl AppState {
             active_ms: 0,
             running_since: Some(now),
             turns: 0,
-            stalls: 0,
-            progress: None,
             failures: 0,
-            // Evidence for the first check starts here.
-            checked_seq: self
+            turn_seq: self
                 .inner
                 .transcript
                 .last_activity_seq(thread_id)
                 .unwrap_or(0),
-            rules: Vec::new(),
-            files: Vec::new(),
-            checking: false,
             retry_at: None,
+            evidence: Vec::new(),
+            also_asked: Vec::new(),
+            objective_updated: false,
         };
         self.bump_goal_generation(thread_id);
         self.store_goal(sink, thread_id, Some(goal.clone()));
         goal
     }
 
-    /// Sets the chat's goal from the agent's `set_goal` tool. The run that
-    /// called it continues; the goal's turns follow when it ends.
-    pub async fn set_goal(
+    /// Creates the chat's goal (the agent's `create_goal`, or the CLI). Refused while the chat
+    /// has an unfinished goal. The run that created it continues; the goal's turns follow when
+    /// it ends, or start now when no run is going.
+    pub async fn create_goal(
         &self,
         sink: Arc<dyn EventSink>,
         thread_id: String,
-        text: String,
+        objective: String,
     ) -> Result<Goal, String> {
         let running = self.require_thread(&thread_id).await?;
-        let text = core_goal::normalize_goal(&text).ok_or("Describe the goal in one sentence")?;
-        let previous = self
+        let objective = core_goal::normalize_goal(&objective)
+            .ok_or("create_goal needs `objective`: the user's objective in their words")?;
+        if self
             .goal_for(&thread_id)
-            .filter(|goal| goal.status != GoalStatus::Reached);
-        let new = previous.is_none();
-        let mut goal = self.begin_goal(sink.as_ref(), &thread_id, &text);
-        // What the person sent after asking, before the agent set it in a run, belongs to the
-        // new goal.
-        if new && running {
-            self.requests_join_new_goal(sink.as_ref(), &thread_id);
+            .is_some_and(|goal| goal.status != GoalStatus::Reached)
+        {
+            return Err("create_goal: this chat already has an unfinished goal; use update_goal only for its status, and the person edits its text on the goal card".to_owned());
         }
-        // Rewording an open goal continues it: its time, turn count and files carry over, and
-        // its to-do list stays; the next check finds the new sentence's rules.
-        if let Some(previous) = previous {
-            let stretch = previous.running_since.map_or(0, |since| {
-                u64::try_from(now_ms().saturating_sub(since)).unwrap_or(0)
-            });
-            if let Some(updated) = self.update_goal(sink.as_ref(), &thread_id, |goal| {
-                goal.active_ms = previous.active_ms.saturating_add(stretch);
-                goal.turns = previous.turns;
-                goal.files = previous.files;
-            }) {
-                goal = updated;
-            }
-        }
-        // `goal.seed_todo`, on the chat's project's configuration as it stands.
-        let record = self
-            .inner
-            .threads
-            .read()
-            .await
-            .get(&thread_id)
-            .map(|record| (record.model.clone(), record.project_root.clone()));
-        if let Some((model, root)) = record {
-            if let Ok(resolved) = self.runtime_configuration(Some(&root), None) {
-                self.seed_goal_todo(
-                    sink.as_ref(),
-                    (&thread_id, ""),
-                    &goal.text,
-                    &resolved.config,
-                    &model,
-                    &root,
-                )
-                .await;
-            }
-        }
+        let goal = self.begin_goal(sink.as_ref(), &thread_id, &objective);
         if !running {
-            self.start_goal_turn(
-                sink,
-                thread_id,
-                "The goal was just set; start on it.".into(),
-            )
-            .await;
+            self.start_goal_turn(sink, thread_id, String::new()).await;
         }
         Ok(goal)
     }
 
-    /// Replaces the goal's sentence; the next turn reads the new one.
+    /// Replaces the goal's text; the next goal run is told the objective changed.
     pub async fn edit_goal(
         &self,
         sink: Arc<dyn EventSink>,
@@ -437,13 +286,18 @@ impl AppState {
         let text = core_goal::normalize_goal(&text).ok_or("The goal cannot be empty")?;
         let goal = self
             .update_goal(sink.as_ref(), &thread_id, |goal| {
-                goal.text = text;
-                // A changed goal gets a fresh look: old stalls and the old sentence's rules no
-                // longer apply; the next check finds the new one's.
-                goal.stalls = 0;
-                goal.rules.clear();
+                if goal.text != text {
+                    goal.text = text;
+                    goal.objective_updated = true;
+                }
             })
             .ok_or_else(|| "This chat has no goal".to_owned())?;
+        let _ = self.inner.diagnostics.append(
+            "goal",
+            "edited",
+            "info",
+            json!({"thread_id": thread_id, "status": goal.status}),
+        );
         Ok(goal)
     }
 
@@ -457,7 +311,7 @@ impl AppState {
         self.bump_goal_generation(&thread_id);
         let goal = self
             .update_goal(sink.as_ref(), &thread_id, |goal| {
-                if goal.status != GoalStatus::Reached {
+                if !matches!(goal.status, GoalStatus::Reached | GoalStatus::Blocked) {
                     set_status(goal, GoalStatus::Paused, None);
                 }
             })
@@ -472,19 +326,83 @@ impl AppState {
         Ok(goal)
     }
 
-    /// Whether the person wrote in this chat since the goal's last check: the
+    /// The agent's `update_goal`: complete (with its evidence) and blocked end the goal's turns;
+    /// paused is accepted only when the person wrote since the current goal turn started.
+    pub async fn update_goal_status(
+        &self,
+        sink: Arc<dyn EventSink>,
+        thread_id: String,
+        update: core_goal::GoalUpdate,
+    ) -> Result<Goal, String> {
+        self.require_thread(&thread_id).await?;
+        let current = self
+            .goal_for(&thread_id)
+            .filter(|goal| goal.status != GoalStatus::Reached)
+            .ok_or("update_goal: this chat has no unfinished goal")?;
+        let (status, reason, evidence) = match update {
+            core_goal::GoalUpdate::Paused => {
+                if !self.person_spoke_since_goal_turn(&thread_id) {
+                    return Err("update_goal: pausing is refused because the user has not asked; keep working toward the goal".to_owned());
+                }
+                return self.pause_goal(sink, thread_id).await;
+            }
+            core_goal::GoalUpdate::Blocked(reason) => {
+                (GoalStatus::Blocked, Some(reason), Vec::new())
+            }
+            core_goal::GoalUpdate::Complete(evidence) => (GoalStatus::Reached, None, evidence),
+        };
+        self.bump_goal_generation(&thread_id);
+        let note = reason.clone();
+        let count = evidence.len();
+        let goal = self
+            .update_goal(sink.as_ref(), &thread_id, |goal| {
+                set_status(goal, status, reason);
+                goal.evidence = evidence;
+                goal.retry_at = None;
+            })
+            .ok_or("update_goal: this chat has no unfinished goal")?;
+        let _ = self.inner.diagnostics.append(
+            "goal",
+            if status == GoalStatus::Reached {
+                "completed"
+            } else {
+                "blocked"
+            },
+            "info",
+            json!({"thread_id": thread_id, "turns": current.turns, "evidence_count": count}),
+        );
+        match note {
+            Some(reason) => self.goal_note(
+                sink.as_ref(),
+                &thread_id,
+                "",
+                GoalNoteKind::Blocked,
+                &format!("Blocked: {reason}"),
+            ),
+            None => self.goal_note(
+                sink.as_ref(),
+                &thread_id,
+                "",
+                GoalNoteKind::Reached,
+                "Complete.",
+            ),
+        }
+        Ok(goal)
+    }
+
+    /// Whether the person wrote in this chat since the current goal turn started: the
     /// agent may pause a goal only because they asked.
-    pub(super) fn person_spoke_since_goal_check(&self, thread_id: &str) -> bool {
+    pub(super) fn person_spoke_since_goal_turn(&self, thread_id: &str) -> bool {
         let Some(goal) = self.goal_for(thread_id) else {
             return false;
         };
-        let mut through = goal.checked_seq;
+        let mut through = goal.turn_seq;
         while let Ok(page) =
             self.inner
                 .transcript
-                .history_after(thread_id, through, EVIDENCE_PAGE_ITEMS)
+                .history_after(thread_id, through, HISTORY_PAGE_ITEMS)
         {
-            let full = page.len() == EVIDENCE_PAGE_ITEMS;
+            let full = page.len() == HISTORY_PAGE_ITEMS;
             for (seq, item) in page {
                 through = seq;
                 let spoke = match item {
@@ -551,7 +469,7 @@ impl AppState {
         Ok(())
     }
 
-    /// Resumes a paused, stuck, waiting or out-of-quota goal; starts a turn
+    /// Resumes a paused, blocked, waiting or out-of-quota goal; starts a turn
     /// now when no run is going.
     pub async fn resume_goal(
         &self,
@@ -570,7 +488,6 @@ impl AppState {
                 if goal.status != GoalStatus::Running {
                     set_status(goal, GoalStatus::Running, None);
                 }
-                goal.stalls = 0;
                 goal.failures = 0;
             })
             .ok_or_else(|| "This chat has no goal".to_owned())?;
@@ -584,7 +501,7 @@ impl AppState {
         if !running && previous.status != GoalStatus::Running {
             let note = match previous.status {
                 GoalStatus::Quota => "Resumed after the model quota pause.",
-                GoalStatus::Stuck => themis_core::prompts::GOAL_NOTE_RESUMED_STUCK,
+                GoalStatus::Blocked => themis_core::prompts::GOAL_NOTE_RESUMED_BLOCKED,
                 _ => "The user resumed the goal.",
             };
             self.start_goal_turn(sink, thread_id, note.into()).await;
@@ -603,28 +520,22 @@ impl AppState {
         thread_id: &str,
         text: &str,
         run_id: &str,
+        from_person: bool,
     ) -> Result<String, String> {
         let is_turn = core_goal::turn_number(text).is_some();
         if let Some(sentence) = core_goal::parse_goal_command(text) {
             if sentence.is_empty() {
                 return Err("Add the goal after /goal, for example: /goal speed up p95".to_owned());
             }
-            self.chain_request(thread_id, run_id, text, false);
+            // Themis creates it from the command; no model decides. This run is its first turn.
             self.begin_goal(sink, thread_id, &sentence);
             self.update_goal(sink, thread_id, |goal| goal.turns = 1);
             self.mark_goal_turn(run_id);
+            return Ok(format!("\n\n{}", self.take_goal_note(sink, thread_id)));
         } else if !is_turn {
-            // A queued message the server sends continues the person's chain of messages; one
-            // they write to an idle chat starts a new one.
-            let queued = self
-                .inner
-                .server_sends
-                .lock()
-                .unwrap_or_else(|e| e.into_inner())
-                .contains_key(run_id);
-            self.chain_request(thread_id, run_id, text, queued);
-            self.note_added_request(sink, thread_id, text);
-            self.start_request_on_todo(sink, thread_id, text);
+            if from_person {
+                self.add_also_asked(sink, thread_id, text);
+            }
             match self.goal_for(thread_id).map(|goal| goal.status) {
                 // An answer to another question leaves the goal waiting on
                 // the blocking one; any other reply resumes it.
@@ -651,7 +562,14 @@ impl AppState {
             }
         }
         Ok(match self.goal_for(thread_id) {
-            Some(goal) if goal.status == GoalStatus::Running => core_goal::goal_context(&goal.text),
+            // A goal turn's saved message is one short line; the note rides along with each run
+            // only, so history doesn't grow by a note per turn and every run reads it fresh.
+            Some(goal) if goal.status == GoalStatus::Running && is_turn => {
+                format!("\n\n{}", self.take_goal_note(sink, thread_id))
+            }
+            Some(goal) if goal.status == GoalStatus::Running => {
+                core_goal::goal_context(&self.take_goal_note(sink, thread_id))
+            }
             // Old goal turns in the chat read as unfinished work unless this says otherwise.
             Some(goal) if !is_turn => core_goal::paused_context(&goal.text),
             None if !is_turn && self.inner.transcript.had_goal(thread_id) => {
@@ -661,86 +579,58 @@ impl AppState {
         })
     }
 
-    /// Puts a request the user sent while the chat's goal is open (not reached) on the to-do
-    /// list in their words, so the agent and the goal check count it. Answers to the agent's
-    /// questions and runtime goal turns are not requests; a steer that comes back as the next
-    /// message is counted once.
-    pub(super) fn note_added_request(&self, sink: &dyn EventSink, thread_id: &str, text: &str) {
-        let text = text.trim();
-        if text.is_empty()
+    /// What the person sent while the goal runs (or waits on them, or on quota) joins it word
+    /// for word as an "Also asked" line, by plain code, so no checkpoint can lose it. Answers to
+    /// the agent's questions, goal turns and `/goal` are not requests.
+    pub(super) fn add_also_asked(&self, sink: &dyn EventSink, thread_id: &str, text: &str) {
+        let active = self.goal_for(thread_id).is_some_and(|goal| {
+            matches!(
+                goal.status,
+                GoalStatus::Running | GoalStatus::Waiting | GoalStatus::Quota
+            )
+        });
+        if !active
             || text.starts_with(super::questions::ANSWER_MARKER)
             || core_goal::turn_number(text).is_some()
-            || !self
-                .goal_for(thread_id)
-                .is_some_and(|goal| goal.status != GoalStatus::Reached)
+            || core_goal::parse_goal_command(text).is_some()
         {
             return;
         }
-        self.add_request_to_todo(sink, thread_id, text);
+        let Some(line) = core_goal::also_asked(text) else {
+            return;
+        };
+        let mut kept = false;
+        let goal = self.update_goal(sink, thread_id, |goal| {
+            if goal.also_asked.len() < core_goal::MAX_ALSO_ASKED {
+                goal.also_asked.push(line);
+                kept = true;
+            }
+        });
+        let _ = self.inner.diagnostics.append(
+            "goal",
+            if kept {
+                "also_asked"
+            } else {
+                "also_asked_full"
+            },
+            "info",
+            json!({"thread_id": thread_id, "count": goal.map_or(0, |goal| goal.also_asked.len())}),
+        );
     }
 
-    /// One request to the goal check, on its model, recorded as a goal check. The turn's
-    /// latest `screenshots` (saved paths, oldest first) go with it as images when the check's
-    /// model reads images and `browser.screenshots_to_model` is on.
-    async fn run_goal_check(
-        &self,
-        thread_id: &str,
-        run_id: &str,
-        goal: &Goal,
-        answer: &str,
-        evidence: &str,
-        screenshots: &[String],
-    ) -> Result<core_goal::GoalVerdict, String> {
-        let (config, catalog, to_model) = self.goal_check_config(thread_id).await?;
-        let model = config.model.clone().unwrap_or_default();
-        let images: Vec<themis_core::vision::Image> =
-            if to_model && themis_core::providers::model_accepts_images(&catalog, &model) {
-                let start = screenshots
-                    .len()
-                    .saturating_sub(core_goal::MAX_CHECK_SCREENSHOTS);
-                screenshots[start..]
-                    .iter()
-                    .filter_map(|path| themis_core::vision::copy_of(path))
-                    .collect()
-            } else {
-                Vec::new()
-            };
-        if !images.is_empty() {
-            let _ = self.inner.diagnostics.append(
-                "goal",
-                "check_images_sent",
-                "info",
-                json!({
-                    "thread_id": thread_id,
-                    "model": model,
-                    "image_count": images.len(),
-                    "bytes": images.iter().map(|image| image.bytes.len()).sum::<usize>(),
-                }),
+    /// The goal note this goal run carries ([`core_goal::goal_note`]): the "objective updated"
+    /// note once after an edit, then the continuation with the objective and its "Also asked"
+    /// lines.
+    fn take_goal_note(&self, sink: &dyn EventSink, thread_id: &str) -> String {
+        let mut note = String::new();
+        self.update_goal(sink, thread_id, |goal| {
+            note = core_goal::goal_note(
+                &core_goal::objective(&goal.text, &goal.also_asked),
+                goal.objective_updated,
             );
-        }
-        let guidance = self.project_guidance_for(thread_id).await;
-        // The same per-model routes and limits real runs use.
-        themis_core::providers::with_catalog_limits(
-            &catalog,
-            themis_core::context_metrics::with_usage_recorder(
-                self.usage_recorder(thread_id, run_id),
-                themis_core::context_metrics::with_usage_kind(
-                    themis_core::context_metrics::UsageKind::GoalCheck,
-                    core_goal::check_with_config(
-                        &config,
-                        &goal.text,
-                        &goal.rules,
-                        &self.todo_for(thread_id),
-                        answer,
-                        evidence,
-                        &guidance,
-                        &images,
-                    ),
-                ),
-            ),
-        )
-        .await
-        .map_err(|error| format!("{error:#}"))
+            goal.objective_updated = false;
+        });
+        note
     }
 
     /// Notes once, when a goal's first turn starts, that the context window
@@ -792,7 +682,7 @@ impl AppState {
     }
 
     /// Forgets that `run_id` was a goal turn: a queued message ran after it,
-    /// so the goal continues after that message without checking this turn.
+    /// so the goal continues after that message.
     pub(super) fn goal_turn_interrupted(&self, run_id: &str) {
         self.inner
             .goal_turn_runs
@@ -865,10 +755,16 @@ impl AppState {
         if self.require_thread(&thread_id).await.unwrap_or(true) {
             return; // That run's end continues the goal.
         }
+        let turn_seq = self
+            .inner
+            .transcript
+            .last_activity_seq(&thread_id)
+            .unwrap_or(0);
         let Some(goal) = self.update_goal(sink.as_ref(), &thread_id, |goal| {
             goal.retry_at = None;
             if goal.status == GoalStatus::Running {
                 goal.turns = goal.turns.saturating_add(1);
+                goal.turn_seq = turn_seq;
             }
         }) else {
             return;
@@ -877,7 +773,7 @@ impl AppState {
             return;
         }
         let note = self.with_open_questions(&thread_id, note);
-        let text = core_goal::turn_message(goal.turns, &goal.text, &note, &goal.rules, &goal.files);
+        let text = core_goal::turn_message(goal.turns, &note);
         let run_id = uuid::Uuid::new_v4().to_string();
         self.mark_goal_turn(&run_id);
         let (sent, progress) = self
@@ -931,8 +827,6 @@ impl AppState {
         run_id: String,
         terminal: ThreadEvent,
     ) {
-        // Every run is checked, not only goal turns: a message's run that
-        // finished the goal would otherwise be followed by a turn redoing it.
         self.inner
             .goal_turn_runs
             .lock()
@@ -944,14 +838,14 @@ impl AppState {
         if goal.status != GoalStatus::Running {
             return;
         }
-        let answer = match terminal {
+        match terminal {
             ThreadEvent::Failed { error } => {
                 self.goal_turn_failed(sink, thread_id, run_id, &error);
                 return;
             }
-            ThreadEvent::Finished { result, .. } | ThreadEvent::Incomplete { result, .. } => result,
+            ThreadEvent::Finished { .. } | ThreadEvent::Incomplete { .. } => {}
             _ => return,
-        };
+        }
         self.update_goal(sink.as_ref(), &thread_id, |goal| goal.failures = 0);
         // A blocking question ended the run: the goal waits for its answer.
         if let Some(question) = self
@@ -964,260 +858,15 @@ impl AppState {
             });
             return;
         }
-        // A passing status line says so while the check reads the turn.
-        self.update_goal(sink.as_ref(), &thread_id, |goal| goal.checking = true);
-        let (evidence, turn_files, through_seq, page_spoiled, screenshots) =
-            self.turn_evidence(&thread_id, goal.checked_seq);
-        let changed_files = !turn_files.is_empty();
-        self.update_goal(sink.as_ref(), &thread_id, |goal| {
-            for file in &turn_files {
-                goal.files.retain(|known| known != file);
-                goal.files.push(file.clone());
-            }
-            let excess = goal.files.len().saturating_sub(MAX_GOAL_FILES);
-            goal.files.drain(..excess);
-        });
-        let checked_goal = goal.started_at;
-        // The removed requests this check reads; it judges them whatever it decides.
-        let removals_read = self.todo_for(&thread_id).removed_requests.len();
-        let verdict = self
-            .run_goal_check(&thread_id, &run_id, &goal, &answer, &evidence, &screenshots)
-            .await;
-        let check_failed = verdict.is_err();
-        self.update_goal(sink.as_ref(), &thread_id, |goal| goal.checking = false);
-        // The goal may have been paused or edited while the check ran.
-        let Some(goal) = self.goal_for(&thread_id) else {
-            return;
-        };
-        if goal.status != GoalStatus::Running {
-            return;
-        }
-        let verdict = match verdict {
-            Ok(verdict) => verdict,
-            Err(error) => {
-                let _ = self.inner.diagnostics.append(
-                    "goal",
-                    "check_failed",
-                    "warn",
-                    json!({"thread_id": thread_id, "run_id": run_id}),
-                );
-                let reason = if matches!(core_goal::classify_failure(&error), Failure::Quota) {
-                    // The check itself ran out of quota: so will the next turn.
-                    self.goal_turn_failed(sink, thread_id, run_id, &error);
-                    return;
-                } else {
-                    "The goal check could not decide this time; continuing."
-                };
-                core_goal::GoalVerdict::undecided(reason)
-            }
-        };
-        // However sure the check is: proof from a page a script changed isn't proof.
-        let verdict = if page_spoiled && verdict.verdict == Verdict::Reached {
-            let _ = self.inner.diagnostics.append(
-                "goal",
-                "script_proof_refused",
-                "info",
-                json!({"thread_id": thread_id}),
-            );
-            core_goal::GoalVerdict {
-                verdict: Verdict::NotYet,
-                reason: themis_core::prompts::GOAL_NOTE_SCRIPT_PROOF.to_owned(),
-                ..verdict
-            }
-        } else {
-            verdict
-        };
-        // "Waiting for you" needs a question to the user in the answer; a check
-        // that only lacks evidence means not yet.
-        let verdict = if verdict.verdict == Verdict::NeedsUser && !answer.contains('?') {
-            core_goal::GoalVerdict {
-                verdict: Verdict::NotYet,
-                ..verdict
-            }
-        } else {
-            verdict
-        };
-        // A decided check has judged this evidence; a failed one has not, so
-        // the next check reads it again.
-        // Only for the goal that was checked: one set while the check ran keeps
-        // its own starting point. The check referees the agent's list: what it reopens, adds,
-        // completes or closes lands there, and the goal is reached only when nothing is open.
-        let mut verdict = verdict;
-        let mut list = self.todo_for(&thread_id);
-        if !check_failed
-            && self
-                .goal_for(&thread_id)
-                .is_some_and(|goal| goal.started_at == checked_goal)
-        {
-            self.update_goal(sink.as_ref(), &thread_id, |goal| {
-                goal.checked_seq = through_seq;
-                if !verdict.rules.is_empty() {
-                    goal.rules = verdict.rules.clone();
-                }
-            });
-            let (updated, counts) = self.update_todo(sink.as_ref(), &thread_id, |list| {
-                let counts = verdict.referee(list);
-                list.judged_removals(removals_read);
-                counts
-            });
-            list = updated;
-            if counts.any() {
-                let _ = self.inner.diagnostics.append(
-                    "todo",
-                    "check_refereed",
-                    "info",
-                    json!({"thread_id": thread_id, "run_id": run_id, "reopened": counts.reopened,
-                        "added": counts.added, "confirmed": counts.confirmed, "closed": counts.closed}),
-                );
-            }
-        }
-        let _ = self.inner.diagnostics.append(
-            "goal",
-            "checked",
-            "info",
-            json!({"thread_id": thread_id, "run_id": run_id, "verdict": verdict.verdict, "open_items": list.open().count()}),
-        );
-        match verdict.verdict {
-            Verdict::Reached => {
-                let Some(goal) = self.update_goal(sink.as_ref(), &thread_id, |goal| {
-                    goal.progress = verdict.progress.clone().or(goal.progress.take());
-                    set_status(goal, GoalStatus::Reached, Some(verdict.reason.clone()));
-                }) else {
-                    return;
-                };
-                self.goal_note(
-                    sink.as_ref(),
-                    &thread_id,
-                    &run_id,
-                    GoalNoteKind::Reached,
-                    &format!("Complete. {}", verdict.reason),
-                );
-                // An answer that already says so needs no second message,
-                // unless open questions still have to be named.
-                if verdict.told_user == Some(true) && self.open_questions(&thread_id).is_empty() {
-                    return;
-                }
-                self.announce_reached(sink, &thread_id, &goal, &verdict.reason)
-                    .await;
-            }
-            Verdict::NeedsUser => {
-                // The answer already asks the user; the goal waits for the reply.
-                self.update_goal(sink.as_ref(), &thread_id, |goal| {
-                    set_status(goal, GoalStatus::Waiting, Some(verdict.reason.clone()));
-                });
-            }
-            Verdict::NotYet | Verdict::Unreachable => {
-                // The check judges progress; a reworded measurement is not.
-                // Changed files always are: a checker looking only for proof
-                // of completion must not count real work as a stall.
-                let progressed = changed_files
-                    || verdict.progressed.unwrap_or_else(|| {
-                        verdict
-                            .progress
-                            .as_ref()
-                            .is_some_and(|progress| Some(progress) != goal.progress.as_ref())
-                    });
-                // The checker failing says nothing about the agent's progress.
-                let stalls = if progressed {
-                    0
-                } else if check_failed {
-                    goal.stalls
-                } else {
-                    goal.stalls.saturating_add(1)
-                };
-                self.update_goal(sink.as_ref(), &thread_id, |goal| {
-                    goal.stalls = stalls;
-                    if verdict.progress.is_some() {
-                        goal.progress = verdict.progress.clone();
-                    }
-                });
-                let shown_message = check_message(&verdict, &list);
-                let agent_note = match &verdict.next {
-                    Some(next) => format!("{} {next}", verdict.reason),
-                    None => verdict.reason.clone(),
-                };
-                // Turns without progress never stop the goal; the next one is
-                // told to change course.
-                let note = if stalls >= STALL_TURNS {
-                    let _ = self.inner.diagnostics.append(
-                        "goal",
-                        "stalled",
-                        "info",
-                        json!({"thread_id": thread_id, "run_id": run_id, "stalls": stalls}),
-                    );
-                    format!(
-                        "{agent_note} {}",
-                        themis_core::prompts::fill(
-                            themis_core::prompts::GOAL_NOTE_STALLED,
-                            &[("turns", &stalls.to_string())],
-                        )
-                    )
-                } else {
-                    agent_note
-                };
-                // The chat dims the turn on this; the agent says why in its own words next turn.
-                if check_failed {
-                    self.goal_note(
-                        sink.as_ref(),
-                        &thread_id,
-                        &run_id,
-                        GoalNoteKind::Status,
-                        "The check couldn't decide this time, so I'm carrying on.",
-                    );
-                } else {
-                    self.goal_note(
-                        sink.as_ref(),
-                        &thread_id,
-                        &run_id,
-                        GoalNoteKind::NotYet,
-                        &shown_message,
-                    );
-                }
-                self.start_goal_turn(sink, thread_id, note).await;
-            }
-        }
+        self.start_goal_turn(sink, thread_id, String::new()).await;
     }
 
     /// `note` followed by the chat's open questions, so they survive checkpoints.
     fn with_open_questions(&self, thread_id: &str, note: String) -> String {
         match self.open_questions_note(thread_id) {
+            Some(open) if note.is_empty() => open,
             Some(open) => format!("{note}\n{open}"),
             None => note,
-        }
-    }
-
-    /// One short turn in which the agent tells the user the goal is reached,
-    /// in its own words. The goal is already reached, so no check follows it.
-    async fn announce_reached(
-        &self,
-        sink: Arc<dyn EventSink>,
-        thread_id: &str,
-        goal: &Goal,
-        reason: &str,
-    ) {
-        let open = self.open_questions_note(thread_id);
-        let reason = match &open {
-            Some(open) => format!("{reason}\n{open}"),
-            None => reason.to_owned(),
-        };
-        let text = core_goal::reached_message(
-            goal.turns.saturating_add(1),
-            &goal.text,
-            &reason,
-            open.is_some(),
-        );
-        let run_id = uuid::Uuid::new_v4().to_string();
-        let (sent, _) = self
-            .send_from_server(sink, thread_id, text, &run_id, None, Vec::new())
-            .await;
-        if sent.is_err() {
-            // The goal stays reached; only the agent's sentence is missing.
-            let _ = self.inner.diagnostics.append(
-                "goal",
-                "reached_turn_not_started",
-                "warn",
-                json!({"thread_id": thread_id}),
-            );
         }
     }
 
@@ -1311,184 +960,6 @@ impl AppState {
         }
     }
 
-    /// The commands every run since the previous decided goal check ran
-    /// (the turn, plus any user message, failed or interrupted turn before
-    /// it), with bounded output; whether those runs changed files; and the
-    /// history position read through. History after `after_seq` is read in
-    /// pages; only the newest evidence text is kept, but every item counts
-    /// toward "changed files" and the position.
-    fn turn_evidence(
-        &self,
-        thread_id: &str,
-        after_seq: i64,
-    ) -> (String, Vec<String>, i64, bool, Vec<String>) {
-        let mut spoiled = false;
-        let mut evidence = String::new();
-        let mut changed = Vec::new();
-        // The paths of the turn's latest screenshots, oldest first.
-        let mut screenshots = std::collections::VecDeque::new();
-        let mut subagents = std::collections::HashMap::new();
-        let mut through = after_seq;
-        while let Ok(page) =
-            self.inner
-                .transcript
-                .history_after(thread_id, through, EVIDENCE_PAGE_ITEMS)
-        {
-            let full = page.len() == EVIDENCE_PAGE_ITEMS;
-            for (seq, item) in page {
-                through = seq;
-                let crate::transcript::HistoryItem::Event { envelope } = item else {
-                    continue;
-                };
-                let line = match envelope.event {
-                    ThreadEvent::ToolStarted { tool, summary, .. } => {
-                        spoiled = page_spoiled_after(spoiled, &tool, &summary);
-                        if marks_page_change(&tool, &summary) {
-                            format!(
-                                "$ {tool}: {summary}\n{}\n",
-                                themis_core::prompts::GOAL_EVIDENCE_SCRIPT
-                            )
-                        } else {
-                            format!("$ {tool}: {summary}\n")
-                        }
-                    }
-                    ThreadEvent::ToolFinished {
-                        tool, ok, output, ..
-                    } => {
-                        if ok && tool == "browser_screenshot" {
-                            if let Some(path) = screenshot_path(&output) {
-                                screenshots.push_back(path);
-                                if screenshots.len() > core_goal::MAX_CHECK_SCREENSHOTS {
-                                    screenshots.pop_front();
-                                }
-                            }
-                        }
-                        let output = clip_output(&output);
-                        format!("{}{output}\n\n", if ok { "" } else { "(failed) " })
-                    }
-                    ThreadEvent::SubagentStarted {
-                        id,
-                        name,
-                        write_paths,
-                        ..
-                    } => {
-                        subagents.insert(id, (name, write_paths));
-                        continue;
-                    }
-                    ThreadEvent::SubagentEnded {
-                        id, status, result, ..
-                    } => {
-                        // One started before the last check isn't in this stretch of history.
-                        let (name, paths) = match subagents.remove(&id) {
-                            Some((name, paths)) if paths.is_empty() => {
-                                (name, "nothing, it could only read".to_owned())
-                            }
-                            Some((name, paths)) => (name, paths.join(", ")),
-                            None => (id, "what it was given earlier".to_owned()),
-                        };
-                        format!(
-                            "{}\n\n",
-                            themis_core::prompts::fill(
-                                themis_core::prompts::GOAL_EVIDENCE_SUBAGENT,
-                                &[
-                                    ("name", &name),
-                                    ("status", &status),
-                                    ("paths", &paths),
-                                    ("result", &clip_output(&result)),
-                                ],
-                            )
-                        )
-                    }
-                    ThreadEvent::FilesChanged { files } => {
-                        changed.extend(files.iter().map(|file| file.path.clone()));
-                        format!(
-                            "Files changed: {}\n",
-                            files
-                                .iter()
-                                .map(|file| file.path.as_str())
-                                .collect::<Vec<_>>()
-                                .join(", ")
-                        )
-                    }
-                    _ => continue,
-                };
-                evidence.push_str(&line);
-                // Keep the end: the last commands carry the latest measurements.
-                let count = evidence.chars().count();
-                if count > 2 * MAX_EVIDENCE_CHARS {
-                    evidence = evidence.chars().skip(count - MAX_EVIDENCE_CHARS).collect();
-                }
-            }
-            if !full {
-                break;
-            }
-        }
-        let count = evidence.chars().count();
-        if count > MAX_EVIDENCE_CHARS {
-            evidence = format!(
-                "…\n{}",
-                evidence
-                    .chars()
-                    .skip(count - MAX_EVIDENCE_CHARS)
-                    .collect::<String>()
-            );
-        }
-        (evidence, changed, through, spoiled, screenshots.into())
-    }
-
-    /// The provider for the goal check (`goal.check_model`, else the chat's current model,
-    /// from OpenCode Go or a provider in runtime.jsonc) and the catalog its routes and
-    /// limits come from.
-    /// What the chat's project says about working in it, read fresh for each check.
-    async fn project_guidance_for(&self, thread_id: &str) -> String {
-        let root = self
-            .inner
-            .threads
-            .read()
-            .await
-            .get(thread_id)
-            .map(|record| record.project_root.clone());
-        let Some(root) = root else {
-            return String::new();
-        };
-        self.runtime_configuration(Some(&root), None)
-            .map(|resolved| themis_core::configuration::project_guidance(&resolved.config, &root))
-            .unwrap_or_default()
-    }
-
-    async fn goal_check_config(
-        &self,
-        thread_id: &str,
-    ) -> Result<
-        (
-            themis_core::providers::ProviderConfig,
-            Vec<themis_core::providers::GoModel>,
-            bool,
-        ),
-        String,
-    > {
-        let (chat_model, project_root) = self
-            .inner
-            .threads
-            .read()
-            .await
-            .get(thread_id)
-            .map(|record| (record.model.clone(), record.project_root.clone()))
-            .ok_or_else(|| format!("unknown thread '{thread_id}'"))?;
-        // The chat's project may set `goal.check_model` too.
-        let mut runtime = self
-            .runtime_configuration(Some(&project_root), None)?
-            .config;
-        // One short request on `goal.check_model`, else the chat's model; it writes no summary.
-        let model = runtime.goal.check_model.clone().unwrap_or(chat_model);
-        runtime.compaction.summary_model = None;
-        let config = self
-            .provider_config_for(&runtime, &model, thread_id)
-            .await?;
-        let catalog = self.run_catalog(&runtime, &[model.as_str()]).await;
-        Ok((config, catalog, runtime.browser.screenshots_to_model))
-    }
-
     /// On start: goals that were running carry on (the cut-off turn is
     /// rechecked by the next one), goals out of quota retry, queued messages
     /// of idle chats go out.
@@ -1501,10 +972,6 @@ impl AppState {
             let Some(goal) = self.goal_for(&thread_id) else {
                 continue;
             };
-            // A check the app closed during is not still going.
-            if goal.checking {
-                self.update_goal(sink.as_ref(), &thread_id, |goal| goal.checking = false);
-            }
             match goal.status {
                 GoalStatus::Running => {
                     // Time with the app closed does not count.
@@ -1555,38 +1022,9 @@ impl AppState {
     }
 }
 
-/// Where a `browser_screenshot` result saved its PNG.
-fn screenshot_path(output: &str) -> Option<String> {
-    serde_json::from_str::<serde_json::Value>(output).ok()?["path"]
-        .as_str()
-        .map(str::to_owned)
-}
-
-/// A long command output without its middle, marked where it was cut.
-fn clip_output(output: &str) -> String {
-    let count = output.chars().count();
-    if count <= OUTPUT_HEAD_CHARS + OUTPUT_TAIL_CHARS {
-        return output.to_owned();
-    }
-    let head: String = output.chars().take(OUTPUT_HEAD_CHARS).collect();
-    let tail: String = output.chars().skip(count - OUTPUT_TAIL_CHARS).collect();
-    let omitted = count - OUTPUT_HEAD_CHARS - OUTPUT_TAIL_CHARS;
-    format!("{head}\n[… {omitted} characters clipped …]\n{tail}")
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn a_screenshot_result_names_its_saved_file() {
-        assert_eq!(
-            screenshot_path(r#"{"path":"/p/.themis/attachments/a/shot.png","width":1}"#).as_deref(),
-            Some("/p/.themis/attachments/a/shot.png")
-        );
-        assert_eq!(screenshot_path("browser_screenshot: no page is open"), None);
-        assert_eq!(screenshot_path(r#"{"path":7}"#), None);
-    }
 
     #[test]
     fn small_window_note_groups_the_token_count() {
@@ -1601,52 +1039,6 @@ mod tests {
         assert_eq!(
             small_window_note(127_999),
             "Context window is small (127,999 tokens); long goals may stall."
-        );
-    }
-
-    #[test]
-    fn long_outputs_keep_their_start_and_their_results() {
-        let table: String = (1..=200)
-            .map(|n| format!("| {n} | check number {n} with its details | PASS |\n"))
-            .collect();
-        let output = format!("# CHECKS\n{table}Summary: 200/200 PASS");
-        let clipped = clip_output(&output);
-        assert!(clipped.starts_with("# CHECKS\n| 1 |"));
-        assert!(clipped.ends_with("Summary: 200/200 PASS"));
-        assert!(clipped.contains("characters clipped"));
-        assert!(clipped.chars().count() < OUTPUT_HEAD_CHARS + OUTPUT_TAIL_CHARS + 50);
-        assert_eq!(clip_output("short"), "short");
-    }
-
-    #[test]
-    fn the_check_says_what_is_wrong_what_to_change_what_it_reopened_and_what_wasnt_followed() {
-        let mut list = themis_core::todo::TodoList::default();
-        list.add_from_check("Health", "");
-        list.add_from_check("Score", "");
-        let mut verdict = core_goal::GoalVerdict::undecided("Shooting doesn't raise the score.");
-        verdict.next = Some("Fix how bullets hit enemies, then show the score rising.".into());
-        verdict.reopen = vec![
-            ("t2".into(), "never shown".into()),
-            ("t9".into(), "gone".into()),
-        ];
-        verdict.rules = vec![
-            core_goal::GoalRule {
-                what: "No build step".into(),
-                ..Default::default()
-            },
-            core_goal::GoalRule {
-                what: "Use subagents".into(),
-                broken: true,
-                ..Default::default()
-            },
-        ];
-        assert_eq!(
-            check_message(&verdict, &list),
-            "Shooting doesn't raise the score.\n\nFix how bullets hit enemies, then show the score rising.\n\nReopened: Score\n\nNot followed: Use subagents"
-        );
-        assert_eq!(
-            check_message(&core_goal::GoalVerdict::undecided("Not yet."), &list),
-            "Not yet."
         );
     }
 
@@ -1678,14 +1070,12 @@ mod tests {
             active_ms: 1_000,
             running_since: Some(now_ms() - 5_000),
             turns: 1,
-            stalls: 0,
-            progress: None,
             failures: 0,
-            checked_seq: 0,
-            rules: Vec::new(),
-            files: Vec::new(),
-            checking: false,
+            turn_seq: 0,
             retry_at: None,
+            evidence: Vec::new(),
+            also_asked: Vec::new(),
+            objective_updated: false,
         };
         set_status(&mut goal, GoalStatus::Paused, None);
         assert!(goal.running_since.is_none());
@@ -1694,73 +1084,5 @@ mod tests {
         set_status(&mut goal, GoalStatus::Running, None);
         assert_eq!(goal.active_ms, paused);
         assert!(goal.running_since.is_some());
-    }
-}
-
-#[cfg(test)]
-mod script_tests {
-    use super::{marks_page_change, page_spoiled_after};
-
-    #[test]
-    fn a_changed_page_stays_unproven_until_it_is_reloaded() {
-        let script =
-            r#"call `browser_devtools` with {"expression":"camera.position.set(1, 10, 2)"}"#;
-        let click = r#"call `browser_click` with {"x":640,"y":400}"#;
-        let mut spoiled = false;
-        spoiled = page_spoiled_after(spoiled, "browser_click", click);
-        assert!(!spoiled);
-        spoiled = page_spoiled_after(spoiled, "browser_devtools", script);
-        assert!(spoiled);
-        spoiled = page_spoiled_after(spoiled, "browser_click", click);
-        assert!(spoiled, "a real click doesn't undo it");
-        spoiled = page_spoiled_after(
-            spoiled,
-            "browser_navigate",
-            r#"call `browser_navigate` with {"action":"reload"}"#,
-        );
-        assert!(!spoiled);
-        spoiled = page_spoiled_after(spoiled, "browser_devtools", script);
-        spoiled = page_spoiled_after(
-            spoiled,
-            "browser_open",
-            r#"call `browser_open` with {"url":"http://localhost"}"#,
-        );
-        assert!(!spoiled);
-    }
-
-    #[test]
-    fn scripts_that_change_the_page_are_told_apart_from_reads_and_real_input() {
-        for changes in [
-            r#"call `browser_devtools` with {"expression":"camera.position.set(1, 10, 2)"}"#,
-            r#"call `browser_devtools` with {"expression":"controls.getObject().lookAt(e.position)"}"#,
-            r#"call `browser_devtools` with {"expression":"document.getElementById('restartBtn').click()"}"#,
-            r#"call `browser_devtools` with {"expression":"el.dispatchEvent(new MouseEvent('click'))"}"#,
-            r#"call `browser_devtools` with {"expression":"window._debug.forceKillNearest()"}"#,
-            r#"call `browser_devtools` with {"expression":"score = 10"}"#,
-            r#"call `browser_devtools` with {"expression":"window._debug.shoot()"}"#,
-        ] {
-            assert!(marks_page_change("browser_devtools", changes), "{changes}");
-        }
-        for reads in [
-            r#"call `browser_devtools` with {"expression":"document.getElementById('score').textContent"}"#,
-            r#"call `browser_devtools` with {"expression":"JSON.stringify({n: enemies.length, ok: a === b})"}"#,
-            r#"call `browser_devtools` with {"expression":"enemies.filter(e => e.alive).length"}"#,
-            r#"call `browser_devtools` with {"action":"read","area":"console","expression":""}"#,
-        ] {
-            assert!(!marks_page_change("browser_devtools", reads), "{reads}");
-        }
-        // A summary cut short still counts, and later fields aren't taken for the script.
-        assert!(marks_page_change(
-            "browser_devtools",
-            r#"call `browser_devtools` with {"action":"run","expression":"const c = window._debug.controls.getObject(); c.position.set(-0.14, 10, 0.12); c.loo…"#
-        ));
-        assert!(!marks_page_change(
-            "browser_devtools",
-            r#"call `browser_devtools` with {"expression":"a.length","selector":"x=y"}"#
-        ));
-        assert!(!marks_page_change(
-            "browser_click",
-            r#"call `browser_click` with {"x":640,"y":400}"#
-        ));
     }
 }

@@ -21,8 +21,6 @@ pub enum UsageKind {
     Answer,
     /// A context checkpoint or document capsule summary.
     Summary,
-    /// The separate goal-mode check after a goal turn.
-    GoalCheck,
 }
 
 impl UsageKind {
@@ -30,7 +28,6 @@ impl UsageKind {
         match self {
             Self::Answer => "answer",
             Self::Summary => "summary",
-            Self::GoalCheck => "goal_check",
         }
     }
 }

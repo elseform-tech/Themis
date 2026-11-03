@@ -6,7 +6,7 @@ import { Button } from "../components";
 import type { GoModel } from "../lib/types";
 import { usesGo } from "../lib/models";
 import { yoloKeeps } from "../lib/yolo";
-import { attachFiles, getEffectivePermissions, editGoal, enqueueMessage, getGoal, getThread, getTodo, getWorkspace, listDiff, listGoModels, listQueue, pauseGoal, removeGoal, removeQueuedMessage, resumeGoal, sendMessage, setProvider, setThreadEffort, setThreadApprovalMode, steerQueuedMessage, stopThread, updateQueuedMessage, switchBranch } from "../lib/tauri";
+import { attachFiles, getEffectivePermissions, editGoal, enqueueMessage, getGoal, getThread, getWorkspace, listDiff, listGoModels, listQueue, pauseGoal, removeGoal, removeQueuedMessage, resumeGoal, sendMessage, setProvider, setThreadEffort, setThreadApprovalMode, steerQueuedMessage, stopThread, updateQueuedMessage, switchBranch } from "../lib/tauri";
 import { useLiveDiff } from "../lib/useLiveDiff";
 import { visibleFiles } from "../lib/hiddenFiles";
 import { describeError, isConcurrencyLimitError, newId, toast, useActiveProject, useActiveThread, useApp } from "../state/store";
@@ -123,7 +123,6 @@ export function ThreadView() {
     let cancelled = false;
     listQueue(threadId).then(queue => { if (!cancelled) dispatch({ type: "queue/loaded", threadId, queue }); }).catch(() => {});
     getGoal(threadId).then(goal => { if (!cancelled) dispatch({ type: "goal/loaded", threadId, goal }); }).catch(() => {});
-    getTodo(threadId).then(todo => { if (!cancelled) dispatch({ type: "todo/loaded", threadId, todo }); }).catch(() => {});
     return () => { cancelled = true; };
   }, [threadId, dispatch]);
   useEffect(() => {
@@ -370,7 +369,6 @@ export function ThreadView() {
       ) : (
         <>
           <ThreadConversation
-            goalChecking={goal?.checking}
             goalRetryAt={goal?.status === "running" || goal?.status === "quota" ? goal.retry_at : undefined}
             threadId={thread.id}
             messages={messages}

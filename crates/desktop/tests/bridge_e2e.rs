@@ -120,7 +120,6 @@ fn event_kinds(events: &[ThreadEvent]) -> Vec<&'static str> {
             ThreadEvent::UserMessage { .. } => "user_message",
             ThreadEvent::QueueChanged { .. } => "queue_changed",
             ThreadEvent::GoalChanged { .. } => "goal_changed",
-            ThreadEvent::TodoChanged { .. } => "todo_changed",
             ThreadEvent::GoalNote { .. } => "goal_note",
             ThreadEvent::QuestionAsked { .. } => "question_asked",
             ThreadEvent::QuestionAnswered { .. } => "question_answered",

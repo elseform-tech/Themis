@@ -20,9 +20,7 @@ it("counts longer waits in minutes and seconds", () => {
   expect(screen.getByRole("status")).toHaveTextContent("Trying again in 2:05");
 });
 
-it("shows nothing for a wait already over, and says when a check is running", () => {
-  const { container, rerender } = render(<GoalWait retryAt={1_000_000 - 1} />);
+it("shows nothing for a wait already over", () => {
+  const { container } = render(<GoalWait retryAt={1_000_000 - 1} />);
   expect(container).toBeEmptyDOMElement();
-  rerender(<GoalWait checking />);
-  expect(screen.getByRole("status")).toHaveTextContent("Checking…");
 });

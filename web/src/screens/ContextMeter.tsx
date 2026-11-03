@@ -10,6 +10,8 @@ const PARTS: Part[] = [
   { key: "tool_activity", label: "Tool calls & results", color: "var(--themis-accent)" },
   // Only thinking models send their reasoning back; the row appears when there is some.
   { key: "reasoning", label: "Model reasoning", color: "var(--themis-success)", optional: true },
+  // The goal note the latest goal run carries; the row appears only during a goal.
+  { key: "goal", label: "Goal", color: "var(--themis-warning)", optional: true },
   { key: "conversation", label: "Messages", color: "var(--themis-info)" },
   { key: "attachments", label: "Attachments", color: "#c58af9" },
   { key: "checkpoint", label: "Checkpoint & task ledger", color: "var(--themis-gradient-3)" },

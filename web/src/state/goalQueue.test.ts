@@ -37,32 +37,32 @@ describe("queue and goal events", () => {
     ] } as never);
     expect((loaded.messages[thread] ?? []).find(row => row.role === "assistant")?.goalRejected).toBe(true);
     expect((loaded.messages[thread] ?? []).filter(row => row.goalCheck).map(row => row.text)).toEqual(["That isn't proven yet."]);
-    // The goal's end speaks the same way; other notes stay in the conversation's own voice.
-    const reached = reducer(initialState, envelope({ kind: "goal_note", outcome: "reached", reason: "Everything is complete." }));
-    expect((reached.messages[thread] ?? [])[0]).toMatchObject({ text: "Everything is complete.", goalCheck: true });
+    // The agent's own complete or blocked is a plain line, like every other goal note.
+    const reached = reducer(initialState, envelope({ kind: "goal_note", outcome: "reached", reason: "Complete." }));
+    expect((reached.messages[thread] ?? [])[0]).toMatchObject({ text: "Complete.", goalStatus: true });
+    expect((reached.messages[thread] ?? [])[0]?.goalCheck).toBeUndefined();
     const paused = reducer(initialState, envelope({ kind: "goal_note", outcome: "status", reason: "I've paused the goal." }));
     expect((paused.messages[thread] ?? [])[0]).toMatchObject({ goalStatus: true });
     expect((paused.messages[thread] ?? [])[0]?.goalCheck).toBeUndefined();
   });
 
+  it("opens an old chat whose history holds events this version no longer has", () => {
+    let state = reducer(initialState, envelope({ kind: "user_message", text: "hi" }));
+    for (const old of [{ kind: "todo_changed", todo: { revision: 1, items: [] } }, { kind: "goal_check_started" }, { kind: "something_new" }]) {
+      const next = reducer(state, envelope(old));
+      expect(next).toBe(state);
+      state = next;
+    }
+    expect(state.messages[thread]?.map(row => row.text)).toEqual(["hi"]);
+  });
+
   it("keeps the queue and goal of each chat", () => {
     let state = reducer(initialState, envelope({ kind: "queue_changed", queue: [{ id: "q", text: "later", attachments: [], held: false }] }, ""));
-    state = reducer(state, envelope({ kind: "goal_changed", goal: { text: "speed up p95", status: "running", started_at: 0, active_ms: 0, turns: 1, stalls: 0, failures: 0 } }, ""));
+    state = reducer(state, envelope({ kind: "goal_changed", goal: { text: "speed up p95", status: "running", started_at: 0, active_ms: 0, turns: 1, failures: 0 } }, ""));
     expect(state.queues[thread]?.map(item => item.text)).toEqual(["later"]);
     expect(state.goals[thread]?.text).toBe("speed up p95");
     state = reducer(state, envelope({ kind: "goal_changed", goal: null }, ""));
     expect(state.goals[thread]).toBeNull();
-  });
-
-  it("keeps each chat's to-do list, live and when loaded", () => {
-    const todo = { revision: 2, items: [{ id: "a", title: "Plan", status: "completed" as const }, { id: "b", title: "Build", status: "in_progress" as const }] };
-    let state = reducer(initialState, envelope({ kind: "todo_changed", todo }, ""));
-    expect(state.todos[thread]).toEqual(todo);
-    // Another chat's list stays apart; a later list replaces the whole one.
-    state = reducer(state, { type: "todo/loaded", threadId: "t2", todo: { revision: 1, items: [{ id: "x", title: "Other", status: "pending" }] } });
-    state = reducer(state, envelope({ kind: "todo_changed", todo: { revision: 3, items: [] } }, ""));
-    expect(state.todos[thread]).toEqual({ revision: 3, items: [] });
-    expect(state.todos.t2?.items.map(item => item.title)).toEqual(["Other"]);
   });
 
   it("puts a steer after the text streamed before it, marked as steered", () => {

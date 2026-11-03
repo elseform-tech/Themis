@@ -1,0 +1,1 @@
+The goal is created. When this turn ends, the runtime keeps starting goal turns until you mark it complete with update_goal. Finish this turn normally.

@@ -209,76 +209,58 @@ nothing and grant nothing; the switches are saved under `hooks.built_in` in your
 
 ### Goals
 
-A goal is one sentence the agent keeps working toward, turn after turn, until it
-is reached; for example `/goal optimize this app to speed up p95`.
+A goal is an objective the agent keeps working toward, turn after turn, until it
+marks it complete; for example `/goal optimize this app to speed up p95`. As in
+Codex, the chat's own model judges its goal: there is no separate check.
 
-- **Start one** with `/goal <sentence>` (the first entry of the `/` menu, at the
-  start of a message). The command shows as a **Goal** sticker in the composer
-  and in the sent message. It starts right away. When you ask for an ongoing outcome in
-  plain words, the agent may ask once whether to make it a goal; if you agree, it
-  sets the goal itself.
-- **The goal row** at the top of the composer shows the sentence (click it to
-  read it in full) and the goal's total elapsed
+- **Start one** with `/goal <objective>` (the first entry of the `/` menu, at the
+  start of a message). Themis creates the goal itself, no model involved, and the
+  message's run is the goal's first turn. The command shows as a **Goal** sticker
+  in the composer and in the sent message. You can also ask in plain words ("set a
+  goal: …", "make this a goal"): the agent creates it with its `create_goal` tool.
+  It does so only when you ask, never for an ordinary request, and not while the
+  chat already has an unfinished goal.
+- **Every goal turn** carries a short note with the whole objective and plain
+  rules: keep all of it and never make success smaller; trust current files and
+  command output over memory of earlier turns; notice a turn that made no
+  progress and try something else; before calling the goal done, check every
+  requirement against current evidence, and treat uncertain evidence as not done.
+- **Done, blocked or paused.** When every requirement is proven, the agent calls
+  `update_goal` complete with one evidence entry per requirement (what it is, and
+  what shows it: a command and its result, a file, a test, a page check); a call
+  with no evidence is refused. The goal row then shows **Complete** with that
+  list until your next message. The agent marks a goal **Blocked** only when the
+  same blocker stopped it for three goal turns in a row, saying why; **Resume**
+  starts it again. It pauses the goal only when you ask.
+- **What you add joins the goal.** Each message you send while the goal runs
+  (typed, queued or steered in) is added to the objective word for word as an
+  "Also asked" line, so no checkpoint can lose it; the agent decides how it
+  bears on the goal. Answers to the agent's questions are not added. The goal row
+  shows the lines when you open it. The agent cannot mark the goal complete while a
+  message you queued is still waiting: it reads that message in the next goal turn
+  first.
+- **The goal row** at the top of the composer shows the objective (click it to
+  read it in full, with its "Also asked" lines) and the goal's total elapsed
   time across all its turns (time spent paused, waiting or with Themis closed does
   not count). Its icons are
-  **Edit** (applies from the next turn; the current turn keeps running),
+  **Edit** (the next goal turn is told the objective changed and the new one
+  replaces the old; the current turn keeps running),
   **Pause** (after this turn) or **Resume**, and **More**, which holds **Remove**
-  (the current turn finishes; no further turns or checks). A message sent while a goal is paused, or after it ended, gets an ordinary answer: the agent is
-  told not to pick the goal's work back up unless you ask. You can also ask in the
-  chat to pause or remove the goal, and the agent does it; it can't do either unless
-  you asked. In a narrow chat the sentence sits on its own line below the icons.
-- **After each turn** (a goal turn, or the run of a message you sent while the
-  goal is open) a separate check (on the chat's model, or the one
-  `goal.check_model` names in runtime.jsonc), with a fresh context, reads the goal, the
-  turn's answer and the commands it ran, and decides: reached or not yet (the next
-  turn starts by itself, told why). With a number in
-  the goal, that number is the bar; without one, the check decides when further
-  gains are not worth it and says why.
-  The check reads the commands of the turn it judges (long outputs keep their
-  start and end), never the agent's claims, and referees the agent's own to-do
-  list: it can reopen an item it doesn't accept as done, with a short reason
-  ("reopened by the check"), or add one the goal asks for and the list lacks. When
-  the agent left finished work unticked, the check ticks it off itself on what the
-  commands showed ("confirmed by the check"), and closes a request a later one
-  cancelled ("cancelled by your later request") or a question the reply answered
-  ("answered"); your words stay as you sent them. The
-  goal is reached only when the check agrees and nothing on the list is open.
-  With `goal.seed_todo` on in `runtime.jsonc` (off by default), a new goal's list is filled
-  before its first turn: a setup or read-and-plan step when one is really needed, one item
-  per thing the goal asks for, then "Verify end to end", each tagged "from the goal". How the work must be done (a technology, an approach, who does which part) sits apart as rules in Workspace › To-do: they are never ticked off, and one that wasn't followed says so. A turn's
-  replies dim when the check rejects them, so a claim the check didn't accept
-  doesn't read as a result. A browser script that changes the page instead of using it (setting a value, clicking from code) rules out reaching the goal until the page is reloaded and the whole thing shown again with real input. The check also says whether the turn moved the work forward (a turn
-  that changed files always did); after three turns that only re-check, the next
-  one is told to step back and try a different approach.
-- **What you add joins the goal.** A request you send while the goal is open
-  (steered in, queued or typed) goes on the to-do list in your own words, tagged
-  "you asked", and holds the goal until it is done. So does one you steered in or
-  queued after asking for the goal but before the agent set it, while its runs
-  were still going (the last eight at most; once the chat goes idle, your next
-  message starts afresh). None is ever dropped; when you
-  cancel or change an earlier request, the agent takes the old item off, and the
-  check puts it back if nothing you said cancelled it. Answers to the agent's
-  questions are not requests. While the turn your request started (or was
-  steered into) runs, its item shows in progress even if the agent never updates
-  its list; when that turn ends it goes back to pending unless the agent marked
-  it done. Themis never marks it done for the agent. `themis call get_todo`
-  shows the list.
-- **The agent says where it stands.** There is no status box after a turn: each
-  goal turn opens with the agent saying, in its own words, where the goal stands
-  and what it will do next. Once the check finds the goal reached, one short
-  turn has the agent tell you so and what shows it, unless the answer it checked
-  already said so (and no question of the agent's is still open).
-- **It keeps going and never gives up.** There is no time, turn, cost or stall
-  limit. Your messages are handled first, then the goal continues. Failed turns are
-  retried with growing waits (up to 15 minutes) however often they fail; **Stop**
-  ends only the current turn; a closed app resumes running goals when it opens
-  again. A goal pauses only when it is reached, waiting for your answer (a blocking
-  question: the agent can do nothing more toward the goal without it; answering
-  it resumes the goal, see **Questions from the agent**), or out of model
-  quota (it retries every 15 minutes; switching the model resumes it at once). A
-  goal saved as stuck by an earlier version waits for Resume.
+  (the current turn finishes; no further turns). A message sent while a goal is
+  paused, or after it ended, gets an ordinary answer: the agent is told not to
+  pick the goal's work back up unless you ask. In a narrow chat the objective sits
+  on its own line below the icons.
+- **The context meter** shows a **Goal** part while a goal run carries its note.
+- **It keeps going.** There is no time, turn, cost or stall limit. Your messages
+  are handled first, then the goal continues. Failed turns are retried with
+  growing waits (up to 15 minutes) however often they fail; **Stop** ends only the
+  current turn; a closed app resumes running goals when it opens again. A goal
+  pauses on its own only when it waits for your answer (a blocking question:
+  answering it resumes the goal, see **Questions from the agent**) or is out of
+  model quota (it retries every 15 minutes; switching the model resumes it at
+  once).
 - **Notifications** (macOS): while Themis is in the background, a desktop
-  notification names the chat when its goal is reached, waits for your
+  notification names the chat when its goal is complete or blocked, waits for your
   answer, or runs out of model quota (once per quota pause, not at every retry).
   Pausing a goal yourself never notifies. Clicking one brings Themis forward and
   opens the chat. Turn them off with **Notify when a goal finishes or pauses** in
@@ -286,11 +268,8 @@ is reached; for example `/goal optimize this app to speed up p95`.
   is needed or when you turn the switch on; if notifications are off for Themis in
   System Settings › Notifications, the switch says so.
 - A goal never grants permissions: approvals and the sandbox apply as usual, and
-  while an approval waits the goal waits too. A reached goal leaves the composer;
-  the agent's message saying so stays in the conversation. Sending a new message after a goal
-  is reached clears it; `/goal` again replaces the current goal. When the agent
-  rewords an open goal (for example to fold in what you added), the goal goes on:
-  its elapsed time, turn count and added requests carry over.
+  while an approval waits the goal waits too. Sending a new message after a goal
+  is complete clears it; `/goal` again replaces the current goal.
 - **⌘/Ctrl+B** collapses or pins the sidebar. Hovering at the left edge reveals
   an overlay after 300 ms. It closes 700 ms after leaving, unless focus is inside.
   Hover reveal can be disabled in Appearance. A visible button always reopens it.

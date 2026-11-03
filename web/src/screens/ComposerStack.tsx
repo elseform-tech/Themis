@@ -45,7 +45,7 @@ export function ComposerStack({ threadId, goal, approvals, questions, traces, on
   const expiries = questions.filter(question => question.answer === undefined && !question.blocking).map(question => question.asked_at + QUESTION_OPEN_MS).filter(at => at > Date.now());
   const now = useNowAt(expiries.length ? Math.min(...expiries) : undefined);
   const { current, waiting } = useMemo(() => composerQueue(approvals, questions, placements, now), [approvals, questions, placements, now]);
-  const shownGoal = goal && goal.status !== "reached" ? goal : null;
+  const shownGoal = goal ?? null;
   const setFolded = (value: boolean) => { setFoldedState(value); writeFolded(value); };
 
   async function decide(request: ApprovalRequest, decision: ApprovalDecision) {

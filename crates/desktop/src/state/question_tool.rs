@@ -1,5 +1,5 @@
 //! The agent's `ask_user` tool: a question to the user that does not stop the
-//! work. Like `set_goal` it needs no approval prompt, but a deny rule still
+//! work. Like `create_goal` it needs no approval prompt, but a deny rule still
 //! wins. A blocking question ends the run after this tool batch.
 
 use std::sync::Arc;

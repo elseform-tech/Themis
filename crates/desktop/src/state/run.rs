@@ -324,7 +324,6 @@ impl AppState {
                 json!({"thread_id": thread_id, "run_id": run_id, "hook": "skills_at_start", "event": "SessionStart"}),
             );
         }
-        let still_open_hook = built_in.still_open;
         let save_reminder = built_in.save_reminder && run_configuration.memory.enabled;
         skill_catalog = format!(
             "\n{}\n{project_guidance}\n{memory_line}{}{secrets_note}{}",
@@ -524,6 +523,18 @@ impl AppState {
             thread_id: thread_id.to_owned(),
             run: check_approval.clone(),
         }));
+        // Only a chat with an unfinished goal can update it.
+        if self
+            .goal_for(thread_id)
+            .is_some_and(|goal| goal.status != crate::types::GoalStatus::Reached)
+        {
+            tools.push(Box::new(super::goal_tool::UpdateGoalTool {
+                state: self.clone(),
+                sink: Arc::clone(sink),
+                thread_id: thread_id.to_owned(),
+                run: check_approval.clone(),
+            }));
+        }
         let end_request = themis_core::runtime::EndRequest::default();
         tools.push(Box::new(super::question_tool::QuestionTool {
             state: self.clone(),
@@ -557,44 +568,7 @@ impl AppState {
                 saved: Arc::clone(&memory_saved),
             }));
         }
-        // The agent's to-do list: the run opened with it as it stood, and a checkpoint reads it
-        // back as it stands then.
-        let todo_seen = Arc::new(std::sync::atomic::AtomicU64::new(
-            self.todo_for(thread_id).revision,
-        ));
-        tools.push(Box::new(super::todo::TodoTool {
-            owner: super::todo::TodoOwner::Chat {
-                state: self.clone(),
-                sink: Arc::clone(sink),
-                thread_id: thread_id.to_owned(),
-                seen: Arc::clone(&todo_seen),
-            },
-            denied: {
-                let action = themis_core::tools::ToolAction {
-                    display: None,
-                    command: Vec::new(),
-                    tool: "todo_write".to_owned(),
-                    summary: "todo_write".to_owned(),
-                    risk: themis_core::tools::RiskLevel::Read,
-                };
-                let decision =
-                    if check_approval.mode == themis_core::configuration::ApprovalMode::Yolo {
-                        check_approval.policy.yolo_decision(&action)
-                    } else {
-                        check_approval.policy.decision(&action)
-                    };
-                decision == themis_core::configuration::PolicyAction::Deny
-            },
-        }));
-        let checkpoint_note: themis_core::runtime::CheckpointNote = {
-            let state = self.clone();
-            let thread_id = thread_id.to_owned();
-            Arc::new(move || {
-                let list = state.todo_for(&thread_id);
-                todo_seen.store(list.revision, std::sync::atomic::Ordering::SeqCst);
-                list.note()
-            })
-        };
+        let checkpoint_note: themis_core::runtime::CheckpointNote = Arc::new(|| None);
         tools.push(Box::new(super::media_tool::AttachFileTool {
             state: self.clone(),
             sink: Arc::clone(sink),
@@ -891,9 +865,6 @@ impl AppState {
                         })
                         .await
                         .unwrap_or_default();
-                        if !files.is_empty() && still_open_hook {
-                            pump_state.leave_still_open_note(&pump_thread);
-                        }
                         if !files.is_empty() {
                             let changed = ThreadEventEnvelope {
                                 thread_id: pump_thread.clone(),

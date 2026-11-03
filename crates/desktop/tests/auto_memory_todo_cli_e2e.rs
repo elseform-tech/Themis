@@ -4,8 +4,6 @@
 //!   passing (no "remember") with the right scope and the chat's "Remembered" line; it saves
 //!   nothing when nothing is new, refuses a secret, doesn't duplicate, skips a turn in which the
 //!   agent saved, and is off by default.
-//! - `goal.seed_todo`: a new goal's list is seeded before its first turn, which reads it, and
-//!   the goal is reached once the items are done.
 //! - `hooks.built_in`: each built-in hook adds its text (to the main agent and to subagents) only
 //!   while its switch is on, switched through Integrations › Hooks' commands.
 
@@ -19,8 +17,6 @@ use themis_desktop::state::AppState;
 use wiremock::{matchers::method, Mock, MockServer, Request, ResponseTemplate};
 
 const PASS: &str = "You decide what an assistant should remember";
-const SEED: &str = "You turn a goal into a short to-do list";
-const CHECK: &str = "You decide whether an agent has reached a goal";
 const SUBAGENT: &str = "You are a subagent";
 const SUMMARY: &str = "You summarize agent context";
 const TODO_SKILL: &str = "# To-do list";
@@ -113,7 +109,6 @@ fn main_answer(body: &Value) -> ResponseTemplate {
         return text_reply("Done.");
     }
     let user = last_user(body);
-    let wire = body["messages"].to_string();
     match () {
         _ if user.starts_with("remember-it") => call(
             "memory",
@@ -124,30 +119,9 @@ fn main_answer(body: &Value) -> ResponseTemplate {
             "spawn_subagents",
             json!({"say":"Starting a helper.","subagents":[{"name":"Helper","brief":"Look around."}]}),
         ),
-        // A rewrite that puts back an item the check completed, as a stale agent would.
-        _ if user.starts_with("redo-list") => call(
-            "todo_write",
-            json!({"todos":[
-                {"id":"t1","title":"Tasks can be added and ticked off","status":"completed","outcome":"added and ticked three"},
-                {"id":"t2","title":"CSV export downloads every task","status":"completed","outcome":"downloaded 3 rows"},
-                {"id":"t3","title":"Verify end to end","status":"pending"}]}),
-        ),
-        _ if user.starts_with("plan-it") => call(
-            "todo_write",
-            json!({"todos":[{"title":"Write the parser","status":"in_progress"},{"title":"Write its tests","status":"pending"}]}),
-        ),
         _ if user.starts_with("write-file") => call(
             "write_file",
             json!({"file_path": format!("{}.txt", user.lines().next().unwrap_or_default().replace(' ', "-")), "content":"x", "append": false}),
-        ),
-        // A goal turn finishes the features on its list (read at the turn's start), and leaves
-        // the last item for the check.
-        _ if wire.contains("[pending; from the goal] Tasks can be added") => call(
-            "todo_write",
-            json!({"todos":[
-                {"id":"t1","title":"Tasks can be added and ticked off","status":"completed","outcome":"added and ticked three"},
-                {"id":"t2","title":"CSV export downloads every task","status":"completed","outcome":"downloaded 3 rows"},
-                {"id":"t3","title":"Verify end to end","status":"pending"}]}),
         ),
         _ if user.starts_with("filler") => text_reply("Noted."),
         _ => text_reply("Fixed the build."),
@@ -191,15 +165,6 @@ impl Harness {
                 let head = system(&body);
                 if head.starts_with(PASS) {
                     return text_reply(&pass_answer(&body));
-                }
-                if head.starts_with(SEED) {
-                    return text_reply(r#"{"items":[{"title":"Tasks can be added and ticked off"},{"title":"CSV export downloads every task","details":"every row"}]}"#);
-                }
-                if head.contains(CHECK) {
-                    // The check completes the seeded verification item on the turn's evidence.
-                    return text_reply(
-                        r#"{"verdict":"reached","reason":"Everything works.","progressed":true,"complete":[{"id":"t3","outcome":"clicked through every feature"}]}"#,
-                    );
                 }
                 if head.contains(SUMMARY) {
                     return text_reply("Goal/constraints: keep notes. Unresolved work: none. Parked work: none. Next action: carry on.");
@@ -439,83 +404,6 @@ async fn the_memory_pass_notices_a_preference_and_skips_refuses_and_dedupes() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn a_seeded_goal_reads_its_list_and_is_reached_once_its_items_are_done() {
-    let mut h = Harness::start(Some(r#"{"goal":{"seed_todo":true}}"#), None).await;
-    let id = h.new_chat();
-    h.send(
-        &id,
-        "/goal Build a todo app with CSV export",
-        Duration::from_millis(500),
-    )
-    .await;
-    // One seeding request: the empty project counts as new, so set-up may come first.
-    let seeds = h.requests_of(SEED);
-    assert_eq!(seeds.len(), 1);
-    let user = seeds[0]["messages"][1]["content"].as_str().unwrap();
-    assert!(user.contains("a new, empty project"), "{user}");
-    assert!(user.contains("Build a todo app with CSV export"), "{user}");
-    // The goal's first turn opened with the seeded list.
-    let first = h.first_request_of("/goal Build a todo app");
-    let opening = last_user(&first);
-    assert!(
-        opening.contains("[pending; from the goal] Tasks can be added and ticked off"),
-        "{opening}"
-    );
-    assert!(opening.contains("Verify end to end"), "{opening}");
-    // The agent finishes the items, the check accepts them, and the goal is reached.
-    let deadline = std::time::Instant::now() + Duration::from_secs(60);
-    loop {
-        let goal = h.cli("get_goal", json!({"threadId": id}));
-        if goal["status"] == "reached" {
-            break;
-        }
-        assert!(std::time::Instant::now() < deadline, "{goal}");
-        tokio::time::sleep(Duration::from_millis(100)).await;
-    }
-    let list = h.cli("get_todo", json!({"threadId": id}));
-    let items = list["items"].as_array().unwrap();
-    assert_eq!(items.len(), 3, "{list}");
-    assert!(items.iter().all(|item| item["source"] == "goal"), "{list}");
-    assert!(
-        items.iter().all(|item| item["status"] == "completed"),
-        "{list}"
-    );
-    // The agent ticked the features; the check completed "Verify end to end" itself.
-    assert_eq!(items[2]["title"], "Verify end to end");
-    assert!(!items[2]["closed"].is_null(), "{list}");
-    assert!(items[0]["closed"].is_null(), "{list}");
-    // An agent's later rewrite can't put it back: the check's status stands and the agent is
-    // told why.
-    h.send(&id, "redo-list", Duration::from_millis(300)).await;
-    let list = h.cli("get_todo", json!({"threadId": id}));
-    assert_eq!(list["items"][2]["status"], "completed", "{list}");
-    assert!(!list["items"][2]["closed"].is_null(), "{list}");
-    let result = h
-        .requests
-        .lock()
-        .unwrap()
-        .iter()
-        .rev()
-        .find(|body| last(body)["role"] == "tool")
-        .map(|body| last(body)["content"].to_string())
-        .unwrap_or_default();
-    assert!(
-        result.contains("t3 was confirmed by the check; only the check can reopen it."),
-        "{result}"
-    );
-    let seeded = h.logged("todo", "seed", 1).await;
-    assert_eq!(fields(&seeded[0])["outcome"], "seeded");
-    assert_eq!(fields(&seeded[0])["items"], 3);
-
-    // Seeding is off by default: another chat's goal starts with an empty list.
-    let mut off = Harness::start(None, None).await;
-    let other = off.new_chat();
-    off.send(&other, "/goal Build it", Duration::from_millis(300))
-        .await;
-    assert!(off.requests_of(SEED).is_empty());
-}
-
-#[tokio::test(flavor = "multi_thread")]
 async fn built_in_hooks_add_their_text_to_agents_and_subagents_only_while_switched_on() {
     let mut h = Harness::start(None, None).await;
     let id = h.new_chat();
@@ -580,18 +468,6 @@ async fn built_in_hooks_add_their_text_to_agents_and_subagents_only_while_switch
     assert!(sub_system.contains(TODO_SKILL), "{sub_system}");
     assert!(sub_system.contains(MEMORY_SKILL), "{sub_system}");
     assert!(sub_system.contains(SUBAGENT_MEMORY_NOTE), "{sub_system}");
-    // Files changed while items are open: the next turn starts by naming them.
-    h.send(&id, "plan-it again", Duration::from_millis(300))
-        .await;
-    h.send(&id, "write-file two", Duration::from_millis(300))
-        .await;
-    h.send(&id, "next two", Duration::from_millis(300)).await;
-    let opening = last_user(&h.first_request_of("next two"));
-    assert!(opening.contains(STILL_OPEN), "{opening}");
-    assert!(opening.contains("Write its tests"), "{opening}");
-    // Only once, and not after a turn that changed nothing.
-    h.send(&id, "next three", Duration::from_millis(300)).await;
-    assert!(!last_user(&h.first_request_of("next three")).contains(STILL_OPEN));
     // Off again: nothing.
     h.cli(
         "update_built_in_hook",
@@ -601,10 +477,6 @@ async fn built_in_hooks_add_their_text_to_agents_and_subagents_only_while_switch
         .await;
     h.send(&id, "next four", Duration::from_millis(300)).await;
     assert!(!last_user(&h.first_request_of("next four")).contains(STILL_OPEN));
-    let (lines, _) = h.logs("hook", "built_in");
-    assert!(lines
-        .iter()
-        .any(|line| fields(line)["hook"] == "still_open"));
 }
 
 /// With `save_reminder` on, the agent is reminded once before its context is compacted; with

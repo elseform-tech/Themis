@@ -16,7 +16,7 @@ vi.mock("../lib/tauri", () => ({
 
 const approval: ApprovalRequest = { approval_id: "a1", thread_id: "t1", tool: "shell", summary: "run", risk: "execute", command: { argv: ["python3", "check.py"] } } as ApprovalRequest;
 const question: Question = { id: "q1", run_id: "r1", question: "Retired items in INDEX.md only?", choices: ["INDEX.md only", "Own file too"], assumption: "INDEX.md only", blocking: false, asked_at: Date.now() };
-const goal: Goal = { text: "Write every memo", status: "running", started_at: 0, active_ms: 0, turns: 2, stalls: 0, failures: 0 };
+const goal: Goal = { text: "Write every memo", status: "running", started_at: 0, active_ms: 0, turns: 2, failures: 0 };
 
 function stack(props: { approvals?: ApprovalRequest[]; questions?: Question[]; goal?: Goal | null }) {
   return <ComposerStack threadId="t1" goal={props.goal ?? null} approvals={props.approvals ?? []} questions={props.questions ?? []} traces={[]}
@@ -66,8 +66,11 @@ describe("composer stack", () => {
     expect(screen.getByRole("region", { name: "Goal" })).toBeInTheDocument();
   });
 
-  it("is empty without a goal, approval or question", () => {
-    const { container } = render(stack({ goal: { ...goal, status: "reached" } }));
+  it("keeps a complete goal for its evidence, and is empty without a goal, approval or question", () => {
+    render(stack({ goal: { ...goal, status: "reached" } }));
+    expect(screen.getByRole("region", { name: "Goal" })).toHaveTextContent("Complete");
+    cleanup();
+    const { container } = render(stack({ goal: null }));
     expect(container).toBeEmptyDOMElement();
   });
 });

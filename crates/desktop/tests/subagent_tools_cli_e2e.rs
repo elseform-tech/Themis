@@ -674,41 +674,9 @@ async fn a_plain_subagent_has_none_of_these_tools_unless_named() {
     .await;
     run(&app, "yolo", "go").await;
     let (tools, _) = child_request(&app).await;
-    for named_only in [
-        "background_task",
-        "todo_write",
-        "ask_user",
-        "spawn_subagents",
-        "git",
-    ] {
+    for named_only in ["background_task", "ask_user", "spawn_subagents", "git"] {
         assert!(!tools.iter().any(|tool| tool == named_only), "{tools:?}");
     }
-    app.serving.abort();
-}
-
-#[tokio::test(flavor = "multi_thread")]
-async fn a_todo_list_is_kept_and_shows_what_it_is_doing() {
-    let todos = json!({"todos": [
-        {"title": "Read the code", "status": "completed"},
-        {"title": "Write the report", "status": "in_progress"}
-    ]});
-    let app = app(
-        Setup {
-            agents: &[("planner", "tools: Read, TodoWrite")],
-            ..Setup::default()
-        },
-        spawning(Some("planner"), calling(vec![("todo_write", todos)])),
-    )
-    .await;
-    run(&app, "custom", "go").await;
-    let answered = child_results(&app).await;
-    assert!(answered[0].contains("\"done\":1"), "{answered:?}");
-    let listed = call(
-        app.data.path(),
-        "list_subagents",
-        json!({"threadId": app.thread}),
-    );
-    assert_eq!(listed[0]["text"], "Write the report", "{listed}");
     app.serving.abort();
 }
 

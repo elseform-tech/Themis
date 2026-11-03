@@ -279,9 +279,7 @@ impl themis_core::browser::media::MediaSink for ProjectMedia {
 }
 
 /// What a run's screenshots give its model: nothing with `browser.screenshots_to_model`
-/// off; the image when the model reads images; otherwise, when a separate
-/// `goal.check_model` may read them, a kept copy for the goal check, while the run's model
-/// gets the text result as before.
+/// off or a model that reads text only; the image when the model reads images.
 pub(super) fn screenshots_to_model(
     config: &themis_core::configuration::RuntimeConfig,
     catalog: &[themis_core::providers::GoModel],
@@ -292,13 +290,6 @@ pub(super) fn screenshots_to_model(
         ScreenshotsToModel::Off
     } else if themis_core::providers::model_accepts_images(catalog, model) {
         ScreenshotsToModel::Seen
-    } else if config
-        .goal
-        .check_model
-        .as_deref()
-        .is_some_and(|check| check != model)
-    {
-        ScreenshotsToModel::Kept
     } else {
         ScreenshotsToModel::Off
     }
@@ -371,12 +362,7 @@ mod screenshot_tests {
         assert_eq!(
             screenshots_to_model(&config, &catalog, "reader"),
             ScreenshotsToModel::Off,
-            "no other model would ever see a copy"
-        );
-        config.goal.check_model = Some("seer".into());
-        assert_eq!(
-            screenshots_to_model(&config, &catalog, "reader"),
-            ScreenshotsToModel::Kept
+            "a model that reads text only gets no copy"
         );
         config.browser.screenshots_to_model = false;
         assert_eq!(

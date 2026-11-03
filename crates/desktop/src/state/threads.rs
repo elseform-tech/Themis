@@ -520,14 +520,15 @@ impl AppState {
         };
         // `/goal` sets the goal, a reply resumes a goal waiting for the user;
         // every run while a goal runs is told about it.
-        // Every run reads the chat's to-do list as it stands, after any goal context.
-        let goal_context = match self.goal_for_message(sink.as_ref(), &thread_id, &text, &run_id) {
-            Ok(context) => context,
-            Err(error) => {
-                self.finish_run(&thread_id).await;
-                return Err(error);
-            }
-        };
+        let from_person = snapshot.person_text.is_some();
+        let goal_context =
+            match self.goal_for_message(sink.as_ref(), &thread_id, &text, &run_id, from_person) {
+                Ok(context) => context,
+                Err(error) => {
+                    self.finish_run(&thread_id).await;
+                    return Err(error);
+                }
+            };
         let shown_attachments = attachments.clone();
         if let Err(error) = self.inner.transcript.append_user_with_attachments(
             &thread_id,
@@ -559,28 +560,7 @@ impl AppState {
                 attachments: shown_attachments,
             },
         });
-        // A goal this message just set may get its to-do list first (`goal.seed_todo`); the
-        // message already shows, and the turn reads the seeded list.
-        if themis_core::goal::parse_goal_command(&text).is_some_and(|goal| !goal.is_empty()) {
-            if let Some(goal) = self.goal_for(&thread_id) {
-                self.seed_goal_todo(
-                    sink.as_ref(),
-                    (&thread_id, &run_id),
-                    &goal.text,
-                    &runtime_configuration,
-                    &snapshot.model,
-                    &snapshot.work_root,
-                )
-                .await;
-            }
-        }
-        // Every run reads the chat's to-do list as it stands, after any goal context, and the
-        // "Still open" note when the last turn left one (`hooks.built_in.still_open`).
-        let resolved_text = format!(
-            "{resolved_text}{goal_context}{}{}",
-            self.todo_note(&thread_id),
-            self.take_still_open_note(&thread_id)
-        );
+        let resolved_text = format!("{resolved_text}{goal_context}");
         self.persist_registry().await;
         let policy = RunPolicy {
             total_turns: runtime_configuration
@@ -706,7 +686,6 @@ impl AppState {
         self.forget_chat_grants(std::slice::from_ref(&thread_id));
         self.forget_queues(std::slice::from_ref(&thread_id));
         self.forget_goals(std::slice::from_ref(&thread_id));
-        self.forget_todos(std::slice::from_ref(&thread_id));
         self.forget_questions(std::slice::from_ref(&thread_id));
         self.forget_subagents(std::slice::from_ref(&thread_id));
         self.end_deleted_chat_session(&thread_id);

@@ -1,0 +1,1 @@
+The user resumed the goal after it was blocked. Count any blocker afresh from this turn: read any change to the goal and try a different approach.
