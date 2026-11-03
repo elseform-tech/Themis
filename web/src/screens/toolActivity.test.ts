@@ -36,7 +36,6 @@ describe("tool rows say what the calls did", () => {
     expect(describeTools([call("web_search", 'call `web_search` with {"query":"semver precedence rules"}')])).toBe("Searched the web for “semver precedence rules”");
     expect(describeTools([call("fetch_url", 'call `fetch_url` with {"url":"https://semver.org/#spec"}')])).toBe("Opened semver.org");
     expect(describeTools([call("browser_click", "x"), call("browser_open", "y")])).toBe("Used the browser");
-    expect(describeTools([call("todo_write", "x")])).toBe("Updated the to-do list");
     expect(describeTools([call("list_dir", "list `.`")])).toBe("Listed the project");
     expect(describeTools([call("read_file", "check.txt")])).toBe("Read a file");
     expect(describeTools([call("mcp_0123456789abcdef01234567_read_text", "x", "files · read text file")])).toBe("Used files · read text file");

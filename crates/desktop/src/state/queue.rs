@@ -288,15 +288,10 @@ impl AppState {
                 .push_back(text.clone());
             Ok((text, entry.run_id.clone()))
         })?;
-        let (steered, run_id) = steered;
+        let (_steered, _run_id) = steered;
         // After the inbox: an approval asked from here on sees the message there
         // and is denied without a box (see `DesktopApprovalHook`).
         let denied = self.deny_approvals_for_new_message(&thread_id);
-        // Before a goal exists, a goal the agent sets in this run takes it on.
-        self.chain_request(&thread_id, &run_id, &steered, true);
-        self.note_added_request(sink.as_ref(), &thread_id, &steered);
-        // The running turn takes it up now.
-        self.start_request_on_todo(sink.as_ref(), &thread_id, &steered);
         let _ = self.inner.diagnostics.append(
             "queue",
             "steered",
@@ -491,15 +486,11 @@ impl AppState {
         if matches!(terminal, ThreadEvent::Failed { .. }) {
             self.hold_hook_wakes(&thread_id);
         }
-        // Before the next turn or the goal check: what this turn started is no longer going.
-        self.end_todo_turn(sink.as_ref(), &thread_id);
         if self.dispatch_queue(Arc::clone(&sink), &thread_id).await {
             // The goal learns about the turn it was waiting on later.
             self.goal_turn_interrupted(&run_id);
             return;
         }
-        // Nothing of the person's follows this run: their next message starts a new chain.
-        self.close_request_chain(&thread_id);
         self.goal_after_run(Arc::clone(&sink), thread_id.clone(), run_id, terminal)
             .await;
         // A hook that finished while this turn was on its last step.

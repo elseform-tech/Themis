@@ -110,18 +110,6 @@ const ALL: &[(&str, &str, &[&str])] = &[
         "subagent-memory-skill-note",
         &[],
     ),
-    (TODO_SEED_SYSTEM, "todo-seed-system", &[]),
-    (TODO_SEED_USER, "todo-seed-user", &["project", "goal"]),
-    (TODO_SEED_NEW_PROJECT, "todo-seed-new-project", &[]),
-    (
-        TODO_SEED_EXISTING_PROJECT,
-        "todo-seed-existing-project",
-        &[],
-    ),
-    (TODO_SEED_VERIFY, "todo-seed-verify", &[]),
-    (TODO_SEED_VERIFY_DETAILS, "todo-seed-verify-details", &[]),
-    (RUNTIME_STILL_OPEN, "runtime-still-open", &["items"]),
-    (TOOL_TODO_CHECK_KEPT, "tool-todo-check-kept", &["id", "how"]),
     (
         QUESTION_ANSWER,
         "question-answer",
@@ -327,8 +315,6 @@ const ALL: &[(&str, &str, &[&str])] = &[
     (SUBAGENT_ASK_NOTE, "subagent-ask-note", &[]),
     (SUBAGENT_BACKGROUND_NOTE, "subagent-background-note", &[]),
     (SUBAGENT_CLAUDE_NAMES, "subagent-claude-names", &["names"]),
-    (TODO_TOOL, "todo-tool", &[]),
-    (RUNTIME_TODO_NOTE, "runtime-todo-note", &["items"]),
     (SPAWN_SUBAGENTS_WEB, "spawn-subagents-web", &[]),
     (
         SUBAGENT_WRITE_PATHS_NOTE,
@@ -661,7 +647,6 @@ fn runtime_note_markers_stay_at_the_start() {
     assert!(RUNTIME_STEERED.starts_with("[The user sent this while you were working"));
     assert!(RUNTIME_STEERS_CHECK.starts_with("[Runtime check, not from the user]"));
     assert!(RUNTIME_LOOP_WARNING.starts_with("Loop warning"));
-    assert!(RUNTIME_TODO_NOTE.starts_with("[To-do — runtime, not from the user]"));
 }
 
 #[test]

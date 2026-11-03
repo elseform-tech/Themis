@@ -282,10 +282,6 @@ pub enum ThreadEvent {
     GoalChanged {
         goal: Option<Goal>,
     },
-    /// The chat's to-do list changed. Live only; `run_id` is empty.
-    TodoChanged {
-        todo: themis_core::todo::TodoList,
-    },
     /// What the goal check (or the goal supervisor) concluded after a turn.
     GoalNote {
         outcome: GoalNoteKind,

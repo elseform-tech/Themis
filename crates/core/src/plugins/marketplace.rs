@@ -3200,8 +3200,6 @@ fn import_hooks(value: &Value, root: &Path, spec: &mut PluginSpec) -> anyhow::Re
             "PostToolBatch" => "PostToolBatch",
             "PostCompact" => "PostCompact",
             "Notification" => "Notification",
-            "TaskCreated" => "TaskCreated",
-            "TaskCompleted" => "TaskCompleted",
             "ConfigChange" => "ConfigChange",
             "InstructionsLoaded" => "InstructionsLoaded",
             // Fires only when the run failed; `Stop` also runs then, as RunEnd always does.
@@ -3246,10 +3244,7 @@ fn import_hooks(value: &Value, root: &Path, spec: &mut PluginSpec) -> anyhow::Re
             "UserPromptExpansion" => Some(&[]),
             _ => None,
         };
-        let matcher_ignored = matches!(
-            event.as_str(),
-            "PostToolBatch" | "TaskCreated" | "TaskCompleted"
-        );
+        let matcher_ignored = event == "PostToolBatch";
         for group in groups.as_array().context("Invalid hook groups")? {
             for raw in group["hooks"].as_array().context("Invalid hook list")? {
                 // A `prompt` hook asks the chat's model; only where Claude has them and their answer
@@ -3264,8 +3259,6 @@ fn import_hooks(value: &Value, root: &Path, spec: &mut PluginSpec) -> anyhow::Re
                             | "UserPromptExpansion"
                             | "Stop"
                             | "PostToolBatch"
-                            | "TaskCreated"
-                            | "TaskCompleted"
                     ))
                 .then(|| raw["prompt"].as_str())
                 .flatten()

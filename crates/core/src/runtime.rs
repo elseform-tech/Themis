@@ -2688,14 +2688,6 @@ pub async fn with_checkpoint_note<F: std::future::Future>(
     CHECKPOINT_NOTE.scope(note, future).await
 }
 
-/// Whether a user message is the to-do note, which is never the person's request.
-fn is_todo_note(text: &str) -> bool {
-    let marker = crate::prompts::RUNTIME_TODO_NOTE
-        .split_once(']')
-        .map_or("", |(marker, _)| marker);
-    !marker.is_empty() && text.starts_with(marker)
-}
-
 tokio::task_local! { static FIRST_REQUEST: String; }
 
 /// Runs `future` with the chat's first user message, which every context checkpoint
@@ -3356,7 +3348,6 @@ fn active_request_index(messages: &[ChatMessage]) -> Option<usize> {
                 .starts_with(crate::prompts::RUNTIME_SUBAGENT_NOTE)
             // Hook context is never the person's request.
             && !message.content.starts_with(crate::prompts::HOOK_CONTEXT_NOTE)
-            && !is_todo_note(&message.content)
     })
 }
 

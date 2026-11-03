@@ -33,13 +33,13 @@ const host = (url: string) => { try { return new URL(url).host; } catch { return
 const count = (n: number, one: string, many: string) => (n === 1 ? `a ${one}` : `${n} ${many}`);
 const clip = (text: string, max = 40) => (text.length > max ? `${text.slice(0, max - 1)}…` : text);
 
-type Kind = "subagents" | "read" | "edit" | "list" | "search" | "run" | "git" | "web" | "fetch" | "browser" | "recall" | "checklist" | "other";
+type Kind = "subagents" | "read" | "edit" | "list" | "search" | "run" | "git" | "web" | "fetch" | "browser" | "recall" | "other";
 
 const KIND: Record<string, Kind> = {
   read_file: "read", write_file: "edit", apply_patch: "edit", copy_file: "edit", move_file: "edit",
   delete_file: "edit", create_dir: "edit", list_dir: "list", search_file: "search", shell: "run",
   spawn_subagents: "subagents", wait_subagents: "subagents", message_subagent: "subagents", stop_subagent: "subagents",
-  git: "git", web_search: "web", fetch_url: "fetch", recall: "recall", todo_write: "checklist",
+  git: "git", web_search: "web", fetch_url: "fetch", recall: "recall",
 };
 
 function kindOf(name: string): Kind {
@@ -93,7 +93,6 @@ function phrase(kind: Kind, calls: { name: string; summary: string; label?: stri
     }
     case "browser": return "Used the browser";
     case "recall": return "Looked back at earlier work";
-    case "checklist": return "Updated the to-do list";
     case "other": {
       const names = unique(calls.map(call => toolDisplayName(call.name, call.label)));
       return names.length === 1 ? `Used ${names[0]}` : `Used ${names.length} tools`;

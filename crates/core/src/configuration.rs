@@ -658,15 +658,6 @@ impl Default for CompactionConfig {
         }
     }
 }
-/// Goal mode (`goal`); file only.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-#[serde(default, deny_unknown_fields)]
-pub struct GoalConfig {
-    /// When a goal starts on an empty list, one request on the summary model fills the to-do
-    /// list from the goal's sentence, ending with "Verify end to end".
-    pub seed_todo: bool,
-}
-
 /// Memory across chats (`memory`, Settings › Memory); see [`crate::memory`].
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
@@ -1199,8 +1190,6 @@ pub struct RuntimeConfig {
     /// OS sandbox for commands the agent runs; see [`crate::sandbox`].
     pub sandbox: crate::sandbox::SandboxConfig,
     pub compaction: CompactionConfig,
-    /// Goal mode; see [`GoalConfig`].
-    pub goal: GoalConfig,
     /// Subagents; see [`SubagentsConfig`].
     pub subagents: SubagentsConfig,
     /// Plugin hooks; see [`HooksConfig`].
@@ -1238,7 +1227,6 @@ impl Default for RuntimeConfig {
             approval: ApprovalPolicy::default(),
             sandbox: crate::sandbox::SandboxConfig::default(),
             compaction: CompactionConfig::default(),
-            goal: GoalConfig::default(),
             subagents: SubagentsConfig::default(),
             hooks: HooksConfig::default(),
             memory: MemoryConfig::default(),
@@ -2277,7 +2265,6 @@ pub fn schema() -> Value {
         "enabled":{"type":"boolean","default":true,"description":"Save and read memories across chats (Settings › Memory). A project or run layer may only set it to false."},
         "auto":{"type":"boolean","default":false,"description":"After a turn in which you wrote, one request on the summary model notices what is worth remembering and saves it. A project or run layer may only set it to false."}
     }});
-    schema["properties"]["goal"]["properties"]["seed_todo"] = serde_json::json!({"type":"boolean","default":false,"description":"When a goal starts on an empty to-do list, one request on the summary model fills it from the goal, ending with \"Verify end to end\""});
     schema["properties"]["hooks"]["properties"]["built_in"] = serde_json::json!({"type":"object","additionalProperties":false,"properties":{
         "skills_at_start":{"type":"boolean","default":false,"description":"Session start: runs carry the short To-do and Memory skills"},
         "still_open":{"type":"boolean","default":false,"description":"Run end: when files changed while the to-do list has open items, the next turn starts with a Still open note"},
@@ -2370,8 +2357,7 @@ fn base_schema() -> Value {
                 "max_wakes":{"type":"integer","minimum":0,"maximum":10,"default":3,"description":"Turns in a row a finished background plugin hook may start in an idle chat before you write again; 0 never starts one, and what a hook reports waits for the next turn"},
                 "session_idle_minutes":{"type":"integer","minimum":0,"maximum":10080,"default":60,"description":"Minutes a chat may sit idle before its session ends for plugin hooks; writing again starts the next one. 0 never ends one for being idle"},
                 "prompt_hook_calls":{"type":"integer","minimum":0,"maximum":1000,"default":50,"description":"Model requests prompt hooks may make in a run, each on the chat's model. A guard that finds none left refuses. 0 turns prompt hooks off; only your own runtime.jsonc can set this"}
-            }},
-            "goal":{"type":"object","additionalProperties":false,"properties":{}}
+            }}
         }
     })
 }
@@ -2705,21 +2691,20 @@ mod tests {
         }
     }
     #[test]
-    fn auto_memory_goal_seeding_and_built_in_hooks_are_off_by_default_and_switchable() {
+    fn auto_memory_and_built_in_hooks_are_off_by_default_and_switchable() {
         let defaults = RuntimeConfig::default();
         assert!(!defaults.memory.auto);
-        assert!(!defaults.goal.seed_todo);
         assert_eq!(defaults.hooks.built_in, BuiltInHooks::default());
         assert!(defaults.hooks.built_in.switches().iter().all(|(_, on)| !on));
         let on = resolve(
             Some(
-                r#"{"memory":{"auto":true},"goal":{"seed_todo":true},"hooks":{"built_in":{"skills_at_start":true,"still_open":true,"save_reminder":true}}}"#,
+                r#"{"memory":{"auto":true},"hooks":{"built_in":{"skills_at_start":true,"still_open":true,"save_reminder":true}}}"#,
             ),
             None,
             None,
         )
         .unwrap();
-        assert!(on.config.memory.auto && on.config.goal.seed_todo);
+        assert!(on.config.memory.auto);
         assert!(on
             .config
             .hooks
@@ -2728,7 +2713,6 @@ mod tests {
             .iter()
             .all(|(_, on)| *on));
         assert_eq!(on.provenance["memory.auto"], "user");
-        assert_eq!(on.provenance["goal.seed_todo"], "user");
         assert_eq!(on.provenance["hooks.built_in.still_open"], "user");
         // A project may turn noticing off, never on; it may set the built-in hooks either way.
         let user = r#"{"memory":{"auto":true}}"#;
@@ -2738,11 +2722,11 @@ mod tests {
         assert!(resolve(None, None, Some(r#"{"memory":{"auto":true}}"#)).is_err());
         let project = resolve(
             None,
-            Some(r#"{"hooks":{"built_in":{"still_open":true}},"goal":{"seed_todo":true}}"#),
+            Some(r#"{"hooks":{"built_in":{"still_open":true}}}"#),
             None,
         )
         .unwrap();
-        assert!(project.config.hooks.built_in.still_open && project.config.goal.seed_todo);
+        assert!(project.config.hooks.built_in.still_open);
         assert!(resolve(Some(r#"{"hooks":{"built_in":{"other":true}}}"#), None, None).is_err());
     }
 

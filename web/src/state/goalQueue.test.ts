@@ -54,17 +54,6 @@ describe("queue and goal events", () => {
     expect(state.goals[thread]).toBeNull();
   });
 
-  it("keeps each chat's to-do list, live and when loaded", () => {
-    const todo = { revision: 2, items: [{ id: "a", title: "Plan", status: "completed" as const }, { id: "b", title: "Build", status: "in_progress" as const }] };
-    let state = reducer(initialState, envelope({ kind: "todo_changed", todo }, ""));
-    expect(state.todos[thread]).toEqual(todo);
-    // Another chat's list stays apart; a later list replaces the whole one.
-    state = reducer(state, { type: "todo/loaded", threadId: "t2", todo: { revision: 1, items: [{ id: "x", title: "Other", status: "pending" }] } });
-    state = reducer(state, envelope({ kind: "todo_changed", todo: { revision: 3, items: [] } }, ""));
-    expect(state.todos[thread]).toEqual({ revision: 3, items: [] });
-    expect(state.todos.t2?.items.map(item => item.title)).toEqual(["Other"]);
-  });
-
   it("puts a steer after the text streamed before it, marked as steered", () => {
     let state = reducer(initialState, envelope({ kind: "started", task: "x", max_turns: 5 }));
     state = reducer(state, envelope({ kind: "assistant_text", text: "Reading the file." }));

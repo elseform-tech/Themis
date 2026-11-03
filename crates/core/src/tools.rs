@@ -117,7 +117,7 @@ pub fn tool_approves_itself(name: &str) -> bool {
     // are approved as they happen.
     matches!(
         name,
-        "manage_automations" | "set_goal" | "update_goal" | "ask_user" | "todo_write" | "memory"
+        "manage_automations" | "set_goal" | "update_goal" | "ask_user" | "memory"
     ) || crate::skills::SUBAGENT_TOOLS.contains(&name)
         || is_site_tool(name)
 }

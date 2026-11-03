@@ -192,7 +192,6 @@ impl AppState {
         self.forget_chat_grants(&ids);
         self.forget_queues(&ids);
         self.forget_goals(&ids);
-        self.forget_todos(&ids);
         self.forget_questions(&ids);
         self.forget_subagents(&ids);
         self.forget_hook_sessions(&ids);

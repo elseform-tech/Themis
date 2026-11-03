@@ -553,24 +553,6 @@ impl SubagentKit {
         }
     }
 
-    /// Whether a deny rule someone wrote covers a tool that approves itself, in YOLO too.
-    fn denies(&self, tool: &str) -> bool {
-        let action = ToolAction {
-            display: None,
-            command: Vec::new(),
-            tool: tool.to_owned(),
-            summary: tool.to_owned(),
-            risk: themis_core::tools::RiskLevel::Read,
-        };
-        let policy = &self.config.approval;
-        let decision = if self.mode == ApprovalMode::Yolo {
-            policy.yolo_decision(&action)
-        } else {
-            policy.decision(&action)
-        };
-        decision == themis_core::configuration::PolicyAction::Deny
-    }
-
     /// Metadata only: why, how many and which tools, never a call's contents.
     fn log_left_out(&self, reason: &str, names: &[String]) {
         let listed: Vec<String> = names
@@ -686,8 +668,6 @@ impl SubagentKit {
             inbox: SteerInbox::default(),
             tool_calls: AtomicUsize::new(0),
             progress: Mutex::new(Progress::default()),
-            todo: Mutex::default(),
-            still_open: Mutex::default(),
         });
         self.notes.expect(1);
         self.started
@@ -898,15 +878,6 @@ impl SubagentKit {
         );
         web.retain(|tool| agent.web.tools.iter().any(|wanted| wanted == tool.name()));
         let mut named: Vec<Box<dyn ToolT>> = Vec::new();
-        if names(agent, "todo_write") {
-            named.push(Box::new(super::todo::TodoTool {
-                owner: super::todo::TodoOwner::Subagent {
-                    agent: Arc::clone(agent),
-                    report: self.reporter(),
-                },
-                denied: self.denies("todo_write"),
-            }));
-        }
         // Every subagent starts with the memory index. One without a plugin profile (which
         // picks its own tools) may also read a memory in full.
         if self.config.memory.enabled && (agent.profile.is_none() || names(agent, "memory")) {
@@ -1276,26 +1247,7 @@ impl SubagentKit {
             &["context", &self.thread_id, "subagents", &agent.id],
         )
         .ok();
-        // `hooks.built_in.still_open`: what it changed this turn, when it may change anything.
-        let watch_files = built_in.still_open && !agent.write_paths.is_empty();
-        let changes_before = if watch_files {
-            let root = self.work_root.clone();
-            tokio::task::spawn_blocking(move || crate::diff::change_fingerprint(&root))
-                .await
-                .unwrap_or_default()
-        } else {
-            Default::default()
-        };
-        let mut task = agent.task.lock().unwrap_or_else(|e| e.into_inner()).clone();
-        if let Some(note) = agent
-            .still_open
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .take()
-        {
-            task.push_str("\n\n");
-            task.push_str(&note);
-        }
+        let task = agent.task.lock().unwrap_or_else(|e| e.into_inner()).clone();
         let run = themis_core::runtime::run_task_with_evidence(
             llm,
             tools,
@@ -1355,34 +1307,6 @@ impl SubagentKit {
         )
         .await;
         done.store(true, Ordering::SeqCst);
-        if watch_files {
-            let root = self.work_root.clone();
-            let changed = tokio::task::spawn_blocking(move || {
-                !crate::diff::changed_between(
-                    &root,
-                    &changes_before,
-                    &crate::diff::change_fingerprint(&root),
-                )
-                .is_empty()
-            })
-            .await
-            .unwrap_or(false);
-            let note = agent
-                .todo
-                .lock()
-                .unwrap_or_else(|e| e.into_inner())
-                .still_open_note();
-            if let (true, Some(note)) = (changed, note) {
-                *agent.still_open.lock().unwrap_or_else(|e| e.into_inner()) = Some(note);
-                let _ = self.state.inner.diagnostics.append(
-                    "hook",
-                    "built_in",
-                    "info",
-                    json!({"thread_id": self.thread_id, "subagent_id": agent.id,
-                        "hook": "still_open", "event": "SubagentEnd"}),
-                );
-            }
-        }
         // Nothing owns what it started once it is over.
         if let Some(kit) = &nested {
             let left: Vec<Arc<Subagent>> = kit
@@ -1663,10 +1587,6 @@ pub(super) struct Subagent {
     pub(super) inbox: SteerInbox,
     pub(super) tool_calls: AtomicUsize,
     progress: Mutex<Progress>,
-    /// Its own to-do list, kept across the turns it is picked up again for.
-    pub(super) todo: Mutex<themis_core::todo::TodoList>,
-    /// The "Still open" note its next turn starts with (`hooks.built_in.still_open`).
-    still_open: Mutex<Option<String>>,
 }
 
 #[derive(Clone, Default)]
@@ -1699,7 +1619,7 @@ fn names(agent: &Subagent, tool: &str) -> bool {
 
 /// Claude's names for the tools it has, for instructions written for Claude.
 fn claude_names(tools: &[Box<dyn ToolT>]) -> Vec<String> {
-    const NAMES: [(&str, &str); 14] = [
+    const NAMES: [(&str, &str); 13] = [
         ("read_file", "Read"),
         ("search_file", "Grep"),
         ("list_dir", "LS and Glob"),
@@ -1708,7 +1628,6 @@ fn claude_names(tools: &[Box<dyn ToolT>]) -> Vec<String> {
         ("apply_patch", "Edit"),
         ("fetch_url", "WebFetch"),
         ("web_search", "WebSearch"),
-        ("todo_write", "TodoWrite"),
         ("background_task", "BashOutput and KillShell"),
         ("ask_user", "AskUserQuestion"),
         ("create_dir", "mkdir"),

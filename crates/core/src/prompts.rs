@@ -53,10 +53,6 @@ pub const SUBAGENT_BACKGROUND_NOTE: &str =
     include_str!("../builtins/prompts/subagent-background-note.md");
 pub const SUBAGENT_CLAUDE_NAMES: &str =
     include_str!("../builtins/prompts/subagent-claude-names.md");
-/// Description of `todo_write`, the to-do list of the main agent and of subagents.
-pub const TODO_TOOL: &str = include_str!("../builtins/prompts/todo-tool.md");
-/// The to-do list read back at the start of each run and after a checkpoint; `{{items}}`.
-pub const RUNTIME_TODO_NOTE: &str = include_str!("../builtins/prompts/runtime-todo-note.md");
 pub const SPAWN_SUBAGENTS_WEB: &str = include_str!("../builtins/prompts/spawn-subagents-web.md");
 /// Told to the main agent when it starts subagents without write paths; `{{names}}`.
 pub const SPAWN_SUBAGENTS_ONLY_READ: &str =
@@ -191,27 +187,6 @@ pub const RUNTIME_SAVE_REMINDER_SUBAGENT: &str =
 /// After the Memory skill in a subagent's system message: its memory tool only reads.
 pub const SUBAGENT_MEMORY_SKILL_NOTE: &str =
     include_str!("../builtins/prompts/subagent-memory-skill-note.md");
-/// System prompt of the request that seeds a new goal's to-do list (`goal.seed_todo`).
-pub const TODO_SEED_SYSTEM: &str = include_str!("../builtins/prompts/todo-seed-system.md");
-/// The seeding request; `{{project}}` (one of the two lines below) and `{{goal}}`.
-pub const TODO_SEED_USER: &str = include_str!("../builtins/prompts/todo-seed-user.md");
-/// Where a seeded goal's work happens: a project with nothing in it yet.
-pub const TODO_SEED_NEW_PROJECT: &str =
-    include_str!("../builtins/prompts/todo-seed-new-project.md");
-/// Where a seeded goal's work happens: a project that already has files.
-pub const TODO_SEED_EXISTING_PROJECT: &str =
-    include_str!("../builtins/prompts/todo-seed-existing-project.md");
-/// Title of the item a seeded list ends with.
-pub const TODO_SEED_VERIFY: &str = include_str!("../builtins/prompts/todo-seed-verify.md");
-/// Details of the item a seeded list ends with.
-pub const TODO_SEED_VERIFY_DETAILS: &str =
-    include_str!("../builtins/prompts/todo-seed-verify-details.md");
-/// `todo_write` result note when a rewrite tried to change the status of an item the goal
-/// check completed or closed; `{{id}}`, `{{how}}` ("confirmed", "closed as cancelled", …).
-pub const TOOL_TODO_CHECK_KEPT: &str = include_str!("../builtins/prompts/tool-todo-check-kept.md");
-/// The note a turn starts with when files changed last turn with to-do items open
-/// (`hooks.built_in.still_open`); `{{items}}`.
-pub const RUNTIME_STILL_OPEN: &str = include_str!("../builtins/prompts/runtime-still-open.md");
 /// The message that delivers the user's answer; `{{question}}`, `{{assumption}}`, `{{answer}}`.
 pub const QUESTION_ANSWER: &str = include_str!("../builtins/prompts/question-answer.md");
 /// Description of the `update_goal` tool.

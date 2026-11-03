@@ -261,15 +261,8 @@ impl AppState {
         let previous = self
             .goal_for(&thread_id)
             .filter(|goal| goal.status != GoalStatus::Reached);
-        let new = previous.is_none();
         let mut goal = self.begin_goal(sink.as_ref(), &thread_id, &text);
-        // What the person sent after asking, before the agent set it in a run, belongs to the
-        // new goal.
-        if new && running {
-            self.requests_join_new_goal(sink.as_ref(), &thread_id);
-        }
-        // Rewording an open goal continues it: its time and turn count carry over, and its
-        // to-do list stays.
+        // Rewording an open goal continues it: its time and turn count carry over.
         if let Some(previous) = previous {
             let stretch = previous.running_since.map_or(0, |since| {
                 u64::try_from(now_ms().saturating_sub(since)).unwrap_or(0)
@@ -279,27 +272,6 @@ impl AppState {
                 goal.turns = previous.turns;
             }) {
                 goal = updated;
-            }
-        }
-        // `goal.seed_todo`, on the chat's project's configuration as it stands.
-        let record = self
-            .inner
-            .threads
-            .read()
-            .await
-            .get(&thread_id)
-            .map(|record| (record.model.clone(), record.project_root.clone()));
-        if let Some((model, root)) = record {
-            if let Ok(resolved) = self.runtime_configuration(Some(&root), None) {
-                self.seed_goal_todo(
-                    sink.as_ref(),
-                    (&thread_id, ""),
-                    &goal.text,
-                    &resolved.config,
-                    &model,
-                    &root,
-                )
-                .await;
             }
         }
         if !running {
@@ -496,7 +468,7 @@ impl AppState {
         Ok(())
     }
 
-    /// Resumes a paused, stuck, waiting or out-of-quota goal; starts a turn
+    /// Resumes a paused, blocked, waiting or out-of-quota goal; starts a turn
     /// now when no run is going.
     pub async fn resume_goal(
         &self,
@@ -553,22 +525,10 @@ impl AppState {
             if sentence.is_empty() {
                 return Err("Add the goal after /goal, for example: /goal speed up p95".to_owned());
             }
-            self.chain_request(thread_id, run_id, text, false);
             self.begin_goal(sink, thread_id, &sentence);
             self.update_goal(sink, thread_id, |goal| goal.turns = 1);
             self.mark_goal_turn(run_id);
         } else if !is_turn {
-            // A queued message the server sends continues the person's chain of messages; one
-            // they write to an idle chat starts a new one.
-            let queued = self
-                .inner
-                .server_sends
-                .lock()
-                .unwrap_or_else(|e| e.into_inner())
-                .contains_key(run_id);
-            self.chain_request(thread_id, run_id, text, queued);
-            self.note_added_request(sink, thread_id, text);
-            self.start_request_on_todo(sink, thread_id, text);
             match self.goal_for(thread_id).map(|goal| goal.status) {
                 // An answer to another question leaves the goal waiting on
                 // the blocking one; any other reply resumes it.
@@ -603,24 +563,6 @@ impl AppState {
             }
             _ => String::new(),
         })
-    }
-
-    /// Puts a request the user sent while the chat's goal is open (not reached) on the to-do
-    /// list in their words, so the agent and the goal check count it. Answers to the agent's
-    /// questions and runtime goal turns are not requests; a steer that comes back as the next
-    /// message is counted once.
-    pub(super) fn note_added_request(&self, sink: &dyn EventSink, thread_id: &str, text: &str) {
-        let text = text.trim();
-        if text.is_empty()
-            || text.starts_with(super::questions::ANSWER_MARKER)
-            || core_goal::turn_number(text).is_some()
-            || !self
-                .goal_for(thread_id)
-                .is_some_and(|goal| goal.status != GoalStatus::Reached)
-        {
-            return;
-        }
-        self.add_request_to_todo(sink, thread_id, text);
     }
 
     /// Notes once, when a goal's first turn starts, that the context window

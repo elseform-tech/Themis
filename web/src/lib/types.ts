@@ -340,7 +340,6 @@ export type ThreadEvent =
   | { kind: 'queue_changed'; queue: QueuedMessage[] }
   | { kind: 'goal_changed'; goal: Goal | null }
   /** The main agent's to-do list changed. */
-  | { kind: 'todo_changed'; todo: TodoList }
   | { kind: 'goal_note'; outcome: GoalNoteKind; reason: string }
   /** The agent asked the user a question, or updated one still open (same id). */
   | { kind: 'question_asked'; question: Question }
@@ -497,29 +496,6 @@ export interface Goal {
 export interface GoalEvidence {
   requirement: string;
   proof: string;
-}
-
-export type TodoStatus = "pending" | "in_progress" | "completed";
-
-/** One item of the main agent's own to-do list for a chat. */
-export interface TodoItem {
-  id: string;
-  title: string;
-  details?: string;
-  status: TodoStatus;
-  outcome?: string;
-  /** Who added it when the agent didn't: a request the person sent during a goal, or the goal check. */
-  source?: "person" | "check" | "goal";
-  /** The goal check's short reason for reopening it. */
-  reopened?: string;
-  /** The goal check, not the agent, finished it: shown done, cancelled by a later request, or a question answered. */
-  closed?: "confirmed" | "cancelled" | "answered";
-}
-
-/** The main agent's to-do list for a chat (normal chats and goals). */
-export interface TodoList {
-  revision: number;
-  items: TodoItem[];
 }
 
 export interface ThreadEventEnvelope {
