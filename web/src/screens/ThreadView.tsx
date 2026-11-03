@@ -88,9 +88,9 @@ export function ThreadView() {
   const stream = thread === null ? "" : (state.streams[thread.id] ?? "");
 
   const sendError = thread === null ? undefined : state.sendErrors[thread.id];
-  const readOnly = project !== null && !project.is_git && thread?.approval_mode !== "yolo";
-  // A message sent while a run is going waits in the chat's queue.
-  const composerDisabled = thread === null || thread.provider !== "go" || sending || attaching || permissionSaving || readOnly || project === null;
+  // A message sent while a run is going waits in the chat's queue. A project
+  // without Git chats too: in Custom the backend refuses its writes, not the chat.
+  const composerDisabled = thread === null || thread.provider !== "go" || sending || attaching || permissionSaving || project === null;
   const trace = thread ? state.traces[thread.id] ?? [] : [];
   useEffect(() => {
     function shortcut(event: KeyboardEvent) {
@@ -295,7 +295,6 @@ export function ThreadView() {
       plugins={promptPlugins}
       history={history}
       composerDisabled={composerDisabled}
-      readOnly={readOnly}
       running={running}
       stopping={stopping}
       sendError={sendError ?? (skillsError ? `Skills unavailable: ${skillsError}` : undefined)}

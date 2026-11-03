@@ -23,7 +23,6 @@ interface ThreadComposerProps {
   plugins?: PromptPlugin[];
   history?: string[];
   composerDisabled: boolean;
-  readOnly: boolean;
   running: boolean;
   stopping: boolean;
   sendError: string | undefined;
@@ -67,7 +66,6 @@ export function ThreadComposer({
   plugins = [],
   history = [],
   composerDisabled,
-  readOnly,
   running,
   stopping,
   sendError,
@@ -164,7 +162,7 @@ export function ThreadComposer({
           </li>)}
         </ul>}
         <PromptInput id="themis-composer" label="Message" value={draft} skills={skills} plugins={plugins} commands={COMMANDS} history={history} disabled={composerDisabled}
-          placeholder={running ? "Queue a message — or steer it in" : readOnly ? "Start a new thread to continue" : "Ask Themis… @ for plugins, / for skills"}
+          placeholder={running ? "Queue a message — or steer it in" :"Ask Themis… @ for plugins, / for skills"}
           onChange={onDraftChange} onSubmit={() => { if (!sendBlocked) onSend(); }} />
         <div className="themis-thread-composer-actions">
           <details className="themis-composer-add" data-popover>
