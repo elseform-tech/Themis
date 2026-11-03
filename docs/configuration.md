@@ -878,8 +878,9 @@ model, which has no memory tool:
 - **Event passes**, on events that matter without the person's words, each with the event's
   content (at most 8 KiB): a goal completed (its objective, "Also asked" lines and evidence:
   what was built, where, how to run and test it, what was verified), the goal edited by the
-  person (its new objective), and a context checkpoint (the checkpoint summary: constraints,
-  gotchas and decisions a later chat needs). `logs/` has `memory` / `event` with the event name.
+  person (its new objective). A context checkpoint starts none: its summary is mostly the state
+  of unfinished work, which goes stale within minutes. `logs/` has `memory` / `event` with the
+  event name.
 - **Consolidation**, when the app has been idle (no run going) for 5 minutes after a job, at
   most once per `memory.consolidate_every_hours`: one request per scope with at least two
   memories (the global scope, then each project with a pass since the last one), with every

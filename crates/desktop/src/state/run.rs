@@ -828,27 +828,6 @@ impl AppState {
                     if let RunEvent::Steered { text } = &event {
                         memory_turn.person.push(text.clone());
                     }
-                    // A checkpoint condenses a long stretch of work: what a later chat needs
-                    // from it may be in nothing the person said.
-                    if let RunEvent::ContextCheckpoint { summary } = &event {
-                        let (state, sink, thread, run, summary) = (
-                            pump_state.clone(),
-                            Arc::clone(&pump_sink),
-                            pump_thread.clone(),
-                            pump_run.clone(),
-                            summary.clone(),
-                        );
-                        tokio::spawn(async move {
-                            state
-                                .spawn_memory_event(
-                                    sink,
-                                    (&thread, &run),
-                                    "the context was checkpointed",
-                                    summary,
-                                )
-                                .await;
-                        });
-                    }
                     if let RunEvent::Finished { result } | RunEvent::Incomplete { result } = &event
                     {
                         // The memory pass, once the reply is done: on its own task, never

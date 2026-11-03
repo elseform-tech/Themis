@@ -174,7 +174,7 @@ whole team shares still belong in the project's `AGENTS.md`.
 
 - **It keeps itself.** After each turn in which you said something (a message, one you
   steered in, an answer to the agent's question; in a goal, after each goal turn), and when a
-  goal is completed or edited or a long run's context is checkpointed, a separate, steadier
+  goal is completed or edited, a separate, steadier
   memory model reads it in the background, and saves what is worth keeping (a preference mentioned in passing, a
   correction, a decision), updates a memory you just changed, or removes one that no longer
   holds. You never need to say "remember", and the chat's own model never has to save
