@@ -211,6 +211,28 @@ describe("Workspace journey", () => {
     expect(bridge.sendMessage).toHaveBeenCalledWith(thread.id,"Inspect project","",[]);
   });
 
+  it("shows a new chat's session-start approval while its send is still answering",async()=>{
+    const thread={id:"hook-thread",title:"Hook chat",provider:"go" as const,model:"test-model",running:false,worktree_path:null,branch:null,base_branch:null,recovered:false,skill_ids:[],approval_mode:"custom" as const};
+    vi.mocked(bridge.listThreads).mockResolvedValue([thread]);vi.mocked(bridge.getThread).mockResolvedValue(thread);
+    let event!:(envelope:import("../lib/types").ThreadEventEnvelope)=>void;
+    let approval!:(request:import("../lib/types").ApprovalRequest)=>void;
+    vi.mocked(bridge.onThreadEvent).mockImplementationOnce(async callback=>{event=callback;return()=>{};});
+    vi.mocked(bridge.onApprovalRequest).mockImplementationOnce(async callback=>{approval=callback;return()=>{};});
+    let answered!:(value:{run_id:string})=>void;
+    vi.mocked(bridge.sendMessage).mockImplementationOnce(()=>new Promise(resolve=>{answered=resolve;}) as never);
+    await mount();await act(async()=>fireEvent.click(screen.getByRole("button",{name:/^Hook chat/})));
+    fireEvent.input(screen.getByLabelText("Message"),{target:{textContent:"Hello"}});
+    await act(async()=>fireEvent.click(screen.getByRole("button",{name:"Send"})));
+    await act(async()=>{
+      event({thread_id:thread.id,run_id:"r1",event:{kind:"user_message",text:"Hello"} as never});
+      event({thread_id:thread.id,run_id:"r1",event:{kind:"started",task:"Hello",max_turns:5}});
+      approval({thread_id:thread.id,approval_id:"hook-1",tool:"hook_g--superpowers--session-start",risk:"execute",summary:"SessionStart: run-hook.cmd session-start",grantable:true,command:{argv:["run-hook.cmd session-start"],background:false}} as never);
+    });
+    expect(await screen.findByRole("region",{name:"Approval needed"})).toHaveTextContent("run-hook.cmd session-start");
+    await act(async()=>answered({run_id:"r1"}));
+    expect(screen.getByRole("region",{name:"Approval needed"})).toBeInTheDocument();
+  });
+
   it("waits for permission persistence before permitting a send",async()=>{
     const thread={id:"permission-thread",title:"Permission test",provider:"go" as const,model:"test-model",running:false,worktree_path:null,branch:null,base_branch:null,recovered:false,skill_ids:[]};
     vi.mocked(bridge.listThreads).mockResolvedValue([thread]);vi.mocked(bridge.getThread).mockResolvedValue(thread);
