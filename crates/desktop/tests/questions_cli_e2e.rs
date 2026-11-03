@@ -123,6 +123,12 @@ async fn app(respond: impl Fn(&Value) -> ResponseTemplate + Send + Sync + 'stati
         .await;
     let data = tempfile::tempdir().unwrap();
     let project = tempfile::tempdir().unwrap();
+    // Goals here end on the agent's first complete; QA turns have their own tests.
+    std::fs::write(
+        data.path().join("runtime.jsonc"),
+        r#"{"goal_qa_turns": false}"#,
+    )
+    .unwrap();
     let state = AppState::new_for_test(data.path().join("settings.json"));
     state
         .set_secret("go".into(), "synthetic-test-key".into())
@@ -432,7 +438,7 @@ async fn yolo_keeps_a_deny_rule_for_ask_user() {
     let (data, thread) = (app.data.path().to_owned(), app.thread.clone());
     std::fs::write(
         data.join("runtime.jsonc"),
-        r#"{"approval":{"rules":[{"tool":"ask_user","action":"deny"}]}}"#,
+        r#"{"goal_qa_turns":false,"approval":{"rules":[{"tool":"ask_user","action":"deny"}]}}"#,
     )
     .unwrap();
     tokio::task::spawn_blocking(move || {

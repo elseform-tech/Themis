@@ -59,6 +59,12 @@ async fn a_reached_goal_notifies_once_and_attempts_log_metadata_only() {
         .await;
     let data = tempfile::tempdir().unwrap();
     let project = tempfile::tempdir().unwrap();
+    // Goals here end on the agent's first complete; QA turns have their own tests.
+    std::fs::write(
+        data.path().join("runtime.jsonc"),
+        r#"{"goal_qa_turns": false}"#,
+    )
+    .unwrap();
     let state = AppState::new_for_test(data.path().join("settings.json"));
     state
         .set_secret("go".into(), "synthetic-test-key".into())
