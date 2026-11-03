@@ -939,6 +939,20 @@ model, which has no memory tool:
   `memory-consolidate-system.md` and `memory-consolidate-user.md`, and at most 10 changes,
   only in that scope: it merges duplicates into one and deletes clearly stale ones.
 
+**When a pass runs, and what it reads.** Besides the person's words, every pass reads what the
+turn ran into: each failed step (tool, end of its output) and what the agent said next, read from
+that turn's history (at most 8, each at most 300 characters). A turn the person said nothing in
+(a goal turn) still gets a pass when it ran into failed steps or was a QA turn that changed files,
+since that is when a lesson is fresh; the prompt keeps lessons as project or feedback memories
+(symptom, cause, rule, how to check) worded so a similar later task finds them. `memory.thinking`
+(default `auto`, user file only) sets how much the memory models think: `auto` lets them think for
+a pass that carries lessons (failed steps, a QA turn's fixes, a completed goal) and asks for the
+least otherwise; `least` always the least; `model` always the model's own. The least effort comes
+from the Go catalog (loaded first when empty), so a model that refuses `none` gets its lowest
+listed effort. Measured with `python3 -m evals.memory` (`memory_try_pass`, a read-only dry run of
+one pass through the CLI: `{projectRoot, person, answered, reply, ran_into, qa_fixed, event,
+thinking, model}` → the answer, what it would save, time and tokens; it saves nothing).
+
 Each job tries the models in order and moves on after a provider error, a time-out, a rate
 limit, an answer it can't read, or the daily cap. A job every model failed waits in memory
 (at most 8 jobs; a ninth pushes the oldest out) and is tried again once the app is idle, 1, 2,

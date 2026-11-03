@@ -17,6 +17,7 @@ use std::sync::Arc;
 use serde_json::{json, Value};
 use themis_core::configuration::RuntimeConfig;
 use themis_core::memory::auto as pass;
+use themis_core::memory::auto::TurnText;
 use themis_core::memory::jobs::{self, Failure, Pending};
 use themis_core::memory::plans::{OpRefused, PlanOp, PlanRecord};
 use themis_core::memory::{MemoryScope, SaveMode};
@@ -49,6 +50,13 @@ pub(super) struct MemoryTurn {
     /// An event that started this pass on its own (goal completed or edited, a checkpoint): what
     /// happened, and its content.
     pub(super) event: Option<(&'static str, String)>,
+    /// History position when the turn started: where what it ran into is read from.
+    pub(super) start_seq: i64,
+    /// What the turn ran into: each failed step and what the agent said next (filled when the
+    /// turn ends). A turn that hit a snag and got past it is worth a pass on its own.
+    pub(super) ran_into: String,
+    /// A QA goal turn that changed files: it found problems and fixed them.
+    pub(super) qa_fixed: bool,
 }
 
 /// One memory job.
@@ -118,13 +126,39 @@ fn skip_reason(turn: &MemoryTurn) -> Option<&'static str> {
         Some("memory_off")
     } else if turn.event.is_some() {
         None
-    } else if said == 0 {
+    } else if said == 0 && turn.ran_into.is_empty() && !turn.qa_fixed {
         Some("no_person_message")
-    } else if said < TRIVIAL_CHARS {
+    } else if said > 0 && said < TRIVIAL_CHARS && turn.ran_into.is_empty() && !turn.qa_fixed {
         Some("trivial")
     } else {
         None
     }
+}
+
+/// Whether a job's memory model thinks before answering (`memory.thinking`): with `auto`, a pass
+/// that carries lessons (failed steps, a QA turn's fixes, a completed goal) does; others and
+/// consolidation think the least.
+fn memory_thinks(config: &RuntimeConfig, job: &Job) -> bool {
+    use themis_core::configuration::MemoryThinking;
+    match config.memory.thinking {
+        MemoryThinking::Least => false,
+        MemoryThinking::Model => true,
+        MemoryThinking::Auto => match job {
+            Job::Pass { turn, .. } => carries_lessons(turn),
+            Job::Consolidate { .. } => false,
+        },
+    }
+}
+
+/// A turn whose pass may keep lessons: it ran into failed steps, a QA turn fixed problems, or a
+/// goal completed.
+fn carries_lessons(turn: &MemoryTurn) -> bool {
+    !turn.ran_into.trim().is_empty()
+        || turn.qa_fixed
+        || turn
+            .event
+            .as_ref()
+            .is_some_and(|(what, _)| *what == "a goal was completed")
 }
 
 fn now_ms() -> i64 {
@@ -238,12 +272,33 @@ impl AppState {
         model: &str,
         thread: Option<(&str, &str)>,
         (system, user): (&str, &str),
+        think: bool,
     ) -> Result<(String, Option<(u32, u32)>), Failure> {
+        self.memory_model_request_why(config, model, thread, (system, user), think)
+            .await
+            .map_err(|(failure, _)| failure)
+    }
+
+    /// [`Self::memory_model_request`], with the provider's own words on a failure (for the
+    /// person's dry run only; never logged).
+    async fn memory_model_request_why(
+        &self,
+        config: &RuntimeConfig,
+        model: &str,
+        thread: Option<(&str, &str)>,
+        (system, user): (&str, &str),
+        think: bool,
+    ) -> Result<(String, Option<(u32, u32)>), (Failure, String)> {
         let session = thread.map_or("themis-memory", |(thread_id, _)| thread_id);
         let provider = self
             .single_provider_config(config, model, session)
             .await
-            .map_err(|_| Failure::Unavailable)?;
+            .map_err(|error| (Failure::Unavailable, error))?;
+        // The catalog says how far each model's thinking goes down: without it the least
+        // thinking is a guess some models refuse (a fresh app has none until something loads it).
+        if !Self::is_configured_model(config, model) {
+            let _ = self.ensure_go_catalog().await;
+        }
         let catalog = self.run_catalog(config, &[model]).await;
         let limit = std::time::Duration::from_secs(config.compaction.request_timeout_seconds);
         let recorder: themis_core::context_metrics::UsageRecorder = {
@@ -268,20 +323,26 @@ impl AppState {
                 recorder,
                 themis_core::context_metrics::with_usage_kind(
                     themis_core::context_metrics::UsageKind::Memory,
-                    // A short extraction: the least thinking each model allows.
-                    themis_core::providers::with_least_thinking(themis_core::providers::ask_once(
-                        &provider, system, user,
-                    )),
+                    // A short extraction thinks the least each model allows; one that carries
+                    // lessons may think (see `memory_thinks`).
+                    async {
+                        let ask = themis_core::providers::ask_once(&provider, system, user);
+                        if think {
+                            ask.await
+                        } else {
+                            themis_core::providers::with_least_thinking(ask).await
+                        }
+                    },
                 ),
             ),
         );
         match tokio::time::timeout(limit, request).await {
             Ok(Ok(answer)) => Ok(answer),
             Ok(Err(error)) if themis_core::providers::is_rate_limited(&error) => {
-                Err(Failure::RateLimited)
+                Err((Failure::RateLimited, error.to_string()))
             }
-            Ok(Err(_)) => Err(Failure::ProviderError),
-            Err(_) => Err(Failure::TimedOut),
+            Ok(Err(error)) => Err((Failure::ProviderError, format!("{error:#}"))),
+            Err(_) => Err((Failure::TimedOut, "no answer in time".to_owned())),
         }
     }
 
@@ -359,6 +420,9 @@ impl AppState {
                 person: Vec::new(),
                 answered,
                 event: Some((what, content)),
+                start_seq: 0,
+                ran_into: String::new(),
+                qa_fixed: false,
             },
             String::new(),
         );
@@ -402,6 +466,7 @@ impl AppState {
         if let Some((thread_id, run_id)) = &thread {
             self.memory_working(sink, (thread_id, run_id), "checking");
         }
+        let think = memory_thinks(&config, &job);
         let (done, failures) = jobs::on_models(&models, |index, model| {
             let (system, user, known, config, thread) =
                 (&system, &user, &known, &config, thread.clone());
@@ -421,7 +486,7 @@ impl AppState {
                     }
                     let ids = thread.as_ref().map(|(t, r)| (t.as_str(), r.as_str()));
                     let (text, usage) = self
-                        .memory_model_request(config, &model, ids, (system, user))
+                        .memory_model_request(config, &model, ids, (system, user), think)
                         .await?;
                     if let Some((prompt, completion)) = usage {
                         log["prompt_tokens"] = prompt.into();
@@ -531,8 +596,13 @@ impl AppState {
                 Some((
                     known,
                     pass::request(
-                        &turn.person,
-                        (&turn.answered, reply),
+                        &TurnText {
+                            person: &turn.person,
+                            answered: &turn.answered,
+                            reply,
+                            ran_into: &turn.ran_into,
+                            qa_fixed: turn.qa_fixed,
+                        },
                         &global,
                         &project,
                         &relevant,
@@ -786,6 +856,134 @@ impl AppState {
         })
     }
 
+    /// A dry run of one memory pass, for evals and diagnosis: what the memory model would
+    /// propose for this turn (`person`, `answered`, `reply`, `ran_into`, `qa_fixed`, an optional
+    /// `event` of `{what, content}`), with `thinking` (`least` or `model`) and `model` (the first
+    /// memory model by default) chosen for this call. It reads the project's memory and plan
+    /// indexes but writes nothing, and logs only the job's metadata.
+    pub async fn memory_try_pass(
+        &self,
+        project_root: &str,
+        input: &Value,
+    ) -> Result<Value, String> {
+        let root = PathBuf::from(project_root);
+        let mut config = self
+            .runtime_configuration(Some(&root), None)
+            .map_err(|error| error.to_string())?
+            .config;
+        config.memory.thinking = match input["thinking"].as_str() {
+            None | Some("auto") => themis_core::configuration::MemoryThinking::Auto,
+            Some("least") => themis_core::configuration::MemoryThinking::Least,
+            Some("model") => themis_core::configuration::MemoryThinking::Model,
+            Some(_) => return Err("thinking is auto, least or model".to_owned()),
+        };
+        let model = input["model"]
+            .as_str()
+            .map(str::to_owned)
+            .or_else(|| config.memory.models.first().cloned())
+            .ok_or("no memory model")?;
+        let text = |key: &str| input[key].as_str().unwrap_or_default().to_owned();
+        let person: Vec<String> = input["person"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(Value::as_str)
+            .map(str::to_owned)
+            .collect();
+        let event = input["event"]["what"].as_str().map(|what| {
+            (
+                what.to_owned(),
+                input["event"]["content"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .to_owned(),
+            )
+        });
+        let index = |scope| {
+            self.memory_store(scope, Some(&root))
+                .map(|store| store.index())
+                .unwrap_or_default()
+        };
+        let (global, project) = (index(MemoryScope::Global), index(MemoryScope::Project));
+        let (plans_index, record) = self.plan_record_for(&root, "", &text("plan_about"));
+        let record = record
+            .map(|record| themis_core::memory::plans::serialize(&record))
+            .unwrap_or_default();
+        let (answered, reply, ran_into) = (text("answered"), text("reply"), text("ran_into"));
+        let (system, user) = pass::request(
+            &TurnText {
+                person: &person,
+                answered: &answered,
+                reply: &reply,
+                ran_into: &ran_into,
+                qa_fixed: input["qa_fixed"].as_bool().unwrap_or(false),
+            },
+            &global,
+            &project,
+            &[],
+            (&plans_index, &record),
+            event
+                .as_ref()
+                .map(|(what, content)| (what.as_str(), content.as_str())),
+        );
+        let turn = MemoryTurn {
+            project_root: root.clone(),
+            config: config.clone(),
+            person: person.clone(),
+            answered: text("answered"),
+            event: None,
+            start_seq: 0,
+            ran_into: text("ran_into"),
+            qa_fixed: input["qa_fixed"].as_bool().unwrap_or(false),
+        };
+        let think = match config.memory.thinking {
+            themis_core::configuration::MemoryThinking::Auto => {
+                carries_lessons(&turn)
+                    || event
+                        .as_ref()
+                        .is_some_and(|(what, _)| what == "a goal was completed")
+            }
+            themis_core::configuration::MemoryThinking::Least => false,
+            themis_core::configuration::MemoryThinking::Model => true,
+        };
+        let started = std::time::Instant::now();
+        let answer = self
+            .memory_model_request_why(&config, &model, None, (&system, &user), think)
+            .await;
+        let elapsed_ms = started.elapsed().as_millis() as u64;
+        let _ = self.inner.diagnostics.append(
+            "memory",
+            "try_pass",
+            "info",
+            json!({"model": model, "thinking": input["thinking"], "thought": think, "elapsed_ms": elapsed_ms, "ok": answer.is_ok()}),
+        );
+        let (answer, usage) = answer.map_err(|(failure, why)| {
+            format!(
+                "{}: {}",
+                failure.as_str(),
+                why.chars().take(400).collect::<String>()
+            )
+        })?;
+        let parsed = pass::parse_answer(&answer, &themis_core::memory::today(), pass::MAX_CHANGES)
+            .map(|(proposals, _)| {
+                proposals
+                    .iter()
+                    .map(|p| format!("{p:?}"))
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        let plan = pass::parse_plan_answer(&answer).map(|op| format!("{op:?}"));
+        Ok(json!({
+            "model": model,
+            "thought": think,
+            "elapsed_ms": elapsed_ms,
+            "usage": usage.map(|(prompt, completion)| json!({"prompt": prompt, "completion": completion})),
+            "answer": answer,
+            "memories": parsed,
+            "plan": plan,
+        }))
+    }
+
     fn tell_running_agent(
         &self,
         thread_id: &str,
@@ -954,5 +1152,71 @@ impl AppState {
             };
             self.run_memory_job(sink, job, None).await;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn turn(ran_into: &str, qa_fixed: bool, event: Option<&'static str>) -> MemoryTurn {
+        MemoryTurn {
+            project_root: PathBuf::from("/p"),
+            config: RuntimeConfig::default(),
+            person: vec!["hello there, friend".to_owned()],
+            answered: String::new(),
+            event: event.map(|what| (what, String::new())),
+            start_seq: 0,
+            ran_into: ran_into.to_owned(),
+            qa_fixed,
+        }
+    }
+
+    /// `auto` thinks only for a pass that carries lessons; the other settings are fixed.
+    #[test]
+    fn memory_thinks_when_a_pass_carries_lessons() {
+        use themis_core::configuration::MemoryThinking;
+        let pass = |turn: MemoryTurn| Job::Pass {
+            thread_id: "t".into(),
+            run_id: "r".into(),
+            turn,
+            reply: String::new(),
+        };
+        let mut config = RuntimeConfig::default();
+        assert_eq!(config.memory.thinking, MemoryThinking::Auto);
+        assert!(!memory_thinks(&config, &pass(turn("", false, None))));
+        assert!(memory_thinks(
+            &config,
+            &pass(turn("- shell failed: x", false, None))
+        ));
+        assert!(memory_thinks(&config, &pass(turn("", true, None))));
+        assert!(memory_thinks(
+            &config,
+            &pass(turn("", false, Some("a goal was completed")))
+        ));
+        assert!(!memory_thinks(
+            &config,
+            &pass(turn("", false, Some("a goal was created")))
+        ));
+        let consolidate = Job::Consolidate {
+            config: config.clone(),
+            project_root: None,
+        };
+        assert!(!memory_thinks(&config, &consolidate));
+        config.memory.thinking = MemoryThinking::Least;
+        assert!(!memory_thinks(
+            &config,
+            &pass(turn("- shell failed: x", true, None))
+        ));
+        config.memory.thinking = MemoryThinking::Model;
+        assert!(memory_thinks(&config, &pass(turn("", false, None))));
+        // A turn that hit a snag is worth a pass even when the person said nothing.
+        let mut quiet = turn("- shell failed: x", false, None);
+        quiet.person.clear();
+        assert_eq!(skip_reason(&quiet), None);
+        quiet.ran_into.clear();
+        assert_eq!(skip_reason(&quiet), Some("no_person_message"));
+        quiet.qa_fixed = true;
+        assert_eq!(skip_reason(&quiet), None);
     }
 }

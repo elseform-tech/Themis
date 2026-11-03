@@ -816,6 +816,10 @@ async fn dispatch_command(
                 state.set_user_memory_settings(enabled, models, revision.as_deref())?;
             output!(json!({"settings": settings, "revision": revision}))
         }
+        "memory_try_pass" => {
+            let project_root: String = arg(&args, "projectRoot")?;
+            output!(state.memory_try_pass(&project_root, &args).await?)
+        }
         "list_memories" => {
             let scope: String = arg(&args, "scope")?;
             let project_root: Option<String> = arg(&args, "projectRoot")?;

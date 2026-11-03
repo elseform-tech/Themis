@@ -122,6 +122,8 @@ const ALL: &[(&str, &str, &[&str])] = &[
             "answered",
             "person",
             "reply",
+            "qa",
+            "ran_into",
         ],
     ),
     (

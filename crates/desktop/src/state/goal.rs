@@ -71,7 +71,7 @@ fn tail(text: &str) -> String {
 
 /// What the work ran into: each failed step (tool, end of its output) with the first thing
 /// the agent said after it, the latest [`MAX_SNAGS`]. Pure, so it is tested on its own.
-fn work_snags(events: &[ThreadEvent]) -> String {
+fn snags_of(events: &[ThreadEvent]) -> String {
     let mut snags: Vec<String> = Vec::new();
     for (at, event) in events.iter().enumerate() {
         let ThreadEvent::ToolFinished {
@@ -532,6 +532,11 @@ impl AppState {
                     .collect();
                 self.mark_plan_done(&thread_id, &evidence).await;
                 let mut content = format!("Objective: {}", goal.text);
+                if let Some(name) = self.plan_name_for_chat(&thread_id).await {
+                    content.push_str(&format!(
+                        "\nThe work's plan record: {name} (write \"done\" for it)"
+                    ));
+                }
                 for asked in &goal.also_asked {
                     content.push_str(&format!("\nAlso asked: {asked}"));
                 }
@@ -541,7 +546,7 @@ impl AppState {
                 }
                 // What the work ran into: the steps that failed and what the agent said next,
                 // read from the goal's own history (a short goal has no checkpoint).
-                let snags = self.goal_snags(&thread_id, goal.start_seq);
+                let snags = self.work_snags(&thread_id, goal.start_seq);
                 if !snags.is_empty() {
                     content.push_str(&format!(
                         "\nWhat the work ran into (failed steps, then what the agent said next):\n{snags}"
@@ -793,9 +798,9 @@ impl AppState {
         self.spawn_goal_memory_event(sink, thread_id, "a goal was created", (content, answered));
     }
 
-    /// The failed steps of the goal's work since `from_seq`, each with what the agent said
-    /// next: read a page at a time, at most [`SNAG_SCAN_ITEMS`] items, at most [`MAX_SNAGS`].
-    fn goal_snags(&self, thread_id: &str, from_seq: i64) -> String {
+    /// The failed steps of a chat's work since `from_seq` (a goal's, or one turn's), each with
+    /// what the agent said next: read a page at a time, at most [`SNAG_SCAN_ITEMS`] items, at most [`MAX_SNAGS`].
+    pub(super) fn work_snags(&self, thread_id: &str, from_seq: i64) -> String {
         let mut events = Vec::new();
         let mut through = from_seq;
         while events.len() < SNAG_SCAN_ITEMS {
@@ -817,7 +822,7 @@ impl AppState {
                 break;
             }
         }
-        work_snags(&events)
+        snags_of(&events)
     }
 
     /// Whether this chat's project runs QA goal turns (`goal_qa_turns`).
@@ -828,6 +833,13 @@ impl AppState {
         self.runtime_configuration(Some(std::path::Path::new(&root)), None)
             .map(|resolved| resolved.config.goal_qa_turns)
             .unwrap_or(true)
+    }
+
+    /// The name of the plan record this chat's goal builds, if it has one.
+    async fn plan_name_for_chat(&self, thread_id: &str) -> Option<String> {
+        let root = self.thread_project_root(thread_id).await?;
+        let store = self.plan_store(std::path::Path::new(&root)).ok()?;
+        store.for_chat(thread_id).map(|record| record.name)
     }
 
     /// Fills the results of the plan record this chat's goal built from the closing reply, if
@@ -1511,7 +1523,7 @@ mod snag_tests {
             tool(false, "refused: outside the project"),
             tool(true, "not json at all"),
         ];
-        let snags = work_snags(&events);
+        let snags = snags_of(&events);
         assert!(
             snags.contains("- shell failed: {\"exit_code\":1"),
             "{snags}"
@@ -1529,7 +1541,7 @@ mod snag_tests {
         let many: Vec<ThreadEvent> = (0..20)
             .map(|n| tool(false, &format!("{n} {}", "x".repeat(1000))))
             .collect();
-        let snags = work_snags(&many);
+        let snags = snags_of(&many);
         assert_eq!(snags.lines().count(), MAX_SNAGS);
         assert!(snags
             .lines()

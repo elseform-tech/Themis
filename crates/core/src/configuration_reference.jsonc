@@ -135,6 +135,10 @@
     // When the app is idle, merge duplicate memories and drop stale ones at most this
     // often (1-720 hours). User file only.
     "consolidate_every_hours": 24,
+    // How much the memory models think before answering: "auto" (their own thinking for a
+    // pass that carries lessons, the least otherwise), "least" (always the least, fastest) or
+    // "model" (always their own). User file only.
+    "thinking": "auto",
   },
 
   // ─── SKILLS AND INSTRUCTIONS ──────────────────────────────────────────────────────────

@@ -676,6 +676,26 @@ pub struct MemoryConfig {
     /// At most one consolidation (merge duplicates, drop stale memories) this often, when the
     /// app is idle. User file only.
     pub consolidate_every_hours: u32,
+    /// How much the memory models think before answering: `auto` (their own thinking for a pass
+    /// that carries lessons, the least otherwise), `least` (always the least each model allows,
+    /// fastest) or `model` (always each model's own default). User file only.
+    pub thinking: MemoryThinking,
+}
+
+/// How much the memory models think (`memory.thinking`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MemoryThinking {
+    /// The model's own thinking for a pass that carries lessons (the turn ran into failed
+    /// steps, a QA turn fixed problems, a goal completed), the least otherwise. Measured with
+    /// `evals/memory`: thinking writes fuller lessons (cause, how to check) at about four times
+    /// the tokens, and adds nothing elsewhere.
+    #[default]
+    Auto,
+    /// The least thinking each model allows.
+    Least,
+    /// Each model's own default thinking.
+    Model,
 }
 
 /// Fewest models `memory.models` may list.
@@ -702,6 +722,7 @@ impl Default for MemoryConfig {
             models: DEFAULT_MEMORY_MODELS.map(str::to_owned).to_vec(),
             daily_budget_usd: 0.5,
             consolidate_every_hours: 24,
+            thinking: MemoryThinking::Auto,
         }
     }
 }
@@ -715,7 +736,12 @@ fn check_memory_restriction(layer: &Value, origin: &str) -> Result<()> {
             "the {origin} configuration may only set memory.enabled to false"
         );
     }
-    for field in ["models", "daily_budget_usd", "consolidate_every_hours"] {
+    for field in [
+        "models",
+        "daily_budget_usd",
+        "consolidate_every_hours",
+        "thinking",
+    ] {
         ensure!(
             layer.pointer(&format!("/memory/{field}")).is_none(),
             "the {origin} configuration can't set memory.{field}"
@@ -2299,7 +2325,8 @@ pub fn schema() -> Value {
         "enabled":{"type":"boolean","default":true,"description":"Keep memories across chats (Settings › Memory): saved, updated and removed in the background after each turn. A project or run layer may only set it to false."},
         "models":{"type":"array","minItems":MIN_MEMORY_MODELS,"maxItems":MAX_MEMORY_MODELS,"uniqueItems":true,"items":{"type":"string","minLength":1,"maxLength":200},"default":DEFAULT_MEMORY_MODELS,"description":"Models that run memory jobs, tried in order (Settings › Models). User file only."},
         "daily_budget_usd":{"type":"number","minimum":0,"maximum":MAX_MEMORY_BUDGET_USD,"default":0.5,"description":"Estimated dollars the memory models may spend in a day, together. User file only."},
-        "consolidate_every_hours":{"type":"integer","minimum":1,"maximum":MAX_CONSOLIDATE_HOURS,"default":24,"description":"At most one idle consolidation (merge duplicates, drop stale memories) this often. User file only."}
+        "consolidate_every_hours":{"type":"integer","minimum":1,"maximum":MAX_CONSOLIDATE_HOURS,"default":24,"description":"At most one idle consolidation (merge duplicates, drop stale memories) this often. User file only."},
+        "thinking":{"enum":["auto","least","model"],"default":"auto","description":"How much the memory models think before answering: auto (their own thinking for a pass that carries lessons, the least otherwise), least (always the least, fastest) or model (always their own). User file only."}
     }});
     schema
 }

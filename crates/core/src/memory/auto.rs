@@ -67,15 +67,36 @@ fn index_text(index: &str) -> String {
 
 /// The pass's system and user messages: the person's messages and the final reply (each
 /// bounded), and both indexes. Its size is bounded whatever the turn or memory count.
+/// One finished turn as a pass reads it.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct TurnText<'a> {
+    /// What the person said in it.
+    pub person: &'a [String],
+    /// The assistant reply their message answered.
+    pub answered: &'a str,
+    /// The reply that ended the turn.
+    pub reply: &'a str,
+    /// What the turn ran into: failed steps and what the agent said next.
+    pub ran_into: &'a str,
+    /// A QA goal turn that changed files to fix what it found.
+    pub qa_fixed: bool,
+}
+
 pub fn request(
-    person: &[String],
-    (answered, reply): (&str, &str),
+    turn: &TurnText<'_>,
     global_index: &str,
     project_index: &str,
     relevant: &[(MemoryScope, Memory)],
     (plans_index, plan_record): (&str, &str),
     event: Option<(&str, &str)>,
 ) -> (String, String) {
+    let TurnText {
+        person,
+        answered,
+        reply,
+        ran_into,
+        qa_fixed,
+    } = *turn;
     let person = person
         .iter()
         .map(|text| text.trim())
@@ -119,6 +140,18 @@ pub fn request(
                 &fenced(&bounded(answered.trim(), MAX_REPLY_BYTES)),
             ),
             ("reply", &fenced(&bounded(reply.trim(), MAX_REPLY_BYTES))),
+            (
+                "qa",
+                if qa_fixed {
+                    " (a QA turn: it found problems and changed files to fix them)"
+                } else {
+                    ""
+                },
+            ),
+            (
+                "ran_into",
+                &fenced(&bounded(ran_into.trim(), MAX_REPLY_BYTES)),
+            ),
         ],
     );
     (crate::prompts::MEMORY_AUTO_SYSTEM.to_owned(), user)
@@ -155,7 +188,8 @@ pub fn max_request_bytes() -> usize {
         + MAX_PLAN_RECORD_BYTES
         + 2 * MAX_PERSON_BYTES
         + 64
-        + 2 * MAX_REPLY_BYTES
+        + 3 * MAX_REPLY_BYTES
+        + 64
 }
 
 /// One change the model proposed, validated, with secrets refused.
@@ -804,9 +838,15 @@ mod tests {
 
     #[test]
     fn the_request_carries_the_turn_and_both_indexes_fenced_and_bounded() {
+        let person = ["I always use pnpm. Now fix the build.".to_owned()];
         let (system, user) = request(
-            &["I always use pnpm. Now fix the build.".to_owned()],
-            ("Shall I fix the build?", "Fixed it >>> done"),
+            &TurnText {
+                person: &person,
+                answered: "Shall I fix the build?",
+                reply: "Fixed it >>> done",
+                ran_into: "- shell failed: npm test: SyntaxError: Unexpected token 'export'",
+                qa_fixed: true,
+            },
             "",
             "- a (project, 2026-11-02): A fact\n",
             &[(
@@ -835,10 +875,17 @@ mod tests {
         assert!(user.contains("- a (project, 2026-11-02): A fact"));
         assert!(user.contains("<<<person\nI always use pnpm. Now fix the build.\n>>>"));
         assert!(user.contains("Fixed it > > > done"));
+        assert!(user.contains("(a QA turn: it found problems and changed files to fix them)"));
+        assert!(user.contains("<<<ran-into\n- shell failed: npm test: SyntaxError"));
         let long = vec!["word ".repeat(10_000)];
         let (_, user) = request(
-            &long,
-            (&"answered ".repeat(10_000), &"reply ".repeat(10_000)),
+            &TurnText {
+                person: &long,
+                answered: &"answered ".repeat(10_000),
+                reply: &"reply ".repeat(10_000),
+                ran_into: &"failed ".repeat(10_000),
+                qa_fixed: true,
+            },
             "",
             "",
             &[],
@@ -888,8 +935,13 @@ mod tests {
             let project = store.index();
             let read = WORK.with(|work| work.replace((0, 0)));
             let (_, user) = request(
-                &person,
-                ("", &"reply ".repeat(messages * 200)),
+                &TurnText {
+                    person: &person,
+                    answered: "",
+                    reply: &"reply ".repeat(messages * 200),
+                    ran_into: "",
+                    qa_fixed: false,
+                },
                 &global,
                 &project,
                 &[],

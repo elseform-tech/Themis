@@ -187,6 +187,10 @@ impl Harness {
                 if last_user(&body).contains("this turn fails") {
                     return ResponseTemplate::new(400).set_body_string("bad request");
                 }
+                // A turn whose first step fails, then a reply.
+                if last_user(&body).contains("list the missing folder") && last(&body)["role"] == "user" {
+                    return call("list_dir", json!({"directory_path": "no-such-folder"}));
+                }
                 // A plan the person can approve.
                 if last_user(&body).contains("Plan the notes tool") {
                     return text_reply("1. Store notes in notes.txt.\n2. Sort notes by title.\n3. Show the count.");
@@ -901,6 +905,35 @@ async fn an_approved_plan_keeps_a_record_through_changes_to_done() {
         system.contains("## Lessons\n- Write notes.txt with a trailing newline"),
         "{system}"
     );
+}
+
+/// The pass reads what the turn ran into: each failed step and what the agent said next, so
+/// a lesson can be kept where the work went wrong.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_pass_reads_what_the_turn_ran_into() {
+    let mut h = Harness::start(MODELS).await;
+    let id = h.new_chat();
+    h.send(
+        &id,
+        "Please list the missing folder for me.",
+        Duration::from_secs(5),
+    )
+    .await;
+    let deadline = std::time::Instant::now() + Duration::from_secs(20);
+    let pass = loop {
+        if let Some(body) = h.memory_requests().into_iter().find(|body| {
+            body["messages"][1]
+                .to_string()
+                .contains("list the missing folder")
+        }) {
+            break body;
+        }
+        assert!(std::time::Instant::now() < deadline, "no pass");
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    };
+    let user = pass["messages"][1]["content"].as_str().unwrap();
+    assert!(user.contains("<<<ran-into\n- list_dir failed:"), "{user}");
+    assert!(user.contains("then: Done."), "{user}");
 }
 
 /// An update that keeps a memory's description but changes its text is applied: the memory

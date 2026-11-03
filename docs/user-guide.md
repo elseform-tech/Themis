@@ -182,6 +182,9 @@ whole team shares still belong in the project's `AGENTS.md`.
   anything. It never stores secrets, and what a web page or file said is kept as "the page
   said …" with its source. When the app has been idle a while (at most once a day by
   default), it also merges duplicate memories and drops stale ones.
+- **It learns from mistakes.** When a step fails and the agent gets past it, or a check turns
+  up problems that get fixed, the memory model keeps a lesson (what went wrong, why, the rule
+  that avoids it, how to check) so a later chat in the project doesn't repeat it.
 - **Plans get a record of their own.** When you approve a plan ("I love it, build it", or a
   goal made from it), Themis keeps it word for word as a plan record for that project. When you
   change it, only the steps you changed are rewritten and a "Change: …" line is added. When

@@ -561,6 +561,13 @@ impl AppState {
                 )
             })),
             event: None,
+            start_seq: self
+                .inner
+                .transcript
+                .last_activity_seq(thread_id)
+                .unwrap_or(0),
+            ran_into: String::new(),
+            qa_fixed: false,
         };
         let checkpoint_note: themis_core::runtime::CheckpointNote = Arc::new(|| None);
         tools.push(Box::new(super::media_tool::AttachFileTool {
@@ -856,12 +863,26 @@ impl AppState {
                     };
                     if let Some(result) = ended {
                         let person = std::mem::take(&mut memory_turn.person);
+                        // What the turn ran into, and whether a QA turn had to fix things: the
+                        // moments a lesson is fresh.
+                        let ran_into = pump_state.work_snags(&pump_thread, memory_turn.start_seq);
+                        let qa_fixed = pump_state
+                            .goal_for(&pump_thread)
+                            .is_some_and(|goal| !goal.qa_turn.is_empty())
+                            && pump_state
+                                .inner
+                                .runs_changed_files
+                                .lock()
+                                .unwrap_or_else(|e| e.into_inner())
+                                .contains(&pump_run);
                         pump_state.spawn_memory_pass(
                             Arc::clone(&pump_sink),
                             pump_thread.clone(),
                             pump_run.clone(),
                             super::memory_auto::MemoryTurn {
                                 person,
+                                ran_into,
+                                qa_fixed,
                                 ..memory_turn.clone()
                             },
                             result,
