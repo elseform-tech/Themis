@@ -2,15 +2,11 @@
 // browser, forwards the person's input and drives take over and DevTools.
 import { Channel, invoke as tauriInvoke } from "@tauri-apps/api/core";
 
-export interface BrowserTab { title: string; url: string }
-
 export interface BrowserState {
   /** False until the chat has a page open. */
   open: boolean;
   /** False when no Chromium browser is installed or configured. */
   available?: boolean;
-  tabs: BrowserTab[];
-  current: number;
   url: string;
   title: string;
   can_go_back: boolean;
@@ -57,8 +53,6 @@ export const browserInput = (threadId: string, input: BrowserInput) => invoke<vo
 export const browserOpenUrl = (threadId: string, address: string) => invoke<void>("browser_open_url", { threadId, address });
 export const browserSetMuted = (threadId: string, muted: boolean) => invoke<void>("browser_set_muted", { threadId, muted });
 export const browserNavigate = (threadId: string, action: "back" | "forward" | "reload") => invoke<void>("browser_navigate", { threadId, action });
-export const browserSwitchTab = (threadId: string, tab: number) => invoke<void>("browser_tab", { threadId, action: "switch", tab });
-export const browserCloseTab = (threadId: string, tab: number) => invoke<void>("browser_tab", { threadId, action: "close", tab });
 export const browserDevtoolsUrl = (threadId: string) => invoke<string | null>("browser_devtools_url", { threadId });
 export const browserCapture = (threadId: string) => invoke<SavedMedia>("browser_capture", { threadId });
 export const browserRecordStart = (threadId: string) => invoke<null>("browser_record", { threadId, action: "start" });

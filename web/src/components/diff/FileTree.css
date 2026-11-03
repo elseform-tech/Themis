@@ -25,5 +25,8 @@
 .themis-filetree-btn--discard { color: var(--themis-danger); }
 .themis-filetree-btn:hover:not(:disabled) { background: var(--themis-nav-active-bg); }
 .themis-filetree-btn:disabled { opacity: .35; cursor: not-allowed; }
+/* Dotted paths (`.github/…`, `.gitignore`) fold into one quiet line below the rest. */
+.themis-filetree-hidden { margin-top: 4px; }
+.themis-filetree-hidden-label { flex: 1; min-width: 0; color: var(--themis-text-3); }
 .themis-filetree-none { padding: 10px; color: var(--themis-text-2); font-size: .8125rem; }
 @media (pointer: coarse) { .themis-filetree-actions { opacity: 1; } }

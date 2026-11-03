@@ -1374,6 +1374,9 @@ async fn cli_checkpoint_keeps_the_goal_and_budget_events_reach_clients() {
     );
     let mut compactions = 0;
     let mut budgets = Vec::new();
+    // The budget sent just before a checkpoint is the size that triggered it, which may pass
+    // the usable size: that request is never sent at that size.
+    let mut triggers = Vec::new();
     let terminal = tokio::time::timeout(std::time::Duration::from_secs(60), async {
         loop {
             let item = Client::next_event(&mut events).await.unwrap();
@@ -1381,7 +1384,10 @@ async fn cli_checkpoint_keeps_the_goal_and_budget_events_reach_clients() {
                 continue;
             }
             let event = &item["payload"]["event"];
-            compactions += usize::from(event["kind"] == "context_compacting");
+            if event["kind"] == "context_compacting" {
+                compactions += 1;
+                triggers.push(budgets.len().saturating_sub(1));
+            }
             if event["kind"] == "context_budget" {
                 budgets.push(event["budget"].clone());
             }
@@ -1402,7 +1408,7 @@ async fn cli_checkpoint_keeps_the_goal_and_budget_events_reach_clients() {
         requests + compactions,
         "one budget per bounded model request, plus the triggering size before each checkpoint"
     );
-    for budget in &budgets {
+    for (index, budget) in budgets.iter().enumerate() {
         let breakdown = &budget["breakdown"];
         let parts: u64 = [
             "system",
@@ -1416,7 +1422,8 @@ async fn cli_checkpoint_keeps_the_goal_and_budget_events_reach_clients() {
         .sum();
         assert_eq!(parts, budget["used_tokens"].as_u64().unwrap());
         assert!(
-            budget["used_tokens"].as_u64() <= budget["usable_tokens"].as_u64(),
+            triggers.contains(&index)
+                || budget["used_tokens"].as_u64() <= budget["usable_tokens"].as_u64(),
             "{budget}"
         );
         assert!(budget["compaction_at_tokens"].as_u64() <= budget["usable_tokens"].as_u64());

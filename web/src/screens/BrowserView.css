@@ -1,11 +1,5 @@
 /* Workspace Browser tab: the chat's built-in browser, streamed. */
 .themis-browser { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 6px; }
-.themis-browser-tabs { display: flex; gap: 2px; overflow-x: auto; font-size: .78rem; }
-.themis-browser-tab { display: inline-flex; align-items: center; max-width: 220px; border-radius: 8px; color: var(--themis-text-2); }
-.themis-browser-tab.is-current { background: var(--themis-raised); color: var(--themis-text); }
-.themis-browser-tab button { padding: 6px 4px 6px 10px; border: 0; background: transparent; color: inherit; font: inherit; cursor: pointer; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.themis-browser-tab .themis-browser-tab-close { flex: none; padding: 6px 8px; color: var(--themis-text-3); }
-.themis-browser-tab .themis-browser-tab-close:hover { color: var(--themis-text); }
 .themis-browser-bar { display: flex; align-items: center; gap: 4px; }
 .themis-browser-icon { position: relative; display: inline-grid; place-items: center; grid-auto-flow: column; gap: 4px; min-width: 30px; height: 30px; padding: 0 4px; border: 0; background: transparent; color: var(--themis-text-2); cursor: pointer; }
 .themis-browser-icon:hover:not(:disabled), .themis-browser-icon.is-on { color: var(--themis-text); }

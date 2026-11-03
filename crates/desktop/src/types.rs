@@ -644,6 +644,10 @@ pub struct ChangedFile {
     pub added: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub removed: Option<u32>,
+    /// A part of the path starts with a dot (`.github/…`, `.gitignore`); the reply folds these
+    /// into one "N hidden files changed" line.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub hidden: bool,
 }
 
 /// One file shown under a reply (`AttachedMedia` in types.ts).
@@ -701,6 +705,10 @@ pub struct DiffFile {
     /// generated file): `hunks` hold only its first lines.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub too_large: bool,
+    /// A part of the path starts with a dot; listings put these last and Changes folds them
+    /// into one "N hidden files changed" line.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub hidden: bool,
 }
 
 /// Diff listing (`DiffState` in types.ts).
@@ -1647,9 +1655,16 @@ mod tests {
             added: 1,
             removed: 0,
             too_large: false,
+            hidden: false,
         };
         let json = to_value(&file);
         assert!(json.get("too_large").is_none());
+        assert!(json.get("hidden").is_none());
+        let hidden = DiffFile {
+            hidden: true,
+            ..file.clone()
+        };
+        assert_eq!(to_value(&hidden)["hidden"], true);
         assert_eq!(json["path"], "a.rs");
         assert_eq!(json["status"], "modified");
         assert!(json.get("old_path").is_none());

@@ -366,7 +366,7 @@ fn evaluation(result: &Value) -> Result<Value, String> {
 impl ChatBrowser {
     async fn devtools_target(&self) -> Result<Target, String> {
         let inner = self.inner.lock().await;
-        let (Some(browser), Some(tab)) = (&inner.browser, inner.tabs.get(inner.current)) else {
+        let (Some(browser), Some(tab)) = (&inner.browser, inner.tab.as_ref()) else {
             return Err("no page is open; use browser_open first".into());
         };
         let url = tab
@@ -393,8 +393,8 @@ impl ChatBrowser {
             let backend = {
                 let inner = self.inner.lock().await;
                 inner
-                    .tabs
-                    .get(inner.current)
+                    .tab
+                    .as_ref()
                     .and_then(|tab| tab.refs.resolve(reference))
             }
             .ok_or_else(|| {
@@ -1246,7 +1246,7 @@ impl ChatBrowser {
                 return;
             };
             inner
-                .tabs
+                .tab
                 .iter()
                 .map(|tab| {
                     let paused = tab

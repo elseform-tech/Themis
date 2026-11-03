@@ -95,6 +95,13 @@ async fn the_agent_fills_a_form_reads_notes_and_navigates_in_a_real_browser() {
         ))
         .mount(&site)
         .await;
+    Mock::given(path("/opener"))
+        .respond_with(ResponseTemplate::new(200).set_body_raw(
+            "<!doctype html><title>Opener</title><a href=\"/second\" target=\"_blank\">Open second</a> <button onclick=\"window.open('/second?script')\">Script window</button>",
+            "text/html",
+        ))
+        .mount(&site)
+        .await;
     let project = tempfile::tempdir().unwrap();
     let media_dir = tempfile::tempdir().unwrap();
     let chat = hub.chat("chat-1", project.path());
@@ -235,7 +242,7 @@ async fn the_agent_fills_a_form_reads_notes_and_navigates_in_a_real_browser() {
         .unwrap();
     assert!(back["url"].as_str().unwrap().ends_with("/signup"), "{back}");
 
-    // Keys and a second tab.
+    // Keys, and windows a page opens load in the chat's one page.
     tool("browser_press")
         .execute(json!({"key": "Tab"}))
         .await
@@ -245,22 +252,38 @@ async fn the_agent_fills_a_form_reads_notes_and_navigates_in_a_real_browser() {
         .await
         .unwrap_err();
     assert!(error.to_string().contains("unknown key"), "{error}");
-    let other = tool("browser_open")
-        .execute(json!({"url": format!("{}/second", site.uri()), "new_tab": true}))
-        .await
-        .unwrap();
-    assert_eq!(other["tab"], "2 of 2");
-    let tabs: Value = tool("browser_tabs")
-        .execute(json!({"action": "list"}))
-        .await
-        .unwrap();
-    assert_eq!(tabs["tabs"].as_array().unwrap().len(), 2, "{tabs}");
-    tool("browser_tabs")
-        .execute(json!({"action": "close", "tab": 2}))
+    for (button, landed) in [
+        ("\"Open second\"", "/second"),
+        ("\"Script window\"", "/second?script"),
+    ] {
+        let opener = tool("browser_open")
+            .execute(json!({"url": format!("{}/opener", site.uri())}))
+            .await
+            .unwrap();
+        let reference = ref_of(opener["snapshot"].as_str().unwrap(), button);
+        let clicked = tool("browser_click")
+            .execute(json!({"ref": reference}))
+            .await
+            .unwrap();
+        let mut state = chat.state().await;
+        for _ in 0..50 {
+            if state.url.ends_with(landed) {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+            state = chat.state().await;
+        }
+        assert!(state.url.ends_with(landed), "{state:?}");
+        let snapshot = tool("browser_snapshot").execute(json!({})).await.unwrap();
+        let reports = format!("{clicked}{snapshot}");
+        assert!(reports.contains("tried to open a new window"), "{reports}");
+    }
+    assert!(tool_names(&tools).iter().all(|name| name != "browser_tabs"));
+    tool("browser_open")
+        .execute(json!({"url": url}))
         .await
         .unwrap();
     let state = chat.state().await;
-    assert_eq!(state.tabs.len(), 1);
     assert!(state.url.ends_with("/signup"), "{state:?}");
 
     // A screenshot of the page and of one element, and a short recording.
@@ -323,9 +346,7 @@ async fn the_workspace_stream_sends_frames_and_the_person_and_agent_act_together
     let Some(hub) = hub(data.path()) else { return };
     let project = tempfile::tempdir().unwrap();
     let chat = hub.chat("chat-3", project.path());
-    chat.open("data:text/html,<h1>Hello</h1>", false)
-        .await
-        .unwrap();
+    chat.open("data:text/html,<h1>Hello</h1>").await.unwrap();
     let mut updates = chat.subscribe();
     chat.start_screencast(800, 600, 1.0, true).await.unwrap();
     let frame = tokio::time::timeout(std::time::Duration::from_secs(10), async {
@@ -379,9 +400,7 @@ async fn the_workspace_stream_sends_frames_and_the_person_and_agent_act_together
     )
     .await
     .unwrap();
-    chat.open("data:text/html,<h1>Recorded</h1>", false)
-        .await
-        .unwrap();
+    chat.open("data:text/html,<h1>Recorded</h1>").await.unwrap();
     tokio::time::sleep(std::time::Duration::from_millis(600)).await;
     let (video, _) = chat
         .stop_recording(themis_core::browser::media::Recorder::Agent)
@@ -461,9 +480,7 @@ async fn the_browser_tab_streams_at_its_pixel_density_and_resizes_only_when_aske
         // No scrollbar: on Linux a scrollbar would take its width off the visible page size.
         &format!(
             "data:text/html,<html style='overflow:hidden'><body style='font:14px sans-serif'>{words}</body></html>"
-        ),
-        false,
-    )
+        ))
     .await
     .unwrap();
     let size = || async { chat.snapshot(None, false).await.unwrap().visible_page };
@@ -536,7 +553,7 @@ async fn the_speaker_starts_off_and_turns_on_for_current_and_new_pages() {
             );
         }
     };
-    chat.open(page, false).await.unwrap();
+    chat.open(page).await.unwrap();
     assert!(chat.state().await.muted);
     shows("sound off").await;
     chat.set_muted(false).await.unwrap();
@@ -662,12 +679,53 @@ async fn the_agent_moves_the_mouse_and_reopening_a_page_reuses_its_tab() {
         .execute(json!({"x": 99999, "y": 1}))
         .await
         .is_err());
-    let again = tool("browser_open")
-        .execute(json!({"url": url, "new_tab": true}))
+}
+
+fn tool_names(tools: &[Box<dyn themis_core::tools::ToolT>]) -> Vec<String> {
+    tools.iter().map(|tool| tool.name().to_owned()).collect()
+}
+
+/// At most OPEN_PAGES chats keep a page open: one more closes the least recently used idle
+/// one, which reopens at the same address when that chat next browses.
+#[tokio::test(flavor = "multi_thread")]
+async fn only_a_few_chats_keep_a_page_open_and_a_closed_one_reopens_where_it_was() {
+    let _browser = ONE_BROWSER.lock().await;
+    let data = tempfile::tempdir().unwrap();
+    let Some(hub) = hub(data.path()) else { return };
+    let project = tempfile::tempdir().unwrap();
+    let limit = themis_core::browser::session::OPEN_PAGES;
+    let chats: Vec<_> = (0..=limit)
+        .map(|i| hub.chat(&format!("chat-{i}"), project.path()))
+        .collect();
+    for (i, chat) in chats.iter().enumerate() {
+        chat.open(&format!(
+            "data:text/html,<title>Page {i}</title><h1>Page {i}</h1>"
+        ))
         .await
         .unwrap();
-    // Only with more than one tab does a result say which it is.
-    assert!(again.get("tab").is_none(), "{again}");
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+    let mut open = Vec::new();
+    for chat in &chats {
+        open.push(chat.state().await.open);
+    }
+    assert_eq!(open.iter().filter(|open| **open).count(), limit, "{open:?}");
+    assert!(!open[0], "the oldest page closes first: {open:?}");
+    let back = chats[0].snapshot(None, false).await.unwrap();
+    assert!(back.snapshot.contains("Page 0"), "{}", back.snapshot);
+    assert!(
+        back.new_since_last_action
+            .iter()
+            .any(|note| note.contains("closed while unused")),
+        "{:?}",
+        back.new_since_last_action
+    );
+    assert!(chats[0].state().await.open);
+    let mut still_open = 0;
+    for chat in &chats {
+        still_open += usize::from(chat.state().await.open);
+    }
+    assert_eq!(still_open, limit);
 }
 
 /// A first-person page turns without limit: relative moves carry on past the page's edge with
@@ -1210,9 +1268,7 @@ async fn an_animated_page_streams_at_about_thirty_frames_a_second() {
     let project = tempfile::tempdir().unwrap();
     let chat = hub.chat("chat-5", project.path());
     chat.open(
-        "data:text/html,<body><p id=c>0</p><script>let n=0,c=0;(function f(){n=(n+7)&255;c+=1;document.body.style.background='rgb('+n+',80,120)';document.getElementById('c').textContent='painted '+c;requestAnimationFrame(f)})()</script>",
-        false,
-    )
+        "data:text/html,<body><p id=c>0</p><script>let n=0,c=0;(function f(){n=(n+7)&255;c+=1;document.body.style.background='rgb('+n+',80,120)';document.getElementById('c').textContent='painted '+c;requestAnimationFrame(f)})()</script>")
     .await
     .unwrap();
     let mut updates = chat.subscribe();
@@ -1275,17 +1331,13 @@ async fn the_view_shows_the_page_after_a_first_open_was_refused() {
     let project = tempfile::tempdir().unwrap();
     let chat = hub.chat("chat-6", project.path());
     let mut updates = chat.subscribe();
-    let refused = chat
-        .open(&format!("http://127.0.0.1:{closed}/"), false)
-        .await;
+    let refused = chat.open(&format!("http://127.0.0.1:{closed}/")).await;
     assert!(
         format!("{refused:?}").contains("ERR_CONNECTION_REFUSED"),
         "{refused:?}"
     );
     chat.start_screencast(800, 600, 2.0, true).await.unwrap();
-    chat.open(&format!("{}/game", site.uri()), false)
-        .await
-        .unwrap();
+    chat.open(&format!("{}/game", site.uri())).await.unwrap();
     // Frames that arrive after the page loaded show it, not the error page.
     tokio::time::timeout(std::time::Duration::from_secs(10), async {
         loop {
@@ -1331,7 +1383,7 @@ async fn the_stream_and_title_follow_the_person_to_another_site() {
     let port = site.address().port();
     let project = tempfile::tempdir().unwrap();
     let chat = hub.chat("chat-sites", project.path());
-    chat.open(&format!("http://127.0.0.1:{port}/a"), false)
+    chat.open(&format!("http://127.0.0.1:{port}/a"))
         .await
         .unwrap();
     assert_eq!(
@@ -1413,12 +1465,12 @@ async fn the_person_is_never_held_up_by_an_agent_action_in_progress() {
         .await;
     let project = tempfile::tempdir().unwrap();
     let chat = hub.chat("chat-busy", project.path());
-    chat.open("about:blank", false).await.unwrap();
+    chat.open("about:blank").await.unwrap();
     chat.start_screencast(800, 600, 1.0, true).await.unwrap();
     let agent = {
         let chat = Arc::clone(&chat);
         let url = format!("{}/busy", site.uri());
-        tokio::spawn(async move { chat.open(&url, false).await })
+        tokio::spawn(async move { chat.open(&url).await })
     };
     // Wait for the agent's page to commit (slow runners take over a second to get there),
     // then give it a moment so its open is settling on the page's endless polling.

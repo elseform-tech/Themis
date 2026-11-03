@@ -195,6 +195,33 @@ describe("WorkspacePanel", () => {
     await act(async () => {});
     expect(container.querySelector(".themis-diff-path")).toHaveTextContent("docs/guide.md");
   });
+  it("keeps hidden changes out of the count and the opened diff, behind one line", async () => {
+    const hidden = { ...diff.files[0]!, path: ".github/workflows/ci.yml", hidden: true };
+    const files = [hidden, diff.files[0]!];
+    vi.mocked(bridge.listDiff).mockImplementation(async () => ({ ...diff, files }) as never);
+    appState = { ...appState, diffs: { t1: { ...diff, files } as never } };
+    const { container } = render(<WorkspacePanel projectRoot="/repo" threadId="t1" workspace={workspace} />);
+    await act(async () => {});
+    expect(screen.getByRole("button", { name: "Changes 1" })).toBeInTheDocument();
+    expect(container.querySelector(".themis-diff-path")).toHaveTextContent("src/a.ts");
+    expect(screen.queryByTitle(".github/workflows/ci.yml")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "1 hidden file changed" }));
+    fireEvent.click(screen.getByTitle(".github/workflows/ci.yml"));
+    expect(container.querySelector(".themis-diff-path")).toHaveTextContent(".github/workflows/ci.yml");
+    vi.mocked(bridge.listDiff).mockImplementation(async () => diff);
+  });
+  it("says only hidden files changed instead of opening one", async () => {
+    const files = [{ ...diff.files[0]!, path: ".gitignore", hidden: true }];
+    vi.mocked(bridge.listDiff).mockImplementation(async () => ({ ...diff, files }) as never);
+    appState = { ...appState, diffs: { t1: { ...diff, files } as never } };
+    const { container } = render(<WorkspacePanel projectRoot="/repo" threadId="t1" workspace={workspace} />);
+    await act(async () => {});
+    expect(screen.getByRole("button", { name: "Changes" })).toBeInTheDocument();
+    expect(container.querySelector(".themis-diff-path")).toBeNull();
+    expect(screen.getByText("Only hidden files changed.")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "1 hidden file changed" })).toBeInTheDocument();
+    vi.mocked(bridge.listDiff).mockImplementation(async () => diff);
+  });
   it("filters Changes by author once a subagent has write paths", async () => {
     const files = [{ ...diff.files[0], path: "src/a.ts" }, { ...diff.files[0], path: "notes/b.md" }];
     vi.mocked(bridge.listDiff).mockImplementation(async () => ({ ...diff, files }) as never);
