@@ -1,11 +1,11 @@
-import { useState } from "react";
+import { useLayoutEffect, useRef, useState } from "react";
 import { DotSpinner } from "../components/DotSpinner";
 import type { TodoItem } from "../lib/types";
 import "./TodoList.css";
 
-/** Rows the overview box shows at most, and how many before the current item stay in view. */
+/** Rows the overview box shows at most, and how long a reordered row takes to slide to its place. */
 const WINDOW_ROWS = 5;
-const WINDOW_BEFORE = 2;
+const SLIDE_MS = 250;
 
 /** The item being worked on: the first in progress, else the first still to do; -1 when all are done. */
 export function currentTodo(items: TodoItem[]): number {
@@ -15,31 +15,59 @@ export function currentTodo(items: TodoItem[]): number {
 
 export const doneCount = (items: TodoItem[]) => items.filter(item => item.status === "completed").length;
 
+const RANK: Record<TodoItem["status"], number> = { in_progress: 0, pending: 1, completed: 2 };
+
+/** The list as both views show it: in progress first, then pending items, then finished ones
+ *  (done, confirmed, cancelled or answered), each group in the agent's plan order. */
+export const sortTodos = (items: TodoItem[]) =>
+  items.map((item, at) => ({ item, at })).sort((a, b) => RANK[a.item.status] - RANK[b.item.status] || a.at - b.at).map(({ item }) => item);
+
 export interface TodoWindowRows {
-  /** Items above the rows: finished ones, and ones still to do (the agent started a later one). */
-  before: { done: number; open: number };
+  /** Open items in the sorted order, at most five. */
   shown: TodoItem[];
-  /** Items below the rows. */
+  /** Open items folded below the rows. */
   more: number;
+  /** Finished items, counted on the bottom line. */
+  done: number;
   /** Every item is finished: the box says so in one line instead of rows. */
   allDone: boolean;
 }
 
-/** What the overview box shows: the current item with up to two before it, at most five rows;
- *  items above them are counted ("N done · N to do") and the rest fold into "N more", so the
- *  counts and rows always add up to the whole list. */
+/** What the overview box shows: the item in progress and what comes next, at most five rows;
+ *  open items past them fold into "N more" and finished ones into "N done" at the bottom, so
+ *  the rows and counts always add up to the whole list. */
 export function todoWindow(items: TodoItem[]): TodoWindowRows {
-  const current = currentTodo(items);
-  if (current < 0) return { before: { done: items.length, open: 0 }, shown: [], more: 0, allDone: items.length > 0 };
-  const from = Math.max(0, current - WINDOW_BEFORE);
-  const shown = items.slice(from, from + WINDOW_ROWS);
-  const done = doneCount(items.slice(0, from));
-  return { before: { done, open: from - done }, shown, more: items.length - from - shown.length, allDone: false };
+  const open = sortTodos(items.filter(item => item.status !== "completed"));
+  const shown = open.slice(0, WINDOW_ROWS);
+  return { shown, more: open.length - shown.length, done: items.length - open.length, allDone: items.length > 0 && open.length === 0 };
 }
 
-/** The line for the items above the rows, or nothing when there are none. */
-const beforeText = ({ done, open }: TodoWindowRows["before"]) =>
-  [done > 0 ? `${done} done` : "", open > 0 ? `${open} to do` : ""].filter(Boolean).join(" · ");
+/** Slides rows (children with a `data-key`) from where they were to their new place after a
+ *  reorder (FLIP); a row that just arrived doesn't move, and reduced motion moves nothing. */
+function useSlide<T extends HTMLElement>() {
+  const ref = useRef<T>(null);
+  const tops = useRef(new Map<string, number>());
+  useLayoutEffect(() => {
+    const rows = [...(ref.current?.querySelectorAll<HTMLElement>(":scope > [data-key]") ?? [])];
+    const was = tops.current;
+    const now = new Map(rows.map(row => [row.dataset.key!, row.getBoundingClientRect().top]));
+    tops.current = now;
+    if (was.size === 0 || window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches) return;
+    for (const row of rows) {
+      const before = was.get(row.dataset.key!);
+      const dy = before === undefined ? 0 : before - now.get(row.dataset.key!)!;
+      if (!dy) continue;
+      row.style.transition = "none";
+      row.style.transform = `translateY(${dy}px)`;
+      requestAnimationFrame(() => requestAnimationFrame(() => {
+        row.style.transition = `transform ${SLIDE_MS}ms ease`;
+        row.style.transform = "";
+        row.addEventListener("transitionend", () => { row.style.transition = ""; }, { once: true });
+      }));
+    }
+  });
+  return ref;
+}
 
 const STATUS_WORDS: Partial<Record<TodoItem["status"], string>> = { completed: "Done: ", in_progress: "In progress: " };
 const STATE_CLASS: Partial<Record<TodoItem["status"], string>> = { completed: " is-done", in_progress: " is-current" };
@@ -81,7 +109,7 @@ function Item({ item, fresh }: { item: TodoItem; fresh: boolean }) {
   const [open, setOpen] = useState(false);
   const more = !!(item.details || item.outcome || item.reopened);
   return (
-    <li className={todoClass(item, fresh)}>
+    <li className={todoClass(item, fresh)} data-key={item.id}>
       {more
         ? <button type="button" className="themis-todo-line" aria-expanded={open} onClick={() => setOpen(!open)}><TodoLine item={item} /></button>
         : <div className="themis-todo-line"><TodoLine item={item} /></div>}
@@ -96,12 +124,13 @@ function Item({ item, fresh }: { item: TodoItem; fresh: boolean }) {
   );
 }
 
-/** The whole list; an item with details, an outcome or a reason it was reopened opens to show them. */
+/** The whole list, sorted by state; an item with details, an outcome or a reason it was reopened opens to show them. */
 export function TodoItems({ items }: { items: TodoItem[] }) {
   const arrived = useArrivals(items);
+  const list = useSlide<HTMLOListElement>();
   return (
-    <ol className="themis-todo" aria-label="To-do">
-      {items.map(item => <Item key={item.id} item={item} fresh={arrived(item)} />)}
+    <ol ref={list} className="themis-todo" aria-label="To-do">
+      {sortTodos(items).map(item => <Item key={item.id} item={item} fresh={arrived(item)} />)}
     </ol>
   );
 }
@@ -110,14 +139,14 @@ export function TodoItems({ items }: { items: TodoItem[] }) {
  *  quiet line (the To-do tab keeps the whole list). */
 export function TodoWindow({ items }: { items: TodoItem[] }) {
   const arrived = useArrivals(items);
-  const { before, shown, more, allDone } = todoWindow(items);
+  const rows = useSlide<HTMLSpanElement>();
+  const { shown, more, done, allDone } = todoWindow(items);
   if (allDone) return <span className="themis-todo is-compact"><span className="themis-todo-more is-all-done">{items.length} of {items.length} done</span></span>;
-  const above = beforeText(before);
   return (
-    <span className="themis-todo is-compact">
-      {above && <span className="themis-todo-more">{above}</span>}
-      {shown.map(item => <span key={item.id} className={todoClass(item, arrived(item))}><span className="themis-todo-line"><TodoLine item={item} /></span></span>)}
+    <span ref={rows} className="themis-todo is-compact">
+      {shown.map(item => <span key={item.id} data-key={item.id} className={todoClass(item, arrived(item))}><span className="themis-todo-line"><TodoLine item={item} /></span></span>)}
       {more > 0 && <span className="themis-todo-more">{more} more</span>}
+      {done > 0 && <span className="themis-todo-more">{done} done</span>}
     </span>
   );
 }

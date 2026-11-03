@@ -15,9 +15,8 @@ button.themis-todo-line:focus-visible { outline: 2px solid var(--themis-accent);
 .themis-todo-text { flex: 1; min-width: 0; overflow-wrap: anywhere; }
 .themis-todo-tag { font-size: .75rem; font-weight: 400; color: var(--themis-text-3); }
 .themis-todo-tag.is-reopened { color: var(--themis-accent); }
-/* Finished items are crossed off and dimmed; there is no tick. */
-.themis-todo-item.is-done { color: var(--themis-text-3); }
-.themis-todo-item.is-done .themis-todo-title { text-decoration: line-through; text-decoration-thickness: 1px; text-decoration-color: color-mix(in srgb, var(--themis-text-3) 80%, transparent); }
+/* Finished items sit at the bottom, faded, tags kept; there is no tick and nothing is crossed off. */
+.themis-todo-item.is-done { color: var(--themis-text-3); opacity: .55; }
 .themis-todo-item.is-done .themis-todo-pending { width: 4px; height: 4px; border: 0; background: var(--themis-text-3); opacity: .6; }
 .themis-todo-item.is-current { background: color-mix(in srgb, var(--themis-text) 4%, transparent); color: var(--themis-text); }
 .themis-todo-item.is-current .themis-todo-title { font-weight: 550; }

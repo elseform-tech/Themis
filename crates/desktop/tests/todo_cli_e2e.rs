@@ -382,8 +382,10 @@ async fn the_check_referees_the_list_and_a_request_sent_mid_goal_becomes_an_item
     let checks = checks.lock().unwrap().clone();
     assert!(checks.len() >= 2, "reached only on a later check");
     let first = checks[0]["messages"][1]["content"].as_str().unwrap();
+    // On a slow runner the first check may come after the agent's second turn, so its outcome
+    // may already be the later one; either way the check reads the finished item.
     assert!(
-        first.contains("- t2 [done] Build the board — outcome: cards drag"),
+        first.contains("- t2 [done] Build the board — outcome: "),
         "{first}"
     );
     assert!(
@@ -573,6 +575,29 @@ async fn the_check_closes_items_an_agent_that_never_writes_its_list_left_open() 
     assert!(!logs.contains("sessionStorage"), "no item text in the logs");
 }
 
+/// Waits on the event stream for a `todo_changed` whose list holds `words`, in any state.
+async fn todo_event_any(events: &mut tokio::net::TcpStream, id: &str, words: &str) {
+    tokio::time::timeout(Duration::from_secs(120), async {
+        loop {
+            let item = Client::next_event(events).await.unwrap();
+            let event = &item["payload"]["event"];
+            if item["name"] == "thread-event"
+                && item["payload"]["thread_id"] == id
+                && event["kind"] == "todo_changed"
+                && event["todo"]["items"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .any(|item| item["details"] == words)
+            {
+                return;
+            }
+        }
+    })
+    .await
+    .unwrap_or_else(|_| panic!("no todo_changed with the request"));
+}
+
 /// Waits on the event stream for a `todo_changed` whose list holds `words` with `status`.
 async fn todo_event(events: &mut tokio::net::TcpStream, id: &str, words: &str, status: &str) {
     tokio::time::timeout(Duration::from_secs(120), async {
@@ -703,4 +728,122 @@ async fn cli_a_delivered_request_is_in_progress_for_its_turn_and_pending_after()
     assert!(task.contains("[in progress; the person asked]"), "{task}");
     cli(data.path(), "pause_goal", json!({"threadId": id}));
     serving.abort();
+}
+
+/// Live: the person asked for a goal in their own words and, before the agent called `set_goal`,
+/// sent "Also add a category filter…", which reached the agent first. Requests the person sent
+/// after the message that set the goal, in the same run or the queued runs that followed it,
+/// join the list as "you asked" once the goal exists; the goal message itself does not.
+/// Each case runs with the request sent at once (on a slow runner it lands before the run's
+/// first model call, and the model reads both messages together) and sent only after that call.
+/// The model is scripted on what it has read, not on which message came last.
+#[tokio::test(flavor = "multi_thread")]
+async fn cli_requests_sent_before_set_goal_in_the_same_chain_join_the_list() {
+    const ASK: &str = "Set a goal: build the board.";
+    const STEERED: &str = "Also add a category filter to the board.";
+    const QUEUED: &str = "And show the due dates in ISO format.";
+    for (queued, after_first_call) in [(false, false), (false, true), (true, false), (true, true)] {
+        let request = if queued { QUEUED } else { STEERED };
+        let data = tempfile::tempdir().unwrap();
+        let project = tempfile::tempdir().unwrap();
+        let provider = MockServer::builder().start().await;
+        let gate = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let held = Arc::clone(&gate);
+        let calls = Arc::new(AtomicUsize::new(0));
+        let called = Arc::clone(&calls);
+        let goal_set = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        Mock::given(method("POST"))
+            .respond_with(move |request: &Request| {
+                let body: Value = request.body_json().unwrap();
+                if is_check(&body) {
+                    return text_reply(
+                        r#"{"verdict":"not_yet","reason":"Keep going.","progressed":true}"#,
+                    );
+                }
+                called.fetch_add(1, Ordering::SeqCst);
+                if last_is_tool(&body) {
+                    return text_reply("On it.");
+                }
+                // What the model has read so far, whatever order it arrived in.
+                let said = |words: &str| {
+                    body["messages"].as_array().into_iter().flatten().any(|m| {
+                        m["role"] == "user"
+                            && m["content"]
+                                .as_str()
+                                .is_some_and(|text| text.starts_with(words))
+                    })
+                };
+                // The first call waits until the test has sent the request.
+                let waited = std::time::Instant::now();
+                while !held.load(Ordering::SeqCst) && waited.elapsed() < Duration::from_secs(60) {
+                    std::thread::sleep(Duration::from_millis(10));
+                }
+                // Steered: the agent sets the goal in the asking run. Queued: in the next one.
+                let sets = if queued { said(QUEUED) } else { said(ASK) };
+                if sets && !goal_set.swap(true, Ordering::SeqCst) {
+                    return call("set_goal", json!({"goal": "Build the board"}));
+                }
+                text_reply("Working.")
+            })
+            .mount(&provider)
+            .await;
+        let (mut events, serving) = start(&provider, data.path()).await;
+        let thread = cli(
+            data.path(),
+            "create_thread",
+            json!({"projectRoot":project.path(),"provider":"go","model":"test-model"}),
+        );
+        let id = thread["id"].as_str().unwrap().to_owned();
+        cli(
+            data.path(),
+            "send_message",
+            json!({"threadId": id, "text": ASK, "reasoningEffort": null}),
+        );
+        if after_first_call {
+            let waited = std::time::Instant::now();
+            while calls.load(Ordering::SeqCst) == 0 && waited.elapsed() < Duration::from_secs(60) {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        }
+        let waiting = cli(
+            data.path(),
+            "enqueue_message",
+            json!({"threadId": id, "text": request}),
+        );
+        if !queued {
+            cli(
+                data.path(),
+                "steer_queued_message",
+                json!({"threadId": id, "messageId": waiting["id"]}),
+            );
+        }
+        // No goal yet, so the request is not on a list yet.
+        assert_eq!(
+            cli(data.path(), "get_goal", json!({"threadId": id})),
+            Value::Null
+        );
+        gate.store(true, Ordering::SeqCst);
+
+        // The run the request reached sets the goal: the request joins the list. Whether its
+        // in-progress mark is still on when the event is read depends on timing (a slow runner
+        // may already have ended that run), so wait for the item itself.
+        todo_event_any(&mut events, &id, request).await;
+        let goal = cli(data.path(), "get_goal", json!({"threadId": id}));
+        assert_eq!(goal["text"], "Build the board", "{goal}");
+        let list = cli(data.path(), "get_todo", json!({"threadId": id}));
+        assert_eq!(request_item(&list, request)["source"], "person", "{list}");
+        // The goal-setting message is the goal, not a request; nothing is added twice.
+        let items = list["items"].as_array().unwrap();
+        assert!(items.iter().all(|item| item["details"] != ASK), "{list}");
+        assert_eq!(
+            items
+                .iter()
+                .filter(|item| item["details"] == request)
+                .count(),
+            1,
+            "{list}"
+        );
+        cli(data.path(), "pause_goal", json!({"threadId": id}));
+        serving.abort();
+    }
 }

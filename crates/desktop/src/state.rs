@@ -340,6 +340,9 @@ struct AppStateInner {
     todos_dir: PathBuf,
     /// Serializes to-do list changes.
     todo_lock: std::sync::Mutex<()>,
+    /// Per chat, the person's messages since they last wrote to an idle chat (see
+    /// `todo::RequestChain`): what a goal the agent sets later in that chain takes on.
+    request_chains: std::sync::Mutex<HashMap<String, todo::RequestChain>>,
     /// "Still open" notes waiting for each chat's next turn (`hooks.built_in.still_open`).
     still_open: std::sync::Mutex<HashMap<String, String>>,
     /// Open plugin hook sessions, by chat; see `hook_sessions.rs`.
@@ -622,6 +625,7 @@ impl AppState {
                 todos: std::sync::Mutex::new(HashMap::new()),
                 todos_dir: app_dir.join(todo::TODOS_DIR),
                 todo_lock: std::sync::Mutex::new(()),
+                request_chains: std::sync::Mutex::new(HashMap::new()),
                 still_open: std::sync::Mutex::new(HashMap::new()),
                 hook_sessions: std::sync::Mutex::new(HashMap::new()),
                 goal_generations: std::sync::Mutex::new(HashMap::new()),

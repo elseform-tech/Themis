@@ -373,7 +373,13 @@ impl AppState {
         let previous = self
             .goal_for(&thread_id)
             .filter(|goal| goal.status != GoalStatus::Reached);
+        let new = previous.is_none();
         let mut goal = self.begin_goal(sink.as_ref(), &thread_id, &text);
+        // What the person sent after asking, before the agent set it in a run, belongs to the
+        // new goal.
+        if new && running {
+            self.requests_join_new_goal(sink.as_ref(), &thread_id);
+        }
         // Rewording an open goal continues it: its time, turn count and files carry over, and
         // its to-do list stays; the next check finds the new sentence's rules.
         if let Some(previous) = previous {
@@ -603,10 +609,20 @@ impl AppState {
             if sentence.is_empty() {
                 return Err("Add the goal after /goal, for example: /goal speed up p95".to_owned());
             }
+            self.chain_request(thread_id, run_id, text, false);
             self.begin_goal(sink, thread_id, &sentence);
             self.update_goal(sink, thread_id, |goal| goal.turns = 1);
             self.mark_goal_turn(run_id);
         } else if !is_turn {
+            // A queued message the server sends continues the person's chain of messages; one
+            // they write to an idle chat starts a new one.
+            let queued = self
+                .inner
+                .server_sends
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .contains_key(run_id);
+            self.chain_request(thread_id, run_id, text, queued);
             self.note_added_request(sink, thread_id, text);
             self.start_request_on_todo(sink, thread_id, text);
             match self.goal_for(thread_id).map(|goal| goal.status) {
