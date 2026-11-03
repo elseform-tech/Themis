@@ -718,7 +718,7 @@ impl PluginStore {
         name: &str,
         allow_partial: bool,
     ) -> anyhow::Result<Plugin> {
-        let _scan_lock = self.scan_lock(marketplace)?;
+        let _scan_lock = self.scan_lock_waiting(marketplace).await?;
         let refresh = self
             .registry(scope)?
             .current
@@ -785,7 +785,7 @@ impl PluginStore {
     }
     /// Read supported package contents without registering or enabling any capability.
     pub async fn preview(&self, marketplace: &str, name: &str) -> anyhow::Result<PluginSpec> {
-        let _lock = self.scan_lock(marketplace)?;
+        let _lock = self.scan_lock_waiting(marketplace).await?;
         self.marketplace_spec(marketplace, name, false, false, None)
             .await
     }
@@ -794,7 +794,7 @@ impl PluginStore {
         marketplace: &str,
         name: &str,
     ) -> anyhow::Result<ImportPreview> {
-        let _lock = self.scan_lock(marketplace)?;
+        let _lock = self.scan_lock_waiting(marketplace).await?;
         self.inspect_for_scan(marketplace, name).await
     }
     pub(super) async fn inspect_for_scan(
