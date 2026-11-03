@@ -28,9 +28,18 @@
 .themis-memory-question { color: var(--themis-text-2); font-size: .78rem; margin-right: auto; }
 .themis-danger-action { color: var(--themis-danger); }
 
-/* In the chat: a slim line where the agent saved or deleted a memory. */
-.themis-memory-line { display: inline-flex; align-items: center; gap: 8px; align-self: flex-start; max-width: 100%; color: var(--themis-text-3); font-size: .8rem; }
-.themis-memory-line svg { flex: none; width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
-.themis-memory-line button { min-width: 0; padding: 0; border: 0; background: transparent; font: inherit; color: var(--themis-text-2); text-decoration: underline; text-decoration-color: var(--themis-border); text-underline-offset: 3px; cursor: pointer; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* In the chat: one slim line under a reply where the memory models changed memory. */
+.themis-memory-line { display: inline-flex; align-items: flex-start; gap: 8px; align-self: flex-start; max-width: 100%; color: var(--themis-text-3); font-size: .8rem; line-height: 1.4; }
+.themis-memory-dots { flex: none; width: 14px; height: 14px; margin-top: 1px; fill: currentColor; }
+.themis-memory-dots circle { opacity: .25; }
+.themis-memory-dots circle.is-lit { opacity: .8; }
+.themis-memory-change { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.themis-memory-scope { color: var(--themis-text-3); }
+.themis-memory-line button { min-width: 0; padding: 0; border: 0; background: transparent; font: inherit; color: var(--themis-text-2); text-decoration: underline; text-decoration-color: var(--themis-border); text-underline-offset: 3px; cursor: pointer; }
 .themis-memory-line button:hover { color: var(--themis-text); }
 .themis-memory-line button:focus-visible { outline: 2px solid var(--themis-accent); outline-offset: 2px; }
+.themis-memory-line .themis-memory-summary { color: var(--themis-text-3); text-decoration: none; }
+.themis-memory-group { min-width: 0; }
+.themis-memory-group ul { list-style: none; margin: 4px 0 0; padding: 0; display: grid; gap: 2px; }
+.themis-memory-group li { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.themis-memory-waiting { margin: 0; padding: 8px 0 2px; }

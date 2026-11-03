@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
+import { DOT_GRID } from "../components/DotSpinner";
 import { Switch } from "../components";
 import { deleteMemory, getMemorySettings, listMemories, updateMemorySettings } from "../lib/tauri";
-import type { Memory, MemoryKind, MemoryList, MemoryNote, MemoryScope } from "../lib/types";
+import type { Memory, MemoryChange, MemoryKind, MemoryList, MemoryScope, MemoryWaiting } from "../lib/types";
 import { describeError, useActiveProject, useApp } from "../state/store";
 import { SettingsGroup } from "./SettingsGroup";
 import "./MemorySettings.css";
@@ -28,29 +29,72 @@ function sourceKind(source: string): string {
   return /^(web|https?:|page|site)/i.test(source.trim()) ? "a web page" : "a file";
 }
 
-/** The brain mark used by Settings › Memory and the chat's memory lines. */
-export function MemoryIcon({ size = 14 }: { size?: number }) {
-  return <svg width={size} height={size} viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M9.5 2A2.5 2.5 0 0 1 12 4.5v15a2.5 2.5 0 0 1-4.96.44 2.5 2.5 0 0 1-2.96-3.08 3 3 0 0 1-.34-5.58 2.5 2.5 0 0 1 1.32-4.24A2.5 2.5 0 0 1 9.5 2Z" /><path d="M14.5 2A2.5 2.5 0 0 0 12 4.5v15a2.5 2.5 0 0 0 4.96.44 2.5 2.5 0 0 0 2.96-3.08 3 3 0 0 0 .34-5.58 2.5 2.5 0 0 0-1.32-4.24A2.5 2.5 0 0 0 14.5 2Z" /></svg>;
+/** The memory mark: the sidebar's 3×3 dot grid with its top and bottom rows lit, muted. */
+export function MemoryDots() {
+  const lit = [0, 1, 2, 6, 7, 8];
+  return <svg className="themis-memory-dots" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+    {DOT_GRID.map(([cx, cy], cell) => <circle key={cell} className={lit.includes(cell) ? "is-lit" : undefined} cx={cx} cy={cy} r="2.1" />)}
+  </svg>;
 }
 
-/** "Remembered · <name>" (or "Forgot · <name>") where the agent changed a memory; the
- *  name opens it in Settings › Memory. */
-export function MemoryLine({ note }: { note: MemoryNote }) {
+const VERBS: Record<MemoryChange["action"], string> = { saved: "Saved", updated: "Updated", removed: "Removed" };
+
+/** The Settings key that opens one memory: `<scope>:<name>`. */
+export function memoryKey(change: Pick<MemoryChange, "scope" | "name">): string {
+  return `${change.scope}:${change.name}`;
+}
+
+/** "Saved <name> · global": the name opens it in Settings › Memory (a removed one has nothing to
+ *  open); hovering it shows its file and the memory model that made the change. */
+function ChangeText({ change }: { change: MemoryChange }) {
   const { dispatch } = useApp();
-  const verb = note.action === "forgot" ? "Forgot" : "Remembered";
-  const title = memoryTitle(note.name);
-  return <div className="themis-memory-line" role="note">
-    <MemoryIcon />
-    <span>{verb}</span>
-    {note.action === "forgot"
-      ? <span title={note.description}>{title}</span>
-      : <button type="button" title={note.description} aria-label={`${verb} ${title}: open in Settings`} onClick={() => dispatch({ type: "ui/view", view: "settings", settings: { section: "Memory", key: memoryKey(note) } })}>{title}</button>}
+  const verb = VERBS[change.action];
+  const title = memoryTitle(change.name);
+  const hint = `memory/${change.name}.md · by ${change.model}`;
+  return <>
+    <span>{verb}</span>{" "}
+    {change.action === "removed"
+      ? <span title={hint}>{title}</span>
+      : <button type="button" title={hint} aria-label={`${verb} ${title}: open in Settings`} onClick={() => dispatch({ type: "ui/view", view: "settings", settings: { section: "Memory", key: memoryKey(change) } })}>{title}</button>}
+    <span className="themis-memory-scope"> · {change.scope}</span>
+  </>;
+}
+
+/** Under a reply: what the memory models changed after that turn, on one slim line. Several
+ *  changes read "Saved 2 · updated 1", with each one listed on expand. */
+export function MemoryLine({ changes }: { changes: MemoryChange[] }) {
+  const [open, setOpen] = useState(false);
+  if (changes.length === 1) {
+    return <div className="themis-memory-line" role="note"><MemoryDots /><span className="themis-memory-change"><ChangeText change={changes[0]!} /></span></div>;
+  }
+  const summary = (["saved", "updated", "removed"] as const)
+    .map(action => [action, changes.filter(change => change.action === action).length] as const)
+    .filter(([, count]) => count > 0)
+    .map(([action, count], index) => `${index === 0 ? VERBS[action] : action} ${count}`)
+    .join(" · ");
+  return <div className="themis-memory-line is-several" role="note">
+    <MemoryDots />
+    <span className="themis-memory-group">
+      <button type="button" className="themis-memory-summary" aria-expanded={open} onClick={() => setOpen(value => !value)}>{summary}</button>
+      {open && <ul>{changes.map(change => <li key={`${change.scope}:${change.name}:${change.action}`}><ChangeText change={change} /></li>)}</ul>}
+    </span>
   </div>;
 }
 
-/** The Settings key that opens one memory: `<scope>:<name>`. */
-export function memoryKey(note: Pick<MemoryNote, "scope" | "name">): string {
-  return `${note.scope}:${note.name}`;
+const REASONS: Record<string, string> = {
+  rate_limited: "rate limited",
+  provider_error: "unavailable",
+  timed_out: "timed out",
+  unreadable: "unreadable answer",
+  over_budget: "daily cap reached",
+  unavailable: "can't be reached",
+};
+
+/** "Waiting for the memory models: 2 jobs (rate limited, daily cap reached)". */
+function waitingText(waiting: MemoryWaiting): string {
+  const reasons = [...new Set(waiting.reasons.map(reason => REASONS[reason] ?? reason.replace(/_/g, " ")))];
+  const jobs = waiting.jobs === 1 ? "1 job" : `${waiting.jobs} jobs`;
+  return `Waiting for the memory models: ${jobs}${reasons.length ? ` (${reasons.join(", ")})` : ""}`;
 }
 
 function MemoryRow({ memory, open, onToggle, onDelete }: { memory: Memory; open: boolean; onToggle: (open: boolean) => void; onDelete: () => Promise<void> }) {
@@ -79,20 +123,20 @@ function MemoryRow({ memory, open, onToggle, onDelete }: { memory: Memory; open:
   </details>;
 }
 
-/** Settings › Memory: what the agent remembers for this project or everywhere, read and
- *  delete, and two switches (`memory.enabled` and `memory.auto`, saved in place in the user
- *  runtime.jsonc). */
+/** Settings › Memory: what is remembered for this project or everywhere, read and delete, the
+ *  `memory.enabled` switch (saved in place in the user runtime.jsonc), and a status line while
+ *  memory jobs wait for the memory models. */
 export function MemorySettingsSection({ focusKey, onSaved }: { focusKey?: string; onSaved?: () => void } = {}) {
   const { state } = useApp();
   const project = useActiveProject();
   const focusScope = focusKey?.split(":")[0] as MemoryScope | undefined;
   const [scope, setScope] = useState<MemoryScope>(focusScope === "global" ? "global" : "project");
   const [open, setOpen] = useState<string | null>(focusKey?.split(":").slice(1).join(":") ?? null);
-  const [settings, setSettings] = useState<{ enabled: boolean; auto: boolean; revision: string } | null>(null);
+  const [settings, setSettings] = useState<{ enabled: boolean; revision: string; waiting: MemoryWaiting | null } | null>(null);
   const [list, setList] = useState<MemoryList | null>(null);
   const [error, setError] = useState("");
   const root = state.activeProjectRoot;
-  const loadSettings = () => getMemorySettings().then(view => setSettings({ enabled: view.settings.enabled, auto: view.settings.auto, revision: view.revision })).catch(reason => setError(describeError(reason)));
+  const loadSettings = () => getMemorySettings().then(view => setSettings({ enabled: view.settings.enabled, revision: view.revision, waiting: view.waiting ?? null })).catch(reason => setError(describeError(reason)));
   const loadList = (which: MemoryScope) => {
     if (which === "project" && !root) { setList(null); return Promise.resolve(); }
     return listMemories(which, which === "project" ? root : null).then(setList).catch(reason => setError(describeError(reason)));
@@ -101,11 +145,11 @@ export function MemorySettingsSection({ focusKey, onSaved }: { focusKey?: string
   useEffect(() => { void loadList(scope); }, [scope, root]); // eslint-disable-line react-hooks/exhaustive-deps
   if (!settings) return error ? <p role="alert" className="themis-form-error">{error}</p> : null;
 
-  const toggle = async (changes: { enabled?: boolean; auto?: boolean }) => {
+  const toggle = async (changes: { enabled: boolean }) => {
     setError("");
     try {
       const view = await updateMemorySettings(changes, settings.revision);
-      setSettings({ enabled: view.settings.enabled, auto: view.settings.auto, revision: view.revision });
+      setSettings({ ...settings, enabled: view.settings.enabled, revision: view.revision });
       onSaved?.();
     } catch (reason) {
       setError(describeError(reason));
@@ -130,13 +174,10 @@ export function MemorySettingsSection({ focusKey, onSaved }: { focusKey?: string
     {error && <p role="alert" className="themis-form-error">{error}</p>}
     <SettingsGroup>
       <label className="themis-settings-check themis-memory-switch">
-        <span className="themis-settings-name">Remember things across chats<small>The agent saves what it learns about you and your projects, and reads it back in new chats. Nothing here is committed to the project.</small></span>
+        <span className="themis-settings-name">Remember things across chats<small>After each reply, the memory models (Settings › Models) keep what's worth knowing about you and your projects, and new chats start with it. Nothing here is committed to the project.</small></span>
         <Switch checked={settings.enabled} onChange={event => void toggle({ enabled: event.target.checked })} />
       </label>
-      {settings.enabled && <label className="themis-settings-check themis-memory-switch">
-        <span className="themis-settings-name">Notice what's worth remembering<small>After each reply to you, Themis asks the summary model once whether you said something worth keeping, and saves it without being asked.</small></span>
-        <Switch checked={settings.auto} onChange={event => void toggle({ auto: event.target.checked })} />
-      </label>}
+      {settings.enabled && settings.waiting && <p role="status" className="themis-settings-hint themis-memory-waiting">{waitingText(settings.waiting)}</p>}
       {settings.enabled && <div className="themis-settings-control themis-memory-showing">
         <span>Showing</span>
         <span className="themis-memory-scopes" role="group" aria-label="Which memories">
@@ -145,7 +186,7 @@ export function MemorySettingsSection({ focusKey, onSaved }: { focusKey?: string
         </span>
       </div>}
     </SettingsGroup>
-    {!settings.enabled && <SettingsGroup><p className="themis-memory-empty">Memory is off. The agent won't save or read memories; the ones it saved are kept until you switch it back on.</p></SettingsGroup>}
+    {!settings.enabled && <SettingsGroup><p className="themis-memory-empty">Memory is off. Nothing is saved or read; what was saved is kept until you switch it back on.</p></SettingsGroup>}
     {settings.enabled && list && <>
       <div className="themis-memory-head">
         <span>{memories.length === 1 ? "1 memory" : `${memories.length} memories`}</span>

@@ -1,5 +1,5 @@
 import { useState } from "react";
-import type { BuiltInHook, Plugin } from "../lib/types";
+import type { Plugin } from "../lib/types";
 
 /** A hook row of the Installed list. */
 export interface HookRow {
@@ -70,18 +70,15 @@ export function hookMeta(row: HookRow, source: string): string {
 }
 
 /** Installed › Hooks: the events in run order with their hooks, empty ones dimmed (the rarer ones
- *  appear only with a hook), and one line per plugin for the hooks it could not bring. Themis's own
- *  hooks sit under their events as "Themis (built-in)". Read-only apart from each hook's switch. */
-export function HooksByEvent({ rows, plugins, sourceOf, disabled, onToggle, onOpen, builtIns = [], builtInsDisabled = false, onToggleBuiltIn }: {
+ *  appear only with a hook), and one line per plugin for the hooks it could not bring. Read-only
+ *  apart from each hook's switch. */
+export function HooksByEvent({ rows, plugins, sourceOf, disabled, onToggle, onOpen }: {
   rows: HookRow[];
   plugins: Plugin[];
   sourceOf: (row: HookRow) => string;
   disabled: (row: HookRow) => boolean;
   onToggle: (row: HookRow) => void;
   onOpen: (row: HookRow) => void;
-  builtIns?: BuiltInHook[];
-  builtInsDisabled?: boolean;
-  onToggleBuiltIn?: (hook: BuiltInHook) => void;
 }) {
   const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(new Set());
   const toggleEvent = (title: string) => setCollapsed(current => {
@@ -96,14 +93,12 @@ export function HooksByEvent({ rows, plugins, sourceOf, disabled, onToggle, onOp
     return [`${reasons.length} hook${reasons.length === 1 ? "" : "s"} skipped (${plugin.spec.name}): ${unique.join("; ")}.`];
   });
   const hooksOf = (events: string[]) => rows.filter(row => events.includes(row.plugin.spec.hooks.find(hook => hook.name === row.id)?.event ?? ""));
-  const builtInsOf = (events: string[]) => builtIns.filter(hook => events.includes(hook.event));
   return (
     <div className="themis-integrations-list">
       <ol className="themis-hook-events" aria-label="Hook events in run order">
-        {HOOK_EVENTS.filter(step => !step.onlyWhenUsed || hooksOf(step.events).length + builtInsOf(step.events).length > 0).map((step, index) => {
+        {HOOK_EVENTS.filter(step => !step.onlyWhenUsed || hooksOf(step.events).length > 0).map((step, index) => {
           const hooks = hooksOf(step.events);
-          const own = builtInsOf(step.events);
-          const count = hooks.length + own.length;
+          const count = hooks.length;
           const open = !collapsed.has(step.title);
           const heading = <>
             <span className="themis-hook-step" aria-hidden="true">{index + 1}</span>
@@ -125,15 +120,6 @@ export function HooksByEvent({ rows, plugins, sourceOf, disabled, onToggle, onOp
                     <span className="themis-hook-meta">{hookMeta(row, sourceOf(row))}</span>
                   </span>
                   <button className="themis-integration-toggle" role="switch" aria-label={`${row.id} enabled`} aria-checked={row.enabled} disabled={disabled(row)} onClick={() => onToggle(row)}><span className="themis-toggle-track"><span /></span></button>
-                </div>
-              ))}
-              {open && own.map(hook => (
-                <div key={`built-in:${hook.id}`} className="themis-hook-row">
-                  <span className="themis-hook-text">
-                    <span className="themis-hook-name">{hook.title}</span>
-                    <span className="themis-hook-meta">Themis (built-in) · {hook.description}</span>
-                  </span>
-                  <button className="themis-integration-toggle" role="switch" aria-label={`${hook.title} enabled`} aria-checked={hook.enabled} disabled={builtInsDisabled} onClick={() => onToggleBuiltIn?.(hook)}><span className="themis-toggle-track"><span /></span></button>
                 </div>
               ))}
             </li>

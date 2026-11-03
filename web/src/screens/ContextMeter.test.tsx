@@ -38,6 +38,16 @@ describe("ContextMeter", () => {
     expect(panel).toHaveTextContent("Model reasoning21.3k");
     expect(screen.getByRole("img")).toHaveAccessibleName(expect.stringContaining("Model reasoning 21.3k"));
   });
+  it("shows the memory block as its own part only when the turn carried one", () => {
+    const { rerender } = render(<ContextMeter budget={budget} />);
+    fireEvent.click(screen.getByRole("button", { name: "Context 84% full" }));
+    expect(screen.getByRole("dialog", { name: "Context" })).not.toHaveTextContent("Memory");
+    rerender(<ContextMeter budget={{ ...budget, breakdown: { ...budget.breakdown, system: 6200, memory: 2200 } }} />);
+    const panel = screen.getByRole("dialog", { name: "Context" });
+    expect(panel).toHaveTextContent("Memory2.2k");
+    expect(panel).toHaveTextContent("System & instructions6.2k");
+    expect(screen.getByRole("img")).toHaveAccessibleName(expect.stringContaining("Memory 2.2k"));
+  });
   it("adds this chat's recorded tokens when the panel opens, and nothing before any", async () => {
     const usage = { requests: 54, unreported_requests: 0, input_tokens: 1_250_000, cached_input_tokens: 900_000, output_tokens: 40_200, reasoning_tokens: 0, unpriced_requests: 0 };
     vi.mocked(bridge.getChatUsage).mockResolvedValueOnce(usage).mockResolvedValueOnce({ ...usage, requests: 0 });

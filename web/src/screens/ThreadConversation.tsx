@@ -180,7 +180,7 @@ function ConversationRow({
     return <QuestionRow question={row.message.question} />;
   }
   if (row.kind === "message" && row.message.memory) {
-    return <MemoryLine note={row.message.memory} />;
+    return <MemoryLine changes={row.message.memory} />;
   }
   if (row.kind === "message" && row.message.subagents) {
     return <SubagentCard agents={row.message.subagents} runLive={row.message.runId !== undefined && row.message.runId === activeRunId} />;

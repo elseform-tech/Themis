@@ -322,7 +322,7 @@ export type ThreadEvent =
   /** Images, videos or PDFs the agent attached to this run's reply, in order. */
   | { kind: 'media_attached'; files: AttachedMedia[] }
   /** The agent saved, updated or deleted a memory. */
-  | ({ kind: 'memory_changed' } & MemoryNote)
+  | { kind: 'memory_changed'; changes: MemoryChange[] }
   /** Who drives the chat's built-in browser, and any recording (live only). */
   | { kind: 'browser_changed'; controller: string; recording?: BrowserRecording }
   | { kind: 'incomplete'; result: string; model?: string }
@@ -413,14 +413,28 @@ export interface MemoryList {
   max_lines: number;
   revision: string;
   enabled: boolean;
+  /** Memory jobs waiting for the memory models, when any are. */
+  waiting?: MemoryWaiting | null;
 }
 
-/** A save, update or delete the agent made, as the chat shows it. */
-export interface MemoryNote {
-  action: 'saved' | 'updated' | 'forgot';
+/** Memory jobs every memory model failed, waiting for a later try. */
+export interface MemoryWaiting {
+  jobs: number;
+  /** Why the last try failed on each model, in order (`rate_limited`, `over_budget`, …). */
+  reasons: string[];
+  /** When the next try is, in milliseconds since the epoch. */
+  next_at?: number | null;
+}
+
+/** One memory a memory model saved, updated or removed after a turn. */
+export interface MemoryChange {
+  action: 'saved' | 'updated' | 'removed';
   scope: MemoryScope;
   name: string;
   description: string;
+  /** The memory model that made it, and its place in `memory.models` (from 0). */
+  model: string;
+  model_index: number;
   project_root?: string;
 }
 
@@ -597,7 +611,7 @@ export interface ContextBudget {
   provider_input_tokens?: number;
   /** Estimate correction in thousandths (1000 = exact). */
   calibration_ratio_milli?: number;
-  breakdown: { system: number; checkpoint: number; attachments: number; conversation: number; tool_activity: number; reasoning?: number };
+  breakdown: { system: number; checkpoint: number; attachments: number; conversation: number; tool_activity: number; reasoning?: number; memory?: number };
 }
 
 /** A readable project file one run changed. */
@@ -666,8 +680,8 @@ export interface PersistedMessage {
   question?: Question;
   /** Subagents started together in this run, shown as one card. */
   subagents?: SubagentEntry[];
-  /** A memory the agent saved, updated or deleted here: one slim line. */
-  memory?: MemoryNote;
+  /** What the memory models changed after this turn: one slim line under the reply. */
+  memory?: MemoryChange[];
 }
 
 export type HistoryItem =
@@ -943,9 +957,6 @@ export interface BrowserHistoryEntry {
   project: string;
 }
 
-/** Settings › Memory's switches. */
-export interface MemorySwitches { enabled: boolean; auto: boolean }
+/** The `memory` block of the user runtime.jsonc (Settings › Memory and Settings › Models). */
+export interface MemorySettings { enabled: boolean; models: string[]; daily_budget_usd: number; consolidate_every_hours: number }
 
-/** One of Themis's own hooks, listed in Integrations › Hooks as "Themis (built-in)". */
-export interface BuiltInHook { id: string; event: string; title: string; description: string; enabled: boolean }
-export interface BuiltInHooks { hooks: BuiltInHook[]; revision: string }
