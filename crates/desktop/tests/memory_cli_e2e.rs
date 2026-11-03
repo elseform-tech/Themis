@@ -187,7 +187,7 @@ impl Harness {
                 if last_user(&body).starts_with("spawn-one") && last(&body)["role"] == "user" {
                     return call(
                         "spawn_subagents",
-                        json!({"say":"Starting a helper.","subagents":[{"name":"Helper","brief":"Look around."}]}),
+                        json!({"say":"Starting a helper.","subagents":[{"write_paths": [], "name":"Helper","brief":"Look around."}]}),
                     );
                 }
                 text_reply("Done.")

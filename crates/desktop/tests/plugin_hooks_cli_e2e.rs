@@ -1379,7 +1379,7 @@ async fn an_agent_matcher_fires_when_subagents_start() {
             0 => tool_call(
                 "s1",
                 "spawn_subagents",
-                &json!({"say": "Starting.", "subagents": [{"brief": "b"}]}),
+                &json!({"say": "Starting.", "subagents": [{"write_paths": [], "brief": "b"}]}),
             ),
             _ => reply("Done."),
         }

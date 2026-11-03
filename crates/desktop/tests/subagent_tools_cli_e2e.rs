@@ -265,7 +265,7 @@ fn spawning(
             return child(body);
         }
         if results(body).is_empty() {
-            let mut one = json!({"name": "Helper", "brief": "Do the work."});
+            let mut one = json!({"write_paths": [], "name": "Helper", "brief": "Do the work."});
             if let Some(profile) = profile {
                 one["profile"] = json!(profile);
             }
@@ -987,7 +987,7 @@ fn nesting(
 }
 
 fn inner_spec(extra: Value) -> Value {
-    let mut spec = json!({"name": "Inner", "brief": INNER});
+    let mut spec = json!({"write_paths": [], "name": "Inner", "brief": INNER});
     spec.as_object_mut()
         .unwrap()
         .extend(extra.as_object().cloned().unwrap_or_default());

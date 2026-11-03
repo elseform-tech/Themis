@@ -203,8 +203,14 @@ fn parse_briefs(args: &Value) -> Result<Vec<Brief>, ToolCallError> {
                         )))
                     }
                 },
+                // Said for every subagent, so one meant to build is never started read-only.
                 write_paths: match &item["write_paths"] {
-                    Value::Null => Vec::new(),
+                    Value::Null => {
+                        return Err(error(format!(
+                            "subagent {}: give `write_paths`: the project-relative files or folders it will create or change, or [] when it only reads (reviews, searches). Nothing was started.",
+                            index + 1
+                        )))
+                    }
                     paths => paths
                         .as_array()
                         .and_then(|paths| {
@@ -528,8 +534,8 @@ impl ToolT for SubagentTool {
                 let mut item = json!({"type":"object","properties":{
                     "name":{"type":"string","description":"A short name, for example \"Bug hunt\""},
                     "brief":{"type":"string"},
-                    "write_paths":{"type":"array","items":{"type":"string"},"description":"Project-relative folders (ending in /) or files it alone may change. Leave out for read-only."}
-                },"required":["brief"]});
+                    "write_paths":{"type":"array","items":{"type":"string"},"description":"Project-relative folders (ending in /) or files it alone may create or change; [] when it only reads."}
+                },"required":["brief","write_paths"]});
                 if self.models {
                     item["properties"]["model"] = json!({"type":"string"});
                 }
@@ -672,8 +678,8 @@ mod tests {
     #[test]
     fn briefs_are_read_leniently_and_bounded() {
         let briefs = parse_briefs(&json!({"subagents": [
-            {"name": "Bug hunt", "brief": "Find bugs in src/"},
-            {"brief": "  Check docs  "}
+            {"write_paths": [], "name": "Bug hunt", "brief": "Find bugs in src/"},
+            {"write_paths": [], "brief": "  Check docs  "}
         ]}))
         .unwrap();
         assert_eq!(
@@ -686,8 +692,19 @@ mod tests {
         );
         assert!(parse_briefs(&json!({"subagents": []})).is_err());
         assert!(parse_briefs(&json!({"subagents": [{"name": "x"}]})).is_err());
-        let seven = vec![json!({"brief": "b"}); MAX_PER_CALL + 1];
+        let seven = vec![json!({"write_paths": [], "brief": "b"}); MAX_PER_CALL + 1];
         assert!(parse_briefs(&json!({ "subagents": seven })).is_err());
+        // A subagent with no word on writing is refused, never started read-only by default.
+        let error = parse_briefs(&json!({"subagents": [
+            {"write_paths": ["store.js"], "brief": "Build store.js"},
+            {"brief": "Build timer.js"}
+        ]}))
+        .err()
+        .unwrap();
+        assert!(
+            format!("{error:?}").contains("subagent 2: give `write_paths`"),
+            "{error:?}"
+        );
     }
 
     #[test]
