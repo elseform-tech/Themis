@@ -238,8 +238,10 @@ Codex, the chat's own model judges its goal: there is no separate check.
 - **Done, blocked or paused.** When every requirement is proven, the agent calls
   `update_goal` complete with one evidence entry per requirement (what it is, and
   what shows it: a command and its result, a file, a test, a page check); a call
-  with no evidence is refused. The goal row then shows **Complete** with that
-  list until your next message. The agent marks a goal **Blocked** only when the
+  with no evidence is refused. The goal row then shows **Complete** until your next
+  message; the evidence is in the agent's reply and the work's plan record. The goal row is
+  always one line (the full sentence on hover); click it or the pencil to edit it, in a box
+  that grows with the text. The agent marks a goal **Blocked** only when the
   same blocker stopped it for three goal turns in a row, saying why; **Resume**
   starts it again. It pauses the goal only when you ask.
 - **What you add joins the goal.** Each message you send while the goal runs

@@ -472,6 +472,9 @@ pub struct Goal {
     /// lets the agent pause the goal.
     #[serde(default)]
     pub turn_seq: i64,
+    /// History position when the goal began: where what the work ran into starts.
+    #[serde(default)]
+    pub start_seq: i64,
     /// What the agent named as proof of each requirement when it marked the goal complete.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub evidence: Vec<themis_core::goal::Evidence>,

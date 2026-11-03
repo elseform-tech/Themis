@@ -677,6 +677,14 @@ async fn a_completed_goal_starts_a_pass_with_its_evidence() {
             .any(|event| event["event"] == "a goal was completed"),
         "{events:?}"
     );
+    // The evidence is in the chat, under the Complete note (the goal bar keeps one line).
+    let history = h.cli("get_thread_history", json!({"threadId":id}));
+    assert!(
+        history
+            .to_string()
+            .contains("Complete.\\n\\n- notes.txt exists: ls notes.txt: notes.txt"),
+        "{history}"
+    );
     // The turn's pass and the goal's run one after the other, never at once, so the second
     // reads what the first saved instead of saving the same thing again.
     h.logged("job", 2).await;

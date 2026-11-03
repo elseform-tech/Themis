@@ -59,29 +59,31 @@ describe("GoalBar", () => {
     expect(remove).toHaveBeenCalled();
   });
 
-  it("shows a complete goal with the evidence for each requirement and nothing to edit or pause", () => {
+  it("shows a complete goal on its one line, without its evidence, and nothing to edit or pause", () => {
     const evidence = [
       { requirement: "p95 under 200 ms", proof: "bench.sh: p95 184 ms" },
       { requirement: "tests pass", proof: "cargo test: 42 passed" },
     ];
     render(<GoalBar goal={goal({ status: "reached", running_since: undefined, evidence })} onEdit={vi.fn()} onPause={vi.fn()} onResume={vi.fn()} onRemove={vi.fn()} />);
     expect(screen.getByText("Complete")).toBeInTheDocument();
-    const list = screen.getByRole("list", { name: "Evidence" });
-    expect(list).toHaveTextContent("p95 under 200 ms bench.sh: p95 184 ms");
-    expect(list).toHaveTextContent("tests pass cargo test: 42 passed");
+    expect(screen.queryByRole("list")).toBeNull();
+    expect(screen.getByRole("region", { name: "Goal" })).not.toHaveTextContent("bench.sh");
+    // A complete goal's sentence is text, not a way into an editor.
+    expect(screen.queryByRole("button", { name: /Optimize this app/ })).toBeNull();
     expect(screen.queryByRole("button", { name: "Edit goal" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Pause goal after this turn" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Resume goal" })).toBeNull();
   });
 
-  it("lists what the person also asked, word for word, when the goal is opened", () => {
+  it("keeps what the person also asked out of the card: it is in the chat and the goal the agent reads", () => {
     const also_asked = ["also add a license line\n  (MIT)", "and a build badge"];
     render(<GoalBar goal={goal({ also_asked })} onEdit={vi.fn()} onPause={vi.fn()} onResume={vi.fn()} onRemove={vi.fn()} />);
-    expect(screen.queryByRole("list", { name: "Also asked" })).toBeNull();
-    expect(screen.getByText(/\+2 asked/)).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: /Optimize this app/ }));
-    const items = screen.getAllByRole("listitem").map(item => item.textContent);
-    expect(items).toEqual(["Also asked: also add a license line\n  (MIT)", "Also asked: and a build badge"]);
+    const card = screen.getByRole("region", { name: "Goal" });
+    expect(card).not.toHaveTextContent("license");
+    expect(card).not.toHaveTextContent("asked");
+    expect(screen.queryByRole("list")).toBeNull();
+    // The full sentence shows on hover.
+    expect(screen.getByRole("button", { name: /Optimize this app/ })).toHaveAttribute("title", "Optimize this app to bring p95 under 200 ms");
   });
 
   it("says a blocked goal is blocked and why, and offers resume", () => {
@@ -91,12 +93,13 @@ describe("GoalBar", () => {
     expect(screen.queryByRole("list", { name: "Evidence" })).toBeNull();
   });
 
-  it("opens the sentence in full on a click, and edits it in place", async () => {
+  it("edits the sentence in place from a click on it or the edit icon", async () => {
     const edit = vi.fn().mockResolvedValue(undefined);
+    const { unmount } = render(<GoalBar goal={goal()} onEdit={edit} onPause={vi.fn()} onResume={vi.fn()} onRemove={vi.fn()} />);
+    fireEvent.click(screen.getByRole("button", { name: "Optimize this app to bring p95 under 200 ms" }));
+    expect(screen.getByLabelText("Goal")).toHaveValue("Optimize this app to bring p95 under 200 ms");
+    unmount();
     render(<GoalBar goal={goal()} onEdit={edit} onPause={vi.fn()} onResume={vi.fn()} onRemove={vi.fn()} />);
-    const sentence = screen.getByRole("button", { name: "Optimize this app to bring p95 under 200 ms" });
-    fireEvent.click(sentence);
-    expect(sentence).toHaveAttribute("aria-expanded", "true");
     fireEvent.click(screen.getByRole("button", { name: "Edit goal" }));
     const field = screen.getByLabelText("Goal");
     fireEvent.change(field, { target: { value: "  Bring p95 under 150 ms " } });
