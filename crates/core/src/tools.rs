@@ -854,6 +854,25 @@ pub fn git_argv(args: &serde_json::Value) -> Option<Vec<String>> {
     Some(std::iter::once("git".to_owned()).chain(rest).collect())
 }
 
+/// The git subcommands the restricted git tool runs (YOLO runs any).
+const GIT_ALLOWED: [&str; 8] = [
+    "status", "diff", "log", "show", "add", "commit", "checkout", "branch",
+];
+
+fn git_refusal(subcommand: &str) -> String {
+    format!(
+        "git: subcommand '{subcommand}' is denied by the allowlist (allowed: {}). {REFUSAL_NOTE}",
+        GIT_ALLOWED.join(", ")
+    )
+}
+
+/// Why the restricted git tool would refuse `argv` (`git <subcommand> …`), if it would: the
+/// runtime refuses such a call before asking anyone, since approving it could not make it run.
+pub fn git_allowlist_refusal(argv: &[String]) -> Option<String> {
+    let subcommand = argv.get(1)?;
+    (!GIT_ALLOWED.contains(&subcommand.as_str())).then(|| git_refusal(subcommand))
+}
+
 /// A list of strings, or the JSON text of one; nothing at all is an empty list.
 fn args_list(args: Option<&Value>) -> Option<Vec<String>> {
     match args {
@@ -2963,12 +2982,7 @@ impl ToolRuntime for GitTool {
             "checkout" | "branch" | "commit" if destructive => RiskLevel::Destructive,
             "status" | "diff" | "log" | "show" => RiskLevel::Read,
             "add" | "commit" | "checkout" | "branch" => RiskLevel::Write,
-            other => {
-                return Err(tool_error(format!(
-                    "git: subcommand '{other}' is denied by the allowlist \
-                     (allowed: status, diff, log, show, add, commit, checkout, branch). {REFUSAL_NOTE}"
-                )));
-            }
+            other => return Err(tool_error(git_refusal(other))),
         };
         let action = ToolAction {
             display: Some(git_display(&args, &root)),
