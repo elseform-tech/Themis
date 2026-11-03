@@ -21,6 +21,7 @@ import type {
   HistoryItem,
   PersistedMessage,
   ThreadInfo,
+  MemoryChange,
   ThreadChange,
   ThreadTasks,
   QueuedMessage,
@@ -640,9 +641,11 @@ export function applyThreadEvent(
       return { ...state, runChanges: { ...state.runChanges, [runId]: event.files } };
     case "browser_changed":
       return { ...state, browsers: { ...state.browsers, [threadId]: { controller: event.controller, recording: event.recording, at: Date.now() } } };
-    case "memory_changed":
-      if (event.changes.length === 0) return state;
-      return appendMessage(state, threadId, { id: newId("memory"), role: "system", text: "", runId, memory: event.changes });
+    case "memory_changed": {
+      const changes = memoryChanges(event);
+      if (changes.length === 0) return state;
+      return appendMessage(state, threadId, { id: newId("memory"), role: "system", text: "", runId, memory: changes });
+    }
     case "media_attached": {
       const previous = state.runMedia[runId] ?? [];
       const added = event.files.filter(file => !previous.some(seen => seen.path === file.path));
@@ -1020,4 +1023,13 @@ export function reducer(state: AppState, action: AppAction): AppState {
 /** OpenCode Go can be used: a key is set and OpenCode has not rejected it. */
 export function goUsable(state: Pick<AppState, "secretStatus" | "goKeyCheck">): boolean {
   return state.secretStatus.go && state.goKeyCheck !== "rejected";
+}
+
+/** A chat saved before memory models carries one change in the event itself
+ *  (`action` saved/updated/forgot, `scope`, `name`, `description`) instead of `changes`. */
+function memoryChanges(event: Record<string, unknown>): MemoryChange[] {
+  if (Array.isArray(event.changes)) return event.changes as MemoryChange[];
+  if (typeof event.name !== "string" || (event.scope !== "global" && event.scope !== "project")) return [];
+  const action = event.action === "forgot" ? "removed" : event.action === "updated" ? "updated" : "saved";
+  return [{ action, scope: event.scope, name: event.name, description: typeof event.description === "string" ? event.description : "", model: "", model_index: -1 }];
 }

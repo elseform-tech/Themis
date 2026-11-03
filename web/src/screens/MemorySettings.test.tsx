@@ -153,6 +153,14 @@ describe("memory in the chat", () => {
     expect(row?.memory).toEqual(changes);
     expect(row?.runId).toBe("r");
   });
+
+  it("still reads a chat saved before memory models, whose event holds one change", () => {
+    const state = reducer(initialState, { type: "thread/event", envelope: { thread_id: "t", run_id: "r", event: { kind: "memory_changed", action: "forgot", scope: "global", name: "old-pref", description: "An old preference" } } } as never);
+    const rows = state.messages.t ?? [];
+    expect(rows[rows.length - 1]?.memory).toEqual([{ action: "removed", scope: "global", name: "old-pref", description: "An old preference", model: "", model_index: -1 }]);
+    const ignored = reducer(initialState, { type: "thread/event", envelope: { thread_id: "t", run_id: "r", event: { kind: "memory_changed" } } } as never);
+    expect(ignored.messages.t ?? []).toEqual([]);
+  });
 });
 
 describe("memory wording", () => {

@@ -50,7 +50,7 @@ function ChangeText({ change }: { change: MemoryChange }) {
   const { dispatch } = useApp();
   const verb = VERBS[change.action];
   const title = memoryTitle(change.name);
-  const hint = `memory/${change.name}.md · by ${change.model}`;
+  const hint = change.model ? `memory/${change.name}.md · by ${change.model}` : `memory/${change.name}.md`;
   return <>
     <span>{verb}</span>{" "}
     {change.action === "removed"
