@@ -121,6 +121,7 @@ const ALL: &[(&str, &str, &[&str])] = &[
     (ASK_USER_WAITING, "ask-user-waiting", &[]),
     (ASK_USER_LIMIT, "ask-user-limit", &["max"]),
     (SYSTEM_MEMORY, "system-memory", &["global", "project"]),
+    (SYSTEM_MEMORY_OFF, "system-memory-off", &[]),
     (MEMORY_TOOL, "memory-tool", &[]),
     (MEMORY_TOOL_READ, "memory-tool-read", &[]),
     (MEMORY_AUTO_SYSTEM, "memory-auto-system", &[]),

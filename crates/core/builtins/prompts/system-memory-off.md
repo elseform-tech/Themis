@@ -1,0 +1,1 @@
+Memory is off (Settings › Memory): nothing carries over to a later chat. If the person asks you to remember something, say you can't while memory is off, rather than promising to.
