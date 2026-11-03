@@ -155,6 +155,10 @@ impl Harness {
                 if system(&body).starts_with(SUBAGENT) {
                     return text_reply("Sub done.");
                 }
+                // A turn whose model request fails outright.
+                if last_user(&body).contains("this turn fails") {
+                    return ResponseTemplate::new(400).set_body_string("bad request");
+                }
                 // A goal's turn: complete it once, with evidence.
                 let offers_update = body["tools"]
                     .as_array()
@@ -654,6 +658,34 @@ async fn a_completed_goal_starts_a_pass_with_its_evidence() {
             "memory jobs overlapped: {spans:?}"
         );
     }
+}
+
+/// A turn that fails still had the person's words: its pass runs all the same.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_failed_turn_still_keeps_what_the_person_said() {
+    let mut h = Harness::start(MODELS).await;
+    let id = h.new_chat();
+    h.cli(
+        "send_message",
+        json!({"threadId":id,"text":"By the way, I always use pnpm, and this turn fails.","reasoningEffort":null}),
+    );
+    let deadline = std::time::Instant::now() + Duration::from_secs(30);
+    let pass = loop {
+        let found = h.memory_requests().into_iter().find(|body| {
+            body["messages"]
+                .to_string()
+                .contains("I always use pnpm, and this turn fails")
+        });
+        if let Some(body) = found {
+            break body;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "no pass after the failed turn"
+        );
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    };
+    assert!(pass["tools"].is_null());
 }
 
 #[tokio::test(flavor = "multi_thread")]

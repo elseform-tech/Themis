@@ -828,10 +828,17 @@ impl AppState {
                     if let RunEvent::Steered { text } = &event {
                         memory_turn.person.push(text.clone());
                     }
-                    if let RunEvent::Finished { result } | RunEvent::Incomplete { result } = &event
-                    {
-                        // The memory pass, once the reply is done: on its own task, never
-                        // holding up what comes next.
+                    // The memory pass, once the turn is over (finished, incomplete or failed:
+                    // what the person said counts either way): on its own task, never holding
+                    // up what comes next.
+                    let ended = match &event {
+                        RunEvent::Finished { result } | RunEvent::Incomplete { result } => {
+                            Some(result.clone())
+                        }
+                        RunEvent::Failed { .. } => Some(String::new()),
+                        _ => None,
+                    };
+                    if let Some(result) = ended {
                         let person = std::mem::take(&mut memory_turn.person);
                         pump_state.spawn_memory_pass(
                             Arc::clone(&pump_sink),
@@ -841,7 +848,7 @@ impl AppState {
                                 person,
                                 ..memory_turn.clone()
                             },
-                            result.clone(),
+                            result,
                         );
                     }
                     // A terminal event means the run is over: mark the thread
