@@ -79,6 +79,32 @@ pub async fn url(app_dir: &Path) -> Result<String, String> {
         .map_err(|e| e.to_string())?
 }
 
+/// Longest a run waits for the built-in server before it starts without it.
+pub const RUN_WAIT: std::time::Duration = std::time::Duration::from_secs(3);
+
+/// How a run's wait for the search server ended.
+#[derive(Debug, PartialEq, Eq)]
+pub enum ForRun {
+    Ready(String),
+    /// It failed to start; why.
+    Unavailable(String),
+    /// Still starting after `wait`: this run goes without it, later runs get it.
+    Starting,
+}
+
+/// Waits for `address` at most `wait`, so a search server that is slow or never answers can't
+/// hold a run up (it used to wait up to 45 s before the run began).
+pub async fn for_run(
+    wait: std::time::Duration,
+    address: impl std::future::Future<Output = Result<String, String>>,
+) -> ForRun {
+    match tokio::time::timeout(wait, address).await {
+        Ok(Ok(url)) => ForRun::Ready(url),
+        Ok(Err(error)) => ForRun::Unavailable(error),
+        Err(_) => ForRun::Starting,
+    }
+}
+
 /// Starts it in the background when the app server starts, so the first search is quick.
 pub fn start_in_background(app_dir: &Path) {
     if runtime_dir().is_none() {
@@ -272,5 +298,27 @@ mod tests {
         let first = secret(folder.path()).unwrap();
         assert_eq!(secret(folder.path()).unwrap(), first);
         assert!(first.len() >= 32);
+    }
+
+    #[tokio::test]
+    async fn a_run_waits_for_the_search_server_only_briefly() {
+        let wait = std::time::Duration::from_millis(100);
+        let started = std::time::Instant::now();
+        let slow = async {
+            tokio::time::sleep(std::time::Duration::from_secs(30)).await;
+            Ok::<_, String>("http://127.0.0.1:1".to_owned())
+        };
+        assert_eq!(for_run(wait, slow).await, ForRun::Starting);
+        assert!(started.elapsed() < std::time::Duration::from_secs(2));
+        let ready = async { Ok::<_, String>("http://127.0.0.1:2".to_owned()) };
+        assert_eq!(
+            for_run(wait, ready).await,
+            ForRun::Ready("http://127.0.0.1:2".into())
+        );
+        let failed = async { Err::<String, _>("no python".to_owned()) };
+        assert_eq!(
+            for_run(wait, failed).await,
+            ForRun::Unavailable("no python".into())
+        );
     }
 }
