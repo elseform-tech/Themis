@@ -230,7 +230,7 @@ export function MemorySettingsSection({ focusKey, onSaved }: { focusKey?: string
     {error && <p role="alert" className="themis-form-error">{error}</p>}
     <SettingsGroup>
       <label className="themis-settings-check themis-memory-switch">
-        <span className="themis-settings-name">Remember things across chats<small>After each reply, the memory models (Settings › Models) keep what's worth knowing about you and your projects, and new chats start with it. Nothing here is committed to the project.</small></span>
+        <span className="themis-settings-name">Remember things across chats<small>As you speak, the memory models (Settings › Models) keep what's worth knowing about you and your projects, and new chats start with it. Nothing here is committed to the project.</small></span>
         <Switch checked={settings.enabled} onChange={event => void toggle({ enabled: event.target.checked })} />
       </label>
       {settings.enabled && settings.waiting && <p role="status" className="themis-settings-hint themis-memory-waiting">{waitingText(settings.waiting)}</p>}

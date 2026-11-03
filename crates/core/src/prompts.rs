@@ -172,6 +172,8 @@ pub const ASK_USER_LIMIT: &str = include_str!("../builtins/prompts/ask-user-limi
 /// The memory index at the start of a run (main agent and subagents); `{{global}}`,
 /// `{{project}}`.
 pub const SYSTEM_MEMORY: &str = include_str!("../builtins/prompts/system-memory.md");
+/// A memory the memory models changed while a run works, delivered into that run.
+pub const MEMORY_CHANGED_NOTE: &str = include_str!("../builtins/prompts/memory-changed-note.md");
 /// After the index: the memories relevant to the message, in full; `{{memories}}`.
 pub const SYSTEM_MEMORY_RELEVANT: &str =
     include_str!("../builtins/prompts/system-memory-relevant.md");

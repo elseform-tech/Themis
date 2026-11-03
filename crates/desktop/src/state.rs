@@ -318,6 +318,8 @@ struct AppStateInner {
     /// Steer inboxes of running runs, by chat, with the sink of the run (to
     /// announce steers put back in the queue when the run ends).
     steer_inboxes: std::sync::Mutex<HashMap<String, SteerEntry>>,
+    /// Each running chat's note channel: memory the memory models change mid-run reaches it.
+    live_notes: std::sync::Mutex<HashMap<String, Arc<themis_core::runtime::RunNotes>>>,
     /// Per-chat questions to the user (`questions/<chat id>.json`), loaded on first use.
     questions: std::sync::Mutex<HashMap<String, Vec<crate::types::Question>>>,
     questions_dir: PathBuf,
@@ -611,6 +613,7 @@ impl AppState {
                 queues_dir: app_dir.join(queue::QUEUES_DIR),
                 queue_lock: std::sync::Mutex::new(()),
                 steer_inboxes: std::sync::Mutex::new(HashMap::new()),
+                live_notes: std::sync::Mutex::new(HashMap::new()),
                 questions: std::sync::Mutex::new(HashMap::new()),
                 questions_dir: app_dir.join(questions::QUESTIONS_DIR),
                 subagents: std::sync::Mutex::new(HashMap::new()),

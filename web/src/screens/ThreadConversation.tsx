@@ -154,7 +154,7 @@ export function ThreadConversation({
         </div>
       )}
       {!running && !sending && <GoalWait retryAt={goalRetryAt} />}
-      {!running && !sending && memoryWorking && lastFinalId === undefined && <MemoryWorkingLine step={memoryWorking} />}
+      {memoryWorking && (running || sending || lastFinalId === undefined) && <MemoryWorkingLine step={memoryWorking} />}
       <div ref={endRef} />
       </div>
     </div>

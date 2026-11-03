@@ -245,7 +245,7 @@ project content, so a cloned repository's guidance reaches the agent, but it nev
 | `hooks.max_wakes` | Integer 0–10, default `3`: how many turns in a row a finished background [plugin hook](plugins.md) may start in an idle chat before you write again. `0` never starts one, and what a hook reports waits for the chat's next turn. Never in YOLO, while a goal runs, or after a turn that failed or that you stopped. A project or run layer may only lower it. |
 | `hooks.session_idle_minutes` | Integer 0–10080, default `60`: minutes a chat may sit idle before its session ends for [plugin hooks](plugins.md#sessions) (`SessionEnd`, then `SessionStart` when you write again). `0` never ends one for being idle. Captured when a run starts, so a change applies from the chat's next turn. |
 | `hooks.prompt_hook_calls` | Integer 0–1000, default `50`: model requests [prompt hooks](plugins.md#prompt-hooks) may make in a run, shared with its subagents. A guard that finds none left refuses the call. `0` turns prompt hooks off. Your own `runtime.jsonc` only: a project or run layer that sets it is refused. |
-| `memory.enabled` | Boolean, default `true`: after each turn the memory models keep memories across chats in the background (see [Memory](#memory)), and every run (and subagent) starts with the memory index and the memories relevant to its message. No agent has a memory tool. `false`: nothing is saved or read and no memory job runs; saved memories are kept, and the main agent's system message carries the one line in `crates/core/builtins/prompts/system-memory-off.md` instead, so it says it can't remember rather than promising to. Settings › Memory's switch writes it in your `runtime.jsonc` in place. A project or run layer may only set it to `false`. |
+| `memory.enabled` | Boolean, default `true`: as the person speaks the memory models keep memories across chats in the background (see [Memory](#memory)), and every run (and subagent) starts with the memory index and the memories relevant to its message. No agent has a memory tool. `false`: nothing is saved or read and no memory job runs; saved memories are kept, and the main agent's system message carries the one line in `crates/core/builtins/prompts/system-memory-off.md` instead, so it says it can't remember rather than promising to. Settings › Memory's switch writes it in your `runtime.jsonc` in place. A project or run layer may only set it to `false`. |
 | `memory.models` | 3 to 8 distinct model ids (`<provider>/<id>` for a model from `providers`), default `["muse-spark-1.3-contributor", "claude-haiku-5-5", "deepseek-v4.1-flash"]`: the models that run memory jobs, tried in order. A job moves to the next model on a provider error, a time-out (`compaction.request_timeout_seconds`), a rate limit (HTTP 429), an answer it can't read, or the daily cap. Settings › Models › Memory models edits the list in place (reorder, add, remove; never fewer than three). The defaults are cheap OpenCode Go models on three different wire protocols (Responses, Messages, Chat Completions), each with structured-output support in the models.dev catalog. Your own `runtime.jsonc` only: a project or run layer that sets it is refused. |
 | `memory.daily_budget_usd` | Number 0–100, default `0.5`: estimated dollars (models.dev list prices, as in Settings › Usage) all memory models may spend in a day together, counted from memory usage recorded since local midnight. A model the catalog lists as free is never held back; a model without a price counts as paid at $0. When every model is held back, the job waits until tomorrow without using up its tries. File only; your own `runtime.jsonc` only. |
 | `memory.consolidate_every_hours` | Integer 1–720, default `24`: at most one idle consolidation (merge duplicate memories, drop clearly stale ones) this often, recorded in app data `memory/consolidated.json`. File only; your own `runtime.jsonc` only. |
@@ -863,13 +863,16 @@ file keeps it in `source` and says what that content said, never as the person's
 Memory is kept by background jobs on the memory models (`memory.models`), never by the chat's
 model, which has no memory tool:
 
-- **The pass**, after each turn that ended (finished or incomplete) in which the person wrote
-  (their message or what they steered in; not a goal turn, a hook's wake or an automation),
-  except a trivial one (under 8 characters, such as "ok" or "thanks"). One request with no
-  tools reads that turn (the person's words, at most 8 KiB, and the final reply, at most
-  4 KiB) and both indexes, with the prompts `memory-auto-system.md` and `memory-auto-user.md`,
-  and may save, update or delete at most 3 memories. It runs on its own task and never holds
-  up the next message.
+- **The pass**, the moment the person says something: a message that starts a run, or one
+  steered into a running one (not a goal turn, a hook's wake or an automation), except a
+  trivial one (under 8 characters, such as "ok" or "thanks"). One request with no tools
+  reads that message (at most 8 KiB), the assistant reply it answers (the previous reply, or
+  what the agent said last in the run; at most 4 KiB) and both indexes, with the prompts
+  `memory-auto-system.md` and `memory-auto-user.md`, and may save, update (with an optional
+  `new_name`) or delete at most 3 memories. It runs on its own task alongside the run. When
+  it changes memory while that chat's run still works, the run gets the changes at its next
+  step as a runtime note (`memory-changed-note.md`), so a long run or a goal never works from
+  stale memory.
 - **Consolidation**, when the app has been idle (no run going) for 5 minutes after a job, at
   most once per `memory.consolidate_every_hours`: one request per scope with at least two
   memories (the global scope, then each project with a pass since the last one), with every

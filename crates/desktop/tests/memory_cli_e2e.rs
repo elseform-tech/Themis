@@ -149,6 +149,11 @@ impl Harness {
                 if system(&body).starts_with(SUBAGENT) {
                     return text_reply("Sub done.");
                 }
+                // A run that keeps working a moment: a read, answered slowly, then the reply.
+                if last_user(&body).contains("keep working") && last(&body)["role"] == "user" {
+                    return call("list_dir", json!({"directory_path":"."}))
+                        .set_delay(Duration::from_millis(1500));
+                }
                 if last_user(&body).starts_with("spawn-one") && last(&body)["role"] == "user" {
                     return call(
                         "spawn_subagents",
@@ -364,7 +369,8 @@ async fn the_memory_models_keep_memory_with_fallback_and_the_next_turn_reads_it(
         user.contains("<<<person\nBy the way, I always use pnpm."),
         "{user}"
     );
-    assert!(user.contains("<<<assistant-reply\nDone.\n>>>"), "{user}");
+    // The pass runs as the person speaks: a chat's first message answers no reply yet.
+    assert!(!user.contains("Done."), "{user}");
     assert!(pass["tools"].is_null(), "the pass offers no tools");
     // Which model did the job, as metadata only.
     let jobs = h.logged("job", 2).await;
@@ -502,6 +508,67 @@ async fn the_memory_models_keep_memory_with_fallback_and_the_next_turn_reads_it(
     for private in ["pnpm", "JavaScript", "package manager"] {
         assert!(!text.contains(private), "diagnostics hold {private:?}");
     }
+}
+
+/// Memory is read back live: what the memory models save while the agent still works reaches
+/// that same run at its next step, as a runtime note (not a subagent report, not the person).
+#[tokio::test(flavor = "multi_thread")]
+async fn a_memory_saved_while_the_agent_works_reaches_the_running_turn() {
+    let mut h = Harness::start(MODELS).await;
+    let id = h.new_chat();
+    let (lines, _) = h
+        .send(
+            &id,
+            "By the way, I always use pnpm. Please keep working on the build.",
+            Duration::from_secs(10),
+        )
+        .await;
+    assert_eq!(lines.len(), 1, "{lines:?}");
+    let main: Vec<Value> = h
+        .requests
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|body| {
+            !body["model"]
+                .as_str()
+                .unwrap_or_default()
+                .starts_with("mem-")
+        })
+        .cloned()
+        .collect();
+    let told = main
+        .iter()
+        .find(|body| {
+            body["messages"]
+                .to_string()
+                .contains("Memory changed while you work")
+        })
+        .expect("the running turn was told");
+    let note = told["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|message| {
+            message["content"]
+                .as_str()
+                .is_some_and(|text| text.starts_with("Memory changed while you work"))
+        })
+        .expect("the note is its own message, not wrapped as a subagent report")
+        .clone();
+    let text = note["content"].as_str().unwrap();
+    assert!(
+        text.contains("saved uses-pnpm (global): Uses pnpm, not npm"),
+        "{text}"
+    );
+    assert!(
+        text.contains("The person uses pnpm"),
+        "with what it says: {text}"
+    );
+    assert!(
+        !text.contains("[memory-note]"),
+        "the marker never reaches the model"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread")]

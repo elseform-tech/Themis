@@ -539,12 +539,36 @@ impl AppState {
             end: Arc::clone(&end_request),
             subagent: None,
         }));
-        // What the memory pass after this turn reads.
+        // Memory is kept as the person speaks: a pass starts the moment their message arrives
+        // (here, and for each one steered in below), with the reply it answers as context, in
+        // parallel with the run.
         let memory_turn = super::memory_auto::MemoryTurn {
             project_root: snapshot.work_root.clone(),
             config: run_configuration.clone(),
-            person: snapshot.person_text.clone().into_iter().collect(),
+            person: Vec::new(),
         };
+        if let Some(said) = &snapshot.person_text {
+            let answered = snapshot
+                .history
+                .iter()
+                .rev()
+                .find(|turn| {
+                    matches!(turn.role, themis_core::runtime::ConversationRole::Assistant)
+                        && !turn.text.trim().is_empty()
+                })
+                .map(|turn| turn.text.clone())
+                .unwrap_or_default();
+            self.spawn_memory_pass(
+                Arc::clone(sink),
+                thread_id.to_owned(),
+                run_id.to_owned(),
+                super::memory_auto::MemoryTurn {
+                    person: vec![said.clone()],
+                    ..memory_turn.clone()
+                },
+                answered,
+            );
+        }
         let checkpoint_note: themis_core::runtime::CheckpointNote = Arc::new(|| None);
         tools.push(Box::new(super::media_tool::AttachFileTool {
             state: self.clone(),
@@ -676,6 +700,11 @@ impl AppState {
         } else {
             themis_core::runtime::RunNotes::new()
         };
+        self.inner
+            .live_notes
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(thread_id.to_owned(), Arc::clone(&run_notes));
         let hook_runtime = themis_core::plugins::hooks::HookRuntime {
             hooks,
             run_id: run_id.to_owned(),
@@ -770,9 +799,10 @@ impl AppState {
             let pump_terminated = Arc::clone(&terminated);
             let run_model = snapshot.model.clone();
             let pump_root = snapshot.work_root.clone();
-            let mut memory_turn = memory_turn;
             let pump = tokio::spawn(async move {
                 let mut pending_text = String::new();
+                // What the agent said last in this run: the context of a message steered in.
+                let mut said_last = String::new();
                 while let Some(event) = events_rx.recv().await {
                     // Desktop admission already published Started before setup/preparation.
                     // Keep core's event for standalone callers without resetting live UI state.
@@ -781,6 +811,14 @@ impl AppState {
                     }
                     if let RunEvent::AssistantText(delta) = &event {
                         pending_text.push_str(delta);
+                        said_last.push_str(delta);
+                        if said_last.len() > 8 * 1024 {
+                            let cut = said_last.len() - 4 * 1024;
+                            let cut = (cut..said_last.len())
+                                .find(|at| said_last.is_char_boundary(*at))
+                                .unwrap_or(said_last.len());
+                            said_last.drain(..cut);
+                        }
                         pump_sink.emit_thread_event(&ThreadEventEnvelope {
                             thread_id: pump_thread.clone(),
                             run_id: pump_run.clone(),
@@ -808,7 +846,16 @@ impl AppState {
                         continue;
                     }
                     if let RunEvent::Steered { text } = &event {
-                        memory_turn.person.push(text.clone());
+                        pump_state.spawn_memory_pass(
+                            Arc::clone(&pump_sink),
+                            pump_thread.clone(),
+                            pump_run.clone(),
+                            super::memory_auto::MemoryTurn {
+                                person: vec![text.clone()],
+                                ..memory_turn.clone()
+                            },
+                            said_last.clone(),
+                        );
                     }
                     // A terminal event means the run is over: mark the thread
                     // idle BEFORE emitting, so observers (merge/discard,
@@ -894,20 +941,6 @@ impl AppState {
                             .await;
                     }
                     pump_sink.emit_thread_event(&envelope);
-                    if let RunEvent::Finished { result } | RunEvent::Incomplete { result } = &event
-                    {
-                        // The memory pass: on its own task, never holding up what comes next.
-                        pump_state.spawn_memory_pass(
-                            Arc::clone(&pump_sink),
-                            pump_thread.clone(),
-                            pump_run.clone(),
-                            std::mem::replace(
-                                &mut memory_turn,
-                                super::memory_auto::MemoryTurn::spent(),
-                            ),
-                            result.clone(),
-                        );
-                    }
                     if terminal {
                         // The next queued message or goal turn starts after
                         // observers saw this run end.

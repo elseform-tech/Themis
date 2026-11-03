@@ -388,6 +388,11 @@ impl AppState {
     /// Closes the run's steer inbox; steers it never read go back to the
     /// front of the queue, in order, to be sent as the next message.
     pub(super) fn close_steer_inbox(&self, thread_id: &str) {
+        self.inner
+            .live_notes
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(thread_id);
         // Same lock order as steering: queue, then inboxes.
         let _guard = self
             .inner

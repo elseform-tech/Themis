@@ -172,8 +172,9 @@ why, decisions about a project and where to find things outside it. Each memory 
 dated file in the app data folder, never in your project, so nothing is committed; rules the
 whole team shares still belong in the project's `AGENTS.md`.
 
-- **It keeps itself.** After each reply, a separate, steadier memory model reads that turn
-  in the background and saves what is worth keeping (a preference mentioned in passing, a
+- **It keeps itself.** The moment you say something (a new message, one you steer in while
+  the agent works, or an answer), a separate, steadier memory model reads it with the reply
+  it answers, in the background, and saves what is worth keeping (a preference mentioned in passing, a
   correction, a decision), updates a memory you just changed, or removes one that no longer
   holds. You never need to say "remember", and the chat's own model never has to save
   anything. It never stores secrets, and what a web page or file said is kept as "the page

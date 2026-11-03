@@ -44,23 +44,6 @@ pub(super) struct MemoryTurn {
     pub(super) person: Vec<String>,
 }
 
-impl MemoryTurn {
-    /// What is left once a turn's pass has been handed its turn: nothing to pass on.
-    pub(super) fn spent() -> Self {
-        Self {
-            project_root: PathBuf::new(),
-            config: RuntimeConfig {
-                memory: themis_core::configuration::MemoryConfig {
-                    enabled: false,
-                    ..Default::default()
-                },
-                ..RuntimeConfig::default()
-            },
-            person: Vec::new(),
-        }
-    }
-}
-
 /// One memory job.
 #[derive(Clone)]
 pub(super) enum Job {
@@ -483,6 +466,8 @@ impl AppState {
         };
         let by = job.kind();
         let mut changes = Vec::new();
+        // What each saved or updated memory now says, for a run still working.
+        let mut bodies: Vec<(String, String)> = Vec::new();
         for proposal in planned {
             let scope = proposal.scope();
             let Ok(store) = self.memory_store(scope, project_root.as_deref()) else {
@@ -545,6 +530,7 @@ impl AppState {
                         }
                     };
                     self.note_memory(verb, scope, memory.kind, &store, by);
+                    bodies.push((memory.name.clone(), memory.body.clone()));
                     changes.push(change(verb, &memory.name, &memory.description));
                 }
             }
@@ -565,12 +551,56 @@ impl AppState {
             if changes.is_empty() {
                 self.memory_working(sink, (thread_id, run_id), "done");
             }
+            self.tell_running_agent(thread_id, &changes, &bodies);
             self.announce_memory(sink, (thread_id, run_id), changes);
         }
         let _ = self
             .inner
             .diagnostics
             .append("memory", "job_done", "info", log);
+    }
+
+    /// Reads memory back into the chat's run while it still works: what changed reaches it at
+    /// its next step as a runtime note, so a long run (a goal) never works from stale memory.
+    fn tell_running_agent(
+        &self,
+        thread_id: &str,
+        changes: &[MemoryChange],
+        bodies: &[(String, String)],
+    ) {
+        if changes.is_empty() {
+            return;
+        }
+        let notes = self
+            .inner
+            .live_notes
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get(thread_id)
+            .cloned();
+        let Some(notes) = notes else { return };
+        let lines: Vec<String> = changes
+            .iter()
+            .map(|change| {
+                let body = bodies
+                    .iter()
+                    .find(|(name, _)| *name == change.name)
+                    .map(|(_, body)| format!("\n  {}", body.trim().replace('\n', "\n  ")))
+                    .unwrap_or_default();
+                format!(
+                    "- {} {} ({}): {}{body}",
+                    change.action, change.name, change.scope, change.description
+                )
+            })
+            .collect();
+        notes.deliver(format!(
+            "{}{}",
+            themis_core::runtime::MEMORY_NOTE_MARKER,
+            themis_core::prompts::fill(
+                themis_core::prompts::MEMORY_CHANGED_NOTE,
+                &[("changes", &lines.join("\n"))],
+            )
+        ));
     }
 
     /// Keeps a job every model failed for a later try, bounded; one with no tries left (or

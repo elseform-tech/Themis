@@ -790,6 +790,15 @@ async fn run_task_with_evidence_inner(
         }
         // Results of subagents (and other notes) join at the same boundary.
         for note in run_notes().map(|notes| notes.take()).unwrap_or_default() {
+            // Memory the memory models changed meanwhile: information as it stands, no reaction.
+            if let Some(memory) = note.strip_prefix(MEMORY_NOTE_MARKER) {
+                messages.push(ChatMessage {
+                    role: ChatRole::User,
+                    message_type: MessageType::Text,
+                    content: memory.trim_start().to_owned(),
+                });
+                continue;
+            }
             reaction_due = true;
             messages.push(ChatMessage {
                 role: ChatRole::User,
@@ -2646,6 +2655,9 @@ impl RunNotes {
             .collect()
     }
 }
+
+/// Starts a run note that carries memory changed mid-run, not a subagent's report.
+pub const MEMORY_NOTE_MARKER: &str = "[memory-note]";
 
 /// Runs `future` with `notes` as the run's note channel.
 pub async fn with_run_notes<F: std::future::Future>(notes: Arc<RunNotes>, future: F) -> F::Output {
