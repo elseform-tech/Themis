@@ -382,27 +382,22 @@ pub fn plan(proposals: Vec<Proposal>, known: &[Known], counts: &mut PassCounts) 
     let (deletes, saves): (Vec<_>, Vec<_>) = proposals
         .into_iter()
         .partition(|proposal| matches!(proposal, Proposal::Delete { .. }));
-    // A rename removes the memory it replaces, like a delete.
-    let mut saves_kept = Vec::new();
-    for proposal in saves {
-        if let Proposal::Save {
-            scope,
-            renamed_from: Some(old),
-            ..
-        } = &proposal
-        {
-            if exists(*scope, old).is_none() {
+    // A rename needs the memory it replaces; that one is removed only after the renamed
+    // memory is saved (by whoever applies the plan), so a dropped save never loses it.
+    let saves: Vec<Proposal> = saves
+        .into_iter()
+        .filter(|proposal| match proposal {
+            Proposal::Save {
+                scope,
+                renamed_from: Some(old),
+                ..
+            } if exists(*scope, old).is_none() => {
                 counts.missing += 1;
-                continue;
+                false
             }
-            planned.push(Proposal::Delete {
-                scope: *scope,
-                name: old.clone(),
-            });
-        }
-        saves_kept.push(proposal);
-    }
-    let saves = saves_kept;
+            _ => true,
+        })
+        .collect();
     for proposal in deletes {
         let twice = planned.iter().any(|earlier| {
             earlier.scope() == proposal.scope() && earlier.name() == proposal.name()
@@ -434,6 +429,7 @@ pub fn plan(proposals: Vec<Proposal>, known: &[Known], counts: &mut PassCounts) 
         let existing = exists(scope, &memory.name);
         let described_elsewhere = known.iter().any(|entry| {
             !(entry.scope == scope && entry.name == memory.name)
+                && !(entry.scope == scope && renamed_from.as_deref() == Some(entry.name.as_str()))
                 && !deleted(entry)
                 && same_text(&entry.description, &memory.description)
         });
@@ -558,15 +554,14 @@ mod tests {
         let (proposals, _) = parse(&answer(serde_json::json!([entry]))).unwrap();
         let mut counts = PassCounts::default();
         let planned = plan(proposals, &known, &mut counts);
-        assert_eq!(planned.len(), 2, "{planned:?}");
-        assert_eq!(
-            planned[0],
-            Proposal::Delete {
-                scope: MemoryScope::Project,
-                name: "server-token-bucket".into()
-            }
-        );
-        let (mode, scope, memory) = saved(&planned[1]);
+        assert_eq!(planned.len(), 1, "{planned:?}");
+        // The old one is only named for removal after the save, never removed ahead of it.
+        let Proposal::Save { renamed_from, .. } = &planned[0] else {
+            unreachable!()
+        };
+        assert_eq!(renamed_from.as_deref(), Some("server-token-bucket"));
+        assert_eq!(counts.duplicate, 0);
+        let (mode, scope, memory) = saved(&planned[0]);
         assert_eq!(
             (mode, scope, memory.name.as_str()),
             (

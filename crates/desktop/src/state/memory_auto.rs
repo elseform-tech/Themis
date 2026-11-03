@@ -513,10 +513,26 @@ impl AppState {
                     }
                     Err(_) => counts.failed += 1,
                 },
-                pass::Proposal::Save { mode, memory, .. } => {
+                pass::Proposal::Save {
+                    mode,
+                    memory,
+                    renamed_from,
+                    ..
+                } => {
                     if store.save(&memory, mode).is_err() {
                         counts.failed += 1;
                         continue;
+                    }
+                    // A rename removes the old memory only once the new one is saved.
+                    if let Some(old) = renamed_from {
+                        match store.delete(&old, None) {
+                            Ok(gone) => {
+                                counts.deleted += 1;
+                                self.note_memory("deleted", scope, gone.kind, &store, by);
+                                changes.push(change("removed", &old, &gone.description));
+                            }
+                            Err(_) => counts.failed += 1,
+                        }
                     }
                     let verb = match mode {
                         SaveMode::Create => {
