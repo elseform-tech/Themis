@@ -861,12 +861,13 @@ file keeps it in `source` and says what that content said, never as the person's
 ### Plan records
 
 Plans are not memories. Each piece of work the person approved has one plan record,
-`memory/projects/<hash>/plans/<name>.md` (project only; at most 50 per project, 16 KiB per
-file), with a header of `name`, `title` (one line, at most 120), `status` (`approved`,
+`memory/projects/<hash>/plans/<name>.md` (project only; at most 50 per project, 32 KiB per
+file; a record trims its oldest changes, then its last evidence lines, lessons and results,
+rather than grow past that), with a header of `name`, `title` (one line, at most 120), `status` (`approved`,
 `in progress` while a goal builds it, `done`), `updated` and, while a chat's goal builds it,
 `chat` (that chat's id), then five sections: **Plan** (the reply the person approved, copied
 word for word by Themis, at most 8 KiB), **Changes** (one line per change, at most 20),
-**Results** (at most 2 KiB), **Evidence** (one line per requirement, at most 12) and
+**Results** (at most 2 KiB), **Evidence** (one line per requirement, at most 12 of 1000 characters) and
 **Lessons** (at most 3). `plans/PLANS.md` is their index (`- name (status, date): title`).
 Records are read as untrusted: a file whose header or sections don't fit is skipped, secrets
 are hidden, and the sections are found from the end so a plan that quotes a heading keeps it.

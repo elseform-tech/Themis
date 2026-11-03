@@ -22,14 +22,17 @@ pub const PLANS_INDEX_FILE: &str = "PLANS.md";
 pub const MAX_PLANS: usize = 50;
 /// Most bytes of the plan text kept; past it the end is cut.
 pub const MAX_PLAN_BYTES: usize = 8 * 1024;
-/// Most bytes of a record file; a larger file is not read.
-pub const MAX_RECORD_BYTES: u64 = 16 * 1024;
+/// Most bytes of a record file; a larger file is not read. Every record the limits below allow
+/// fits (plan 8 KiB, changes 20 × 400, results 2 KiB, evidence 12 × 1000, lessons 3 × 400).
+pub const MAX_RECORD_BYTES: u64 = 32 * 1024;
 /// Most "Change: …" lines one record keeps; the oldest go first.
 pub const MAX_CHANGES: usize = 20;
 /// Most characters of one change, evidence or lesson line.
 pub const MAX_LINE_CHARS: usize = 400;
 /// Most bytes of the results.
 pub const MAX_RESULTS_BYTES: usize = 2 * 1024;
+/// Most characters of one evidence line: a proof can be long.
+pub const MAX_EVIDENCE_CHARS: usize = 1000;
 /// Most evidence lines.
 pub const MAX_EVIDENCE: usize = 12;
 /// Most lessons.
@@ -193,6 +196,7 @@ impl PlanRecord {
             self.changes.drain(..over);
         }
         self.updated = today.to_owned();
+        self.fit();
         (applied, missed)
     }
 
@@ -203,23 +207,43 @@ impl PlanRecord {
         if !results.trim().is_empty() {
             self.results = block(results, MAX_RESULTS_BYTES);
         }
-        let lines = |items: &[String], max: usize| -> Vec<String> {
+        let lines = |items: &[String], max: usize, chars: usize| -> Vec<String> {
             items
                 .iter()
-                .map(|item| line(&strip_secrets(item), MAX_LINE_CHARS))
+                .map(|item| line(&strip_secrets(item), chars))
                 .filter(|item| !item.is_empty())
                 .take(max)
                 .collect()
         };
-        let evidence = lines(evidence, MAX_EVIDENCE);
+        let evidence = lines(evidence, MAX_EVIDENCE, MAX_EVIDENCE_CHARS);
         if !evidence.is_empty() {
             self.evidence = evidence;
         }
-        let lessons = lines(lessons, MAX_LESSONS);
+        let lessons = lines(lessons, MAX_LESSONS, MAX_LINE_CHARS);
         if !lessons.is_empty() {
             self.lessons = lessons;
         }
         self.updated = today.to_owned();
+        self.fit();
+    }
+
+    /// Keeps the record within [`MAX_RECORD_BYTES`], whatever its characters: the oldest
+    /// changes go first, then the last evidence lines, the last lessons, and finally the
+    /// results. The plan itself (at most [`MAX_PLAN_BYTES`]) always stays.
+    fn fit(&mut self) {
+        while serialize(self).len() as u64 > MAX_RECORD_BYTES {
+            if !self.changes.is_empty() {
+                self.changes.remove(0);
+            } else if !self.evidence.is_empty() {
+                self.evidence.pop();
+            } else if !self.lessons.is_empty() {
+                self.lessons.pop();
+            } else if !self.results.is_empty() {
+                self.results.clear();
+            } else {
+                break;
+            }
+        }
     }
 
     /// The record's index line: `- name (status, date): title`.
@@ -333,11 +357,11 @@ pub fn parse(text: &str) -> Result<PlanRecord, MemoryError> {
         .ok_or_else(|| MemoryError("a plan record needs `## Plan`".into()))?
         .trim()
         .to_owned();
-    let list = |section: &str| -> Vec<String> {
+    let list = |section: &str, chars: usize| -> Vec<String> {
         section
             .lines()
             .filter_map(|row| row.strip_prefix("- "))
-            .map(|item| line(item, MAX_LINE_CHARS))
+            .map(|item| line(item, chars))
             .filter(|item| !item.is_empty())
             .collect()
     };
@@ -355,10 +379,19 @@ pub fn parse(text: &str) -> Result<PlanRecord, MemoryError> {
         updated: field("updated")?,
         chat: fields.get("chat").cloned(),
         plan,
-        changes: list(&sections[0]).into_iter().take(MAX_CHANGES).collect(),
+        changes: list(&sections[0], MAX_LINE_CHARS)
+            .into_iter()
+            .take(MAX_CHANGES)
+            .collect(),
         results: cut(&results, MAX_RESULTS_BYTES),
-        evidence: list(&sections[2]).into_iter().take(MAX_EVIDENCE).collect(),
-        lessons: list(&sections[3]).into_iter().take(MAX_LESSONS).collect(),
+        evidence: list(&sections[2], MAX_EVIDENCE_CHARS)
+            .into_iter()
+            .take(MAX_EVIDENCE)
+            .collect(),
+        lessons: list(&sections[3], MAX_LINE_CHARS)
+            .into_iter()
+            .take(MAX_LESSONS)
+            .collect(),
     };
     record.validate()?;
     Ok(record)
@@ -647,7 +680,7 @@ pub fn parse_op(entry: &Value) -> Option<Result<PlanOp, OpRefused>> {
         Some("done") => PlanOp::Done {
             name,
             results: text(entry, "results").unwrap_or_default(),
-            evidence: texts(entry, "evidence", MAX_EVIDENCE),
+            evidence: texts(entry, "evidence", MAX_EVIDENCE).into_iter().collect(),
             lessons: texts(entry, "lessons", MAX_LESSONS),
         },
         Some("delete") => PlanOp::Delete { name },
@@ -810,6 +843,24 @@ mod tests {
         assert!(store.index().contains("(done, 2026-11-04)"));
         store.delete("splitter-app").unwrap();
         assert_eq!(store.index(), "");
+    }
+
+    #[test]
+    fn the_largest_record_the_limits_allow_still_saves_and_reads_back() {
+        let wide = |n: usize| "é".repeat(n);
+        let mut record =
+            PlanRecord::new("big", &wide(500), &wide(9000), Some("chat-1"), "2026-11-03");
+        for _ in 0..30 {
+            record.change(&wide(900), &[], "2026-11-04");
+        }
+        let many = |count: usize, chars: usize| vec![wide(chars); count];
+        record.done(&wide(5000), &many(20, 2000), &many(9, 900), "2026-11-05");
+        assert_eq!(record.evidence[0].chars().count(), MAX_EVIDENCE_CHARS);
+        record.validate().unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let store = PlanStore::new(dir.path(), "project-abc").unwrap();
+        store.save(&record, true).unwrap();
+        assert_eq!(store.read("big").unwrap().unwrap(), record);
     }
 
     #[test]
