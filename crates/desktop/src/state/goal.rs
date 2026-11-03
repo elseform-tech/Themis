@@ -39,6 +39,9 @@ const BUSY_RETRY: Duration = Duration::from_secs(20);
 const MAX_NOTE_PART_CHARS: usize = 800;
 /// History items read per page while looking for the person's messages.
 const HISTORY_PAGE_ITEMS: usize = 2_000;
+/// How long after a goal completes Themis waits for the memory pass before filling the plan
+/// record's results from the closing reply.
+const PLAN_RESULTS_WAIT: Duration = Duration::from_secs(20);
 /// Most history items one goal's snag scan reads.
 const SNAG_SCAN_ITEMS: usize = 6_000;
 /// Most snags a goal-complete pass reads.
@@ -786,9 +789,7 @@ impl AppState {
         }
         // The reply it answered (the plan, when there is one) goes as the reply answered, so a
         // plan record copies it whole.
-        let answered = transcript
-            .last_turn_text(thread_id, "assistant")
-            .unwrap_or_default();
+        let answered = transcript.last_reply_text(thread_id);
         self.spawn_goal_memory_event(sink, thread_id, "a goal was created", (content, answered));
     }
 
@@ -827,6 +828,40 @@ impl AppState {
         self.runtime_configuration(Some(std::path::Path::new(&root)), None)
             .map(|resolved| resolved.config.goal_qa_turns)
             .unwrap_or(true)
+    }
+
+    /// Fills the results of the plan record this chat's goal built from the closing reply, if
+    /// they are still empty a moment after the goal-complete memory pass had its chance; logs a
+    /// record left without results or lessons.
+    async fn plan_results_from_reply(&self, thread_id: &str, reply: &str) {
+        let Some(root) = self.thread_project_root(thread_id).await else {
+            return;
+        };
+        let (state, thread_id, reply) = (self.clone(), thread_id.to_owned(), reply.to_owned());
+        tokio::spawn(async move {
+            // The goal-complete pass runs on its own task; give it time to write first.
+            tokio::time::sleep(PLAN_RESULTS_WAIT).await;
+            let _guard = state.inner.memory_job_lock.lock().await;
+            let Ok(store) = state.plan_store(std::path::Path::new(&root)) else {
+                return;
+            };
+            let Some(mut record) = store.for_chat(&thread_id) else {
+                return;
+            };
+            let filled = record.results.is_empty() && !reply.trim().is_empty();
+            if filled {
+                record.done(&reply, &[], &[], &themis_core::memory::today());
+                let _ = store.save(&record, false);
+            }
+            if filled || record.lessons.is_empty() {
+                let _ = state.inner.diagnostics.append(
+                    "memory",
+                    "plan",
+                    "info",
+                    json!({"thread_id": thread_id, "op": "done", "by": "goal_reply", "outcome": "no_done", "results_filled": filled, "lessons": record.lessons.len()}),
+                );
+            }
+        });
     }
 
     /// Marks the plan record this chat's goal built as done, with `evidence`.
@@ -1152,6 +1187,13 @@ impl AppState {
         let Some(goal) = self.goal_for(&thread_id) else {
             return;
         };
+        // The turn that completed the goal: its closing reply says what was built and how it was
+        // checked, the record's results when the memory pass gives none.
+        if goal.status == GoalStatus::Reached {
+            if let ThreadEvent::Finished { result, .. } = &terminal {
+                self.plan_results_from_reply(&thread_id, result).await;
+            }
+        }
         if goal.status != GoalStatus::Running {
             return;
         }

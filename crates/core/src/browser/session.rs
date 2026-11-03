@@ -1491,6 +1491,33 @@ impl ChatBrowser {
         }
     }
 
+    /// Moves the agent's pointer to `to` the way a hand would: the view is told where it goes
+    /// and animates the cursor over [`GLIDE`], while the page gets the moves along an eased
+    /// path. From nowhere (no move yet) it goes straight there.
+    async fn glide(&self, cdp: &Cdp, session: &str, to: (f64, f64)) -> Result<(), String> {
+        let from = self
+            .pointer
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .replace(to);
+        let path = from.map_or_else(Vec::new, |from| glide_path(from, to));
+        if path.is_empty() {
+            return mouse(
+                cdp,
+                session,
+                json!({"type": "mouseMoved", "x": to.0, "y": to.1}),
+            )
+            .await;
+        }
+        self.publish_state().await;
+        let pause = GLIDE / path.len() as u32;
+        for (x, y) in path {
+            mouse(cdp, session, json!({"type": "mouseMoved", "x": x, "y": y})).await?;
+            tokio::time::sleep(pause).await;
+        }
+        Ok(())
+    }
+
     /// Sends the current state to the Workspace view (never waits on an action).
     async fn publish_state(&self) {
         if self.updates.receiver_count() == 0 {
@@ -1905,8 +1932,8 @@ impl ChatBrowser {
         let mut inner = self.inner.lock().await;
         let (cdp, session, backend) = self.element(&inner, reference).await?;
         let (x, y) = element_center(&cdp, &session, backend).await?;
-        click_at(&cdp, &session, x, y, if double { 2 } else { 1 }).await?;
-        *self.pointer.lock().unwrap_or_else(|e| e.into_inner()) = Some((x, y));
+        self.glide(&cdp, &session, (x, y)).await?;
+        press_at(&cdp, &session, x, y, if double { 2 } else { 1 }).await?;
         self.settle(&inner, false).await;
         let report = self.report(&mut inner, None).await;
         drop(inner);
@@ -1942,8 +1969,8 @@ impl ChatBrowser {
                 press_at(&browser.cdp, &session, held_x, held_y, clicks).await?;
             }
             _ => {
-                click_at(&browser.cdp, &session, x, y, clicks).await?;
-                *self.pointer.lock().unwrap_or_else(|e| e.into_inner()) = Some((x, y));
+                self.glide(&browser.cdp, &session, (x, y)).await?;
+                press_at(&browser.cdp, &session, x, y, clicks).await?;
             }
         }
         self.settle(&inner, false).await;
@@ -2038,14 +2065,7 @@ impl ChatBrowser {
             self.move_holding(&browser.cdp, &session, from, (x, y))
                 .await?;
         } else {
-            browser
-                .cdp
-                .call(
-                    Some(&session),
-                    "Input.dispatchMouseEvent",
-                    json!({"type": "mouseMoved", "x": x, "y": y}),
-                )
-                .await?;
+            self.glide(&browser.cdp, &session, (x, y)).await?;
         }
         *self.pointer.lock().unwrap_or_else(|e| e.into_inner()) = Some((x, y));
         self.settle(&inner, false).await;
@@ -3441,6 +3461,33 @@ pub enum DragEnd {
 
 /// Moves between the two ends, enough for a page to see the distance covered.
 const DRAG_STEPS: u32 = 12;
+/// How long the agent's pointer takes to travel to where it acts: the view animates the
+/// cursor over the same time, and the page gets the moves on the way.
+pub const GLIDE: Duration = Duration::from_millis(240);
+/// Pixels per glide step, and the bounds on steps.
+const GLIDE_STEP_PX: f64 = 40.0;
+const GLIDE_MIN_STEPS: u32 = 4;
+const GLIDE_MAX_STEPS: u32 = 12;
+
+/// The points a glide from `from` to `to` passes through, eased in and out, ending exactly at
+/// `to`; empty when the pointer is already there.
+fn glide_path(from: (f64, f64), to: (f64, f64)) -> Vec<(f64, f64)> {
+    let distance = (to.0 - from.0).hypot(to.1 - from.1);
+    if distance < 2.0 {
+        return Vec::new();
+    }
+    let steps = ((distance / GLIDE_STEP_PX).ceil() as u32).clamp(GLIDE_MIN_STEPS, GLIDE_MAX_STEPS);
+    (1..=steps)
+        .map(|step| {
+            let t = f64::from(step) / f64::from(steps);
+            let eased = 0.5 - 0.5 * (std::f64::consts::PI * t).cos();
+            (
+                from.0 + (to.0 - from.0) * eased,
+                from.1 + (to.1 - from.1) * eased,
+            )
+        })
+        .collect()
+}
 const DRAG_STEP_PAUSE: Duration = Duration::from_millis(16);
 /// A page starts native drag and drop a moment after the mouse leaves; waits this long at most.
 const DRAG_START_WAIT: Duration = Duration::from_millis(250);
@@ -3530,16 +3577,6 @@ async fn drag_gesture(
     let native = intercepted.is_some();
     finish_drag(cdp, session, intercepted, to).await?;
     Ok(native)
-}
-
-async fn click_at(cdp: &Cdp, session: &str, x: f64, y: f64, clicks: u32) -> Result<(), String> {
-    cdp.call(
-        Some(session),
-        "Input.dispatchMouseEvent",
-        json!({"type": "mouseMoved", "x": x, "y": y}),
-    )
-    .await?;
-    press_at(cdp, session, x, y, clicks).await
 }
 
 async fn press_at(cdp: &Cdp, session: &str, x: f64, y: f64, clicks: u32) -> Result<(), String> {
@@ -3633,6 +3670,26 @@ async fn password_fields(
 
 #[cfg(test)]
 mod tests {
+    /// A glide eases in and out along the straight line, ends exactly on the target, takes a
+    /// bounded number of steps whatever the distance, and is nothing when already there.
+    #[test]
+    fn a_glide_eases_to_the_target_in_bounded_steps() {
+        assert!(super::glide_path((10.0, 10.0), (11.0, 10.5)).is_empty());
+        let path = super::glide_path((0.0, 0.0), (400.0, 0.0));
+        assert_eq!(path.len(), 10);
+        assert_eq!(*path.last().unwrap(), (400.0, 0.0));
+        let steps: Vec<f64> = path.windows(2).map(|pair| pair[1].0 - pair[0].0).collect();
+        assert!(steps.iter().all(|step| *step > 0.0), "{path:?}");
+        // Slow at both ends, fastest in the middle.
+        assert!(
+            path[0].0 < steps[4] && steps[steps.len() - 1] < steps[4],
+            "{path:?}"
+        );
+        assert!(path.iter().all(|point| point.1 == 0.0));
+        assert_eq!(super::glide_path((0.0, 0.0), (30.0, 0.0)).len(), 4);
+        assert_eq!(super::glide_path((0.0, 0.0), (5000.0, 5000.0)).len(), 12);
+    }
+
     #[test]
     fn a_relative_move_reports_its_distance_from_a_start_outside_the_page() {
         const PAGE: (f64, f64) = (1280.0, 800.0);

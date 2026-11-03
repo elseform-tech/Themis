@@ -194,7 +194,7 @@ whole team shares still belong in the project's `AGENTS.md`.
   project's, never another project's.
 - **What the agent sees.** Each turn starts with a one-line index of them (at most 200
   lines) and, in full, the few whose names and descriptions share words with your message.
-  Memories carry their date, and the agent is told they may be out of date. The context
+  The agent starts from memory before reading files. What you want (your preferences, decisions and approved plans) takes precedence over what the files do now, so where the code disagrees, the code is changed, unless you change your mind. Facts about the state of things carry their date and are checked against the files. The context
   meter shows what they take as **Memory**.
 - **In the chat.** Inside the reply, above its footer, a step with the Memory icon: while the
   memory models read the turn it shimmers **Checking what to remember…**; it goes when

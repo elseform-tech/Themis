@@ -239,8 +239,12 @@ function ConversationRow({
  *  Ran python3 check.py"). It stays folded during a run, so the chat doesn't jump with each call. */
 export function ToolGroup({ messages, activeRunId, skills, plugins }: { messages: ChatMessage[]; activeRunId: string | undefined; skills: PromptSkill[]; plugins: PromptPlugin[] }) {
   const failed = messages.filter(message => message.tool?.ok === false).length;
+  // Screenshots and recordings show under the line while it is folded, not two folds deep.
+  const [open, setOpen] = useState(false);
+  const shots = messages.flatMap(message => message.tool?.media ? [message.tool.media] : []);
   return (
-    <details className="themis-tool-group">
+    <>
+    <details className="themis-tool-group" onToggle={event => setOpen(event.currentTarget.open)}>
       <summary>
         <span className="themis-tool-chevron" aria-hidden="true">›</span>
         <span title={`${messages.length} tool call${messages.length === 1 ? "" : "s"}`}>{describeTools(messages, activeRunId !== undefined)}</span>
@@ -250,6 +254,12 @@ export function ToolGroup({ messages, activeRunId, skills, plugins }: { messages
         {messages.map(message => <Message key={message.id} message={message} activeRunId={activeRunId} skills={skills} plugins={plugins} />)}
       </div>
     </details>
+    {!open && shots.length > 0 && (
+      <div className="themis-tool-shots" aria-label="Screenshots">
+        {shots.map(media => <ToolMediaPreview key={media.path} media={media}>{null}</ToolMediaPreview>)}
+      </div>
+    )}
+    </>
   );
 }
 

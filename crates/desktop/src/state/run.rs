@@ -553,16 +553,13 @@ impl AppState {
                 .filter(|text| !self.goal_takes_words(thread_id, text))
                 .into_iter()
                 .collect(),
-            answered: snapshot
-                .history
-                .iter()
-                .rev()
-                .find(|turn| {
-                    matches!(turn.role, themis_core::runtime::ConversationRole::Assistant)
-                        && !turn.text.trim().is_empty()
-                })
-                .map(|turn| turn.text.clone())
-                .unwrap_or_default(),
+            // The whole reply the person answered, not just its closing paragraph.
+            answered: crate::transcript::reply_before(snapshot.history.iter().rev().map(|turn| {
+                (
+                    matches!(turn.role, themis_core::runtime::ConversationRole::Assistant),
+                    turn.text.as_str(),
+                )
+            })),
             event: None,
         };
         let checkpoint_note: themis_core::runtime::CheckpointNote = Arc::new(|| None);

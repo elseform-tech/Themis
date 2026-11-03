@@ -28,3 +28,6 @@
 .themis-tool-media { margin: 6px 0 10px; }
 .themis-tool-media .themis-media-frame { width: 160px; height: auto; min-width: 0; max-height: 120px; aspect-ratio: 16 / 10; }
 .themis-tool-media .themis-media-frame img, .themis-tool-media .themis-media-frame video { width: 100%; max-width: none; height: 100%; object-fit: cover; object-position: top; }
+/* A folded group of steps shows its screenshots under its line. */
+.themis-tool-shots { display: flex; flex-wrap: wrap; gap: 8px; margin: 2px 0 8px 18px; }
+.themis-tool-shots .themis-tool-media { margin: 0; }

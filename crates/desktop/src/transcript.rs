@@ -14,6 +14,23 @@ pub mod history_pages;
 mod scale_tests;
 mod source_exports;
 
+/// Most rows [`Transcript::last_reply_text`] reads.
+pub const REPLY_ROWS: usize = 64;
+
+/// The whole reply before the latest message, from turns newest first (`(is_assistant,
+/// text)`): the person's trailing messages are skipped, then the assistant messages up to the
+/// message before them are joined oldest first.
+pub fn reply_before<'a>(newest_first: impl Iterator<Item = (bool, &'a str)>) -> String {
+    let mut parts: Vec<&str> = newest_first
+        .skip_while(|(assistant, _)| !assistant)
+        .take_while(|(assistant, _)| *assistant)
+        .map(|(_, text)| text.trim())
+        .filter(|text| !text.is_empty())
+        .collect();
+    parts.reverse();
+    parts.join("\n\n")
+}
+
 // Items live briefly while being read or saved, and most of them are events.
 #[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -451,6 +468,28 @@ impl TranscriptStore {
             .optional()
             .ok()
             .flatten()
+    }
+
+    /// The whole assistant reply before the person's latest message: every assistant message of
+    /// that turn, in order (a reply is saved as several, its closing summary last). Reads at most
+    /// [`REPLY_ROWS`] rows.
+    pub fn last_reply_text(&self, thread_id: &str) -> String {
+        let connection = self.connection.lock().unwrap_or_else(|e| e.into_inner());
+        let Ok(mut statement) = connection.prepare(
+            "SELECT role,text FROM context_turns WHERE thread_id=?1 ORDER BY seq DESC LIMIT ?2",
+        ) else {
+            return String::new();
+        };
+        let rows: Vec<(String, String)> = statement
+            .query_map(params![thread_id, REPLY_ROWS as i64], |row| {
+                Ok((row.get(0)?, row.get(1)?))
+            })
+            .map(|rows| rows.flatten().collect())
+            .unwrap_or_default();
+        reply_before(
+            rows.iter()
+                .map(|(role, text)| (role == "assistant", text.as_str())),
+        )
     }
 
     /// The chat's latest checkpoint summary, if it has one.
@@ -1226,5 +1265,36 @@ mod history_after_tests {
             .history_after("chat", all[3].0, 100)
             .unwrap()
             .is_empty());
+    }
+}
+
+#[cfg(test)]
+mod reply_tests {
+    use super::reply_before;
+
+    /// The approved plan is the whole reply before the person's message, not its closing
+    /// paragraph alone.
+    #[test]
+    fn the_reply_before_the_latest_message_is_whole() {
+        // Newest first: the person's approval, then the plan reply's parts, then older turns.
+        let rows = [
+            (false, "Approved, make it a goal."),
+            (true, "This turn only delivered the plan."),
+            (true, ""),
+            (true, "## Plan\n1. Waves\n2. HUD"),
+            (false, "Plan an FPS."),
+            (true, "Older reply."),
+        ];
+        assert_eq!(
+            reply_before(rows.into_iter()),
+            "## Plan\n1. Waves\n2. HUD\n\nThis turn only delivered the plan."
+        );
+        assert_eq!(reply_before([(false, "hi")].into_iter()), "");
+        assert_eq!(reply_before(std::iter::empty()), "");
+        // No message after it: the latest reply.
+        assert_eq!(
+            reply_before([(true, "b"), (true, "a"), (false, "q")].into_iter()),
+            "a\n\nb"
+        );
     }
 }
