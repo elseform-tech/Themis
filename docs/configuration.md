@@ -863,18 +863,18 @@ file keeps it in `source` and says what that content said, never as the person's
 Memory is kept by background jobs on the memory models (`memory.models`), never by the chat's
 model, which has no memory tool:
 
-- **The pass**, the moment the person says something: a message that starts a run, or one
-  steered into a running one (not a goal turn, a hook's wake or an automation), except a
-  trivial one (under 8 characters, such as "ok" or "thanks"). One request with no tools
-  reads that message (at most 8 KiB), the assistant reply it answers (the previous reply, or
-  what the agent said last in the run; at most 4 KiB), both indexes and, in full, the memories
-  the message may touch (at most 5, 8 KiB, chosen like a run's), so an update keeps what still
-  holds, with the prompts
-  `memory-auto-system.md` and `memory-auto-user.md`, and may save, update (with an optional
-  `new_name`) or delete at most 3 memories. It runs on its own task alongside the run. When
-  it changes memory while that chat's run still works, the run gets the changes at its next
-  step as a runtime note (`memory-changed-note.md`), so a long run or a goal never works from
-  stale memory.
+- **The pass**, when a turn's reply is done and the person said something in that turn (the
+  message that started it, what they steered in, an answer to the agent's question; in a goal,
+  after each goal turn they spoke in; never a hook's wake or an automation), except a trivial
+  one (under 8 characters, such as "ok" or "thanks"). One request with no tools and the
+  least thinking the model allows reads the reply their message answered, what they said (at
+  most 8 KiB), the reply that ended the turn (each reply at most 4 KiB), both indexes and, in
+  full, the memories the turn may touch (at most 5, 8 KiB, chosen like a run's), so an update
+  keeps what still holds, with the prompts `memory-auto-system.md` and `memory-auto-user.md`,
+  and may save, update (with an optional `new_name`) or delete at most 3 memories. It runs on
+  its own task and never holds up the next message. When it changes memory while that chat's
+  next run already works, that run gets the changes at its next step as a runtime note
+  (`memory-changed-note.md`).
 - **Event passes**, on events that matter without the person's words, each with the event's
   content (at most 8 KiB): a goal completed (its objective, "Also asked" lines and evidence:
   what was built, where, how to run and test it, what was verified), the goal edited by the
