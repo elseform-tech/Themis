@@ -98,6 +98,38 @@ describe("chat overview box", () => {
     } finally { vi.useRealTimers(); }
   });
 
+  it("asks again when its start failed, even if Workspace's last frame came in", async () => {
+    const { result } = renderHook(() => useOverview("t1", media));
+    await act(async () => {});
+    const { browserPreview } = await import("../lib/browser");
+    vi.mocked(browserPreview).mockClear();
+    vi.mocked(browserPreview).mockRejectedValueOnce(new Error("Page.startScreencast: Screencast is already active"));
+    vi.useFakeTimers();
+    try {
+      render(<OverviewBox threadId="t1" overview={result.current} onOpenMedia={() => {}} />);
+      await act(async () => { vi.advanceTimersByTime(300); });
+      // A frame of the stream Workspace is still stopping.
+      act(() => { streamUpdate?.({ kind: "frame", data: "OLD", width: 800, height: 600 }); });
+      await act(async () => { vi.advanceTimersByTime(2000); });
+      expect(browserPreview).toHaveBeenCalledTimes(2);
+    } finally { vi.useRealTimers(); }
+  });
+
+  it("does not ask again once the preview draws", async () => {
+    const { result } = renderHook(() => useOverview("t1", media));
+    await act(async () => {});
+    const { browserPreview } = await import("../lib/browser");
+    vi.mocked(browserPreview).mockClear();
+    vi.useFakeTimers();
+    try {
+      render(<OverviewBox threadId="t1" overview={result.current} onOpenMedia={() => {}} />);
+      await act(async () => { vi.advanceTimersByTime(300); });
+      act(() => { streamUpdate?.({ kind: "frame", data: "NEW", width: 440, height: 275 }); });
+      await act(async () => { vi.advanceTimersByTime(2000); });
+      expect(browserPreview).toHaveBeenCalledTimes(1);
+    } finally { vi.useRealTimers(); }
+  });
+
   it("folds to its icons and remembers it", async () => {
     const { result, rerender } = renderHook(() => useOverview("t1", media));
     await act(async () => {});

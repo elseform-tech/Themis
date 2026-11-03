@@ -20,15 +20,37 @@ const clock = (seconds: number) => `${Math.floor(seconds / 60)}:${String(seconds
 
 /** Mouse moves without a pressed button are sent at most this often. */
 const MOVE_INTERVAL_MS = 50;
+/** The page is laid out again only once the person stops resizing the panel this long. */
+const RESIZE_SETTLE_MS = 250;
+
+type Size = { width: number; height: number };
+
+/** Device pixels per CSS pixel of this screen, as the backend takes it (1 to 3). */
+const pixelRatio = () => Math.min(3, Math.max(1, window.devicePixelRatio || 1));
+
+/** Where the page sits in the panel: scaled down to fit when it is laid out larger than
+ *  the panel (never up, so a frame is never stretched), centred across and at the top. */
+export function pageRect(panel: Size | null, page: Size | null): { left: number; top: number; width: number; height: number; scale: number } {
+  if (!panel || !page || page.width <= 0 || page.height <= 0) return { left: 0, top: 0, width: panel?.width ?? 0, height: panel?.height ?? 0, scale: 1 };
+  const scale = Math.min(1, panel.width / page.width, panel.height / page.height);
+  const tidy = (value: number) => Math.round(value * 100) / 100;
+  const width = tidy(page.width * scale);
+  return { left: tidy(Math.max(0, (panel.width - width) / 2)), top: 0, width, height: tidy(page.height * scale), scale };
+}
 
 /**
  * The chat's built-in browser: the same page the agent drives, streamed from
  * the backend. The person and the agent use it at the same time. Nothing here
  * changes project files.
  */
-export function BrowserView({ threadId }: { threadId: string }) {
+export function BrowserView({ threadId, running = false }: { threadId: string; running?: boolean }) {
   const [state, setState] = useState<BrowserState | null>(null);
   const [frame, setFrame] = useState<string | null>(null);
+  // The page's CSS size (from its frames) and the panel's, to place and aim at the page.
+  const [page, setPage] = useState<Size | null>(null);
+  const [panel, setPanel] = useState<Size | null>(null);
+  const runningNow = useRef(running);
+  runningNow.current = running;
   const [address, setAddress] = useState("");
   const [editing, setEditing] = useState(false);
   const [devtools, setDevtools] = useState<string | null>(null);
@@ -54,12 +76,14 @@ export function BrowserView({ threadId }: { threadId: string }) {
 
   useEffect(() => {
     let live = true;
-    setState(null); setFrame(null); setDevtools(null); setError("");
+    setState(null); setFrame(null); setPage(null); setDevtools(null); setError("");
     browserState(threadId).then(next => { if (live) apply(next); }).catch(reason => { if (live) setError(describeError(reason)); });
     const stop = browserStream(threadId, update => {
       if (!live) return;
-      if (update.kind === "frame") setFrame(`data:image/jpeg;base64,${update.data}`);
-      else apply(update.state);
+      if (update.kind === "frame") {
+        setFrame(`data:image/jpeg;base64,${update.data}`);
+        if (update.width > 0 && update.height > 0) setPage(previous => previous?.width === update.width && previous.height === update.height ? previous : { width: update.width, height: update.height });
+      } else apply(update.state);
     });
     return () => { live = false; stop(); void browserScreencastStop(threadId).catch(() => undefined); };
   }, [threadId, apply]);
@@ -69,23 +93,30 @@ export function BrowserView({ threadId }: { threadId: string }) {
   const [personAt, setPersonAt] = useState<string | null>(null);
   const pointerKey = state?.pointer ? state.pointer.join() : null;
   const agentCursor = pointerKey && pointerKey !== personAt ? state?.pointer ?? null : null;
-  // The page is laid out at the view's size, so input coordinates map one to one.
+  // Frames come at the panel's pixel density. The page is laid out at the panel's size
+  // when the tab opens with no run going, and after the person resizes the panel; never
+  // under an agent mid-task, whose coordinates must hold (the page is then scaled to fit).
   useEffect(() => {
     const element = viewport.current;
     if (!open || !element) return;
     let timer: ReturnType<typeof setTimeout> | undefined;
+    let first = true;
     const fit = () => {
       clearTimeout(timer);
       timer = setTimeout(() => {
         const { width, height } = element.getBoundingClientRect();
-        if (width > 0 && height > 0) void browserScreencast(threadId, width, height, window.devicePixelRatio || 1).catch(reason => setError(describeError(reason)));
-      }, 150);
+        if (width <= 0 || height <= 0) return;
+        setPanel({ width, height });
+        const resize = !first || !runningNow.current;
+        first = false;
+        void browserScreencast(threadId, width, height, pixelRatio(), resize).catch(reason => setError(describeError(reason)));
+      }, first ? 150 : RESIZE_SETTLE_MS);
     };
     fit();
     const observer = new ResizeObserver(fit);
     observer.observe(element);
     return () => { clearTimeout(timer); observer.disconnect(); };
-  }, [threadId, open, devtools]);
+  }, [threadId, open]);
 
   useEffect(() => { if (!editing && state) setAddress(state.url === "about:blank" ? "" : state.url); }, [state, editing]);
 
@@ -106,9 +137,15 @@ export function BrowserView({ threadId }: { threadId: string }) {
     return () => element.removeEventListener("wheel", wheel);
   }, [open, send]);
 
+  const shown = pageRect(panel, page);
+  // Read when an event comes (the wheel listener outlives a render).
+  const placed = useRef(shown);
+  placed.current = shown;
+  /** A point of the panel in the page's own CSS pixels. */
   function point(event: { clientX: number; clientY: number }) {
     const rect = viewport.current?.getBoundingClientRect();
-    return { x: event.clientX - (rect?.left ?? 0), y: event.clientY - (rect?.top ?? 0) };
+    const { left, top, scale } = placed.current;
+    return { x: (event.clientX - (rect?.left ?? 0) - left) / scale, y: (event.clientY - (rect?.top ?? 0) - top) / scale };
   }
 
   function mouse(kind: "down" | "up" | "move", event: React.MouseEvent) {
@@ -216,8 +253,8 @@ export function BrowserView({ threadId }: { threadId: string }) {
           onContextMenu={event => event.preventDefault()}
           onKeyDown={event => key("down", event)} onKeyUp={event => key("up", event)}
           onPaste={event => { event.preventDefault(); const text = event.clipboardData.getData("text"); if (text) send({ type: "text", text }); }}>
-          {frame && <img src={frame} alt="" draggable={false} />}
-          {agentCursor && <svg className="themis-browser-cursor" data-testid="agent-cursor" style={{ transform: `translate(${agentCursor[0]}px, ${agentCursor[1]}px)` }} width="18" height="18" viewBox="0 0 18 18" aria-hidden="true"><path d="M2 1.5v13l3.6-3.2 2.4 5.2 2.6-1.2-2.4-5.1h4.8Z" /></svg>}
+          {frame && <img src={frame} alt="" draggable={false} style={page && panel ? { left: shown.left, top: shown.top, width: shown.width, height: shown.height } : undefined} />}
+          {agentCursor && <svg className="themis-browser-cursor" data-testid="agent-cursor" style={{ transform: `translate(${shown.left + agentCursor[0] * shown.scale}px, ${shown.top + agentCursor[1] * shown.scale}px)` }} width="18" height="18" viewBox="0 0 18 18" aria-hidden="true"><path d="M2 1.5v13l3.6-3.2 2.4 5.2 2.6-1.2-2.4-5.1h4.8Z" /></svg>}
         </div>
       ) : (
         <EmptyState title="No page open" hint="Pages the agent opens show here too." />

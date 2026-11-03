@@ -160,7 +160,7 @@ async fn the_agent_fills_a_form_reads_notes_and_navigates_in_a_real_browser() {
         .unwrap();
     // The Workspace view watches; it is streaming, as when the tab is open.
     let mut updates = chat.subscribe();
-    chat.start_screencast(800, 600, 1.0).await.unwrap();
+    chat.start_screencast(800, 600, 1.0, true).await.unwrap();
     // A ref quoted as it looks in a JSON result still works, as models send it.
     let clicked = tool("browser_click")
         .execute(json!({"ref": format!("\"{submit}\"")}))
@@ -327,7 +327,7 @@ async fn the_workspace_stream_sends_frames_and_the_person_and_agent_act_together
         .await
         .unwrap();
     let mut updates = chat.subscribe();
-    chat.start_screencast(800, 600, 1.0).await.unwrap();
+    chat.start_screencast(800, 600, 1.0, true).await.unwrap();
     let frame = tokio::time::timeout(std::time::Duration::from_secs(10), async {
         loop {
             if let Ok(themis_core::browser::BrowserUpdate::Frame { data, width, .. }) =
@@ -342,10 +342,10 @@ async fn the_workspace_stream_sends_frames_and_the_person_and_agent_act_together
     assert!(!frame.0.is_empty());
     assert_eq!(frame.1, 800);
     // The view asks again (remount, resize) while the tab is already streaming.
-    chat.start_screencast(800, 600, 1.0)
+    chat.start_screencast(800, 600, 1.0, true)
         .await
         .expect("restarting on the same tab");
-    chat.start_screencast(640, 480, 2.0)
+    chat.start_screencast(640, 480, 2.0, true)
         .await
         .expect("resizing on the same tab");
     // A Retina view gets frames at device pixels, not blurry CSS pixels.
@@ -423,6 +423,87 @@ async fn the_workspace_stream_sends_frames_and_the_person_and_agent_act_together
     assert!(devtools.starts_with("http://127.0.0.1:"), "{devtools}");
     chat.stop_screencast().await;
     hub.close_chat("chat-3").await;
+}
+
+/// The next frame: its pixel size, the page's CSS size it names, and its JPEG bytes.
+async fn next_frame(
+    updates: &mut tokio::sync::broadcast::Receiver<themis_core::browser::BrowserUpdate>,
+) -> (usize, usize, u32, u32, usize) {
+    tokio::time::timeout(Duration::from_secs(10), async {
+        loop {
+            if let Ok(themis_core::browser::BrowserUpdate::Frame {
+                data,
+                width,
+                height,
+            }) = updates.recv().await
+            {
+                let (_, w, h) = frame_colour(&data);
+                return (w, h, width, height, data.len() * 3 / 4);
+            }
+        }
+    })
+    .await
+    .expect("a frame")
+}
+
+/// Opening the Browser tab mid-task leaves the agent's page at its size and sends frames at
+/// the panel's own pixel density; only a resize by the person lays the page out again.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_browser_tab_streams_at_its_pixel_density_and_resizes_only_when_asked() {
+    let _browser = ONE_BROWSER.lock().await;
+    let data = tempfile::tempdir().unwrap();
+    let Some(hub) = hub(data.path()) else { return };
+    let project = tempfile::tempdir().unwrap();
+    let chat = hub.chat("chat-crisp", project.path());
+    // Text over the whole page, as a real one has: the frame's bytes are what streams.
+    let words = "Crisp text for the Browser tab. ".repeat(400);
+    chat.open(
+        // No scrollbar: on Linux a scrollbar would take its width off the visible page size.
+        &format!(
+            "data:text/html,<html style='overflow:hidden'><body style='font:14px sans-serif'>{words}</body></html>"
+        ),
+        false,
+    )
+    .await
+    .unwrap();
+    let size = || async { chat.snapshot(None, false).await.unwrap().visible_page };
+    // The agent's page at the default size.
+    assert_eq!(size().await.as_deref(), Some("1280x800"));
+    let mut updates = chat.subscribe();
+    // A 744 × 560 panel on a Retina screen opens while the agent works.
+    chat.start_screencast(744, 560, 2.0, false).await.unwrap();
+    let (w, h, css_w, css_h, bytes) = next_frame(&mut updates).await;
+    eprintln!("kept page: frame {w}x{h} px for page {css_w}x{css_h} css, {bytes} bytes");
+    // The page kept its layout, so the agent's coordinates still hold.
+    assert_eq!(size().await.as_deref(), Some("1280x800"));
+    assert_eq!(
+        (css_w, css_h),
+        (1280, 800),
+        "frames name the page's CSS size"
+    );
+    // At most the panel's device pixels, the page's shape kept: 1488 × 930.
+    assert!(w <= 1488 && h <= 1120, "{w}x{h}");
+    assert!(w >= 1480 && (900..=940).contains(&h), "{w}x{h}");
+    // The person drags the panel wider: the page follows the panel now.
+    chat.start_screencast(900, 560, 2.0, true).await.unwrap();
+    assert_eq!(size().await.as_deref(), Some("900x560"));
+    let resized = tokio::time::timeout(Duration::from_secs(10), async {
+        loop {
+            let (w, h, css_w, _, bytes) = next_frame(&mut updates).await;
+            if css_w == 900 {
+                return (w, h, bytes);
+            }
+        }
+    })
+    .await
+    .expect("a frame of the resized page");
+    eprintln!(
+        "resized page: frame {}x{} px for page 900x560 css, {} bytes",
+        resized.0, resized.1, resized.2
+    );
+    assert_eq!((resized.0, resized.1), (1800, 1120));
+    chat.stop_screencast().await;
+    hub.close_chat("chat-crisp").await;
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -760,7 +841,12 @@ requestAnimationFrame(draw);
     })
     .await
     .expect("no frame for a frozen page");
-    assert!(!framed.is_empty());
+    // At the preview's size, not the page's.
+    let (_, width, height) = frame_colour(&framed);
+    assert!(
+        (400..=440).contains(&width) && height > 0 && height < width,
+        "{width}x{height}"
+    );
     chat.stop_screencast().await;
     // The action thaws the page, and drawing carries on; each round needs its own freeze.
     for round in 0..3 {
@@ -776,6 +862,137 @@ requestAnimationFrame(draw);
         chat.freeze_pages().await;
         tokio::time::sleep(Duration::from_millis(2000)).await;
     }
+}
+
+/// The mean colour of a base64 JPEG frame, and its size.
+fn frame_colour(data: &str) -> ([u8; 3], usize, usize) {
+    use base64::Engine;
+    let jpeg = base64::engine::general_purpose::STANDARD
+        .decode(data)
+        .unwrap();
+    let (rgb, width, height) = themis_core::browser::media::decode_jpeg(&jpeg).unwrap();
+    let mut sum = [0u64; 3];
+    for pixel in rgb.as_chunks::<3>().0 {
+        for (total, value) in sum.iter_mut().zip(pixel) {
+            *total += u64::from(*value);
+        }
+    }
+    let count = (width * height).max(1) as u64;
+    (sum.map(|total| (total / count) as u8), width, height)
+}
+
+/// Waits up to `limit` for a frame of the stream that `matches`; returns how many came.
+async fn frame_where(
+    updates: &mut tokio::sync::broadcast::Receiver<themis_core::browser::BrowserUpdate>,
+    limit: Duration,
+    matches: impl Fn([u8; 3], usize, usize) -> bool,
+) -> Result<usize, usize> {
+    let mut seen = 0;
+    let found = tokio::time::timeout(limit, async {
+        loop {
+            match updates.recv().await {
+                Ok(themis_core::browser::BrowserUpdate::Frame { data, .. }) => {
+                    seen += 1;
+                    let (colour, width, height) = frame_colour(&data);
+                    if matches(colour, width, height) {
+                        return;
+                    }
+                }
+                Ok(_) | Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {}
+                Err(error) => panic!("{error}"),
+            }
+        }
+    })
+    .await;
+    found.map(|()| seen).map_err(|_| seen)
+}
+
+/// Closing Workspace stops its stream as the chat's preview starts. The stop waits for an
+/// agent action in progress, so it can land after the preview began: the preview must keep
+/// following the page (owner report: it stayed on "Click the circles…" after "All done").
+#[tokio::test(flavor = "multi_thread")]
+async fn the_preview_follows_the_page_when_a_late_stop_from_workspace_lands() {
+    let _browser = ONE_BROWSER.lock().await;
+    let data = tempfile::tempdir().unwrap();
+    let Some(hub) = hub(data.path()) else { return };
+    let site = MockServer::builder().start().await;
+    Mock::given(path("/game"))
+        .respond_with(ResponseTemplate::new(200).set_body_raw(
+            r#"<!doctype html><title>Circles</title>
+<body style="margin:0;background:rgb(200,30,30)"><h1 id="say">Click the circles</h1>
+<button id="finish" onclick="document.body.style.background='rgb(30,200,30)';document.getElementById('say').textContent='All done'">Finish</button></body>"#,
+            "text/html",
+        ))
+        .mount(&site)
+        .await;
+    let project = tempfile::tempdir().unwrap();
+    let chat = hub.chat("chat-preview-late-stop", project.path());
+    let tools = themis_core::browser::tools::browser_tools(
+        Arc::new(FnHook::new(|_: &ToolAction| Approval::AllowOnce)),
+        themis_core::browser::tools::BrowserScope {
+            permissions: themis_core::tools::site_permissions::SitePermissions::new(
+                Default::default(),
+                None,
+            ),
+            chat: Arc::clone(&chat),
+            cancel: None,
+            media: None,
+            screenshots: Default::default(),
+        },
+    );
+    let tools = Arc::new(tools);
+    let tool = |tools: &[Box<dyn themis_core::tools::ToolT>], name: &str| {
+        tools.iter().position(|tool| tool.name() == name).unwrap()
+    };
+    let open = tool(&tools, "browser_open");
+    tools[open]
+        .execute(json!({"url": format!("{}/game", site.uri())}))
+        .await
+        .unwrap();
+    // The person watched in Workspace.
+    chat.start_screencast(800, 600, 1.0, true).await.unwrap();
+    let mut updates = chat.subscribe();
+    // The agent is busy: a held key keeps its action going for a while.
+    let press = tool(&tools, "browser_press");
+    let busy = {
+        let tools = Arc::clone(&tools);
+        tokio::spawn(async move {
+            tools[press]
+                .execute(json!({"key": "x", "hold_ms": 2500}))
+                .await
+        })
+    };
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    // Workspace closes: its stop is sent first, the preview's start a moment later.
+    let stop = {
+        let chat = Arc::clone(&chat);
+        tokio::spawn(async move { chat.stop_screencast().await })
+    };
+    tokio::time::sleep(Duration::from_millis(250)).await;
+    chat.start_preview(440).await.unwrap();
+    busy.await.unwrap().unwrap();
+    stop.await.unwrap();
+    // The preview is small, and the page still the red one.
+    let red = |[r, g, _]: [u8; 3], width: usize, _| width <= 440 && r > 150 && g < 80;
+    frame_where(&mut updates, Duration::from_secs(5), red)
+        .await
+        .expect("the preview never drew the page");
+    // The game ends; the preview must show it.
+    let snapshot = chat.snapshot(None, false).await.unwrap().snapshot;
+    let finish = ref_of(&snapshot, "\"Finish\"");
+    tools[tool(&tools, "browser_click")]
+        .execute(json!({"ref": finish}))
+        .await
+        .unwrap();
+    let green = |[r, g, _]: [u8; 3], width: usize, _| width <= 440 && g > 150 && r < 80;
+    let followed = frame_where(&mut updates, Duration::from_secs(5), green).await;
+    assert!(
+        followed.is_ok(),
+        "the preview kept the old page: {followed:?} frames after the change; {:?}",
+        themis_core::browser::stream_stats()
+    );
+    chat.stop_screencast().await;
+    hub.close_chat("chat-preview-late-stop").await;
 }
 
 /// First-person pages lock the pointer; this browser refuses that, so a stand-in does it.
@@ -994,7 +1211,7 @@ async fn an_animated_page_streams_at_about_thirty_frames_a_second() {
     .unwrap();
     let mut updates = chat.subscribe();
     let before = themis_core::browser::stream_stats();
-    chat.start_screencast(400, 300, 1.0).await.unwrap();
+    chat.start_screencast(400, 300, 1.0, true).await.unwrap();
     let start = std::time::Instant::now();
     let mut frames = 0;
     while start.elapsed() < std::time::Duration::from_secs(2) {
@@ -1059,7 +1276,7 @@ async fn the_view_shows_the_page_after_a_first_open_was_refused() {
         format!("{refused:?}").contains("ERR_CONNECTION_REFUSED"),
         "{refused:?}"
     );
-    chat.start_screencast(800, 600, 2.0).await.unwrap();
+    chat.start_screencast(800, 600, 2.0, true).await.unwrap();
     chat.open(&format!("{}/game", site.uri()), false)
         .await
         .unwrap();
@@ -1116,7 +1333,7 @@ async fn the_stream_and_title_follow_the_person_to_another_site() {
         "First site",
         "the page's own title"
     );
-    chat.start_screencast(800, 600, 1.0).await.unwrap();
+    chat.start_screencast(800, 600, 1.0, true).await.unwrap();
     let mut updates = chat.subscribe();
     // `localhost` is another site than `127.0.0.1`: Chrome moves the page to a new
     // renderer, which ends the old screencast.
@@ -1191,7 +1408,7 @@ async fn the_person_is_never_held_up_by_an_agent_action_in_progress() {
     let project = tempfile::tempdir().unwrap();
     let chat = hub.chat("chat-busy", project.path());
     chat.open("about:blank", false).await.unwrap();
-    chat.start_screencast(800, 600, 1.0).await.unwrap();
+    chat.start_screencast(800, 600, 1.0, true).await.unwrap();
     let agent = {
         let chat = Arc::clone(&chat);
         let url = format!("{}/busy", site.uri());

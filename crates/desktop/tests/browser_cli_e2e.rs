@@ -348,6 +348,42 @@ async fn cli_run_drives_the_browser_and_the_workspace_commands_see_it() {
                 .contains("/devtools/devtools_app.html?ws="),
             "{devtools}"
         );
+        // The Browser tab opening mid-task streams at its pixel density without laying the
+        // agent's page out again; a resize by the person does. Captures are in CSS pixels.
+        let captured_width = || {
+            let captured = call(&data_dir, "browser_capture", json!({"threadId": thread_id}));
+            let png = std::fs::read(captured["path"].as_str().unwrap()).unwrap();
+            u32::from_be_bytes(png[16..20].try_into().unwrap())
+        };
+        let before = captured_width();
+        call(
+            &data_dir,
+            "browser_screencast",
+            json!({"threadId": thread_id, "width": 700, "height": 500, "scale": 2.0, "resize": false}),
+        );
+        assert_eq!(captured_width(), before, "the page kept its size");
+        call(
+            &data_dir,
+            "browser_screencast",
+            json!({"threadId": thread_id, "width": 700, "height": 500, "scale": 2.0, "resize": true}),
+        );
+        assert_eq!(captured_width(), 700, "the page follows a resized panel");
+        // Closing Workspace and showing the preview answer at once, in turn.
+        call(
+            &data_dir,
+            "browser_screencast_stop",
+            json!({"threadId": thread_id}),
+        );
+        call(
+            &data_dir,
+            "browser_preview",
+            json!({"threadId": thread_id, "width": 440}),
+        );
+        call(
+            &data_dir,
+            "browser_screencast_stop",
+            json!({"threadId": thread_id}),
+        );
         // Discarding the chat closes its browser.
         call(&data_dir, "discard_thread", json!({"threadId": thread_id}));
     })

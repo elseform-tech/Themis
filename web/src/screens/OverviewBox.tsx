@@ -89,15 +89,18 @@ function BrowserPreview({ threadId, label, agent, onOpen }: { threadId: string; 
   const [activity, setActivity] = useState<string | null>(null);
   useEffect(() => {
     let live = true;
+    // Only frames after a start that worked count: the Workspace's last frames can arrive
+    // first, and a start can fail while that stream is still stopping.
+    let started = false;
     let framed = false;
     const stop = browserStream(threadId, update => {
       if (!live) return;
-      if (update.kind === "frame") { framed = true; setFrame(`data:image/jpeg;base64,${update.data}`); }
+      if (update.kind === "frame") { framed ||= started; setFrame(`data:image/jpeg;base64,${update.data}`); }
       else setActivity(update.state.controller === "agent" ? update.state.activity : null);
     });
-    const start = () => { if (live) void browserPreview(threadId, PREVIEW_FRAME_WIDTH).catch(() => undefined); };
+    const start = () => { if (live) void browserPreview(threadId, PREVIEW_FRAME_WIDTH).then(() => { started = true; }, () => undefined); };
     // Closing Workspace stops its stream as this box appears, and that stop can land after
-    // this start: start a moment later, and once more if no frame has come.
+    // this start: start a moment later, and once more if no frame of the preview has come.
     const first = window.setTimeout(start, PREVIEW_START_DELAY_MS);
     const again = window.setTimeout(() => { if (!framed) start(); }, PREVIEW_RETRY_MS);
     return () => { live = false; window.clearTimeout(first); window.clearTimeout(again); stop(); void browserScreencastStop(threadId).catch(() => undefined); };
