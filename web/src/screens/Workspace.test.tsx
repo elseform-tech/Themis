@@ -670,6 +670,29 @@ describe("Workspace journey", () => {
     expect(within(big).getAllByRole("listitem")).toHaveLength(5);
     fireEvent.click(within(big).getByRole("button", { name: "Show all 12" }));
     expect(within(big).getAllByRole("listitem")).toHaveLength(12);
+    // Hidden files (a dotted part) fold into one line that lists their names.
+    const lastEdited = () => { const all = screen.getAllByRole("region", { name: "Files edited in this turn" }); return all[all.length - 1]!; };
+    const dotted = [{ path: "src/app.py", status: "modified" as const, added: 1, removed: 1 }, { path: ".github/workflows/ci.yml", status: "added" as const, added: 3, removed: 0, hidden: true }, { path: ".gitignore", status: "modified" as const, added: 1, removed: 0, hidden: true }];
+    await act(async () => receive({ thread_id: "edit", run_id: "r3", event: { kind: "started", task: "ci", max_turns: 3 } }));
+    await act(async () => receive({ thread_id: "edit", run_id: "r3", event: { kind: "files_changed", files: dotted } }));
+    await act(async () => receive({ thread_id: "edit", run_id: "r3", event: { kind: "finished", result: "Added CI." } }));
+    const withHidden = lastEdited();
+    expect(withHidden).toHaveTextContent("Edited 1 file");
+    // The turn's total counts only the shown file: its row and the header read the same.
+    expect(within(withHidden).getAllByLabelText("1 added, 1 removed")).toHaveLength(2);
+    expect(withHidden).not.toHaveTextContent(".gitignore");
+    const toggle = within(withHidden).getByRole("button", { name: "2 hidden files changed" });
+    fireEvent.click(toggle);
+    expect(toggle).toHaveAttribute("aria-expanded", "true");
+    expect(withHidden).toHaveTextContent(".gitignore");
+    expect(withHidden).toHaveTextContent(".github/workflows/ci.yml");
+    // A turn that changed only hidden files shows just that line.
+    await act(async () => receive({ thread_id: "edit", run_id: "r4", event: { kind: "started", task: "ignore", max_turns: 3 } }));
+    await act(async () => receive({ thread_id: "edit", run_id: "r4", event: { kind: "files_changed", files: [dotted[2]!] } }));
+    await act(async () => receive({ thread_id: "edit", run_id: "r4", event: { kind: "finished", result: "Ignored target." } }));
+    const onlyHidden = lastEdited();
+    expect(onlyHidden).not.toHaveTextContent(/Edited/);
+    expect(within(onlyHidden).getByRole("button", { name: "1 hidden file changed" })).toBeInTheDocument();
   });
   it("keeps compact navigation without expanding on hover", async () => {
     vi.useFakeTimers(); await mount();

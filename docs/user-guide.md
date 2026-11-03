@@ -316,7 +316,12 @@ is reached; for example `/goal optimize this app to speed up p95`.
   **Changes** (readable changed files with line counts and their wrapped,
   highlighted diff, Unified or Split, updating live while the agent works; a
   switcher at the top shows another branch's changes without switching to it, which
-  only the composer does; binary, generated and secret-looking files are hidden; a
+  only the composer does; binary, generated and secret-looking files are hidden;
+  hidden files, those with a part of the path starting with a dot such as
+  `.gitignore`, `.github/workflows/ci.yml` or `.themis/config.jsonc`, are left out
+  of the list and the counts and fold into one quiet "N hidden files changed" line
+  at the bottom that lists their names, and clicking one shows its diff; the same
+  line sits under a reply's "Edited N files" card; a
   change too large to show whole, such as a downloaded dataset, shows its first
   2,000 lines with a note), **Files** (leaves out what Git ignores and secret-looking
   files), **Pull requests** (needs

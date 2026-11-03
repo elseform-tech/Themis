@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { browserPreview, browserScreencastStop, browserState, browserStream, type BrowserState } from "../lib/browser";
+import { visibleFiles } from "../lib/hiddenFiles";
 import type { AttachedMedia, DiffState, TodoItem } from "../lib/types";
 import { DotSpinner } from "../components/DotSpinner";
 import { currentTodo, doneCount, TodoWindow } from "./TodoList";
@@ -30,8 +31,10 @@ export interface Overview {
 
 /** Added and removed lines across the chat's changed files. */
 export function diffTotals(diff: DiffState | null | undefined): Overview["changes"] {
-  if (!diff?.available || diff.files.length === 0) return null;
-  return { files: diff.files.length, added: diff.files.reduce((sum, file) => sum + file.added, 0), removed: diff.files.reduce((sum, file) => sum + file.removed, 0) };
+  // Hidden files (`.github/…`) are folded in Changes, so they don't count here either.
+  const files = diff?.available ? visibleFiles(diff.files) : [];
+  if (files.length === 0) return null;
+  return { files: files.length, added: files.reduce((sum, file) => sum + file.added, 0), removed: files.reduce((sum, file) => sum + file.removed, 0) };
 }
 
 function browserLabel(state: BrowserState): string {
