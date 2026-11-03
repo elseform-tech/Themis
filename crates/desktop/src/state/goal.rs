@@ -269,6 +269,7 @@ impl AppState {
             return Err("create_goal: this chat already has an unfinished goal; use update_goal only for its status, and the person edits its text on the goal card".to_owned());
         }
         let goal = self.begin_goal(sink.as_ref(), &thread_id, &objective);
+        self.remember_goal_created(&sink, &thread_id, &goal.text);
         if !running {
             self.start_goal_turn(sink, thread_id, String::new()).await;
         }
@@ -547,7 +548,7 @@ impl AppState {
     /// run is a goal turn.
     pub(super) fn goal_for_message(
         &self,
-        sink: &dyn EventSink,
+        sink: &Arc<dyn EventSink>,
         thread_id: &str,
         text: &str,
         run_id: &str,
@@ -559,14 +560,19 @@ impl AppState {
                 return Err("Add the goal after /goal, for example: /goal speed up p95".to_owned());
             }
             // Themis creates it from the command; no model decides. This run is its first turn.
-            self.begin_goal(sink, thread_id, &sentence);
-            self.update_goal(sink, thread_id, |goal| goal.turns = 1);
+            let goal = self.begin_goal(sink.as_ref(), thread_id, &sentence);
+            self.remember_goal_created(sink, thread_id, &goal.text);
+            self.update_goal(sink.as_ref(), thread_id, |goal| goal.turns = 1);
             self.mark_goal_turn(run_id);
-            return Ok(format!("\n\n{}", self.take_goal_note(sink, thread_id)));
+            return Ok(format!(
+                "\n\n{}",
+                self.take_goal_note(sink.as_ref(), thread_id)
+            ));
         } else if !is_turn {
             if from_person {
                 self.add_also_asked(sink, thread_id, text);
             }
+            let sink = sink.as_ref();
             match self.goal_for(thread_id).map(|goal| goal.status) {
                 // An answer to another question leaves the goal waiting on
                 // the blocking one; any other reply resumes it.
@@ -592,6 +598,7 @@ impl AppState {
                 _ => {}
             }
         }
+        let sink = sink.as_ref();
         Ok(match self.goal_for(thread_id) {
             // A goal turn's saved message is one short line; the note rides along with each run
             // only, so history doesn't grow by a note per turn and every run reads it fresh.
@@ -613,7 +620,52 @@ impl AppState {
     /// What the person sent while the goal runs (or waits on them, or on quota) joins it word
     /// for word as an "Also asked" line, by plain code, so no checkpoint can lose it. Answers to
     /// the agent's questions, goal turns and `/goal` are not requests.
-    pub(super) fn add_also_asked(&self, sink: &dyn EventSink, thread_id: &str, text: &str) {
+    /// Whether the person's message `text` reaches memory through a goal event (the goal it
+    /// created, or an "Also asked" line), so the turn's own pass leaves it out. Answers to
+    /// the agent's questions still go through the turn's pass, with the question they answer.
+    pub(super) fn goal_takes_words(&self, thread_id: &str, text: &str) -> bool {
+        self.goal_for(thread_id).is_some_and(|goal| {
+            matches!(
+                goal.status,
+                GoalStatus::Running | GoalStatus::Waiting | GoalStatus::Quota
+            )
+        }) && !text.starts_with(super::questions::ANSWER_MARKER)
+            && core_goal::turn_number(text).is_none()
+    }
+
+    /// The memory pass for a goal just created: the approved plan is saved now, not after
+    /// the goal's first (long) turn. It reads the objective, the person's latest words and
+    /// the reply they answered (the plan).
+    fn remember_goal_created(&self, sink: &Arc<dyn EventSink>, thread_id: &str, objective: &str) {
+        let transcript = &self.inner.transcript;
+        let mut content = format!("The objective:\n{objective}");
+        if let Some(person) = transcript.last_turn_text(thread_id, "user") {
+            let person: String = person.chars().take(4000).collect();
+            content.push_str(&format!("\nThe person's latest message:\n{person}"));
+        }
+        if let Some(reply) = transcript.last_turn_text(thread_id, "assistant") {
+            let reply: String = reply.chars().take(12000).collect();
+            content.push_str(&format!("\nThe reply that message answered:\n{reply}"));
+        }
+        self.spawn_goal_memory_event(sink, thread_id, "a goal was created", content);
+    }
+
+    fn spawn_goal_memory_event(
+        &self,
+        sink: &Arc<dyn EventSink>,
+        thread_id: &str,
+        what: &'static str,
+        content: String,
+    ) {
+        let (state, sink, thread_id) = (self.clone(), Arc::clone(sink), thread_id.to_owned());
+        tokio::spawn(async move {
+            state
+                .spawn_memory_event(sink, (&thread_id, ""), what, content)
+                .await;
+        });
+    }
+
+    pub(super) fn add_also_asked(&self, sink: &Arc<dyn EventSink>, thread_id: &str, text: &str) {
         let active = self.goal_for(thread_id).is_some_and(|goal| {
             matches!(
                 goal.status,
@@ -631,7 +683,8 @@ impl AppState {
             return;
         };
         let mut kept = false;
-        let goal = self.update_goal(sink, thread_id, |goal| {
+        let said = line.clone();
+        let goal = self.update_goal(sink.as_ref(), thread_id, |goal| {
             if goal.also_asked.len() < core_goal::MAX_ALSO_ASKED {
                 goal.also_asked.push(line);
                 kept = true;
@@ -645,8 +698,17 @@ impl AppState {
                 "also_asked_full"
             },
             "info",
-            json!({"thread_id": thread_id, "count": goal.map_or(0, |goal| goal.also_asked.len())}),
+            json!({"thread_id": thread_id, "count": goal.as_ref().map_or(0, |goal| goal.also_asked.len())}),
         );
+        // What the person asks mid-goal is remembered now, not after the goal's long turn.
+        if let Some(goal) = goal {
+            self.spawn_goal_memory_event(
+                sink,
+                thread_id,
+                "the person changed or added to the goal while it ran",
+                format!("The person said:\n{said}\nThe objective:\n{}", goal.text),
+            );
+        }
     }
 
     /// The goal note this goal run carries ([`core_goal::goal_note`]): the "objective updated"

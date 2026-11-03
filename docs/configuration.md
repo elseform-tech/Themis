@@ -865,7 +865,8 @@ model, which has no memory tool:
 
 - **The pass**, when a turn's reply is done and the person said something in that turn (the
   message that started it, what they steered in, an answer to the agent's question; in a goal,
-  after each goal turn they spoke in; never a hook's wake or an automation), except a trivial
+  after each goal turn they spoke in, except words a goal event below already passed on; never
+  a hook's wake or an automation), except a trivial
   one (under 8 characters, such as "ok" or "thanks"). One request with no tools and the
   least thinking the model allows reads the reply their message answered, what they said (at
   most 8 KiB), the reply that ended the turn (each reply at most 4 KiB), both indexes and, in
@@ -876,9 +877,13 @@ model, which has no memory tool:
   next run already works, that run gets the changes at its next step as a runtime note
   (`memory-changed-note.md`).
 - **Event passes**, on events that matter without the person's words, each with the event's
-  content (at most 8 KiB): a goal completed (its objective, "Also asked" lines and evidence:
-  what was built, where, how to run and test it, what was verified), the goal edited by the
-  person (its new objective). A context checkpoint starts none: its summary is mostly the state
+  content (at most 8 KiB): a goal created, by `/goal` or the agent's `create_goal` (its
+  objective, the person's latest message and the reply it answered, so an approved plan is
+  kept before the goal's first turn ends), a message the person steered or sent into a running
+  goal that became an "Also asked" line (their words and the objective), a goal completed (its
+  objective, "Also asked" lines, evidence and the chat's latest checkpoint summary, from which
+  at most 2 lasting lessons are kept as rules), the goal edited by the person (its new
+  objective). A context checkpoint starts none: its summary is mostly the state
   of unfinished work, which goes stale within minutes. `logs/` has `memory` / `event` with the
   event name.
 - **Consolidation**, when the app has been idle (no run going) for 5 minutes after a job, at

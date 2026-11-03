@@ -173,8 +173,9 @@ dated file in the app data folder, never in your project, so nothing is committe
 whole team shares still belong in the project's `AGENTS.md`.
 
 - **It keeps itself.** After each turn in which you said something (a message, one you
-  steered in, an answer to the agent's question; in a goal, after each goal turn), and when a
-  goal is completed or edited, a separate, steadier
+  steered in, an answer to the agent's question; in a goal, after each goal turn), at once
+  when a goal is created (so an approved plan is kept before the work starts) and when you
+  add to or change a running goal, and when a goal is completed or edited, a separate, steadier
   memory model reads it in the background, and saves what is worth keeping (a preference mentioned in passing, a
   correction, a decision), updates a memory you just changed, or removes one that no longer
   holds. You never need to say "remember", and the chat's own model never has to save

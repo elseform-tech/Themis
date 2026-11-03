@@ -545,7 +545,14 @@ impl AppState {
         let memory_turn = super::memory_auto::MemoryTurn {
             project_root: snapshot.work_root.clone(),
             config: run_configuration.clone(),
-            person: snapshot.person_text.clone().into_iter().collect(),
+            // Words a goal event already took (the goal they created, an "Also asked"
+            // line) are not passed twice.
+            person: snapshot
+                .person_text
+                .clone()
+                .filter(|text| !self.goal_takes_words(thread_id, text))
+                .into_iter()
+                .collect(),
             answered: snapshot
                 .history
                 .iter()
@@ -826,7 +833,9 @@ impl AppState {
                         continue;
                     }
                     if let RunEvent::Steered { text } = &event {
-                        memory_turn.person.push(text.clone());
+                        if !pump_state.goal_takes_words(&pump_thread, text) {
+                            memory_turn.person.push(text.clone());
+                        }
                     }
                     // The memory pass, once the turn is over (finished, incomplete or failed:
                     // what the person said counts either way): on its own task, never holding

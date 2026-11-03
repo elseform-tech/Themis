@@ -290,7 +290,7 @@ impl AppState {
         })?;
         let (steered, _run_id) = steered;
         // Steered into a goal, it joins the goal word for word.
-        self.add_also_asked(sink.as_ref(), &thread_id, &steered);
+        self.add_also_asked(&sink, &thread_id, &steered);
         // After the inbox: an approval asked from here on sees the message there
         // and is denied without a box (see `DesktopApprovalHook`).
         let denied = self.deny_approvals_for_new_message(&thread_id);

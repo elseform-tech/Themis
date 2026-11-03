@@ -159,6 +159,11 @@ impl Harness {
                 if last_user(&body).contains("this turn fails") {
                     return ResponseTemplate::new(400).set_body_string("bad request");
                 }
+                // A goal turn that keeps working a while before it completes.
+                if body["messages"].to_string().contains("slow goal") && last(&body)["role"] == "user" {
+                    return call("list_dir", json!({"directory_path":"."}))
+                        .set_delay(Duration::from_millis(2500));
+                }
                 // A goal's turn: complete it once, with evidence.
                 let offers_update = body["tools"]
                     .as_array()
@@ -635,8 +640,13 @@ async fn a_completed_goal_starts_a_pass_with_its_evidence() {
         user.contains("- notes.txt exists: ls notes.txt: notes.txt"),
         "{user}"
     );
-    let events = h.logged("event", 1).await;
-    assert_eq!(events[0]["event"], "a goal was completed");
+    let events = h.logged("event", 2).await;
+    assert!(
+        events
+            .iter()
+            .any(|event| event["event"] == "a goal was completed"),
+        "{events:?}"
+    );
     // The turn's pass and the goal's run one after the other, never at once, so the second
     // reads what the first saved instead of saving the same thing again.
     h.logged("job", 2).await;
@@ -658,6 +668,73 @@ async fn a_completed_goal_starts_a_pass_with_its_evidence() {
             "memory jobs overlapped: {spans:?}"
         );
     }
+}
+
+/// A goal's plan and what the person adds mid-goal reach memory at once, while the goal's
+/// first turn still works, not after it: the created goal hands over the plan reply the
+/// person answered, and a steered message its words. The turn's own pass leaves those words
+/// out, so nothing is passed twice.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_new_goal_and_a_mid_goal_change_reach_memory_while_the_turn_works() {
+    let mut h = Harness::start(MODELS).await;
+    let id = h.new_chat();
+    h.send(&id, "Plan the notes tool.", Duration::from_millis(100))
+        .await;
+    h.cli(
+        "send_message",
+        json!({"threadId":id,"text":"/goal slow goal: build the notes tool as planned","reasoningEffort":null}),
+    );
+    let created = h.logged("event", 1).await;
+    assert_eq!(created[0]["event"], "a goal was created");
+    let message = h.cli(
+        "enqueue_message",
+        json!({"threadId":id,"text":"Change: notes are sorted by date."}),
+    );
+    h.cli(
+        "steer_queued_message",
+        json!({"threadId":id,"messageId":message["id"]}),
+    );
+    let events = h.logged("event", 2).await;
+    assert_eq!(
+        events[1]["event"],
+        "the person changed or added to the goal while it ran"
+    );
+    // Both came before the goal's first turn ended.
+    let goal = h.cli("get_goal", json!({"threadId":id}));
+    assert_eq!(goal["status"], "running", "{goal}");
+    let passes = |h: &Harness, needle: &str| {
+        h.memory_requests()
+            .into_iter()
+            .filter(|body| body["messages"][1].to_string().contains(needle))
+            .count()
+    };
+    let deadline = std::time::Instant::now() + Duration::from_secs(20);
+    while passes(&h, "What just happened: a goal was created") == 0
+        || passes(&h, "notes are sorted by date") == 0
+    {
+        assert!(std::time::Instant::now() < deadline, "no event passes");
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    let body = h
+        .memory_requests()
+        .into_iter()
+        .find(|body| {
+            body["messages"][1]
+                .to_string()
+                .contains("What just happened: a goal was created")
+        })
+        .unwrap();
+    let user = body["messages"][1]["content"].as_str().unwrap();
+    assert!(
+        user.contains("The reply that message answered:\nDone."),
+        "{user}"
+    );
+    assert!(user.contains("slow goal: build the notes tool"), "{user}");
+    // Once the goal completes, no pass carries the goal's words as the person's own again.
+    h.watch(&id, Duration::from_millis(100), true).await;
+    tokio::time::sleep(Duration::from_millis(800)).await;
+    assert_eq!(passes(&h, "<<<person\n/goal slow goal"), 0);
+    assert_eq!(passes(&h, "<<<person\nChange: notes are sorted"), 0);
 }
 
 /// A turn that fails still had the person's words: its pass runs all the same.

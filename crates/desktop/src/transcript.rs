@@ -439,6 +439,20 @@ impl TranscriptStore {
         .collect()
     }
 
+    /// The chat's latest saved message from `role` ("user" or "assistant"), if any.
+    pub fn last_turn_text(&self, thread_id: &str, role: &str) -> Option<String> {
+        let connection = self.connection.lock().unwrap_or_else(|e| e.into_inner());
+        connection
+            .query_row(
+                "SELECT text FROM context_turns WHERE thread_id=?1 AND role=?2 ORDER BY seq DESC LIMIT 1",
+                params![thread_id, role],
+                |row| row.get(0),
+            )
+            .optional()
+            .ok()
+            .flatten()
+    }
+
     /// The chat's latest checkpoint summary, if it has one.
     pub fn checkpoint_summary(&self, thread_id: &str) -> Option<String> {
         let connection = self.connection.lock().unwrap_or_else(|e| e.into_inner());
