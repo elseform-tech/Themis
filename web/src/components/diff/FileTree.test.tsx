@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import type { DiffFile } from "../../lib/types";
 import { FileTree } from "./FileTree";
 
@@ -58,6 +58,34 @@ describe("FileTree", () => {
   it("shows an empty state when there are no files", () => {
     setup([]);
     expect(screen.getByText("No changed files")).toBeInTheDocument();
+  });
+
+  it("folds hidden files into one quiet line that reveals and opens them", () => {
+    const files: DiffFile[] = [
+      FILES[0]!,
+      { path: ".github/workflows/ci.yml", status: "added", preexisting: false, added: 1, removed: 0, hunks: [], hidden: true },
+      { path: ".gitignore", status: "modified", preexisting: false, added: 1, removed: 0, hunks: [], hidden: true },
+    ];
+    const onSelect = vi.fn();
+    render(<FileTree files={files} selectedPath="src/a.ts" onSelect={onSelect} />);
+    expect(screen.queryByTitle(".gitignore")).toBeNull();
+    const toggle = screen.getByRole("button", { name: "2 hidden files changed" });
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
+    fireEvent.click(toggle);
+    expect(toggle).toHaveAttribute("aria-expanded", "true");
+    fireEvent.click(screen.getByTitle(".github/workflows/ci.yml"));
+    expect(onSelect).toHaveBeenCalledWith(".github/workflows/ci.yml");
+    expect(screen.getByTitle(".gitignore")).toBeInTheDocument();
+  });
+
+  it("shows nothing extra without hidden files, and opens the line for a selected hidden one", () => {
+    setup();
+    expect(screen.queryByRole("button", { name: /hidden file/ })).toBeNull();
+    cleanup();
+    render(<FileTree files={[{ path: ".gitignore", status: "modified", preexisting: false, added: 1, removed: 0, hunks: [], hidden: true }]} selectedPath=".gitignore" onSelect={vi.fn()} />);
+    expect(screen.queryByText("No changed files")).toBeNull();
+    expect(screen.getByRole("button", { name: "1 hidden file changed" })).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByTitle(".gitignore")).toBeInTheDocument();
   });
 
   it("groups large change lists by folder and filters them", () => {

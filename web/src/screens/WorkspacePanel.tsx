@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type CSSProperties, type ReactNode, useMemo } from "react";
 import { DiffView, EmptyState, FileTree, Tooltip } from "../components";
 import { authorOf, authorOptions } from "../lib/changeAuthors";
+import { visibleFiles } from "../lib/hiddenFiles";
 import { CodeBlock } from "../components/CodeBlock";
 import type { DiffState, DirEntry, FileView, WorkspaceInfo } from "../lib/types";
 import { branchDiff, getWorkspace, listDiff, listProjectDir, readProjectFile } from "../lib/tauri";
@@ -73,7 +74,7 @@ export function WorkspacePanel({ projectRoot, threadId, workspace }: { projectRo
   // The request is applied once, so the remembered tab wins the next time the panel opens.
   useEffect(() => { if (tabRequestAt && state.workspaceTabRequest) { choose(state.workspaceTabRequest.tab); dispatch({ type: "ui/tab-request-consumed" }); } }, [tabRequestAt]); // eslint-disable-line react-hooks/exhaustive-deps
   const diff = state.diffs[threadId];
-  const changed = diff?.available ? diff.files.length : 0;
+  const changed = diff?.available ? visibleFiles(diff.files).length : 0;
   const counts = countTasks(state.tasks[threadId], state.settings.automations_enabled);
   const taskCount = counts.attention + counts.running + counts.scheduled;
   return (
@@ -196,7 +197,8 @@ function ChangesView({ threadId, workspace, projectRoot, onWantDiffWidth }: { th
   const options = branch === null ? authorOptions(authors, diff.files.map(entry => entry.path)) : [];
   const shownAuthor = options.includes(author) ? author : "";
   const files = shownAuthor ? diff.files.filter(entry => authorOf(entry.path, authors) === shownAuthor) : diff.files;
-  const file = files.find(entry => entry.path === selected) ?? files[0] ?? null;
+  // A hidden file (`.github/…`) opens only when picked from its folded line.
+  const file = files.find(entry => entry.path === selected) ?? files.find(entry => !entry.hidden) ?? null;
   return (
     <div className="themis-workspace-changes">
       {bar((options.length > 0 || diff.reason) && <>
@@ -210,12 +212,12 @@ function ChangesView({ threadId, workspace, projectRoot, onWantDiffWidth }: { th
         )}
         {diff.reason && <p className="themis-workspace-note">{diff.reason}</p>}
       </>)}
-      {file === null
+      {files.length === 0
         ? <EmptyState title="No changes" hint={branch !== null ? `${branch} adds nothing to ${current ?? "the current branch"}.` : "The checkout matches its last commit."} />
         : (
           <DiffSplit>
-            <FileTree files={files} selectedPath={file.path} onSelect={setSelected} />
-            <DiffView file={file} onWantWidth={onWantDiffWidth} />
+            <FileTree files={files} selectedPath={file?.path ?? null} onSelect={setSelected} />
+            {file ? <DiffView file={file} onWantWidth={onWantDiffWidth} /> : <EmptyState title="No changes" hint="Only hidden files changed." />}
           </DiffSplit>
         )}
     </div>
