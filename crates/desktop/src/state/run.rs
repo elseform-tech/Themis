@@ -302,11 +302,27 @@ impl AppState {
             themis_core::configuration::project_guidance(&run_configuration, &snapshot.work_root);
         // The global and this project's memory indexes, read once per run.
         let memory_note = self.memory_note(run_configuration.memory.enabled, &snapshot.work_root);
-        let memory_line = if memory_note.is_empty() {
+        let mut memory_line = if memory_note.is_empty() {
             String::new()
         } else {
             format!("{memory_note}\n")
         };
+        // `hooks.built_in.skills_at_start`: the short To-do (and, with memory on, Memory) skill.
+        let built_in = &run_configuration.hooks.built_in;
+        if built_in.skills_at_start {
+            memory_line.push_str(&themis_core::built_in_hooks::skills_text(
+                run_configuration.memory.enabled,
+            ));
+            memory_line.push('\n');
+            let _ = self.inner.diagnostics.append(
+                "hook",
+                "built_in",
+                "info",
+                json!({"thread_id": thread_id, "run_id": run_id, "hook": "skills_at_start", "event": "SessionStart"}),
+            );
+        }
+        let still_open_hook = built_in.still_open;
+        let save_reminder = built_in.save_reminder && run_configuration.memory.enabled;
         skill_catalog = format!(
             "\n{}\n{project_guidance}\n{memory_line}{}{secrets_note}{}",
             themis_core::prompts::fill(
@@ -515,6 +531,15 @@ impl AppState {
             end: Arc::clone(&end_request),
             subagent: None,
         }));
+        // What the memory pass after this turn reads (`memory.auto`).
+        let memory_saved = Arc::new(AtomicBool::new(false));
+        let memory_turn = super::memory_auto::MemoryTurn {
+            project_root: snapshot.work_root.clone(),
+            config: run_configuration.clone(),
+            chat_model: snapshot.model.clone(),
+            person: snapshot.person_text.clone().into_iter().collect(),
+            saved: Arc::clone(&memory_saved),
+        };
         // Memory off: no tool at all, so its description costs nothing.
         if run_configuration.memory.enabled {
             tools.push(Box::new(super::memory::MemoryTool {
@@ -526,6 +551,7 @@ impl AppState {
                 enabled: true,
                 run: check_approval.clone(),
                 read_only: false,
+                saved: Arc::clone(&memory_saved),
             }));
         }
         // The agent's to-do list: the run opened with it as it stood, and a checkpoint reads it
@@ -790,6 +816,7 @@ impl AppState {
             let pump_terminated = Arc::clone(&terminated);
             let run_model = snapshot.model.clone();
             let pump_root = snapshot.work_root.clone();
+            let mut memory_turn = memory_turn;
             let pump = tokio::spawn(async move {
                 let mut pending_text = String::new();
                 while let Some(event) = events_rx.recv().await {
@@ -826,6 +853,9 @@ impl AppState {
                     if matches!(event, RunEvent::AssistantText(_)) {
                         continue;
                     }
+                    if let RunEvent::Steered { text } = &event {
+                        memory_turn.person.push(text.clone());
+                    }
                     // A terminal event means the run is over: mark the thread
                     // idle BEFORE emitting, so observers (merge/discard,
                     // provider switch) never see `Finished` on a busy thread.
@@ -858,6 +888,9 @@ impl AppState {
                         })
                         .await
                         .unwrap_or_default();
+                        if !files.is_empty() && still_open_hook {
+                            pump_state.leave_still_open_note(&pump_thread);
+                        }
                         if !files.is_empty() {
                             let changed = ThreadEventEnvelope {
                                 thread_id: pump_thread.clone(),
@@ -910,6 +943,20 @@ impl AppState {
                             .await;
                     }
                     pump_sink.emit_thread_event(&envelope);
+                    if let RunEvent::Finished { result } | RunEvent::Incomplete { result } = &event
+                    {
+                        // `memory.auto`: on its own task, never holding up what comes next.
+                        pump_state.spawn_memory_pass(
+                            Arc::clone(&pump_sink),
+                            pump_thread.clone(),
+                            pump_run.clone(),
+                            std::mem::replace(
+                                &mut memory_turn,
+                                super::memory_auto::MemoryTurn::spent(),
+                            ),
+                            result.clone(),
+                        );
+                    }
                     if terminal {
                         // The next queued message or goal turn starts after
                         // observers saw this run end.
@@ -984,7 +1031,7 @@ impl AppState {
                                                 }
                                                 // Boxed: the run's future is large, and the
                                                 // steer scope must not copy it on the stack.
-                                                themis_core::runtime::with_checkpoint_note(checkpoint_note, themis_core::runtime::with_first_request(first_request, themis_core::runtime::with_end_request(end_request, themis_core::runtime::with_steer_inbox(steer_inbox, themis_core::runtime::with_run_notes(run_notes, Box::pin(run_task_with_evidence(
+                                                themis_core::runtime::with_save_reminder(save_reminder.then(|| themis_core::prompts::RUNTIME_SAVE_REMINDER.to_owned()), themis_core::runtime::with_checkpoint_note(checkpoint_note, themis_core::runtime::with_first_request(first_request, themis_core::runtime::with_end_request(end_request, themis_core::runtime::with_steer_inbox(steer_inbox, themis_core::runtime::with_run_notes(run_notes, Box::pin(run_task_with_evidence(
                                                 llm,
                                                 if yolo {
                                                     tools
@@ -1001,7 +1048,7 @@ impl AppState {
                                                 stopped,
                                                 skill_catalog,
                                                 Some(evidence_directory),
-                                            ))))))).await
+                                            )))))))).await
                                             }))
                                         },
                                     ),

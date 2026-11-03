@@ -516,7 +516,7 @@ export interface TodoItem {
   status: TodoStatus;
   outcome?: string;
   /** Who added it when the agent didn't: a request the person sent during a goal, or the goal check. */
-  source?: "person" | "check";
+  source?: "person" | "check" | "goal";
   /** The goal check's short reason for reopening it. */
   reopened?: string;
   /** The goal check, not the agent, finished it: shown done, cancelled by a later request, or a question answered. */
@@ -942,3 +942,10 @@ export interface BrowserHistoryEntry {
   visits: number;
   project: string;
 }
+
+/** Settings › Memory's switches. */
+export interface MemorySwitches { enabled: boolean; auto: boolean }
+
+/** One of Themis's own hooks, listed in Integrations › Hooks as "Themis (built-in)". */
+export interface BuiltInHook { id: string; event: string; title: string; description: string; enabled: boolean }
+export interface BuiltInHooks { hooks: BuiltInHook[]; revision: string }

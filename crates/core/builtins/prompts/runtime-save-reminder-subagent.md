@@ -1,0 +1,1 @@
+[Memory reminder — runtime, not from the user] Your context will be compacted soon. If you learned something worth remembering in later chats (a preference, a decision and its reason, a fact the project's files don't record), put it in your final reply so the main agent can keep it; otherwise carry on.

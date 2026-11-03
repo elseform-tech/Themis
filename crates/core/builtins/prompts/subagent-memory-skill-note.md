@@ -1,0 +1,1 @@
+As a subagent, your memory tool only reads. Do not try to save: put anything worth remembering in your final reply, and the main agent keeps it.

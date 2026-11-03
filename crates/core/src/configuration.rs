@@ -666,6 +666,9 @@ pub struct GoalConfig {
     /// model a connected provider offers (`<provider>/<id>` for one from `providers`).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub check_model: Option<String>,
+    /// When a goal starts on an empty list, one request on the summary model fills the to-do
+    /// list from the goal's sentence, ending with "Verify end to end".
+    pub seed_todo: bool,
 }
 
 /// Memory across chats (`memory`, Settings › Memory); see [`crate::memory`].
@@ -675,21 +678,31 @@ pub struct MemoryConfig {
     /// Save and read memories. Off, runs get no index and no memory tool; saved
     /// memories are kept. A project or run layer may only set it to false.
     pub enabled: bool,
+    /// After a turn in which the person wrote, one request on the summary model notices what
+    /// is worth remembering and saves it (Settings › Memory's "Notice what's worth
+    /// remembering"). A project or run layer may only set it to false.
+    pub auto: bool,
 }
 
 impl Default for MemoryConfig {
     fn default() -> Self {
-        Self { enabled: true }
+        Self {
+            enabled: true,
+            auto: false,
+        }
     }
 }
 
-/// A project or run layer may only turn memory off: memories are the person's own.
+/// A project or run layer may only turn memory (or noticing what to remember) off: memories are
+/// the person's own.
 fn check_memory_restriction(layer: &Value, origin: &str) -> Result<()> {
-    if let Some(value) = layer.pointer("/memory/enabled") {
-        ensure!(
-            value == &Value::Bool(false),
-            "the {origin} configuration may only set memory.enabled to false"
-        );
+    for field in ["enabled", "auto"] {
+        if let Some(value) = layer.pointer(&format!("/memory/{field}")) {
+            ensure!(
+                value == &Value::Bool(false),
+                "the {origin} configuration may only set memory.{field} to false"
+            );
+        }
     }
     Ok(())
 }
@@ -735,6 +748,35 @@ pub struct HooksConfig {
     /// Model requests `prompt` hooks may make in a run, which is what they cost. A guard that finds
     /// none left refuses. 0 turns them off, for the person only: nothing is asked or refused.
     pub prompt_hook_calls: u32,
+    /// Themis's own hooks (Integrations › Hooks, "Themis (built-in)"): native, no command, no
+    /// approval, and they never grant permissions.
+    pub built_in: BuiltInHooks,
+}
+
+/// Themis's built-in hooks, each off by default.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct BuiltInHooks {
+    /// Session start: runs carry the short To-do and Memory skills (Memory only while memory
+    /// is on).
+    pub skills_at_start: bool,
+    /// Run end: when files changed while the to-do list has open items, the next turn starts
+    /// with a "Still open: …" note.
+    pub still_open: bool,
+    /// Before compaction: when a context checkpoint is near, the agent gets a one-line reminder
+    /// to save anything worth remembering (while memory is on).
+    pub save_reminder: bool,
+}
+
+impl BuiltInHooks {
+    /// Each switch's name (as in `hooks.built_in`) and value.
+    pub fn switches(&self) -> [(&'static str, bool); 3] {
+        [
+            ("skills_at_start", self.skills_at_start),
+            ("still_open", self.still_open),
+            ("save_reminder", self.save_reminder),
+        ]
+    }
 }
 
 /// Most `hooks.prompt_hook_calls` may say.
@@ -751,6 +793,7 @@ impl Default for HooksConfig {
             max_wakes: 3,
             session_idle_minutes: 60,
             prompt_hook_calls: 50,
+            built_in: BuiltInHooks::default(),
         }
     }
 }
@@ -2236,7 +2279,14 @@ pub fn schema() -> Value {
     // Here because one more key in the base schema's macro reaches the compiler's recursion limit.
     schema["properties"]["project_guidance"] = serde_json::json!({"type":"boolean","default":true});
     schema["properties"]["memory"] = serde_json::json!({"type":"object","additionalProperties":false,"properties":{
-        "enabled":{"type":"boolean","default":true,"description":"Save and read memories across chats (Settings › Memory). A project or run layer may only set it to false."}
+        "enabled":{"type":"boolean","default":true,"description":"Save and read memories across chats (Settings › Memory). A project or run layer may only set it to false."},
+        "auto":{"type":"boolean","default":false,"description":"After a turn in which you wrote, one request on the summary model notices what is worth remembering and saves it. A project or run layer may only set it to false."}
+    }});
+    schema["properties"]["goal"]["properties"]["seed_todo"] = serde_json::json!({"type":"boolean","default":false,"description":"When a goal starts on an empty to-do list, one request on the summary model fills it from the goal, ending with \"Verify end to end\""});
+    schema["properties"]["hooks"]["properties"]["built_in"] = serde_json::json!({"type":"object","additionalProperties":false,"properties":{
+        "skills_at_start":{"type":"boolean","default":false,"description":"Session start: runs carry the short To-do and Memory skills"},
+        "still_open":{"type":"boolean","default":false,"description":"Run end: when files changed while the to-do list has open items, the next turn starts with a Still open note"},
+        "save_reminder":{"type":"boolean","default":false,"description":"Before compaction: a one-line reminder to save anything worth remembering when a checkpoint is near"}
     }});
     schema
 }
@@ -2662,6 +2712,48 @@ mod tests {
             .is_err());
         }
     }
+    #[test]
+    fn auto_memory_goal_seeding_and_built_in_hooks_are_off_by_default_and_switchable() {
+        let defaults = RuntimeConfig::default();
+        assert!(!defaults.memory.auto);
+        assert!(!defaults.goal.seed_todo);
+        assert_eq!(defaults.hooks.built_in, BuiltInHooks::default());
+        assert!(defaults.hooks.built_in.switches().iter().all(|(_, on)| !on));
+        let on = resolve(
+            Some(
+                r#"{"memory":{"auto":true},"goal":{"seed_todo":true},"hooks":{"built_in":{"skills_at_start":true,"still_open":true,"save_reminder":true}}}"#,
+            ),
+            None,
+            None,
+        )
+        .unwrap();
+        assert!(on.config.memory.auto && on.config.goal.seed_todo);
+        assert!(on
+            .config
+            .hooks
+            .built_in
+            .switches()
+            .iter()
+            .all(|(_, on)| *on));
+        assert_eq!(on.provenance["memory.auto"], "user");
+        assert_eq!(on.provenance["goal.seed_todo"], "user");
+        assert_eq!(on.provenance["hooks.built_in.still_open"], "user");
+        // A project may turn noticing off, never on; it may set the built-in hooks either way.
+        let user = r#"{"memory":{"auto":true}}"#;
+        let off = resolve(Some(user), Some(r#"{"memory":{"auto":false}}"#), None).unwrap();
+        assert!(!off.config.memory.auto);
+        assert!(resolve(None, Some(r#"{"memory":{"auto":true}}"#), None).is_err());
+        assert!(resolve(None, None, Some(r#"{"memory":{"auto":true}}"#)).is_err());
+        let project = resolve(
+            None,
+            Some(r#"{"hooks":{"built_in":{"still_open":true}},"goal":{"seed_todo":true}}"#),
+            None,
+        )
+        .unwrap();
+        assert!(project.config.hooks.built_in.still_open && project.config.goal.seed_todo);
+        assert!(resolve(Some(r#"{"hooks":{"built_in":{"other":true}}}"#), None, None).is_err());
+    }
+
     #[test]
     fn memory_is_on_by_default_and_projects_may_only_turn_it_off() {
         assert!(RuntimeConfig::default().memory.enabled);

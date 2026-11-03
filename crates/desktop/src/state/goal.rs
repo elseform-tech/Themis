@@ -394,6 +394,27 @@ impl AppState {
                 goal = updated;
             }
         }
+        // `goal.seed_todo`, on the chat's project's configuration as it stands.
+        let record = self
+            .inner
+            .threads
+            .read()
+            .await
+            .get(&thread_id)
+            .map(|record| (record.model.clone(), record.project_root.clone()));
+        if let Some((model, root)) = record {
+            if let Ok(resolved) = self.runtime_configuration(Some(&root), None) {
+                self.seed_goal_todo(
+                    sink.as_ref(),
+                    (&thread_id, ""),
+                    &goal.text,
+                    &resolved.config,
+                    &model,
+                    &root,
+                )
+                .await;
+            }
+        }
         if !running {
             self.start_goal_turn(
                 sink,

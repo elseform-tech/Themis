@@ -25,6 +25,7 @@ mod mcp_consent;
 mod mcp_file;
 mod media_tool;
 mod memory;
+mod memory_auto;
 mod permissions;
 mod plugins;
 mod preferences;
@@ -166,6 +167,9 @@ struct RunSnapshot {
     short_reply: bool,
     /// Started by an automation or watch: nobody is necessarily watching.
     automation_run: bool,
+    /// The person's own words that started this run; `None` for a goal turn, a hook's wake or
+    /// an automation (the memory pass reads only what the person said).
+    person_text: Option<String>,
 }
 
 /// One automation run in flight: the completion registry entry that lets the
@@ -339,6 +343,8 @@ struct AppStateInner {
     /// Per chat, the person's messages since they last wrote to an idle chat (see
     /// `todo::RequestChain`): what a goal the agent sets later in that chain takes on.
     request_chains: std::sync::Mutex<HashMap<String, todo::RequestChain>>,
+    /// "Still open" notes waiting for each chat's next turn (`hooks.built_in.still_open`).
+    still_open: std::sync::Mutex<HashMap<String, String>>,
     /// Open plugin hook sessions, by chat; see `hook_sessions.rs`.
     hook_sessions: std::sync::Mutex<HashMap<String, hook_sessions::OpenHookSession>>,
     /// Bumped whenever a waiting goal timer must no longer fire.
@@ -620,6 +626,7 @@ impl AppState {
                 todos_dir: app_dir.join(todo::TODOS_DIR),
                 todo_lock: std::sync::Mutex::new(()),
                 request_chains: std::sync::Mutex::new(HashMap::new()),
+                still_open: std::sync::Mutex::new(HashMap::new()),
                 hook_sessions: std::sync::Mutex::new(HashMap::new()),
                 goal_generations: std::sync::Mutex::new(HashMap::new()),
                 server_sends: std::sync::Mutex::new(HashMap::new()),

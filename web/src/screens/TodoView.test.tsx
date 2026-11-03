@@ -71,6 +71,14 @@ it("tags requests from the person, the check's additions and reopened items in w
   expect(screen.getByText("Write the README").closest("li")).not.toHaveTextContent("·");
 });
 
+it("tags an item seeded from the goal subtly", () => {
+  const seeded = { revision: 1, items: [{ id: "1", title: "CSV export downloads every task", status: "pending" as const, source: "goal" as const }] };
+  render(<TodoView goal={goal()} todo={seeded} />);
+  const item = screen.getByText("CSV export downloads every task").closest("li");
+  expect(item).toHaveTextContent("· from the goal");
+  expect(item?.querySelector(".themis-todo-tag")).toHaveTextContent("from the goal");
+});
+
 it("opens an item to show its details, outcome and why the check reopened it", () => {
   render(<TodoView goal={goal()} todo={todo} />);
   const done = screen.getByRole("button", { name: /Read the docs and plan/ });
