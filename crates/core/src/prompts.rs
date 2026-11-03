@@ -177,6 +177,10 @@ pub const MEMORY_CHANGED_NOTE: &str = include_str!("../builtins/prompts/memory-c
 /// After the index: the memories relevant to the message, in full; `{{memories}}`.
 pub const SYSTEM_MEMORY_RELEVANT: &str =
     include_str!("../builtins/prompts/system-memory-relevant.md");
+/// After the memories: the project's plan records, one line each; `{{index}}`.
+pub const SYSTEM_MEMORY_PLANS: &str = include_str!("../builtins/prompts/system-memory-plans.md");
+/// After the plan records' index: the record the run is about, in full; `{{record}}`.
+pub const SYSTEM_MEMORY_PLAN: &str = include_str!("../builtins/prompts/system-memory-plan.md");
 /// The main agent's line in place of the memory index when `memory.enabled` is false.
 pub const SYSTEM_MEMORY_OFF: &str = include_str!("../builtins/prompts/system-memory-off.md");
 /// System prompt of the background memory pass after a turn, on the memory models.

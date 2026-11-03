@@ -18,6 +18,7 @@ use serde_json::{json, Value};
 use themis_core::configuration::RuntimeConfig;
 use themis_core::memory::auto as pass;
 use themis_core::memory::jobs::{self, Failure, Pending};
+use themis_core::memory::plans::{OpRefused, PlanOp, PlanRecord};
 use themis_core::memory::{MemoryScope, SaveMode};
 
 use super::AppState;
@@ -140,6 +141,8 @@ fn tomorrow_ms() -> i64 {
 struct Answered {
     planned: Vec<pass::Proposal>,
     counts: pass::PassCounts,
+    /// The plan record op the pass proposed, if any.
+    plan: Option<Result<PlanOp, OpRefused>>,
 }
 
 impl AppState {
@@ -331,7 +334,7 @@ impl AppState {
         sink: Arc<dyn EventSink>,
         (thread_id, run_id): (&str, &str),
         what: &'static str,
-        content: String,
+        (content, answered): (String, String),
     ) {
         let Some(root) = self.thread_project_root(thread_id).await else {
             return;
@@ -354,7 +357,7 @@ impl AppState {
                 project_root: root,
                 config: resolved.config,
                 person: Vec::new(),
-                answered: String::new(),
+                answered,
                 event: Some((what, content)),
             },
             String::new(),
@@ -437,7 +440,15 @@ impl AppState {
                         None => proposals,
                     };
                     let planned = pass::plan(proposals, known, &mut counts);
-                    Ok(Answered { planned, counts })
+                    let plan = consolidating
+                        .is_none()
+                        .then(|| pass::parse_plan_answer(&text))
+                        .flatten();
+                    Ok(Answered {
+                        planned,
+                        counts,
+                        plan,
+                    })
                 }
                 .await;
                 log["outcome"] = result
@@ -469,7 +480,12 @@ impl AppState {
     /// to do (a scope with fewer than two memories needs no tidying).
     fn memory_job_request(&self, job: &Job) -> Option<(Vec<pass::Known>, (String, String))> {
         match job {
-            Job::Pass { turn, reply, .. } => {
+            Job::Pass {
+                turn,
+                reply,
+                thread_id,
+                ..
+            } => {
                 let index = |scope| {
                     self.memory_store(scope, Some(&turn.project_root))
                         .map(|store| store.index())
@@ -506,6 +522,12 @@ impl AppState {
                         entry.body = Some(memory.body.clone());
                     }
                 }
+                // The plan records' index and the record this chat is about, in full.
+                let (plans_index, record) =
+                    self.plan_record_for(&turn.project_root, thread_id, &about);
+                let record = record
+                    .map(|record| themis_core::memory::plans::serialize(&record))
+                    .unwrap_or_default();
                 Some((
                     known,
                     pass::request(
@@ -514,6 +536,7 @@ impl AppState {
                         &global,
                         &project,
                         &relevant,
+                        (&plans_index, &record),
                         turn.event
                             .as_ref()
                             .map(|(what, content)| (*what, content.as_str())),
@@ -550,6 +573,7 @@ impl AppState {
         let Answered {
             planned,
             mut counts,
+            plan,
         } = answered;
         let project_root = match job {
             Job::Pass { turn, .. } => Some(turn.project_root.clone()),
@@ -626,7 +650,21 @@ impl AppState {
                 }
             }
         }
-        let outcome = if counts.changed() {
+        let mut plan_changed = false;
+        if let (
+            Job::Pass {
+                thread_id, turn, ..
+            },
+            Some(plan),
+        ) = (job, plan)
+        {
+            if let Some(change) = self.apply_plan_op(thread_id, turn, plan, (model_index, model)) {
+                plan_changed = true;
+                bodies.push((change.name.clone(), change.description.clone()));
+                changes.push(change);
+            }
+        }
+        let outcome = if counts.changed() || plan_changed {
             "changed"
         } else {
             "nothing"
@@ -653,6 +691,101 @@ impl AppState {
 
     /// Reads memory back into the chat's run while it still works: what changed reaches it at
     /// its next step as a runtime note, so a long run (a goal) never works from stale memory.
+    /// Applies the pass's plan op to the project's plan records. A new record copies the plan
+    /// reply the person answered word for word and is tied to the chat while its goal runs.
+    /// Returns the change line for the chat; logs metadata only.
+    fn apply_plan_op(
+        &self,
+        thread_id: &str,
+        turn: &MemoryTurn,
+        plan: Result<PlanOp, OpRefused>,
+        (model_index, model): (usize, &str),
+    ) -> Option<MemoryChange> {
+        let today = themis_core::memory::today();
+        let mut log = json!({"thread_id": thread_id});
+        let result: Result<(&str, PlanRecord), &str> = (|| {
+            let op = plan.map_err(|refused| match refused {
+                OpRefused::Invalid => "invalid",
+                OpRefused::Secret => "sensitive",
+            })?;
+            log["op"] = match &op {
+                PlanOp::Create { .. } => "create",
+                PlanOp::Change { .. } => "change",
+                PlanOp::Done { .. } => "done",
+                PlanOp::Delete { .. } => "delete",
+            }
+            .into();
+            let store = self.plan_store(&turn.project_root).map_err(|_| "failed")?;
+            let existing = store.read(op.name()).map_err(|_| "unreadable")?;
+            match (op, existing) {
+                (PlanOp::Create { name, title }, None) => {
+                    if turn.answered.trim().is_empty() {
+                        return Err("no_plan_reply");
+                    }
+                    let building = self.goal_for(thread_id).is_some_and(|goal| {
+                        !matches!(goal.status, crate::types::GoalStatus::Reached)
+                    });
+                    let record = PlanRecord::new(
+                        &name,
+                        &title,
+                        &turn.answered,
+                        building.then_some(thread_id),
+                        &today,
+                    );
+                    store.save(&record, true).map_err(|_| "failed")?;
+                    Ok(("saved", record))
+                }
+                (PlanOp::Create { .. }, Some(_)) => Err("exists"),
+                (PlanOp::Change { change, edits, .. }, Some(mut record)) => {
+                    let (applied, missed) = record.change(&change, &edits, &today);
+                    log["edits_applied"] = applied.into();
+                    log["edits_missed"] = missed.into();
+                    store.save(&record, false).map_err(|_| "failed")?;
+                    Ok(("updated", record))
+                }
+                (
+                    PlanOp::Done {
+                        results,
+                        evidence,
+                        lessons,
+                        ..
+                    },
+                    Some(mut record),
+                ) => {
+                    // A goal's evidence, copied by Themis, wins over the model's.
+                    let evidence = if record.evidence.is_empty() {
+                        evidence
+                    } else {
+                        Vec::new()
+                    };
+                    record.done(&results, &evidence, &lessons, &today);
+                    store.save(&record, false).map_err(|_| "failed")?;
+                    Ok(("updated", record))
+                }
+                (PlanOp::Delete { name }, Some(_)) => {
+                    let record = store.delete(&name).map_err(|_| "failed")?;
+                    Ok(("removed", record))
+                }
+                (_, None) => Err("missing"),
+            }
+        })();
+        log["outcome"] = match &result {
+            Ok((action, _)) => (*action).into(),
+            Err(why) => (*why).into(),
+        };
+        let _ = self.inner.diagnostics.append("memory", "plan", "info", log);
+        let (action, record) = result.ok()?;
+        Some(MemoryChange {
+            action: action.to_owned(),
+            scope: "project".to_owned(),
+            name: format!("plans/{}", record.name),
+            description: record.title,
+            model: model.to_owned(),
+            model_index,
+            project_root: Some(turn.project_root.to_string_lossy().into_owned()),
+        })
+    }
+
     fn tell_running_agent(
         &self,
         thread_id: &str,

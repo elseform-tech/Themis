@@ -1,0 +1,2 @@
+Plan records: work the person approved in this project, one line each (status, last change). Themis keeps them (the plan as approved, the changes the person made, and once built its results, evidence and lessons); you never write them. A done record says what was built and verified then: check it against the current files before relying on it.
+{{index}}

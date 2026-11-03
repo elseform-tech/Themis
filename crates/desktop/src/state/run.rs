@@ -306,7 +306,7 @@ impl AppState {
         // message, read once per run.
         let memory_note = self.memory_note(
             run_configuration.memory.enabled,
-            &snapshot.work_root,
+            (&snapshot.work_root, thread_id),
             snapshot.person_text.as_deref().unwrap_or(&task),
         );
         // With memory off the main agent is told so, and doesn't promise to remember.

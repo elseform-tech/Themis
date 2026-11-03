@@ -36,21 +36,68 @@ impl AppState {
         MemoryStore::new(&self.memory_root(), &folder).map_err(|e| e.to_string())
     }
 
+    /// This project's plan records.
+    pub(crate) fn plan_store(
+        &self,
+        project_root: &Path,
+    ) -> Result<themis_core::memory::plans::PlanStore, String> {
+        themis_core::memory::plans::PlanStore::new(
+            &self.memory_root(),
+            &themis_core::memory::project_folder(project_root),
+        )
+        .map_err(|e| e.to_string())
+    }
+
+    /// The plan record a chat is about: the one its goal builds, else the one `about` names
+    /// best. Reads the index and at most one record.
+    pub(crate) fn plan_record_for(
+        &self,
+        project_root: &Path,
+        thread_id: &str,
+        about: &str,
+    ) -> (String, Option<themis_core::memory::plans::PlanRecord>) {
+        let Ok(store) = self.plan_store(project_root) else {
+            return (String::new(), None);
+        };
+        let index = store.index();
+        if index.is_empty() {
+            return (index, None);
+        }
+        let record = store.for_chat(thread_id).or_else(|| {
+            themis_core::memory::plans::relevant_name(about, &index)
+                .and_then(|name| store.read(&name).ok().flatten())
+        });
+        (index, record)
+    }
+
     /// What a run in `project_root` starts with for `message`: the global and this project's
     /// indexes (never another project's) and the memories relevant to the message in full, or
     /// nothing when memory is off or empty. Reads two index files and at most
     /// [`themis_core::memory::MAX_RELEVANT`] memories.
-    pub(super) fn memory_note(&self, enabled: bool, project_root: &Path, message: &str) -> String {
+    pub(super) fn memory_note(
+        &self,
+        enabled: bool,
+        (project_root, thread_id): (&Path, &str),
+        message: &str,
+    ) -> String {
         if !enabled {
             return String::new();
         }
+        // Then the plan records: their index and the one this chat is about, in full.
+        let (plans_index, record) = self.plan_record_for(project_root, thread_id, message);
+        let plans = themis_core::memory::plans::run_note(&plans_index, record.as_ref());
         let Ok(global) = self.memory_store(MemoryScope::Global, None) else {
             return String::new();
         };
         let project = self
             .memory_store(MemoryScope::Project, Some(project_root))
             .ok();
-        themis_core::memory::memory_block(&global, project.as_ref(), message)
+        let memories = themis_core::memory::memory_block(&global, project.as_ref(), message);
+        match (memories.is_empty(), plans.is_empty()) {
+            (_, true) => memories,
+            (true, false) => plans,
+            (false, false) => format!("{memories}\n{plans}"),
+        }
     }
 
     /// Settings › Memory: one scope's memories, its index use, the revision a delete names, and

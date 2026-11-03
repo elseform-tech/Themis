@@ -10,6 +10,7 @@ use std::sync::Mutex;
 
 pub mod auto;
 pub mod jobs;
+pub mod plans;
 
 use serde::{Deserialize, Serialize};
 use sha2::Digest;

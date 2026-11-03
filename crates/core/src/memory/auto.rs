@@ -27,6 +27,8 @@ pub const MAX_CONSOLIDATE_CHANGES: usize = 10;
 pub const MAX_CONSOLIDATE_BODY_BYTES: usize = 1024;
 /// Most bytes of memories one consolidation request carries; the oldest past it are left out.
 pub const MAX_CONSOLIDATE_BYTES: usize = 48 * 1024;
+/// Most bytes of the plan record one pass reads.
+pub const MAX_PLAN_RECORD_BYTES: usize = super::plans::MAX_RECORD_BYTES as usize;
 /// Most `{` positions tried when looking for the answer's JSON object.
 const MAX_JSON_STARTS: usize = 64;
 
@@ -71,6 +73,7 @@ pub fn request(
     global_index: &str,
     project_index: &str,
     relevant: &[(MemoryScope, Memory)],
+    (plans_index, plan_record): (&str, &str),
     event: Option<(&str, &str)>,
 ) -> (String, String) {
     let person = person
@@ -85,6 +88,22 @@ pub fn request(
             ("global", &index_text(global_index)),
             ("project", &index_text(project_index)),
             ("relevant", &relevant_text(relevant)),
+            (
+                "plans",
+                &if plans_index.trim().is_empty() {
+                    "(none)".to_owned()
+                } else {
+                    bounded(plans_index.trim_end(), 8 * 1024)
+                },
+            ),
+            (
+                "plan_record",
+                &if plan_record.trim().is_empty() {
+                    "(none)".to_owned()
+                } else {
+                    fenced(&bounded(plan_record.trim(), MAX_PLAN_RECORD_BYTES))
+                },
+            ),
             (
                 "event",
                 &event.map_or_else(String::new, |(what, content)| {
@@ -132,6 +151,8 @@ pub fn max_request_bytes() -> usize {
     crate::prompts::MEMORY_AUTO_USER.len()
         + 2 * MAX_INDEX_BYTES
         + super::MAX_RELEVANT_BYTES
+        + 8 * 1024
+        + MAX_PLAN_RECORD_BYTES
         + 2 * MAX_PERSON_BYTES
         + 64
         + 2 * MAX_REPLY_BYTES
@@ -241,6 +262,18 @@ fn field(entry: &Value, key: &str) -> Option<String> {
 /// Whether hiding secrets would change `text`: it holds one.
 fn holds_secret(text: &str) -> bool {
     strip_secrets(text) != text
+}
+
+/// The answer's plan op (`"plan": {op, name, …}` beside `"memories"`), if it has one.
+/// Untrusted, like the rest of the answer.
+pub fn parse_plan_answer(
+    text: &str,
+) -> Option<Result<super::plans::PlanOp, super::plans::OpRefused>> {
+    if text.len() > MAX_ANSWER_BYTES {
+        return None;
+    }
+    let object = json_object_with(text, "memories")?;
+    super::plans::parse_op(object.get("plan").unwrap_or(&Value::Null))
 }
 
 /// Reads the model's answer: `{"memories":[{action, scope?, name, type, description, body,
@@ -787,8 +820,14 @@ mod tests {
                     body: "The whole fact, steps 1 to 8.".into(),
                 },
             )],
+            (
+                "- splitter-app (in progress, 2026-11-03): Splitter\n",
+                "## Plan\n1. People >>> first",
+            ),
             None,
         );
+        assert!(user.contains("- splitter-app (in progress, 2026-11-03): Splitter"));
+        assert!(user.contains("## Plan\n1. People > > > first"));
         assert!(system.starts_with("You keep an assistant's memory"));
         // A memory the message may touch comes in full, so an update keeps what still holds.
         assert!(user.contains("### a (project)\nThe whole fact, steps 1 to 8."));
@@ -803,6 +842,10 @@ mod tests {
             "",
             "",
             &[],
+            (
+                &"- p (done, 2026-11-03): t\n".repeat(2_000),
+                &"plan ".repeat(10_000),
+            ),
             Some(("a goal was completed", &"evidence ".repeat(10_000))),
         );
         assert!(user.len() <= max_request_bytes(), "{}", user.len());
@@ -850,6 +893,7 @@ mod tests {
                 &global,
                 &project,
                 &[],
+                ("", ""),
                 None,
             );
             (user.len(), read)

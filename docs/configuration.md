@@ -858,6 +858,35 @@ Only `user` and `feedback` memories may be global; `project` and `reference` mem
 belong to one project. A scope holds at most 200 memories. A memory built from a web page or a
 file keeps it in `source` and says what that content said, never as the person's word.
 
+### Plan records
+
+Plans are not memories. Each piece of work the person approved has one plan record,
+`memory/projects/<hash>/plans/<name>.md` (project only; at most 50 per project, 16 KiB per
+file), with a header of `name`, `title` (one line, at most 120), `status` (`approved`,
+`in progress` while a goal builds it, `done`), `updated` and, while a chat's goal builds it,
+`chat` (that chat's id), then five sections: **Plan** (the reply the person approved, copied
+word for word by Themis, at most 8 KiB), **Changes** (one line per change, at most 20),
+**Results** (at most 2 KiB), **Evidence** (one line per requirement, at most 12) and
+**Lessons** (at most 3). `plans/PLANS.md` is their index (`- name (status, date): title`).
+Records are read as untrusted: a file whose header or sections don't fit is skipped, secrets
+are hidden, and the sections are found from the end so a plan that quotes a heading keeps it.
+
+The memory pass manages them through one `"plan"` entry beside `"memories"` in its answer:
+`create` (the person approved the plan in the reply they answered: Themis copies that reply;
+the model only names it), `change` (a change line plus `old` → `new` edits, each applied only
+when `old` occurs exactly once in the plan, so every step the change doesn't touch stays word
+for word), `done` (results and lessons; evidence only when the record has none) and `delete`.
+When a goal completes, Themis itself marks the record its chat's goal built as done and copies
+the goal's evidence as the agent gave it (`memory` / `plan` with `by: goal`), before the
+goal-complete pass adds results and lessons. Ordinary passes never save a plan, its steps or
+what was built as memories. A run gets, after the memories, the plans index and in full the
+record its chat's goal builds, else the one whose line shares the most words (at least two)
+with the message (`system-memory-plans.md`, `system-memory-plan.md`): one index file and at
+most one record per run. The pass gets the same index and record. `logs/` has `memory` /
+`plan` lines with the op and outcome (`saved`, `updated`, `removed`, `exists`, `missing`,
+`invalid`, `sensitive`, `no_plan_reply`, `failed`) and edit counts only. The chat's memory
+line shows a record as `plans/<name>.md`.
+
 ### Memory jobs and the memory models
 
 Memory is kept by background jobs on the memory models (`memory.models`), never by the chat's

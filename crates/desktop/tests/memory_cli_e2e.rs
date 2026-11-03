@@ -87,6 +87,27 @@ fn last_user(body: &Value) -> String {
 fn pass_answer(body: &Value) -> String {
     let user = body["messages"][1]["content"].as_str().unwrap_or_default();
     let person = user.split("<<<person").nth(1).unwrap_or_default();
+    // Plan records, by event.
+    if user.contains("What just happened: a goal was created") && user.contains("notes tool") {
+        return json!({"plan":{"op":"create","name":"notes-tool","title":"Notes tool in notes.txt"},
+            "memories":[{"action":"save","scope":"global","name":"likes-short-names","type":"user",
+            "description":"Likes short file names","body":"The person likes short file names."}]})
+        .to_string();
+    }
+    if user.contains("What just happened: the person changed or added to the goal")
+        && user.contains("sort notes by date")
+    {
+        return json!({"plan":{"op":"change","name":"notes-tool","change":"Notes are sorted by date, not title.",
+            "edits":[{"old":"2. Sort notes by title.","new":"2. Sort notes by date."}]},"memories":[]})
+        .to_string();
+    }
+    if user.contains("What just happened: a goal was completed") && user.contains("notes tool") {
+        return json!({"plan":{"op":"done","name":"notes-tool","results":"Built notes.txt; check with: ls notes.txt",
+            "evidence":["made up by the model"],
+            "lessons":["Write notes.txt with a trailing newline — the line count check reads whole lines"]},
+            "memories":[]})
+        .to_string();
+    }
     if person.contains("always use pnpm") {
         json!({"memories":[{"action":"save","scope":"global","name":"uses-pnpm","type":"user",
             "description":"Uses pnpm, not npm","body":"The person uses pnpm for JavaScript projects."}]})
@@ -163,6 +184,10 @@ impl Harness {
                 // A turn whose model request fails outright.
                 if last_user(&body).contains("this turn fails") {
                     return ResponseTemplate::new(400).set_body_string("bad request");
+                }
+                // A plan the person can approve.
+                if last_user(&body).contains("Plan the notes tool") {
+                    return text_reply("1. Store notes in notes.txt.\n2. Sort notes by title.\n3. Show the count.");
                 }
                 // A goal turn that keeps working a while before it completes.
                 if body["messages"].to_string().contains("slow goal") && last(&body)["role"] == "user" {
@@ -731,7 +756,7 @@ async fn a_new_goal_and_a_mid_goal_change_reach_memory_while_the_turn_works() {
         .unwrap();
     let user = body["messages"][1]["content"].as_str().unwrap();
     assert!(
-        user.contains("The reply that message answered:\nDone."),
+        user.contains("<<<reply-answered\n1. Store notes in notes.txt."),
         "{user}"
     );
     assert!(user.contains("slow goal: build the notes tool"), "{user}");
@@ -740,6 +765,132 @@ async fn a_new_goal_and_a_mid_goal_change_reach_memory_while_the_turn_works() {
     tokio::time::sleep(Duration::from_millis(800)).await;
     assert_eq!(passes(&h, "<<<person\n/goal slow goal"), 0);
     assert_eq!(passes(&h, "<<<person\nChange: notes are sorted"), 0);
+}
+
+/// The file of plan record `name`, wherever the project's memory folder is.
+fn plan_file(data: &Path, name: &str) -> Option<String> {
+    fn find(dir: &Path, name: &str) -> Option<std::path::PathBuf> {
+        for entry in std::fs::read_dir(dir).ok()?.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                if let Some(found) = find(&path, name) {
+                    return Some(found);
+                }
+            } else if path.ends_with(format!("plans/{name}.md")) {
+                return Some(path);
+            }
+        }
+        None
+    }
+    std::fs::read_to_string(find(data, name)?).ok()
+}
+
+/// Waits up to 20 s for plan record `name` to hold `wanted`; its text.
+async fn plan_with(data: &Path, name: &str, wanted: &str) -> String {
+    let deadline = std::time::Instant::now() + Duration::from_secs(20);
+    loop {
+        let text = plan_file(data, name).unwrap_or_default();
+        if text.contains(wanted) {
+            return text;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "no `{wanted}` in: {text}"
+        );
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+}
+
+/// A plan the person approved gets a plan record, at once when a goal is made from it: the
+/// plan word for word, tied to the chat. A change while the goal runs rewrites only the step it
+/// touches and adds its line; when the goal completes Themis copies the goal's evidence as the
+/// agent gave it and the pass adds results and lessons. A later chat about the work gets the
+/// record in full, and ordinary memories still come from the same passes.
+#[tokio::test(flavor = "multi_thread")]
+async fn an_approved_plan_keeps_a_record_through_changes_to_done() {
+    let mut h = Harness::start(MODELS).await;
+    let id = h.new_chat();
+    h.send(&id, "Plan the notes tool.", Duration::from_millis(100))
+        .await;
+    h.cli(
+        "send_message",
+        json!({"threadId":id,"text":"/goal slow goal: build the notes tool as planned","reasoningEffort":null}),
+    );
+    let record = plan_with(h.data.path(), "notes-tool", "## Plan").await;
+    assert!(record.contains("status: in progress"), "{record}");
+    assert!(record.contains(&format!("chat: {id}")), "{record}");
+    assert!(
+        record.contains(
+            "## Plan\n1. Store notes in notes.txt.\n2. Sort notes by title.\n3. Show the count."
+        ),
+        "{record}"
+    );
+    // The same pass still keeps an ordinary memory.
+    let global = h.cli("list_memories", json!({"scope":"global"}));
+    assert!(global.to_string().contains("likes-short-names"), "{global}");
+
+    // A change while the goal runs: only the step it touches is rewritten.
+    let message = h.cli(
+        "enqueue_message",
+        json!({"threadId":id,"text":"Change: sort notes by date."}),
+    );
+    h.cli(
+        "steer_queued_message",
+        json!({"threadId":id,"messageId":message["id"]}),
+    );
+    let record = plan_with(h.data.path(), "notes-tool", "sorted by date").await;
+    assert!(
+        record.contains("1. Store notes in notes.txt.\n2. Sort notes by date.\n3. Show the count."),
+        "{record}"
+    );
+    assert!(
+        record.contains("## Changes\n- Notes are sorted by date, not title."),
+        "{record}"
+    );
+
+    // The goal completes: the evidence as the agent gave it, then results and lessons.
+    h.watch(&id, Duration::from_millis(100), true).await;
+    let record = plan_with(h.data.path(), "notes-tool", "trailing newline").await;
+    assert!(record.contains("status: done"), "{record}");
+    assert!(
+        record.contains("## Evidence\n- notes.txt exists: ls notes.txt: notes.txt"),
+        "{record}"
+    );
+    assert!(!record.contains("made up by the model"), "{record}");
+    assert!(
+        record.contains("## Results\nBuilt notes.txt; check with: ls notes.txt"),
+        "{record}"
+    );
+
+    // A new chat about the work gets the record in full.
+    let other = h.new_chat();
+    h.send(
+        &other,
+        "How do I check the notes tool works?",
+        Duration::from_millis(100),
+    )
+    .await;
+    let request = h
+        .requests
+        .lock()
+        .unwrap()
+        .iter()
+        .rev()
+        .find(|body| {
+            !body["model"]
+                .as_str()
+                .unwrap_or_default()
+                .starts_with("mem-")
+                && last_user(body).contains("How do I check the notes tool")
+        })
+        .cloned()
+        .unwrap();
+    let system = system(&request);
+    assert!(system.contains("- notes-tool (done, "), "{system}");
+    assert!(
+        system.contains("## Lessons\n- Write notes.txt with a trailing newline"),
+        "{system}"
+    );
 }
 
 /// An update that keeps a memory's description but changes its text is applied: the memory

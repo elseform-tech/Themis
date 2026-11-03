@@ -303,7 +303,10 @@ impl AppState {
             Arc::clone(&sink),
             (&thread_id, ""),
             "the goal was edited by the person",
-            format!("The objective is now:\n{}", goal.text),
+            (
+                format!("The objective is now:\n{}", goal.text),
+                String::new(),
+            ),
         )
         .await;
         Ok(goal)
@@ -395,6 +398,14 @@ impl AppState {
                     GoalNoteKind::Reached,
                     "Complete.",
                 );
+                // The work's plan record is done, with the evidence as the agent gave it: no
+                // model in between, so none of it is summarized away.
+                let evidence: Vec<String> = goal
+                    .evidence
+                    .iter()
+                    .map(|item| format!("{}: {}", item.requirement, item.proof))
+                    .collect();
+                self.mark_plan_done(&thread_id, &evidence).await;
                 let mut content = format!("Objective: {}", goal.text);
                 for asked in &goal.also_asked {
                     content.push_str(&format!("\nAlso asked: {asked}"));
@@ -414,7 +425,7 @@ impl AppState {
                     Arc::clone(&sink),
                     (&thread_id, ""),
                     "a goal was completed",
-                    content,
+                    (content, String::new()),
                 )
                 .await;
             }
@@ -643,11 +654,37 @@ impl AppState {
             let person: String = person.chars().take(4000).collect();
             content.push_str(&format!("\nThe person's latest message:\n{person}"));
         }
-        if let Some(reply) = transcript.last_turn_text(thread_id, "assistant") {
-            let reply: String = reply.chars().take(12000).collect();
-            content.push_str(&format!("\nThe reply that message answered:\n{reply}"));
-        }
-        self.spawn_goal_memory_event(sink, thread_id, "a goal was created", content);
+        // The reply it answered (the plan, when there is one) goes as the reply answered, so a
+        // plan record copies it whole.
+        let answered = transcript
+            .last_turn_text(thread_id, "assistant")
+            .unwrap_or_default();
+        self.spawn_goal_memory_event(sink, thread_id, "a goal was created", (content, answered));
+    }
+
+    /// Marks the plan record this chat's goal built as done, with `evidence`.
+    async fn mark_plan_done(&self, thread_id: &str, evidence: &[String]) {
+        let Some(root) = self.thread_project_root(thread_id).await else {
+            return;
+        };
+        let Ok(store) = self.plan_store(std::path::Path::new(&root)) else {
+            return;
+        };
+        let Some(mut record) = store.for_chat(thread_id) else {
+            return;
+        };
+        record.done("", evidence, &[], &themis_core::memory::today());
+        let outcome = if store.save(&record, false).is_ok() {
+            "updated"
+        } else {
+            "failed"
+        };
+        let _ = self.inner.diagnostics.append(
+            "memory",
+            "plan",
+            "info",
+            json!({"thread_id": thread_id, "op": "done", "by": "goal", "outcome": outcome, "evidence": evidence.len()}),
+        );
     }
 
     fn spawn_goal_memory_event(
@@ -655,7 +692,7 @@ impl AppState {
         sink: &Arc<dyn EventSink>,
         thread_id: &str,
         what: &'static str,
-        content: String,
+        content: (String, String),
     ) {
         let (state, sink, thread_id) = (self.clone(), Arc::clone(sink), thread_id.to_owned());
         tokio::spawn(async move {
@@ -706,7 +743,10 @@ impl AppState {
                 sink,
                 thread_id,
                 "the person changed or added to the goal while it ran",
-                format!("The person said:\n{said}\nThe objective:\n{}", goal.text),
+                (
+                    format!("The person said:\n{said}\nThe objective:\n{}", goal.text),
+                    String::new(),
+                ),
             );
         }
     }
