@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AttachedMedia, ToolMedia } from "../lib/types";
 import { initialState, reducer, type ChatMessage } from "../state/reducer";
 import { MediaGallery } from "./MediaStrip";
-import { ToolGroup } from "./ThreadConversation";
+import { GoalTurnDivider, ToolGroup } from "./ThreadConversation";
 
 vi.mock("../lib/tauri", () => ({ attachmentFile: vi.fn(async (_thread: string, path: string) => `asset://${path}`) }));
 
@@ -84,3 +84,13 @@ describe("tool media in the reducer", () => {
     expect(replayed.messages.t1!.find(row => row.tool)!.tool!.media).toEqual(shot);
   });
 });
+
+describe("a goal turn", () => {
+  it("starts after a quiet separator, not a bubble", () => {
+    render(<GoalTurnDivider turn={3} />);
+    const line = screen.getByRole("separator", { name: "Goal turn 3" });
+    expect(line).toHaveClass("themis-goal-turn");
+    expect(line).toHaveTextContent("");
+  });
+});
+

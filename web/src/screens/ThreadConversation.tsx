@@ -355,6 +355,11 @@ function formatRunDuration(ms: number): string {
   return seconds < 60 ? `${seconds}s` : `${Math.floor(seconds / 60)}m${seconds % 60 === 0 ? "" : ` ${seconds % 60}s`}`;
 }
 
+/** The line between goal turns: a hairline with space around it, no text. */
+export function GoalTurnDivider({ turn }: { turn: number }) {
+  return <div className="themis-goal-turn" role="separator" aria-label={`Goal turn ${turn}`} />;
+}
+
 type InlineMemory = { memoryByRun: Record<string, ChatMessage>; finalRuns: Set<string>; lastFinalId: string | undefined; working: "checking" | "waiting" | undefined };
 
 function Message({ message, threadId, activeRunId, durationMs, skills, plugins, memory, memoryWorking }: { message: ChatMessage; threadId?: string; activeRunId: string | undefined; durationMs?: number; skills: PromptSkill[]; plugins: PromptPlugin[]; memory?: ChatMessage; memoryWorking?: "checking" | "waiting" }) {
@@ -364,8 +369,8 @@ function Message({ message, threadId, activeRunId, durationMs, skills, plugins, 
   // A goal turn starts with a runtime message: a divider, not a bubble from the user.
   if (message.goalStatus) return <div className="themis-thread-msg themis-thread-msg--assistant themis-thread-msg--completed"><ResponseBody text={message.text} /></div>;
   if (message.goalCheck) return <div className="themis-thread-msg themis-thread-msg--user"><span className="themis-goal-check-label">Goal check</span><p className="themis-thread-text">{message.text}</p></div>;
-  // The check's bubble already marks where a new goal turn starts.
-  if (message.goalTurn !== undefined) return null;
+  // Where a new goal turn starts: a quiet line with room around it.
+  if (message.goalTurn !== undefined) return <GoalTurnDivider turn={message.goalTurn} />;
   // Not the person's message: what started this turn, and whose word it is.
   if (message.hookWake !== undefined) return <div className="themis-thread-msg themis-thread-msg--user"><span className="themis-goal-check-label">Plugin hook</span><p className="themis-thread-text">{message.hookWake}</p></div>;
   const text = message.attachments?.length ? message.text.split("\n\nAttached files (local paths;")[0]! : message.text;

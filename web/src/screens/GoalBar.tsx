@@ -48,6 +48,8 @@ export function GoalBar({ goal, onEdit, onPause, onResume, onRemove, onFold }: G
   const [draft, setDraft] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [menu, setMenu] = useState(false);
+  // A goal that can't be edited (complete, or waiting for a reply) unfolds to its full text.
+  const [unfolded, setUnfolded] = useState(false);
   const ticking = goal.status === "running" && goal.running_since !== undefined;
   useEffect(() => {
     if (!ticking) return;
@@ -92,12 +94,12 @@ export function GoalBar({ goal, onEdit, onPause, onResume, onRemove, onFold }: G
   }
 
   return (
-    <div role="region" aria-label="Goal" className="themis-goal-bar" data-status={goal.status}>
+    <div role="region" aria-label="Goal" className={`themis-goal-bar${unfolded ? " is-unfolded" : ""}`} data-status={goal.status}>
       <GoalMark />
       <div className="themis-goal-body">
         {editable
           ? <button type="button" className="themis-goal-text" title={goal.text} onClick={() => setDraft(goal.text)}>{goal.text}</button>
-          : <span className="themis-goal-text" title={goal.text}>{goal.text}</span>}
+          : <button type="button" className={`themis-goal-text${unfolded ? " is-unfolded" : ""}`} aria-expanded={unfolded} title={unfolded ? "Show less" : goal.text} onClick={() => setUnfolded(open => !open)}>{goal.text}</button>}
       </div>
       <span className="themis-goal-meta">
         {label && <span className="themis-goal-state">{label}</span>}

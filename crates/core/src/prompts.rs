@@ -212,6 +212,10 @@ pub const GOAL_QA_PASSED: &str = include_str!("../builtins/prompts/goal-qa-passe
 /// update_goal complete answered with QA turns; `{{count}}`.
 /// The quality items every goal's checklist ends with, one per line.
 pub const GOAL_QUALITY_ITEMS: &str = include_str!("../builtins/prompts/goal-quality-items.md");
+/// update_goal complete after QA with fewer evidence entries than checklist items;
+/// `{{items}}`, `{{given}}`.
+pub const GOAL_COMPLETE_EVIDENCE: &str =
+    include_str!("../builtins/prompts/goal-complete-evidence.md");
 pub const GOAL_COMPLETE_QA: &str = include_str!("../builtins/prompts/goal-complete-qa.md");
 pub const GOAL_COMPLETE_UNREAD: &str = include_str!("../builtins/prompts/goal-complete-unread.md");
 

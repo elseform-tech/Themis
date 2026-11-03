@@ -458,6 +458,16 @@ impl AppState {
                         &[("count", &goal.checklist.len().to_string())],
                     ));
                 }
+                // After QA, the evidence covers the checklist: one entry per item.
+                if qa && evidence.len() < current.checklist.len() {
+                    return Err(themis_core::prompts::fill(
+                        themis_core::prompts::GOAL_COMPLETE_EVIDENCE,
+                        &[
+                            ("items", &current.checklist.len().to_string()),
+                            ("given", &evidence.len().to_string()),
+                        ],
+                    ));
+                }
                 (GoalStatus::Reached, None, evidence)
             }
         };

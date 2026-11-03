@@ -1153,6 +1153,12 @@ async fn a_goal_pauses_after_its_turns_keep_failing() {
         .await;
     let data = tempfile::tempdir().unwrap();
     let project = tempfile::tempdir().unwrap();
+    // The goal turn loop alone; QA turns have their own tests.
+    std::fs::write(
+        data.path().join("runtime.jsonc"),
+        r#"{"goal_qa_turns": false}"#,
+    )
+    .unwrap();
     let state = AppState::new_for_test(data.path().join("settings.json"));
     state.set_go_base_url_override(Some(server.uri()));
     state
@@ -1204,6 +1210,12 @@ async fn a_goal_whose_turn_cannot_start_retries() {
         .await;
     let data = tempfile::tempdir().unwrap();
     let project = tempfile::tempdir().unwrap();
+    // The goal turn loop alone; QA turns have their own tests.
+    std::fs::write(
+        data.path().join("runtime.jsonc"),
+        r#"{"goal_qa_turns": false}"#,
+    )
+    .unwrap();
     let state = AppState::new_for_test(data.path().join("settings.json"));
     state.set_go_base_url_override(Some(server.uri()));
     let thread = state

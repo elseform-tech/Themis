@@ -1,0 +1,1 @@
+update_goal: give one evidence entry per checklist item ({{items}} items; you gave {{given}}), each naming its item and what you ran or saw for it in this turn. Then call update_goal complete again.

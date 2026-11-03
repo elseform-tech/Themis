@@ -38,7 +38,8 @@
   font: inherit; font-size: .8125rem; font-weight: 600; line-height: 1.5; text-align: left; cursor: pointer;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis; border-radius: 6px;
 }
-span.themis-goal-text { cursor: default; }
+.themis-goal-text.is-unfolded { white-space: normal; overflow-wrap: anywhere; }
+.themis-goal-bar.is-unfolded { align-items: flex-start; }
 .themis-goal-text:focus-visible { outline: 2px solid var(--themis-accent); outline-offset: 2px; }
 .themis-goal-more { position: relative; display: inline-flex; }
 .themis-goal-menu {

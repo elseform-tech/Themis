@@ -782,11 +782,22 @@ async fn cli_a_goal_is_complete_only_after_qa_turns_pass_its_checklist() {
                 reply("Checked: it holds.")
             };
         }
-        if fresh && offers(body, "update_goal") {
-            return calls(
-                "update_goal",
-                json!({"status": "complete", "evidence": [{"requirement": "the README has a title", "proof": "head -1 README.md: # Ledgerly"}]}),
-            );
+        let refused_evidence = body["messages"]
+            .as_array()
+            .and_then(|messages| messages.last())
+.is_some_and(|message| {
+                message["role"] == "tool"
+                    && message["content"]
+                        .to_string()
+                        .contains("one evidence entry per checklist item")
+            });
+        if (fresh || refused_evidence) && offers(body, "update_goal") {
+            // The last check first gives one entry (refused), then one per checklist item.
+            let entries = if refused_evidence { 7 } else { 1 };
+            let evidence: Vec<Value> = (0..entries)
+                .map(|i| json!({"requirement": format!("item {}", i + 1), "proof": "checked: it holds"}))
+                .collect();
+            return calls("update_goal", json!({"status": "complete", "evidence": evidence}));
         }
         reply("Built it.")
     })
@@ -836,13 +847,16 @@ async fn cli_a_goal_is_complete_only_after_qa_turns_pass_its_checklist() {
         "{}",
         qa[0]
     );
-    assert!(
-        qa[0].contains("1. the README has a title\n2. Fault tolerance"),
-        "{}",
-        qa[0]
-    );
+    assert!(qa[0].contains("1. item 1\n2. Fault tolerance"), "{}", qa[0]);
     assert!(qa[1].contains("3 of 7"), "{}", qa[1]);
     assert!(qa[2].contains("7. UI and user experience"), "{}", qa[2]);
+    // Too little evidence after QA is refused: one entry per checklist item.
+    assert!(
+        bodies.iter().any(|body| body["messages"]
+            .to_string()
+            .contains("one evidence entry per checklist item (7 items; you gave 1)")),
+        "short evidence accepted"
+    );
     // Then the last check, and complete.
     assert!(bodies
         .iter()

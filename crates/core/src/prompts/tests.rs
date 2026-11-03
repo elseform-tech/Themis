@@ -103,6 +103,11 @@ const ALL: &[(&str, &str, &[&str])] = &[
     (GOAL_QA_PASSED, "goal-qa-passed", &[]),
     (GOAL_QUALITY_ITEMS, "goal-quality-items", &[]),
     (GOAL_COMPLETE_QA, "goal-complete-qa", &["count"]),
+    (
+        GOAL_COMPLETE_EVIDENCE,
+        "goal-complete-evidence",
+        &["items", "given"],
+    ),
     (MEMORY_AUTO_SYSTEM, "memory-auto-system", &[]),
     (
         MEMORY_AUTO_USER,

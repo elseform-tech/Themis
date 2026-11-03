@@ -68,9 +68,16 @@ describe("GoalBar", () => {
     expect(screen.getByText("Complete")).toBeInTheDocument();
     expect(screen.queryByRole("list")).toBeNull();
     expect(screen.getByRole("region", { name: "Goal" })).not.toHaveTextContent("bench.sh");
-    // A complete goal's sentence is text, not a way into an editor.
-    expect(screen.queryByRole("button", { name: /Optimize this app/ })).toBeNull();
+    // A complete goal can't be edited, but its full sentence unfolds on a click and folds back.
     expect(screen.queryByRole("button", { name: "Edit goal" })).toBeNull();
+    const sentence = screen.getByRole("button", { name: /Optimize this app/ });
+    expect(sentence).toHaveAttribute("aria-expanded", "false");
+    fireEvent.click(sentence);
+    expect(sentence).toHaveAttribute("aria-expanded", "true");
+    expect(sentence).toHaveClass("is-unfolded");
+    expect(screen.queryByRole("textbox")).toBeNull();
+    fireEvent.click(sentence);
+    expect(sentence).toHaveAttribute("aria-expanded", "false");
     expect(screen.queryByRole("button", { name: "Pause goal after this turn" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Resume goal" })).toBeNull();
   });
