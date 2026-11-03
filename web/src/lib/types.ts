@@ -325,6 +325,7 @@ export type ThreadEvent =
   | { kind: 'memory_changed'; changes: MemoryChange[] }
   /** Who drives the chat's built-in browser, and any recording (live only). */
   | { kind: 'browser_changed'; controller: string; recording?: BrowserRecording }
+  | { kind: 'memory_working'; step: 'checking' | 'done' | 'waiting' }
   | { kind: 'incomplete'; result: string; model?: string }
   | { kind: 'finished'; result: string; model?: string }
   | { kind: 'failed'; error: string }
@@ -684,6 +685,8 @@ export interface PersistedMessage {
   subagents?: SubagentEntry[];
   /** What the memory models changed after this turn: one slim line under the reply. */
   memory?: MemoryChange[];
+  /** The line arrived live, after its shimmer: it briefly shows what is being saved. */
+  memorySettling?: boolean;
 }
 
 export type HistoryItem =

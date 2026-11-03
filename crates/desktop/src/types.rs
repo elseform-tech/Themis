@@ -247,6 +247,13 @@ pub enum ThreadEvent {
     MemoryChanged {
         changes: Vec<MemoryChange>,
     },
+    /// Where the memory pass after this run's turn stands, for a shimmering line under the
+    /// reply while the memory models work. Live only (never saved): `checking` while a model
+    /// reads the turn, `done` when it changed nothing, `waiting` when every model failed and the
+    /// job waits to retry. A pass that changed memory ends with [`Self::MemoryChanged`] instead.
+    MemoryWorking {
+        step: String,
+    },
     /// Who controls the chat's built-in browser and whether it is recording
     /// changed. Live only; `run_id` is empty.
     BrowserChanged {

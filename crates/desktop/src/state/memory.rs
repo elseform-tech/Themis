@@ -112,6 +112,22 @@ impl AppState {
         sink.emit_thread_event(&envelope);
     }
 
+    /// Tells the chat where its memory pass stands ([`ThreadEvent::MemoryWorking`]); live only.
+    pub(super) fn memory_working(
+        &self,
+        sink: &dyn EventSink,
+        (thread_id, run_id): (&str, &str),
+        step: &str,
+    ) {
+        sink.emit_thread_event(&ThreadEventEnvelope {
+            thread_id: thread_id.to_owned(),
+            run_id: run_id.to_owned(),
+            event: ThreadEvent::MemoryWorking {
+                step: step.to_owned(),
+            },
+        });
+    }
+
     /// One bounded diagnostics line: what happened, where and how many remain.
     pub(super) fn note_memory(
         &self,

@@ -145,6 +145,8 @@ export interface AppState {
   workspaceTabRequest: { tab: WorkspaceTab; at: number } | null;
   /** Each chat's built-in browser: who drives it and any recording (live only). */
   browsers: Record<string, { controller: string; recording?: BrowserRecording; at: number }>;
+  /** Where each chat's memory pass stands while it works (live only). */
+  memoryWorking: Record<string, "checking" | "waiting">;
   /** Per-chat task feed behind the header indicator and the Tasks tab. */
   tasks: Record<string, ThreadTasks>;
   /** Messages waiting for each chat's current run to end. */
@@ -289,6 +291,7 @@ export const initialState: AppState = {
   subagentFocus: null,
   workspaceTabRequest: null,
   browsers: {},
+  memoryWorking: {},
   tasks: {},
   queues: {},
   goals: {},
@@ -641,10 +644,17 @@ export function applyThreadEvent(
       return { ...state, runChanges: { ...state.runChanges, [runId]: event.files } };
     case "browser_changed":
       return { ...state, browsers: { ...state.browsers, [threadId]: { controller: event.controller, recording: event.recording, at: Date.now() } } };
+    case "memory_working": {
+      const { [threadId]: _was, ...others } = state.memoryWorking;
+      return { ...state, memoryWorking: event.step === "done" ? others : { ...others, [threadId]: event.step } };
+    }
     case "memory_changed": {
       const changes = memoryChanges(event);
-      if (changes.length === 0) return state;
-      return appendMessage(state, threadId, { id: newId("memory"), role: "system", text: "", runId, memory: changes });
+      const live = state.memoryWorking[threadId] !== undefined;
+      const { [threadId]: _was, ...others } = state.memoryWorking;
+      const settled = { ...state, memoryWorking: others };
+      if (changes.length === 0) return settled;
+      return appendMessage(settled, threadId, { id: newId("memory"), role: "system", text: "", runId, memory: changes, ...(live ? { memorySettling: true } : {}) });
     }
     case "media_attached": {
       const previous = state.runMedia[runId] ?? [];

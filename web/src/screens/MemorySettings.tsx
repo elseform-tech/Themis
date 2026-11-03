@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { DOT_GRID } from "../components/DotSpinner";
+import { DOT_GRID, DotSpinner } from "../components/DotSpinner";
 import { Switch } from "../components";
 import { deleteMemory, getMemorySettings, listMemories, updateMemorySettings } from "../lib/tauri";
 import type { Memory, MemoryChange, MemoryKind, MemoryList, MemoryScope, MemoryWaiting } from "../lib/types";
@@ -60,10 +60,52 @@ function ChangeText({ change }: { change: MemoryChange }) {
   </>;
 }
 
+/** How long a line that just arrived shows what is being written before it settles. */
+export const MEMORY_SETTLE_MS = 900;
+/** How long "Memory will retry later" stays before it fades. */
+export const MEMORY_WAITING_MS = 6000;
+
+const WRITING: Record<MemoryChange["action"], string> = { saved: "Saving", updated: "Updating", removed: "Removing" };
+
+/** "Saving uses-pnpm.md" for one change; "Saving 2 memories · updating index" for several. */
+export function writingText(changes: MemoryChange[]): string {
+  if (changes.length === 1) return `${WRITING[changes[0]!.action]} ${changes[0]!.name}.md`;
+  return `Saving ${changes.length} memories · updating index`;
+}
+
+/** While the memory models work after a turn: a shimmering line under the latest reply. When
+ *  every model failed it says so quietly for a moment (Settings › Memory keeps the details). */
+export function MemoryWorkingLine({ step }: { step: "checking" | "waiting" }) {
+  const [hidden, setHidden] = useState(false);
+  useEffect(() => {
+    setHidden(false);
+    if (step !== "waiting") return;
+    const timer = window.setTimeout(() => setHidden(true), MEMORY_WAITING_MS);
+    return () => window.clearTimeout(timer);
+  }, [step]);
+  if (hidden) return null;
+  return <div className="themis-memory-line is-working" role="status">
+    {step === "checking" ? <DotSpinner className="themis-memory-dots" /> : <MemoryDots />}
+    {step === "checking"
+      ? <span className="themis-shimmer">Checking what to remember…</span>
+      : <span>Memory will retry later</span>}
+  </div>;
+}
+
 /** Under a reply: what the memory models changed after that turn, on one slim line. Several
- *  changes read "Saved 2 · updated 1", with each one listed on expand. */
-export function MemoryLine({ changes }: { changes: MemoryChange[] }) {
+ *  changes read "Saved 2 · updated 1", with each one listed on expand. A line that just arrived
+ *  (`settling`) first shows what is being written, shimmering, then settles. */
+export function MemoryLine({ changes, settling = false }: { changes: MemoryChange[]; settling?: boolean }) {
   const [open, setOpen] = useState(false);
+  const [writing, setWriting] = useState(settling);
+  useEffect(() => {
+    if (!writing) return;
+    const timer = window.setTimeout(() => setWriting(false), MEMORY_SETTLE_MS);
+    return () => window.clearTimeout(timer);
+  }, [writing]);
+  if (writing) {
+    return <div className="themis-memory-line is-working" role="status"><DotSpinner className="themis-memory-dots" /><span className="themis-shimmer">{writingText(changes)}</span></div>;
+  }
   if (changes.length === 1) {
     return <div className="themis-memory-line" role="note"><MemoryDots /><span className="themis-memory-change"><ChangeText change={changes[0]!} /></span></div>;
   }

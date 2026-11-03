@@ -19,7 +19,7 @@ import { groupConversation, toolDisplayName, type ConversationRow } from "./conv
 import { describeTools } from "./toolActivity";
 import { OverviewBox, type Overview } from "./OverviewBox";
 import { SubagentCard } from "./SubagentCard";
-import { MemoryLine } from "./MemorySettings";
+import { MemoryLine, MemoryWorkingLine } from "./MemorySettings";
 
 interface ThreadConversationProps {
   /** The goal check is reading the turn that just ended. */
@@ -68,7 +68,8 @@ export function ThreadConversation({
   // A tool step's screenshot opens on its own, outside the replies' "2 of 9".
   const [single, setSingle] = useState<AttachedMedia | null>(null);
   const gallery = useMemo(() => ({ threadId, items: media, open: openMedia, show: setSingle }), [threadId, media, openMedia]);
-  const { state: { diffs }, dispatch } = useApp();
+  const { state: { diffs, memoryWorking: working }, dispatch } = useApp();
+  const memoryWorking = working[threadId];
   // Links in replies open in this chat's browser, shown in the Workspace Browser tab.
   const openLink = useCallback((url: string) => {
     dispatch({ type: "ui/diff-panel", open: true, tab: "browser" });
@@ -138,6 +139,7 @@ export function ThreadConversation({
         </div>
       )}
       {!running && !sending && <GoalWait checking={goalChecking} retryAt={goalRetryAt} />}
+      {!running && !sending && memoryWorking && <MemoryWorkingLine step={memoryWorking} />}
       <div ref={endRef} />
       </div>
     </div>
@@ -181,7 +183,7 @@ function ConversationRow({
     return <QuestionRow question={row.message.question} />;
   }
   if (row.kind === "message" && row.message.memory) {
-    return <MemoryLine changes={row.message.memory} />;
+    return <MemoryLine changes={row.message.memory} settling={row.message.memorySettling} />;
   }
   if (row.kind === "message" && row.message.subagents) {
     return <SubagentCard agents={row.message.subagents} runLive={row.message.runId !== undefined && row.message.runId === activeRunId} />;

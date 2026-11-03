@@ -112,6 +112,7 @@ fn event_kinds(events: &[ThreadEvent]) -> Vec<&'static str> {
             ThreadEvent::FilesChanged { .. } => "files_changed",
             ThreadEvent::MediaAttached { .. } => "media_attached",
             ThreadEvent::MemoryChanged { .. } => "memory_changed",
+            ThreadEvent::MemoryWorking { .. } => "memory_working",
             ThreadEvent::BrowserChanged { .. } => "browser_changed",
             ThreadEvent::BackgroundTasksChanged => "background_tasks_changed",
             ThreadEvent::Steered { .. } => "steered",

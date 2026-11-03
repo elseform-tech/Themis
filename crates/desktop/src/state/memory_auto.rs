@@ -362,6 +362,9 @@ impl AppState {
             }),
             Job::Pass { .. } => None,
         };
+        if let Some((thread_id, run_id)) = &thread {
+            self.memory_working(sink, (thread_id, run_id), "checking");
+        }
         let (done, failures) = jobs::on_models(&models, |index, model| {
             let (system, user, known, config, thread) =
                 (&system, &user, &known, &config, thread.clone());
@@ -419,7 +422,12 @@ impl AppState {
                 let model = models[index].clone();
                 self.apply_memory_job(sink, &job, (index, &model), answered);
             }
-            None => self.keep_memory_job(job, waiting, &failures),
+            None => {
+                if let Some((thread_id, run_id)) = &thread {
+                    self.memory_working(sink, (thread_id, run_id), "waiting");
+                }
+                self.keep_memory_job(job, waiting, &failures);
+            }
         }
     }
 
@@ -538,6 +546,9 @@ impl AppState {
         {
             log["thread_id"] = thread_id.as_str().into();
             log["run_id"] = run_id.as_str().into();
+            if changes.is_empty() {
+                self.memory_working(sink, (thread_id, run_id), "done");
+            }
             self.announce_memory(sink, (thread_id, run_id), changes);
         }
         let _ = self

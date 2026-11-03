@@ -119,6 +119,8 @@ struct Harness {
     _provider: MockServer,
     requests: Arc<Mutex<Vec<Value>>>,
     script: Arc<Script>,
+    /// Every live `memory_working` step seen, in order, with `changed` for each memory line.
+    steps: Vec<String>,
 }
 
 impl Harness {
@@ -175,6 +177,7 @@ impl Harness {
             _provider: provider,
             requests,
             script,
+            steps: Vec::new(),
         }
     }
 
@@ -226,7 +229,15 @@ impl Harness {
             let event = &item["payload"]["event"];
             let kind = event["kind"].as_str().unwrap_or_default();
             match kind {
+                "memory_working" => {
+                    self.steps
+                        .push(event["step"].as_str().unwrap_or_default().to_owned());
+                    if finished && event["step"] != "checking" {
+                        return (lines, budgets);
+                    }
+                }
                 "memory_changed" => {
+                    self.steps.push("changed".into());
                     lines.push(event.clone());
                     if finished {
                         return (lines, budgets);
@@ -335,6 +346,8 @@ async fn the_memory_models_keep_memory_with_fallback_and_the_next_turn_reads_it(
     assert_eq!(changes[0]["name"], "uses-pnpm");
     assert_eq!(changes[0]["model"], "mem-two");
     assert_eq!(changes[0]["model_index"], 1);
+    // The chat saw the pass working before its line, shimmering under the reply.
+    assert_eq!(h.steps, ["checking", "changed"]);
     let saved = std::fs::read_to_string(h.data.path().join("memory/global/uses-pnpm.md")).unwrap();
     assert!(saved.contains("type: user"), "{saved}");
     // The pass asked mem-one, then mem-two, never mem-three; it read the turn as data.
@@ -504,6 +517,8 @@ async fn a_job_every_memory_model_failed_waits_and_is_retried_and_settings_edit_
         )
         .await;
     assert!(lines.is_empty(), "{lines:?}");
+    // The chat's line said the memory models were checking, then that the job waits.
+    assert_eq!(h.steps, ["checking", "waiting"]);
     // All three were asked, each failed, and the job waits; Settings › Memory says so.
     let waiting = h.logged("job_waiting", 1).await;
     assert_eq!(

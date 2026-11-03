@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import * as bridge from "../lib/tauri";
 import type { MemoryChange, MemoryList, MemoryWaiting } from "../lib/types";
 import { initialState, reducer } from "../state/reducer";
-import { MemoryLine, MemorySettingsSection, memoryDate, memoryTitle } from "./MemorySettings";
+import { MEMORY_SETTLE_MS, MEMORY_WAITING_MS, MemoryLine, MemorySettingsSection, MemoryWorkingLine, memoryDate, memoryTitle } from "./MemorySettings";
 
 const dispatch = vi.fn();
 vi.mock("../lib/tauri", () => ({
@@ -117,6 +117,45 @@ describe("Settings › Memory", () => {
 const change = (over: Partial<MemoryChange> = {}): MemoryChange => ({ action: "saved", scope: "global", name: "python-preference", description: "Prefers Python", model: "muse-spark-1.3-contributor", model_index: 0, ...over });
 
 describe("memory in the chat", () => {
+  it("shimmers while the memory models check the turn, then shows what it writes, then settles", () => {
+    vi.useFakeTimers();
+    const { unmount } = render(<MemoryWorkingLine step="checking" />);
+    expect(screen.getByRole("status")).toHaveTextContent("Checking what to remember…");
+    expect(screen.getByRole("status").querySelector(".themis-shimmer")).not.toBeNull();
+    unmount();
+    render(<MemoryLine changes={[change()]} settling />);
+    expect(screen.getByRole("status")).toHaveTextContent("Saving python-preference.md");
+    act(() => { vi.advanceTimersByTime(MEMORY_SETTLE_MS); });
+    expect(screen.queryByRole("status")).toBeNull();
+    expect(screen.getByRole("note")).toHaveTextContent("Saved Python preference · global");
+    vi.useRealTimers();
+  });
+
+  it("says quietly that memory will retry when every model failed, then fades", () => {
+    vi.useFakeTimers();
+    render(<MemoryWorkingLine step="waiting" />);
+    expect(screen.getByRole("status")).toHaveTextContent("Memory will retry later");
+    act(() => { vi.advanceTimersByTime(MEMORY_WAITING_MS); });
+    expect(screen.queryByRole("status")).toBeNull();
+    vi.useRealTimers();
+  });
+
+  it("tracks the pass live and marks a line that arrived while it was shown", () => {
+    const event = (body: object) => ({ type: "thread/event", envelope: { thread_id: "t", run_id: "r", event: body } }) as never;
+    let state = reducer(initialState, event({ kind: "memory_working", step: "checking" }));
+    expect(state.memoryWorking.t).toBe("checking");
+    state = reducer(state, event({ kind: "memory_changed", changes: [change()] }));
+    expect(state.memoryWorking.t).toBeUndefined();
+    const rows = state.messages.t ?? [];
+    expect(rows[rows.length - 1]?.memorySettling).toBe(true);
+    // A line read back from history (no live pass) does not replay the animation.
+    const replayed = reducer(initialState, event({ kind: "memory_changed", changes: [change()] }));
+    expect((replayed.messages.t ?? [])[0]?.memorySettling).toBeUndefined();
+    // Nothing worth keeping: the shimmer just goes.
+    state = reducer(reducer(state, event({ kind: "memory_working", step: "checking" })), event({ kind: "memory_working", step: "done" }));
+    expect(state.memoryWorking.t).toBeUndefined();
+  });
+
   it("is one slim line with the dot-grid mark, whose name opens the memory in Settings", () => {
     render(<MemoryLine changes={[change()]} />);
     const line = screen.getByRole("note");
