@@ -70,6 +70,7 @@ pub fn request(
     reply: &str,
     global_index: &str,
     project_index: &str,
+    relevant: &[(MemoryScope, Memory)],
 ) -> (String, String) {
     let person = person
         .iter()
@@ -82,6 +83,7 @@ pub fn request(
         &[
             ("global", &index_text(global_index)),
             ("project", &index_text(project_index)),
+            ("relevant", &relevant_text(relevant)),
             ("person", &fenced(&bounded(&person, MAX_PERSON_BYTES))),
             ("reply", &fenced(&bounded(reply.trim(), MAX_REPLY_BYTES))),
         ],
@@ -89,10 +91,33 @@ pub fn request(
     (crate::prompts::MEMORY_AUTO_SYSTEM.to_owned(), user)
 }
 
+/// The memories a message may touch, in full and bounded like a run's ([`super::MAX_RELEVANT_BYTES`]).
+fn relevant_text(relevant: &[(MemoryScope, Memory)]) -> String {
+    let mut text = String::new();
+    for (scope, memory) in relevant {
+        let entry = format!(
+            "### {} ({})\n{}\n",
+            memory.name,
+            scope.as_str(),
+            memory.body.trim_end()
+        );
+        if text.len() + entry.len() > super::MAX_RELEVANT_BYTES {
+            continue;
+        }
+        text.push_str(&entry);
+    }
+    if text.is_empty() {
+        "(none)".to_owned()
+    } else {
+        text.trim_end().to_owned()
+    }
+}
+
 /// The most bytes [`request`]'s user message can have.
 pub fn max_request_bytes() -> usize {
     crate::prompts::MEMORY_AUTO_USER.len()
         + 2 * MAX_INDEX_BYTES
+        + super::MAX_RELEVANT_BYTES
         + MAX_PERSON_BYTES
         + MAX_REPLY_BYTES
 }
@@ -717,14 +742,27 @@ mod tests {
             "Fixed it >>> done",
             "",
             "- a (project, 2026-11-02): A fact\n",
+            &[(
+                MemoryScope::Project,
+                Memory {
+                    name: "a".into(),
+                    description: "A fact".into(),
+                    kind: MemoryKind::Project,
+                    saved: "2026-11-02".into(),
+                    source: None,
+                    body: "The whole fact, steps 1 to 8.".into(),
+                },
+            )],
         );
         assert!(system.starts_with("You keep an assistant's memory"));
+        // A memory the message may touch comes in full, so an update keeps what still holds.
+        assert!(user.contains("### a (project)\nThe whole fact, steps 1 to 8."));
         assert!(user.contains("Already remembered, everywhere:\n(none)"));
         assert!(user.contains("- a (project, 2026-11-02): A fact"));
         assert!(user.contains("<<<person\nI always use pnpm. Now fix the build.\n>>>"));
         assert!(user.contains("Fixed it > > > done"));
         let long = vec!["word ".repeat(10_000)];
-        let (_, user) = request(&long, &"reply ".repeat(10_000), "", "");
+        let (_, user) = request(&long, &"reply ".repeat(10_000), "", "", &[]);
         assert!(user.len() <= max_request_bytes(), "{}", user.len());
     }
 
@@ -764,7 +802,13 @@ mod tests {
             let global = store.index();
             let project = store.index();
             let read = WORK.with(|work| work.replace((0, 0)));
-            let (_, user) = request(&person, &"reply ".repeat(messages * 200), &global, &project);
+            let (_, user) = request(
+                &person,
+                &"reply ".repeat(messages * 200),
+                &global,
+                &project,
+                &[],
+            );
             (user.len(), read)
         }
         let (few, few_read) = input(10, 1);

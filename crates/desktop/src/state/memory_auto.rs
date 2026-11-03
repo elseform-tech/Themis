@@ -427,7 +427,21 @@ impl AppState {
                 let (global, project) = (index(MemoryScope::Global), index(MemoryScope::Project));
                 let mut known = pass::known_from_index(MemoryScope::Global, &global);
                 known.extend(pass::known_from_index(MemoryScope::Project, &project));
-                Some((known, pass::request(&turn.person, reply, &global, &project)))
+                // The memories the message (and the reply it answers) may touch, in full, so an
+                // update keeps what still holds.
+                let about = format!("{}\n{reply}", turn.person.join("\n"));
+                let relevant: Vec<(MemoryScope, themis_core::memory::Memory)> =
+                    themis_core::memory::relevant_names(&about, &global, &project)
+                        .into_iter()
+                        .filter_map(|(scope, name)| {
+                            let store = self.memory_store(scope, Some(&turn.project_root)).ok()?;
+                            Some((scope, store.read(&name).ok()??))
+                        })
+                        .collect();
+                Some((
+                    known,
+                    pass::request(&turn.person, reply, &global, &project, &relevant),
+                ))
             }
             Job::Consolidate { project_root, .. } => {
                 let scope = if project_root.is_some() {

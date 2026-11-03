@@ -100,7 +100,7 @@ const ALL: &[(&str, &str, &[&str])] = &[
     (
         MEMORY_AUTO_USER,
         "memory-auto-user",
-        &["global", "project", "person", "reply"],
+        &["global", "project", "relevant", "person", "reply"],
     ),
     (
         MEMORY_CONSOLIDATE_SYSTEM,
