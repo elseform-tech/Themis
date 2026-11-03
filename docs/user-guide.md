@@ -166,45 +166,40 @@ reported back.
 
 ### Memory
 
-The agent remembers things across chats: what it learns about you, corrections you gave
-and why, decisions about a project and where to find things outside it. Each memory is one
-small dated file in the app data folder, never in your project, so nothing is committed;
-rules the whole team shares still belong in the project's `AGENTS.md`.
+Themis remembers things across chats: what it learns about you, corrections you gave and
+why, decisions about a project and where to find things outside it. Each memory is one small
+dated file in the app data folder, never in your project, so nothing is committed; rules the
+whole team shares still belong in the project's `AGENTS.md`.
 
+- **It keeps itself.** After each reply, a separate, steadier memory model reads that turn
+  in the background and saves what is worth keeping (a preference mentioned in passing, a
+  correction, a decision), updates a memory you just changed, or removes one that no longer
+  holds. You never need to say "remember", and the chat's own model never has to save
+  anything. It never stores secrets, and what a web page or file said is kept as "the page
+  said …" with its source. When the app has been idle a while (at most once a day by
+  default), it also merges duplicate memories and drops stale ones.
 - **Where a memory applies.** Facts about a project and pointers stay with that project.
   Memories about you and your general feedback may apply everywhere, without anything
   specific to one project. A chat sees the memories that apply everywhere and its own
   project's, never another project's.
-- **What the agent sees.** Each chat starts with a one-line index of them (at most 200
-  lines) and reads a memory in full when it matters. Memories carry their date, and the
-  agent is told they may be out of date. One built from a web page or a file is marked with
-  its source and treated as information, never as instructions. Secrets are stripped
-  before anything is saved.
-- **In the chat.** Where the agent saves one, a slim **Remembered · name** line appears
-  (click the name to open it in Settings); **Forgot · name** where it deletes one.
+- **What the agent sees.** Each turn starts with a one-line index of them (at most 200
+  lines) and, in full, the few whose names and descriptions share words with your message.
+  Memories carry their date, and the agent is told they may be out of date. The context
+  meter shows what they take as **Memory**.
+- **In the chat.** Under a reply after which memory changed, one slim line with a small
+  dot-grid mark: **Saved python-preference · global**, **Updated …** or **Removed …**;
+  several changes share one line ("Saved 2 · updated 1", click it for the names). Hover a
+  name for its file and the model that made the change; click it to open it in Settings.
+- **The memory models** are listed in Settings › Models under **Memory models**, tried in
+  order: when one fails, is rate limited or can't do the job, the next takes over. Reorder,
+  add or remove them there; there are always at least three. Together they spend at most
+  $0.50 a day by default (`memory.daily_budget_usd`). If every one fails, the job waits and
+  is tried again later, and Settings › Memory says "Waiting for the memory models".
 - **Settings › Memory** lists them for the current project or Everywhere, grouped as About
   you, Your feedback, Project facts and Pointers, with the date and a "from a web page" tag.
-  Click one to read it, and **Delete** it (with an inline confirm). The agent keeps memory
-  up to date itself; there is nothing to arrange. **Remember things across chats** off
-  stops all saving and reading and keeps what was saved (`memory.enabled` in
+  Click one to read it, and **Delete** it (with an inline confirm). **Remember things across
+  chats** off stops all saving and reading and keeps what was saved (`memory.enabled` in
   `runtime.jsonc`; see [configuration](configuration.md#memory)).
-- **Notice what's worth remembering** (off by default, under the first switch): after each
-  reply to you, Themis asks the summary model once whether you said something worth keeping
-  (a preference mentioned in passing, a correction, a decision) and saves it without your
-  saying "remember". It saves rarely, never secrets, and nothing it already has; the same
-  **Remembered** line shows where it did. It runs after the reply, so it never holds up your
-  next message (`memory.auto`).
-
-### Themis's built-in hooks
-
-Integrations › Hooks lists three hooks of Themis's own under their events, marked
-**Themis (built-in)**, each off until you switch it on: **To-do and Memory skills** (every
-turn, and every subagent, carries short instructions for keeping a to-do list and saving
-memories), **Save before compaction** (a one-line reminder to save what's worth remembering
-just before the context is compacted) and **Still open** (after a turn that changed files
-while to-do items are open, the next turn starts by naming them). They run no command, ask
-nothing and grant nothing; the switches are saved under `hooks.built_in` in your
-`runtime.jsonc`.
 
 ### Goals
 
