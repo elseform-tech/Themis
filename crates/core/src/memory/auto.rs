@@ -232,18 +232,7 @@ fn proposal(entry: &Value, today: &str) -> Result<Proposal, Refused> {
     if scope == MemoryScope::Global && !kind.may_be_global() {
         return Err(Refused::Scope);
     }
-    let mut lines = Vec::new();
-    if let Some(why) = why {
-        lines.push(format!("Why: {}", why.replace('\n', " ")));
-    }
-    if let Some(how) = how {
-        lines.push(format!("How to apply: {}", how.replace('\n', " ")));
-    }
-    let body = if lines.is_empty() {
-        fact
-    } else {
-        format!("{fact}\n\n{}", lines.join("\n"))
-    };
+    let body = super::compose_body(&fact, why.as_deref(), how.as_deref());
     let memory = Memory {
         name,
         description,

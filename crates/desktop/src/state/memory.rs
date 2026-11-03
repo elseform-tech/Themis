@@ -182,18 +182,11 @@ fn memory_from(args: &Value, name: &str) -> Result<Memory, ToolCallError> {
         .ok_or_else(|| error("description is needed: one line saying what the memory is"))?
         .replace(['\n', '\r'], " ");
     let fact = text_arg(args, "body").ok_or_else(|| error("body is needed: the fact itself"))?;
-    let mut lines = Vec::new();
-    if let Some(why) = text_arg(args, "why") {
-        lines.push(format!("Why: {}", why.replace('\n', " ")));
-    }
-    if let Some(how) = text_arg(args, "how_to_apply") {
-        lines.push(format!("How to apply: {}", how.replace('\n', " ")));
-    }
-    let body = if lines.is_empty() {
-        fact
-    } else {
-        format!("{fact}\n\n{}", lines.join("\n"))
-    };
+    let body = themis_core::memory::compose_body(
+        &fact,
+        text_arg(args, "why").as_deref(),
+        text_arg(args, "how_to_apply").as_deref(),
+    );
     let memory = Memory {
         name: name.to_owned(),
         description,
@@ -302,19 +295,32 @@ impl ToolRuntime for MemoryTool {
                 Ok(json!({"deleted": name, "scope": scope.as_str()}))
             }
             _ => {
-                let memory = memory_from(&args, &name)?;
+                // An update may rename: the corrected fact goes under `new_name`.
+                let new_name = match args["new_name"].as_str().map(str::trim) {
+                    None | Some("") => name.clone(),
+                    Some(_) if action == "save" => {
+                        return Err(error("new_name is only for update"))
+                    }
+                    Some(text) if themis_core::memory::valid_name(text) => text.to_owned(),
+                    Some(_) => {
+                        return Err(error(
+                            "new_name must be a lowercase kebab-case slug, such as free-model-for-tests",
+                        ))
+                    }
+                };
+                let memory = memory_from(&args, &new_name)?;
                 if scope == MemoryScope::Global && !memory.kind.may_be_global() {
                     return Err(error(format!(
                         "a {} memory belongs to this project: save it with scope \"project\"",
                         memory.kind.as_str()
                     )));
                 }
-                let mode = if action == "save" {
-                    SaveMode::Create
+                let count = if action == "save" {
+                    store.save(&memory, SaveMode::Create)
                 } else {
-                    SaveMode::Update
-                };
-                let count = store.save(&memory, mode).map_err(error)?;
+                    store.rename(&name, &memory)
+                }
+                .map_err(error)?;
                 self.saved.store(true, std::sync::atomic::Ordering::SeqCst);
                 let verb = if action == "save" { "saved" } else { "updated" };
                 self.state
@@ -351,6 +357,7 @@ impl ToolT for MemoryTool {
         json!({"type":"object","properties":{
             "action":{"type":"string","enum":["save","update","delete","read"]},
             "name":name,
+            "new_name":{"type":"string","description":"update only: the memory's new name when the corrected fact no longer fits the old one."},
             "scope":scope,
             "type":{"type":"string","enum":["user","feedback","project","reference"]},
             "description":{"type":"string","description":"One line, at most 160 characters."},

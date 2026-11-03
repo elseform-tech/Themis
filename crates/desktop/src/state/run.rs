@@ -302,7 +302,10 @@ impl AppState {
             themis_core::configuration::project_guidance(&run_configuration, &snapshot.work_root);
         // The global and this project's memory indexes, read once per run.
         let memory_note = self.memory_note(run_configuration.memory.enabled, &snapshot.work_root);
-        let mut memory_line = if memory_note.is_empty() {
+        // With memory off the main agent is told so, and doesn't promise to remember.
+        let mut memory_line = if !run_configuration.memory.enabled {
+            format!("{}\n", themis_core::prompts::SYSTEM_MEMORY_OFF)
+        } else if memory_note.is_empty() {
             String::new()
         } else {
             format!("{memory_note}\n")

@@ -98,11 +98,19 @@ fn scripted(request: &str) -> Option<Value> {
             json!({"action":"update","scope":"global","name":"free-model-for-tests","type":"feedback",
             "description":"Use the free model for every test and eval run","body":"Use the free model for tests and evals."})
         }
+        // A corrected fact: renamed, and the body still carries the old Why line while
+        // `why` gives the new one.
+        _ if request.starts_with("rename-it") => {
+            json!({"action":"update","scope":"global","name":"free-model-for-tests","new_name":"free-model-everywhere",
+            "type":"feedback","description":"Use the free model for every run",
+            "body":"Use the free model for every run.\n\nWhy: said so in chat\nHow to apply: pick it for any test run",
+            "why":"corrected in a later chat","how_to_apply":"pick it for every run"})
+        }
         _ if request.starts_with("read-it") => {
             json!({"action":"read","scope":"global","name":"free-model-for-tests"})
         }
         _ if request.starts_with("forget-it") => {
-            json!({"action":"delete","scope":"global","name":"free-model-for-tests"})
+            json!({"action":"delete","scope":"global","name":"free-model-everywhere"})
         }
         _ if request.starts_with("try-off") => {
             json!({"action":"save","name":"while-off","type":"user",
@@ -250,6 +258,7 @@ async fn memories_saved_in_one_chat_reach_the_next_and_follow_updates_deletes_an
     h.send(&first, "hello").await;
     let request = h.first_request_of("hello");
     assert!(!system(&request).contains(NOTE));
+    assert!(!system(&request).contains(themis_core::prompts::SYSTEM_MEMORY_OFF));
     let tool = request["tools"]
         .as_array()
         .unwrap()
@@ -408,6 +417,44 @@ async fn memories_saved_in_one_chat_reach_the_next_and_follow_updates_deletes_an
         note.contains("Use the free model for every test and eval run"),
         "{note}"
     );
+
+    // A corrected fact is renamed: one file under the new name, the old one gone, one Why
+    // and one How to apply line (the new ones), and Settings › Memory lists the new name.
+    let events = h.send(&second, "rename-it").await;
+    assert_eq!(events.len(), 1, "{}", h.tool_result());
+    assert_eq!(events[0]["action"], "updated");
+    assert_eq!(events[0]["name"], "free-model-everywhere");
+    let global = h.memory_dir().join("global");
+    assert!(!global.join("free-model-for-tests.md").exists());
+    let renamed = std::fs::read_to_string(global.join("free-model-everywhere.md")).unwrap();
+    assert!(
+        renamed.starts_with("---\nname: free-model-everywhere\n"),
+        "{renamed}"
+    );
+    assert_eq!(renamed.matches("Why:").count(), 1, "{renamed}");
+    assert_eq!(renamed.matches("How to apply:").count(), 1, "{renamed}");
+    assert!(
+        renamed.ends_with(
+            "Use the free model for every run.\n\nWhy: corrected in a later chat\nHow to apply: pick it for every run\n"
+        ),
+        "{renamed}"
+    );
+    let listed = h.cli("list_memories", json!({"scope":"global"}));
+    let names: Vec<&str> = listed["memories"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|memory| memory["name"].as_str().unwrap())
+        .collect();
+    assert_eq!(names, ["free-model-everywhere"], "{listed}");
+    h.send(&second, "after rename").await;
+    let note = system(&h.first_request_of("after rename"));
+    assert!(
+        note.contains("- free-model-everywhere (feedback, "),
+        "{note}"
+    );
+    assert!(!note.contains("free-model-for-tests"), "{note}");
+
     let events = h.send(&second, "forget-it").await;
     assert_eq!(events[0]["action"], "forgot");
     h.send(&second, "after delete").await;
@@ -424,7 +471,7 @@ async fn memories_saved_in_one_chat_reach_the_next_and_follow_updates_deletes_an
         .filter(|item| item["envelope"]["event"]["kind"] == "memory_changed")
         .map(|item| item["envelope"]["event"]["action"].as_str().unwrap())
         .collect();
-    assert_eq!(saved, ["updated", "forgot"], "{history}");
+    assert_eq!(saved, ["updated", "updated", "forgot"], "{history}");
 
     // Settings › Memory: list and delete, refused on a stale revision.
     let root = h.project.path().to_string_lossy().into_owned();
@@ -460,6 +507,12 @@ async fn memories_saved_in_one_chat_reach_the_next_and_follow_updates_deletes_an
     h.send(&second, "try-off").await;
     let request = h.first_request_of("try-off");
     assert!(!system(&request).contains(NOTE));
+    // The agent is told memory is off, so it doesn't promise to remember.
+    assert!(
+        system(&request).contains(themis_core::prompts::SYSTEM_MEMORY_OFF),
+        "{}",
+        system(&request)
+    );
     // The tool isn't offered, so nothing can be saved or read.
     assert!(
         !request["tools"]

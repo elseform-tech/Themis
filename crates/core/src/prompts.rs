@@ -202,6 +202,8 @@ pub const ASK_USER_LIMIT: &str = include_str!("../builtins/prompts/ask-user-limi
 /// The memory index at the start of a run (main agent and subagents); `{{global}}`,
 /// `{{project}}`.
 pub const SYSTEM_MEMORY: &str = include_str!("../builtins/prompts/system-memory.md");
+/// The main agent's line in place of the memory index when `memory.enabled` is false.
+pub const SYSTEM_MEMORY_OFF: &str = include_str!("../builtins/prompts/system-memory-off.md");
 /// Description of the main agent's `memory` tool.
 pub const MEMORY_TOOL: &str = include_str!("../builtins/prompts/memory-tool.md");
 /// Description of a subagent's read-only `memory` tool.
