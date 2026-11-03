@@ -520,13 +520,15 @@ impl AppState {
         };
         // `/goal` sets the goal, a reply resumes a goal waiting for the user;
         // every run while a goal runs is told about it.
-        let goal_context = match self.goal_for_message(sink.as_ref(), &thread_id, &text, &run_id) {
-            Ok(context) => context,
-            Err(error) => {
-                self.finish_run(&thread_id).await;
-                return Err(error);
-            }
-        };
+        let from_person = snapshot.person_text.is_some();
+        let goal_context =
+            match self.goal_for_message(sink.as_ref(), &thread_id, &text, &run_id, from_person) {
+                Ok(context) => context,
+                Err(error) => {
+                    self.finish_run(&thread_id).await;
+                    return Err(error);
+                }
+            };
         let shown_attachments = attachments.clone();
         if let Err(error) = self.inner.transcript.append_user_with_attachments(
             &thread_id,

@@ -631,7 +631,7 @@ mod tests {
             "browser_open",
             "browser_click",
             "attach_file",
-            "set_goal",
+            "create_goal",
         ];
         let tools = || {
             names
@@ -648,10 +648,10 @@ mod tests {
         // `browser` grants every browser tool; `read_file` grants attach_file.
         assert_eq!(
             kept(&["browser"]),
-            ["browser_open", "browser_click", "set_goal"]
+            ["browser_open", "browser_click", "create_goal"]
         );
-        assert_eq!(kept(&["read_file"]), ["attach_file", "set_goal"]);
-        assert_eq!(kept(&["fetch_url"]), ["fetch_url", "set_goal"]);
+        assert_eq!(kept(&["read_file"]), ["attach_file", "create_goal"]);
+        assert_eq!(kept(&["fetch_url"]), ["fetch_url", "create_goal"]);
         assert_eq!(kept(&[]).len(), names.len());
     }
 

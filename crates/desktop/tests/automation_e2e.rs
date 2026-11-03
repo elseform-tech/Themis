@@ -195,7 +195,7 @@ async fn skilled_run_filters_tools_composes_instructions_and_materializes() {
         tool_names,
         vec![
             "read_file",
-            "set_goal",
+            "create_goal",
             // Asking the user is never a skill's to grant or withhold.
             "ask_user",
             // Memory is the person's own, like a question.

@@ -203,6 +203,10 @@ pub struct ContextBreakdown {
     /// A thinking model's own reasoning, sent back with its tool calls and earlier answers.
     #[serde(default)]
     pub reasoning: usize,
+    /// The goal note (continuation or "objective updated") the latest goal run carries: from
+    /// where it starts in its user message to the end, taken out of `conversation`.
+    #[serde(default)]
+    pub goal: usize,
 }
 
 /// 19155 -> "19,155", for numbers people read in an error.
@@ -230,7 +234,13 @@ fn thrashing(checkpoint_turns: &[usize], limit: usize) -> bool {
 
 fn context_breakdown(messages: &[ChatMessage]) -> ContextBreakdown {
     let mut breakdown = ContextBreakdown::default();
-    for message in messages {
+    // Only the latest goal note counts as the goal's: older goal turns are conversation now.
+    let latest_goal_note = messages.iter().rposition(|message| {
+        message.role == ChatRole::User
+            && matches!(message.message_type, MessageType::Text)
+            && crate::goal::goal_note_start(&message.content).is_some()
+    });
+    for (index, message) in messages.iter().enumerate() {
         // Visible content goes to its own part; replayed reasoning has a part of its own.
         let tokens = crate::calibration::message_tokens(message);
         breakdown.reasoning += crate::providers::reasoning::replayed_tokens(message);
@@ -250,6 +260,15 @@ fn context_breakdown(messages: &[ChatMessage]) -> ContextBreakdown {
                     || message.content.starts_with("Attached original") =>
             {
                 &mut breakdown.attachments
+            }
+            _ if Some(index) == latest_goal_note => {
+                // The note's share of the message's tokens, by bytes, so the parts still add up.
+                let at = crate::goal::goal_note_start(&message.content).unwrap_or(0);
+                let total = message.content.len().max(1);
+                let goal = tokens * (total - at) / total;
+                breakdown.goal += goal;
+                breakdown.conversation += tokens - goal;
+                continue;
             }
             _ => &mut breakdown.conversation,
         };
@@ -6045,6 +6064,43 @@ mod tests {
             estimated_tokens(std::slice::from_ref(&message)),
             "the parts add up to the meter's total"
         );
+    }
+
+    /// The goal note a run carries is the meter's Goal part, only the latest one, and the parts
+    /// still add up to the total.
+    #[test]
+    fn the_latest_goal_note_has_its_own_part_of_the_context_breakdown() {
+        let user = |content: String| ChatMessage {
+            role: ChatRole::User,
+            message_type: MessageType::Text,
+            content,
+        };
+        let note = crate::goal::goal_note("ship the report", false);
+        let messages = [
+            user(format!("{}\n\n{note}", crate::goal::turn_message(1, ""))),
+            user(format!(
+                "{}{}",
+                "Fix the footer too. ".repeat(20),
+                crate::goal::goal_context(&note)
+            )),
+        ];
+        let breakdown = context_breakdown(&messages);
+        let first = crate::calibration::message_tokens(&messages[0]);
+        let second = crate::calibration::message_tokens(&messages[1]);
+        assert!(
+            breakdown.goal > 0 && breakdown.goal < second,
+            "{breakdown:?}"
+        );
+        assert!(
+            breakdown.conversation >= first,
+            "an earlier goal turn is conversation"
+        );
+        assert_eq!(
+            breakdown.goal + breakdown.conversation,
+            estimated_tokens(&messages)
+        );
+        let plain = context_breakdown(&[user("hello".into())]);
+        assert_eq!(plain.goal, 0);
     }
 
     #[tokio::test]

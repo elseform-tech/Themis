@@ -242,50 +242,40 @@ impl AppState {
                 .unwrap_or(0),
             retry_at: None,
             evidence: Vec::new(),
+            also_asked: Vec::new(),
+            objective_updated: false,
         };
         self.bump_goal_generation(thread_id);
         self.store_goal(sink, thread_id, Some(goal.clone()));
         goal
     }
 
-    /// Sets the chat's goal from the agent's `set_goal` tool. The run that
-    /// called it continues; the goal's turns follow when it ends.
-    pub async fn set_goal(
+    /// Creates the chat's goal (the agent's `create_goal`, or the CLI). Refused while the chat
+    /// has an unfinished goal. The run that created it continues; the goal's turns follow when
+    /// it ends, or start now when no run is going.
+    pub async fn create_goal(
         &self,
         sink: Arc<dyn EventSink>,
         thread_id: String,
-        text: String,
+        objective: String,
     ) -> Result<Goal, String> {
         let running = self.require_thread(&thread_id).await?;
-        let text = core_goal::normalize_goal(&text).ok_or("Describe the goal in one sentence")?;
-        let previous = self
+        let objective = core_goal::normalize_goal(&objective)
+            .ok_or("create_goal needs `objective`: the user's objective in their words")?;
+        if self
             .goal_for(&thread_id)
-            .filter(|goal| goal.status != GoalStatus::Reached);
-        let mut goal = self.begin_goal(sink.as_ref(), &thread_id, &text);
-        // Rewording an open goal continues it: its time and turn count carry over.
-        if let Some(previous) = previous {
-            let stretch = previous.running_since.map_or(0, |since| {
-                u64::try_from(now_ms().saturating_sub(since)).unwrap_or(0)
-            });
-            if let Some(updated) = self.update_goal(sink.as_ref(), &thread_id, |goal| {
-                goal.active_ms = previous.active_ms.saturating_add(stretch);
-                goal.turns = previous.turns;
-            }) {
-                goal = updated;
-            }
+            .is_some_and(|goal| goal.status != GoalStatus::Reached)
+        {
+            return Err("create_goal: this chat already has an unfinished goal; use update_goal only for its status, and the person edits its text on the goal card".to_owned());
         }
+        let goal = self.begin_goal(sink.as_ref(), &thread_id, &objective);
         if !running {
-            self.start_goal_turn(
-                sink,
-                thread_id,
-                "The goal was just set; start on it.".into(),
-            )
-            .await;
+            self.start_goal_turn(sink, thread_id, String::new()).await;
         }
         Ok(goal)
     }
 
-    /// Replaces the goal's sentence; the next turn reads the new one.
+    /// Replaces the goal's text; the next goal run is told the objective changed.
     pub async fn edit_goal(
         &self,
         sink: Arc<dyn EventSink>,
@@ -295,8 +285,19 @@ impl AppState {
         self.require_thread(&thread_id).await?;
         let text = core_goal::normalize_goal(&text).ok_or("The goal cannot be empty")?;
         let goal = self
-            .update_goal(sink.as_ref(), &thread_id, |goal| goal.text = text)
+            .update_goal(sink.as_ref(), &thread_id, |goal| {
+                if goal.text != text {
+                    goal.text = text;
+                    goal.objective_updated = true;
+                }
+            })
             .ok_or_else(|| "This chat has no goal".to_owned())?;
+        let _ = self.inner.diagnostics.append(
+            "goal",
+            "edited",
+            "info",
+            json!({"thread_id": thread_id, "status": goal.status}),
+        );
         Ok(goal)
     }
 
@@ -519,16 +520,22 @@ impl AppState {
         thread_id: &str,
         text: &str,
         run_id: &str,
+        from_person: bool,
     ) -> Result<String, String> {
         let is_turn = core_goal::turn_number(text).is_some();
         if let Some(sentence) = core_goal::parse_goal_command(text) {
             if sentence.is_empty() {
                 return Err("Add the goal after /goal, for example: /goal speed up p95".to_owned());
             }
+            // Themis creates it from the command; no model decides. This run is its first turn.
             self.begin_goal(sink, thread_id, &sentence);
             self.update_goal(sink, thread_id, |goal| goal.turns = 1);
             self.mark_goal_turn(run_id);
+            return Ok(format!("\n\n{}", self.take_goal_note(sink, thread_id)));
         } else if !is_turn {
+            if from_person {
+                self.add_also_asked(sink, thread_id, text);
+            }
             match self.goal_for(thread_id).map(|goal| goal.status) {
                 // An answer to another question leaves the goal waiting on
                 // the blocking one; any other reply resumes it.
@@ -555,7 +562,14 @@ impl AppState {
             }
         }
         Ok(match self.goal_for(thread_id) {
-            Some(goal) if goal.status == GoalStatus::Running => core_goal::goal_context(&goal.text),
+            // A goal turn's saved message is one short line; the note rides along with each run
+            // only, so history doesn't grow by a note per turn and every run reads it fresh.
+            Some(goal) if goal.status == GoalStatus::Running && is_turn => {
+                format!("\n\n{}", self.take_goal_note(sink, thread_id))
+            }
+            Some(goal) if goal.status == GoalStatus::Running => {
+                core_goal::goal_context(&self.take_goal_note(sink, thread_id))
+            }
             // Old goal turns in the chat read as unfinished work unless this says otherwise.
             Some(goal) if !is_turn => core_goal::paused_context(&goal.text),
             None if !is_turn && self.inner.transcript.had_goal(thread_id) => {
@@ -563,6 +577,60 @@ impl AppState {
             }
             _ => String::new(),
         })
+    }
+
+    /// What the person sent while the goal runs (or waits on them, or on quota) joins it word
+    /// for word as an "Also asked" line, by plain code, so no checkpoint can lose it. Answers to
+    /// the agent's questions, goal turns and `/goal` are not requests.
+    pub(super) fn add_also_asked(&self, sink: &dyn EventSink, thread_id: &str, text: &str) {
+        let active = self.goal_for(thread_id).is_some_and(|goal| {
+            matches!(
+                goal.status,
+                GoalStatus::Running | GoalStatus::Waiting | GoalStatus::Quota
+            )
+        });
+        if !active
+            || text.starts_with(super::questions::ANSWER_MARKER)
+            || core_goal::turn_number(text).is_some()
+            || core_goal::parse_goal_command(text).is_some()
+        {
+            return;
+        }
+        let Some(line) = core_goal::also_asked(text) else {
+            return;
+        };
+        let mut kept = false;
+        let goal = self.update_goal(sink, thread_id, |goal| {
+            if goal.also_asked.len() < core_goal::MAX_ALSO_ASKED {
+                goal.also_asked.push(line);
+                kept = true;
+            }
+        });
+        let _ = self.inner.diagnostics.append(
+            "goal",
+            if kept {
+                "also_asked"
+            } else {
+                "also_asked_full"
+            },
+            "info",
+            json!({"thread_id": thread_id, "count": goal.map_or(0, |goal| goal.also_asked.len())}),
+        );
+    }
+
+    /// The goal note this goal run carries ([`core_goal::goal_note`]): the "objective updated"
+    /// note once after an edit, then the continuation with the objective and its "Also asked"
+    /// lines.
+    fn take_goal_note(&self, sink: &dyn EventSink, thread_id: &str) -> String {
+        let mut note = String::new();
+        self.update_goal(sink, thread_id, |goal| {
+            note = core_goal::goal_note(
+                &core_goal::objective(&goal.text, &goal.also_asked),
+                goal.objective_updated,
+            );
+            goal.objective_updated = false;
+        });
+        note
     }
 
     /// Notes once, when a goal's first turn starts, that the context window
@@ -705,7 +773,7 @@ impl AppState {
             return;
         }
         let note = self.with_open_questions(&thread_id, note);
-        let text = core_goal::turn_message(goal.turns, &goal.text, &note);
+        let text = core_goal::turn_message(goal.turns, &note);
         let run_id = uuid::Uuid::new_v4().to_string();
         self.mark_goal_turn(&run_id);
         let (sent, progress) = self
@@ -796,6 +864,7 @@ impl AppState {
     /// `note` followed by the chat's open questions, so they survive checkpoints.
     fn with_open_questions(&self, thread_id: &str, note: String) -> String {
         match self.open_questions_note(thread_id) {
+            Some(open) if note.is_empty() => open,
             Some(open) => format!("{note}\n{open}"),
             None => note,
         }
@@ -1005,6 +1074,8 @@ mod tests {
             turn_seq: 0,
             retry_at: None,
             evidence: Vec::new(),
+            also_asked: Vec::new(),
+            objective_updated: false,
         };
         set_status(&mut goal, GoalStatus::Paused, None);
         assert!(goal.running_since.is_none());

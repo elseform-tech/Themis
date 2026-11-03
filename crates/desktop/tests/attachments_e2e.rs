@@ -1410,6 +1410,7 @@ async fn cli_checkpoint_keeps_the_goal_and_budget_events_reach_clients() {
             "attachments",
             "conversation",
             "tool_activity",
+            "goal",
         ]
         .iter()
         .map(|key| breakdown[key].as_u64().unwrap())

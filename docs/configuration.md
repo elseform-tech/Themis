@@ -212,7 +212,7 @@ combined, and do not grant permissions.
 
 `project_guidance` (default `true`) reads the project root's `AGENTS.md`, or `CLAUDE.md`
 when there is no `AGENTS.md`, at the start of each run and puts it in the system message of the
-agent and its subagents, and the goal check is held to it as well. They also get a map of up to 40
+agent and its subagents. They also get a map of up to 40
 other documents (`.md`, `.mdx`, `.rst`), nearest the root first, three folders deep at most, with
 hidden and generated folders skipped and links not followed; these are named, not loaded, and a
 guidance file in a subfolder applies to work in that folder. A file over the 64 KiB limit is cut;
@@ -493,40 +493,45 @@ in `goals/<chat id>.json` (app data, beside `threads.json`): `[{"id","text","att
 "reasoning_effort","held","note"}]` (at most 50 messages of 100,000 characters; `held` while being
 edited or after the server refused it, with the reason in `note`; `reasoning_effort` applies only
 while the chat's current model offers it) and `{"text","status","reason","started_at","active_ms",
-"running_since","turns","stalls","progress","failures","checked_seq"}` with
-`status` one of `running`, `paused`, `waiting`, `stuck`, `quota`, `reached` (the goal sentence is
-at most 2,000 characters; `active_ms` is the goal's total running time, saved every minute while
+"running_since","turns","failures","turn_seq","retry_at","evidence","also_asked","objective_updated"}`
+with `status` one of `running`, `paused`, `waiting`, `blocked`, `quota`, `reached` (the goal text is
+at most 2,000 characters; `also_asked` holds each message the person sent while it ran, word for
+word, at most 50 of 4,000 characters; `evidence` is `[{"requirement","proof"}]`, at most 40 entries
+of 300 and 600 characters, from `update_goal` complete; `objective_updated` is set by `edit_goal`
+until the next goal run is told; `active_ms` is the goal's total running time, saved every minute while
 it runs, so a crash or quit loses at most a minute of it). They grant nothing; a damaged file is ignored (fixed
 `queue_ignored`/`goal_ignored` diagnostics, never the contents), and discarding a chat or its
-project removes both. Diagnostics record queue and goal ids, status changes, check verdict kinds
-and retry counts, never message text, the goal sentence or check prompts.
+project removes both. Diagnostics record queue and goal ids, status changes (`completed` and
+`blocked` with the turn and evidence counts, `edited`, `also_asked` and `also_asked_full` with the
+line count) and retry counts, never message text, the goal text or its evidence.
 Goal notifications are sent by the desktop app (it watches `goal_changed` events and checks
 its own window focus and the `goal_notifications` setting), which reports each attempt through
 `record_notification` (`{"record":{"thread_id","kind","outcome"}}`, unknown fields refused):
 service `notifications`, event `goal_notification`, with the chat id, `kind` (`reached`,
-`stuck`, `waiting`, `quota`) and `outcome` (`sent`; or, at `warn`, `denied`, `failed`,
-`unavailable`), never the chat title, goal sentence or reason. Each goal check reads
-the commands and file changes recorded since `checked_seq` (the history position the last decided
-check read through), in pages of 2,000 items, keeping the newest 32,000 characters of command
-output; an output longer than 6,000 characters keeps its first 2,000 and last 4,000 with a
-clipped marker, and the check asks for a compact proof (a count, a grep) rather than a whole file.
-A check that fails does not move it. The check runs on `goal.check_model`, else the chat's
-model. A goal never stops on its own: after three
-turns without progress (a turn that changed files always counts as progress) the next turn
-is told to try a different approach, failed turns retry with backoff however often they fail,
-and `stuck` remains only for goals saved by earlier versions. Every run that ends while the
-goal runs is checked, a message's run as well as a goal turn. When the check finds the goal
-reached, one short unchecked turn has the agent tell the user, unless the check's `told_user`
-says the checked answer already did and no question is open; that turn's message asks the
-agent to name open questions only when there are some (`goal-reached-open-questions.md`); the check's verdicts post no
-`goal_note`, shown in the chat as plain lines: what the goal is doing and why, plus the
-small-window and quota notes. Apart from its model, the goal check, the stall nudge, quota retries
+`blocked`, `waiting`, `quota`) and `outcome` (`sent`; or, at `warn`, `denied`, `failed`,
+`unavailable`), never the chat title, goal sentence or reason.
+There is no separate goal check: the chat's own model judges its goal, as in Codex. Every run
+while the goal runs carries the goal note, appended to the run's message and never saved: a
+goal turn's saved message is only `[Goal — runtime, not from the user] Turn N.` and any note
+about the last turn (an interruption, a failure, open questions); a message of the person's
+gets `goal-context.md` first. The note is `goal-continuation.md` with the objective (the text,
+then each `Also asked:` line) inside `<objective>` tags as the user's data, preceded once by
+`goal-objective-updated.md` after an edit. `create_goal` (description `tool-create-goal.md`) is
+offered in every chat and refused while an unfinished goal exists; `update_goal`
+(`tool-update-goal.md`) is offered while the chat has an unfinished goal: `complete` needs
+`evidence`, one entry per requirement, and is refused without it or with an empty entry;
+`blocked` needs a `reason`; `paused` is refused unless the person wrote since the current goal
+turn started (`turn_seq`). Complete and blocked end the goal's turns and post a `goal_note`
+(`reached`, `blocked`). Both tools need no approval prompt, but a deny rule for them wins. A goal
+never stops on its own otherwise: failed turns retry with backoff however often they fail.
+`goal_note` events show in the chat as plain lines: what the goal is doing and why, plus the
+small-window and quota notes. Quota retries
 (every 15 minutes) and failed-turn handling are fixed, not runtime configuration. A failed turn retries with doubling
 waits from 30 s, plus up to a fifth of random extra. The goal pauses until resumed after 6 failed
 turns in a row for errors that usually clear (network, 5xx, rate limits, empty replies), about 15
 minutes of waiting, and after 3 for anything else. App server commands:
 `list_queue`, `enqueue_message`, `update_queued_message`, `remove_queued_message`,
-`steer_queued_message`, `get_goal`, `set_goal`, `edit_goal`, `pause_goal`, `resume_goal`, `remove_goal`
+`steer_queued_message`, `get_goal`, `create_goal` (`threadId`, `text`), `edit_goal`, `pause_goal`, `resume_goal`, `remove_goal`
 (also through `themis call`).
 A steer is saved and sent as a `steer_shown` event at once; `steered` follows when the model reads
 it, or `steer_returned` when the run ended first and the message went back to the queue. Clients
@@ -536,11 +541,7 @@ each result tells the agent a new message came and it may ask again. The dialog'
 `approval-expired` event carries `steered: true` (no expiry warning). Grants and rules do not change,
 and neither a plain queued message nor an answer to `ask_user` denies anything. Diagnostics record
 `queue`/`steered` with `approvals_denied`, a count.
-A rule may be `pending`: it asks for a step that hasn't happened and still can, such as a review before finishing, and it holds the goal open until it has happened or is marked broken. A broken rule doesn't hold the goal, and still applies to the work left. The goal check can't lose a rule: one its reply leaves out stays on the list, without holding the goal, since only what the check just said can hold it; editing the goal's sentence drops its rules and the next check finds the new sentence's. The check also reads the project's guidance (see `project_guidance`).
-
-A goal's `rules` say how the work must be done (`{"what","broken","pending","how"}`); they are never ticked off, the check marks one `broken` only when it is too late to follow, and that is reported rather than repaired. Each goal turn repeats them. What there is to do is the agent's own to-do list (below), which the goal check referees. `script_proof_refused` logs a goal held back by a page a script changed, with none of the goal's text. `files` lists the files changed for it, up to 30. `checking` is true while a check runs. `set_goal` on an open (not reached) goal keeps its `active_ms`, `turns` and `files`.
-
-**Questions.** The agent's `ask_user` tool (no approval prompt, like `set_goal`; a deny rule
+**Questions.** The agent's `ask_user` tool (no approval prompt, like `create_goal`; a deny rule
 for `ask_user` still wins) stores a chat's questions in `questions/<chat id>.json` (app data):
 `[{"id","run_id","question","choices","assumption","reasons","blocking","topic","asked_at","answer"}]`
 (`assumption` holds the tool's `recommended` answer, which the agent works on until answered;
@@ -559,7 +560,7 @@ waiting). `answer_question` (`threadId`, `questionId`, `answer`) delivers the an
 steer when a run is going (unread, it returns to the front of the queue), otherwise first in
 the queue as the next message, joining an answer already waiting there; `list_questions`
 (`threadId`) lists them. The answer message starts with a fixed marker the goal supervisor
-reads. Open questions are listed in each goal turn's message and in the reached turn's. A
+reads. Open questions are listed in each goal turn's message. A
 damaged file is ignored (`questions_ignored`); diagnostics record question ids, the blocking
 flag and the delivery path (`asked`, `updated`, `answered`), never the question or answer text.
 Answers grant nothing.
@@ -782,7 +783,7 @@ Omit runId for the latest snapshot; no available snapshot returns null. Diagnost
 Every completed model request is recorded once in app-data `usage.sqlite3`, whatever
 `logging.context_metrics` says: time, provider id (`opencode-go`), model id, kind
 (`answer` for conversation turns including spec checks, `summary` for checkpoints and
-document capsules, `goal_check` for goal mode's check), chat and run id, and the
+document capsules, chat and run id, and the
 provider-reported input, cached input, output and reasoning tokens (null when the
 provider reported none). Input includes cached input and output includes reasoning, as
 in the context accounting above. Failed and cancelled requests are not recorded. No

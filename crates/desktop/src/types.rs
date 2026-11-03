@@ -459,6 +459,13 @@ pub struct Goal {
     /// What the agent named as proof of each requirement when it marked the goal complete.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub evidence: Vec<themis_core::goal::Evidence>,
+    /// Each message the person sent while the goal ran, word for word; part of the objective
+    /// every goal run reads, so compaction can't lose it.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub also_asked: Vec<String>,
+    /// The person edited the text since the last goal run: the next one is told once.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub objective_updated: bool,
     /// Unix milliseconds when the next turn is due, while the goal waits to retry.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub retry_at: Option<i64>,

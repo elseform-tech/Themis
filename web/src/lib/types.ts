@@ -490,6 +490,8 @@ export interface Goal {
   retry_at?: number;
   /** What the agent named as proof of each requirement when it marked the goal complete. */
   evidence?: GoalEvidence[];
+  /** Each message the person sent while the goal ran, word for word; part of its objective. */
+  also_asked?: string[];
 }
 
 /** One requirement of a complete goal and what proves it. */
@@ -566,7 +568,7 @@ export interface ContextBudget {
   provider_input_tokens?: number;
   /** Estimate correction in thousandths (1000 = exact). */
   calibration_ratio_milli?: number;
-  breakdown: { system: number; checkpoint: number; attachments: number; conversation: number; tool_activity: number; reasoning?: number };
+  breakdown: { system: number; checkpoint: number; attachments: number; conversation: number; tool_activity: number; reasoning?: number; goal?: number };
 }
 
 /** A readable project file one run changed. */

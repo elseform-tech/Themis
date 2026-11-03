@@ -42,7 +42,11 @@ async fn a_reached_goal_notifies_once_and_attempts_log_metadata_only() {
         .respond_with(|request: &Request| {
             let body = request.body_json::<Value>().unwrap_or(Value::Null);
             let offered = body["tools"].to_string().contains("\"update_goal\"");
-            let called = body["messages"].to_string().contains("update_goal");
+            let called = body["messages"].as_array().is_some_and(|messages| {
+                messages
+                    .iter()
+                    .any(|message| message["tool_calls"].to_string().contains("update_goal"))
+            });
             if offered && !called {
                 ResponseTemplate::new(200).set_body_json(json!({"choices":[{"message":{"role":"assistant","content":null,
                     "tool_calls":[{"id":"g","type":"function","function":{"name":"update_goal","arguments":json!({"status":"complete","evidence":[{"requirement":"the README has a title","proof":"head -1 README.md: # Title"}]}).to_string()}}]},

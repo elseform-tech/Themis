@@ -1,6 +1,6 @@
 # Prompts
 
-Every model-facing prompt Themis writes (the system message, goal checks,
+Every model-facing prompt Themis writes (the system message, goal notes,
 summary and checkpoint requests, runtime nudges, tool-result notes, attachment
 headings, eval probes) lives in its own Markdown file under
 `crates/core/builtins/prompts/`. Edit the file to change the text the model
@@ -13,7 +13,7 @@ Files are grouped by prefix:
 | Prefix | Used for |
 |---|---|
 | `system-` | Pieces of the system message of every ordinary run |
-| `goal-` | Goal mode: the goal check, the goal context and goal-turn messages |
+| `goal-` | Goal mode: the continuation note every goal run carries, the "objective updated" note, a message's goal context and goal-turn notes |
 | `summary-` and `compaction-checkpoint.md` | Context checkpoints, document summaries, coverage lines |
 | `runtime-` | Runtime notes and nudges sent during a run |
 | `tool-` | Notes added to tool results |

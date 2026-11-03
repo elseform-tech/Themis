@@ -76,6 +76,7 @@ export function GoalBar({ goal, onEdit, onPause, onResume, onRemove, onFold }: G
   const editable = goal.status !== "waiting" && !complete;
   const elapsed = formatElapsed(goalElapsedMs(goal, now));
   const evidence = complete ? goal.evidence ?? [] : [];
+  const alsoAsked = goal.also_asked ?? [];
 
   if (draft !== null) {
     return (
@@ -102,7 +103,12 @@ export function GoalBar({ goal, onEdit, onPause, onResume, onRemove, onFold }: G
     <div role="region" aria-label="Goal" className={`themis-goal-bar${expanded || evidence.length ? " is-expanded" : ""}`} data-status={goal.status}>
       <GoalMark />
       <div className="themis-goal-body">
-        <button type="button" className="themis-goal-text" aria-expanded={expanded} title={expanded ? "Show less" : goal.text} onClick={toggle}>{goal.text}</button>
+        <button type="button" className="themis-goal-text" aria-expanded={expanded} title={expanded ? "Show less" : goal.text} onClick={toggle}>{goal.text}{!expanded && alsoAsked.length > 0 && <span className="themis-goal-asked-count"> · +{alsoAsked.length} asked</span>}</button>
+        {expanded && alsoAsked.length > 0 && (
+          <ul className="themis-goal-asked" aria-label="Also asked">
+            {alsoAsked.map((asked, index) => <li key={index}>Also asked: {asked}</li>)}
+          </ul>
+        )}
         {evidence.length > 0 && (
           <ul className="themis-goal-evidence" aria-label="Evidence">
             {evidence.map((entry, index) => (

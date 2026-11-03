@@ -74,6 +74,16 @@ describe("GoalBar", () => {
     expect(screen.queryByRole("button", { name: "Resume goal" })).toBeNull();
   });
 
+  it("lists what the person also asked, word for word, when the goal is opened", () => {
+    const also_asked = ["also add a license line\n  (MIT)", "and a build badge"];
+    render(<GoalBar goal={goal({ also_asked })} onEdit={vi.fn()} onPause={vi.fn()} onResume={vi.fn()} onRemove={vi.fn()} />);
+    expect(screen.queryByRole("list", { name: "Also asked" })).toBeNull();
+    expect(screen.getByText(/\+2 asked/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /Optimize this app/ }));
+    const items = screen.getAllByRole("listitem").map(item => item.textContent);
+    expect(items).toEqual(["Also asked: also add a license line\n  (MIT)", "Also asked: and a build badge"]);
+  });
+
   it("says a blocked goal is blocked and why, and offers resume", () => {
     render(<GoalBar goal={goal({ status: "blocked", running_since: undefined, reason: "No API key for the payment sandbox." })} onEdit={vi.fn()} onPause={vi.fn()} onResume={vi.fn()} onRemove={vi.fn()} />);
     expect(screen.getByText("Blocked · No API key for the payment sandbox.")).toBeInTheDocument();

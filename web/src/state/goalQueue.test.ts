@@ -45,6 +45,16 @@ describe("queue and goal events", () => {
     expect((paused.messages[thread] ?? [])[0]?.goalCheck).toBeUndefined();
   });
 
+  it("opens an old chat whose history holds events this version no longer has", () => {
+    let state = reducer(initialState, envelope({ kind: "user_message", text: "hi" }));
+    for (const old of [{ kind: "todo_changed", todo: { revision: 1, items: [] } }, { kind: "goal_check_started" }, { kind: "something_new" }]) {
+      const next = reducer(state, envelope(old));
+      expect(next).toBe(state);
+      state = next;
+    }
+    expect(state.messages[thread]?.map(row => row.text)).toEqual(["hi"]);
+  });
+
   it("keeps the queue and goal of each chat", () => {
     let state = reducer(initialState, envelope({ kind: "queue_changed", queue: [{ id: "q", text: "later", attachments: [], held: false }] }, ""));
     state = reducer(state, envelope({ kind: "goal_changed", goal: { text: "speed up p95", status: "running", started_at: 0, active_ms: 0, turns: 1, failures: 0 } }, ""));

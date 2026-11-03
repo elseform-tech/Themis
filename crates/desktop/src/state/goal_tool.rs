@@ -1,4 +1,4 @@
-//! The agent's goal tools. `set_goal` sets the chat's goal when the user asks for one;
+//! The agent's goal tools. `create_goal` creates the chat's goal when the user asks for one;
 //! `update_goal` ends it as complete (with evidence for each requirement) or blocked, or pauses
 //! it when the person asked. Like the own-chat automation lifecycle they need no approval
 //! prompt, but a deny rule still wins.
@@ -78,38 +78,32 @@ fn denied(
 #[async_trait]
 impl ToolRuntime for GoalTool {
     async fn execute(&self, args: Value) -> Result<Value, ToolCallError> {
-        let Some(goal) = args["goal"].as_str().filter(|goal| !goal.trim().is_empty()) else {
-            return Err(error("set_goal needs `goal`: the goal in one sentence"));
-        };
-        if let Some(refused) = denied(&self.state, &self.run, &self.thread_id, "set_goal") {
+        if let Some(refused) = denied(&self.state, &self.run, &self.thread_id, "create_goal") {
             return Err(refused);
         }
+        let objective = args["objective"].as_str().unwrap_or_default().to_owned();
         let goal = self
             .state
-            .set_goal(
-                Arc::clone(&self.sink),
-                self.thread_id.clone(),
-                goal.to_owned(),
-            )
+            .create_goal(Arc::clone(&self.sink), self.thread_id.clone(), objective)
             .await
             .map_err(error)?;
         Ok(json!({
-            "goal": goal.text,
+            "objective": goal.text,
             "status": "running",
-            "note": themis_core::prompts::GOAL_SET_NOTE
+            "note": themis_core::prompts::GOAL_CREATED_NOTE
         }))
     }
 }
 
 impl ToolT for GoalTool {
     fn name(&self) -> &str {
-        "set_goal"
+        "create_goal"
     }
     fn description(&self) -> &str {
-        "Set this chat's goal: one sentence the runtime keeps working toward, turn after turn, until you mark it complete with update_goal. Call it straight away when the user asks for a goal in their own words. Otherwise call it only after they agreed to make their request a goal (when a request clearly needs many rounds of work toward a measurable or judgeable outcome, first ask once, in one line: \"Want me to make this a goal and keep working until it's reached?\"). Include any conditions the user added. Never call it for questions or one-step changes. Replaces an existing goal."
+        themis_core::prompts::CREATE_GOAL_TOOL
     }
     fn args_schema(&self) -> Value {
-        json!({"type":"object","properties":{"goal":{"type":"string","description":"The goal in one sentence, in the user's terms."}},"required":["goal"],"additionalProperties":false})
+        json!({"type":"object","properties":{"objective":{"type":"string","description":"The objective in the user's words, with every condition they gave."}},"required":["objective"],"additionalProperties":false})
     }
     fn output_schema(&self) -> Option<Value> {
         None

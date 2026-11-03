@@ -129,10 +129,15 @@ pub const DESKTOP_WATCH_COMPLETE: &str =
 pub const DESKTOP_WATCH_CHECK: &str = include_str!("../builtins/prompts/desktop-watch-check.md");
 
 // Goal mode.
-/// Active-goal context appended to every run in a chat with a running goal; `{{goal}}`.
+/// What a person's message is told while the chat's goal runs, before the goal note;
+/// `{{goal_turn_marker}}`.
 pub const GOAL_CONTEXT: &str = include_str!("../builtins/prompts/goal-context.md");
-/// Message that starts a goal turn; `{{goal_turn_marker}}`, `{{turn}}`, `{{goal}}`, `{{note}}`.
-pub const GOAL_TURN: &str = include_str!("../builtins/prompts/goal-turn.md");
+/// The continuation note every goal run carries, Codex's goal rules for a weak model;
+/// `{{objective}}` is the goal's text with its "Also asked" lines.
+pub const GOAL_CONTINUATION: &str = include_str!("../builtins/prompts/goal-continuation.md");
+/// Before the continuation note, once, after the person edited the goal.
+pub const GOAL_OBJECTIVE_UPDATED: &str =
+    include_str!("../builtins/prompts/goal-objective-updated.md");
 pub const GOAL_CONTEXT_OVER: &str = include_str!("../builtins/prompts/goal-context-over.md");
 pub const GOAL_CONTEXT_PAUSED: &str = include_str!("../builtins/prompts/goal-context-paused.md");
 /// The map of a project's other documents; `{{docs}}`.
@@ -191,8 +196,10 @@ pub const SUBAGENT_MEMORY_SKILL_NOTE: &str =
 pub const QUESTION_ANSWER: &str = include_str!("../builtins/prompts/question-answer.md");
 /// Description of the `update_goal` tool.
 pub const UPDATE_GOAL_TOOL: &str = include_str!("../builtins/prompts/tool-update-goal.md");
-/// `note` field of the set_goal tool result.
-pub const GOAL_SET_NOTE: &str = include_str!("../builtins/prompts/goal-set-note.md");
+/// Description of the `create_goal` tool.
+pub const CREATE_GOAL_TOOL: &str = include_str!("../builtins/prompts/tool-create-goal.md");
+/// `note` field of the create_goal tool result.
+pub const GOAL_CREATED_NOTE: &str = include_str!("../builtins/prompts/goal-created-note.md");
 
 // Summaries and compaction.
 /// System prompt of every context checkpoint request.

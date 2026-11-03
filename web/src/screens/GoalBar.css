@@ -42,6 +42,8 @@
 .themis-goal-bar.is-expanded .themis-goal-text { padding-top: 4px; white-space: normal; overflow-wrap: anywhere; }
 .themis-goal-evidence { margin: 4px 0 2px; padding: 0 0 0 16px; font-size: .75rem; line-height: 1.5; color: var(--themis-text); }
 .themis-goal-proof { color: var(--themis-text-2); }
+.themis-goal-asked { margin: 4px 0 2px; padding: 0; list-style: none; font-size: .75rem; line-height: 1.5; color: var(--themis-text-2); white-space: pre-wrap; overflow-wrap: anywhere; }
+.themis-goal-asked-count { font-weight: 500; color: var(--themis-text-2); }
 .themis-goal-more { position: relative; display: inline-flex; }
 .themis-goal-menu {
   position: absolute; bottom: calc(100% + 4px); right: 0; z-index: 70; display: grid; min-width: 140px; padding: 4px;

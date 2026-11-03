@@ -591,7 +591,7 @@ async fn the_agent_sets_a_goal_with_its_tool_and_turns_follow() {
                 .as_array()
                 .is_some_and(|messages| messages.iter().any(|m| m["role"] == "tool"));
             if mentions(&body, "make it a goal") && !used_tool && !mentions(&body, "[Goal — runtime") {
-                ResponseTemplate::new(200).set_body_json(json!({"choices":[{"message":{"role":"assistant","content":null,"tool_calls":[{"id":"g","type":"function","function":{"name":"set_goal","arguments":"{\"goal\":\"get every test green\"}"}}]},"finish_reason":"tool_calls"}]}))
+                ResponseTemplate::new(200).set_body_json(json!({"choices":[{"message":{"role":"assistant","content":null,"tool_calls":[{"id":"g","type":"function","function":{"name":"create_goal","arguments":"{\"objective\":\"get every test green\"}"}}]},"finish_reason":"tool_calls"}]}))
             } else {
                 reply("Working on it.")
             }
@@ -941,54 +941,6 @@ async fn the_agent_cannot_pause_a_goal_nobody_asked_to_stop() {
         |event| matches!(event, ThreadEvent::ToolFinished { ok: false, output, .. } if output.contains("pausing is refused")),
     )
     .await;
-    settle(&state, &thread).await;
-}
-
-/// Found in a live run: the agent reworded the goal with `set_goal` and its
-/// elapsed time and turn count started again from zero.
-#[tokio::test(flavor = "multi_thread")]
-async fn rewording_an_open_goal_keeps_its_time_and_turns() {
-    let server = MockServer::builder().start().await;
-    Mock::given(method("POST"))
-        .respond_with(|request: &Request| {
-            let body = body(request);
-            if mentions(&body, "[Goal — runtime") {
-                return completes(&body, "The file has four lines.");
-            }
-            let used_tool = body["messages"]
-                .as_array()
-                .is_some_and(|messages| messages.iter().any(|m| m["role"] == "tool"));
-            if used_tool {
-                reply("Goal reworded to four lines.")
-            } else {
-                std::thread::sleep(Duration::from_millis(600));
-                ResponseTemplate::new(200).set_body_json(json!({"choices":[{"message":{"role":"assistant","content":null,"tool_calls":[{"id":"g","type":"function","function":{"name":"set_goal","arguments":"{\"goal\":\"colors.txt has four lines\"}"}}]},"finish_reason":"tool_calls"}]}))
-            }
-        })
-        .mount(&server)
-        .await;
-    let (state, _data, _project, thread) = chat(&server).await;
-    let (sink, _rx) = ChannelSink::channel();
-    state
-        .send_message(
-            Arc::new(sink),
-            thread.clone(),
-            "/goal colors.txt has three lines".into(),
-        )
-        .await
-        .unwrap();
-    goal_until(&state, &thread, |status| status == GoalStatus::Reached).await;
-    let goal = state.goal_for(&thread).unwrap();
-    assert_eq!(goal.text, "colors.txt has four lines");
-    assert_eq!(
-        goal.turns, 2,
-        "the /goal run stays turn 1; one goal turn followed"
-    );
-    assert!(
-        goal.active_ms >= 550,
-        "time before the rewording is kept: {} ms",
-        goal.active_ms
-    );
     settle(&state, &thread).await;
 }
 

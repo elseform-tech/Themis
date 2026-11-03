@@ -712,6 +712,10 @@ export function applyThreadEvent(
       };
       return setThreadRunning(next, threadId, false);
     }
+    // Saved chats keep events later versions dropped (a to-do list's, a goal check's): they
+    // change nothing, so an old chat still opens.
+    default:
+      return state;
   }
 }
 
