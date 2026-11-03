@@ -501,7 +501,13 @@ async fn the_browser_tab_streams_at_its_pixel_density_and_resizes_only_when_aske
         "resized page: frame {}x{} px for page 900x560 css, {} bytes",
         resized.0, resized.1, resized.2
     );
-    assert_eq!((resized.0, resized.1), (1800, 1120));
+    // Chrome on Linux rounds a frame's width down a little (1792 for 1800): within 1%.
+    assert!(
+        (1782..=1800).contains(&resized.0) && resized.1 == 1120,
+        "{}x{}",
+        resized.0,
+        resized.1
+    );
     chat.stop_screencast().await;
     hub.close_chat("chat-crisp").await;
 }
