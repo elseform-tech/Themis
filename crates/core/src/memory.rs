@@ -211,6 +211,49 @@ impl Memory {
     }
 }
 
+/// A memory's body from its fact and optional `why` and `how_to_apply`: the fact, then one
+/// `Why:` and one `How to apply:` line. A field replaces such lines the fact repeats (a model
+/// updating a memory often passes the old body back with them); without the field the last of
+/// them is kept. So an update never stacks a second `Why:`.
+pub fn compose_body(fact: &str, why: Option<&str>, how: Option<&str>) -> String {
+    let label = |line: &str, label: &str| {
+        let line = line.trim_start();
+        line.get(..label.len())
+            .filter(|head| head.eq_ignore_ascii_case(label))
+            .map(|_| line[label.len()..].trim().to_owned())
+    };
+    let mut kept_why = None;
+    let mut kept_how = None;
+    let mut rest = Vec::new();
+    for line in fact.lines() {
+        if let Some(text) = label(line, "Why:") {
+            kept_why = Some(text);
+        } else if let Some(text) = label(line, "How to apply:") {
+            kept_how = Some(text);
+        } else {
+            rest.push(line);
+        }
+    }
+    let one_line = |text: &str| text.replace(['\n', '\r'], " ").trim().to_owned();
+    let why = why.map(one_line).or(kept_why).filter(|t| !t.is_empty());
+    let how = how.map(one_line).or(kept_how).filter(|t| !t.is_empty());
+    let mut body = rest.join("\n").trim().to_owned();
+    let lines: Vec<String> = [
+        why.map(|text| format!("Why: {text}")),
+        how.map(|text| format!("How to apply: {text}")),
+    ]
+    .into_iter()
+    .flatten()
+    .collect();
+    if !lines.is_empty() {
+        if !body.is_empty() {
+            body.push_str("\n\n");
+        }
+        body.push_str(&lines.join("\n"));
+    }
+    body
+}
+
 /// The file text of a valid memory.
 pub fn serialize(memory: &Memory) -> String {
     let mut text = format!(
@@ -601,6 +644,44 @@ impl MemoryStore {
         Ok(listing.memories.len())
     }
 
+    /// Updates the memory named `from` to `memory`, under `memory.name` when that differs: the
+    /// file is rewritten in place and then renamed in one step, so the scope never holds both,
+    /// and the index is rewritten. Refuses a `from` not in use and a new name already in use.
+    pub fn rename(&self, from: &str, memory: &Memory) -> Result<usize, MemoryError> {
+        if from == memory.name {
+            return self.save(memory, SaveMode::Update);
+        }
+        memory.validate()?;
+        let _writing = WRITING.lock().unwrap_or_else(|e| e.into_inner());
+        self.checked_dir(true)?;
+        let old = self.path_of(from)?;
+        let new = self.path_of(&memory.name)?;
+        let original = match read_bounded(&old, MAX_FILE_BYTES) {
+            Some(text)
+                if std::fs::symlink_metadata(&old).is_ok_and(|m| m.file_type().is_file()) =>
+            {
+                text
+            }
+            _ => return fail(format!("no memory is named {from}")),
+        };
+        if std::fs::symlink_metadata(&new).is_ok() {
+            return fail(format!(
+                "a memory named {} already exists: update that one, or pick another name",
+                memory.name
+            ));
+        }
+        crate::chat_grants::write_atomic(&old, &serialize(memory))
+            .map_err(|_| MemoryError("memory could not be saved".into()))?;
+        if std::fs::rename(&old, &new).is_err() {
+            // Put the old memory back rather than leave it under a name it doesn't carry.
+            let _ = crate::chat_grants::write_atomic(&old, &original);
+            return fail("memory could not be renamed");
+        }
+        let listing = self.list()?;
+        self.write_index(&listing)?;
+        Ok(listing.memories.len())
+    }
+
     /// Deletes a memory and rewrites the index. With `revision`, refuses when the index changed
     /// since it was read. Returns the memory that was deleted.
     pub fn delete(&self, name: &str, revision: Option<&str>) -> Result<Memory, MemoryError> {
@@ -788,6 +869,75 @@ mod tests {
     }
 
     #[test]
+    fn an_update_can_rename_and_leaves_one_file() {
+        let root = tempfile::tempdir().unwrap();
+        let store = MemoryStore::new(root.path(), GLOBAL_FOLDER).unwrap();
+        store
+            .save(&memory("deploy-via-staging-branch"), SaveMode::Create)
+            .unwrap();
+        store.save(&memory("other"), SaveMode::Create).unwrap();
+        let corrected = memory("deploy-via-release-branch");
+        // Onto a name in use, or from a name not in use: refused, nothing changes.
+        assert!(store
+            .rename("deploy-via-staging-branch", &memory("other"))
+            .is_err());
+        assert!(store.rename("missing", &corrected).is_err());
+        assert!(store.rename("../x", &corrected).is_err());
+        let mut invalid = corrected.clone();
+        invalid.description = String::new();
+        assert!(store.rename("deploy-via-staging-branch", &invalid).is_err());
+        assert!(store.read("deploy-via-staging-branch").unwrap().is_some());
+        assert_eq!(
+            store
+                .rename("deploy-via-staging-branch", &corrected)
+                .unwrap(),
+            2
+        );
+        assert!(store.read("deploy-via-staging-branch").unwrap().is_none());
+        assert!(!store.dir().join("deploy-via-staging-branch.md").exists());
+        assert_eq!(
+            store.read("deploy-via-release-branch").unwrap(),
+            Some(corrected.clone())
+        );
+        assert!(store.index().contains("- deploy-via-release-branch ("));
+        assert!(!store.index().contains("staging"));
+        // Renaming to its own name is a plain update.
+        assert_eq!(
+            store
+                .rename("deploy-via-release-branch", &corrected)
+                .unwrap(),
+            2
+        );
+    }
+
+    #[test]
+    fn an_updated_body_keeps_one_why_and_one_how_line() {
+        // The fields replace Why and How lines the body repeats.
+        assert_eq!(
+            compose_body(
+                "Deploy via the release branch.\n\nWhy: staging is shared\nHow to apply: push to staging",
+                Some("staging was retired"),
+                Some("push to release"),
+            ),
+            "Deploy via the release branch.\n\nWhy: staging was retired\nHow to apply: push to release"
+        );
+        // Without the fields, only the last of repeated lines is kept, at the end.
+        assert_eq!(
+            compose_body(
+                "Deploy via release.\nWhy: old\n\nWhy: new\nhow to apply: merge",
+                None,
+                None
+            ),
+            "Deploy via release.\n\nWhy: new\nHow to apply: merge"
+        );
+        assert_eq!(compose_body("Just a fact.", None, None), "Just a fact.");
+        assert_eq!(
+            compose_body("Fact.", Some("a\nb"), None),
+            "Fact.\n\nWhy: a b"
+        );
+    }
+
+    #[test]
     fn folders_must_be_plain_and_never_symlinks() {
         let root = tempfile::tempdir().unwrap();
         for bad in ["", "../x", "/abs", "a/../b", "a b"] {
@@ -947,6 +1097,23 @@ mod tests {
             let cleaned = strip_secrets(&text);
             prop_assert!(!cleaned.chars().any(|c| c.is_control() && c != '\n' && c != '\t'));
             prop_assert_eq!(cleaned.split('\n').count(), text.split('\n').count());
+        }
+
+        #[test]
+        fn a_composed_body_never_holds_two_why_or_how_lines(
+            fact in "((Why|why|WHY|How to apply|how to apply): [a-zé ]{0,12}\n|[ -~é]{0,20}\n){0,8}",
+            why in prop::option::of("[ -~é\n]{0,20}"),
+            how in prop::option::of("[ -~é\n]{0,20}"),
+        ) {
+            let body = compose_body(&fact, why.as_deref(), how.as_deref());
+            let count = |label: &str| body
+                .lines()
+                .filter(|line| line.trim_start().to_ascii_lowercase().starts_with(label))
+                .count();
+            prop_assert!(count("why:") <= 1, "{}", body);
+            prop_assert!(count("how to apply:") <= 1, "{}", body);
+            // Composing again changes nothing.
+            prop_assert_eq!(compose_body(&body, None, None), body);
         }
     }
 }
