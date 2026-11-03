@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { EmptyState } from "../components";
 import {
-  browserCapture, browserCloseTab, browserRecordStart, browserSetMuted, browserRecordStop, browserDevtoolsUrl, browserInput, browserNavigate, browserOpenUrl, browserScreencast,
-  browserScreencastStop, browserState, browserStream, browserSwitchTab, keyText, modifierBits, MOUSE_BUTTONS,
+  browserCapture, browserRecordStart, browserSetMuted, browserRecordStop, browserDevtoolsUrl, browserInput, browserNavigate, browserOpenUrl, browserScreencast,
+  browserScreencastStop, browserState, browserStream, keyText, modifierBits, MOUSE_BUTTONS,
   type BrowserInput, type BrowserState, type SavedMedia,
 } from "../lib/browser";
 import { readSession, writeSession } from "../state/session";
@@ -205,16 +205,6 @@ export function BrowserView({ threadId, running = false }: { threadId: string; r
   const loading = state.loading || navigating || (state.controller === "agent" && !open);
   return (
     <div className={`themis-browser${devtools ? " has-devtools" : ""}`}>
-      {state.tabs.length > 1 && (
-        <div className="themis-browser-tabs" role="tablist" aria-label="Browser tabs">
-          {state.tabs.map((tab, index) => (
-            <span key={index} className={`themis-browser-tab${index === state.current ? " is-current" : ""}`}>
-              <button type="button" role="tab" aria-selected={index === state.current} title={tab.url} onClick={() => void act(() => browserSwitchTab(threadId, index + 1))}>{tab.title || tab.url}</button>
-              <button type="button" className="themis-browser-tab-close" aria-label={`Close ${tab.title || "tab"}`} onClick={() => void act(() => browserCloseTab(threadId, index + 1))}>✕</button>
-            </span>
-          ))}
-        </div>
-      )}
       <div className="themis-browser-bar">
         <button type="button" className="themis-browser-icon" aria-label="Back" disabled={!state.can_go_back} onClick={() => void navigate(() => browserNavigate(threadId, "back"))}><Chevron left /></button>
         <button type="button" className="themis-browser-icon" aria-label="Forward" disabled={!state.can_go_forward} onClick={() => void navigate(() => browserNavigate(threadId, "forward"))}><Chevron /></button>

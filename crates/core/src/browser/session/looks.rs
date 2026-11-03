@@ -387,7 +387,7 @@ impl ChatBrowser {
     /// back in the scheme it had.
     pub async fn check_looks(self: &Arc<Self>, show_secrets: bool) -> Result<Value, String> {
         let mut inner = self.inner.lock().await;
-        if inner.tabs.is_empty() {
+        if inner.tab.is_none() {
             return Err("no page is open; use browser_open first".into());
         }
         let (cdp, session) = self.current(&mut inner).await?;
@@ -400,8 +400,7 @@ impl ChatBrowser {
             runs.push(run_scheme(&cdp, &session, scheme).await?);
         }
         drop(restore);
-        let current = inner.current;
-        let tab = inner.tabs.get_mut(current).ok_or("no page is open")?;
+        let tab = inner.tab.as_mut().ok_or("no page is open")?;
         let (document, url, log) = {
             let state = tab.state.lock().unwrap_or_else(|e| e.into_inner());
             (

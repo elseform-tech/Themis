@@ -15,8 +15,6 @@ vi.mock("../lib/browser", async importOriginal => ({
   browserInput: vi.fn(async () => undefined),
   browserOpenUrl: vi.fn(async () => undefined),
   browserNavigate: vi.fn(async () => undefined),
-  browserSwitchTab: vi.fn(async () => undefined),
-  browserCloseTab: vi.fn(async () => undefined),
   browserDevtoolsUrl: vi.fn(async () => "http://127.0.0.1:9222/devtools/devtools_app.html?ws=127.0.0.1:9222/devtools/page/T"),
   browserSetMuted: vi.fn(async () => undefined),
   browserCapture: vi.fn(async () => ({ path: "/p/.themis/attachments/x/screenshot-1701-12.png", name: "screenshot-1701-12.png", size: 10 })),
@@ -25,7 +23,7 @@ vi.mock("../lib/browser", async importOriginal => ({
 }));
 
 const page: BrowserState = {
-  open: true, available: true, tabs: [{ title: "Sign up", url: "http://localhost:5173/signup" }], current: 0,
+  open: true, available: true,
   url: "http://localhost:5173/signup", title: "Sign up", can_go_back: true, can_go_forward: false,
   controller: "agent", activity: "clicking “Create account”", console_errors: 1, loading: false, muted: true,
 };
@@ -86,16 +84,15 @@ describe("BrowserView", () => {
     expect(bridge.browserInput).toHaveBeenCalledWith("t1", expect.objectContaining({ type: "mouse", kind: "wheel", x: 200, y: 200, delta_x: 40, delta_y: 0 }));
   });
 
-  it("opens typed addresses, switches tabs and splits off DevTools", async () => {
-    vi.mocked(bridge.browserState).mockResolvedValue({ ...page, controller: "idle", activity: null, tabs: [...page.tabs, { title: "Docs", url: "https://docs.rs" }] });
+  it("opens typed addresses and splits off DevTools, with no tab strip", async () => {
+    vi.mocked(bridge.browserState).mockResolvedValue({ ...page, controller: "idle", activity: null });
     await act(async () => { render(<BrowserView threadId="t1" />); });
     const address = screen.getByLabelText("Address");
     fireEvent.focus(address);
     fireEvent.change(address, { target: { value: "docs.rs/serde" } });
     await act(async () => fireEvent.submit(address));
     expect(bridge.browserOpenUrl).toHaveBeenCalledWith("t1", "docs.rs/serde");
-    await act(async () => fireEvent.click(screen.getByRole("tab", { name: "Docs" })));
-    expect(bridge.browserSwitchTab).toHaveBeenCalledWith("t1", 2);
+    expect(screen.queryByRole("tablist", { name: "Browser tabs" })).toBeNull();
     await act(async () => fireEvent.click(screen.getByRole("button", { name: /^DevTools/ })));
     expect(document.querySelector("iframe.themis-browser-devtools")).toHaveAttribute("src", expect.stringContaining("/devtools/devtools_app.html"));
   });
@@ -147,11 +144,11 @@ describe("BrowserView", () => {
   });
 
   it("explains a missing browser and an empty one", async () => {
-    vi.mocked(bridge.browserState).mockResolvedValue({ ...page, open: false, available: false, tabs: [], url: "", title: "" });
+    vi.mocked(bridge.browserState).mockResolvedValue({ ...page, open: false, available: false, url: "", title: "" });
     await act(async () => { render(<BrowserView threadId="t1" />); });
     expect(screen.getByText("No Chromium browser found")).toBeInTheDocument();
     cleanup();
-    vi.mocked(bridge.browserState).mockResolvedValue({ ...page, open: false, tabs: [], url: "", title: "", controller: "idle", activity: null });
+    vi.mocked(bridge.browserState).mockResolvedValue({ ...page, open: false, url: "", title: "", controller: "idle", activity: null });
     await act(async () => { render(<BrowserView threadId="t2" />); });
     expect(screen.getByText("No page open")).toBeInTheDocument();
     expect(screen.getByLabelText("Address")).toHaveValue("");

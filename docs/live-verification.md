@@ -114,7 +114,7 @@ full tour.
 | `tool:browser_drag` | tour | `crates/core/src/browser` | Ask the agent to drag a card between columns on a page using native drag and drop, and to move a slider; both change on screen. |
 | `tool:Skill` | tour | `crates/core/src/skills.rs` | Ask the agent to load a skill by name; its instructions come back, and a subagent can do the same. |
 | `tool:browser_scroll` | tour | `crates/core/src/browser` | Ask the agent to scroll a long page. |
-| `tool:browser_tabs` | tour | `crates/core/src/browser` | Ask the agent to list and switch tabs. |
+| `feature:one-browser-page` | tour | `crates/core/src/browser/session.rs`, `web/src/screens/BrowserView.tsx` | Ask the agent to open a page with a `target="_blank"` link and click it: the Browser tab shows the linked page in the same view, with no tab strip, and the agent's result says the page tried to open a new window. Open pages in four chats one after another: the first chat's Browser tab is empty; ask that chat to read its page again and it reopens at the same address. |
 | `tool:browser_screenshot` | tour | `crates/core/src/browser` | Goal screenshots the page. |
 | `tool:browser_record` | tour | `crates/core/src/browser` | Ask for a short recording; it plays in the media viewer. |
 | `tool:browser_check_looks` | tour | `crates/core/src/browser/session/looks.rs` | Ask the agent to check how a served page with a same-colour button and a `//` line atop its CSS looks: it names the button (light only) and the dropped rule, and the page ends in the scheme it started in. |
