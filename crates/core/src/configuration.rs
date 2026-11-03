@@ -977,7 +977,7 @@ pub enum SiteAccess {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(default, deny_unknown_fields)]
 pub struct BrowserPermissions {
-    /// Open, navigate, click, type, screenshots, recording and tabs.
+    /// Open, navigate, click, type, screenshots and recording.
     pub browsing: SiteAccess,
     /// Saving a file the page or an agent action downloads.
     pub downloads: SiteAccess,

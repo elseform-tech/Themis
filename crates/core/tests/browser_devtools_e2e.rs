@@ -517,9 +517,7 @@ async fn a_download_nobody_allowed_is_cancelled() {
         gate: Arc::new(|_site: &str| Err("Downloads is blocked".to_owned())),
     }));
     let started = std::time::Instant::now();
-    chat.open(&format!("{}/files", site.uri()), false)
-        .await
-        .unwrap();
+    chat.open(&format!("{}/files", site.uri())).await.unwrap();
     let clicked = chat
         .evaluate_for_test("document.getElementById('get').click()")
         .await;

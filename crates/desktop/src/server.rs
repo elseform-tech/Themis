@@ -1269,15 +1269,6 @@ async fn dispatch_command(
                 )
                 .await
         ),
-        "browser_tab" => done!(
-            state
-                .browser_tab(
-                    &arg::<String>(&args, "threadId")?,
-                    &arg::<String>(&args, "action")?,
-                    arg(&args, "tab")?,
-                )
-                .await
-        ),
         "browser_capture" => {
             state
                 .browser_capture(&arg::<String>(&args, "threadId")?)

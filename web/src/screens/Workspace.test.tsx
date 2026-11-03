@@ -193,18 +193,18 @@ describe("Workspace journey", () => {
     await waitFor(() => expect(vi.mocked(bridge.getThreadHistory).mock.calls.filter(call => call[0] === "idle").length).toBe(2), { timeout: 5000 });
   }, 10000);
 
-  it("permits YOLO selection and sending in a non-Git project",async()=>{
-    const project={name:"NonGit QA",root:"/tmp/non-git-qa",is_git:false};
+  it("lets a Custom chat in a non-Git project send",async()=>{
+    // A project folder holding only .themis/ (no Git repository) still chats in
+    // Custom; the backend refuses its writes there, not the conversation.
+    const project={name:"ping",root:"/tmp/ping",is_git:false};
     const thread={id:"non-git-thread",title:"NonGit thread",provider:"go" as const,model:"test-model",running:false,worktree_path:null,branch:null,base_branch:null,recovered:false,skill_ids:[]};
     vi.mocked(bridge.getDefaultProject).mockResolvedValueOnce(project);
     vi.mocked(bridge.listThreads).mockResolvedValue([thread]);vi.mocked(bridge.getThread).mockResolvedValue(thread);
-    vi.mocked(bridge.setThreadApprovalMode).mockResolvedValueOnce({...thread,approval_mode:"yolo"});
     await mount();await act(async()=>fireEvent.click(screen.getByRole("button",{name:/^NonGit thread/})));
-    expect(screen.getByLabelText("Message")).toHaveAttribute("aria-disabled","true");
-    fireEvent.click(screen.getByLabelText("Permissions: Custom"));
-    expect(screen.getByRole("combobox",{name:"Approval mode"})).toBeEnabled();
-    await act(async()=>fireEvent.change(screen.getByRole("combobox",{name:"Approval mode"}),{target:{value:"yolo"}}));
+    expect(screen.getByLabelText("Permissions: Custom")).toBeInTheDocument();
     expect(screen.getByLabelText("Message")).toHaveAttribute("aria-disabled","false");
+    expect(screen.queryByText(/Start a new thread to continue/)).toBeNull();
+    expect(document.querySelector("[data-placeholder*='Start a new thread'],[aria-placeholder*='Start a new thread']")).toBeNull();
     fireEvent.input(screen.getByLabelText("Message"),{target:{textContent:"Inspect project"}});
     expect(screen.getByRole("button",{name:"Send"})).toBeEnabled();
     await act(async()=>fireEvent.click(screen.getByRole("button",{name:"Send"})));
@@ -670,6 +670,29 @@ describe("Workspace journey", () => {
     expect(within(big).getAllByRole("listitem")).toHaveLength(5);
     fireEvent.click(within(big).getByRole("button", { name: "Show all 12" }));
     expect(within(big).getAllByRole("listitem")).toHaveLength(12);
+    // Hidden files (a dotted part) fold into one line that lists their names.
+    const lastEdited = () => { const all = screen.getAllByRole("region", { name: "Files edited in this turn" }); return all[all.length - 1]!; };
+    const dotted = [{ path: "src/app.py", status: "modified" as const, added: 1, removed: 1 }, { path: ".github/workflows/ci.yml", status: "added" as const, added: 3, removed: 0, hidden: true }, { path: ".gitignore", status: "modified" as const, added: 1, removed: 0, hidden: true }];
+    await act(async () => receive({ thread_id: "edit", run_id: "r3", event: { kind: "started", task: "ci", max_turns: 3 } }));
+    await act(async () => receive({ thread_id: "edit", run_id: "r3", event: { kind: "files_changed", files: dotted } }));
+    await act(async () => receive({ thread_id: "edit", run_id: "r3", event: { kind: "finished", result: "Added CI." } }));
+    const withHidden = lastEdited();
+    expect(withHidden).toHaveTextContent("Edited 1 file");
+    // The turn's total counts only the shown file: its row and the header read the same.
+    expect(within(withHidden).getAllByLabelText("1 added, 1 removed")).toHaveLength(2);
+    expect(withHidden).not.toHaveTextContent(".gitignore");
+    const toggle = within(withHidden).getByRole("button", { name: "2 hidden files changed" });
+    fireEvent.click(toggle);
+    expect(toggle).toHaveAttribute("aria-expanded", "true");
+    expect(withHidden).toHaveTextContent(".gitignore");
+    expect(withHidden).toHaveTextContent(".github/workflows/ci.yml");
+    // A turn that changed only hidden files shows just that line.
+    await act(async () => receive({ thread_id: "edit", run_id: "r4", event: { kind: "started", task: "ignore", max_turns: 3 } }));
+    await act(async () => receive({ thread_id: "edit", run_id: "r4", event: { kind: "files_changed", files: [dotted[2]!] } }));
+    await act(async () => receive({ thread_id: "edit", run_id: "r4", event: { kind: "finished", result: "Ignored target." } }));
+    const onlyHidden = lastEdited();
+    expect(onlyHidden).not.toHaveTextContent(/Edited/);
+    expect(within(onlyHidden).getByRole("button", { name: "1 hidden file changed" })).toBeInTheDocument();
   });
   it("keeps compact navigation without expanding on hover", async () => {
     vi.useFakeTimers(); await mount();

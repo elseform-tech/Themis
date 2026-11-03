@@ -8,6 +8,7 @@ import { usesGo } from "../lib/models";
 import { yoloKeeps } from "../lib/yolo";
 import { attachFiles, getEffectivePermissions, editGoal, enqueueMessage, getGoal, getThread, getWorkspace, listDiff, listGoModels, listQueue, pauseGoal, removeGoal, removeQueuedMessage, resumeGoal, sendMessage, setProvider, setThreadEffort, setThreadApprovalMode, steerQueuedMessage, stopThread, updateQueuedMessage, switchBranch } from "../lib/tauri";
 import { useLiveDiff } from "../lib/useLiveDiff";
+import { visibleFiles } from "../lib/hiddenFiles";
 import { describeError, isConcurrencyLimitError, newId, toast, useActiveProject, useActiveThread, useApp } from "../state/store";
 import { readSession, writeSession } from "../state/session";
 import { useNewThread } from "./actions";
@@ -88,9 +89,9 @@ export function ThreadView() {
   const stream = thread === null ? "" : (state.streams[thread.id] ?? "");
 
   const sendError = thread === null ? undefined : state.sendErrors[thread.id];
-  const readOnly = project !== null && !project.is_git && thread?.approval_mode !== "yolo";
-  // A message sent while a run is going waits in the chat's queue.
-  const composerDisabled = thread === null || thread.provider !== "go" || sending || attaching || permissionSaving || readOnly || project === null;
+  // A message sent while a run is going waits in the chat's queue. A project
+  // without Git chats too: in Custom the backend refuses its writes, not the chat.
+  const composerDisabled = thread === null || thread.provider !== "go" || sending || attaching || permissionSaving || project === null;
   const trace = thread ? state.traces[thread.id] ?? [] : [];
   useEffect(() => {
     function shortcut(event: KeyboardEvent) {
@@ -267,7 +268,7 @@ export function ThreadView() {
   const questions = messages.flatMap(message => message.question ? [message.question] : []);
   const compacting = state.compacting[thread.id] ?? false;
   const diff = state.diffs[thread.id];
-  const changedFiles = diff?.available ? diff.files.length : undefined;
+  const changedFiles = diff?.available ? visibleFiles(diff.files).length : undefined;
   const empty = messages.length === 0 && stream === "" && !running && !sending;
   // The overview box stands in for the Workspace while it is closed. The chat keeps its room
   // from the first message, so a long reply doesn't jump narrower when the box has something
@@ -294,7 +295,6 @@ export function ThreadView() {
       plugins={promptPlugins}
       history={history}
       composerDisabled={composerDisabled}
-      readOnly={readOnly}
       running={running}
       stopping={stopping}
       sendError={sendError ?? (skillsError ? `Skills unavailable: ${skillsError}` : undefined)}

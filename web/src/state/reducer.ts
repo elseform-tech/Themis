@@ -569,10 +569,9 @@ export function applyThreadEvent(
     case "goal_changed":
       return { ...state, goals: { ...state.goals, [threadId]: event.goal } };
     case "goal_note": {
-      // The check's verdict is the next thing the agent hears, so it gets a small bubble.
-      if (event.outcome === "not_yet" || event.outcome === "reached") {
-        const noted = event.outcome === "not_yet" ? markTurnRejected(state, threadId) : state;
-        return appendMessage(noted, threadId, { id: newId("msg"), role: "system", text: event.reason, runId, goalCheck: true });
+      // A goal check's verdict, in chats from before goals judged themselves, keeps its bubble.
+      if (event.outcome === "not_yet") {
+        return appendMessage(markTurnRejected(state, threadId), threadId, { id: newId("msg"), role: "system", text: event.reason, runId, goalCheck: true });
       }
       return appendMessage(state, threadId, { id: newId("msg"), role: "system", text: event.reason, runId, goalStatus: true });
     }

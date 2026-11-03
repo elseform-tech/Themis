@@ -578,6 +578,8 @@ export interface ChangedFile {
   /** Lines added and removed against the last commit; absent when they can't be counted. */
   added?: number;
   removed?: number;
+  /** A part of the path starts with a dot (`.github/…`, `.gitignore`); folded into one line. */
+  hidden?: boolean;
 }
 
 /** A recording of the built-in browser in progress. */
@@ -775,6 +777,8 @@ export interface DiffFile {
   removed: number;
   /** Too large to show line by line (a dataset, a generated file); listed without hunks. */
   too_large?: boolean;
+  /** A part of the path starts with a dot; listed last and folded into one line in Changes. */
+  hidden?: boolean;
 }
 export interface DiffState {
   available: boolean;

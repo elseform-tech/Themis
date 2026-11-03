@@ -566,6 +566,88 @@ async fn the_turn_ends_after_both_subagents_reported_back() {
     app.serving.abort();
 }
 
+/// Starting a subagent doesn't hold the main agent: while a slow subagent works, the main agent's
+/// next step runs a tool and gets its result, and a reply without tools doesn't end the turn
+/// until the subagent's report has reached it.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_main_agent_keeps_working_while_a_slow_subagent_runs() {
+    const SLOW: Duration = Duration::from_secs(4);
+    const REPORT: &str = "Slow: everything looked at.";
+    // When each request arrived: (main agent?, its tool results, the time).
+    let arrivals: Arc<Mutex<Vec<(bool, usize, Instant)>>> = Arc::default();
+    let log = Arc::clone(&arrivals);
+    let app = app(None, move |body| {
+        let subagent = is_subagent(body);
+        log.lock()
+            .unwrap()
+            .push((!subagent, tool_results(body), Instant::now()));
+        if subagent {
+            return reply(REPORT).set_delay(SLOW);
+        }
+        match tool_results(body) {
+            0 => tools(&[(
+                "s1",
+                "spawn_subagents",
+                json!({"subagents": [{"name": "Slow", "brief": "Look at everything."}]}),
+            )]),
+            1 => tools(&[("r1", "read_file", json!({"file_path": "notes.txt"}))]),
+            _ if mentions(body, REPORT) => reply("Merged: Slow's report and the notes."),
+            _ => reply("The notes say hello; Slow is still looking."),
+        }
+    })
+    .await;
+    let (data, thread) = (app.data.path().to_owned(), app.thread.clone());
+    tokio::task::spawn_blocking({
+        let (data, thread) = (data.clone(), thread.clone());
+        move || run(&data, &thread, "look around")
+    })
+    .await
+    .unwrap();
+
+    let all = bodies(&app.llm).await;
+    let main: Vec<&Value> = all.iter().filter(|body| !is_subagent(body)).collect();
+    // The main agent's own read came back while the subagent was still working: that request
+    // carries the read's result and no report yet.
+    let read_back = main
+        .iter()
+        .find(|body| mentions(body, "hello from the notes"))
+        .expect("the main agent's read never came back");
+    assert!(!mentions(read_back, NOTE), "{read_back}");
+    // And on time: well before the subagent's answer was due.
+    let arrivals = arrivals.lock().unwrap().clone();
+    let child_asked = arrivals
+        .iter()
+        .find(|(is_main, _, _)| !is_main)
+        .map(|(_, _, at)| *at)
+        .expect("the subagent never asked its model");
+    let read_at = arrivals
+        .iter()
+        .find(|(is_main, results, _)| *is_main && *results == 2)
+        .map(|(_, _, at)| *at)
+        .expect("no main step after the read");
+    assert!(
+        read_at < child_asked + SLOW,
+        "the main agent waited for the subagent: {:?} after it asked",
+        read_at.saturating_duration_since(child_asked)
+    );
+    // Its reply without tools while the subagent ran did not end the turn: the turn went on
+    // until the report arrived, labelled as the subagent's.
+    let last = main.last().unwrap();
+    assert!(mentions(last, "Slow is still looking"), "{last}");
+    assert!(mentions(last, NOTE) && mentions(last, REPORT), "{last}");
+    tokio::task::spawn_blocking(move || {
+        let ended: Vec<_> = history_kinds(&data, &thread)
+            .into_iter()
+            .filter(|e| e["kind"] == "subagent_ended")
+            .collect();
+        assert_eq!(ended.len(), 1, "{ended:?}");
+        assert_eq!(ended[0]["status"], "finished");
+    })
+    .await
+    .unwrap();
+    app.serving.abort();
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn a_stopped_subagent_ends_and_a_waited_result_is_not_repeated() {
     let app = app(None, move |body| {

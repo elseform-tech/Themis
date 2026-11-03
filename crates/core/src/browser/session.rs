@@ -1,7 +1,7 @@
 //! Browser sessions: one Chromium per project profile, shared by that
-//! project's chats; each chat owns its own tabs.
+//! project's chats; each chat owns one page.
 //!
-//! The agent's tools and the person's Workspace view drive the same tabs. When
+//! The agent's tools and the person's Workspace view drive the same page. When
 //! the person takes over, agent actions wait until they hand back. Each tab
 //! keeps what changed since the agent last looked (console errors, failed
 //! requests, dialogs) and whether the page is still loading.
@@ -21,9 +21,14 @@ use super::launch::{find_browser, BrowserProcess, DEFAULT_VIEWPORT};
 use super::media::{Recorder, Recording};
 use super::snapshot::{parse_ax_nodes, render, Outline, RefMap, RenderOptions};
 
-/// Tabs one chat may keep open.
-pub const MAX_TABS: usize = 8;
 /// Longest wait for a page to finish loading after a navigation.
+/// Chats whose page stays open at once, app-wide. Opening one more closes the page of the
+/// chat used least recently (one nobody is watching, recording or acting in); that chat
+/// reopens it at the same address when it next browses. Each open page costs a renderer
+/// process and its memory, even frozen.
+pub const OPEN_PAGES: usize = 3;
+/// Most time Chrome gets to say where a new window was going before it is closed unloaded.
+const POPUP_WAIT: Duration = Duration::from_secs(3);
 pub const NAVIGATION_WAIT: Duration = Duration::from_secs(30);
 /// Longest wait for a page to settle after other actions.
 pub const SETTLE_WAIT: Duration = Duration::from_secs(10);
@@ -55,8 +60,6 @@ pub enum BrowserUpdate {
 #[derive(Debug, Clone, Default, Serialize, PartialEq)]
 pub struct BrowserState {
     pub open: bool,
-    pub tabs: Vec<TabInfo>,
-    pub current: usize,
     pub url: String,
     pub title: String,
     pub can_go_back: bool,
@@ -81,12 +84,6 @@ pub struct RecordingInfo {
     pub by: Recorder,
     pub seconds: u64,
     pub max_seconds: u64,
-}
-
-#[derive(Debug, Clone, Default, Serialize, PartialEq, Eq)]
-pub struct TabInfo {
-    pub title: String,
-    pub url: String,
 }
 
 /// Live state of one tab, kept current by its event watcher.
@@ -308,6 +305,8 @@ impl BrowserHub {
                 targets: Mutex::new(HashSet::new()),
                 view: Mutex::default(),
                 stream_start: tokio::sync::Mutex::new(()),
+                reopen: Mutex::new(None),
+                last_used: Mutex::new(Instant::now()),
             })
         }))
     }
@@ -321,7 +320,7 @@ impl BrowserHub {
             .cloned()
     }
 
-    /// Closes a chat's tabs (chat deleted); the shared browser exits when no
+    /// Closes a chat's page (chat deleted); the shared browser exits when no
     /// chat uses it.
     pub async fn close_chat(&self, chat_id: &str) {
         let chat = self
@@ -340,7 +339,7 @@ impl BrowserHub {
         self.root().join("profiles").join(profile_key(project))
     }
 
-    /// Closes `project`'s browser (every chat's tabs on it) and waits for Chrome to let go of
+    /// Closes `project`'s browser (every chat's page on it) and waits for Chrome to let go of
     /// its profile, so its files can be changed. Chats reopen it when they next browse.
     pub async fn close_project(&self, project: &Path) {
         let key = profile_key(project);
@@ -369,6 +368,36 @@ impl BrowserHub {
                 break;
             }
             tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+    }
+
+    /// Keeps at most [`OPEN_PAGES`] chats' pages open: closes the least recently used idle
+    /// ones until `opening` fits. A page in use stays open, so the limit can be passed then.
+    async fn make_room(&self, opening: &Arc<ChatBrowser>) {
+        let mut others: Vec<Arc<ChatBrowser>> = self
+            .chats
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .values()
+            .filter(|chat| !Arc::ptr_eq(chat, opening))
+            .filter(|chat| {
+                chat.view
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .tab
+                    .is_some()
+            })
+            .cloned()
+            .collect();
+        others.sort_by_key(|chat| *chat.last_used.lock().unwrap_or_else(|e| e.into_inner()));
+        let mut open = others.len();
+        for chat in others {
+            if open < OPEN_PAGES {
+                break;
+            }
+            if chat.idle_page() && chat.close_for_room().await {
+                open -= 1;
+            }
         }
     }
 
@@ -460,11 +489,11 @@ fn profile_key(project: &Path) -> String {
 #[derive(Default)]
 struct ChatInner {
     browser: Option<Arc<SharedBrowser>>,
-    tabs: Vec<Tab>,
-    current: usize,
+    /// The chat's one page; links and pages that open a new window load here instead.
+    tab: Option<Tab>,
 }
 
-/// The chat's browser connection and tabs as of their last change. The person's input
+/// The chat's browser connection and page as of their last change. The person's input
 /// and the Workspace view read this, never `inner`: an agent action holds `inner` while
 /// its page settles (seconds on busy sites), and neither side waits for the other.
 #[derive(Clone, Default)]
@@ -472,8 +501,7 @@ struct View {
     cdp: Option<Arc<Cdp>>,
     /// `127.0.0.1:<port>` of the browser's debugging server (for DevTools).
     http_address: Option<String>,
-    tabs: Vec<ViewTab>,
-    current: usize,
+    tab: Option<ViewTab>,
 }
 
 #[derive(Clone)]
@@ -486,7 +514,7 @@ struct ViewTab {
 impl View {
     /// The connection and session of the current tab, if a page is open.
     fn current(&self) -> Option<(Arc<Cdp>, String)> {
-        let tab = self.tabs.get(self.current)?;
+        let tab = self.tab.as_ref()?;
         Some((Arc::clone(self.cdp.as_ref()?), tab.session_id.clone()))
     }
 }
@@ -578,18 +606,22 @@ pub struct ChatBrowser {
     viewport: Mutex<Viewport>,
     /// The Workspace speaker is off (the default): pages play no sound.
     muted: AtomicBool,
-    /// Downloads of this chat's tabs, newest last.
+    /// Downloads of this chat's page, newest last.
     downloads: Mutex<Vec<downloads::Download>>,
     /// Until when a download that starts follows the person's own input (theirs).
     person_until: Mutex<Option<Instant>>,
     /// The current run's download folder and permission.
     download_policy: Mutex<Option<downloads::DownloadPolicy>>,
-    /// Target ids of this chat's tabs, readable while an action holds `inner`.
+    /// Target ids of this chat's page, readable while an action holds `inner`.
     targets: Mutex<HashSet<String>>,
     /// See [`View`].
     view: Mutex<View>,
     /// One screencast start at a time (Chrome refuses a second start on a tab).
     stream_start: tokio::sync::Mutex<()>,
+    /// The address of the page closed to make room (see [`OPEN_PAGES`]), reopened on next use.
+    reopen: Mutex<Option<String>>,
+    /// When an agent action or the person last used the page; the oldest page closes first.
+    last_used: Mutex<Instant>,
 }
 
 impl std::fmt::Debug for ChatBrowser {
@@ -605,9 +637,6 @@ impl std::fmt::Debug for ChatBrowser {
 pub struct ActionReport {
     pub url: String,
     pub title: String,
-    /// `"1 of 2"` when the chat has more than one tab.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub tab: Option<String>,
     pub snapshot: String,
     /// The size x and y are measured against, as `1280x720`.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -842,6 +871,8 @@ fn spawn_watcher(
     tokio::spawn(async move {
         // When the next frame may be acknowledged (see FRAME_GAP).
         let mut next_ack = std::time::Instant::now();
+        // Windows this page opened that were already loaded here instead.
+        let mut redirected: HashSet<String> = HashSet::new();
         loop {
             let event = match events.recv().await {
                 Ok(event) => event,
@@ -866,6 +897,16 @@ fn spawn_watcher(
                 Err(broadcast::error::RecvError::Closed) => break,
             };
             if event.session.as_deref() != Some(session_id.as_str()) {
+                if redirect_popup(
+                    &cdp,
+                    &target_id,
+                    &session_id,
+                    &state,
+                    &event,
+                    &mut redirected,
+                ) {
+                    continue;
+                }
                 if event.method == "Target.targetInfoChanged"
                     && event.params["targetInfo"]["targetId"] == target_id.as_str()
                 {
@@ -986,6 +1027,61 @@ fn spawn_watcher(
             }
         }
     })
+}
+
+/// A chat has one page: a window this page opens (a `target="_blank"` link, `window.open`)
+/// is closed and its address loaded in the page instead. A window that never gets an
+/// address (one a script writes into) is closed after [`POPUP_WAIT`]. Returns whether
+/// `event` was about such a window.
+fn redirect_popup(
+    cdp: &Arc<Cdp>,
+    target_id: &str,
+    session_id: &str,
+    state: &Mutex<TabState>,
+    event: &CdpEvent,
+    redirected: &mut HashSet<String>,
+) -> bool {
+    let info = &event.params["targetInfo"];
+    if event.method == "Target.targetDestroyed" {
+        let gone = event.params["targetId"].as_str().unwrap_or_default();
+        return redirected.remove(gone);
+    }
+    if !matches!(
+        event.method.as_str(),
+        "Target.targetCreated" | "Target.targetInfoChanged"
+    ) || info["type"] != "page"
+        || info["openerId"].as_str() != Some(target_id)
+    {
+        return false;
+    }
+    let Some(popup) = info["targetId"].as_str().map(str::to_owned) else {
+        return false;
+    };
+    if redirected.contains(&popup) {
+        return true;
+    }
+    let url = info["url"].as_str().unwrap_or_default();
+    if url.is_empty() || url == "about:blank" {
+        if event.method == "Target.targetCreated" {
+            let cdp = Arc::clone(cdp);
+            tokio::spawn(async move {
+                tokio::time::sleep(POPUP_WAIT).await;
+                cdp.send(None, "Target.closeTarget", json!({"targetId": popup}));
+            });
+        }
+        return true;
+    }
+    cdp.send(Some(session_id), "Page.navigate", json!({"url": url}));
+    cdp.send(None, "Target.closeTarget", json!({"targetId": popup}));
+    push_note(
+        state,
+        format!(
+            "the page tried to open a new window; {} loaded in this page instead",
+            short_url(url)
+        ),
+    );
+    redirected.insert(popup);
+    true
 }
 
 /// After a commit, makes sure the view catches up with the new page. A page restored by
@@ -1216,7 +1312,7 @@ impl ChatBrowser {
         let view = self.view();
         let Some(cdp) = view.cdp else { return };
         let freezing = state == "frozen";
-        for tab in &view.tabs {
+        if let Some(tab) = &view.tab {
             let session = Some(tab.session_id.as_str());
             // Focus emulation decides both ways (tested against the real engine): left on, a page
             // ignores the freeze; left off, a thawed page stays hidden and never draws again.
@@ -1285,7 +1381,7 @@ impl ChatBrowser {
         let Some(browser) = inner.browser.clone() else {
             return Ok(());
         };
-        for tab in &mut inner.tabs {
+        if let Some(tab) = &mut inner.tab {
             // The new script goes in before the old one comes out.
             let new = install_audio(&browser.cdp, &tab.session_id, muted).await?;
             if let Some(old) = tab.audio_script.replace(new) {
@@ -1307,7 +1403,7 @@ impl ChatBrowser {
         self.state_of().await
     }
 
-    /// Records the browser and tabs for [`View`] readers; called after every change.
+    /// Records the browser and page for [`View`] readers; called after every change.
     fn remember(&self, inner: &ChatInner) {
         *self.view.lock().unwrap_or_else(|e| e.into_inner()) = View {
             cdp: inner
@@ -1318,16 +1414,11 @@ impl ChatBrowser {
                 .browser
                 .as_ref()
                 .map(|browser| browser.http_address.clone()),
-            tabs: inner
-                .tabs
-                .iter()
-                .map(|tab| ViewTab {
-                    target_id: tab.target_id.clone(),
-                    session_id: tab.session_id.clone(),
-                    state: Arc::clone(&tab.state),
-                })
-                .collect(),
-            current: inner.current,
+            tab: inner.tab.as_ref().map(|tab| ViewTab {
+                target_id: tab.target_id.clone(),
+                session_id: tab.session_id.clone(),
+                state: Arc::clone(&tab.state),
+            }),
         };
     }
 
@@ -1337,18 +1428,7 @@ impl ChatBrowser {
 
     async fn state_of(&self) -> BrowserState {
         let view = self.view();
-        let tabs: Vec<TabInfo> = view
-            .tabs
-            .iter()
-            .map(|tab| {
-                let state = tab.state.lock().unwrap_or_else(|e| e.into_inner());
-                TabInfo {
-                    title: state.title.clone(),
-                    url: state.url.clone(),
-                }
-            })
-            .collect();
-        let current = view.tabs.get(view.current);
+        let current = view.tab.as_ref();
         let (url, title, errors, loading) = current
             .map(|tab| {
                 let state = tab.state.lock().unwrap_or_else(|e| e.into_inner());
@@ -1383,9 +1463,7 @@ impl ChatBrowser {
             .unwrap_or_else(|e| e.into_inner())
             .clone();
         BrowserState {
-            open: !view.tabs.is_empty(),
-            current: view.current,
-            tabs,
+            open: view.tab.is_some(),
             url,
             title,
             can_go_back: back,
@@ -1425,7 +1503,7 @@ impl ChatBrowser {
     /// The host of the current page (for approvals), if a page is open.
     pub async fn current_site(&self) -> Option<String> {
         let inner = self.inner.lock().await;
-        let tab = inner.tabs.get(inner.current)?;
+        let tab = inner.tab.as_ref()?;
         let url = tab
             .state
             .lock()
@@ -1440,7 +1518,7 @@ impl ChatBrowser {
     /// Browser tab already shows above it).
     pub async fn devtools_url(&self) -> Option<String> {
         let view = self.view();
-        let tab = view.tabs.get(view.current)?;
+        let tab = view.tab.as_ref()?;
         Some(format!(
             "http://{0}/devtools/devtools_app.html?ws={0}/devtools/page/{1}",
             view.http_address.as_deref()?,
@@ -1453,13 +1531,12 @@ impl ChatBrowser {
             if !browser.cdp.is_closed() {
                 return Ok(Arc::clone(browser));
             }
-            // The browser exited: its tabs are gone too.
-            inner.tabs.clear();
+            // The browser exited: its page is gone too.
+            inner.tab = None;
             self.targets
                 .lock()
                 .unwrap_or_else(|e| e.into_inner())
                 .clear();
-            inner.current = 0;
         }
         let hub = self.hub.upgrade().ok_or("the app is closing")?;
         let browser = hub.shared_for(&self.profile_key).await?;
@@ -1468,11 +1545,9 @@ impl ChatBrowser {
         Ok(browser)
     }
 
-    async fn new_tab(self: &Arc<Self>, inner: &mut ChatInner) -> Result<(), String> {
-        if inner.tabs.len() >= MAX_TABS {
-            return Err(format!(
-                "this chat already has {MAX_TABS} tabs open; close one with browser_tabs"
-            ));
+    async fn open_page(self: &Arc<Self>, inner: &mut ChatInner) -> Result<(), String> {
+        if let Some(hub) = self.hub.upgrade() {
+            hub.make_room(self).await;
         }
         let browser = self.browser(inner).await?;
         let cdp = &browser.cdp;
@@ -1547,7 +1622,7 @@ impl ChatBrowser {
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .insert(target_id.clone());
-        inner.tabs.push(Tab {
+        inner.tab = Some(Tab {
             target_id,
             session_id,
             state,
@@ -1557,7 +1632,6 @@ impl ChatBrowser {
             watcher,
             audio_script,
         });
-        inner.current = inner.tabs.len() - 1;
         self.remember(inner);
         Ok(())
     }
@@ -1568,32 +1642,121 @@ impl ChatBrowser {
         inner: &mut ChatInner,
     ) -> Result<(Arc<Cdp>, String), String> {
         self.thaw_pages().await;
+        self.touch();
         let browser = self.browser(inner).await?;
-        if inner.tabs.is_empty() {
-            self.new_tab(inner).await?;
+        if inner.tab.is_none() {
+            self.open_page(inner).await?;
+            let reopen = self.reopen.lock().unwrap_or_else(|e| e.into_inner()).take();
+            if let Some(url) = reopen {
+                let tab = inner.tab.as_ref().ok_or("no page is open")?;
+                browser
+                    .cdp
+                    .call_with_timeout(
+                        Some(&tab.session_id),
+                        "Page.navigate",
+                        json!({"url": url}),
+                        NAVIGATION_WAIT,
+                    )
+                    .await?;
+                self.settle(inner, true).await;
+                if let Some(tab) = &inner.tab {
+                    push_note(
+                        &tab.state,
+                        format!(
+                            "this page was closed while unused to save memory and has been reopened at {}; take a new snapshot before using old refs",
+                            short_url(&url)
+                        ),
+                    );
+                }
+            }
         }
-        let tab = &inner.tabs[inner.current];
+        let tab = inner.tab.as_ref().ok_or("no page is open")?;
         Ok((Arc::clone(&browser.cdp), tab.session_id.clone()))
     }
 
-    /// Loads `url` in the current tab, or a new one.
-    pub async fn open(self: &Arc<Self>, url: &str, new_tab: bool) -> Result<ActionReport, String> {
-        let mut inner = self.inner.lock().await;
-        if new_tab && !inner.tabs.is_empty() {
-            // The same page again reloads its tab: agents retrying a page piled up tabs, and every
-            // one of them keeps running.
-            let open_already = inner
-                .tabs
-                .iter()
-                .position(|tab| tab.state.lock().unwrap_or_else(|e| e.into_inner()).url == url);
-            match open_already {
-                Some(index) => {
-                    inner.current = index;
-                    self.remember(&inner);
-                }
-                None => self.new_tab(&mut inner).await?,
-            }
+    /// Reopens the page closed to make room, so an action finds it where it was.
+    async fn reopen_if_closed(self: &Arc<Self>, inner: &mut ChatInner) -> Result<(), String> {
+        if inner.tab.is_none() {
+            self.current(inner).await?;
         }
+        Ok(())
+    }
+
+    /// Whether the chat has a page, open now or closed to make room (reopened on use).
+    fn has_page(&self, inner: &ChatInner) -> bool {
+        inner.tab.is_some()
+            || self
+                .reopen
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .is_some()
+    }
+
+    fn touch(&self) {
+        *self.last_used.lock().unwrap_or_else(|e| e.into_inner()) = Instant::now();
+    }
+
+    /// Whether the page may be closed to make room: nobody watches, records or acts in it.
+    fn idle_page(&self) -> bool {
+        !self.ui_stream.load(Ordering::SeqCst)
+            && self
+                .activity
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .is_none()
+            && self
+                .recording
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .is_none()
+            && self
+                .view
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .tab
+                .is_some()
+    }
+
+    /// Closes the page to make room, remembering its address. False when an action holds it.
+    async fn close_for_room(&self) -> bool {
+        let Ok(mut inner) = self.inner.try_lock() else {
+            return false;
+        };
+        let Some(tab) = inner.tab.take() else {
+            return false;
+        };
+        let url = tab
+            .state
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .url
+            .clone();
+        if !url.is_empty() && url != "about:blank" {
+            *self.reopen.lock().unwrap_or_else(|e| e.into_inner()) = Some(url);
+        }
+        self.targets
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(&tab.target_id);
+        if let Some(browser) = &inner.browser {
+            let _ = browser
+                .cdp
+                .call(
+                    None,
+                    "Target.closeTarget",
+                    json!({"targetId": tab.target_id}),
+                )
+                .await;
+        }
+        self.remember(&inner);
+        drop(inner);
+        self.publish_state().await;
+        true
+    }
+
+    /// Loads `url` in the chat's page.
+    pub async fn open(self: &Arc<Self>, url: &str) -> Result<ActionReport, String> {
+        let mut inner = self.inner.lock().await;
         let (cdp, session) = self.current(&mut inner).await?;
         let navigated = cdp
             .call_with_timeout(
@@ -1642,9 +1805,10 @@ impl ChatBrowser {
     /// Back, forward or reload.
     pub async fn navigate(self: &Arc<Self>, action: &str) -> Result<ActionReport, String> {
         let mut inner = self.inner.lock().await;
-        if inner.tabs.is_empty() {
+        if !self.has_page(&inner) {
             return Err("no page is open; use browser_open first".into());
         }
+        self.reopen_if_closed(&mut inner).await?;
         let (cdp, session) = self.current(&mut inner).await?;
         history_step(&cdp, &session, action).await?;
         self.settle(&inner, true).await;
@@ -1671,17 +1835,18 @@ impl ChatBrowser {
         layout: bool,
     ) -> Result<ActionReport, String> {
         let mut inner = self.inner.lock().await;
-        if inner.tabs.is_empty() {
+        if !self.has_page(&inner) {
             return Err("no page is open; use browser_open first".into());
         }
+        self.reopen_if_closed(&mut inner).await?;
         let report = self.report(&mut inner, reference).await?;
         if !layout {
             return Ok(report);
         }
         let browser = inner.browser.clone().ok_or("no page is open")?;
         let session = inner
-            .tabs
-            .get(inner.current)
+            .tab
+            .as_ref()
             .ok_or("no page is open")?
             .session_id
             .clone();
@@ -1702,7 +1867,7 @@ impl ChatBrowser {
     /// The accessible name of a ref from the last snapshot, for labels.
     pub async fn name_of(&self, reference: &str) -> Option<String> {
         let inner = self.inner.lock().await;
-        let tab = inner.tabs.get(inner.current)?;
+        let tab = inner.tab.as_ref()?;
         let backend = tab.refs.resolve(reference)?;
         tab.names.get(&backend).cloned()
     }
@@ -1718,8 +1883,8 @@ impl ChatBrowser {
             .as_ref()
             .ok_or("no page is open; use browser_open first")?;
         let tab = inner
-            .tabs
-            .get(inner.current)
+            .tab
+            .as_ref()
             .ok_or("no page is open; use browser_open first")?;
         if !is_ref(reference) {
             let backend = selected_element(&browser.cdp, &tab.session_id, reference).await?;
@@ -1763,8 +1928,8 @@ impl ChatBrowser {
             .clone()
             .ok_or("no page is open; use browser_open first")?;
         let session = inner
-            .tabs
-            .get(inner.current)
+            .tab
+            .as_ref()
             .ok_or("no page is open; use browser_open first")?
             .session_id
             .clone();
@@ -1801,8 +1966,8 @@ impl ChatBrowser {
             .clone()
             .ok_or("no page is open; use browser_open first")?;
         let session = inner
-            .tabs
-            .get(inner.current)
+            .tab
+            .as_ref()
             .ok_or("no page is open; use browser_open first")?
             .session_id
             .clone();
@@ -1853,8 +2018,8 @@ impl ChatBrowser {
             .clone()
             .ok_or("no page is open; use browser_open first")?;
         let session = inner
-            .tabs
-            .get(inner.current)
+            .tab
+            .as_ref()
             .ok_or("no page is open; use browser_open first")?
             .session_id
             .clone();
@@ -1933,8 +2098,8 @@ impl ChatBrowser {
             .clone()
             .ok_or("no page is open; use browser_open first")?;
         let session = inner
-            .tabs
-            .get(inner.current)
+            .tab
+            .as_ref()
             .ok_or("no page is open; use browser_open first")?
             .session_id
             .clone();
@@ -1973,8 +2138,8 @@ impl ChatBrowser {
             .clone()
             .ok_or("no page is open; use browser_open first")?;
         let session = inner
-            .tabs
-            .get(inner.current)
+            .tab
+            .as_ref()
             .ok_or("no page is open; use browser_open first")?
             .session_id
             .clone();
@@ -2020,8 +2185,8 @@ impl ChatBrowser {
             .clone()
             .ok_or("no page is open; use browser_open first")?;
         let session = inner
-            .tabs
-            .get(inner.current)
+            .tab
+            .as_ref()
             .ok_or("no page is open; use browser_open first")?
             .session_id
             .clone();
@@ -2149,9 +2314,10 @@ impl ChatBrowser {
             )
         })?;
         let mut inner = self.inner.lock().await;
-        if inner.tabs.is_empty() {
+        if !self.has_page(&inner) {
             return Err("no page is open; use browser_open first".into());
         }
+        self.reopen_if_closed(&mut inner).await?;
         let (cdp, session) = self.current(&mut inner).await?;
         press_key_for(&cdp, &session, &press, hold).await?;
         self.settle(&inner, press.key == "Enter").await;
@@ -2168,9 +2334,10 @@ impl ChatBrowser {
         reference: Option<&str>,
     ) -> Result<ActionReport, String> {
         let mut inner = self.inner.lock().await;
-        if inner.tabs.is_empty() {
+        if !self.has_page(&inner) {
             return Err("no page is open; use browser_open first".into());
         }
+        self.reopen_if_closed(&mut inner).await?;
         let (cdp, session) = self.current(&mut inner).await?;
         let metrics = cdp
             .call(Some(&session), "Page.getLayoutMetrics", json!({}))
@@ -2214,73 +2381,11 @@ impl ChatBrowser {
         report
     }
 
-    /// Lists, switches to or closes tabs (1-based numbers).
-    pub async fn tabs(self: &Arc<Self>, action: &str, tab: Option<usize>) -> Result<Value, String> {
-        let mut inner = self.inner.lock().await;
-        let pick = |count: usize| -> Result<usize, String> {
-            let number = tab.ok_or("say which tab (its number from list)")?;
-            (1..=count)
-                .contains(&number)
-                .then(|| number - 1)
-                .ok_or_else(|| format!("there is no tab {number}; this chat has {count}"))
-        };
-        match action.trim().to_ascii_lowercase().as_str() {
-            "list" => {}
-            "switch" => {
-                inner.current = pick(inner.tabs.len())?;
-                let target = inner.tabs[inner.current].target_id.clone();
-                if let Some(browser) = &inner.browser {
-                    let _ = browser
-                        .cdp
-                        .call(None, "Target.activateTarget", json!({"targetId": target}))
-                        .await;
-                }
-            }
-            "close" => {
-                let index = pick(inner.tabs.len())?;
-                let tab = inner.tabs.remove(index);
-                self.targets
-                    .lock()
-                    .unwrap_or_else(|e| e.into_inner())
-                    .remove(&tab.target_id);
-                if let Some(browser) = &inner.browser {
-                    let _ = browser
-                        .cdp
-                        .call(
-                            None,
-                            "Target.closeTarget",
-                            json!({"targetId": tab.target_id}),
-                        )
-                        .await;
-                }
-                if inner.current >= inner.tabs.len() {
-                    inner.current = inner.tabs.len().saturating_sub(1);
-                }
-            }
-            other => {
-                return Err(format!(
-                    "action must be list, switch or close, not '{}'",
-                    cap(other, 20)
-                ))
-            }
-        }
-        self.remember(&inner);
-        let state = self.state_of().await;
-        drop(inner);
-        self.publish_state().await;
-        self.restart_screencast().await;
-        Ok(json!({
-            "tabs": state.tabs.iter().enumerate().map(|(i, tab)| json!({
-                "tab": i + 1, "title": tab.title, "url": tab.url, "current": i == state.current && state.open,
-            })).collect::<Vec<_>>(),
-        }))
-    }
-
     async fn close_all(&self) {
         self.stop_screencast().await;
         let mut inner = self.inner.lock().await;
         if let Some(browser) = &inner.browser {
-            for tab in &inner.tabs {
+            if let Some(tab) = &inner.tab {
                 let _ = browser
                     .cdp
                     .call(
@@ -2291,7 +2396,7 @@ impl ChatBrowser {
                     .await;
             }
         }
-        inner.tabs.clear();
+        inner.tab = None;
         self.targets
             .lock()
             .unwrap_or_else(|e| e.into_inner())
@@ -2303,7 +2408,7 @@ impl ChatBrowser {
     /// Waits until the page has settled: loaded (after a navigation) and the
     /// network quiet, bounded by [`NAVIGATION_WAIT`] / [`SETTLE_WAIT`].
     async fn settle(&self, inner: &ChatInner, navigation: bool) {
-        let Some(tab) = inner.tabs.get(inner.current) else {
+        let Some(tab) = inner.tab.as_ref() else {
             return;
         };
         let started = Instant::now();
@@ -2345,9 +2450,7 @@ impl ChatBrowser {
         reference: Option<&str>,
     ) -> Result<ActionReport, String> {
         let browser = inner.browser.clone().ok_or("no page is open")?;
-        let count = inner.tabs.len();
-        let current = inner.current;
-        let tab = inner.tabs.get_mut(current).ok_or("no page is open")?;
+        let tab = inner.tab.as_mut().ok_or("no page is open")?;
         let (document, url, title, notes) = {
             let mut state = tab.state.lock().unwrap_or_else(|e| e.into_inner());
             (
@@ -2428,7 +2531,6 @@ impl ChatBrowser {
         Ok(ActionReport {
             url,
             title,
-            tab: (count > 1).then(|| format!("{} of {count}", current + 1)),
             snapshot: if text.is_empty() { "(empty page)".to_owned() } else { text },
             visible_page,
             new_since_last_action: notes,
@@ -2643,7 +2745,7 @@ impl ChatBrowser {
             if self
                 .inner
                 .try_lock()
-                .is_ok_and(|inner| inner.tabs.is_empty())
+                .is_ok_and(|inner| !self.has_page(&inner))
             {
                 return Err("no page is open to record; use browser_open first".into());
             }
@@ -2756,8 +2858,8 @@ impl ChatBrowser {
             .clone()
             .ok_or("no page is open; use browser_open first")?;
         let tab = inner
-            .tabs
-            .get(inner.current)
+            .tab
+            .as_ref()
             .ok_or("no page is open; use browser_open first")?;
         let cdp = &browser.cdp;
         let session = tab.session_id.clone();

@@ -6,7 +6,7 @@ use themis_core::tools::sensitive::SensitiveMatcher;
 
 use crate::diff::{
     git_diff_cached, git_diff_head, git_diff_worktree, git_head, git_untracked, is_git_repo,
-    is_readable_change, untracked_diff_file, MAX_DIFF_FILES, MAX_LISTED_DIFF_BYTES,
+    is_hidden_path, is_readable_change, untracked_diff_file, MAX_DIFF_FILES, MAX_LISTED_DIFF_BYTES,
 };
 use crate::types::{DiffState, MergeResult};
 use crate::worktree;
@@ -130,8 +130,13 @@ fn read_diff(
     let mut secrets = before - files.len();
     let before = files.len();
     files.retain(|file| is_readable_change(root, &file.path));
-    let mut hidden = before - files.len();
+    let mut unreadable = before - files.len();
     let mut total = files.len();
+    // Hidden files (a dotted part, such as `.github/`) go after the rest, so they never take a
+    // listed place from a visible file.
+    let (mut files, tracked_hidden): (Vec<_>, Vec<_>) =
+        files.into_iter().partition(|file| !file.hidden);
+    let mut untracked_hidden = Vec::new();
     // The counts need a look at every new file. Only the ones shown are read in full.
     for relative in git_untracked(root)? {
         crate::diff::count_listed_item();
@@ -143,15 +148,28 @@ fn read_diff(
             continue;
         }
         if !is_readable_change(root, &relative) {
-            hidden += 1;
+            unreadable += 1;
             continue;
         }
         total += 1;
+        if is_hidden_path(&relative) {
+            untracked_hidden.push(relative);
+            continue;
+        }
         if files.len() < MAX_DIFF_FILES {
             files.push(untracked_diff_file(root, &relative));
         }
         listed.insert(relative);
     }
+    let room = MAX_DIFF_FILES.saturating_sub(files.len());
+    files.extend(tracked_hidden.into_iter().take(room));
+    let room = MAX_DIFF_FILES.saturating_sub(files.len());
+    files.extend(
+        untracked_hidden
+            .iter()
+            .take(room)
+            .map(|relative| untracked_diff_file(root, relative)),
+    );
     for file in &mut files {
         file.preexisting = preexisting.contains(&file.path)
             || file
@@ -167,10 +185,10 @@ fn read_diff(
         ));
     }
     bound_listed_lines(&mut files);
-    if hidden > 0 {
+    if unreadable > 0 {
         notes.push(format!(
-            "{hidden} binary or generated file{} hidden",
-            if hidden == 1 { "" } else { "s" }
+            "{unreadable} binary or generated file{} hidden",
+            if unreadable == 1 { "" } else { "s" }
         ));
     }
     if secrets > 0 {
@@ -461,6 +479,52 @@ mod tests {
         let paths: Vec<&str> = state.files.iter().map(|file| file.path.as_str()).collect();
         assert_eq!(paths, ["new.py"]);
         assert_eq!(state.reason.as_deref(), Some("3 secret files hidden"));
+    }
+
+    /// Hidden files (a part of the path starts with a dot) are marked and listed after the
+    /// rest, so the Changes view can fold them into one line.
+    #[test]
+    fn listing_marks_hidden_files_and_lists_them_last() {
+        let repo = committed_repo();
+        std::fs::write(repo.path().join(".gitignore"), "target\n").unwrap();
+        std::fs::create_dir_all(repo.path().join(".github/workflows")).unwrap();
+        std::fs::write(repo.path().join(".github/workflows/ci.yml"), "on: push\n").unwrap();
+        std::fs::write(repo.path().join("kept.txt"), "edited\n").unwrap();
+        std::fs::write(repo.path().join("new.py"), "print(1)\n").unwrap();
+        let state = read_diff(repo.path(), &HashSet::new(), &matcher()).unwrap();
+        let listed: Vec<(&str, bool)> = state
+            .files
+            .iter()
+            .map(|file| (file.path.as_str(), file.hidden))
+            .collect();
+        assert_eq!(
+            listed,
+            [
+                ("kept.txt", false),
+                ("new.py", false),
+                (".github/workflows/ci.yml", true),
+                (".gitignore", true),
+            ]
+        );
+        assert!(
+            !state.files[2].hunks.is_empty(),
+            "a hidden file keeps its diff"
+        );
+        assert_eq!(state.reason, None);
+    }
+
+    /// Hidden files never take a listed place from a visible one.
+    #[test]
+    fn hidden_files_make_way_for_visible_ones_at_the_cap() {
+        let repo = dirty_repo(0, MAX_DIFF_FILES);
+        std::fs::write(repo.path().join(".gitignore"), "target\n").unwrap();
+        let state = read_diff(repo.path(), &HashSet::new(), &matcher()).unwrap();
+        assert_eq!(state.files.len(), MAX_DIFF_FILES);
+        assert!(state.files.iter().all(|file| !file.hidden));
+        assert_eq!(
+            state.reason.as_deref(),
+            Some(format!("truncated: showing {MAX_DIFF_FILES} of 201 changed files").as_str())
+        );
     }
 
     /// Changed files come first, then new ones by name, with both notes counting everything.

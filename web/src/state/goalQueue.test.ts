@@ -37,9 +37,10 @@ describe("queue and goal events", () => {
     ] } as never);
     expect((loaded.messages[thread] ?? []).find(row => row.role === "assistant")?.goalRejected).toBe(true);
     expect((loaded.messages[thread] ?? []).filter(row => row.goalCheck).map(row => row.text)).toEqual(["That isn't proven yet."]);
-    // The goal's end speaks the same way; other notes stay in the conversation's own voice.
-    const reached = reducer(initialState, envelope({ kind: "goal_note", outcome: "reached", reason: "Everything is complete." }));
-    expect((reached.messages[thread] ?? [])[0]).toMatchObject({ text: "Everything is complete.", goalCheck: true });
+    // The agent's own complete or blocked is a plain line, like every other goal note.
+    const reached = reducer(initialState, envelope({ kind: "goal_note", outcome: "reached", reason: "Complete." }));
+    expect((reached.messages[thread] ?? [])[0]).toMatchObject({ text: "Complete.", goalStatus: true });
+    expect((reached.messages[thread] ?? [])[0]?.goalCheck).toBeUndefined();
     const paused = reducer(initialState, envelope({ kind: "goal_note", outcome: "status", reason: "I've paused the goal." }));
     expect((paused.messages[thread] ?? [])[0]).toMatchObject({ goalStatus: true });
     expect((paused.messages[thread] ?? [])[0]?.goalCheck).toBeUndefined();

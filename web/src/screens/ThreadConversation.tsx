@@ -6,6 +6,7 @@ import { usePromptSkills } from "../lib/usePromptSkills";
 import { describeError, toast, useActiveProject, useApp } from "../state/store";
 import { browserOpenUrl } from "../lib/browser";
 import { ANSWER_MARKER, type AttachedMedia, type ChangedFile, type Question } from "../lib/types";
+import { hiddenFilesLabel, visibleFiles } from "../lib/hiddenFiles";
 import { QuestionNote, useNowAt } from "./QuestionBox";
 import { placeQuestion, questionOnComposer, QUESTION_OPEN_MS, usePlacements } from "../state/composerSlot";
 import { useCallback, useEffect, useMemo, useState } from "react";
@@ -272,27 +273,38 @@ function LineCounts({ added, removed }: { added: number; removed: number }) {
   return <span className="themis-edited-counts" aria-label={`${added} added, ${removed} removed`}><span className="themis-edited-status--added">+{added}</span> <span className="themis-edited-status--deleted">-{removed}</span></span>;
 }
 
-function EditedFiles({ files }: { files: ChangedFile[] }) {
+function EditedFiles({ files: all }: { files: ChangedFile[] }) {
   const { dispatch } = useApp();
   const [expanded, setExpanded] = useState(false);
+  const [hiddenOpen, setHiddenOpen] = useState(false);
+  // Hidden files (`.github/…`, `.gitignore`) fold into one line that lists their names.
+  const files = visibleFiles(all);
+  const hidden = all.filter(file => file.hidden);
   const counted = files.filter(file => file.added !== undefined || file.removed !== undefined);
   const totalAdded = counted.reduce((sum, file) => sum + (file.added ?? 0), 0);
   const totalRemoved = counted.reduce((sum, file) => sum + (file.removed ?? 0), 0);
   const shown = expanded ? files : files.slice(0, EDITED_PREVIEW);
+  const row = (file: ChangedFile) => {
+    const slash = file.path.lastIndexOf("/");
+    return <li key={file.path}><button type="button" title={`${file.path} · show diff`} onClick={() => dispatch({ type: "ui/diff-panel", open: true, focus: file.path })}>
+      <span className={`themis-edited-status themis-edited-status--${file.status}`} aria-label={file.status}>{STATUS_LETTER[file.status]}</span>
+      <span className="themis-edited-path">{slash >= 0 && <span>{file.path.slice(0, slash + 1)}</span>}{file.path.slice(slash + 1)}</span>
+      {(file.added !== undefined || file.removed !== undefined) && <LineCounts added={file.added ?? 0} removed={file.removed ?? 0} />}
+    </button></li>;
+  };
   return <section className="themis-edited-files" aria-label="Files edited in this turn">
-    <header>
-      <h3>Edited {files.length} file{files.length === 1 ? "" : "s"}</h3>
-      {counted.length > 0 && <LineCounts added={totalAdded} removed={totalRemoved} />}
-    </header>
-    <ul className={expanded ? "is-expanded" : undefined}>{shown.map(file => {
-      const slash = file.path.lastIndexOf("/");
-      return <li key={file.path}><button type="button" title={`${file.path} · show diff`} onClick={() => dispatch({ type: "ui/diff-panel", open: true, focus: file.path })}>
-        <span className={`themis-edited-status themis-edited-status--${file.status}`} aria-label={file.status}>{STATUS_LETTER[file.status]}</span>
-        <span className="themis-edited-path">{slash >= 0 && <span>{file.path.slice(0, slash + 1)}</span>}{file.path.slice(slash + 1)}</span>
-        {(file.added !== undefined || file.removed !== undefined) && <LineCounts added={file.added ?? 0} removed={file.removed ?? 0} />}
-      </button></li>;
-    })}</ul>
-    {files.length > EDITED_PREVIEW && <button type="button" className="themis-edited-more" aria-expanded={expanded} onClick={() => setExpanded(value => !value)}>{expanded ? "Show fewer" : `Show all ${files.length}`}</button>}
+    {files.length > 0 && <>
+      <header>
+        <h3>Edited {files.length} file{files.length === 1 ? "" : "s"}</h3>
+        {counted.length > 0 && <LineCounts added={totalAdded} removed={totalRemoved} />}
+      </header>
+      <ul className={expanded ? "is-expanded" : undefined}>{shown.map(row)}</ul>
+      {files.length > EDITED_PREVIEW && <button type="button" className="themis-edited-more" aria-expanded={expanded} onClick={() => setExpanded(value => !value)}>{expanded ? "Show fewer" : `Show all ${files.length}`}</button>}
+    </>}
+    {hidden.length > 0 && <>
+      <button type="button" className="themis-edited-more" aria-expanded={hiddenOpen} onClick={() => setHiddenOpen(value => !value)}>{hiddenFilesLabel(hidden.length)}</button>
+      {hiddenOpen && <ul className="themis-edited-hidden">{hidden.map(row)}</ul>}
+    </>}
   </section>;
 }
 

@@ -41,6 +41,10 @@ describe("chat overview box", () => {
     // From each file's own totals: a very large file's listing holds only its first lines.
     const counted = { ...diff, files: [{ ...diff.files[0]!, added: 25000, removed: 1 }, { ...diff.files[1]!, added: 2, removed: 0 }] };
     expect(diffTotals(counted)).toEqual({ files: 2, added: 25002, removed: 1 });
+    // Hidden files (`.github/…`) are left out of the row, as they are folded in Changes.
+    const dotted = { ...counted, files: [...counted.files, { ...diff.files[0]!, path: ".gitignore", added: 5, removed: 5, hidden: true }] };
+    expect(diffTotals(dotted)).toEqual({ files: 2, added: 25002, removed: 1 });
+    expect(diffTotals({ available: true, files: [dotted.files[2]!] })).toBeNull();
     expect(diffTotals({ available: true, files: [] })).toBeNull();
     expect(diffTotals({ available: false, reason: "not git", files: [] })).toBeNull();
   });

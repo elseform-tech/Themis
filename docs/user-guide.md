@@ -50,8 +50,9 @@ levels are listed.
 
 ## Projects, threads, runs
 
-- **Project actions → Open existing folder** opens an existing project. In Custom mode, non-Git
-  folders disable sending; YOLO allows runs (see [sandbox](sandbox.md)).
+- **Project actions → Open existing folder** opens an existing project. A folder without Git
+  chats as usual; in Custom mode the agent's changes there are refused (only reads
+  and integrations run), and YOLO allows them (see [sandbox](sandbox.md)).
 - The **+** beside a project starts a thread with your default provider and model.
   Threads share the selected project checkout; they do not automatically create
   separate branches or worktrees.
@@ -293,7 +294,12 @@ Codex, the chat's own model judges its goal: there is no separate check.
   **Changes** (readable changed files with line counts and their wrapped,
   highlighted diff, Unified or Split, updating live while the agent works; a
   switcher at the top shows another branch's changes without switching to it, which
-  only the composer does; binary, generated and secret-looking files are hidden; a
+  only the composer does; binary, generated and secret-looking files are hidden;
+  hidden files, those with a part of the path starting with a dot such as
+  `.gitignore`, `.github/workflows/ci.yml` or `.themis/config.jsonc`, are left out
+  of the list and the counts and fold into one quiet "N hidden files changed" line
+  at the bottom that lists their names, and clicking one shows its diff; the same
+  line sits under a reply's "Edited N files" card; a
   change too large to show whole, such as a downloaded dataset, shows its first
   2,000 lines with a note), **Files** (leaves out what Git ignores and secret-looking
   files), **Pull requests** (needs
@@ -635,9 +641,10 @@ Entered keys stay in macOS Keychain until you forget them. Go also reads
 `OPENCODE_KEY` from the environment. Keys are not written to SQLite or settings.
 
 **Why is my project read-only?**
-Custom mode disables the desktop composer for non-Git folders. The shield
-remains available; selecting YOLO enables sending (with no approvals and no
-sandbox walls; only Themis' own settings stay protected).
+In a folder without Git, Custom mode lets you chat but refuses the agent's
+writes and commands (reads and integrations still run). Selecting YOLO in the
+shield allows them (with no approvals and no sandbox walls; only Themis' own
+settings stay protected).
 See [sandbox](sandbox.md) for backend policy and the limits of tool-level
 restrictions.
 
