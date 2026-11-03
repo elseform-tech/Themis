@@ -461,11 +461,32 @@ async fn goal_soak_e2e() {
     for &at in &summaries {
         let before = bodies[..at].iter().rev().find(ordinary).unwrap();
         let after = bodies[at..].iter().find(ordinary).unwrap();
+        // Each message's role and size, to see what a checkpoint failed to shrink.
+        let parts = |body: &Value| {
+            body["messages"]
+                .as_array()
+                .map(|messages| {
+                    messages
+                        .iter()
+                        .map(|m| {
+                            format!(
+                                "{}:{}",
+                                m["role"].as_str().unwrap_or("?"),
+                                m.to_string().len()
+                            )
+                        })
+                        .collect::<Vec<_>>()
+                        .join(" ")
+                })
+                .unwrap_or_default()
+        };
         assert!(
             size(after) < size(before),
-            "checkpoint at request {at}: next request {} bytes, last before {} bytes",
+            "checkpoint at request {at}: next request {} bytes, last before {} bytes\nbefore: {}\nafter: {}",
             size(after),
-            size(before)
+            size(before),
+            parts(before),
+            parts(after)
         );
     }
     // The goal is in every model request after a checkpoint.
