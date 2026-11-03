@@ -70,6 +70,22 @@ export function ThreadConversation({
   const gallery = useMemo(() => ({ threadId, items: media, open: openMedia, show: setSingle }), [threadId, media, openMedia]);
   const { state: { diffs, memoryWorking: working }, dispatch } = useApp();
   const memoryWorking = working[threadId];
+  // Memory lines sit inside their run's final reply, above its footer; the live "checking" line
+  // inside the latest one. A run with no final reply keeps its line on its own.
+  const { memoryByRun, finalRuns, lastFinalId } = useMemo(() => {
+    const memoryByRun: Record<string, ChatMessage> = {};
+    const finalRuns = new Set<string>();
+    let lastFinalId: string | undefined;
+    for (const message of messages) {
+      if (message.memory && message.runId) memoryByRun[message.runId] = message;
+      if (message.role === "assistant" && message.final) {
+        lastFinalId = message.id;
+        if (message.runId) finalRuns.add(message.runId);
+      }
+    }
+    return { memoryByRun, finalRuns, lastFinalId };
+  }, [messages]);
+  const inline = useMemo(() => ({ memoryByRun, finalRuns, lastFinalId, working: running || sending ? undefined : memoryWorking }), [memoryByRun, finalRuns, lastFinalId, memoryWorking, running, sending]);
   // Links in replies open in this chat's browser, shown in the Workspace Browser tab.
   const openLink = useCallback((url: string) => {
     dispatch({ type: "ui/diff-panel", open: true, tab: "browser" });
@@ -120,6 +136,7 @@ export function ThreadConversation({
             skills={skills} plugins={plugins}
             activeRunId={activeRunId}
             runDurations={runDurations}
+            memory={inline}
           />
         ))
       )}
@@ -139,7 +156,7 @@ export function ThreadConversation({
         </div>
       )}
       {!running && !sending && <GoalWait checking={goalChecking} retryAt={goalRetryAt} />}
-      {!running && !sending && memoryWorking && <MemoryWorkingLine step={memoryWorking} />}
+      {!running && !sending && memoryWorking && lastFinalId === undefined && <MemoryWorkingLine step={memoryWorking} />}
       <div ref={endRef} />
       </div>
     </div>
@@ -171,6 +188,7 @@ function ConversationRow({
   runDurations,
   skills,
   plugins,
+  memory,
 }: {
   row: ConversationRow;
   threadId: string;
@@ -178,11 +196,13 @@ function ConversationRow({
   runDurations: Record<string, number>;
   skills: PromptSkill[];
   plugins: PromptPlugin[];
+  memory: InlineMemory;
 }) {
   if (row.kind === "message" && row.message.question) {
     return <QuestionRow question={row.message.question} />;
   }
   if (row.kind === "message" && row.message.memory) {
+    if (row.message.runId && memory.finalRuns.has(row.message.runId)) return null;
     return <MemoryLine changes={row.message.memory} settling={row.message.memorySettling} />;
   }
   if (row.kind === "message" && row.message.subagents) {
@@ -190,7 +210,9 @@ function ConversationRow({
   }
   if (row.kind === "message") {
     const durationMs = row.message.final && row.message.runId ? runDurations[row.message.runId] : undefined;
-    return <Message threadId={threadId} message={row.message} activeRunId={activeRunId} durationMs={durationMs} skills={skills} plugins={plugins} />;
+    const saved = row.message.final && row.message.runId ? memory.memoryByRun[row.message.runId] : undefined;
+    const working = row.message.id === memory.lastFinalId ? memory.working : undefined;
+    return <Message threadId={threadId} message={row.message} activeRunId={activeRunId} durationMs={durationMs} skills={skills} plugins={plugins} memory={saved} memoryWorking={working} />;
   }
   if (row.kind === "milestone") return <Milestone row={row} activeRunId={activeRunId} skills={skills} plugins={plugins} />;
 
@@ -334,7 +356,9 @@ function formatRunDuration(ms: number): string {
   return seconds < 60 ? `${seconds}s` : `${Math.floor(seconds / 60)}m${seconds % 60 === 0 ? "" : ` ${seconds % 60}s`}`;
 }
 
-function Message({ message, threadId, activeRunId, durationMs, skills, plugins }: { message: ChatMessage; threadId?: string; activeRunId: string | undefined; durationMs?: number; skills: PromptSkill[]; plugins: PromptPlugin[] }) {
+type InlineMemory = { memoryByRun: Record<string, ChatMessage>; finalRuns: Set<string>; lastFinalId: string | undefined; working: "checking" | "waiting" | undefined };
+
+function Message({ message, threadId, activeRunId, durationMs, skills, plugins, memory, memoryWorking }: { message: ChatMessage; threadId?: string; activeRunId: string | undefined; durationMs?: number; skills: PromptSkill[]; plugins: PromptPlugin[]; memory?: ChatMessage; memoryWorking?: "checking" | "waiting" }) {
   if (message.checkpoint) return <CheckpointDivider checkpoint={message.checkpoint} />;
   // The answered question box already shows the answer the agent was sent.
   if (message.role === "user" && message.text.startsWith(ANSWER_MARKER)) return null;
@@ -386,6 +410,7 @@ function Message({ message, threadId, activeRunId, durationMs, skills, plugins }
           <ResponseBody text={message.text} artifacts={message.media?.map(file => file.path)} />
           {!!message.media?.length && <MediaStrip files={message.media} />}
           {!!message.changedFiles?.length && <EditedFiles files={message.changedFiles} />}
+          {memory?.memory ? <MemoryLine key={memory.id} changes={memory.memory} settling={memory.memorySettling} /> : memoryWorking && <MemoryWorkingLine step={memoryWorking} />}
           {(message.final || !message.runId) && <div className="themis-response-actions">
             <CopyButton text={message.text} />
             <small className="themis-response-model">{message.interrupted === "stopped" ? "Stopped by you" : message.interrupted === "failed" ? "Interrupted by an error" : message.model ?? "Model not recorded"}{durationMs !== undefined && ` · ${formatRunDuration(durationMs)}`}</small>

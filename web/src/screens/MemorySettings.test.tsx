@@ -127,7 +127,7 @@ describe("memory in the chat", () => {
     expect(screen.getByRole("status")).toHaveTextContent("Saving python-preference.md");
     act(() => { vi.advanceTimersByTime(MEMORY_SETTLE_MS); });
     expect(screen.queryByRole("status")).toBeNull();
-    expect(screen.getByRole("note")).toHaveTextContent("Saved Python preference · global");
+    expect(screen.getByRole("note")).toHaveTextContent("Saved python-preference.md · global");
     vi.useRealTimers();
   });
 
@@ -159,9 +159,9 @@ describe("memory in the chat", () => {
   it("is one slim line with the dot-grid mark, whose name opens the memory in Settings", () => {
     render(<MemoryLine changes={[change()]} />);
     const line = screen.getByRole("note");
-    expect(line).toHaveTextContent("Saved Python preference · global");
-    expect(line.querySelector("svg.themis-memory-dots")).not.toBeNull();
-    const name = screen.getByRole("button", { name: /Python preference/ });
+    expect(line).toHaveTextContent("Saved python-preference.md · global");
+    expect(line.querySelector(".themis-memory-icon svg")).not.toBeNull();
+    const name = screen.getByRole("button", { name: /python-preference\.md/ });
     expect(name).toHaveAttribute("title", "memory/python-preference.md · by muse-spark-1.3-contributor");
     fireEvent.click(name);
     expect(dispatch).toHaveBeenCalledWith({ type: "ui/view", view: "settings", settings: { section: "Memory", key: "global:python-preference" } });
@@ -169,7 +169,7 @@ describe("memory in the chat", () => {
 
   it("says Removed for a deleted memory, with nothing to open", () => {
     render(<MemoryLine changes={[change({ action: "removed", scope: "project", name: "old-fact" })]} />);
-    expect(screen.getByRole("note")).toHaveTextContent("Removed Old fact · project");
+    expect(screen.getByRole("note")).toHaveTextContent("Removed old-fact.md · project");
     expect(screen.queryByRole("button")).toBeNull();
   });
 
@@ -177,11 +177,11 @@ describe("memory in the chat", () => {
     render(<MemoryLine changes={[change(), change({ name: "uses-pnpm" }), change({ action: "updated", name: "deploy-branch", scope: "project", model: "claude-haiku-5-5", model_index: 1 })]} />);
     const toggle = screen.getByRole("button", { name: "Saved 2 · updated 1" });
     expect(toggle).toHaveAttribute("aria-expanded", "false");
-    expect(screen.queryByRole("button", { name: /Uses pnpm/ })).toBeNull();
+    expect(screen.queryByRole("button", { name: /uses-pnpm\.md/ })).toBeNull();
     fireEvent.click(toggle);
     expect(toggle).toHaveAttribute("aria-expanded", "true");
-    expect(screen.getByRole("button", { name: /Deploy branch/ })).toHaveAttribute("title", "memory/deploy-branch.md · by claude-haiku-5-5");
-    expect(screen.getAllByRole("listitem").map(item => item.textContent)).toEqual(["Saved Python preference · global", "Saved Uses pnpm · global", "Updated Deploy branch · project"]);
+    expect(screen.getByRole("button", { name: /deploy-branch\.md/ })).toHaveAttribute("title", "memory/deploy-branch.md · by claude-haiku-5-5");
+    expect(screen.getAllByRole("listitem").map(item => item.textContent)).toEqual(["Saved python-preference.md · global", "Saved uses-pnpm.md · global", "Updated deploy-branch.md · project"]);
   });
 
   it("comes from the memory_changed event and stays in the run", () => {

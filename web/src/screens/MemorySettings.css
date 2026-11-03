@@ -30,9 +30,8 @@
 
 /* In the chat: one slim line under a reply where the memory models changed memory. */
 .themis-memory-line { display: inline-flex; align-items: flex-start; gap: 8px; align-self: flex-start; max-width: 100%; color: var(--themis-text-3); font-size: .8rem; line-height: 1.4; }
-.themis-memory-dots { flex: none; width: 14px; height: 14px; margin-top: 1px; fill: currentColor; }
-.themis-memory-dots circle { opacity: .25; }
-.themis-memory-dots circle.is-lit { opacity: .8; }
+.themis-memory-icon { flex: none; display: inline-flex; width: 14px; height: 14px; margin-top: 1px; opacity: .8; }
+.themis-memory-icon svg { width: 14px; height: 14px; }
 .themis-memory-change { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .themis-memory-scope { color: var(--themis-text-3); }
 .themis-memory-line button { min-width: 0; padding: 0; border: 0; background: transparent; font: inherit; color: var(--themis-text-2); text-decoration: underline; text-decoration-color: var(--themis-border); text-underline-offset: 3px; cursor: pointer; }

@@ -1,10 +1,9 @@
 import { useEffect, useState } from "react";
-import { DOT_GRID, DotSpinner } from "../components/DotSpinner";
 import { Switch } from "../components";
 import { deleteMemory, getMemorySettings, listMemories, updateMemorySettings } from "../lib/tauri";
 import type { Memory, MemoryChange, MemoryKind, MemoryList, MemoryScope, MemoryWaiting } from "../lib/types";
 import { describeError, useActiveProject, useApp } from "../state/store";
-import { SettingsGroup } from "./SettingsGroup";
+import { SectionIcon, SettingsGroup } from "./SettingsGroup";
 import "./MemorySettings.css";
 
 const KINDS: [MemoryKind, string][] = [["user", "About you"], ["feedback", "Your feedback"], ["project", "Project facts"], ["reference", "Pointers"]];
@@ -29,12 +28,9 @@ function sourceKind(source: string): string {
   return /^(web|https?:|page|site)/i.test(source.trim()) ? "a web page" : "a file";
 }
 
-/** The memory mark: the sidebar's 3×3 dot grid with its top and bottom rows lit, muted. */
-export function MemoryDots() {
-  const lit = [0, 1, 2, 6, 7, 8];
-  return <svg className="themis-memory-dots" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-    {DOT_GRID.map(([cx, cy], cell) => <circle key={cell} className={lit.includes(cell) ? "is-lit" : undefined} cx={cx} cy={cy} r="2.1" />)}
-  </svg>;
+/** The memory mark: Settings › Memory's own icon, small and muted. */
+export function MemoryIcon() {
+  return <span className="themis-memory-icon" aria-hidden="true"><SectionIcon section="Memory" /></span>;
 }
 
 const VERBS: Record<MemoryChange["action"], string> = { saved: "Saved", updated: "Updated", removed: "Removed" };
@@ -49,7 +45,7 @@ export function memoryKey(change: Pick<MemoryChange, "scope" | "name">): string 
 function ChangeText({ change }: { change: MemoryChange }) {
   const { dispatch } = useApp();
   const verb = VERBS[change.action];
-  const title = memoryTitle(change.name);
+  const title = `${change.name}.md`;
   const hint = change.model ? `memory/${change.name}.md · by ${change.model}` : `memory/${change.name}.md`;
   return <>
     <span>{verb}</span>{" "}
@@ -85,7 +81,7 @@ export function MemoryWorkingLine({ step }: { step: "checking" | "waiting" }) {
   }, [step]);
   if (hidden) return null;
   return <div className="themis-memory-line is-working" role="status">
-    {step === "checking" ? <DotSpinner className="themis-memory-dots" /> : <MemoryDots />}
+    <MemoryIcon />
     {step === "checking"
       ? <span className="themis-shimmer">Checking what to remember…</span>
       : <span>Memory will retry later</span>}
@@ -104,10 +100,10 @@ export function MemoryLine({ changes, settling = false }: { changes: MemoryChang
     return () => window.clearTimeout(timer);
   }, [writing]);
   if (writing) {
-    return <div className="themis-memory-line is-working" role="status"><DotSpinner className="themis-memory-dots" /><span className="themis-shimmer">{writingText(changes)}</span></div>;
+    return <div className="themis-memory-line is-working" role="status"><MemoryIcon /><span className="themis-shimmer">{writingText(changes)}</span></div>;
   }
   if (changes.length === 1) {
-    return <div className="themis-memory-line" role="note"><MemoryDots /><span className="themis-memory-change"><ChangeText change={changes[0]!} /></span></div>;
+    return <div className="themis-memory-line" role="note"><MemoryIcon /><span className="themis-memory-change"><ChangeText change={changes[0]!} /></span></div>;
   }
   const summary = (["saved", "updated", "removed"] as const)
     .map(action => [action, changes.filter(change => change.action === action).length] as const)
@@ -115,7 +111,7 @@ export function MemoryLine({ changes, settling = false }: { changes: MemoryChang
     .map(([action, count], index) => `${index === 0 ? VERBS[action] : action} ${count}`)
     .join(" · ");
   return <div className="themis-memory-line is-several" role="note">
-    <MemoryDots />
+    <MemoryIcon />
     <span className="themis-memory-group">
       <button type="button" className="themis-memory-summary" aria-expanded={open} onClick={() => setOpen(value => !value)}>{summary}</button>
       {open && <ul>{changes.map(change => <li key={`${change.scope}:${change.name}:${change.action}`}><ChangeText change={change} /></li>)}</ul>}

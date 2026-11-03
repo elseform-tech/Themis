@@ -248,6 +248,14 @@ async fn a_question_keeps_the_run_going_and_its_answer_arrives_during_or_after_i
             .any(|body| mentions(body, "Answer: Tabs") && mentions(body, "You assumed: Spaces")),
         "the answer reached the running run"
     );
+    // With the options the agent offered and their reasons, so the decision keeps its details.
+    assert!(
+        answered.iter().any(|body| mentions(
+            body,
+            "Options you offered: Spaces (recommended: the usual choice); Tabs"
+        )),
+        "the answer names the options"
+    );
     // Delivered once: as a steer, not also as a later message.
     let starts: Vec<_> = all
         .iter()

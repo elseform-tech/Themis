@@ -187,14 +187,17 @@ whole team shares still belong in the project's `AGENTS.md`.
   lines) and, in full, the few whose names and descriptions share words with your message.
   Memories carry their date, and the agent is told they may be out of date. The context
   meter shows what they take as **Memory**.
-- **In the chat.** While the memory models read a turn, a shimmering **Checking what to
-  remember…** line with the walking-dots spinner sits under the reply; it goes when nothing
-  was worth keeping, says **Memory will retry later** for a moment when every model failed,
-  and otherwise briefly shows what it writes (**Saving python-preference.md**) before
-  settling. Under a reply after which memory changed, one slim line with a small
-  dot-grid mark: **Saved python-preference · global**, **Updated …** or **Removed …**;
-  several changes share one line ("Saved 2 · updated 1", click it for the names). Hover a
-  name for its file and the model that made the change; click it to open it in Settings.
+- **In the chat.** Inside the reply, above its footer, a step with the Memory icon: while the
+  memory models read the turn it shimmers **Checking what to remember…**; it goes when
+  nothing was worth keeping, says **Memory will retry later** for a moment when every model
+  failed, and otherwise briefly shows what it writes (**Saving python-preference.md**) and
+  then stays as a quiet step: **Saved python-preference.md · global**, **Updated …** or
+  **Removed …**; several changes share one step ("Saved 2 · updated 1", click it for the
+  names). Hover a name for its file and the model that made the change; click it to open it
+  in Settings.
+- **Decisions keep their details.** When you answer one of the agent's questions, the
+  answer carries the options it offered with their tradeoffs, and the memory models save
+  the decision in full: the question, the options, what you chose, why, and what it affects.
 - **The memory models** are listed in Settings › Models under **Memory models**, tried in
   order: when one fails, is rate limited or can't do the job, the next takes over. Reorder,
   add or remove them there; there are always at least three. Together they spend at most

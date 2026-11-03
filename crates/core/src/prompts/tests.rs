@@ -157,7 +157,7 @@ const ALL: &[(&str, &str, &[&str])] = &[
     (
         QUESTION_ANSWER,
         "question-answer",
-        &["question", "assumption", "answer"],
+        &["question", "options", "assumption", "answer"],
     ),
     (COMPACTION_CHECKPOINT, "compaction-checkpoint", &[]),
     (

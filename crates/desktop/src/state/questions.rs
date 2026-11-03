@@ -364,6 +364,7 @@ impl AppState {
             themis_core::prompts::QUESTION_ANSWER,
             &[
                 ("question", &question.question),
+                ("options", &offered_options(question)),
                 (
                     "assumption",
                     question.assumption.as_deref().unwrap_or("nothing stated"),
@@ -461,6 +462,29 @@ impl AppState {
             }
         }
     }
+}
+
+
+/// The options the agent offered, each with its tradeoff, the recommended one marked:
+/// "Spaces (recommended: the usual choice); Tabs". A free-text question has none.
+fn offered_options(question: &Question) -> String {
+    if question.choices.is_empty() {
+        return "none (a free answer)".to_owned();
+    }
+    question
+        .choices
+        .iter()
+        .map(|choice| {
+            let recommended = question.assumption.as_deref() == Some(choice.as_str());
+            match (question.reasons.get(choice), recommended) {
+                (Some(reason), true) => format!("{choice} (recommended: {reason})"),
+                (Some(reason), false) => format!("{choice} ({reason})"),
+                (None, true) => format!("{choice} (recommended)"),
+                (None, false) => choice.clone(),
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("; ")
 }
 
 #[cfg(test)]
