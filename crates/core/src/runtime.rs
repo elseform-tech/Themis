@@ -4203,6 +4203,13 @@ async fn execute_call(
                 _ => Vec::new(),
             },
         };
+        // Approving a git subcommand the (restricted) git tool refuses could never make it
+        // run, so nobody is asked. Only Custom asks, and there the git tool is restricted.
+        if name == "git" && approvals.would_ask(&action) {
+            if let Some(refusal) = crate::tools::git_allowlist_refusal(&action.command) {
+                return Err(format!("tool 'git' failed: {refusal}"));
+            }
+        }
         // A plugin may say no before the person is asked, never yes.
         let hook_denied = if approvals.would_ask(&action) {
             crate::plugins::hooks::permission_request(name, &approval_args, events).await
@@ -9086,6 +9093,56 @@ mod tests {
         .await;
         assert!(result.unwrap_err().contains("approval denied"));
         assert_eq!(std::fs::read_to_string(victim).unwrap(), "keep");
+    }
+
+    /// A git subcommand outside the tool's allowlist is refused before anyone is asked:
+    /// approving it could never make it run.
+    #[tokio::test]
+    async fn a_git_subcommand_the_tool_refuses_is_never_put_to_the_person() {
+        /// A person who is asked about everything and says yes.
+        #[derive(Default)]
+        struct Person(std::sync::Mutex<Vec<ToolAction>>);
+        impl ApprovalHook for Person {
+            fn approve(&self, action: &ToolAction) -> Approval {
+                self.0.lock().unwrap().push(action.clone());
+                Approval::AllowOnce
+            }
+            fn would_ask(&self, _action: &ToolAction) -> bool {
+                true
+            }
+        }
+        let person = Arc::new(Person::default());
+        let asked = &person.0;
+        let hook: Arc<dyn ApprovalHook> = person.clone();
+        let root = tempfile::tempdir().unwrap();
+        let tools = crate::tools::boxed_tools(root.path(), Arc::clone(&hook)).unwrap();
+        let caching = CachingApprovals::wrap(hook);
+        let (events, _rx) = tokio::sync::mpsc::channel(16);
+        let refused = execute_call(
+            &tools,
+            &caching,
+            "git",
+            &serde_json::json!({"args": ["rev-parse", "--short", "HEAD"]}).to_string(),
+            "git rev-parse",
+            &events,
+            &AtomicBool::new(false),
+        )
+        .await
+        .unwrap_err();
+        assert!(refused.contains("denied by the allowlist"), "{refused}");
+        assert!(asked.lock().unwrap().is_empty(), "nobody is asked");
+        // An allowed one is still asked about.
+        let _ = execute_call(
+            &tools,
+            &caching,
+            "git",
+            &serde_json::json!({"args": ["add", "x"]}).to_string(),
+            "git add",
+            &events,
+            &AtomicBool::new(false),
+        )
+        .await;
+        assert_eq!(asked.lock().unwrap().len(), 1);
     }
 
     /// The dialog's first prompt for a shell/git call comes from this dispatch
