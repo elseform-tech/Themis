@@ -458,7 +458,10 @@ async fn the_browser_tab_streams_at_its_pixel_density_and_resizes_only_when_aske
     // Text over the whole page, as a real one has: the frame's bytes are what streams.
     let words = "Crisp text for the Browser tab. ".repeat(400);
     chat.open(
-        &format!("data:text/html,<body style='font:14px sans-serif'>{words}</body>"),
+        // No scrollbar: on Linux a scrollbar would take its width off the visible page size.
+        &format!(
+            "data:text/html,<html style='overflow:hidden'><body style='font:14px sans-serif'>{words}</body></html>"
+        ),
         false,
     )
     .await
