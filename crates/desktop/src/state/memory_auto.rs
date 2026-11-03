@@ -496,6 +496,16 @@ impl AppState {
                             Some((scope, store.read(&name).ok()??))
                         })
                         .collect();
+                // What the model was shown in full is known in full, so an update that keeps a
+                // memory's description but changes its text is an update, not a duplicate.
+                for (scope, memory) in &relevant {
+                    if let Some(entry) = known
+                        .iter_mut()
+                        .find(|entry| entry.scope == *scope && entry.name == memory.name)
+                    {
+                        entry.body = Some(memory.body.clone());
+                    }
+                }
                 Some((
                     known,
                     pass::request(

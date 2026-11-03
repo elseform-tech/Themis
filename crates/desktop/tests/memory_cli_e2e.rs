@@ -93,6 +93,11 @@ fn pass_answer(body: &Value) -> String {
         .to_string()
     } else if person.contains("forget the pnpm") {
         json!({"memories":[{"action":"delete","scope":"global","name":"uses-pnpm"}]}).to_string()
+    } else if person.contains("demo day") {
+        // Same description, new text: an update all the same.
+        json!({"memories":[{"action":"update","scope":"project","name":"launch-deadline","type":"project",
+            "description":"Launch is on Friday","body":"The launch is on Friday, with a demo day before it."}]})
+        .to_string()
     } else if person.contains("deadline") {
         json!({"memories":[{"action":"save","scope":"project","name":"launch-deadline","type":"project",
             "description":"Launch is on Friday","body":"The launch is on Friday."}]})
@@ -735,6 +740,38 @@ async fn a_new_goal_and_a_mid_goal_change_reach_memory_while_the_turn_works() {
     tokio::time::sleep(Duration::from_millis(800)).await;
     assert_eq!(passes(&h, "<<<person\n/goal slow goal"), 0);
     assert_eq!(passes(&h, "<<<person\nChange: notes are sorted"), 0);
+}
+
+/// An update that keeps a memory's description but changes its text is applied: the memory
+/// was shown to the model in full, so the change is known to be real, not a repeat.
+#[tokio::test(flavor = "multi_thread")]
+async fn an_update_with_the_same_description_changes_the_text() {
+    let mut h = Harness::start(MODELS).await;
+    let id = h.new_chat();
+    h.send(
+        &id,
+        "The deadline for launch is Friday.",
+        Duration::from_secs(10),
+    )
+    .await;
+    let (lines, _) = h
+        .send(
+            &id,
+            "We add a demo day before the launch deadline.",
+            Duration::from_secs(10),
+        )
+        .await;
+    assert_eq!(lines.len(), 1, "{lines:?}");
+    assert_eq!(lines[0]["changes"][0]["action"], "updated", "{lines:?}");
+    let root = h.project.path().to_string_lossy().into_owned();
+    let listed = h.cli(
+        "list_memories",
+        json!({"scope":"project","projectRoot":root}),
+    );
+    assert!(
+        listed.to_string().contains("with a demo day before it"),
+        "{listed}"
+    );
 }
 
 /// A turn that fails still had the person's words: its pass runs all the same.

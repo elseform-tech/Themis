@@ -736,6 +736,25 @@ mod tests {
             &mut counts,
         );
         assert_eq!(saved(&planned[0]).0, SaveMode::Update);
+        // A changed text under the same description, for a memory known in full: an update.
+        let mut shown = known(index, "");
+        shown[0].body = Some("The person uses pnpm for JavaScript projects.".to_owned());
+        let mut rewritten = preference();
+        rewritten["action"] = "update".into();
+        rewritten["body"] = "The person uses pnpm, and yarn for the old app.".into();
+        let mut counts = PassCounts::default();
+        let planned = plan(parsed(serde_json::json!([rewritten])), &shown, &mut counts);
+        assert_eq!((planned.len(), counts.duplicate), (1, 0));
+        assert_eq!(saved(&planned[0]).0, SaveMode::Update);
+        // The same text again for it: nothing.
+        let mut counts = PassCounts::default();
+        assert!(plan(
+            parsed(serde_json::json!([preference()])),
+            &shown,
+            &mut counts
+        )
+        .is_empty());
+        assert_eq!(counts.duplicate, 1);
         // An update of a name the scope lacks is a save; the same name twice is one.
         let mut update = preference();
         update["action"] = "update".into();
