@@ -605,6 +605,7 @@ async fn a_memory_saved_while_the_next_run_works_reaches_that_run() {
 #[tokio::test(flavor = "multi_thread")]
 async fn a_completed_goal_starts_a_pass_with_its_evidence() {
     let mut h = Harness::start(MODELS).await;
+    h.script.slow_memory.store(true, Ordering::SeqCst);
     let id = h.new_chat();
     h.send(&id, "/goal write notes.txt", Duration::from_millis(300))
         .await;
@@ -632,6 +633,27 @@ async fn a_completed_goal_starts_a_pass_with_its_evidence() {
     );
     let events = h.logged("event", 1).await;
     assert_eq!(events[0]["event"], "a goal was completed");
+    // The turn's pass and the goal's run one after the other, never at once, so the second
+    // reads what the first saved instead of saving the same thing again.
+    h.logged("job", 2).await;
+    let (_, text) = h.logs("job");
+    let mut spans: Vec<(i64, i64)> = text
+        .lines()
+        .filter_map(|line| serde_json::from_str::<Value>(line).ok())
+        .filter(|line| line["service"] == "memory" && line["event"] == "job")
+        .map(|line| {
+            let end = line["timestamp"].as_i64().unwrap();
+            (end - line["details"]["elapsed_ms"].as_i64().unwrap(), end)
+        })
+        .collect();
+    spans.sort();
+    assert!(spans.len() >= 2, "{spans:?}");
+    for pair in spans.windows(2) {
+        assert!(
+            pair[1].0 + 20 >= pair[0].1,
+            "memory jobs overlapped: {spans:?}"
+        );
+    }
 }
 
 #[tokio::test(flavor = "multi_thread")]

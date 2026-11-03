@@ -320,6 +320,9 @@ struct AppStateInner {
     steer_inboxes: std::sync::Mutex<HashMap<String, SteerEntry>>,
     /// Each running chat's note channel: memory the memory models change mid-run reaches it.
     live_notes: std::sync::Mutex<HashMap<String, Arc<themis_core::runtime::RunNotes>>>,
+    /// One memory job at a time, so a pass reads what the one before it saved (a turn's pass
+    /// and a completed goal's would otherwise both save the same thing).
+    memory_job_lock: tokio::sync::Mutex<()>,
     /// Per-chat questions to the user (`questions/<chat id>.json`), loaded on first use.
     questions: std::sync::Mutex<HashMap<String, Vec<crate::types::Question>>>,
     questions_dir: PathBuf,
@@ -614,6 +617,7 @@ impl AppState {
                 queue_lock: std::sync::Mutex::new(()),
                 steer_inboxes: std::sync::Mutex::new(HashMap::new()),
                 live_notes: std::sync::Mutex::new(HashMap::new()),
+                memory_job_lock: tokio::sync::Mutex::new(()),
                 questions: std::sync::Mutex::new(HashMap::new()),
                 questions_dir: app_dir.join(questions::QUESTIONS_DIR),
                 subagents: std::sync::Mutex::new(HashMap::new()),

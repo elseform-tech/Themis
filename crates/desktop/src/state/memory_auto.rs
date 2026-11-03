@@ -369,6 +369,8 @@ impl AppState {
         job: Job,
         waiting: Option<jobs::Waiting<Job>>,
     ) {
+        // After the job before it, so its request reads the memory that job left.
+        let _one_at_a_time = self.inner.memory_job_lock.lock().await;
         let config = job.config().clone();
         let models = config.memory.models.clone();
         let budget = config.memory.daily_budget_usd;
