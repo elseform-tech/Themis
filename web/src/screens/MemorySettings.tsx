@@ -60,6 +60,10 @@ function ChangeText({ change }: { change: MemoryChange }) {
 export const MEMORY_SETTLE_MS = 900;
 /** How long "Memory will retry later" stays before it fades. */
 export const MEMORY_WAITING_MS = 6000;
+/** How long the settled "Saved x.md" stays before it fades away (Settings › Memory keeps it). */
+export const MEMORY_SHOWN_MS = 3000;
+/** The fade itself. */
+export const MEMORY_FADE_MS = 400;
 
 const WRITING: Record<MemoryChange["action"], string> = { saved: "Saving", updated: "Updating", removed: "Removing" };
 
@@ -91,26 +95,40 @@ export function MemoryWorkingLine({ step }: { step: "checking" | "waiting" }) {
 /** Under a reply: what the memory models changed after that turn, on one slim line. Several
  *  changes read "Saved 2 · updated 1", with each one listed on expand. A line that just arrived
  *  (`settling`) first shows what is being written, shimmering, then settles. */
-export function MemoryLine({ changes, settling = false }: { changes: MemoryChange[]; settling?: boolean }) {
+/** Live lines that already faded: coming back to the chat does not play them again. */
+const FADED = new Set<string>();
+
+export function MemoryLine({ changes, settling = false, fades = false, id }: { changes: MemoryChange[]; settling?: boolean; fades?: boolean; id?: string }) {
+  const done = fades && id !== undefined && FADED.has(id);
   const [open, setOpen] = useState(false);
-  const [writing, setWriting] = useState(settling);
+  const [writing, setWriting] = useState(settling && !done);
+  // A live line goes once it has said what it saved: writing, then shown, then fading, then gone.
+  const [phase, setPhase] = useState<"shown" | "fading" | "gone">(done ? "gone" : "shown");
+  useEffect(() => { if (phase === "gone" && id !== undefined) FADED.add(id); }, [phase, id]);
   useEffect(() => {
     if (!writing) return;
     const timer = window.setTimeout(() => setWriting(false), MEMORY_SETTLE_MS);
     return () => window.clearTimeout(timer);
   }, [writing]);
+  useEffect(() => {
+    if (!fades || writing || open || phase === "gone") return;
+    const timer = window.setTimeout(() => setPhase(phase === "shown" ? "fading" : "gone"), phase === "shown" ? MEMORY_SHOWN_MS : MEMORY_FADE_MS);
+    return () => window.clearTimeout(timer);
+  }, [fades, writing, open, phase]);
+  if (phase === "gone") return null;
+  const fading = phase === "fading" ? " is-fading" : "";
   if (writing) {
     return <div className="themis-memory-line is-working" role="status"><MemoryIcon /><span className="themis-shimmer">{writingText(changes)}</span></div>;
   }
   if (changes.length === 1) {
-    return <div className="themis-memory-line" role="note"><MemoryIcon /><span className="themis-memory-change"><ChangeText change={changes[0]!} /></span></div>;
+    return <div className={`themis-memory-line${fading}`} role="note"><MemoryIcon /><span className="themis-memory-change"><ChangeText change={changes[0]!} /></span></div>;
   }
   const summary = (["saved", "updated", "removed"] as const)
     .map(action => [action, changes.filter(change => change.action === action).length] as const)
     .filter(([, count]) => count > 0)
     .map(([action, count], index) => `${index === 0 ? VERBS[action] : action} ${count}`)
     .join(" · ");
-  return <div className="themis-memory-line is-several" role="note">
+  return <div className={`themis-memory-line is-several${fading}`} role="note">
     <MemoryIcon />
     <span className="themis-memory-group">
       <button type="button" className="themis-memory-summary" aria-expanded={open} onClick={() => setOpen(value => !value)}>{summary}</button>

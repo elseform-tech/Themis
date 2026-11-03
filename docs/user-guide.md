@@ -190,11 +190,11 @@ whole team shares still belong in the project's `AGENTS.md`.
 - **In the chat.** Inside the reply, above its footer, a step with the Memory icon: while the
   memory models read the turn it shimmers **Checking what to remember…**; it goes when
   nothing was worth keeping, says **Memory will retry later** for a moment when every model
-  failed, and otherwise briefly shows what it writes (**Saving python-preference.md**) and
-  then stays as a quiet step: **Saved python-preference.md · global**, **Updated …** or
-  **Removed …**; several changes share one step ("Saved 2 · updated 1", click it for the
-  names). Hover a name for its file and the model that made the change; click it to open it
-  in Settings.
+  failed, and otherwise briefly shows what it writes (**Saving python-preference.md**), then
+  **Saved python-preference.md · global** (**Updated …**, **Removed …**; several changes
+  read "Saved 2 · updated 1") for a few seconds, then fades away. Settings › Memory is the
+  record; while the step shows, hover a name for its file and model or click it to open it
+  there. When a decision changes what a memory is about, the memory is renamed to fit.
 - **Decisions keep their details.** When you answer one of the agent's questions, the
   answer carries the options it offered with their tradeoffs, and the memory models save
   the decision in full: the question, the options, what you chose, why, and what it affects.

@@ -105,6 +105,8 @@ pub enum Proposal {
         mode: SaveMode,
         scope: MemoryScope,
         memory: Memory,
+        /// An update that renames: the memory it replaces, removed when this one is saved.
+        renamed_from: Option<String>,
     },
     /// Remove a memory that no longer holds.
     Delete { scope: MemoryScope, name: String },
@@ -258,6 +260,16 @@ fn proposal(entry: &Value, today: &str) -> Result<Proposal, Refused> {
     if entry["action"] == "delete" {
         return Ok(Proposal::Delete { scope, name });
     }
+    // An update may give the memory a name that fits what it now says.
+    let (name, renamed_from) = match entry["new_name"].as_str().map(str::trim) {
+        Some(new) if mode == SaveMode::Update && !new.is_empty() && new != name => {
+            if !valid_name(new) {
+                return Err(Refused::Invalid);
+            }
+            (new.to_owned(), Some(name))
+        }
+        _ => (name, None),
+    };
     let kind = entry["type"]
         .as_str()
         .and_then(MemoryKind::parse)
@@ -302,6 +314,7 @@ fn proposal(entry: &Value, today: &str) -> Result<Proposal, Refused> {
         mode,
         scope,
         memory,
+        renamed_from,
     })
 }
 
@@ -369,6 +382,27 @@ pub fn plan(proposals: Vec<Proposal>, known: &[Known], counts: &mut PassCounts) 
     let (deletes, saves): (Vec<_>, Vec<_>) = proposals
         .into_iter()
         .partition(|proposal| matches!(proposal, Proposal::Delete { .. }));
+    // A rename removes the memory it replaces, like a delete.
+    let mut saves_kept = Vec::new();
+    for proposal in saves {
+        if let Proposal::Save {
+            scope,
+            renamed_from: Some(old),
+            ..
+        } = &proposal
+        {
+            if exists(*scope, old).is_none() {
+                counts.missing += 1;
+                continue;
+            }
+            planned.push(Proposal::Delete {
+                scope: *scope,
+                name: old.clone(),
+            });
+        }
+        saves_kept.push(proposal);
+    }
+    let saves = saves_kept;
     for proposal in deletes {
         let twice = planned.iter().any(|earlier| {
             earlier.scope() == proposal.scope() && earlier.name() == proposal.name()
@@ -389,7 +423,10 @@ pub fn plan(proposals: Vec<Proposal>, known: &[Known], counts: &mut PassCounts) 
     let mut kept: Vec<Proposal> = Vec::new();
     for proposal in saves {
         let Proposal::Save {
-            scope, mut memory, ..
+            scope,
+            mut memory,
+            renamed_from,
+            ..
         } = proposal
         else {
             continue;
@@ -424,6 +461,7 @@ pub fn plan(proposals: Vec<Proposal>, known: &[Known], counts: &mut PassCounts) 
             },
             scope,
             memory,
+            renamed_from,
         });
     }
     planned.extend(kept);
@@ -493,6 +531,7 @@ mod tests {
                 mode,
                 scope,
                 memory,
+                ..
             } => (*mode, *scope, memory),
             Proposal::Delete { .. } => panic!("a delete: {proposal:?}"),
         }
@@ -502,6 +541,49 @@ mod tests {
         let mut known = known_from_index(MemoryScope::Global, global);
         known.extend(known_from_index(MemoryScope::Project, project));
         known
+    }
+
+    /// An update that changes what a memory is about gives it a fitting name: the old file goes,
+    /// the corrected memory is saved under `new_name`.
+    #[test]
+    fn an_update_with_a_new_name_replaces_the_old_file() {
+        let known = known(
+            "",
+            "- server-token-bucket (project, 2026-11-03): Rate limits with a token bucket\n",
+        );
+        let entry = serde_json::json!({"action":"update","scope":"project","name":"server-token-bucket",
+            "new_name":"nginx-rate-limiting","type":"project",
+            "description":"Rate limits in nginx limit_req, not an in-memory token bucket",
+            "body":"Decision: nginx limit_req in front of the API; rejected the token bucket."});
+        let (proposals, _) = parse(&answer(serde_json::json!([entry]))).unwrap();
+        let mut counts = PassCounts::default();
+        let planned = plan(proposals, &known, &mut counts);
+        assert_eq!(planned.len(), 2, "{planned:?}");
+        assert_eq!(
+            planned[0],
+            Proposal::Delete {
+                scope: MemoryScope::Project,
+                name: "server-token-bucket".into()
+            }
+        );
+        let (mode, scope, memory) = saved(&planned[1]);
+        assert_eq!(
+            (mode, scope, memory.name.as_str()),
+            (
+                SaveMode::Create,
+                MemoryScope::Project,
+                "nginx-rate-limiting"
+            )
+        );
+        // A new name for a memory that isn't remembered is just a missing update.
+        let (proposals, _) = parse(&answer(
+            serde_json::json!([{"action":"update","scope":"project","name":"never-saved",
+            "new_name":"other","type":"project","description":"x","body":"y"}]),
+        ))
+        .unwrap();
+        let mut counts = PassCounts::default();
+        assert!(plan(proposals, &known, &mut counts).is_empty());
+        assert_eq!(counts.missing, 1);
     }
 
     fn preference() -> Value {

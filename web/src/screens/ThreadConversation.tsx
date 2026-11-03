@@ -200,8 +200,9 @@ function ConversationRow({
     return <QuestionRow question={row.message.question} />;
   }
   if (row.kind === "message" && row.message.memory) {
-    if (row.message.runId && memory.finalRuns.has(row.message.runId)) return null;
-    return <MemoryLine changes={row.message.memory} settling={row.message.memorySettling} />;
+    // Only a line that arrived live shows, inside its reply, and then fades; history keeps none.
+    if (!row.message.memorySettling || (row.message.runId && memory.finalRuns.has(row.message.runId))) return null;
+    return <MemoryLine id={row.message.id} changes={row.message.memory} settling fades />;
   }
   if (row.kind === "message" && row.message.subagents) {
     return <SubagentCard agents={row.message.subagents} runLive={row.message.runId !== undefined && row.message.runId === activeRunId} />;
@@ -408,7 +409,7 @@ function Message({ message, threadId, activeRunId, durationMs, skills, plugins, 
           <ResponseBody text={message.text} artifacts={message.media?.map(file => file.path)} />
           {!!message.media?.length && <MediaStrip files={message.media} />}
           {!!message.changedFiles?.length && <EditedFiles files={message.changedFiles} />}
-          {memory?.memory ? <MemoryLine key={memory.id} changes={memory.memory} settling={memory.memorySettling} /> : memoryWorking && <MemoryWorkingLine step={memoryWorking} />}
+          {memory?.memory && memory.memorySettling ? <MemoryLine key={memory.id} id={memory.id} changes={memory.memory} settling fades /> : memoryWorking && <MemoryWorkingLine step={memoryWorking} />}
           {(message.final || !message.runId) && <div className="themis-response-actions">
             <CopyButton text={message.text} />
             <small className="themis-response-model">{message.interrupted === "stopped" ? "Stopped by you" : message.interrupted === "failed" ? "Interrupted by an error" : message.model ?? "Model not recorded"}{durationMs !== undefined && ` · ${formatRunDuration(durationMs)}`}</small>

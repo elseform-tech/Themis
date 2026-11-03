@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import * as bridge from "../lib/tauri";
 import type { MemoryChange, MemoryList, MemoryWaiting } from "../lib/types";
 import { initialState, reducer } from "../state/reducer";
-import { MEMORY_SETTLE_MS, MEMORY_WAITING_MS, MemoryLine, MemorySettingsSection, MemoryWorkingLine, memoryDate, memoryTitle } from "./MemorySettings";
+import { MEMORY_FADE_MS, MEMORY_SETTLE_MS, MEMORY_SHOWN_MS, MEMORY_WAITING_MS, MemoryLine, MemorySettingsSection, MemoryWorkingLine, memoryDate, memoryTitle } from "./MemorySettings";
 
 const dispatch = vi.fn();
 vi.mock("../lib/tauri", () => ({
@@ -128,6 +128,22 @@ describe("memory in the chat", () => {
     act(() => { vi.advanceTimersByTime(MEMORY_SETTLE_MS); });
     expect(screen.queryByRole("status")).toBeNull();
     expect(screen.getByRole("note")).toHaveTextContent("Saved python-preference.md · global");
+    vi.useRealTimers();
+  });
+
+  it("fades away once it has said what it saved, and does not come back", () => {
+    vi.useFakeTimers();
+    const { unmount } = render(<MemoryLine id="m1" changes={[change()]} settling fades />);
+    act(() => { vi.advanceTimersByTime(MEMORY_SETTLE_MS); });
+    expect(screen.getByRole("note")).toHaveTextContent("Saved python-preference.md · global");
+    act(() => { vi.advanceTimersByTime(MEMORY_SHOWN_MS); });
+    expect(screen.getByRole("note")).toHaveClass("is-fading");
+    act(() => { vi.advanceTimersByTime(MEMORY_FADE_MS); });
+    expect(screen.queryByRole("note")).toBeNull();
+    unmount();
+    render(<MemoryLine id="m1" changes={[change()]} settling fades />);
+    expect(screen.queryByRole("note")).toBeNull();
+    expect(screen.queryByRole("status")).toBeNull();
     vi.useRealTimers();
   });
 
