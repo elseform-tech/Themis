@@ -663,7 +663,7 @@ async fn a_completed_goal_starts_a_pass_with_its_evidence() {
 /// A turn that fails still had the person's words: its pass runs all the same.
 #[tokio::test(flavor = "multi_thread")]
 async fn a_failed_turn_still_keeps_what_the_person_said() {
-    let mut h = Harness::start(MODELS).await;
+    let h = Harness::start(MODELS).await;
     let id = h.new_chat();
     h.cli(
         "send_message",
