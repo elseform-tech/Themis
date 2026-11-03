@@ -875,6 +875,11 @@ model, which has no memory tool:
   it changes memory while that chat's run still works, the run gets the changes at its next
   step as a runtime note (`memory-changed-note.md`), so a long run or a goal never works from
   stale memory.
+- **Event passes**, on events that matter without the person's words, each with the event's
+  content (at most 8 KiB): a goal completed (its objective, "Also asked" lines and evidence:
+  what was built, where, how to run and test it, what was verified), the goal edited by the
+  person (its new objective), and a context checkpoint (the checkpoint summary: constraints,
+  gotchas and decisions a later chat needs). `logs/` has `memory` / `event` with the event name.
 - **Consolidation**, when the app has been idle (no run going) for 5 minutes after a job, at
   most once per `memory.consolidate_every_hours`: one request per scope with at least two
   memories (the global scope, then each project with a pass since the last one), with every

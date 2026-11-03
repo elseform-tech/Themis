@@ -45,6 +45,9 @@ pub(super) struct MemoryTurn {
     /// The assistant reply the person's message answered (empty in a new chat): what "yes, go
     /// with that" refers to.
     pub(super) answered: String,
+    /// An event that started this pass on its own (goal completed or edited, a checkpoint): what
+    /// happened, and its content.
+    pub(super) event: Option<(&'static str, String)>,
 }
 
 /// One memory job.
@@ -112,6 +115,8 @@ fn skip_reason(turn: &MemoryTurn) -> Option<&'static str> {
     let said: usize = turn.person.iter().map(|text| text.trim().len()).sum();
     if !turn.config.memory.enabled {
         Some("memory_off")
+    } else if turn.event.is_some() {
+        None
     } else if said == 0 {
         Some("no_person_message")
     } else if said < TRIVIAL_CHARS {
@@ -318,6 +323,44 @@ impl AppState {
         });
     }
 
+    /// Starts a pass for an event that matters on its own (no person words needed): a goal
+    /// completed or edited, a checkpoint. It reads the event's content with the chat's current
+    /// configuration.
+    pub(super) async fn spawn_memory_event(
+        &self,
+        sink: Arc<dyn EventSink>,
+        (thread_id, run_id): (&str, &str),
+        what: &'static str,
+        content: String,
+    ) {
+        let Some(root) = self.thread_project_root(thread_id).await else {
+            return;
+        };
+        let root = PathBuf::from(root);
+        let Ok(resolved) = self.runtime_configuration(Some(&root), None) else {
+            return;
+        };
+        let _ = self.inner.diagnostics.append(
+            "memory",
+            "event",
+            "info",
+            json!({"thread_id": thread_id, "event": what}),
+        );
+        self.spawn_memory_pass(
+            sink,
+            thread_id.to_owned(),
+            run_id.to_owned(),
+            MemoryTurn {
+                project_root: root,
+                config: resolved.config,
+                person: Vec::new(),
+                answered: String::new(),
+                event: Some((what, content)),
+            },
+            String::new(),
+        );
+    }
+
     /// Runs `job` on the memory models in order. A job every model failed is kept for a later
     /// try (`waiting` is the earlier tries of a job taken from the queue).
     async fn run_memory_job(
@@ -435,7 +478,14 @@ impl AppState {
                 known.extend(pass::known_from_index(MemoryScope::Project, &project));
                 // The memories the message (and the reply it answers) may touch, in full, so an
                 // update keeps what still holds.
-                let about = format!("{}\n{}\n{reply}", turn.person.join("\n"), turn.answered);
+                let about = format!(
+                    "{}\n{}\n{reply}\n{}",
+                    turn.person.join("\n"),
+                    turn.answered,
+                    turn.event
+                        .as_ref()
+                        .map_or("", |(_, content)| content.as_str())
+                );
                 let relevant: Vec<(MemoryScope, themis_core::memory::Memory)> =
                     themis_core::memory::relevant_names(&about, &global, &project)
                         .into_iter()
@@ -452,6 +502,9 @@ impl AppState {
                         &global,
                         &project,
                         &relevant,
+                        turn.event
+                            .as_ref()
+                            .map(|(what, content)| (*what, content.as_str())),
                     ),
                 ))
             }

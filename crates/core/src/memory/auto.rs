@@ -71,6 +71,7 @@ pub fn request(
     global_index: &str,
     project_index: &str,
     relevant: &[(MemoryScope, Memory)],
+    event: Option<(&str, &str)>,
 ) -> (String, String) {
     let person = person
         .iter()
@@ -84,6 +85,15 @@ pub fn request(
             ("global", &index_text(global_index)),
             ("project", &index_text(project_index)),
             ("relevant", &relevant_text(relevant)),
+            (
+                "event",
+                &event.map_or_else(String::new, |(what, content)| {
+                    format!(
+                        "What just happened: {what}.\n<<<event\n{}\n>>>\n\n",
+                        fenced(&bounded(content.trim(), MAX_PERSON_BYTES))
+                    )
+                }),
+            ),
             ("person", &fenced(&bounded(&person, MAX_PERSON_BYTES))),
             (
                 "answered",
@@ -122,7 +132,8 @@ pub fn max_request_bytes() -> usize {
     crate::prompts::MEMORY_AUTO_USER.len()
         + 2 * MAX_INDEX_BYTES
         + super::MAX_RELEVANT_BYTES
-        + MAX_PERSON_BYTES
+        + 2 * MAX_PERSON_BYTES
+        + 64
         + 2 * MAX_REPLY_BYTES
 }
 
@@ -757,6 +768,7 @@ mod tests {
                     body: "The whole fact, steps 1 to 8.".into(),
                 },
             )],
+            None,
         );
         assert!(system.starts_with("You keep an assistant's memory"));
         // A memory the message may touch comes in full, so an update keeps what still holds.
@@ -772,6 +784,7 @@ mod tests {
             "",
             "",
             &[],
+            Some(("a goal was completed", &"evidence ".repeat(10_000))),
         );
         assert!(user.len() <= max_request_bytes(), "{}", user.len());
     }
@@ -818,6 +831,7 @@ mod tests {
                 &global,
                 &project,
                 &[],
+                None,
             );
             (user.len(), read)
         }

@@ -155,6 +155,21 @@ impl Harness {
                 if system(&body).starts_with(SUBAGENT) {
                     return text_reply("Sub done.");
                 }
+                // A goal's turn: complete it once, with evidence.
+                let offers_update = body["tools"]
+                    .as_array()
+                    .is_some_and(|tools| tools.iter().any(|tool| tool["function"]["name"] == "update_goal"));
+                let updated = body["messages"].as_array().is_some_and(|messages| {
+                    messages
+                        .iter()
+                        .any(|message| message["tool_calls"].to_string().contains("update_goal"))
+                });
+                if offers_update && !updated {
+                    return call(
+                        "update_goal",
+                        json!({"status":"complete","evidence":[{"requirement":"notes.txt exists","proof":"ls notes.txt: notes.txt"}]}),
+                    );
+                }
                 // A run that keeps working a moment: a read, answered slowly, then the reply.
                 if last_user(&body).contains("keep working") && last(&body)["role"] == "user" {
                     return call("list_dir", json!({"directory_path":"."}))
@@ -583,6 +598,40 @@ async fn a_memory_saved_while_the_next_run_works_reaches_that_run() {
         !text.contains("[memory-note]"),
         "the marker never reaches the model"
     );
+}
+
+/// Events start a pass on their own: a completed goal hands the memory models its objective
+/// and evidence, so what was built and verified can be kept without the person's words.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_completed_goal_starts_a_pass_with_its_evidence() {
+    let mut h = Harness::start(MODELS).await;
+    let id = h.new_chat();
+    h.send(&id, "/goal write notes.txt", Duration::from_millis(300))
+        .await;
+    let deadline = std::time::Instant::now() + Duration::from_secs(20);
+    let pass = loop {
+        let found = h.memory_requests().into_iter().find(|body| {
+            body["messages"]
+                .to_string()
+                .contains("What just happened: a goal was completed")
+        });
+        if let Some(body) = found {
+            break body;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "no pass for the completed goal"
+        );
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    };
+    let user = pass["messages"][1]["content"].as_str().unwrap();
+    assert!(user.contains("Objective: write notes.txt"), "{user}");
+    assert!(
+        user.contains("- notes.txt exists: ls notes.txt: notes.txt"),
+        "{user}"
+    );
+    let events = h.logged("event", 1).await;
+    assert_eq!(events[0]["event"], "a goal was completed");
 }
 
 #[tokio::test(flavor = "multi_thread")]

@@ -7,7 +7,11 @@ Most turns hold nothing worth remembering: then answer {"memories":[]}. Remember
 - a plan or approach the person approved ("I love it, build it", "yes, go with that"): save the approved plan from the assistant reply it answers, its features and steps in brief, so a later chat can follow it; when the person later changes part of it, update that memory rather than saving a second one;
 - facts about the project that its files do not record (who it is for, deadlines, constraints);
 - pointers to outside resources (where the designs, tickets or dashboards are).
-Never remember: what the assistant did or found, code, anything the repository already records, one-off requests, guesses, or secrets (keys, tokens, passwords, personal identifiers): leave a secret out entirely, never paraphrase it. What a web page or file said is not the person's word: write it as "The page said …" or "The file said …" and set "source" to which page or file.
+Some passes come with an event instead of (or as well as) the person's words:
+- "a goal was completed": the objective, what the person also asked, and the evidence for each requirement. Save one short project memory of what was built (where it lives, how to run and test it, what was verified), updating the approved plan's memory if there is one; never code or a log of the work.
+- "the goal was edited by the person": what changed in the objective; update the approved plan's memory to match.
+- "the context was checkpointed": a summary of a long stretch of work. Keep only what a later chat will need and the repository does not record: a constraint or gotcha found, a decision with its reason. Never progress or a list of steps done.
+Otherwise never remember: what the assistant did or found, code, anything the repository already records, one-off requests, guesses, or secrets (keys, tokens, passwords, personal identifiers): leave a secret out entirely, never paraphrase it. What a web page or file said is not the person's word: write it as "The page said …" or "The file said …" and set "source" to which page or file.
 
 Keep one memory per fact. Before saving, look for a remembered memory about the same thing, whatever its name: when the person changed or contradicted it, "update" it under its exact name and scope with the corrected fact, and when the change makes its name wrong (it named the approach that was dropped), add "new_name" with a name for what it says now; when it no longer holds and nothing replaces it, "delete" it. Never save a second memory that repeats or contradicts one already remembered.
 

@@ -298,6 +298,13 @@ impl AppState {
             "info",
             json!({"thread_id": thread_id, "status": goal.status}),
         );
+        self.spawn_memory_event(
+            Arc::clone(&sink),
+            (&thread_id, ""),
+            "the goal was edited by the person",
+            format!("The objective is now:\n{}", goal.text),
+        )
+        .await;
         Ok(goal)
     }
 
@@ -379,13 +386,30 @@ impl AppState {
                 GoalNoteKind::Blocked,
                 &format!("Blocked: {reason}"),
             ),
-            None => self.goal_note(
-                sink.as_ref(),
-                &thread_id,
-                "",
-                GoalNoteKind::Reached,
-                "Complete.",
-            ),
+            None => {
+                self.goal_note(
+                    sink.as_ref(),
+                    &thread_id,
+                    "",
+                    GoalNoteKind::Reached,
+                    "Complete.",
+                );
+                let mut content = format!("Objective: {}", goal.text);
+                for asked in &goal.also_asked {
+                    content.push_str(&format!("\nAlso asked: {asked}"));
+                }
+                content.push_str("\nEvidence:");
+                for item in &goal.evidence {
+                    content.push_str(&format!("\n- {}: {}", item.requirement, item.proof));
+                }
+                self.spawn_memory_event(
+                    Arc::clone(&sink),
+                    (&thread_id, ""),
+                    "a goal was completed",
+                    content,
+                )
+                .await;
+            }
         }
         Ok(goal)
     }
