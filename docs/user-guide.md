@@ -194,9 +194,9 @@ whole team shares still belong in the project's `AGENTS.md`.
   nothing was worth keeping, says **Memory will retry later** for a moment when every model
   failed, and otherwise briefly shows what it writes (**Saving python-preference.md**), then
   **Saved python-preference.md · global** (**Updated …**, **Removed …**; several changes
-  read "Saved 2 · updated 1") for a few seconds, then fades away. Settings › Memory is the
-  record; while the step shows, hover a name for its file and model or click it to open it
-  there. When a decision changes what a memory is about, the memory is renamed to fit.
+  read "Saved 2 · updated 1") for a few seconds, then fades away; while it shows, hover a
+  name for its file and the model that made it. When a decision changes what a memory is
+  about, the memory is renamed to fit.
 - **Decisions keep their details.** When you answer one of the agent's questions, the
   answer carries the options it offered with their tradeoffs, and the memory models save
   the decision in full: the question, the options, what you chose, why, and what it affects.
@@ -205,11 +205,10 @@ whole team shares still belong in the project's `AGENTS.md`.
   add or remove them there; there are always at least three. Together they spend at most
   $0.50 a day by default (`memory.daily_budget_usd`). If every one fails, the job waits and
   is tried again later, and Settings › Memory says "Waiting for the memory models".
-- **Settings › Memory** lists them for the current project or Everywhere, grouped as About
-  you, Your feedback, Project facts and Pointers, with the date and a "from a web page" tag.
-  Click one to read it, and **Delete** it (with an inline confirm). **Remember things across
-  chats** off stops all saving and reading and keeps what was saved (`memory.enabled` in
-  `runtime.jsonc`; see [configuration](configuration.md#memory)).
+- **Settings › Memory** is one switch, **Remember things across chats**: off stops all
+  saving and reading and keeps what was saved (`memory.enabled` in `runtime.jsonc`; see
+  [configuration](configuration.md#memory)). Memories are not listed in the app; to drop one,
+  tell the agent ("forget that I use pnpm") and the memory models remove it.
 
 ### Goals
 
