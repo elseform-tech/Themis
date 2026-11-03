@@ -76,6 +76,9 @@ pub struct BrowserState {
     pub recording: Option<RecordingInfo>,
     /// Where the agent last left the mouse, in the page's CSS pixels.
     pub pointer: Option<(f64, f64)>,
+    /// The page holds the pointer lock: the view then locks the person's mouse to it on a
+    /// click and sends its movement as relative moves.
+    pub pointer_locked: bool,
 }
 
 /// A recording in progress, for the Browser tab and the thread header.
@@ -206,14 +209,6 @@ impl BrowserHub {
         self.executable().is_some() || self.built_in()
     }
 
-    /// Whether pages run in a browser with no window.
-    fn headless(&self) -> bool {
-        self.config
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .headless
-    }
-
     /// Whether the automatic choice is the built-in engine (installed or downloadable).
     pub fn built_in(&self) -> bool {
         downloaded_browser(&self.root()).is_some()
@@ -293,6 +288,7 @@ impl BrowserHub {
                 screencast: Mutex::new(None),
                 frozen: AtomicBool::new(false),
                 pointer: Mutex::new(None),
+                page_locked: AtomicBool::new(false),
                 held: Mutex::new(None),
                 ui_stream: AtomicBool::new(false),
                 frame_target: Mutex::new(None),
@@ -593,6 +589,8 @@ pub struct ChatBrowser {
     frozen: AtomicBool,
     /// Where the mouse last went on the visible page, for moves relative to it.
     pointer: Mutex<Option<(f64, f64)>>,
+    /// The page held the pointer lock when last checked (after the person's clicks and keys).
+    page_locked: AtomicBool,
     /// The mouse button held down by `browser_press`.
     held: Mutex<Option<HeldMouse>>,
     /// Session id of the tab being streamed to the Workspace view.
@@ -1478,6 +1476,7 @@ impl ChatBrowser {
             loading,
             muted: self.muted.load(Ordering::SeqCst),
             pointer: *self.pointer.lock().unwrap_or_else(|e| e.into_inner()),
+            pointer_locked: self.page_locked.load(Ordering::SeqCst),
             recording: self
                 .recording
                 .lock()
@@ -1516,6 +1515,14 @@ impl ChatBrowser {
             tokio::time::sleep(pause).await;
         }
         Ok(())
+    }
+
+    /// Reads whether the page holds the pointer lock and tells the view when that changed.
+    async fn check_lock(&self, cdp: &Cdp, session: &str) {
+        let locked = pointer_locked(cdp, session).await;
+        if self.page_locked.swap(locked, Ordering::SeqCst) != locked {
+            self.publish_state().await;
+        }
     }
 
     /// Sends the current state to the Workspace view (never waits on an action).
@@ -1632,16 +1639,16 @@ impl ChatBrowser {
                 json!({"source": include_str!("no_bounce.js")}),
             )
             .await;
-        // The stand-in is a convenience: a page that refuses it just has no pointer lock.
-        if self.hub.upgrade().is_some_and(|hub| hub.headless()) {
-            let _ = cdp
-                .call(
-                    Some(&session_id),
-                    "Page.addScriptToEvaluateOnNewDocument",
-                    json!({"source": include_str!("pointer_lock.js")}),
-                )
-                .await;
-        }
+        // The browser runs off screen (or headless) and can't lock a real pointer, so a
+        // stand-in does it for every page: the agent's and the person's moves turn the view.
+        // A page that refuses it just has no pointer lock.
+        let _ = cdp
+            .call(
+                Some(&session_id),
+                "Page.addScriptToEvaluateOnNewDocument",
+                json!({"source": include_str!("pointer_lock.js")}),
+            )
+            .await;
         // A tab that cannot take the sound setting is not opened.
         let audio_script =
             Some(install_audio(cdp, &session_id, self.muted.load(Ordering::SeqCst)).await?);
@@ -3010,7 +3017,21 @@ impl ChatBrowser {
                 delta_x,
                 delta_y,
             } => {
-                *self.pointer.lock().unwrap_or_else(|e| e.into_inner()) = Some((*x, *y));
+                // A locked page has no pointer position: presses happen where it is held.
+                let locked = self.page_locked.load(Ordering::SeqCst) && kind != "wheel";
+                let (x, y) = if locked {
+                    self.pointer
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner())
+                        .unwrap_or((*x, *y))
+                } else {
+                    *self.pointer.lock().unwrap_or_else(|e| e.into_inner()) = Some((*x, *y));
+                    (*x, *y)
+                };
+                if locked && kind == "move" {
+                    return Ok(());
+                }
+                let pressed = kind == "down";
                 let kind = match kind.as_str() {
                     "down" => "mousePressed",
                     "up" => "mouseReleased",
@@ -3022,11 +3043,48 @@ impl ChatBrowser {
                     "left" | "right" | "middle" => button.as_str(),
                     _ => "none",
                 };
-                cdp.send(
-                    session,
-                    "Input.dispatchMouseEvent",
-                    json!({"type": kind, "x": x, "y": y, "button": button, "clickCount": clicks.min(&3), "modifiers": modifiers & 15, "deltaX": delta_x, "deltaY": delta_y}),
+                let buttons = match (kind, button) {
+                    ("mousePressed" | "mouseMoved", "left") => 1,
+                    ("mousePressed" | "mouseMoved", "right") => 2,
+                    ("mousePressed" | "mouseMoved", "middle") => 4,
+                    _ => 0,
+                };
+                let params = json!({"type": kind, "x": x, "y": y, "button": button, "buttons": buttons, "clickCount": clicks.min(&3), "modifiers": modifiers & 15, "deltaX": delta_x, "deltaY": delta_y});
+                // A click is when a page takes (or gives up) the pointer lock: the press is
+                // waited for, then the lock read.
+                if pressed {
+                    let _ = cdp.call(session, "Input.dispatchMouseEvent", params).await;
+                    self.check_lock(cdp, &session_id).await;
+                } else {
+                    cdp.send(session, "Input.dispatchMouseEvent", params);
+                }
+            }
+            UserInput::MouseBy { dx, dy } => {
+                if !self.page_locked.load(Ordering::SeqCst) {
+                    return Ok(());
+                }
+                let viewport = *self.viewport.lock().unwrap_or_else(|e| e.into_inner());
+                let size = (f64::from(viewport.width), f64::from(viewport.height));
+                let from = self
+                    .pointer
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .unwrap_or((size.0 / 2.0, size.1 / 2.0));
+                let delta = (
+                    dx.clamp(-MAX_PERSON_MOVE, MAX_PERSON_MOVE),
+                    dy.clamp(-MAX_PERSON_MOVE, MAX_PERSON_MOVE),
                 );
+                let Ok(path) = relative_path(from, delta, size) else {
+                    return Ok(());
+                };
+                for (x, y) in path.start.into_iter().chain([path.end]) {
+                    cdp.send(
+                        session,
+                        "Input.dispatchMouseEvent",
+                        json!({"type": "mouseMoved", "x": x, "y": y}),
+                    );
+                }
+                *self.pointer.lock().unwrap_or_else(|e| e.into_inner()) = Some(path.end);
             }
             UserInput::Key {
                 kind,
@@ -3046,7 +3104,13 @@ impl ChatBrowser {
                 if let Some(text) = text.as_deref().filter(|_| kind == "keyDown") {
                     params["text"] = json!(cap(text, 8));
                 }
-                cdp.send(session, "Input.dispatchKeyEvent", params);
+                // Escape releases a held pointer lock: waited for, then the lock read.
+                if kind == "rawKeyDown" && key == "Escape" {
+                    let _ = cdp.call(session, "Input.dispatchKeyEvent", params).await;
+                    self.check_lock(cdp, &session_id).await;
+                } else {
+                    cdp.send(session, "Input.dispatchKeyEvent", params);
+                }
             }
             UserInput::Text { text } => {
                 cdp.send(
@@ -3059,6 +3123,9 @@ impl ChatBrowser {
         Ok(())
     }
 }
+
+/// Most CSS pixels one relative move from the person may carry.
+const MAX_PERSON_MOVE: f64 = 2_000.0;
 
 /// Input from the Workspace view, in page CSS pixels.
 #[derive(Debug, Clone, serde::Deserialize)]
@@ -3093,6 +3160,11 @@ pub enum UserInput {
     },
     Text {
         text: String,
+    },
+    /// A relative move from the person's locked mouse, in page CSS pixels.
+    MouseBy {
+        dx: f64,
+        dy: f64,
     },
 }
 

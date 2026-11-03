@@ -38,3 +38,5 @@
 .themis-browser-cursor { position: absolute; top: 0; left: 0; z-index: 1; pointer-events: none; transition: transform 240ms ease-in-out; filter: drop-shadow(0 1px 2px rgb(0 0 0 / .5)); }
 .themis-browser-cursor path { fill: var(--themis-accent); stroke: #fff; stroke-width: 1; stroke-linejoin: round; }
 @media (prefers-reduced-motion: reduce) { .themis-browser-cursor { transition: none; } }
+/* While a page holds the pointer lock: how to take and give back the mouse. */
+.themis-browser-lock-hint { position: absolute; top: 10px; left: 50%; z-index: 2; transform: translateX(-50%); padding: 4px 10px; border-radius: 999px; background: rgb(0 0 0 / .62); color: #fff; font-size: .75rem; pointer-events: none; white-space: nowrap; }

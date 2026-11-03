@@ -92,7 +92,9 @@ export function BrowserView({ threadId, running = false }: { threadId: string; r
   // The stream has no pointer in it. The person's own mouse takes over until the agent moves again.
   const [personAt, setPersonAt] = useState<string | null>(null);
   const pointerKey = state?.pointer ? state.pointer.join() : null;
-  const agentCursor = pointerKey && pointerKey !== personAt ? state?.pointer ?? null : null;
+  // A page holding the pointer lock has no pointer to show: the person's mouse turns the view.
+  const pageLocked = state?.pointer_locked ?? false;
+  const agentCursor = pointerKey && pointerKey !== personAt && !pageLocked ? state?.pointer ?? null : null;
   // Frames come at the panel's pixel density. The page is laid out at the panel's size
   // when the tab opens with no run going, and after the person resizes the panel; never
   // under an agent mid-task, whose coordinates must hold (the page is then scaled to fit).
@@ -124,6 +126,39 @@ export function BrowserView({ threadId, running = false }: { threadId: string; r
     void browserInput(threadId, input).catch(reason => setError(describeError(reason)));
   }, [threadId]);
 
+  // The person's mouse is locked to the view while the page holds the pointer lock: its
+  // movement goes as relative moves, gathered once a frame. Escape (which the app's web view
+  // keeps for itself) gives the mouse back and lets the page go too.
+  const [mouseHeld, setMouseHeld] = useState(false);
+  const pageLockedNow = useRef(pageLocked);
+  pageLockedNow.current = pageLocked;
+  const moved = useRef({ dx: 0, dy: 0, frame: 0 });
+  useEffect(() => {
+    const changed = () => {
+      const held = !!viewport.current && document.pointerLockElement === viewport.current;
+      setMouseHeld(held);
+      if (!held && pageLockedNow.current) {
+        for (const kind of ["down", "up"] as const) send({ type: "key", kind, key: "Escape", code: "Escape", key_code: 27, modifiers: 0 });
+      }
+    };
+    document.addEventListener("pointerlockchange", changed);
+    return () => document.removeEventListener("pointerlockchange", changed);
+  }, [send]);
+  useEffect(() => {
+    if (!pageLocked && viewport.current && document.pointerLockElement === viewport.current) document.exitPointerLock();
+  }, [pageLocked]);
+  function turn(event: React.MouseEvent) {
+    const scale = placed.current.scale || 1;
+    moved.current.dx += event.movementX / scale;
+    moved.current.dy += event.movementY / scale;
+    if (moved.current.frame) return;
+    moved.current.frame = requestAnimationFrame(() => {
+      const { dx, dy } = moved.current;
+      moved.current = { dx: 0, dy: 0, frame: 0 };
+      if (dx || dy) send({ type: "mouse_by", dx, dy });
+    });
+  }
+
   // Scrolling goes to the page only: a non-passive listener (React's onWheel is passive)
   // cancels the gesture here, so the app does not scroll or bounce with it.
   useEffect(() => {
@@ -154,7 +189,12 @@ export function BrowserView({ threadId, running = false }: { threadId: string; r
       if (event.buttons === 0 && now - lastMove.current < MOVE_INTERVAL_MS) return;
       lastMove.current = now;
     }
-    if (kind === "down") viewport.current?.focus();
+    if (kind === "down") {
+      viewport.current?.focus();
+      // A click on a page holding the pointer lock takes the person's mouse into the view.
+      if (pageLocked && !mouseHeld) viewport.current?.requestPointerLock?.();
+    }
+    if (kind === "move" && mouseHeld) { turn(event); return; }
     send({ type: "mouse", kind, ...point(event), button: MOUSE_BUTTONS[event.button] ?? "left", clicks: kind === "move" ? 0 : event.detail || 1, modifiers: modifierBits(event) });
   }
 
@@ -244,6 +284,7 @@ export function BrowserView({ threadId, running = false }: { threadId: string; r
           onKeyDown={event => key("down", event)} onKeyUp={event => key("up", event)}
           onPaste={event => { event.preventDefault(); const text = event.clipboardData.getData("text"); if (text) send({ type: "text", text }); }}>
           {frame && <img src={frame} alt="" draggable={false} style={page && panel ? { left: shown.left, top: shown.top, width: shown.width, height: shown.height } : undefined} />}
+          {pageLocked && <span className="themis-browser-lock-hint" role="status">{mouseHeld ? "Esc to release the mouse" : "Click to control the view"}</span>}
           {agentCursor && <svg className="themis-browser-cursor" data-testid="agent-cursor" style={{ transform: `translate(${shown.left + agentCursor[0] * shown.scale}px, ${shown.top + agentCursor[1] * shown.scale}px)` }} width="18" height="18" viewBox="0 0 18 18" aria-hidden="true"><path d="M2 1.5v13l3.6-3.2 2.4 5.2 2.6-1.2-2.4-5.1h4.8Z" /></svg>}
         </div>
       ) : (

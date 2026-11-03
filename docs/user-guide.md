@@ -409,7 +409,10 @@ shows a live preview of the page with what the agent is doing; click it to open
 **Workspace → Browser**, where the line above the page says the same. (To have
 Workspace open by itself instead, turn on **Open Workspace when the agent starts
 browsing** in Settings › Browser.) You can click, type or enter an
-address at the same time; the agent keeps working. The speaker button turns the
+address at the same time; the agent keeps working. The agent's pointer glides to where it
+clicks, so you can follow it. A page that locks the pointer (a first-person game) says
+**Click to control the view**: a click takes your mouse into the page and turns the view as
+you move it, and **Esc** gives it back. The speaker button turns the
 page's sound on (it starts off). **DevTools** opens Chrome's
 DevTools for the page. Browser actions ask per site, like page reads. Start a
 message with **/browser-use** to have the agent do a task in the browser (it

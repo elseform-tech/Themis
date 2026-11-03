@@ -1121,6 +1121,88 @@ document.addEventListener('mousemove', e => { if (document.pointerLockElement) {
     assert!(!text.contains("moved 0"), "{text}");
 }
 
+/// The person plays a first-person page in the Workspace view: their click locks the
+/// pointer (the view learns it from the state), their locked mouse's movement turns the view
+/// past the page's edge, presses land where the pointer is held, and Escape gives it back.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_person_locks_the_pointer_turns_the_view_and_escapes() {
+    use themis_core::browser::UserInput;
+    let _browser = ONE_BROWSER.lock().await;
+    let data = tempfile::tempdir().unwrap();
+    let Some(hub) = hub(data.path()) else { return };
+    let site = MockServer::builder().start().await;
+    Mock::given(path("/fps"))
+        .respond_with(ResponseTemplate::new(200).set_body_raw(
+            r#"<!doctype html><title>Fps</title><body style="margin:0">
+<canvas id="c" width="800" height="600" style="display:block"></canvas><p id="out">none</p>
+<script>
+const out = document.getElementById('out'), c = document.getElementById('c');
+let state = 'unlocked', moved = 0, shots = 0;
+const show = () => out.textContent = state + ' moved ' + moved + ' shots ' + shots;
+c.addEventListener('mousedown', () => { if (document.pointerLockElement) { shots += 1; show(); } else c.requestPointerLock(); });
+document.addEventListener('pointerlockchange', () => { state = document.pointerLockElement === c ? 'locked' : 'unlocked'; show(); });
+document.addEventListener('mousemove', e => { if (document.pointerLockElement) { moved += Math.abs(e.movementX); show(); } });
+</script></body>"#,
+            "text/html",
+        ))
+        .mount(&site)
+        .await;
+    let project = tempfile::tempdir().unwrap();
+    let chat = hub.chat("chat-person-lock", project.path());
+    chat.open(&format!("{}/fps", site.uri())).await.unwrap();
+    let press = |kind: &str| UserInput::Mouse {
+        kind: kind.into(),
+        x: 100.0,
+        y: 100.0,
+        button: "left".into(),
+        clicks: 1,
+        modifiers: 0,
+        delta_x: 0.0,
+        delta_y: 0.0,
+    };
+    let page = || async { chat.snapshot(None, false).await.unwrap().snapshot };
+    chat.user_input(&press("down")).await.unwrap();
+    chat.user_input(&press("up")).await.unwrap();
+    let seen = page().await;
+    assert!(
+        chat.state().await.pointer_locked,
+        "the view is told the page locked: {seen}"
+    );
+    assert!(page().await.contains("locked moved 0"));
+    // Turning far past the page's right edge, as a locked mouse may.
+    for _ in 0..6 {
+        chat.user_input(&UserInput::MouseBy { dx: 400.0, dy: 0.0 })
+            .await
+            .unwrap();
+    }
+    let text = page().await;
+    assert!(
+        !text.contains("moved 0") && text.contains("locked"),
+        "{text}"
+    );
+    // A press while locked is a shot where the pointer is held, not a new lock.
+    chat.user_input(&press("down")).await.unwrap();
+    chat.user_input(&press("up")).await.unwrap();
+    assert!(page().await.contains("shots 1"));
+    // Escape gives the mouse back.
+    chat.user_input(&UserInput::Key {
+        kind: "down".into(),
+        key: "Escape".into(),
+        code: "Escape".into(),
+        text: None,
+        key_code: 27,
+        modifiers: 0,
+    })
+    .await
+    .unwrap();
+    assert!(!chat.state().await.pointer_locked);
+    assert!(page().await.contains("unlocked"));
+    // Moves while unlocked are not relative turns.
+    chat.user_input(&UserInput::MouseBy { dx: 50.0, dy: 0.0 })
+        .await
+        .unwrap();
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn the_agent_holds_a_key_named_as_a_page_names_it_and_sees_the_page_size() {
     let _browser = ONE_BROWSER.lock().await;

@@ -895,9 +895,18 @@ mod tests {
         let note = run_note("", "- a (project, 2026-11-02): A fact\n", &[]);
         assert!(note.starts_with("Memory from earlier chats"), "{note}");
         // Memory first: what the person wants wins over the files; facts about state are checked.
-        assert!(note.contains("Start from memory before reading files"), "{note}");
-        assert!(note.contains("memory takes precedence over the files"), "{note}");
-        assert!(note.contains("check those against the current files"), "{note}");
+        assert!(
+            note.contains("Start from memory before reading files"),
+            "{note}"
+        );
+        assert!(
+            note.contains("memory takes precedence over the files"),
+            "{note}"
+        );
+        assert!(
+            note.contains("check those against the current files"),
+            "{note}"
+        );
         assert!(note.contains("so you never save them"), "{note}");
         assert!(!note.contains("memory tool"), "no tool is offered: {note}");
         assert!(
