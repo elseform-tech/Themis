@@ -222,6 +222,9 @@ fn preview_file(name: &str) -> String {
     format!("{key}.json")
 }
 
+/// Longest a person's preview, inspect or install waits for a background check to finish.
+const SCAN_WAIT: std::time::Duration = std::time::Duration::from_secs(120);
+
 impl PluginStore {
     fn scan_directory(&self, name: &str) -> anyhow::Result<PathBuf> {
         if !safe_name(name) {
@@ -245,6 +248,19 @@ impl PluginStore {
         lock.try_lock()
             .context("Marketplace is being checked; try again when scanning finishes")?;
         Ok(lock)
+    }
+    /// [`Self::scan_lock`] for something the person asked for (preview, inspect, install): while
+    /// a background check of the marketplace holds the lock, wait for it (up to
+    /// [`SCAN_WAIT`]) instead of failing with "try again".
+    pub(super) async fn scan_lock_waiting(&self, name: &str) -> anyhow::Result<fs::File> {
+        let started = std::time::Instant::now();
+        loop {
+            match self.scan_lock(name) {
+                Ok(lock) => return Ok(lock),
+                Err(error) if started.elapsed() >= SCAN_WAIT => return Err(error),
+                Err(_) => tokio::time::sleep(std::time::Duration::from_millis(50)).await,
+            }
+        }
     }
     fn scan_state(&self, name: &str) -> anyhow::Result<MarketplaceScan> {
         read_json(&self.scan_directory(name)?.join("scan.json"))
