@@ -86,6 +86,21 @@ describe("GoalBar", () => {
     expect(screen.getByRole("button", { name: /Optimize this app/ })).toHaveAttribute("title", "Optimize this app to bring p95 under 200 ms");
   });
 
+  it("shows how far QA has come while QA turns run", () => {
+    const checklist = [
+      { text: "Rounds to 2 decimals", state: "passed" as const },
+      { text: "Bad input shows a note", state: "fixed" as const },
+      { text: "Security", state: "unconfirmed" as const },
+      { text: "UI", state: "open" as const },
+    ];
+    const { rerender } = render(<GoalBar goal={goal({ checklist })} onEdit={vi.fn()} onPause={vi.fn()} onResume={vi.fn()} onRemove={vi.fn()} />);
+    expect(screen.queryByText(/QA /)).toBeNull();
+    rerender(<GoalBar goal={goal({ checklist, qa: true })} onEdit={vi.fn()} onPause={vi.fn()} onResume={vi.fn()} onRemove={vi.fn()} />);
+    expect(screen.getByText("QA 2/4")).toBeInTheDocument();
+    // The checklist itself stays out of the card.
+    expect(screen.getByRole("region", { name: "Goal" })).not.toHaveTextContent("Rounds to 2 decimals");
+  });
+
   it("says a blocked goal is blocked and why, and offers resume", () => {
     render(<GoalBar goal={goal({ status: "blocked", running_since: undefined, reason: "No API key for the payment sandbox." })} onEdit={vi.fn()} onPause={vi.fn()} onResume={vi.fn()} onRemove={vi.fn()} />);
     expect(screen.getByText("Blocked · No API key for the payment sandbox.")).toBeInTheDocument();

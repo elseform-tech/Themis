@@ -299,6 +299,9 @@ impl AppState {
                 .transcript
                 .last_activity_seq(thread_id)
                 .unwrap_or(0),
+            checklist: Vec::new(),
+            qa: false,
+            qa_turn: Vec::new(),
             retry_at: None,
             evidence: Vec::new(),
             also_asked: Vec::new(),
@@ -317,6 +320,7 @@ impl AppState {
         sink: Arc<dyn EventSink>,
         thread_id: String,
         objective: String,
+        checklist: Vec<core_goal::ChecklistItem>,
     ) -> Result<Goal, String> {
         let running = self.require_thread(&thread_id).await?;
         let objective = core_goal::normalize_goal(&objective)
@@ -328,6 +332,11 @@ impl AppState {
             return Err("create_goal: this chat already has an unfinished goal; use update_goal only for its status, and the person edits its text on the goal card".to_owned());
         }
         let goal = self.begin_goal(sink.as_ref(), &thread_id, &objective);
+        let goal = self
+            .update_goal(sink.as_ref(), &thread_id, |goal| {
+                goal.checklist = core_goal::with_quality_items(checklist)
+            })
+            .unwrap_or(goal);
         self.remember_goal_created(&sink, &thread_id, &goal.text);
         if !running {
             self.start_goal_turn(sink, thread_id, String::new()).await;
@@ -419,7 +428,38 @@ impl AppState {
             core_goal::GoalUpdate::Blocked(reason) => {
                 (GoalStatus::Blocked, Some(reason), Vec::new())
             }
-            core_goal::GoalUpdate::Complete(evidence) => (GoalStatus::Reached, None, evidence),
+            core_goal::GoalUpdate::Complete(evidence) => {
+                // QA first: the first complete starts QA turns over the checklist, and complete
+                // counts once every item passed one.
+                let qa = self.goal_qa_enabled(&thread_id).await;
+                if qa && (!current.qa || !core_goal::all_passed(&current.checklist)) {
+                    let from_evidence: Vec<core_goal::ChecklistItem> = evidence
+                        .iter()
+                        .filter_map(|item| core_goal::ChecklistItem::new(&item.requirement))
+                        .take(core_goal::MAX_CHECKLIST)
+                        .collect();
+                    let goal = self
+                        .update_goal(sink.as_ref(), &thread_id, |goal| {
+                            if goal.checklist.is_empty() {
+                                goal.checklist = core_goal::with_quality_items(from_evidence);
+                            }
+                            goal.qa = true;
+                        })
+                        .ok_or("update_goal: this chat has no unfinished goal")?;
+                    let open = goal.checklist.iter().filter(|item| !item.settled()).count();
+                    let _ = self.inner.diagnostics.append(
+                        "goal",
+                        "qa_needed",
+                        "info",
+                        json!({"thread_id": thread_id, "items": goal.checklist.len(), "open": open}),
+                    );
+                    return Err(themis_core::prompts::fill(
+                        themis_core::prompts::GOAL_COMPLETE_QA,
+                        &[("count", &goal.checklist.len().to_string())],
+                    ));
+                }
+                (GoalStatus::Reached, None, evidence)
+            }
         };
         self.bump_goal_generation(&thread_id);
         let note = reason.clone();
@@ -453,13 +493,20 @@ impl AppState {
                 // The evidence goes in the chat, under the note; the goal bar keeps one line.
                 let mut note = "Complete.".to_owned();
                 if !goal.evidence.is_empty() {
-                    note.push_str("\n");
+                    note.push('\n');
                     for item in &goal.evidence {
                         note.push_str(&format!(
                             "\n- {}: {}",
                             core_goal::one_line(&item.requirement, 300),
                             core_goal::one_line(&item.proof, 1000)
                         ));
+                    }
+                }
+                let unconfirmed = core_goal::unconfirmed(&goal.checklist);
+                if !unconfirmed.is_empty() {
+                    note.push_str("\n\nNo QA turn could confirm:");
+                    for item in unconfirmed {
+                        note.push_str(&format!("\n- {item}"));
                     }
                 }
                 self.goal_note(sink.as_ref(), &thread_id, "", GoalNoteKind::Reached, &note);
@@ -762,6 +809,16 @@ impl AppState {
         work_snags(&events)
     }
 
+    /// Whether this chat's project runs QA goal turns (`goal_qa_turns`).
+    async fn goal_qa_enabled(&self, thread_id: &str) -> bool {
+        let Some(root) = self.thread_project_root(thread_id).await else {
+            return true;
+        };
+        self.runtime_configuration(Some(std::path::Path::new(&root)), None)
+            .map(|resolved| resolved.config.goal_qa_turns)
+            .unwrap_or(true)
+    }
+
     /// Marks the plan record this chat's goal built as done, with `evidence`.
     async fn mark_plan_done(&self, thread_id: &str, evidence: &[String]) {
         let Some(root) = self.thread_project_root(thread_id).await else {
@@ -823,8 +880,14 @@ impl AppState {
         let said = line.clone();
         let goal = self.update_goal(sink.as_ref(), thread_id, |goal| {
             if goal.also_asked.len() < core_goal::MAX_ALSO_ASKED {
-                goal.also_asked.push(line);
+                goal.also_asked.push(line.clone());
                 kept = true;
+            }
+            // What the person adds is checked like the rest.
+            if goal.checklist.len() < core_goal::MAX_GOAL_ITEMS {
+                if let Some(item) = core_goal::ChecklistItem::new(&line) {
+                    goal.checklist.push(item);
+                }
             }
         });
         let _ = self.inner.diagnostics.append(
@@ -862,6 +925,17 @@ impl AppState {
                 goal.objective_updated,
             );
             goal.objective_updated = false;
+            // The checklist: all of it while building, then a few items per QA turn.
+            goal.qa_turn = if goal.qa {
+                core_goal::next_qa(&goal.checklist)
+            } else {
+                Vec::new()
+            };
+            let part = core_goal::checklist_note(&goal.checklist, goal.qa, &goal.qa_turn);
+            if !part.is_empty() {
+                note.push_str("\n\n");
+                note.push_str(&part);
+            }
         });
         note
     }
@@ -1080,6 +1154,38 @@ impl AppState {
             _ => return,
         }
         self.update_goal(sink.as_ref(), &thread_id, |goal| goal.failures = 0);
+        // A QA turn's verdict, from what it did: tools used, files changed.
+        let changed = self
+            .inner
+            .runs_changed_files
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(&run_id);
+        let used = self
+            .inner
+            .runs_used_tools
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(&run_id);
+        if !goal.qa_turn.is_empty() {
+            let goal = self.update_goal(sink.as_ref(), &thread_id, |goal| {
+                let checked = std::mem::take(&mut goal.qa_turn);
+                core_goal::record_qa(&mut goal.checklist, &checked, used, changed);
+            });
+            if let Some(goal) = goal {
+                let passed = goal
+                    .checklist
+                    .iter()
+                    .filter(|item| item.state == core_goal::ItemState::Passed)
+                    .count();
+                let _ = self.inner.diagnostics.append(
+                    "goal",
+                    "qa_turn",
+                    "info",
+                    json!({"thread_id": thread_id, "run_id": run_id, "used_tools": used, "changed_files": changed, "passed": passed, "items": goal.checklist.len()}),
+                );
+            }
+        }
         // A blocking question ended the run: the goal waits for its answer.
         if let Some(question) = self
             .open_questions(&thread_id)
@@ -1306,6 +1412,9 @@ mod tests {
             failures: 0,
             turn_seq: 0,
             start_seq: 0,
+            checklist: Vec::new(),
+            qa: false,
+            qa_turn: Vec::new(),
             retry_at: None,
             evidence: Vec::new(),
             also_asked: Vec::new(),

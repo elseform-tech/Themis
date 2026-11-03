@@ -100,6 +100,12 @@ fn mentions(body: &Value, needle: &str) -> bool {
 async fn chat(server: &MockServer) -> (AppState, tempfile::TempDir, tempfile::TempDir, String) {
     let data = tempfile::tempdir().unwrap();
     let project = tempfile::tempdir().unwrap();
+    // These tests cover the goal turn loop and queue; QA turns have their own tests.
+    std::fs::write(
+        data.path().join("runtime.jsonc"),
+        r#"{"goal_qa_turns": false}"#,
+    )
+    .unwrap();
     let state = AppState::new_for_test(data.path().join("settings.json"));
     state
         .set_secret("go".into(), "synthetic-test-key".into())
@@ -591,7 +597,7 @@ async fn the_agent_sets_a_goal_with_its_tool_and_turns_follow() {
                 .as_array()
                 .is_some_and(|messages| messages.iter().any(|m| m["role"] == "tool"));
             if mentions(&body, "make it a goal") && !used_tool && !mentions(&body, "[Goal — runtime") {
-                ResponseTemplate::new(200).set_body_json(json!({"choices":[{"message":{"role":"assistant","content":null,"tool_calls":[{"id":"g","type":"function","function":{"name":"create_goal","arguments":"{\"objective\":\"get every test green\"}"}}]},"finish_reason":"tool_calls"}]}))
+                ResponseTemplate::new(200).set_body_json(json!({"choices":[{"message":{"role":"assistant","content":null,"tool_calls":[{"id":"g","type":"function","function":{"name":"create_goal","arguments":"{\"objective\":\"get every test green\",\"checklist\":[\"Every test is green\"]}"}}]},"finish_reason":"tool_calls"}]}))
             } else {
                 reply("Working on it.")
             }
@@ -1340,7 +1346,7 @@ async fn a_goal_with_a_small_context_window_warns_once() {
     // up; a small budget comes from runtime.jsonc, as in evals.
     std::fs::write(
         data.path().join("runtime.jsonc"),
-        r#"{"schema_version":1,"context_token_budget":64000}"#,
+        r#"{"schema_version":1,"context_token_budget":64000,"goal_qa_turns":false}"#,
     )
     .unwrap();
     let (sink, mut rx) = ChannelSink::channel();

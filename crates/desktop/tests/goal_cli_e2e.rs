@@ -389,7 +389,15 @@ struct GoalApp {
 }
 
 impl GoalApp {
+    /// A chat whose goals skip QA turns: these tests cover the goal turn loop.
     async fn start(respond: impl Fn(&Value) -> ResponseTemplate + Send + Sync + 'static) -> Self {
+        Self::start_with(r#"{"goal_qa_turns": false}"#, respond).await
+    }
+
+    async fn start_with(
+        runtime: &str,
+        respond: impl Fn(&Value) -> ResponseTemplate + Send + Sync + 'static,
+    ) -> Self {
         let llm = MockServer::builder().start().await;
         Mock::given(method("POST"))
             .respond_with(move |request: &Request| respond(&body(request)))
@@ -397,6 +405,7 @@ impl GoalApp {
             .await;
         let data = tempfile::tempdir().unwrap();
         let project = tempfile::tempdir().unwrap();
+        std::fs::write(data.path().join("runtime.jsonc"), runtime).unwrap();
         let state = AppState::new_for_test(data.path().join("settings.json"));
         state
             .set_secret("go".into(), "synthetic-test-key".into())
@@ -571,11 +580,11 @@ async fn cli_a_goal_asked_for_in_words_is_created_with_create_goal_once() {
             return match tries {
                 0 => calls(
                     "create_goal",
-                    json!({"objective": "every page has a footer"}),
+                    json!({"objective": "every page has a footer", "checklist": ["Every page has a footer"]}),
                 ),
                 1 => calls(
                     "create_goal",
-                    json!({"objective": "every page has a footer, twice"}),
+                    json!({"objective": "every page has a footer, twice", "checklist": ["Footer twice"]}),
                 ),
                 _ => reply("The goal is set."),
             };
@@ -751,5 +760,92 @@ async fn cli_an_edited_goal_tells_the_next_turn_once() {
         .expect("new objective");
     assert!(updated < objective, "{second}");
     assert!(!turn(3).contains("The user edited the goal"), "only once");
+    app.finish().await;
+}
+
+/// QA turns: the first `complete` is refused and starts QA goal turns over the checklist (the
+/// agent's requirements plus the standing quality items), a few items per turn; a QA turn that
+/// used a tool and changed no files passes its items, and `complete` is accepted once every
+/// item passed. The goal ends with every item passed.
+#[tokio::test(flavor = "multi_thread")]
+async fn cli_a_goal_is_complete_only_after_qa_turns_pass_its_checklist() {
+    let app = GoalApp::start_with("{}", |body| {
+        let user = last_user(body);
+        let fresh = body["messages"]
+            .as_array()
+            .and_then(|messages| messages.last())
+            .is_some_and(|message| message["role"] == "user");
+        if user.contains("This is a QA turn") {
+            return if fresh {
+                calls("list_dir", json!({"directory_path": "."}))
+            } else {
+                reply("Checked: it holds.")
+            };
+        }
+        if fresh && offers(body, "update_goal") {
+            return calls(
+                "update_goal",
+                json!({"status": "complete", "evidence": [{"requirement": "the README has a title", "proof": "head -1 README.md: # Ledgerly"}]}),
+            );
+        }
+        reply("Built it.")
+    })
+    .await;
+    let (data, thread) = (app.data.path().to_owned(), app.thread.clone());
+    let goal = tokio::task::spawn_blocking(move || {
+        call(
+            &data,
+            "send_message",
+            json!({"threadId": thread, "text": "/goal give the README a title"}),
+        );
+        goal_until(&data, &thread, "never complete", |goal| {
+            goal["status"] == "reached"
+        })
+    })
+    .await
+    .unwrap();
+    let checklist = goal["checklist"].as_array().unwrap();
+    assert_eq!(checklist.len(), 1 + 6, "{goal}");
+    assert!(
+        checklist.iter().all(|item| item["state"] == "passed"),
+        "{goal}"
+    );
+    let bodies = app.bodies().await;
+    // The first complete was answered with QA, not accepted.
+    assert!(
+        bodies
+            .iter()
+            .any(|body| body["messages"].to_string().contains("not complete yet")),
+        "no QA answer"
+    );
+    // Three QA turns of at most three items, in checklist order, quality items included.
+    let qa: Vec<String> = bodies
+        .iter()
+        .filter(|body| {
+            body["messages"]
+                .as_array()
+                .and_then(|m| m.last())
+                .is_some_and(|m| m["role"] == "user")
+                && last_user(body).contains("This is a QA turn")
+        })
+        .map(last_user)
+        .collect();
+    assert_eq!(qa.len(), 3, "{qa:#?}");
+    assert!(
+        qa[0].contains("0 of 7 checklist items have passed"),
+        "{}",
+        qa[0]
+    );
+    assert!(
+        qa[0].contains("1. the README has a title\n2. Fault tolerance"),
+        "{}",
+        qa[0]
+    );
+    assert!(qa[1].contains("3 of 7"), "{}", qa[1]);
+    assert!(qa[2].contains("7. UI and user experience"), "{}", qa[2]);
+    // Then the last check, and complete.
+    assert!(bodies
+        .iter()
+        .any(|body| last_user(body).contains("Every checklist item has passed")));
     app.finish().await;
 }

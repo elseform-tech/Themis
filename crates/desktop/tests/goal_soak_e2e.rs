@@ -258,7 +258,7 @@ async fn soak() -> Soak {
     std::fs::write(
         project.path().join(".themis/config.jsonc"),
         // The middle of what the assertions accept (17.5k to 21.5k with the subagent tools).
-        r#"{"context_token_budget":19500,"recent_messages":4,"total_turns":8}"#,
+        r#"{"context_token_budget":19500,"recent_messages":4,"total_turns":8,"goal_qa_turns":false}"#,
     )
     .unwrap();
     let state = AppState::new_for_test(data.path().join("settings.json"));

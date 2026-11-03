@@ -1,0 +1,1 @@
+update_goal: not complete yet. Themis now checks the work item by item in the next goal turns ({{count}} checklist items, a few per turn), like a demanding user. Finish this turn by telling the user what you built and how you checked it; do not call update_goal again until a goal turn says every item has passed.

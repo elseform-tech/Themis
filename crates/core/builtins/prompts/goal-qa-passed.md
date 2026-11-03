@@ -1,0 +1,1 @@
+Every checklist item has passed a QA turn. Run one last check of the whole objective as a user would, then call update_goal complete with one evidence entry per checklist item: what you ran or saw in this turn.

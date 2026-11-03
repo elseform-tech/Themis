@@ -147,6 +147,10 @@
   // Read the project's AGENTS.md (or else CLAUDE.md) at the start of each run, for agents,
   // subagents and the goal check, and list its other docs. It never grants permissions.
   "project_guidance": true,
+  // After the agent first calls a goal complete, QA goal turns check its checklist (the
+  // agent's items plus the standing quality items) a few at a time; complete is accepted once
+  // every item has passed or could not be confirmed. false accepts the first complete.
+  "goal_qa_turns": true,
 
   // ─── MODEL PROVIDERS (listed in Settings › Models) ────────────────────────────────────
   // OpenCode Go is built in. Add OpenAI-compatible providers (Chat Completions) here; only

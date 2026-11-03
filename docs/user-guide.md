@@ -235,6 +235,14 @@ Codex, the chat's own model judges its goal: there is no separate check.
   command output over memory of earlier turns; notice a turn that made no
   progress and try something else; before calling the goal done, check every
   requirement against current evidence, and treat uncertain evidence as not done.
+- **Checked like a demanding user would.** When the agent creates a goal it writes a
+  checklist of everything you asked for, and Themis adds standing quality checks (fault
+  tolerance, security, clean and not overengineered code, engineering quality, efficiency, and
+  UI and user experience). When the agent first says it's done, the goal goes on: each next
+  turn checks a few items for real (using the app, trying bad input, comparing with your
+  plan) and fixes what falls short. The goal row shows how far it got (**QA 4/11**). The goal
+  completes once every item has passed; anything that could not be confirmed is listed under
+  the Complete note. Turn this off with `"goal_qa_turns": false` in `runtime.jsonc`.
 - **Done, blocked or paused.** When every requirement is proven, the agent calls
   `update_goal` complete with one evidence entry per requirement (what it is, and
   what shows it: a command and its result, a file, a test, a page check); a call

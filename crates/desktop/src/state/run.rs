@@ -832,6 +832,16 @@ impl AppState {
                     if matches!(event, RunEvent::AssistantText(_)) {
                         continue;
                     }
+                    if let RunEvent::ToolCallFinished { tool, .. } = &event {
+                        if !matches!(tool.as_str(), "update_goal" | "create_goal") {
+                            pump_state
+                                .inner
+                                .runs_used_tools
+                                .lock()
+                                .unwrap_or_else(|e| e.into_inner())
+                                .insert(pump_run.clone());
+                        }
+                    }
                     if let RunEvent::Steered { text } = &event {
                         if !pump_state.goal_takes_words(&pump_thread, text) {
                             memory_turn.person.push(text.clone());
@@ -893,6 +903,12 @@ impl AppState {
                         .await
                         .unwrap_or_default();
                         if !files.is_empty() {
+                            pump_state
+                                .inner
+                                .runs_changed_files
+                                .lock()
+                                .unwrap_or_else(|e| e.into_inner())
+                                .insert(pump_run.clone());
                             let changed = ThreadEventEnvelope {
                                 thread_id: pump_thread.clone(),
                                 run_id: pump_run.clone(),

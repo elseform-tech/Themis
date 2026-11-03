@@ -296,6 +296,199 @@ pub fn classify_failure(error: &str) -> Failure {
     Failure::Other
 }
 
+/// Most checklist items the agent gives (the quality items come on top).
+pub const MAX_CHECKLIST: usize = 20;
+/// Most items a goal's checklist holds in all: the agent's, the quality items and what the
+/// person adds while it runs.
+pub const MAX_GOAL_ITEMS: usize = 35;
+/// Longest checklist item, in characters.
+pub const MAX_ITEM_CHARS: usize = 300;
+/// Most items one QA turn checks.
+pub const QA_BATCH: usize = 3;
+/// Most QA rounds one item gets; after that it is unconfirmed, so a goal can't loop.
+pub const MAX_ITEM_ROUNDS: u32 = 3;
+
+/// Where a checklist item stands.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ItemState {
+    /// No QA turn has checked it yet.
+    Open,
+    /// A QA turn changed files for it: it is checked again.
+    Fixed,
+    /// A QA turn checked it and changed nothing.
+    Passed,
+    /// No QA turn could confirm it in [`MAX_ITEM_ROUNDS`] rounds (never checked, or still
+    /// being fixed): it no longer holds the goal up, and the person is told.
+    Unconfirmed,
+}
+
+/// One checklist item: a concrete thing the person asked for, checked in QA turns.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ChecklistItem {
+    pub text: String,
+    pub state: ItemState,
+    /// QA turns that have checked it.
+    #[serde(default)]
+    pub rounds: u32,
+}
+
+impl ChecklistItem {
+    /// An item from untrusted text: one line, bounded, secrets hidden.
+    pub fn new(text: &str) -> Option<Self> {
+        let text = one_line(&crate::memory::strip_secrets(text), MAX_ITEM_CHARS);
+        (!text.is_empty()).then_some(Self {
+            text,
+            state: ItemState::Open,
+            rounds: 0,
+        })
+    }
+}
+
+/// Reads `create_goal`'s `checklist`: 1 to [`MAX_CHECKLIST`] non-empty items. A refusal says
+/// why, so the model can fix the call.
+pub fn parse_checklist(value: &serde_json::Value) -> Result<Vec<ChecklistItem>, String> {
+    const HOW: &str = "one item per concrete thing the user asked for or approved, each a short statement someone could check by using the result";
+    let Some(list) = value.as_array().filter(|list| !list.is_empty()) else {
+        return Err(format!("create_goal needs `checklist`: {HOW}."));
+    };
+    if list.len() > MAX_CHECKLIST {
+        return Err(format!(
+            "create_goal: at most {MAX_CHECKLIST} checklist items; group small related ones."
+        ));
+    }
+    let items: Vec<ChecklistItem> = list
+        .iter()
+        .filter_map(|item| item.as_str().and_then(ChecklistItem::new))
+        .collect();
+    if items.len() != list.len() {
+        return Err(format!(
+            "create_goal: every checklist item is a non-empty string: {HOW}."
+        ));
+    }
+    Ok(items)
+}
+
+/// `items` with the standing quality items after them (fault tolerance, security, clean and
+/// not overengineered, engineering quality, UI and user experience), each once.
+pub fn with_quality_items(mut items: Vec<ChecklistItem>) -> Vec<ChecklistItem> {
+    for line in crate::prompts::GOAL_QUALITY_ITEMS.lines() {
+        if let Some(item) = ChecklistItem::new(line) {
+            if !items.iter().any(|have| have.text == item.text) {
+                items.push(item);
+            }
+        }
+    }
+    items
+}
+
+/// The items the next QA turn checks: the first [`QA_BATCH`] not yet passed, in order.
+pub fn next_qa(items: &[ChecklistItem]) -> Vec<usize> {
+    items
+        .iter()
+        .enumerate()
+        .filter(|(_, item)| !item.settled())
+        .map(|(index, _)| index)
+        .take(QA_BATCH)
+        .collect()
+}
+
+/// What a QA turn did to its items. One that changed files sends them back as fixed; one that
+/// used a tool and changed nothing passes them; one that used no tool checked nothing and
+/// gives no verdict. An item still not passed after [`MAX_ITEM_ROUNDS`] rounds is unconfirmed,
+/// so the goal can't loop, and never counts as passed.
+pub fn record_qa(
+    items: &mut [ChecklistItem],
+    checked: &[usize],
+    used_tools: bool,
+    changed_files: bool,
+) {
+    for &index in checked {
+        let Some(item) = items.get_mut(index) else {
+            continue;
+        };
+        item.rounds += 1;
+        if changed_files {
+            item.state = ItemState::Fixed;
+        } else if used_tools {
+            item.state = ItemState::Passed;
+        }
+        if item.state != ItemState::Passed && item.rounds >= MAX_ITEM_ROUNDS {
+            item.state = ItemState::Unconfirmed;
+        }
+    }
+}
+
+impl ChecklistItem {
+    /// Passed, or past its rounds: nothing more to check.
+    pub fn settled(&self) -> bool {
+        matches!(self.state, ItemState::Passed | ItemState::Unconfirmed)
+    }
+}
+
+/// Whether every item is settled (an empty checklist has nothing left to check).
+pub fn all_passed(items: &[ChecklistItem]) -> bool {
+    items.iter().all(ChecklistItem::settled)
+}
+
+/// The items no QA turn could confirm, for the person to know.
+pub fn unconfirmed(items: &[ChecklistItem]) -> Vec<&str> {
+    items
+        .iter()
+        .filter(|item| item.state == ItemState::Unconfirmed)
+        .map(|item| item.text.as_str())
+        .collect()
+}
+
+/// Numbered lines of `items` (1-based, in checklist order), marking ones a QA turn fixed.
+fn item_lines(items: &[ChecklistItem], indices: &[usize]) -> String {
+    indices
+        .iter()
+        .filter_map(|&index| items.get(index).map(|item| (index, item)))
+        .map(|(index, item)| {
+            let again = if item.state == ItemState::Fixed {
+                " (fixed last time: check it again)"
+            } else {
+                ""
+            };
+            // Item text can't close the block it is quoted in.
+            let text = item.text.replace("</checklist", "<\\/checklist");
+            format!("{}. {text}{again}", index + 1)
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// The checklist part of a goal turn's note: the whole list while building (before the agent
+/// first calls complete), the items this QA turn checks, or the last check once all passed.
+pub fn checklist_note(items: &[ChecklistItem], qa: bool, checking: &[usize]) -> String {
+    if items.is_empty() {
+        return String::new();
+    }
+    if !qa {
+        let all: Vec<usize> = (0..items.len()).collect();
+        return crate::prompts::fill(
+            crate::prompts::GOAL_CHECKLIST,
+            &[("items", &item_lines(items, &all))],
+        );
+    }
+    if all_passed(items) {
+        return crate::prompts::GOAL_QA_PASSED.to_owned();
+    }
+    let passed = items
+        .iter()
+        .filter(|item| item.state == ItemState::Passed)
+        .count();
+    crate::prompts::fill(
+        crate::prompts::GOAL_QA,
+        &[
+            ("passed", &passed.to_string()),
+            ("total", &items.len().to_string()),
+            ("items", &item_lines(items, checking)),
+        ],
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -475,5 +668,109 @@ mod tests {
             let _ = classify_failure(&text);
             let _ = turn_number(&text);
         }
+    }
+}
+
+#[cfg(test)]
+mod checklist_tests {
+    use super::*;
+
+    fn items(n: usize) -> Vec<ChecklistItem> {
+        (1..=n)
+            .map(|i| ChecklistItem::new(&format!("item {i}")).unwrap())
+            .collect()
+    }
+
+    #[test]
+    fn a_checklist_is_read_or_refused_with_a_reason() {
+        let list = parse_checklist(&serde_json::json!([
+            "Rounds to 2 decimals",
+            "  Bad input shows a note "
+        ]))
+        .unwrap();
+        assert_eq!(list[1].text, "Bad input shows a note");
+        assert!(list.iter().all(|item| item.state == ItemState::Open));
+        assert!(parse_checklist(&serde_json::Value::Null)
+            .unwrap_err()
+            .contains("needs `checklist`"));
+        assert!(parse_checklist(&serde_json::json!(["ok", ""])).is_err());
+        assert!(parse_checklist(&serde_json::json!(["ok", 3])).is_err());
+        assert!(parse_checklist(&serde_json::json!(vec!["x"; MAX_CHECKLIST + 1])).is_err());
+    }
+
+    #[test]
+    fn every_checklist_ends_with_the_quality_items_once() {
+        let list = with_quality_items(items(2));
+        let texts: Vec<&str> = list.iter().map(|item| item.text.as_str()).collect();
+        assert_eq!(texts.len(), 8, "{texts:?}");
+        assert!(texts.iter().any(|text| text.starts_with("Efficiency")));
+        assert!(texts[2].starts_with("Fault tolerance"));
+        assert!(texts.iter().any(|text| text.starts_with("Security")));
+        assert!(texts
+            .iter()
+            .any(|text| text.starts_with("Clean and not overengineered")));
+        assert!(texts
+            .iter()
+            .any(|text| text.starts_with("UI and user experience")));
+        assert_eq!(with_quality_items(list.clone()), list);
+    }
+
+    #[test]
+    fn qa_turns_pass_items_only_when_they_checked_and_changed_nothing() {
+        let mut list = items(5);
+        assert_eq!(next_qa(&list), [0, 1, 2]);
+        // Used tools, changed files: fixed, checked again first.
+        record_qa(&mut list, &[0, 1, 2], true, true);
+        assert_eq!(list[0].state, ItemState::Fixed);
+        assert_eq!(next_qa(&list), [0, 1, 2]);
+        // Checked nothing: no verdict.
+        record_qa(&mut list, &[0, 1, 2], false, false);
+        assert_eq!(list[0].state, ItemState::Fixed);
+        // Checked, changed nothing: passed.
+        list[0].rounds = 0;
+        record_qa(&mut list, &[0], true, false);
+        assert_eq!(list[0].state, ItemState::Passed);
+        assert_eq!(next_qa(&list), [1, 2, 3]);
+        // An item can't loop: past its rounds it is unconfirmed, never passed.
+        record_qa(&mut list, &[1], true, true);
+        assert_eq!(list[1].state, ItemState::Unconfirmed);
+        assert_eq!(unconfirmed(&list), ["item 2"]);
+        // A turn that checks nothing never passes anything, however often it runs.
+        let mut idle = items(1);
+        for _ in 0..MAX_ITEM_ROUNDS {
+            record_qa(&mut idle, &[0], false, false);
+        }
+        assert_eq!(idle[0].state, ItemState::Unconfirmed);
+        assert!(!all_passed(&list));
+        record_qa(&mut list, &[2, 3, 4], true, false);
+        assert!(all_passed(&list));
+        assert!(next_qa(&list).is_empty());
+    }
+
+    #[test]
+    fn the_note_lists_the_checklist_then_each_qa_batch_then_the_last_check() {
+        let mut list = items(4);
+        let building = checklist_note(&list, false, &[]);
+        assert!(
+            building.contains("1. item 1\n2. item 2\n3. item 3\n4. item 4"),
+            "{building}"
+        );
+        list[0].state = ItemState::Passed;
+        list[1].state = ItemState::Fixed;
+        let qa = checklist_note(&list, true, &next_qa(&list));
+        assert!(qa.contains("1 of 4 checklist items have passed"), "{qa}");
+        assert!(
+            qa.contains("2. item 2 (fixed last time: check it again)\n3. item 3\n4. item 4"),
+            "{qa}"
+        );
+        assert!(!qa.contains("1. item 1"), "{qa}");
+        for item in &mut list {
+            item.state = ItemState::Passed;
+        }
+        assert_eq!(
+            checklist_note(&list, true, &[]),
+            crate::prompts::GOAL_QA_PASSED
+        );
+        assert_eq!(checklist_note(&[], true, &[]), "");
     }
 }
