@@ -347,9 +347,28 @@ pub fn changed_between(
                 status,
                 added,
                 removed,
+                hidden: is_hidden_path(path),
             }
         })
         .collect()
+}
+
+/// True when a part of a project-relative Git path (`/`-separated) starts with a dot:
+/// `.gitignore`, `.github/workflows/ci.yml`, `src/.cache/x`. The change lists fold these into
+/// one line rather than leave them out, since a CI workflow or `.gitignore` edit can matter.
+#[must_use]
+pub fn is_hidden_path(path: &str) -> bool {
+    path.split('/').any(|part| part.starts_with('.'))
+}
+
+/// Moves hidden files after the rest, keeping each group's order, so a listing's cap drops
+/// hidden files before visible ones.
+pub fn hidden_last(files: &mut Vec<DiffFile>) {
+    let (visible, hidden): (Vec<DiffFile>, Vec<DiffFile>) = std::mem::take(files)
+        .into_iter()
+        .partition(|file| !file.hidden);
+    files.extend(visible);
+    files.extend(hidden);
 }
 
 /// Runs `git diff HEAD --no-color -U3` and parses it into [`DiffFile`]s.
@@ -520,6 +539,7 @@ pub fn untracked_diff_file(root: &Path, relative: &str) -> DiffFile {
         added: count_lines(&root.join(relative)),
         removed: 0,
         too_large,
+        hidden: is_hidden_path(relative),
     }
 }
 
@@ -655,6 +675,7 @@ impl FileBuilder {
         let (added, removed) = (count(DiffLineKind::Add), count(DiffLineKind::Del));
         let (hunks, too_large) = first_lines(self.hunks, MAX_SHOWN_DIFF_LINES);
         DiffFile {
+            hidden: is_hidden_path(&path),
             path,
             old_path,
             status,
@@ -1220,26 +1241,59 @@ index 5555555..6666666 100644
         std::fs::write(root.join("new.py"), "print(1)\n").unwrap();
         std::fs::write(root.join("blob.bin"), [0u8, 1, 2]).unwrap();
         std::fs::remove_file(root.join("gone.txt")).unwrap();
+        std::fs::create_dir_all(root.join(".github/workflows")).unwrap();
+        std::fs::write(root.join(".github/workflows/ci.yml"), "on: push\n").unwrap();
         let after = change_fingerprint(root);
         let changed = changed_between(root, &before, &after);
         assert_eq!(
             changed,
             vec![
                 ChangedFile {
+                    added: Some(1),
+                    removed: Some(0),
+                    path: ".github/workflows/ci.yml".into(),
+                    status: DiffStatus::Added,
+                    hidden: true,
+                },
+                ChangedFile {
                     added: Some(0),
                     removed: Some(1),
                     path: "gone.txt".into(),
-                    status: DiffStatus::Deleted
+                    status: DiffStatus::Deleted,
+                    hidden: false,
                 },
                 ChangedFile {
                     added: Some(1),
                     removed: Some(0),
                     path: "new.py".into(),
-                    status: DiffStatus::Added
+                    status: DiffStatus::Added,
+                    hidden: false,
                 },
             ],
-            "an edit made before the run and binary files are not reported"
+            "an edit made before the run and binary files are not reported; a hidden one is marked"
         );
+    }
+
+    #[test]
+    fn a_path_is_hidden_when_any_part_starts_with_a_dot() {
+        for path in [
+            ".gitignore",
+            ".themis/config.jsonc",
+            ".github/workflows/ci.yml",
+            "src/.cache/x.txt",
+            "web/.env.example",
+        ] {
+            assert!(is_hidden_path(path), "{path}");
+        }
+        for path in [
+            "README.md",
+            "src/main.rs",
+            "docs/a.b/c.md",
+            "",
+            "notes..txt",
+        ] {
+            assert!(!is_hidden_path(path), "{path}");
+        }
     }
 
     use proptest::prelude::*;
@@ -1310,6 +1364,21 @@ index 5555555..6666666 100644
             expected.sort_unstable();
             expected.dedup();
             prop_assert_eq!(paths, expected);
+        }
+
+        /// A Git path is hidden exactly when one of its parts starts with a dot, wherever it sits.
+        #[test]
+        fn hidden_paths_are_the_ones_with_a_dotted_part(
+            parts in proptest::collection::vec("[a-z0-9_.-]{1,6}", 1..5),
+        ) {
+            let path = parts.join("/");
+            prop_assert_eq!(is_hidden_path(&path), parts.iter().any(|part| part.starts_with('.')));
+        }
+
+        /// Arbitrary Git output never panics the check.
+        #[test]
+        fn hidden_check_accepts_any_text(text in any::<String>()) {
+            let _ = is_hidden_path(&text);
         }
 
         /// Files judged readable are NUL-free UTF-8 in their sampled prefix.

@@ -298,6 +298,7 @@ impl AppState {
             let before = files.len();
             files.retain(|file| !super::changes::looks_secret(&matcher, &file.path));
             let secrets = before - files.len();
+            crate::diff::hidden_last(&mut files);
             let total = files.len();
             let mut notes = Vec::new();
             if total > crate::diff::MAX_DIFF_FILES {

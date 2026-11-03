@@ -660,6 +660,54 @@ async fn cli_turn_records_the_files_it_edited_in_history() {
     task.abort();
 }
 
+/// Hidden changes (`.github/…`, `.gitignore`) come through the shared server marked and after
+/// the rest, so Workspace › Changes can fold them into one line.
+#[tokio::test(flavor = "multi_thread")]
+async fn cli_list_diff_marks_hidden_files_and_lists_them_last() {
+    if !common::git_available() {
+        return;
+    }
+    let (_repo, project) = common::init_repo();
+    let dir = tempfile::tempdir().unwrap();
+    let state = AppState::new_for_test(dir.path().join("settings.json"));
+    let task = tokio::spawn(Server::bind(state, dir.path()).await.unwrap().run());
+    let thread = cli(
+        dir.path(),
+        &["thread", "create", project.to_str().unwrap(), "test-model"],
+    );
+    let id = thread["id"].as_str().unwrap();
+    std::fs::create_dir_all(project.join(".github/workflows")).unwrap();
+    std::fs::write(project.join(".github/workflows/ci.yml"), "on: push\n").unwrap();
+    std::fs::write(project.join(".gitignore"), "target\n").unwrap();
+    std::fs::write(project.join("README.md"), "# edited\n").unwrap();
+    let diff = cli(
+        dir.path(),
+        &["call", "list_diff", &json!({"threadId": id}).to_string()],
+    );
+    let listed: Vec<(&str, bool)> = diff["files"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|file| {
+            (
+                file["path"].as_str().unwrap(),
+                file["hidden"].as_bool().unwrap_or(false),
+            )
+        })
+        .collect();
+    assert_eq!(
+        listed,
+        [
+            ("README.md", false),
+            (".github/workflows/ci.yml", true),
+            (".gitignore", true),
+        ],
+        "{diff}"
+    );
+    assert!(diff["files"][0].get("hidden").is_none(), "{diff}");
+    task.abort();
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn cli_preserves_incomplete_handoff_and_exits_nonzero() {
     let project = tempfile::tempdir().unwrap();

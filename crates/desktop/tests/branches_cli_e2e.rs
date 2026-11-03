@@ -33,7 +33,8 @@ fn call(data: &Path, command: &str, args: Value) -> Result<Value, String> {
     }
 }
 
-/// `main` with `shared.txt`, and `feature` adding `new.txt` and changing `shared.txt`.
+/// `main` with `shared.txt`, and `feature` adding `new.txt` and `.gitignore` and changing
+/// `shared.txt`.
 fn repository(root: &Path) {
     git(root, &["init", "-q", "-b", "main"]);
     std::fs::write(root.join("shared.txt"), "one\n").unwrap();
@@ -42,6 +43,7 @@ fn repository(root: &Path) {
     git(root, &["switch", "-qc", "feature"]);
     std::fs::write(root.join("shared.txt"), "two\n").unwrap();
     std::fs::write(root.join("new.txt"), "added\n").unwrap();
+    std::fs::write(root.join(".gitignore"), "target\n").unwrap();
     git(root, &["add", "."]);
     git(root, &["commit", "-qm", "second"]);
     git(root, &["switch", "-q", "main"]);
@@ -84,9 +86,17 @@ async fn a_branch_is_read_without_switching_and_switching_guards_uncommitted_wor
             .as_array()
             .unwrap()
             .iter()
-            .map(|f| f["path"].clone())
+            .map(|f| (f["path"].clone(), f["hidden"].as_bool().unwrap_or(false)))
             .collect();
-        assert_eq!(paths, vec![json!("new.txt"), json!("shared.txt")]);
+        // A hidden file is marked and comes after the rest.
+        assert_eq!(
+            paths,
+            vec![
+                (json!("new.txt"), false),
+                (json!("shared.txt"), false),
+                (json!(".gitignore"), true)
+            ]
+        );
         assert_eq!(current(&root), "main");
         // Only local branches: not options, ranges or other references.
         for bad in ["--output=/tmp/x", "main..feature", "HEAD", "missing"] {
