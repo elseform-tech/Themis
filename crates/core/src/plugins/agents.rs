@@ -21,7 +21,7 @@ pub const WRITE_TOOLS: [&str; 3] = ["write_file", "apply_patch", "create_dir"];
 pub const WEB_TOOLS: [&str; 2] = ["fetch_url", "web_search"];
 /// Tools a subagent has only when its profile's list names them: they cost every subagent context,
 /// and a plain one has no use for them.
-pub const NAMED_ONLY_TOOLS: [&str; 3] = ["background_task", "todo_write", "ask_user"];
+pub const NAMED_ONLY_TOOLS: [&str; 2] = ["background_task", "ask_user"];
 
 /// What `Agent` and `Task` stand for. Never implied, not even by `*`: a profile has it only when
 /// its list names it, and a subagent started by another subagent doesn't get it at all.
@@ -453,10 +453,6 @@ fn mapped(name: &str) -> Option<&'static [&'static str]> {
         "Edit" | "Write" | "MultiEdit" => Some(&WRITE_TOOLS),
         "WebFetch" => Some(&["fetch_url"]),
         "WebSearch" => Some(&["web_search"]),
-        // Its own plan: Claude's older and newer names for one list.
-        "TodoWrite" | "TodoRead" | "TaskCreate" | "TaskUpdate" | "TaskList" | "TaskGet" => {
-            Some(&["todo_write"])
-        }
         // Background programs it started with the shell.
         "BashOutput" | "KillShell" | "KillBash" | "TaskOutput" | "TaskStop" => {
             Some(&["background_task"])
@@ -1041,10 +1037,13 @@ mod tests {
 
     #[test]
     fn claudes_other_names_map_to_what_a_subagent_can_have_when_named() {
-        let all = with_tools(
-            "tools: TodoWrite, TaskCreate, TaskUpdate, BashOutput, KillShell, AskUserQuestion",
-        );
+        let all = with_tools("tools: BashOutput, KillShell, AskUserQuestion");
         assert!(all.dropped_tools.is_empty(), "{:?}", all.dropped_tools);
+        // Claude's to-do tools have nothing here: a profile naming them hears so.
+        assert_eq!(
+            with_tools("tools: Read, TodoWrite, TaskCreate").dropped_tools,
+            ["TodoWrite", "TaskCreate"]
+        );
         for tool in NAMED_ONLY_TOOLS {
             assert!(all.names(tool), "{tool}");
         }

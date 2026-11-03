@@ -1955,87 +1955,6 @@ async fn a_changed_configuration_and_loaded_instructions_reach_their_hooks() {
     app.serving.abort();
 }
 
-/// A subagent's plan is Themis's task list: a new item is `TaskCreated`, one newly done is
-/// `TaskCompleted`, and a hook that refuses tells the subagent why and leaves the plan alone.
-#[tokio::test(flavor = "multi_thread")]
-async fn a_subagents_plan_runs_the_task_hooks() {
-    const REFUSES: &str = r#"#!/bin/sh
-input=$(cat)
-printf '%s\n' "$input" >> completed.jsonl
-case "$input" in *'Refuse this'*) echo 'tests are not green' >&2; exit 2 ;; esac
-"#;
-    let hooks = json!({
-        "TaskCreated": [{"hooks": [{"type": "command", "command": logging("created.jsonl")}]}],
-        "TaskCompleted": [{"hooks": [{"type": "command",
-            "command": "sh \"${CLAUDE_PLUGIN_ROOT}/hooks/refuses.sh\""}]}],
-    });
-    let plan = |status_read: &str, status_write: &str| {
-        json!({"todos": [
-            {"title": "Read the code", "status": status_read},
-            {"title": "Refuse this", "status": status_write},
-        ]})
-    };
-    let (first, second, third) = (
-        plan("in_progress", "pending"),
-        plan("completed", "pending"),
-        plan("completed", "completed"),
-    );
-    let app = crate::app(
-        hooks,
-        &[
-            ("hooks/refuses.sh", REFUSES),
-            (
-                "agents/planner.md",
-                "---\nname: planner\ndescription: Plans\ntools: Read, TodoWrite\n---\nPlan it.",
-            ),
-        ],
-        move |body| {
-            let child = body["messages"][0]["content"]
-                .as_str()
-                .unwrap_or_default()
-                .starts_with("You are a subagent");
-            let done = tool_results(body).len();
-            if child {
-                return match done {
-                    0 => tool_call("t0", "todo_write", &first),
-                    1 => tool_call("t1", "todo_write", &second),
-                    2 => tool_call("t2", "todo_write", &third),
-                    _ => reply("Reported."),
-                };
-            }
-            match done {
-                0 => tool_call(
-                    "s1",
-                    "spawn_subagents",
-                    &json!({"say": "Starting.", "subagents": [{"brief": "b", "profile": "planner"}]}),
-                ),
-                _ => reply("Done."),
-            }
-        },
-    )
-    .await;
-    run(&app, "go").await;
-    until("the refusal never came", || {
-        lines(&app, "completed.jsonl").len() >= 2
-    });
-    let created = lines(&app, "created.jsonl");
-    assert_eq!(created.len(), 2, "{created:?}");
-    assert_eq!(created[0]["hook_event_name"], "TaskCreated");
-    assert_eq!(created[0]["task_subject"], "Read the code");
-    assert_eq!(created[0]["teammate_name"], created[0]["agent"]["name"]);
-    let completed = lines(&app, "completed.jsonl");
-    assert_eq!(completed.len(), 2, "{completed:?}");
-    assert_eq!(completed[0]["task_subject"], "Read the code");
-    assert_eq!(completed[1]["task_subject"], "Refuse this");
-    let refusal = bodies(&app.llm)
-        .await
-        .iter()
-        .flat_map(tool_results)
-        .any(|result| result.contains("tests are not green"));
-    assert!(refusal, "the subagent never heard why");
-    app.serving.abort();
-}
-
 /// Whether a request is a prompt hook's: its own system message, no tools.
 fn is_prompt_hook(body: &Value) -> bool {
     body["messages"][0]["content"]
@@ -2314,7 +2233,7 @@ async fn themis_notifying_runs_the_notification_hooks() {
     let (data, thread) = (app.data.path().to_owned(), app.thread.clone());
     tokio::task::spawn_blocking(move || {
         for (kind, outcome) in [
-            ("stuck", "sent"),
+            ("blocked", "sent"),
             ("reached", "denied"),
             ("reached", "sent"),
         ] {

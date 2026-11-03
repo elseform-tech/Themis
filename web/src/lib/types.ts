@@ -341,7 +341,6 @@ export type ThreadEvent =
   | { kind: 'queue_changed'; queue: QueuedMessage[] }
   | { kind: 'goal_changed'; goal: Goal | null }
   /** The main agent's to-do list changed. */
-  | { kind: 'todo_changed'; todo: TodoList }
   | { kind: 'goal_note'; outcome: GoalNoteKind; reason: string }
   /** The agent asked the user a question, or updated one still open (same id). */
   | { kind: 'question_asked'; question: Question }
@@ -485,8 +484,9 @@ export interface QueuedMessage {
   note?: string;
 }
 
-export type GoalStatus = 'running' | 'paused' | 'waiting' | 'stuck' | 'quota' | 'reached';
-export type GoalNoteKind = 'reached' | 'not_yet' | 'stuck' | 'waiting' | 'quota' | 'failed' | 'status' | 'small_window';
+export type GoalStatus = 'running' | 'paused' | 'waiting' | 'blocked' | 'quota' | 'reached';
+/** `not_yet` only in chats from before goals judged themselves. */
+export type GoalNoteKind = 'reached' | 'not_yet' | 'blocked' | 'waiting' | 'quota' | 'failed' | 'status' | 'small_window';
 
 /** A chat's goal: one sentence the agent keeps working toward. */
 export interface Goal {
@@ -500,48 +500,19 @@ export interface Goal {
   /** Unix milliseconds since the goal last started running. */
   running_since?: number;
   turns: number;
-  stalls: number;
-  progress?: string;
   failures: number;
-  /** How the work must be done the whole way; read-only, from the goal check. */
-  rules?: GoalRule[];
-  /** The goal check is reading the turn that just ended. */
-  checking?: boolean;
   /** Unix milliseconds when the next turn is due, while the goal waits to retry. */
   retry_at?: number;
+  /** What the agent named as proof of each requirement when it marked the goal complete. */
+  evidence?: GoalEvidence[];
+  /** Each message the person sent while the goal ran, word for word; part of its objective. */
+  also_asked?: string[];
 }
 
-/** A rule the goal's work keeps to the whole way; never ticked off. */
-export interface GoalRule {
-  what: string;
-  /** A rule that wasn't followed. */
-  broken?: boolean;
-  /** A step the rule asks for that hasn't happened yet and holds the goal open. */
-  pending?: boolean;
-  how?: string;
-}
-
-export type TodoStatus = "pending" | "in_progress" | "completed";
-
-/** One item of the main agent's own to-do list for a chat. */
-export interface TodoItem {
-  id: string;
-  title: string;
-  details?: string;
-  status: TodoStatus;
-  outcome?: string;
-  /** Who added it when the agent didn't: a request the person sent during a goal, or the goal check. */
-  source?: "person" | "check" | "goal";
-  /** The goal check's short reason for reopening it. */
-  reopened?: string;
-  /** The goal check, not the agent, finished it: shown done, cancelled by a later request, or a question answered. */
-  closed?: "confirmed" | "cancelled" | "answered";
-}
-
-/** The main agent's to-do list for a chat (normal chats and goals). */
-export interface TodoList {
-  revision: number;
-  items: TodoItem[];
+/** One requirement of a complete goal and what proves it. */
+export interface GoalEvidence {
+  requirement: string;
+  proof: string;
 }
 
 export interface ThreadEventEnvelope {
@@ -612,7 +583,7 @@ export interface ContextBudget {
   provider_input_tokens?: number;
   /** Estimate correction in thousandths (1000 = exact). */
   calibration_ratio_milli?: number;
-  breakdown: { system: number; checkpoint: number; attachments: number; conversation: number; tool_activity: number; reasoning?: number; memory?: number };
+  breakdown: { system: number; checkpoint: number; attachments: number; conversation: number; tool_activity: number; reasoning?: number; memory?: number; goal?: number };
 }
 
 /** A readable project file one run changed. */

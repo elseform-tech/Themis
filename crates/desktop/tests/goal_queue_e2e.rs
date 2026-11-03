@@ -1,8 +1,6 @@
 //! Prompt queue, steering and goal mode through the real app state, with a
-//! scripted model (wiremock). The goal check is told apart from agent turns by
-//! its system prompt.
+//! scripted model (wiremock). A goal ends when the scripted agent calls `update_goal`.
 
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -16,7 +14,6 @@ use wiremock::{Mock, MockServer, Request, ResponseTemplate};
 
 /// Generous: CI runs every test binary at once.
 const DEADLINE: Duration = Duration::from_secs(120);
-const CHECK_MARKER: &str = "You decide whether an agent has reached a goal";
 
 /// Holds a scripted answer until the test opens it, so actions that must land
 /// while a run is going (queue, steer, pause, switch) do so however slow the
@@ -59,40 +56,35 @@ fn distinct(bodies: Vec<Value>) -> Vec<Value> {
         .collect()
 }
 
-/// The agent's step when the to-do note its run opened with lists requests of the person's
-/// still open and it hasn't written its list yet: it finishes them all with `todo_write`, as a
-/// real agent finishing the work would.
-fn finishes_requests(body: &Value) -> Option<ResponseTemplate> {
-    let messages = body["messages"].as_array()?;
-    let wrote = messages
-        .iter()
-        .any(|message| message["tool_calls"].to_string().contains("todo_write"));
-    if wrote {
-        return None;
-    }
-    let note = messages
-        .iter()
-        .rev()
-        .find(|message| message["role"] == "user")?["content"]
-        .as_str()?;
-    let open: Vec<Value> = note
-        .lines()
-        // A request whose turn this is reads as in progress.
-        .filter(|line| {
-            line.starts_with("- t")
-                && (line.contains("[pending; the person asked]")
-                    || line.contains("[in progress; the person asked]"))
-        })
-        .filter_map(|line| line[2..].split(' ').next())
-        .map(|id| json!({"id": id, "title": "Done as asked", "status": "completed"}))
-        .collect();
-    (!open.is_empty()).then(|| calls("todo_write", json!({ "todos": open })))
+/// Whether the request offers the tool `name`.
+fn offers(body: &Value, name: &str) -> bool {
+    body["tools"].as_array().is_some_and(|tools| {
+        tools
+            .iter()
+            .any(|tool| tool["function"]["name"] == name || tool["name"] == name)
+    })
 }
 
-fn is_check(body: &Value) -> bool {
-    body["messages"][0]["content"]
-        .as_str()
-        .is_some_and(|text| text.contains(CHECK_MARKER))
+/// Whether the conversation already called the tool `name`.
+fn called(body: &Value, name: &str) -> bool {
+    body["messages"].as_array().is_some_and(|messages| {
+        messages
+            .iter()
+            .any(|message| message["tool_calls"].to_string().contains(name))
+    })
+}
+
+/// The agent's step once its work is done: it marks the goal complete with evidence for each
+/// requirement, then answers with `answer`.
+fn completes(body: &Value, answer: &str) -> ResponseTemplate {
+    if offers(body, "update_goal") && !called(body, "update_goal") {
+        calls(
+            "update_goal",
+            json!({"status": "complete", "evidence": [{"requirement": "the work is done", "proof": "done.txt reads done"}]}),
+        )
+    } else {
+        reply(answer)
+    }
 }
 
 fn mentions(body: &Value, needle: &str) -> bool {
@@ -178,7 +170,7 @@ async fn settle(state: &AppState, thread_id: &str) {
     {
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
-    // A goal check that started before the pause finishes against this server.
+    // A request that started before the pause finishes against this server.
     tokio::time::sleep(Duration::from_millis(300)).await;
 }
 
@@ -355,269 +347,6 @@ async fn queued_messages_wait_steers_reach_the_run_and_the_queue_drains() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn a_goal_runs_turn_after_turn_until_the_check_finds_it_reached() {
-    let server = MockServer::builder().start().await;
-    let checks = Arc::new(AtomicUsize::new(0));
-    let seen_checks = Arc::clone(&checks);
-    Mock::given(method("POST"))
-        .respond_with(move |request: &Request| {
-            let body = body(request);
-            if is_check(&body) {
-                return if seen_checks.fetch_add(1, Ordering::SeqCst) == 0 {
-                    reply(r#"{"verdict":"not_yet","reason":"Counter is 1; needs 2.","progress":"counter 1"}"#)
-                } else {
-                    reply(r#"{"verdict":"reached","reason":"Counter is 2.","progress":"counter 2"}"#)
-                };
-            }
-            if mentions(&body, "A separate check found the goal reached") {
-                return reply("I've reached the goal: the counter is 2.");
-            }
-            reply("Incremented the counter.")
-        })
-        .mount(&server)
-        .await;
-    let (state, _data, _project, thread) = chat(&server).await;
-    let (sink, mut rx) = ChannelSink::channel();
-    let sink = Arc::new(sink);
-    let empty = state
-        .send_message(sink.clone(), thread.clone(), "/goal".into())
-        .await
-        .unwrap_err();
-    assert!(empty.contains("Add the goal after /goal"), "{empty}");
-    state
-        .send_message(
-            sink.clone(),
-            thread.clone(),
-            "/goal  make the counter reach 2".into(),
-        )
-        .await
-        .unwrap();
-    assert_eq!(
-        state.goal_for(&thread).map(|goal| goal.text),
-        Some("make the counter reach 2".into())
-    );
-    goal_until(&state, &thread, |status| status == GoalStatus::Reached).await;
-    let goal = state.goal_for(&thread).unwrap();
-    assert_eq!(goal.turns, 2);
-    assert_eq!(goal.reason.as_deref(), Some("Counter is 2."));
-    assert!(goal.running_since.is_none());
-    // The agent says it in its own words; the check posts no note of its own.
-    let mut seen = Vec::new();
-    until(
-        &mut rx,
-        &mut seen,
-        |event| matches!(event, ThreadEvent::Finished { result, .. } if result == "I've reached the goal: the counter is 2."),
-    )
-    .await;
-    // The verdict is recorded, for the chat to dim the turn; the agent voices it next turn.
-    assert!(seen.iter().any(|event| matches!(
-        event,
-        ThreadEvent::GoalNote { outcome: GoalNoteKind::NotYet, reason, .. }
-            if reason == "Counter is 1; needs 2."
-    )));
-    // The chat carries no announcements of its own around a check.
-    assert!(
-        !seen.iter().any(|event| matches!(
-            event,
-            ThreadEvent::GoalNote { outcome: GoalNoteKind::Status, reason, .. }
-                if reason.contains("checking") || reason.contains("starting")
-        )),
-        "{seen:?}"
-    );
-    // While the check runs, the goal says so, for a passing status line.
-    let checking: Vec<bool> = seen
-        .iter()
-        .filter_map(|event| match event {
-            ThreadEvent::GoalChanged { goal: Some(goal) } => Some(goal.checking),
-            _ => None,
-        })
-        .collect();
-    assert!(
-        checking.windows(2).any(|pair| pair == [true, false]),
-        "{checking:?}"
-    );
-    assert!(!state.goal_for(&thread).unwrap().checking);
-    // The second turn was started by the runtime, carrying the check's reason.
-    let bodies: Vec<Value> = distinct(
-        server
-            .received_requests()
-            .await
-            .unwrap()
-            .iter()
-            .map(body)
-            .collect(),
-    );
-    let turns: Vec<&Value> = bodies.iter().filter(|body| !is_check(body)).collect();
-    assert_eq!(turns.len(), 3);
-    assert_eq!(
-        checks.load(Ordering::SeqCst),
-        2,
-        "no check after the reached turn"
-    );
-    assert!(mentions(turns[0], "Active goal for this chat"));
-    assert!(mentions(
-        turns[1],
-        "[Goal — runtime, not from the user] Turn 2."
-    ));
-    assert!(mentions(turns[1], "Last check: Counter is 1; needs 2."));
-    assert!(mentions(turns[1], "what the last check found"));
-    // Then one short turn, unchecked, tells the user the goal is reached.
-    assert!(mentions(
-        turns[2],
-        "[Goal — runtime, not from the user] Turn 3."
-    ));
-    assert!(mentions(
-        turns[2],
-        "A separate check found the goal reached: Counter is 2."
-    ));
-    assert_eq!(state.goal_for(&thread).unwrap().turns, 2);
-    // The check sees the goal and the answer as fenced data.
-    let check = bodies.iter().find(|body| is_check(body)).unwrap();
-    assert!(mentions(check, "make the counter reach 2"));
-    assert!(mentions(check, "Incremented the counter."));
-    // A new message after a reached goal clears it.
-    state
-        .send_message(sink, thread.clone(), "thanks".into())
-        .await
-        .unwrap();
-    assert!(state.goal_for(&thread).is_none());
-    settle(&state, &thread).await;
-}
-
-#[tokio::test(flavor = "multi_thread")]
-async fn turns_that_only_re_verify_stall_and_the_goal_changes_course_instead_of_stopping() {
-    // A live goal looped for ten turns: each re-ran a few checks, the check
-    // said "not shown this turn" and phrased its measured fact differently,
-    // which counted as progress. The check's own progress judgement decides.
-    // A goal never gives up: after three such turns the next one is told to
-    // try a different approach, and the goal keeps running.
-    let server = MockServer::builder().start().await;
-    let checks = Arc::new(std::sync::atomic::AtomicUsize::new(0));
-    let counted = Arc::clone(&checks);
-    Mock::given(method("POST"))
-        .respond_with(move |request: &Request| {
-            if is_check(&body(request)) {
-                let n = counted.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-                return reply(&format!(
-                    r#"{{"verdict":"not_yet","reason":"Not all requirements shown this turn.","progress":"re-check {n} of the same 34 tests","progressed":{}}}"#,
-                    n == 0
-                ));
-            }
-            reply("All requirements still hold; verified in earlier turns.")
-        })
-        .mount(&server)
-        .await;
-    let (state, _data, _project, thread) = chat(&server).await;
-    let (sink, _rx) = ChannelSink::channel();
-    let sink: Arc<dyn themis_desktop::sink::EventSink> = Arc::new(sink);
-    state
-        .send_message(
-            sink.clone(),
-            thread.clone(),
-            "/goal pass every check".into(),
-        )
-        .await
-        .unwrap();
-    let changed_course = tokio::time::timeout(DEADLINE, async {
-        loop {
-            let requests = server.received_requests().await.unwrap();
-            if requests
-                .iter()
-                .map(body)
-                .any(|body| !is_check(&body) && mentions(&body, "try a different approach"))
-            {
-                return;
-            }
-            tokio::time::sleep(Duration::from_millis(50)).await;
-        }
-    })
-    .await;
-    assert!(
-        changed_course.is_ok(),
-        "goal: {:?}",
-        state.goal_for(&thread)
-    );
-    let goal = state.goal_for(&thread).unwrap();
-    assert_eq!(goal.status, GoalStatus::Running);
-    assert!(goal.stalls >= 3, "stalls {}", goal.stalls);
-    assert!(checks.load(std::sync::atomic::Ordering::SeqCst) >= 4);
-    settle(&state, &thread).await;
-}
-
-/// Found in the goal soak: a turn that rewrote 172 files was judged "no
-/// progress" by a check that looked only for proof of completion. A turn
-/// that changed files is never a stall, whatever the check says.
-#[tokio::test(flavor = "multi_thread")]
-async fn a_turn_that_changed_files_is_never_a_stall() {
-    let server = MockServer::builder().start().await;
-    let checks = Arc::new(AtomicUsize::new(0));
-    let counted = Arc::clone(&checks);
-    let writes = Arc::new(AtomicUsize::new(0));
-    Mock::given(method("POST"))
-        .respond_with(move |request: &Request| {
-            let body = body(request);
-            if is_check(&body) {
-                counted.fetch_add(1, Ordering::SeqCst);
-                return reply(
-                    r#"{"verdict":"not_yet","reason":"No passing check shown.","progressed":false}"#,
-                );
-            }
-            let tool_done = body["messages"]
-                .as_array()
-                .and_then(|messages| messages.last())
-                .is_some_and(|message| message["role"] == "tool");
-            if tool_done {
-                return reply("Wrote the next file.");
-            }
-            let n = writes.fetch_add(1, Ordering::SeqCst);
-            let arguments = json!({"file_path": format!("out/{n}.md"), "content": format!("item {n}")});
-            ResponseTemplate::new(200).set_body_json(json!({"choices":[{"message":{"role":"assistant","content":null,"tool_calls":[{"id":format!("w{n}"),"type":"function","function":{"name":"write_file","arguments":arguments.to_string()}}]},"finish_reason":"tool_calls"}]}))
-        })
-        .mount(&server)
-        .await;
-    let (state, _data, project, thread) = chat(&server).await;
-    // Changed files are read from Git, as in a real project.
-    let git = std::process::Command::new("git")
-        .args(["init", "-q"])
-        .current_dir(project.path())
-        .status()
-        .unwrap();
-    assert!(git.success());
-    state
-        .set_thread_approval_mode(
-            thread.clone(),
-            themis_core::configuration::ApprovalMode::Yolo,
-        )
-        .await
-        .unwrap();
-    let (sink, _rx) = ChannelSink::channel();
-    let sink: Arc<dyn themis_desktop::sink::EventSink> = Arc::new(sink);
-    state
-        .send_message(
-            sink.clone(),
-            thread.clone(),
-            "/goal write every file".into(),
-        )
-        .await
-        .unwrap();
-    let checked = tokio::time::timeout(DEADLINE, async {
-        while checks.load(Ordering::SeqCst) < 4 {
-            tokio::time::sleep(Duration::from_millis(50)).await;
-        }
-    })
-    .await;
-    assert!(checked.is_ok(), "goal: {:?}", state.goal_for(&thread));
-    settle(&state, &thread).await;
-    let goal = state.goal_for(&thread).unwrap();
-    assert_eq!(goal.stalls, 0, "every turn wrote a file");
-    let requests = server.received_requests().await.unwrap();
-    assert!(!requests
-        .iter()
-        .map(body)
-        .any(|body| !is_check(&body) && mentions(&body, "try a different approach")));
-}
-
-#[tokio::test(flavor = "multi_thread")]
 async fn a_running_goal_saves_its_elapsed_time_during_a_turn() {
     // A live goal showed only the current turn's time: elapsed time was saved
     // at turn boundaries, so each app restart mid-turn lost the whole turn.
@@ -626,11 +355,8 @@ async fn a_running_goal_saves_its_elapsed_time_during_a_turn() {
     let gate = released.clone();
     Mock::given(method("POST"))
         .respond_with(move |request: &Request| {
-            if is_check(&body(request)) {
-                return reply(r#"{"verdict":"reached","reason":"Done.","progress":"done"}"#);
-            }
             gate.wait();
-            reply("Worked on it.")
+            completes(&body(request), "Worked on it.")
         })
         .mount(&server)
         .await;
@@ -655,19 +381,14 @@ async fn a_running_goal_saves_its_elapsed_time_during_a_turn() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn pause_holds_the_goal_resume_continues_and_stalls_never_stop_it() {
+async fn pause_holds_the_goal_resume_continues_and_turns_keep_going() {
     let server = MockServer::builder().start().await;
     // The first turn's answer waits for the test to pause the goal, so the
     // pause always lands while that turn runs, however slow the machine.
     let released = Gate::default();
     let gate = released.clone();
     Mock::given(method("POST"))
-        .respond_with(move |request: &Request| {
-            if is_check(&body(request)) {
-                return reply(
-                    r#"{"verdict":"not_yet","reason":"Still 300 ms.","progress":"p95 300 ms"}"#,
-                );
-            }
+        .respond_with(move |_: &Request| {
             gate.wait();
             reply("Tried another cache setting.")
         })
@@ -686,20 +407,19 @@ async fn pause_holds_the_goal_resume_continues_and_stalls_never_stop_it() {
         .unwrap();
     assert_eq!(paused.status, GoalStatus::Paused);
     released.open();
-    // The running turn finishes; no further turn and no check starts while
-    // paused. (One turn can make more than one request: a stream attempt and
-    // its plain retry; so count goal turns and checks, not requests.)
-    let turns_and_checks = |requests: &[Request]| {
-        requests
+    // The running turn finishes; no further turn starts while paused. (One turn can make more
+    // than one request: a stream attempt and its plain retry; so count goal turns, not
+    // requests.)
+    let goal_turns = |requests: &[Request]| {
+        distinct(requests.iter().map(body).collect())
             .iter()
-            .map(body)
-            .filter(|body| is_check(body) || mentions(body, "[Goal — runtime, not from the user]"))
+            .filter(|body| mentions(body, "[Goal — runtime, not from the user]"))
             .count()
     };
     tokio::time::sleep(Duration::from_millis(2500)).await;
     let requests = server.received_requests().await.unwrap();
     assert_eq!(
-        turns_and_checks(&requests),
+        goal_turns(&requests),
         0,
         "only the first turn ran; goal now {:?}; requests: {:#?}",
         state.goal_for(&thread),
@@ -718,19 +438,12 @@ async fn pause_holds_the_goal_resume_continues_and_stalls_never_stop_it() {
                             .collect::<String>()
                     })
                     .unwrap_or_default();
-                format!(
-                    "check={} stream={} last={last}",
-                    is_check(&body),
-                    body["stream"]
-                )
+                format!("stream={} last={last}", body["stream"])
             })
             .collect::<Vec<_>>()
     );
     tokio::time::sleep(Duration::from_millis(500)).await;
-    assert_eq!(
-        turns_and_checks(&server.received_requests().await.unwrap()),
-        0
-    );
+    assert_eq!(goal_turns(&server.received_requests().await.unwrap()), 0);
     let elapsed = state.goal_for(&thread).unwrap().active_ms;
     tokio::time::sleep(Duration::from_millis(300)).await;
     assert_eq!(
@@ -744,14 +457,8 @@ async fn pause_holds_the_goal_resume_continues_and_stalls_never_stop_it() {
         .await
         .unwrap();
     // Every turn makes no progress and changes no file; the goal keeps going.
-    let checks = |requests: &[Request]| {
-        requests
-            .iter()
-            .filter(|request| is_check(&body(request)))
-            .count()
-    };
     let kept_going = tokio::time::timeout(DEADLINE, async {
-        while checks(&server.received_requests().await.unwrap()) < 5 {
+        while goal_turns(&server.received_requests().await.unwrap()) < 3 {
             tokio::time::sleep(Duration::from_millis(50)).await;
         }
     })
@@ -759,17 +466,6 @@ async fn pause_holds_the_goal_resume_continues_and_stalls_never_stop_it() {
     assert!(kept_going.is_ok(), "goal: {:?}", state.goal_for(&thread));
     let goal = state.goal_for(&thread).unwrap();
     assert_eq!(goal.status, GoalStatus::Running);
-    assert!(goal.stalls >= 3, "stalls {}", goal.stalls);
-    // Editing the goal gives it a fresh start.
-    let edited = state
-        .edit_goal(
-            sink.clone(),
-            thread.clone(),
-            "speed up p95 with a cache".into(),
-        )
-        .await
-        .unwrap();
-    assert_eq!(edited.stalls, 0);
     state
         .resume_goal(sink.clone(), thread.clone())
         .await
@@ -791,11 +487,7 @@ async fn a_used_up_quota_pauses_the_goal_and_a_model_switch_resumes_it() {
                 return ResponseTemplate::new(429)
                     .set_body_string("monthly usage limit reached for your plan");
             }
-            if is_check(&body) {
-                reply(r#"{"verdict":"reached","reason":"Done.","progress":"done"}"#)
-            } else {
-                reply("Finished the work.")
-            }
+            completes(&body, "Finished the work.")
         })
         .mount(&server)
         .await;
@@ -831,7 +523,7 @@ async fn a_used_up_quota_pauses_the_goal_and_a_model_switch_resumes_it() {
         .unwrap()
         .iter()
         .map(body)
-        .rfind(|body| !is_check(body))
+        .next_back()
         .unwrap();
     assert_eq!(last_turn["model"], "other-model");
     settle(&state, &thread).await;
@@ -841,13 +533,7 @@ async fn a_used_up_quota_pauses_the_goal_and_a_model_switch_resumes_it() {
 async fn a_running_goal_resumes_when_the_app_starts_again() {
     let server = MockServer::builder().start().await;
     Mock::given(method("POST"))
-        .respond_with(|request: &Request| {
-            if is_check(&body(request)) {
-                reply(r#"{"verdict":"reached","reason":"Done after restart."}"#)
-            } else {
-                reply("Re-checked and finished.")
-            }
-        })
+        .respond_with(|request: &Request| completes(&body(request), "Re-checked and finished."))
         .mount(&server)
         .await;
     let (state, data, _project, thread) = chat(&server).await;
@@ -886,7 +572,7 @@ async fn a_running_goal_resumes_when_the_app_starts_again() {
         .unwrap()
         .iter()
         .map(body)
-        .find(|body| !is_check(body))
+        .next()
         .unwrap();
     assert!(mentions(&first, "interrupted when Themis closed"));
     settle(&restarted, &thread).await;
@@ -895,24 +581,17 @@ async fn a_running_goal_resumes_when_the_app_starts_again() {
 #[tokio::test(flavor = "multi_thread")]
 async fn the_agent_sets_a_goal_with_its_tool_and_turns_follow() {
     let server = MockServer::builder().start().await;
-    let checks = Arc::new(AtomicUsize::new(0));
-    let seen_checks = Arc::clone(&checks);
     Mock::given(method("POST"))
         .respond_with(move |request: &Request| {
             let body = body(request);
-            if is_check(&body) {
-                // The run that set the goal is checked too; it did no work yet.
-                return if seen_checks.fetch_add(1, Ordering::SeqCst) == 0 {
-                    reply(r#"{"verdict":"not_yet","reason":"No test has run yet."}"#)
-                } else {
-                    reply(r#"{"verdict":"reached","reason":"All green."}"#)
-                };
+            if mentions(&body, "[Goal — runtime") {
+                return completes(&body, "All green.");
             }
             let used_tool = body["messages"]
                 .as_array()
                 .is_some_and(|messages| messages.iter().any(|m| m["role"] == "tool"));
             if mentions(&body, "make it a goal") && !used_tool && !mentions(&body, "[Goal — runtime") {
-                ResponseTemplate::new(200).set_body_json(json!({"choices":[{"message":{"role":"assistant","content":null,"tool_calls":[{"id":"g","type":"function","function":{"name":"set_goal","arguments":"{\"goal\":\"get every test green\"}"}}]},"finish_reason":"tool_calls"}]}))
+                ResponseTemplate::new(200).set_body_json(json!({"choices":[{"message":{"role":"assistant","content":null,"tool_calls":[{"id":"g","type":"function","function":{"name":"create_goal","arguments":"{\"objective\":\"get every test green\"}"}}]},"finish_reason":"tool_calls"}]}))
             } else {
                 reply("Working on it.")
             }
@@ -932,86 +611,8 @@ async fn the_agent_sets_a_goal_with_its_tool_and_turns_follow() {
         goal.turns, 1,
         "the agent's own run set it; one goal turn followed"
     );
-    assert_eq!(checks.load(Ordering::SeqCst), 2);
+    assert_eq!(goal.evidence.len(), 1, "{goal:?}");
     settle(&state, &thread).await;
-}
-
-/// Found in a live run: a message's run finished the goal and said so, yet
-/// only goal turns were checked, so a turn redid the verification and another
-/// announced the goal reached: three messages saying the same thing. Every run
-/// is checked now, and an answer that already tells the user needs no
-/// announcement.
-#[tokio::test(flavor = "multi_thread")]
-async fn a_message_run_that_finishes_the_goal_is_checked_and_nothing_repeats_it() {
-    let server = MockServer::builder().start().await;
-    let gate = Gate::default();
-    let held = gate.clone();
-    let checks = Arc::new(AtomicUsize::new(0));
-    let seen_checks = Arc::clone(&checks);
-    let agent_calls = Arc::new(AtomicUsize::new(0));
-    let calls = Arc::clone(&agent_calls);
-    Mock::given(method("POST"))
-        .respond_with(move |request: &Request| {
-            let body = body(request);
-            if is_check(&body) {
-                seen_checks.fetch_add(1, Ordering::SeqCst);
-                return reply(r#"{"verdict":"reached","reason":"PASS4 shows four lines.","progressed":true,"told_user":true}"#);
-            }
-            if let Some(finish) = finishes_requests(&body) {
-                return finish;
-            }
-            if calls.fetch_add(1, Ordering::SeqCst) == 0 {
-                held.wait();
-                reply("Wrote three lines.")
-            } else {
-                reply("Added yellow; PASS4 shows all four lines, so the goal is done.")
-            }
-        })
-        .mount(&server)
-        .await;
-    let (state, _data, _project, thread) = chat(&server).await;
-    let (sink, _rx) = ChannelSink::channel();
-    let sink: Arc<dyn themis_desktop::sink::EventSink> = Arc::new(sink);
-    state
-        .send_message(
-            sink.clone(),
-            thread.clone(),
-            "/goal colors.txt lists the colors".into(),
-        )
-        .await
-        .unwrap();
-    state
-        .enqueue_message(
-            sink.clone(),
-            thread.clone(),
-            "Also add yellow.".into(),
-            None,
-            vec![],
-        )
-        .await
-        .unwrap();
-    gate.open();
-    goal_until(&state, &thread, |status| status == GoalStatus::Reached).await;
-    settle(&state, &thread).await;
-    assert_eq!(checks.load(Ordering::SeqCst), 1);
-    let bodies = distinct(
-        server
-            .received_requests()
-            .await
-            .unwrap()
-            .iter()
-            .map(body)
-            .collect(),
-    );
-    let turns: Vec<&Value> = bodies.iter().filter(|body| !is_check(body)).collect();
-    // The message's run finishes the request on its list, then answers.
-    assert_eq!(turns.len(), 3, "no goal turn and no announcement followed");
-    assert!(!turns.iter().any(|body| mentions(body, "[Goal — runtime")));
-    assert_eq!(state.goal_for(&thread).unwrap().turns, 1);
-}
-
-fn calls_tool(name: &str, arguments: Value) -> ResponseTemplate {
-    calls(name, arguments)
 }
 
 fn calls(name: &str, arguments: Value) -> ResponseTemplate {
@@ -1021,24 +622,18 @@ fn calls(name: &str, arguments: Value) -> ResponseTemplate {
 /// Found in a live run: asked to stop the goal, the agent had no way to and said
 /// it had, and the next turn started anyway.
 #[tokio::test(flavor = "multi_thread")]
-async fn asked_to_stop_the_agent_pauses_the_goal_and_no_check_or_turn_follows() {
+async fn asked_to_stop_the_agent_pauses_the_goal_and_no_turn_follows() {
     let server = MockServer::builder().start().await;
     let gate = Gate::default();
     let held = gate.clone();
-    let checks = Arc::new(AtomicUsize::new(0));
-    let seen_checks = Arc::clone(&checks);
     Mock::given(method("POST"))
         .respond_with(move |request: &Request| {
             let body = body(request);
-            if is_check(&body) {
-                seen_checks.fetch_add(1, Ordering::SeqCst);
-                return reply(r#"{"verdict":"not_yet","reason":"Keep going."}"#);
-            }
             let sent = body["messages"].to_string();
-            if sent.contains("pause") && sent.contains("\"status\"") {
+            if called(&body, "update_goal") {
                 reply("The goal is paused.")
             } else if sent.contains("Please stop the goal") {
-                calls("set_goal", json!({"pause": true}))
+                calls("update_goal", json!({"status": "paused"}))
             } else {
                 held.wait();
                 calls("list_dir", json!({"directory_path": "."}))
@@ -1077,125 +672,53 @@ async fn asked_to_stop_the_agent_pauses_the_goal_and_no_check_or_turn_follows() 
     let goal = state.goal_for(&thread).unwrap();
     assert_eq!(goal.status, GoalStatus::Paused);
     assert_eq!(goal.turns, 1);
-    assert_eq!(checks.load(Ordering::SeqCst), 0);
-}
-
-/// The rules a check found survive into the next check and turn, which see them, and the
-/// next turn knows which files the work is in.
-#[tokio::test(flavor = "multi_thread")]
-async fn rules_and_files_carry_from_turn_to_turn() {
-    let server = MockServer::builder().start().await;
-    let checks = Arc::new(AtomicUsize::new(0));
-    let seen_checks = Arc::clone(&checks);
-    let later_check = Arc::new(Mutex::new(String::new()));
-    let seen_later_check = Arc::clone(&later_check);
-    let later_turn = Arc::new(Mutex::new(String::new()));
-    let seen_later_turn = Arc::clone(&later_turn);
-    Mock::given(method("POST"))
-        .respond_with(move |request: &Request| {
-            let body = body(request);
-            let sent = body["messages"].to_string();
-            if is_check(&body) {
-                return if seen_checks.fetch_add(1, Ordering::SeqCst) == 0 {
-                    reply(r#"{"verdict":"not_yet","reason":"The health part isn't shown yet.","next":"Run check_health.py next.","rules":[{"what":"Score is kept in score.txt","how":"0 to 10 after a real click"}]}"#)
-                } else {
-                    *seen_later_check.lock().unwrap() = sent;
-                    reply(r#"{"verdict":"reached","reason":"Both are shown."}"#)
-                };
-            }
-            if mentions(&body, "A separate check found the goal reached") {
-                return reply("Done.");
-            }
-            if sent.contains("Turn 2.") {
-                *seen_later_turn.lock().unwrap() = sent;
-                return reply("Checked health.");
-            }
-            if sent.contains("score.txt") {
-                return reply("Wrote the score.");
-            }
-            calls("write_file", json!({"file_path": "score.txt", "content": "10"}))
-        })
-        .mount(&server)
-        .await;
-    let (state, _data, project, thread) = chat(&server).await;
-    // Changed files are read from Git, as in a real project.
-    let git = std::process::Command::new("git")
-        .args(["init", "-q"])
-        .current_dir(project.path())
-        .status()
-        .unwrap();
-    assert!(git.success());
-    state
-        .set_thread_approval_mode(
-            thread.clone(),
-            themis_core::configuration::ApprovalMode::Yolo,
-        )
-        .await
-        .unwrap();
-    let (sink, mut rx) = ChannelSink::channel();
-    let sink = Arc::new(sink);
-    state
-        .send_message(sink.clone(), thread.clone(), "/goal finish the game".into())
-        .await
-        .unwrap();
-    goal_until(&state, &thread, |status| status == GoalStatus::Reached).await;
-    let goal = state.goal_for(&thread).unwrap();
-    assert_eq!(
-        goal.rules.len(),
-        1,
-        "a rule the check left out stays: {goal:?}"
-    );
-    assert_eq!(goal.files, vec!["score.txt".to_owned()], "{goal:?}");
-    let turn = later_turn.lock().unwrap().clone();
-    assert!(turn.contains("- Score is kept in score.txt"), "{turn}");
-    assert!(turn.contains("score.txt"), "{turn}");
-    assert!(turn.contains("Run check_health.py next."), "{turn}");
-    let check = later_check.lock().unwrap().clone();
-    assert!(
-        check.contains("- [kept so far] Score is kept in score.txt (0 to 10 after a real click)"),
-        "{check}"
-    );
-    let mut seen = Vec::new();
-    until(
-        &mut rx,
-        &mut seen,
-        |event| matches!(event, ThreadEvent::Finished { result, .. } if result == "Done."),
+    let goal_turns = distinct(
+        server
+            .received_requests()
+            .await
+            .unwrap()
+            .iter()
+            .map(body)
+            .collect(),
     )
-    .await;
-    let notes: Vec<_> = seen
-        .iter()
-        .filter_map(|event| match event {
-            ThreadEvent::GoalNote { reason, .. } => Some(reason.clone()),
-            _ => None,
-        })
-        .collect();
-    assert!(
-        notes
-            .iter()
-            .any(|note| note.contains("health part isn't shown yet")),
-        "{notes:?}"
-    );
-    // The person sees what the agent is told: what's wrong and what to change.
-    assert!(
-        notes
-            .iter()
-            .any(|note| note.ends_with("isn't shown yet.\n\nRun check_health.py next.")),
-        "{notes:?}"
-    );
+    .iter()
+    .filter(|body| mentions(body, "[Goal — runtime"))
+    .count();
+    assert_eq!(goal_turns, 0, "no goal turn followed the pause");
 }
 
-/// When the turn's answer already told the person, no closing turn runs, but the chat still
-/// shows how the check came out.
+/// The goal judges itself: `update_goal` complete with no evidence, or with an entry that
+/// names no proof, is refused with the reason in the tool result; with evidence for each
+/// requirement it ends the goal, the evidence is kept for the card, and no further turn starts.
 #[tokio::test(flavor = "multi_thread")]
-async fn a_goal_reached_without_a_closing_turn_still_says_so_in_the_chat() {
+async fn complete_needs_evidence_and_then_ends_the_goal() {
     let server = MockServer::builder().start().await;
     Mock::given(method("POST"))
         .respond_with(|request: &Request| {
             let body = body(request);
-            if is_check(&body) {
-                return reply(r#"{"verdict":"reached","reason":"Score and health both change with real input.","told_user":true}"#);
+            let tries = body["messages"]
+                .as_array()
+                .map_or(0, |messages| {
+                    messages
+                        .iter()
+                        .filter(|message| message["tool_calls"].to_string().contains("update_goal"))
+                        .count()
+                });
+            match tries {
+                0 => calls("update_goal", json!({"status": "complete"})),
+                1 => calls(
+                    "update_goal",
+                    json!({"status": "complete", "evidence": [{"requirement": "colors.txt lists four colors", "proof": ""}]}),
+                ),
+                2 => calls(
+                    "update_goal",
+                    json!({"status": "complete", "evidence": [
+                        {"requirement": "colors.txt lists four colors", "proof": "wc -l colors.txt: 4"},
+                        {"requirement": "the test passes", "proof": "python3 check.py: PASS"}
+                    ]}),
+                ),
+                _ => reply("Done: colors.txt has four lines and check.py passes."),
             }
-            reply("The game works: score and health change with real input.")
         })
         .mount(&server)
         .await;
@@ -1205,26 +728,209 @@ async fn a_goal_reached_without_a_closing_turn_still_says_so_in_the_chat() {
         .send_message(
             Arc::new(sink),
             thread.clone(),
-            "/goal finish the game".into(),
+            "/goal colors.txt lists four colors".into(),
         )
         .await
         .unwrap();
     goal_until(&state, &thread, |status| status == GoalStatus::Reached).await;
     let mut seen = Vec::new();
     until(&mut rx, &mut seen, |event| {
-        matches!(event, ThreadEvent::GoalNote { reason, .. } if reason.starts_with("Complete."))
+        matches!(event, ThreadEvent::Finished { .. })
     })
     .await;
-    let note = seen
+    settle(&state, &thread).await;
+    let refusals: Vec<&String> = seen
         .iter()
-        .find_map(|event| match event {
-            ThreadEvent::GoalNote { reason, .. } if reason.starts_with("Complete.") => {
-                Some(reason.clone())
-            }
+        .filter_map(|event| match event {
+            ThreadEvent::ToolFinished {
+                tool,
+                ok: false,
+                output,
+                ..
+            } if tool == "update_goal" => Some(output),
             _ => None,
         })
+        .collect();
+    assert_eq!(refusals.len(), 2, "{refusals:?}");
+    assert!(refusals[0].contains("needs `evidence`"), "{}", refusals[0]);
+    assert!(
+        refusals[1].contains("entry 1 needs both"),
+        "{}",
+        refusals[1]
+    );
+    let goal = state.goal_for(&thread).unwrap();
+    assert_eq!(goal.evidence.len(), 2, "{goal:?}");
+    assert_eq!(goal.evidence[1].proof, "python3 check.py: PASS");
+    assert_eq!(goal.turns, 1, "no goal turn after complete");
+    assert!(seen.iter().any(|event| matches!(
+        event,
+        ThreadEvent::GoalNote {
+            outcome: GoalNoteKind::Reached,
+            ..
+        }
+    )));
+    let goal_turns = distinct(
+        server
+            .received_requests()
+            .await
+            .unwrap()
+            .iter()
+            .map(body)
+            .collect(),
+    )
+    .iter()
+    .filter(|body| mentions(body, "[Goal — runtime"))
+    .count();
+    assert_eq!(goal_turns, 0);
+}
+
+/// A message the person queued while the goal turn ran must be read before the goal can be
+/// complete: `update_goal` complete is refused while it waits, and the next goal turn carries it
+/// as an "Also asked" line.
+#[tokio::test(flavor = "multi_thread")]
+async fn complete_waits_for_a_message_the_person_queued_meanwhile() {
+    let server = MockServer::builder().start().await;
+    Mock::given(method("POST"))
+        .respond_with(|request: &Request| {
+            let body = body(request);
+            let evidence = |extra: bool| {
+                let mut entries = vec![
+                    json!({"requirement": "calc.py has add", "proof": "python3 test_calc.py: ok"}),
+                ];
+                if extra {
+                    entries.push(
+                        json!({"requirement": "also sub", "proof": "python3 test_calc.py: ok"}),
+                    );
+                }
+                json!({"status": "complete", "evidence": entries})
+            };
+            if called(&body, "update_goal") && mentions(&body, "Also asked: Also add sub") {
+                return reply("Done: add and sub both pass.");
+            }
+            if mentions(&body, "Also asked: Also add sub") {
+                return calls("update_goal", evidence(true));
+            }
+            if called(&body, "update_goal") {
+                return reply("Reading the new request next.");
+            }
+            // The first goal turn takes a moment, so the person's message lands meanwhile.
+            calls("update_goal", evidence(false)).set_delay(std::time::Duration::from_millis(800))
+        })
+        .mount(&server)
+        .await;
+    let (state, _data, _project, thread) = chat(&server).await;
+    let (sink, mut rx) = ChannelSink::channel();
+    let sink: Arc<dyn themis_desktop::sink::EventSink> = Arc::new(sink);
+    state
+        .send_message(sink.clone(), thread.clone(), "/goal calc.py has add".into())
+        .await
         .unwrap();
-    assert!(note.contains("Score and health both change"), "{note}");
+    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    state
+        .enqueue_message(
+            sink.clone(),
+            thread.clone(),
+            "Also add sub".into(),
+            None,
+            Vec::new(),
+        )
+        .await
+        .unwrap();
+    goal_until(&state, &thread, |status| status == GoalStatus::Reached).await;
+    let mut seen = Vec::new();
+    until(&mut rx, &mut seen, |event| {
+        matches!(event, ThreadEvent::Finished { .. })
+    })
+    .await;
+    settle(&state, &thread).await;
+    let refusals: Vec<&String> = seen
+        .iter()
+        .filter_map(|event| match event {
+            ThreadEvent::ToolFinished {
+                tool,
+                ok: false,
+                output,
+                ..
+            } if tool == "update_goal" => Some(output),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(refusals.len(), 1, "{refusals:?}");
+    assert!(refusals[0].contains("not read yet"), "{}", refusals[0]);
+    let goal = state.goal_for(&thread).unwrap();
+    assert_eq!(
+        goal.evidence.len(),
+        2,
+        "completed only after the new request: {goal:?}"
+    );
+}
+
+/// `update_goal` blocked (after the same blocker held for three goal turns) ends the goal's
+/// turns with the reason shown; resuming it starts again with a fresh blocked count.
+#[tokio::test(flavor = "multi_thread")]
+async fn blocked_ends_the_goal_until_the_person_resumes_it() {
+    let server = MockServer::builder().start().await;
+    Mock::given(method("POST"))
+        .respond_with(|request: &Request| {
+            let body = body(request);
+            let after_tool = body["messages"]
+                .as_array()
+                .and_then(|messages| messages.last())
+                .is_some_and(|message| message["role"] == "tool");
+            if mentions(&body, "Count any blocker afresh") {
+                return if after_tool {
+                    reply("The key arrived; done.")
+                } else {
+                    calls(
+                        "update_goal",
+                        json!({"status": "complete", "evidence": [{"requirement": "a test payment", "proof": "sandbox: payment ok"}]}),
+                    )
+                };
+            }
+            if called(&body, "update_goal") {
+                return reply("I'm blocked: the sandbox needs an API key.");
+            }
+            // Turns 1 and 2 hit the blocker; turn 3 marks the goal blocked.
+            if mentions(&body, "Turn 2.") {
+                calls(
+                    "update_goal",
+                    json!({"status": "blocked", "reason": "The payment sandbox needs an API key only you can create."}),
+                )
+            } else {
+                reply("The payment sandbox refused: no API key.")
+            }
+        })
+        .mount(&server)
+        .await;
+    let (state, _data, _project, thread) = chat(&server).await;
+    let (sink, _rx) = ChannelSink::channel();
+    let sink: Arc<dyn themis_desktop::sink::EventSink> = Arc::new(sink);
+    state
+        .send_message(
+            sink.clone(),
+            thread.clone(),
+            "/goal take a test payment".into(),
+        )
+        .await
+        .unwrap();
+    goal_until(&state, &thread, |status| status == GoalStatus::Blocked).await;
+    settle(&state, &thread).await;
+    let goal = state.goal_for(&thread).unwrap();
+    assert_eq!(goal.turns, 2, "{goal:?}");
+    assert_eq!(
+        goal.reason.as_deref(),
+        Some("The payment sandbox needs an API key only you can create.")
+    );
+    let requests = server.received_requests().await.unwrap().len();
+    tokio::time::sleep(Duration::from_millis(800)).await;
+    assert_eq!(
+        server.received_requests().await.unwrap().len(),
+        requests,
+        "no turn starts while blocked"
+    );
+    state.resume_goal(sink, thread.clone()).await.unwrap();
+    goal_until(&state, &thread, |status| status == GoalStatus::Reached).await;
+    settle(&state, &thread).await;
 }
 
 /// A failed turn waits with a countdown the chat can show, and leaves no note behind that
@@ -1276,145 +982,6 @@ async fn a_failed_turn_counts_down_instead_of_leaving_a_note() {
         .unwrap();
 }
 
-/// Asked in the chat to remove the goal, the agent removes it: no goal is left, and
-/// no check or further turn follows.
-#[tokio::test(flavor = "multi_thread")]
-async fn asked_to_remove_the_goal_the_agent_removes_it() {
-    let server = MockServer::builder().start().await;
-    let gate = Gate::default();
-    let held = gate.clone();
-    let checks = Arc::new(AtomicUsize::new(0));
-    let seen_checks = Arc::clone(&checks);
-    Mock::given(method("POST"))
-        .respond_with(move |request: &Request| {
-            let body = body(request);
-            if is_check(&body) {
-                seen_checks.fetch_add(1, Ordering::SeqCst);
-                return reply(r#"{"verdict":"not_yet","reason":"Keep going."}"#);
-            }
-            let sent = body["messages"].to_string();
-            if sent.contains("removed") && sent.contains("\"status\"") {
-                reply("The goal is removed.")
-            } else if sent.contains("Please remove the goal") {
-                calls("set_goal", json!({"remove": true}))
-            } else {
-                held.wait();
-                calls("list_dir", json!({"directory_path": "."}))
-            }
-        })
-        .mount(&server)
-        .await;
-    let (state, _data, _project, thread) = chat(&server).await;
-    let (sink, _rx) = ChannelSink::channel();
-    let sink = Arc::new(sink);
-    state
-        .send_message(
-            sink.clone(),
-            thread.clone(),
-            "/goal finish the thing".into(),
-        )
-        .await
-        .unwrap();
-    let ask = state
-        .enqueue_message(
-            sink.clone(),
-            thread.clone(),
-            "Please remove the goal".into(),
-            None,
-            vec![],
-        )
-        .await
-        .unwrap();
-    state
-        .steer_queued_message(sink.clone(), thread.clone(), ask.id)
-        .await
-        .unwrap();
-    gate.open();
-    for _ in 0..200 {
-        if state.goal_for(&thread).is_none() {
-            break;
-        }
-        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-    }
-    settle(&state, &thread).await;
-    assert!(state.goal_for(&thread).is_none());
-    assert_eq!(checks.load(Ordering::SeqCst), 0);
-}
-
-/// Every diagnostics line under a chat's app data.
-fn logged(data: &std::path::Path) -> String {
-    let mut text = String::new();
-    for entry in std::fs::read_dir(data.join("logs"))
-        .into_iter()
-        .flatten()
-        .flatten()
-    {
-        text.push_str(&std::fs::read_to_string(entry.path()).unwrap_or_default());
-    }
-    text
-}
-
-/// A script that changed the page can't prove a goal, and that refusal and each to-do update
-/// are logged, as counts and with no text of the list's.
-#[tokio::test(flavor = "multi_thread")]
-async fn a_refused_script_proof_and_todo_updates_are_logged_as_metadata() {
-    let server = MockServer::builder().start().await;
-    Mock::given(method("POST"))
-        .respond_with(|request: &Request| {
-            let body = body(request);
-            if is_check(&body) {
-                return reply(r#"{"verdict":"reached","reason":"Done.","told_user":true}"#);
-            }
-            let tools = body["messages"]
-                .as_array()
-                .map_or(0, |messages| messages.iter().filter(|m| m["role"] == "tool").count());
-            match tools {
-                0 => calls(
-                    "todo_write",
-                    json!({"todos":[{"title":"SECRET-ITEM-TEXT","status":"completed"},{"title":"Another","status":"completed"}]}),
-                ),
-                1 => calls("browser_devtools", json!({"expression": "player.x = 1"})),
-                _ => reply("It is done."),
-            }
-        })
-        .mount(&server)
-        .await;
-    let (state, data, _project, thread) = chat(&server).await;
-    let (sink, _rx) = ChannelSink::channel();
-    state
-        .send_message(
-            Arc::new(sink),
-            thread.clone(),
-            "/goal finish the thing".into(),
-        )
-        .await
-        .unwrap();
-    for _ in 0..400 {
-        let text = logged(data.path());
-        if text.contains("script_proof_refused") && text.contains("\"updated\"") {
-            break;
-        }
-        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-    }
-    let text = logged(data.path());
-    let refused = text
-        .lines()
-        .find(|line| line.contains("script_proof_refused"));
-    assert!(refused.is_some(), "not logged: {text}");
-    let updated = text
-        .lines()
-        .find(|line| line.contains("\"todo\"") && line.contains("\"updated\""))
-        .expect("the to-do update is logged");
-    assert!(updated.contains("\"items\":2"), "{updated}");
-    assert!(updated.contains("\"by\":\"agent\""), "{updated}");
-    assert!(
-        !text.contains("SECRET-ITEM-TEXT"),
-        "item text reached the log"
-    );
-    state.stop_thread(thread.clone()).await.ok();
-    settle(&state, &thread).await;
-}
-
 /// A goal keeps going until it is reached: the agent can't talk itself out of a
 /// hard one by pausing it.
 #[tokio::test(flavor = "multi_thread")]
@@ -1423,16 +990,16 @@ async fn the_agent_cannot_pause_a_goal_nobody_asked_to_stop() {
     Mock::given(method("POST"))
         .respond_with(|request: &Request| {
             let body = body(request);
-            if is_check(&body) {
-                return reply(r#"{"verdict":"reached","reason":"Done.","told_user":true}"#);
-            }
-            let used_tool = body["messages"]
-                .as_array()
-                .is_some_and(|messages| messages.iter().any(|m| m["role"] == "tool"));
-            if used_tool {
+            let sent = body["messages"].to_string();
+            if sent.contains("\"complete\"") {
                 reply("Carrying on, and it's done.")
+            } else if sent.contains("pausing is refused") {
+                calls(
+                    "update_goal",
+                    json!({"status": "complete", "evidence": [{"requirement": "the thing", "proof": "it runs"}]}),
+                )
             } else {
-                calls("set_goal", json!({"pause": true}))
+                calls("update_goal", json!({"status": "paused"}))
             }
         })
         .mount(&server)
@@ -1455,143 +1022,6 @@ async fn the_agent_cannot_pause_a_goal_nobody_asked_to_stop() {
         |event| matches!(event, ThreadEvent::ToolFinished { ok: false, output, .. } if output.contains("pausing is refused")),
     )
     .await;
-    settle(&state, &thread).await;
-}
-
-/// Found in a live run: the agent reworded the goal with `set_goal` and its
-/// elapsed time and turn count started again from zero.
-#[tokio::test(flavor = "multi_thread")]
-async fn rewording_an_open_goal_keeps_its_time_and_turns() {
-    let server = MockServer::builder().start().await;
-    Mock::given(method("POST"))
-        .respond_with(|request: &Request| {
-            let body = body(request);
-            if is_check(&body) {
-                return reply(r#"{"verdict":"reached","reason":"Four lines.","told_user":true}"#);
-            }
-            let used_tool = body["messages"]
-                .as_array()
-                .is_some_and(|messages| messages.iter().any(|m| m["role"] == "tool"));
-            if used_tool {
-                reply("Goal reworded to four lines; the file has them.")
-            } else {
-                std::thread::sleep(Duration::from_millis(600));
-                ResponseTemplate::new(200).set_body_json(json!({"choices":[{"message":{"role":"assistant","content":null,"tool_calls":[{"id":"g","type":"function","function":{"name":"set_goal","arguments":"{\"goal\":\"colors.txt has four lines\"}"}}]},"finish_reason":"tool_calls"}]}))
-            }
-        })
-        .mount(&server)
-        .await;
-    let (state, _data, _project, thread) = chat(&server).await;
-    let (sink, _rx) = ChannelSink::channel();
-    state
-        .send_message(
-            Arc::new(sink),
-            thread.clone(),
-            "/goal colors.txt has three lines".into(),
-        )
-        .await
-        .unwrap();
-    goal_until(&state, &thread, |status| status == GoalStatus::Reached).await;
-    let goal = state.goal_for(&thread).unwrap();
-    assert_eq!(goal.text, "colors.txt has four lines");
-    assert_eq!(goal.turns, 1, "the /goal run stays turn 1");
-    assert!(
-        goal.active_ms >= 550,
-        "time before the rewording is kept: {} ms",
-        goal.active_ms
-    );
-    settle(&state, &thread).await;
-}
-
-/// Found in a live run: the work happened in a queued message's run, the next
-/// goal turn only reported it, and the check (seeing that turn alone) asked the
-/// user. Evidence now spans every run since the previous check, and "waiting
-/// for you" needs a question in the answer.
-#[tokio::test(flavor = "multi_thread")]
-async fn the_check_sees_work_done_since_the_last_check_and_never_waits_without_a_question() {
-    let server = MockServer::builder().start().await;
-    let gate = Gate::default();
-    let held = gate.clone();
-    let checks = Arc::new(AtomicUsize::new(0));
-    let seen_checks = Arc::clone(&checks);
-    Mock::given(method("POST"))
-        .respond_with(move |request: &Request| {
-            let body = body(request);
-            if is_check(&body) {
-                return if seen_checks.fetch_add(1, Ordering::SeqCst) == 0 {
-                    reply(r#"{"verdict":"needs_user","reason":"No fresh evidence this turn."}"#)
-                } else {
-                    reply(r#"{"verdict":"reached","reason":"Listing shown."}"#)
-                };
-            }
-            let tool_done = body["messages"]
-                .as_array()
-                .is_some_and(|messages| messages.iter().any(|m| m["role"] == "tool"));
-            let last_user = body["messages"]
-                .as_array()
-                .and_then(|messages| messages.iter().rev().find(|m| m["role"] == "user"))
-                .and_then(|m| m["content"].as_str())
-                .unwrap_or_default()
-                .to_owned();
-            if last_user.contains("list the folder") && !tool_done {
-                ResponseTemplate::new(200).set_body_json(json!({"choices":[{"message":{"role":"assistant","content":null,"tool_calls":[{"id":"l","type":"function","function":{"name":"list_dir","arguments":"{\"path\":\".\"}"}}]},"finish_reason":"tool_calls"}]}))
-            } else if let Some(finish) = finishes_requests(&body) {
-                finish
-            } else if last_user.contains("list the folder") {
-                reply("Listed the folder.")
-            } else if last_user.contains("/goal") {
-                held.wait();
-                reply("Starting.")
-            } else {
-                reply("Already done earlier.")
-            }
-        })
-        .mount(&server)
-        .await;
-    let (state, _data, _project, thread) = chat(&server).await;
-    state
-        .set_thread_approval_mode(
-            thread.clone(),
-            themis_core::configuration::ApprovalMode::Yolo,
-        )
-        .await
-        .unwrap();
-    let (sink, _rx) = ChannelSink::channel();
-    let sink: Arc<dyn themis_desktop::sink::EventSink> = Arc::new(sink);
-    state
-        .send_message(
-            sink.clone(),
-            thread.clone(),
-            "/goal show the folder listing".into(),
-        )
-        .await
-        .unwrap();
-    state
-        .enqueue_message(
-            sink.clone(),
-            thread.clone(),
-            "list the folder".into(),
-            None,
-            vec![],
-        )
-        .await
-        .unwrap();
-    gate.open();
-    // "Waiting for you" without a question went on as not yet, to the end.
-    goal_until(&state, &thread, |status| status == GoalStatus::Reached).await;
-    assert_eq!(checks.load(Ordering::SeqCst), 2);
-    let first_check = server
-        .received_requests()
-        .await
-        .unwrap()
-        .iter()
-        .map(body)
-        .find(is_check)
-        .unwrap();
-    assert!(
-        mentions(&first_check, "list_dir"),
-        "the queued run's command is evidence for the turn after it"
-    );
     settle(&state, &thread).await;
 }
 
@@ -1706,9 +1136,6 @@ async fn unsendable_queued_messages_are_recorded_and_the_queue_moves_on() {
     settle(&state, &thread).await;
 }
 
-/// Review findings: a `/goal` whose run cannot start still continues (it
-/// retries as a failed turn instead of staying "running" with no turn), and a
-/// goal check that fails does not count as a turn without progress.
 /// A model that keeps refusing pauses the goal instead of retrying for ever, says why in its
 /// status, and adds no note to the chat. Takes the two retry waits (30 s and 60 s, jittered).
 #[tokio::test(flavor = "multi_thread")]
@@ -1760,23 +1187,13 @@ async fn a_goal_pauses_after_its_turns_keep_failing() {
     assert_eq!(goal.failures, 0, "a resume starts counting again");
 }
 
+/// Review findings: a `/goal` whose run cannot start still continues: it retries as a failed
+/// turn instead of staying "running" with no turn.
 #[tokio::test(flavor = "multi_thread")]
-async fn a_goal_whose_turn_cannot_start_retries_and_a_failed_check_is_not_a_stall() {
+async fn a_goal_whose_turn_cannot_start_retries() {
     let server = MockServer::builder().start().await;
-    let checks = Arc::new(AtomicUsize::new(0));
-    let seen_checks = Arc::clone(&checks);
     Mock::given(method("POST"))
-        .respond_with(move |request: &Request| {
-            if is_check(&body(request)) {
-                // The first check fails twice (no decision); the next decides.
-                return if seen_checks.fetch_add(1, Ordering::SeqCst) < 2 {
-                    ResponseTemplate::new(500).set_body_string("checker down")
-                } else {
-                    reply(r#"{"verdict":"reached","reason":"Done."}"#)
-                };
-            }
-            reply("Worked on it.")
-        })
+        .respond_with(move |request: &Request| completes(&body(request), "Worked on it."))
         .mount(&server)
         .await;
     let data = tempfile::tempdir().unwrap();
@@ -1826,25 +1243,6 @@ async fn a_goal_whose_turn_cannot_start_retries_and_a_failed_check_is_not_a_stal
         .resume_goal(sink.clone(), thread.clone())
         .await
         .unwrap();
-    // The next turn carries the failed check's note.
-    let continued = tokio::time::timeout(DEADLINE, async {
-        loop {
-            let requests = server.received_requests().await.unwrap();
-            if requests.iter().map(body).any(|body| {
-                !is_check(&body) && mentions(&body, "Last check: The goal check could not decide")
-            }) {
-                return;
-            }
-            tokio::time::sleep(Duration::from_millis(50)).await;
-        }
-    })
-    .await;
-    assert!(continued.is_ok(), "goal: {:?}", state.goal_for(&thread));
-    assert_eq!(
-        state.goal_for(&thread).unwrap().stalls,
-        0,
-        "a failed check is not a stall"
-    );
     goal_until(&state, &thread, |status| status == GoalStatus::Reached).await;
     settle(&state, &thread).await;
 }
@@ -1926,19 +1324,12 @@ async fn a_chat_wide_error_holds_one_message_and_keeps_the_rest_in_order() {
 #[tokio::test(flavor = "multi_thread")]
 async fn a_goal_with_a_small_context_window_warns_once() {
     let server = MockServer::builder().start().await;
-    let checks = Arc::new(AtomicUsize::new(0));
-    let seen_checks = Arc::clone(&checks);
     Mock::given(method("POST"))
         .respond_with(move |request: &Request| {
-            if is_check(&body(request)) {
-                return if seen_checks.fetch_add(1, Ordering::SeqCst) == 0 {
-                    reply(r#"{"verdict":"not_yet","reason":"One more step.","progress":"step 1"}"#)
-                } else {
-                    reply(r#"{"verdict":"reached","reason":"Done.","progress":"step 2"}"#)
-                };
-            }
-            if mentions(&body(request), "A separate check found the goal reached") {
-                return reply("Both steps are done, so the goal is reached.");
+            let body = body(request);
+            // The /goal run takes the first step; the next goal turn the second, and ends it.
+            if mentions(&body, "[Goal — runtime") {
+                return completes(&body, "Both steps are done, so the goal is reached.");
             }
             reply("Did a step.")
         })
@@ -1980,88 +1371,6 @@ async fn a_goal_with_a_small_context_window_warns_once() {
         ["Context window is small (64,000 tokens); long goals may stall."]
     );
     assert_eq!(state.goal_for(&thread).unwrap().turns, 2);
-    settle(&state, &thread).await;
-}
-
-/// A request steered in while a goal runs is part of the goal: it lands on the to-do list in
-/// the person's words, holds the goal until the agent finishes it, and the goal check is
-/// shown it. A goal turn is not a request.
-#[tokio::test(flavor = "multi_thread")]
-async fn a_request_steered_into_a_goal_reaches_the_goal_check() {
-    let server = MockServer::builder().start().await;
-    let gate = Gate::default();
-    let held = gate.clone();
-    let checks = Arc::new(Mutex::new(Vec::new()));
-    let seen = Arc::clone(&checks);
-    let agent_calls = Arc::new(AtomicUsize::new(0));
-    let calls = Arc::clone(&agent_calls);
-    Mock::given(method("POST"))
-        .respond_with(move |request: &Request| {
-            let body = body(request);
-            if is_check(&body) {
-                seen.lock().unwrap().push(body);
-                return reply(r#"{"verdict":"reached","reason":"The report and the CSV export are done.","progress":"","progressed":true}"#);
-            }
-            if body["messages"].as_array().and_then(|m| m.last()).is_some_and(|m| m["role"] == "tool") {
-                return reply("Report written and exported as CSV.");
-            }
-            if calls.fetch_add(1, Ordering::SeqCst) == 0 {
-                held.wait();
-                reply("Report written.")
-            } else {
-                calls_tool("todo_write", json!({"todos":[{"id":"t1","title":"Export CSV","status":"completed","outcome":"report.csv"}]}))
-            }
-        })
-        .mount(&server)
-        .await;
-    let (state, _data, _project, thread) = chat(&server).await;
-    let (sink, _rx) = ChannelSink::channel();
-    let sink = Arc::new(sink);
-    state
-        .send_message(
-            sink.clone(),
-            thread.clone(),
-            "/goal Write the monthly report.".into(),
-        )
-        .await
-        .unwrap();
-    let steer = state
-        .enqueue_message(
-            sink.clone(),
-            thread.clone(),
-            "Also export CSV.".into(),
-            None,
-            vec![],
-        )
-        .await
-        .unwrap();
-    state
-        .steer_queued_message(sink.clone(), thread.clone(), steer.id)
-        .await
-        .unwrap();
-    gate.open();
-    goal_until(&state, &thread, |status| status == GoalStatus::Reached).await;
-
-    let list = state.todo_for(&thread);
-    assert_eq!(list.items[0].details, "Also export CSV.");
-    assert_eq!(list.items[0].outcome, "report.csv");
-    let checks = distinct(checks.lock().unwrap().clone());
-    // Whether the first check finds the request still open or already done depends on when the
-    // steer lands in the turn (slower machines finish it in the same turn); either way the check
-    // is shown it in the person's words, and an open one held the goal for another check.
-    let input = checks[0]["messages"][1]["content"].as_str().unwrap();
-    let open = input.contains("- t1 [pending; the person asked] Also export CSV.");
-    assert!(
-        open || input.contains("Also export CSV."),
-        "the check sees the request: {input}"
-    );
-    if open {
-        assert!(checks.len() >= 2, "the open request held the first check");
-    }
-    assert!(
-        !input.contains("[Goal"),
-        "a goal turn is not a request: {input}"
-    );
     settle(&state, &thread).await;
 }
 
@@ -2493,25 +1802,14 @@ async fn answering_a_question_leaves_an_approval_waiting() {
 async fn a_message_after_a_goal_is_told_the_goal_is_not_running() {
     let server = MockServer::builder().start().await;
     Mock::given(method("POST"))
-        .respond_with(|request: &Request| {
-            let body = body(request);
-            if is_check(&body) {
-                return reply(r#"{"verdict":"not_yet","reason":"Keep going."}"#);
-            }
-            reply("Hi.")
-        })
+        .respond_with(|_: &Request| reply("Hi."))
         .mount(&server)
         .await;
     let (state, _data, _project, thread) = chat(&server).await;
     let (sink, _rx) = ChannelSink::channel();
     let sink = Arc::new(sink);
     let last_sent = |bodies: Vec<wiremock::Request>| {
-        bodies
-            .iter()
-            .map(body)
-            .rfind(|body| !is_check(body))
-            .unwrap()["messages"]
-            .to_string()
+        bodies.iter().map(body).next_back().unwrap()["messages"].to_string()
     };
     // A chat that never had a goal hears nothing about one.
     state

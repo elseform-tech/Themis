@@ -250,42 +250,4 @@ impl AppState {
         }
         Ok(settings)
     }
-
-    /// One request with no tools on the summary model (`compaction.summary_model`, else the
-    /// chat's), within `compaction.request_timeout_seconds`, recorded as summary usage. Returns
-    /// the reply's text and the provider's token counts.
-    pub(super) async fn summary_model_request(
-        &self,
-        config: &RuntimeConfig,
-        chat_model: &str,
-        (thread_id, run_id): (&str, &str),
-        system: &str,
-        user: &str,
-    ) -> Result<(String, Option<(u32, u32)>), String> {
-        let model = config
-            .compaction
-            .summary_model
-            .clone()
-            .unwrap_or_else(|| chat_model.to_owned());
-        let provider = self
-            .single_provider_config(config, &model, thread_id)
-            .await?;
-        let catalog = self.run_catalog(config, &[model.as_str()]).await;
-        let limit = std::time::Duration::from_secs(config.compaction.request_timeout_seconds);
-        let request = themis_core::providers::with_catalog_limits(
-            &catalog,
-            themis_core::context_metrics::with_usage_recorder(
-                self.usage_recorder(thread_id, run_id),
-                themis_core::context_metrics::with_usage_kind(
-                    themis_core::context_metrics::UsageKind::Summary,
-                    themis_core::providers::ask_once(&provider, system, user),
-                ),
-            ),
-        );
-        match tokio::time::timeout(limit, request).await {
-            Ok(Ok(answer)) => Ok(answer),
-            Ok(Err(_)) => Err("request_failed".to_owned()),
-            Err(_) => Err("timed_out".to_owned()),
-        }
-    }
 }

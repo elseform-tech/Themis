@@ -202,7 +202,8 @@ fn the_source_lists_are_read() {
     for tool in [
         "read_file",
         "shell",
-        "set_goal",
+        "create_goal",
+        "update_goal",
         "ask_user",
         "manage_automations",
         "browser_devtools",

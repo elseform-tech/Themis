@@ -9,7 +9,7 @@ afterEach(() => { cleanup(); vi.useRealTimers(); try { window.localStorage?.clea
 
 const goal = (overrides: Partial<Goal> = {}): Goal => ({
   text: "Optimize this app to bring p95 under 200 ms", status: "running", started_at: 0,
-  active_ms: 3_600_000, running_since: 1_000, turns: 3, stalls: 0, failures: 0, ...overrides,
+  active_ms: 3_600_000, running_since: 1_000, turns: 3, failures: 0, ...overrides,
 });
 
 describe("GoalBar", () => {
@@ -59,19 +59,36 @@ describe("GoalBar", () => {
     expect(remove).toHaveBeenCalled();
   });
 
-  it("keeps the goal's rules out of the composer", () => {
-    const rules = [{ what: "No build step" }, { what: "Subagents build the parts", broken: true }];
-    render(<GoalBar goal={goal({ rules })} onEdit={vi.fn()} onPause={vi.fn()} onResume={vi.fn()} onRemove={vi.fn()} />);
-    fireEvent.click(screen.getByRole("button", { name: "Optimize this app to bring p95 under 200 ms" }));
-    expect(screen.queryByText("Subagents build the parts")).not.toBeInTheDocument();
-    expect(screen.queryByText(/Not followed/i)).not.toBeInTheDocument();
+  it("shows a complete goal with the evidence for each requirement and nothing to edit or pause", () => {
+    const evidence = [
+      { requirement: "p95 under 200 ms", proof: "bench.sh: p95 184 ms" },
+      { requirement: "tests pass", proof: "cargo test: 42 passed" },
+    ];
+    render(<GoalBar goal={goal({ status: "reached", running_since: undefined, evidence })} onEdit={vi.fn()} onPause={vi.fn()} onResume={vi.fn()} onRemove={vi.fn()} />);
+    expect(screen.getByText("Complete")).toBeInTheDocument();
+    const list = screen.getByRole("list", { name: "Evidence" });
+    expect(list).toHaveTextContent("p95 under 200 ms bench.sh: p95 184 ms");
+    expect(list).toHaveTextContent("tests pass cargo test: 42 passed");
+    expect(screen.queryByRole("button", { name: "Edit goal" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Pause goal after this turn" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Resume goal" })).toBeNull();
   });
 
-  it("leaves the composer once the goal is reached", () => {
-    const { container, rerender } = render(<GoalBar goal={goal()} onEdit={vi.fn()} onPause={vi.fn()} onResume={vi.fn()} onRemove={vi.fn()} />);
-    expect(screen.getByRole("region", { name: "Goal" })).toBeInTheDocument();
-    rerender(<GoalBar goal={goal({ status: "reached", running_since: undefined })} onEdit={vi.fn()} onPause={vi.fn()} onResume={vi.fn()} onRemove={vi.fn()} />);
-    expect(container).toBeEmptyDOMElement();
+  it("lists what the person also asked, word for word, when the goal is opened", () => {
+    const also_asked = ["also add a license line\n  (MIT)", "and a build badge"];
+    render(<GoalBar goal={goal({ also_asked })} onEdit={vi.fn()} onPause={vi.fn()} onResume={vi.fn()} onRemove={vi.fn()} />);
+    expect(screen.queryByRole("list", { name: "Also asked" })).toBeNull();
+    expect(screen.getByText(/\+2 asked/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /Optimize this app/ }));
+    const items = screen.getAllByRole("listitem").map(item => item.textContent);
+    expect(items).toEqual(["Also asked: also add a license line\n  (MIT)", "Also asked: and a build badge"]);
+  });
+
+  it("says a blocked goal is blocked and why, and offers resume", () => {
+    render(<GoalBar goal={goal({ status: "blocked", running_since: undefined, reason: "No API key for the payment sandbox." })} onEdit={vi.fn()} onPause={vi.fn()} onResume={vi.fn()} onRemove={vi.fn()} />);
+    expect(screen.getByText("Blocked · No API key for the payment sandbox.")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Resume goal" })).toBeInTheDocument();
+    expect(screen.queryByRole("list", { name: "Evidence" })).toBeNull();
   });
 
   it("opens the sentence in full on a click, and edits it in place", async () => {

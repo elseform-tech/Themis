@@ -1,1 +1,0 @@
-The last {{turns}} turns did not move the work closer to the goal. Do not repeat them: step back, find what is actually blocking the goal, and try a different approach.

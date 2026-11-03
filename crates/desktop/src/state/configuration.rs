@@ -555,16 +555,10 @@ pub const RUNTIME_CONFIG_PRESETS: [(&str, &[(&str, &str)]); 6] = [
     ),
     (
         "Models",
-        &[
-            (
-                "Check goal turns with a cheaper model",
-                r#""goal": { "check_model": "glm-5.3" },"#,
-            ),
-            (
-                "Write checkpoint summaries with another model",
-                r#""compaction": { "summary_model": "glm-5.3" },"#,
-            ),
-        ],
+        &[(
+            "Write checkpoint summaries with another model",
+            r#""compaction": { "summary_model": "glm-5.3" },"#,
+        )],
     ),
     (
         "Logs",

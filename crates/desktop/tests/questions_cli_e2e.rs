@@ -13,9 +13,7 @@ use themis_desktop::{server::Server, state::AppState, types::ProviderKind};
 use wiremock::matchers::method;
 use wiremock::{Mock, MockServer, Request, ResponseTemplate};
 
-const CHECK_MARKER: &str = "You decide whether an agent has reached a goal";
 const ANSWER_MARKER: &str = "[Answer to your question — from the user]";
-const REACHED_TURN: &str = "A separate check found the goal reached";
 const OPEN_QUESTIONS: &str = "Open questions you asked the user";
 const DEADLINE: Duration = Duration::from_secs(60);
 
@@ -77,13 +75,6 @@ fn tools(calls: &[(&str, &str, Value)]) -> ResponseTemplate {
 
 fn messages(body: &Value) -> &[Value] {
     body["messages"].as_array().map_or(&[], Vec::as_slice)
-}
-
-fn is_check(body: &Value) -> bool {
-    messages(body)
-        .first()
-        .and_then(|m| m["content"].as_str())
-        .is_some_and(|text| text.contains(CHECK_MARKER))
 }
 
 /// The last user message, and how many tool results came after it.
@@ -331,18 +322,20 @@ async fn a_question_keeps_the_run_going_and_its_answer_arrives_during_or_after_i
 #[tokio::test(flavor = "multi_thread")]
 async fn a_blocking_question_ends_the_run_and_the_goal_waits_for_that_answer_only() {
     let app = app(|body| {
-        if is_check(body) {
-            return reply(r#"{"verdict":"reached","reason":"The key is configured.","progress":"configured"}"#);
-        }
         let (text, results) = last_user(body);
-        if text.contains(REACHED_TURN) {
-            return reply("I've reached the goal; I assumed MIT for the license.");
-        }
         if text.starts_with(ANSWER_MARKER) {
             return reply("Noted your answer.");
         }
         if text.contains("[Goal — runtime, not from the user] Turn") {
-            return reply("Configured the key.");
+            return if results == 0 {
+                tools(&[(
+                    "done",
+                    "update_goal",
+                    json!({"status": "complete", "evidence": [{"requirement": "the API key is configured", "proof": ".env sets THEMIS_KEY"}]}),
+                )])
+            } else {
+                reply("I've reached the goal; I assumed MIT for the license.")
+            };
         }
         if results == 0 {
             return tools(&[
@@ -399,7 +392,7 @@ async fn a_blocking_question_ends_the_run_and_the_goal_waits_for_that_answer_onl
     .unwrap();
     assert!(history.contains("I need your answer to the question above before I can go on."));
     assert!(!history.contains("THIS RUN SHOULD HAVE ENDED"));
-    // The goal turn and the reached turn both list the question still open.
+    // The goal turn lists the question still open.
     let goal_turn = all
         .iter()
         .find(|body| {
@@ -417,13 +410,6 @@ async fn a_blocking_question_ends_the_run_and_the_goal_waits_for_that_answer_onl
         !turn_text.contains("Dark mode by default?"),
         "answered questions are not listed"
     );
-    let reached = all
-        .iter()
-        .find(|body| last_user(body).0.contains(REACHED_TURN))
-        .expect("reached turn");
-    assert!(last_user(reached)
-        .0
-        .contains("Which license? (assuming: MIT)"));
     app.serving.abort();
 }
 

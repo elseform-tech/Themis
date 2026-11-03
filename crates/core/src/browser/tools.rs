@@ -43,9 +43,6 @@ pub enum ScreenshotsToModel {
     /// Nothing: the text result only (`browser.screenshots_to_model` is off).
     #[default]
     Off,
-    /// A model copy is kept for the goal check, whose model may read images; the run's
-    /// model reads text only and gets the text result, as with `Off`.
-    Kept,
     /// The run's model reads images: it gets the model copy after the tool result.
     Seen,
 }
@@ -1176,17 +1173,12 @@ mod tests {
         };
         let (text, text_schema) = description(ScreenshotsToModel::Off);
         assert!(text.contains("You cannot see it yourself"), "{text}");
-        assert_eq!(description(ScreenshotsToModel::Kept).0, text);
         let (seeing, seeing_schema) = description(ScreenshotsToModel::Seen);
         assert_eq!(seeing, crate::prompts::TOOL_SCREENSHOT_SEEING_DESCRIPTION);
         assert!(!seeing.contains("cannot see"));
         assert_eq!(seeing_schema, text_schema);
         assert_eq!(
             screenshot_note(ScreenshotsToModel::Off, false),
-            crate::prompts::TOOL_SCREENSHOT_NOTE
-        );
-        assert_eq!(
-            screenshot_note(ScreenshotsToModel::Kept, true),
             crate::prompts::TOOL_SCREENSHOT_NOTE
         );
         assert_eq!(

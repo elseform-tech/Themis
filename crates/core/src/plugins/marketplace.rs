@@ -718,7 +718,7 @@ impl PluginStore {
         name: &str,
         allow_partial: bool,
     ) -> anyhow::Result<Plugin> {
-        let _scan_lock = self.scan_lock(marketplace)?;
+        let _scan_lock = self.scan_lock_waiting(marketplace).await?;
         let refresh = self
             .registry(scope)?
             .current
@@ -785,7 +785,7 @@ impl PluginStore {
     }
     /// Read supported package contents without registering or enabling any capability.
     pub async fn preview(&self, marketplace: &str, name: &str) -> anyhow::Result<PluginSpec> {
-        let _lock = self.scan_lock(marketplace)?;
+        let _lock = self.scan_lock_waiting(marketplace).await?;
         self.marketplace_spec(marketplace, name, false, false, None)
             .await
     }
@@ -794,7 +794,7 @@ impl PluginStore {
         marketplace: &str,
         name: &str,
     ) -> anyhow::Result<ImportPreview> {
-        let _lock = self.scan_lock(marketplace)?;
+        let _lock = self.scan_lock_waiting(marketplace).await?;
         self.inspect_for_scan(marketplace, name).await
     }
     pub(super) async fn inspect_for_scan(
@@ -3200,8 +3200,6 @@ fn import_hooks(value: &Value, root: &Path, spec: &mut PluginSpec) -> anyhow::Re
             "PostToolBatch" => "PostToolBatch",
             "PostCompact" => "PostCompact",
             "Notification" => "Notification",
-            "TaskCreated" => "TaskCreated",
-            "TaskCompleted" => "TaskCompleted",
             "ConfigChange" => "ConfigChange",
             "InstructionsLoaded" => "InstructionsLoaded",
             // Fires only when the run failed; `Stop` also runs then, as RunEnd always does.
@@ -3237,7 +3235,7 @@ fn import_hooks(value: &Value, root: &Path, spec: &mut PluginSpec) -> anyhow::Re
             "Notification" => Some(&[
                 "permission_prompt",
                 "goal_reached",
-                "goal_stuck",
+                "goal_blocked",
                 "goal_waiting",
                 "goal_quota",
             ]),
@@ -3246,10 +3244,7 @@ fn import_hooks(value: &Value, root: &Path, spec: &mut PluginSpec) -> anyhow::Re
             "UserPromptExpansion" => Some(&[]),
             _ => None,
         };
-        let matcher_ignored = matches!(
-            event.as_str(),
-            "PostToolBatch" | "TaskCreated" | "TaskCompleted"
-        );
+        let matcher_ignored = event == "PostToolBatch";
         for group in groups.as_array().context("Invalid hook groups")? {
             for raw in group["hooks"].as_array().context("Invalid hook list")? {
                 // A `prompt` hook asks the chat's model; only where Claude has them and their answer
@@ -3264,8 +3259,6 @@ fn import_hooks(value: &Value, root: &Path, spec: &mut PluginSpec) -> anyhow::Re
                             | "UserPromptExpansion"
                             | "Stop"
                             | "PostToolBatch"
-                            | "TaskCreated"
-                            | "TaskCompleted"
                     ))
                 .then(|| raw["prompt"].as_str())
                 .flatten()

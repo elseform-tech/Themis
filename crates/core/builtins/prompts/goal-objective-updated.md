@@ -1,0 +1,1 @@
+The user edited the goal. The objective below replaces the old one: aim this turn at it, and stop any work that only served the old objective.

@@ -1138,10 +1138,9 @@ async fn dispatch_command(
                 .await?
         ),
         "get_goal" => output!(state.get_goal(arg(&args, "threadId")?).await?),
-        "get_todo" => output!(state.get_todo(arg(&args, "threadId")?).await?),
-        "set_goal" => output!(
+        "create_goal" => output!(
             state
-                .set_goal(sink, arg(&args, "threadId")?, arg(&args, "text")?)
+                .create_goal(sink, arg(&args, "threadId")?, arg(&args, "text")?)
                 .await?
         ),
         "edit_goal" => output!(

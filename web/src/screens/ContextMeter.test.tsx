@@ -48,6 +48,15 @@ describe("ContextMeter", () => {
     expect(panel).toHaveTextContent("System & instructions6.2k");
     expect(screen.getByRole("img")).toHaveAccessibleName(expect.stringContaining("Memory 2.2k"));
   });
+
+  it("shows the goal's note as its own part only while a goal run carries one", () => {
+    const { rerender } = render(<ContextMeter budget={budget} />);
+    fireEvent.click(screen.getByRole("button", { name: "Context 84% full" }));
+    expect(screen.getByRole("dialog", { name: "Context" })).not.toHaveTextContent("Goal");
+    rerender(<ContextMeter budget={{ ...budget, breakdown: { ...budget.breakdown, conversation: 38100, goal: 400 } }} />);
+    expect(screen.getByRole("dialog", { name: "Context" })).toHaveTextContent("Goal400");
+    expect(screen.getByRole("img")).toHaveAccessibleName(expect.stringContaining("Goal 400"));
+  });
   it("adds this chat's recorded tokens when the panel opens, and nothing before any", async () => {
     const usage = { requests: 54, unreported_requests: 0, input_tokens: 1_250_000, cached_input_tokens: 900_000, output_tokens: 40_200, reasoning_tokens: 0, unpriced_requests: 0 };
     vi.mocked(bridge.getChatUsage).mockResolvedValueOnce(usage).mockResolvedValueOnce({ ...usage, requests: 0 });

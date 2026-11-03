@@ -171,7 +171,6 @@ the rest), the page script looks at the first 5,000 elements and text nodes and 
 leave the page (a field is named by its label and marked `(filled)`), URLs lose their query
 and fragment, and token-like words are hidden unless Show secrets is on. Colours over
 background images and gradients, and text with a shadow or outline, are not judged.
-The goal check sees the result like any other tool output.
 
 **In Workspace.** The Browser tab streams the chat's current tab at the screen's pixel
 density: the page is drawn at the screen's device pixel ratio (1 to 3) and each JPEG frame
@@ -263,11 +262,9 @@ text result, so a long run never resends every picture. The copies live in memor
 (the latest eight), never in transcripts, checkpoints or summaries; the PNG saved for
 the person is unchanged.
 
-The goal check gets the turn's latest two screenshots the same way when its model
-(`goal.check_model`, else the chat's) reads images. A model that reads text only, or
-the switch turned off, keeps the text result and description it always had; a request
+A model that reads text only, or the switch turned off, keeps the text result and description it always had; a request
 holding an image is refused for a model that cannot read it. Diagnostics record
-`vision`/`images_sent` and `goal`/`check_images_sent` with the model, image count and
+`vision`/`images_sent` with the model, image count and
 bytes, never the image.
 
 ## Permissions (Settings › Browser)

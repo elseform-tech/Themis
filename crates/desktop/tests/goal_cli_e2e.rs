@@ -15,8 +15,6 @@ use themis_desktop::{
 use wiremock::matchers::method;
 use wiremock::{Mock, MockServer, Request, ResponseTemplate};
 
-const CHECK_MARKER: &str = "You decide whether an agent has reached a goal";
-
 fn call(data: &Path, command: &str, args: Value) -> Value {
     let output = std::process::Command::new(env!("CARGO_BIN_EXE_themis"))
         .arg("--data-dir")
@@ -85,7 +83,7 @@ async fn settle(state: &AppState, thread_id: &str) {
     {
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
-    // A goal check that started before the pause finishes against this server.
+    // A request that started before the pause finishes against this server.
     tokio::time::sleep(Duration::from_millis(300)).await;
 }
 
@@ -95,47 +93,45 @@ fn reply(text: &str) -> ResponseTemplate {
     }))
 }
 
-/// The agent's turn when the to-do note it opened with lists requests of the person's still
-/// open: it finishes them all with `todo_write`, as a real agent finishing the work would.
-fn finishes_requests(request: &Request) -> Option<ResponseTemplate> {
-    let body: Value = request.body_json().ok()?;
-    let messages = body["messages"].as_array()?;
-    if messages.last()?["role"] == "tool" {
-        return None;
-    }
-    let note = messages
-        .iter()
-        .rev()
-        .find(|message| message["role"] == "user")?["content"]
-        .as_str()?;
-    let open: Vec<Value> = note
-        .lines()
-        // A request whose turn this is reads as in progress.
-        .filter(|line| {
-            line.starts_with("- t")
-                && (line.contains("[pending; the person asked]")
-                    || line.contains("[in progress; the person asked]"))
-        })
-        .filter_map(|line| line[2..].split(' ').next())
-        .map(|id| json!({"id": id, "title": "Done as asked", "status": "completed"}))
-        .collect();
-    (!open.is_empty()).then(|| {
-        ResponseTemplate::new(200).set_body_json(json!({"choices":[{"message":{"role":"assistant","content":null,
-            "tool_calls":[{"id":"todo","type":"function","function":{"name":"todo_write","arguments":json!({"todos": open}).to_string()}}]},
-            "finish_reason":"tool_calls"}]}))
+/// Whether the request offers the tool `name`.
+fn offers(body: &Value, name: &str) -> bool {
+    body["tools"].as_array().is_some_and(|tools| {
+        tools
+            .iter()
+            .any(|tool| tool["function"]["name"] == name || tool["name"] == name)
     })
 }
 
-fn is_check(request: &Request) -> bool {
-    request
-        .body_json::<Value>()
-        .ok()
-        .and_then(|body| {
-            body["messages"][0]["content"]
-                .as_str()
-                .map(|text| text.contains(CHECK_MARKER))
-        })
-        .unwrap_or(false)
+/// Whether the conversation already called the tool `name`.
+fn called(body: &Value, name: &str) -> bool {
+    body["messages"].as_array().is_some_and(|messages| {
+        messages
+            .iter()
+            .any(|message| message["tool_calls"].to_string().contains(name))
+    })
+}
+
+fn calls(name: &str, arguments: Value) -> ResponseTemplate {
+    ResponseTemplate::new(200).set_body_json(json!({"choices":[{"message":{"role":"assistant","content":null,
+        "tool_calls":[{"id":"call_1","type":"function","function":{"name":name,"arguments":arguments.to_string()}}]},
+        "finish_reason":"tool_calls"}]}))
+}
+
+/// The agent's step once its work is done: it marks the goal complete with evidence for each
+/// requirement, then answers with `answer`.
+fn completes(body: &Value, answer: &str) -> ResponseTemplate {
+    if offers(body, "update_goal") && !called(body, "update_goal") {
+        calls(
+            "update_goal",
+            json!({"status": "complete", "evidence": [{"requirement": "the README has a title", "proof": "head -1 README.md: # Ledgerly"}]}),
+        )
+    } else {
+        reply(answer)
+    }
+}
+
+fn body(request: &Request) -> Value {
+    request.body_json().unwrap_or(Value::Null)
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -145,12 +141,12 @@ async fn cli_starts_a_goal_queues_a_message_and_reads_the_goal_back() {
     let held = gate.clone();
     Mock::given(method("POST"))
         .respond_with(move |request: &Request| {
-            if is_check(request) {
-                reply(r#"{"verdict":"reached","reason":"The README has a title.","progress":"title present"}"#)
-            } else if let Some(finish) = finishes_requests(request) {
-                finish
+            held.wait();
+            let body = body(request);
+            // The queued message's run finishes the work; the goal ends there.
+            if body.to_string().contains("also add a license line") {
+                completes(&body, "Added a title and a license line.")
             } else {
-                held.wait();
                 reply("Added a title.")
             }
         })
@@ -200,7 +196,10 @@ async fn cli_starts_a_goal_queues_a_message_and_reads_the_goal_back() {
             let goal = call(&data_dir, "get_goal", json!({"threadId": thread_id}));
             let queue = call(&data_dir, "list_queue", json!({"threadId": thread_id}));
             if goal["status"] == "reached" && queue.as_array().is_some_and(Vec::is_empty) {
-                assert_eq!(goal["reason"], "The README has a title.");
+                assert_eq!(
+                    goal["evidence"][0]["proof"], "head -1 README.md: # Ledgerly",
+                    "{goal}"
+                );
                 break;
             }
             assert!(
@@ -235,11 +234,7 @@ async fn cli_starts_a_goal_queues_a_message_and_reads_the_goal_back() {
     .unwrap();
     // The queued message ran after the goal turn, before the goal continued.
     let requests = llm.received_requests().await.unwrap();
-    let turns: Vec<Value> = requests
-        .iter()
-        .filter(|request| !is_check(request))
-        .map(|request| request.body_json().unwrap())
-        .collect();
+    let turns: Vec<Value> = requests.iter().map(body).collect();
     assert!(turns
         .iter()
         .any(|body| body.to_string().contains("also add a license line")));
@@ -345,323 +340,416 @@ async fn a_model_switch_mid_run_applies_next_turn_without_foreign_reasoning() {
     settle(&state, &thread.id).await;
 }
 
-/// `goal.check_model` (here from the project's config) sends the goal check to that
-/// model; the turns stay on the chat's model.
-#[tokio::test(flavor = "multi_thread")]
-async fn the_goal_check_uses_goal_check_model_and_turns_use_the_chats_model() {
-    let llm = MockServer::builder().start().await;
-    Mock::given(method("POST"))
-        .respond_with(|request: &Request| {
-            if is_check(request) {
-                reply(r#"{"verdict":"reached","reason":"Done.","progress":"done"}"#)
-            } else {
-                reply("Did it.")
-            }
-        })
-        .mount(&llm)
-        .await;
-    let data = tempfile::tempdir().unwrap();
-    let project = tempfile::tempdir().unwrap();
-    std::fs::create_dir_all(project.path().join(".themis")).unwrap();
-    std::fs::write(
-        project.path().join(".themis/config.jsonc"),
-        r#"{"goal":{"check_model":"check-model"}}"#,
-    )
-    .unwrap();
-    let state = AppState::new_for_test(data.path().join("settings.json"));
-    state
-        .set_secret("go".into(), "synthetic-test-key".into())
-        .await
-        .unwrap();
-    state.set_go_base_url_override(Some(llm.uri()));
-    let thread = state
-        .create_thread(
-            project.path().to_string_lossy().into(),
-            ProviderKind::Go,
-            Some("test-model".into()),
-        )
-        .await
-        .unwrap();
-    let server = Server::bind(state.clone(), data.path()).await.unwrap();
-    let task = tokio::spawn(server.run());
-    let data_dir = data.path().to_owned();
-    let thread_id = thread.id.clone();
-    tokio::task::spawn_blocking(move || {
-        call(
-            &data_dir,
-            "send_message",
-            json!({"threadId": thread_id, "text": "/goal do the thing"}),
-        );
-        let deadline = std::time::Instant::now() + Duration::from_secs(60);
-        while call(&data_dir, "get_goal", json!({"threadId": thread_id}))["status"] != "reached" {
-            assert!(std::time::Instant::now() < deadline, "goal never reached");
-            std::thread::sleep(Duration::from_millis(200));
-        }
-    })
-    .await
-    .unwrap();
-    let requests = llm.received_requests().await.unwrap();
-    let model = |request: &Request| {
-        request.body_json::<Value>().unwrap_or(Value::Null)["model"]
-            .as_str()
-            .unwrap_or_default()
-            .to_owned()
-    };
-    let checks: Vec<String> = requests.iter().filter(|r| is_check(r)).map(model).collect();
-    let turns: Vec<String> = requests
-        .iter()
-        .filter(|r| !is_check(r))
-        .map(model)
-        .collect();
-    assert!(
-        !checks.is_empty() && checks.iter().all(|m| m == "check-model"),
-        "{checks:?}"
-    );
-    assert!(
-        !turns.is_empty() && turns.iter().all(|m| m == "test-model"),
-        "{turns:?}"
-    );
-    settle(&state, &thread.id).await;
-    task.abort();
+/// A CLI call that may fail: its JSON result, or its error text.
+fn try_call(data: &Path, command: &str, args: Value) -> Result<Value, String> {
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_themis"))
+        .arg("--data-dir")
+        .arg(data)
+        .args(["call", command, &args.to_string()])
+        .env_remove("OPENCODE_KEY")
+        .output()
+        .expect("CLI");
+    if output.status.success() {
+        Ok(serde_json::from_slice(&output.stdout).unwrap_or(Value::Null))
+    } else {
+        Err(String::from_utf8_lossy(&output.stderr).into_owned())
+    }
 }
 
-/// The check judges "subagents build the parts" from what they were given and what they said, not
-/// from the main agent's commands alone.
-#[tokio::test(flavor = "multi_thread")]
-async fn the_goal_check_sees_what_subagents_were_given_and_reported() {
-    let llm = MockServer::builder().start().await;
-    Mock::given(method("POST"))
-        .respond_with(|request: &Request| {
-            let body = String::from_utf8_lossy(&request.body).into_owned();
-            if is_check(request) {
-                reply(r#"{"verdict":"reached","reason":"Done.","progress":"done"}"#)
-            } else if body.contains("You are a subagent") {
-                reply("Built the board in notes/board.js.")
-            } else if body.contains("Built the board") {
-                reply("Did it.")
-            } else if body.contains("\"role\":\"tool\"") {
-                reply("Waiting for it.")
-            } else {
-                ResponseTemplate::new(200).set_body_json(json!({"choices": [{"message": {
-                    "role": "assistant", "content": null, "tool_calls": [{"id": "s1", "type": "function",
-                    "function": {"name": "spawn_subagents", "arguments": json!({"subagents": [
-                        {"name": "Builder", "brief": "Build it.", "write_paths": ["notes/"]}
-                    ]}).to_string()}}]}, "finish_reason": "tool_calls"}]}))
-            }
-        })
-        .mount(&llm)
-        .await;
-    let data = tempfile::tempdir().unwrap();
-    let project = tempfile::tempdir().unwrap();
-    let state = AppState::new_for_test(data.path().join("settings.json"));
-    state
-        .set_secret("go".into(), "synthetic-test-key".into())
-        .await
-        .unwrap();
-    state.set_go_base_url_override(Some(llm.uri()));
-    let thread = state
-        .create_thread(
-            project.path().to_string_lossy().into(),
-            ProviderKind::Go,
-            Some("test-model".into()),
-        )
-        .await
-        .unwrap();
-    let server = Server::bind(state.clone(), data.path()).await.unwrap();
-    let task = tokio::spawn(server.run());
-    let data_dir = data.path().to_owned();
-    let thread_id = thread.id.clone();
-    tokio::task::spawn_blocking(move || {
-        call(
-            &data_dir,
-            "send_message",
-            json!({"threadId": thread_id, "text": "/goal build it"}),
-        );
-        let deadline = std::time::Instant::now() + Duration::from_secs(60);
-        while call(&data_dir, "get_goal", json!({"threadId": thread_id}))["status"] != "reached" {
-            assert!(std::time::Instant::now() < deadline, "goal never reached");
-            std::thread::sleep(Duration::from_millis(200));
-        }
-    })
-    .await
-    .unwrap();
-    let requests = llm.received_requests().await.unwrap();
-    let check = requests.iter().rfind(|r| is_check(r)).expect("a check");
-    let body = String::from_utf8_lossy(&check.body);
-    assert!(
-        body.contains("Builder") && body.contains("notes/"),
-        "{body}"
-    );
-    assert!(
-        body.contains("Built the board in notes/board.js."),
-        "{body}"
-    );
-    settle(&state, &thread.id).await;
-    task.abort();
+/// The text of the last user message a request carries.
+fn last_user(body: &Value) -> String {
+    body["messages"]
+        .as_array()
+        .and_then(|messages| messages.iter().rev().find(|m| m["role"] == "user"))
+        .and_then(|message| message["content"].as_str())
+        .unwrap_or_default()
+        .to_owned()
 }
 
-/// Through the CLI: a request steered in while a goal runs lands on the to-do list in the
-/// person's words (`get_todo` shows it), holds the goal until it is finished, and is shown to
-/// the goal check.
+/// The description of the tool `name` a request offers.
+fn tool_description(body: &Value, name: &str) -> String {
+    body["tools"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .find(|tool| tool["function"]["name"] == name)
+        .and_then(|tool| tool["function"]["description"].as_str())
+        .unwrap_or_default()
+        .to_owned()
+}
+
+/// A chat on the shared server with a scripted model, driven through the CLI.
+struct GoalApp {
+    llm: MockServer,
+    state: AppState,
+    data: tempfile::TempDir,
+    _project: tempfile::TempDir,
+    thread: String,
+    task: tokio::task::JoinHandle<Result<(), String>>,
+}
+
+impl GoalApp {
+    async fn start(respond: impl Fn(&Value) -> ResponseTemplate + Send + Sync + 'static) -> Self {
+        let llm = MockServer::builder().start().await;
+        Mock::given(method("POST"))
+            .respond_with(move |request: &Request| respond(&body(request)))
+            .mount(&llm)
+            .await;
+        let data = tempfile::tempdir().unwrap();
+        let project = tempfile::tempdir().unwrap();
+        let state = AppState::new_for_test(data.path().join("settings.json"));
+        state
+            .set_secret("go".into(), "synthetic-test-key".into())
+            .await
+            .unwrap();
+        state.set_go_base_url_override(Some(llm.uri()));
+        let thread = state
+            .create_thread(
+                project.path().to_string_lossy().into(),
+                ProviderKind::Go,
+                Some("test-model".into()),
+            )
+            .await
+            .unwrap()
+            .id;
+        let server = Server::bind(state.clone(), data.path()).await.unwrap();
+        let task = tokio::spawn(server.run());
+        Self {
+            llm,
+            state,
+            data,
+            _project: project,
+            thread,
+            task,
+        }
+    }
+
+    async fn bodies(&self) -> Vec<Value> {
+        self.llm
+            .received_requests()
+            .await
+            .unwrap()
+            .iter()
+            .map(body)
+            .collect()
+    }
+
+    async fn finish(self) {
+        self.task.abort();
+        settle(&self.state, &self.thread).await;
+    }
+}
+
+/// Polls `get_goal` through the CLI until `done` holds.
+fn goal_until(data: &Path, thread: &str, what: &str, done: impl Fn(&Value) -> bool) -> Value {
+    let deadline = std::time::Instant::now() + Duration::from_secs(60);
+    loop {
+        let goal = call(data, "get_goal", json!({"threadId": thread}));
+        if done(&goal) {
+            return goal;
+        }
+        assert!(std::time::Instant::now() < deadline, "{what}: {goal}");
+        std::thread::sleep(Duration::from_millis(100));
+    }
+}
+
+/// `/goal` creates the goal before any model request (Themis does it, no model decides), and
+/// the run it starts is the goal's first turn: its message carries the continuation note with
+/// the objective as the user's data, `update_goal` is offered, and no to-do tool or separate
+/// check request exists anywhere.
 #[tokio::test(flavor = "multi_thread")]
-async fn cli_a_steer_during_a_goal_is_added_to_it() {
-    let llm = MockServer::builder().start().await;
+async fn cli_goal_command_creates_the_goal_without_a_model_and_carries_the_continuation() {
     let gate = Gate::default();
     let held = gate.clone();
-    Mock::given(method("POST"))
-        .respond_with(move |request: &Request| {
-            if is_check(request) {
-                reply(r#"{"verdict":"reached","reason":"Title and license line are there.","progress":""}"#)
-            } else if let Some(finish) = finishes_requests(request) {
-                finish
-            } else {
-                held.wait();
-                reply("Added a title and a license line.")
-            }
-        })
-        .mount(&llm)
-        .await;
-    let data = tempfile::tempdir().unwrap();
-    let project = tempfile::tempdir().unwrap();
-    let state = AppState::new_for_test(data.path().join("settings.json"));
-    state
-        .set_secret("go".into(), "synthetic-test-key".into())
-        .await
-        .unwrap();
-    state.set_go_base_url_override(Some(llm.uri()));
-    let thread = state
-        .create_thread(
-            project.path().to_string_lossy().into(),
-            ProviderKind::Go,
-            Some("test-model".into()),
-        )
-        .await
-        .unwrap();
-    let server = Server::bind(state.clone(), data.path()).await.unwrap();
-    let task = tokio::spawn(server.run());
-    let data_dir = data.path().to_owned();
-    let thread_id = thread.id.clone();
-    tokio::task::spawn_blocking(move || {
-        call(
-            &data_dir,
-            "send_message",
-            json!({"threadId": thread_id, "text": "/goal give the README a title"}),
-        );
-        let queued = call(
-            &data_dir,
-            "enqueue_message",
-            json!({"threadId": thread_id, "text": "also add a license line"}),
-        );
-        call(
-            &data_dir,
-            "steer_queued_message",
-            json!({"threadId": thread_id, "messageId": queued["id"]}),
-        );
-        let list = call(&data_dir, "get_todo", json!({"threadId": thread_id}));
-        assert_eq!(
-            list["items"][0]["details"], "also add a license line",
-            "{list}"
-        );
-        assert_eq!(list["items"][0]["source"], "person", "{list}");
-        gate.open();
-        let deadline = std::time::Instant::now() + Duration::from_secs(60);
-        while call(&data_dir, "get_goal", json!({"threadId": thread_id}))["status"] != "reached" {
-            assert!(std::time::Instant::now() < deadline, "goal never reached");
-            std::thread::sleep(Duration::from_millis(200));
+    let app = GoalApp::start(move |body| {
+        held.wait();
+        completes(body, "The README has a title.")
+    })
+    .await;
+    let (data, thread) = (app.data.path().to_owned(), app.thread.clone());
+    let requests_before = app.llm.received_requests().await.unwrap().len();
+    tokio::task::spawn_blocking({
+        let (data, thread) = (data.clone(), thread.clone());
+        move || {
+            call(
+                &data,
+                "send_message",
+                json!({"threadId": thread, "text": "/goal give the README a title"}),
+            );
+            // The goal exists while the model has not answered anything yet.
+            let goal = call(&data, "get_goal", json!({"threadId": thread}));
+            assert_eq!(goal["text"], "give the README a title", "{goal}");
+            assert_eq!(goal["status"], "running", "{goal}");
         }
     })
     .await
     .unwrap();
-    let requests = llm.received_requests().await.unwrap();
-    let check = requests
-        .iter()
-        .find(|request| is_check(request))
-        .map(|request| request.body_json::<Value>().unwrap())
-        .unwrap();
-    let input = check["messages"][1]["content"].as_str().unwrap();
+    assert_eq!(requests_before, 0);
+    gate.open();
+    tokio::task::spawn_blocking({
+        let (data, thread) = (data.clone(), thread.clone());
+        move || {
+            goal_until(&data, &thread, "never complete", |goal| {
+                goal["status"] == "reached"
+            })
+        }
+    })
+    .await
+    .unwrap();
+    let bodies = app.bodies().await;
+    let first = &bodies[0];
+    let opening = last_user(first);
     assert!(
-        input.contains("- t1 [pending; the person asked] also add a license line"),
-        "{input}"
+        opening.starts_with("/goal give the README a title"),
+        "{opening}"
     );
-    task.abort();
-    settle(&state, &thread.id).await;
+    assert!(
+        opening.contains("<objective>\ngive the README a title\n</objective>"),
+        "{opening}"
+    );
+    assert!(opening.contains("Keep the whole objective"), "{opening}");
+    assert!(offers(first, "update_goal"));
+    // The context meter counts the goal note it carried as its own part, and the parts still
+    // add up to what was used.
+    let history = tokio::task::spawn_blocking({
+        let (data, thread) = (data.clone(), thread.clone());
+        move || call(&data, "get_thread_history", json!({"threadId": thread}))
+    })
+    .await
+    .unwrap();
+    let budgets: Vec<&Value> = history
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|item| item["envelope"]["event"]["kind"] == "context_budget")
+        .map(|item| &item["envelope"]["event"]["budget"])
+        .collect();
+    assert!(!budgets.is_empty(), "{history}");
+    for budget in &budgets {
+        let breakdown = &budget["breakdown"];
+        assert!(breakdown["goal"].as_u64().unwrap() > 0, "{budget}");
+        let parts: u64 = [
+            "system",
+            "checkpoint",
+            "attachments",
+            "conversation",
+            "tool_activity",
+            "reasoning",
+            "goal",
+        ]
+        .iter()
+        .map(|key| breakdown[key].as_u64().unwrap())
+        .sum();
+        assert_eq!(parts, budget["used_tokens"].as_u64().unwrap(), "{budget}");
+    }
+    for body in &bodies {
+        assert!(!offers(body, "todo_write"), "no to-do tool");
+        assert!(
+            !body
+                .to_string()
+                .contains("You decide whether an agent has reached a goal"),
+            "no separate goal check"
+        );
+    }
+    app.finish().await;
 }
 
-/// A queued message's run that finishes the goal is checked, and an answer
-/// that already says so gets no extra goal turn or announcement.
+/// Asked in plain words, the agent creates the goal with `create_goal`, whose description says
+/// to do so only when the user asks; a second `create_goal` while that goal is unfinished is
+/// refused and says why. Goal turns follow until the agent completes it.
 #[tokio::test(flavor = "multi_thread")]
-async fn cli_a_message_that_finishes_the_goal_is_not_repeated() {
-    let llm = MockServer::builder().start().await;
-    let gate = Gate::default();
-    let held = gate.clone();
-    Mock::given(method("POST"))
-        .respond_with(move |request: &Request| {
-            if is_check(request) {
-                reply(r#"{"verdict":"reached","reason":"The title is there.","told_user":true}"#)
-            } else if let Some(finish) = finishes_requests(request) {
-                finish
-            } else {
-                held.wait();
-                reply("Added the title; the goal is done.")
-            }
-        })
-        .mount(&llm)
-        .await;
-    let data = tempfile::tempdir().unwrap();
-    let project = tempfile::tempdir().unwrap();
-    let state = AppState::new_for_test(data.path().join("settings.json"));
-    state
-        .set_secret("go".into(), "synthetic-test-key".into())
-        .await
-        .unwrap();
-    state.set_go_base_url_override(Some(llm.uri()));
-    let thread = state
-        .create_thread(
-            project.path().to_string_lossy().into(),
-            ProviderKind::Go,
-            Some("test-model".into()),
-        )
-        .await
-        .unwrap();
-    let server = Server::bind(state.clone(), data.path()).await.unwrap();
-    let task = tokio::spawn(server.run());
-    let data_dir = data.path().to_owned();
-    let thread_id = thread.id.clone();
-    tokio::task::spawn_blocking(move || {
-        call(
-            &data_dir,
-            "send_message",
-            json!({"threadId": thread_id, "text": "/goal give the README a title"}),
-        );
-        call(
-            &data_dir,
-            "enqueue_message",
-            json!({"threadId": thread_id, "text": "use the title Ledgerly"}),
-        );
-        gate.open();
-        let deadline = std::time::Instant::now() + Duration::from_secs(60);
-        while call(&data_dir, "get_goal", json!({"threadId": thread_id}))["status"] != "reached" {
-            assert!(std::time::Instant::now() < deadline, "goal never reached");
-            std::thread::sleep(Duration::from_millis(200));
+async fn cli_a_goal_asked_for_in_words_is_created_with_create_goal_once() {
+    let app = GoalApp::start(|body| {
+        let opening = last_user(body);
+        let tries = body["messages"].as_array().map_or(0, |messages| {
+            messages
+                .iter()
+                .filter(|m| m["tool_calls"].to_string().contains("create_goal"))
+                .count()
+        });
+        if opening.contains("set a goal:") {
+            return match tries {
+                0 => calls(
+                    "create_goal",
+                    json!({"objective": "every page has a footer"}),
+                ),
+                1 => calls(
+                    "create_goal",
+                    json!({"objective": "every page has a footer, twice"}),
+                ),
+                _ => reply("The goal is set."),
+            };
         }
+        completes(body, "Every page has a footer.")
+    })
+    .await;
+    let (data, thread) = (app.data.path().to_owned(), app.thread.clone());
+    let goal = tokio::task::spawn_blocking(move || {
+        call(
+            &data,
+            "send_message",
+            json!({"threadId": thread, "text": "Please set a goal: every page has a footer"}),
+        );
+        goal_until(&data, &thread, "never complete", |goal| {
+            goal["status"] == "reached"
+        })
     })
     .await
     .unwrap();
-    settle(&state, &thread.id).await;
-    let requests = llm.received_requests().await.unwrap();
-    let mut agent: Vec<Value> = requests
-        .iter()
-        .filter(|request| !is_check(request))
-        .map(|request| request.body_json::<Value>().unwrap())
-        .collect();
-    agent.dedup();
+    assert_eq!(goal["text"], "every page has a footer", "{goal}");
     assert_eq!(
-        agent.len(),
-        3,
-        "the /goal run and the message's run (which finishes the request on its list), nothing after"
+        goal["turns"], 1,
+        "one goal turn followed the run that created it"
     );
-    assert!(!agent
+    let bodies = app.bodies().await;
+    let description = tool_description(&bodies[0], "create_goal");
+    assert!(
+        description.contains("only when the user explicitly asks")
+            && description.contains("never infer a goal"),
+        "{description}"
+    );
+    assert!(!offers(&bodies[0], "set_goal"));
+    assert!(
+        bodies
+            .iter()
+            .any(|body| body.to_string().contains("already has an unfinished goal")),
+        "the second create_goal was refused with its reason"
+    );
+    app.finish().await;
+}
+
+/// What the person sends while the goal runs, queued or steered in, joins the goal word for
+/// word as an "Also asked" line, with no model involved; the next goal turn's continuation note
+/// carries each line, and the goal shows them.
+#[tokio::test(flavor = "multi_thread")]
+async fn cli_messages_during_a_goal_are_added_to_it_verbatim() {
+    let gate = Gate::default();
+    let held = gate.clone();
+    let app = GoalApp::start(move |body| {
+        let opening = last_user(body);
+        if opening.starts_with("/goal") {
+            held.wait();
+            return reply("Started on the README.");
+        }
+        if opening.contains("Turn 2.") {
+            return completes(body, "Title, license and badge are there.");
+        }
+        reply("Noted.")
+    })
+    .await;
+    let (data, thread) = (app.data.path().to_owned(), app.thread.clone());
+    let steered = "also add a license line\n  (MIT, see `LICENSE`)";
+    let queued = "and a build badge, please";
+    let goal = tokio::task::spawn_blocking({
+        let (data, thread) = (data.clone(), thread.clone());
+        move || {
+            call(
+                &data,
+                "send_message",
+                json!({"threadId": thread, "text": "/goal give the README a title"}),
+            );
+            let message = call(
+                &data,
+                "enqueue_message",
+                json!({"threadId": thread, "text": steered}),
+            );
+            call(
+                &data,
+                "steer_queued_message",
+                json!({"threadId": thread, "messageId": message["id"]}),
+            );
+            call(
+                &data,
+                "enqueue_message",
+                json!({"threadId": thread, "text": queued}),
+            );
+            let goal = call(&data, "get_goal", json!({"threadId": thread}));
+            assert_eq!(goal["also_asked"], json!([steered]), "{goal}");
+            gate.open();
+            goal_until(&data, &thread, "never complete", |goal| {
+                goal["status"] == "reached"
+            })
+        }
+    })
+    .await
+    .unwrap();
+    assert_eq!(goal["also_asked"], json!([steered, queued]), "{goal}");
+    assert_eq!(goal["text"], "give the README a title");
+    let bodies = app.bodies().await;
+    let turn = bodies
         .iter()
-        .any(|body| body.to_string().contains("[Goal — runtime")));
-    task.abort();
+        .find(|body| last_user(body).contains("Turn 2."))
+        .expect("goal turn 2");
+    let note = last_user(turn);
+    assert!(
+        note.contains(&format!(
+            "give the README a title\nAlso asked: {steered}\nAlso asked: {queued}\n</objective>"
+        )),
+        "{note}"
+    );
+    app.finish().await;
+}
+
+/// Editing the goal's text on the card (`edit_goal`) gives the next goal turn the "objective
+/// updated" note before the continuation, once; the turn after that has only the continuation.
+#[tokio::test(flavor = "multi_thread")]
+async fn cli_an_edited_goal_tells_the_next_turn_once() {
+    let gate = Gate::default();
+    let held = gate.clone();
+    let app = GoalApp::start(move |body| {
+        let opening = last_user(body);
+        if opening.starts_with("/goal") {
+            held.wait();
+        }
+        if opening.contains("Turn 3.") {
+            return completes(body, "Done with the new objective.");
+        }
+        reply("Worked on it.")
+    })
+    .await;
+    let (data, thread) = (app.data.path().to_owned(), app.thread.clone());
+    tokio::task::spawn_blocking(move || {
+        call(
+            &data,
+            "send_message",
+            json!({"threadId": thread, "text": "/goal write three colors"}),
+        );
+        call(&data, "pause_goal", json!({"threadId": thread}));
+        let edited = call(
+            &data,
+            "edit_goal",
+            json!({"threadId": thread, "text": "write four colors"}),
+        );
+        assert_eq!(edited["text"], "write four colors");
+        // Editing a goal that isn't there is refused.
+        assert!(try_call(&data, "edit_goal", json!({"threadId": "nope", "text": "x"})).is_err());
+        gate.open();
+        while call(&data, "get_thread", json!({"threadId": thread}))["running"] == true {
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        call(&data, "resume_goal", json!({"threadId": thread}));
+        goal_until(&data, &thread, "never complete", |goal| {
+            goal["status"] == "reached"
+        });
+    })
+    .await
+    .unwrap();
+    let bodies = app.bodies().await;
+    let turn = |number: u32| {
+        bodies
+            .iter()
+            .find(|body| last_user(body).contains(&format!("Turn {number}.")))
+            .map(last_user)
+            .unwrap_or_else(|| panic!("goal turn {number}"))
+    };
+    let second = turn(2);
+    let updated = second
+        .find("The user edited the goal")
+        .expect("update note");
+    let objective = second
+        .find("<objective>\nwrite four colors\n</objective>")
+        .expect("new objective");
+    assert!(updated < objective, "{second}");
+    assert!(!turn(3).contains("The user edited the goal"), "only once");
+    app.finish().await;
 }

@@ -18,11 +18,8 @@ use wiremock::{Mock, MockServer, Request, ResponseTemplate};
 const ITEMS: usize = 14;
 const RULE: &str = "RULE-MARKER-7: every file starts with `owner: heron`.";
 const GOAL: &str = "GOAL-SOAK write out/item-01.md through out/item-14.md, one per turn";
-const CHECK_MARKER: &str = "You decide whether an agent has reached a goal";
 const SUMMARY_MARKER: &str = "You summarize agent context";
 const TURN_MARKER: &str = "[Goal — runtime, not from the user]";
-/// The app's one short turn after the check finds the goal reached.
-const REACHED_TURN: &str = "A separate check found the goal reached";
 const SPEC_MARKER: &str = "[Runtime check, not from the user]";
 const CHECKPOINT: &str = "Goal/constraints: write the item files in order, one per turn. Unresolved work: the remaining item files. Next action: write the next item file.";
 /// Generous: CI runs every test binary at once.
@@ -54,10 +51,6 @@ fn system_has(body: &Value, marker: &str) -> bool {
     body["messages"][0]["content"]
         .as_str()
         .is_some_and(|text| text.contains(marker))
-}
-
-fn is_check(body: &Value) -> bool {
-    system_has(body, CHECK_MARKER)
 }
 
 fn is_summary(body: &Value) -> bool {
@@ -114,18 +107,31 @@ fn respond(
         script.lock().unwrap().summaries += 1;
         return reply(CHECKPOINT);
     }
-    if is_check(body) {
-        let written = script.lock().unwrap().written;
-        return reply(&if written >= ITEMS {
-            json!({"verdict":"reached","reason":format!("All {ITEMS} items written."),"progress":format!("{written} items"),"progressed":true})
-        } else {
-            json!({"verdict":"not_yet","reason":format!("{written} of {ITEMS} items written."),"progress":format!("{written} items"),"progressed":true})
-        }.to_string());
-    }
     let messages = body["messages"].as_array().unwrap();
     let last = messages.last().unwrap();
     let text = last["content"].as_str().unwrap_or_default();
     if last["role"] == "tool" {
+        let completed = messages
+            .iter()
+            .rev()
+            .find(|message| message["role"] == "assistant")
+            .is_some_and(|message| message["tool_calls"].to_string().contains("update_goal"));
+        if completed {
+            return reply("I've reached the goal: every item file is written.");
+        }
+        // The last item written: the agent audits and marks the goal complete.
+        if script.lock().unwrap().written >= ITEMS {
+            let evidence = [
+                json!({"requirement": "out/item-01.md through out/item-14.md", "proof": format!("ls out: {ITEMS} files")}),
+            ];
+            return ResponseTemplate::new(200).set_body_json(json!({"choices":[{"message":{
+                "role":"assistant","content":null,
+                "tool_calls":[{"id":"done","type":"function","function":{
+                    "name":"update_goal",
+                    "arguments":json!({"status":"complete","evidence":evidence}).to_string()
+                }}]
+            },"finish_reason":"tool_calls"}]}));
+        }
         return reply("Wrote the item file.");
     }
     if text.contains(SPEC_MARKER) {
@@ -138,9 +144,6 @@ fn respond(
     }
     if text.contains("RULE-MARKER-7") {
         return reply("Noted the rule.");
-    }
-    if text.contains(REACHED_TURN) {
-        return reply("I've reached the goal: every item file is written.");
     }
     // A goal turn: write the next item.
     let (item, wait) = {
@@ -214,13 +217,13 @@ impl Soak {
 }
 
 fn ordinary(body: &&Value) -> bool {
-    !is_check(body) && !is_summary(body)
+    !is_summary(body)
 }
 
 /// Runs the goal to the end through the app server and the CLI: a first message with a
 /// rule, `/goal`, a pause during the first turn after the second checkpoint (checked to
-/// hold, with the clock stopped), a resume, and `reached` (checked to start no further
-/// turn).
+/// hold, with the clock stopped), a resume, and the agent's `update_goal` complete (checked to
+/// start no further turn).
 async fn soak() -> Soak {
     let started = Instant::now();
     // The system prompt lists the user's skills (~/.agents, ~/.codex, ~/.claude), and at
@@ -346,7 +349,7 @@ async fn soak() -> Soak {
         "{goal}"
     );
     let elapsed = goal["active_ms"].as_u64().unwrap();
-    // The pause holds after the turn: no further turn or check, and the clock stops.
+    // The pause holds after the turn: no further turn, and the clock stops.
     tokio::time::sleep(Duration::from_millis(1500)).await;
     assert_eq!(script.lock().unwrap().written, written_at_pause);
     assert_eq!(
@@ -372,18 +375,8 @@ async fn soak() -> Soak {
         goal["active_ms"].as_u64().unwrap() > elapsed,
         "elapsed time grows again once resumed: {goal}"
     );
-    // The agent's short turn telling the user starts right after the status changes.
+    // The turn that marked it complete ends with its answer, and nothing follows.
     let deadline = Instant::now() + DEADLINE;
-    while !llm
-        .received_requests()
-        .await
-        .unwrap()
-        .iter()
-        .any(|request| String::from_utf8_lossy(&request.body).contains(REACHED_TURN))
-    {
-        assert!(Instant::now() < deadline, "the reached turn never started");
-        tokio::time::sleep(Duration::from_millis(50)).await;
-    }
     while running(&dir, &id) {
         assert!(Instant::now() < deadline);
         tokio::time::sleep(Duration::from_millis(50)).await;
@@ -398,6 +391,7 @@ async fn soak() -> Soak {
     let goal = cli(&dir, "get_goal", json!({"threadId": id}));
     assert_eq!(goal["status"], "reached", "{goal}");
     assert_eq!(goal["turns"], ITEMS, "{goal}");
+    assert_eq!(goal["evidence"].as_array().map(Vec::len), Some(1), "{goal}");
     assert_eq!(script.lock().unwrap().written, ITEMS);
 
     let bodies = llm

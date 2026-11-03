@@ -18,7 +18,6 @@ import type {
   WorkspaceInfo,
   GoModel,
   Goal,
-  TodoList,
   Question,
   QueuedMessage,
   HistoryItem,
@@ -168,10 +167,6 @@ export function getGoal(threadId: string): Promise<Goal | null> {
 }
 
 /** The main agent's to-do list for the chat; no items when it has none. */
-export function getTodo(threadId: string): Promise<TodoList> {
-  return invoke('get_todo', { threadId });
-}
-
 export function editGoal(threadId: string, text: string): Promise<Goal> {
   return invoke('edit_goal', { threadId, text });
 }

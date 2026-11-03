@@ -298,10 +298,6 @@ pub enum ThreadEvent {
     GoalChanged {
         goal: Option<Goal>,
     },
-    /// The chat's to-do list changed. Live only; `run_id` is empty.
-    TodoChanged {
-        todo: themis_core::todo::TodoList,
-    },
     /// What the goal check (or the goal supervisor) concluded after a turn.
     GoalNote {
         outcome: GoalNoteKind,
@@ -441,11 +437,12 @@ pub enum GoalStatus {
     Paused,
     /// Waiting for the user's answer; their reply resumes it.
     Waiting,
-    /// Genuinely stuck (no progress, or unreachable as written).
-    Stuck,
+    /// The agent marked it blocked after the same blocker held for three goal turns; Resume
+    /// continues.
+    Blocked,
     /// The model quota is used up; it retries on its own.
     Quota,
-    /// The goal check found it reached.
+    /// The agent marked it complete, with evidence for each requirement.
     Reached,
 }
 
@@ -454,7 +451,7 @@ pub enum GoalStatus {
 pub struct Goal {
     pub text: String,
     pub status: GoalStatus,
-    /// Why it paused, got stuck or was reached.
+    /// Why it paused or is blocked.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reason: Option<String>,
     /// Unix milliseconds.
@@ -468,29 +465,23 @@ pub struct Goal {
     /// Goal turns started so far.
     #[serde(default)]
     pub turns: u32,
-    /// Consecutive turns without progress.
-    #[serde(default)]
-    pub stalls: u32,
-    /// The last measured progress the check reported.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub progress: Option<String>,
     /// Consecutive failed turns (sets the retry wait).
     #[serde(default)]
     pub failures: u32,
-    /// History position the last decided goal check read through; the next
-    /// check reads only what came after.
+    /// History position when the current goal turn started: what the person wrote after it
+    /// lets the agent pause the goal.
     #[serde(default)]
-    pub checked_seq: i64,
-    /// How the work must be done, as the last decided check saw it. The tasks themselves are
-    /// the agent's to-do list.
+    pub turn_seq: i64,
+    /// What the agent named as proof of each requirement when it marked the goal complete.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub rules: Vec<themis_core::goal::GoalRule>,
-    /// Files changed while working on this goal, so a new turn knows where its work is.
+    pub evidence: Vec<themis_core::goal::Evidence>,
+    /// Each message the person sent while the goal ran, word for word; part of the objective
+    /// every goal run reads, so compaction can't lose it.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub files: Vec<String>,
-    /// The goal check is reading the turn that just ended.
+    pub also_asked: Vec<String>,
+    /// The person edited the text since the last goal run: the next one is told once.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-    pub checking: bool,
+    pub objective_updated: bool,
     /// Unix milliseconds when the next turn is due, while the goal waits to retry.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub retry_at: Option<i64>,
@@ -501,8 +492,9 @@ pub struct Goal {
 #[serde(rename_all = "snake_case")]
 pub enum GoalNoteKind {
     Reached,
+    /// A goal check's "not yet" in chats from before goals judged themselves.
     NotYet,
-    Stuck,
+    Blocked,
     Waiting,
     Quota,
     Failed,

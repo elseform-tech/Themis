@@ -8,7 +8,7 @@ use std::path::Path;
 use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
-pub const EVENTS: [&str; 21] = [
+pub const EVENTS: [&str; 19] = [
     "PromptSubmit",
     "RunStart",
     "BeforeTool",
@@ -26,8 +26,6 @@ pub const EVENTS: [&str; 21] = [
     "PostToolBatch",
     "PostCompact",
     "Notification",
-    "TaskCreated",
-    "TaskCompleted",
     "ConfigChange",
     "InstructionsLoaded",
 ];
@@ -1427,45 +1425,6 @@ pub async fn permission_denied(
     emit_current("PermissionDenied", payload, events).await.ok();
 }
 
-/// A subagent's plan changed: `TaskCreated` for each new item, `TaskCompleted` for each newly done.
-/// A hook that refuses refuses the change, and the subagent hears why. Items are named by their
-/// words, since a plan has no other ids.
-pub async fn plan_changed(
-    before: &[(String, String)],
-    after: &[(String, String)],
-) -> anyhow::Result<()> {
-    let Ok(runtime) = ACTIVE.try_with(Clone::clone) else {
-        return Ok(());
-    };
-    if !runtime.listens("TaskCreated") && !runtime.listens("TaskCompleted") {
-        return Ok(());
-    }
-    // These are the tool's own business: their outcomes show as its result.
-    let (events, _) = tokio::sync::mpsc::channel(1);
-    let name = runtime.agent.as_ref().map(|agent| agent["name"].clone());
-    for (content, status) in after {
-        let payload = json!({"task_id": task_id(content), "task_subject": content,
-            "teammate_name": name});
-        let known = before.iter().find(|(known, _)| known == content);
-        if known.is_none() {
-            runtime
-                .emit("TaskCreated", payload.clone(), &events)
-                .await?;
-        }
-        if status == "completed" && known.is_none_or(|(_, status)| status != "completed") {
-            runtime.emit("TaskCompleted", payload, &events).await?;
-        }
-    }
-    Ok(())
-}
-
-fn task_id(content: &str) -> String {
-    use std::hash::{Hash, Hasher};
-    let mut hash = std::collections::hash_map::DefaultHasher::new();
-    content.hash(&mut hash);
-    format!("task-{:012x}", hash.finish() & 0xffff_ffff_ffff)
-}
-
 /// `text` cut to at most `limit` bytes on a character boundary.
 fn capped(text: &str, limit: usize) -> &str {
     if text.len() <= limit {
@@ -2273,8 +2232,6 @@ impl HookRuntime {
                     | "BeforeCompaction"
                     | "UserPromptExpansion"
                     | "PostToolBatch"
-                    | "TaskCreated"
-                    | "TaskCompleted"
             );
             let abort = hook.failure_policy == Some(HookFailurePolicy::Abort)
                 || (hook.failure_policy.is_none() && hook.blocking);
@@ -2284,7 +2241,7 @@ impl HookRuntime {
                 Err(error) if stoppable => {
                     if let Some(Blocked(reason)) = error.downcast_ref::<Blocked>() {
                         let reason = reason.as_deref();
-                        if matches!(event, "BeforeTool" | "TaskCreated" | "TaskCompleted") {
+                        if event == "BeforeTool" {
                             bail!(blocked_tool_note(&hook.name, reason));
                         }
                         bail!(blocked_message(&hook.name, reason));

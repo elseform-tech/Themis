@@ -15,8 +15,6 @@ use themis_desktop::types::ProviderKind;
 use wiremock::matchers::method;
 use wiremock::{Mock, MockServer, Request, ResponseTemplate};
 
-const CHECK_MARKER: &str = "You decide whether an agent has reached a goal";
-
 fn call(data: &Path, command: &str, args: Value) -> Result<Value, String> {
     let output = std::process::Command::new(env!("CARGO_BIN_EXE_themis"))
         .arg("--data-dir")
@@ -42,13 +40,17 @@ async fn a_reached_goal_notifies_once_and_attempts_log_metadata_only() {
     let llm = MockServer::builder().start().await;
     Mock::given(method("POST"))
         .respond_with(|request: &Request| {
-            let check = request.body_json::<Value>().ok().is_some_and(|body| {
-                body["messages"][0]["content"]
-                    .as_str()
-                    .is_some_and(|text| text.contains(CHECK_MARKER))
+            let body = request.body_json::<Value>().unwrap_or(Value::Null);
+            let offered = body["tools"].to_string().contains("\"update_goal\"");
+            let called = body["messages"].as_array().is_some_and(|messages| {
+                messages
+                    .iter()
+                    .any(|message| message["tool_calls"].to_string().contains("update_goal"))
             });
-            if check {
-                reply(r#"{"verdict":"reached","reason":"The README has a title.","progress":"title present"}"#)
+            if offered && !called {
+                ResponseTemplate::new(200).set_body_json(json!({"choices":[{"message":{"role":"assistant","content":null,
+                    "tool_calls":[{"id":"g","type":"function","function":{"name":"update_goal","arguments":json!({"status":"complete","evidence":[{"requirement":"the README has a title","proof":"head -1 README.md: # Title"}]}).to_string()}}]},
+                    "finish_reason":"tool_calls"}]}))
             } else {
                 reply("Added a title.")
             }

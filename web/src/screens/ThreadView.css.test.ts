@@ -30,5 +30,5 @@ it("shrinks the header's Workspace button before the model name when the chat is
 it("puts the goal sentence on its own line when the chat is too narrow to show it beside the controls", () => {
   const goal = readFileSync(new URL("./GoalBar.css", import.meta.url), "utf8");
   expect(goal).toMatch(/@container themis-composer \(max-width: 380px\)\s*\{\s*\.themis-goal-bar:not\(\.is-editing\)\s*\{[^}]*flex-wrap:\s*wrap/);
-  expect(goal).toMatch(/\.themis-goal-bar:not\(\.is-editing\) \.themis-goal-text\s*\{[^}]*flex-basis:\s*100%/);
+  expect(goal).toMatch(/\.themis-goal-bar:not\(\.is-editing\) \.themis-goal-body\s*\{[^}]*flex-basis:\s*100%/);
 });

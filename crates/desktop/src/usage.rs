@@ -88,7 +88,6 @@ fn kind_name(kind: UsageKind) -> &'static str {
 fn kind_from(name: &str) -> UsageKind {
     match name {
         "summary" => UsageKind::Summary,
-        "goal_check" => UsageKind::GoalCheck,
         "memory" => UsageKind::Memory,
         _ => UsageKind::Answer,
     }
@@ -923,7 +922,7 @@ mod tests {
             UsageRecord {
                 provider: "opencode-go".into(),
                 model: long.clone(),
-                kind: UsageKind::GoalCheck,
+                kind: UsageKind::Summary,
                 input_tokens: Some(7),
                 cached_input_tokens: None,
                 output_tokens: Some(3),
@@ -944,7 +943,7 @@ mod tests {
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].model.len(), MAX_ID_CHARS);
         assert_eq!(rows[0].thread_id.as_ref().unwrap().len(), MAX_ID_CHARS);
-        assert_eq!(rows[0].kind, UsageKind::GoalCheck);
+        assert_eq!(rows[0].kind, UsageKind::Summary);
         assert_eq!(rows[0].output_tokens, Some(3));
     }
 }

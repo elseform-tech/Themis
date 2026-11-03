@@ -84,6 +84,48 @@ fn invalid_plugin_paths_and_missing_references_are_rejected() {
     );
 }
 
+/// A person's install while a background check holds the marketplace waits for the check,
+/// instead of failing with "try again when scanning finishes".
+#[tokio::test]
+async fn an_install_waits_for_a_background_check_instead_of_failing() {
+    let global = tempfile::tempdir().unwrap();
+    let repo = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(repo.path().join(".claude-plugin")).unwrap();
+    std::fs::write(
+        repo.path().join(".claude-plugin/marketplace.json"),
+        r#"{"plugins":[{"name":"notes","source":"./notes"}]}"#,
+    )
+    .unwrap();
+    std::fs::create_dir_all(repo.path().join("notes/skills/jot")).unwrap();
+    std::fs::write(
+        repo.path().join("notes/skills/jot/SKILL.md"),
+        "---\nname: jot\ndescription: Jot\n---\nWrite it down.",
+    )
+    .unwrap();
+    let store = PluginStore::new(global.path().into(), None);
+    store
+        .add_marketplace("fixture", repo.path().to_str().unwrap())
+        .unwrap();
+    // A background check holds the marketplace's lock for a moment.
+    let directory = global.path().join("compatibility-cache/fixture");
+    std::fs::create_dir_all(&directory).unwrap();
+    let lock = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(directory.join("scan.lock"))
+        .unwrap();
+    lock.try_lock().unwrap();
+    let release = tokio::spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_millis(400)).await;
+        drop(lock);
+    });
+    let installed = store.install("global", "fixture", "notes").await.unwrap();
+    assert_eq!(installed.spec.skills[0].instructions, "Write it down.");
+    release.await.unwrap();
+}
+
 #[tokio::test]
 async fn marketplace_import_keeps_resources_and_disables_executable_components() {
     let global = tempfile::tempdir().unwrap();

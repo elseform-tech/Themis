@@ -42,8 +42,8 @@ fn server_exposes_all_frontend_backend_commands() {
             "get_thread_history_page",
             // CLI path to the global runtime.jsonc; the desktop uses open_runtime_config.
             "ensure_runtime_config",
-            // The agent's set_goal tool and the CLI set goals; the desktop sends `/goal`.
-            "set_goal",
+            // The agent's create_goal tool and the CLI create goals; the desktop sends `/goal`.
+            "create_goal",
             // The desktop watches the mcp.json copy and applies saves itself; the CLI applies.
             "apply_mcp_config",
             // The desktop rebuilds questions from the chat's history; the CLI lists them.

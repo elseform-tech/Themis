@@ -553,24 +553,6 @@ impl SubagentKit {
         }
     }
 
-    /// Whether a deny rule someone wrote covers a tool that approves itself, in YOLO too.
-    fn denies(&self, tool: &str) -> bool {
-        let action = ToolAction {
-            display: None,
-            command: Vec::new(),
-            tool: tool.to_owned(),
-            summary: tool.to_owned(),
-            risk: themis_core::tools::RiskLevel::Read,
-        };
-        let policy = &self.config.approval;
-        let decision = if self.mode == ApprovalMode::Yolo {
-            policy.yolo_decision(&action)
-        } else {
-            policy.decision(&action)
-        };
-        decision == themis_core::configuration::PolicyAction::Deny
-    }
-
     /// Metadata only: why, how many and which tools, never a call's contents.
     fn log_left_out(&self, reason: &str, names: &[String]) {
         let listed: Vec<String> = names
@@ -686,7 +668,6 @@ impl SubagentKit {
             inbox: SteerInbox::default(),
             tool_calls: AtomicUsize::new(0),
             progress: Mutex::new(Progress::default()),
-            todo: Mutex::default(),
         });
         self.notes.expect(1);
         self.started
@@ -897,15 +878,6 @@ impl SubagentKit {
         );
         web.retain(|tool| agent.web.tools.iter().any(|wanted| wanted == tool.name()));
         let mut named: Vec<Box<dyn ToolT>> = Vec::new();
-        if names(agent, "todo_write") {
-            named.push(Box::new(super::todo::TodoTool {
-                owner: super::todo::TodoOwner::Subagent {
-                    agent: Arc::clone(agent),
-                    report: self.reporter(),
-                },
-                denied: self.denies("todo_write"),
-            }));
-        }
         if names(agent, "ask_user") {
             named.push(Box::new(super::question_tool::QuestionTool {
                 state: self.state.clone(),
@@ -1574,8 +1546,6 @@ pub(super) struct Subagent {
     pub(super) inbox: SteerInbox,
     pub(super) tool_calls: AtomicUsize,
     progress: Mutex<Progress>,
-    /// Its own to-do list, kept across the turns it is picked up again for.
-    pub(super) todo: Mutex<themis_core::todo::TodoList>,
 }
 
 #[derive(Clone, Default)]
@@ -1608,7 +1578,7 @@ fn names(agent: &Subagent, tool: &str) -> bool {
 
 /// Claude's names for the tools it has, for instructions written for Claude.
 fn claude_names(tools: &[Box<dyn ToolT>]) -> Vec<String> {
-    const NAMES: [(&str, &str); 14] = [
+    const NAMES: [(&str, &str); 13] = [
         ("read_file", "Read"),
         ("search_file", "Grep"),
         ("list_dir", "LS and Glob"),
@@ -1617,7 +1587,6 @@ fn claude_names(tools: &[Box<dyn ToolT>]) -> Vec<String> {
         ("apply_patch", "Edit"),
         ("fetch_url", "WebFetch"),
         ("web_search", "WebSearch"),
-        ("todo_write", "TodoWrite"),
         ("background_task", "BashOutput and KillShell"),
         ("ask_user", "AskUserQuestion"),
         ("create_dir", "mkdir"),

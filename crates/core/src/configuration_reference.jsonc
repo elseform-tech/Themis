@@ -210,11 +210,6 @@
     // "prompt_file": "my-summary-guidance.md", // extra summary guidance, 32 KiB at most
   },
 
-  // ─── GOALS ───────────────────────────────────────────────────────────────────────────
-  "goal": {
-    // "check_model": "glm-5.3"              // checks each goal turn; absent: the chat's model
-    "seed_todo": false                        // a new goal on an empty to-do list gets one item per thing it asks for (one summary-model request)
-  },
   // Plugin hooks. A project file may only lower max_wakes, and can't set prompt_hook_calls.
   "hooks": {
     "max_wakes": 3,                           // turns in a row one reporting back may start in an idle chat (0-10)

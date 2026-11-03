@@ -195,11 +195,9 @@ async fn skilled_run_filters_tools_composes_instructions_and_materializes() {
         tool_names,
         vec![
             "read_file",
-            "set_goal",
+            "create_goal",
             // Asking the user is never a skill's to grant or withhold.
             "ask_user",
-            // Nor is keeping the chat's to-do list.
-            "todo_write",
             // Showing project files under the reply comes with `read_file`.
             "attach_file",
             "Skill",

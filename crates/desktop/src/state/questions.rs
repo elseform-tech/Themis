@@ -464,7 +464,6 @@ impl AppState {
     }
 }
 
-
 /// The options the agent offered, each with its tradeoff, the recommended one marked:
 /// "Spaces (recommended: the usual choice); Tabs". A free-text question has none.
 fn offered_options(question: &Question) -> String {
