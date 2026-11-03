@@ -53,6 +53,10 @@
   animation: themis-gradient-drift 9s ease-in-out infinite alternate;
 }
 @keyframes themis-gradient-drift { from { background-position: 0% 50%; } to { background-position: 100% 50%; } }
+/* The shared spinner turn: running subagents' rings and the task arc. */
+@keyframes themis-thread-spin { to { transform: rotate(1turn); } }
+/* The selected name's slow glint (the companion picker). */
+@keyframes themis-selected-glint { from { background-position: 100% 0; } to { background-position: -100% 0; } }
 
 body {
   background-color: var(--themis-canvas);
