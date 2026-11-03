@@ -29,7 +29,7 @@
 .themis-danger-action { color: var(--themis-danger); }
 
 /* In the chat: one slim line under a reply where the memory models changed memory. */
-.themis-memory-line { display: inline-flex; align-items: flex-start; gap: 8px; align-self: flex-start; max-width: 100%; color: var(--themis-text-3); font-size: .8rem; line-height: 1.4; }
+.themis-memory-line { display: inline-flex; align-items: flex-start; gap: 8px; align-self: flex-start; max-width: 100%; color: var(--themis-text-3); font-size: .8rem; line-height: 1.4; margin-top: 8px; }
 .themis-memory-icon { flex: none; display: inline-flex; width: 14px; height: 14px; margin-top: 1px; opacity: .8; }
 .themis-memory-icon svg { width: 14px; height: 14px; }
 .themis-memory-change { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
