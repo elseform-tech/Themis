@@ -85,7 +85,21 @@ impl AppState {
         }
         // Then the plan records: their index and the one this chat is about, in full.
         let (plans_index, record) = self.plan_record_for(project_root, thread_id, message);
-        let plans = themis_core::memory::plans::run_note(&plans_index, record.as_ref());
+        let mut plans = themis_core::memory::plans::run_note(&plans_index, record.as_ref());
+        // And the project's tasks outside any record: open ones in full, done ones counted.
+        let tasks = self
+            .plan_store(project_root)
+            .map(|store| themis_core::memory::tasks::run_view(&store.tasks().read()))
+            .unwrap_or_default();
+        if !tasks.is_empty() {
+            if !plans.is_empty() {
+                plans.push('\n');
+            }
+            plans.push_str(&themis_core::prompts::fill(
+                themis_core::prompts::SYSTEM_MEMORY_TASKS,
+                &[("tasks", tasks.trim_end())],
+            ));
+        }
         let Ok(global) = self.memory_store(MemoryScope::Global, None) else {
             return String::new();
         };

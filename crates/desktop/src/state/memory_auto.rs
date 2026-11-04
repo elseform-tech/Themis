@@ -173,6 +173,10 @@ struct Answered {
     counts: pass::PassCounts,
     /// The plan record op the pass proposed, if any.
     plan: Option<Result<PlanOp, OpRefused>>,
+    /// Task ops the pass proposed, and how many it had refused.
+    tasks: (Vec<themis_core::memory::tasks::TaskOp>, usize),
+    /// Decisions the pass proposed for plan records.
+    decisions: Vec<pass::Decision>,
 }
 
 impl AppState {
@@ -504,10 +508,20 @@ impl AppState {
                         .is_none()
                         .then(|| pass::parse_plan_answer(&text))
                         .flatten();
+                    let (tasks, decisions) = if consolidating.is_none() {
+                        (
+                            pass::parse_tasks_answer(&text),
+                            pass::parse_decisions_answer(&text),
+                        )
+                    } else {
+                        Default::default()
+                    };
                     Ok(Answered {
                         planned,
                         counts,
                         plan,
+                        tasks,
+                        decisions,
                     })
                 }
                 .await;
@@ -588,6 +602,10 @@ impl AppState {
                 let record = record
                     .map(|record| themis_core::memory::plans::serialize(&record))
                     .unwrap_or_default();
+                let tasks = self
+                    .plan_store(&turn.project_root)
+                    .map(|store| themis_core::memory::tasks::render_list(&store.tasks().read()))
+                    .unwrap_or_default();
                 Some((
                     known,
                     pass::request(
@@ -600,7 +618,7 @@ impl AppState {
                         &global,
                         &project,
                         &relevant,
-                        (&plans_index, &record),
+                        (&plans_index, &record, &tasks),
                         turn.event
                             .as_ref()
                             .map(|(what, content)| (*what, content.as_str())),
@@ -638,6 +656,8 @@ impl AppState {
             planned,
             mut counts,
             plan,
+            tasks,
+            decisions,
         } = answered;
         let project_root = match job {
             Job::Pass { turn, .. } => Some(turn.project_root.clone()),
@@ -726,6 +746,14 @@ impl AppState {
                 plan_changed = true;
                 bodies.push((change.name.clone(), change.description.clone()));
                 changes.push(change);
+            }
+        }
+        if let Job::Pass {
+            thread_id, turn, ..
+        } = job
+        {
+            if self.apply_tasks_and_decisions(thread_id, turn, tasks, &decisions) {
+                plan_changed = true;
             }
         }
         let outcome = if counts.changed() || plan_changed {
@@ -850,6 +878,85 @@ impl AppState {
         })
     }
 
+    /// Applies the pass's task ops and decisions: a task naming a plan record that exists goes
+    /// to that record, any other to the project's tasks file; a decision goes to its record.
+    /// They stay out of the chat's memory line (the agent reads them next run); `logs/` gets
+    /// counts only. Returns whether anything changed.
+    fn apply_tasks_and_decisions(
+        &self,
+        thread_id: &str,
+        turn: &MemoryTurn,
+        (ops, refused): (Vec<themis_core::memory::tasks::TaskOp>, usize),
+        decisions: &[pass::Decision],
+    ) -> bool {
+        if ops.is_empty() && decisions.is_empty() && refused == 0 {
+            return false;
+        }
+        let today = themis_core::memory::today();
+        let Ok(store) = self.plan_store(&turn.project_root) else {
+            return false;
+        };
+        let mut records: std::collections::BTreeMap<String, PlanRecord> = Default::default();
+        let mut loose = store.tasks().read();
+        let (mut applied, mut missed, mut decided) = (0, refused, 0);
+        let mut loose_changed = false;
+        for op in &ops {
+            let record = op.work().and_then(|work| {
+                if !records.contains_key(work) {
+                    let found = store.read(work).ok().flatten()?;
+                    records.insert(work.to_owned(), found);
+                }
+                records.get_mut(work)
+            });
+            let changed = match record {
+                Some(record) => record.apply_task(op, &today),
+                None => {
+                    let changed = themis_core::memory::tasks::apply(&mut loose, op, &today);
+                    loose_changed |= changed;
+                    changed
+                }
+            };
+            if changed {
+                applied += 1;
+            } else {
+                missed += 1;
+            }
+        }
+        for decision in decisions {
+            if !records.contains_key(&decision.work) {
+                match store.read(&decision.work).ok().flatten() {
+                    Some(found) => {
+                        records.insert(decision.work.clone(), found);
+                    }
+                    None => {
+                        missed += 1;
+                        continue;
+                    }
+                }
+            }
+            if let Some(record) = records.get_mut(&decision.work) {
+                record.decide(decision.who, &decision.what, &decision.why, &today);
+                decided += 1;
+            }
+        }
+        let mut failed = 0;
+        for record in records.values() {
+            if store.save(record, false).is_err() {
+                failed += 1;
+            }
+        }
+        if loose_changed && store.tasks().write(&loose).is_err() {
+            failed += 1;
+        }
+        let _ = self.inner.diagnostics.append(
+            "memory",
+            "tasks",
+            "info",
+            json!({"thread_id": thread_id, "applied": applied, "missed": missed, "decisions": decided, "failed": failed}),
+        );
+        applied + decided > 0 && failed == 0
+    }
+
     /// A dry run of one memory pass, for evals and diagnosis: what the memory model would
     /// propose for this turn (`person`, `answered`, `reply`, `ran_into`, an optional
     /// `event` of `{what, content}`), with `thinking` (`least` or `model`) and `model` (the first
@@ -900,9 +1007,24 @@ impl AppState {
         };
         let (global, project) = (index(MemoryScope::Global), index(MemoryScope::Project));
         let (plans_index, record) = self.plan_record_for(&root, "", &text("plan_about"));
-        let record = record
-            .map(|record| themis_core::memory::plans::serialize(&record))
-            .unwrap_or_default();
+        // An eval may hand in a record and a task list of its own (a long session's state).
+        let record = match input["plan_record"].as_str() {
+            Some(given) => given.to_owned(),
+            None => record
+                .map(|record| themis_core::memory::plans::serialize(&record))
+                .unwrap_or_default(),
+        };
+        let plans_index = match input["plans_index"].as_str() {
+            Some(given) => given.to_owned(),
+            None => plans_index,
+        };
+        let tasks = match input["tasks"].as_str() {
+            Some(given) => given.to_owned(),
+            None => self
+                .plan_store(&root)
+                .map(|store| themis_core::memory::tasks::render_list(&store.tasks().read()))
+                .unwrap_or_default(),
+        };
         let (answered, reply, ran_into) = (text("answered"), text("reply"), text("ran_into"));
         let (system, user) = pass::request(
             &TurnText {
@@ -914,7 +1036,7 @@ impl AppState {
             &global,
             &project,
             &[],
-            (&plans_index, &record),
+            (&plans_index, &record, &tasks),
             event
                 .as_ref()
                 .map(|(what, content)| (what.as_str(), content.as_str())),
@@ -965,7 +1087,16 @@ impl AppState {
             })
             .unwrap_or_default();
         let plan = pass::parse_plan_answer(&answer).map(|op| format!("{op:?}"));
+        let (task_ops, tasks_refused) = pass::parse_tasks_answer(&answer);
+        let tasks: Vec<String> = task_ops.iter().map(|op| format!("{op:?}")).collect();
+        let decisions: Vec<String> = pass::parse_decisions_answer(&answer)
+            .iter()
+            .map(|decision| format!("{decision:?}"))
+            .collect();
         Ok(json!({
+            "tasks": tasks,
+            "tasks_refused": tasks_refused,
+            "decisions": decisions,
             "model": model,
             "thought": think,
             "elapsed_ms": elapsed_ms,

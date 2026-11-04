@@ -22,9 +22,11 @@ pub const PLANS_INDEX_FILE: &str = "PLANS.md";
 pub const MAX_PLANS: usize = 50;
 /// Most bytes of the plan text kept; past it the end is cut.
 pub const MAX_PLAN_BYTES: usize = 8 * 1024;
-/// Most bytes of a record file; a larger file is not read. Every record the limits below allow
-/// fits (plan 8 KiB, changes 20 × 400, results 2 KiB, evidence 12 × 1000, lessons 3 × 400).
-pub const MAX_RECORD_BYTES: u64 = 32 * 1024;
+/// Most bytes of a record file; a larger file is not read. A record trims itself to fit (old
+/// closed tasks, decisions and changes first), so a growing piece of work never passes it.
+pub const MAX_RECORD_BYTES: u64 = 64 * 1024;
+/// Most decision lines one record keeps; the oldest go first.
+pub const MAX_DECISIONS: usize = 12;
 /// Most "Change: …" lines one record keeps; the oldest go first.
 pub const MAX_CHANGES: usize = 20;
 /// Most characters of one change, evidence or lesson line.
@@ -42,13 +44,17 @@ pub const MAX_EDITS: usize = 8;
 /// Most characters of a record's title.
 pub const MAX_TITLE_CHARS: usize = 120;
 
-const HEADINGS: [&str; 5] = [
+const HEADINGS: [&str; 7] = [
     "## Plan",
     "## Changes",
+    "## Decisions",
+    "## Tasks",
     "## Results",
     "## Evidence",
     "## Lessons",
 ];
+/// Sections a record written before they existed may lack.
+const OPTIONAL: [&str; 2] = ["## Decisions", "## Tasks"];
 
 /// Where the work stands.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -97,6 +103,10 @@ pub struct PlanRecord {
     pub plan: String,
     /// One line per change the person made, oldest first.
     pub changes: Vec<String>,
+    /// Choices made for this work, by the person or the agent, with why; oldest first.
+    pub decisions: Vec<String>,
+    /// The work's tasks, old and new, with their status.
+    pub tasks: Vec<super::tasks::Task>,
     /// What was built, where, how to run and test it.
     pub results: String,
     /// One line per requirement: what proves it.
@@ -171,6 +181,8 @@ impl PlanRecord {
             chat: chat.map(str::to_owned),
             plan: block(plan, MAX_PLAN_BYTES),
             changes: Vec::new(),
+            decisions: Vec::new(),
+            tasks: Vec::new(),
             results: String::new(),
             evidence: Vec::new(),
             lessons: Vec::new(),
@@ -244,7 +256,17 @@ impl PlanRecord {
     /// results. The plan itself (at most [`MAX_PLAN_BYTES`]) always stays.
     fn fit(&mut self) {
         while serialize(self).len() as u64 > MAX_RECORD_BYTES {
-            if !self.changes.is_empty() {
+            let closed = self.tasks.iter().position(|task| {
+                matches!(
+                    task.status,
+                    super::tasks::TaskStatus::Done | super::tasks::TaskStatus::Cancelled
+                )
+            });
+            if let Some(at) = closed {
+                self.tasks.remove(at);
+            } else if !self.decisions.is_empty() {
+                self.decisions.remove(0);
+            } else if !self.changes.is_empty() {
                 self.changes.remove(0);
             } else if !self.evidence.is_empty() {
                 self.evidence.pop();
@@ -256,6 +278,68 @@ impl PlanRecord {
                 break;
             }
         }
+    }
+
+    /// Records a decision: `who` (the person or the agent) chose `what`, because `why`.
+    pub fn decide(&mut self, who: &str, what: &str, why: &str, today: &str) {
+        let what = line(&strip_secrets(what), MAX_LINE_CHARS);
+        if what.is_empty() {
+            return;
+        }
+        let why = line(&strip_secrets(why), MAX_LINE_CHARS);
+        let mut entry = format!("{who}: {what}");
+        if !why.is_empty() {
+            entry.push_str(&format!(" — because {why}"));
+        }
+        self.decisions
+            .push(line(&format!("{entry} ({today})"), MAX_LINE_CHARS));
+        let over = self.decisions.len().saturating_sub(MAX_DECISIONS);
+        self.decisions.drain(..over);
+        self.updated = today.to_owned();
+        self.fit();
+    }
+
+    /// Applies a task op to the work's tasks; whether anything changed.
+    pub fn apply_task(&mut self, op: &super::tasks::TaskOp, today: &str) -> bool {
+        let changed = super::tasks::apply(&mut self.tasks, op, today);
+        if changed {
+            self.updated = today.to_owned();
+            self.fit();
+        }
+        changed
+    }
+
+    /// What a run is shown of the record: the plan, the changes, decisions, open tasks (done
+    /// ones as a count) and lessons. Results and evidence stay in the file for `search_memory`,
+    /// so the block stays the same size however long the work runs.
+    pub fn run_view(&self) -> String {
+        let mut text = format!(
+            "{} ({}, {}): {}\n## Plan\n{}\n",
+            self.name,
+            self.status.as_str(),
+            self.updated,
+            self.title,
+            self.plan.trim_end()
+        );
+        let lines = |items: &[String]| -> String {
+            items.iter().map(|item| format!("- {item}\n")).collect()
+        };
+        for (heading, body) in [
+            ("## Changes", lines(&self.changes)),
+            ("## Decisions", lines(&self.decisions)),
+            ("## Tasks", super::tasks::run_view(&self.tasks)),
+            ("## Lessons", lines(&self.lessons)),
+        ] {
+            if !body.is_empty() {
+                text.push_str(&format!("{heading}\n{body}"));
+            }
+        }
+        if !self.results.is_empty() || !self.evidence.is_empty() {
+            text.push_str(
+                "(Results and evidence are in the full record: search_memory with its name.)\n",
+            );
+        }
+        text
     }
 
     /// The record's index line: `- name (status, date): title`.
@@ -317,9 +401,16 @@ pub fn serialize(record: &PlanRecord) -> String {
     } else {
         record.results.clone()
     };
+    let tasks = if record.tasks.is_empty() {
+        "(none)".to_owned()
+    } else {
+        super::tasks::render_list(&record.tasks)
+    };
     for (heading, body) in HEADINGS.iter().zip([
         record.plan.clone(),
         list(&record.changes),
+        list(&record.decisions),
+        tasks,
         results,
         list(&record.evidence),
         list(&record.lessons),
@@ -356,9 +447,13 @@ pub fn parse(text: &str) -> Result<PlanRecord, MemoryError> {
     let mut sections: Vec<String> = Vec::new();
     for heading in HEADINGS.iter().skip(1).rev() {
         let marker = format!("\n{heading}\n");
-        let at = body
-            .rfind(&marker)
-            .ok_or_else(|| MemoryError(format!("a plan record needs `{heading}`")))?;
+        let Some(at) = body.rfind(&marker) else {
+            if OPTIONAL.contains(heading) {
+                sections.push(String::new());
+                continue;
+            }
+            return Err(MemoryError(format!("a plan record needs `{heading}`")));
+        };
         sections.push(edges(&body[at + marker.len()..]));
         body = &body[..at];
     }
@@ -376,10 +471,11 @@ pub fn parse(text: &str) -> Result<PlanRecord, MemoryError> {
             .filter(|item| !item.is_empty())
             .collect()
     };
-    let results = if sections[1] == "(none)" {
+    // Changes, Decisions, Tasks, Results, Evidence, Lessons.
+    let results = if sections[3] == "(none)" {
         String::new()
     } else {
-        sections[1].clone()
+        sections[3].clone()
     };
     let record = PlanRecord {
         name: field("name")?,
@@ -394,12 +490,17 @@ pub fn parse(text: &str) -> Result<PlanRecord, MemoryError> {
             .into_iter()
             .take(MAX_CHANGES)
             .collect(),
+        decisions: list(&sections[1], MAX_LINE_CHARS)
+            .into_iter()
+            .take(MAX_DECISIONS)
+            .collect(),
+        tasks: super::tasks::parse_list(&sections[2]),
         results: cut(&results, MAX_RESULTS_BYTES),
-        evidence: list(&sections[2], MAX_EVIDENCE_CHARS)
+        evidence: list(&sections[4], MAX_EVIDENCE_CHARS)
             .into_iter()
             .take(MAX_EVIDENCE)
             .collect(),
-        lessons: list(&sections[3], MAX_LINE_CHARS)
+        lessons: list(&sections[5], MAX_LINE_CHARS)
             .into_iter()
             .take(MAX_LESSONS)
             .collect(),
@@ -471,6 +572,11 @@ impl PlanStore {
             None => fail("that plan record's file is unreadable"),
             Some(text) => parse(&text).map(Some),
         }
+    }
+
+    /// The project's tasks outside any plan record, beside the records.
+    pub fn tasks(&self) -> super::tasks::TaskFile {
+        super::tasks::TaskFile::new(self.store.dir())
     }
 
     /// The record a goal in `chat` is building, if any.
@@ -582,7 +688,7 @@ pub fn run_note(index: &str, record: Option<&PlanRecord>) -> String {
         note.push('\n');
         note.push_str(&crate::prompts::fill(
             crate::prompts::SYSTEM_MEMORY_PLAN,
-            &[("record", serialize(record).trim_end())],
+            &[("record", record.run_view().trim_end())],
         ));
     }
     note
@@ -776,6 +882,101 @@ mod tests {
             record.changes,
             ["Amounts in euros only; the leftover cent goes to the payer."]
         );
+        assert_eq!(parse(&serialize(&record)).unwrap(), record);
+    }
+
+    /// A record keeps the work's decisions and tasks, old and new; a record written before
+    /// those sections existed still reads; a run sees open tasks and decisions but not results.
+    #[test]
+    fn a_record_keeps_decisions_and_tasks_and_older_records_still_read() {
+        use super::super::tasks::{TaskOp, TaskStatus};
+        let old = "---\nname: old\ntitle: Old work\nstatus: done\nupdated: 2026-11-01\n---\n## Plan\n1. Build it.\n\n## Changes\n(none)\n\n## Results\nBuilt it.\n\n## Evidence\n- built: ls\n\n## Lessons\n(none)\n";
+        let record = parse(old).unwrap();
+        assert!(record.decisions.is_empty() && record.tasks.is_empty());
+        assert_eq!(parse(&serialize(&record)).unwrap(), record);
+
+        let mut record = record;
+        record.decide(
+            "agent",
+            "pool asteroid meshes",
+            "creating them per frame leaks GPU memory",
+            "2026-11-04",
+        );
+        record.decide("person", "keep the mute key M", "", "2026-11-04");
+        let add = |title: &str| TaskOp::Add {
+            title: title.into(),
+            note: String::new(),
+            work: None,
+        };
+        assert!(record.apply_task(&add("Sound on hit"), "2026-11-04"));
+        assert!(record.apply_task(&add("Back/forward cache check"), "2026-11-04"));
+        assert!(record.apply_task(
+            &TaskOp::Update {
+                title: "Sound on hit".into(),
+                status: TaskStatus::Done,
+                note: "heard by the person".into(),
+                work: None
+            },
+            "2026-11-04"
+        ));
+        let back = parse(&serialize(&record)).unwrap();
+        assert_eq!(back, record);
+        assert_eq!(back.decisions[0], "agent: pool asteroid meshes — because creating them per frame leaks GPU memory (2026-11-04)");
+        let view = record.run_view();
+        assert!(
+            view.contains("## Decisions\n- agent: pool asteroid meshes"),
+            "{view}"
+        );
+        assert!(
+            view.contains("- [open] Back/forward cache check (2026-11-04)"),
+            "{view}"
+        );
+        assert!(
+            view.contains("- 1 done or cancelled (latest: Sound on hit)"),
+            "{view}"
+        );
+        assert!(!view.contains("Built it."), "results stay out: {view}");
+        assert!(view.contains("search_memory"), "{view}");
+    }
+
+    /// A record that would pass its size drops old closed tasks before anything else.
+    #[test]
+    fn a_full_record_drops_old_closed_tasks_first() {
+        use super::super::tasks::{TaskOp, TaskStatus};
+        let mut record = record();
+        let long = "x".repeat(290);
+        for n in 0..200 {
+            let title = format!("task {n} {}", "y".repeat(100));
+            record.apply_task(
+                &TaskOp::Add {
+                    title: title.clone(),
+                    note: long.clone(),
+                    work: None,
+                },
+                "2026-11-04",
+            );
+            record.apply_task(
+                &TaskOp::Update {
+                    title,
+                    status: TaskStatus::Done,
+                    note: long.clone(),
+                    work: None,
+                },
+                "2026-11-04",
+            );
+        }
+        record.apply_task(
+            &TaskOp::Add {
+                title: "still open".into(),
+                note: long.clone(),
+                work: None,
+            },
+            "2026-11-04",
+        );
+        assert!(serialize(&record).len() as u64 <= MAX_RECORD_BYTES);
+        assert!(record.tasks.iter().any(|task| task.title == "still open"));
+        assert_eq!(record.changes.len(), 0);
+        assert!(record.plan.contains("1. People"), "{}", record.plan);
         assert_eq!(parse(&serialize(&record)).unwrap(), record);
     }
 

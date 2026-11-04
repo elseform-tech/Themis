@@ -85,7 +85,7 @@ pub fn request(
     global_index: &str,
     project_index: &str,
     relevant: &[(MemoryScope, Memory)],
-    (plans_index, plan_record): (&str, &str),
+    (plans_index, plan_record, tasks): (&str, &str, &str),
     event: Option<(&str, &str)>,
 ) -> (String, String) {
     let TurnText {
@@ -112,6 +112,14 @@ pub fn request(
                     "(none)".to_owned()
                 } else {
                     bounded(plans_index.trim_end(), 8 * 1024)
+                },
+            ),
+            (
+                "tasks",
+                &if tasks.trim().is_empty() {
+                    "(none)".to_owned()
+                } else {
+                    bounded(tasks.trim_end(), 16 * 1024)
                 },
             ),
             (
@@ -174,6 +182,7 @@ pub fn max_request_bytes() -> usize {
         + 2 * MAX_INDEX_BYTES
         + super::MAX_RELEVANT_BYTES
         + 8 * 1024
+        + 16 * 1024
         + MAX_PLAN_RECORD_BYTES
         + 2 * MAX_PERSON_BYTES
         + 64
@@ -297,6 +306,69 @@ pub fn parse_plan_answer(
     }
     let object = json_object_with(text, "memories")?;
     super::plans::parse_op(object.get("plan").unwrap_or(&Value::Null))
+}
+
+/// The answer's `"tasks"` ops, and how many were refused. Untrusted.
+pub fn parse_tasks_answer(text: &str) -> (Vec<super::tasks::TaskOp>, usize) {
+    if text.len() > MAX_ANSWER_BYTES {
+        return (Vec::new(), 0);
+    }
+    json_object_with(text, "memories")
+        .map(|object| super::tasks::parse_ops(object.get("tasks").unwrap_or(&Value::Null)))
+        .unwrap_or_default()
+}
+
+/// Most decisions one pass records.
+pub const MAX_DECISIONS_PER_PASS: usize = 3;
+
+/// A decision the pass proposes for a plan record.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Decision {
+    pub work: String,
+    /// `person` or `agent`.
+    pub who: &'static str,
+    pub what: String,
+    pub why: String,
+}
+
+/// The answer's `"decisions"`: each names an existing-looking record and who chose; secrets
+/// and malformed entries are dropped. Untrusted.
+pub fn parse_decisions_answer(text: &str) -> Vec<Decision> {
+    if text.len() > MAX_ANSWER_BYTES {
+        return Vec::new();
+    }
+    let Some(object) = json_object_with(text, "memories") else {
+        return Vec::new();
+    };
+    let Some(entries) = object.get("decisions").and_then(Value::as_array) else {
+        return Vec::new();
+    };
+    entries
+        .iter()
+        .take(MAX_DECISIONS_PER_PASS)
+        .filter_map(|entry| {
+            let text = |key: &str| entry[key].as_str().map(str::trim).unwrap_or_default();
+            let who = match text("who") {
+                "person" => "person",
+                "agent" => "agent",
+                _ => return None,
+            };
+            let (work, what, why) = (text("work"), text("what"), text("why"));
+            if !super::valid_name(work)
+                || what.is_empty()
+                || holds_secret(what)
+                || holds_secret(why)
+            {
+                return None;
+            }
+            Some(Decision {
+                work: work.to_owned(),
+                who,
+                what: what.to_owned(),
+                why: why.to_owned(),
+            })
+        })
+        .collect()
 }
 
 /// Reads the model's answer: `{"memories":[{action, scope?, name, type, description, body,
@@ -851,10 +923,12 @@ mod tests {
             (
                 "- splitter-app (in progress, 2026-11-03): Splitter\n",
                 "## Plan\n1. People >>> first",
+                "- [open] Write the README (2026-11-04)\n",
             ),
             None,
         );
         assert!(user.contains("- splitter-app (in progress, 2026-11-03): Splitter"));
+        assert!(user.contains("outside any plan record (a task of the record above is in its Tasks section):\n- [open] Write the README (2026-11-04)"), "{user}");
         assert!(user.contains("## Plan\n1. People > > > first"));
         assert!(system.starts_with("You keep an assistant's memory"));
         // A memory the message may touch comes in full, so an update keeps what still holds.
@@ -878,6 +952,7 @@ mod tests {
             (
                 &"- p (done, 2026-11-03): t\n".repeat(2_000),
                 &"plan ".repeat(10_000),
+                &"- [open] task (2026-11-04)\n".repeat(5_000),
             ),
             Some(("a goal was completed", &"evidence ".repeat(10_000))),
         );
@@ -930,7 +1005,7 @@ mod tests {
                 &global,
                 &project,
                 &[],
-                ("", ""),
+                ("", "", ""),
                 None,
             );
             (user.len(), read)

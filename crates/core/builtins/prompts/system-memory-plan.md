@@ -1,2 +1,2 @@
-The plan record of the work this is about, in full. Follow the plan as it now stands (its changes included) and use its lessons:
+The plan record of the work this is about. Follow the plan as it now stands (its changes included), keep to its decisions unless the person changes them, work through its open tasks and use its lessons:
 {{record}}

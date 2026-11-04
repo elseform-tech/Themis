@@ -98,15 +98,25 @@ fn pass_answer(body: &Value) -> String {
         && user.contains("sort notes by date")
     {
         return json!({"plan":{"op":"change","name":"notes-tool","change":"Notes are sorted by date, not title.",
-            "edits":[{"old":"2. Sort notes by title.","new":"2. Sort notes by date."}]},"memories":[]})
+            "edits":[{"old":"2. Sort notes by title.","new":"2. Sort notes by date."}]},"memories":[],
+            "decisions":[{"work":"notes-tool","who":"person","what":"sort notes by date","why":"newest notes matter most"}],
+            "tasks":[{"op":"add","title":"Show the count in the footer","note":"\"show the count\"","work":"notes-tool"}]})
         .to_string();
     }
     if user.contains("What just happened: a goal was completed") && user.contains("notes tool") {
         return json!({"plan":{"op":"done","name":"notes-tool","results":"Built notes.txt; check with: ls notes.txt",
             "evidence":["made up by the model"],
             "lessons":["Write notes.txt with a trailing newline — the line count check reads whole lines"]},
-            "memories":[]})
+            "memories":[],
+            "tasks":[{"op":"update","title":"Show the count in the footer","status":"done","note":"ls notes.txt shows it","work":"notes-tool"}]})
         .to_string();
+    }
+    // Tasks outside any plan: one added, then done.
+    if person.contains("also write a README") {
+        return json!({"memories":[],"tasks":[{"op":"add","title":"Write the README","note":"\"also write a README\" with run steps"}]}).to_string();
+    }
+    if person.contains("README is written") {
+        return json!({"memories":[],"tasks":[{"op":"update","title":"Write the README","status":"done","note":"README.md has the run steps"}]}).to_string();
     }
     if person.contains("always use pnpm") {
         json!({"memories":[{"action":"save","scope":"global","name":"uses-pnpm","type":"user",
@@ -862,6 +872,16 @@ async fn an_approved_plan_keeps_a_record_through_changes_to_done() {
     );
     let record = plan_with(h.data.path(), "notes-tool", "sorted by date").await;
     assert!(
+        record.contains(
+            "## Decisions\n- person: sort notes by date — because newest notes matter most ("
+        ),
+        "{record}"
+    );
+    assert!(
+        record.contains("## Tasks\n- [open] Show the count in the footer — \"show the count\" ("),
+        "{record}"
+    );
+    assert!(
         record.contains("1. Store notes in notes.txt.\n2. Sort notes by date.\n3. Show the count."),
         "{record}"
     );
@@ -909,10 +929,85 @@ async fn an_approved_plan_keeps_a_record_through_changes_to_done() {
         .unwrap();
     let system = system(&request);
     assert!(system.contains("- notes-tool (done, "), "{system}");
+    // Its decisions and how its tasks ended; results stay in the file.
+    assert!(
+        system.contains("## Decisions\n- person: sort notes by date"),
+        "{system}"
+    );
+    assert!(
+        system.contains("- 1 done or cancelled (latest: Show the count in the footer)"),
+        "{system}"
+    );
+    assert!(!system.contains("## Results\nBuilt notes.txt"), "{system}");
     assert!(
         system.contains("## Lessons\n- Write notes.txt with a trailing newline"),
         "{system}"
     );
+}
+
+/// Tasks outside any plan are kept in the project's tasks file: the next run sees an open one,
+/// and once done it is counted, not dropped; a new chat in the project sees it too.
+#[tokio::test(flavor = "multi_thread")]
+async fn tasks_are_kept_across_turns_and_chats() {
+    let mut h = Harness::start(MODELS).await;
+    let id = h.new_chat();
+    h.send(
+        &id,
+        "Fix the title, and also write a README.",
+        Duration::from_secs(10),
+    )
+    .await;
+    let tasks_file = |h: &Harness| {
+        std::fs::read_dir(h.data.path().join("memory/projects"))
+            .unwrap()
+            .flatten()
+            .map(|entry| entry.path().join("plans/TASKS.md"))
+            .find(|path| path.exists())
+            .map(|path| std::fs::read_to_string(path).unwrap())
+            .unwrap_or_default()
+    };
+    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+    while !tasks_file(&h).contains("Write the README") {
+        assert!(std::time::Instant::now() < deadline, "no task saved");
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    let main_system = |h: &Harness, asked: &str| {
+        h.requests
+            .lock()
+            .unwrap()
+            .iter()
+            .rev()
+            .find(|body| body["model"] == "test-model" && last_user(body).contains(asked))
+            .map(system)
+            .unwrap()
+    };
+    let other = h.new_chat();
+    h.send(
+        &other,
+        "What is left to do here?",
+        Duration::from_millis(100),
+    )
+    .await;
+    let seen = main_system(&h, "What is left to do here?");
+    assert!(
+        seen.contains("- [open] Write the README — \"also write a README\" with run steps ("),
+        "{seen}"
+    );
+    h.send(&other, "The README is written.", Duration::from_secs(10))
+        .await;
+    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+    while !tasks_file(&h).contains("[done] Write the README") {
+        assert!(std::time::Instant::now() < deadline, "task not marked done");
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    h.send(&id, "Anything else open?", Duration::from_millis(100))
+        .await;
+    let seen = main_system(&h, "Anything else open?");
+    assert!(
+        seen.contains("- 1 done or cancelled (latest: Write the README)"),
+        "{seen}"
+    );
+    assert!(!seen.contains("[open] Write the README"), "{seen}");
 }
 
 /// The pass reads what the turn ran into: its failed steps and the agent's notes along the

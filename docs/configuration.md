@@ -871,14 +871,16 @@ file keeps it in `source` and says what that content said, never as the person's
 ### Plan records
 
 Plans are not memories. Each piece of work the person approved has one plan record,
-`memory/projects/<hash>/plans/<name>.md` (project only; at most 50 per project, 32 KiB per
-file; a record trims its oldest changes, then its last evidence lines, lessons and results,
-rather than grow past that), with a header of `name`, `title` (one line, at most 120), `status` (`approved`,
+`memory/projects/<hash>/plans/<name>.md` (project only; at most 50 per project, 64 KiB per
+file; a record trims its oldest closed tasks, then its oldest decisions and changes, its last
+evidence lines, lessons and results, rather than grow past that), with a header of `name`, `title` (one line, at most 120), `status` (`approved`,
 `in progress` while a goal builds it, `done`), `updated` and, while a chat's goal builds it,
 `chat` (that chat's id), then five sections: **Plan** (the reply the person approved, copied
 word for word by Themis, at most 8 KiB), **Changes** (one line per change, at most 20),
-**Results** (at most 2 KiB), **Evidence** (one line per requirement, at most 12 of 1000 characters) and
-**Lessons** (at most 3). `plans/PLANS.md` is their index (`- name (status, date): title`).
+**Decisions** (at most 12 lines, `person:` or `agent:` what was chosen, `— because` why, and
+the date; the oldest go first), **Tasks** (task lines, below), **Results** (at most 2 KiB),
+**Evidence** (one line per requirement, at most 12 of 1000 characters) and **Lessons** (at most 3).
+Decisions and Tasks may be missing from a record written before they existed; it still reads. `plans/PLANS.md` is their index (`- name (status, date): title`).
 Records are read as untrusted: a file whose header or sections don't fit is skipped, secrets
 are hidden, and the sections are found from the end so a plan that quotes a heading keeps it.
 
@@ -890,10 +892,30 @@ for word), `done` (results and lessons; evidence only when the record has none) 
 When a goal completes, Themis itself marks the record its chat's goal built as done and copies
 the goal's evidence as the agent gave it (`memory` / `plan` with `by: goal`), before the
 goal-complete pass adds results and lessons. Ordinary passes never save a plan, its steps or
-what was built as memories. A run gets, after the memories, the plans index and in full the
+what was built as memories. A run gets, after the memories, the plans index and the
 record its chat's goal builds, else the one whose line shares the most words (at least two)
-with the message (`system-memory-plans.md`, `system-memory-plan.md`): one index file and at
-most one record per run. The pass gets the same index and record. `logs/` has `memory` /
+with the message (`system-memory-plans.md`, `system-memory-plan.md`): its plan, changes,
+decisions, open tasks (done ones as a count with the latest three titles) and lessons, while
+results and evidence stay in the file for `search_memory`. One index file and at most one
+record per run.
+
+### Tasks
+
+Tasks keep track of the work along the way. A task line is `- [status] title — note (date)`:
+status `open`, `doing`, `done` or `cancelled`, a title (at most 120 characters), a note (at
+most 300: what done means and the person's own words, or the outcome and its proof, or why it
+was cancelled) and the day it last changed. Tasks of approved work live in its record's Tasks
+section; the rest in one project file, `memory/projects/<hash>/plans/TASKS.md` (at most 48 KiB).
+A list keeps at most 40 open or doing tasks (a new one past that is refused, never an open one
+dropped) and 60 done or cancelled ones (the oldest go first); a task is never renamed or
+removed otherwise. The memory pass reads the record's tasks and the project file
+(`memory-auto-user.md`, at most 16 KiB) and answers with at most 12 `"tasks"` ops: `add`
+(title, note, optional `work` naming a record; a title already listed updates its note and
+reopens it) and `update` (exact title, status, note), and at most 3 `"decisions"` (`work`,
+`who`: person or agent, `what`, `why`) for records. Entries holding a secret or not fitting are
+refused. A run gets the project file's open tasks in full and its done ones as a count
+(`system-memory-tasks.md`). `logs/` gets a `memory` / `tasks` line with counts only
+(applied, missed, decisions, failed); task changes stay out of the chat's memory line. The pass gets the same index and record. `logs/` has `memory` /
 `plan` lines with the op and outcome (`saved`, `updated`, `removed`, `exists`, `missing`,
 `invalid`, `sensitive`, `no_plan_reply`, `failed`) and edit counts only. The chat's memory
 line shows a record as `plans/<name>.md`.

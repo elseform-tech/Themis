@@ -182,20 +182,32 @@ whole team shares still belong in the project's `AGENTS.md`.
   anything. It never stores secrets, and what a web page or file said is kept as "the page
   said …" with its source. When the app has been idle a while (at most once a day by
   default), it also merges duplicate memories and drops stale ones.
-- **It learns from mistakes.** When a step fails and the agent gets past it, the memory model keeps a lesson (what went wrong, why, the rule
-  that avoids it, how to check) so a later chat in the project doesn't repeat it.
+- **It learns from mistakes.** When a step fails, or the agent finds a bug in its own work, drops
+  an approach or notes a better way, the memory model keeps a lesson (what went wrong, why, the
+  rule that avoids it, how to check) so a later chat in the project doesn't repeat it.
+- **It keeps track of tasks.** What you ask for along the way and what the agent finds still to
+  do become tasks with a status (open, doing, done, cancelled). Old tasks stay: a new request
+  never pushes out an earlier one, a done task keeps how it ended, and a cancelled one says why.
+  Each turn shows the agent the open ones, so a long chat or goal doesn't lose track. Tasks of a
+  piece of approved work live in its plan record; the rest in one list per project.
+- **It keeps decisions with their reasons.** Choices made for a piece of work, yours and the
+  agent's own (an approach or design it picked between options, with why), go into that
+  work's plan record. When you reverse a remembered decision, the memory keeps the old one with
+  the date and why it changed, so "why was this removed?" has an answer.
 - **Plans get a record of their own.** When you approve a plan ("I love it, build it", or a
   goal made from it), Themis keeps it word for word as a plan record for that project. When you
   change it, only the steps you changed are rewritten and a "Change: …" line is added. When
   the work is done, the record gets what was built and how to run it, the evidence (a goal's,
   as the agent gave it) and up to three lessons. A later chat about the same work sees that
-  record in full, so it can follow the plan as it now stands and avoid old mistakes.
+  record (the plan, changes, decisions, open tasks and lessons; results and evidence stay in
+  the file), so it can follow the plan as it now stands and avoid old mistakes.
 - **Where a memory applies.** Facts about a project and pointers stay with that project.
   Memories about you and your general feedback may apply everywhere, without anything
   specific to one project. A chat sees the memories that apply everywhere and its own
   project's, never another project's.
 - **What the agent sees.** Each turn starts with a one-line index of them (at most 200
   lines) and, in full, the few whose names and descriptions share words with your message.
+  When those don't cover something, the agent can search memory itself (`search_memory`).
   The agent starts from memory before reading files. What you want (your preferences, decisions and approved plans) takes precedence over what the files do now, so where the code disagrees, the code is changed, unless you change your mind. Facts about the state of things carry their date and are checked against the files. The context
   meter shows what they take as **Memory**.
 - **In the chat.** Inside the reply, above its footer, a step with the Memory icon: while the

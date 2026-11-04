@@ -11,6 +11,7 @@ use std::sync::Mutex;
 pub mod auto;
 pub mod jobs;
 pub mod plans;
+pub mod tasks;
 
 use serde::{Deserialize, Serialize};
 use sha2::Digest;
