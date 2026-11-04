@@ -782,6 +782,44 @@ pub fn relevant_names(
         .collect()
 }
 
+/// Most index lines one memory search returns.
+pub const MAX_SEARCH_RESULTS: usize = 10;
+
+/// `search_memory`'s query: the index lines of `sources` (a label and an index each: memories or
+/// plan records) that share the most words with `query`, at most [`MAX_SEARCH_RESULTS`], earlier
+/// sources first on a tie. Reads only the indexes it is given.
+pub fn search<'a>(query: &str, sources: &[(&'a str, &str)]) -> Vec<(&'a str, String)> {
+    let wanted = terms(query);
+    if wanted.is_empty() {
+        return Vec::new();
+    }
+    let mut scored: Vec<(usize, usize, &str, String)> = Vec::new();
+    for (label, index) in sources {
+        for line in index.lines() {
+            let Some((name, description)) = auto::index_entry(line) else {
+                continue;
+            };
+            let score = terms(&format!("{name} {description}"))
+                .intersection(&wanted)
+                .count();
+            if score > 0 {
+                scored.push((
+                    score,
+                    scored.len(),
+                    label,
+                    line.trim_start_matches("- ").to_owned(),
+                ));
+            }
+        }
+    }
+    scored.sort_by(|a, b| b.0.cmp(&a.0).then(a.1.cmp(&b.1)));
+    scored
+        .into_iter()
+        .take(MAX_SEARCH_RESULTS)
+        .map(|(_, _, label, line)| (label, line))
+        .collect()
+}
+
 /// What a run is told about memory: the global and this project's indexes under the memory
 /// note, then `relevant` in full (within [`MAX_RELEVANT_BYTES`]), or nothing when neither index
 /// holds a memory.
@@ -948,6 +986,32 @@ mod tests {
     /// Taken from a live goal run: its lesson matched only through "until", and two unrelated
     /// memories through "small" and "from". A plural now finds its singular, and filler words
     /// pick nothing.
+    #[test]
+    fn a_search_finds_index_lines_by_words_across_sources() {
+        let memories = "- fixed-step-tap-latching (project, 2026-11-04): Fixed-step games must latch quick discrete presses\n- pytest-for-tests (project, 2026-11-03): Uses pytest for all tests\n";
+        let plans = "- dodger-asteroid-dodger (in progress, 2026-11-04): Build small 3D asteroid-dodger browser game\n";
+        let found = search(
+            "keyboard presses lost in my game loop",
+            &[("project memory", memories), ("plan record", plans)],
+        );
+        assert_eq!(found.len(), 2, "{found:?}");
+        assert_eq!(found[0].0, "project memory");
+        assert!(
+            found[0].1.starts_with("fixed-step-tap-latching (project"),
+            "{found:?}"
+        );
+        assert_eq!(found[1].0, "plan record");
+        assert!(search("the and with", &[("project memory", memories)]).is_empty());
+        // Bounded, whatever the index holds.
+        let many: String = (0..50)
+            .map(|n| format!("- game-{n} (project, 2026-11-04): game note {n}\n"))
+            .collect();
+        assert_eq!(
+            search("game", &[("project memory", &many)]).len(),
+            MAX_SEARCH_RESULTS
+        );
+    }
+
     #[test]
     fn plurals_match_and_filler_words_do_not() {
         let project = "- fixed-step-tap-latching (project, 2026-11-04): Fixed-step games must latch quick discrete presses until next step reads them

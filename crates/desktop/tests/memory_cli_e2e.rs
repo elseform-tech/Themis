@@ -189,6 +189,16 @@ impl Harness {
                 if last_user(&body).contains("list the missing folder") && last(&body)["role"] == "user" {
                     return call("list_dir", json!({"directory_path": "no-such-folder"}));
                 }
+                // The agent looks memory up: a search, then one result read in full.
+                if last_user(&body).contains("look up the launch") {
+                    let tool_text = last(&body)["content"].to_string();
+                    if last(&body)["role"] == "user" {
+                        return call("search_memory", json!({"query": "when is the launch"}));
+                    }
+                    if tool_text.contains("matches") {
+                        return ResponseTemplate::new(200).set_body_json(json!({"choices":[{"message":{"role":"assistant","content":null,"tool_calls":[{"id":"call_2","type":"function","function":{"name":"search_memory","arguments":json!({"name":"launch-deadline"}).to_string()}}]},"finish_reason":"tool_calls"}]}));
+                    }
+                }
                 // A plan the person can approve.
                 if last_user(&body).contains("Plan the notes tool") {
                     return text_reply("1. Store notes in notes.txt.\n2. Sort notes by title.\n3. Show the count.");
@@ -933,6 +943,54 @@ async fn the_pass_reads_what_the_turn_ran_into() {
     let user = pass["messages"][1]["content"].as_str().unwrap();
     assert!(user.contains("<<<ran-into\n- list_dir failed:"), "{user}");
     assert!(!user.contains("- noted: Done."), "{user}");
+}
+
+/// The agent can look memory up itself: a query finds index lines, a name reads one in full.
+/// It is offered only while memory is on.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_agent_searches_memory_and_reads_one_in_full() {
+    let mut h = Harness::start(MODELS).await;
+    let id = h.new_chat();
+    h.send(
+        &id,
+        "The deadline for launch is Friday.",
+        Duration::from_secs(10),
+    )
+    .await;
+    h.send(
+        &id,
+        "Please look up the launch date.",
+        Duration::from_secs(5),
+    )
+    .await;
+    let main: Vec<Value> = h
+        .requests
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|body| body["model"] == "test-model")
+        .cloned()
+        .collect();
+    let offered = main.last().unwrap()["tools"].to_string();
+    assert!(offered.contains("\"search_memory\""), "{offered}");
+    let results: Vec<String> = main
+        .iter()
+        .map(last)
+        .filter(|message| message["role"] == "tool")
+        .map(|message| message["content"].to_string())
+        .collect();
+    assert!(
+        results
+            .iter()
+            .any(|result| result.contains("launch-deadline (project")),
+        "the search found it: {results:?}"
+    );
+    assert!(
+        results
+            .iter()
+            .any(|result| result.contains("The launch is on Friday.")),
+        "the read gave it in full: {results:?}"
+    );
 }
 
 /// An update that keeps a memory's description but changes its text is applied: the memory

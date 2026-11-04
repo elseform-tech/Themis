@@ -1,0 +1,146 @@
+//! `search_memory`: the agent's read-only way into what Themis remembers, beside the index and
+//! the few memories every run gets in full. A query finds index lines across this project's and
+//! the global memories and the project's plan records; a name reads one of them in full. It
+//! never writes, reads no other project's memory, and is offered only while memory is on.
+
+use std::path::PathBuf;
+
+use serde_json::{json, Value};
+use themis_core::configuration::{ApprovalMode, PolicyAction};
+use themis_core::memory::MemoryScope;
+use themis_core::tools::{async_trait, RiskLevel, ToolAction, ToolCallError, ToolRuntime, ToolT};
+
+use super::integration_tools::RunApproval;
+use super::AppState;
+
+pub(super) struct SearchMemoryTool {
+    pub(super) state: AppState,
+    pub(super) project_root: PathBuf,
+    pub(super) thread_id: String,
+    pub(super) run: RunApproval,
+}
+
+impl std::fmt::Debug for SearchMemoryTool {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SearchMemoryTool").finish_non_exhaustive()
+    }
+}
+
+fn error(message: impl ToString) -> ToolCallError {
+    ToolCallError::RuntimeError(message.to_string().into())
+}
+
+const NAME: &str = "search_memory";
+
+impl SearchMemoryTool {
+    /// Refused when an approval rule denies it; otherwise it approves itself (it only reads).
+    fn denied(&self) -> Option<ToolCallError> {
+        let action = ToolAction {
+            display: None,
+            command: Vec::new(),
+            tool: NAME.to_owned(),
+            summary: NAME.to_owned(),
+            risk: RiskLevel::Read,
+        };
+        let decision = if self.run.mode == ApprovalMode::Yolo {
+            self.run.policy.yolo_decision(&action)
+        } else {
+            self.run.policy.decision(&action)
+        };
+        (decision == PolicyAction::Deny)
+            .then(|| error("approval denied for 'search_memory': the approval rules deny it"))
+    }
+
+    /// The index lines that share words with `query`, across memories and plan records.
+    fn find(&self, query: &str) -> Result<Value, String> {
+        let project = self
+            .state
+            .memory_store(MemoryScope::Project, Some(&self.project_root))?
+            .index();
+        let global = self.state.memory_store(MemoryScope::Global, None)?.index();
+        let plans = self
+            .state
+            .plan_store(&self.project_root)
+            .map(|store| store.index())
+            .unwrap_or_default();
+        let found = themis_core::memory::search(
+            query,
+            &[
+                ("project memory", &project),
+                ("global memory", &global),
+                ("plan record", &plans),
+            ],
+        );
+        let matches: Vec<Value> = found
+            .into_iter()
+            .map(|(source, line)| json!({"source": source, "line": line}))
+            .collect();
+        Ok(json!({"matches": matches}))
+    }
+
+    /// One memory or plan record in full, this project's before the global ones.
+    fn read(&self, name: &str) -> Result<Value, String> {
+        for scope in [MemoryScope::Project, MemoryScope::Global] {
+            let root = (scope == MemoryScope::Project).then_some(self.project_root.as_path());
+            let store = self.state.memory_store(scope, root)?;
+            if let Some(memory) = store.read(name).map_err(|e| e.to_string())? {
+                return Ok(json!({
+                    "source": format!("{} memory", scope.as_str()),
+                    "text": themis_core::memory::serialize(&memory),
+                }));
+            }
+        }
+        if let Ok(store) = self.state.plan_store(&self.project_root) {
+            if let Some(record) = store.read(name).map_err(|e| e.to_string())? {
+                return Ok(json!({
+                    "source": "plan record",
+                    "text": themis_core::memory::plans::serialize(&record),
+                }));
+            }
+        }
+        Err(format!(
+            "nothing named '{name}' is remembered; search with a query to find names"
+        ))
+    }
+}
+
+#[async_trait]
+impl ToolRuntime for SearchMemoryTool {
+    async fn execute(&self, args: Value) -> Result<Value, ToolCallError> {
+        if let Some(refused) = self.denied() {
+            return Err(refused);
+        }
+        let name = args["name"].as_str().map(str::trim).unwrap_or_default();
+        let query = args["query"].as_str().map(str::trim).unwrap_or_default();
+        let result = match (name.is_empty(), query.is_empty()) {
+            (false, _) => self.read(name),
+            (true, false) => self.find(query),
+            (true, true) => Err("pass a query or a name".to_owned()),
+        };
+        let _ = self.state.inner.diagnostics.append(
+            "memory",
+            "searched",
+            "info",
+            json!({"thread_id": self.thread_id, "by": if name.is_empty() { "query" } else { "name" }, "ok": result.is_ok()}),
+        );
+        result.map_err(error)
+    }
+}
+
+impl ToolT for SearchMemoryTool {
+    fn name(&self) -> &str {
+        "search_memory"
+    }
+    fn description(&self) -> &str {
+        themis_core::prompts::SEARCH_MEMORY_TOOL
+    }
+    fn args_schema(&self) -> Value {
+        json!({"type":"object","properties":{
+            "query":{"type":"string","description":"Words about what you need, to find memories and plan records"},
+            "name":{"type":"string","description":"A memory or plan record name, to read it in full"}
+        },"additionalProperties":false})
+    }
+    fn output_schema(&self) -> Option<Value> {
+        None
+    }
+}

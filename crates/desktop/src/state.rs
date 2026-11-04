@@ -26,6 +26,7 @@ mod mcp_file;
 mod media_tool;
 mod memory;
 mod memory_auto;
+mod memory_tool;
 mod permissions;
 mod plugins;
 mod preferences;

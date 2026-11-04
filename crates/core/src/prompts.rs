@@ -198,6 +198,8 @@ pub const MEMORY_CONSOLIDATE_USER: &str =
 pub const QUESTION_ANSWER: &str = include_str!("../builtins/prompts/question-answer.md");
 /// Description of the `update_goal` tool.
 pub const UPDATE_GOAL_TOOL: &str = include_str!("../builtins/prompts/tool-update-goal.md");
+/// Description of the `search_memory` tool.
+pub const SEARCH_MEMORY_TOOL: &str = include_str!("../builtins/prompts/tool-search-memory.md");
 /// Description of the `create_goal` tool.
 pub const CREATE_GOAL_TOOL: &str = include_str!("../builtins/prompts/tool-create-goal.md");
 /// `note` field of the create_goal tool result.

@@ -72,6 +72,7 @@ const ALL: &[(&str, &str, &[&str])] = &[
     (GOAL_CONTINUATION, "goal-continuation", &["objective"]),
     (GOAL_OBJECTIVE_UPDATED, "goal-objective-updated", &[]),
     (CREATE_GOAL_TOOL, "tool-create-goal", &[]),
+    (SEARCH_MEMORY_TOOL, "tool-search-memory", &[]),
     (PROJECT_GUIDANCE_DOCS, "project-guidance-docs", &["docs"]),
     (GOAL_CONTEXT_OVER, "goal-context-over", &[]),
     (GOAL_CONTEXT_PAUSED, "goal-context-paused", &["goal"]),

@@ -529,6 +529,15 @@ impl AppState {
                 run: check_approval.clone(),
             }));
         }
+        // What Themis remembers, beyond the index and the few memories the run gets in full.
+        if run_configuration.memory.enabled {
+            tools.push(Box::new(super::memory_tool::SearchMemoryTool {
+                state: self.clone(),
+                project_root: snapshot.work_root.clone(),
+                thread_id: thread_id.to_owned(),
+                run: check_approval.clone(),
+            }));
+        }
         let end_request = themis_core::runtime::EndRequest::default();
         tools.push(Box::new(super::question_tool::QuestionTool {
             state: self.clone(),

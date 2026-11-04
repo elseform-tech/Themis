@@ -845,7 +845,8 @@ source]): description`), newest first, at most 200 lines and 24 KiB. It is rewri
 atomically on every save and delete. A run reads the global index and the current project's
 (never another project's), and in full the memories relevant to its message (the person's
 words, or the task for a goal turn or automation): the index lines that share the most words
-of at least four letters with it (common words left out), at most 5, this project's first on a
+of at least four letters with it (common filler words left out, a plain plural counted as its
+singular, so "games" finds "game"), at most 5, this project's first on a
 tie, within 8 KiB together. That rule needs no model request and reads two index files and at
 most five memory files per run, whatever the memory count. All of it goes into the system
 message of the main agent and of every subagent under the note in
@@ -853,6 +854,15 @@ message of the main agent and of every subagent under the note in
 `system-memory-relevant.md`). Nothing is added while both indexes are empty. The context
 meter counts that block, as sent, as its own **Memory** part (`breakdown.memory`, taken out
 of `system`, so the parts still add up to `used_tokens`).
+
+**`search_memory`.** While memory is on, the main agent also gets a read-only `search_memory`
+tool (description `tool-search-memory.md`) for what the injected index and full memories
+don't cover. `query` returns at most 10 index lines, scored by the same word rule, across this
+project's memories, the global ones and this project's plan records, each with its source;
+`name` returns one memory (this project's before the global one) or plan record in full. It
+reads only the indexes and one file, never another project's memory, writes nothing, and
+approves itself (a deny rule still refuses it). `logs/` gets a `memory` / `searched` line with
+whether it searched or read and whether it succeeded.
 
 Only `user` and `feedback` memories may be global; `project` and `reference` memories always
 belong to one project. A scope holds at most 200 memories. A memory built from a web page or a
