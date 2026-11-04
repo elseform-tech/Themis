@@ -108,7 +108,7 @@ fn pass_answer(body: &Value) -> String {
             "evidence":["made up by the model"],
             "lessons":["Write notes.txt with a trailing newline — the line count check reads whole lines"]},
             "memories":[],
-            "tasks":[{"op":"update","title":"Show the count in the footer","status":"done","note":"ls notes.txt shows it","work":"notes-tool"}]})
+            "tasks":[{"op":"update","title":"Show the count in the footer","status":"done","note":"ls notes.txt shows it"}]})
         .to_string();
     }
     // Tasks outside any plan: one added, then done.

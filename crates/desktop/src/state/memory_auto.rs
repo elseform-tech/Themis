@@ -179,6 +179,13 @@ struct Answered {
     decisions: Vec<pass::Decision>,
 }
 
+/// Whether `tasks` lists a task titled `title` (case aside).
+fn holds(tasks: &[themis_core::memory::tasks::Task], title: &str) -> bool {
+    tasks
+        .iter()
+        .any(|task| task.title.trim().eq_ignore_ascii_case(title.trim()))
+}
+
 impl AppState {
     fn memory_jobs(&self) -> std::sync::MutexGuard<'_, MemoryJobs> {
         self.inner
@@ -901,7 +908,28 @@ impl AppState {
         let (mut applied, mut missed, mut decided) = (0, refused, 0);
         let mut loose_changed = false;
         for op in &ops {
-            let record = op.work().and_then(|work| {
+            // An update whose task is in no list it names is looked up by title in the
+            // records, so a missing or wrong `work` can't lose a status change.
+            let work = match op {
+                themis_core::memory::tasks::TaskOp::Update { title, .. }
+                    if !holds(&loose, title)
+                        && op.work().is_none_or(|work| {
+                            store
+                                .read(work)
+                                .ok()
+                                .flatten()
+                                .is_none_or(|record| !holds(&record.tasks, title))
+                        }) =>
+                {
+                    store.list().ok().and_then(|all| {
+                        all.into_iter()
+                            .find(|record| holds(&record.tasks, title))
+                            .map(|record| record.name)
+                    })
+                }
+                _ => op.work().map(str::to_owned),
+            };
+            let record = work.as_deref().and_then(|work| {
                 if !records.contains_key(work) {
                     let found = store.read(work).ok().flatten()?;
                     records.insert(work.to_owned(), found);

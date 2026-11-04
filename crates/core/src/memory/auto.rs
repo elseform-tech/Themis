@@ -280,6 +280,23 @@ pub fn json_object_with(text: &str, key: &str) -> Option<serde_json::Map<String,
     None
 }
 
+/// The pass answer: the first object holding any of its parts (`memories`, `tasks`,
+/// `decisions`, `plan`). A model with nothing to remember may leave `memories` out.
+fn pass_object(text: &str) -> Option<serde_json::Map<String, Value>> {
+    for (start, _) in text.match_indices('{').take(MAX_JSON_STARTS) {
+        let mut values = serde_json::Deserializer::from_str(&text[start..]).into_iter::<Value>();
+        if let Some(Ok(Value::Object(object))) = values.next() {
+            if ["memories", "tasks", "decisions", "plan"]
+                .iter()
+                .any(|key| object.contains_key(*key))
+            {
+                return Some(object);
+            }
+        }
+    }
+    None
+}
+
 /// Plain text of an answer field: control characters removed, trimmed.
 fn field(entry: &Value, key: &str) -> Option<String> {
     let text: String = entry[key]
@@ -304,7 +321,7 @@ pub fn parse_plan_answer(
     if text.len() > MAX_ANSWER_BYTES {
         return None;
     }
-    let object = json_object_with(text, "memories")?;
+    let object = pass_object(text)?;
     super::plans::parse_op(object.get("plan").unwrap_or(&Value::Null))
 }
 
@@ -313,7 +330,7 @@ pub fn parse_tasks_answer(text: &str) -> (Vec<super::tasks::TaskOp>, usize) {
     if text.len() > MAX_ANSWER_BYTES {
         return (Vec::new(), 0);
     }
-    json_object_with(text, "memories")
+    pass_object(text)
         .map(|object| super::tasks::parse_ops(object.get("tasks").unwrap_or(&Value::Null)))
         .unwrap_or_default()
 }
@@ -337,7 +354,7 @@ pub fn parse_decisions_answer(text: &str) -> Vec<Decision> {
     if text.len() > MAX_ANSWER_BYTES {
         return Vec::new();
     }
-    let Some(object) = json_object_with(text, "memories") else {
+    let Some(object) = pass_object(text) else {
         return Vec::new();
     };
     let Some(entries) = object.get("decisions").and_then(Value::as_array) else {
@@ -383,8 +400,12 @@ pub fn parse_answer(
     if text.len() > MAX_ANSWER_BYTES {
         return Err(AnswerError::TooLong);
     }
-    let object = json_object_with(text, "memories").ok_or(AnswerError::NoJson)?;
-    let entries = object["memories"].as_array().ok_or(AnswerError::NoJson)?;
+    let object = pass_object(text).ok_or(AnswerError::NoJson)?;
+    let none = Vec::new();
+    let entries = match object.get("memories") {
+        None => &none,
+        Some(memories) => memories.as_array().ok_or(AnswerError::NoJson)?,
+    };
     let mut counts = PassCounts {
         proposed: entries.len(),
         over_limit: entries.len().saturating_sub(limit),
@@ -794,6 +815,19 @@ mod tests {
             parse(&"x".repeat(MAX_ANSWER_BYTES + 1)).unwrap_err(),
             AnswerError::TooLong
         );
+    }
+
+    /// A model with nothing to remember may leave `memories` out; its tasks, decisions and plan
+    /// still count (a live eval lost a cancelled task that way).
+    #[test]
+    fn an_answer_without_memories_still_carries_its_tasks_and_decisions() {
+        let text = r#"Here: {"tasks":[{"op":"update","title":"Touch controls","status":"cancelled","note":"dropped"}],"decisions":[{"work":"dodger","who":"agent","what":"pool bullets","why":"no stutter"}]}"#;
+        let (proposals, counts) = parse(text).unwrap();
+        assert!(proposals.is_empty());
+        assert_eq!(counts, PassCounts::default());
+        assert_eq!(parse_tasks_answer(text).0.len(), 1);
+        assert_eq!(parse_decisions_answer(text).len(), 1);
+        assert_eq!(parse(r#"{"other":1}"#).unwrap_err(), AnswerError::NoJson);
     }
 
     #[test]

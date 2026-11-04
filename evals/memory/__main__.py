@@ -38,6 +38,41 @@ PLAN = """Here is the plan for the `arena/` folder:
 
 This turn only delivered the plan; I am waiting for your go-ahead."""
 
+DODGER_RECORD = """---
+name: dodger
+title: Asteroid-dodger browser game in dodger/
+status: in progress
+updated: 2026-11-04
+---
+## Plan
+1. Ship moves with arrow keys or WASD.
+2. Asteroids speed up over time; score counts survival time.
+3. Three lives with a short blink after a hit; high score in localStorage.
+4. Start, pause, game over and restart screens; WebAudio beeps with mute key M.
+
+## Changes
+- Person added alien invaders that shoot the player
+
+## Decisions
+(none)
+
+## Tasks
+- [open] Aliens that shoot the player — "add some alien invaders that are able to shoot the player" (2026-11-04)
+- [open] Pause with P or Esc — "P or Esc pauses" (2026-11-04)
+- [open] Touch controls — on-screen arrows for phones (2026-11-04)
+- [done] Sound on hit — beeps play on a hit; heard by the person (2026-11-04)
+
+## Results
+(none)
+
+## Evidence
+(none)
+
+## Lessons
+(none)
+"""
+DODGER_INDEX = "- dodger (in progress, 2026-11-04): Asteroid-dodger browser game in dodger/\n"
+
 CASES = [
     {
         "name": "plan_approved",
@@ -95,6 +130,56 @@ CASES = [
         "expect": {"nothing": True},
     },
     {
+        # Several requirements in one message, mid-session: each becomes a task in the person's words.
+        "name": "tasks_from_new_requirements",
+        "person": ["Next, let the player shoot back with Space, make the levels harder every 30 seconds, and show the level number in the HUD."],
+        "answered": "Aliens now appear after 15 seconds and shoot pink bolts.",
+        "reply": "Starting on shooting: I'll add a bullet pool first.",
+        "plan_record": DODGER_RECORD, "plans_index": DODGER_INDEX,
+        "expect": {"tasks_add": ["shoot", "level"], "tasks_work": "dodger"},
+    },
+    {
+        # A task finished with proof in the turn is done; one only planned stays open.
+        "name": "task_done_only_with_proof",
+        "person": [],
+        "reply": "Pause works: in the browser P and Esc both stop the clock at 0:12 and resume it; 123 specs pass. Aliens are next.",
+        "ran_into": "- noted: Pressed P at 0:12: the clock stayed at 0:12 for 3 s. Pressed Esc: same. Resumed with P.\n- noted: I'll start the alien shots after this.",
+        "plan_record": DODGER_RECORD, "plans_index": DODGER_INDEX,
+        "expect": {"tasks_done": ["Pause"], "tasks_not_done": ["Aliens"]},
+    },
+    {
+        "name": "task_cancelled_by_person",
+        "person": ["Forget the touch controls, this is desktop only."],
+        "answered": "Touch controls are next on the list.",
+        "reply": "Dropped touch controls; the game stays keyboard-only.",
+        "plan_record": DODGER_RECORD, "plans_index": DODGER_INDEX,
+        "expect": {"tasks_cancelled": ["Touch"]},
+    },
+    {
+        "name": "agent_decision_between_options",
+        "person": [],
+        "reply": "Shooting works with a fixed pool of 30 bullets.",
+        "ran_into": "- noted: Two ways to do bullets: create a mesh per shot and dispose it on hit, or keep a fixed pool of 30 and reuse them. I'm using the pool: creating and disposing meshes every shot stutters at 60 fps and risks leaking GPU memory.",
+        "plan_record": DODGER_RECORD, "plans_index": DODGER_INDEX,
+        "expect": {"decision": ["agent", "pool"]},
+    },
+    {
+        # A remembered decision the person reverses keeps the old one and why it changed.
+        "name": "reversed_decision_keeps_history",
+        "person": ["Remove the to-do list tab after all: free models call its tool unreliably, so it does more harm than good."],
+        "answered": "The to-do list tab is in place as you decided.",
+        "reply": "Removed the to-do list tab and its tool.",
+        "expect": {"memory_words": ["before", "unreliabl"]},
+    },
+    {
+        "name": "routine_step_is_no_decision",
+        "person": [],
+        "reply": "Read the HUD code and ran the specs: 123 pass.",
+        "ran_into": "- noted: I'll read hud.js first.\n- noted: Running the specs now.",
+        "plan_record": DODGER_RECORD, "plans_index": DODGER_INDEX,
+        "expect": {"no_decision": True, "no_task_changes": True},
+    },
+    {
         "name": "goal_completed_done",
         "person": [],
         "answered": "",
@@ -146,8 +231,33 @@ def check(case, result):
         failures.append("no lesson kept as a memory")
     if expect.get("global") and "Global" not in " ".join(memories):
         failures.append("not global")
-    if expect.get("nothing") and (memories or plan):
+    tasks, decisions = result.get("tasks") or [], result.get("decisions") or []
+    if expect.get("nothing") and (memories or plan or tasks or decisions):
         failures.append("kept something")
+    adds = [op for op in tasks if op.startswith("Add")]
+    for word in expect.get("tasks_add", []):
+        if not any(word.lower() in op.lower() for op in adds):
+            failures.append(f"no task added for '{word}'")
+    if expect.get("tasks_work") and adds and not all(f'Some("{expect["tasks_work"]}")' in op for op in adds):
+        failures.append("added tasks not tied to the work")
+    def updated(word, status):
+        return any(op.startswith("Update") and word.lower() in op.lower() and f"status: {status}" in op for op in tasks)
+    for word in expect.get("tasks_done", []):
+        if not updated(word, "Done"):
+            failures.append(f"'{word}' not marked done")
+    for word in expect.get("tasks_not_done", []):
+        if updated(word, "Done"):
+            failures.append(f"'{word}' marked done without proof")
+    for word in expect.get("tasks_cancelled", []):
+        if not updated(word, "Cancelled"):
+            failures.append(f"'{word}' not cancelled")
+    if expect.get("no_task_changes") and tasks:
+        failures.append("changed tasks on a routine turn")
+    for word in expect.get("decision", []):
+        if not any(word.lower() in decision.lower() for decision in decisions):
+            failures.append(f"no decision with '{word}'")
+    if expect.get("no_decision") and decisions:
+        failures.append("kept a routine step as a decision")
     if expect.get("no_lesson") and re.search(r"(?i)lesson|test-first|failing test", text):
         failures.append("kept a test-first step as a lesson")
     return failures
@@ -160,6 +270,19 @@ def body_words(memories):
         if match:
             counts.append(len(match.group(1).split()))
     return counts
+
+
+def seed_memory(data, project):
+    """The project's remembered decision the reversal case changes."""
+    import hashlib
+    folder = hashlib.sha256(os.path.realpath(project).encode()).hexdigest()[:16]
+    memories = os.path.join(data, "memory", "projects", folder)
+    os.makedirs(memories, exist_ok=True)
+    with open(os.path.join(memories, "keep-todo-list-tab.md"), "w", encoding="utf-8") as f:
+        f.write("---\nname: keep-todo-list-tab\ndescription: Keep the agent's to-do list tab and its tool\ntype: project\nsaved: 2026-11-02\n---\n"
+                "The person decided to keep the to-do list tab and the agent's todo tool.\n\nWhy: they want to see what is pending.\n")
+    with open(os.path.join(memories, "MEMORY.md"), "w", encoding="utf-8") as f:
+        f.write("- keep-todo-list-tab (project, 2026-11-02): Keep the agent's to-do list tab and its tool\n")
 
 
 def main():
@@ -180,6 +303,7 @@ def main():
     os.makedirs(data)
     os.makedirs(project)
     print(f"work folder: {work}", flush=True)
+    seed_memory(data, project)
     boot = cli(binary, data, env, "server", "start", timeout=120)
     if boot.returncode != 0:
         sys.exit(f"server start: {boot.stderr.strip()[-300:]}")
@@ -196,6 +320,9 @@ def main():
                                "answered": case.get("answered", ""), "reply": case.get("reply", ""),
                                "ran_into": case.get("ran_into", ""),
                                "event": case.get("event"), "plan_about": "arena first-person shooter"}
+                    for key in ("plan_record", "plans_index", "tasks"):
+                        if key in case:
+                            request[key] = case[key]
                     if args.model:
                         request["model"] = args.model
                     value, error = call(binary, data, env, "memory_try_pass", request, timeout=240)
@@ -204,6 +331,7 @@ def main():
                     row = {"rep": rep, "mode": mode, "case": case["name"], "failures": failures, "thought": result.get("thought"),
                            "elapsed_ms": result.get("elapsed_ms"), "usage": result.get("usage"),
                            "memories": result.get("memories"), "plan": result.get("plan"),
+                           "tasks": result.get("tasks"), "decisions": result.get("decisions"),
                            "answer": result.get("answer")}
                     log.write(json.dumps(row) + "\n")
                     log.flush()
