@@ -157,6 +157,22 @@ CASES = [
         "expect": {"tasks_add_done": ["blue", "footer"]},
     },
     {
+        # Taken from a live long-session run: a first request built and checked in one turn
+        # left no trace, read as a "one-off request".
+        "name": "first_request_recorded",
+        "person": ["Build a small notes board web page in a new folder called board: plain HTML, CSS and JavaScript, no build step. I can add a note with a title and text, delete a note, and notes are saved in localStorage so they survive a reload. Keep it simple and test it in the browser."],
+        "reply": "All requirements hold: seven unit tests pass; in the browser adding a note, reloading to confirm it persisted, and deleting it all worked, with no console messages. Plain HTML, CSS and JavaScript, no build step.",
+        "ran_into": "- noted: Writing board/index.html, board/app.js and the tests.\n- noted: Tests pass; opening the page.",
+        "expect": {"tasks_add_done": ["add", "delete", "localStorage"]},
+    },
+    {
+        # An explanation is no task.
+        "name": "question_is_no_task",
+        "person": ["Quick question: what is the difference between localStorage and sessionStorage?"],
+        "reply": "localStorage keeps data until it is cleared; sessionStorage is cleared when the tab closes.",
+        "expect": {"nothing": True},
+    },
+    {
         "name": "task_cancelled_by_person",
         "person": ["Forget the touch controls, this is desktop only."],
         "answered": "Touch controls are next on the list.",
