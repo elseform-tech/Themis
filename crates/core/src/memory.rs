@@ -709,20 +709,41 @@ pub const MAX_RELEVANT: usize = 5;
 pub const MAX_RELEVANT_BYTES: usize = 8 * 1024;
 /// Shortest word that counts toward relevance.
 const MIN_TERM_CHARS: usize = 4;
-/// Words too common to tell memories apart.
-const STOP_WORDS: [&str; 24] = [
-    "about", "after", "again", "also", "been", "before", "could", "does", "from", "have", "into",
-    "just", "like", "make", "more", "please", "should", "that", "them", "then", "there", "this",
-    "what", "with",
+/// Words too common to tell memories apart: a live run's lesson came in only through "until",
+/// and unrelated memories through "small" and "from".
+const STOP_WORDS: [&str; 64] = [
+    "about", "after", "again", "also", "always", "another", "any", "because", "been", "before",
+    "being", "both", "but", "could", "does", "done", "each", "even", "every", "from", "have",
+    "here", "into", "just", "keep", "like", "make", "many", "more", "most", "much", "must", "need",
+    "never", "next", "only", "other", "over", "please", "same", "should", "small", "some", "such",
+    "than", "that", "their", "them", "then", "there", "these", "they", "this", "those", "under",
+    "until", "used", "uses", "very", "what", "when", "where", "which", "with",
 ];
 
-/// The distinct lowercase words of `text` that can tell memories apart.
+/// The distinct lowercase words of `text` that can tell memories apart, a plural counted as
+/// its singular ("games" finds "game", "libraries" finds "library").
 fn terms(text: &str) -> std::collections::BTreeSet<String> {
     text.split(|c: char| !c.is_alphanumeric())
-        .filter(|word| word.chars().count() >= MIN_TERM_CHARS)
         .map(str::to_lowercase)
+        .map(|word| singular(&word))
+        .filter(|word| word.chars().count() >= MIN_TERM_CHARS)
         .filter(|word| !STOP_WORDS.contains(&word.as_str()))
         .collect()
+}
+
+/// A plain English plural's singular; anything else unchanged. Words ending in "ss", "us" or
+/// "is" ("class", "status", "analysis") are not plurals.
+fn singular(word: &str) -> String {
+    if let Some(stem) = word.strip_suffix("ies").filter(|stem| stem.len() >= 3) {
+        return format!("{stem}y");
+    }
+    if word.len() > 4
+        && word.ends_with('s')
+        && !["ss", "us", "is"].iter().any(|end| word.ends_with(end))
+    {
+        return word[..word.len() - 1].to_owned();
+    }
+    word.to_owned()
 }
 
 /// Which memories bear on `message`, by a cheap rule that needs no model: the index lines
@@ -922,6 +943,31 @@ mod tests {
             full.ends_with("in full:\n### free-model-for-tests (feedback, 2026-11-02): Use the free model for test runs (global)\nUse the free model for test runs.\n\nWhy: said so.\nHow to apply: pick it."),
             "{full}"
         );
+    }
+
+    /// Taken from a live goal run: its lesson matched only through "until", and two unrelated
+    /// memories through "small" and "from". A plural now finds its singular, and filler words
+    /// pick nothing.
+    #[test]
+    fn plurals_match_and_filler_words_do_not() {
+        let project = "- fixed-step-tap-latching (project, 2026-11-04): Fixed-step games must latch quick discrete presses until next step reads them
+- cli-tool-language (project, 2026-11-03): Small command-line tool uses Go instead of Python
+- deploy-from-release-branch (project, 2026-11-03): Deploys this project from release branch, never main
+";
+        let picked = relevant_names(
+            "Build a small browser game in a new folder: keys move the ship until it is hit; three lives, sound from WebAudio.",
+            "",
+            project,
+        );
+        assert_eq!(
+            picked,
+            [(MemoryScope::Project, "fixed-step-tap-latching".to_owned())]
+        );
+        assert_eq!(singular("libraries"), "library");
+        assert_eq!(singular("class"), "class");
+        assert_eq!(singular("status"), "status");
+        assert_eq!(singular("analysis"), "analysis");
+        assert_eq!(singular("bus"), "bus");
     }
 
     #[test]
