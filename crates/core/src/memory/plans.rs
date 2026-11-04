@@ -141,7 +141,19 @@ fn block(text: &str, max: usize) -> String {
         })
         .collect::<Vec<_>>()
         .join("\n");
-    cut(text.trim(), max)
+    cut(&edges(&text), max)
+}
+
+/// `text` without blank lines at either end, keeping its first line's indentation: an edit of
+/// an indented step (a file tree, a code block) must keep it, saved and read back.
+fn edges(text: &str) -> String {
+    let start = text
+        .lines()
+        .take_while(|row| row.trim().is_empty())
+        .map(|row| row.len() + 1)
+        .sum::<usize>()
+        .min(text.len());
+    text[start..].trim_end().to_owned()
 }
 
 impl PlanRecord {
@@ -347,16 +359,15 @@ pub fn parse(text: &str) -> Result<PlanRecord, MemoryError> {
         let at = body
             .rfind(&marker)
             .ok_or_else(|| MemoryError(format!("a plan record needs `{heading}`")))?;
-        sections.push(body[at + marker.len()..].trim().to_owned());
+        sections.push(edges(&body[at + marker.len()..]));
         body = &body[..at];
     }
     sections.reverse();
     let plan = body
         .trim_start_matches('\n')
         .strip_prefix("## Plan\n")
-        .ok_or_else(|| MemoryError("a plan record needs `## Plan`".into()))?
-        .trim()
-        .to_owned();
+        .ok_or_else(|| MemoryError("a plan record needs `## Plan`".into()))
+        .map(edges)?;
     let list = |section: &str, chars: usize| -> Vec<String> {
         section
             .lines()
@@ -764,6 +775,36 @@ mod tests {
         assert_eq!(
             record.changes,
             ["Amounts in euros only; the leftover cent goes to the payer."]
+        );
+        assert_eq!(parse(&serialize(&record)).unwrap(), record);
+    }
+
+    /// An edit of an indented line keeps its indentation: a live run's edit of a file tree moved
+    /// `score.js` out of its folder when the new text was trimmed.
+    #[test]
+    fn an_edit_of_an_indented_line_keeps_its_indentation() {
+        let mut record = PlanRecord::new(
+            "tree",
+            "A tree",
+            "```\ngame/\n    state.js   phases\n    score.js   scoring\n```",
+            None,
+            "2026-11-04",
+        );
+        let (applied, missed) = record.change(
+            "Added aliens.js",
+            &[(
+                "    score.js   scoring".to_owned(),
+                "    score.js   scoring\n    aliens.js  invaders".to_owned(),
+            )],
+            "2026-11-04",
+        );
+        assert_eq!((applied, missed), (1, 0));
+        assert!(
+            record.plan.contains(
+                "\n    state.js   phases\n    score.js   scoring\n    aliens.js  invaders\n"
+            ),
+            "{}",
+            record.plan
         );
         assert_eq!(parse(&serialize(&record)).unwrap(), record);
     }
