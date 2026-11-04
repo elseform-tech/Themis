@@ -117,6 +117,9 @@ describe("answerOf", () => {
     const text = `${ANSWER_MARKER}\nQuestion: Tabs or spaces?\nOptions you offered: Tabs; Spaces\nYou assumed: Tabs\nAnswer: it sounds good and the controls are fine\nIf the answer differs from your assumption, first fix what you did on it, then continue.`;
     expect(answerOf(text)).toBe("it sounds good and the controls are fine");
     expect(answerOf("Answer: not one")).toBeUndefined();
+    // A chosen option is sent the same way: its label is the bubble.
+    const chosen = `${ANSWER_MARKER}\nQuestion: Tabs or spaces?\nOptions you offered: Tabs (recommended); Spaces\nYou assumed: Tabs\nAnswer: Spaces\nIf the answer differs from your assumption, first fix what you did on it, then continue.`;
+    expect(answerOf(chosen)).toBe("Spaces");
   });
 });
 
