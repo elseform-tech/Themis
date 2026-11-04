@@ -606,16 +606,6 @@ impl AppState {
                 // The plan records' index and the record this chat is about, in full.
                 let (plans_index, record) =
                     self.plan_record_for(&turn.project_root, thread_id, &about);
-                // A record from before tasks existed gets one per plan step first, so the model
-                // only moves statuses.
-                let record = record.map(|mut record| {
-                    if record.seed_tasks(&themis_core::memory::today()) > 0 {
-                        if let Ok(store) = self.plan_store(&turn.project_root) {
-                            let _ = store.save(&record, false);
-                        }
-                    }
-                    record
-                });
                 let record = record
                     .map(|record| themis_core::memory::plans::serialize(&record))
                     .unwrap_or_default();

@@ -44,8 +44,6 @@ const HISTORY_PAGE_ITEMS: usize = 2_000;
 const PLAN_RESULTS_WAIT: Duration = Duration::from_secs(20);
 /// Most history items one goal's snag scan reads.
 const SNAG_SCAN_ITEMS: usize = 6_000;
-/// Most snags a goal-complete pass reads.
-const MAX_SNAGS: usize = 8;
 /// Most characters of a failed step's output, and of what the agent said next.
 const SNAG_CHARS: usize = 300;
 /// Most entries of one turn's working log (its failed steps and the agent's notes), the latest.
@@ -71,34 +69,6 @@ fn tail(text: &str) -> String {
     flat.chars()
         .skip(count.saturating_sub(SNAG_CHARS))
         .collect()
-}
-
-/// What the work ran into: each failed step (tool, end of its output) with the first thing
-/// the agent said after it, the latest [`MAX_SNAGS`]. Pure, so it is tested on its own.
-fn snags_of(events: &[ThreadEvent]) -> String {
-    let mut snags: Vec<String> = Vec::new();
-    for (at, event) in events.iter().enumerate() {
-        let ThreadEvent::ToolFinished {
-            tool, ok, output, ..
-        } = event
-        else {
-            continue;
-        };
-        if !step_failed(*ok, output) || tool.starts_with("hook_") || tool == "Skill" {
-            continue;
-        }
-        let next = events[at + 1..].iter().find_map(|later| match later {
-            ThreadEvent::AssistantText { text } if !text.trim().is_empty() => Some(tail(text)),
-            _ => None,
-        });
-        let mut snag = format!("- {tool} failed: {}", tail(output));
-        if let Some(next) = next {
-            snag.push_str(&format!("\n  then: {next}"));
-        }
-        snags.push(snag);
-    }
-    let skip = snags.len().saturating_sub(MAX_SNAGS);
-    snags.into_iter().skip(skip).collect::<Vec<_>>().join("\n")
 }
 
 /// One turn's working log for its memory pass, in order: each failed step, and each note the
@@ -538,10 +508,13 @@ impl AppState {
                 }
                 // What the work ran into: the steps that failed and what the agent said next,
                 // read from the goal's own history (a short goal has no checkpoint).
-                let snags = self.work_snags(&thread_id, goal.start_seq);
+                // What the work ran into: its failed steps and the agent's notes along the
+                // way (where lessons are: a bug found, an approach dropped, a better way), the
+                // latest of the whole goal.
+                let snags = self.work_log(&thread_id, goal.start_seq);
                 if !snags.is_empty() {
                     content.push_str(&format!(
-                        "\nWhat the work ran into (failed steps, then what the agent said next):\n{snags}"
+                        "\nWhat the work ran into (failed steps and the agent's notes along the way):\n{snags}"
                     ));
                 }
                 // And its latest checkpoint, when there is one.
@@ -788,12 +761,6 @@ impl AppState {
         // plan record copies it whole.
         let answered = transcript.last_reply_text(thread_id);
         self.spawn_goal_memory_event(sink, thread_id, "a goal was created", (content, answered));
-    }
-
-    /// The failed steps of a goal's work since `from_seq`, each with what the agent said next:
-    /// at most [`MAX_SNAGS`].
-    pub(super) fn work_snags(&self, thread_id: &str, from_seq: i64) -> String {
-        snags_of(&self.events_since(thread_id, from_seq))
     }
 
     /// One turn's working log for its memory pass: see [`work_log_of`].
@@ -1449,43 +1416,6 @@ mod snag_tests {
 
     fn said(text: &str) -> ThreadEvent {
         ThreadEvent::AssistantText { text: text.into() }
-    }
-
-    #[test]
-    fn failed_steps_are_kept_with_what_the_agent_said_next() {
-        let events = vec![
-            tool(true, r#"{"exit_code":0,"output":"ok"}"#),
-            tool(
-                true,
-                r#"{"exit_code":1,"output":"AssertionError: 'aeroskobing' !== 'rskbing'"}"#,
-            ),
-            said("NFD stripping drops æ and ø, adding a map for them."),
-            tool(false, "refused: outside the project"),
-            tool(true, "not json at all"),
-        ];
-        let snags = snags_of(&events);
-        assert!(
-            snags.contains("- shell failed: {\"exit_code\":1"),
-            "{snags}"
-        );
-        assert!(
-            snags.contains("then: NFD stripping drops æ and ø"),
-            "{snags}"
-        );
-        assert!(
-            snags.contains("- shell failed: refused: outside the project"),
-            "{snags}"
-        );
-        assert_eq!(snags.matches("- shell failed").count(), 2, "{snags}");
-        // At most MAX_SNAGS, the latest; each bounded.
-        let many: Vec<ThreadEvent> = (0..20)
-            .map(|n| tool(false, &format!("{n} {}", "x".repeat(1000))))
-            .collect();
-        let snags = snags_of(&many);
-        assert_eq!(snags.lines().count(), MAX_SNAGS);
-        assert!(snags
-            .lines()
-            .all(|line| line.chars().count() <= SNAG_CHARS + 20));
     }
 
     /// A turn's log holds what a failed step alone never shows: the agent's notes on what it

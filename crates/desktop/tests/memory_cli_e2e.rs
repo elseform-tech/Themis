@@ -943,10 +943,19 @@ async fn an_approved_plan_keeps_a_record_through_changes_to_done() {
         system.contains("## Decisions\n- person: sort notes by date"),
         "{system}"
     );
+    // Finished work leaves nothing open: its plan steps are closed with it.
     assert!(
-        system.contains("- 1 done: Show the count in the footer"),
+        system.contains("- 4 done: ") && system.contains("Show the count in the footer"),
         "{system}"
     );
+    // The step the change replaced was cancelled, not closed as done.
+    assert!(
+        system.contains(
+            "- [cancelled] Sort notes by title. — the plan changed: Notes are sorted by date"
+        ),
+        "{system}"
+    );
+    assert!(!system.contains("- [open] "), "{system}");
     assert!(!system.contains("## Results\nBuilt notes.txt"), "{system}");
     assert!(
         system.contains("## Lessons\n- Write notes.txt with a trailing newline"),

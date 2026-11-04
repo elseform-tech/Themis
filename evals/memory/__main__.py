@@ -195,6 +195,15 @@ CASES = [
         "expect": {"tasks_add_min": 4},
     },
     {
+        # An old open task the turn finds already done is closed, not left stale.
+        "name": "stale_task_closed",
+        "person": [],
+        "reply": "Checked the open items: dark mode already exists, styles.css has a prefers-color-scheme block from October and the page follows the system theme; nothing to do there.",
+        "ran_into": "- noted: The task list says dark mode is open since 2026-10-20; reading styles.css first.\n- noted: styles.css already has @media (prefers-color-scheme: dark) and the page switches with the system theme.",
+        "tasks": "- [open] Add dark mode — follow the system theme (2026-10-20)\n- [open] Export notes to JSON (2026-11-04)\n",
+        "expect": {"tasks_done": ["dark mode"], "tasks_not_done": ["Export"]},
+    },
+    {
         "name": "task_cancelled_by_person",
         "person": ["Forget the touch controls, this is desktop only."],
         "answered": "Touch controls are next on the list.",

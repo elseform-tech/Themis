@@ -906,9 +906,10 @@ record per run.
 Tasks keep track of the work along the way. A task line is `- [status] title — note (date)`:
 status `open`, `doing`, `done` or `cancelled`, a title (at most 120 characters), a note (at
 most 300: what done means and the person's own words, or the outcome and its proof, or why it
-was cancelled) and the day it last changed. Themis makes each step of an approved plan (each bullet or numbered line outside code blocks,
-a `**Label:**` step titled by its label) an open task when the record is created, when a change
-adds steps, and before a pass reads a record that has none for them; the memory models only move
+was cancelled) and the day it last changed. Themis makes each step of an approved plan (each bullet or numbered line outside code blocks
+and outside a section of open questions, a `**Label:**` step titled by its label) an open task
+when the record is created and when a change adds steps (never for work already under way,
+whose steps' state it can't know); the memory models only move
 their statuses, recording progress on a task worked on but not finished as `doing` with what was
 tried. Tasks of approved work live in its record's Tasks
 section; the rest in one project file, `memory/projects/<hash>/plans/TASKS.md` (at most 48 KiB).
@@ -920,7 +921,13 @@ removed otherwise. The memory pass reads the record's tasks and the project file
 started or finished, so finished asks stay on record; optional `work` naming a record; a title
 already listed updates its note and reopens it) and `update` (exact title, status, note), and at most 3 `"decisions"` (`work`,
 `who`: person or agent, `what`, `why`) for records. Entries holding a secret or not fitting are
-refused. A run gets the project file's tasks the same way: open ones in full, the latest 20
+refused. When a record is marked done, Themis closes its tasks still open or doing as done, saying in
+the note they were closed when the work was marked done (the evidence is the proof). The
+goal-complete pass reads the goal's working log (failed steps and the agent's notes, the latest
+40) for its lessons. Tasks and decisions carry their date: runs are told an older open task may
+since be done or no longer wanted (check the files, and ask before starting one this chat didn't
+raise) and that the latest decision on a matter wins; passes close an open task the turn shows
+already done or no longer wanted. A run gets the project file's tasks the same way: open ones in full, the latest 20
 cancelled ones with why, and the latest 20 done ones by title (`system-memory-tasks.md`). `logs/` gets a `memory` / `tasks` line with counts only
 (applied, missed, decisions, failed); task changes stay out of the chat's memory line. The pass gets the same index and record. `logs/` has `memory` /
 `plan` lines with the op and outcome (`saved`, `updated`, `removed`, `exists`, `missing`,

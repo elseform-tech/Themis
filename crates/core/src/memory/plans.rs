@@ -210,6 +210,24 @@ impl PlanRecord {
                 Some(plan) => {
                     self.plan = plan;
                     applied += 1;
+                    // A step the change rewrote no longer stands: its task is cancelled, saying
+                    // why, never later closed as done (the new step gets its own task).
+                    let kept: Vec<String> = plan_requirements(&new)
+                        .into_iter()
+                        .map(|(title, _)| title.to_ascii_lowercase())
+                        .collect();
+                    for (title, _) in plan_requirements(old) {
+                        if kept.contains(&title.to_ascii_lowercase()) {
+                            continue;
+                        }
+                        let op = super::tasks::TaskOp::Update {
+                            title,
+                            status: super::tasks::TaskStatus::Cancelled,
+                            note: format!("the plan changed: {}", line(change, 200)),
+                            work: None,
+                        };
+                        super::tasks::apply(&mut self.tasks, &op, today);
+                    }
                 }
                 None => missed += 1,
             }
@@ -230,6 +248,24 @@ impl PlanRecord {
     /// lessons replace theirs when given.
     pub fn done(&mut self, results: &str, evidence: &[String], lessons: &[String], today: &str) {
         self.status = PlanStatus::Done;
+        // Finished work leaves nothing open: a task still open is closed with it, saying so,
+        // so it doesn't read as proven on its own (the evidence is the proof).
+        for task in &mut self.tasks {
+            if matches!(
+                task.status,
+                super::tasks::TaskStatus::Open | super::tasks::TaskStatus::Doing
+            ) {
+                task.status = super::tasks::TaskStatus::Done;
+                task.note = line(
+                    &format!(
+                        "closed when the work was marked done (see Evidence); {}",
+                        task.note
+                    ),
+                    super::tasks::MAX_TASK_NOTE,
+                );
+                task.updated = today.to_owned();
+            }
+        }
         if !results.trim().is_empty() {
             self.results = block(results, MAX_RESULTS_BYTES);
         }
@@ -409,6 +445,8 @@ impl PlanRecord {
 /// label, others by their opening words.
 fn plan_requirements(plan: &str) -> Vec<(String, String)> {
     let mut fenced = false;
+    // A section of open questions asks; its items are not requirements.
+    let mut asking = false;
     let mut found = Vec::new();
     for row in plan.lines() {
         let row = row.trim();
@@ -417,6 +455,13 @@ fn plan_requirements(plan: &str) -> Vec<(String, String)> {
             continue;
         }
         if fenced {
+            continue;
+        }
+        if row.starts_with('#') {
+            asking = row.to_ascii_lowercase().contains("question");
+            continue;
+        }
+        if asking {
             continue;
         }
         let item = row
@@ -1077,7 +1122,7 @@ mod tests {
         let mut record = PlanRecord::new(
             "dodger",
             "Dodger",
-            "## Gameplay\n- **Ship:** arrow keys or WASD move it.\n- **Lives:** three, with a `1.5 s` blink.\n\nSome prose.\n```\n- not a step\n```\n## How we test it\n1. **Unit tests:** node --test dodger/spec\n2. Browser check over http with a clean console",
+            "## Gameplay\n- **Ship:** arrow keys or WASD move it.\n- **Lives:** three, with a `1.5 s` blink.\n\nSome prose.\n```\n- not a step\n```\n## Open questions\n- Should Esc also pause?\n## How we test it\n1. **Unit tests:** node --test dodger/spec\n2. Browser check over http with a clean console",
             None,
             "2026-11-04",
         );
@@ -1101,6 +1146,30 @@ mod tests {
         assert_eq!(record.seed_tasks("2026-11-04"), 0);
         record.plan.push_str("\n3. Sound by ear");
         assert_eq!(record.seed_tasks("2026-11-05"), 1);
+        // A change that rewrites a step cancels its task and adds the new one.
+        record.change(
+            "Lives are five now",
+            &[(
+                "- **Lives:** three, with a `1.5 s` blink.".to_owned(),
+                "- **Five lives:** with a blink.".to_owned(),
+            )],
+            "2026-11-05",
+        );
+        record.seed_tasks("2026-11-05");
+        let lives = record
+            .tasks
+            .iter()
+            .find(|task| task.title == "Lives")
+            .unwrap();
+        assert_eq!(lives.status, super::super::tasks::TaskStatus::Cancelled);
+        assert!(
+            lives
+                .note
+                .starts_with("the plan changed: Lives are five now"),
+            "{}",
+            lives.note
+        );
+        assert!(record.tasks.iter().any(|task| task.title == "Five lives"));
         assert_eq!(parse(&serialize(&record)).unwrap(), record);
     }
 
@@ -1143,6 +1212,14 @@ mod tests {
             &["Keep money in integer cents: floats drifted by a cent".to_owned()],
             "2026-11-04",
         );
+        // Nothing is left open on finished work.
+        assert!(record
+            .tasks
+            .iter()
+            .all(|task| task.status == super::super::tasks::TaskStatus::Done));
+        assert!(record.tasks[0]
+            .note
+            .starts_with("closed when the work was marked done"));
         // Done keeps the chat link: that chat may go on about the work.
         assert_eq!(
             (record.status, record.chat.as_deref()),
