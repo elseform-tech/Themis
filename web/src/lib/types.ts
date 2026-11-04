@@ -469,8 +469,18 @@ export interface Question {
   answer?: string;
 }
 
-/** Starts the message that delivers an answer to the agent (shown as the answered box instead). */
+/** Starts the message that delivers an answer to the agent. */
 export const ANSWER_MARKER = "[Answer to your question — from the user]";
+
+/** The person's own answer inside such a message (what they chose or wrote), else undefined. */
+export function answerOf(text: string): string | undefined {
+  if (!text.startsWith(ANSWER_MARKER)) return undefined;
+  const at = text.lastIndexOf("\nAnswer: ");
+  if (at < 0) return undefined;
+  const rest = text.slice(at + "\nAnswer: ".length);
+  const end = rest.indexOf("\nIf the answer differs");
+  return (end < 0 ? rest : rest.slice(0, end)).trim();
+}
 
 /** A message waiting for the chat's current run to end. */
 export interface QueuedMessage {

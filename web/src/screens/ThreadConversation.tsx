@@ -5,7 +5,7 @@ import { PromptText } from "../components/PromptInput";
 import { usePromptSkills } from "../lib/usePromptSkills";
 import { describeError, toast, useActiveProject, useApp } from "../state/store";
 import { browserOpenUrl } from "../lib/browser";
-import { ANSWER_MARKER, type AttachedMedia, type ChangedFile, type Question } from "../lib/types";
+import { ANSWER_MARKER, answerOf, type AttachedMedia, type ChangedFile, type Question } from "../lib/types";
 import { hiddenFilesLabel, visibleFiles } from "../lib/hiddenFiles";
 import { QuestionNote, useNowAt } from "./QuestionBox";
 import { placeQuestion, questionOnComposer, QUESTION_OPEN_MS, usePlacements } from "../state/composerSlot";
@@ -374,8 +374,12 @@ type InlineMemory = { memoryByRun: Record<string, ChatMessage>; finalRuns: Set<s
 
 function Message({ message, threadId, activeRunId, durationMs, skills, plugins, memory, memoryWorking }: { message: ChatMessage; threadId?: string; activeRunId: string | undefined; durationMs?: number; skills: PromptSkill[]; plugins: PromptPlugin[]; memory?: ChatMessage; memoryWorking?: "checking" | "waiting" }) {
   if (message.checkpoint) return <CheckpointDivider checkpoint={message.checkpoint} />;
-  // The answered question box already shows the answer the agent was sent.
-  if (message.role === "user" && message.text.startsWith(ANSWER_MARKER)) return null;
+  // An answer to the agent's question is the person's next message: their words in a bubble,
+  // so a long chat shows what they said where they said it.
+  if (message.role === "user" && message.text.startsWith(ANSWER_MARKER)) {
+    const answer = answerOf(message.text);
+    return answer ? <div className="themis-thread-msg themis-thread-msg--user"><p className="themis-thread-text">{answer}</p></div> : null;
+  }
   // A goal turn starts with a runtime message: a divider, not a bubble from the user.
   if (message.goalStatus) return <div className="themis-thread-msg themis-thread-msg--assistant themis-thread-msg--completed"><ResponseBody text={message.text} /></div>;
   if (message.goalCheck) return <div className="themis-thread-msg themis-thread-msg--user"><span className="themis-goal-check-label">Goal check</span><p className="themis-thread-text">{message.text}</p></div>;

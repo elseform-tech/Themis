@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { ANSWER_MARKER, type Question } from "../lib/types";
+import { ANSWER_MARKER, answerOf, type Question } from "../lib/types";
 import { initialState, reducer } from "../state/reducer";
 import { composerQueue, QUESTION_OPEN_MS, questionOnComposer } from "../state/composerSlot";
 import { QuestionBox, QuestionNote } from "./QuestionBox";
@@ -109,6 +109,14 @@ describe("what the composer shows", () => {
     // Opened again from its turn, it stays until answered.
     expect(questionOnComposer(question({ asked_at: now - 10 * QUESTION_OPEN_MS }), new Map([["q1", "composer"]]), now)).toBe(true);
     expect(questionOnComposer(question({ blocking: true, asked_at: now - 10 * QUESTION_OPEN_MS }), new Map([["q1", "turn"]]), now)).toBe(true);
+  });
+});
+
+describe("answerOf", () => {
+  it("reads the person's answer out of the message the agent was sent", () => {
+    const text = `${ANSWER_MARKER}\nQuestion: Tabs or spaces?\nOptions you offered: Tabs; Spaces\nYou assumed: Tabs\nAnswer: it sounds good and the controls are fine\nIf the answer differs from your assumption, first fix what you did on it, then continue.`;
+    expect(answerOf(text)).toBe("it sounds good and the controls are fine");
+    expect(answerOf("Answer: not one")).toBeUndefined();
   });
 });
 
