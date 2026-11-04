@@ -82,15 +82,9 @@ impl ToolRuntime for GoalTool {
             return Err(refused);
         }
         let objective = args["objective"].as_str().unwrap_or_default().to_owned();
-        let checklist = themis_core::goal::parse_checklist(&args["checklist"]).map_err(error)?;
         let goal = self
             .state
-            .create_goal(
-                Arc::clone(&self.sink),
-                self.thread_id.clone(),
-                objective,
-                checklist,
-            )
+            .create_goal(Arc::clone(&self.sink), self.thread_id.clone(), objective)
             .await
             .map_err(error)?;
         Ok(json!({
@@ -109,10 +103,7 @@ impl ToolT for GoalTool {
         themis_core::prompts::CREATE_GOAL_TOOL
     }
     fn args_schema(&self) -> Value {
-        json!({"type":"object","properties":{
-            "objective":{"type":"string","description":"The objective in the user's words, with every condition they gave."},
-            "checklist":{"type":"array","minItems":1,"maxItems":themis_core::goal::MAX_CHECKLIST,"items":{"type":"string","maxLength":themis_core::goal::MAX_ITEM_CHARS},"description":"One item per concrete thing the user asked for or approved, each a short statement someone could check by using the result."}
-        },"required":["objective","checklist"],"additionalProperties":false})
+        json!({"type":"object","properties":{"objective":{"type":"string","description":"The objective in the user's words, with every condition they gave."}},"required":["objective"],"additionalProperties":false})
     }
     fn output_schema(&self) -> Option<Value> {
         None

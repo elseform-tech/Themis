@@ -389,9 +389,8 @@ struct GoalApp {
 }
 
 impl GoalApp {
-    /// A chat whose goals skip QA turns: these tests cover the goal turn loop.
     async fn start(respond: impl Fn(&Value) -> ResponseTemplate + Send + Sync + 'static) -> Self {
-        Self::start_with(r#"{"goal_qa_turns": false}"#, respond).await
+        Self::start_with("{}", respond).await
     }
 
     async fn start_with(
@@ -760,136 +759,5 @@ async fn cli_an_edited_goal_tells_the_next_turn_once() {
         .expect("new objective");
     assert!(updated < objective, "{second}");
     assert!(!turn(3).contains("The user edited the goal"), "only once");
-    app.finish().await;
-}
-
-/// QA turns: the first `complete` is refused and starts QA goal turns over the checklist (the
-/// agent's requirements plus the standing quality items), a few items per turn; a QA turn that
-/// used a tool and changed no files passes its items, and `complete` is accepted once every
-/// item passed. The goal ends with every item passed.
-#[tokio::test(flavor = "multi_thread")]
-async fn cli_a_goal_is_complete_only_after_qa_turns_pass_its_checklist() {
-    let app = GoalApp::start_with("{}", |body| {
-        // The memory models (on the same scripted server) keep nothing here.
-        if body["messages"][0]["content"]
-            .as_str()
-            .is_some_and(|system| system.starts_with("You keep an assistant's memory"))
-        {
-            return reply(r#"{"memories":[]}"#);
-        }
-        let user = last_user(body);
-        let fresh = body["messages"]
-            .as_array()
-            .and_then(|messages| messages.last())
-            .is_some_and(|message| message["role"] == "user");
-        if user.contains("This is a QA turn") {
-            // The first QA turn finds a problem and fixes it; the others only check.
-            return if fresh && user.contains("0 of 7 checklist items have passed") && !user.contains("fixed last time") {
-                calls("write_file", json!({"file_path": "fix.txt", "content": "fixed"}))
-            } else if fresh {
-                calls("list_dir", json!({"directory_path": "."}))
-            } else {
-                reply("Checked: it holds.")
-            };
-        }
-        let refused_evidence = body["messages"]
-            .as_array()
-            .and_then(|messages| messages.last())
-.is_some_and(|message| {
-                message["role"] == "tool"
-                    && message["content"]
-                        .to_string()
-                        .contains("one evidence entry per checklist item")
-            });
-        if (fresh || refused_evidence) && offers(body, "update_goal") {
-            // The last check first gives one entry (refused), then one per checklist item.
-            let entries = if refused_evidence { 7 } else { 1 };
-            let evidence: Vec<Value> = (0..entries)
-                .map(|i| json!({"requirement": format!("item {}", i + 1), "proof": "checked: it holds"}))
-                .collect();
-            return calls("update_goal", json!({"status": "complete", "evidence": evidence}));
-        }
-        reply("Built it.")
-    })
-    .await;
-    // Memory runs too, so a QA turn that fixed something gets its pass.
-    app.state.set_memory_jobs_for_test(true, 300, 100);
-    let (data, thread) = (app.data.path().to_owned(), app.thread.clone());
-    let goal = tokio::task::spawn_blocking(move || {
-        call(
-            &data,
-            "set_thread_approval_mode",
-            json!({"threadId": thread, "mode": "yolo"}),
-        );
-        call(
-            &data,
-            "send_message",
-            json!({"threadId": thread, "text": "/goal give the README a title"}),
-        );
-        goal_until(&data, &thread, "never complete", |goal| {
-            goal["status"] == "reached"
-        })
-    })
-    .await
-    .unwrap();
-    let checklist = goal["checklist"].as_array().unwrap();
-    assert_eq!(checklist.len(), 1 + 6, "{goal}");
-    assert!(
-        checklist.iter().all(|item| item["state"] == "passed"),
-        "{goal}"
-    );
-    let bodies = app.bodies().await;
-    // The first complete was answered with QA, not accepted.
-    assert!(
-        bodies
-            .iter()
-            .any(|body| body["messages"].to_string().contains("not complete yet")),
-        "no QA answer"
-    );
-    // Three QA turns of at most three items, in checklist order, quality items included.
-    let qa: Vec<String> = bodies
-        .iter()
-        .filter(|body| {
-            body["messages"]
-                .as_array()
-                .and_then(|m| m.last())
-                .is_some_and(|m| m["role"] == "user")
-                && last_user(body).contains("This is a QA turn")
-        })
-        .map(last_user)
-        .collect();
-    // The first QA turn changed files: its items are checked again before the rest.
-    assert_eq!(qa.len(), 4, "{qa:#?}");
-    assert!(
-        qa[1].contains("0 of 7") && qa[1].contains("(fixed last time: check it again)"),
-        "{}",
-        qa[1]
-    );
-    // A QA turn that fixed something gets a memory pass, even with no words from the person.
-    assert!(
-        bodies.iter().any(|body| body["messages"][1]
-            .to_string()
-            .contains("(a QA turn: it found problems and changed files to fix them)")),
-        "no memory pass for the QA turn that fixed something"
-    );
-    assert!(
-        qa[0].contains("0 of 7 checklist items have passed"),
-        "{}",
-        qa[0]
-    );
-    assert!(qa[0].contains("1. item 1\n2. Fault tolerance"), "{}", qa[0]);
-    assert!(qa[2].contains("3 of 7"), "{}", qa[2]);
-    assert!(qa[3].contains("7. UI and user experience"), "{}", qa[3]);
-    // Too little evidence after QA is refused: one entry per checklist item.
-    assert!(
-        bodies.iter().any(|body| body["messages"]
-            .to_string()
-            .contains("one evidence entry per checklist item (7 items; you gave 1)")),
-        "short evidence accepted"
-    );
-    // Then the last check, and complete.
-    assert!(bodies
-        .iter()
-        .any(|body| last_user(body).contains("Every checklist item has passed")));
     app.finish().await;
 }

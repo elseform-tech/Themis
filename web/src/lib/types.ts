@@ -507,17 +507,6 @@ export interface Goal {
   evidence?: GoalEvidence[];
   /** Each message the person sent while the goal ran, word for word; part of its objective. */
   also_asked?: string[];
-  /** What the goal must meet, item by item; QA turns check it after the agent first says complete. */
-  checklist?: GoalChecklistItem[];
-  /** True once QA turns have started. */
-  qa?: boolean;
-}
-
-/** One checklist item and where its QA stands. */
-export interface GoalChecklistItem {
-  text: string;
-  state: "open" | "fixed" | "passed" | "unconfirmed";
-  rounds?: number;
 }
 
 /** One requirement of a complete goal and what proves it. */

@@ -1144,15 +1144,7 @@ async fn dispatch_command(
         "get_goal" => output!(state.get_goal(arg(&args, "threadId")?).await?),
         "create_goal" => output!(
             state
-                .create_goal(
-                    sink,
-                    arg(&args, "threadId")?,
-                    arg(&args, "text")?,
-                    match args.get("checklist") {
-                        Some(list) if !list.is_null() => themis_core::goal::parse_checklist(list)?,
-                        _ => Vec::new(),
-                    },
-                )
+                .create_goal(sink, arg(&args, "threadId")?, arg(&args, "text")?)
                 .await?
         ),
         "edit_goal" => output!(

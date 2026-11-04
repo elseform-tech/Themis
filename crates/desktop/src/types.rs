@@ -475,16 +475,6 @@ pub struct Goal {
     /// History position when the goal began: where what the work ran into starts.
     #[serde(default)]
     pub start_seq: i64,
-    /// What the goal must meet, item by item: written by the agent when it created the goal
-    /// (or from its first `complete`), added to by the person's messages, never shortened.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub checklist: Vec<themis_core::goal::ChecklistItem>,
-    /// The agent called `complete` once: goal turns are QA turns until every item passed.
-    #[serde(default)]
-    pub qa: bool,
-    /// The items the current QA turn checks.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub qa_turn: Vec<usize>,
     /// What the agent named as proof of each requirement when it marked the goal complete.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub evidence: Vec<themis_core::goal::Evidence>,

@@ -55,8 +55,6 @@ pub(super) struct MemoryTurn {
     /// What the turn ran into: each failed step and what the agent said next (filled when the
     /// turn ends). A turn that hit a snag and got past it is worth a pass on its own.
     pub(super) ran_into: String,
-    /// A QA goal turn that changed files: it found problems and fixed them.
-    pub(super) qa_fixed: bool,
 }
 
 /// One memory job.
@@ -126,9 +124,9 @@ fn skip_reason(turn: &MemoryTurn) -> Option<&'static str> {
         Some("memory_off")
     } else if turn.event.is_some() {
         None
-    } else if said == 0 && turn.ran_into.is_empty() && !turn.qa_fixed {
+    } else if said == 0 && turn.ran_into.is_empty() {
         Some("no_person_message")
-    } else if said > 0 && said < TRIVIAL_CHARS && turn.ran_into.is_empty() && !turn.qa_fixed {
+    } else if said > 0 && said < TRIVIAL_CHARS && turn.ran_into.is_empty() {
         Some("trivial")
     } else {
         None
@@ -136,7 +134,7 @@ fn skip_reason(turn: &MemoryTurn) -> Option<&'static str> {
 }
 
 /// Whether a job's memory model thinks before answering (`memory.thinking`): with `auto`, a pass
-/// that carries lessons (failed steps, a QA turn's fixes, a completed goal) does; others and
+/// that carries lessons (failed steps, a completed goal) does; others and
 /// consolidation think the least.
 fn memory_thinks(config: &RuntimeConfig, job: &Job) -> bool {
     use themis_core::configuration::MemoryThinking;
@@ -150,11 +148,9 @@ fn memory_thinks(config: &RuntimeConfig, job: &Job) -> bool {
     }
 }
 
-/// A turn whose pass may keep lessons: it ran into failed steps, a QA turn fixed problems, or a
-/// goal completed.
+/// A turn whose pass may keep lessons: it ran into failed steps, or a goal completed.
 fn carries_lessons(turn: &MemoryTurn) -> bool {
     !turn.ran_into.trim().is_empty()
-        || turn.qa_fixed
         || turn
             .event
             .as_ref()
@@ -422,7 +418,6 @@ impl AppState {
                 event: Some((what, content)),
                 start_seq: 0,
                 ran_into: String::new(),
-                qa_fixed: false,
             },
             String::new(),
         );
@@ -601,7 +596,6 @@ impl AppState {
                             answered: &turn.answered,
                             reply,
                             ran_into: &turn.ran_into,
-                            qa_fixed: turn.qa_fixed,
                         },
                         &global,
                         &project,
@@ -857,7 +851,7 @@ impl AppState {
     }
 
     /// A dry run of one memory pass, for evals and diagnosis: what the memory model would
-    /// propose for this turn (`person`, `answered`, `reply`, `ran_into`, `qa_fixed`, an optional
+    /// propose for this turn (`person`, `answered`, `reply`, `ran_into`, an optional
     /// `event` of `{what, content}`), with `thinking` (`least` or `model`) and `model` (the first
     /// memory model by default) chosen for this call. It reads the project's memory and plan
     /// indexes but writes nothing, and logs only the job's metadata.
@@ -916,7 +910,6 @@ impl AppState {
                 answered: &answered,
                 reply: &reply,
                 ran_into: &ran_into,
-                qa_fixed: input["qa_fixed"].as_bool().unwrap_or(false),
             },
             &global,
             &project,
@@ -934,7 +927,6 @@ impl AppState {
             event: None,
             start_seq: 0,
             ran_into: text("ran_into"),
-            qa_fixed: input["qa_fixed"].as_bool().unwrap_or(false),
         };
         let think = match config.memory.thinking {
             themis_core::configuration::MemoryThinking::Auto => {
@@ -1159,7 +1151,7 @@ impl AppState {
 mod tests {
     use super::*;
 
-    fn turn(ran_into: &str, qa_fixed: bool, event: Option<&'static str>) -> MemoryTurn {
+    fn turn(ran_into: &str, event: Option<&'static str>) -> MemoryTurn {
         MemoryTurn {
             project_root: PathBuf::from("/p"),
             config: RuntimeConfig::default(),
@@ -1168,7 +1160,6 @@ mod tests {
             event: event.map(|what| (what, String::new())),
             start_seq: 0,
             ran_into: ran_into.to_owned(),
-            qa_fixed,
         }
     }
 
@@ -1184,19 +1175,18 @@ mod tests {
         };
         let mut config = RuntimeConfig::default();
         assert_eq!(config.memory.thinking, MemoryThinking::Auto);
-        assert!(!memory_thinks(&config, &pass(turn("", false, None))));
+        assert!(!memory_thinks(&config, &pass(turn("", None))));
         assert!(memory_thinks(
             &config,
-            &pass(turn("- shell failed: x", false, None))
+            &pass(turn("- shell failed: x", None))
         ));
-        assert!(memory_thinks(&config, &pass(turn("", true, None))));
         assert!(memory_thinks(
             &config,
-            &pass(turn("", false, Some("a goal was completed")))
+            &pass(turn("", Some("a goal was completed")))
         ));
         assert!(!memory_thinks(
             &config,
-            &pass(turn("", false, Some("a goal was created")))
+            &pass(turn("", Some("a goal was created")))
         ));
         let consolidate = Job::Consolidate {
             config: config.clone(),
@@ -1206,17 +1196,15 @@ mod tests {
         config.memory.thinking = MemoryThinking::Least;
         assert!(!memory_thinks(
             &config,
-            &pass(turn("- shell failed: x", true, None))
+            &pass(turn("- shell failed: x", None))
         ));
         config.memory.thinking = MemoryThinking::Model;
-        assert!(memory_thinks(&config, &pass(turn("", false, None))));
+        assert!(memory_thinks(&config, &pass(turn("", None))));
         // A turn that hit a snag is worth a pass even when the person said nothing.
-        let mut quiet = turn("- shell failed: x", false, None);
+        let mut quiet = turn("- shell failed: x", None);
         quiet.person.clear();
         assert_eq!(skip_reason(&quiet), None);
         quiet.ran_into.clear();
         assert_eq!(skip_reason(&quiet), Some("no_person_message"));
-        quiet.qa_fixed = true;
-        assert_eq!(skip_reason(&quiet), None);
     }
 }

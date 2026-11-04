@@ -210,22 +210,6 @@ traversal, and remain inside the project after canonicalization. Each list permi
 at most 32 paths. Instructions are UTF-8 project guidance, limited to 64 KiB
 combined, and do not grant permissions.
 
-`goal_qa_turns` (default `true`) runs QA goal turns before a goal can be complete. The agent
-writes a checklist when it creates a goal (`create_goal`'s `checklist`: 1 to 20 items, each at
-most 300 characters, secrets hidden; with `/goal`, the requirements of its first `complete`),
-Themis adds the standing quality items (`goal-quality-items.md`: fault tolerance, security,
-clean and not overengineered, engineering quality, efficiency, UI and user experience) and
-each message the person adds while the goal runs, at most 35 items in all. The agent can't
-shorten it. The first `update_goal` complete is answered with QA (`goal-complete-qa.md`); each
-following goal turn checks at most 3 items not yet settled (`goal-qa.md`, the items in a fenced
-`<checklist>` block). Themis gives the verdict from what the turn did: a turn that used a tool
-other than the goal tools and changed no files passes its items; one that changed files marks
-them fixed, to be checked again; one that used no tool gives none. An item not passed after 3
-rounds is unconfirmed and no longer holds the goal up. Once every item is settled, the next
-turn (`goal-qa-passed.md`) may complete the goal, and the chat's Complete note lists the
-evidence and any unconfirmed items. `logs/` has `goal` / `qa_needed` and `goal` / `qa_turn`
-with counts only. `false` accepts the first complete.
-
 `project_guidance` (default `true`) reads the project root's `AGENTS.md`, or `CLAUDE.md`
 when there is no `AGENTS.md`, at the start of each run and puts it in the system message of the
 agent and its subagents. They also get a map of up to 40
@@ -942,11 +926,11 @@ model, which has no memory tool:
 **When a pass runs, and what it reads.** Besides the person's words, every pass reads what the
 turn ran into: each failed step (tool, end of its output) and what the agent said next, read from
 that turn's history (at most 8, each at most 300 characters). A turn the person said nothing in
-(a goal turn) still gets a pass when it ran into failed steps or was a QA turn that changed files,
+(a goal turn) still gets a pass when it ran into failed steps,
 since that is when a lesson is fresh; the prompt keeps lessons as project or feedback memories
 (symptom, cause, rule, how to check) worded so a similar later task finds them. `memory.thinking`
 (default `auto`, user file only) sets how much the memory models think: `auto` lets them think for
-a pass that carries lessons (failed steps, a QA turn's fixes, a completed goal) and asks for the
+a pass that carries lessons (failed steps, a completed goal) and asks for the
 least otherwise; `least` always the least; `model` always the model's own. The least effort comes
 from the Go catalog (loaded first when empty), so a model that refuses `none` gets its lowest
 listed effort. Measured with `python3 -m evals.memory` (`memory_try_pass`, a read-only dry run of

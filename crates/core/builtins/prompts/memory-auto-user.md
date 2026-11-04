@@ -22,7 +22,7 @@ In full, the plan record this turn may touch:
 <<<assistant-reply
 {{reply}}
 >>>
-What the turn ran into{{qa}}: each failed step, then what the assistant said next (empty when nothing failed).
+What the turn ran into: each failed step, then what the assistant said next (empty when nothing failed).
 <<<ran-into
 {{ran_into}}
 >>>

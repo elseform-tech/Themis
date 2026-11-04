@@ -203,20 +203,6 @@ pub const CREATE_GOAL_TOOL: &str = include_str!("../builtins/prompts/tool-create
 /// `note` field of the create_goal tool result.
 pub const GOAL_CREATED_NOTE: &str = include_str!("../builtins/prompts/goal-created-note.md");
 /// `update_goal` complete refused because the person queued a message the agent has not read.
-/// A goal's checklist, in each goal turn's note before QA starts; `{{items}}`.
-pub const GOAL_CHECKLIST: &str = include_str!("../builtins/prompts/goal-checklist.md");
-/// A QA goal turn's note: the items it checks; `{{items}}`, `{{passed}}`, `{{total}}`.
-pub const GOAL_QA: &str = include_str!("../builtins/prompts/goal-qa.md");
-/// The goal turn after every checklist item passed QA.
-pub const GOAL_QA_PASSED: &str = include_str!("../builtins/prompts/goal-qa-passed.md");
-/// update_goal complete answered with QA turns; `{{count}}`.
-/// The quality items every goal's checklist ends with, one per line.
-pub const GOAL_QUALITY_ITEMS: &str = include_str!("../builtins/prompts/goal-quality-items.md");
-/// update_goal complete after QA with fewer evidence entries than checklist items;
-/// `{{items}}`, `{{given}}`.
-pub const GOAL_COMPLETE_EVIDENCE: &str =
-    include_str!("../builtins/prompts/goal-complete-evidence.md");
-pub const GOAL_COMPLETE_QA: &str = include_str!("../builtins/prompts/goal-complete-qa.md");
 pub const GOAL_COMPLETE_UNREAD: &str = include_str!("../builtins/prompts/goal-complete-unread.md");
 
 // Summaries and compaction.

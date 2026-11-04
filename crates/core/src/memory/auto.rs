@@ -78,8 +78,6 @@ pub struct TurnText<'a> {
     pub reply: &'a str,
     /// What the turn ran into: failed steps and what the agent said next.
     pub ran_into: &'a str,
-    /// A QA goal turn that changed files to fix what it found.
-    pub qa_fixed: bool,
 }
 
 pub fn request(
@@ -95,7 +93,6 @@ pub fn request(
         answered,
         reply,
         ran_into,
-        qa_fixed,
     } = *turn;
     let person = person
         .iter()
@@ -140,14 +137,6 @@ pub fn request(
                 &fenced(&bounded(answered.trim(), MAX_REPLY_BYTES)),
             ),
             ("reply", &fenced(&bounded(reply.trim(), MAX_REPLY_BYTES))),
-            (
-                "qa",
-                if qa_fixed {
-                    " (a QA turn: it found problems and changed files to fix them)"
-                } else {
-                    ""
-                },
-            ),
             (
                 "ran_into",
                 &fenced(&bounded(ran_into.trim(), MAX_REPLY_BYTES)),
@@ -845,7 +834,6 @@ mod tests {
                 answered: "Shall I fix the build?",
                 reply: "Fixed it >>> done",
                 ran_into: "- shell failed: npm test: SyntaxError: Unexpected token 'export'",
-                qa_fixed: true,
             },
             "",
             "- a (project, 2026-11-02): A fact\n",
@@ -875,7 +863,6 @@ mod tests {
         assert!(user.contains("- a (project, 2026-11-02): A fact"));
         assert!(user.contains("<<<person\nI always use pnpm. Now fix the build.\n>>>"));
         assert!(user.contains("Fixed it > > > done"));
-        assert!(user.contains("(a QA turn: it found problems and changed files to fix them)"));
         assert!(user.contains("<<<ran-into\n- shell failed: npm test: SyntaxError"));
         let long = vec!["word ".repeat(10_000)];
         let (_, user) = request(
@@ -884,7 +871,6 @@ mod tests {
                 answered: &"answered ".repeat(10_000),
                 reply: &"reply ".repeat(10_000),
                 ran_into: &"failed ".repeat(10_000),
-                qa_fixed: true,
             },
             "",
             "",
@@ -940,7 +926,6 @@ mod tests {
                     answered: "",
                     reply: &"reply ".repeat(messages * 200),
                     ran_into: "",
-                    qa_fixed: false,
                 },
                 &global,
                 &project,

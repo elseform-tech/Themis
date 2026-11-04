@@ -187,8 +187,6 @@ full tour.
 | `feature:search` | tour | `web/src/screens/Palette.tsx` | ⌘K finds a chat and a command. |
 | `feature:help` | tour | `web/src/screens/Sidebar.tsx` | Help opens the shortcuts. |
 | `feature:companion` | tour | `web/src/components/KnightCompanion.tsx` | The companion shows state notes and can be resized and moved. |
-| `config:goal_qa_turns` | tour | `crates/core/src/configuration.rs`, `crates/desktop/src/state/goal.rs` | With `"goal_qa_turns": false` in `runtime.jsonc` a small goal completes on the agent's first `complete` (no QA turns, no QA label); removed again, the next goal runs QA turns. |
-| `feature:goal-qa` | tour | `crates/core/src/goal.rs`, `crates/desktop/src/state/goal.rs`, `crates/core/builtins/prompts/goal-qa.md` | Ask for a plan, approve it as a goal: `get_goal` shows the agent's checklist plus the six quality items. The agent's first complete is answered with QA; the following turns each check up to three items (the goal row shows QA n/m), a turn that changes files sends its items back, and the goal completes only after every item is settled, with unconfirmed items listed under the Complete note. |
 | `config:project_guidance` | tour | `crates/core/src/configuration.rs`, `crates/desktop/src/state/subagents.rs` | In a project with an `AGENTS.md` and a `docs/` folder, the agent and a subagent follow a rule from it without being told. |
 | `feature:cli` | tour | `crates/desktop/src/cli.rs` | `themis status`, `themis thread list` and `themis doctor` work against the running app. |
 | `settings:General` | tour | `web/src/screens/Settings.tsx` | Toggle the reply sound; it takes effect on the next reply. |

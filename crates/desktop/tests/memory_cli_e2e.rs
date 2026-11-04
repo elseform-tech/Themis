@@ -20,9 +20,7 @@ use wiremock::{matchers::method, Mock, MockServer, Request, ResponseTemplate};
 const PASS: &str = "You keep an assistant's memory";
 const NOTE: &str = "Memory from earlier chats";
 const SUBAGENT: &str = "You are a subagent";
-// Goals here skip QA turns: these tests cover memory.
-const MODELS: &str =
-    r#"{"memory":{"models":["mem-one","mem-two","mem-three"]},"goal_qa_turns":false}"#;
+const MODELS: &str = r#"{"memory":{"models":["mem-one","mem-two","mem-three"]}}"#;
 
 fn cli(dir: &Path, command: &str, args: Value) -> Result<Value, String> {
     use std::io::Write;

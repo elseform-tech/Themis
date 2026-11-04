@@ -100,12 +100,6 @@ fn mentions(body: &Value, needle: &str) -> bool {
 async fn chat(server: &MockServer) -> (AppState, tempfile::TempDir, tempfile::TempDir, String) {
     let data = tempfile::tempdir().unwrap();
     let project = tempfile::tempdir().unwrap();
-    // These tests cover the goal turn loop and queue; QA turns have their own tests.
-    std::fs::write(
-        data.path().join("runtime.jsonc"),
-        r#"{"goal_qa_turns": false}"#,
-    )
-    .unwrap();
     let state = AppState::new_for_test(data.path().join("settings.json"));
     state
         .set_secret("go".into(), "synthetic-test-key".into())
@@ -1153,12 +1147,6 @@ async fn a_goal_pauses_after_its_turns_keep_failing() {
         .await;
     let data = tempfile::tempdir().unwrap();
     let project = tempfile::tempdir().unwrap();
-    // The goal turn loop alone; QA turns have their own tests.
-    std::fs::write(
-        data.path().join("runtime.jsonc"),
-        r#"{"goal_qa_turns": false}"#,
-    )
-    .unwrap();
     let state = AppState::new_for_test(data.path().join("settings.json"));
     state.set_go_base_url_override(Some(server.uri()));
     state
@@ -1210,12 +1198,6 @@ async fn a_goal_whose_turn_cannot_start_retries() {
         .await;
     let data = tempfile::tempdir().unwrap();
     let project = tempfile::tempdir().unwrap();
-    // The goal turn loop alone; QA turns have their own tests.
-    std::fs::write(
-        data.path().join("runtime.jsonc"),
-        r#"{"goal_qa_turns": false}"#,
-    )
-    .unwrap();
     let state = AppState::new_for_test(data.path().join("settings.json"));
     state.set_go_base_url_override(Some(server.uri()));
     let thread = state
@@ -1358,7 +1340,7 @@ async fn a_goal_with_a_small_context_window_warns_once() {
     // up; a small budget comes from runtime.jsonc, as in evals.
     std::fs::write(
         data.path().join("runtime.jsonc"),
-        r#"{"schema_version":1,"context_token_budget":64000,"goal_qa_turns":false}"#,
+        r#"{"schema_version":1,"context_token_budget":64000}"#,
     )
     .unwrap();
     let (sink, mut rx) = ChannelSink::channel();

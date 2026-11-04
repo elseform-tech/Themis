@@ -182,8 +182,7 @@ whole team shares still belong in the project's `AGENTS.md`.
   anything. It never stores secrets, and what a web page or file said is kept as "the page
   said …" with its source. When the app has been idle a while (at most once a day by
   default), it also merges duplicate memories and drops stale ones.
-- **It learns from mistakes.** When a step fails and the agent gets past it, or a check turns
-  up problems that get fixed, the memory model keeps a lesson (what went wrong, why, the rule
+- **It learns from mistakes.** When a step fails and the agent gets past it, the memory model keeps a lesson (what went wrong, why, the rule
   that avoids it, how to check) so a later chat in the project doesn't repeat it.
 - **Plans get a record of their own.** When you approve a plan ("I love it, build it", or a
   goal made from it), Themis keeps it word for word as a plan record for that project. When you
@@ -238,14 +237,11 @@ Codex, the chat's own model judges its goal: there is no separate check.
   command output over memory of earlier turns; notice a turn that made no
   progress and try something else; before calling the goal done, check every
   requirement against current evidence, and treat uncertain evidence as not done.
-- **Checked like a demanding user would.** When the agent creates a goal it writes a
-  checklist of everything you asked for, and Themis adds standing quality checks (fault
-  tolerance, security, clean and not overengineered code, engineering quality, efficiency, and
-  UI and user experience). When the agent first says it's done, the goal goes on: each next
-  turn checks a few items for real (using the app, trying bad input, comparing with your
-  plan) and fixes what falls short. The goal row shows how far it got (**QA 4/11**). The goal
-  completes once every item has passed; anything that could not be confirmed is listed under
-  the Complete note. Turn this off with `"goal_qa_turns": false` in `runtime.jsonc`.
+- **How rigorous a goal is comes from the goal and the project.** Before the agent calls a
+  goal done it checks every requirement against current evidence: the goal text, each thing
+  you added, each step of the approved plan, and the checks your `AGENTS.md` and docs ask
+  for. Say what "done" means there (the tests to run, the checks to pass) and the goal keeps
+  going until they hold.
 - **Done, blocked or paused.** When every requirement is proven, the agent calls
   `update_goal` complete with one evidence entry per requirement (what it is, and
   what shows it: a command and its result, a file, a test, a page check); a call

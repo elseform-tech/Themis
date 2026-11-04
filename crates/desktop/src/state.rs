@@ -341,10 +341,6 @@ struct AppStateInner {
     goal_lock: std::sync::Mutex<()>,
     /// Runs started as goal turns (checked when they end).
     goal_turn_runs: std::sync::Mutex<HashSet<String>>,
-    /// Runs that changed project files, and runs that used a tool other than the goal tools:
-    /// what a QA turn did, read when it ends.
-    pub(crate) runs_changed_files: std::sync::Mutex<HashSet<String>>,
-    pub(crate) runs_used_tools: std::sync::Mutex<HashSet<String>>,
     /// Open plugin hook sessions, by chat; see `hook_sessions.rs`.
     hook_sessions: std::sync::Mutex<HashMap<String, hook_sessions::OpenHookSession>>,
     /// Bumped whenever a waiting goal timer must no longer fire.
@@ -632,8 +628,6 @@ impl AppState {
                 goals_dir: app_dir.join(goal::GOALS_DIR),
                 goal_lock: std::sync::Mutex::new(()),
                 goal_turn_runs: std::sync::Mutex::new(HashSet::new()),
-                runs_changed_files: std::sync::Mutex::new(HashSet::new()),
-                runs_used_tools: std::sync::Mutex::new(HashSet::new()),
                 hook_sessions: std::sync::Mutex::new(HashMap::new()),
                 goal_generations: std::sync::Mutex::new(HashMap::new()),
                 server_sends: std::sync::Mutex::new(HashMap::new()),

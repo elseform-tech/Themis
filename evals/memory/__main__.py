@@ -61,9 +61,8 @@ CASES = [
         "expect": {"memory_words": ["pnpm", "lock"]},
     },
     {
-        "name": "qa_fixed_lessons",
+        "name": "review_fixed_lessons",
         "person": [],
-        "qa_fixed": True,
         "answered": "",
         "reply": "QA on efficiency and clean code: main.js created a new BoxGeometry and MeshLambertMaterial for every enemy and pickup and never disposed them, so GPU memory grew all session; enemies and pickups now share one geometry and material per kind, and removed meshes are disposed. I also removed window.__arenaDebug and the spawnTestPickup helper I had added to the shipped page for testing; tests use the spec files instead. Changed main.js and game/enemies.js.",
         "ran_into": "",
@@ -177,7 +176,7 @@ def main():
                 for case in cases:
                     request = {"projectRoot": project, "thinking": mode, "person": case["person"],
                                "answered": case.get("answered", ""), "reply": case.get("reply", ""),
-                               "ran_into": case.get("ran_into", ""), "qa_fixed": case.get("qa_fixed", False),
+                               "ran_into": case.get("ran_into", ""),
                                "event": case.get("event"), "plan_about": "arena first-person shooter"}
                     if args.model:
                         request["model"] = args.model

@@ -687,7 +687,7 @@ pub struct MemoryConfig {
 #[serde(rename_all = "snake_case")]
 pub enum MemoryThinking {
     /// The model's own thinking for a pass that carries lessons (the turn ran into failed
-    /// steps, a QA turn fixed problems, a goal completed), the least otherwise. Measured with
+    /// steps, a goal completed), the least otherwise. Measured with
     /// `evals/memory`: thinking writes fuller lessons (cause, how to check) at about four times
     /// the tokens, and adds nothing elsewhere.
     #[default]
@@ -1237,8 +1237,6 @@ pub struct RuntimeConfig {
     pub instructions: Vec<String>,
     /// Read the project's AGENTS.md (or CLAUDE.md) and list its other docs for agents and the goal check.
     pub project_guidance: bool,
-    /// After the agent first calls a goal complete, run QA goal turns over its checklist.
-    pub goal_qa_turns: bool,
     pub logging: LoggingConfig,
     #[serde(rename = "$schema", skip_serializing_if = "Option::is_none")]
     pub schema: Option<String>,
@@ -1278,7 +1276,6 @@ impl Default for RuntimeConfig {
             skills: SkillConfig::default(),
             instructions: Vec::new(),
             project_guidance: true,
-            goal_qa_turns: true,
             logging: LoggingConfig::default(),
             schema: None,
             schema_version: 1,
@@ -2320,7 +2317,6 @@ pub fn schema() -> Value {
     schema["properties"]["models"] = models;
     // Here because one more key in the base schema's macro reaches the compiler's recursion limit.
     schema["properties"]["project_guidance"] = serde_json::json!({"type":"boolean","default":true});
-    schema["properties"]["goal_qa_turns"] = serde_json::json!({"type":"boolean","default":true,"description":"After the agent first calls a goal complete, QA goal turns check its checklist a few items at a time; complete is accepted once every item passed. false accepts the first complete."});
     schema["properties"]["memory"] = serde_json::json!({"type":"object","additionalProperties":false,"properties":{
         "enabled":{"type":"boolean","default":true,"description":"Keep memories across chats (Settings › Memory): saved, updated and removed in the background after each turn. A project or run layer may only set it to false."},
         "models":{"type":"array","minItems":MIN_MEMORY_MODELS,"maxItems":MAX_MEMORY_MODELS,"uniqueItems":true,"items":{"type":"string","minLength":1,"maxLength":200},"default":DEFAULT_MEMORY_MODELS,"description":"Models that run memory jobs, tried in order (Settings › Models). User file only."},

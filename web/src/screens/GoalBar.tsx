@@ -62,12 +62,7 @@ export function GoalBar({ goal, onEdit, onPause, onResume, onRemove, onFold }: G
     setSaving(true);
     try { await onEdit(draft.trim()); setDraft(null); } finally { setSaving(false); }
   }
-  const checklist = goal.checklist ?? [];
-  // While QA turns run: how many checklist items have settled so far.
-  const qa = goal.qa && goal.status === "running" && checklist.length > 0
-    ? `QA ${checklist.filter(item => item.state === "passed" || item.state === "unconfirmed").length}/${checklist.length}`
-    : null;
-  const label = (goal.status === "paused" || goal.status === "blocked") && goal.reason ? `${STATUS_LABEL[goal.status]} · ${goal.reason}` : STATUS_LABEL[goal.status] ?? qa;
+  const label = (goal.status === "paused" || goal.status === "blocked") && goal.reason ? `${STATUS_LABEL[goal.status]} · ${goal.reason}` : STATUS_LABEL[goal.status];
   const paused = goal.status === "paused" || goal.status === "blocked" || goal.status === "quota";
   const complete = goal.status === "reached";
   const editable = goal.status !== "waiting" && !complete;
