@@ -83,7 +83,7 @@ CASES = [
         "answered": "",
         "reply": "",
         "event": {"what": "a goal was completed", "content": "Objective: Build a small first-person shooter in arena/\nThe work's plan record: arena-fps (write \"done\" for it)\nEvidence:\n- playable: started, moved, shot an enemy (60 -> 35.9 HP), died, restarted at HP 100\n- tests: node --test arena/spec/*.spec.mjs: 70/70\nWhat the work ran into (failed steps, then what the agent said next):\n- shell failed: {\"exit_code\":1,\"output\":\"TypeError: Cannot read properties of null (reading 'classList') at main.js:41\"}\n  then: index.html had no #hud element yet; added the HUD markup before wiring it."},
-        "expect": {"plan_done": "arena-fps"},
+        "expect": {"plan_done": "arena-fps", "any_lesson": True},
     },
     {
         "name": "preference_in_passing",
@@ -125,8 +125,8 @@ def check(case, result):
     for word in expect.get("memory_words", []):
         if word.lower() not in text and word.lower() not in plan.lower():
             failures.append(f"missing '{word}'")
-    if expect.get("any_lesson") and not memories and "lessons" not in plan:
-        failures.append("no lesson kept")
+    if expect.get("any_lesson") and not memories:
+        failures.append("no lesson kept as a memory")
     if expect.get("global") and "Global" not in " ".join(memories):
         failures.append("not global")
     if expect.get("nothing") and (memories or plan):
