@@ -173,6 +173,28 @@ CASES = [
         "expect": {"nothing": True},
     },
     {
+        # A goal turn that worked on a task without finishing it keeps its progress.
+        "name": "progress_kept_as_doing",
+        "person": [],
+        "reply": "The run reached Level 2 at 0:20 with three lives, but no alien saucer appeared yet, so I still have not seen a player shot kill an alien. Kills don't add points and the HUD has no kill counter, so I have to watch the screen.",
+        "ran_into": "- noted: Aliens are set to start at 15 seconds; holding Space while moving.\n- noted: 0:25 and still only asteroids near the ship.",
+        "plan_record": DODGER_RECORD, "plans_index": DODGER_INDEX,
+        "expect": {"tasks_doing": ["Aliens"]},
+    },
+    {
+        # A record whose plan steps have no tasks gets them, done or open.
+        "name": "plan_requirements_backfilled",
+        "person": [],
+        "reply": "The 123 specs pass. Earlier turns proved movement with arrows and WASD, the speed-up, three lives with the blink, the high score after a reload and the start/pause/game over screens in the browser.",
+        "plan_record": DODGER_RECORD.replace("""## Tasks
+- [open] Aliens that shoot the player — "add some alien invaders that are able to shoot the player" (2026-11-04)
+- [open] Pause with P or Esc — "P or Esc pauses" (2026-11-04)
+- [open] Touch controls — on-screen arrows for phones (2026-11-04)
+- [done] Sound on hit — beeps play on a hit; heard by the person (2026-11-04)""", "## Tasks\n(none)"),
+        "plans_index": DODGER_INDEX,
+        "expect": {"tasks_add_min": 4},
+    },
+    {
         "name": "task_cancelled_by_person",
         "person": ["Forget the touch controls, this is desktop only."],
         "answered": "Touch controls are next on the list.",
@@ -224,7 +246,7 @@ CASES = [
         "person": ["thanks, looks great"],
         "answered": "Done: the footer now shows the year.",
         "reply": "Glad it helps.",
-        "expect": {"nothing": True},
+        "expect": {"no_memory": True},
     },
     {
         "name": "test_first_is_no_lesson",
@@ -279,6 +301,13 @@ def check(case, result):
     for word in expect.get("tasks_add_done", []):
         if not any(op.startswith("Add") and word.lower() in op.lower() and "status: Done" in op for op in tasks):
             failures.append(f"finished '{word}' not recorded done")
+    for word in expect.get("tasks_doing", []):
+        if not updated(word, "Doing"):
+            failures.append(f"'{word}' progress not kept as doing")
+    if expect.get("tasks_add_min") and len(adds) < expect["tasks_add_min"]:
+        failures.append(f"only {len(adds)} plan requirements added")
+    if expect.get("no_memory") and (memories or plan or decisions):
+        failures.append("kept a memory, plan or decision")
     if expect.get("no_task_changes") and tasks:
         failures.append("changed tasks on a routine turn")
     for word in expect.get("decision", []):

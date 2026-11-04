@@ -881,8 +881,13 @@ async fn an_approved_plan_keeps_a_record_through_changes_to_done() {
         ),
         "{record}"
     );
+    // Themis made a task of each plan step; the model added one more.
     assert!(
-        record.contains("## Tasks\n- [open] Show the count in the footer — \"show the count\" ("),
+        record.contains("## Tasks\n- [open] Store notes in notes.txt. ("),
+        "{record}"
+    );
+    assert!(
+        record.contains("- [open] Show the count in the footer — \"show the count\" ("),
         "{record}"
     );
     assert!(

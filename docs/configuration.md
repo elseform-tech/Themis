@@ -906,7 +906,11 @@ record per run.
 Tasks keep track of the work along the way. A task line is `- [status] title — note (date)`:
 status `open`, `doing`, `done` or `cancelled`, a title (at most 120 characters), a note (at
 most 300: what done means and the person's own words, or the outcome and its proof, or why it
-was cancelled) and the day it last changed. Tasks of approved work live in its record's Tasks
+was cancelled) and the day it last changed. Themis makes each step of an approved plan (each bullet or numbered line outside code blocks,
+a `**Label:**` step titled by its label) an open task when the record is created, when a change
+adds steps, and before a pass reads a record that has none for them; the memory models only move
+their statuses, recording progress on a task worked on but not finished as `doing` with what was
+tried. Tasks of approved work live in its record's Tasks
 section; the rest in one project file, `memory/projects/<hash>/plans/TASKS.md` (at most 48 KiB).
 A list keeps at most 40 open or doing tasks (a new one past that is refused, never an open one
 dropped) and 60 done or cancelled ones (the oldest go first); a task is never renamed or

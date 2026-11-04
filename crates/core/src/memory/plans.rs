@@ -169,7 +169,7 @@ fn edges(text: &str) -> String {
 impl PlanRecord {
     /// A new record of `plan` (the approved reply), kept word for word within its limit.
     pub fn new(name: &str, title: &str, plan: &str, chat: Option<&str>, today: &str) -> Self {
-        Self {
+        let mut record = Self {
             name: name.to_owned(),
             title: line(&strip_secrets(title), MAX_TITLE_CHARS),
             status: if chat.is_some() {
@@ -186,7 +186,9 @@ impl PlanRecord {
             results: String::new(),
             evidence: Vec::new(),
             lessons: Vec::new(),
-        }
+        };
+        record.seed_tasks(today);
+        record
     }
 
     /// Records a change: each edit whose `old` text occurs exactly once in the plan is applied
@@ -299,6 +301,36 @@ impl PlanRecord {
         self.fit();
     }
 
+    /// Adds an open task for each requirement of the plan that has none yet: each bullet or
+    /// numbered step outside code blocks, a `**Label:**` step titled by its label. Themis does
+    /// this itself (the memory models only move statuses), so a record's tasks cover its whole
+    /// plan. Returns how many were added.
+    pub fn seed_tasks(&mut self, today: &str) -> usize {
+        let mut added = 0;
+        for (title, note) in plan_requirements(&self.plan) {
+            if self
+                .tasks
+                .iter()
+                .any(|task| task.title.eq_ignore_ascii_case(&title))
+            {
+                continue;
+            }
+            let op = super::tasks::TaskOp::Add {
+                title,
+                note,
+                status: super::tasks::TaskStatus::Open,
+                work: None,
+            };
+            if super::tasks::apply(&mut self.tasks, &op, today) {
+                added += 1;
+            }
+        }
+        if added > 0 {
+            self.fit();
+        }
+        added
+    }
+
     /// Applies a task op to the work's tasks; whether anything changed.
     pub fn apply_task(&mut self, op: &super::tasks::TaskOp, today: &str) -> bool {
         let changed = super::tasks::apply(&mut self.tasks, op, today);
@@ -370,6 +402,64 @@ impl PlanRecord {
         }
         Ok(())
     }
+}
+
+/// The requirements of an approved plan, as (title, note): each `- `, `* ` or `N. ` line
+/// outside code blocks, without Markdown emphasis; a `**Label:** rest` line is titled by its
+/// label, others by their opening words.
+fn plan_requirements(plan: &str) -> Vec<(String, String)> {
+    let mut fenced = false;
+    let mut found = Vec::new();
+    for row in plan.lines() {
+        let row = row.trim();
+        if row.starts_with("```") {
+            fenced = !fenced;
+            continue;
+        }
+        if fenced {
+            continue;
+        }
+        let item = row
+            .strip_prefix("- ")
+            .or_else(|| row.strip_prefix("* "))
+            .or_else(|| {
+                let (number, rest) = row.split_once(". ")?;
+                (!number.is_empty() && number.bytes().all(|b| b.is_ascii_digit())).then_some(rest)
+            });
+        let Some(item) = item.map(str::trim).filter(|item| !item.is_empty()) else {
+            continue;
+        };
+        let labelled = item
+            .strip_prefix("**")
+            .and_then(|rest| rest.split_once("**"))
+            .map(|(label, rest)| {
+                (
+                    label.trim().trim_end_matches(':').to_owned(),
+                    rest.trim_start_matches(':').trim().to_owned(),
+                )
+            });
+        let plain = |text: &str| text.replace("**", "").replace('`', "");
+        let (title, note) = match labelled {
+            Some((label, rest)) if !label.is_empty() => (plain(&label), plain(&rest)),
+            _ => {
+                let text = plain(item);
+                let title: String = text
+                    .split_whitespace()
+                    .take(10)
+                    .collect::<Vec<_>>()
+                    .join(" ");
+                // A short step is its own title; a note would only repeat it.
+                let note = if title == text.trim() {
+                    String::new()
+                } else {
+                    text
+                };
+                (title, note)
+            }
+        };
+        found.push((title, note));
+    }
+    found
 }
 
 /// The record's file text.
@@ -977,6 +1067,40 @@ mod tests {
         assert!(record.tasks.iter().any(|task| task.title == "still open"));
         assert_eq!(record.changes.len(), 0);
         assert!(record.plan.contains("1. People"), "{}", record.plan);
+        assert_eq!(parse(&serialize(&record)).unwrap(), record);
+    }
+
+    /// Every plan step becomes a task Themis tracks, titled by its label; code blocks and
+    /// prose are not steps; a second seeding adds only what is missing.
+    #[test]
+    fn a_plans_steps_become_its_tasks() {
+        let mut record = PlanRecord::new(
+            "dodger",
+            "Dodger",
+            "## Gameplay\n- **Ship:** arrow keys or WASD move it.\n- **Lives:** three, with a `1.5 s` blink.\n\nSome prose.\n```\n- not a step\n```\n## How we test it\n1. **Unit tests:** node --test dodger/spec\n2. Browser check over http with a clean console",
+            None,
+            "2026-11-04",
+        );
+        let titles: Vec<&str> = record
+            .tasks
+            .iter()
+            .map(|task| task.title.as_str())
+            .collect();
+        assert_eq!(
+            titles,
+            [
+                "Ship",
+                "Lives",
+                "Unit tests",
+                "Browser check over http with a clean console"
+            ],
+            "{:?}",
+            record.tasks
+        );
+        assert_eq!(record.tasks[1].note, "three, with a 1.5 s blink.");
+        assert_eq!(record.seed_tasks("2026-11-04"), 0);
+        record.plan.push_str("\n3. Sound by ear");
+        assert_eq!(record.seed_tasks("2026-11-05"), 1);
         assert_eq!(parse(&serialize(&record)).unwrap(), record);
     }
 
