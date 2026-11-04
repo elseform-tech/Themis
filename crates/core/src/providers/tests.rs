@@ -1546,6 +1546,49 @@ fn messages_answers_keep_their_thinking_except_for_claude() {
     }
 }
 
+/// Claude caches only marked prefixes: the system prompt is a cached block and the newest block
+/// carries the rolling mark, so each request reads the conversation before it from cache. Other
+/// models on the Messages endpoint get no marks they may not take.
+#[test]
+fn claude_requests_mark_the_system_prompt_and_newest_block_for_caching() {
+    let history = vec![
+        ChatMessage {
+            role: ChatRole::System,
+            message_type: MessageType::Text,
+            content: "rules".into(),
+        },
+        user_message("first"),
+        ChatMessage {
+            role: ChatRole::Assistant,
+            message_type: MessageType::Text,
+            content: "answer".into(),
+        },
+        user_message("next"),
+    ];
+    let body = messages::messages_body("claude-haiku-5-5", &history, None, false).unwrap();
+    assert_eq!(body["system"][0]["text"], "rules", "{body}");
+    assert_eq!(
+        body["system"][0]["cache_control"]["type"], "ephemeral",
+        "{body}"
+    );
+    let messages = body["messages"].as_array().unwrap();
+    let newest = messages.last().unwrap()["content"].as_array().unwrap();
+    assert_eq!(
+        newest.last().unwrap()["cache_control"]["type"],
+        "ephemeral",
+        "{body}"
+    );
+    // Only the newest block is marked (the API allows at most four).
+    assert_eq!(
+        body.to_string().matches("cache_control").count(),
+        2,
+        "{body}"
+    );
+    let other = messages::messages_body("qwen3.8-flash", &history, None, false).unwrap();
+    assert_eq!(other["system"], "rules", "{other}");
+    assert!(!other.to_string().contains("cache_control"), "{other}");
+}
+
 #[tokio::test]
 async fn a_streamed_responses_cut_off_is_reported_as_truncated() {
     use futures_util::StreamExt;
@@ -3548,7 +3591,8 @@ fn an_image_goes_to_an_image_model_in_each_protocols_own_shape() {
     );
     assert_eq!(
         last["content"][2],
-        json!({"type":"image","source":{"type":"base64","media_type":"image/jpeg","data":data}})
+        // The newest block carries Claude's rolling cache mark.
+        json!({"type":"image","source":{"type":"base64","media_type":"image/jpeg","data":data},"cache_control":{"type":"ephemeral"}})
     );
 
     // Gemini: inline data in a user turn after the function response.

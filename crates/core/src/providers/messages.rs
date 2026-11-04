@@ -66,10 +66,27 @@ pub(super) fn messages_body(
         }
         input.push(json!({"role": if message.role == "assistant" { "assistant" } else { "user" }, "content": content}));
     }
+    // Claude caches only what a request marks: the system prompt, and a rolling mark on the
+    // newest block so the next request reads the whole conversation before it from cache.
+    // Without it every request paid full price for the whole context.
+    let cache = model.starts_with("claude-");
+    if cache {
+        if let Some(block) = input
+            .last_mut()
+            .and_then(|message| message["content"].as_array_mut())
+            .and_then(|blocks| blocks.last_mut())
+        {
+            block["cache_control"] = json!({"type": "ephemeral"});
+        }
+    }
     let mut body =
         json!({"model": model, "messages": input, "max_tokens": 16384, "stream": streaming});
     if !system.is_empty() {
-        body["system"] = json!(system.join("\n\n"));
+        body["system"] = if cache {
+            json!([{"type": "text", "text": system.join("\n\n"), "cache_control": {"type": "ephemeral"}}])
+        } else {
+            json!(system.join("\n\n"))
+        };
     }
     if let Some(tools) = tools.filter(|tools| !tools.is_empty()) {
         body["tools"] = json!(tools.iter().map(|tool| json!({"name": tool.function.name, "description": tool.function.description, "input_schema": tool.function.parameters})).collect::<Vec<_>>());
