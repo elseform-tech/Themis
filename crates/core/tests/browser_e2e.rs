@@ -304,6 +304,24 @@ async fn the_agent_fills_a_form_reads_notes_and_navigates_in_a_real_browser() {
         part["width"].as_u64().unwrap() < shot["width"].as_u64().unwrap(),
         "{part}"
     );
+    // A CSS selector or text=… works as for clicks: a live goal run asked for `body` and
+    // `#scene` and went in circles on a ref-only error.
+    for element in ["button", "body", "text=Create account"] {
+        let by_selector = tool("browser_screenshot")
+            .execute(json!({"ref": element}))
+            .await
+            .unwrap();
+        assert!(
+            by_selector["width"].as_u64().unwrap() > 0,
+            "{element}: {by_selector}"
+        );
+    }
+    let missing = tool("browser_screenshot")
+        .execute(json!({"ref": "#no-such-thing"}))
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(missing.contains("#no-such-thing"), "{missing}");
     tool("browser_record")
         .execute(json!({"action": "start", "max_seconds": 5}))
         .await

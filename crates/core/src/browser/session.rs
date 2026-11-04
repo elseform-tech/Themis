@@ -2909,9 +2909,15 @@ impl ChatBrowser {
                 .scale;
         let (width, height) = match reference {
             Some(reference) => {
-                let backend = tab.refs.resolve(reference).ok_or_else(|| {
-                    format!("no element {reference} on this page; take a new browser_snapshot")
-                })?;
+                // A CSS selector or text=… works too, as for clicks: agents write them for
+                // screenshots the same way, and a ref-only error sent them in circles.
+                let backend = if is_ref(reference) {
+                    tab.refs.resolve(reference).ok_or_else(|| {
+                        format!("no element {reference} on this page; take a new browser_snapshot")
+                    })?
+                } else {
+                    selected_element(cdp, &session, reference).await?
+                };
                 let _ = cdp
                     .call(
                         Some(&session),
