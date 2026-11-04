@@ -932,10 +932,7 @@ mod tests {
             view.contains("- [open] Back/forward cache check (2026-11-04)"),
             "{view}"
         );
-        assert!(
-            view.contains("- 1 done or cancelled (latest: Sound on hit)"),
-            "{view}"
-        );
+        assert!(view.contains("- 1 done: Sound on hit"), "{view}");
         assert!(!view.contains("Built it."), "results stay out: {view}");
         assert!(view.contains("search_memory"), "{view}");
     }

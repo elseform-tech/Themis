@@ -25,8 +25,8 @@ pub const MAX_TASK_NOTE: usize = 300;
 pub const MAX_TASK_OPS: usize = 12;
 /// Most bytes of the tasks file.
 const MAX_TASKS_BYTES: u64 = 48 * 1024;
-/// Most done tasks a run is shown by title.
-const DONE_SHOWN: usize = 3;
+/// Most done tasks a run is shown by title, and cancelled ones with why.
+const CLOSED_SHOWN: usize = 20;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -277,29 +277,67 @@ pub fn apply(tasks: &mut Vec<Task>, op: &TaskOp, today: &str) -> bool {
     true
 }
 
-/// What a run is shown of `tasks`: open and doing ones in full, then the done count with the
-/// latest few titles. Empty when there are none.
+/// What a run is shown of `tasks`: open and doing ones in full; the latest cancelled ones with
+/// why (what was dropped matters as much as what is left); then the done ones by title only.
+/// Empty when there are none. `search_memory` reads the rest.
 pub fn run_view(tasks: &[Task]) -> String {
     let mut view: String = tasks
         .iter()
         .filter(|task| !task.status.closed())
         .map(|task| format!("{}\n", render(task)))
         .collect();
-    let done: Vec<&Task> = tasks.iter().filter(|task| task.status.closed()).collect();
+    let cancelled: Vec<&Task> = tasks
+        .iter()
+        .filter(|task| task.status == TaskStatus::Cancelled)
+        .collect();
+    for task in &cancelled[cancelled.len().saturating_sub(CLOSED_SHOWN)..] {
+        view.push_str(&format!("{}\n", render(task)));
+    }
+    let done: Vec<&str> = tasks
+        .iter()
+        .filter(|task| task.status == TaskStatus::Done)
+        .map(|task| task.title.as_str())
+        .collect();
     if !done.is_empty() {
-        let latest: Vec<&str> = done
-            .iter()
-            .rev()
-            .take(DONE_SHOWN)
-            .map(|task| task.title.as_str())
-            .collect();
+        let shown = &done[done.len().saturating_sub(CLOSED_SHOWN)..];
+        let earlier = done.len() - shown.len();
+        let more = if earlier > 0 {
+            format!(" (and {earlier} earlier)")
+        } else {
+            String::new()
+        };
         view.push_str(&format!(
-            "- {} done or cancelled (latest: {})\n",
+            "- {} done: {}{more}\n",
             done.len(),
-            latest.join("; ")
+            shown.join("; ")
         ));
     }
     view
+}
+
+/// `search_memory`'s query over tasks: the task lines sharing the most words with `query`
+/// (title and note), at most [`super::MAX_SEARCH_RESULTS`], earlier lines first on a tie.
+pub fn search(query: &str, tasks: &[Task]) -> Vec<String> {
+    let wanted = super::terms(query);
+    if wanted.is_empty() {
+        return Vec::new();
+    }
+    let mut scored: Vec<(usize, usize, String)> = tasks
+        .iter()
+        .enumerate()
+        .filter_map(|(at, task)| {
+            let score = super::terms(&format!("{} {}", task.title, task.note))
+                .intersection(&wanted)
+                .count();
+            (score > 0).then(|| (score, at, render(task)))
+        })
+        .collect();
+    scored.sort_by(|a, b| b.0.cmp(&a.0).then(a.1.cmp(&b.1)));
+    scored
+        .into_iter()
+        .take(super::MAX_SEARCH_RESULTS)
+        .map(|(_, _, line)| line)
+        .collect()
 }
 
 /// The project's tasks outside any plan record (`plans/TASKS.md`).
@@ -415,7 +453,11 @@ mod tests {
             "{view}"
         );
         assert!(
-            view.ends_with("- 2 done or cancelled (latest: Touch controls; Pause with P or Esc)\n"),
+            view.ends_with(
+                "- [cancelled] Touch controls — the person dropped it (2026-11-04)
+- 1 done: Pause with P or Esc
+"
+            ),
             "{view}"
         );
         assert_eq!(parse_list(&render_list(&tasks)), tasks);
@@ -483,6 +525,37 @@ mod tests {
         assert_eq!(ops[0].work(), Some("dodger-asteroid-dodger"));
         assert_eq!(refused, 4);
         assert_eq!(parse_ops(&json!(null)), (Vec::new(), 0));
+    }
+
+    #[test]
+    fn a_search_finds_tasks_by_their_title_and_note() {
+        let mut tasks = Vec::new();
+        apply(
+            &mut tasks,
+            &add("Kanban colour label", "\"red, yellow or green\""),
+            "2026-11-04",
+        );
+        apply(
+            &mut tasks,
+            &add("Kanban edit card", "rename a card"),
+            "2026-11-04",
+        );
+        apply(
+            &mut tasks,
+            &update(
+                "Kanban colour label",
+                TaskStatus::Cancelled,
+                "the person dropped the colours",
+            ),
+            "2026-11-04",
+        );
+        let found = search("why were the colours dropped on the kanban", &tasks);
+        assert_eq!(found.len(), 2, "{found:?}");
+        assert!(
+            found[0].starts_with("- [cancelled] Kanban colour label"),
+            "{found:?}"
+        );
+        assert!(search("the", &tasks).is_empty());
     }
 
     #[test]

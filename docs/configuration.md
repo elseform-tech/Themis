@@ -857,9 +857,10 @@ of `system`, so the parts still add up to `used_tokens`).
 
 **`search_memory`.** While memory is on, the main agent also gets a read-only `search_memory`
 tool (description `tool-search-memory.md`) for what the injected index and full memories
-don't cover. `query` returns at most 10 index lines, scored by the same word rule, across this
-project's memories, the global ones and this project's plan records, each with its source;
-`name` returns one memory (this project's before the global one) or plan record in full. It
+don't cover. `query` returns at most 10 lines, scored by the same word rule, across this project's
+memories, the global ones, this project's plan records and its tasks outside any record (up to
+3 places kept for tasks), each with its source; `name` returns one memory (this project's
+before the global one) or plan record in full, and `tasks` the whole task list. It
 reads only the indexes and one file, never another project's memory, writes nothing, and
 approves itself (a deny rule still refuses it). `logs/` gets a `memory` / `searched` line with
 whether it searched or read and whether it succeeded.
@@ -895,7 +896,8 @@ goal-complete pass adds results and lessons. Ordinary passes never save a plan, 
 what was built as memories. A run gets, after the memories, the plans index and the
 record its chat's goal builds, else the one whose line shares the most words (at least two)
 with the message (`system-memory-plans.md`, `system-memory-plan.md`): its plan, changes,
-decisions, open tasks (done ones as a count with the latest three titles) and lessons, while
+decisions, tasks (open ones in full, the latest 20 cancelled ones with why, done ones by
+title, the latest 20) and lessons, while
 results and evidence stay in the file for `search_memory`. One index file and at most one
 record per run.
 
@@ -914,8 +916,8 @@ removed otherwise. The memory pass reads the record's tasks and the project file
 started or finished, so finished asks stay on record; optional `work` naming a record; a title
 already listed updates its note and reopens it) and `update` (exact title, status, note), and at most 3 `"decisions"` (`work`,
 `who`: person or agent, `what`, `why`) for records. Entries holding a secret or not fitting are
-refused. A run gets the project file's open tasks in full and its done ones as a count
-(`system-memory-tasks.md`). `logs/` gets a `memory` / `tasks` line with counts only
+refused. A run gets the project file's tasks the same way: open ones in full, the latest 20
+cancelled ones with why, and the latest 20 done ones by title (`system-memory-tasks.md`). `logs/` gets a `memory` / `tasks` line with counts only
 (applied, missed, decisions, failed); task changes stay out of the chat's memory line. The pass gets the same index and record. `logs/` has `memory` /
 `plan` lines with the op and outcome (`saved`, `updated`, `removed`, `exists`, `missing`,
 `invalid`, `sensitive`, `no_plan_reply`, `failed`) and edit counts only. The chat's memory

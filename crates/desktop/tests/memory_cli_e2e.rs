@@ -199,6 +199,10 @@ impl Harness {
                 if last_user(&body).contains("list the missing folder") && last(&body)["role"] == "user" {
                     return call("list_dir", json!({"directory_path": "no-such-folder"}));
                 }
+                // The agent looks a task up.
+                if last_user(&body).contains("look up the readme task") && last(&body)["role"] == "user" {
+                    return call("search_memory", json!({"query": "readme"}));
+                }
                 // The agent looks memory up: a search, then one result read in full.
                 if last_user(&body).contains("look up the launch") {
                     let tool_text = last(&body)["content"].to_string();
@@ -935,7 +939,7 @@ async fn an_approved_plan_keeps_a_record_through_changes_to_done() {
         "{system}"
     );
     assert!(
-        system.contains("- 1 done or cancelled (latest: Show the count in the footer)"),
+        system.contains("- 1 done: Show the count in the footer"),
         "{system}"
     );
     assert!(!system.contains("## Results\nBuilt notes.txt"), "{system}");
@@ -1003,9 +1007,29 @@ async fn tasks_are_kept_across_turns_and_chats() {
     h.send(&id, "Anything else open?", Duration::from_millis(100))
         .await;
     let seen = main_system(&h, "Anything else open?");
+    assert!(seen.contains("- 1 done: Write the README"), "{seen}");
+    // The agent can find a task by its words and read the whole list.
+    h.send(
+        &id,
+        "Please look up the readme task.",
+        Duration::from_millis(100),
+    )
+    .await;
+    let results: Vec<String> = h
+        .requests
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|body| body["model"] == "test-model")
+        .map(last)
+        .filter(|message| message["role"] == "tool")
+        .map(|message| message["content"].to_string())
+        .collect();
     assert!(
-        seen.contains("- 1 done or cancelled (latest: Write the README)"),
-        "{seen}"
+        results
+            .iter()
+            .any(|result| result.contains("[done] Write the README") && result.contains("task")),
+        "{results:?}"
     );
     assert!(!seen.contains("[open] Write the README"), "{seen}");
 }

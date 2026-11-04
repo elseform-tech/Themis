@@ -71,15 +71,37 @@ impl SearchMemoryTool {
                 ("plan record", &plans),
             ],
         );
-        let matches: Vec<Value> = found
+        let mut matches: Vec<Value> = found
             .into_iter()
             .map(|(source, line)| json!({"source": source, "line": line}))
             .collect();
+        // And the project's tasks outside any record (a record's tasks come with it by name).
+        if let Ok(store) = self.state.plan_store(&self.project_root) {
+            let tasks = themis_core::memory::tasks::search(query, &store.tasks().read());
+            // Tasks always get a few of the places, within the same total.
+            let reserved = tasks.len().min(3);
+            matches.truncate(themis_core::memory::MAX_SEARCH_RESULTS - reserved);
+            let room = themis_core::memory::MAX_SEARCH_RESULTS - matches.len();
+            matches.extend(
+                tasks
+                    .into_iter()
+                    .take(room)
+                    .map(|line| json!({"source": "task", "line": line})),
+            );
+        }
         Ok(json!({"matches": matches}))
     }
 
-    /// One memory or plan record in full, this project's before the global ones.
+    /// One memory or plan record in full, this project's before the global ones; `tasks` reads
+    /// the project's whole task list.
     fn read(&self, name: &str) -> Result<Value, String> {
+        if name == "tasks" {
+            let tasks = self.state.plan_store(&self.project_root)?.tasks().read();
+            return Ok(json!({
+                "source": "tasks",
+                "text": themis_core::memory::tasks::render_list(&tasks),
+            }));
+        }
         for scope in [MemoryScope::Project, MemoryScope::Global] {
             let root = (scope == MemoryScope::Project).then_some(self.project_root.as_path());
             let store = self.state.memory_store(scope, root)?;
