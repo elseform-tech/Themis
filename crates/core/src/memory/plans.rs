@@ -906,6 +906,7 @@ mod tests {
         let add = |title: &str| TaskOp::Add {
             title: title.into(),
             note: String::new(),
+            status: TaskStatus::Open,
             work: None,
         };
         assert!(record.apply_task(&add("Sound on hit"), "2026-11-04"));
@@ -951,6 +952,7 @@ mod tests {
                 &TaskOp::Add {
                     title: title.clone(),
                     note: long.clone(),
+                    status: TaskStatus::Open,
                     work: None,
                 },
                 "2026-11-04",
@@ -969,6 +971,7 @@ mod tests {
             &TaskOp::Add {
                 title: "still open".into(),
                 note: long.clone(),
+                status: TaskStatus::Open,
                 work: None,
             },
             "2026-11-04",

@@ -910,8 +910,9 @@ A list keeps at most 40 open or doing tasks (a new one past that is refused, nev
 dropped) and 60 done or cancelled ones (the oldest go first); a task is never renamed or
 removed otherwise. The memory pass reads the record's tasks and the project file
 (`memory-auto-user.md`, at most 16 KiB) and answers with at most 12 `"tasks"` ops: `add`
-(title, note, optional `work` naming a record; a title already listed updates its note and
-reopens it) and `update` (exact title, status, note), and at most 3 `"decisions"` (`work`,
+(title, note, optional `status`: open by default, or doing or done for an ask the turn already
+started or finished, so finished asks stay on record; optional `work` naming a record; a title
+already listed updates its note and reopens it) and `update` (exact title, status, note), and at most 3 `"decisions"` (`work`,
 `who`: person or agent, `what`, `why`) for records. Entries holding a secret or not fitting are
 refused. A run gets the project file's open tasks in full and its done ones as a count
 (`system-memory-tasks.md`). `logs/` gets a `memory` / `tasks` line with counts only

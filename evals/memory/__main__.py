@@ -148,6 +148,15 @@ CASES = [
         "expect": {"tasks_done": ["Pause"], "tasks_not_done": ["Aliens"]},
     },
     {
+        # Asks the turn already finished stay on record as done, with their proof.
+        "name": "finished_asks_recorded_done",
+        "person": ["Make the ship blue and add a footer with the controls."],
+        "answered": "The game runs with a grey ship.",
+        "reply": "The ship is blue now and the footer lists arrow keys/WASD, P/Esc and M; checked in the browser, 123 specs pass.",
+        "plan_record": DODGER_RECORD, "plans_index": DODGER_INDEX,
+        "expect": {"tasks_add_done": ["blue", "footer"]},
+    },
+    {
         "name": "task_cancelled_by_person",
         "person": ["Forget the touch controls, this is desktop only."],
         "answered": "Touch controls are next on the list.",
@@ -251,6 +260,9 @@ def check(case, result):
     for word in expect.get("tasks_cancelled", []):
         if not updated(word, "Cancelled"):
             failures.append(f"'{word}' not cancelled")
+    for word in expect.get("tasks_add_done", []):
+        if not any(op.startswith("Add") and word.lower() in op.lower() and "status: Done" in op for op in tasks):
+            failures.append(f"finished '{word}' not recorded done")
     if expect.get("no_task_changes") and tasks:
         failures.append("changed tasks on a routine turn")
     for word in expect.get("decision", []):

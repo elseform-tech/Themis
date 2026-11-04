@@ -150,9 +150,11 @@ fn fit(tasks: &mut Vec<Task>) {
 /// A change the memory model proposes. `work` names the plan record it belongs to, if any.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TaskOp {
+    /// A new task; `status` is open unless the turn already started or finished it.
     Add {
         title: String,
         note: String,
+        status: TaskStatus,
         work: Option<String>,
     },
     Update {
@@ -193,7 +195,12 @@ pub fn parse_ops(value: &Value) -> (Vec<TaskOp>, usize) {
             .map(str::to_owned);
         let op = match (text("op"), TaskStatus::parse(text("status"))) {
             _ if title.is_empty() => None,
-            ("add", _) => Some(TaskOp::Add { title, note, work }),
+            ("add", status) => Some(TaskOp::Add {
+                title,
+                note,
+                status: status.unwrap_or(TaskStatus::Open),
+                work,
+            }),
             ("update", Some(status)) => Some(TaskOp::Update {
                 title,
                 status,
@@ -218,14 +225,19 @@ fn same(a: &str, b: &str) -> bool {
 /// when it was closed), an update needs the exact title. Returns whether anything changed.
 pub fn apply(tasks: &mut Vec<Task>, op: &TaskOp, today: &str) -> bool {
     match op {
-        TaskOp::Add { title, note, .. } => {
+        TaskOp::Add {
+            title,
+            note,
+            status,
+            ..
+        } => {
             let (title, note) = (&clean(title, MAX_TASK_TITLE), &clean(note, MAX_TASK_NOTE));
             if title.is_empty() {
                 return false;
             }
             if let Some(task) = tasks.iter_mut().find(|task| same(&task.title, title)) {
-                if task.status.closed() {
-                    task.status = TaskStatus::Open;
+                if task.status.closed() || *status != TaskStatus::Open {
+                    task.status = *status;
                 }
                 if !note.is_empty() {
                     task.note = note.clone();
@@ -239,7 +251,7 @@ pub fn apply(tasks: &mut Vec<Task>, op: &TaskOp, today: &str) -> bool {
             }
             tasks.push(Task {
                 title: title.clone(),
-                status: TaskStatus::Open,
+                status: *status,
                 note: note.clone(),
                 updated: today.to_owned(),
             });
@@ -336,6 +348,7 @@ mod tests {
         TaskOp::Add {
             title: title.into(),
             note: note.into(),
+            status: TaskStatus::Open,
             work: None,
         }
     }
@@ -452,13 +465,21 @@ mod tests {
     fn ops_are_checked_and_secrets_refused() {
         let (ops, refused) = parse_ops(&json!([
             {"op":"add","title":"Sound on hit","note":"beep","work":"dodger-asteroid-dodger"},
+            {"op":"add","title":"Title fixed","status":"done","note":"README shows it"},
             {"op":"update","title":"Sound on hit","status":"done","note":"heard by the person"},
             {"op":"update","title":"x","status":"finished"},
             {"op":"add","title":""},
             {"op":"add","title":"Use key sk-ant-api03-abcdefghijklmnopqrstuvwxyz0123456789"},
             "not an object"
         ]));
-        assert_eq!(ops.len(), 2, "{ops:?}");
+        assert_eq!(ops.len(), 3, "{ops:?}");
+        assert!(matches!(
+            &ops[1],
+            TaskOp::Add {
+                status: TaskStatus::Done,
+                ..
+            }
+        ));
         assert_eq!(ops[0].work(), Some("dodger-asteroid-dodger"));
         assert_eq!(refused, 4);
         assert_eq!(parse_ops(&json!(null)), (Vec::new(), 0));
