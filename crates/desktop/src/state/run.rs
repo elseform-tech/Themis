@@ -836,11 +836,22 @@ impl AppState {
                     if matches!(event, RunEvent::AssistantText(_)) {
                         continue;
                     }
-                    if let RunEvent::ToolCallFinished { tool, .. } = &event {
+                    if let RunEvent::ToolCallFinished { tool, ok, .. } = &event {
                         if !matches!(tool.as_str(), "update_goal" | "create_goal") {
                             pump_state
                                 .inner
                                 .runs_used_tools
+                                .lock()
+                                .unwrap_or_else(|e| e.into_inner())
+                                .insert(pump_run.clone());
+                        }
+                        // A file tool that wrote counts as a change even where Git can't see it
+                        // (a project without Git).
+                        if *ok && themis_core::plugins::agents::WRITE_TOOLS.contains(&tool.as_str())
+                        {
+                            pump_state
+                                .inner
+                                .runs_changed_files
                                 .lock()
                                 .unwrap_or_else(|e| e.into_inner())
                                 .insert(pump_run.clone());
@@ -861,33 +872,6 @@ impl AppState {
                         RunEvent::Failed { .. } => Some(String::new()),
                         _ => None,
                     };
-                    if let Some(result) = ended {
-                        let person = std::mem::take(&mut memory_turn.person);
-                        // What the turn ran into, and whether a QA turn had to fix things: the
-                        // moments a lesson is fresh.
-                        let ran_into = pump_state.work_snags(&pump_thread, memory_turn.start_seq);
-                        let qa_fixed = pump_state
-                            .goal_for(&pump_thread)
-                            .is_some_and(|goal| !goal.qa_turn.is_empty())
-                            && pump_state
-                                .inner
-                                .runs_changed_files
-                                .lock()
-                                .unwrap_or_else(|e| e.into_inner())
-                                .contains(&pump_run);
-                        pump_state.spawn_memory_pass(
-                            Arc::clone(&pump_sink),
-                            pump_thread.clone(),
-                            pump_run.clone(),
-                            super::memory_auto::MemoryTurn {
-                                person,
-                                ran_into,
-                                qa_fixed,
-                                ..memory_turn.clone()
-                            },
-                            result,
-                        );
-                    }
                     // A terminal event means the run is over: mark the thread
                     // idle BEFORE emitting, so observers (merge/discard,
                     // provider switch) never see `Finished` on a busy thread.
@@ -937,6 +921,34 @@ impl AppState {
                             }
                             pump_sink.emit_thread_event(&changed);
                         }
+                    }
+                    // After the changed files are known: a QA turn that changed them fixed something.
+                    if let Some(result) = ended {
+                        let person = std::mem::take(&mut memory_turn.person);
+                        // What the turn ran into, and whether a QA turn had to fix things: the
+                        // moments a lesson is fresh.
+                        let ran_into = pump_state.work_snags(&pump_thread, memory_turn.start_seq);
+                        let qa_fixed = pump_state
+                            .goal_for(&pump_thread)
+                            .is_some_and(|goal| !goal.qa_turn.is_empty())
+                            && pump_state
+                                .inner
+                                .runs_changed_files
+                                .lock()
+                                .unwrap_or_else(|e| e.into_inner())
+                                .contains(&pump_run);
+                        pump_state.spawn_memory_pass(
+                            Arc::clone(&pump_sink),
+                            pump_thread.clone(),
+                            pump_run.clone(),
+                            super::memory_auto::MemoryTurn {
+                                person,
+                                ran_into,
+                                qa_fixed,
+                                ..memory_turn.clone()
+                            },
+                            result,
+                        );
                     }
                     let mut captured_event = ThreadEvent::from(event.clone());
                     if let ThreadEvent::ToolStarted { tool, label, .. } = &mut captured_event {

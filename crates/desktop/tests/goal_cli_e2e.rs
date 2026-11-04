@@ -770,13 +770,23 @@ async fn cli_an_edited_goal_tells_the_next_turn_once() {
 #[tokio::test(flavor = "multi_thread")]
 async fn cli_a_goal_is_complete_only_after_qa_turns_pass_its_checklist() {
     let app = GoalApp::start_with("{}", |body| {
+        // The memory models (on the same scripted server) keep nothing here.
+        if body["messages"][0]["content"]
+            .as_str()
+            .is_some_and(|system| system.starts_with("You keep an assistant's memory"))
+        {
+            return reply(r#"{"memories":[]}"#);
+        }
         let user = last_user(body);
         let fresh = body["messages"]
             .as_array()
             .and_then(|messages| messages.last())
             .is_some_and(|message| message["role"] == "user");
         if user.contains("This is a QA turn") {
-            return if fresh {
+            // The first QA turn finds a problem and fixes it; the others only check.
+            return if fresh && user.contains("0 of 7 checklist items have passed") && !user.contains("fixed last time") {
+                calls("write_file", json!({"file_path": "fix.txt", "content": "fixed"}))
+            } else if fresh {
                 calls("list_dir", json!({"directory_path": "."}))
             } else {
                 reply("Checked: it holds.")
@@ -802,8 +812,15 @@ async fn cli_a_goal_is_complete_only_after_qa_turns_pass_its_checklist() {
         reply("Built it.")
     })
     .await;
+    // Memory runs too, so a QA turn that fixed something gets its pass.
+    app.state.set_memory_jobs_for_test(true, 300, 100);
     let (data, thread) = (app.data.path().to_owned(), app.thread.clone());
     let goal = tokio::task::spawn_blocking(move || {
+        call(
+            &data,
+            "set_thread_approval_mode",
+            json!({"threadId": thread, "mode": "yolo"}),
+        );
         call(
             &data,
             "send_message",
@@ -841,15 +858,28 @@ async fn cli_a_goal_is_complete_only_after_qa_turns_pass_its_checklist() {
         })
         .map(last_user)
         .collect();
-    assert_eq!(qa.len(), 3, "{qa:#?}");
+    // The first QA turn changed files: its items are checked again before the rest.
+    assert_eq!(qa.len(), 4, "{qa:#?}");
+    assert!(
+        qa[1].contains("0 of 7") && qa[1].contains("(fixed last time: check it again)"),
+        "{}",
+        qa[1]
+    );
+    // A QA turn that fixed something gets a memory pass, even with no words from the person.
+    assert!(
+        bodies.iter().any(|body| body["messages"][1]
+            .to_string()
+            .contains("(a QA turn: it found problems and changed files to fix them)")),
+        "no memory pass for the QA turn that fixed something"
+    );
     assert!(
         qa[0].contains("0 of 7 checklist items have passed"),
         "{}",
         qa[0]
     );
     assert!(qa[0].contains("1. item 1\n2. Fault tolerance"), "{}", qa[0]);
-    assert!(qa[1].contains("3 of 7"), "{}", qa[1]);
-    assert!(qa[2].contains("7. UI and user experience"), "{}", qa[2]);
+    assert!(qa[2].contains("3 of 7"), "{}", qa[2]);
+    assert!(qa[3].contains("7. UI and user experience"), "{}", qa[3]);
     // Too little evidence after QA is refused: one entry per checklist item.
     assert!(
         bodies.iter().any(|body| body["messages"]
