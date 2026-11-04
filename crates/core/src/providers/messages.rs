@@ -11,7 +11,13 @@ pub(super) fn messages_body(
     use serde_json::json;
     let mut system = Vec::new();
     let mut input: Vec<serde_json::Value> = Vec::new();
-    for message in to_wire_messages(messages)? {
+    let wire = to_wire_messages(messages)?;
+    // Claude signs a thinking block against the exact conversation before it, and Themis
+    // shortens older history as a chat grows, so an older replayed block fails the whole request
+    // ("bound to a different conversation"). Only the latest assistant message's thinking is
+    // needed (it continues the tool loop); Claude ignores earlier turns' thinking anyway.
+    let latest_assistant = wire.iter().rposition(|message| message.role == "assistant");
+    for (at, message) in wire.into_iter().enumerate() {
         if message.role == "system" {
             system.push(message.content.unwrap_or_default());
             continue;
@@ -41,6 +47,7 @@ pub(super) fn messages_body(
         } else {
             // A thinking model's blocks go first, unchanged (signatures must round-trip).
             let kept = match message.tool_calls.as_deref() {
+                Some(_) if model.starts_with("claude-") && Some(at) != latest_assistant => None,
                 Some(calls) => super::reasoning::replay(calls),
                 // Claude binds a thinking block to the exact conversation before it, and a
                 // later message's history is shorter, so its answers go back without it.

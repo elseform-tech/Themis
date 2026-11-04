@@ -1677,6 +1677,53 @@ async fn reasoning_and_its_details_go_back_in_the_fields_they_came_in() {
     );
 }
 
+/// Claude signs thinking against the conversation before it, and Themis shortens older history,
+/// so only the latest assistant message carries its thinking back: a live goal lost seven turns
+/// to "bound to a different conversation" when every older block was replayed. Other Messages
+/// models keep every block.
+#[test]
+fn claude_replays_thinking_only_on_the_latest_assistant_message() {
+    let call = |id: &str| -> ToolCall {
+        serde_json::from_value(json!({"id": id, "type": "function", "function": {"name": "read_file", "arguments": "{}"}})).unwrap()
+    };
+    let (first, second) = (call("binding-call-1"), call("binding-call-2"));
+    reasoning::remember_blocks_for_test(
+        std::slice::from_ref(&first),
+        vec![json!({"type":"thinking","thinking":"one","signature":"sig-1"})],
+    );
+    reasoning::remember_blocks_for_test(
+        std::slice::from_ref(&second),
+        vec![json!({"type":"thinking","thinking":"two","signature":"sig-2"})],
+    );
+    let turn = |call: &ToolCall| {
+        [
+            ChatMessage {
+                role: ChatRole::Assistant,
+                message_type: MessageType::ToolUse(vec![call.clone()]),
+                content: String::new(),
+            },
+            ChatMessage {
+                role: ChatRole::Tool,
+                message_type: MessageType::ToolResult(vec![call.clone()]),
+                content: String::new(),
+            },
+        ]
+    };
+    let mut history = vec![user_message("check")];
+    history.extend(turn(&first));
+    history.extend(turn(&second));
+    let claude = messages::messages_body("claude-haiku-5-5", &history, None, false).unwrap();
+    let text = claude.to_string();
+    assert!(!text.contains("sig-1"), "{claude}");
+    assert_eq!(
+        claude["messages"][3]["content"][0]["signature"], "sig-2",
+        "{claude}"
+    );
+    let other = messages::messages_body("qwen3.8-flash", &history, None, false).unwrap();
+    let text = other.to_string();
+    assert!(text.contains("sig-1") && text.contains("sig-2"), "{other}");
+}
+
 #[tokio::test]
 async fn messages_thinking_blocks_return_first_and_unchanged_with_their_tool_uses() {
     use futures_util::StreamExt;
