@@ -1724,6 +1724,67 @@ fn claude_replays_thinking_only_on_the_latest_assistant_message() {
     assert!(text.contains("sig-1") && text.contains("sig-2"), "{other}");
 }
 
+/// Even the latest thinking block breaks when context maintenance rewrote messages before it
+/// mid-run: Claude answers 400 "bound to a different conversation". The request is sent once
+/// more without thinking blocks; another 400, or another model, is not retried.
+#[tokio::test]
+async fn claude_retries_once_without_thinking_when_a_block_is_unbound() {
+    let server = MockServer::builder().start().await;
+    let refused = json!({"type":"error","error":{"type":"invalid_request_error","message":"Upstream request failed: [invalid_request_error] messages.3.content.0: Invalid `signature` in `thinking` block. The block is bound to a different conversation."}});
+    Mock::given(method("POST"))
+        .and(path("/messages"))
+        .and(wiremock::matchers::body_string_contains("sig-unbound"))
+        .respond_with(ResponseTemplate::new(400).set_body_json(refused))
+        .mount(&server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/messages"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(
+            json!({"content":[{"type":"text","text":"done"}],"stop_reason":"end_turn"}),
+        ))
+        .mount(&server)
+        .await;
+    let call: ToolCall = serde_json::from_value(json!({"id": "unbound-call-1", "type": "function", "function": {"name": "read_file", "arguments": "{}"}})).unwrap();
+    reasoning::remember_blocks_for_test(
+        std::slice::from_ref(&call),
+        vec![json!({"type":"thinking","thinking":"t","signature":"sig-unbound"})],
+    );
+    let history = [
+        user_message("check"),
+        ChatMessage {
+            role: ChatRole::Assistant,
+            message_type: MessageType::ToolUse(vec![call.clone()]),
+            content: String::new(),
+        },
+        ChatMessage {
+            role: ChatRole::Tool,
+            message_type: MessageType::ToolResult(vec![call]),
+            content: String::new(),
+        },
+    ];
+    let claude = CompatibleProvider::go(
+        "test".into(),
+        "claude-haiku-5-5".into(),
+        Some(server.uri()),
+        None,
+    );
+    let answer = claude.chat_with_tools(&history, None, None).await.unwrap();
+    assert_eq!(answer.text().as_deref(), Some("done"));
+    let requests = server.received_requests().await.unwrap();
+    assert_eq!(requests.len(), 2);
+    assert!(String::from_utf8_lossy(&requests[0].body).contains("sig-unbound"));
+    assert!(!String::from_utf8_lossy(&requests[1].body).contains("thinking"));
+    // Another model gets the error as it is.
+    let qwen = CompatibleProvider::go(
+        "test".into(),
+        "qwen3.8-flash".into(),
+        Some(server.uri()),
+        None,
+    );
+    assert!(qwen.chat_with_tools(&history, None, None).await.is_err());
+    assert_eq!(server.received_requests().await.unwrap().len(), 3);
+}
+
 #[tokio::test]
 async fn messages_thinking_blocks_return_first_and_unchanged_with_their_tool_uses() {
     use futures_util::StreamExt;

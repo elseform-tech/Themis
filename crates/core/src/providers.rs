@@ -907,6 +907,25 @@ async fn ensure_success(
 
 impl CompatibleProvider {
     /// One non-streaming chat request with this provider's model, settings and key.
+    /// Claude refused a replayed thinking block because the conversation before it changed
+    /// (context maintenance rewrote older messages mid-run). The request is valid without its
+    /// thinking blocks, so it is sent once more with none; logs metadata only.
+    fn thinking_unbound(&self, error: &LLMError) -> bool {
+        let unbound = self.model.starts_with("claude-")
+            && error
+                .to_string()
+                .contains("bound to a different conversation");
+        if unbound {
+            crate::diagnostics::emit(
+                "provider",
+                "thinking_unbound_retry",
+                "warn",
+                serde_json::json!({"model": self.model}),
+            );
+        }
+        unbound
+    }
+
     async fn chat_once(
         &self,
         messages: &[ChatMessage],
@@ -932,12 +951,20 @@ impl CompatibleProvider {
                 .or_else(|| OUTPUT_LIMIT.try_with(|limit| *limit).ok())
                 .map(|limit| bounded_output_limit(&self.model, limit)),
         );
-        let response = self
-            .chat_request(messages, tools, false, sampling)?
-            .send()
-            .await
-            .map_err(|err| transport_error("chat request failed", err))?;
-        let response = ensure_success(response, &self.provider_name).await?;
+        let send = || async {
+            let response = self
+                .chat_request(messages, tools, false, sampling)?
+                .send()
+                .await
+                .map_err(|err| transport_error("chat request failed", err))?;
+            ensure_success(response, &self.provider_name).await
+        };
+        let response = match send().await {
+            Err(error) if self.thinking_unbound(&error) => {
+                reasoning::REPLAY_REASONING.scope(false, send()).await?
+            }
+            result => result?,
+        };
         let raw = response
             .text()
             .await
@@ -1099,12 +1126,20 @@ impl ChatProvider for CompatibleProvider {
                 .ok(),
         );
         let protocol = self.protocol();
-        let response = self
-            .chat_request(messages, tools, true, None)?
-            .send()
-            .await
-            .map_err(|error| transport_error("stream request failed", error))?;
-        let response = ensure_success(response, &self.provider_name).await?;
+        let send = || async {
+            let response = self
+                .chat_request(messages, tools, true, None)?
+                .send()
+                .await
+                .map_err(|error| transport_error("stream request failed", error))?;
+            ensure_success(response, &self.provider_name).await
+        };
+        let response = match send().await {
+            Err(error) if self.thinking_unbound(&error) => {
+                reasoning::REPLAY_REASONING.scope(false, send()).await?
+            }
+            result => result?,
+        };
         // Some compatible endpoints return a complete JSON response despite stream=true.
         if !response
             .headers()
