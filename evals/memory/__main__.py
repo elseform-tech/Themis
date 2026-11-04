@@ -77,6 +77,24 @@ CASES = [
         "expect": {"memory_words": ["commonjs", "use strict"], "any_lesson": True},
     },
     {
+        # A goal turn with no failed step: the lesson is in the agent's notes along the way.
+        "name": "notes_found_bug",
+        "person": [],
+        "answered": "",
+        "reply": "Pause and restart now work in the browser; 120 specs pass. Next turn: sound on hit.",
+        "ran_into": "- noted: Starting a run to check the HUD over the starfield.\n- noted: Going back left the page on the start screen, but the HUD reads as visible, which doesn't match. I'll take a screenshot before drawing any conclusion.\n- noted: Found it: main.js called hud.show() in the pageshow handler before state.reset(), so a page restored from the back/forward cache kept the old 'playing' HUD. Moving reset() first and hiding the HUD whenever the phase is 'ready'.\n- noted: Tried a setTimeout to wait for the scene before reset; dropped it, it only hid the race. Reset now runs synchronously in pageshow.",
+        "expect": {"memory_words": ["pageshow", "reset"], "any_lesson": True},
+    },
+    {
+        # Notes that only narrate the next step hold no lesson.
+        "name": "narration_is_nothing",
+        "person": [],
+        "answered": "",
+        "reply": "Added the level display to the HUD; the specs pass.",
+        "ran_into": "- noted: I'll read hud.js first.\n- noted: Now I'll add the level line under the score.\n- noted: Running the specs.",
+        "expect": {"nothing": True},
+    },
+    {
         "name": "goal_completed_done",
         "person": [],
         "answered": "",

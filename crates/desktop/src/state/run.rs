@@ -896,8 +896,9 @@ impl AppState {
                     }
                     if let Some(result) = ended {
                         let person = std::mem::take(&mut memory_turn.person);
-                        // What the turn ran into: where a lesson is fresh.
-                        let ran_into = pump_state.work_snags(&pump_thread, memory_turn.start_seq);
+                        // What the turn ran into, failed steps and the agent's notes along the
+                        // way: where a lesson is fresh.
+                        let ran_into = pump_state.work_log(&pump_thread, memory_turn.start_seq);
                         pump_state.spawn_memory_pass(
                             Arc::clone(&pump_sink),
                             pump_thread.clone(),

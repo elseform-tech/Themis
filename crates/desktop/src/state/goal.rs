@@ -48,6 +48,10 @@ const SNAG_SCAN_ITEMS: usize = 6_000;
 const MAX_SNAGS: usize = 8;
 /// Most characters of a failed step's output, and of what the agent said next.
 const SNAG_CHARS: usize = 300;
+/// Most entries of one turn's working log (its failed steps and the agent's notes), the latest.
+const MAX_LOG_ENTRIES: usize = 40;
+/// Most characters of one note the agent wrote between steps.
+const NOTE_CHARS: usize = 400;
 
 /// Whether a finished tool step failed: refused, or a command that exited non-zero.
 fn step_failed(ok: bool, output: &str) -> bool {
@@ -95,6 +99,51 @@ fn snags_of(events: &[ThreadEvent]) -> String {
     }
     let skip = snags.len().saturating_sub(MAX_SNAGS);
     snags.into_iter().skip(skip).collect::<Vec<_>>().join("\n")
+}
+
+/// One turn's working log for its memory pass, in order: each failed step, and each note the
+/// agent wrote between steps (what it tried, found wrong, dropped or thinks could be better),
+/// which a failed step alone never shows. The note that ended the turn is its reply, read
+/// elsewhere. The latest [`MAX_LOG_ENTRIES`], each bounded.
+fn work_log_of(events: &[ThreadEvent]) -> String {
+    let mut entries: Vec<String> = Vec::new();
+    let mut notes: Vec<usize> = Vec::new();
+    for event in events {
+        match event {
+            ThreadEvent::ToolFinished {
+                tool, ok, output, ..
+            } if step_failed(*ok, output) && !tool.starts_with("hook_") && tool != "Skill" => {
+                entries.push(format!("- {tool} failed: {}", tail(output)));
+            }
+            ThreadEvent::AssistantText { text } if !text.trim().is_empty() => {
+                notes.push(entries.len());
+                entries.push(format!("- noted: {}", head(text, NOTE_CHARS)));
+            }
+            _ => {}
+        }
+    }
+    if let Some(&reply) = notes.last() {
+        if reply == entries.len() - 1 {
+            entries.pop();
+        }
+    }
+    let skip = entries.len().saturating_sub(MAX_LOG_ENTRIES);
+    entries
+        .into_iter()
+        .skip(skip)
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// The first `limit` characters of `text` on one line, marked when cut.
+fn head(text: &str, limit: usize) -> String {
+    let flat = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    if flat.chars().count() <= limit {
+        return flat;
+    }
+    let mut cut: String = flat.chars().take(limit).collect();
+    cut.push('…');
+    cut
 }
 
 fn now_ms() -> i64 {
@@ -741,9 +790,19 @@ impl AppState {
         self.spawn_goal_memory_event(sink, thread_id, "a goal was created", (content, answered));
     }
 
-    /// The failed steps of a chat's work since `from_seq` (a goal's, or one turn's), each with
-    /// what the agent said next: read a page at a time, at most [`SNAG_SCAN_ITEMS`] items, at most [`MAX_SNAGS`].
+    /// The failed steps of a goal's work since `from_seq`, each with what the agent said next:
+    /// at most [`MAX_SNAGS`].
     pub(super) fn work_snags(&self, thread_id: &str, from_seq: i64) -> String {
+        snags_of(&self.events_since(thread_id, from_seq))
+    }
+
+    /// One turn's working log for its memory pass: see [`work_log_of`].
+    pub(super) fn work_log(&self, thread_id: &str, from_seq: i64) -> String {
+        work_log_of(&self.events_since(thread_id, from_seq))
+    }
+
+    /// The chat's events after `from_seq`, at most [`SNAG_SCAN_ITEMS`].
+    fn events_since(&self, thread_id: &str, from_seq: i64) -> Vec<ThreadEvent> {
         let mut events = Vec::new();
         let mut through = from_seq;
         while events.len() < SNAG_SCAN_ITEMS {
@@ -765,7 +824,7 @@ impl AppState {
                 break;
             }
         }
-        snags_of(&events)
+        events
     }
 
     /// The name of the plan record this chat's goal builds, if it has one.
@@ -1427,5 +1486,43 @@ mod snag_tests {
         assert!(snags
             .lines()
             .all(|line| line.chars().count() <= SNAG_CHARS + 20));
+    }
+
+    /// A turn's log holds what a failed step alone never shows: the agent's notes on what it
+    /// found wrong or dropped, in order with the failures, without the reply that ended it.
+    #[test]
+    fn a_turns_log_keeps_the_agents_notes_with_its_failed_steps() {
+        let events = vec![
+            said("Starting the asteroid pool."),
+            tool(true, r#"{"exit_code":0,"output":"ok"}"#),
+            said("The HUD reads visible on the start screen, which doesn't match: show() ran before reset()."),
+            tool(true, r#"{"exit_code":1,"output":"1 failing"}"#),
+            said("Dropped per-frame Vector3 allocation; one reused vector is enough."),
+            said("Done: the game works."),
+        ];
+        let log = work_log_of(&events);
+        let lines: Vec<&str> = log.lines().collect();
+        assert_eq!(lines.len(), 4, "{log}");
+        assert!(
+            lines[1].starts_with("- noted: The HUD reads visible"),
+            "{log}"
+        );
+        assert!(lines[2].starts_with("- shell failed:"), "{log}");
+        assert!(lines[3].contains("Dropped per-frame Vector3"), "{log}");
+        assert!(!log.contains("Done: the game works"), "{log}");
+        // The latest MAX_LOG_ENTRIES, each note bounded.
+        let many: Vec<ThreadEvent> = (0..100)
+            .map(|n| said(&format!("note {n} {}", "y".repeat(2000))))
+            .collect();
+        let log = work_log_of(&many);
+        assert_eq!(log.lines().count(), MAX_LOG_ENTRIES);
+        assert!(
+            log.lines().last().unwrap().starts_with("- noted: note 98"),
+            "{log}"
+        );
+        assert!(log
+            .lines()
+            .all(|line| line.chars().count() <= NOTE_CHARS + 20));
+        assert_eq!(work_log_of(&[]), "");
     }
 }

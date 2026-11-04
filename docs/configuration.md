@@ -924,13 +924,15 @@ model, which has no memory tool:
   only in that scope: it merges duplicates into one and deletes clearly stale ones.
 
 **When a pass runs, and what it reads.** Besides the person's words, every pass reads what the
-turn ran into: each failed step (tool, end of its output) and what the agent said next, read from
-that turn's history (at most 8, each at most 300 characters). A turn the person said nothing in
-(a goal turn) still gets a pass when it ran into failed steps,
-since that is when a lesson is fresh; the prompt keeps lessons as project or feedback memories
+turn ran into, in order from that turn's history: each failed step (tool, end of its output, at
+most 300 characters) and each note the agent wrote between steps (what it tried, found wrong,
+dropped or thinks could be better, at most 400 characters), the latest 40 entries; the note that
+ended the turn is its reply and is not repeated. A goal-complete pass reads the goal's failed
+steps with what the agent said next (at most 8). A turn the person said nothing in (a goal turn)
+still gets a pass when it has such a log, since that is when a lesson is fresh; the prompt keeps lessons as project or feedback memories
 (symptom, cause, rule, how to check) worded so a similar later task finds them. `memory.thinking`
 (default `auto`, user file only) sets how much the memory models think: `auto` lets them think for
-a pass that carries lessons (failed steps, a completed goal) and asks for the
+a pass that carries lessons (a turn with work in it: failed steps or notes, a completed goal) and asks for the
 least otherwise; `least` always the least; `model` always the model's own. The least effort comes
 from the Go catalog (loaded first when empty), so a model that refuses `none` gets its lowest
 listed effort. Measured with `python3 -m evals.memory` (`memory_try_pass`, a read-only dry run of

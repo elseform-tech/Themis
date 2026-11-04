@@ -52,8 +52,8 @@ pub(super) struct MemoryTurn {
     pub(super) event: Option<(&'static str, String)>,
     /// History position when the turn started: where what it ran into is read from.
     pub(super) start_seq: i64,
-    /// What the turn ran into: each failed step and what the agent said next (filled when the
-    /// turn ends). A turn that hit a snag and got past it is worth a pass on its own.
+    /// What the turn ran into: its failed steps and the agent's notes along the way (filled when
+    /// the turn ends). A turn with work in it is worth a pass on its own.
     pub(super) ran_into: String,
 }
 

@@ -905,8 +905,9 @@ async fn an_approved_plan_keeps_a_record_through_changes_to_done() {
     );
 }
 
-/// The pass reads what the turn ran into: each failed step and what the agent said next, so
-/// a lesson can be kept where the work went wrong.
+/// The pass reads what the turn ran into: its failed steps and the agent's notes along the
+/// way, so a lesson can be kept where the work went wrong. The note that ended the turn is
+/// its reply, read once, not again in the log.
 #[tokio::test(flavor = "multi_thread")]
 async fn the_pass_reads_what_the_turn_ran_into() {
     let mut h = Harness::start(MODELS).await;
@@ -931,7 +932,7 @@ async fn the_pass_reads_what_the_turn_ran_into() {
     };
     let user = pass["messages"][1]["content"].as_str().unwrap();
     assert!(user.contains("<<<ran-into\n- list_dir failed:"), "{user}");
-    assert!(user.contains("then: Done."), "{user}");
+    assert!(!user.contains("- noted: Done."), "{user}");
 }
 
 /// An update that keeps a memory's description but changes its text is applied: the memory
