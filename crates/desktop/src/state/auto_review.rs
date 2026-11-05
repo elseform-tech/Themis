@@ -225,6 +225,10 @@ impl AutoReviewer for DesktopReviewer {
         }
     }
 
+    fn allowed_once(&self, action: &ToolAction) -> bool {
+        self.state.take_auto_once(&self.thread_id, action)
+    }
+
     fn blocked(&self, action: &ToolAction, reason: &str, safer: &str) {
         // The command itself when there is one: "touch hard.txt", not the raw tool call.
         let what = if action.command.is_empty() {

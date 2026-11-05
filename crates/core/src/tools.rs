@@ -1068,6 +1068,10 @@ pub enum AutoVerdict {
 /// words in the chat, and tells the person about a hard block.
 pub trait AutoReviewer: Send + Sync {
     fn review(&self, action: &ToolAction) -> AutoVerdict;
+    /// Whether the person allowed this exact action once (their "Allow once" after a block),
+    /// using it up. Gates only a person may open (running outside the sandbox, sensitive
+    /// files) honour only this, never the model's verdict.
+    fn allowed_once(&self, action: &ToolAction) -> bool;
     /// A hard block: ask the person (Allow once, the safer way, or skip) without stopping the run.
     fn blocked(&self, action: &ToolAction, reason: &str, safer: &str);
 }

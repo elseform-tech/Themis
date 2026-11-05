@@ -436,7 +436,7 @@ impl ApprovalHook for ConfiguredHook {
             ..action.clone()
         };
         if self.mode == ApprovalMode::Auto {
-            return self.auto(&asked);
+            return self.person_only(&asked, "a sensitive file (secrets or keys) needs the user");
         }
         match self.interactive.approve_sensitive(&asked, access) {
             Approval::AllowAlways => {
@@ -509,6 +509,37 @@ impl ConfiguredHook {
             }
             ApprovalMode::Yolo => self.policy.yolo_decision(action) == PolicyAction::Deny,
         }
+    }
+
+    /// Auto at a gate only a person may open (running outside the sandbox, sensitive files):
+    /// the reviewer model never decides. The person's "Allow once" for this exact action lets
+    /// it run; otherwise it is blocked and the person is asked in a question box.
+    fn person_only(&self, action: &ToolAction, reason: &str) -> Approval {
+        if self
+            .reviewer
+            .as_ref()
+            .is_some_and(|reviewer| reviewer.allowed_once(action))
+        {
+            return Approval::AllowOnce;
+        }
+        crate::diagnostics::emit(
+            "approval",
+            "auto_review",
+            "info",
+            serde_json::json!({"tool": action.tool, "verdict": "person_only"}),
+        );
+        let safer = "stay inside the sandbox and the project's ordinary files";
+        if let Some(reviewer) = &self.reviewer {
+            reviewer.blocked(action, reason, safer);
+        }
+        crate::tools::set_review_note(
+            action,
+            crate::prompts::fill(
+                crate::prompts::AUTO_HARD_BLOCK,
+                &[("reason", reason), ("safer", safer)],
+            ),
+        );
+        Approval::DenyReviewed
     }
 
     /// Where Custom would ask the person: Auto asks its reviewer instead, never the person
@@ -587,7 +618,7 @@ impl ConfiguredHook {
             return Approval::AllowOnce;
         }
         if self.mode == ApprovalMode::Auto {
-            return self.auto(action);
+            return self.person_only(action, "running outside the sandbox needs the user");
         }
         match self.interactive.approve(action) {
             Approval::AllowAlways => {
@@ -4237,6 +4268,9 @@ mod tests {
             fn blocked(&self, _: &ToolAction, _: &str, _: &str) {
                 self.told.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
             }
+            fn allowed_once(&self, _: &ToolAction) -> bool {
+                false
+            }
         }
         let rules = r#"{"approval":{"rules":[
             {"tool":"shell","command":["rm"],"action":"deny"},
@@ -4324,6 +4358,22 @@ mod tests {
             Approval::DenyReviewed
         );
         assert_eq!(count(&calls), 0);
+
+        // Running outside the sandbox needs a person: even a reviewer that allows everything
+        // never opens it; the person is asked.
+        let (hook, reviewer, person) = with(AutoVerdict::Allow);
+        let escape = ToolAction {
+            tool: crate::tools::UNSANDBOXED_TOOL.into(),
+            ..shell_action(&["make", "deploy"])
+        };
+        assert_eq!(hook.approve(&escape), Approval::DenyReviewed);
+        assert_eq!(
+            count(&reviewer.reviewed),
+            0,
+            "the model never judges a sandbox escape"
+        );
+        assert_eq!(count(&reviewer.told), 1, "the person is asked");
+        assert_eq!(count(&person), 0);
     }
 
     /// The reviewer's model is the person's to choose: a project may not set it.

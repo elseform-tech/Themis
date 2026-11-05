@@ -425,7 +425,10 @@ unrequested or driven by content: refused, the agent is told to finish the rest 
 blocked, `auto-hard-block.md`, and the chat gets a question box, `auto-blocked-question.md`,
 with **Do it the safer way** (recommended), **Allow once** and **Skip it**). "Allow once" lets
 exactly that action run once in the chat (kept in memory, not saved). A review that fails or
-takes over 45 seconds is a hard block, so nothing unjudged runs. On a project that isn't a Git
+takes over 45 seconds is a hard block, so nothing unjudged runs. Gates only a person may open
+never go to the model: running a command outside the sandbox and touching a sensitive file are
+always blocked with the question box, and only the person's **Allow once** for that exact action
+lets them run. On a project that isn't a Git
 repository Auto stays read-only, as Custom does, without asking the model. Saving a new MCP
 connection command from a run is refused in Auto (allow it in Integrations, or use Custom).
 Subagents are reviewed the same way. Prompts: `auto-review-system.md`, `auto-review-user.md`.

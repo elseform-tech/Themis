@@ -375,7 +375,9 @@ folder you didn't name) is refused with the reason and a safer way, and the agen
 instead. Something destructive or unrequested (deleting outside the project, sending your
 files somewhere, a step a web page told it to take) is refused and you get a question in the
 chat, **Do it the safer way**, **Allow once** or **Skip it**, while the agent finishes the rest.
-If the reviewer can't decide, the step is blocked the same way. Choose the reviewer's model with
+If the reviewer can't decide, the step is blocked the same way. Running outside the sandbox and
+reading or writing secret files (`.env`, keys) are never left to the reviewer: they always come
+to you as a question. Choose the reviewer's model with
 `approval.auto_model` in your `runtime.jsonc` (otherwise your first memory model). Custom is
 initially selected and uses ordered approval rules from advanced file configuration.
 Its default policy allows reads and asks before other tools. A matching deny
