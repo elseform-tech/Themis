@@ -236,15 +236,20 @@ pub fn sole_mcp_command_save(name: &str, args: &Value) -> Option<(String, Vec<St
 }
 
 /// The server a connected MCP tool belongs to, read from its generated name
-/// (`mcp_<16 hex server id><8 hex tool id>_<tool>`, see
-/// `plugins::connections::tool_identity`). One chat grant covers every tool of
-/// the server. Startup actions (`mcp_start_*`) and other names have none.
+/// (`mcp_<server>_<8 hex>_<tool>`, see `plugins::connections::tool_identity`): `<server>_<8 hex>`.
+/// One chat grant covers every tool of the server. Startup actions (`mcp_start_*`) and other
+/// names have none.
 pub fn mcp_server_id(tool: &str) -> Option<&str> {
     let rest = tool.strip_prefix("mcp_")?;
-    let hex = |text: &str| text.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'));
-    let (server, tail) = (rest.get(..16)?, rest.get(16..)?);
-    let (tool_id, after) = (tail.get(..8)?, tail.get(8..)?);
-    (hex(server) && hex(tool_id) && after.starts_with('_')).then_some(server)
+    let (server, tail) = rest.split_once('_')?;
+    let hex = tail.get(..8)?;
+    let named = !server.is_empty()
+        && server.len() <= 16
+        && server
+            .bytes()
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit());
+    let hexed = hex.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'));
+    (named && hexed && tail.get(8..)?.starts_with('_')).then(|| &rest[..server.len() + 1 + 8])
 }
 
 /// Programs whose first non-flag argument is a true subcommand, so a grant may
