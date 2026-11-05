@@ -1355,12 +1355,14 @@ fn connection_error_category(error: &anyhow::Error) -> &'static str {
     }
 }
 
-/// Generated tool name tail: `<server>_<8 hex>_<tool>`, e.g. `playwright_3f2a9c1b_browser_click`.
+/// Generated tool name tail: `<server>_<16 hex>_<tool>`, e.g.
+/// `playwright_3f2a9c1b4d5e6f70_browser_click`.
 /// `<server>` is the server's own name (letters and digits, at most 16) so a model can read
-/// and copy it; the 8 hex digits come from the whole namespace (which binds the server's
-/// definition), so a changed definition is another server and a chat grant covers every tool
-/// of exactly one (see [`crate::tools::mcp_server_id`]). A live run's model kept mistyping
-/// the old 24 hex digits. The tool name is cut to 34 characters (64 in all).
+/// and copy it; the 16 hex digits (64 bits) come from the whole namespace (which binds the
+/// server's definition), so a changed definition is another server and a chat grant covers
+/// every tool of exactly one (see [`crate::tools::mcp_server_id`]); 64 bits keep a crafted
+/// plugin from matching a granted server's id. A live run's model kept mistyping the old 24
+/// hex digits. The tool name is cut to 26 characters (64 in all).
 pub fn tool_identity(namespace: &str, component: &str) -> String {
     use sha2::{Digest, Sha256};
     let digest = Sha256::digest(namespace.as_bytes());
@@ -1377,11 +1379,11 @@ pub fn tool_identity(namespace: &str, component: &str) -> String {
     }
     format!(
         "{server}_{}_{}",
-        digest[..4]
+        digest[..8]
             .iter()
             .map(|b| format!("{b:02x}"))
             .collect::<String>(),
-        component.chars().take(34).collect::<String>()
+        component.chars().take(26).collect::<String>()
     )
 }
 

@@ -414,7 +414,7 @@ mod tests {
         }
     }
 
-    /// A connected MCP tool of `server` (`name_8hex`) as the runtime names it.
+    /// A connected MCP tool of `server` (`name_16hex`) as the runtime names it.
     fn mcp(server: &str, tool: &str) -> ToolAction {
         ToolAction {
             display: None,
@@ -493,11 +493,11 @@ mod tests {
     #[test]
     fn server_grant_covers_every_tool_of_that_server_only() {
         let grants = ChatGrants::in_memory();
-        assert!(grants.remember(&mcp("docs_445566aa", "one")));
-        assert!(grants.covers(&mcp("docs_445566aa", "two")));
-        assert!(!grants.covers(&mcp("docs_445566bb", "two")));
+        assert!(grants.remember(&mcp("docs_00112233445566aa", "one")));
+        assert!(grants.covers(&mcp("docs_00112233445566aa", "two")));
+        assert!(!grants.covers(&mcp("docs_00112233445566bb", "two")));
         // Startup actions and lookalike names belong to no server.
-        let mut start = mcp("docs_445566aa", "two");
+        let mut start = mcp("docs_00112233445566aa", "two");
         start.tool = "mcp_start_g--docs--1--srv".into();
         assert!(!grants.covers(&start));
     }
@@ -518,11 +518,11 @@ mod tests {
         let first = ChatGrants::load(&path);
         assert!(first.is_empty() && first.warning().is_none());
         first.remember(&shell(&["cargo", "test"]));
-        first.remember(&mcp("docs_445566aa", "x"));
+        first.remember(&mcp("docs_00112233445566aa", "x"));
         let second = ChatGrants::load(&path);
         assert_eq!(second.len(), 2);
         assert!(second.covers(&shell(&["cargo", "test", "-q"])));
-        assert!(second.covers(&mcp("docs_445566aa", "y")));
+        assert!(second.covers(&mcp("docs_00112233445566aa", "y")));
         assert!(
             !ChatGrants::load(&dir.path().join("other.json")).covers(&shell(&["cargo", "test"]))
         );

@@ -475,7 +475,7 @@ keyed by site: one grant on a browser action covers every browser action on that
 **Chat grants.** The approval box offers **Allow once**, **Allow in this chat** and
 **Deny**. *Allow in this chat* runs the action now and saves the grant to the chat's own
 file, `chat_grants/<chat id>.json` in the app data directory (beside `threads.json`). Format:
-`{"version":1,"grants":[{"tool":"shell","command":["cargo","test"],"risk":"execute"}, {"tool":"mcp","server":"<server>_<8 hex>","risk":"network"}]}`;
+`{"version":1,"grants":[{"tool":"shell","command":["cargo","test"],"risk":"execute"}, {"tool":"mcp","server":"<server>_<16 hex>","risk":"network"}]}`;
 `command` is the covered argv prefix (`shell`, `git` and `shell_unsandboxed`) or the one covered site (`browser`, `fetch_url`, `web_search`, e.g. `{"tool":"browser","command":["localhost"],"risk":"network"}`), `server` marks a whole-MCP-server
 grant, and `risk` is `read`, `write`, `execute` or `network`. Limits: 256 grants, 256 KiB.
 The file is loaded when a run starts (configuration and approval mode are still captured once

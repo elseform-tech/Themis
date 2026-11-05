@@ -1159,7 +1159,7 @@ pub(super) fn permission_mode(mode: themis_core::configuration::ApprovalMode) ->
     }
 }
 
-/// The server's own tool name inside an MCP wire name (`mcp_<server>_<8 hex>_<tool>`).
+/// The server's own tool name inside an MCP wire name (`mcp_<server>_<16 hex>_<tool>`).
 fn mcp_remote_name(wire: &str) -> Option<&str> {
     let server = themis_core::tools::mcp_server_id(wire)?;
     wire.strip_prefix("mcp_")?
@@ -1173,16 +1173,16 @@ mod mcp_label_tests {
     #[test]
     fn mcp_wire_names_yield_the_server_tool_name() {
         assert_eq!(
-            super::mcp_remote_name("mcp_playwright_0ad259c8_browser_evaluate"),
+            super::mcp_remote_name("mcp_playwright_932fdceefae46ddd_browser_evaluate"),
             Some("browser_evaluate")
         );
         for other in [
             "shell",
             "mcp_start_docs",
             "mcp_xyz_tool",
-            "mcp_playwright_0ad259c8_",
-            "mcp_playwright_0ad259c8x",
-            "mcp_Playwright_0ad259c8_browser_evaluate",
+            "mcp_playwright_932fdceefae46ddd_",
+            "mcp_playwright_932fdceefae46dddx",
+            "mcp_Playwright_932fdceefae46ddd_browser_evaluate",
         ] {
             assert_eq!(super::mcp_remote_name(other), None, "{other}");
         }
