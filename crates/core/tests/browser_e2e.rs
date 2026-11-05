@@ -775,6 +775,34 @@ async fn an_idle_browser_exits_and_comes_back_where_it_was() {
     assert!(chat.state().await.open);
 }
 
+/// More chats than open pages: the first chat's page is closed to make room, and the browser
+/// still exits once all are idle (it never did, waiting for that chat to have a page again).
+/// Found in the 4-chat live check on 2026-11-06.
+#[tokio::test(flavor = "multi_thread")]
+async fn an_idle_browser_exits_when_a_page_was_closed_to_make_room() {
+    let _browser = ONE_BROWSER.lock().await;
+    let data = tempfile::tempdir().unwrap();
+    let Some(hub) = hub(data.path()) else { return };
+    let project = tempfile::tempdir().unwrap();
+    let chats: Vec<_> = (0..=themis_core::browser::session::OPEN_PAGES)
+        .map(|index| hub.chat(&format!("chat-room-{index}"), project.path()))
+        .collect();
+    for (index, chat) in chats.iter().enumerate() {
+        chat.open(&format!(
+            "data:text/html,<title>P{index}</title><h1>Page {index}</h1>"
+        ))
+        .await
+        .unwrap();
+    }
+    assert!(!chats[0].state().await.open, "the first page made room");
+    assert!(hub.exit_when_idle(std::time::Duration::ZERO).await);
+    for chat in &chats {
+        assert!(!chat.state().await.open);
+    }
+    let back = chats[0].snapshot(None, false).await.unwrap();
+    assert!(back.snapshot.contains("Page 0"), "{}", back.snapshot);
+}
+
 /// A first-person page turns without limit: relative moves carry on past the page's edge with
 /// the exact distance, and a click doesn't turn the view. A page without the lock has an edge.
 #[tokio::test(flavor = "multi_thread")]

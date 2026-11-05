@@ -415,8 +415,10 @@ impl BrowserHub {
         if self.shared.lock().await.is_empty() {
             return false;
         }
+        // A chat whose page was already closed to make room is as quiet as an idle one: with
+        // more chats than open pages, waiting for it to have a page would keep the browser forever.
         let quiet = chats.iter().all(|chat| {
-            chat.idle_page()
+            (chat.idle_page() || chat.page_closed_and_quiet())
                 && chat
                     .last_used
                     .lock()
@@ -1773,6 +1775,26 @@ impl ChatBrowser {
 
     fn touch(&self) {
         *self.last_used.lock().unwrap_or_else(|e| e.into_inner()) = Instant::now();
+    }
+
+    /// No page open (closed to make room, or never opened) and nothing running in it.
+    fn page_closed_and_quiet(&self) -> bool {
+        self.view
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .tab
+            .is_none()
+            && !self.ui_stream.load(Ordering::SeqCst)
+            && self
+                .activity
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .is_none()
+            && self
+                .recording
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .is_none()
     }
 
     /// Whether the page may be closed to make room: nobody watches, records or acts in it.
