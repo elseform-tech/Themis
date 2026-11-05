@@ -202,7 +202,7 @@ class Reporting(unittest.TestCase):
         self.assertEqual(len(chosen), 16)
         self.assertEqual(len(set(chosen)), 16)
         own = arms(["accumulating-requests", "trace-rounding"], None, ["none"], [1])
-        self.assertEqual(sorted(str(b) for name, b, _p, _s in own if name == "accumulating-requests"), ["16000", "32000"])
+        self.assertEqual(sorted(str(b) for name, b, _p, _s in own if name == "accumulating-requests"), ["32000", "64000"])
         self.assertEqual(len([1 for name, *_ in own if name == "trace-rounding"]), 3)
 
 
