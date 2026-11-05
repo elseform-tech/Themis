@@ -11,8 +11,8 @@
   "side-overdue-sort"
  ],
  "budgets": [
-  16000,
-  32000
+  32000,
+  64000
  ],
  "source": [
   "ledgerly/cli/commands/customers.py"

@@ -255,7 +255,7 @@ python3 -m evals.verify run --model muse-spark-1.3-contributor --profiles none,m
 context) and a realistic request whose cause is away from its symptom; hidden checks score the
 share of requirements met. The `mixed` profile adds messages mid-task (a change of direction, a
 tightened requirement, "add a test", an unrelated question and fix), and two scenarios pile up
-requests in one chat. Budgets are 32k, 64k and auto (16k and 32k for `accumulating-requests`). It
+requests in one chat. Budgets are 32k, 64k and auto (32k and 64k for `accumulating-requests`). It
 reads verification habits (a check after the last change, unchecked or false claims, a bug
 reproduced first, a regression test), evidence for lookups, and harness health (checkpoints,
 re-reads after them, our tool errors). Runs take 2–6 minutes and about $0.01–0.04 each. The result
