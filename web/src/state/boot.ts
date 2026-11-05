@@ -115,7 +115,9 @@ async function restoreProject(
     const threads = await context.api.listThreads(root);
     if (!context.isCancelled()) {
       context.dispatch({ type: "thread/listed", projectRoot: root, threads });
-      await Promise.all(threads.map((thread) => restoreThreadHistory(thread, context)));
+      // Only the chat being reopened and running ones load now; the rest load when opened.
+      const needed = threads.filter((thread) => thread.running || thread.id === context.savedSelection?.threadId);
+      await Promise.all(needed.map((thread) => restoreThreadHistory(thread, context)));
     }
   } catch (error: unknown) {
     if (!context.isCancelled()) {

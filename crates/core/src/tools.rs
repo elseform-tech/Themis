@@ -236,15 +236,20 @@ pub fn sole_mcp_command_save(name: &str, args: &Value) -> Option<(String, Vec<St
 }
 
 /// The server a connected MCP tool belongs to, read from its generated name
-/// (`mcp_<16 hex server id><8 hex tool id>_<tool>`, see
-/// `plugins::connections::tool_identity`). One chat grant covers every tool of
-/// the server. Startup actions (`mcp_start_*`) and other names have none.
+/// (`mcp_<server>_<16 hex>_<tool>`, see `plugins::connections::tool_identity`):
+/// `<server>_<16 hex>`. One chat grant covers every tool of the server. Startup actions
+/// (`mcp_start_*`) and other names have none.
 pub fn mcp_server_id(tool: &str) -> Option<&str> {
     let rest = tool.strip_prefix("mcp_")?;
-    let hex = |text: &str| text.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'));
-    let (server, tail) = (rest.get(..16)?, rest.get(16..)?);
-    let (tool_id, after) = (tail.get(..8)?, tail.get(8..)?);
-    (hex(server) && hex(tool_id) && after.starts_with('_')).then_some(server)
+    let (server, tail) = rest.split_once('_')?;
+    let hex = tail.get(..16)?;
+    let named = !server.is_empty()
+        && server.len() <= 16
+        && server
+            .bytes()
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit());
+    let hexed = hex.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'));
+    (named && hexed && tail.get(16..)?.starts_with('_')).then(|| &rest[..server.len() + 1 + 16])
 }
 
 /// Programs whose first non-flag argument is a true subcommand, so a grant may
@@ -1014,6 +1019,9 @@ pub enum Approval {
     /// Refuse to run this action for now: the person steered a new message in
     /// while it waited (or before it asked), and the agent should read that first.
     DenyForNewMessage,
+    /// Refused by Auto mode's reviewer; the reason and a safer way go back to the agent
+    /// (see [`take_review_note`]).
+    DenyReviewed,
 }
 
 impl Approval {
@@ -1021,7 +1029,10 @@ impl Approval {
     /// [`Approval::Deny`], so that every refusal counts.
     #[must_use]
     pub const fn is_denied(self) -> bool {
-        matches!(self, Self::Deny | Self::DenyForNewMessage)
+        matches!(
+            self,
+            Self::Deny | Self::DenyForNewMessage | Self::DenyReviewed
+        )
     }
 
     /// The guidance a refusal carries in the tool result.
@@ -1032,6 +1043,63 @@ impl Approval {
             _ => REFUSAL_NOTE,
         }
     }
+}
+
+/// What Auto mode's reviewer says about an action Custom would have asked about.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AutoVerdict {
+    Allow,
+    /// Risky but plausibly wanted: refused, with why and a safer way; the agent changes course.
+    Soft {
+        reason: String,
+        safer: String,
+    },
+    /// Destructive and unrequested, or driven by content rather than the person: refused, and
+    /// the person is asked in a question box while the run goes on.
+    Hard {
+        reason: String,
+        safer: String,
+    },
+    /// No verdict (the reviewer model failed or was too slow): treated as a hard block.
+    Unavailable,
+}
+
+/// Auto mode's reviewer, supplied by the app: it judges an action against the person's own
+/// words in the chat, and tells the person about a hard block.
+pub trait AutoReviewer: Send + Sync {
+    fn review(&self, action: &ToolAction) -> AutoVerdict;
+    /// Whether the person allowed this exact action once (their "Allow once" after a block),
+    /// using it up. Gates only a person may open (running outside the sandbox, sensitive
+    /// files) honour only this, never the model's verdict.
+    fn allowed_once(&self, action: &ToolAction) -> bool;
+    /// A hard block: ask the person (Allow once, the safer way, or skip) without stopping the run.
+    fn blocked(&self, action: &ToolAction, reason: &str, safer: &str);
+}
+
+/// Notes of the reviewer's refusals, by action, waiting for their tool result. The approval and
+/// the result may run on different threads, so the note is keyed by the action itself.
+static REVIEW_NOTES: std::sync::Mutex<Vec<(String, String)>> = std::sync::Mutex::new(Vec::new());
+
+fn review_key(action: &ToolAction) -> String {
+    format!("{}\0{}", action.tool, action.summary)
+}
+
+/// Sets the note a [`Approval::DenyReviewed`] refusal of `action` carries back to the agent.
+pub fn set_review_note(action: &ToolAction, note: String) {
+    let mut notes = REVIEW_NOTES.lock().unwrap_or_else(|e| e.into_inner());
+    let key = review_key(action);
+    notes.retain(|(known, _)| *known != key);
+    notes.push((key, note));
+    let over = notes.len().saturating_sub(64);
+    notes.drain(..over);
+}
+
+/// The note of the reviewer's refusal of `action`, once.
+pub fn take_review_note(action: &ToolAction) -> Option<String> {
+    let mut notes = REVIEW_NOTES.lock().unwrap_or_else(|e| e.into_inner());
+    let key = review_key(action);
+    let at = notes.iter().position(|(known, _)| *known == key)?;
+    Some(notes.remove(at).1)
 }
 
 /// [`ApprovalHook`] adapter over a closure.
@@ -1088,6 +1156,12 @@ fn check_approval(hook: &dyn ApprovalHook, action: &ToolAction) -> Result<(), To
 fn check_decision(decision: Approval, action: &ToolAction) -> Result<(), ToolCallError> {
     match decision {
         Approval::AllowOnce | Approval::AllowAlways => Ok(()),
+        Approval::DenyReviewed => Err(tool_error(format!(
+            "approval denied for '{}': {} {}",
+            action.tool,
+            action.summary,
+            take_review_note(action).unwrap_or_else(|| REFUSAL_NOTE.to_owned())
+        ))),
         denied @ (Approval::Deny | Approval::DenyForNewMessage) => Err(tool_error(format!(
             "approval denied for '{}': {} {}",
             action.tool,

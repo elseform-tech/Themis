@@ -99,14 +99,16 @@ describe("ThreadComposer", () => {
     view.rerender(<ThreadComposer {...view.props} />);
     expect(screen.getByText("Custom",{selector:"summary span"})).not.toHaveClass("is-yolo");
   });
-  it("shows only YOLO and Custom and permits next-run changes while running",()=>{
+  it("shows only YOLO, Auto and Custom and permits next-run changes while running",()=>{
     const view=composer(true),onApprovalModeChange=vi.fn();
     view.rerender(<ThreadComposer {...view.props} onApprovalModeChange={onApprovalModeChange} />);
     expect(screen.getByText("Custom",{selector:"summary span"})).toBeInTheDocument();
     const select=screen.getByRole("combobox",{name:"Approval mode",hidden:true});
-    expect(Array.from(select.querySelectorAll("option")).map(option=>option.textContent)).toEqual(["YOLO","Custom"]);
+    expect(Array.from(select.querySelectorAll("option")).map(option=>option.textContent)).toEqual(["YOLO","Auto","Custom"]);
     expect(select).toBeEnabled();fireEvent.change(select,{target:{value:"yolo"}});
     expect(onApprovalModeChange).toHaveBeenCalledWith("yolo");
+    fireEvent.change(select,{target:{value:"auto"}});
+    expect(onApprovalModeChange).toHaveBeenCalledWith("auto");
     expect(screen.queryByRole("button", {name:"Edit configuration"})).toBeNull();
     expect(screen.getByText(/Changes apply to the next run/)).toBeInTheDocument();
   });

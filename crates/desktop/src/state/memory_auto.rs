@@ -288,7 +288,7 @@ impl AppState {
 
     /// [`Self::memory_model_request`], with the provider's own words on a failure (for the
     /// person's dry run only; never logged).
-    async fn memory_model_request_why(
+    pub(super) async fn memory_model_request_why(
         &self,
         config: &RuntimeConfig,
         model: &str,
@@ -613,6 +613,7 @@ impl AppState {
                     .plan_store(&turn.project_root)
                     .map(|store| themis_core::memory::tasks::render_list(&store.tasks().read()))
                     .unwrap_or_default();
+                let earlier_answer = self.earlier_answer(thread_id, &turn.person);
                 Some((
                     known,
                     pass::request(
@@ -621,6 +622,7 @@ impl AppState {
                             answered: &turn.answered,
                             reply,
                             ran_into: &turn.ran_into,
+                            earlier_answer: &earlier_answer,
                         },
                         &global,
                         &project,
@@ -887,6 +889,24 @@ impl AppState {
         })
     }
 
+    /// The chat's latest answered question, as `Question: …\nAnswer: …`, unless this turn
+    /// already carries it (then the pass reads it as the person's words). Empty when none.
+    fn earlier_answer(&self, thread_id: &str, person: &[String]) -> String {
+        let Some(question) = self
+            .questions_for(thread_id)
+            .into_iter()
+            .filter(|question| question.answer.is_some())
+            .max_by_key(|question| question.asked_at)
+        else {
+            return String::new();
+        };
+        let answer = question.answer.unwrap_or_default();
+        if person.iter().any(|said| said.contains(&answer)) {
+            return String::new();
+        }
+        format!("Question: {}\nAnswer: {answer}", question.question)
+    }
+
     /// Applies the pass's task ops and decisions: a task naming a plan record that exists goes
     /// to that record, any other to the project's tasks file; a decision goes to its record.
     /// They stay out of the chat's memory line (the agent reads them next run); `logs/` gets
@@ -965,7 +985,7 @@ impl AppState {
                 }
             }
             if let Some(record) = records.get_mut(&decision.work) {
-                record.decide(decision.who, &decision.what, &decision.why, &today);
+                record.decide(&decision.what, &decision.why, &today);
                 decided += 1;
             }
         }
@@ -1062,6 +1082,7 @@ impl AppState {
                 answered: &answered,
                 reply: &reply,
                 ran_into: &ran_into,
+                earlier_answer: &text("earlier_answer"),
             },
             &global,
             &project,

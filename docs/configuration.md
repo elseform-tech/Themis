@@ -409,8 +409,32 @@ failing the call.
 
 ## Composer permissions
 
-The shield offers only **Custom** (default) or **YOLO**, persisted per thread.
+The shield offers **YOLO**, **Auto** or **Custom** (default), persisted per thread.
 It has no configuration editor or advanced settings link.
+
+**Auto** never prompts. Rules decide first, exactly as in Custom (a deny rule refuses, an allow
+rule or an "allow in this chat" grant proceeds), and Custom's sandbox applies; where Custom
+would ask, a reviewer model decides instead, against the person's own messages in the chat (the
+latest 12, at most 6000 characters), the chat's goal and the project's guidance (at most 3000
+characters). Text from files, pages or tool output never counts as the person's request. The
+reviewer is `approval.auto_model` (user file only, a model id; a project setting it is a
+validation error), else the first memory model; it answers allow, `soft` (risky but plausible:
+the action is refused and the agent gets the reason and a safer way, `auto-soft-block.md`; the
+third soft block of the same command in a run is a hard one) or `hard` (destructive,
+unrequested or driven by content: refused, the agent is told to finish the rest and say what was
+blocked, `auto-hard-block.md`, and the chat gets a question box, `auto-blocked-question.md`,
+with **Do it the safer way** (recommended), **Allow once** and **Skip it**). "Allow once" lets
+exactly that action run once in the chat (kept in memory, not saved). A review that fails or
+takes over 45 seconds is a hard block, so nothing unjudged runs. Gates only a person may open
+never go to the model: running a command outside the sandbox and touching a sensitive file are
+always blocked with the question box, and only the person's **Allow once** for that exact action
+lets them run. On a project that isn't a Git
+repository Auto stays read-only, as Custom does, without asking the model. Saving a new MCP
+connection command from a run is refused in Auto (allow it in Integrations, or use Custom).
+Subagents are reviewed the same way. Prompts: `auto-review-system.md`, `auto-review-user.md`.
+`logs/` gets `approval` / `auto_reviewed` (tool, risk, verdict, time) and `approval` /
+`auto_review` lines, never the command or the person's words. `auto_try_review` is a read-only
+dry run of one review for evals (`evals/auto_review`).
 Custom checks rules in order: first matching tool/risk wins, otherwise `default`
 applies. Tool names match exactly or with a trailing `*` prefix wildcard.
 Actions are `allow`, `ask`, or `deny`; risks are `read`, `write`, `execute`,
@@ -475,7 +499,7 @@ keyed by site: one grant on a browser action covers every browser action on that
 **Chat grants.** The approval box offers **Allow once**, **Allow in this chat** and
 **Deny**. *Allow in this chat* runs the action now and saves the grant to the chat's own
 file, `chat_grants/<chat id>.json` in the app data directory (beside `threads.json`). Format:
-`{"version":1,"grants":[{"tool":"shell","command":["cargo","test"],"risk":"execute"}, {"tool":"mcp","server":"<16 hex>","risk":"network"}]}`;
+`{"version":1,"grants":[{"tool":"shell","command":["cargo","test"],"risk":"execute"}, {"tool":"mcp","server":"<server>_<16 hex>","risk":"network"}]}`;
 `command` is the covered argv prefix (`shell`, `git` and `shell_unsandboxed`) or the one covered site (`browser`, `fetch_url`, `web_search`, e.g. `{"tool":"browser","command":["localhost"],"risk":"network"}`), `server` marks a whole-MCP-server
 grant, and `risk` is `read`, `write`, `execute` or `network`. Limits: 256 grants, 256 KiB.
 The file is loaded when a run starts (configuration and approval mode are still captured once
@@ -878,8 +902,8 @@ evidence lines, lessons and results, rather than grow past that), with a header 
 `in progress` while a goal builds it, `done`), `updated` and, while a chat's goal builds it,
 `chat` (that chat's id), then five sections: **Plan** (the reply the person approved, copied
 word for word by Themis, at most 8 KiB), **Changes** (one line per change, at most 20),
-**Decisions** (at most 12 lines, `person:` or `agent:` what was chosen, `— because` why, and
-the date; the oldest go first), **Tasks** (task lines, below), **Results** (at most 2 KiB),
+**Decisions** (the person's only, at most 12 lines: what was chosen, `— because` why, and the
+date; the oldest go first), **Tasks** (task lines, below), **Results** (at most 2 KiB),
 **Evidence** (one line per requirement, at most 12 of 1000 characters) and **Lessons** (at most 3).
 Decisions and Tasks may be missing from a record written before they existed; it still reads. `plans/PLANS.md` is their index (`- name (status, date): title`).
 Records are read as untrusted: a file whose header or sections don't fit is skipped, secrets
@@ -920,7 +944,7 @@ removed otherwise. The memory pass reads the record's tasks and the project file
 (title, note, optional `status`: open by default, or doing or done for an ask the turn already
 started or finished, so finished asks stay on record; optional `work` naming a record; a title
 already listed updates its note and reopens it) and `update` (exact title, status, note), and at most 3 `"decisions"` (`work`,
-`who`: person or agent, `what`, `why`) for records. Entries holding a secret or not fitting are
+`what`, `why`; the person's choices only, never the agent's own) for records. Entries holding a secret or not fitting are
 refused. When a record is marked done, Themis closes its tasks still open or doing as done, saying in
 the note they were closed when the work was marked done (the evidence is the proof). The
 goal-complete pass reads the goal's working log (failed steps and the agent's notes, the latest
@@ -975,7 +999,7 @@ most 300 characters) and each note the agent wrote between steps (what it tried,
 dropped or thinks could be better, at most 400 characters), the latest 40 entries; the note that
 ended the turn is its reply and is not repeated. A goal-complete pass reads the goal's failed
 steps with what the agent said next (at most 8). A turn the person said nothing in (a goal turn)
-still gets a pass when it has such a log, since that is when a lesson is fresh; the prompt keeps lessons as project or feedback memories
+still gets a pass when it has such a log, since that is when a lesson is fresh. Every pass also reads the chat's latest answered question (at most 2 KiB) when the turn doesn't already carry it, marked as read before, so a pass that missed what an answer settles (a task it proves done) can still close it, without saving what is already remembered again; the prompt keeps lessons as project or feedback memories
 (symptom, cause, rule, how to check) worded so a similar later task finds them. `memory.thinking`
 (default `auto`, user file only) sets how much the memory models think: `auto` lets them think for
 a pass that carries lessons (a turn with work in it: failed steps or notes, a completed goal) and asks for the

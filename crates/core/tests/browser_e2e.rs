@@ -746,6 +746,35 @@ async fn only_a_few_chats_keep_a_page_open_and_a_closed_one_reopens_where_it_was
     assert_eq!(still_open, limit);
 }
 
+/// A browser no chat has used for a while exits (its process and helpers gone), and the next
+/// action starts it again with each page back at its address. A chat used recently keeps it.
+#[tokio::test(flavor = "multi_thread")]
+async fn an_idle_browser_exits_and_comes_back_where_it_was() {
+    let _browser = ONE_BROWSER.lock().await;
+    let data = tempfile::tempdir().unwrap();
+    let Some(hub) = hub(data.path()) else { return };
+    let project = tempfile::tempdir().unwrap();
+    let chat = hub.chat("chat-idle", project.path());
+    chat.open("data:text/html,<title>Kept</title><h1>Kept page</h1>")
+        .await
+        .unwrap();
+    assert!(
+        !hub.exit_when_idle(std::time::Duration::from_secs(600))
+            .await,
+        "used just now: stays"
+    );
+    assert!(chat.state().await.open);
+    assert!(hub.exit_when_idle(std::time::Duration::ZERO).await);
+    assert!(!chat.state().await.open);
+    assert!(
+        !hub.exit_when_idle(std::time::Duration::ZERO).await,
+        "nothing left to end"
+    );
+    let back = chat.snapshot(None, false).await.unwrap();
+    assert!(back.snapshot.contains("Kept page"), "{}", back.snapshot);
+    assert!(chat.state().await.open);
+}
+
 /// A first-person page turns without limit: relative moves carry on past the page's edge with
 /// the exact distance, and a click doesn't turn the view. A page without the lock has an edge.
 #[tokio::test(flavor = "multi_thread")]

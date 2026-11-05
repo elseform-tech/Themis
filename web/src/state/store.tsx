@@ -118,6 +118,27 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const savedSelection = useRef(readSession<{ root: string; threadId: string } | null>("selection", null));
   const currentState = useRef(state);
   currentState.current = state;
+
+  /** The activity position each chat's history was loaded at, shared by the loader on opening
+   *  and the recovery loop, so a chat is reloaded only when it changed since. */
+  const loadedAtRef = useRef(new Map<string, number>());
+  // A chat's history loads when it is opened, not at startup: memory holds the chats in use.
+  const openedThread = state.activeThreadId;
+  const openedLoaded = openedThread ? Boolean(state.historyLoaded[openedThread]) : true;
+  useEffect(() => {
+    if (!openedThread || openedLoaded) return;
+    let live = true;
+    const listed = Object.values(currentState.current.threadsByProject).flat().find(thread => thread.id === openedThread);
+    const seq = listed?.last_activity_seq;
+    getThreadHistory(openedThread)
+      .then(history => {
+        if (!live) return;
+        if (seq !== undefined) loadedAtRef.current.set(openedThread, seq);
+        dispatch({ type: "thread/history-loaded", threadId: openedThread, history });
+      })
+      .catch((error: unknown) => { if (live) toast(dispatch, `Could not load this chat: ${describeError(error)}`, "warning"); });
+    return () => { live = false; };
+  }, [openedThread, openedLoaded]);
   const recoverState = useRef<() => void>(() => {});
   const refreshSecretStatus = useRef<() => void>(() => {});
   useEffect(() => { if (startup === null) recoverState.current(); }, [startup]);
@@ -158,7 +179,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     let recoveryRequested = false;
     let recoveryWarning = false;
     let retry: ReturnType<typeof setTimeout> | undefined;
-    const loadedAt = new Map<string, number>();
+    const loadedAt = loadedAtRef.current;
     async function recover() {
       if (cancelled) return;
       if (recovering) { recoveryRequested = true; return; }
@@ -176,6 +197,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
               dispatch({ type: "thread/synced", projectRoot: project.root, thread });
               dispatch({ type: "thread/running-loaded", threadId: thread.id, running: true });
               pending = true; continue;
+            }
+            // A chat not opened yet keeps only its list entry; its history loads when opened.
+            if (!currentState.current.historyLoaded[thread.id]) {
+              dispatch({ type: "thread/synced", projectRoot: project.root, thread });
+              continue;
             }
             // While another chat keeps this loop going, an idle chat that has not changed stays as loaded.
             if (thread.last_activity_seq !== undefined && loadedAt.get(thread.id) === thread.last_activity_seq) continue;

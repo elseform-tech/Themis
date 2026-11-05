@@ -464,7 +464,7 @@ export async function attachmentFile(threadId: string, path: string): Promise<st
   return convertFileSrc(validated);
 }
 
-export function setThreadApprovalMode(threadId: string, mode: "custom" | "yolo"): Promise<ThreadInfo> {
+export function setThreadApprovalMode(threadId: string, mode: "custom" | "auto" | "yolo"): Promise<ThreadInfo> {
   const previous = pendingPermissionChanges.get(threadId);
   const request = (previous ? previous.catch(() => undefined) : Promise.resolve()).then(() => invoke<ThreadInfo>("set_thread_approval_mode", {threadId, mode}));
   const tracked = request.finally(() => { if (pendingPermissionChanges.get(threadId) === tracked) pendingPermissionChanges.delete(threadId); });

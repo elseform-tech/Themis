@@ -204,6 +204,26 @@ CASES = [
         "expect": {"tasks_done": ["dark mode"], "tasks_not_done": ["Export"]},
     },
     {
+        # From a live goal: the person's answer settled a task, the pass of that turn missed it;
+        # a later turn's pass sees the answer again and closes it.
+        "name": "earlier_answer_settles_task",
+        "person": [],
+        "reply": "Checked the HUD again in the browser; nothing changed in the code this turn.",
+        "earlier_answer": "Question: Could you play a short run and tell me whether the start, hit, pause and game-over beeps sound right?\nAnswer: it sounds good and the game feels good, the controls are fine",
+        "plan_record": DODGER_RECORD.replace("- [done] Sound on hit — beeps play on a hit; heard by the person (2026-11-04)", "- [open] Sound beeps check — the person listens and confirms the beeps (2026-11-04)"),
+        "plans_index": DODGER_INDEX,
+        "expect": {"tasks_done": ["Sound"], "tasks_not_done": ["Aliens"]},
+    },
+    {
+        # An earlier answer already acted on is not saved again.
+        "name": "earlier_answer_not_saved_twice",
+        "person": [],
+        "reply": "Read the HUD code; nothing changed this turn.",
+        "earlier_answer": "Question: Tabs or spaces for indentation?\nAnswer: Tabs",
+        "plan_record": DODGER_RECORD, "plans_index": DODGER_INDEX,
+        "expect": {"no_memory": True, "no_task_changes": True},
+    },
+    {
         "name": "task_cancelled_by_person",
         "person": ["Forget the touch controls, this is desktop only."],
         "answered": "Touch controls are next on the list.",
@@ -217,7 +237,8 @@ CASES = [
         "reply": "Shooting works with a fixed pool of 30 bullets.",
         "ran_into": "- noted: Two ways to do bullets: create a mesh per shot and dispose it on hit, or keep a fixed pool of 30 and reuse them. I'm using the pool: creating and disposing meshes every shot stutters at 60 fps and risks leaking GPU memory.",
         "plan_record": DODGER_RECORD, "plans_index": DODGER_INDEX,
-        "expect": {"decision": ["agent", "pool"]},
+        # The agent's own choice is not memory: it belongs in a comment or commit.
+        "expect": {"no_decision": True, "no_memory": True},
     },
     {
         # A remembered decision the person reverses keeps the old one and why it changed.
@@ -226,6 +247,23 @@ CASES = [
         "answered": "The to-do list tab is in place as you decided.",
         "reply": "Removed the to-do list tab and its tool.",
         "expect": {"memory_words": ["before", "unreliabl"]},
+    },
+    {
+        # The person asks the agent what it thinks of a method, then approves it.
+        "name": "method_approved_after_asking",
+        "person": ["Yes, I like it, please go with that method."],
+        "answered": "I'd use a fixed 60 Hz logic step with an accumulator: the game logic runs at a steady rate whatever the frame rate, rendering interpolates between steps, and input is latched until the next step reads it. The alternative, a variable time step, is simpler but makes collisions and speed depend on the frame rate.",
+        "reply": "Switched the loop to a fixed 60 Hz step with an accumulator.",
+        "plan_record": DODGER_RECORD, "plans_index": DODGER_INDEX,
+        "expect": {"kept_somewhere": ["fixed", "60"]},
+    },
+    {
+        # A method the agent researched, approved by the person.
+        "name": "method_approved_after_research",
+        "person": ["Great research. Go with Vitest for this project."],
+        "answered": "I compared test runners for this Vite project: Vitest reuses the Vite config and transforms, starts fastest and runs in watch mode; Jest needs a Babel or ts-jest setup to match; node --test has no DOM. I recommend Vitest.",
+        "reply": "Set up Vitest with the Vite config; npm test runs it.",
+        "expect": {"kept_somewhere": ["vitest"]},
     },
     {
         "name": "routine_step_is_no_decision",
@@ -317,6 +355,10 @@ def check(case, result):
         failures.append(f"only {len(adds)} plan requirements added")
     if expect.get("no_memory") and (memories or plan or decisions):
         failures.append("kept a memory, plan or decision")
+    for word in expect.get("kept_somewhere", []):
+        kept = (text + " " + plan + " " + " ".join(decisions)).lower()
+        if word.lower() not in kept:
+            failures.append(f"approved '{word}' not kept as a decision, memory or plan")
     if expect.get("no_task_changes") and tasks:
         failures.append("changed tasks on a routine turn")
     for word in expect.get("decision", []):
@@ -347,8 +389,12 @@ def seed_memory(data, project):
     with open(os.path.join(memories, "keep-todo-list-tab.md"), "w", encoding="utf-8") as f:
         f.write("---\nname: keep-todo-list-tab\ndescription: Keep the agent's to-do list tab and its tool\ntype: project\nsaved: 2026-11-02\n---\n"
                 "The person decided to keep the to-do list tab and the agent's todo tool.\n\nWhy: they want to see what is pending.\n")
+    with open(os.path.join(memories, "indent-with-tabs.md"), "w", encoding="utf-8") as f:
+        f.write("---\nname: indent-with-tabs\ndescription: Indent code with tabs, not spaces\ntype: project\nsaved: 2026-11-04\n---\n"
+                "Question: tabs or spaces for indentation? The person chose tabs.\n")
     with open(os.path.join(memories, "MEMORY.md"), "w", encoding="utf-8") as f:
-        f.write("- keep-todo-list-tab (project, 2026-11-02): Keep the agent's to-do list tab and its tool\n")
+        f.write("- indent-with-tabs (project, 2026-11-04): Indent code with tabs, not spaces\n"
+                "- keep-todo-list-tab (project, 2026-11-02): Keep the agent's to-do list tab and its tool\n")
 
 
 def main():
@@ -386,7 +432,7 @@ def main():
                                "answered": case.get("answered", ""), "reply": case.get("reply", ""),
                                "ran_into": case.get("ran_into", ""),
                                "event": case.get("event"), "plan_about": "arena first-person shooter"}
-                    for key in ("plan_record", "plans_index", "tasks"):
+                    for key in ("plan_record", "plans_index", "tasks", "earlier_answer"):
                         if key in case:
                             request[key] = case[key]
                     if args.model:

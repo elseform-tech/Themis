@@ -29,3 +29,7 @@ What the turn ran into, in order: each failed step, and the notes the assistant 
 <<<ran-into
 {{ran_into}}
 >>>
+The person's latest answer to one of the assistant's questions, from an earlier turn (empty when there is none). It was read when given: use it only for what it settles that the record, the task list and the remembered memories don't show yet; anything already there stays as it is.
+<<<earlier-answer
+{{earlier_answer}}
+>>>

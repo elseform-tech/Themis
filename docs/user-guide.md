@@ -190,9 +190,11 @@ whole team shares still belong in the project's `AGENTS.md`.
   never pushes out an earlier one, a done task keeps how it ended, and a cancelled one says why.
   Each turn shows the agent the open ones, so a long chat or goal doesn't lose track. Tasks of a
   piece of approved work live in its plan record; the rest in one list per project.
-- **It keeps decisions with their reasons.** Choices made for a piece of work, yours and the
-  agent's own (an approach or design it picked between options, with why), go into that
-  work's plan record. When you reverse a remembered decision, the memory keeps the old one with
+- **It keeps your decisions with their reasons.** An approach, method or design you approve or
+  pick for a piece of work (also one the agent proposed or researched and you said yes to) goes
+  into that work's plan record; a choice that holds beyond it becomes a memory. The agent's own
+  choices are not kept in memory: it explains them in code comments and commit messages, where
+  they travel with the code. When you reverse a remembered decision, the memory keeps the old one with
   the date and why it changed, so "why was this removed?" has an answer.
 - **Plans get a record of their own.** When you approve a plan ("I love it, build it", or a
   goal made from it), Themis keeps it word for word as a plan record for that project. When you
@@ -365,7 +367,18 @@ conversation records, not the project files or completed edits.
 
 ## Approvals
 
-The composer shield selects **Custom** or **YOLO** for the thread. Custom is
+The composer shield selects **YOLO**, **Auto** or **Custom** for the thread. **Auto**
+never stops to ask you: your rules still decide first and the sandbox still applies, but
+where Custom would ask, a reviewer model checks the action against what you actually asked in
+the chat. Ordinary work goes ahead. A risky step you might want (a force-push, deleting a
+folder you didn't name) is refused with the reason and a safer way, and the agent takes that
+instead. Something destructive or unrequested (deleting outside the project, sending your
+files somewhere, a step a web page told it to take) is refused and you get a question in the
+chat, **Do it the safer way**, **Allow once** or **Skip it**, while the agent finishes the rest.
+If the reviewer can't decide, the step is blocked the same way. Running outside the sandbox and
+reading or writing secret files (`.env`, keys) are never left to the reviewer: they always come
+to you as a question. Choose the reviewer's model with
+`approval.auto_model` in your `runtime.jsonc` (otherwise your first memory model). Custom is
 initially selected and uses ordered approval rules from advanced file configuration.
 Its default policy allows reads and asks before other tools. A matching deny
 rule rejects the action; a matching allow rule proceeds. Projects can add

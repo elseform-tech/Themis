@@ -59,8 +59,16 @@
 /* Conversation stream. */
 .themis-thread-stream { flex: 1; overflow-y: auto; overflow-x: hidden; padding: 16px max(var(--themis-thread-gutter), calc((100% - var(--themis-thread-column)) / 2)) 24px; }
 .themis-thread-stream-content { display: flex; flex-direction: column; gap: 20px; min-width: 0; }
+/* Room the content gave back while the end was being read; sized by followLatest. */
+.themis-thread-room { height: 0; }
+/* Back to the latest message, shown only while scrolled up; it rides the bottom of the view. */
+.themis-jump-latest { position: sticky; bottom: 12px; display: flex; align-items: center; gap: 6px; width: fit-content; margin: 8px auto 0; padding: 6px 12px; border: 1px solid var(--themis-border); border-radius: 999px; background: var(--themis-raised); color: var(--themis-text); font: inherit; font-size: .8125rem; box-shadow: 0 8px 24px rgb(0 0 0 / .25); cursor: pointer; }
+.themis-jump-latest:hover { color: var(--themis-accent); }
 .themis-thread-start { margin: auto; color: var(--themis-text-2); font-size: .875rem; }
 .themis-thread-msg { max-width: 100%; }
+/* A long chat holds thousands of rows: rows far off screen keep their size but are not laid out
+   or painted until the person scrolls near, so memory and work stay with what is on screen. */
+.themis-thread-stream-content > .themis-thread-msg { content-visibility: auto; contain-intrinsic-size: auto 120px; }
 .themis-thread-msg--user { align-self: flex-end; max-width: 80%; padding: 12px 18px; border-radius: 22px 22px 6px 22px; background: var(--themis-user-message-bg); }
 .themis-thread-msg--system { color: var(--themis-danger); }
 .themis-thread-msg--stopped { color: var(--themis-text-2); }

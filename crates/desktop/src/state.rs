@@ -6,6 +6,7 @@
 //! touching Tauri — that keeps them directly drivable from headless tests.
 
 mod attachments;
+mod auto_review;
 mod automation;
 mod background;
 mod browser;
@@ -333,6 +334,10 @@ struct AppStateInner {
     terminals: Arc<terminal::Terminals>,
     /// Serializes question changes.
     question_lock: std::sync::Mutex<()>,
+    /// Auto mode: hard-block questions by id, with the chat and the exact action they ask about.
+    auto_questions: std::sync::Mutex<std::collections::BTreeMap<String, (String, String)>>,
+    /// Auto mode: exact actions the person allowed once after a block, by chat.
+    auto_once: std::sync::Mutex<HashMap<String, Vec<String>>>,
     /// Memory jobs waiting for the memory models, and when idle work may run.
     memory_jobs: std::sync::Mutex<memory_auto::MemoryJobs>,
     /// Per-chat goals (`goals/<chat id>.json`), loaded on first use.
@@ -624,6 +629,8 @@ impl AppState {
                 subagents: std::sync::Mutex::new(HashMap::new()),
                 terminals: Arc::default(),
                 question_lock: std::sync::Mutex::new(()),
+                auto_questions: std::sync::Mutex::default(),
+                auto_once: std::sync::Mutex::default(),
                 memory_jobs: std::sync::Mutex::new(memory_auto::MemoryJobs::new(false)),
                 goals: std::sync::Mutex::new(HashMap::new()),
                 goals_dir: app_dir.join(goal::GOALS_DIR),
@@ -962,6 +969,7 @@ impl AppState {
 fn thread_info(record: &ThreadRecord, transcript: &TranscriptStore) -> Result<ThreadInfo, String> {
     Ok(ThreadInfo {
         last_activity_seq: transcript.last_activity_seq(&record.id)?,
+        last_outcome: transcript.last_outcome(&record.id)?.map(str::to_owned),
         id: record.id.clone(),
         title: record.title.clone(),
         provider: record.provider,

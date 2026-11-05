@@ -272,12 +272,26 @@ impl AppState {
                 context: diagnostic_context.clone(),
             }),
         };
-        let approvals = themis_core::configuration::configured_hook_for_project(
+        // Auto mode: a reviewer model decides where Custom would ask the person.
+        let reviewer = (snapshot.approval_mode == themis_core::configuration::ApprovalMode::Auto)
+            .then(|| {
+                Arc::new(super::auto_review::DesktopReviewer {
+                    state: self.clone(),
+                    sink: Arc::clone(sink),
+                    thread_id: thread_id.to_owned(),
+                    run_id: run_id.to_owned(),
+                    project_root: snapshot.work_root.clone(),
+                    config: run_configuration.clone(),
+                    is_git: snapshot.is_git,
+                }) as Arc<dyn themis_core::tools::AutoReviewer>
+            });
+        let approvals = themis_core::configuration::configured_hook_with_reviewer(
             snapshot.approval_mode,
             run_configuration.approval.clone(),
             hook,
             grants,
             Some(&snapshot.work_root),
+            reviewer,
         );
         let approvals: Arc<dyn ApprovalHook> = Arc::new(AuditedApprovals {
             inner: approvals,
@@ -1167,17 +1181,18 @@ impl AppState {
 pub(super) fn permission_mode(mode: themis_core::configuration::ApprovalMode) -> &'static str {
     match mode {
         themis_core::configuration::ApprovalMode::Yolo => "bypassPermissions",
+        // Auto never prompts, like Claude Code's own auto mode.
+        themis_core::configuration::ApprovalMode::Auto => "auto",
         themis_core::configuration::ApprovalMode::Custom => "default",
     }
 }
 
-/// The server's own tool name inside an MCP wire name (`mcp_<24 hex>_<tool>`).
+/// The server's own tool name inside an MCP wire name (`mcp_<server>_<16 hex>_<tool>`).
 fn mcp_remote_name(wire: &str) -> Option<&str> {
-    let rest = wire.strip_prefix("mcp_")?;
-    let (identity, remote) = rest.split_at_checked(24)?;
-    (identity.bytes().all(|b| b.is_ascii_hexdigit()) && !remote.is_empty())
-        .then(|| remote.strip_prefix('_'))
-        .flatten()
+    let server = themis_core::tools::mcp_server_id(wire)?;
+    wire.strip_prefix("mcp_")?
+        .get(server.len()..)?
+        .strip_prefix('_')
         .filter(|remote| !remote.is_empty())
 }
 
@@ -1186,15 +1201,16 @@ mod mcp_label_tests {
     #[test]
     fn mcp_wire_names_yield_the_server_tool_name() {
         assert_eq!(
-            super::mcp_remote_name("mcp_932fdceefae46ddd0ad259c8_browser_evaluate"),
+            super::mcp_remote_name("mcp_playwright_932fdceefae46ddd_browser_evaluate"),
             Some("browser_evaluate")
         );
         for other in [
             "shell",
             "mcp_start_docs",
             "mcp_xyz_tool",
-            "mcp_932fdceefae46ddd0ad259c8_",
-            "mcp_932fdceefae46ddd0ad259c8x",
+            "mcp_playwright_932fdceefae46ddd_",
+            "mcp_playwright_932fdceefae46dddx",
+            "mcp_Playwright_932fdceefae46ddd_browser_evaluate",
         ] {
             assert_eq!(super::mcp_remote_name(other), None, "{other}");
         }

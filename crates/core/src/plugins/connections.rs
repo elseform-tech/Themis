@@ -1355,25 +1355,35 @@ fn connection_error_category(error: &anyhow::Error) -> &'static str {
     }
 }
 
-/// Generated tool name tail: `<16 hex server id><8 hex tool id>_<tool>`. The
-/// server id depends only on `namespace`, so a chat grant can cover every tool
-/// of one server (see [`crate::tools::mcp_server_id`]); the tool id keeps
-/// names unique when long tool names are truncated.
+/// Generated tool name tail: `<server>_<16 hex>_<tool>`, e.g.
+/// `playwright_3f2a9c1b4d5e6f70_browser_click`.
+/// `<server>` is the server's own name (letters and digits, at most 16) so a model can read
+/// and copy it; the 16 hex digits (64 bits) come from the whole namespace (which binds the
+/// server's definition), so a changed definition is another server and a chat grant covers
+/// every tool of exactly one (see [`crate::tools::mcp_server_id`]); 64 bits keep a crafted
+/// plugin from matching a granted server's id. A live run's model kept mistyping the old 24
+/// hex digits. The tool name is cut to 26 characters (64 in all).
 pub fn tool_identity(namespace: &str, component: &str) -> String {
     use sha2::{Digest, Sha256};
-    let server = Sha256::digest(namespace.as_bytes());
-    let tool = Sha256::digest([namespace.as_bytes(), b"\0", component.as_bytes()].concat());
+    let digest = Sha256::digest(namespace.as_bytes());
+    let label = namespace.split('#').next().unwrap_or_default();
+    let label = label.rsplit([':', '/']).next().unwrap_or_default();
+    let mut server: String = label
+        .chars()
+        .filter(char::is_ascii_alphanumeric)
+        .map(|c| c.to_ascii_lowercase())
+        .take(16)
+        .collect();
+    if server.is_empty() {
+        server.push_str("server");
+    }
     format!(
-        "{}{}_{}",
-        server[..8]
+        "{server}_{}_{}",
+        digest[..8]
             .iter()
             .map(|b| format!("{b:02x}"))
             .collect::<String>(),
-        tool[..4]
-            .iter()
-            .map(|b| format!("{b:02x}"))
-            .collect::<String>(),
-        component.chars().take(32).collect::<String>()
+        component.chars().take(26).collect::<String>()
     )
 }
 

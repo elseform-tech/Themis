@@ -112,6 +112,14 @@ pub fn launch_args(profile: &Path, headless: bool) -> Vec<String> {
     if headless {
         args.push("--headless=new".to_owned());
     }
+    // Draw WebGL on the machine's GPU. Headless Chromium otherwise draws it in software
+    // (SwiftShader): three 3D pages kept 5+ cores busy and heated the machine; on Metal the
+    // same pages took ~40% of one core. Linux keeps software drawing, since many Linux setups
+    // (containers, CI, remote desktops) have no GPU driver headless Chromium can use.
+    #[cfg(target_os = "macos")]
+    args.push("--use-angle=metal".to_owned());
+    #[cfg(windows)]
+    args.push("--use-angle=d3d11".to_owned());
     // Chromium will not start as root with its sandbox (Linux containers and
     // CI images often run as root); it has no other way to run there.
     if running_as_root() {

@@ -99,7 +99,7 @@ fn pass_answer(body: &Value) -> String {
     {
         return json!({"plan":{"op":"change","name":"notes-tool","change":"Notes are sorted by date, not title.",
             "edits":[{"old":"2. Sort notes by title.","new":"2. Sort notes by date."}]},"memories":[],
-            "decisions":[{"work":"notes-tool","who":"person","what":"sort notes by date","why":"newest notes matter most"}],
+            "decisions":[{"work":"notes-tool","what":"sort notes by date","why":"newest notes matter most"}],
             "tasks":[{"op":"add","title":"Show the count in the footer","note":"\"show the count\"","work":"notes-tool"}]})
         .to_string();
     }
@@ -175,6 +175,19 @@ impl Harness {
                 let body: Value = request.body_json().unwrap();
                 seen.lock().unwrap().push(body.clone());
                 let model = body["model"].as_str().unwrap_or_default().to_owned();
+                // Auto mode's reviewer (the first memory model): its verdict by the command.
+                if system(&body).starts_with("You review one action") {
+                    let asked = body["messages"][1]["content"].as_str().unwrap_or_default();
+                    let asked = asked.split("<<<action").nth(1).unwrap_or_default();
+                    let verdict = if asked.contains("soft.txt") {
+                        json!({"verdict":"soft","reason":"it touches a file nobody named","safer":"use notes.txt instead"})
+                    } else if asked.contains("hard.txt") {
+                        json!({"verdict":"hard","reason":"it was not asked for","safer":"leave it out"})
+                    } else {
+                        json!({"verdict":"allow","reason":"","safer":""})
+                    };
+                    return text_reply(&verdict.to_string());
+                }
                 if model.starts_with("mem-") {
                     if behave.all_down.load(Ordering::SeqCst) {
                         return ResponseTemplate::new(500).set_body_string("down");
@@ -198,6 +211,13 @@ impl Harness {
                 // A turn whose first step fails, then a reply.
                 if last_user(&body).contains("list the missing folder") && last(&body)["role"] == "user" {
                     return call("list_dir", json!({"directory_path": "no-such-folder"}));
+                }
+                // Auto mode: the agent runs one harmless command, then says done.
+                if let Some(name) = last_user(&body).strip_prefix("auto-step ") {
+                    if last(&body)["role"] == "user" {
+                        return call("shell", json!({"command": "touch", "args": [name.trim()]}));
+                    }
+                    return text_reply("Done.");
                 }
                 // The agent looks a task up.
                 if last_user(&body).contains("look up the readme task") && last(&body)["role"] == "user" {
@@ -876,9 +896,7 @@ async fn an_approved_plan_keeps_a_record_through_changes_to_done() {
     );
     let record = plan_with(h.data.path(), "notes-tool", "sorted by date").await;
     assert!(
-        record.contains(
-            "## Decisions\n- person: sort notes by date — because newest notes matter most ("
-        ),
+        record.contains("## Decisions\n- sort notes by date — because newest notes matter most ("),
         "{record}"
     );
     // Themis made a task of each plan step; the model added one more.
@@ -940,7 +958,7 @@ async fn an_approved_plan_keeps_a_record_through_changes_to_done() {
     assert!(system.contains("- notes-tool (done, "), "{system}");
     // Its decisions and how its tasks ended; results stay in the file.
     assert!(
-        system.contains("## Decisions\n- person: sort notes by date"),
+        system.contains("## Decisions\n- sort notes by date"),
         "{system}"
     );
     // Finished work leaves nothing open: its plan steps are closed with it.
@@ -1007,6 +1025,11 @@ async fn tasks_are_kept_across_turns_and_chats() {
     )
     .await;
     let seen = main_system(&h, "What is left to do here?");
+    // The agent is told where its own choices go: the code, not memory.
+    assert!(
+        seen.contains("Themis does not keep your own choices in memory"),
+        "{seen}"
+    );
     assert!(
         seen.contains("- [open] Write the README — \"also write a README\" with run steps ("),
         "{seen}"
@@ -1124,6 +1147,104 @@ async fn the_agent_searches_memory_and_reads_one_in_full() {
             .any(|result| result.contains("The launch is on Friday.")),
         "the read gave it in full: {results:?}"
     );
+}
+
+/// Auto mode never prompts: where Custom would ask, the reviewer model (the first memory model
+/// by default) allows, soft-blocks with a reason and a safer way the agent reads, or hard-blocks
+/// and asks the person in a question box; their "Allow once" lets exactly that action run once.
+#[tokio::test(flavor = "multi_thread")]
+async fn auto_mode_reviews_instead_of_asking() {
+    let mut h = Harness::start(MODELS).await;
+    let git = std::process::Command::new("git")
+        .args(["init", "-q"])
+        .current_dir(h.project.path())
+        .status()
+        .unwrap();
+    assert!(git.success());
+    let id = h.new_chat();
+    h.cli(
+        "set_thread_approval_mode",
+        json!({"threadId": id, "mode": "auto"}),
+    );
+    let tool_result = |h: &Harness| -> String {
+        h.requests
+            .lock()
+            .unwrap()
+            .iter()
+            .rev()
+            .filter(|body| body["model"] == "test-model")
+            .map(last)
+            .find(|message| message["role"] == "tool")
+            .map(|message| message["content"].to_string())
+            .unwrap_or_default()
+    };
+    let root = h.project.path().to_owned();
+    let file = |name: &str| root.join(name).exists();
+
+    h.send(&id, "auto-step fine.txt", Duration::from_millis(100))
+        .await;
+    assert!(file("fine.txt"), "allowed: {}", tool_result(&h));
+
+    h.send(&id, "auto-step soft.txt", Duration::from_millis(100))
+        .await;
+    assert!(!file("soft.txt"));
+    let soft = tool_result(&h);
+    assert!(
+        soft.contains("Auto mode's reviewer stopped this: it touches a file nobody named")
+            && soft.contains("use notes.txt instead"),
+        "{soft}"
+    );
+    let questions = h.cli("list_questions", json!({"threadId": id}));
+    assert_eq!(
+        questions.as_array().map(Vec::len),
+        Some(0),
+        "a soft block asks nobody: {questions}"
+    );
+
+    h.send(&id, "auto-step hard.txt", Duration::from_millis(100))
+        .await;
+    assert!(!file("hard.txt"));
+    let hard = tool_result(&h);
+    assert!(
+        hard.contains("Auto mode's reviewer blocked this: it was not asked for"),
+        "{hard}"
+    );
+    let questions = h.cli("list_questions", json!({"threadId": id}));
+    let question = &questions[0];
+    assert!(
+        question["question"]
+            .as_str()
+            .unwrap()
+            .starts_with("Auto mode blocked an action"),
+        "{question}"
+    );
+    // The recommended answer (the safer way) comes first, as in every question box.
+    assert_eq!(
+        question["choices"],
+        json!(["Do it the safer way", "Allow once", "Skip it"]),
+        "{question}"
+    );
+    assert!(
+        question["question"]
+            .as_str()
+            .unwrap()
+            .contains("blocked an action: touch hard.txt."),
+        "{question}"
+    );
+
+    // The person allows it once: exactly that action runs, once.
+    h.cli(
+        "answer_question",
+        json!({"threadId": id, "questionId": question["id"], "answer": "Allow once"}),
+    );
+    h.watch(&id, Duration::from_millis(100), true).await;
+    h.send(&id, "auto-step hard.txt", Duration::from_millis(100))
+        .await;
+    assert!(file("hard.txt"), "allowed once: {}", tool_result(&h));
+    std::fs::remove_file(root.join("hard.txt")).unwrap();
+    h.send(&id, "auto-step hard.txt", Duration::from_millis(100))
+        .await;
+    assert!(!file("hard.txt"), "only once: {}", tool_result(&h));
 }
 
 /// An update that keeps a memory's description but changes its text is applied: the memory

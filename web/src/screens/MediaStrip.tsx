@@ -56,7 +56,7 @@ function MediaTile({ file }: { file: AttachedMedia }) {
     <button type="button" className="themis-media-tile" aria-label={`${file.kind === "video" ? "Play" : "Open"} ${label(file)}`} onClick={() => gallery.open(file.path)}>
       <span className="themis-media-frame">
         {failed ? <span className="themis-media-missing">Preview unavailable</span>
-          : url && file.kind === "image" ? <img src={url} alt="" />
+          : url && file.kind === "image" ? <img src={url} alt="" loading="lazy" decoding="async" />
           : url && file.kind === "video" ? <><video src={`${url}#t=0.1`} preload="metadata" muted playsInline aria-hidden="true" tabIndex={-1} /><span className="themis-media-play" aria-hidden="true"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z" /></svg></span></>
           : file.kind === "pdf" ? <span className="themis-media-missing">PDF</span> : null}
       </span>
@@ -82,7 +82,7 @@ function ToolMediaThumb({ threadId, media, show }: { threadId: string; media: To
     <button type="button" className="themis-media-tile themis-tool-media" aria-label={video ? "Play recording" : "Open screenshot"} onClick={() => show(file)}>
       <span className="themis-media-frame" style={size ? { aspectRatio: `${media.width} / ${media.height}` } : undefined}>
         {failed ? <span className="themis-media-missing">Preview unavailable</span>
-          : url && !video ? <img src={url} alt="" />
+          : url && !video ? <img src={url} alt="" loading="lazy" decoding="async" />
           : url && video ? <><video src={`${url}#t=0.1`} preload="metadata" muted playsInline aria-hidden="true" tabIndex={-1} /><span className="themis-media-play" aria-hidden="true"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z" /></svg></span></>
           : null}
       </span>

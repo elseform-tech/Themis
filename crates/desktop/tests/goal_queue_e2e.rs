@@ -671,7 +671,9 @@ async fn asked_to_stop_the_agent_pauses_the_goal_and_no_turn_follows() {
     settle(&state, &thread).await;
     let goal = state.goal_for(&thread).unwrap();
     assert_eq!(goal.status, GoalStatus::Paused);
-    assert_eq!(goal.turns, 1);
+    // The stop lands in the first turn, or (when it arrives just after that turn's request went
+    // out, as on Windows CI) in the next one; either way that turn pauses and none follows it.
+    assert!(goal.turns <= 2, "{goal:?}");
     let goal_turns = distinct(
         server
             .received_requests()
@@ -684,7 +686,11 @@ async fn asked_to_stop_the_agent_pauses_the_goal_and_no_turn_follows() {
     .iter()
     .filter(|body| mentions(body, "[Goal — runtime"))
     .count();
-    assert_eq!(goal_turns, 0, "no goal turn followed the pause");
+    assert_eq!(
+        goal_turns,
+        goal.turns as usize - 1,
+        "no goal turn followed the pause"
+    );
 }
 
 /// The goal judges itself: `update_goal` complete with no evidence, or with an entry that

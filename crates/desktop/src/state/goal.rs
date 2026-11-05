@@ -35,8 +35,8 @@ const MAX_BACKOFF: Duration = Duration::from_secs(15 * 60);
 pub(super) const BANK_INTERVAL: Duration = Duration::from_secs(60);
 /// Wait before retrying a goal turn the concurrency limit turned away.
 const BUSY_RETRY: Duration = Duration::from_secs(20);
-/// Longest paragraph of a goal note.
-const MAX_NOTE_PART_CHARS: usize = 800;
+/// Longest line of a goal note (an evidence line holds a requirement and its proof).
+const MAX_NOTE_LINE_CHARS: usize = 1400;
 /// History items read per page while looking for the person's messages.
 const HISTORY_PAGE_ITEMS: usize = 2_000;
 /// How long after a goal completes Themis waits for the memory pass before filling the plan
@@ -114,6 +114,16 @@ fn head(text: &str, limit: usize) -> String {
     let mut cut: String = flat.chars().take(limit).collect();
     cut.push('…');
     cut
+}
+
+/// A goal note as shown: its paragraphs and lines kept (a Complete note's evidence is a list,
+/// one requirement a line), each line bounded, never the whole list cut as one.
+fn note_text(reason: &str) -> String {
+    reason
+        .split('\n')
+        .map(|line| core_goal::one_line(line, MAX_NOTE_LINE_CHARS))
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 fn now_ms() -> i64 {
@@ -273,12 +283,7 @@ impl AppState {
             run_id: run_id.to_owned(),
             event: ThreadEvent::GoalNote {
                 outcome,
-                // A check's message keeps its paragraphs.
-                reason: reason
-                    .split("\n\n")
-                    .map(|part| core_goal::one_line(part, MAX_NOTE_PART_CHARS))
-                    .collect::<Vec<_>>()
-                    .join("\n\n"),
+                reason: note_text(reason),
             },
         };
         if let Err(error) = self.inner.transcript.append_event(&envelope) {
@@ -1371,6 +1376,24 @@ mod tests {
             .iter()
             .all(|got| *got >= wait && *got <= wait + wait / 5));
         assert!(waits.len() > 1, "{waits:?}");
+    }
+
+    /// A live goal's Complete note lost all but its first evidence lines: the list was one
+    /// paragraph cut at 800 characters.
+    #[test]
+    fn a_complete_note_keeps_every_evidence_line() {
+        let lines: Vec<String> = (0..13)
+            .map(|n| format!("- requirement {n}: {}", "proof ".repeat(80)))
+            .collect();
+        let note = note_text(&format!("Complete.\n\n{}", lines.join("\n")));
+        assert_eq!(
+            note.lines()
+                .filter(|line| line.starts_with("- requirement"))
+                .count(),
+            13
+        );
+        assert!(note.starts_with("Complete.\n\n- requirement 0: "));
+        assert!(note.contains("\n- requirement 12: "));
     }
 
     #[test]

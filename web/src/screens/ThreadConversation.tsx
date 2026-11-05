@@ -57,7 +57,7 @@ export function ThreadConversation({
 }: ThreadConversationProps) {
   const project = useActiveProject();
   const { skills, plugins } = usePromptSkills(project?.root, running);
-  const { scrollRef, contentRef, endRef, scrolledUp, onScroll } = useFollowLatest(threadId, useMemo(() => [messages, stream], [messages, stream]));
+  const { scrollRef, contentRef, endRef, spacerRef, scrolledUp, onScroll, jumpToLatest } = useFollowLatest(threadId, useMemo(() => [messages, stream], [messages, stream]));
   const [now, setNow] = useState(Date.now());
   const toolPending = traces.find(entry => entry.ok === undefined && !entry.summary.startsWith("approval "));
   const media = useMemo(() => messages.flatMap(message => message.media ?? []), [messages]);
@@ -157,6 +157,13 @@ export function ThreadConversation({
       {memoryWorking && (running || sending || lastFinalId === undefined) && <MemoryWorkingLine step={memoryWorking} />}
       <div ref={endRef} />
       </div>
+      <div ref={spacerRef} className="themis-thread-room" aria-hidden="true" />
+      {scrolledUp && messages.length > 0 && (
+        <button type="button" className="themis-jump-latest" onClick={jumpToLatest}>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M12 5v14M6 13l6 6 6-6" /></svg>
+          Latest
+        </button>
+      )}
     </div>
     {overview && <OverviewBox threadId={threadId} overview={overview} onOpenMedia={openMedia} />}
     {viewing !== null && media[viewing] && <MediaViewer threadId={threadId} items={media} index={viewing} onIndex={setViewing} onClose={() => setViewing(null)} />}
