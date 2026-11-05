@@ -674,22 +674,30 @@ async fn asked_to_stop_the_agent_pauses_the_goal_and_no_turn_follows() {
     // The stop lands in the first turn, or (when it arrives just after that turn's request went
     // out, as on Windows CI) in the next one; either way that turn pauses and none follows it.
     assert!(goal.turns <= 2, "{goal:?}");
-    let goal_turns = distinct(
-        server
-            .received_requests()
-            .await
-            .unwrap()
-            .iter()
-            .map(body)
-            .collect(),
-    )
-    .iter()
-    .filter(|body| mentions(body, "[Goal — runtime"))
-    .count();
-    assert_eq!(
-        goal_turns,
-        goal.turns as usize - 1,
-        "no goal turn followed the pause"
+    // No goal turn started after the pause: the newest goal turn any request names is the
+    // goal's last counted turn. (One turn can send several requests, and later requests carry
+    // earlier turns' markers, so requests are not counted.)
+    const MARK: &str = "[Goal — runtime, not from the user] Turn ";
+    let newest = server
+        .received_requests()
+        .await
+        .unwrap()
+        .iter()
+        .map(|request| String::from_utf8_lossy(&request.body).into_owned())
+        .flat_map(|text| {
+            text.match_indices(MARK)
+                .filter_map(|(at, _)| {
+                    let rest = &text[at + MARK.len()..];
+                    let digits: String = rest.chars().take_while(char::is_ascii_digit).collect();
+                    digits.parse::<u32>().ok()
+                })
+                .collect::<Vec<_>>()
+        })
+        .max()
+        .unwrap_or(1);
+    assert!(
+        newest <= goal.turns,
+        "no goal turn followed the pause: turn {newest} after {goal:?}"
     );
 }
 
