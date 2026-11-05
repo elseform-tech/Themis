@@ -68,15 +68,34 @@ impl AppState {
         hooks::take_rewake_notes(thread_id);
     }
 
-    /// Why a note may not start a turn in this chat now, for the diagnostics.
-    async fn hook_wake_refused(&self, thread_id: &str) -> Option<&'static str> {
+    /// Takes one of the chat's `limit` wakes, checking and counting under one lock: two reports
+    /// finishing together must not both pass the check and start a turn over the limit.
+    fn reserve_hook_wake(&self, thread_id: &str, limit: u32) -> bool {
+        let mut wakes = self
+            .inner
+            .hook_wakes
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let count = wakes.entry(thread_id.to_owned()).or_insert(0);
+        if *count >= limit {
+            return false;
+        }
+        *count += 1;
+        true
+    }
+
+    /// Why a note may not start a turn in this chat now, for the diagnostics; else the chat's
+    /// wake limit.
+    async fn hook_wake_refused(&self, thread_id: &str) -> Result<u32, &'static str> {
         let threads = self.inner.threads.read().await;
-        let record = threads.get(thread_id)?;
+        let Some(record) = threads.get(thread_id) else {
+            return Err("gone");
+        };
         if record.running {
-            return Some("running");
+            return Err("running");
         }
         if record.approval_mode == ApprovalMode::Yolo {
-            return Some("yolo");
+            return Err("yolo");
         }
         let root = std::path::PathBuf::from(&record.project_root);
         drop(threads);
@@ -84,12 +103,11 @@ impl AppState {
             .goal_for(thread_id)
             .is_some_and(|goal| goal.status == GoalStatus::Running)
         {
-            return Some("goal");
+            return Err("goal");
         }
-        let limit = self
+        Ok(self
             .runtime_configuration(Some(&root), None)
-            .map_or(0, |resolved| resolved.config.hooks.max_wakes);
-        (self.hook_wake_count(thread_id) >= limit).then_some("limit")
+            .map_or(0, |resolved| resolved.config.hooks.max_wakes))
     }
 
     /// Starts a turn for what a hook reported, if a turn may start. Every other case leaves the
@@ -102,7 +120,12 @@ impl AppState {
             self.forget_hook_reports(&thread_id);
             return;
         }
-        if let Some(reason) = self.hook_wake_refused(&thread_id).await {
+        let refused = match self.hook_wake_refused(&thread_id).await {
+            Ok(limit) if self.reserve_hook_wake(&thread_id, limit) => None,
+            Ok(_) => Some("limit"),
+            Err(reason) => Some(reason),
+        };
+        if let Some(reason) = refused {
             let _ = self.inner.diagnostics.append(
                 "hook",
                 "rewake_waits",
@@ -117,10 +140,6 @@ impl AppState {
         let text = themis_core::prompts::fill(
             themis_core::prompts::HOOK_WAKE_TURN,
             &[("marker", hooks::HOOK_WAKE_MARKER)],
-        );
-        self.set_hook_wake_count(
-            &thread_id,
-            self.hook_wake_count(&thread_id).saturating_add(1),
         );
         let run_id = uuid::Uuid::new_v4().to_string();
         let (sent, progress) = self
@@ -145,5 +164,34 @@ impl AppState {
             if woke { "info" } else { "warn" },
             json!({"thread_id": thread_id}),
         );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn reports_finishing_together_never_wake_past_the_limit() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = AppState::new_for_test(dir.path().join("settings.json"));
+        // Sixteen reports race for a limit of three: exactly three get a turn.
+        let won = std::thread::scope(|scope| {
+            let racers: Vec<_> = (0..16)
+                .map(|_| scope.spawn(|| state.reserve_hook_wake("chat", 3)))
+                .collect();
+            racers
+                .into_iter()
+                .filter_map(|racer| racer.join().ok())
+                .filter(|won| *won)
+                .count()
+        });
+        assert_eq!(won, 3);
+        assert!(!state.reserve_hook_wake("chat", 3));
+        // Held: none until the person writes.
+        state.hold_hook_wakes("other");
+        assert!(!state.reserve_hook_wake("other", 3));
+        state.reset_hook_wakes("other");
+        assert!(state.reserve_hook_wake("other", 3));
     }
 }
