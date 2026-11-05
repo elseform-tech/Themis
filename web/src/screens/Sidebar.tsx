@@ -70,8 +70,9 @@ export function Sidebar({ collapsed: folded, companionControl }: { collapsed: bo
   const statusOf = (thread: ThreadInfo) => threadStatus(state, thread);
   const threads = [...(activeRoot ? state.threadsByProject[activeRoot] ?? [] : [])]
     .sort((a, b) => (b.last_activity_seq ?? 0) - (a.last_activity_seq ?? 0));
-  // Chats that are working or waiting for you sit in Running above the rest; both keep newest first.
-  const live = threads.filter(thread => isLive(statusOf(thread)));
+  // Chats waiting for you, then working ones, sit above the rest; each keeps newest first.
+  const waiting = threads.filter(thread => isWaiting(statusOf(thread)));
+  const live = threads.filter(thread => statusOf(thread) === "Working");
   const rest = threads.filter(thread => !isLive(statusOf(thread)));
   const [showAll, setShowAll] = useState(false);
   const shown = showAll ? rest : rest.slice(0, 12);
@@ -108,7 +109,7 @@ export function Sidebar({ collapsed: folded, companionControl }: { collapsed: bo
     const locked = state.running[thread.id] ?? thread.running;
     const status = statusOf(thread);
     const unseen = finished.has(thread.id) && !isLive(status);
-    return <li key={thread.id} className="themis-sidebar-thread"><button type="button" className={`themis-sidebar-row themis-thread-row ${active ? "themis-sidebar-row--active" : ""} ${unseen ? "is-unseen" : ""}`} title={thread.title} aria-label={thread.title} aria-current={active ? "true" : undefined} onClick={() => activeRoot && dispatch({ type: "thread/selected", projectRoot: activeRoot, threadId: thread.id })}><ThreadStatus status={status} /><MovingText>{thread.title}</MovingText></button><details className="themis-thread-row-actions"><summary aria-label={`Options for ${thread.title}`} title="Thread options"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="12" cy="5" r="1.7" /><circle cx="12" cy="12" r="1.7" /><circle cx="12" cy="19" r="1.7" /></svg></summary><div className="themis-row-menu"><button type="button" aria-label={`Edit ${thread.title}`} disabled={locked} onClick={event => { event.currentTarget.closest("details")?.removeAttribute("open"); setEditError(""); setEditing({ ...thread, projectRoot: activeRoot! }); }}>Rename</button><button type="button" className="is-danger" aria-label={`Remove ${thread.title}`} disabled={locked} onClick={event => { event.currentTarget.closest("details")?.removeAttribute("open"); setRemoving({ ...thread, projectRoot: activeRoot! }); }}>Remove</button></div></details></li>;
+    return <li key={thread.id} className="themis-sidebar-thread"><button type="button" className={`themis-sidebar-row themis-thread-row ${active ? "themis-sidebar-row--active" : ""} ${unseen ? "is-unseen" : ""}`} title={thread.title} aria-label={thread.title} aria-current={active ? "true" : undefined} onClick={() => activeRoot && dispatch({ type: "thread/selected", projectRoot: activeRoot, threadId: thread.id })}><ThreadStatus status={status} /><MovingText>{thread.title}</MovingText>{TAG[status] && <span className="themis-thread-tag">{TAG[status]}</span>}</button><details className="themis-thread-row-actions"><summary aria-label={`Options for ${thread.title}`} title="Thread options"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="12" cy="5" r="1.7" /><circle cx="12" cy="12" r="1.7" /><circle cx="12" cy="19" r="1.7" /></svg></summary><div className="themis-row-menu"><button type="button" aria-label={`Edit ${thread.title}`} disabled={locked} onClick={event => { event.currentTarget.closest("details")?.removeAttribute("open"); setEditError(""); setEditing({ ...thread, projectRoot: activeRoot! }); }}>Rename</button><button type="button" className="is-danger" aria-label={`Remove ${thread.title}`} disabled={locked} onClick={event => { event.currentTarget.closest("details")?.removeAttribute("open"); setRemoving({ ...thread, projectRoot: activeRoot! }); }}>Remove</button></div></details></li>;
   }
   // Installed parts still off: the mark stays until they've been seen in the Installed list.
   const [partsOff, setPartsOff] = useState(false);
@@ -164,6 +165,10 @@ export function Sidebar({ collapsed: folded, companionControl }: { collapsed: bo
             </div>
           </details>
           {activeProject && <>
+            {waiting.length > 0 && <section className="themis-thread-group" aria-label="Waiting for you">
+              <h2 className="themis-sidebar-section">Waiting for you<span aria-hidden="true">{waiting.length}</span></h2>
+              <ul className="themis-sidebar-list">{waiting.map(threadRow)}</ul>
+            </section>}
             {live.length > 0 && <section className="themis-thread-group" aria-label="Running">
               <h2 className="themis-sidebar-section">Running<span aria-hidden="true">{live.length}</span></h2>
               <ul className="themis-sidebar-list">{live.map(threadRow)}</ul>
@@ -252,11 +257,20 @@ export function SidebarIcon({ name }: { name: SidebarIconName }) {
   </svg>;
 }
 
-type ThreadState = "Working" | "Needs approval" | "Failed" | "Stopped" | "Done" | "Idle" | "Interrupted";
+type ThreadState = "Working" | "Needs approval" | "Question" | "Goal paused" | "Goal blocked" | "Goal waiting" | "Failed" | "Stopped" | "Done" | "Idle" | "Interrupted";
 export function threadStatus(state: ReturnType<typeof useApp>["state"], thread: ThreadInfo): ThreadState {
   const messages = state.messages[thread.id] ?? [];
   const last = messages[messages.length - 1];
   const running = state.running[thread.id] ?? thread.running;
+  // What waits on the person comes first: an approval, then a question box, then a held goal.
+  if (state.approvals.some(approval => approval.thread_id === thread.id)) return "Needs approval";
+  const asking = messages.some(row => row.question && row.question.answer === undefined)
+    || (!state.historyLoaded[thread.id] && (thread.open_questions ?? 0) > 0);
+  if (asking) return "Question";
+  const goal = thread.id in state.goals ? state.goals[thread.id]?.status : thread.goal_status;
+  if (goal === "paused") return "Goal paused";
+  if (goal === "blocked") return "Goal blocked";
+  if (goal === "waiting") return "Goal waiting";
   // A chat not opened yet has no history loaded: its last run's end comes with the list.
   if (!running && !state.historyLoaded[thread.id] && !state.sendErrors[thread.id]) {
     return thread.last_outcome === "failed" ? "Failed"
@@ -265,7 +279,7 @@ export function threadStatus(state: ReturnType<typeof useApp>["state"], thread: 
       : thread.recovered ? "Interrupted" : "Idle";
   }
   return running
-    ? state.approvals.some(approval => approval.thread_id === thread.id) ? "Needs approval" : "Working"
+    ? "Working"
     : state.sendErrors[thread.id] || (last?.role === "system" && /^(Run failed:|Send failed:|Send rejected:)/.test(last.text)) ? "Failed"
     : last?.role === "system" && last.text.startsWith("Stopped by you.") ? "Stopped"
     : last?.incomplete ? "Idle"
@@ -297,11 +311,16 @@ function useFreshlyFinished(running: Record<string, boolean>, viewing: string | 
   return fresh;
 }
 
-const isLive = (status: ThreadState) => status === "Working" || status === "Needs approval";
+const WAITING: readonly ThreadState[] = ["Needs approval", "Question", "Goal paused", "Goal blocked", "Goal waiting"];
+const isWaiting = (status: ThreadState) => WAITING.includes(status);
+const isLive = (status: ThreadState) => status === "Working" || isWaiting(status);
 
-/** Lit cells: a pause sign while waiting for you, a cross for a failure. */
-const LIT: Partial<Record<ThreadState, readonly number[]>> = { "Needs approval": [0, 2, 3, 5, 6, 8], Failed: [0, 2, 4, 6, 8] };
-const LABEL: Partial<Record<ThreadState, string>> = { Working: "Working", "Needs approval": "Waiting for you", Failed: "Failed" };
+/** Lit cells: a pause sign while held for you, a question mark for a question, a cross for a failure. */
+const PAUSE = [0, 2, 3, 5, 6, 8] as const;
+const LIT: Partial<Record<ThreadState, readonly number[]>> = { "Needs approval": PAUSE, Question: [0, 1, 2, 5, 4, 7], "Goal paused": PAUSE, "Goal blocked": PAUSE, "Goal waiting": PAUSE, Failed: [0, 2, 4, 6, 8] };
+const LABEL: Partial<Record<ThreadState, string>> = { Working: "Working", "Needs approval": "Waiting for your approval", Question: "Waiting for your answer", "Goal paused": "Goal paused", "Goal blocked": "Goal blocked", "Goal waiting": "Goal waiting for you", Failed: "Failed" };
+/** Why a chat waits for you, on its row. */
+const TAG: Partial<Record<ThreadState, string>> = { "Needs approval": "Approval", Question: "Question", "Goal paused": "Paused", "Goal blocked": "Blocked", "Goal waiting": "Answer" };
 
 /** The chat's icon: dots for live work, waiting for you and failure; the speech bubble otherwise. */
 function ThreadStatus({ status }: { status: ThreadState }) {

@@ -96,6 +96,9 @@
 .themis-thread-status--needs-approval { color: var(--themis-accent); }
 .themis-thread-status--needs-approval circle.is-lit { animation: themis-status-breathe 1.8s ease-in-out infinite; }
 .themis-thread-status--failed { color: var(--themis-danger); }
+.themis-thread-status--question { color: var(--themis-accent); }
+.themis-thread-status--goal-paused, .themis-thread-status--goal-blocked, .themis-thread-status--goal-waiting { color: var(--themis-text-2); }
+.themis-thread-tag { flex: none; margin-left: auto; padding-left: 6px; font-size: .6875rem; color: var(--themis-text-2); }
 @keyframes themis-status-breathe { 50% { opacity: .45; } }
 /* A run that finished while another chat was on screen keeps a bright, bold title until opened. */
 .themis-thread-row.is-unseen { color: var(--themis-text); font-weight: 600; }

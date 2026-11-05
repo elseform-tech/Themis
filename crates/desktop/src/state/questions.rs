@@ -30,8 +30,9 @@ const MAX_ASSUMPTION_CHARS: usize = 1_000;
 const MAX_CHOICES: usize = 4;
 const MAX_CHOICE_CHARS: usize = 200;
 const MAX_TOPIC_CHARS: usize = 80;
-/// A reason is one short line, so the options stay quick to scan.
-const MAX_REASON_CHARS: usize = 160;
+/// A reason says what picking that answer does (steps, commands, files) and its tradeoff:
+/// long enough for that, short enough to scan.
+const MAX_REASON_CHARS: usize = 400;
 const MAX_ANSWER_CHARS: usize = 10_000;
 
 /// Starts the message that delivers answers; the goal supervisor reads it back

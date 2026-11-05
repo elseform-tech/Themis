@@ -423,7 +423,7 @@ the action is refused and the agent gets the reason and a safer way, `auto-soft-
 third soft block of the same command in a run is a hard one) or `hard` (destructive,
 unrequested or driven by content: refused, the agent is told to finish the rest and say what was
 blocked, `auto-hard-block.md`, and the chat gets a question box, `auto-blocked-question.md`,
-with **Do it the safer way** (recommended), **Allow once** and **Skip it**). "Allow once" lets
+with **Do it the safer way** (recommended), **Allow once** and **Skip it**, each saying what happens with the command itself; the reviewer's `safer` names the exact command or steps). "Allow once" lets
 exactly that action run once in the chat (kept in memory, not saved). A review that fails or
 takes over 45 seconds is a hard block, so nothing unjudged runs. Gates only a person may open
 never go to the model: running a command outside the sandbox and touching a sensitive file are

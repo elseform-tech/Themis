@@ -47,6 +47,10 @@ export interface ThreadInfo {
   reasoning_effort?: string | null;
   /** How the last run ended, for the sidebar before the chat's history is loaded. */
   last_outcome?: "done" | "incomplete" | "failed" | "stopped";
+  /** Unanswered question boxes, for the sidebar before the history is loaded. */
+  open_questions?: number;
+  /** Where the chat's goal stands, when it has one. */
+  goal_status?: GoalStatus;
   running: boolean;
   /** Worktree backing this thread (null for non-git read-only threads). */
   worktree_path: string | null;

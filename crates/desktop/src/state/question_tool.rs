@@ -57,7 +57,7 @@ fn parse(args: &Value) -> NewQuestion {
         .unwrap_or_default();
     NewQuestion {
         question: text("question").unwrap_or_default(),
-        // A choice is its answer, or `{"answer", "why"}` with a one-line tradeoff.
+        // A choice is its answer, or `{"answer", "why"}` saying what picking it does and its tradeoff.
         choices: choices.iter().map(|(answer, _)| answer.clone()).collect(),
         reasons: choices
             .into_iter()

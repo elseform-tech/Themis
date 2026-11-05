@@ -69,14 +69,17 @@ describe("Sidebar", () => {
     expect(titles(chats())).toEqual(["Alpha", "Bravo"]);
   });
 
-  it("keeps a chat waiting for approval in Running and hides an empty Chats group", async () => {
+  it("parks a chat waiting for approval under Waiting for you and hides empty groups", async () => {
     const waiting = chat("w", "Waiting chat", 1, { running: true });
     vi.mocked(bridge.getPendingApprovals).mockResolvedValue([{ thread_id: "w", approval_id: "p", tool: "read_file", risk: "read", summary: "Read it" }]);
     const { sidebar } = await mountWith([waiting]);
-    const running = within(sidebar).getByRole("region", { name: "Running" });
-    expect(titles(running)).toEqual(["Waiting chat"]);
+    const group = within(sidebar).getByRole("region", { name: "Waiting for you" });
+    expect(titles(group)).toEqual(["Waiting chat"]);
+    expect(within(sidebar).queryByRole("region", { name: "Running" })).toBeNull();
     expect(within(sidebar).queryByRole("region", { name: "Chats" })).toBeNull();
-    const mark = within(row(sidebar, "Waiting chat")).getByRole("img", { name: "Waiting for you" });
+    // The row says why it waits.
+    expect(within(row(sidebar, "Waiting chat")).getByText("Approval")).toBeTruthy();
+    const mark = within(row(sidebar, "Waiting chat")).getByRole("img", { name: "Waiting for your approval" });
     // A pause sign: left and right columns of the 3×3 grid lit, the middle column faint.
     expect(mark.querySelectorAll("circle")).toHaveLength(9);
     expect([...mark.querySelectorAll("circle")].map(dot => dot.classList.contains("is-lit"))).toEqual([true, false, true, true, false, true, true, false, true]);

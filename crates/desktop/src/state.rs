@@ -970,6 +970,8 @@ fn thread_info(record: &ThreadRecord, transcript: &TranscriptStore) -> Result<Th
     Ok(ThreadInfo {
         last_activity_seq: transcript.last_activity_seq(&record.id)?,
         last_outcome: transcript.last_outcome(&record.id)?.map(str::to_owned),
+        open_questions: 0,
+        goal_status: None,
         id: record.id.clone(),
         title: record.title.clone(),
         provider: record.provider,
