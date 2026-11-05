@@ -890,6 +890,35 @@ async fn run_task_with_evidence_inner(
                 serde_json::json!({"budget_tokens":policy.context_token_budget,"work_room_tokens":work_room(&messages),"minimum_budget_tokens":minimum_budget(&messages)}),
             );
         }
+        // The instructions and tools leave no room to work: a checkpoint can only shorten the
+        // conversation, so say so now instead of failing checkpoint after checkpoint.
+        if turn == 1
+            && policy.context_token_budget != usize::MAX
+            && work_room(&messages) < crate::context_window::MIN_START_ROOM_TOKENS
+        {
+            let fixed = policy
+                .context_token_budget
+                .saturating_sub(input_budget)
+                .saturating_add(system_tokens(&messages));
+            let error = format!(
+                "Stopped: the context budget of {} tokens is too small. The instructions and tools alone need about {} tokens; raise the context budget to at least {} tokens.",
+                grouped(policy.context_token_budget),
+                grouped(fixed),
+                grouped(minimum_budget(&messages))
+            );
+            crate::diagnostics::emit(
+                "context",
+                "budget_below_instructions",
+                "warn",
+                serde_json::json!({"budget_tokens":policy.context_token_budget,"fixed_tokens":fixed,"minimum_budget_tokens":minimum_budget(&messages)}),
+            );
+            emit(RunEvent::Failed {
+                error: error.clone(),
+            })
+            .await
+            .ok();
+            return Err(anyhow!(error));
+        }
         // The context budget the composer meter and checkpoint divider show.
         let budget_now = |messages: &[ChatMessage]| {
             let raw_used = estimated_tokens(messages);

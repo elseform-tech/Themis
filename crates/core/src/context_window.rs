@@ -26,6 +26,9 @@ pub const MIN_LEARNED_WINDOW: usize = 8_000;
 /// Room a run needs for work after its instructions and tool definitions: a few pages read, a
 /// patch and their results. The thrash stop advises a budget that leaves at least this.
 pub const MIN_WORK_ROOM_TOKENS: usize = 6_000;
+/// Below this much room after the instructions and tools, not even the first request and one
+/// tool result fit, and no checkpoint can make more: the run stops before its first request.
+pub const MIN_START_ROOM_TOKENS: usize = 1_000;
 /// Smallest cap the app's Settings offer. A cap is clamped to the model's window, so each model's
 /// safe minimum is the smaller of this and its window; smaller budgets come only from
 /// `runtime.jsonc`, for evals.

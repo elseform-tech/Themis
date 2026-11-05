@@ -152,3 +152,77 @@ async fn a_budget_too_small_for_the_work_stops_with_advice() {
     assert!(room < 6000 && minimum > 16000, "{error}");
     assert!(!budgets.is_empty());
 }
+
+/// A budget that leaves the run no room after its instructions and tools (16k since the tools grew
+/// past 10k tokens) stops before the first request, saying how much they need, instead of failing
+/// checkpoint after checkpoint. Found by the verify eval on 2026-11-05.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_budget_the_instructions_overflow_stops_at_once_with_advice() {
+    let data = tempfile::tempdir().unwrap();
+    let project = tempfile::tempdir().unwrap();
+    std::fs::create_dir(project.path().join(".themis")).unwrap();
+    std::fs::write(
+        project.path().join(".themis/config.jsonc"),
+        r#"{"context_token_budget":16000}"#,
+    )
+    .unwrap();
+    let provider = MockServer::builder().start().await;
+    Mock::given(method("POST"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(
+            json!({"choices":[{"message":{"content":"Done."},"finish_reason":"stop"}]}),
+        ))
+        .mount(&provider)
+        .await;
+    let state = AppState::new_for_test(data.path().join("settings.json"));
+    state
+        .set_secret("go".into(), "test-key".into())
+        .await
+        .unwrap();
+    state.set_go_base_url_override(Some(provider.uri()));
+    let server = Server::bind(state, data.path()).await.unwrap();
+    let serving = tokio::spawn(server.run());
+    let client = Client::new(data.path().into());
+    let mut events = client.subscribe().await.unwrap();
+    let thread = cli(
+        data.path(),
+        "create_thread",
+        json!({"projectRoot":project.path(),"provider":"go","model":"test-model"}),
+    );
+    let id = thread["id"].as_str().unwrap().to_owned();
+    cli(
+        data.path(),
+        "send_message",
+        json!({"threadId":id,"text":"Say hello."}),
+    );
+    let terminal = tokio::time::timeout(std::time::Duration::from_secs(60), async {
+        loop {
+            let item = Client::next_event(&mut events).await.unwrap();
+            if item["name"] != "thread-event" || item["payload"]["thread_id"] != id {
+                continue;
+            }
+            let event = item["payload"]["event"].clone();
+            if matches!(
+                event["kind"].as_str(),
+                Some("finished" | "incomplete" | "failed")
+            ) {
+                break event;
+            }
+        }
+    })
+    .await
+    .unwrap();
+    client.call("shutdown", json!({})).await.unwrap();
+    let _ = serving.await;
+    assert_eq!(terminal["kind"], "failed", "{terminal}");
+    let error = terminal["error"].as_str().unwrap();
+    assert!(
+        error.starts_with("Stopped: the context budget of 16,000 tokens is too small."),
+        "{error}"
+    );
+    assert!(
+        error.contains("raise the context budget to at least"),
+        "{error}"
+    );
+    // Nothing was sent: no task request, no checkpoint attempts.
+    assert_eq!(provider.received_requests().await.unwrap().len(), 0);
+}
