@@ -744,7 +744,7 @@ async fn a_subagents_request_names_it_and_its_grant_stays_its_own() {
             } else if tools == 0 {
                 call(
                     "spawn_subagents",
-                    json!({"subagents":[{"name":"Reader","brief":"Read the env file."}]}),
+                    json!({"subagents":[{"write_paths": [], "name":"Reader","brief":"Read the env file."}]}),
                 )
             } else if messages.iter().any(|m| {
                 m["content"]

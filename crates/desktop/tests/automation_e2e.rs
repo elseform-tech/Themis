@@ -196,10 +196,9 @@ async fn skilled_run_filters_tools_composes_instructions_and_materializes() {
         vec![
             "read_file",
             "create_goal",
-            // Asking the user is never a skill's to grant or withhold.
+            // Reading memory, like asking the user, is never a skill's to grant or withhold.
+            "search_memory",
             "ask_user",
-            // Memory is the person's own, like a question.
-            "memory",
             // Showing project files under the reply comes with `read_file`.
             "attach_file",
             "Skill",

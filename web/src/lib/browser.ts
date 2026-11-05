@@ -21,6 +21,8 @@ export interface BrowserState {
   muted: boolean;
   /** Where the agent last left the mouse, in the page's CSS pixels. */
   pointer?: [number, number] | null;
+  /** The page holds the pointer lock: a click locks the person's mouse to the view. */
+  pointer_locked?: boolean;
   /** A recording in progress. */
   recording?: { by: "agent" | "user"; seconds: number; max_seconds: number } | null;
 }
@@ -36,7 +38,8 @@ export type BrowserUpdate =
 export type BrowserInput =
   | { type: "mouse"; kind: "down" | "up" | "move" | "wheel"; x: number; y: number; button?: string; clicks?: number; modifiers?: number; delta_x?: number; delta_y?: number }
   | { type: "key"; kind: "down" | "up"; key: string; code: string; text?: string; key_code: number; modifiers: number }
-  | { type: "text"; text: string };
+  | { type: "text"; text: string }
+  | { type: "mouse_by"; dx: number; dy: number };
 
 function invoke<T>(command: string, args: Record<string, unknown>): Promise<T> {
   return tauriInvoke<T>("backend_command", { command, args });

@@ -1,0 +1,2 @@
+Tasks Themis keeps for this project outside any plan record (the person's asks and what was found left to do, with their status; Themis updates them after each turn, you never write them). Work through the open ones that belong to this chat's work. Each carries the day it last changed: an older open task may since be done or no longer wanted, so check the current files before relying on it, and ask the person before starting one this chat didn't bring up:
+{{tasks}}

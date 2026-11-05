@@ -322,9 +322,10 @@ export type ThreadEvent =
   /** Images, videos or PDFs the agent attached to this run's reply, in order. */
   | { kind: 'media_attached'; files: AttachedMedia[] }
   /** The agent saved, updated or deleted a memory. */
-  | ({ kind: 'memory_changed' } & MemoryNote)
+  | { kind: 'memory_changed'; changes: MemoryChange[] }
   /** Who drives the chat's built-in browser, and any recording (live only). */
   | { kind: 'browser_changed'; controller: string; recording?: BrowserRecording }
+  | { kind: 'memory_working'; step: 'checking' | 'done' | 'waiting' }
   | { kind: 'incomplete'; result: string; model?: string }
   | { kind: 'finished'; result: string; model?: string }
   | { kind: 'failed'; error: string }
@@ -412,14 +413,28 @@ export interface MemoryList {
   max_lines: number;
   revision: string;
   enabled: boolean;
+  /** Memory jobs waiting for the memory models, when any are. */
+  waiting?: MemoryWaiting | null;
 }
 
-/** A save, update or delete the agent made, as the chat shows it. */
-export interface MemoryNote {
-  action: 'saved' | 'updated' | 'forgot';
+/** Memory jobs every memory model failed, waiting for a later try. */
+export interface MemoryWaiting {
+  jobs: number;
+  /** Why the last try failed on each model, in order (`rate_limited`, `over_budget`, …). */
+  reasons: string[];
+  /** When the next try is, in milliseconds since the epoch. */
+  next_at?: number | null;
+}
+
+/** One memory a memory model saved, updated or removed after a turn. */
+export interface MemoryChange {
+  action: 'saved' | 'updated' | 'removed';
   scope: MemoryScope;
   name: string;
   description: string;
+  /** The memory model that made it, and its place in `memory.models` (from 0). */
+  model: string;
+  model_index: number;
   project_root?: string;
 }
 
@@ -454,8 +469,18 @@ export interface Question {
   answer?: string;
 }
 
-/** Starts the message that delivers an answer to the agent (shown as the answered box instead). */
+/** Starts the message that delivers an answer to the agent. */
 export const ANSWER_MARKER = "[Answer to your question — from the user]";
+
+/** The person's own answer inside such a message (what they chose or wrote), else undefined. */
+export function answerOf(text: string): string | undefined {
+  if (!text.startsWith(ANSWER_MARKER)) return undefined;
+  const at = text.lastIndexOf("\nAnswer: ");
+  if (at < 0) return undefined;
+  const rest = text.slice(at + "\nAnswer: ".length);
+  const end = rest.indexOf("\nIf the answer differs");
+  return (end < 0 ? rest : rest.slice(0, end)).trim();
+}
 
 /** A message waiting for the chat's current run to end. */
 export interface QueuedMessage {
@@ -568,7 +593,7 @@ export interface ContextBudget {
   provider_input_tokens?: number;
   /** Estimate correction in thousandths (1000 = exact). */
   calibration_ratio_milli?: number;
-  breakdown: { system: number; checkpoint: number; attachments: number; conversation: number; tool_activity: number; reasoning?: number; goal?: number };
+  breakdown: { system: number; checkpoint: number; attachments: number; conversation: number; tool_activity: number; reasoning?: number; memory?: number; goal?: number };
 }
 
 /** A readable project file one run changed. */
@@ -639,8 +664,10 @@ export interface PersistedMessage {
   question?: Question;
   /** Subagents started together in this run, shown as one card. */
   subagents?: SubagentEntry[];
-  /** A memory the agent saved, updated or deleted here: one slim line. */
-  memory?: MemoryNote;
+  /** What the memory models changed after this turn: one slim line under the reply. */
+  memory?: MemoryChange[];
+  /** The line arrived live, after its shimmer: it briefly shows what is being saved. */
+  memorySettling?: boolean;
 }
 
 export type HistoryItem =
@@ -918,9 +945,6 @@ export interface BrowserHistoryEntry {
   project: string;
 }
 
-/** Settings › Memory's switches. */
-export interface MemorySwitches { enabled: boolean; auto: boolean }
+/** The `memory` block of the user runtime.jsonc (Settings › Memory and Settings › Models). */
+export interface MemorySettings { enabled: boolean; models: string[]; daily_budget_usd: number; consolidate_every_hours: number }
 
-/** One of Themis's own hooks, listed in Integrations › Hooks as "Themis (built-in)". */
-export interface BuiltInHook { id: string; event: string; title: string; description: string; enabled: boolean }
-export interface BuiltInHooks { hooks: BuiltInHook[]; revision: string }

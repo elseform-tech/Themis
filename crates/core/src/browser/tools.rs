@@ -815,7 +815,9 @@ impl ToolRuntime for BrowserDrag {
 #[derive(Debug, Clone, Default, Serialize, Deserialize, ToolInput)]
 pub struct ScreenshotArgs {
     #[serde(default, alias = "ref")]
-    #[input(description = "Only this element (a ref); omit for the visible page")]
+    #[input(
+        description = "Only this element: a ref from the latest snapshot like e14, a CSS selector, or text=Some text; omit for the visible page"
+    )]
     pub reference: String,
     #[serde(default)]
     #[input(description = "The whole scrollable page instead of the visible part")]

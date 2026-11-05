@@ -26,6 +26,7 @@ mod mcp_file;
 mod media_tool;
 mod memory;
 mod memory_auto;
+mod memory_tool;
 mod permissions;
 mod plugins;
 mod preferences;
@@ -318,6 +319,11 @@ struct AppStateInner {
     /// Steer inboxes of running runs, by chat, with the sink of the run (to
     /// announce steers put back in the queue when the run ends).
     steer_inboxes: std::sync::Mutex<HashMap<String, SteerEntry>>,
+    /// Each running chat's note channel: memory the memory models change mid-run reaches it.
+    live_notes: std::sync::Mutex<HashMap<String, Arc<themis_core::runtime::RunNotes>>>,
+    /// One memory job at a time, so a pass reads what the one before it saved (a turn's pass
+    /// and a completed goal's would otherwise both save the same thing).
+    memory_job_lock: tokio::sync::Mutex<()>,
     /// Per-chat questions to the user (`questions/<chat id>.json`), loaded on first use.
     questions: std::sync::Mutex<HashMap<String, Vec<crate::types::Question>>>,
     questions_dir: PathBuf,
@@ -327,6 +333,8 @@ struct AppStateInner {
     terminals: Arc<terminal::Terminals>,
     /// Serializes question changes.
     question_lock: std::sync::Mutex<()>,
+    /// Memory jobs waiting for the memory models, and when idle work may run.
+    memory_jobs: std::sync::Mutex<memory_auto::MemoryJobs>,
     /// Per-chat goals (`goals/<chat id>.json`), loaded on first use.
     goals: std::sync::Mutex<HashMap<String, Option<crate::types::Goal>>>,
     goals_dir: PathBuf,
@@ -459,6 +467,13 @@ impl AppState {
             Machine::real(),
         );
         Self::spawn_automation_scheduler(state.clone());
+        // Memory jobs run in the app; headless tests turn them on when they test them.
+        state
+            .inner
+            .memory_jobs
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .enabled = true;
         state.inner.browsers.allow_engine_download();
         state
     }
@@ -602,11 +617,14 @@ impl AppState {
                 queues_dir: app_dir.join(queue::QUEUES_DIR),
                 queue_lock: std::sync::Mutex::new(()),
                 steer_inboxes: std::sync::Mutex::new(HashMap::new()),
+                live_notes: std::sync::Mutex::new(HashMap::new()),
+                memory_job_lock: tokio::sync::Mutex::new(()),
                 questions: std::sync::Mutex::new(HashMap::new()),
                 questions_dir: app_dir.join(questions::QUESTIONS_DIR),
                 subagents: std::sync::Mutex::new(HashMap::new()),
                 terminals: Arc::default(),
                 question_lock: std::sync::Mutex::new(()),
+                memory_jobs: std::sync::Mutex::new(memory_auto::MemoryJobs::new(false)),
                 goals: std::sync::Mutex::new(HashMap::new()),
                 goals_dir: app_dir.join(goal::GOALS_DIR),
                 goal_lock: std::sync::Mutex::new(()),

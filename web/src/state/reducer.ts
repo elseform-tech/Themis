@@ -21,6 +21,7 @@ import type {
   HistoryItem,
   PersistedMessage,
   ThreadInfo,
+  MemoryChange,
   ThreadChange,
   ThreadTasks,
   QueuedMessage,
@@ -143,6 +144,8 @@ export interface AppState {
   workspaceTabRequest: { tab: WorkspaceTab; at: number } | null;
   /** Each chat's built-in browser: who drives it and any recording (live only). */
   browsers: Record<string, { controller: string; recording?: BrowserRecording; at: number }>;
+  /** Where each chat's memory pass stands while it works (live only). */
+  memoryWorking: Record<string, "checking" | "waiting">;
   /** Per-chat task feed behind the header indicator and the Tasks tab. */
   tasks: Record<string, ThreadTasks>;
   /** Messages waiting for each chat's current run to end. */
@@ -285,6 +288,7 @@ export const initialState: AppState = {
   subagentFocus: null,
   workspaceTabRequest: null,
   browsers: {},
+  memoryWorking: {},
   tasks: {},
   queues: {},
   goals: {},
@@ -633,9 +637,17 @@ export function applyThreadEvent(
       return { ...state, runChanges: { ...state.runChanges, [runId]: event.files } };
     case "browser_changed":
       return { ...state, browsers: { ...state.browsers, [threadId]: { controller: event.controller, recording: event.recording, at: Date.now() } } };
+    case "memory_working": {
+      const { [threadId]: _was, ...others } = state.memoryWorking;
+      return { ...state, memoryWorking: event.step === "done" ? others : { ...others, [threadId]: event.step } };
+    }
     case "memory_changed": {
-      const { kind: _kind, ...memory } = event;
-      return appendMessage(state, threadId, { id: newId("memory"), role: "system", text: "", runId, memory });
+      const changes = memoryChanges(event);
+      const live = state.memoryWorking[threadId] !== undefined;
+      const { [threadId]: _was, ...others } = state.memoryWorking;
+      const settled = { ...state, memoryWorking: others };
+      if (changes.length === 0) return settled;
+      return appendMessage(settled, threadId, { id: newId("memory"), role: "system", text: "", runId, memory: changes, ...(live ? { memorySettling: true } : {}) });
     }
     case "media_attached": {
       const previous = state.runMedia[runId] ?? [];
@@ -1016,4 +1028,13 @@ export function reducer(state: AppState, action: AppAction): AppState {
 /** OpenCode Go can be used: a key is set and OpenCode has not rejected it. */
 export function goUsable(state: Pick<AppState, "secretStatus" | "goKeyCheck">): boolean {
   return state.secretStatus.go && state.goKeyCheck !== "rejected";
+}
+
+/** A chat saved before memory models carries one change in the event itself
+ *  (`action` saved/updated/forgot, `scope`, `name`, `description`) instead of `changes`. */
+function memoryChanges(event: Record<string, unknown>): MemoryChange[] {
+  if (Array.isArray(event.changes)) return event.changes as MemoryChange[];
+  if (typeof event.name !== "string" || (event.scope !== "global" && event.scope !== "project")) return [];
+  const action = event.action === "forgot" ? "removed" : event.action === "updated" ? "updated" : "saved";
+  return [{ action, scope: event.scope, name: event.name, description: typeof event.description === "string" ? event.description : "", model: "", model_index: -1 }];
 }

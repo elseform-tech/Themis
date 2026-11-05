@@ -156,6 +156,25 @@ pub struct RunHandle {
     pub run_id: String,
 }
 
+/// One memory a memory job saved, updated or removed.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MemoryChange {
+    /// `saved`, `updated` or `removed`.
+    pub action: String,
+    /// `project` or `global`.
+    pub scope: String,
+    /// The memory's name (its file, `memory/<name>.md`).
+    pub name: String,
+    /// Its one-line description (empty for a removed one the job never read).
+    pub description: String,
+    /// The memory model that made the change, and its place in `memory.models` (from 0).
+    pub model: String,
+    pub model_index: usize,
+    /// The project a project memory belongs to.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project_root: Option<String>,
+}
+
 /// Streaming run event (`ThreadEvent` in types.ts).
 ///
 /// Internally tagged on `kind`; variant names match the TS union exactly
@@ -223,20 +242,17 @@ pub enum ThreadEvent {
     MediaAttached {
         files: Vec<AttachedMedia>,
     },
-    /// The agent saved, updated or deleted a memory (`memory` tool); the chat shows a slim
-    /// "Remembered" or "Forgot" line that opens it in Settings › Memory.
+    /// The memory models changed memory after this run's turn: one slim line under the reply,
+    /// whose names open Settings › Memory.
     MemoryChanged {
-        /// `saved`, `updated` or `forgot`.
-        action: String,
-        /// `project` or `global`.
-        scope: String,
-        /// The memory's name (its file).
-        name: String,
-        /// Its one-line description.
-        description: String,
-        /// The project a project memory belongs to.
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        project_root: Option<String>,
+        changes: Vec<MemoryChange>,
+    },
+    /// Where the memory pass after this run's turn stands, for a shimmering line under the
+    /// reply while the memory models work. Live only (never saved): `checking` while a model
+    /// reads the turn, `done` when it changed nothing, `waiting` when every model failed and the
+    /// job waits to retry. A pass that changed memory ends with [`Self::MemoryChanged`] instead.
+    MemoryWorking {
+        step: String,
     },
     /// Who controls the chat's built-in browser and whether it is recording
     /// changed. Live only; `run_id` is empty.
@@ -456,6 +472,13 @@ pub struct Goal {
     /// lets the agent pause the goal.
     #[serde(default)]
     pub turn_seq: i64,
+    /// Where the goal turn before it started: words the person sent between turns (folded into
+    /// the goal as "Also asked") still let the agent pause on the next turn.
+    #[serde(default)]
+    pub prev_turn_seq: i64,
+    /// History position when the goal began: where what the work ran into starts.
+    #[serde(default)]
+    pub start_seq: i64,
     /// What the agent named as proof of each requirement when it marked the goal complete.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub evidence: Vec<themis_core::goal::Evidence>,

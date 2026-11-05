@@ -76,6 +76,9 @@ pub struct BrowserState {
     pub recording: Option<RecordingInfo>,
     /// Where the agent last left the mouse, in the page's CSS pixels.
     pub pointer: Option<(f64, f64)>,
+    /// The page holds the pointer lock: the view then locks the person's mouse to it on a
+    /// click and sends its movement as relative moves.
+    pub pointer_locked: bool,
 }
 
 /// A recording in progress, for the Browser tab and the thread header.
@@ -206,14 +209,6 @@ impl BrowserHub {
         self.executable().is_some() || self.built_in()
     }
 
-    /// Whether pages run in a browser with no window.
-    fn headless(&self) -> bool {
-        self.config
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .headless
-    }
-
     /// Whether the automatic choice is the built-in engine (installed or downloadable).
     pub fn built_in(&self) -> bool {
         downloaded_browser(&self.root()).is_some()
@@ -293,6 +288,7 @@ impl BrowserHub {
                 screencast: Mutex::new(None),
                 frozen: AtomicBool::new(false),
                 pointer: Mutex::new(None),
+                page_locked: AtomicBool::new(false),
                 held: Mutex::new(None),
                 ui_stream: AtomicBool::new(false),
                 frame_target: Mutex::new(None),
@@ -593,6 +589,8 @@ pub struct ChatBrowser {
     frozen: AtomicBool,
     /// Where the mouse last went on the visible page, for moves relative to it.
     pointer: Mutex<Option<(f64, f64)>>,
+    /// The page held the pointer lock when last checked (after the person's clicks and keys).
+    page_locked: AtomicBool,
     /// The mouse button held down by `browser_press`.
     held: Mutex<Option<HeldMouse>>,
     /// Session id of the tab being streamed to the Workspace view.
@@ -1478,6 +1476,7 @@ impl ChatBrowser {
             loading,
             muted: self.muted.load(Ordering::SeqCst),
             pointer: *self.pointer.lock().unwrap_or_else(|e| e.into_inner()),
+            pointer_locked: self.page_locked.load(Ordering::SeqCst),
             recording: self
                 .recording
                 .lock()
@@ -1488,6 +1487,41 @@ impl ChatBrowser {
                     seconds: recording.elapsed().as_secs(),
                     max_seconds: recording.max.as_secs(),
                 }),
+        }
+    }
+
+    /// Moves the agent's pointer to `to` the way a hand would: the view is told where it goes
+    /// and animates the cursor over [`GLIDE`], while the page gets the moves along an eased
+    /// path. From nowhere (no move yet) it goes straight there.
+    async fn glide(&self, cdp: &Cdp, session: &str, to: (f64, f64)) -> Result<(), String> {
+        let from = self
+            .pointer
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .replace(to);
+        let path = from.map_or_else(Vec::new, |from| glide_path(from, to));
+        if path.is_empty() {
+            return mouse(
+                cdp,
+                session,
+                json!({"type": "mouseMoved", "x": to.0, "y": to.1}),
+            )
+            .await;
+        }
+        self.publish_state().await;
+        let pause = GLIDE / path.len() as u32;
+        for (x, y) in path {
+            mouse(cdp, session, json!({"type": "mouseMoved", "x": x, "y": y})).await?;
+            tokio::time::sleep(pause).await;
+        }
+        Ok(())
+    }
+
+    /// Reads whether the page holds the pointer lock and tells the view when that changed.
+    async fn check_lock(&self, cdp: &Cdp, session: &str) {
+        let locked = pointer_locked(cdp, session).await;
+        if self.page_locked.swap(locked, Ordering::SeqCst) != locked {
+            self.publish_state().await;
         }
     }
 
@@ -1605,16 +1639,16 @@ impl ChatBrowser {
                 json!({"source": include_str!("no_bounce.js")}),
             )
             .await;
-        // The stand-in is a convenience: a page that refuses it just has no pointer lock.
-        if self.hub.upgrade().is_some_and(|hub| hub.headless()) {
-            let _ = cdp
-                .call(
-                    Some(&session_id),
-                    "Page.addScriptToEvaluateOnNewDocument",
-                    json!({"source": include_str!("pointer_lock.js")}),
-                )
-                .await;
-        }
+        // The browser runs off screen (or headless) and can't lock a real pointer, so a
+        // stand-in does it for every page: the agent's and the person's moves turn the view.
+        // A page that refuses it just has no pointer lock.
+        let _ = cdp
+            .call(
+                Some(&session_id),
+                "Page.addScriptToEvaluateOnNewDocument",
+                json!({"source": include_str!("pointer_lock.js")}),
+            )
+            .await;
         // A tab that cannot take the sound setting is not opened.
         let audio_script =
             Some(install_audio(cdp, &session_id, self.muted.load(Ordering::SeqCst)).await?);
@@ -1905,8 +1939,8 @@ impl ChatBrowser {
         let mut inner = self.inner.lock().await;
         let (cdp, session, backend) = self.element(&inner, reference).await?;
         let (x, y) = element_center(&cdp, &session, backend).await?;
-        click_at(&cdp, &session, x, y, if double { 2 } else { 1 }).await?;
-        *self.pointer.lock().unwrap_or_else(|e| e.into_inner()) = Some((x, y));
+        self.glide(&cdp, &session, (x, y)).await?;
+        press_at(&cdp, &session, x, y, if double { 2 } else { 1 }).await?;
         self.settle(&inner, false).await;
         let report = self.report(&mut inner, None).await;
         drop(inner);
@@ -1942,8 +1976,8 @@ impl ChatBrowser {
                 press_at(&browser.cdp, &session, held_x, held_y, clicks).await?;
             }
             _ => {
-                click_at(&browser.cdp, &session, x, y, clicks).await?;
-                *self.pointer.lock().unwrap_or_else(|e| e.into_inner()) = Some((x, y));
+                self.glide(&browser.cdp, &session, (x, y)).await?;
+                press_at(&browser.cdp, &session, x, y, clicks).await?;
             }
         }
         self.settle(&inner, false).await;
@@ -2038,14 +2072,7 @@ impl ChatBrowser {
             self.move_holding(&browser.cdp, &session, from, (x, y))
                 .await?;
         } else {
-            browser
-                .cdp
-                .call(
-                    Some(&session),
-                    "Input.dispatchMouseEvent",
-                    json!({"type": "mouseMoved", "x": x, "y": y}),
-                )
-                .await?;
+            self.glide(&browser.cdp, &session, (x, y)).await?;
         }
         *self.pointer.lock().unwrap_or_else(|e| e.into_inner()) = Some((x, y));
         self.settle(&inner, false).await;
@@ -2882,9 +2909,15 @@ impl ChatBrowser {
                 .scale;
         let (width, height) = match reference {
             Some(reference) => {
-                let backend = tab.refs.resolve(reference).ok_or_else(|| {
-                    format!("no element {reference} on this page; take a new browser_snapshot")
-                })?;
+                // A CSS selector or text=… works too, as for clicks: agents write them for
+                // screenshots the same way, and a ref-only error sent them in circles.
+                let backend = if is_ref(reference) {
+                    tab.refs.resolve(reference).ok_or_else(|| {
+                        format!("no element {reference} on this page; take a new browser_snapshot")
+                    })?
+                } else {
+                    selected_element(cdp, &session, reference).await?
+                };
                 let _ = cdp
                     .call(
                         Some(&session),
@@ -2990,7 +3023,21 @@ impl ChatBrowser {
                 delta_x,
                 delta_y,
             } => {
-                *self.pointer.lock().unwrap_or_else(|e| e.into_inner()) = Some((*x, *y));
+                // A locked page has no pointer position: presses happen where it is held.
+                let locked = self.page_locked.load(Ordering::SeqCst) && kind != "wheel";
+                let (x, y) = if locked {
+                    self.pointer
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner())
+                        .unwrap_or((*x, *y))
+                } else {
+                    *self.pointer.lock().unwrap_or_else(|e| e.into_inner()) = Some((*x, *y));
+                    (*x, *y)
+                };
+                if locked && kind == "move" {
+                    return Ok(());
+                }
+                let pressed = kind == "down";
                 let kind = match kind.as_str() {
                     "down" => "mousePressed",
                     "up" => "mouseReleased",
@@ -3002,11 +3049,48 @@ impl ChatBrowser {
                     "left" | "right" | "middle" => button.as_str(),
                     _ => "none",
                 };
-                cdp.send(
-                    session,
-                    "Input.dispatchMouseEvent",
-                    json!({"type": kind, "x": x, "y": y, "button": button, "clickCount": clicks.min(&3), "modifiers": modifiers & 15, "deltaX": delta_x, "deltaY": delta_y}),
+                let buttons = match (kind, button) {
+                    ("mousePressed" | "mouseMoved", "left") => 1,
+                    ("mousePressed" | "mouseMoved", "right") => 2,
+                    ("mousePressed" | "mouseMoved", "middle") => 4,
+                    _ => 0,
+                };
+                let params = json!({"type": kind, "x": x, "y": y, "button": button, "buttons": buttons, "clickCount": clicks.min(&3), "modifiers": modifiers & 15, "deltaX": delta_x, "deltaY": delta_y});
+                // A click is when a page takes (or gives up) the pointer lock: the press is
+                // waited for, then the lock read.
+                if pressed {
+                    let _ = cdp.call(session, "Input.dispatchMouseEvent", params).await;
+                    self.check_lock(cdp, &session_id).await;
+                } else {
+                    cdp.send(session, "Input.dispatchMouseEvent", params);
+                }
+            }
+            UserInput::MouseBy { dx, dy } => {
+                if !self.page_locked.load(Ordering::SeqCst) {
+                    return Ok(());
+                }
+                let viewport = *self.viewport.lock().unwrap_or_else(|e| e.into_inner());
+                let size = (f64::from(viewport.width), f64::from(viewport.height));
+                let from = self
+                    .pointer
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .unwrap_or((size.0 / 2.0, size.1 / 2.0));
+                let delta = (
+                    dx.clamp(-MAX_PERSON_MOVE, MAX_PERSON_MOVE),
+                    dy.clamp(-MAX_PERSON_MOVE, MAX_PERSON_MOVE),
                 );
+                let Ok(path) = relative_path(from, delta, size) else {
+                    return Ok(());
+                };
+                for (x, y) in path.start.into_iter().chain([path.end]) {
+                    cdp.send(
+                        session,
+                        "Input.dispatchMouseEvent",
+                        json!({"type": "mouseMoved", "x": x, "y": y}),
+                    );
+                }
+                *self.pointer.lock().unwrap_or_else(|e| e.into_inner()) = Some(path.end);
             }
             UserInput::Key {
                 kind,
@@ -3026,7 +3110,13 @@ impl ChatBrowser {
                 if let Some(text) = text.as_deref().filter(|_| kind == "keyDown") {
                     params["text"] = json!(cap(text, 8));
                 }
-                cdp.send(session, "Input.dispatchKeyEvent", params);
+                // Escape releases a held pointer lock: waited for, then the lock read.
+                if kind == "rawKeyDown" && key == "Escape" {
+                    let _ = cdp.call(session, "Input.dispatchKeyEvent", params).await;
+                    self.check_lock(cdp, &session_id).await;
+                } else {
+                    cdp.send(session, "Input.dispatchKeyEvent", params);
+                }
             }
             UserInput::Text { text } => {
                 cdp.send(
@@ -3039,6 +3129,9 @@ impl ChatBrowser {
         Ok(())
     }
 }
+
+/// Most CSS pixels one relative move from the person may carry.
+const MAX_PERSON_MOVE: f64 = 2_000.0;
 
 /// Input from the Workspace view, in page CSS pixels.
 #[derive(Debug, Clone, serde::Deserialize)]
@@ -3073,6 +3166,11 @@ pub enum UserInput {
     },
     Text {
         text: String,
+    },
+    /// A relative move from the person's locked mouse, in page CSS pixels.
+    MouseBy {
+        dx: f64,
+        dy: f64,
     },
 }
 
@@ -3441,6 +3539,33 @@ pub enum DragEnd {
 
 /// Moves between the two ends, enough for a page to see the distance covered.
 const DRAG_STEPS: u32 = 12;
+/// How long the agent's pointer takes to travel to where it acts: the view animates the
+/// cursor over the same time, and the page gets the moves on the way.
+pub const GLIDE: Duration = Duration::from_millis(240);
+/// Pixels per glide step, and the bounds on steps.
+const GLIDE_STEP_PX: f64 = 40.0;
+const GLIDE_MIN_STEPS: u32 = 4;
+const GLIDE_MAX_STEPS: u32 = 12;
+
+/// The points a glide from `from` to `to` passes through, eased in and out, ending exactly at
+/// `to`; empty when the pointer is already there.
+fn glide_path(from: (f64, f64), to: (f64, f64)) -> Vec<(f64, f64)> {
+    let distance = (to.0 - from.0).hypot(to.1 - from.1);
+    if distance < 2.0 {
+        return Vec::new();
+    }
+    let steps = ((distance / GLIDE_STEP_PX).ceil() as u32).clamp(GLIDE_MIN_STEPS, GLIDE_MAX_STEPS);
+    (1..=steps)
+        .map(|step| {
+            let t = f64::from(step) / f64::from(steps);
+            let eased = 0.5 - 0.5 * (std::f64::consts::PI * t).cos();
+            (
+                from.0 + (to.0 - from.0) * eased,
+                from.1 + (to.1 - from.1) * eased,
+            )
+        })
+        .collect()
+}
 const DRAG_STEP_PAUSE: Duration = Duration::from_millis(16);
 /// A page starts native drag and drop a moment after the mouse leaves; waits this long at most.
 const DRAG_START_WAIT: Duration = Duration::from_millis(250);
@@ -3530,16 +3655,6 @@ async fn drag_gesture(
     let native = intercepted.is_some();
     finish_drag(cdp, session, intercepted, to).await?;
     Ok(native)
-}
-
-async fn click_at(cdp: &Cdp, session: &str, x: f64, y: f64, clicks: u32) -> Result<(), String> {
-    cdp.call(
-        Some(session),
-        "Input.dispatchMouseEvent",
-        json!({"type": "mouseMoved", "x": x, "y": y}),
-    )
-    .await?;
-    press_at(cdp, session, x, y, clicks).await
 }
 
 async fn press_at(cdp: &Cdp, session: &str, x: f64, y: f64, clicks: u32) -> Result<(), String> {
@@ -3633,6 +3748,26 @@ async fn password_fields(
 
 #[cfg(test)]
 mod tests {
+    /// A glide eases in and out along the straight line, ends exactly on the target, takes a
+    /// bounded number of steps whatever the distance, and is nothing when already there.
+    #[test]
+    fn a_glide_eases_to_the_target_in_bounded_steps() {
+        assert!(super::glide_path((10.0, 10.0), (11.0, 10.5)).is_empty());
+        let path = super::glide_path((0.0, 0.0), (400.0, 0.0));
+        assert_eq!(path.len(), 10);
+        assert_eq!(*path.last().unwrap(), (400.0, 0.0));
+        let steps: Vec<f64> = path.windows(2).map(|pair| pair[1].0 - pair[0].0).collect();
+        assert!(steps.iter().all(|step| *step > 0.0), "{path:?}");
+        // Slow at both ends, fastest in the middle.
+        assert!(
+            path[0].0 < steps[4] && steps[steps.len() - 1] < steps[4],
+            "{path:?}"
+        );
+        assert!(path.iter().all(|point| point.1 == 0.0));
+        assert_eq!(super::glide_path((0.0, 0.0), (30.0, 0.0)).len(), 4);
+        assert_eq!(super::glide_path((0.0, 0.0), (5000.0, 5000.0)).len(), 12);
+    }
+
     #[test]
     fn a_relative_move_reports_its_distance_from_a_start_outside_the_page() {
         const PAGE: (f64, f64) = (1280.0, 800.0);

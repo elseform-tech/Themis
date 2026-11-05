@@ -39,6 +39,82 @@ const BUSY_RETRY: Duration = Duration::from_secs(20);
 const MAX_NOTE_PART_CHARS: usize = 800;
 /// History items read per page while looking for the person's messages.
 const HISTORY_PAGE_ITEMS: usize = 2_000;
+/// How long after a goal completes Themis waits for the memory pass before filling the plan
+/// record's results from the closing reply.
+const PLAN_RESULTS_WAIT: Duration = Duration::from_secs(20);
+/// Most history items one goal's snag scan reads.
+const SNAG_SCAN_ITEMS: usize = 6_000;
+/// Most characters of a failed step's output, and of what the agent said next.
+const SNAG_CHARS: usize = 300;
+/// Most entries of one turn's working log (its failed steps and the agent's notes), the latest.
+const MAX_LOG_ENTRIES: usize = 40;
+/// Most characters of one note the agent wrote between steps.
+const NOTE_CHARS: usize = 400;
+
+/// Whether a finished tool step failed: refused, or a command that exited non-zero.
+fn step_failed(ok: bool, output: &str) -> bool {
+    if !ok {
+        return true;
+    }
+    serde_json::from_str::<serde_json::Value>(output)
+        .ok()
+        .and_then(|value| value["exit_code"].as_i64())
+        .is_some_and(|code| code != 0)
+}
+
+/// The end of `text` on one line, at most [`SNAG_CHARS`] characters: an error is at the end.
+fn tail(text: &str) -> String {
+    let flat = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    let count = flat.chars().count();
+    flat.chars()
+        .skip(count.saturating_sub(SNAG_CHARS))
+        .collect()
+}
+
+/// One turn's working log for its memory pass, in order: each failed step, and each note the
+/// agent wrote between steps (what it tried, found wrong, dropped or thinks could be better),
+/// which a failed step alone never shows. The note that ended the turn is its reply, read
+/// elsewhere. The latest [`MAX_LOG_ENTRIES`], each bounded.
+fn work_log_of(events: &[ThreadEvent]) -> String {
+    let mut entries: Vec<String> = Vec::new();
+    let mut notes: Vec<usize> = Vec::new();
+    for event in events {
+        match event {
+            ThreadEvent::ToolFinished {
+                tool, ok, output, ..
+            } if step_failed(*ok, output) && !tool.starts_with("hook_") && tool != "Skill" => {
+                entries.push(format!("- {tool} failed: {}", tail(output)));
+            }
+            ThreadEvent::AssistantText { text } if !text.trim().is_empty() => {
+                notes.push(entries.len());
+                entries.push(format!("- noted: {}", head(text, NOTE_CHARS)));
+            }
+            _ => {}
+        }
+    }
+    if let Some(&reply) = notes.last() {
+        if reply == entries.len() - 1 {
+            entries.pop();
+        }
+    }
+    let skip = entries.len().saturating_sub(MAX_LOG_ENTRIES);
+    entries
+        .into_iter()
+        .skip(skip)
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// The first `limit` characters of `text` on one line, marked when cut.
+fn head(text: &str, limit: usize) -> String {
+    let flat = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    if flat.chars().count() <= limit {
+        return flat;
+    }
+    let mut cut: String = flat.chars().take(limit).collect();
+    cut.push('…');
+    cut
+}
 
 fn now_ms() -> i64 {
     chrono::Utc::now().timestamp_millis()
@@ -235,7 +311,17 @@ impl AppState {
             running_since: Some(now),
             turns: 0,
             failures: 0,
+            prev_turn_seq: self
+                .inner
+                .transcript
+                .last_activity_seq(thread_id)
+                .unwrap_or(0),
             turn_seq: self
+                .inner
+                .transcript
+                .last_activity_seq(thread_id)
+                .unwrap_or(0),
+            start_seq: self
                 .inner
                 .transcript
                 .last_activity_seq(thread_id)
@@ -269,6 +355,7 @@ impl AppState {
             return Err("create_goal: this chat already has an unfinished goal; use update_goal only for its status, and the person edits its text on the goal card".to_owned());
         }
         let goal = self.begin_goal(sink.as_ref(), &thread_id, &objective);
+        self.remember_goal_created(&sink, &thread_id, &goal.text);
         if !running {
             self.start_goal_turn(sink, thread_id, String::new()).await;
         }
@@ -298,6 +385,16 @@ impl AppState {
             "info",
             json!({"thread_id": thread_id, "status": goal.status}),
         );
+        self.spawn_memory_event(
+            Arc::clone(&sink),
+            (&thread_id, ""),
+            "the goal was edited by the person",
+            (
+                format!("The objective is now:\n{}", goal.text),
+                String::new(),
+            ),
+        )
+        .await;
         Ok(goal)
     }
 
@@ -379,13 +476,67 @@ impl AppState {
                 GoalNoteKind::Blocked,
                 &format!("Blocked: {reason}"),
             ),
-            None => self.goal_note(
-                sink.as_ref(),
-                &thread_id,
-                "",
-                GoalNoteKind::Reached,
-                "Complete.",
-            ),
+            None => {
+                // The evidence goes in the chat, under the note; the goal bar keeps one line.
+                let mut note = "Complete.".to_owned();
+                if !goal.evidence.is_empty() {
+                    note.push('\n');
+                    for item in &goal.evidence {
+                        note.push_str(&format!(
+                            "\n- {}: {}",
+                            core_goal::one_line(&item.requirement, 300),
+                            core_goal::one_line(&item.proof, 1000)
+                        ));
+                    }
+                }
+                self.goal_note(sink.as_ref(), &thread_id, "", GoalNoteKind::Reached, &note);
+                // The work's plan record is done, with the evidence as the agent gave it: no
+                // model in between, so none of it is summarized away.
+                let evidence: Vec<String> = goal
+                    .evidence
+                    .iter()
+                    .map(|item| format!("{}: {}", item.requirement, item.proof))
+                    .collect();
+                self.mark_plan_done(&thread_id, &evidence).await;
+                let mut content = format!("Objective: {}", goal.text);
+                if let Some(name) = self.plan_name_for_chat(&thread_id).await {
+                    content.push_str(&format!(
+                        "\nThe work's plan record: {name} (write \"done\" for it)"
+                    ));
+                }
+                for asked in &goal.also_asked {
+                    content.push_str(&format!("\nAlso asked: {asked}"));
+                }
+                content.push_str("\nEvidence:");
+                for item in &goal.evidence {
+                    content.push_str(&format!("\n- {}: {}", item.requirement, item.proof));
+                }
+                // What the work ran into: the steps that failed and what the agent said next,
+                // read from the goal's own history (a short goal has no checkpoint).
+                // What the work ran into: its failed steps and the agent's notes along the
+                // way (where lessons are: a bug found, an approach dropped, a better way), the
+                // latest of the whole goal.
+                let snags = self.work_log(&thread_id, goal.start_seq);
+                if !snags.is_empty() {
+                    content.push_str(&format!(
+                        "\nWhat the work ran into (failed steps and the agent's notes along the way):\n{snags}"
+                    ));
+                }
+                // And its latest checkpoint, when there is one.
+                if let Some(summary) = self.inner.transcript.checkpoint_summary(&thread_id) {
+                    let notes: String = summary.chars().take(5000).collect();
+                    content.push_str(&format!(
+                        "\nNotes from the work (its latest checkpoint):\n{notes}"
+                    ));
+                }
+                self.spawn_memory_event(
+                    Arc::clone(&sink),
+                    (&thread_id, ""),
+                    "a goal was completed",
+                    (content, String::new()),
+                )
+                .await;
+            }
         }
         Ok(goal)
     }
@@ -396,7 +547,9 @@ impl AppState {
         let Some(goal) = self.goal_for(thread_id) else {
             return false;
         };
-        let mut through = goal.turn_seq;
+        // From the turn before: what the person sent between turns was folded into the goal
+        // before this turn started, and still counts as their asking.
+        let mut through = goal.prev_turn_seq.min(goal.turn_seq);
         while let Ok(page) =
             self.inner
                 .transcript
@@ -516,7 +669,7 @@ impl AppState {
     /// run is a goal turn.
     pub(super) fn goal_for_message(
         &self,
-        sink: &dyn EventSink,
+        sink: &Arc<dyn EventSink>,
         thread_id: &str,
         text: &str,
         run_id: &str,
@@ -528,14 +681,19 @@ impl AppState {
                 return Err("Add the goal after /goal, for example: /goal speed up p95".to_owned());
             }
             // Themis creates it from the command; no model decides. This run is its first turn.
-            self.begin_goal(sink, thread_id, &sentence);
-            self.update_goal(sink, thread_id, |goal| goal.turns = 1);
+            let goal = self.begin_goal(sink.as_ref(), thread_id, &sentence);
+            self.remember_goal_created(sink, thread_id, &goal.text);
+            self.update_goal(sink.as_ref(), thread_id, |goal| goal.turns = 1);
             self.mark_goal_turn(run_id);
-            return Ok(format!("\n\n{}", self.take_goal_note(sink, thread_id)));
+            return Ok(format!(
+                "\n\n{}",
+                self.take_goal_note(sink.as_ref(), thread_id)
+            ));
         } else if !is_turn {
             if from_person {
                 self.add_also_asked(sink, thread_id, text);
             }
+            let sink = sink.as_ref();
             match self.goal_for(thread_id).map(|goal| goal.status) {
                 // An answer to another question leaves the goal waiting on
                 // the blocking one; any other reply resumes it.
@@ -561,6 +719,7 @@ impl AppState {
                 _ => {}
             }
         }
+        let sink = sink.as_ref();
         Ok(match self.goal_for(thread_id) {
             // A goal turn's saved message is one short line; the note rides along with each run
             // only, so history doesn't grow by a note per turn and every run reads it fresh.
@@ -582,7 +741,148 @@ impl AppState {
     /// What the person sent while the goal runs (or waits on them, or on quota) joins it word
     /// for word as an "Also asked" line, by plain code, so no checkpoint can lose it. Answers to
     /// the agent's questions, goal turns and `/goal` are not requests.
-    pub(super) fn add_also_asked(&self, sink: &dyn EventSink, thread_id: &str, text: &str) {
+    /// Whether the person's message `text` reaches memory through a goal event (the goal it
+    /// created, or an "Also asked" line), so the turn's own pass leaves it out. Answers to
+    /// the agent's questions still go through the turn's pass, with the question they answer.
+    pub(super) fn goal_takes_words(&self, thread_id: &str, text: &str) -> bool {
+        self.goal_for(thread_id).is_some_and(|goal| {
+            matches!(
+                goal.status,
+                GoalStatus::Running | GoalStatus::Waiting | GoalStatus::Quota
+            )
+        }) && !text.starts_with(super::questions::ANSWER_MARKER)
+            && core_goal::turn_number(text).is_none()
+    }
+
+    /// The memory pass for a goal just created: the approved plan is saved now, not after
+    /// the goal's first (long) turn. It reads the objective, the person's latest words and
+    /// the reply they answered (the plan).
+    fn remember_goal_created(&self, sink: &Arc<dyn EventSink>, thread_id: &str, objective: &str) {
+        let transcript = &self.inner.transcript;
+        let mut content = format!("The objective:\n{objective}");
+        if let Some(person) = transcript.last_turn_text(thread_id, "user") {
+            let person: String = person.chars().take(4000).collect();
+            content.push_str(&format!("\nThe person's latest message:\n{person}"));
+        }
+        // The reply it answered (the plan, when there is one) goes as the reply answered, so a
+        // plan record copies it whole.
+        let answered = transcript.last_reply_text(thread_id);
+        self.spawn_goal_memory_event(sink, thread_id, "a goal was created", (content, answered));
+    }
+
+    /// One turn's working log for its memory pass: see [`work_log_of`].
+    pub(super) fn work_log(&self, thread_id: &str, from_seq: i64) -> String {
+        work_log_of(&self.events_since(thread_id, from_seq))
+    }
+
+    /// The chat's events after `from_seq`, at most [`SNAG_SCAN_ITEMS`].
+    fn events_since(&self, thread_id: &str, from_seq: i64) -> Vec<ThreadEvent> {
+        let mut events = Vec::new();
+        let mut through = from_seq;
+        while events.len() < SNAG_SCAN_ITEMS {
+            let Ok(page) =
+                self.inner
+                    .transcript
+                    .history_after(thread_id, through, HISTORY_PAGE_ITEMS)
+            else {
+                break;
+            };
+            let Some((last, _)) = page.last() else { break };
+            through = *last;
+            let full = page.len() == HISTORY_PAGE_ITEMS;
+            events.extend(page.into_iter().filter_map(|(_, item)| match item {
+                crate::transcript::HistoryItem::Event { envelope } => Some(envelope.event),
+                _ => None,
+            }));
+            if !full {
+                break;
+            }
+        }
+        events
+    }
+
+    /// The name of the plan record this chat's goal builds, if it has one.
+    async fn plan_name_for_chat(&self, thread_id: &str) -> Option<String> {
+        let root = self.thread_project_root(thread_id).await?;
+        let store = self.plan_store(std::path::Path::new(&root)).ok()?;
+        store.for_chat(thread_id).map(|record| record.name)
+    }
+
+    /// Fills the results of the plan record this chat's goal built from the closing reply, if
+    /// they are still empty a moment after the goal-complete memory pass had its chance; logs a
+    /// record left without results or lessons.
+    async fn plan_results_from_reply(&self, thread_id: &str, reply: &str) {
+        let Some(root) = self.thread_project_root(thread_id).await else {
+            return;
+        };
+        let (state, thread_id, reply) = (self.clone(), thread_id.to_owned(), reply.to_owned());
+        tokio::spawn(async move {
+            // The goal-complete pass runs on its own task; give it time to write first.
+            tokio::time::sleep(PLAN_RESULTS_WAIT).await;
+            let _guard = state.inner.memory_job_lock.lock().await;
+            let Ok(store) = state.plan_store(std::path::Path::new(&root)) else {
+                return;
+            };
+            let Some(mut record) = store.for_chat(&thread_id) else {
+                return;
+            };
+            let filled = record.results.is_empty() && !reply.trim().is_empty();
+            if filled {
+                record.done(&reply, &[], &[], &themis_core::memory::today());
+                let _ = store.save(&record, false);
+            }
+            if filled || record.lessons.is_empty() {
+                let _ = state.inner.diagnostics.append(
+                    "memory",
+                    "plan",
+                    "info",
+                    json!({"thread_id": thread_id, "op": "done", "by": "goal_reply", "outcome": "no_done", "results_filled": filled, "lessons": record.lessons.len()}),
+                );
+            }
+        });
+    }
+
+    /// Marks the plan record this chat's goal built as done, with `evidence`.
+    async fn mark_plan_done(&self, thread_id: &str, evidence: &[String]) {
+        let Some(root) = self.thread_project_root(thread_id).await else {
+            return;
+        };
+        let Ok(store) = self.plan_store(std::path::Path::new(&root)) else {
+            return;
+        };
+        let Some(mut record) = store.for_chat(thread_id) else {
+            return;
+        };
+        record.done("", evidence, &[], &themis_core::memory::today());
+        let outcome = if store.save(&record, false).is_ok() {
+            "updated"
+        } else {
+            "failed"
+        };
+        let _ = self.inner.diagnostics.append(
+            "memory",
+            "plan",
+            "info",
+            json!({"thread_id": thread_id, "op": "done", "by": "goal", "outcome": outcome, "evidence": evidence.len()}),
+        );
+    }
+
+    fn spawn_goal_memory_event(
+        &self,
+        sink: &Arc<dyn EventSink>,
+        thread_id: &str,
+        what: &'static str,
+        content: (String, String),
+    ) {
+        let (state, sink, thread_id) = (self.clone(), Arc::clone(sink), thread_id.to_owned());
+        tokio::spawn(async move {
+            state
+                .spawn_memory_event(sink, (&thread_id, ""), what, content)
+                .await;
+        });
+    }
+
+    pub(super) fn add_also_asked(&self, sink: &Arc<dyn EventSink>, thread_id: &str, text: &str) {
         let active = self.goal_for(thread_id).is_some_and(|goal| {
             matches!(
                 goal.status,
@@ -600,9 +900,10 @@ impl AppState {
             return;
         };
         let mut kept = false;
-        let goal = self.update_goal(sink, thread_id, |goal| {
+        let said = line.clone();
+        let goal = self.update_goal(sink.as_ref(), thread_id, |goal| {
             if goal.also_asked.len() < core_goal::MAX_ALSO_ASKED {
-                goal.also_asked.push(line);
+                goal.also_asked.push(line.clone());
                 kept = true;
             }
         });
@@ -614,8 +915,20 @@ impl AppState {
                 "also_asked_full"
             },
             "info",
-            json!({"thread_id": thread_id, "count": goal.map_or(0, |goal| goal.also_asked.len())}),
+            json!({"thread_id": thread_id, "count": goal.as_ref().map_or(0, |goal| goal.also_asked.len())}),
         );
+        // What the person asks mid-goal is remembered now, not after the goal's long turn.
+        if let Some(goal) = goal {
+            self.spawn_goal_memory_event(
+                sink,
+                thread_id,
+                "the person changed or added to the goal while it ran",
+                (
+                    format!("The person said:\n{said}\nThe objective:\n{}", goal.text),
+                    String::new(),
+                ),
+            );
+        }
     }
 
     /// The goal note this goal run carries ([`core_goal::goal_note`]): the "objective updated"
@@ -764,6 +1077,7 @@ impl AppState {
             goal.retry_at = None;
             if goal.status == GoalStatus::Running {
                 goal.turns = goal.turns.saturating_add(1);
+                goal.prev_turn_seq = goal.turn_seq;
                 goal.turn_seq = turn_seq;
             }
         }) else {
@@ -835,6 +1149,13 @@ impl AppState {
         let Some(goal) = self.goal_for(&thread_id) else {
             return;
         };
+        // The turn that completed the goal: its closing reply says what was built and how it was
+        // checked, the record's results when the memory pass gives none.
+        if goal.status == GoalStatus::Reached {
+            if let ThreadEvent::Finished { result, .. } = &terminal {
+                self.plan_results_from_reply(&thread_id, result).await;
+            }
+        }
         if goal.status != GoalStatus::Running {
             return;
         }
@@ -1071,7 +1392,9 @@ mod tests {
             running_since: Some(now_ms() - 5_000),
             turns: 1,
             failures: 0,
+            prev_turn_seq: 0,
             turn_seq: 0,
+            start_seq: 0,
             retry_at: None,
             evidence: Vec::new(),
             also_asked: Vec::new(),
@@ -1084,5 +1407,61 @@ mod tests {
         set_status(&mut goal, GoalStatus::Running, None);
         assert_eq!(goal.active_ms, paused);
         assert!(goal.running_since.is_some());
+    }
+}
+
+#[cfg(test)]
+mod snag_tests {
+    use super::*;
+
+    fn tool(ok: bool, output: &str) -> ThreadEvent {
+        ThreadEvent::ToolFinished {
+            tool: "shell".into(),
+            ok,
+            output: output.into(),
+            media: None,
+        }
+    }
+
+    fn said(text: &str) -> ThreadEvent {
+        ThreadEvent::AssistantText { text: text.into() }
+    }
+
+    /// A turn's log holds what a failed step alone never shows: the agent's notes on what it
+    /// found wrong or dropped, in order with the failures, without the reply that ended it.
+    #[test]
+    fn a_turns_log_keeps_the_agents_notes_with_its_failed_steps() {
+        let events = vec![
+            said("Starting the asteroid pool."),
+            tool(true, r#"{"exit_code":0,"output":"ok"}"#),
+            said("The HUD reads visible on the start screen, which doesn't match: show() ran before reset()."),
+            tool(true, r#"{"exit_code":1,"output":"1 failing"}"#),
+            said("Dropped per-frame Vector3 allocation; one reused vector is enough."),
+            said("Done: the game works."),
+        ];
+        let log = work_log_of(&events);
+        let lines: Vec<&str> = log.lines().collect();
+        assert_eq!(lines.len(), 4, "{log}");
+        assert!(
+            lines[1].starts_with("- noted: The HUD reads visible"),
+            "{log}"
+        );
+        assert!(lines[2].starts_with("- shell failed:"), "{log}");
+        assert!(lines[3].contains("Dropped per-frame Vector3"), "{log}");
+        assert!(!log.contains("Done: the game works"), "{log}");
+        // The latest MAX_LOG_ENTRIES, each note bounded.
+        let many: Vec<ThreadEvent> = (0..100)
+            .map(|n| said(&format!("note {n} {}", "y".repeat(2000))))
+            .collect();
+        let log = work_log_of(&many);
+        assert_eq!(log.lines().count(), MAX_LOG_ENTRIES);
+        assert!(
+            log.lines().last().unwrap().starts_with("- noted: note 98"),
+            "{log}"
+        );
+        assert!(log
+            .lines()
+            .all(|line| line.chars().count() <= NOTE_CHARS + 20));
+        assert_eq!(work_log_of(&[]), "");
     }
 }

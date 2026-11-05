@@ -38,6 +38,17 @@ describe("ContextMeter", () => {
     expect(panel).toHaveTextContent("Model reasoning21.3k");
     expect(screen.getByRole("img")).toHaveAccessibleName(expect.stringContaining("Model reasoning 21.3k"));
   });
+  it("shows the memory block as its own part only when the turn carried one", () => {
+    const { rerender } = render(<ContextMeter budget={budget} />);
+    fireEvent.click(screen.getByRole("button", { name: "Context 84% full" }));
+    expect(screen.getByRole("dialog", { name: "Context" })).not.toHaveTextContent("Memory");
+    rerender(<ContextMeter budget={{ ...budget, breakdown: { ...budget.breakdown, system: 6200, memory: 2200 } }} />);
+    const panel = screen.getByRole("dialog", { name: "Context" });
+    expect(panel).toHaveTextContent("Memory2.2k");
+    expect(panel).toHaveTextContent("System & instructions6.2k");
+    expect(screen.getByRole("img")).toHaveAccessibleName(expect.stringContaining("Memory 2.2k"));
+  });
+
   it("shows the goal's note as its own part only while a goal run carries one", () => {
     const { rerender } = render(<ContextMeter budget={budget} />);
     fireEvent.click(screen.getByRole("button", { name: "Context 84% full" }));

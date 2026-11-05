@@ -402,12 +402,12 @@ async fn what_a_profile_names_decides_its_mcp_tools() {
         spawning(
             |_| {
                 json!([
-                    {"brief": "brief-named", "profile": "named"},
-                    {"brief": "brief-in-plugin", "profile": "in-plugin"},
-                    {"brief": "brief-server-wide", "profile": "server-wide"},
-                    {"brief": "brief-all-listed", "profile": "all-listed"},
-                    {"brief": "brief-no-list", "profile": "no-list"},
-                    {"brief": "brief-reads-only", "profile": "reads-only"}
+                    {"write_paths": [], "brief": "brief-named", "profile": "named"},
+                    {"write_paths": [], "brief": "brief-in-plugin", "profile": "in-plugin"},
+                    {"write_paths": [], "brief": "brief-server-wide", "profile": "server-wide"},
+                    {"write_paths": [], "brief": "brief-all-listed", "profile": "all-listed"},
+                    {"write_paths": [], "brief": "brief-no-list", "profile": "no-list"},
+                    {"write_paths": [], "brief": "brief-reads-only", "profile": "reads-only"}
                 ])
             },
             |_| reply("Reported."),
@@ -437,7 +437,7 @@ async fn a_deny_list_takes_mcp_tools_away() {
             ..Setup::default()
         },
         spawning(
-            |_| json!([{"brief": "brief-denied", "profile": "denied"}]),
+            |_| json!([{"write_paths": [], "brief": "brief-denied", "profile": "denied"}]),
             |_| reply("Reported."),
         ),
     )
@@ -456,11 +456,11 @@ async fn the_main_agent_gives_a_plain_subagent_its_mcp_tools() {
             |body| {
                 let lookup = wire_name(body, "_lookup").expect("the main agent's tool");
                 json!([
-                    {"brief": "brief-default"},
-                    {"brief": "brief-none", "mcp_tools": []},
-                    {"brief": "brief-one", "mcp_tools": [lookup]},
-                    {"brief": "brief-all", "mcp_tools": ["*"]},
-                    {"brief": "brief-unknown", "mcp_tools": ["mcp_nothing_like_it"]}
+                    {"write_paths": [], "brief": "brief-default"},
+                    {"write_paths": [], "brief": "brief-none", "mcp_tools": []},
+                    {"write_paths": [], "brief": "brief-one", "mcp_tools": [lookup]},
+                    {"write_paths": [], "brief": "brief-all", "mcp_tools": ["*"]},
+                    {"write_paths": [], "brief": "brief-unknown", "mcp_tools": ["mcp_nothing_like_it"]}
                 ])
             },
             |_| reply("Reported."),
@@ -517,8 +517,8 @@ async fn a_connection_that_is_not_enabled_stays_out_and_the_subagent_is_told() {
         spawning(
             |_| {
                 json!([
-                    {"brief": "brief-named", "profile": "named"},
-                    {"brief": "brief-no-list", "profile": "no-list"}
+                    {"write_paths": [], "brief": "brief-named", "profile": "named"},
+                    {"write_paths": [], "brief": "brief-no-list", "profile": "no-list"}
                 ])
             },
             |_| reply("Reported."),
@@ -564,9 +564,9 @@ async fn allow_mcp_off_gives_no_subagent_any_mcp_tool() {
         spawning(
             |_| {
                 json!([
-                    {"brief": "brief-named", "profile": "named"},
-                    {"brief": "brief-no-list", "profile": "no-list"},
-                    {"brief": "brief-asked", "mcp_tools": ["*"]}
+                    {"write_paths": [], "brief": "brief-named", "profile": "named"},
+                    {"write_paths": [], "brief": "brief-no-list", "profile": "no-list"},
+                    {"write_paths": [], "brief": "brief-asked", "mcp_tools": ["*"]}
                 ])
             },
             calls_lookup,
@@ -611,7 +611,7 @@ async fn in_custom_a_subagents_mcp_call_asks_under_its_name_and_its_grant_stays_
                     "s1",
                     "spawn_subagents",
                     &json!({"say": "Starting.", "subagents": [
-                        {"name": "Finder", "brief": "brief", "profile": "role"}
+                        {"write_paths": [], "name": "Finder", "brief": "brief", "profile": "role"}
                     ]}),
                 );
             }
@@ -721,7 +721,7 @@ async fn a_deny_rule_beats_a_subagents_mcp_call_even_in_yolo() {
                 0 => tool_call(
                     "s1",
                     "spawn_subagents",
-                    &json!({"say": "Starting.", "subagents": [{"brief": "brief", "profile": "role"}]}),
+                    &json!({"say": "Starting.", "subagents": [{"write_paths": [], "brief": "brief", "profile": "role"}]}),
                 ),
                 _ if mentions(body, NOTE) => reply("Done."),
                 _ => reply("Waiting."),
@@ -798,7 +798,7 @@ async fn hooks_fire_on_a_subagents_mcp_call_and_name_the_agent() {
             ..Setup::default()
         },
         spawning(
-            |_| json!([{"name": "Finder", "brief": "brief", "profile": "role"}]),
+            |_| json!([{"write_paths": [], "name": "Finder", "brief": "brief", "profile": "role"}]),
             calls_lookup,
         ),
     )
@@ -825,7 +825,7 @@ async fn stopping_a_subagent_ends_its_mcp_call() {
             ..Setup::default()
         },
         spawning(
-            |_| json!([{"name": "Finder", "brief": "brief", "profile": "role"}]),
+            |_| json!([{"write_paths": [], "name": "Finder", "brief": "brief", "profile": "role"}]),
             calls_lookup,
         ),
     )
@@ -909,7 +909,7 @@ async fn mcp_tools_are_no_file_permission_and_the_subagent_is_told_what_they_are
                         "s2",
                         "spawn_subagents",
                         &json!({"say": "Without paths.", "subagents": [
-                            {"name": "Reader", "brief": "brief-reads", "profile": "only-mcp"}
+                            {"write_paths": [], "name": "Reader", "brief": "brief-reads", "profile": "only-mcp"}
                         ]}),
                     )
                 }

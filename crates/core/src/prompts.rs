@@ -172,30 +172,36 @@ pub const ASK_USER_LIMIT: &str = include_str!("../builtins/prompts/ask-user-limi
 /// The memory index at the start of a run (main agent and subagents); `{{global}}`,
 /// `{{project}}`.
 pub const SYSTEM_MEMORY: &str = include_str!("../builtins/prompts/system-memory.md");
+/// A memory the memory models changed while a run works, delivered into that run.
+pub const MEMORY_CHANGED_NOTE: &str = include_str!("../builtins/prompts/memory-changed-note.md");
+/// After the index: the memories relevant to the message, in full; `{{memories}}`.
+pub const SYSTEM_MEMORY_RELEVANT: &str =
+    include_str!("../builtins/prompts/system-memory-relevant.md");
+/// After the memories: the project's plan records, one line each; `{{index}}`.
+pub const SYSTEM_MEMORY_PLANS: &str = include_str!("../builtins/prompts/system-memory-plans.md");
+/// The project's open tasks outside any plan record, in each run's memory block.
+pub const SYSTEM_MEMORY_TASKS: &str = include_str!("../builtins/prompts/system-memory-tasks.md");
+/// After the plan records' index: the record the run is about, in full; `{{record}}`.
+pub const SYSTEM_MEMORY_PLAN: &str = include_str!("../builtins/prompts/system-memory-plan.md");
 /// The main agent's line in place of the memory index when `memory.enabled` is false.
 pub const SYSTEM_MEMORY_OFF: &str = include_str!("../builtins/prompts/system-memory-off.md");
-/// Description of the main agent's `memory` tool.
-pub const MEMORY_TOOL: &str = include_str!("../builtins/prompts/memory-tool.md");
-/// Description of a subagent's read-only `memory` tool.
-pub const MEMORY_TOOL_READ: &str = include_str!("../builtins/prompts/memory-tool-read.md");
-/// System prompt of the background memory pass after a turn (`memory.auto`).
+/// System prompt of the background memory pass after a turn, on the memory models.
 pub const MEMORY_AUTO_SYSTEM: &str = include_str!("../builtins/prompts/memory-auto-system.md");
 /// The memory pass's request: `{{global}}`, `{{project}}` (indexes), `{{person}}` (the
 /// person's messages that turn) and `{{reply}}` (the agent's final reply).
 pub const MEMORY_AUTO_USER: &str = include_str!("../builtins/prompts/memory-auto-user.md");
-/// The one-line reminder before a context checkpoint (`hooks.built_in.save_reminder`).
-pub const RUNTIME_SAVE_REMINDER: &str =
-    include_str!("../builtins/prompts/runtime-save-reminder.md");
-/// The save reminder as a subagent gets it: it passes facts on in its reply.
-pub const RUNTIME_SAVE_REMINDER_SUBAGENT: &str =
-    include_str!("../builtins/prompts/runtime-save-reminder-subagent.md");
-/// After the Memory skill in a subagent's system message: its memory tool only reads.
-pub const SUBAGENT_MEMORY_SKILL_NOTE: &str =
-    include_str!("../builtins/prompts/subagent-memory-skill-note.md");
+/// System prompt of the idle consolidation of one scope; `{{scope}}`.
+pub const MEMORY_CONSOLIDATE_SYSTEM: &str =
+    include_str!("../builtins/prompts/memory-consolidate-system.md");
+/// The consolidation request: `{{scope}}` and `{{memories}}` (each memory in full).
+pub const MEMORY_CONSOLIDATE_USER: &str =
+    include_str!("../builtins/prompts/memory-consolidate-user.md");
 /// The message that delivers the user's answer; `{{question}}`, `{{assumption}}`, `{{answer}}`.
 pub const QUESTION_ANSWER: &str = include_str!("../builtins/prompts/question-answer.md");
 /// Description of the `update_goal` tool.
 pub const UPDATE_GOAL_TOOL: &str = include_str!("../builtins/prompts/tool-update-goal.md");
+/// Description of the `search_memory` tool.
+pub const SEARCH_MEMORY_TOOL: &str = include_str!("../builtins/prompts/tool-search-memory.md");
 /// Description of the `create_goal` tool.
 pub const CREATE_GOAL_TOOL: &str = include_str!("../builtins/prompts/tool-create-goal.md");
 /// `note` field of the create_goal tool result.

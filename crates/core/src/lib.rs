@@ -5,7 +5,6 @@
 //! agent features land.
 
 pub mod browser;
-pub mod built_in_hooks;
 pub mod calibration;
 pub mod chat_grants;
 pub mod configuration;

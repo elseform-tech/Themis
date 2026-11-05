@@ -2,9 +2,9 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Button, Dialog, EmptyState } from "../components";
 import { KnightLoading, readCompanionPreferences } from "../components/KnightCompanion";
 import { ResponseBody } from "../components/ResponseBody";
-import { getBuiltInHooks, pluginAction, updateBuiltInHook } from "../lib/tauri";
+import { pluginAction } from "../lib/tauri";
 import { isPluginPackage, markOffSeen, offParts, offSummary } from "../lib/integrations";
-import type { BuiltInHook, BuiltInHooks, ImportPreview, Marketplace, McpConnections, Plugin, PluginSpec } from "../lib/types";
+import type { ImportPreview, Marketplace, McpConnections, Plugin, PluginSpec } from "../lib/types";
 import { describeError, toast, useApp } from "../state/store";
 import "./Plugins.css";
 import { McpFileRow } from "./McpFile";
@@ -139,20 +139,6 @@ export function Plugins() {
   const [file, setFile] = useState("");
   const [mcpTools, setMcpTools] = useState<Array<{ name: string; description: string }> | null>();
   const [sourcesOpen, setSourcesOpen] = useState(false);
-  const [builtIns, setBuiltIns] = useState<BuiltInHooks | null>(null), [savingBuiltIn, setSavingBuiltIn] = useState(false);
-  useEffect(() => { void getBuiltInHooks().then(setBuiltIns).catch(() => setBuiltIns(null)); }, []);
-  async function toggleBuiltIn(hook: BuiltInHook) {
-    if (!builtIns) return;
-    setSavingBuiltIn(true);
-    try {
-      setBuiltIns(await updateBuiltInHook(hook.id, !hook.enabled, builtIns.revision));
-    } catch (error) {
-      toast(dispatch, integrationError(error), "danger");
-      void getBuiltInHooks().then(setBuiltIns).catch(() => {});
-    } finally {
-      setSavingBuiltIn(false);
-    }
-  }
   const [updates, setUpdates] = useState<PluginUpdate[]>([]), [expanded, setExpanded] = useState<ReadonlySet<string>>(new Set());
   const previewRequest = useRef(0);
   const search = publicView ? catalogSearch : installedSearch;
@@ -350,7 +336,6 @@ export function Plugins() {
   const offOf = (entry: Pick<CatalogEntry, "market" | "name">) => { const found = plugins.find(plugin => plugin.scope === "global" && plugin.source === entry.market && plugin.spec.name === entry.name); return found ? offSummary(offParts(found)) : ""; };
   const rows = items(plugins, category).filter(row => matchesOrigin(isPublic(row.plugin)) && (installedStatus === "all" || (row.enabled ? "enabled" : "disabled") === installedStatus)).filter(row => matches([row.name, pluginDisplayName(row.plugin), row.plugin.source, row.plugin.spec.origin?.location, row.plugin.spec.description, ...row.plugin.spec.skills.map(skill => skill.description)]));
   // Themis's own hooks: Installed only, by the same search and status filters, never filtered out as a plugin's origin.
-  const shownBuiltIns = publicView || installedOrigin !== "all" ? [] : (builtIns?.hooks ?? []).filter(hook => (installedStatus === "all" || (hook.enabled ? "enabled" : "disabled") === installedStatus) && matches([hook.title, hook.description, "Themis (built-in)"]));
   // While checks run every card stays, so counts and cards don't shift; the filter applies after.
   const matchesStatus = (key: string, installed: boolean) => catalogStatus === "installed" ? installed : catalogStatus === "all" || (catalogStatus === "available" ? catalogLoading || ["supported", "partial"].includes(checks[key]?.report.status) : (checks[key]?.report.status ?? (checkErrors[key] ? "failed" : "unchecked")) === catalogStatus);
   const skippedParts = (plugin: Plugin) => plugin.spec.unsupported?.length ?? 0;
@@ -399,8 +384,8 @@ export function Plugins() {
         {reason(entry.key)}
         <div className="themis-card-footer"><span className="themis-integration-capabilities">{offOf(entry) ? <span className="themis-off-parts"><Icon name="warning" />{offOf(entry)} off</span> : checks[entry.key] ? addsSummary(checks[entry.key].spec) : badge(entry.key)}</span><button className={catalogInstalled(entry) ? "themis-installed" : undefined} aria-live="polite" aria-busy={installing === entry.key} disabled={busy || mutating || !checks[entry.key] || catalogInstalled(entry) || checks[entry.key]?.report.status === "unsupported"} onClick={() => void preview(entry, true)}>{installing === entry.key ? <><span className="themis-install-spinner" aria-hidden="true" />Installing…</> : catalogInstalled(entry) ? "✓ Installed" : "Install"}</button></div>
       </li>)}</ul>
-    </> : category === "Hooks" ? (rows.length || shownBuiltIns.length || plugins.some(plugin => plugin.spec.unsupported.some(note => skipReason(note) !== null))
-      ? <HooksByEvent rows={rows} plugins={plugins} sourceOf={row => pluginDisplayName(row.plugin)} disabled={row => busy || mutating || !row.plugin.enabled && isPluginPackage(row.plugin)} onToggle={row => void toggle(row as Item).catch(() => {})} onOpen={row => open(row as Item)} builtIns={shownBuiltIns} builtInsDisabled={savingBuiltIn} onToggleBuiltIn={hook => void toggleBuiltIn(hook)} />
+    </> : category === "Hooks" ? (rows.length || plugins.some(plugin => plugin.spec.unsupported.some(note => skipReason(note) !== null))
+      ? <HooksByEvent rows={rows} plugins={plugins} sourceOf={row => pluginDisplayName(row.plugin)} disabled={row => busy || mutating || !row.plugin.enabled && isPluginPackage(row.plugin)} onToggle={row => void toggle(row as Item).catch(() => {})} onOpen={row => open(row as Item)} />
       : <EmptyState title={search.trim() || originFilter !== "all" || installedStatus !== "all" ? "No matching integrations" : "No hooks installed"} />
     ) : <>
       {!rows.length && <EmptyState title={(search.trim() || originFilter !== "all" || (publicView ? catalogStatus !== "available" : installedStatus !== "all")) ? "No matching integrations" : `No ${category.toLowerCase()} installed`} />}

@@ -1,8 +1,9 @@
-import { useEffect, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { Goal } from "../lib/types";
 import "./GoalBar.css";
 
-const EXPANDED_KEY = "themis-goal-expanded";
+/** The editor grows with its text up to this many lines, then scrolls. */
+const MAX_EDIT_LINES = 10;
 
 /** Running time in milliseconds: counted time plus the current running stretch. */
 export function goalElapsedMs(goal: Goal, now: number): number {
@@ -28,10 +29,6 @@ const STATUS_LABEL: Record<Goal["status"], string | null> = {
   reached: "Complete",
 };
 
-function readExpanded(): boolean {
-  try { return window.localStorage.getItem(EXPANDED_KEY) === "1"; } catch { return false; }
-}
-
 interface GoalBarProps {
   goal: Goal;
   onEdit: (text: string) => Promise<void>;
@@ -42,16 +39,17 @@ interface GoalBarProps {
   onFold?: () => void;
 }
 
-/** The chat's goal as one row of the composer: its sentence (click to read it in full),
- *  elapsed time, and icons for edit and pause/resume, with remove under "more". A complete
- *  goal stays until the next message, listing the evidence the agent gave for each
- *  requirement. */
+/** The chat's goal as one line of the composer: its sentence (in full on hover; a click
+ *  edits it), its state and elapsed time, and icons for edit and pause/resume, with remove
+ *  under "more". What the person also asked and the evidence stay out of it: they are in the
+ *  chat, the goal the agent reads, and the work's plan record. */
 export function GoalBar({ goal, onEdit, onPause, onResume, onRemove, onFold }: GoalBarProps) {
   const [now, setNow] = useState(() => Date.now());
-  const [expanded, setExpanded] = useState(readExpanded);
   const [draft, setDraft] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [menu, setMenu] = useState(false);
+  // A goal that can't be edited (complete, or waiting for a reply) unfolds to its full text.
+  const [unfolded, setUnfolded] = useState(false);
   const ticking = goal.status === "running" && goal.running_since !== undefined;
   useEffect(() => {
     if (!ticking) return;
@@ -59,12 +57,6 @@ export function GoalBar({ goal, onEdit, onPause, onResume, onRemove, onFold }: G
     const timer = window.setInterval(() => setNow(Date.now()), 1000);
     return () => window.clearInterval(timer);
   }, [ticking]);
-  function toggle() {
-    setExpanded(previous => {
-      try { window.localStorage.setItem(EXPANDED_KEY, previous ? "0" : "1"); } catch { /* per-viewer convenience only */ }
-      return !previous;
-    });
-  }
   async function save() {
     if (draft === null || draft.trim() === "" || saving) return;
     setSaving(true);
@@ -75,16 +67,13 @@ export function GoalBar({ goal, onEdit, onPause, onResume, onRemove, onFold }: G
   const complete = goal.status === "reached";
   const editable = goal.status !== "waiting" && !complete;
   const elapsed = formatElapsed(goalElapsedMs(goal, now));
-  const evidence = complete ? goal.evidence ?? [] : [];
-  const alsoAsked = goal.also_asked ?? [];
 
   if (draft !== null) {
     return (
       <form className="themis-goal-bar is-editing" aria-label="Edit goal" onSubmit={event => { event.preventDefault(); void save(); }}>
         <GoalMark />
         <label className="themis-sr-only" htmlFor="themis-goal-text">Goal</label>
-        <textarea id="themis-goal-text" className="themis-goal-input" rows={2} value={draft} autoFocus maxLength={2000}
-          onChange={event => setDraft(event.target.value)}
+        <GoalEditor value={draft} onChange={setDraft}
           onKeyDown={event => {
             if (event.key === "Escape") { event.preventDefault(); setDraft(null); }
             if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); void save(); }
@@ -100,22 +89,12 @@ export function GoalBar({ goal, onEdit, onPause, onResume, onRemove, onFold }: G
   }
 
   return (
-    <div role="region" aria-label="Goal" className={`themis-goal-bar${expanded || evidence.length ? " is-expanded" : ""}`} data-status={goal.status}>
+    <div role="region" aria-label="Goal" className={`themis-goal-bar${unfolded ? " is-unfolded" : ""}`} data-status={goal.status}>
       <GoalMark />
       <div className="themis-goal-body">
-        <button type="button" className="themis-goal-text" aria-expanded={expanded} title={expanded ? "Show less" : goal.text} onClick={toggle}>{goal.text}{!expanded && alsoAsked.length > 0 && <span className="themis-goal-asked-count"> · +{alsoAsked.length} asked</span>}</button>
-        {expanded && alsoAsked.length > 0 && (
-          <ul className="themis-goal-asked" aria-label="Also asked">
-            {alsoAsked.map((asked, index) => <li key={index}>Also asked: {asked}</li>)}
-          </ul>
-        )}
-        {evidence.length > 0 && (
-          <ul className="themis-goal-evidence" aria-label="Evidence">
-            {evidence.map((entry, index) => (
-              <li key={index}><span>{entry.requirement}</span> <span className="themis-goal-proof">{entry.proof}</span></li>
-            ))}
-          </ul>
-        )}
+        {editable
+          ? <button type="button" className="themis-goal-text" title={goal.text} onClick={() => setDraft(goal.text)}>{goal.text}</button>
+          : <button type="button" className={`themis-goal-text${unfolded ? " is-unfolded" : ""}`} aria-expanded={unfolded} title={unfolded ? "Show less" : goal.text} onClick={() => setUnfolded(open => !open)}>{goal.text}</button>}
       </div>
       <span className="themis-goal-meta">
         {label && <span className="themis-goal-state">{label}</span>}
@@ -158,6 +137,27 @@ export function GoalBar({ goal, onEdit, onPause, onResume, onRemove, onFold }: G
         </button>
       )}
     </div>
+  );
+}
+
+/** The goal's text while it is edited: grows with what it holds, up to [`MAX_EDIT_LINES`]. */
+function GoalEditor({ value, onChange, onKeyDown }: {
+  value: string;
+  onChange: (value: string) => void;
+  onKeyDown: (event: React.KeyboardEvent<HTMLTextAreaElement>) => void;
+}) {
+  const field = useRef<HTMLTextAreaElement>(null);
+  useLayoutEffect(() => {
+    const box = field.current;
+    if (!box) return;
+    box.style.height = "auto";
+    const line = parseFloat(window.getComputedStyle(box).lineHeight) || 20;
+    box.style.height = `${Math.min(box.scrollHeight, line * MAX_EDIT_LINES + 12)}px`;
+  }, [value]);
+  return (
+    <textarea ref={field} id="themis-goal-text" className="themis-goal-input" rows={1} value={value} autoFocus maxLength={2000}
+      onFocus={event => event.currentTarget.setSelectionRange(event.currentTarget.value.length, event.currentTarget.value.length)}
+      onChange={event => onChange(event.target.value)} onKeyDown={onKeyDown} />
   );
 }
 

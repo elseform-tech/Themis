@@ -390,6 +390,13 @@ struct GoalApp {
 
 impl GoalApp {
     async fn start(respond: impl Fn(&Value) -> ResponseTemplate + Send + Sync + 'static) -> Self {
+        Self::start_with("{}", respond).await
+    }
+
+    async fn start_with(
+        runtime: &str,
+        respond: impl Fn(&Value) -> ResponseTemplate + Send + Sync + 'static,
+    ) -> Self {
         let llm = MockServer::builder().start().await;
         Mock::given(method("POST"))
             .respond_with(move |request: &Request| respond(&body(request)))
@@ -397,6 +404,7 @@ impl GoalApp {
             .await;
         let data = tempfile::tempdir().unwrap();
         let project = tempfile::tempdir().unwrap();
+        std::fs::write(data.path().join("runtime.jsonc"), runtime).unwrap();
         let state = AppState::new_for_test(data.path().join("settings.json"));
         state
             .set_secret("go".into(), "synthetic-test-key".into())
@@ -571,11 +579,11 @@ async fn cli_a_goal_asked_for_in_words_is_created_with_create_goal_once() {
             return match tries {
                 0 => calls(
                     "create_goal",
-                    json!({"objective": "every page has a footer"}),
+                    json!({"objective": "every page has a footer", "checklist": ["Every page has a footer"]}),
                 ),
                 1 => calls(
                     "create_goal",
-                    json!({"objective": "every page has a footer, twice"}),
+                    json!({"objective": "every page has a footer, twice", "checklist": ["Footer twice"]}),
                 ),
                 _ => reply("The goal is set."),
             };

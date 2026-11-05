@@ -15,6 +15,8 @@ const PARTS: Part[] = [
   { key: "conversation", label: "Messages", color: "var(--themis-info)" },
   { key: "attachments", label: "Attachments", color: "#c58af9" },
   { key: "checkpoint", label: "Checkpoint & task ledger", color: "var(--themis-gradient-3)" },
+  // The memory block (index and relevant memories) the turn carried; only when there was one.
+  { key: "memory", label: "Memory", color: "var(--themis-gradient-1)", optional: true },
   { key: "system", label: "System & instructions", color: "#6f7480" },
 ];
 

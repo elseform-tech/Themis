@@ -1,8 +1,10 @@
-//! The background memory pass (`memory.auto`): after a turn in which the person wrote, one
-//! request on the summary model reads that turn and the memory index and proposes at most a few
-//! saves or updates. Everything here is pure: building the bounded request, reading the model's
-//! answer as untrusted input, and planning which proposals to apply against the index (scope
-//! rules, secrets, duplicates). The desktop applies the plan through [`super::MemoryStore`].
+//! The memory jobs' requests and answers: the pass after a turn in which the person wrote (one
+//! request on the memory models reads that turn and the memory indexes and proposes at most a
+//! few saves, updates or deletes) and the idle consolidation of one scope (merge duplicates,
+//! drop stale memories). Everything here is pure: building the bounded requests, reading the
+//! model's answer as untrusted input, and planning which proposals to apply against what is
+//! remembered (scope rules, secrets, duplicates). The desktop applies the plan through
+//! [`super::MemoryStore`].
 
 use serde::Serialize;
 use serde_json::Value;
@@ -19,6 +21,14 @@ pub const MAX_INDEX_BYTES: usize = super::MAX_INDEX_BYTES;
 pub const MAX_ANSWER_BYTES: usize = 16 * 1024;
 /// Most proposals one pass applies; the rest are counted and dropped.
 pub const MAX_CHANGES: usize = 3;
+/// Most proposals one consolidation applies.
+pub const MAX_CONSOLIDATE_CHANGES: usize = 10;
+/// Most bytes of one memory's text a consolidation request carries.
+pub const MAX_CONSOLIDATE_BODY_BYTES: usize = 1024;
+/// Most bytes of memories one consolidation request carries; the oldest past it are left out.
+pub const MAX_CONSOLIDATE_BYTES: usize = 48 * 1024;
+/// Most bytes of the plan record one pass reads.
+pub const MAX_PLAN_RECORD_BYTES: usize = super::plans::MAX_RECORD_BYTES as usize;
 /// Most `{` positions tried when looking for the answer's JSON object.
 const MAX_JSON_STARTS: usize = 64;
 
@@ -57,12 +67,33 @@ fn index_text(index: &str) -> String {
 
 /// The pass's system and user messages: the person's messages and the final reply (each
 /// bounded), and both indexes. Its size is bounded whatever the turn or memory count.
+/// One finished turn as a pass reads it.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct TurnText<'a> {
+    /// What the person said in it.
+    pub person: &'a [String],
+    /// The assistant reply their message answered.
+    pub answered: &'a str,
+    /// The reply that ended the turn.
+    pub reply: &'a str,
+    /// What the turn ran into: failed steps and what the agent said next.
+    pub ran_into: &'a str,
+}
+
 pub fn request(
-    person: &[String],
-    reply: &str,
+    turn: &TurnText<'_>,
     global_index: &str,
     project_index: &str,
+    relevant: &[(MemoryScope, Memory)],
+    (plans_index, plan_record, tasks): (&str, &str, &str),
+    event: Option<(&str, &str)>,
 ) -> (String, String) {
+    let TurnText {
+        person,
+        answered,
+        reply,
+        ran_into,
+    } = *turn;
     let person = person
         .iter()
         .map(|text| text.trim())
@@ -74,48 +105,150 @@ pub fn request(
         &[
             ("global", &index_text(global_index)),
             ("project", &index_text(project_index)),
+            ("relevant", &relevant_text(relevant)),
+            (
+                "plans",
+                &if plans_index.trim().is_empty() {
+                    "(none)".to_owned()
+                } else {
+                    bounded(plans_index.trim_end(), 8 * 1024)
+                },
+            ),
+            (
+                "tasks",
+                &if tasks.trim().is_empty() {
+                    "(none)".to_owned()
+                } else {
+                    bounded(tasks.trim_end(), 16 * 1024)
+                },
+            ),
+            (
+                "plan_record",
+                &if plan_record.trim().is_empty() {
+                    "(none)".to_owned()
+                } else {
+                    fenced(&bounded(plan_record.trim(), MAX_PLAN_RECORD_BYTES))
+                },
+            ),
+            (
+                "event",
+                &event.map_or_else(String::new, |(what, content)| {
+                    format!(
+                        "What just happened: {what}.\n<<<event\n{}\n>>>\n\n",
+                        fenced(&bounded(content.trim(), MAX_PERSON_BYTES))
+                    )
+                }),
+            ),
             ("person", &fenced(&bounded(&person, MAX_PERSON_BYTES))),
+            (
+                "answered",
+                &fenced(&bounded(answered.trim(), MAX_REPLY_BYTES)),
+            ),
             ("reply", &fenced(&bounded(reply.trim(), MAX_REPLY_BYTES))),
+            (
+                "ran_into",
+                &fenced(&bounded(ran_into.trim(), MAX_REPLY_BYTES)),
+            ),
         ],
     );
     (crate::prompts::MEMORY_AUTO_SYSTEM.to_owned(), user)
+}
+
+/// The memories a message may touch, in full and bounded like a run's ([`super::MAX_RELEVANT_BYTES`]).
+fn relevant_text(relevant: &[(MemoryScope, Memory)]) -> String {
+    let mut text = String::new();
+    for (scope, memory) in relevant {
+        let entry = format!(
+            "### {} ({})\n{}\n",
+            memory.name,
+            scope.as_str(),
+            memory.body.trim_end()
+        );
+        if text.len() + entry.len() > super::MAX_RELEVANT_BYTES {
+            continue;
+        }
+        text.push_str(&entry);
+    }
+    if text.is_empty() {
+        "(none)".to_owned()
+    } else {
+        text.trim_end().to_owned()
+    }
 }
 
 /// The most bytes [`request`]'s user message can have.
 pub fn max_request_bytes() -> usize {
     crate::prompts::MEMORY_AUTO_USER.len()
         + 2 * MAX_INDEX_BYTES
-        + MAX_PERSON_BYTES
-        + MAX_REPLY_BYTES
+        + super::MAX_RELEVANT_BYTES
+        + 8 * 1024
+        + 16 * 1024
+        + MAX_PLAN_RECORD_BYTES
+        + 2 * MAX_PERSON_BYTES
+        + 64
+        + 3 * MAX_REPLY_BYTES
+        + 64
 }
 
-/// One memory the model proposed, validated, with secrets refused.
+/// One change the model proposed, validated, with secrets refused.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Proposal {
-    pub mode: SaveMode,
-    pub scope: MemoryScope,
-    pub memory: Memory,
+pub enum Proposal {
+    /// Save a new memory or update one by name.
+    Save {
+        mode: SaveMode,
+        scope: MemoryScope,
+        memory: Memory,
+        /// An update that renames: the memory it replaces, removed when this one is saved.
+        renamed_from: Option<String>,
+    },
+    /// Remove a memory that no longer holds.
+    Delete { scope: MemoryScope, name: String },
 }
 
-/// What a pass did with what the model proposed. Counts only, for diagnostics.
+impl Proposal {
+    pub fn scope(&self) -> MemoryScope {
+        match self {
+            Self::Save { scope, .. } | Self::Delete { scope, .. } => *scope,
+        }
+    }
+
+    pub fn name(&self) -> &str {
+        match self {
+            Self::Save { memory, .. } => &memory.name,
+            Self::Delete { name, .. } => name,
+        }
+    }
+}
+
+/// What a job did with what the model proposed. Counts only, for diagnostics.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize)]
 pub struct PassCounts {
     /// Entries the answer held.
     pub proposed: usize,
     pub saved: usize,
     pub updated: usize,
-    /// Already remembered (same name and description, or the same description elsewhere).
+    pub deleted: usize,
+    /// Already remembered (same name and text, or the same description elsewhere).
     pub duplicate: usize,
+    /// A delete of a memory that isn't there.
+    pub missing: usize,
     /// Held something that looks like a secret.
     pub sensitive: usize,
-    /// A project fact or pointer proposed for every project.
+    /// A project fact or pointer proposed for every project, or (consolidating) another scope.
     pub scope: usize,
     /// Malformed: unknown action or type, bad name, missing text.
     pub invalid: usize,
-    /// Past [`MAX_CHANGES`].
+    /// Past the job's limit.
     pub over_limit: usize,
     /// The store refused it (full, unreadable).
     pub failed: usize,
+}
+
+impl PassCounts {
+    /// Whether the job changed memory.
+    pub fn changed(&self) -> bool {
+        self.saved + self.updated + self.deleted > 0
+    }
 }
 
 /// Why an answer could not be read at all.
@@ -147,6 +280,23 @@ pub fn json_object_with(text: &str, key: &str) -> Option<serde_json::Map<String,
     None
 }
 
+/// The pass answer: the first object holding any of its parts (`memories`, `tasks`,
+/// `decisions`, `plan`). A model with nothing to remember may leave `memories` out.
+fn pass_object(text: &str) -> Option<serde_json::Map<String, Value>> {
+    for (start, _) in text.match_indices('{').take(MAX_JSON_STARTS) {
+        let mut values = serde_json::Deserializer::from_str(&text[start..]).into_iter::<Value>();
+        if let Some(Ok(Value::Object(object))) = values.next() {
+            if ["memories", "tasks", "decisions", "plan"]
+                .iter()
+                .any(|key| object.contains_key(*key))
+            {
+                return Some(object);
+            }
+        }
+    }
+    None
+}
+
 /// Plain text of an answer field: control characters removed, trimmed.
 fn field(entry: &Value, key: &str) -> Option<String> {
     let text: String = entry[key]
@@ -163,22 +313,106 @@ fn holds_secret(text: &str) -> bool {
     strip_secrets(text) != text
 }
 
+/// The answer's plan op (`"plan": {op, name, …}` beside `"memories"`), if it has one.
+/// Untrusted, like the rest of the answer.
+pub fn parse_plan_answer(
+    text: &str,
+) -> Option<Result<super::plans::PlanOp, super::plans::OpRefused>> {
+    if text.len() > MAX_ANSWER_BYTES {
+        return None;
+    }
+    let object = pass_object(text)?;
+    super::plans::parse_op(object.get("plan").unwrap_or(&Value::Null))
+}
+
+/// The answer's `"tasks"` ops, and how many were refused. Untrusted.
+pub fn parse_tasks_answer(text: &str) -> (Vec<super::tasks::TaskOp>, usize) {
+    if text.len() > MAX_ANSWER_BYTES {
+        return (Vec::new(), 0);
+    }
+    pass_object(text)
+        .map(|object| super::tasks::parse_ops(object.get("tasks").unwrap_or(&Value::Null)))
+        .unwrap_or_default()
+}
+
+/// Most decisions one pass records.
+pub const MAX_DECISIONS_PER_PASS: usize = 3;
+
+/// A decision the pass proposes for a plan record.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Decision {
+    pub work: String,
+    /// `person` or `agent`.
+    pub who: &'static str,
+    pub what: String,
+    pub why: String,
+}
+
+/// The answer's `"decisions"`: each names an existing-looking record and who chose; secrets
+/// and malformed entries are dropped. Untrusted.
+pub fn parse_decisions_answer(text: &str) -> Vec<Decision> {
+    if text.len() > MAX_ANSWER_BYTES {
+        return Vec::new();
+    }
+    let Some(object) = pass_object(text) else {
+        return Vec::new();
+    };
+    let Some(entries) = object.get("decisions").and_then(Value::as_array) else {
+        return Vec::new();
+    };
+    entries
+        .iter()
+        .take(MAX_DECISIONS_PER_PASS)
+        .filter_map(|entry| {
+            let text = |key: &str| entry[key].as_str().map(str::trim).unwrap_or_default();
+            let who = match text("who") {
+                "person" => "person",
+                "agent" => "agent",
+                _ => return None,
+            };
+            let (work, what, why) = (text("work"), text("what"), text("why"));
+            if !super::valid_name(work)
+                || what.is_empty()
+                || holds_secret(what)
+                || holds_secret(why)
+            {
+                return None;
+            }
+            Some(Decision {
+                work: work.to_owned(),
+                who,
+                what: what.to_owned(),
+                why: why.to_owned(),
+            })
+        })
+        .collect()
+}
+
 /// Reads the model's answer: `{"memories":[{action, scope?, name, type, description, body,
-/// why?, how_to_apply?}]}`, at most [`MAX_CHANGES`] entries. Malformed entries, secrets and
-/// project facts proposed for every project are counted and dropped, never guessed at.
-pub fn parse_answer(text: &str, today: &str) -> Result<(Vec<Proposal>, PassCounts), AnswerError> {
+/// why?, how_to_apply?, source?}]}` (a delete needs only `name` and `scope`), at most `limit`
+/// entries. Malformed entries, secrets and project facts proposed for every project are counted
+/// and dropped, never guessed at.
+pub fn parse_answer(
+    text: &str,
+    today: &str,
+    limit: usize,
+) -> Result<(Vec<Proposal>, PassCounts), AnswerError> {
     if text.len() > MAX_ANSWER_BYTES {
         return Err(AnswerError::TooLong);
     }
-    let object = json_object_with(text, "memories").ok_or(AnswerError::NoJson)?;
-    let entries = object["memories"].as_array().ok_or(AnswerError::NoJson)?;
+    let object = pass_object(text).ok_or(AnswerError::NoJson)?;
+    let none = Vec::new();
+    let entries = match object.get("memories") {
+        None => &none,
+        Some(memories) => memories.as_array().ok_or(AnswerError::NoJson)?,
+    };
     let mut counts = PassCounts {
         proposed: entries.len(),
-        over_limit: entries.len().saturating_sub(MAX_CHANGES),
+        over_limit: entries.len().saturating_sub(limit),
         ..PassCounts::default()
     };
     let mut proposals = Vec::new();
-    for entry in entries.iter().take(MAX_CHANGES) {
+    for entry in entries.iter().take(limit) {
         match proposal(entry, today) {
             Ok(proposal) => proposals.push(proposal),
             Err(Refused::Secret) => counts.sensitive += 1,
@@ -199,6 +433,7 @@ fn proposal(entry: &Value, today: &str) -> Result<Proposal, Refused> {
     let mode = match entry["action"].as_str() {
         Some("save") => SaveMode::Create,
         Some("update") => SaveMode::Update,
+        Some("delete") => SaveMode::Update,
         _ => return Err(Refused::Invalid),
     };
     let scope = match entry["scope"].as_str() {
@@ -211,6 +446,19 @@ fn proposal(entry: &Value, today: &str) -> Result<Proposal, Refused> {
         .filter(|name| valid_name(name))
         .ok_or(Refused::Invalid)?
         .to_owned();
+    if entry["action"] == "delete" {
+        return Ok(Proposal::Delete { scope, name });
+    }
+    // An update may give the memory a name that fits what it now says.
+    let (name, renamed_from) = match entry["new_name"].as_str().map(str::trim) {
+        Some(new) if mode == SaveMode::Update && !new.is_empty() && new != name => {
+            if !valid_name(new) {
+                return Err(Refused::Invalid);
+            }
+            (new.to_owned(), Some(name))
+        }
+        _ => (name, None),
+    };
     let kind = entry["type"]
         .as_str()
         .and_then(MemoryKind::parse)
@@ -222,10 +470,19 @@ fn proposal(entry: &Value, today: &str) -> Result<Proposal, Refused> {
     let fact = field(entry, "body").ok_or(Refused::Invalid)?;
     let why = field(entry, "why");
     let how = field(entry, "how_to_apply");
-    if [Some(&description), Some(&fact), why.as_ref(), how.as_ref()]
-        .into_iter()
-        .flatten()
-        .any(|text| holds_secret(text))
+    let source = field(entry, "source")
+        .map(|text| crate::goal::one_line(&text, super::MAX_SOURCE_CHARS))
+        .filter(|text| !text.is_empty());
+    if [
+        Some(&description),
+        Some(&fact),
+        why.as_ref(),
+        how.as_ref(),
+        source.as_ref(),
+    ]
+    .into_iter()
+    .flatten()
+    .any(|text| holds_secret(text))
     {
         return Err(Refused::Secret);
     }
@@ -238,14 +495,15 @@ fn proposal(entry: &Value, today: &str) -> Result<Proposal, Refused> {
         description,
         kind,
         saved: today.to_owned(),
-        source: None,
+        source,
         body,
     };
     memory.validate().map_err(|_| Refused::Invalid)?;
-    Ok(Proposal {
+    Ok(Proposal::Save {
         mode,
         scope,
         memory,
+        renamed_from,
     })
 }
 
@@ -257,56 +515,183 @@ pub fn index_entry(line: &str) -> Option<(&str, &str)> {
     Some((name, description.trim_end()))
 }
 
+/// A memory already remembered, as a job sees it: from an index line (no text) or a listing.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Known {
+    pub scope: MemoryScope,
+    pub name: String,
+    pub description: String,
+    /// The memory's text when the job read it (consolidation).
+    pub body: Option<String>,
+}
+
+/// What `index` (one scope's index file) says is remembered.
+pub fn known_from_index(scope: MemoryScope, index: &str) -> Vec<Known> {
+    index
+        .lines()
+        .filter_map(index_entry)
+        .map(|(name, description)| Known {
+            scope,
+            name: name.to_owned(),
+            description: description.to_owned(),
+            body: None,
+        })
+        .collect()
+}
+
+/// What `memories` (one scope's listing) hold.
+pub fn known_from_listing(scope: MemoryScope, memories: &[Memory]) -> Vec<Known> {
+    memories
+        .iter()
+        .map(|memory| Known {
+            scope,
+            name: memory.name.clone(),
+            description: memory.description.clone(),
+            body: Some(memory.body.clone()),
+        })
+        .collect()
+}
+
 fn same_text(a: &str, b: &str) -> bool {
     a.trim().eq_ignore_ascii_case(b.trim())
 }
 
-/// What to apply, against the indexes as they stand: a save of a name the scope already has
-/// becomes an update, an update of a name it lacks becomes a save, and anything already
-/// remembered (same name and description, or the same description in either scope) or proposed
-/// twice is a duplicate.
-pub fn plan(
-    proposals: Vec<Proposal>,
-    global_index: &str,
-    project_index: &str,
-    counts: &mut PassCounts,
-) -> Vec<Proposal> {
-    let entries = |index: &str| -> Vec<(String, String)> {
-        index
-            .lines()
-            .filter_map(index_entry)
-            .map(|(name, description)| (name.to_owned(), description.to_owned()))
-            .collect()
+/// What to apply, against what is remembered: a delete of a memory that isn't there is
+/// dropped; a save of a name the scope already has becomes an update and an update of a name
+/// it lacks a save; anything already remembered (same name, description and known text, or the
+/// same description under a name not being deleted) or proposed twice is a duplicate.
+pub fn plan(proposals: Vec<Proposal>, known: &[Known], counts: &mut PassCounts) -> Vec<Proposal> {
+    let exists = |scope: MemoryScope, name: &str| {
+        known
+            .iter()
+            .find(|entry| entry.scope == scope && entry.name == name)
     };
-    let global = entries(global_index);
-    let project = entries(project_index);
     let mut planned: Vec<Proposal> = Vec::new();
-    for mut proposal in proposals {
-        let index = match proposal.scope {
-            MemoryScope::Global => &global,
-            MemoryScope::Project => &project,
-        };
-        let existing = index.iter().find(|(name, _)| *name == proposal.memory.name);
-        let described_elsewhere = global.iter().chain(project.iter()).any(|(name, text)| {
-            *name != proposal.memory.name && same_text(text, &proposal.memory.description)
-        });
-        let unchanged = existing
-            .is_some_and(|(_, description)| same_text(description, &proposal.memory.description));
+    // Deletes first: what they remove no longer counts as remembered elsewhere.
+    let (deletes, saves): (Vec<_>, Vec<_>) = proposals
+        .into_iter()
+        .partition(|proposal| matches!(proposal, Proposal::Delete { .. }));
+    // A rename needs the memory it replaces; that one is removed only after the renamed
+    // memory is saved (by whoever applies the plan), so a dropped save never loses it.
+    let saves: Vec<Proposal> = saves
+        .into_iter()
+        .filter(|proposal| match proposal {
+            Proposal::Save {
+                scope,
+                renamed_from: Some(old),
+                ..
+            } if exists(*scope, old).is_none() => {
+                counts.missing += 1;
+                false
+            }
+            _ => true,
+        })
+        .collect();
+    for proposal in deletes {
         let twice = planned.iter().any(|earlier| {
-            earlier.scope == proposal.scope && earlier.memory.name == proposal.memory.name
+            earlier.scope() == proposal.scope() && earlier.name() == proposal.name()
         });
+        if twice {
+            counts.duplicate += 1;
+        } else if exists(proposal.scope(), proposal.name()).is_none() {
+            counts.missing += 1;
+        } else {
+            planned.push(proposal);
+        }
+    }
+    let deleted = |entry: &Known| {
+        planned
+            .iter()
+            .any(|done| done.scope() == entry.scope && done.name() == entry.name)
+    };
+    let mut kept: Vec<Proposal> = Vec::new();
+    for proposal in saves {
+        let Proposal::Save {
+            scope,
+            mut memory,
+            renamed_from,
+            ..
+        } = proposal
+        else {
+            continue;
+        };
+        let existing = exists(scope, &memory.name);
+        let described_elsewhere = known.iter().any(|entry| {
+            !(entry.scope == scope && entry.name == memory.name)
+                && !(entry.scope == scope && renamed_from.as_deref() == Some(entry.name.as_str()))
+                && !deleted(entry)
+                && same_text(&entry.description, &memory.description)
+        });
+        let unchanged = existing.is_some_and(|entry| {
+            same_text(&entry.description, &memory.description)
+                && entry
+                    .body
+                    .as_ref()
+                    .is_none_or(|body| body.trim() == memory.body.trim())
+        });
+        let twice = kept
+            .iter()
+            .chain(planned.iter())
+            .any(|earlier| earlier.scope() == scope && earlier.name() == memory.name);
         if unchanged || described_elsewhere || twice {
             counts.duplicate += 1;
             continue;
         }
-        proposal.mode = if existing.is_some() {
-            SaveMode::Update
-        } else {
-            SaveMode::Create
-        };
-        planned.push(proposal);
+        memory.source = memory.source.filter(|source| !source.is_empty());
+        kept.push(Proposal::Save {
+            mode: if existing.is_some() {
+                SaveMode::Update
+            } else {
+                SaveMode::Create
+            },
+            scope,
+            memory,
+            renamed_from,
+        });
     }
+    planned.extend(kept);
     planned
+}
+
+/// The consolidation's system and user messages for one scope: every memory with its type,
+/// date, source and text (each text at most [`MAX_CONSOLIDATE_BODY_BYTES`], the whole at most
+/// [`MAX_CONSOLIDATE_BYTES`], newest first). Bounded whatever the memory count.
+pub fn consolidation_request(scope: MemoryScope, memories: &[Memory]) -> (String, String) {
+    let mut listed = String::new();
+    for memory in memories {
+        let entry = format!(
+            "{}\n{}\n\n",
+            memory.index_line(),
+            bounded(memory.body.trim(), MAX_CONSOLIDATE_BODY_BYTES)
+        );
+        if listed.len() + entry.len() > MAX_CONSOLIDATE_BYTES {
+            break;
+        }
+        listed.push_str(&entry);
+    }
+    let scope = scope.as_str();
+    let system = crate::prompts::fill(
+        crate::prompts::MEMORY_CONSOLIDATE_SYSTEM,
+        &[("scope", scope)],
+    );
+    let user = crate::prompts::fill(
+        crate::prompts::MEMORY_CONSOLIDATE_USER,
+        &[("scope", scope), ("memories", &fenced(listed.trim_end()))],
+    );
+    (system, user)
+}
+
+/// A consolidation's proposals for its own scope only; another scope's are counted.
+pub fn only_scope(
+    proposals: Vec<Proposal>,
+    scope: MemoryScope,
+    counts: &mut PassCounts,
+) -> Vec<Proposal> {
+    let (kept, other): (Vec<_>, Vec<_>) = proposals
+        .into_iter()
+        .partition(|proposal| proposal.scope() == scope);
+    counts.scope += other.len();
+    kept
 }
 
 #[cfg(test)]
@@ -320,6 +705,71 @@ mod tests {
         serde_json::json!({ "memories": entries }).to_string()
     }
 
+    fn parse(text: &str) -> Result<(Vec<Proposal>, PassCounts), AnswerError> {
+        parse_answer(text, TODAY, MAX_CHANGES)
+    }
+
+    /// The saved memory of a save or update proposal.
+    fn saved(proposal: &Proposal) -> (SaveMode, MemoryScope, &Memory) {
+        match proposal {
+            Proposal::Save {
+                mode,
+                scope,
+                memory,
+                ..
+            } => (*mode, *scope, memory),
+            Proposal::Delete { .. } => panic!("a delete: {proposal:?}"),
+        }
+    }
+
+    fn known(global: &str, project: &str) -> Vec<Known> {
+        let mut known = known_from_index(MemoryScope::Global, global);
+        known.extend(known_from_index(MemoryScope::Project, project));
+        known
+    }
+
+    /// An update that changes what a memory is about gives it a fitting name: the old file goes,
+    /// the corrected memory is saved under `new_name`.
+    #[test]
+    fn an_update_with_a_new_name_replaces_the_old_file() {
+        let known = known(
+            "",
+            "- server-token-bucket (project, 2026-11-03): Rate limits with a token bucket\n",
+        );
+        let entry = serde_json::json!({"action":"update","scope":"project","name":"server-token-bucket",
+            "new_name":"nginx-rate-limiting","type":"project",
+            "description":"Rate limits in nginx limit_req, not an in-memory token bucket",
+            "body":"Decision: nginx limit_req in front of the API; rejected the token bucket."});
+        let (proposals, _) = parse(&answer(serde_json::json!([entry]))).unwrap();
+        let mut counts = PassCounts::default();
+        let planned = plan(proposals, &known, &mut counts);
+        assert_eq!(planned.len(), 1, "{planned:?}");
+        // The old one is only named for removal after the save, never removed ahead of it.
+        let Proposal::Save { renamed_from, .. } = &planned[0] else {
+            unreachable!()
+        };
+        assert_eq!(renamed_from.as_deref(), Some("server-token-bucket"));
+        assert_eq!(counts.duplicate, 0);
+        let (mode, scope, memory) = saved(&planned[0]);
+        assert_eq!(
+            (mode, scope, memory.name.as_str()),
+            (
+                SaveMode::Create,
+                MemoryScope::Project,
+                "nginx-rate-limiting"
+            )
+        );
+        // A new name for a memory that isn't remembered is just a missing update.
+        let (proposals, _) = parse(&answer(
+            serde_json::json!([{"action":"update","scope":"project","name":"never-saved",
+            "new_name":"other","type":"project","description":"x","body":"y"}]),
+        ))
+        .unwrap();
+        let mut counts = PassCounts::default();
+        assert!(plan(proposals, &known, &mut counts).is_empty());
+        assert_eq!(counts.missing, 1);
+    }
+
     fn preference() -> Value {
         serde_json::json!({"action":"save","scope":"global","name":"uses-pnpm","type":"user",
             "description":"Uses pnpm, not npm","body":"The person uses pnpm for JavaScript projects."})
@@ -327,53 +777,57 @@ mod tests {
 
     #[test]
     fn a_preference_is_read_with_its_scope_and_body() {
-        let (proposals, counts) = parse_answer(
-            &format!(
-                "Sure:\n```json\n{}\n```",
-                answer(serde_json::json!([preference()]))
-            ),
-            TODAY,
-        )
+        let (proposals, counts) = parse(&format!(
+            "Sure:\n```json\n{}\n```",
+            answer(serde_json::json!([preference()]))
+        ))
         .unwrap();
         assert_eq!(counts.proposed, 1);
         assert_eq!(proposals.len(), 1);
-        let proposal = &proposals[0];
-        assert_eq!(proposal.scope, MemoryScope::Global);
-        assert_eq!(proposal.mode, SaveMode::Create);
-        assert_eq!(proposal.memory.kind, MemoryKind::User);
-        assert_eq!(proposal.memory.saved, TODAY);
-        assert_eq!(
-            proposal.memory.body,
-            "The person uses pnpm for JavaScript projects."
-        );
+        let (mode, scope, memory) = saved(&proposals[0]);
+        assert_eq!(scope, MemoryScope::Global);
+        assert_eq!(mode, SaveMode::Create);
+        assert_eq!(memory.kind, MemoryKind::User);
+        assert_eq!(memory.saved, TODAY);
+        assert_eq!(memory.body, "The person uses pnpm for JavaScript projects.");
         let mut with_why = preference();
         with_why["type"] = "feedback".into();
         with_why["why"] = "npm broke the lockfile".into();
         with_why["how_to_apply"] = "run pnpm install".into();
-        let (proposals, _) = parse_answer(&answer(serde_json::json!([with_why])), TODAY).unwrap();
-        assert!(proposals[0]
-            .memory
+        let (proposals, _) = parse(&answer(serde_json::json!([with_why]))).unwrap();
+        assert!(saved(&proposals[0])
+            .2
             .body
             .ends_with("\n\nWhy: npm broke the lockfile\nHow to apply: run pnpm install"));
     }
 
     #[test]
     fn nothing_worth_remembering_is_an_empty_answer() {
-        let (proposals, counts) = parse_answer(r#"{"memories":[]}"#, TODAY).unwrap();
+        let (proposals, counts) = parse(r#"{"memories":[]}"#).unwrap();
         assert!(proposals.is_empty());
         assert_eq!(counts, PassCounts::default());
+        assert_eq!(parse("I found nothing.").unwrap_err(), AnswerError::NoJson);
         assert_eq!(
-            parse_answer("I found nothing.", TODAY).unwrap_err(),
+            parse(r#"{"memories":"none"}"#).unwrap_err(),
             AnswerError::NoJson
         );
         assert_eq!(
-            parse_answer(r#"{"memories":"none"}"#, TODAY).unwrap_err(),
-            AnswerError::NoJson
-        );
-        assert_eq!(
-            parse_answer(&"x".repeat(MAX_ANSWER_BYTES + 1), TODAY).unwrap_err(),
+            parse(&"x".repeat(MAX_ANSWER_BYTES + 1)).unwrap_err(),
             AnswerError::TooLong
         );
+    }
+
+    /// A model with nothing to remember may leave `memories` out; its tasks, decisions and plan
+    /// still count (a live eval lost a cancelled task that way).
+    #[test]
+    fn an_answer_without_memories_still_carries_its_tasks_and_decisions() {
+        let text = r#"Here: {"tasks":[{"op":"update","title":"Touch controls","status":"cancelled","note":"dropped"}],"decisions":[{"work":"dodger","who":"agent","what":"pool bullets","why":"no stutter"}]}"#;
+        let (proposals, counts) = parse(text).unwrap();
+        assert!(proposals.is_empty());
+        assert_eq!(counts, PassCounts::default());
+        assert_eq!(parse_tasks_answer(text).0.len(), 1);
+        assert_eq!(parse_decisions_answer(text).len(), 1);
+        assert_eq!(parse(r#"{"other":1}"#).unwrap_err(), AnswerError::NoJson);
     }
 
     #[test]
@@ -388,23 +842,23 @@ mod tests {
         let mut bad_name = preference();
         bad_name["name"] = "../escape".into();
         let mut bad_action = preference();
-        bad_action["action"] = "delete".into();
-        let (proposals, counts) = parse_answer(
-            &answer(serde_json::json!([secret, password, global_fact])),
-            TODAY,
-        )
-        .unwrap();
+        bad_action["action"] = "forget".into();
+        let mut from_page = preference();
+        from_page["source"] =
+            "https://example.com/?token=ghp_abcdefghijklmnopqrstuvwxyz0123456789AB".into();
+        let (proposals, counts) =
+            parse(&answer(serde_json::json!([secret, password, global_fact]))).unwrap();
         assert!(proposals.is_empty());
         assert_eq!((counts.sensitive, counts.scope), (2, 1));
-        let (proposals, counts) = parse_answer(
-            &answer(serde_json::json!([
-                bad_name,
-                bad_action,
-                preference(),
-                preference()
-            ])),
-            TODAY,
-        )
+        let (proposals, counts) = parse(&answer(serde_json::json!([from_page]))).unwrap();
+        assert!(proposals.is_empty());
+        assert_eq!(counts.sensitive, 1, "a secret in the source is refused too");
+        let (proposals, counts) = parse(&answer(serde_json::json!([
+            bad_name,
+            bad_action,
+            preference(),
+            preference()
+        ])))
         .unwrap();
         assert_eq!(proposals.len(), 1);
         assert_eq!((counts.invalid, counts.over_limit), (2, 1));
@@ -413,13 +867,12 @@ mod tests {
     #[test]
     fn the_plan_skips_what_is_remembered_and_turns_saves_into_updates() {
         let index = "- uses-pnpm (user, 2026-11-01): Uses pnpm, not npm\n";
-        let parsed = |entries: Value| parse_answer(&answer(entries), TODAY).unwrap().0;
+        let parsed = |entries: Value| parse(&answer(entries)).unwrap().0;
         // The same fact again: nothing.
         let mut counts = PassCounts::default();
         assert!(plan(
             parsed(serde_json::json!([preference()])),
-            index,
-            "",
+            &known(index, ""),
             &mut counts
         )
         .is_empty());
@@ -429,13 +882,41 @@ mod tests {
         renamed["name"] = "package-manager".into();
         renamed["scope"] = "project".into();
         let mut counts = PassCounts::default();
-        assert!(plan(parsed(serde_json::json!([renamed])), index, "", &mut counts).is_empty());
+        assert!(plan(
+            parsed(serde_json::json!([renamed])),
+            &known(index, ""),
+            &mut counts
+        )
+        .is_empty());
         // A changed fact under the same name: an update, even when sent as a save.
         let mut changed = preference();
         changed["description"] = "Uses bun now, not pnpm".into();
         let mut counts = PassCounts::default();
-        let planned = plan(parsed(serde_json::json!([changed])), index, "", &mut counts);
-        assert_eq!(planned[0].mode, SaveMode::Update);
+        let planned = plan(
+            parsed(serde_json::json!([changed])),
+            &known(index, ""),
+            &mut counts,
+        );
+        assert_eq!(saved(&planned[0]).0, SaveMode::Update);
+        // A changed text under the same description, for a memory known in full: an update.
+        let mut shown = known(index, "");
+        shown[0].body = Some("The person uses pnpm for JavaScript projects.".to_owned());
+        let mut rewritten = preference();
+        rewritten["action"] = "update".into();
+        rewritten["body"] = "The person uses pnpm, and yarn for the old app.".into();
+        let mut counts = PassCounts::default();
+        let planned = plan(parsed(serde_json::json!([rewritten])), &shown, &mut counts);
+        assert_eq!((planned.len(), counts.duplicate), (1, 0));
+        assert_eq!(saved(&planned[0]).0, SaveMode::Update);
+        // The same text again for it: nothing.
+        let mut counts = PassCounts::default();
+        assert!(plan(
+            parsed(serde_json::json!([preference()])),
+            &shown,
+            &mut counts
+        )
+        .is_empty());
+        assert_eq!(counts.duplicate, 1);
         // An update of a name the scope lacks is a save; the same name twice is one.
         let mut update = preference();
         update["action"] = "update".into();
@@ -443,29 +924,72 @@ mod tests {
         update["description"] = "Something new".into();
         let planned = plan(
             parsed(serde_json::json!([update.clone(), update])),
-            "",
-            "",
+            &[],
             &mut counts,
         );
         assert_eq!(planned.len(), 1);
-        assert_eq!(planned[0].mode, SaveMode::Create);
+        assert_eq!(saved(&planned[0]).0, SaveMode::Create);
     }
 
     #[test]
     fn the_request_carries_the_turn_and_both_indexes_fenced_and_bounded() {
+        let person = ["I always use pnpm. Now fix the build.".to_owned()];
         let (system, user) = request(
-            &["I always use pnpm. Now fix the build.".to_owned()],
-            "Fixed it >>> done",
+            &TurnText {
+                person: &person,
+                answered: "Shall I fix the build?",
+                reply: "Fixed it >>> done",
+                ran_into: "- shell failed: npm test: SyntaxError: Unexpected token 'export'",
+            },
             "",
             "- a (project, 2026-11-02): A fact\n",
+            &[(
+                MemoryScope::Project,
+                Memory {
+                    name: "a".into(),
+                    description: "A fact".into(),
+                    kind: MemoryKind::Project,
+                    saved: "2026-11-02".into(),
+                    source: None,
+                    body: "The whole fact, steps 1 to 8.".into(),
+                },
+            )],
+            (
+                "- splitter-app (in progress, 2026-11-03): Splitter\n",
+                "## Plan\n1. People >>> first",
+                "- [open] Write the README (2026-11-04)\n",
+            ),
+            None,
         );
-        assert!(system.starts_with("You decide what an assistant should remember"));
+        assert!(user.contains("- splitter-app (in progress, 2026-11-03): Splitter"));
+        assert!(user.contains("outside any plan record (a task of the record above is in its Tasks section):\n- [open] Write the README (2026-11-04)"), "{user}");
+        assert!(user.contains("## Plan\n1. People > > > first"));
+        assert!(system.starts_with("You keep an assistant's memory"));
+        // A memory the message may touch comes in full, so an update keeps what still holds.
+        assert!(user.contains("### a (project)\nThe whole fact, steps 1 to 8."));
         assert!(user.contains("Already remembered, everywhere:\n(none)"));
         assert!(user.contains("- a (project, 2026-11-02): A fact"));
         assert!(user.contains("<<<person\nI always use pnpm. Now fix the build.\n>>>"));
         assert!(user.contains("Fixed it > > > done"));
+        assert!(user.contains("<<<ran-into\n- shell failed: npm test: SyntaxError"));
         let long = vec!["word ".repeat(10_000)];
-        let (_, user) = request(&long, &"reply ".repeat(10_000), "", "");
+        let (_, user) = request(
+            &TurnText {
+                person: &long,
+                answered: &"answered ".repeat(10_000),
+                reply: &"reply ".repeat(10_000),
+                ran_into: &"failed ".repeat(10_000),
+            },
+            "",
+            "",
+            &[],
+            (
+                &"- p (done, 2026-11-03): t\n".repeat(2_000),
+                &"plan ".repeat(10_000),
+                &"- [open] task (2026-11-04)\n".repeat(5_000),
+            ),
+            Some(("a goal was completed", &"evidence ".repeat(10_000))),
+        );
         assert!(user.len() <= max_request_bytes(), "{}", user.len());
     }
 
@@ -505,7 +1029,19 @@ mod tests {
             let global = store.index();
             let project = store.index();
             let read = WORK.with(|work| work.replace((0, 0)));
-            let (_, user) = request(&person, &"reply ".repeat(messages * 200), &global, &project);
+            let (_, user) = request(
+                &TurnText {
+                    person: &person,
+                    answered: "",
+                    reply: &"reply ".repeat(messages * 200),
+                    ran_into: "",
+                },
+                &global,
+                &project,
+                &[],
+                ("", "", ""),
+                None,
+            );
             (user.len(), read)
         }
         let (few, few_read) = input(10, 1);
@@ -524,15 +1060,132 @@ mod tests {
         assert_eq!(long, longer);
     }
 
+    #[test]
+    fn a_contradicted_memory_is_updated_or_deleted_never_duplicated() {
+        let index = "- uses-pnpm (user, 2026-11-01): Uses pnpm, not npm\n- old-deadline (project, 2026-10-01): Ships on Oct 30\n";
+        let known = {
+            let mut known = known_from_index(
+                MemoryScope::Global,
+                "- uses-pnpm (user, 2026-11-01): Uses pnpm, not npm\n",
+            );
+            known.extend(known_from_index(
+                MemoryScope::Project,
+                "- old-deadline (project, 2026-10-01): Ships on Oct 30\n",
+            ));
+            known
+        };
+        assert_eq!(known.len(), 2, "{index}");
+        let mut bun = preference();
+        bun["action"] = "update".into();
+        bun["description"] = "Uses bun now, not pnpm".into();
+        let delete = serde_json::json!({"action":"delete","scope":"project","name":"old-deadline"});
+        let missing = serde_json::json!({"action":"delete","scope":"global","name":"never-saved"});
+        let (proposals, _) = parse(&answer(serde_json::json!([bun, delete, missing]))).unwrap();
+        let mut counts = PassCounts::default();
+        let planned = plan(proposals, &known, &mut counts);
+        assert_eq!(planned.len(), 2, "{planned:?}");
+        assert_eq!(
+            planned[0],
+            Proposal::Delete {
+                scope: MemoryScope::Project,
+                name: "old-deadline".into()
+            }
+        );
+        assert_eq!(saved(&planned[1]).0, SaveMode::Update);
+        assert_eq!(counts.missing, 1);
+        // A delete needs only its name; a bad name is refused.
+        let (proposals, counts) = parse(&answer(serde_json::json!([
+            {"action":"delete","name":"../x"}
+        ])))
+        .unwrap();
+        assert!(proposals.is_empty());
+        assert_eq!(counts.invalid, 1);
+    }
+
+    #[test]
+    fn what_a_page_said_keeps_its_source() {
+        let mut page = preference();
+        page["scope"] = "project".into();
+        page["type"] = "reference".into();
+        page["name"] = "burndown-layout".into();
+        page["body"] = "The page said: X axis days, Y axis open tasks.".into();
+        page["source"] = "web page https://example.com/burndown".into();
+        let (proposals, _) = parse(&answer(serde_json::json!([page]))).unwrap();
+        let (_, scope, memory) = saved(&proposals[0]);
+        assert_eq!(scope, MemoryScope::Project);
+        assert_eq!(
+            memory.source.as_deref(),
+            Some("web page https://example.com/burndown")
+        );
+    }
+
+    #[test]
+    fn consolidation_merges_into_one_and_stays_in_its_scope() {
+        let memory = |name: &str, description: &str, body: &str| Memory {
+            name: name.to_owned(),
+            description: description.to_owned(),
+            kind: MemoryKind::User,
+            saved: TODAY.to_owned(),
+            source: None,
+            body: body.to_owned(),
+        };
+        let listing = [
+            memory("uses-pnpm", "Uses pnpm", "The person uses pnpm."),
+            memory("pnpm-please", "Uses pnpm", "pnpm, not npm."),
+        ];
+        let (system, user) = consolidation_request(MemoryScope::Global, &listing);
+        assert!(system.contains(r#""scope":"global""#), "{system}");
+        assert!(
+            user.contains("- uses-pnpm (user, 2026-11-02): Uses pnpm\nThe person uses pnpm."),
+            "{user}"
+        );
+        let text = answer(serde_json::json!([
+            {"action":"update","scope":"global","name":"uses-pnpm","type":"user","description":"Uses pnpm","body":"The person uses pnpm, not npm."},
+            {"action":"delete","scope":"global","name":"pnpm-please"},
+            {"action":"delete","scope":"project","name":"elsewhere"}
+        ]));
+        let (proposals, mut counts) = parse_answer(&text, TODAY, MAX_CONSOLIDATE_CHANGES).unwrap();
+        let proposals = only_scope(proposals, MemoryScope::Global, &mut counts);
+        let planned = plan(
+            proposals,
+            &known_from_listing(MemoryScope::Global, &listing),
+            &mut counts,
+        );
+        // The merged text under the same description is kept (its body changed), the other
+        // removed, and nothing reaches another scope.
+        assert_eq!(planned.len(), 2, "{planned:?}");
+        assert_eq!(counts.scope, 1);
+        assert_eq!(saved(&planned[1]).0, SaveMode::Update);
+        // Bounded whatever the count.
+        let many: Vec<Memory> = (0..200)
+            .map(|n| {
+                memory(
+                    &format!("m-{n}"),
+                    "d",
+                    &"x".repeat(super::super::MAX_BODY_BYTES),
+                )
+            })
+            .collect();
+        let (_, user) = consolidation_request(MemoryScope::Global, &many);
+        assert!(
+            user.len() <= crate::prompts::MEMORY_CONSOLIDATE_USER.len() + MAX_CONSOLIDATE_BYTES,
+            "{}",
+            user.len()
+        );
+    }
+
     proptest! {
         #[test]
         fn parsing_never_panics_and_keeps_only_valid_bounded_memories(text in "[ -~\n]{0,600}") {
-            if let Ok((proposals, counts)) = parse_answer(&text, TODAY) {
+            if let Ok((proposals, counts)) = parse(&text) {
                 prop_assert!(proposals.len() <= MAX_CHANGES);
                 prop_assert!(proposals.len() + counts.sensitive + counts.scope + counts.invalid <= counts.proposed.min(MAX_CHANGES));
                 for proposal in &proposals {
-                    prop_assert!(proposal.memory.validate().is_ok());
-                    prop_assert!(proposal.scope == MemoryScope::Project || proposal.memory.kind.may_be_global());
+                    prop_assert!(valid_name(proposal.name()));
+                    if let Proposal::Save { scope, memory, .. } = proposal {
+                        prop_assert!(memory.validate().is_ok());
+                        prop_assert!(*scope == MemoryScope::Project || memory.kind.may_be_global());
+                    }
                 }
             }
         }
@@ -544,11 +1197,12 @@ mod tests {
         ) {
             let text = answer(serde_json::json!([{"action":"save","scope":scope,"name":name,
                 "type":kind,"description":description,"body":body}]));
-            if let Ok((proposals, _)) = parse_answer(&text, TODAY) {
+            if let Ok((proposals, _)) = parse(&text) {
                 for proposal in proposals {
-                    prop_assert!(proposal.memory.validate().is_ok());
-                    prop_assert!(valid_name(&proposal.memory.name));
-                    prop_assert!(!holds_secret(&proposal.memory.body));
+                    let (_, _, memory) = saved(&proposal);
+                    prop_assert!(memory.validate().is_ok());
+                    prop_assert!(valid_name(&memory.name));
+                    prop_assert!(!holds_secret(&memory.body));
                 }
             }
         }

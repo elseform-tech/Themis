@@ -878,26 +878,6 @@ impl SubagentKit {
         );
         web.retain(|tool| agent.web.tools.iter().any(|wanted| wanted == tool.name()));
         let mut named: Vec<Box<dyn ToolT>> = Vec::new();
-        // Every subagent starts with the memory index. One without a plugin profile (which
-        // picks its own tools) may also read a memory in full.
-        if self.config.memory.enabled && (agent.profile.is_none() || names(agent, "memory")) {
-            named.push(Box::new(super::memory::MemoryTool {
-                state: self.state.clone(),
-                sink: Arc::clone(&self.sink),
-                thread_id: self.thread_id.clone(),
-                run_id: self.run_id.clone(),
-                project_root: self.work_root.clone(),
-                enabled: true,
-                run: super::integration_tools::RunApproval {
-                    mode: self.mode,
-                    policy: self.config.approval.clone(),
-                    interactive: Arc::clone(&approvals_for_web),
-                    grants: Arc::clone(&self.grants),
-                },
-                read_only: true,
-                saved: Arc::default(),
-            }));
-        }
         if names(agent, "ask_user") {
             named.push(Box::new(super::question_tool::QuestionTool {
                 state: self.state.clone(),
@@ -1199,18 +1179,6 @@ impl SubagentKit {
                 &[("tools", &left_out.join(", "))],
             )
         });
-        // `hooks.built_in.skills_at_start`, as for the main agent; its memory tool only reads, so
-        // the Memory skill comes with how a subagent passes a fact on.
-        let built_in = &self.config.hooks.built_in;
-        let built_in_skills = built_in.skills_at_start.then(|| {
-            let memory = self.config.memory.enabled;
-            let mut text = themis_core::built_in_hooks::skills_text(memory);
-            if memory {
-                text.push_str("\n\n");
-                text.push_str(themis_core::prompts::SUBAGENT_MEMORY_SKILL_NOTE);
-            }
-            text
-        });
         let head = std::iter::once(themis_core::prompts::SUBAGENT_SYSTEM)
             .chain([themis_core::prompts::SUBAGENT_SECRETS_NOTE])
             .chain(role.as_deref())
@@ -1226,7 +1194,6 @@ impl SubagentKit {
             .chain((!self.project_guidance.is_empty()).then_some(self.project_guidance.trim()))
             .chain((!self.skills.is_empty()).then_some(themis_core::prompts::SUBAGENT_SKILLS_NOTE))
             .chain((!self.skills.is_empty()).then_some(self.skills.trim()))
-            .chain(built_in_skills.as_deref())
             .chain([themis_core::prompts::SUBAGENT_STATUS_FIELD])
             .collect::<Vec<_>>()
             .join("\n\n");
@@ -1284,17 +1251,9 @@ impl SubagentKit {
                                             notes,
                                             // Boxed: nested subagents stack these futures, and
                                             // unboxed they overflow a runtime worker's stack.
-                                            Box::pin(themis_core::runtime::with_save_reminder(
-                                                (built_in.save_reminder
-                                                    && self.config.memory.enabled)
-                                                    .then(|| {
-                                                        themis_core::prompts::RUNTIME_SAVE_REMINDER_SUBAGENT
-                                                            .to_owned()
-                                                    }),
-                                                themis_core::runtime::with_system_head(
-                                                    head,
-                                                    Box::pin(run),
-                                                ),
+                                            Box::pin(themis_core::runtime::with_system_head(
+                                                head,
+                                                Box::pin(run),
                                             )),
                                         ),
                                     ),

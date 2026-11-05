@@ -591,7 +591,7 @@ async fn the_agent_sets_a_goal_with_its_tool_and_turns_follow() {
                 .as_array()
                 .is_some_and(|messages| messages.iter().any(|m| m["role"] == "tool"));
             if mentions(&body, "make it a goal") && !used_tool && !mentions(&body, "[Goal — runtime") {
-                ResponseTemplate::new(200).set_body_json(json!({"choices":[{"message":{"role":"assistant","content":null,"tool_calls":[{"id":"g","type":"function","function":{"name":"create_goal","arguments":"{\"objective\":\"get every test green\"}"}}]},"finish_reason":"tool_calls"}]}))
+                ResponseTemplate::new(200).set_body_json(json!({"choices":[{"message":{"role":"assistant","content":null,"tool_calls":[{"id":"g","type":"function","function":{"name":"create_goal","arguments":"{\"objective\":\"get every test green\",\"checklist\":[\"Every test is green\"]}"}}]},"finish_reason":"tool_calls"}]}))
             } else {
                 reply("Working on it.")
             }

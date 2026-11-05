@@ -11,7 +11,13 @@ pub(super) fn messages_body(
     use serde_json::json;
     let mut system = Vec::new();
     let mut input: Vec<serde_json::Value> = Vec::new();
-    for message in to_wire_messages(messages)? {
+    let wire = to_wire_messages(messages)?;
+    // Claude signs a thinking block against the exact conversation before it, and Themis
+    // shortens older history as a chat grows, so an older replayed block fails the whole request
+    // ("bound to a different conversation"). Only the latest assistant message's thinking is
+    // needed (it continues the tool loop); Claude ignores earlier turns' thinking anyway.
+    let latest_assistant = wire.iter().rposition(|message| message.role == "assistant");
+    for (at, message) in wire.into_iter().enumerate() {
         if message.role == "system" {
             system.push(message.content.unwrap_or_default());
             continue;
@@ -41,6 +47,7 @@ pub(super) fn messages_body(
         } else {
             // A thinking model's blocks go first, unchanged (signatures must round-trip).
             let kept = match message.tool_calls.as_deref() {
+                Some(_) if model.starts_with("claude-") && Some(at) != latest_assistant => None,
                 Some(calls) => super::reasoning::replay(calls),
                 // Claude binds a thinking block to the exact conversation before it, and a
                 // later message's history is shorter, so its answers go back without it.
@@ -66,10 +73,27 @@ pub(super) fn messages_body(
         }
         input.push(json!({"role": if message.role == "assistant" { "assistant" } else { "user" }, "content": content}));
     }
+    // Claude caches only what a request marks: the system prompt, and a rolling mark on the
+    // newest block so the next request reads the whole conversation before it from cache.
+    // Without it every request paid full price for the whole context.
+    let cache = model.starts_with("claude-");
+    if cache {
+        if let Some(block) = input
+            .last_mut()
+            .and_then(|message| message["content"].as_array_mut())
+            .and_then(|blocks| blocks.last_mut())
+        {
+            block["cache_control"] = json!({"type": "ephemeral"});
+        }
+    }
     let mut body =
         json!({"model": model, "messages": input, "max_tokens": 16384, "stream": streaming});
     if !system.is_empty() {
-        body["system"] = json!(system.join("\n\n"));
+        body["system"] = if cache {
+            json!([{"type": "text", "text": system.join("\n\n"), "cache_control": {"type": "ephemeral"}}])
+        } else {
+            json!(system.join("\n\n"))
+        };
     }
     if let Some(tools) = tools.filter(|tools| !tools.is_empty()) {
         body["tools"] = json!(tools.iter().map(|tool| json!({"name": tool.function.name, "description": tool.function.description, "input_schema": tool.function.parameters})).collect::<Vec<_>>());
