@@ -975,7 +975,7 @@ most 300 characters) and each note the agent wrote between steps (what it tried,
 dropped or thinks could be better, at most 400 characters), the latest 40 entries; the note that
 ended the turn is its reply and is not repeated. A goal-complete pass reads the goal's failed
 steps with what the agent said next (at most 8). A turn the person said nothing in (a goal turn)
-still gets a pass when it has such a log, since that is when a lesson is fresh; the prompt keeps lessons as project or feedback memories
+still gets a pass when it has such a log, since that is when a lesson is fresh. Every pass also reads the chat's latest answered question (at most 2 KiB) when the turn doesn't already carry it, marked as read before, so a pass that missed what an answer settles (a task it proves done) can still close it, without saving what is already remembered again; the prompt keeps lessons as project or feedback memories
 (symptom, cause, rule, how to check) worded so a similar later task finds them. `memory.thinking`
 (default `auto`, user file only) sets how much the memory models think: `auto` lets them think for
 a pass that carries lessons (a turn with work in it: failed steps or notes, a completed goal) and asks for the

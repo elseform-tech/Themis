@@ -204,6 +204,26 @@ CASES = [
         "expect": {"tasks_done": ["dark mode"], "tasks_not_done": ["Export"]},
     },
     {
+        # From a live goal: the person's answer settled a task, the pass of that turn missed it;
+        # a later turn's pass sees the answer again and closes it.
+        "name": "earlier_answer_settles_task",
+        "person": [],
+        "reply": "Checked the HUD again in the browser; nothing changed in the code this turn.",
+        "earlier_answer": "Question: Could you play a short run and tell me whether the start, hit, pause and game-over beeps sound right?\nAnswer: it sounds good and the game feels good, the controls are fine",
+        "plan_record": DODGER_RECORD.replace("- [done] Sound on hit — beeps play on a hit; heard by the person (2026-11-04)", "- [open] Sound beeps check — the person listens and confirms the beeps (2026-11-04)"),
+        "plans_index": DODGER_INDEX,
+        "expect": {"tasks_done": ["Sound"], "tasks_not_done": ["Aliens"]},
+    },
+    {
+        # An earlier answer already acted on is not saved again.
+        "name": "earlier_answer_not_saved_twice",
+        "person": [],
+        "reply": "Read the HUD code; nothing changed this turn.",
+        "earlier_answer": "Question: Tabs or spaces for indentation?\nAnswer: Tabs",
+        "plan_record": DODGER_RECORD, "plans_index": DODGER_INDEX,
+        "expect": {"no_memory": True, "no_task_changes": True},
+    },
+    {
         "name": "task_cancelled_by_person",
         "person": ["Forget the touch controls, this is desktop only."],
         "answered": "Touch controls are next on the list.",
@@ -369,8 +389,12 @@ def seed_memory(data, project):
     with open(os.path.join(memories, "keep-todo-list-tab.md"), "w", encoding="utf-8") as f:
         f.write("---\nname: keep-todo-list-tab\ndescription: Keep the agent's to-do list tab and its tool\ntype: project\nsaved: 2026-11-02\n---\n"
                 "The person decided to keep the to-do list tab and the agent's todo tool.\n\nWhy: they want to see what is pending.\n")
+    with open(os.path.join(memories, "indent-with-tabs.md"), "w", encoding="utf-8") as f:
+        f.write("---\nname: indent-with-tabs\ndescription: Indent code with tabs, not spaces\ntype: project\nsaved: 2026-11-04\n---\n"
+                "Question: tabs or spaces for indentation? The person chose tabs.\n")
     with open(os.path.join(memories, "MEMORY.md"), "w", encoding="utf-8") as f:
-        f.write("- keep-todo-list-tab (project, 2026-11-02): Keep the agent's to-do list tab and its tool\n")
+        f.write("- indent-with-tabs (project, 2026-11-04): Indent code with tabs, not spaces\n"
+                "- keep-todo-list-tab (project, 2026-11-02): Keep the agent's to-do list tab and its tool\n")
 
 
 def main():
@@ -408,7 +432,7 @@ def main():
                                "answered": case.get("answered", ""), "reply": case.get("reply", ""),
                                "ran_into": case.get("ran_into", ""),
                                "event": case.get("event"), "plan_about": "arena first-person shooter"}
-                    for key in ("plan_record", "plans_index", "tasks"):
+                    for key in ("plan_record", "plans_index", "tasks", "earlier_answer"):
                         if key in case:
                             request[key] = case[key]
                     if args.model:

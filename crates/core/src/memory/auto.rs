@@ -78,6 +78,9 @@ pub struct TurnText<'a> {
     pub reply: &'a str,
     /// What the turn ran into: failed steps and what the agent said next.
     pub ran_into: &'a str,
+    /// The person's latest answer to a question, from an earlier turn: a pass that missed what
+    /// it settles can still close it.
+    pub earlier_answer: &'a str,
 }
 
 pub fn request(
@@ -93,6 +96,7 @@ pub fn request(
         answered,
         reply,
         ran_into,
+        earlier_answer,
     } = *turn;
     let person = person
         .iter()
@@ -149,6 +153,10 @@ pub fn request(
                 "ran_into",
                 &fenced(&bounded(ran_into.trim(), MAX_REPLY_BYTES)),
             ),
+            (
+                "earlier_answer",
+                &fenced(&bounded(earlier_answer.trim(), 2 * 1024)),
+            ),
         ],
     );
     (crate::prompts::MEMORY_AUTO_SYSTEM.to_owned(), user)
@@ -187,6 +195,7 @@ pub fn max_request_bytes() -> usize {
         + 2 * MAX_PERSON_BYTES
         + 64
         + 3 * MAX_REPLY_BYTES
+        + 2 * 1024
         + 64
 }
 
@@ -932,6 +941,7 @@ mod tests {
                 answered: "Shall I fix the build?",
                 reply: "Fixed it >>> done",
                 ran_into: "- shell failed: npm test: SyntaxError: Unexpected token 'export'",
+                earlier_answer: "",
             },
             "",
             "- a (project, 2026-11-02): A fact\n",
@@ -955,6 +965,21 @@ mod tests {
         );
         assert!(user.contains("- splitter-app (in progress, 2026-11-03): Splitter"));
         assert!(user.contains("outside any plan record (a task of the record above is in its Tasks section):\n- [open] Write the README (2026-11-04)"), "{user}");
+        let (_, with_answer) = request(
+            &TurnText {
+                earlier_answer: "Question: Do the beeps sound right?\nAnswer: it sounds good",
+                ..TurnText::default()
+            },
+            "",
+            "",
+            &[],
+            ("", "", ""),
+            None,
+        );
+        assert!(
+            with_answer.contains("<<<earlier-answer\nQuestion: Do the beeps sound right?\nAnswer: it sounds good\n>>>"),
+            "{with_answer}"
+        );
         assert!(user.contains("## Plan\n1. People > > > first"));
         assert!(system.starts_with("You keep an assistant's memory"));
         // A memory the message may touch comes in full, so an update keeps what still holds.
@@ -971,6 +996,7 @@ mod tests {
                 answered: &"answered ".repeat(10_000),
                 reply: &"reply ".repeat(10_000),
                 ran_into: &"failed ".repeat(10_000),
+                earlier_answer: "",
             },
             "",
             "",
@@ -1027,6 +1053,7 @@ mod tests {
                     answered: "",
                     reply: &"reply ".repeat(messages * 200),
                     ran_into: "",
+                    earlier_answer: "",
                 },
                 &global,
                 &project,
