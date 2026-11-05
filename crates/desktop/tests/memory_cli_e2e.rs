@@ -1231,6 +1231,16 @@ async fn auto_mode_reviews_instead_of_asking() {
             .contains("blocked an action: touch hard.txt."),
         "{question}"
     );
+    // Each answer says what happens next, with the command itself.
+    assert_eq!(
+        question["reasons"],
+        json!({
+            "Allow once": "Runs `touch hard.txt` once, exactly as written.",
+            "Do it the safer way": "Instead: leave it out",
+            "Skip it": "Leaves `touch hard.txt` out; the agent finishes the rest and tells you what it skipped.",
+        }),
+        "{question}"
+    );
 
     // The person allows it once: exactly that action runs, once.
     h.cli(
