@@ -272,12 +272,26 @@ impl AppState {
                 context: diagnostic_context.clone(),
             }),
         };
-        let approvals = themis_core::configuration::configured_hook_for_project(
+        // Auto mode: a reviewer model decides where Custom would ask the person.
+        let reviewer = (snapshot.approval_mode == themis_core::configuration::ApprovalMode::Auto)
+            .then(|| {
+                Arc::new(super::auto_review::DesktopReviewer {
+                    state: self.clone(),
+                    sink: Arc::clone(sink),
+                    thread_id: thread_id.to_owned(),
+                    run_id: run_id.to_owned(),
+                    project_root: snapshot.work_root.clone(),
+                    config: run_configuration.clone(),
+                    is_git: snapshot.is_git,
+                }) as Arc<dyn themis_core::tools::AutoReviewer>
+            });
+        let approvals = themis_core::configuration::configured_hook_with_reviewer(
             snapshot.approval_mode,
             run_configuration.approval.clone(),
             hook,
             grants,
             Some(&snapshot.work_root),
+            reviewer,
         );
         let approvals: Arc<dyn ApprovalHook> = Arc::new(AuditedApprovals {
             inner: approvals,
@@ -1155,6 +1169,8 @@ impl AppState {
 pub(super) fn permission_mode(mode: themis_core::configuration::ApprovalMode) -> &'static str {
     match mode {
         themis_core::configuration::ApprovalMode::Yolo => "bypassPermissions",
+        // Auto never prompts, like Claude Code's own auto mode.
+        themis_core::configuration::ApprovalMode::Auto => "auto",
         themis_core::configuration::ApprovalMode::Custom => "default",
     }
 }

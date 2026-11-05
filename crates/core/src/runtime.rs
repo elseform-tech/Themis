@@ -82,7 +82,7 @@ impl From<Approval> for ApprovalDecision {
         match value {
             Approval::AllowOnce => Self::AllowOnce,
             Approval::AllowAlways => Self::AllowAlways,
-            Approval::Deny | Approval::DenyForNewMessage => Self::Deny,
+            Approval::Deny | Approval::DenyForNewMessage | Approval::DenyReviewed => Self::Deny,
         }
     }
 }
@@ -4156,8 +4156,8 @@ async fn execute_call(
     } else {
         approvals.sensitive_access(name, &approval_args)
     };
-    let decision = if self_approving {
-        Approval::AllowOnce
+    let (decision, review_note) = if self_approving {
+        (Approval::AllowOnce, None)
     } else {
         // Saving one command-based MCP server is approved once, by the dialog
         // that shows its exact argv and cannot be remembered for the chat.
@@ -4235,7 +4235,11 @@ async fn execute_call(
             })
             .await
             .ok();
-        decision
+        // Auto mode's reviewer says why, and what to do instead.
+        let review_note = (decision == Approval::DenyReviewed)
+            .then(|| crate::tools::take_review_note(&action))
+            .flatten();
+        (decision, review_note)
     };
     if stopped.load(Ordering::SeqCst) {
         return Err("Stopped by you".to_owned());
@@ -4254,7 +4258,8 @@ async fn execute_call(
                 )
             )
         });
-        let reason = format!("{summary}{files} {}", decision.refusal_note());
+        let note = review_note.unwrap_or_else(|| decision.refusal_note().to_owned());
+        let reason = format!("{summary}{files} {note}");
         crate::plugins::hooks::permission_denied(name, &approval_args, &reason, events).await;
         return Err(format!("approval denied for '{name}': {reason}"));
     }

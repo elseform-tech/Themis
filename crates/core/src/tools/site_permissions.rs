@@ -165,6 +165,10 @@ impl SitePermissions {
                     self.allow_always(site, permission);
                     Ok(())
                 }
+                Approval::DenyReviewed => Err(refused(
+                    &crate::tools::take_review_note(&action)
+                        .unwrap_or_else(|| REFUSAL_NOTE.to_owned()),
+                )),
                 denied @ (Approval::Deny | Approval::DenyForNewMessage) => {
                     Err(refused(denied.refusal_note()))
                 }

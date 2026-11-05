@@ -798,12 +798,25 @@ impl SubagentKit {
             inner: Arc::new(dialog),
             grants: ChatGrants::in_memory(),
         });
-        let configured = themis_core::configuration::configured_hook_for_project(
+        // Auto mode reviews a subagent's actions the same way, against the person's words.
+        let reviewer = (self.mode == ApprovalMode::Auto).then(|| {
+            Arc::new(super::auto_review::DesktopReviewer {
+                state: self.state.clone(),
+                sink: Arc::clone(&self.sink),
+                thread_id: self.thread_id.clone(),
+                run_id: self.run_id.clone(),
+                project_root: self.work_root.clone(),
+                config: self.config.clone(),
+                is_git: self.is_git,
+            }) as Arc<dyn themis_core::tools::AutoReviewer>
+        });
+        let configured = themis_core::configuration::configured_hook_with_reviewer(
             self.mode,
             self.config.approval.clone(),
             own,
             Arc::clone(&self.grants),
             Some(&self.work_root),
+            reviewer,
         );
         // A shell held to named commands refuses the others before anything can allow them, in
         // YOLO too: this is the outermost answer, and a call reaches its tool only through it.

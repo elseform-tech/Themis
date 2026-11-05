@@ -17,6 +17,9 @@ pub use providers::{
 #[serde(rename_all = "snake_case")]
 pub enum ApprovalMode {
     Yolo,
+    /// No prompts: where Custom would ask, a reviewer model decides against the person's own
+    /// words, and a block goes back to the agent with its reason (see [`crate::tools::AutoReviewer`]).
+    Auto,
     #[default]
     Custom,
 }
@@ -50,6 +53,10 @@ pub struct ApprovalPolicy {
     /// File-name patterns of sensitive project files, which ask first. Replaces the
     /// defaults when set; `[]` turns it off; a project may only add to it.
     pub sensitive_files: Vec<String>,
+    /// The model Auto mode's reviewer uses (`<provider>/<id>` for a model from providers);
+    /// unset, the first memory model. User file only: a project may not choose who reviews.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auto_model: Option<String>,
 }
 impl Default for ApprovalPolicy {
     fn default() -> Self {
@@ -65,6 +72,7 @@ impl Default for ApprovalPolicy {
                 .iter()
                 .map(|pattern| (*pattern).to_owned())
                 .collect(),
+            auto_model: None,
         }
     }
 }
@@ -101,6 +109,7 @@ impl ApprovalPolicy {
                 .cloned()
                 .collect(),
             sensitive_files: self.sensitive_files.clone(),
+            auto_model: self.auto_model.clone(),
         }
     }
 
@@ -356,6 +365,10 @@ struct ConfiguredHook {
     interactive: Arc<dyn ApprovalHook>,
     grants: Arc<ChatGrants>,
     sensitive: SensitiveMatcher,
+    /// Auto mode's reviewer; without one, Auto blocks what it would ask about.
+    reviewer: Option<Arc<dyn crate::tools::AutoReviewer>>,
+    /// Soft blocks per target this run: the third becomes a hard block.
+    soft_blocks: std::sync::Mutex<std::collections::HashMap<String, u8>>,
 }
 impl ApprovalHook for ConfiguredHook {
     fn denied_by_rule(&self, action: &ToolAction) -> bool {
@@ -422,6 +435,9 @@ impl ApprovalHook for ConfiguredHook {
             ),
             ..action.clone()
         };
+        if self.mode == ApprovalMode::Auto {
+            return self.auto(&asked);
+        }
         match self.interactive.approve_sensitive(&asked, access) {
             Approval::AllowAlways => {
                 if action.grantable() {
@@ -439,7 +455,7 @@ impl ApprovalHook for ConfiguredHook {
     }
 
     fn would_ask(&self, action: &ToolAction) -> bool {
-        if action.tool == crate::tools::UNSANDBOXED_TOOL || self.mode == ApprovalMode::Yolo {
+        if action.tool == crate::tools::UNSANDBOXED_TOOL || self.mode != ApprovalMode::Custom {
             return false;
         }
         self.policy.decision(action) == PolicyAction::Ask
@@ -469,6 +485,9 @@ impl ApprovalHook for ConfiguredHook {
                 if !browser && self.grants.covers(action) {
                     return Approval::AllowOnce;
                 }
+                if self.mode == ApprovalMode::Auto {
+                    return self.auto(action);
+                }
                 match self.interactive.approve(action) {
                     Approval::AllowAlways if browser => Approval::AllowAlways,
                     Approval::AllowAlways => {
@@ -485,9 +504,69 @@ impl ApprovalHook for ConfiguredHook {
 impl ConfiguredHook {
     fn rule_denies(&self, action: &ToolAction) -> bool {
         match self.mode {
-            ApprovalMode::Custom => self.policy.decision(action) == PolicyAction::Deny,
+            ApprovalMode::Custom | ApprovalMode::Auto => {
+                self.policy.decision(action) == PolicyAction::Deny
+            }
             ApprovalMode::Yolo => self.policy.yolo_decision(action) == PolicyAction::Deny,
         }
+    }
+
+    /// Where Custom would ask the person: Auto asks its reviewer instead, never the person
+    /// (the reviewer also honours an "Allow once" the person gave after a block). A soft block goes back to
+    /// the agent with its reason and a safer way; the third on the same target, a hard block or
+    /// no verdict also asks the person in a question box, while the run goes on.
+    fn auto(&self, action: &ToolAction) -> Approval {
+        let verdict = match &self.reviewer {
+            Some(reviewer) => reviewer.review(action),
+            None => crate::tools::AutoVerdict::Unavailable,
+        };
+        let target = format!("{}\0{}", action.tool, action.command.join(" "));
+        let (kind, reason, safer) = match verdict {
+            crate::tools::AutoVerdict::Allow => {
+                crate::diagnostics::emit(
+                    "approval",
+                    "auto_review",
+                    "info",
+                    serde_json::json!({"tool": action.tool, "verdict": "allow"}),
+                );
+                return Approval::AllowOnce;
+            }
+            crate::tools::AutoVerdict::Soft { reason, safer } => {
+                let mut counts = self.soft_blocks.lock().unwrap_or_else(|e| e.into_inner());
+                let count = counts.entry(target).or_insert(0);
+                *count = count.saturating_add(1);
+                let kind = if *count >= 3 { "hard" } else { "soft" };
+                (kind, reason, safer)
+            }
+            crate::tools::AutoVerdict::Hard { reason, safer } => ("hard", reason, safer),
+            crate::tools::AutoVerdict::Unavailable => (
+                "unavailable",
+                "the reviewer could not judge this action".to_owned(),
+                "use a reversible approach, or leave this step for later".to_owned(),
+            ),
+        };
+        crate::diagnostics::emit(
+            "approval",
+            "auto_review",
+            "info",
+            serde_json::json!({"tool": action.tool, "verdict": kind}),
+        );
+        let note = if kind == "soft" {
+            crate::prompts::fill(
+                crate::prompts::AUTO_SOFT_BLOCK,
+                &[("reason", &reason), ("safer", &safer)],
+            )
+        } else {
+            if let Some(reviewer) = &self.reviewer {
+                reviewer.blocked(action, &reason, &safer);
+            }
+            crate::prompts::fill(
+                crate::prompts::AUTO_HARD_BLOCK,
+                &[("reason", &reason), ("safer", &safer)],
+            )
+        };
+        crate::tools::set_review_note(action, note);
+        Approval::DenyReviewed
     }
 
     /// Running a sandbox-blocked command outside the sandbox needs a person:
@@ -506,6 +585,9 @@ impl ConfiguredHook {
         }
         if self.grants.covers(action) {
             return Approval::AllowOnce;
+        }
+        if self.mode == ApprovalMode::Auto {
+            return self.auto(action);
         }
         match self.interactive.approve(action) {
             Approval::AllowAlways => {
@@ -591,6 +673,18 @@ pub fn configured_hook_for_project(
     grants: Arc<ChatGrants>,
     root: Option<&std::path::Path>,
 ) -> Arc<dyn ApprovalHook> {
+    configured_hook_with_reviewer(mode, policy, interactive, grants, root, None)
+}
+
+/// Like [`configured_hook_for_project`], with Auto mode's reviewer.
+pub fn configured_hook_with_reviewer(
+    mode: ApprovalMode,
+    policy: ApprovalPolicy,
+    interactive: Arc<dyn ApprovalHook>,
+    grants: Arc<ChatGrants>,
+    root: Option<&std::path::Path>,
+    reviewer: Option<Arc<dyn crate::tools::AutoReviewer>>,
+) -> Arc<dyn ApprovalHook> {
     let sensitive = policy.sensitive_matcher(root);
     Arc::new(ConfiguredHook {
         mode,
@@ -598,6 +692,8 @@ pub fn configured_hook_for_project(
         interactive,
         grants,
         sensitive,
+        reviewer,
+        soft_blocks: std::sync::Mutex::default(),
     })
 }
 
@@ -1809,6 +1905,10 @@ pub fn resolve(
                     let policy: ApprovalPolicy = serde_json::from_value(policy)
                         .context("invalid project approval policy")?;
                     ensure!(
+                        policy.auto_model.is_none(),
+                        "approval.auto_model is user file only: a project may not choose who reviews"
+                    );
+                    ensure!(
                         policy.default != PolicyAction::Allow
                             && policy.rules.iter().all(|r| r.action == PolicyAction::Deny),
                         "project approval policy may only add deny rules"
@@ -1935,6 +2035,12 @@ pub fn validate(config: &RuntimeConfig) -> Result<()> {
     crate::sandbox::validate(&config.sandbox)?;
     validate_web(config)?;
     validate_sensitive_files(&config.approval.sensitive_files)?;
+    if let Some(model) = &config.approval.auto_model {
+        ensure!(
+            valid_model_id(model),
+            "approval.auto_model must be a model id (<provider>/<id> for a model from providers)"
+        );
+    }
     providers::validate(&config.providers, &config.models)?;
     validate_relative_paths(&config.skills.paths)?;
     validate_relative_paths(&config.instructions)?;
@@ -2342,6 +2448,7 @@ fn base_schema() -> Value {
             "approval":{"type":"object","additionalProperties":false,"properties":{
                 "default":{"enum":["allow","ask","deny"],"default":"ask"},
                 "sensitive_files":{"type":"array","maxItems":128,"items":{"type":"string","minLength":1,"maxLength":129}},
+                "auto_model":{"type":"string","minLength":1,"maxLength":128},
                 "rules":{"type":"array","maxItems":256,"items":{"type":"object","additionalProperties":false,"required":["tool","action"],"properties":{
                     "tool":{"type":"string","pattern":"^([A-Za-z0-9_.-]+\\*?|\\*)$"},
                     "action":{"enum":["allow","ask","deny"]},
@@ -4107,6 +4214,136 @@ mod tests {
             ChatGrants::in_memory(),
         );
         assert_eq!((decision, asked), (Approval::Deny, 0));
+    }
+
+    /// Auto never asks the person: rules decide first (a deny rule beats the reviewer, an allow
+    /// rule skips it), the reviewer decides where Custom would ask, a soft block carries its
+    /// reason, the third on the same target turns hard, a hard block tells the person, and with
+    /// no reviewer nothing that would ask runs.
+    #[test]
+    fn auto_asks_its_reviewer_never_the_person() {
+        use crate::tools::{AutoReviewer, AutoVerdict};
+        struct Scripted {
+            verdict: AutoVerdict,
+            reviewed: std::sync::atomic::AtomicUsize,
+            told: std::sync::atomic::AtomicUsize,
+        }
+        impl AutoReviewer for Scripted {
+            fn review(&self, _: &ToolAction) -> AutoVerdict {
+                self.reviewed
+                    .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                self.verdict.clone()
+            }
+            fn blocked(&self, _: &ToolAction, _: &str, _: &str) {
+                self.told.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            }
+        }
+        let rules = r#"{"approval":{"rules":[
+            {"tool":"shell","command":["rm"],"action":"deny"},
+            {"tool":"shell","command":["cargo"],"action":"allow"}]}}"#;
+        let policy = resolve(Some(rules), None, None).unwrap().config.approval;
+        let with = |verdict: AutoVerdict| {
+            let reviewer = Arc::new(Scripted {
+                verdict,
+                reviewed: Default::default(),
+                told: Default::default(),
+            });
+            let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+            let hook = configured_hook_with_reviewer(
+                ApprovalMode::Auto,
+                policy.clone(),
+                counting_hook(&calls, Approval::AllowOnce),
+                ChatGrants::in_memory(),
+                None,
+                Some(reviewer.clone() as Arc<dyn AutoReviewer>),
+            );
+            (hook, reviewer, calls)
+        };
+        let count =
+            |n: &std::sync::atomic::AtomicUsize| n.load(std::sync::atomic::Ordering::SeqCst);
+
+        let (hook, reviewer, person) = with(AutoVerdict::Allow);
+        assert_eq!(
+            hook.approve(&shell_action(&["rm", "-rf", "x"])),
+            Approval::Deny
+        );
+        assert_eq!(
+            hook.approve(&shell_action(&["cargo", "test"])),
+            Approval::AllowOnce
+        );
+        assert_eq!(count(&reviewer.reviewed), 0, "rules decide first");
+        assert_eq!(hook.approve(&shell_action(&["make"])), Approval::AllowOnce);
+        assert_eq!(count(&reviewer.reviewed), 1);
+        assert!(!hook.would_ask(&shell_action(&["make"])));
+        assert_eq!(count(&person), 0, "the person is never asked");
+
+        let (hook, reviewer, _) = with(AutoVerdict::Soft {
+            reason: "it rewrites history".into(),
+            safer: "push to a new branch".into(),
+        });
+        let push = shell_action(&["git", "push", "--force"]);
+        assert_eq!(hook.approve(&push), Approval::DenyReviewed);
+        let note = crate::tools::take_review_note(&push).unwrap();
+        assert!(
+            note.contains("it rewrites history") && note.contains("push to a new branch"),
+            "{note}"
+        );
+        assert_eq!(count(&reviewer.told), 0, "a soft block asks nobody");
+        hook.approve(&push);
+        hook.approve(&push);
+        assert_eq!(
+            count(&reviewer.told),
+            1,
+            "the third soft block is a hard one"
+        );
+        assert!(crate::tools::take_review_note(&push)
+            .unwrap()
+            .contains("blocked this"));
+
+        let (hook, reviewer, _) = with(AutoVerdict::Hard {
+            reason: "it deletes outside the project".into(),
+            safer: String::new(),
+        });
+        assert_eq!(
+            hook.approve(&shell_action(&["make", "wipe"])),
+            Approval::DenyReviewed
+        );
+        assert_eq!(count(&reviewer.told), 1);
+
+        let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let lone = configured_hook_with_reviewer(
+            ApprovalMode::Auto,
+            policy.clone(),
+            counting_hook(&calls, Approval::AllowOnce),
+            ChatGrants::in_memory(),
+            None,
+            None,
+        );
+        assert_eq!(
+            lone.approve(&shell_action(&["make"])),
+            Approval::DenyReviewed
+        );
+        assert_eq!(count(&calls), 0);
+    }
+
+    /// The reviewer's model is the person's to choose: a project may not set it.
+    #[test]
+    fn auto_model_is_user_file_only_and_a_model_id() {
+        let user = r#"{"approval":{"auto_model":"muse-spark-1.3-contributor"}}"#;
+        let resolved = resolve(Some(user), None, None).unwrap().config;
+        assert_eq!(
+            resolved.approval.auto_model.as_deref(),
+            Some("muse-spark-1.3-contributor")
+        );
+        let project = r#"{"approval":{"auto_model":"cheap"}}"#;
+        let refused = resolve(None, Some(project), None).unwrap_err().to_string();
+        assert!(refused.contains("user file only"), "{refused}");
+        assert!(resolve(
+            Some(r#"{"approval":{"auto_model":"bad model!"}}"#),
+            None,
+            None
+        )
+        .is_err());
     }
 
     /// YOLO never asks, but a deny rule someone wrote still holds; ask rules and a

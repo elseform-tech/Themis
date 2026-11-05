@@ -75,7 +75,7 @@ export function ThreadView() {
     if (threadId !== undefined && !soon) setNoticeDismissed(previous => previous[threadId] ? { ...previous, [threadId]: false } : previous);
   }, [threadId, soon]);
   const permissionPending=useRef(false);
-  async function changeApprovalMode(mode:"custom"|"yolo") {
+  async function changeApprovalMode(mode:"custom"|"auto"|"yolo") {
     if(!thread || !project || permissionPending.current)return;
     permissionPending.current=true;setPermissionSaving(true);
     try {const updated=await setThreadApprovalMode(thread.id,mode);dispatch({type:"thread/updated",projectRoot:project.root,thread:updated});}

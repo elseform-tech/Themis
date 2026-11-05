@@ -53,7 +53,7 @@ function RuleRow({ rule }: { rule: EffectiveRule }) {
   </div>;
 }
 
-type ApprovalPrefs = { default_approval_mode?: "custom" | "yolo"; approval_timeout_seconds: number };
+type ApprovalPrefs = { default_approval_mode?: "custom" | "auto" | "yolo"; approval_timeout_seconds: number };
 
 /** Settings → Permissions: new-chat mode and timeout, the Custom rules, and the global file. */
 export function PermissionsSettings({ editor = "", onEditor, prefs, onPrefs }: { editor?: string; onEditor?: (editor: string) => void; prefs?: ApprovalPrefs; onPrefs?: (patch: Partial<ApprovalPrefs>) => void }) {
@@ -80,8 +80,8 @@ export function PermissionsSettings({ editor = "", onEditor, prefs, onPrefs }: {
   return (<>
     {prefs && <SettingsGroup title="Approvals">
       <label className="themis-settings-control" title="Each chat can switch in its composer. YOLO asks nothing; the sandbox and Browser blocks still apply.">New chats start in
-        <select aria-label="New chats start in" value={prefs.default_approval_mode ?? "custom"} onChange={event => onPrefs?.({ default_approval_mode: event.target.value as "custom" | "yolo" })}>
-          <option value="custom">Custom</option><option value="yolo">YOLO</option>
+        <select aria-label="New chats start in" value={prefs.default_approval_mode ?? "custom"} onChange={event => onPrefs?.({ default_approval_mode: event.target.value as "custom" | "auto" | "yolo" })}>
+          <option value="custom">Custom</option><option value="auto">Auto</option><option value="yolo">YOLO</option>
         </select>
       </label>
       <label className="themis-settings-control" title="An unanswered approval is denied after this long">Approval timeout

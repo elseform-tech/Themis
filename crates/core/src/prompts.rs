@@ -200,6 +200,17 @@ pub const MEMORY_CONSOLIDATE_USER: &str =
 pub const QUESTION_ANSWER: &str = include_str!("../builtins/prompts/question-answer.md");
 /// Description of the `update_goal` tool.
 pub const UPDATE_GOAL_TOOL: &str = include_str!("../builtins/prompts/tool-update-goal.md");
+/// System message of Auto mode's reviewer.
+pub const AUTO_REVIEW_SYSTEM: &str = include_str!("../builtins/prompts/auto-review-system.md");
+/// User message of Auto mode's reviewer: the person's words, the goal, the project's rules and the action.
+pub const AUTO_REVIEW_USER: &str = include_str!("../builtins/prompts/auto-review-user.md");
+/// The question box a hard block posts for the person.
+pub const AUTO_BLOCKED_QUESTION: &str =
+    include_str!("../builtins/prompts/auto-blocked-question.md");
+/// Tool result note when Auto mode's reviewer soft-blocks an action.
+pub const AUTO_SOFT_BLOCK: &str = include_str!("../builtins/prompts/auto-soft-block.md");
+/// Tool result note when Auto mode's reviewer hard-blocks an action.
+pub const AUTO_HARD_BLOCK: &str = include_str!("../builtins/prompts/auto-hard-block.md");
 /// Description of the `search_memory` tool.
 pub const SEARCH_MEMORY_TOOL: &str = include_str!("../builtins/prompts/tool-search-memory.md");
 /// Description of the `create_goal` tool.

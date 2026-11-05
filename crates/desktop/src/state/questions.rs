@@ -338,6 +338,8 @@ impl AppState {
                 answer: answer.clone(),
             },
         );
+        // An "Allow once" to an Auto block lets that exact action run once.
+        self.auto_question_answered(&question.id, &answer);
         let steered = self.deliver_answer(sink.as_ref(), &thread_id, &question, &answer)?;
         let _ = self.inner.diagnostics.append(
             "questions",

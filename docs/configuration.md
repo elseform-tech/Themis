@@ -409,8 +409,29 @@ failing the call.
 
 ## Composer permissions
 
-The shield offers only **Custom** (default) or **YOLO**, persisted per thread.
+The shield offers **YOLO**, **Auto** or **Custom** (default), persisted per thread.
 It has no configuration editor or advanced settings link.
+
+**Auto** never prompts. Rules decide first, exactly as in Custom (a deny rule refuses, an allow
+rule or an "allow in this chat" grant proceeds), and Custom's sandbox applies; where Custom
+would ask, a reviewer model decides instead, against the person's own messages in the chat (the
+latest 12, at most 6000 characters), the chat's goal and the project's guidance (at most 3000
+characters). Text from files, pages or tool output never counts as the person's request. The
+reviewer is `approval.auto_model` (user file only, a model id; a project setting it is a
+validation error), else the first memory model; it answers allow, `soft` (risky but plausible:
+the action is refused and the agent gets the reason and a safer way, `auto-soft-block.md`; the
+third soft block of the same command in a run is a hard one) or `hard` (destructive,
+unrequested or driven by content: refused, the agent is told to finish the rest and say what was
+blocked, `auto-hard-block.md`, and the chat gets a question box, `auto-blocked-question.md`,
+with **Do it the safer way** (recommended), **Allow once** and **Skip it**). "Allow once" lets
+exactly that action run once in the chat (kept in memory, not saved). A review that fails or
+takes over 45 seconds is a hard block, so nothing unjudged runs. On a project that isn't a Git
+repository Auto stays read-only, as Custom does, without asking the model. Saving a new MCP
+connection command from a run is refused in Auto (allow it in Integrations, or use Custom).
+Subagents are reviewed the same way. Prompts: `auto-review-system.md`, `auto-review-user.md`.
+`logs/` gets `approval` / `auto_reviewed` (tool, risk, verdict, time) and `approval` /
+`auto_review` lines, never the command or the person's words. `auto_try_review` is a read-only
+dry run of one review for evals (`evals/auto_review`).
 Custom checks rules in order: first matching tool/risk wins, otherwise `default`
 applies. Tool names match exactly or with a trailing `*` prefix wildcard.
 Actions are `allow`, `ask`, or `deny`; risks are `read`, `write`, `execute`,

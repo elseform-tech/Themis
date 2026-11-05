@@ -120,6 +120,7 @@ impl DesktopApprovalHook {
             Some(Approval::AllowAlways) => "chat",
             Some(Approval::Deny) => "deny",
             Some(Approval::DenyForNewMessage) => "new_message",
+            Some(Approval::DenyReviewed) => "reviewed",
             None => "none",
         };
         let _ = context.log.append_with_level(

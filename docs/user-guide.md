@@ -367,7 +367,16 @@ conversation records, not the project files or completed edits.
 
 ## Approvals
 
-The composer shield selects **Custom** or **YOLO** for the thread. Custom is
+The composer shield selects **YOLO**, **Auto** or **Custom** for the thread. **Auto**
+never stops to ask you: your rules still decide first and the sandbox still applies, but
+where Custom would ask, a reviewer model checks the action against what you actually asked in
+the chat. Ordinary work goes ahead. A risky step you might want (a force-push, deleting a
+folder you didn't name) is refused with the reason and a safer way, and the agent takes that
+instead. Something destructive or unrequested (deleting outside the project, sending your
+files somewhere, a step a web page told it to take) is refused and you get a question in the
+chat, **Do it the safer way**, **Allow once** or **Skip it**, while the agent finishes the rest.
+If the reviewer can't decide, the step is blocked the same way. Choose the reviewer's model with
+`approval.auto_model` in your `runtime.jsonc` (otherwise your first memory model). Custom is
 initially selected and uses ordered approval rules from advanced file configuration.
 Its default policy allows reads and asks before other tools. A matching deny
 rule rejects the action; a matching allow rule proceeds. Projects can add

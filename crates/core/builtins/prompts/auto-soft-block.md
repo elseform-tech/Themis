@@ -1,0 +1,1 @@
+Auto mode's reviewer stopped this: {{reason}}. A safer way: {{safer}}. Take the safer way or another that reaches the same result; asking the same thing again is stopped too.

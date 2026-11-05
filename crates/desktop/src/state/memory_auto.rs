@@ -288,7 +288,7 @@ impl AppState {
 
     /// [`Self::memory_model_request`], with the provider's own words on a failure (for the
     /// person's dry run only; never logged).
-    async fn memory_model_request_why(
+    pub(super) async fn memory_model_request_why(
         &self,
         config: &RuntimeConfig,
         model: &str,

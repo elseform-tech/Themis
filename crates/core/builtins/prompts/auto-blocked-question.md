@@ -1,0 +1,1 @@
+Auto mode blocked an action: {{action}}. Why: {{reason}}. What should the agent do?

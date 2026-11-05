@@ -1,0 +1,1 @@
+Auto mode's reviewer blocked this: {{reason}}. The user has been asked about it (allow once, do it the safer way: {{safer}}, or skip it); their answer arrives as a message. Meanwhile finish the rest of the work without it, and say in your final message what was blocked and why.

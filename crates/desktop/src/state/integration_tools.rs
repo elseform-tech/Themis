@@ -324,6 +324,9 @@ impl ManagementTool {
                 PolicyAction::Allow => (true, false),
                 PolicyAction::Deny => (false, false),
                 PolicyAction::Ask if sole => (true, true),
+                // Auto never prompts, and a new connection's command is the person's to allow
+                // (Integrations, or Custom mode).
+                PolicyAction::Ask if self.run.mode == ApprovalMode::Auto => (false, false),
                 PolicyAction::Ask => (!self.run.interactive.approve(&action).is_denied(), true),
             }
         };
