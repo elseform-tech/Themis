@@ -311,6 +311,11 @@ impl AppState {
             running_since: Some(now),
             turns: 0,
             failures: 0,
+            prev_turn_seq: self
+                .inner
+                .transcript
+                .last_activity_seq(thread_id)
+                .unwrap_or(0),
             turn_seq: self
                 .inner
                 .transcript
@@ -542,7 +547,9 @@ impl AppState {
         let Some(goal) = self.goal_for(thread_id) else {
             return false;
         };
-        let mut through = goal.turn_seq;
+        // From the turn before: what the person sent between turns was folded into the goal
+        // before this turn started, and still counts as their asking.
+        let mut through = goal.prev_turn_seq.min(goal.turn_seq);
         while let Ok(page) =
             self.inner
                 .transcript
@@ -1070,6 +1077,7 @@ impl AppState {
             goal.retry_at = None;
             if goal.status == GoalStatus::Running {
                 goal.turns = goal.turns.saturating_add(1);
+                goal.prev_turn_seq = goal.turn_seq;
                 goal.turn_seq = turn_seq;
             }
         }) else {
@@ -1384,6 +1392,7 @@ mod tests {
             running_since: Some(now_ms() - 5_000),
             turns: 1,
             failures: 0,
+            prev_turn_seq: 0,
             turn_seq: 0,
             start_seq: 0,
             retry_at: None,

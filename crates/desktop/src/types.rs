@@ -472,6 +472,10 @@ pub struct Goal {
     /// lets the agent pause the goal.
     #[serde(default)]
     pub turn_seq: i64,
+    /// Where the goal turn before it started: words the person sent between turns (folded into
+    /// the goal as "Also asked") still let the agent pause on the next turn.
+    #[serde(default)]
+    pub prev_turn_seq: i64,
     /// History position when the goal began: where what the work ran into starts.
     #[serde(default)]
     pub start_seq: i64,
