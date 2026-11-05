@@ -2539,14 +2539,9 @@ impl ChatBrowser {
     ) -> Result<ActionReport, String> {
         let browser = inner.browser.clone().ok_or("no page is open")?;
         let tab = inner.tab.as_mut().ok_or("no page is open")?;
-        let (document, url, title, notes) = {
-            let mut state = tab.state.lock().unwrap_or_else(|e| e.into_inner());
-            (
-                state.document,
-                state.url.clone(),
-                state.title.clone(),
-                std::mem::take(&mut state.notes),
-            )
+        let (document, url, title) = {
+            let state = tab.state.lock().unwrap_or_else(|e| e.into_inner());
+            (state.document, state.url.clone(), state.title.clone())
         };
         tab.forget_refs_of_old_page(document);
         let root = match reference {
@@ -2616,6 +2611,9 @@ impl ChatBrowser {
                     view["clientHeight"].as_f64()?.round()
                 ))
             });
+        // Notes are taken last: a console error or failed request the action caused can reach
+        // the tab's event task while the snapshot is read, and belongs to this action, not the next.
+        let notes = std::mem::take(&mut tab.state.lock().unwrap_or_else(|e| e.into_inner()).notes);
         Ok(ActionReport {
             url,
             title,
