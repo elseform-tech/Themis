@@ -29,6 +29,10 @@ export function useFollowLatest(threadId: string, output: unknown) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
   const endRef = useRef<HTMLDivElement>(null);
+  /** Empty room under the latest message that takes back what the content lost while it was
+   *  being read at the end (a status line that went away), so the text never slides by itself. */
+  const spacerRef = useRef<HTMLDivElement>(null);
+  const contentHeight = useRef(0);
   const following = useRef(true);
   const lastTop = useRef(0);
   const personAt = useRef(0);
@@ -49,6 +53,7 @@ export function useFollowLatest(threadId: string, output: unknown) {
   useEffect(() => {
     const element = scrollRef.current;
     if (!element) return;
+    if (spacerRef.current) spacerRef.current.style.height = "0px";
     element.scrollTop = places.get(threadId) ?? element.scrollHeight;
     lastTop.current = element.scrollTop;
     following.current = distanceFromEnd(element) < FOLLOW_MARGIN;
@@ -56,11 +61,26 @@ export function useFollowLatest(threadId: string, output: unknown) {
   }, [threadId]);
 
   // Heights change without new output: a chart drawn, the Workspace opening, the composer growing.
+  // Content that shrinks while the person reads the end (a "checking what to remember" line that
+  // went away) leaves its height as room under the last message, used up by the next output,
+  // so the page never gets shorter under them and nothing moves.
   useEffect(() => {
     const element = scrollRef.current;
     const content = contentRef.current;
     if (!element || !content || typeof ResizeObserver === "undefined") return;
-    const observer = new ResizeObserver(toEnd);
+    contentHeight.current = content.offsetHeight;
+    const observer = new ResizeObserver(() => {
+      const spacer = spacerRef.current;
+      const height = content.offsetHeight;
+      const change = height - contentHeight.current;
+      contentHeight.current = height;
+      if (spacer) {
+        const room = parseFloat(spacer.style.height || "0");
+        const next = change < 0 && following.current ? room - change : Math.max(0, room - Math.max(0, change));
+        spacer.style.height = `${next}px`;
+      }
+      toEnd();
+    });
     observer.observe(content);
     observer.observe(element);
     return () => observer.disconnect();
@@ -92,5 +112,15 @@ export function useFollowLatest(threadId: string, output: unknown) {
     else places.set(threadId, top);
   }, [threadId]);
 
-  return { scrollRef, contentRef, endRef, scrolledUp, onScroll };
+  /** Back to the latest message, following it again. */
+  const jumpToLatest = useCallback(() => {
+    const element = scrollRef.current;
+    if (!element) return;
+    following.current = true;
+    places.delete(threadId);
+    setScrolledUp(false);
+    element.scrollTo({ top: element.scrollHeight, behavior: "smooth" });
+  }, [threadId]);
+
+  return { scrollRef, contentRef, endRef, spacerRef, scrolledUp, onScroll, jumpToLatest };
 }
