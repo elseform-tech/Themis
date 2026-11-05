@@ -121,6 +121,12 @@ pub struct ThreadInfo {
     /// can show it without loading the chat's history.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_outcome: Option<String>,
+    /// Unanswered question boxes in the chat, for the sidebar's "Waiting for you".
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub open_questions: u32,
+    /// Where the chat's goal stands, when it has one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub goal_status: Option<GoalStatus>,
     pub id: String,
     pub title: String,
     pub provider: ProviderKind,
@@ -1722,6 +1728,8 @@ mod tests {
         let info = ThreadInfo {
             last_activity_seq: 42,
             last_outcome: None,
+            open_questions: 0,
+            goal_status: None,
             id: "t".to_owned(),
             title: "hi".to_owned(),
             provider: ProviderKind::Go,

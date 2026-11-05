@@ -348,9 +348,22 @@ async fn a_blocking_question_ends_the_run_and_the_goal_waits_for_that_answer_onl
     })
     .await;
     let (data, thread) = (app.data.path().to_owned(), app.thread.clone());
+    let root = app._project.path().to_string_lossy().into_owned();
     tokio::task::spawn_blocking({
         let (data, thread) = (data.clone(), thread.clone());
         move || {
+            // The chat list carries what the sidebar's "Waiting for you" needs without the
+            // chat's history: open question boxes and where the goal stands.
+            let listed = |data: &std::path::Path| {
+                call(data, "list_threads", json!({"projectRoot": root}))
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .find(|info| info["id"] == thread.as_str())
+                    .cloned()
+                    .unwrap()
+            };
+            assert!(listed(&data).get("open_questions").is_none(), "no questions yet");
             call(&data, "send_message", json!({"threadId": thread, "text": "/goal configure the API key"}));
             until("the goal never waited", || {
                 call(&data, "get_goal", json!({"threadId": thread}))["status"] == "waiting"
@@ -361,8 +374,12 @@ async fn a_blocking_question_ends_the_run_and_the_goal_waits_for_that_answer_onl
             let id = |text: &str| {
                 questions.as_array().unwrap().iter().find(|q| q["question"] == text).unwrap()["id"].as_str().unwrap().to_owned()
             };
+            let info = listed(&data);
+            assert_eq!(info["open_questions"], 3, "{info}");
+            assert_eq!(info["goal_status"], "waiting", "{info}");
             // Another question's answer runs, but the goal keeps waiting.
             call(&data, "answer_question", json!({"threadId": thread, "questionId": id("Dark mode by default?"), "answer": "No"}));
+            assert_eq!(listed(&data)["open_questions"], 2);
             until("the answer run never finished", || {
                 !running(&data, &thread)
                     && call(&data, "get_thread_history", json!({"threadId": thread})).to_string().contains("Noted your answer.")
@@ -374,6 +391,9 @@ async fn a_blocking_question_ends_the_run_and_the_goal_waits_for_that_answer_onl
                 call(&data, "get_goal", json!({"threadId": thread}))["status"] == "reached" && !running(&data, &thread)
                     && call(&data, "get_thread_history", json!({"threadId": thread})).to_string().contains("I've reached the goal")
             });
+            let info = listed(&data);
+            assert_eq!(info["goal_status"], "reached", "{info}");
+            assert_eq!(info["open_questions"], 1, "the license question is still unanswered: {info}");
         }
     })
     .await

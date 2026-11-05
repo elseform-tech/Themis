@@ -240,11 +240,21 @@ impl AutoReviewer for DesktopReviewer {
             themis_core::prompts::AUTO_BLOCKED_QUESTION,
             &[("action", &what), ("reason", reason)],
         );
-        let mut reasons = vec![(ALLOW_ONCE.to_owned(), "runs exactly this once".to_owned())];
+        // Each answer says what happens next, with the command itself, so the person knows
+        // what they are choosing.
+        let mut reasons = vec![(
+            ALLOW_ONCE.to_owned(),
+            format!("Runs `{what}` once, exactly as written."),
+        )];
         if !safer.trim().is_empty() {
-            reasons.push((SAFER.to_owned(), safer.to_owned()));
+            reasons.push((SAFER.to_owned(), format!("Instead: {}", safer.trim())));
         }
-        reasons.push((SKIP.to_owned(), "the agent leaves this step out".to_owned()));
+        reasons.push((
+            SKIP.to_owned(),
+            format!(
+                "Leaves `{what}` out; the agent finishes the rest and tells you what it skipped."
+            ),
+        ));
         let asked = self.state.ask_question(
             self.sink.as_ref(),
             &self.thread_id,

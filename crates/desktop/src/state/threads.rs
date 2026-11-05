@@ -83,7 +83,7 @@ impl AppState {
             broken: false,
             skill_ids: Vec::new(),
         };
-        let info = thread_info(&record, &self.inner.transcript)?;
+        let info = self.info_of(&record)?;
         self.inner
             .threads
             .write()
@@ -121,7 +121,7 @@ impl AppState {
         threads
             .get(thread_id)
             .ok_or_else(|| format!("unknown thread '{thread_id}'"))
-            .and_then(|record| thread_info(record, &self.inner.transcript))
+            .and_then(|record| self.info_of(record))
     }
 
     pub async fn get_thread_history(&self, thread_id: &str) -> Result<Vec<HistoryItem>, String> {
@@ -160,6 +160,21 @@ impl AppState {
         self.inner.transcript.import_legacy(thread_id, messages)
     }
 
+    /// The chat's list entry, with what the sidebar shows without loading its history:
+    /// unanswered question boxes and where its goal stands.
+    pub(super) fn info_of(&self, record: &ThreadRecord) -> Result<ThreadInfo, String> {
+        let mut info = thread_info(record, &self.inner.transcript)?;
+        info.open_questions = self
+            .questions_for(&record.id)
+            .iter()
+            .filter(|question| question.answer.is_none())
+            .count()
+            .try_into()
+            .unwrap_or(u32::MAX);
+        info.goal_status = self.goal_for(&record.id).map(|goal| goal.status);
+        Ok(info)
+    }
+
     /// Lists the threads on `project_root` (empty when the project has none).
     pub async fn list_threads(&self, project_root: String) -> Result<Vec<ThreadInfo>, String> {
         let root = canonical_project_dir(&project_root)?;
@@ -167,7 +182,7 @@ impl AppState {
         let mut infos: Vec<ThreadInfo> = threads
             .values()
             .filter(|record| record.project_root == root)
-            .map(|record| thread_info(record, &self.inner.transcript))
+            .map(|record| self.info_of(record))
             .collect::<Result<_, _>>()?;
         infos.sort_by(|left, right| left.id.cmp(&right.id));
         Ok(infos)
@@ -635,7 +650,7 @@ impl AppState {
                 .ok_or_else(|| "Thread not found".to_owned())?;
             record.title = title.to_owned();
             record.titled = true;
-            thread_info(record, &self.inner.transcript)?
+            self.info_of(record)?
         };
         self.persist_registry().await;
         Ok(info)
@@ -714,7 +729,7 @@ impl AppState {
             record.provider = provider;
             record.model = model.unwrap_or_default();
             record.reasoning_effort = None;
-            thread_info(record, &self.inner.transcript)?
+            self.info_of(record)?
         };
         self.persist_registry().await;
         Ok(info)
@@ -745,7 +760,7 @@ impl AppState {
                 }
             }
             record.reasoning_effort = effort;
-            thread_info(record, &self.inner.transcript)?
+            self.info_of(record)?
         };
         self.persist_registry().await;
         Ok(info)
