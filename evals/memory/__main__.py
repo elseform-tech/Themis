@@ -217,7 +217,8 @@ CASES = [
         "reply": "Shooting works with a fixed pool of 30 bullets.",
         "ran_into": "- noted: Two ways to do bullets: create a mesh per shot and dispose it on hit, or keep a fixed pool of 30 and reuse them. I'm using the pool: creating and disposing meshes every shot stutters at 60 fps and risks leaking GPU memory.",
         "plan_record": DODGER_RECORD, "plans_index": DODGER_INDEX,
-        "expect": {"decision": ["agent", "pool"]},
+        # The agent's own choice is not memory: it belongs in a comment or commit.
+        "expect": {"no_decision": True, "no_memory": True},
     },
     {
         # A remembered decision the person reverses keeps the old one and why it changed.
@@ -226,6 +227,23 @@ CASES = [
         "answered": "The to-do list tab is in place as you decided.",
         "reply": "Removed the to-do list tab and its tool.",
         "expect": {"memory_words": ["before", "unreliabl"]},
+    },
+    {
+        # The person asks the agent what it thinks of a method, then approves it.
+        "name": "method_approved_after_asking",
+        "person": ["Yes, I like it, please go with that method."],
+        "answered": "I'd use a fixed 60 Hz logic step with an accumulator: the game logic runs at a steady rate whatever the frame rate, rendering interpolates between steps, and input is latched until the next step reads it. The alternative, a variable time step, is simpler but makes collisions and speed depend on the frame rate.",
+        "reply": "Switched the loop to a fixed 60 Hz step with an accumulator.",
+        "plan_record": DODGER_RECORD, "plans_index": DODGER_INDEX,
+        "expect": {"kept_somewhere": ["fixed", "60"]},
+    },
+    {
+        # A method the agent researched, approved by the person.
+        "name": "method_approved_after_research",
+        "person": ["Great research. Go with Vitest for this project."],
+        "answered": "I compared test runners for this Vite project: Vitest reuses the Vite config and transforms, starts fastest and runs in watch mode; Jest needs a Babel or ts-jest setup to match; node --test has no DOM. I recommend Vitest.",
+        "reply": "Set up Vitest with the Vite config; npm test runs it.",
+        "expect": {"kept_somewhere": ["vitest"]},
     },
     {
         "name": "routine_step_is_no_decision",
@@ -317,6 +335,10 @@ def check(case, result):
         failures.append(f"only {len(adds)} plan requirements added")
     if expect.get("no_memory") and (memories or plan or decisions):
         failures.append("kept a memory, plan or decision")
+    for word in expect.get("kept_somewhere", []):
+        kept = (text + " " + plan + " " + " ".join(decisions)).lower()
+        if word.lower() not in kept:
+            failures.append(f"approved '{word}' not kept as a decision, memory or plan")
     if expect.get("no_task_changes") and tasks:
         failures.append("changed tasks on a routine turn")
     for word in expect.get("decision", []):

@@ -965,7 +965,7 @@ impl AppState {
                 }
             }
             if let Some(record) = records.get_mut(&decision.work) {
-                record.decide(decision.who, &decision.what, &decision.why, &today);
+                record.decide(&decision.what, &decision.why, &today);
                 decided += 1;
             }
         }

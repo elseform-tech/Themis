@@ -103,7 +103,7 @@ pub struct PlanRecord {
     pub plan: String,
     /// One line per change the person made, oldest first.
     pub changes: Vec<String>,
-    /// Choices made for this work, by the person or the agent, with why; oldest first.
+    /// The person's choices for this work, with why; oldest first.
     pub decisions: Vec<String>,
     /// The work's tasks, old and new, with their status.
     pub tasks: Vec<super::tasks::Task>,
@@ -318,14 +318,14 @@ impl PlanRecord {
         }
     }
 
-    /// Records a decision: `who` (the person or the agent) chose `what`, because `why`.
-    pub fn decide(&mut self, who: &str, what: &str, why: &str, today: &str) {
+    /// Records the person's decision: they chose `what`, because `why`.
+    pub fn decide(&mut self, what: &str, why: &str, today: &str) {
         let what = line(&strip_secrets(what), MAX_LINE_CHARS);
         if what.is_empty() {
             return;
         }
         let why = line(&strip_secrets(why), MAX_LINE_CHARS);
-        let mut entry = format!("{who}: {what}");
+        let mut entry = what;
         if !why.is_empty() {
             entry.push_str(&format!(" — because {why}"));
         }
@@ -1032,12 +1032,11 @@ mod tests {
 
         let mut record = record;
         record.decide(
-            "agent",
             "pool asteroid meshes",
             "creating them per frame leaks GPU memory",
             "2026-11-04",
         );
-        record.decide("person", "keep the mute key M", "", "2026-11-04");
+        record.decide("keep the mute key M", "", "2026-11-04");
         let add = |title: &str| TaskOp::Add {
             title: title.into(),
             note: String::new(),
@@ -1057,10 +1056,13 @@ mod tests {
         ));
         let back = parse(&serialize(&record)).unwrap();
         assert_eq!(back, record);
-        assert_eq!(back.decisions[0], "agent: pool asteroid meshes — because creating them per frame leaks GPU memory (2026-11-04)");
+        assert_eq!(
+            back.decisions[0],
+            "pool asteroid meshes — because creating them per frame leaks GPU memory (2026-11-04)"
+        );
         let view = record.run_view();
         assert!(
-            view.contains("## Decisions\n- agent: pool asteroid meshes"),
+            view.contains("## Decisions\n- pool asteroid meshes"),
             "{view}"
         );
         assert!(

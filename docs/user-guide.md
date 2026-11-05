@@ -190,9 +190,11 @@ whole team shares still belong in the project's `AGENTS.md`.
   never pushes out an earlier one, a done task keeps how it ended, and a cancelled one says why.
   Each turn shows the agent the open ones, so a long chat or goal doesn't lose track. Tasks of a
   piece of approved work live in its plan record; the rest in one list per project.
-- **It keeps decisions with their reasons.** Choices made for a piece of work, yours and the
-  agent's own (an approach or design it picked between options, with why), go into that
-  work's plan record. When you reverse a remembered decision, the memory keeps the old one with
+- **It keeps your decisions with their reasons.** An approach, method or design you approve or
+  pick for a piece of work (also one the agent proposed or researched and you said yes to) goes
+  into that work's plan record; a choice that holds beyond it becomes a memory. The agent's own
+  choices are not kept in memory: it explains them in code comments and commit messages, where
+  they travel with the code. When you reverse a remembered decision, the memory keeps the old one with
   the date and why it changed, so "why was this removed?" has an answer.
 - **Plans get a record of their own.** When you approve a plan ("I love it, build it", or a
   goal made from it), Themis keeps it word for word as a plan record for that project. When you

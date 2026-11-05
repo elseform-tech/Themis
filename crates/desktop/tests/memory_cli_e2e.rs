@@ -99,7 +99,7 @@ fn pass_answer(body: &Value) -> String {
     {
         return json!({"plan":{"op":"change","name":"notes-tool","change":"Notes are sorted by date, not title.",
             "edits":[{"old":"2. Sort notes by title.","new":"2. Sort notes by date."}]},"memories":[],
-            "decisions":[{"work":"notes-tool","who":"person","what":"sort notes by date","why":"newest notes matter most"}],
+            "decisions":[{"work":"notes-tool","what":"sort notes by date","why":"newest notes matter most"}],
             "tasks":[{"op":"add","title":"Show the count in the footer","note":"\"show the count\"","work":"notes-tool"}]})
         .to_string();
     }
@@ -876,9 +876,7 @@ async fn an_approved_plan_keeps_a_record_through_changes_to_done() {
     );
     let record = plan_with(h.data.path(), "notes-tool", "sorted by date").await;
     assert!(
-        record.contains(
-            "## Decisions\n- person: sort notes by date — because newest notes matter most ("
-        ),
+        record.contains("## Decisions\n- sort notes by date — because newest notes matter most ("),
         "{record}"
     );
     // Themis made a task of each plan step; the model added one more.
@@ -940,7 +938,7 @@ async fn an_approved_plan_keeps_a_record_through_changes_to_done() {
     assert!(system.contains("- notes-tool (done, "), "{system}");
     // Its decisions and how its tasks ended; results stay in the file.
     assert!(
-        system.contains("## Decisions\n- person: sort notes by date"),
+        system.contains("## Decisions\n- sort notes by date"),
         "{system}"
     );
     // Finished work leaves nothing open: its plan steps are closed with it.
@@ -1007,6 +1005,11 @@ async fn tasks_are_kept_across_turns_and_chats() {
     )
     .await;
     let seen = main_system(&h, "What is left to do here?");
+    // The agent is told where its own choices go: the code, not memory.
+    assert!(
+        seen.contains("Themis does not keep your own choices in memory"),
+        "{seen}"
+    );
     assert!(
         seen.contains("- [open] Write the README — \"also write a README\" with run steps ("),
         "{seen}"

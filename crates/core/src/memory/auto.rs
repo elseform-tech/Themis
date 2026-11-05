@@ -342,13 +342,11 @@ pub const MAX_DECISIONS_PER_PASS: usize = 3;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Decision {
     pub work: String,
-    /// `person` or `agent`.
-    pub who: &'static str,
     pub what: String,
     pub why: String,
 }
 
-/// The answer's `"decisions"`: each names an existing-looking record and who chose; secrets
+/// The answer's `"decisions"` (the person's): each names an existing-looking record; secrets
 /// and malformed entries are dropped. Untrusted.
 pub fn parse_decisions_answer(text: &str) -> Vec<Decision> {
     if text.len() > MAX_ANSWER_BYTES {
@@ -365,11 +363,6 @@ pub fn parse_decisions_answer(text: &str) -> Vec<Decision> {
         .take(MAX_DECISIONS_PER_PASS)
         .filter_map(|entry| {
             let text = |key: &str| entry[key].as_str().map(str::trim).unwrap_or_default();
-            let who = match text("who") {
-                "person" => "person",
-                "agent" => "agent",
-                _ => return None,
-            };
             let (work, what, why) = (text("work"), text("what"), text("why"));
             if !super::valid_name(work)
                 || what.is_empty()
@@ -380,7 +373,6 @@ pub fn parse_decisions_answer(text: &str) -> Vec<Decision> {
             }
             Some(Decision {
                 work: work.to_owned(),
-                who,
                 what: what.to_owned(),
                 why: why.to_owned(),
             })
@@ -821,7 +813,7 @@ mod tests {
     /// still count (a live eval lost a cancelled task that way).
     #[test]
     fn an_answer_without_memories_still_carries_its_tasks_and_decisions() {
-        let text = r#"Here: {"tasks":[{"op":"update","title":"Touch controls","status":"cancelled","note":"dropped"}],"decisions":[{"work":"dodger","who":"agent","what":"pool bullets","why":"no stutter"}]}"#;
+        let text = r#"Here: {"tasks":[{"op":"update","title":"Touch controls","status":"cancelled","note":"dropped"}],"decisions":[{"work":"dodger","what":"keep the mute key M","why":"they like it"}]}"#;
         let (proposals, counts) = parse(text).unwrap();
         assert!(proposals.is_empty());
         assert_eq!(counts, PassCounts::default());

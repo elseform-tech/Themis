@@ -878,8 +878,8 @@ evidence lines, lessons and results, rather than grow past that), with a header 
 `in progress` while a goal builds it, `done`), `updated` and, while a chat's goal builds it,
 `chat` (that chat's id), then five sections: **Plan** (the reply the person approved, copied
 word for word by Themis, at most 8 KiB), **Changes** (one line per change, at most 20),
-**Decisions** (at most 12 lines, `person:` or `agent:` what was chosen, `— because` why, and
-the date; the oldest go first), **Tasks** (task lines, below), **Results** (at most 2 KiB),
+**Decisions** (the person's only, at most 12 lines: what was chosen, `— because` why, and the
+date; the oldest go first), **Tasks** (task lines, below), **Results** (at most 2 KiB),
 **Evidence** (one line per requirement, at most 12 of 1000 characters) and **Lessons** (at most 3).
 Decisions and Tasks may be missing from a record written before they existed; it still reads. `plans/PLANS.md` is their index (`- name (status, date): title`).
 Records are read as untrusted: a file whose header or sections don't fit is skipped, secrets
@@ -920,7 +920,7 @@ removed otherwise. The memory pass reads the record's tasks and the project file
 (title, note, optional `status`: open by default, or doing or done for an ask the turn already
 started or finished, so finished asks stay on record; optional `work` naming a record; a title
 already listed updates its note and reopens it) and `update` (exact title, status, note), and at most 3 `"decisions"` (`work`,
-`who`: person or agent, `what`, `why`) for records. Entries holding a secret or not fitting are
+`what`, `why`; the person's choices only, never the agent's own) for records. Entries holding a secret or not fitting are
 refused. When a record is marked done, Themis closes its tasks still open or doing as done, saying in
 the note they were closed when the work was marked done (the evidence is the proof). The
 goal-complete pass reads the goal's working log (failed steps and the agent's notes, the latest
