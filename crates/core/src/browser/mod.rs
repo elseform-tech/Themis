@@ -20,5 +20,5 @@ pub mod tools;
 
 pub use session::{
     stream_stats, BrowserConfig, BrowserHub, BrowserState, BrowserUpdate, ChatBrowser, StreamStats,
-    UserInput,
+    UserInput, IDLE_EXIT,
 };

@@ -10,6 +10,15 @@ use themis_core::browser::{BrowserState, BrowserUpdate, ChatBrowser, UserInput};
 use super::AppState;
 
 impl AppState {
+    /// Lets the built-in browser exit once no chat has used it for
+    /// [`themis_core::browser::IDLE_EXIT`]; the next browser action starts it again.
+    pub async fn exit_idle_browser(&self) {
+        self.inner
+            .browsers
+            .exit_when_idle(themis_core::browser::IDLE_EXIT)
+            .await;
+    }
+
     /// The chat's browser (created, not started, on first use).
     pub(super) async fn chat_browser(&self, thread_id: &str) -> Result<Arc<ChatBrowser>, String> {
         let root = self

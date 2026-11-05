@@ -27,6 +27,9 @@ use super::snapshot::{parse_ax_nodes, render, Outline, RefMap, RenderOptions};
 /// reopens it at the same address when it next browses. Each open page costs a renderer
 /// process and its memory, even frozen.
 pub const OPEN_PAGES: usize = 3;
+/// After this long with no chat using it, the browser exits (hundreds of MB and a GPU process
+/// otherwise stay resident); the next action starts it again and pages reopen at their address.
+pub const IDLE_EXIT: Duration = Duration::from_secs(10 * 60);
 /// Most time Chrome gets to say where a new window was going before it is closed unloaded.
 const POPUP_WAIT: Duration = Duration::from_secs(3);
 pub const NAVIGATION_WAIT: Duration = Duration::from_secs(30);
@@ -395,6 +398,48 @@ impl BrowserHub {
                 open -= 1;
             }
         }
+    }
+
+    /// Ends the browser when every chat has left it idle for `idle_for`: nobody watching a
+    /// Browser tab, no agent action, no recording. Each open page is closed with its address
+    /// remembered (the next action reopens it there), every handle dropped, so Chromium and its
+    /// helpers exit. Returns whether it did.
+    pub async fn exit_when_idle(&self, idle_for: Duration) -> bool {
+        let chats: Vec<Arc<ChatBrowser>> = self
+            .chats
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .values()
+            .cloned()
+            .collect();
+        if self.shared.lock().await.is_empty() {
+            return false;
+        }
+        let quiet = chats.iter().all(|chat| {
+            chat.idle_page()
+                && chat
+                    .last_used
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .elapsed()
+                    >= idle_for
+        });
+        if !quiet {
+            return false;
+        }
+        for chat in &chats {
+            if !chat.release_browser().await {
+                return false;
+            }
+        }
+        self.shared.lock().await.clear();
+        crate::diagnostics::emit(
+            "browser",
+            "exited_idle",
+            "info",
+            json!({"chats": chats.len(), "idle_seconds": idle_for.as_secs()}),
+        );
+        true
     }
 
     async fn release_unused(&self) {
@@ -1782,6 +1827,22 @@ impl ChatBrowser {
                 )
                 .await;
         }
+        self.remember(&inner);
+        drop(inner);
+        self.publish_state().await;
+        true
+    }
+
+    /// Lets go of the browser: closes the page (its address kept to reopen) and drops the
+    /// chat's handle, so the process can exit. False when the chat is busy right now.
+    async fn release_browser(&self) -> bool {
+        if self.view().tab.is_some() && !self.close_for_room().await {
+            return false;
+        }
+        let Ok(mut inner) = self.inner.try_lock() else {
+            return false;
+        };
+        inner.browser = None;
         self.remember(&inner);
         drop(inner);
         self.publish_state().await;

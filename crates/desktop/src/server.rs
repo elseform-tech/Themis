@@ -353,6 +353,18 @@ impl Server {
                 }
             }
         });
+        // A browser no chat has used for a while exits, so it doesn't sit in memory.
+        let browsers = self.state.clone();
+        let mut browsers_stop = self.shutdown.subscribe();
+        tokio::spawn(async move {
+            let mut every = tokio::time::interval(std::time::Duration::from_secs(60));
+            loop {
+                tokio::select! {
+                    _ = every.tick() => browsers.exit_idle_browser().await,
+                    _ = browsers_stop.recv() => break,
+                }
+            }
+        });
         let mut stopped = self.shutdown.subscribe();
         let mut termination = Termination::install();
         tokio::pin!(stop);
