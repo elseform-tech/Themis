@@ -2609,3 +2609,62 @@ async fn stop_failure_runs_only_when_the_run_failed() {
     .unwrap();
     bad.serving.abort();
 }
+
+/// In Custom a new chat's `SessionStart` hook is asked about before the model is, and the box
+/// reaches a subscribed window at once, as a tool's does.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_session_start_question_reaches_a_subscribed_window_at_once() {
+    let hooks = logs("SessionStart", "started.jsonl");
+    let app = crate::app(hooks, &[], |_| reply("Done.")).await;
+    let (data, thread) = (app.data.path().to_owned(), app.thread.clone());
+    let client = themis_desktop::server::Client::new(data.clone());
+    client
+        .call(
+            "set_thread_approval_mode",
+            json!({"threadId": thread, "mode": "custom"}),
+        )
+        .await
+        .unwrap();
+    let mut events = client.subscribe().await.unwrap();
+    let sent = Instant::now();
+    client
+        .call("send_message", json!({"threadId": thread, "text": "first"}))
+        .await
+        .unwrap();
+    let request = tokio::time::timeout(Duration::from_secs(10), async {
+        loop {
+            let event = themis_desktop::server::Client::next_event(&mut events)
+                .await
+                .unwrap();
+            if event["name"] == "approval-request" {
+                return event["payload"].clone();
+            }
+        }
+    })
+    .await
+    .expect("the SessionStart question never reached the window");
+    let waited = sent.elapsed();
+    assert!(
+        request["summary"]
+            .as_str()
+            .unwrap_or_default()
+            .starts_with("SessionStart:"),
+        "{request}"
+    );
+    assert!(waited < Duration::from_secs(2), "the box took {waited:?}");
+    client
+        .call(
+            "approve_action",
+            json!({"threadId": thread, "approvalId": request["approval_id"], "decision": "deny"}),
+        )
+        .await
+        .unwrap();
+    tokio::task::spawn_blocking(move || {
+        until("the run never finished", || {
+            call(&data, "get_thread", json!({"threadId": thread}))["running"] != true
+        });
+    })
+    .await
+    .unwrap();
+    app.serving.abort();
+}

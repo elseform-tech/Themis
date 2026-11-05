@@ -609,14 +609,26 @@ impl AppState {
             && self.inner.built_in_search
             && super::searxng::runtime_dir().is_some()
         {
-            match super::searxng::url(&self.app_data_dir()).await {
-                Ok(url) => web.search_url = Some(url),
-                Err(error) => {
+            let app_dir = self.app_data_dir();
+            match super::searxng::for_run(super::searxng::RUN_WAIT, super::searxng::url(&app_dir))
+                .await
+            {
+                super::searxng::ForRun::Ready(url) => web.search_url = Some(url),
+                super::searxng::ForRun::Unavailable(error) => {
                     let _ = self.inner.diagnostics.append(
                         "web",
                         "built_in_search_unavailable",
                         "warn",
                         json!({"reason": error}),
+                    );
+                }
+                // Its start goes on in the background; the next run gets the server.
+                super::searxng::ForRun::Starting => {
+                    let _ = self.inner.diagnostics.append(
+                        "web",
+                        "built_in_search_starting",
+                        "info",
+                        json!({"waited_ms": super::searxng::RUN_WAIT.as_millis() as u64}),
                     );
                 }
             }
