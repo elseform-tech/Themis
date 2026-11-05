@@ -169,6 +169,22 @@ it("keeps what the content lost at the end as room, so the text being read never
   expect(room.style.height).toBe("0px");
 });
 
+it("lets the room go once the person scrolls up, where it moves nothing they read", () => {
+  const { getByTestId } = render(<Chat threadId="release" />);
+  const scroller = getByTestId("scroller");
+  const content = getByTestId("content");
+  const room = getByTestId("room");
+  contentHeight(content, 2000);
+  sized(scroller, 2000, 1500);
+  scrollTo(scroller, 1500);
+  contentResized();
+  contentHeight(content, 1900);
+  contentResized();
+  expect(room.style.height).toBe("100px");
+  personScrollsTo(scroller, 600);
+  expect(room.style.height).toBe("0px");
+});
+
 it("leaves no room while the person reads further up", () => {
   const { getByTestId } = render(<Chat threadId="up" />);
   const scroller = getByTestId("scroller");

@@ -110,6 +110,8 @@ export function useFollowLatest(threadId: string, output: unknown) {
     setScrolledUp(!following.current);
     if (following.current) places.delete(threadId);
     else places.set(threadId, top);
+    // Away from the end, the room under the last message can go without moving what is read.
+    if (!following.current && spacerRef.current) spacerRef.current.style.height = "0px";
   }, [threadId]);
 
   /** Back to the latest message, following it again. */
