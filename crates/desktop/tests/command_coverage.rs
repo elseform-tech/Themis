@@ -39,6 +39,8 @@ fn server_exposes_all_frontend_backend_commands() {
             "save_runtime_configuration",
             "query_diagnostic_logs",
             "memory_try_pass",
+            // Auto mode's reviewer dry run, for evals only.
+            "auto_try_review",
             "get_context_usage",
             "get_thread_history_page",
             // CLI path to the global runtime.jsonc; the desktop uses open_runtime_config.
