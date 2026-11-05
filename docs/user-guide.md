@@ -167,45 +167,69 @@ reported back.
 
 ### Memory
 
-The agent remembers things across chats: what it learns about you, corrections you gave
-and why, decisions about a project and where to find things outside it. Each memory is one
-small dated file in the app data folder, never in your project, so nothing is committed;
-rules the whole team shares still belong in the project's `AGENTS.md`.
+Themis remembers things across chats: what it learns about you, corrections you gave and
+why, decisions about a project and where to find things outside it. Each memory is one small
+dated file in the app data folder, never in your project, so nothing is committed; rules the
+whole team shares still belong in the project's `AGENTS.md`.
 
+- **It keeps itself.** After each turn in which you said something (a message, one you
+  steered in, an answer to the agent's question; in a goal, after each goal turn), at once
+  when a goal is created (so an approved plan is kept before the work starts) and when you
+  add to or change a running goal, and when a goal is completed or edited, a separate, steadier
+  memory model reads it in the background, and saves what is worth keeping (a preference mentioned in passing, a
+  correction, a decision), updates a memory you just changed, or removes one that no longer
+  holds. You never need to say "remember", and the chat's own model never has to save
+  anything. It never stores secrets, and what a web page or file said is kept as "the page
+  said …" with its source. When the app has been idle a while (at most once a day by
+  default), it also merges duplicate memories and drops stale ones.
+- **It learns from mistakes.** When a step fails, or the agent finds a bug in its own work, drops
+  an approach or notes a better way, the memory model keeps a lesson (what went wrong, why, the
+  rule that avoids it, how to check) so a later chat in the project doesn't repeat it.
+- **It keeps track of tasks.** What you ask for along the way and what the agent finds still to
+  do become tasks with a status (open, doing, done, cancelled). Old tasks stay: a new request
+  never pushes out an earlier one, a done task keeps how it ended, and a cancelled one says why.
+  Each turn shows the agent the open ones, so a long chat or goal doesn't lose track. Tasks of a
+  piece of approved work live in its plan record; the rest in one list per project.
+- **It keeps decisions with their reasons.** Choices made for a piece of work, yours and the
+  agent's own (an approach or design it picked between options, with why), go into that
+  work's plan record. When you reverse a remembered decision, the memory keeps the old one with
+  the date and why it changed, so "why was this removed?" has an answer.
+- **Plans get a record of their own.** When you approve a plan ("I love it, build it", or a
+  goal made from it), Themis keeps it word for word as a plan record for that project. When you
+  change it, only the steps you changed are rewritten and a "Change: …" line is added. When
+  the work is done, the record gets what was built and how to run it, the evidence (a goal's,
+  as the agent gave it) and up to three lessons. A later chat about the same work sees that
+  record (the plan, changes, decisions, open tasks and lessons; results and evidence stay in
+  the file), so it can follow the plan as it now stands and avoid old mistakes.
 - **Where a memory applies.** Facts about a project and pointers stay with that project.
   Memories about you and your general feedback may apply everywhere, without anything
   specific to one project. A chat sees the memories that apply everywhere and its own
   project's, never another project's.
-- **What the agent sees.** Each chat starts with a one-line index of them (at most 200
-  lines) and reads a memory in full when it matters. Memories carry their date, and the
-  agent is told they may be out of date. One built from a web page or a file is marked with
-  its source and treated as information, never as instructions. Secrets are stripped
-  before anything is saved.
-- **In the chat.** Where the agent saves one, a slim **Remembered · name** line appears
-  (click the name to open it in Settings); **Forgot · name** where it deletes one.
-- **Settings › Memory** lists them for the current project or Everywhere, grouped as About
-  you, Your feedback, Project facts and Pointers, with the date and a "from a web page" tag.
-  Click one to read it, and **Delete** it (with an inline confirm). The agent keeps memory
-  up to date itself; there is nothing to arrange. **Remember things across chats** off
-  stops all saving and reading and keeps what was saved (`memory.enabled` in
-  `runtime.jsonc`; see [configuration](configuration.md#memory)).
-- **Notice what's worth remembering** (off by default, under the first switch): after each
-  reply to you, Themis asks the summary model once whether you said something worth keeping
-  (a preference mentioned in passing, a correction, a decision) and saves it without your
-  saying "remember". It saves rarely, never secrets, and nothing it already has; the same
-  **Remembered** line shows where it did. It runs after the reply, so it never holds up your
-  next message (`memory.auto`).
-
-### Themis's built-in hooks
-
-Integrations › Hooks lists three hooks of Themis's own under their events, marked
-**Themis (built-in)**, each off until you switch it on: **To-do and Memory skills** (every
-turn, and every subagent, carries short instructions for keeping a to-do list and saving
-memories), **Save before compaction** (a one-line reminder to save what's worth remembering
-just before the context is compacted) and **Still open** (after a turn that changed files
-while to-do items are open, the next turn starts by naming them). They run no command, ask
-nothing and grant nothing; the switches are saved under `hooks.built_in` in your
-`runtime.jsonc`.
+- **What the agent sees.** Each turn starts with a one-line index of them (at most 200
+  lines) and, in full, the few whose names and descriptions share words with your message.
+  When those don't cover something, the agent can search memory itself (`search_memory`).
+  The agent starts from memory before reading files. What you want (your preferences, decisions and approved plans) takes precedence over what the files do now, so where the code disagrees, the code is changed, unless you change your mind. Facts about the state of things carry their date and are checked against the files. The context
+  meter shows what they take as **Memory**.
+- **In the chat.** Inside the reply, above its footer, a step with the Memory icon: while the
+  memory models read the turn it shimmers **Checking what to remember…**; it goes when
+  nothing was worth keeping, says **Memory will retry later** for a moment when every model
+  failed, and otherwise briefly shows what it writes (**Saving python-preference.md**), then
+  **Saved python-preference.md · global** (**Updated …**, **Removed …**; several changes
+  read "Saved 2 · updated 1") for a few seconds, then fades away; while it shows, hover a
+  name for its file and the model that made it. When a decision changes what a memory is
+  about, the memory is renamed to fit.
+- **Decisions keep their details.** When you answer one of the agent's questions, the
+  answer carries the options it offered with their tradeoffs, and the memory models save
+  the decision in full: the question, the options, what you chose, why, and what it affects.
+- **The memory models** are listed in Settings › Models under **Memory models**, tried in
+  order: when one fails, is rate limited or can't do the job, the next takes over. Reorder,
+  add or remove them there; there are always at least three. Together they spend at most
+  $0.50 a day by default (`memory.daily_budget_usd`). If every one fails, the job waits and
+  is tried again later, and Settings › Memory says "Waiting for the memory models".
+- **Settings › Memory** is one switch, **Remember things across chats**: off stops all
+  saving and reading and keeps what was saved (`memory.enabled` in `runtime.jsonc`; see
+  [configuration](configuration.md#memory)). Memories are not listed in the app; to drop one,
+  tell the agent ("forget that I use pnpm") and the memory models remove it.
 
 ### Goals
 
@@ -225,11 +249,18 @@ Codex, the chat's own model judges its goal: there is no separate check.
   command output over memory of earlier turns; notice a turn that made no
   progress and try something else; before calling the goal done, check every
   requirement against current evidence, and treat uncertain evidence as not done.
+- **How rigorous a goal is comes from the goal and the project.** Before the agent calls a
+  goal done it checks every requirement against current evidence: the goal text, each thing
+  you added, each step of the approved plan, and the checks your `AGENTS.md` and docs ask
+  for. Say what "done" means there (the tests to run, the checks to pass) and the goal keeps
+  going until they hold.
 - **Done, blocked or paused.** When every requirement is proven, the agent calls
   `update_goal` complete with one evidence entry per requirement (what it is, and
   what shows it: a command and its result, a file, a test, a page check); a call
-  with no evidence is refused. The goal row then shows **Complete** with that
-  list until your next message. The agent marks a goal **Blocked** only when the
+  with no evidence is refused. The goal row then shows **Complete** until your next
+  message; the evidence is in the agent's reply and the work's plan record. The goal row is
+  always one line (the full sentence on hover); click it or the pencil to edit it, in a box
+  that grows with the text. The agent marks a goal **Blocked** only when the
   same blocker stopped it for three goal turns in a row, saying why; **Resume**
   starts it again. It pauses the goal only when you ask.
 - **What you add joins the goal.** Each message you send while the goal runs
@@ -389,7 +420,10 @@ shows a live preview of the page with what the agent is doing; click it to open
 **Workspace → Browser**, where the line above the page says the same. (To have
 Workspace open by itself instead, turn on **Open Workspace when the agent starts
 browsing** in Settings › Browser.) You can click, type or enter an
-address at the same time; the agent keeps working. The speaker button turns the
+address at the same time; the agent keeps working. The agent's pointer glides to where it
+clicks, so you can follow it. A page that locks the pointer (a first-person game) says
+**Click to control the view**: a click takes your mouse into the page and turns the view as
+you move it, and **Esc** gives it back. The speaker button turns the
 page's sound on (it starts off). **DevTools** opens Chrome's
 DevTools for the page. Browser actions ask per site, like page reads. Start a
 message with **/browser-use** to have the agent do a task in the browser (it

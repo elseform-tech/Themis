@@ -28,6 +28,8 @@ vi.mock("../lib/tauri", () => ({
   listGoModels: vi.fn(async () => [{ id: "muse-spark-1.3-contributor", name: "Muse Spark" }]),
   checkGoKey: vi.fn(async () => ({ state: "works", secret: "OPENCODE_KEY" })),
   listModelProviders: vi.fn(async () => []),
+  getMemorySettings: vi.fn(async () => ({ settings: { enabled: true, models: ["muse-spark-1.3-contributor", "claude-haiku-5-5", "deepseek-v4.1-flash"], daily_budget_usd: 0.5, consolidate_every_hours: 24 }, revision: "m1" })),
+  updateMemorySettings: vi.fn(),
   listKeys: vi.fn(async () => [
     { name: "OPENCODE_KEY", saved: true, environment: false, used_by: ["OpenCode Go"] },
     { name: "WORK_GO_KEY", saved: true, environment: false, used_by: [] },
@@ -49,7 +51,7 @@ describe("Settings › Models", () => {
   it("shows the connection first, checks the key with OpenCode, and offers the models", async () => {
     await act(async () => { render(<SettingsScreen />); });
     const groups = [...document.querySelectorAll(".themis-settings-subtitle")].map(node => node.textContent);
-    expect(groups).toEqual(["Providers", "Default model"]);
+    expect(groups).toEqual(["Providers", "Default model", "Memory models"]);
     expect(screen.getByText("Connected")).toBeInTheDocument();
     expect(bridge.checkGoKey).toHaveBeenCalledTimes(1);
     expect(dispatch).toHaveBeenCalledWith({ type: "provider/checked", state: "works" });

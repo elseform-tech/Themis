@@ -32,3 +32,8 @@ it("puts the goal sentence on its own line when the chat is too narrow to show i
   expect(goal).toMatch(/@container themis-composer \(max-width: 380px\)\s*\{\s*\.themis-goal-bar:not\(\.is-editing\)\s*\{[^}]*flex-wrap:\s*wrap/);
   expect(goal).toMatch(/\.themis-goal-bar:not\(\.is-editing\) \.themis-goal-body\s*\{[^}]*flex-basis:\s*100%/);
 });
+
+it("separates goal turns with a hairline and room around it", () => {
+  expect(styles).toMatch(/\.themis-goal-turn \{[^}]*margin: 28px 0 22px[^}]*border-top: 1px solid var\(--themis-border-subtle\)/);
+});
+

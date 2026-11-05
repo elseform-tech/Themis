@@ -88,6 +88,7 @@ fn kind_name(kind: UsageKind) -> &'static str {
 fn kind_from(name: &str) -> UsageKind {
     match name {
         "summary" => UsageKind::Summary,
+        "memory" => UsageKind::Memory,
         _ => UsageKind::Answer,
     }
 }

@@ -5,7 +5,7 @@ import { PromptText } from "../components/PromptInput";
 import { usePromptSkills } from "../lib/usePromptSkills";
 import { describeError, toast, useActiveProject, useApp } from "../state/store";
 import { browserOpenUrl } from "../lib/browser";
-import { ANSWER_MARKER, type AttachedMedia, type ChangedFile, type Question } from "../lib/types";
+import { ANSWER_MARKER, answerOf, type AttachedMedia, type ChangedFile, type Question } from "../lib/types";
 import { hiddenFilesLabel, visibleFiles } from "../lib/hiddenFiles";
 import { QuestionNote, useNowAt } from "./QuestionBox";
 import { placeQuestion, questionOnComposer, QUESTION_OPEN_MS, usePlacements } from "../state/composerSlot";
@@ -19,7 +19,7 @@ import { groupConversation, toolDisplayName, type ConversationRow } from "./conv
 import { describeTools } from "./toolActivity";
 import { OverviewBox, type Overview } from "./OverviewBox";
 import { SubagentCard } from "./SubagentCard";
-import { MemoryLine } from "./MemorySettings";
+import { MemoryLine, MemoryWorkingLine } from "./MemorySettings";
 
 interface ThreadConversationProps {
   /** The goal check is reading the turn that just ended. */
@@ -66,7 +66,24 @@ export function ThreadConversation({
   // A tool step's screenshot opens on its own, outside the replies' "2 of 9".
   const [single, setSingle] = useState<AttachedMedia | null>(null);
   const gallery = useMemo(() => ({ threadId, items: media, open: openMedia, show: setSingle }), [threadId, media, openMedia]);
-  const { state: { diffs }, dispatch } = useApp();
+  const { state: { diffs, memoryWorking: working }, dispatch } = useApp();
+  const memoryWorking = working[threadId];
+  // Memory lines sit inside their run's final reply, above its footer; the live "checking" line
+  // inside the latest one. A run with no final reply keeps its line on its own.
+  const { memoryByRun, finalRuns, lastFinalId } = useMemo(() => {
+    const memoryByRun: Record<string, ChatMessage> = {};
+    const finalRuns = new Set<string>();
+    let lastFinalId: string | undefined;
+    for (const message of messages) {
+      if (message.memory && message.runId) memoryByRun[message.runId] = message;
+      if (message.role === "assistant" && message.final) {
+        lastFinalId = message.id;
+        if (message.runId) finalRuns.add(message.runId);
+      }
+    }
+    return { memoryByRun, finalRuns, lastFinalId };
+  }, [messages]);
+  const inline = useMemo(() => ({ memoryByRun, finalRuns, lastFinalId, working: running || sending ? undefined : memoryWorking }), [memoryByRun, finalRuns, lastFinalId, memoryWorking, running, sending]);
   // Links in replies open in this chat's browser, shown in the Workspace Browser tab.
   const openLink = useCallback((url: string) => {
     dispatch({ type: "ui/diff-panel", open: true, tab: "browser" });
@@ -117,6 +134,7 @@ export function ThreadConversation({
             skills={skills} plugins={plugins}
             activeRunId={activeRunId}
             runDurations={runDurations}
+            memory={inline}
           />
         ))
       )}
@@ -136,6 +154,7 @@ export function ThreadConversation({
         </div>
       )}
       {!running && !sending && <GoalWait retryAt={goalRetryAt} />}
+      {memoryWorking && (running || sending || lastFinalId === undefined) && <MemoryWorkingLine step={memoryWorking} />}
       <div ref={endRef} />
       </div>
     </div>
@@ -167,6 +186,7 @@ function ConversationRow({
   runDurations,
   skills,
   plugins,
+  memory,
 }: {
   row: ConversationRow;
   threadId: string;
@@ -174,19 +194,24 @@ function ConversationRow({
   runDurations: Record<string, number>;
   skills: PromptSkill[];
   plugins: PromptPlugin[];
+  memory: InlineMemory;
 }) {
   if (row.kind === "message" && row.message.question) {
     return <QuestionRow question={row.message.question} />;
   }
   if (row.kind === "message" && row.message.memory) {
-    return <MemoryLine note={row.message.memory} />;
+    // Only a line that arrived live shows, inside its reply, and then fades; history keeps none.
+    if (!row.message.memorySettling || (row.message.runId && memory.finalRuns.has(row.message.runId))) return null;
+    return <MemoryLine id={row.message.id} changes={row.message.memory} settling fades />;
   }
   if (row.kind === "message" && row.message.subagents) {
     return <SubagentCard agents={row.message.subagents} runLive={row.message.runId !== undefined && row.message.runId === activeRunId} />;
   }
   if (row.kind === "message") {
     const durationMs = row.message.final && row.message.runId ? runDurations[row.message.runId] : undefined;
-    return <Message threadId={threadId} message={row.message} activeRunId={activeRunId} durationMs={durationMs} skills={skills} plugins={plugins} />;
+    const saved = row.message.final && row.message.runId ? memory.memoryByRun[row.message.runId] : undefined;
+    const working = row.message.id === memory.lastFinalId ? memory.working : undefined;
+    return <Message threadId={threadId} message={row.message} activeRunId={activeRunId} durationMs={durationMs} skills={skills} plugins={plugins} memory={saved} memoryWorking={working} />;
   }
   if (row.kind === "milestone") return <Milestone row={row} activeRunId={activeRunId} skills={skills} plugins={plugins} />;
 
@@ -214,8 +239,12 @@ function ConversationRow({
  *  Ran python3 check.py"). It stays folded during a run, so the chat doesn't jump with each call. */
 export function ToolGroup({ messages, activeRunId, skills, plugins }: { messages: ChatMessage[]; activeRunId: string | undefined; skills: PromptSkill[]; plugins: PromptPlugin[] }) {
   const failed = messages.filter(message => message.tool?.ok === false).length;
+  // Screenshots and recordings show under the line while it is folded, not two folds deep.
+  const [open, setOpen] = useState(false);
+  const shots = messages.flatMap(message => message.tool?.media ? [message.tool.media] : []);
   return (
-    <details className="themis-tool-group">
+    <>
+    <details className="themis-tool-group" onToggle={event => setOpen(event.currentTarget.open)}>
       <summary>
         <span className="themis-tool-chevron" aria-hidden="true">›</span>
         <span title={`${messages.length} tool call${messages.length === 1 ? "" : "s"}`}>{describeTools(messages, activeRunId !== undefined)}</span>
@@ -225,6 +254,12 @@ export function ToolGroup({ messages, activeRunId, skills, plugins }: { messages
         {messages.map(message => <Message key={message.id} message={message} activeRunId={activeRunId} skills={skills} plugins={plugins} />)}
       </div>
     </details>
+    {!open && shots.length > 0 && (
+      <div className="themis-tool-shots" aria-label="Screenshots">
+        {shots.map(media => <ToolMediaPreview key={media.path} media={media}>{null}</ToolMediaPreview>)}
+      </div>
+    )}
+    </>
   );
 }
 
@@ -330,15 +365,26 @@ function formatRunDuration(ms: number): string {
   return seconds < 60 ? `${seconds}s` : `${Math.floor(seconds / 60)}m${seconds % 60 === 0 ? "" : ` ${seconds % 60}s`}`;
 }
 
-function Message({ message, threadId, activeRunId, durationMs, skills, plugins }: { message: ChatMessage; threadId?: string; activeRunId: string | undefined; durationMs?: number; skills: PromptSkill[]; plugins: PromptPlugin[] }) {
+/** The line between goal turns: a hairline with space around it, no text. */
+export function GoalTurnDivider({ turn }: { turn: number }) {
+  return <div className="themis-goal-turn" role="separator" aria-label={`Goal turn ${turn}`} />;
+}
+
+type InlineMemory = { memoryByRun: Record<string, ChatMessage>; finalRuns: Set<string>; lastFinalId: string | undefined; working: "checking" | "waiting" | undefined };
+
+function Message({ message, threadId, activeRunId, durationMs, skills, plugins, memory, memoryWorking }: { message: ChatMessage; threadId?: string; activeRunId: string | undefined; durationMs?: number; skills: PromptSkill[]; plugins: PromptPlugin[]; memory?: ChatMessage; memoryWorking?: "checking" | "waiting" }) {
   if (message.checkpoint) return <CheckpointDivider checkpoint={message.checkpoint} />;
-  // The answered question box already shows the answer the agent was sent.
-  if (message.role === "user" && message.text.startsWith(ANSWER_MARKER)) return null;
+  // An answer to the agent's question is the person's next message: their words in a bubble,
+  // so a long chat shows what they said where they said it.
+  if (message.role === "user" && message.text.startsWith(ANSWER_MARKER)) {
+    const answer = answerOf(message.text);
+    return answer ? <div className="themis-thread-msg themis-thread-msg--user"><p className="themis-thread-text">{answer}</p></div> : null;
+  }
   // A goal turn starts with a runtime message: a divider, not a bubble from the user.
   if (message.goalStatus) return <div className="themis-thread-msg themis-thread-msg--assistant themis-thread-msg--completed"><ResponseBody text={message.text} /></div>;
   if (message.goalCheck) return <div className="themis-thread-msg themis-thread-msg--user"><span className="themis-goal-check-label">Goal check</span><p className="themis-thread-text">{message.text}</p></div>;
-  // The check's bubble already marks where a new goal turn starts.
-  if (message.goalTurn !== undefined) return null;
+  // Where a new goal turn starts: a quiet line with room around it.
+  if (message.goalTurn !== undefined) return <GoalTurnDivider turn={message.goalTurn} />;
   // Not the person's message: what started this turn, and whose word it is.
   if (message.hookWake !== undefined) return <div className="themis-thread-msg themis-thread-msg--user"><span className="themis-goal-check-label">Plugin hook</span><p className="themis-thread-text">{message.hookWake}</p></div>;
   const text = message.attachments?.length ? message.text.split("\n\nAttached files (local paths;")[0]! : message.text;
@@ -382,6 +428,7 @@ function Message({ message, threadId, activeRunId, durationMs, skills, plugins }
           <ResponseBody text={message.text} artifacts={message.media?.map(file => file.path)} />
           {!!message.media?.length && <MediaStrip files={message.media} />}
           {!!message.changedFiles?.length && <EditedFiles files={message.changedFiles} />}
+          {memory?.memory && memory.memorySettling ? <MemoryLine key={memory.id} id={memory.id} changes={memory.memory} settling fades /> : memoryWorking && <MemoryWorkingLine step={memoryWorking} />}
           {(message.final || !message.runId) && <div className="themis-response-actions">
             <CopyButton text={message.text} />
             <small className="themis-response-model">{message.interrupted === "stopped" ? "Stopped by you" : message.interrupted === "failed" ? "Interrupted by an error" : message.model ?? "Model not recorded"}{durationMs !== undefined && ` · ${formatRunDuration(durationMs)}`}</small>

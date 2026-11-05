@@ -290,7 +290,7 @@ impl AppState {
         })?;
         let (steered, _run_id) = steered;
         // Steered into a goal, it joins the goal word for word.
-        self.add_also_asked(sink.as_ref(), &thread_id, &steered);
+        self.add_also_asked(&sink, &thread_id, &steered);
         // After the inbox: an approval asked from here on sees the message there
         // and is denied without a box (see `DesktopApprovalHook`).
         let denied = self.deny_approvals_for_new_message(&thread_id);
@@ -388,6 +388,11 @@ impl AppState {
     /// Closes the run's steer inbox; steers it never read go back to the
     /// front of the queue, in order, to be sent as the next message.
     pub(super) fn close_steer_inbox(&self, thread_id: &str) {
+        self.inner
+            .live_notes
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(thread_id);
         // Same lock order as steering: queue, then inboxes.
         let _guard = self
             .inner

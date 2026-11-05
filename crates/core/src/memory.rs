@@ -1,6 +1,7 @@
 //! What the agent remembers across chats: one small Markdown file per memory with a
 //! frontmatter header, and an index (`MEMORY.md`) of one line per memory that runs read at
-//! their start. Memories live in the app data folder, never in a project: one folder for
+//! their start, with the memories relevant to the message in full. The memory models keep
+//! them (see [`auto`] and [`jobs`]); the chat's own model only reads them. Memories live in the app data folder, never in a project: one folder for
 //! memories that apply everywhere and one per project. Files are untrusted on read (a person
 //! may edit them): every field is validated, sizes are bounded, and symlinks are refused.
 
@@ -8,6 +9,9 @@ use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
 pub mod auto;
+pub mod jobs;
+pub mod plans;
+pub mod tasks;
 
 use serde::{Deserialize, Serialize};
 use sha2::Digest;
@@ -700,9 +704,131 @@ impl MemoryStore {
     }
 }
 
+/// Most memories a run gets in full beside the index.
+pub const MAX_RELEVANT: usize = 5;
+/// Most bytes of those memories together.
+pub const MAX_RELEVANT_BYTES: usize = 8 * 1024;
+/// Shortest word that counts toward relevance.
+const MIN_TERM_CHARS: usize = 4;
+/// Words too common to tell memories apart: a live run's lesson came in only through "until",
+/// and unrelated memories through "small" and "from".
+const STOP_WORDS: [&str; 64] = [
+    "about", "after", "again", "also", "always", "another", "any", "because", "been", "before",
+    "being", "both", "but", "could", "does", "done", "each", "even", "every", "from", "have",
+    "here", "into", "just", "keep", "like", "make", "many", "more", "most", "much", "must", "need",
+    "never", "next", "only", "other", "over", "please", "same", "should", "small", "some", "such",
+    "than", "that", "their", "them", "then", "there", "these", "they", "this", "those", "under",
+    "until", "used", "uses", "very", "what", "when", "where", "which", "with",
+];
+
+/// The distinct lowercase words of `text` that can tell memories apart, a plural counted as
+/// its singular ("games" finds "game", "libraries" finds "library").
+fn terms(text: &str) -> std::collections::BTreeSet<String> {
+    text.split(|c: char| !c.is_alphanumeric())
+        .map(str::to_lowercase)
+        .map(|word| singular(&word))
+        .filter(|word| word.chars().count() >= MIN_TERM_CHARS)
+        .filter(|word| !STOP_WORDS.contains(&word.as_str()))
+        .collect()
+}
+
+/// A plain English plural's singular; anything else unchanged. Words ending in "ss", "us" or
+/// "is" ("class", "status", "analysis") are not plurals.
+fn singular(word: &str) -> String {
+    if let Some(stem) = word.strip_suffix("ies").filter(|stem| stem.len() >= 3) {
+        return format!("{stem}y");
+    }
+    if word.len() > 4
+        && word.ends_with('s')
+        && !["ss", "us", "is"].iter().any(|end| word.ends_with(end))
+    {
+        return word[..word.len() - 1].to_owned();
+    }
+    word.to_owned()
+}
+
+/// Which memories bear on `message`, by a cheap rule that needs no model: the index lines
+/// (name and description) that share the most words of at least four letters with it, at most
+/// [`MAX_RELEVANT`], this project's before the global ones on a tie, newest first.
+pub fn relevant_names(
+    message: &str,
+    global_index: &str,
+    project_index: &str,
+) -> Vec<(MemoryScope, String)> {
+    let wanted = terms(message);
+    if wanted.is_empty() {
+        return Vec::new();
+    }
+    let mut scored: Vec<(usize, usize, MemoryScope, String)> = Vec::new();
+    for (scope, index) in [
+        (MemoryScope::Project, project_index),
+        (MemoryScope::Global, global_index),
+    ] {
+        for line in index.lines() {
+            let Some((name, description)) = auto::index_entry(line) else {
+                continue;
+            };
+            let have = terms(&format!("{name} {description}"));
+            let score = have.intersection(&wanted).count();
+            if score > 0 {
+                scored.push((score, scored.len(), scope, name.to_owned()));
+            }
+        }
+    }
+    scored.sort_by(|a, b| b.0.cmp(&a.0).then(a.1.cmp(&b.1)));
+    scored
+        .into_iter()
+        .take(MAX_RELEVANT)
+        .map(|(_, _, scope, name)| (scope, name))
+        .collect()
+}
+
+/// Most index lines one memory search returns.
+pub const MAX_SEARCH_RESULTS: usize = 10;
+
+/// `search_memory`'s query: the index lines of `sources` (a label and an index each: memories or
+/// plan records) that share the most words with `query`, at most [`MAX_SEARCH_RESULTS`], earlier
+/// sources first on a tie. Reads only the indexes it is given.
+pub fn search<'a>(query: &str, sources: &[(&'a str, &str)]) -> Vec<(&'a str, String)> {
+    let wanted = terms(query);
+    if wanted.is_empty() {
+        return Vec::new();
+    }
+    let mut scored: Vec<(usize, usize, &str, String)> = Vec::new();
+    for (label, index) in sources {
+        for line in index.lines() {
+            let Some((name, description)) = auto::index_entry(line) else {
+                continue;
+            };
+            let score = terms(&format!("{name} {description}"))
+                .intersection(&wanted)
+                .count();
+            if score > 0 {
+                scored.push((
+                    score,
+                    scored.len(),
+                    label,
+                    line.trim_start_matches("- ").to_owned(),
+                ));
+            }
+        }
+    }
+    scored.sort_by(|a, b| b.0.cmp(&a.0).then(a.1.cmp(&b.1)));
+    scored
+        .into_iter()
+        .take(MAX_SEARCH_RESULTS)
+        .map(|(_, _, label, line)| (label, line))
+        .collect()
+}
+
 /// What a run is told about memory: the global and this project's indexes under the memory
-/// note, or nothing when neither holds a memory.
-pub fn run_note(global_index: &str, project_index: &str) -> String {
+/// note, then `relevant` in full (within [`MAX_RELEVANT_BYTES`]), or nothing when neither index
+/// holds a memory.
+pub fn run_note(
+    global_index: &str,
+    project_index: &str,
+    relevant: &[(MemoryScope, Memory)],
+) -> String {
     if global_index.trim().is_empty() && project_index.trim().is_empty() {
         return String::new();
     }
@@ -714,13 +840,54 @@ pub fn run_note(global_index: &str, project_index: &str) -> String {
             index.to_owned()
         }
     };
-    crate::prompts::fill(
+    let mut note = crate::prompts::fill(
         crate::prompts::SYSTEM_MEMORY,
         &[
             ("global", &lines(global_index)),
             ("project", &lines(project_index)),
         ],
-    )
+    );
+    let mut memories = String::new();
+    for (scope, memory) in relevant {
+        let entry = format!(
+            "### {} ({})\n{}\n",
+            memory.index_line().trim_start_matches("- "),
+            scope.as_str(),
+            memory.body.trim_end()
+        );
+        if memories.len() + entry.len() > MAX_RELEVANT_BYTES {
+            continue;
+        }
+        memories.push_str(&entry);
+    }
+    if !memories.is_empty() {
+        note.push('\n');
+        note.push_str(&crate::prompts::fill(
+            crate::prompts::SYSTEM_MEMORY_RELEVANT,
+            &[("memories", memories.trim_end())],
+        ));
+    }
+    note
+}
+
+/// The memory block a run in a project starts with, for `message`: both indexes (one bounded
+/// file each) and the relevant memories (at most [`MAX_RELEVANT`] files), so its cost stays
+/// the same whatever the memory count.
+pub fn memory_block(global: &MemoryStore, project: Option<&MemoryStore>, message: &str) -> String {
+    let global_index = global.index();
+    let project_index = project.map(MemoryStore::index).unwrap_or_default();
+    let relevant: Vec<(MemoryScope, Memory)> =
+        relevant_names(message, &global_index, &project_index)
+            .into_iter()
+            .filter_map(|(scope, name)| {
+                let store = match scope {
+                    MemoryScope::Global => global,
+                    MemoryScope::Project => project?,
+                };
+                Some((scope, store.read(&name).ok()??))
+            })
+            .collect();
+    run_note(&global_index, &project_index, &relevant)
 }
 
 /// Today's date as memories record it.
@@ -783,18 +950,150 @@ mod tests {
     }
 
     #[test]
-    fn the_run_note_carries_both_indexes_or_nothing() {
-        assert_eq!(run_note("", "\n"), "");
-        let note = run_note("", "- a (project, 2026-11-02): A fact\n");
+    fn the_run_note_carries_both_indexes_and_relevant_memories_or_nothing() {
+        assert_eq!(run_note("", "\n", &[]), "");
+        let note = run_note("", "- a (project, 2026-11-02): A fact\n", &[]);
         assert!(note.starts_with("Memory from earlier chats"), "{note}");
-        assert!(note.contains("may be out of date"), "{note}");
+        // Memory first: what the person wants wins over the files; facts about state are checked.
         assert!(
-            note.contains("Read one in full with the memory tool"),
+            note.contains("Start from memory before reading files"),
             "{note}"
         );
         assert!(
+            note.contains("memory takes precedence over the files"),
+            "{note}"
+        );
+        assert!(
+            note.contains("check those against the current files"),
+            "{note}"
+        );
+        assert!(note.contains("so you never save them"), "{note}");
+        assert!(!note.contains("memory tool"), "no tool is offered: {note}");
+        assert!(
             note.ends_with("Everywhere:\n(none)\nThis project:\n- a (project, 2026-11-02): A fact"),
             "{note}"
+        );
+        let full = run_note(
+            "- free-model-for-tests (feedback, 2026-11-02): Use the free model for test runs\n",
+            "",
+            &[(MemoryScope::Global, memory("free-model-for-tests"))],
+        );
+        assert!(
+            full.ends_with("in full:\n### free-model-for-tests (feedback, 2026-11-02): Use the free model for test runs (global)\nUse the free model for test runs.\n\nWhy: said so.\nHow to apply: pick it."),
+            "{full}"
+        );
+    }
+
+    /// Taken from a live goal run: its lesson matched only through "until", and two unrelated
+    /// memories through "small" and "from". A plural now finds its singular, and filler words
+    /// pick nothing.
+    #[test]
+    fn a_search_finds_index_lines_by_words_across_sources() {
+        let memories = "- fixed-step-tap-latching (project, 2026-11-04): Fixed-step games must latch quick discrete presses\n- pytest-for-tests (project, 2026-11-03): Uses pytest for all tests\n";
+        let plans = "- dodger-asteroid-dodger (in progress, 2026-11-04): Build small 3D asteroid-dodger browser game\n";
+        let found = search(
+            "keyboard presses lost in my game loop",
+            &[("project memory", memories), ("plan record", plans)],
+        );
+        assert_eq!(found.len(), 2, "{found:?}");
+        assert_eq!(found[0].0, "project memory");
+        assert!(
+            found[0].1.starts_with("fixed-step-tap-latching (project"),
+            "{found:?}"
+        );
+        assert_eq!(found[1].0, "plan record");
+        assert!(search("the and with", &[("project memory", memories)]).is_empty());
+        // Bounded, whatever the index holds.
+        let many: String = (0..50)
+            .map(|n| format!("- game-{n} (project, 2026-11-04): game note {n}\n"))
+            .collect();
+        assert_eq!(
+            search("game", &[("project memory", &many)]).len(),
+            MAX_SEARCH_RESULTS
+        );
+    }
+
+    #[test]
+    fn plurals_match_and_filler_words_do_not() {
+        let project = "- fixed-step-tap-latching (project, 2026-11-04): Fixed-step games must latch quick discrete presses until next step reads them
+- cli-tool-language (project, 2026-11-03): Small command-line tool uses Go instead of Python
+- deploy-from-release-branch (project, 2026-11-03): Deploys this project from release branch, never main
+";
+        let picked = relevant_names(
+            "Build a small browser game in a new folder: keys move the ship until it is hit; three lives, sound from WebAudio.",
+            "",
+            project,
+        );
+        assert_eq!(
+            picked,
+            [(MemoryScope::Project, "fixed-step-tap-latching".to_owned())]
+        );
+        assert_eq!(singular("libraries"), "library");
+        assert_eq!(singular("class"), "class");
+        assert_eq!(singular("status"), "status");
+        assert_eq!(singular("analysis"), "analysis");
+        assert_eq!(singular("bus"), "bus");
+    }
+
+    #[test]
+    fn relevant_memories_share_words_with_the_message() {
+        let global = "- free-model-for-tests (feedback, 2026-11-02): Use the free model for test runs\n- short-replies (feedback, 2026-11-01): Keep replies short\n";
+        let project = "- deploy-branch (project, 2026-11-02): Deploy from the release branch\n";
+        assert_eq!(
+            relevant_names("Which model should the tests use?", global, project),
+            [(MemoryScope::Global, "free-model-for-tests".to_owned())]
+        );
+        assert_eq!(
+            relevant_names("deploy it to the release", global, project),
+            [(MemoryScope::Project, "deploy-branch".to_owned())]
+        );
+        // Short or common words alone pick nothing.
+        assert!(relevant_names("hi, what is it?", global, project).is_empty());
+        let many: String = (0..50)
+            .map(|n| format!("- m-{n} (user, 2026-11-02): Tests run here\n"))
+            .collect();
+        assert_eq!(relevant_names("tests", &many, "").len(), MAX_RELEVANT);
+    }
+
+    /// The memory block reads two index files and at most [`MAX_RELEVANT`] memories whatever the
+    /// memory count, so each run's cost stays flat as memory grows.
+    #[test]
+    fn the_memory_block_reads_a_bounded_number_of_files() {
+        fn work(count: usize) -> ((u64, u64), usize) {
+            let root = tempfile::tempdir().unwrap();
+            let global = MemoryStore::new(root.path(), GLOBAL_FOLDER).unwrap();
+            let project = MemoryStore::new(root.path(), "projects/abc").unwrap();
+            for index in 0..count {
+                for store in [&global, &project] {
+                    let mut item = memory(&format!("m-{index}"));
+                    item.description = format!("Tests fact number {index}");
+                    std::fs::create_dir_all(store.dir()).unwrap();
+                    std::fs::write(
+                        store.dir().join(format!("{}.md", item.name)),
+                        serialize(&item),
+                    )
+                    .unwrap();
+                }
+            }
+            for store in [&global, &project] {
+                store.write_index(&store.list().unwrap()).unwrap();
+            }
+            WORK.with(|work| work.set((0, 0)));
+            let block = memory_block(&global, Some(&project), "how do the tests run?");
+            (WORK.with(|work| work.replace((0, 0))), block.len())
+        }
+        let (small, small_bytes) = work(10);
+        let (large, large_bytes) = work(200);
+        eprintln!("memory block: 10 memories {small:?} {small_bytes} bytes, 200 memories {large:?} {large_bytes} bytes");
+        assert_eq!(small.0, 2 + MAX_RELEVANT as u64);
+        assert_eq!(large.0, 2 + MAX_RELEVANT as u64);
+        assert!(large.1 <= (2 * MAX_INDEX_BYTES) as u64 + MAX_RELEVANT as u64 * MAX_FILE_BYTES);
+        assert!(
+            large_bytes
+                <= 2 * MAX_INDEX_BYTES
+                    + MAX_RELEVANT_BYTES
+                    + crate::prompts::SYSTEM_MEMORY.len()
+                    + crate::prompts::SYSTEM_MEMORY_RELEVANT.len()
         );
     }
 

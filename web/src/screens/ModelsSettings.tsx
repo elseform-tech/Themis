@@ -6,6 +6,7 @@ import type { GoModel, ModelProvider, Settings } from "../lib/types";
 import { DEFAULT_MODEL, groupByProvider, modelLabel } from "../lib/models";
 import { goUsable } from "../state/reducer";
 import { describeError, useApp } from "../state/store";
+import { MemoryModels } from "./MemoryModels";
 import { RefreshIcon, ResetIcon, SettingsGroup, SettingsIconButton } from "./SettingsGroup";
 
 const STATUS = {
@@ -27,7 +28,7 @@ const PROVIDER_STATUS: Record<ModelProvider["status"], readonly [string, string]
 /**
  * Settings › Models: the providers (OpenCode Go, built in: which secret it reads, whether
  * OpenCode accepts it, and its value; then any from runtime.jsonc with their secret and
- * status), then the default model from every connected provider.
+ * status), then the default model from every connected provider, then the memory models.
  */
 export function ModelsSettings({ save, saving }: { save: (patch: Partial<Settings>) => Promise<boolean>; saving: boolean }) {
   const { state, dispatch } = useApp();
@@ -172,6 +173,7 @@ export function ModelsSettings({ save, saving }: { save: (patch: Partial<Setting
         </select>
       </span></label>
     </SettingsGroup>
+    <MemoryModels models={models} />
   </>;
 }
 

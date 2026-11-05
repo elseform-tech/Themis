@@ -21,6 +21,8 @@ pub enum UsageKind {
     Answer,
     /// A context checkpoint or document capsule summary.
     Summary,
+    /// A memory job (the pass after a turn, or an idle consolidation) on the memory models.
+    Memory,
 }
 
 impl UsageKind {
@@ -28,6 +30,7 @@ impl UsageKind {
         match self {
             Self::Answer => "answer",
             Self::Summary => "summary",
+            Self::Memory => "memory",
         }
     }
 }

@@ -1,1 +1,0 @@
-[Memory reminder — runtime, not from the user] Your context will be compacted soon. If this chat holds anything worth remembering in later chats (a preference, a correction and why, a decision and its reason), save it with the memory tool now; otherwise carry on.

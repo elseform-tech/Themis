@@ -38,6 +38,7 @@ fn server_exposes_all_frontend_backend_commands() {
             "get_runtime_configuration",
             "save_runtime_configuration",
             "query_diagnostic_logs",
+            "memory_try_pass",
             "get_context_usage",
             "get_thread_history_page",
             // CLI path to the global runtime.jsonc; the desktop uses open_runtime_config.

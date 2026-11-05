@@ -130,6 +130,8 @@ impl AppState {
         task: String,
         policy: RunPolicy,
     ) -> Result<(), String> {
+        // Idle memory work waits for the app to be quiet again.
+        self.note_memory_activity();
         // What already differs from HEAD before this run, so the end of the run
         // can report only the files this turn changed.
         let changes_before = {
@@ -300,31 +302,23 @@ impl AppState {
             .await;
         let project_guidance =
             themis_core::configuration::project_guidance(&run_configuration, &snapshot.work_root);
-        // The global and this project's memory indexes, read once per run.
-        let memory_note = self.memory_note(run_configuration.memory.enabled, &snapshot.work_root);
+        // The global and this project's memory indexes and the memories relevant to this
+        // message, read once per run.
+        let memory_note = self.memory_note(
+            run_configuration.memory.enabled,
+            (&snapshot.work_root, thread_id),
+            snapshot.person_text.as_deref().unwrap_or(&task),
+        );
         // With memory off the main agent is told so, and doesn't promise to remember.
-        let mut memory_line = if !run_configuration.memory.enabled {
+        let memory_line = if !run_configuration.memory.enabled {
             format!("{}\n", themis_core::prompts::SYSTEM_MEMORY_OFF)
         } else if memory_note.is_empty() {
             String::new()
         } else {
             format!("{memory_note}\n")
         };
-        // `hooks.built_in.skills_at_start`: the short To-do (and, with memory on, Memory) skill.
-        let built_in = &run_configuration.hooks.built_in;
-        if built_in.skills_at_start {
-            memory_line.push_str(&themis_core::built_in_hooks::skills_text(
-                run_configuration.memory.enabled,
-            ));
-            memory_line.push('\n');
-            let _ = self.inner.diagnostics.append(
-                "hook",
-                "built_in",
-                "info",
-                json!({"thread_id": thread_id, "run_id": run_id, "hook": "skills_at_start", "event": "SessionStart"}),
-            );
-        }
-        let save_reminder = built_in.save_reminder && run_configuration.memory.enabled;
+        // The context meter shows it as its own part, counted from the request that carries it.
+        let memory_block = memory_note.clone();
         skill_catalog = format!(
             "\n{}\n{project_guidance}\n{memory_line}{}{secrets_note}{}",
             themis_core::prompts::fill(
@@ -535,6 +529,15 @@ impl AppState {
                 run: check_approval.clone(),
             }));
         }
+        // What Themis remembers, beyond the index and the few memories the run gets in full.
+        if run_configuration.memory.enabled {
+            tools.push(Box::new(super::memory_tool::SearchMemoryTool {
+                state: self.clone(),
+                project_root: snapshot.work_root.clone(),
+                thread_id: thread_id.to_owned(),
+                run: check_approval.clone(),
+            }));
+        }
         let end_request = themis_core::runtime::EndRequest::default();
         tools.push(Box::new(super::question_tool::QuestionTool {
             state: self.clone(),
@@ -545,29 +548,35 @@ impl AppState {
             end: Arc::clone(&end_request),
             subagent: None,
         }));
-        // What the memory pass after this turn reads (`memory.auto`).
-        let memory_saved = Arc::new(AtomicBool::new(false));
+        // The memory pass after this turn (when its reply is done) reads what the person said in
+        // it, the reply their message answered, and this turn's reply. In a goal it runs after
+        // each goal turn the person spoke in, never only when the goal completes.
         let memory_turn = super::memory_auto::MemoryTurn {
             project_root: snapshot.work_root.clone(),
             config: run_configuration.clone(),
-            chat_model: snapshot.model.clone(),
-            person: snapshot.person_text.clone().into_iter().collect(),
-            saved: Arc::clone(&memory_saved),
+            // Words a goal event already took (the goal they created, an "Also asked"
+            // line) are not passed twice.
+            person: snapshot
+                .person_text
+                .clone()
+                .filter(|text| !self.goal_takes_words(thread_id, text))
+                .into_iter()
+                .collect(),
+            // The whole reply the person answered, not just its closing paragraph.
+            answered: crate::transcript::reply_before(snapshot.history.iter().rev().map(|turn| {
+                (
+                    matches!(turn.role, themis_core::runtime::ConversationRole::Assistant),
+                    turn.text.as_str(),
+                )
+            })),
+            event: None,
+            start_seq: self
+                .inner
+                .transcript
+                .last_activity_seq(thread_id)
+                .unwrap_or(0),
+            ran_into: String::new(),
         };
-        // Memory off: no tool at all, so its description costs nothing.
-        if run_configuration.memory.enabled {
-            tools.push(Box::new(super::memory::MemoryTool {
-                state: self.clone(),
-                sink: Arc::clone(sink),
-                thread_id: thread_id.to_owned(),
-                run_id: run_id.to_owned(),
-                project_root: snapshot.work_root.clone(),
-                enabled: true,
-                run: check_approval.clone(),
-                read_only: false,
-                saved: Arc::clone(&memory_saved),
-            }));
-        }
         let checkpoint_note: themis_core::runtime::CheckpointNote = Arc::new(|| None);
         tools.push(Box::new(super::media_tool::AttachFileTool {
             state: self.clone(),
@@ -681,7 +690,7 @@ impl AppState {
                     permissions: Arc::clone(&site_permissions),
                 },
                 subagent_skills,
-                // Subagents start with the same memory index; they may only read memories.
+                // Subagents start with the same memory block.
                 if memory_note.is_empty() {
                     project_guidance
                 } else {
@@ -699,6 +708,11 @@ impl AppState {
         } else {
             themis_core::runtime::RunNotes::new()
         };
+        self.inner
+            .live_notes
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(thread_id.to_owned(), Arc::clone(&run_notes));
         let hook_runtime = themis_core::plugins::hooks::HookRuntime {
             hooks,
             run_id: run_id.to_owned(),
@@ -831,8 +845,20 @@ impl AppState {
                         continue;
                     }
                     if let RunEvent::Steered { text } = &event {
-                        memory_turn.person.push(text.clone());
+                        if !pump_state.goal_takes_words(&pump_thread, text) {
+                            memory_turn.person.push(text.clone());
+                        }
                     }
+                    // The memory pass, once the turn is over (finished, incomplete or failed:
+                    // what the person said counts either way): on its own task, never holding
+                    // up what comes next.
+                    let ended = match &event {
+                        RunEvent::Finished { result } | RunEvent::Incomplete { result } => {
+                            Some(result.clone())
+                        }
+                        RunEvent::Failed { .. } => Some(String::new()),
+                        _ => None,
+                    };
                     // A terminal event means the run is over: mark the thread
                     // idle BEFORE emitting, so observers (merge/discard,
                     // provider switch) never see `Finished` on a busy thread.
@@ -877,6 +903,23 @@ impl AppState {
                             pump_sink.emit_thread_event(&changed);
                         }
                     }
+                    if let Some(result) = ended {
+                        let person = std::mem::take(&mut memory_turn.person);
+                        // What the turn ran into, failed steps and the agent's notes along the
+                        // way: where a lesson is fresh.
+                        let ran_into = pump_state.work_log(&pump_thread, memory_turn.start_seq);
+                        pump_state.spawn_memory_pass(
+                            Arc::clone(&pump_sink),
+                            pump_thread.clone(),
+                            pump_run.clone(),
+                            super::memory_auto::MemoryTurn {
+                                person,
+                                ran_into,
+                                ..memory_turn.clone()
+                            },
+                            result,
+                        );
+                    }
                     let mut captured_event = ThreadEvent::from(event.clone());
                     if let ThreadEvent::ToolStarted { tool, label, .. } = &mut captured_event {
                         *label = tool_labels.get(tool.as_str()).cloned();
@@ -917,20 +960,6 @@ impl AppState {
                             .await;
                     }
                     pump_sink.emit_thread_event(&envelope);
-                    if let RunEvent::Finished { result } | RunEvent::Incomplete { result } = &event
-                    {
-                        // `memory.auto`: on its own task, never holding up what comes next.
-                        pump_state.spawn_memory_pass(
-                            Arc::clone(&pump_sink),
-                            pump_thread.clone(),
-                            pump_run.clone(),
-                            std::mem::replace(
-                                &mut memory_turn,
-                                super::memory_auto::MemoryTurn::spent(),
-                            ),
-                            result.clone(),
-                        );
-                    }
                     if terminal {
                         // The next queued message or goal turn starts after
                         // observers saw this run end.
@@ -1005,7 +1034,7 @@ impl AppState {
                                                 }
                                                 // Boxed: the run's future is large, and the
                                                 // steer scope must not copy it on the stack.
-                                                themis_core::runtime::with_save_reminder(save_reminder.then(|| themis_core::prompts::RUNTIME_SAVE_REMINDER.to_owned()), themis_core::runtime::with_checkpoint_note(checkpoint_note, themis_core::runtime::with_first_request(first_request, themis_core::runtime::with_end_request(end_request, themis_core::runtime::with_steer_inbox(steer_inbox, themis_core::runtime::with_run_notes(run_notes, Box::pin(run_task_with_evidence(
+                                                themis_core::runtime::with_memory_block(memory_block, themis_core::runtime::with_checkpoint_note(checkpoint_note, themis_core::runtime::with_first_request(first_request, themis_core::runtime::with_end_request(end_request, themis_core::runtime::with_steer_inbox(steer_inbox, themis_core::runtime::with_run_notes(run_notes, Box::pin(run_task_with_evidence(
                                                 llm,
                                                 if yolo {
                                                     tools

@@ -1546,6 +1546,49 @@ fn messages_answers_keep_their_thinking_except_for_claude() {
     }
 }
 
+/// Claude caches only marked prefixes: the system prompt is a cached block and the newest block
+/// carries the rolling mark, so each request reads the conversation before it from cache. Other
+/// models on the Messages endpoint get no marks they may not take.
+#[test]
+fn claude_requests_mark_the_system_prompt_and_newest_block_for_caching() {
+    let history = vec![
+        ChatMessage {
+            role: ChatRole::System,
+            message_type: MessageType::Text,
+            content: "rules".into(),
+        },
+        user_message("first"),
+        ChatMessage {
+            role: ChatRole::Assistant,
+            message_type: MessageType::Text,
+            content: "answer".into(),
+        },
+        user_message("next"),
+    ];
+    let body = messages::messages_body("claude-haiku-5-5", &history, None, false).unwrap();
+    assert_eq!(body["system"][0]["text"], "rules", "{body}");
+    assert_eq!(
+        body["system"][0]["cache_control"]["type"], "ephemeral",
+        "{body}"
+    );
+    let messages = body["messages"].as_array().unwrap();
+    let newest = messages.last().unwrap()["content"].as_array().unwrap();
+    assert_eq!(
+        newest.last().unwrap()["cache_control"]["type"],
+        "ephemeral",
+        "{body}"
+    );
+    // Only the newest block is marked (the API allows at most four).
+    assert_eq!(
+        body.to_string().matches("cache_control").count(),
+        2,
+        "{body}"
+    );
+    let other = messages::messages_body("qwen3.8-flash", &history, None, false).unwrap();
+    assert_eq!(other["system"], "rules", "{other}");
+    assert!(!other.to_string().contains("cache_control"), "{other}");
+}
+
 #[tokio::test]
 async fn a_streamed_responses_cut_off_is_reported_as_truncated() {
     use futures_util::StreamExt;
@@ -1632,6 +1675,114 @@ async fn reasoning_and_its_details_go_back_in_the_fields_they_came_in() {
         assistant["reasoning_details"],
         json!([{"type":"reasoning.text","text":"Add the numbers.","format":"unknown","index":0}])
     );
+}
+
+/// Claude signs thinking against the conversation before it, and Themis shortens older history,
+/// so only the latest assistant message carries its thinking back: a live goal lost seven turns
+/// to "bound to a different conversation" when every older block was replayed. Other Messages
+/// models keep every block.
+#[test]
+fn claude_replays_thinking_only_on_the_latest_assistant_message() {
+    let call = |id: &str| -> ToolCall {
+        serde_json::from_value(json!({"id": id, "type": "function", "function": {"name": "read_file", "arguments": "{}"}})).unwrap()
+    };
+    let (first, second) = (call("binding-call-1"), call("binding-call-2"));
+    reasoning::remember_blocks_for_test(
+        std::slice::from_ref(&first),
+        vec![json!({"type":"thinking","thinking":"one","signature":"sig-1"})],
+    );
+    reasoning::remember_blocks_for_test(
+        std::slice::from_ref(&second),
+        vec![json!({"type":"thinking","thinking":"two","signature":"sig-2"})],
+    );
+    let turn = |call: &ToolCall| {
+        [
+            ChatMessage {
+                role: ChatRole::Assistant,
+                message_type: MessageType::ToolUse(vec![call.clone()]),
+                content: String::new(),
+            },
+            ChatMessage {
+                role: ChatRole::Tool,
+                message_type: MessageType::ToolResult(vec![call.clone()]),
+                content: String::new(),
+            },
+        ]
+    };
+    let mut history = vec![user_message("check")];
+    history.extend(turn(&first));
+    history.extend(turn(&second));
+    let claude = messages::messages_body("claude-haiku-5-5", &history, None, false).unwrap();
+    let text = claude.to_string();
+    assert!(!text.contains("sig-1"), "{claude}");
+    assert_eq!(
+        claude["messages"][3]["content"][0]["signature"], "sig-2",
+        "{claude}"
+    );
+    let other = messages::messages_body("qwen3.8-flash", &history, None, false).unwrap();
+    let text = other.to_string();
+    assert!(text.contains("sig-1") && text.contains("sig-2"), "{other}");
+}
+
+/// Even the latest thinking block breaks when context maintenance rewrote messages before it
+/// mid-run: Claude answers 400 "bound to a different conversation". The request is sent once
+/// more without thinking blocks; another 400, or another model, is not retried.
+#[tokio::test]
+async fn claude_retries_once_without_thinking_when_a_block_is_unbound() {
+    let server = MockServer::builder().start().await;
+    let refused = json!({"type":"error","error":{"type":"invalid_request_error","message":"Upstream request failed: [invalid_request_error] messages.3.content.0: Invalid `signature` in `thinking` block. The block is bound to a different conversation."}});
+    Mock::given(method("POST"))
+        .and(path("/messages"))
+        .and(wiremock::matchers::body_string_contains("sig-unbound"))
+        .respond_with(ResponseTemplate::new(400).set_body_json(refused))
+        .mount(&server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/messages"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(
+            json!({"content":[{"type":"text","text":"done"}],"stop_reason":"end_turn"}),
+        ))
+        .mount(&server)
+        .await;
+    let call: ToolCall = serde_json::from_value(json!({"id": "unbound-call-1", "type": "function", "function": {"name": "read_file", "arguments": "{}"}})).unwrap();
+    reasoning::remember_blocks_for_test(
+        std::slice::from_ref(&call),
+        vec![json!({"type":"thinking","thinking":"t","signature":"sig-unbound"})],
+    );
+    let history = [
+        user_message("check"),
+        ChatMessage {
+            role: ChatRole::Assistant,
+            message_type: MessageType::ToolUse(vec![call.clone()]),
+            content: String::new(),
+        },
+        ChatMessage {
+            role: ChatRole::Tool,
+            message_type: MessageType::ToolResult(vec![call]),
+            content: String::new(),
+        },
+    ];
+    let claude = CompatibleProvider::go(
+        "test".into(),
+        "claude-haiku-5-5".into(),
+        Some(server.uri()),
+        None,
+    );
+    let answer = claude.chat_with_tools(&history, None, None).await.unwrap();
+    assert_eq!(answer.text().as_deref(), Some("done"));
+    let requests = server.received_requests().await.unwrap();
+    assert_eq!(requests.len(), 2);
+    assert!(String::from_utf8_lossy(&requests[0].body).contains("sig-unbound"));
+    assert!(!String::from_utf8_lossy(&requests[1].body).contains("thinking"));
+    // Another model gets the error as it is.
+    let qwen = CompatibleProvider::go(
+        "test".into(),
+        "qwen3.8-flash".into(),
+        Some(server.uri()),
+        None,
+    );
+    assert!(qwen.chat_with_tools(&history, None, None).await.is_err());
+    assert_eq!(server.received_requests().await.unwrap().len(), 3);
 }
 
 #[tokio::test]
@@ -3261,6 +3412,29 @@ fn model_overrides_cap_limits_and_choose_thinking_where_the_catalog_allows() {
         serde_json::from_slice::<Value>(request.body().unwrap().as_bytes().unwrap()).unwrap()
     });
     assert_eq!(body["thinking"], json!({"type":"disabled"}));
+
+    // A short extraction (the memory pass) gets the least thinking, on the model it asked for:
+    // no summary-model swap, unlike a checkpoint summary.
+    let quiet = |model: &str| {
+        MODEL_THINKING.sync_scope(thinking_table(&applied), || {
+            super::LEAST_THINKING.sync_scope((), || {
+                let provider = CompatibleProvider::go("k".into(), model.into(), None, None);
+                let request = provider
+                    .chat_request(&[user_message("hi")], None, false, None)
+                    .unwrap()
+                    .build()
+                    .unwrap();
+                serde_json::from_slice::<Value>(request.body().unwrap().as_bytes().unwrap())
+                    .unwrap()
+            })
+        })
+    };
+    let glm = quiet("glm-5.3");
+    assert_eq!(glm["model"], "glm-5.3");
+    assert_eq!(glm["thinking"], json!({"type":"disabled"}));
+    let muse = quiet("muse");
+    assert_eq!(muse["model"], "muse");
+    assert_ne!(muse["reasoning_effort"], "high", "{muse}");
 }
 
 #[test]
@@ -3525,7 +3699,8 @@ fn an_image_goes_to_an_image_model_in_each_protocols_own_shape() {
     );
     assert_eq!(
         last["content"][2],
-        json!({"type":"image","source":{"type":"base64","media_type":"image/jpeg","data":data}})
+        // The newest block carries Claude's rolling cache mark.
+        json!({"type":"image","source":{"type":"base64","media_type":"image/jpeg","data":data},"cache_control":{"type":"ephemeral"}})
     );
 
     // Gemini: inline data in a user turn after the function response.

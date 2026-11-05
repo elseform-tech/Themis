@@ -59,6 +59,37 @@ describe("BrowserView", () => {
     expect(screen.queryByTestId("agent-cursor")).toBeNull();
   });
 
+  it("takes the mouse into a page holding the pointer lock, turns it with relative moves and gives it back on Esc", async () => {
+    vi.mocked(bridge.browserState).mockResolvedValue({ ...page, controller: "idle", activity: null, pointer: [400, 300], pointer_locked: true });
+    let locked: Element | null = null;
+    Object.defineProperty(document, "pointerLockElement", { configurable: true, get: () => locked });
+    const request = vi.fn(() => { locked = document.querySelector(".themis-browser-page"); document.dispatchEvent(new Event("pointerlockchange")); });
+    HTMLElement.prototype.requestPointerLock = request as unknown as typeof HTMLElement.prototype.requestPointerLock;
+    document.exitPointerLock = vi.fn(() => { locked = null; document.dispatchEvent(new Event("pointerlockchange")); });
+    vi.stubGlobal("requestAnimationFrame", (run: FrameRequestCallback) => { run(0); return 1; });
+    await act(async () => { render(<BrowserView threadId="t1" />); });
+    const view = screen.getByLabelText(/^Page:/);
+    // No pointer to show while the page holds the lock; a hint says how to take control.
+    expect(screen.queryByTestId("agent-cursor")).toBeNull();
+    expect(screen.getByText("Click to control the view")).toBeInTheDocument();
+    act(() => { fireEvent.mouseDown(view, { clientX: 10, clientY: 10 }); });
+    expect(request).toHaveBeenCalled();
+    expect(screen.getByText("Esc to release the mouse")).toBeInTheDocument();
+    vi.mocked(bridge.browserInput).mockClear();
+    act(() => { fireEvent.mouseMove(view, { movementX: 30, movementY: -4 }); });
+    expect(bridge.browserInput).toHaveBeenCalledWith("t1", { type: "mouse_by", dx: 30, dy: -4 });
+    // Esc in the app gives the mouse back first; the page is told to let go too.
+    vi.mocked(bridge.browserInput).mockClear();
+    act(() => { locked = null; document.dispatchEvent(new Event("pointerlockchange")); });
+    expect(bridge.browserInput).toHaveBeenCalledWith("t1", expect.objectContaining({ type: "key", kind: "down", key: "Escape" }));
+    expect(screen.getByText("Click to control the view")).toBeInTheDocument();
+    // The page let go: the mouse is given back without a word.
+    act(() => { fireEvent.mouseDown(view, { clientX: 10, clientY: 10 }); });
+    await act(async () => { push({ kind: "state", state: { ...page, pointer_locked: false } }); });
+    expect(document.exitPointerLock).toHaveBeenCalled();
+    expect(screen.queryByText(/control the view|release the mouse/)).toBeNull();
+  });
+
   it("has no cursor before the agent has used the mouse", async () => {
     render(<BrowserView threadId="t1" />);
     await screen.findByLabelText(/^Page:/);

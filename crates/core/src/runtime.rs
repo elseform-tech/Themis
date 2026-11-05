@@ -203,6 +203,10 @@ pub struct ContextBreakdown {
     /// A thinking model's own reasoning, sent back with its tool calls and earlier answers.
     #[serde(default)]
     pub reasoning: usize,
+    /// The memory block in the system message (index and relevant memories), taken out of
+    /// `system`.
+    #[serde(default)]
+    pub memory: usize,
     /// The goal note (continuation or "objective updated") the latest goal run carries: from
     /// where it starts in its user message to the end, taken out of `conversation`.
     #[serde(default)]
@@ -274,7 +278,28 @@ fn context_breakdown(messages: &[ChatMessage]) -> ContextBreakdown {
         };
         *slot += tokens;
     }
+    let memory = MEMORY_BLOCK
+        .try_with(|block| memory_tokens(block, messages))
+        .unwrap_or(0);
+    breakdown.memory = memory.min(breakdown.system);
+    breakdown.system -= breakdown.memory;
     breakdown
+}
+
+/// Tokens of `block` when the request's system message carries it (bytes / 4, as every part
+/// is estimated); 0 when it is empty or not sent.
+fn memory_tokens(block: &str, messages: &[ChatMessage]) -> usize {
+    if block.is_empty() {
+        return 0;
+    }
+    let sent = messages
+        .iter()
+        .any(|message| message.role == ChatRole::System && message.content.contains(block));
+    if sent {
+        block.len().div_ceil(4)
+    } else {
+        0
+    }
 }
 
 /// [`ApprovalHook`] wrapper that caches `AllowAlways` per tool name.
@@ -722,8 +747,6 @@ async fn run_task_with_evidence_inner(
     let mut turn = 0;
     let mut action_counts = std::collections::HashMap::new();
     let mut reaction_due = false;
-    // The save reminder went out since the last checkpoint.
-    let mut save_reminded = false;
     // Screenshots this run's model may see, when it reads images (none otherwise).
     let mut recent_images =
         crate::vision::RecentImages::new(if crate::providers::accepts_images(llm.model()) {
@@ -767,6 +790,15 @@ async fn run_task_with_evidence_inner(
         }
         // Results of subagents (and other notes) join at the same boundary.
         for note in run_notes().map(|notes| notes.take()).unwrap_or_default() {
+            // Memory the memory models changed meanwhile: information as it stands, no reaction.
+            if let Some(memory) = note.strip_prefix(MEMORY_NOTE_MARKER) {
+                messages.push(ChatMessage {
+                    role: ChatRole::User,
+                    message_type: MessageType::Text,
+                    content: memory.trim_start().to_owned(),
+                });
+                continue;
+            }
             reaction_due = true;
             messages.push(ChatMessage {
                 role: ChatRole::User,
@@ -834,8 +866,10 @@ async fn run_task_with_evidence_inner(
             );
         }
         // Room for work after the system message, and the budget that would leave enough.
-        let system_tokens =
-            |messages: &[ChatMessage]| calibration.messages(context_breakdown(messages).system, 0);
+        let system_tokens = |messages: &[ChatMessage]| {
+            let parts = context_breakdown(messages);
+            calibration.messages(parts.system + parts.memory, 0)
+        };
         let work_room =
             |messages: &[ChatMessage]| input_budget.saturating_sub(system_tokens(messages));
         let minimum_budget = |messages: &[ChatMessage]| {
@@ -943,36 +977,6 @@ async fn run_task_with_evidence_inner(
                     return Err(anyhow!(error));
                 }
             }
-        }
-        // `hooks.built_in.save_reminder`: a checkpoint is near (within two steps' growth, or a
-        // tenth of the budget: a run's first step has no growth yet) and this step takes none,
-        // so the agent is told once per checkpoint, before it.
-        let near = calibrated_growth.saturating_mul(2).max(input_budget / 10);
-        if compacting_now {
-            save_reminded = false;
-        } else if let Some(note) =
-            SAVE_REMINDER
-                .try_with(Clone::clone)
-                .ok()
-                .flatten()
-                .filter(|_| {
-                    !save_reminded
-                        && policy.context_token_budget != usize::MAX
-                        && calibrated_now.saturating_add(near) > semantic_threshold
-                })
-        {
-            save_reminded = true;
-            messages.push(ChatMessage {
-                role: ChatRole::User,
-                message_type: MessageType::Text,
-                content: note,
-            });
-            crate::diagnostics::emit(
-                "hook",
-                "built_in",
-                "info",
-                serde_json::json!({"hook": "save_reminder", "event": "BeforeCompaction"}),
-            );
         }
         if calibrated_tokens(&calibration, &messages, schema_tokens) > input_budget {
             let error = "Context still exceeds the request budget after one compaction; originals preserved".to_owned();
@@ -2652,6 +2656,9 @@ impl RunNotes {
     }
 }
 
+/// Starts a run note that carries memory changed mid-run, not a subagent's report.
+pub const MEMORY_NOTE_MARKER: &str = "[memory-note]";
+
 /// Runs `future` with `notes` as the run's note channel.
 pub async fn with_run_notes<F: std::future::Future>(notes: Arc<RunNotes>, future: F) -> F::Output {
     RUN_NOTES.scope(notes, future).await
@@ -2683,16 +2690,12 @@ pub async fn with_system_head<F: std::future::Future>(head: String, future: F) -
 }
 
 tokio::task_local! { static CHECKPOINT_NOTE: CheckpointNote; }
-tokio::task_local! { static SAVE_REMINDER: Option<String>; }
+tokio::task_local! { static MEMORY_BLOCK: String; }
 
-/// Runs `future` with `note` as its save reminder (`hooks.built_in.save_reminder` while memory
-/// is on; `None` is off): once before each context checkpoint, when one is near, the agent is
-/// reminded to keep anything worth remembering.
-pub async fn with_save_reminder<F: std::future::Future>(
-    note: Option<String>,
-    future: F,
-) -> F::Output {
-    SAVE_REMINDER.scope(note, future).await
+/// Runs `future` knowing the memory block its system message carries (the index and the
+/// relevant memories), so the context meter can show it as its own part.
+pub async fn with_memory_block<F: std::future::Future>(block: String, future: F) -> F::Output {
+    MEMORY_BLOCK.scope(block, future).await
 }
 
 /// Gives the note read back right after a context checkpoint, such as the chat's to-do list as
@@ -3341,10 +3344,8 @@ fn calibration_sample(
 }
 
 /// Notes the runtime adds as user messages during a run; none is a new request.
-const RUNTIME_NOTES: [&str; 10] = [
+const RUNTIME_NOTES: [&str; 8] = [
     crate::prompts::RUNTIME_PASTED_SECRET,
-    crate::prompts::RUNTIME_SAVE_REMINDER,
-    crate::prompts::RUNTIME_SAVE_REMINDER_SUBAGENT,
     SUBAGENT_REACTION_NOTE,
     SPEC_CHECK,
     CUT_OFF_NOTE,
@@ -6108,6 +6109,40 @@ mod tests {
         );
         let plain = context_breakdown(&[user("hello".into())]);
         assert_eq!(plain.goal, 0);
+    }
+
+    #[tokio::test]
+    async fn the_memory_block_is_its_own_part_taken_out_of_the_system_part() {
+        let block = format!(
+            "Memory from earlier chats\n{}",
+            "- a (user, 2026-11-03): x\n".repeat(40)
+        );
+        let system = ChatMessage {
+            role: ChatRole::System,
+            message_type: MessageType::Text,
+            content: format!("Instructions.\n{block}\nMore instructions."),
+        };
+        let user = ChatMessage {
+            role: ChatRole::User,
+            message_type: MessageType::Text,
+            content: "hello".into(),
+        };
+        let messages = [system, user];
+        let plain = context_breakdown(&messages);
+        assert_eq!(plain.memory, 0);
+        let split = with_memory_block(block.clone(), async { context_breakdown(&messages) }).await;
+        assert_eq!(split.memory, block.len().div_ceil(4));
+        assert_eq!(
+            split.memory + split.system,
+            plain.system,
+            "the parts still add up"
+        );
+        assert_eq!(split.conversation, plain.conversation);
+        // A block the request doesn't carry counts nothing.
+        let absent =
+            with_memory_block("not sent".into(), async { context_breakdown(&messages) }).await;
+        assert_eq!(absent.memory, 0);
+        assert_eq!(absent.system, plain.system);
     }
 
     #[tokio::test]

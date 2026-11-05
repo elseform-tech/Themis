@@ -1,10 +1,10 @@
 // @vitest-environment jsdom
-import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AttachedMedia, ToolMedia } from "../lib/types";
 import { initialState, reducer, type ChatMessage } from "../state/reducer";
 import { MediaGallery } from "./MediaStrip";
-import { ToolGroup } from "./ThreadConversation";
+import { GoalTurnDivider, ToolGroup } from "./ThreadConversation";
 
 vi.mock("../lib/tauri", () => ({ attachmentFile: vi.fn(async (_thread: string, path: string) => `asset://${path}`) }));
 
@@ -31,8 +31,8 @@ describe("a screenshot step's output", () => {
   it("is a small thumbnail with its size, not the raw result", async () => {
     let container!: HTMLElement;
     await act(async () => { ({ container } = renderGroup(toolRow(shot))); });
-    const detail = container.querySelector(".themis-tool-detail")!;
-    const thumb = screen.getByRole("button", { name: "Open screenshot" });
+    const detail = container.querySelector(".themis-tool-detail")! as HTMLElement;
+    const thumb = within(detail).getByRole("button", { name: "Open screenshot" });
     expect(thumb.querySelector("img")).toHaveAttribute("src", `asset://${shotPath}`);
     expect(detail).toHaveTextContent("1280 × 800");
     // The note and the JSON are for the model.
@@ -44,7 +44,8 @@ describe("a screenshot step's output", () => {
   it("opens the media viewer on that screenshot alone", async () => {
     let show!: ReturnType<typeof vi.fn>;
     await act(async () => { ({ show } = renderGroup(toolRow(shot))); });
-    fireEvent.click(screen.getByRole("button", { name: "Open screenshot" }));
+    // The thumbnail under the folded line opens it too.
+    fireEvent.click(within(screen.getByLabelText("Screenshots")).getByRole("button", { name: "Open screenshot" }));
     expect(show).toHaveBeenCalledWith({ path: shotPath, name: "screenshot-1652-03.png", kind: "image", caption: "Screenshot" });
   });
 
@@ -53,7 +54,7 @@ describe("a screenshot step's output", () => {
     let container!: HTMLElement;
     let show!: ReturnType<typeof vi.fn>;
     await act(async () => { ({ container, show } = renderGroup(toolRow(video, "browser_record", JSON.stringify({ path: video.path, seconds: 4 })))); });
-    const thumb = screen.getByRole("button", { name: "Play recording" });
+    const thumb = within(container.querySelector(".themis-tool-detail") as HTMLElement).getByRole("button", { name: "Play recording" });
     expect(thumb.querySelector("video")?.getAttribute("src")).toMatch(/recording-1\.mp4#t=0\.1$/);
     expect(thumb.querySelector(".themis-media-play")).not.toBeNull();
     expect(container.querySelector(".themis-tool-detail")).not.toHaveTextContent("seconds");
@@ -84,3 +85,32 @@ describe("tool media in the reducer", () => {
     expect(replayed.messages.t1!.find(row => row.tool)!.tool!.media).toEqual(shot);
   });
 });
+
+describe("a folded group of steps", () => {
+  it("shows its screenshot under its line, and inside the step once unfolded", async () => {
+    let container!: HTMLElement;
+    await act(async () => { ({ container } = renderGroup(toolRow(shot))); });
+    const group = container.querySelector("details.themis-tool-group") as HTMLDetailsElement;
+    expect(group.open).toBe(false);
+    const strip = screen.getByLabelText("Screenshots");
+    expect(group.contains(strip)).toBe(false);
+    expect(strip.querySelector("img")).toHaveAttribute("src", `asset://${shotPath}`);
+    // Unfolded, it shows in its step only, never twice.
+    await act(async () => { group.open = true; fireEvent(group, new Event("toggle")); });
+    expect(screen.queryByLabelText("Screenshots")).toBeNull();
+    // A group without media adds nothing.
+    cleanup();
+    await act(async () => { renderGroup(toolRow(undefined, "read_file", "{}")); });
+    expect(screen.queryByLabelText("Screenshots")).toBeNull();
+  });
+});
+
+describe("a goal turn", () => {
+  it("starts after a quiet separator, not a bubble", () => {
+    render(<GoalTurnDivider turn={3} />);
+    const line = screen.getByRole("separator", { name: "Goal turn 3" });
+    expect(line).toHaveClass("themis-goal-turn");
+    expect(line).toHaveTextContent("");
+  });
+});
+

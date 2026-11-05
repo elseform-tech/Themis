@@ -245,11 +245,10 @@ project content, so a cloned repository's guidance reaches the agent, but it nev
 | `hooks.max_wakes` | Integer 0–10, default `3`: how many turns in a row a finished background [plugin hook](plugins.md) may start in an idle chat before you write again. `0` never starts one, and what a hook reports waits for the chat's next turn. Never in YOLO, while a goal runs, or after a turn that failed or that you stopped. A project or run layer may only lower it. |
 | `hooks.session_idle_minutes` | Integer 0–10080, default `60`: minutes a chat may sit idle before its session ends for [plugin hooks](plugins.md#sessions) (`SessionEnd`, then `SessionStart` when you write again). `0` never ends one for being idle. Captured when a run starts, so a change applies from the chat's next turn. |
 | `hooks.prompt_hook_calls` | Integer 0–1000, default `50`: model requests [prompt hooks](plugins.md#prompt-hooks) may make in a run, shared with its subagents. A guard that finds none left refuses the call. `0` turns prompt hooks off. Your own `runtime.jsonc` only: a project or run layer that sets it is refused. |
-| `hooks.built_in.skills_at_start` | Boolean, default `false`: each turn of the main agent and each subagent carries the short To-do skill (`crates/core/builtins/todo/SKILL.md`) and, while memory is on, the Memory skill (`crates/core/builtins/memory/SKILL.md`), each under 1.5 KiB, in its system message; a subagent is also told its memory tool only reads and to pass facts on in its reply. Integrations › Hooks lists it under Session starts as "Themis (built-in)". Any layer. |
-| `hooks.built_in.still_open` | Boolean, default `false`: when a turn changed files (the `files_changed` check) while the chat's to-do list has open items, the next turn starts with a "Still open" note naming up to 8 of them (the rest counted); once, then it is gone. A subagent that may write gets the same from its own list on its next turn. Listed under Run ends. Any layer. |
-| `hooks.built_in.save_reminder` | Boolean, default `false`, effective only while memory is on: once before each context checkpoint, when one is near (the context is within two steps' growth, or a tenth of the budget, of the checkpoint threshold) and the step takes none, the agent gets a one-line reminder to save anything worth remembering; a subagent is told to put it in its final reply instead. A checkpoint reached in one jump gets no reminder. Listed under Before context is compacted. Any layer. |
-| `memory.enabled` | Boolean, default `true`: the agent may save memories across chats with its `memory` tool and every run (and subagent) starts with the memory index. `false`: no index and no `memory` tool (for the main agent and subagents); saved memories are kept, and the main agent's system message carries the one line in `crates/core/builtins/prompts/system-memory-off.md` instead, so it says it can't remember rather than promising to. Settings › Memory's switch writes it in your `runtime.jsonc` in place. A project or run layer may only set it to `false`. See [Memory](#memory). |
-| `memory.auto` | Boolean, default `false`, effective only while `memory.enabled`: after a turn that ended (finished or incomplete) in which the person wrote (their message or what they steered in; not a goal turn, a hook's wake or an automation), one request with no tools on the summary model reads that turn (the person's words, at most 8 KiB, and the agent's final reply, at most 4 KiB) and both memory indexes, and saves or updates at most 3 memories through the memory store, with the usual "Remembered · …" line. It runs on its own task after the turn and never holds up the next message, and skips a turn in which the agent saved or updated a memory itself. Settings › Memory's "Notice what's worth remembering" writes it in your `runtime.jsonc` in place. A project or run layer may only set it to `false`. See [Memory](#memory). |
+| `memory.enabled` | Boolean, default `true`: as the person speaks the memory models keep memories across chats in the background (see [Memory](#memory)), and every run (and subagent) starts with the memory index and the memories relevant to its message. No agent has a memory tool. `false`: nothing is saved or read and no memory job runs; saved memories are kept, and the main agent's system message carries the one line in `crates/core/builtins/prompts/system-memory-off.md` instead, so it says it can't remember rather than promising to. Settings › Memory's switch writes it in your `runtime.jsonc` in place. A project or run layer may only set it to `false`. |
+| `memory.models` | 3 to 8 distinct model ids (`<provider>/<id>` for a model from `providers`), default `["muse-spark-1.3-contributor", "claude-haiku-5-5", "deepseek-v4.1-flash"]`: the models that run memory jobs, tried in order. A job moves to the next model on a provider error, a time-out (`compaction.request_timeout_seconds`), a rate limit (HTTP 429), an answer it can't read, or the daily cap. Settings › Models › Memory models edits the list in place (reorder, add, remove; never fewer than three). The defaults are cheap OpenCode Go models on three different wire protocols (Responses, Messages, Chat Completions), each with structured-output support in the models.dev catalog. Your own `runtime.jsonc` only: a project or run layer that sets it is refused. |
+| `memory.daily_budget_usd` | Number 0–100, default `0.5`: estimated dollars (models.dev list prices, as in Settings › Usage) all memory models may spend in a day together, counted from memory usage recorded since local midnight. A model the catalog lists as free is never held back; a model without a price counts as paid at $0. When every model is held back, the job waits until tomorrow without using up its tries. File only; your own `runtime.jsonc` only. |
+| `memory.consolidate_every_hours` | Integer 1–720, default `24`: at most one idle consolidation (merge duplicate memories, drop clearly stale ones) this often, recorded in app data `memory/consolidated.json`. File only; your own `runtime.jsonc` only. |
 | `subagents.enabled` | Boolean, default `true`: offer the subagent tools (`spawn_subagents`, `wait_subagents`, `message_subagent`, `stop_subagent`) to the agent. A project or run layer may only set it to `false`. |
 | `subagents.max_parallel` | Integer 1–6, default `3`: subagents running at once per chat; more wait their turn. A project or run layer may only lower it. |
 | `subagents.max_turns` | Integer 1–1000, default `40`: model requests per subagent; reaching it ends the subagent with its partial result. A project or run layer may only lower it. |
@@ -258,7 +257,7 @@ project content, so a cloned repository's guidance reaches the agent, but it nev
 | `subagents.allow_mcp` | Boolean, default `true`: `false` gives no subagent MCP tools, whatever a profile names or the agent asks for. A project or run layer may only set it to `false`. Otherwise a subagent gets MCP tools only from the connections you enabled that came up when the run started: those its profile's list allows, or those the main agent lists in `mcp_tools`. They can act outside the project, and a subagent's read-only file limit and write paths don't cover them. Every call goes through the chat's approval mode under the subagent's name, deny rules still win in YOLO, its "Allow in this chat" stays its own, and `BeforeTool` and `AfterTool` hooks fire with `agent`. What it can't have is left out and it is told; `subagents` / `mcp_left_out` logs the reason (`setting` or `not_connected`), the count and at most 20 names. |
 | `subagents.allow_web` | Boolean, default `true`: `false` gives no subagent `fetch_url` or `web_search`, whatever a profile names. A project or run layer may only set it to `false`. Otherwise a subagent has them unless its profile's list leaves them out, with the same approval rules, per-site grants, deny rules (YOLO included) and hooks as the main agent's, asking under the subagent's name. `sandbox.network: "block"` also keeps them from subagents. `subagents` / `web_left_out` logs the reason and count when a list names them and they can't be had. |
 | `subagents.allow_nested` | Boolean, default `true`: `false` stops subagents starting subagents, whatever a profile names. A project or run layer may only set it to `false`. Otherwise a subagent can start its own only when its plugin profile's list names `Agent` or `Task`; see [plugins](plugins.md). Those can't start any themselves. |
-| `subagents.allow_writes` | Boolean, default `true`: `false` keeps every subagent read-only whatever paths the agent gives it. A project or run layer may only set it to `false`. Otherwise a subagent given `write_paths` (project-relative folders ending in `/` or files, never globs) may change only those: its file tools are limited there in every mode, and with an enforcing sandbox so are its shell commands, YOLO included. Paths that overlap another running subagent's, leave the project, or reach `.git/`, `.themis/` or the app data are refused. With no enforcing sandbox its shell runs as the main agent's does, and the subagent's detail says "Shell not confined". On Linux, file paths (as opposed to folders) are writable through the file tools only, since the OS sandboxes can't allow a file that does not exist yet. |
+| `subagents.allow_writes` | Boolean, default `true`: `false` keeps every subagent read-only whatever paths the agent gives it. A project or run layer may only set it to `false`. The agent must give every subagent `write_paths` (`[]` for one that only reads; a spawn that leaves it out is refused before anything starts, so a builder is never started read-only by mistake). Otherwise a subagent given `write_paths` (project-relative folders ending in `/` or files, never globs) may change only those: its file tools are limited there in every mode, and with an enforcing sandbox so are its shell commands, YOLO included. Paths that overlap another running subagent's, leave the project, or reach `.git/`, `.themis/` or the app data are refused. With no enforcing sandbox its shell runs as the main agent's does, and the subagent's detail says "Shell not confined". On Linux, file paths (as opposed to folders) are writable through the file tools only, since the OS sandboxes can't allow a file that does not exist yet. |
 | `providers` | User file only; at most 16 OpenAI-compatible providers. See [Model providers](#model-providers-and-per-model-overrides) |
 | `models` | At most 256 per-model overrides keyed by model id or `<provider>/<id>`; any layer. See [Model providers](#model-providers-and-per-model-overrides) |
 | `compaction.prompt_file` | Optional UTF-8 Markdown, at most 32 KiB |
@@ -843,60 +842,190 @@ symlinks are never followed, for the folder or a file.
 
 Beside them, `MEMORY.md` is the index: one line per memory (`- name (type, date[, from
 source]): description`), newest first, at most 200 lines and 24 KiB. It is rewritten
-atomically on every save and delete, and it, not the files, is what a run reads: the global
-index and the current project's (never another project's) go into the system message of
-the main agent and of every subagent, under the note in
-`crates/core/builtins/prompts/system-memory.md`. Nothing is added while both are empty.
+atomically on every save and delete. A run reads the global index and the current project's
+(never another project's), and in full the memories relevant to its message (the person's
+words, or the task for a goal turn or automation): the index lines that share the most words
+of at least four letters with it (common filler words left out, a plain plural counted as its
+singular, so "games" finds "game"), at most 5, this project's first on a
+tie, within 8 KiB together. That rule needs no model request and reads two index files and at
+most five memory files per run, whatever the memory count. All of it goes into the system
+message of the main agent and of every subagent under the note in
+`crates/core/builtins/prompts/system-memory.md` (the full memories under
+`system-memory-relevant.md`). Nothing is added while both indexes are empty. The context
+meter counts that block, as sent, as its own **Memory** part (`breakdown.memory`, taken out
+of `system`, so the parts still add up to `used_tokens`).
 
-The main agent's `memory` tool saves, updates, deletes and reads (`action`, `name`,
-`new_name`, `scope`, `type`, `description`, `body`, `why`, `how_to_apply`, `source`). An
-`update` with `new_name` renames the memory when the corrected fact no longer fits its name:
-the file is rewritten and renamed in one step under the store's lock, the index follows,
-and a new name already in use is refused. `why` and `how_to_apply` replace any `Why:` or
-`How to apply:` lines the body repeats, so an update never stacks a second one. Its scope is
-`project` unless it says `global`, and only `user` and `feedback` memories may be global;
-`project` and `reference` memories are refused there. A scope holds at most 200 memories.
-Everything saved first goes through the browser tools' secret redaction and the composer's
-secret check (token-like words and values after names such as `password=` become
-`[hidden: N chars]`). A subagent's `memory` tool only reads, and only subagents without a
-plugin profile get it. The tool asks no approval (it changes nothing but the person's own
-memories), but a deny rule on `memory` still wins, YOLO included.
+**`search_memory`.** While memory is on, the main agent also gets a read-only `search_memory`
+tool (description `tool-search-memory.md`) for what the injected index and full memories
+don't cover. `query` returns at most 10 lines, scored by the same word rule, across this project's
+memories, the global ones, this project's plan records and its tasks outside any record (up to
+3 places kept for tasks), each with its source; `name` returns one memory (this project's
+before the global one) or plan record in full, and `tasks` the whole task list. It
+reads only the indexes and one file, never another project's memory, writes nothing, and
+approves itself (a deny rule still refuses it). `logs/` gets a `memory` / `searched` line with
+whether it searched or read and whether it succeeded.
+
+Only `user` and `feedback` memories may be global; `project` and `reference` memories always
+belong to one project. A scope holds at most 200 memories. A memory built from a web page or a
+file keeps it in `source` and says what that content said, never as the person's word.
+
+### Plan records
+
+Plans are not memories. Each piece of work the person approved has one plan record,
+`memory/projects/<hash>/plans/<name>.md` (project only; at most 50 per project, 64 KiB per
+file; a record trims its oldest closed tasks, then its oldest decisions and changes, its last
+evidence lines, lessons and results, rather than grow past that), with a header of `name`, `title` (one line, at most 120), `status` (`approved`,
+`in progress` while a goal builds it, `done`), `updated` and, while a chat's goal builds it,
+`chat` (that chat's id), then five sections: **Plan** (the reply the person approved, copied
+word for word by Themis, at most 8 KiB), **Changes** (one line per change, at most 20),
+**Decisions** (at most 12 lines, `person:` or `agent:` what was chosen, `— because` why, and
+the date; the oldest go first), **Tasks** (task lines, below), **Results** (at most 2 KiB),
+**Evidence** (one line per requirement, at most 12 of 1000 characters) and **Lessons** (at most 3).
+Decisions and Tasks may be missing from a record written before they existed; it still reads. `plans/PLANS.md` is their index (`- name (status, date): title`).
+Records are read as untrusted: a file whose header or sections don't fit is skipped, secrets
+are hidden, and the sections are found from the end so a plan that quotes a heading keeps it.
+
+The memory pass manages them through one `"plan"` entry beside `"memories"` in its answer:
+`create` (the person approved the plan in the reply they answered: Themis copies that reply;
+the model only names it), `change` (a change line plus `old` → `new` edits, each applied only
+when `old` occurs exactly once in the plan, so every step the change doesn't touch stays word
+for word), `done` (results and lessons; evidence only when the record has none) and `delete`.
+When a goal completes, Themis itself marks the record its chat's goal built as done and copies
+the goal's evidence as the agent gave it (`memory` / `plan` with `by: goal`), before the
+goal-complete pass adds results and lessons. Ordinary passes never save a plan, its steps or
+what was built as memories. A run gets, after the memories, the plans index and the
+record its chat's goal builds, else the one whose line shares the most words (at least two)
+with the message (`system-memory-plans.md`, `system-memory-plan.md`): its plan, changes,
+decisions, tasks (open ones in full, the latest 20 cancelled ones with why, done ones by
+title, the latest 20) and lessons, while
+results and evidence stay in the file for `search_memory`. One index file and at most one
+record per run.
+
+### Tasks
+
+Tasks keep track of the work along the way. A task line is `- [status] title — note (date)`:
+status `open`, `doing`, `done` or `cancelled`, a title (at most 120 characters), a note (at
+most 300: what done means and the person's own words, or the outcome and its proof, or why it
+was cancelled) and the day it last changed. Themis makes each step of an approved plan (each bullet or numbered line outside code blocks
+and outside a section of open questions, a `**Label:**` step titled by its label) an open task
+when the record is created and when a change adds steps (never for work already under way,
+whose steps' state it can't know); the memory models only move
+their statuses, recording progress on a task worked on but not finished as `doing` with what was
+tried. Tasks of approved work live in its record's Tasks
+section; the rest in one project file, `memory/projects/<hash>/plans/TASKS.md` (at most 48 KiB).
+A list keeps at most 40 open or doing tasks (a new one past that is refused, never an open one
+dropped) and 60 done or cancelled ones (the oldest go first); a task is never renamed or
+removed otherwise. The memory pass reads the record's tasks and the project file
+(`memory-auto-user.md`, at most 16 KiB) and answers with at most 12 `"tasks"` ops: `add`
+(title, note, optional `status`: open by default, or doing or done for an ask the turn already
+started or finished, so finished asks stay on record; optional `work` naming a record; a title
+already listed updates its note and reopens it) and `update` (exact title, status, note), and at most 3 `"decisions"` (`work`,
+`who`: person or agent, `what`, `why`) for records. Entries holding a secret or not fitting are
+refused. When a record is marked done, Themis closes its tasks still open or doing as done, saying in
+the note they were closed when the work was marked done (the evidence is the proof). The
+goal-complete pass reads the goal's working log (failed steps and the agent's notes, the latest
+40) for its lessons. Tasks and decisions carry their date: runs are told an older open task may
+since be done or no longer wanted (check the files, and ask before starting one this chat didn't
+raise) and that the latest decision on a matter wins; passes close an open task the turn shows
+already done or no longer wanted. A run gets the project file's tasks the same way: open ones in full, the latest 20
+cancelled ones with why, and the latest 20 done ones by title (`system-memory-tasks.md`). `logs/` gets a `memory` / `tasks` line with counts only
+(applied, missed, decisions, failed); task changes stay out of the chat's memory line. The pass gets the same index and record. `logs/` has `memory` /
+`plan` lines with the op and outcome (`saved`, `updated`, `removed`, `exists`, `missing`,
+`invalid`, `sensitive`, `no_plan_reply`, `failed`) and edit counts only. The chat's memory
+line shows a record as `plans/<name>.md`.
+
+### Memory jobs and the memory models
+
+Memory is kept by background jobs on the memory models (`memory.models`), never by the chat's
+model, which has no memory tool:
+
+- **The pass**, when a turn's reply is done and the person said something in that turn (the
+  message that started it, what they steered in, an answer to the agent's question; in a goal,
+  after each goal turn they spoke in, except words a goal event below already passed on; never
+  a hook's wake or an automation), except a trivial
+  one (under 8 characters, such as "ok" or "thanks"). One request with no tools and the
+  least thinking the model allows reads the reply their message answered, what they said (at
+  most 8 KiB), the reply that ended the turn (each reply at most 4 KiB), both indexes and, in
+  full, the memories the turn may touch (at most 5, 8 KiB, chosen like a run's), so an update
+  keeps what still holds, with the prompts `memory-auto-system.md` and `memory-auto-user.md`,
+  and may save, update (with an optional `new_name`) or delete at most 3 memories. It runs on
+  its own task and never holds up the next message. When it changes memory while that chat's
+  next run already works, that run gets the changes at its next step as a runtime note
+  (`memory-changed-note.md`).
+- **Event passes**, on events that matter without the person's words, each with the event's
+  content (at most 8 KiB): a goal created, by `/goal` or the agent's `create_goal` (its
+  objective, the person's latest message and the reply it answered, so an approved plan is
+  kept before the goal's first turn ends), a message the person steered or sent into a running
+  goal that became an "Also asked" line (their words and the objective), a goal completed (its
+  objective, "Also asked" lines, evidence and the chat's latest checkpoint summary, from which
+  at most 2 lasting lessons are kept as rules), the goal edited by the person (its new
+  objective). A context checkpoint starts none: its summary is mostly the state
+  of unfinished work, which goes stale within minutes. `logs/` has `memory` / `event` with the
+  event name.
+- **Consolidation**, when the app has been idle (no run going) for 5 minutes after a job, at
+  most once per `memory.consolidate_every_hours`: one request per scope with at least two
+  memories (the global scope, then each project with a pass since the last one), with every
+  memory of that scope in full (each text at most 1 KiB, the whole at most 48 KiB), the prompts
+  `memory-consolidate-system.md` and `memory-consolidate-user.md`, and at most 10 changes,
+  only in that scope: it merges duplicates into one and deletes clearly stale ones.
+
+**When a pass runs, and what it reads.** Besides the person's words, every pass reads what the
+turn ran into, in order from that turn's history: each failed step (tool, end of its output, at
+most 300 characters) and each note the agent wrote between steps (what it tried, found wrong,
+dropped or thinks could be better, at most 400 characters), the latest 40 entries; the note that
+ended the turn is its reply and is not repeated. A goal-complete pass reads the goal's failed
+steps with what the agent said next (at most 8). A turn the person said nothing in (a goal turn)
+still gets a pass when it has such a log, since that is when a lesson is fresh; the prompt keeps lessons as project or feedback memories
+(symptom, cause, rule, how to check) worded so a similar later task finds them. `memory.thinking`
+(default `auto`, user file only) sets how much the memory models think: `auto` lets them think for
+a pass that carries lessons (a turn with work in it: failed steps or notes, a completed goal) and asks for the
+least otherwise; `least` always the least; `model` always the model's own. The least effort comes
+from the Go catalog (loaded first when empty), so a model that refuses `none` gets its lowest
+listed effort. Measured with `python3 -m evals.memory` (`memory_try_pass`, a read-only dry run of
+one pass through the CLI: `{projectRoot, person, answered, reply, ran_into, qa_fixed, event,
+thinking, model}` → the answer, what it would save, time and tokens; it saves nothing).
+
+Each job tries the models in order and moves on after a provider error, a time-out, a rate
+limit, an answer it can't read, or the daily cap. A job every model failed waits in memory
+(at most 8 jobs; a ninth pushes the oldest out) and is tried again once the app is idle, 1, 2,
+4, … minutes later (at most 6 hours apart), at most 6 times; a job held back only by the cap
+waits until tomorrow without using up its tries. Waiting jobs do not survive a restart.
+Settings › Memory shows "Waiting for the memory models: N jobs (…)" with the reasons while any
+wait.
+
+The answer is untrusted: `{"memories":[{action, scope, name, type?, description?, body?, why?,
+how_to_apply?, source?}]}`, at most 16 KiB. `delete` needs only `name` and `scope`. An entry
+with an unknown action or type, a bad name or no text is dropped; one that holds a secret
+(anything the secret redaction would hide, in any field) is refused outright, not saved
+redacted; a `project` or `reference` memory proposed for every project is refused. Against
+what is remembered, a delete of a memory that isn't there is dropped, a save of a name the
+scope already has becomes an update and an update of a name it lacks a save, and an entry
+whose name, description and (when read) text are already there, or whose description another
+memory not being deleted already has, is a duplicate and skipped.
+
+Each change a pass makes is one saved `memory_changed` chat event under that turn's reply:
+`changes`, each with `action` (`saved`, `updated` or `removed`), `scope`, `name`,
+`description`, `model`, `model_index` (its place in `memory.models`, from 0) and
+`project_root` for a project memory. Consolidation changes no chat. Tokens are recorded as
+`memory` usage (Settings › Usage), with the chat for a pass.
+
+Diagnostics (metadata only, never what was said or saved): `memory` / `job` for each model
+tried, with the job `kind` (`pass` or `consolidate`), `model_index`, `outcome` (`answered`,
+`rate_limited`, `provider_error`, `timed_out`, `unreadable`, `over_budget`, `unavailable`),
+input bytes, provider token counts and time; `memory` / `job_done` with the outcome (`changed`
+or `nothing`) and counts (`proposed`, `saved`, `updated`, `deleted`, `duplicate`, `missing`,
+`sensitive`, `scope`, `invalid`, `over_limit`, `failed`); `memory` / `job_waiting` with the
+reasons and how many wait; `memory` / `job_dropped`; `memory` / `pass_skipped` with the reason
+(`memory_off`, `no_person_message`, `trivial`); `memory` / `consolidation`; and `memory` /
+`saved`, `updated` or `deleted` with the scope, type, the scope's count and what did it
+(`pass`, `consolidate` or `settings`).
 
 Shared-server commands: `list_memories {scope, projectRoot}` returns the scope's memories,
-`index_lines`, `max_lines`, `skipped`, `enabled` and a `revision`; `delete_memory {scope,
-projectRoot, name, revision}` refuses a stale revision; `get_memory_settings` and
-`update_memory_settings {enabled?, auto?, revision}` read and write `memory.enabled` and
-`memory.auto`. A save,
-update or delete by the agent is a saved `memory_changed` chat event (`action` `saved`,
-`updated` or `forgot`, `scope`, `name`, `description`, `project_root`). Diagnostics log
-`memory` / `saved`, `updated` or `deleted` with the scope, type, the scope's count and who
-did it (`agent`, `auto` or `settings`), never a memory's name or text.
-
-### Noticing what to remember (`memory.auto`)
-
-The background pass is one request on the summary model with the prompts
-`memory-auto-system.md` and `memory-auto-user.md`: the indexes and the turn go in as fenced
-data, and the answer must be `{"memories":[{action, scope, name, type, description, body,
-why?, how_to_apply?}]}` (at most 16 KiB; at most 3 entries are used). The answer is
-untrusted: an entry with an unknown action or type, a bad name or no text is dropped; one that
-holds a secret (anything the secret redaction would hide) is refused outright, not saved
-redacted; a `project` or `reference` memory proposed for every project is refused. Against the
-indexes, a save of a name the scope already has becomes an update, an update of a name it lacks
-becomes a save, and an entry whose name and description are already there, or whose description
-another memory already has, is a duplicate and skipped. The pass's input is bounded: the two
-indexes (each at most 24 KiB) plus 12 KiB of the turn, whatever the turn's length or the
-number of memories. Diagnostics: `memory` / `auto_pass` with the outcome (`saved`, `nothing`,
-`request_failed`, `timed_out`, `unreadable`, `too_long`), counts (`proposed`, `saved`,
-`updated`, `duplicate`, `sensitive`, `scope`, `invalid`, `over_limit`, `failed`), input bytes,
-provider token counts and time; `memory` / `auto_pass_skipped` with the reason
-(`memory_off`, `no_person_message`, `saved_in_turn`). Its tokens are recorded as summary usage.
-
-### Built-in hooks
-
-`get_built_in_hooks` returns each built-in hook (`id`, `event`, `title`, `description`,
-`enabled`) and a `revision`; `update_built_in_hook {id, enabled, revision}` writes
-`hooks.built_in.<id>` in your `runtime.jsonc` in place and refuses a stale revision. Each use
-logs `hook` / `built_in` with the hook and its event, never the text.
+`index_lines`, `max_lines`, `skipped`, `enabled`, `waiting` and a `revision`; `delete_memory
+{scope, projectRoot, name, revision}` refuses a stale revision; `get_memory_settings` returns
+the `memory` block, its `revision` and `waiting` (`null`, or `{jobs, reasons, next_at}`);
+`update_memory_settings {enabled?, models?, revision}` writes `memory.enabled` and
+`memory.models` in place and refuses a stale revision or a list the resolver refuses.
 
 ## Shared-server event stream additions
 

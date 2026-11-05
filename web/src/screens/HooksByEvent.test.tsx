@@ -85,27 +85,3 @@ describe("Hooks by event", () => {
     expect(hookMeta({ key: "k", id: "guard", plugin: guards, enabled: true }, "guards")).toBe("guards · Main and subagents");
   });
 });
-
-describe("Themis's built-in hooks", () => {
-  const builtIns = [
-    { id: "skills_at_start", event: "SessionStart", title: "To-do and Memory skills", description: "Each turn carries short instructions", enabled: false },
-    { id: "save_reminder", event: "BeforeCompaction", title: "Save before compaction", description: "Reminded to save", enabled: true },
-    { id: "still_open", event: "RunEnd", title: "Still open", description: "Names open items", enabled: false },
-  ];
-
-  it("sit under their events as Themis (built-in), each with its own switch", () => {
-    const toggle = vi.fn();
-    render(<HooksByEvent rows={[]} plugins={[]} sourceOf={() => ""} disabled={() => false} onToggle={() => {}} onOpen={() => {}} builtIns={builtIns} onToggleBuiltIn={toggle} />);
-    const events = within(screen.getByRole("list", { name: "Hook events in run order" })).getAllByRole("listitem");
-    const titles = events.map(item => item.querySelector(".themis-hook-title")!.textContent);
-    // Session start appears because a built-in hook uses it.
-    expect(titles[0]).toBe("Session starts");
-    expect(events[0]).toHaveTextContent("1 hook");
-    expect(events[0]).toHaveTextContent("To-do and Memory skillsThemis (built-in) · Each turn carries short instructions");
-    expect(events[titles.indexOf("Before context is compacted")]).toHaveTextContent("Save before compaction");
-    expect(events[titles.indexOf("Run ends")]).toHaveTextContent("Still open");
-    expect(screen.getByRole("switch", { name: "Save before compaction enabled" })).toHaveAttribute("aria-checked", "true");
-    fireEvent.click(screen.getByRole("switch", { name: "Still open enabled" }));
-    expect(toggle).toHaveBeenCalledWith(builtIns[2]);
-  });
-});

@@ -63,8 +63,7 @@ impl Reasoning {
 static KEPT_REASONING: Mutex<VecDeque<(String, Reasoning)>> = Mutex::new(VecDeque::new());
 
 fn enabled() -> bool {
-    REPLAY_REASONING.try_with(|on| *on).unwrap_or(true)
-        && super::COMPACTION_REQUEST.try_with(|_| ()).is_err()
+    REPLAY_REASONING.try_with(|on| *on).unwrap_or(true) && !super::least_thinking()
 }
 
 fn answer_key(text: &str) -> Option<String> {
@@ -120,6 +119,19 @@ pub(super) fn replay(calls: &[ToolCall]) -> Option<Reasoning> {
             .find(|(id, _)| !call.id.is_empty() && *id == call.id)
             .map(|(_, reasoning)| reasoning.clone())
     })
+}
+
+/// Test seam: remembers Messages thinking `blocks` as the reasoning behind `calls`.
+#[cfg(test)]
+pub(crate) fn remember_blocks_for_test(calls: &[ToolCall], blocks: Vec<serde_json::Value>) {
+    remember(
+        calls,
+        "",
+        Reasoning {
+            blocks,
+            ..Default::default()
+        },
+    );
 }
 
 /// Test seam: remembers `text` as the reasoning behind `calls`.

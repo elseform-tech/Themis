@@ -223,7 +223,7 @@ async fn a_subagent_can_see_the_skills_the_main_agent_can() {
             0 => tools(&[(
                 "s1",
                 "spawn_subagents",
-                json!({"subagents": [{"name": "Builder", "brief": "Build it."}]}),
+                json!({"subagents": [{"write_paths": [], "name": "Builder", "brief": "Build it."}]}),
             )]),
             _ if mentions(body, "Done.") => reply("All done."),
             _ => reply("Waiting."),
@@ -275,7 +275,7 @@ async fn agents_and_subagents_read_the_projects_guidance_and_get_a_map_of_its_do
             0 => tools(&[(
                 "s1",
                 "spawn_subagents",
-                json!({"subagents": [{"name": "Builder", "brief": "Build it."}]}),
+                json!({"subagents": [{"write_paths": [], "name": "Builder", "brief": "Build it."}]}),
             )]),
             _ if mentions(body, "Done.") => reply("All done."),
             _ => reply("Waiting."),
@@ -371,7 +371,7 @@ async fn the_skill_tool_loads_a_skill_for_an_agent_and_a_subagent() {
             2 => tools(&[(
                 "s1",
                 "spawn_subagents",
-                json!({"subagents": [{"name": "Builder", "brief": "Build it."}]}),
+                json!({"subagents": [{"write_paths": [], "name": "Builder", "brief": "Build it."}]}),
             )]),
             _ if mentions(body, "Done.") => {
                 seen.lock().unwrap().extend(
@@ -455,8 +455,8 @@ async fn the_turn_ends_after_both_subagents_reported_back() {
                 "s1",
                 "spawn_subagents",
                 json!({"subagents": [
-                    {"name": "Notes", "brief": "Read notes.txt and say what it says."},
-                    {"name": "Files", "brief": "List the project folder."}
+                    {"write_paths": [], "name": "Notes", "brief": "Read notes.txt and say what it says."},
+                    {"write_paths": [], "name": "Files", "brief": "List the project folder."}
                 ]}),
             )]),
             _ if both => reply("Merged: hello, and one file."),
@@ -491,9 +491,7 @@ async fn the_turn_ends_after_both_subagents_reported_back() {
                     "search_file",
                     "shell",
                     "fetch_url",
-                    "web_search",
-                    // Reading a memory in full; saving is the main agent's.
-                    "memory"
+                    "web_search"
                 ]
                 .contains(&name.as_str())),
             "{names:?}"
@@ -588,7 +586,7 @@ async fn the_main_agent_keeps_working_while_a_slow_subagent_runs() {
             0 => tools(&[(
                 "s1",
                 "spawn_subagents",
-                json!({"subagents": [{"name": "Slow", "brief": "Look at everything."}]}),
+                json!({"subagents": [{"write_paths": [], "name": "Slow", "brief": "Look at everything."}]}),
             )]),
             1 => tools(&[("r1", "read_file", json!({"file_path": "notes.txt"}))]),
             _ if mentions(body, REPORT) => reply("Merged: Slow's report and the notes."),
@@ -661,7 +659,7 @@ async fn a_stopped_subagent_ends_and_a_waited_result_is_not_repeated() {
             0 => tools(&[(
                 "s1",
                 "spawn_subagents",
-                json!({"subagents": [{"name": "Slow", "brief": "Look at everything."}]}),
+                json!({"subagents": [{"write_paths": [], "name": "Slow", "brief": "Look at everything."}]}),
             )]),
             // In one reply: notes join between replies, so a subagent that ends quickly (as it
             // did on Windows) can't reach the main agent as a note before the wait takes it.
@@ -756,7 +754,7 @@ async fn starting_a_subagent_says_when_it_can_only_read() {
                 "s1",
                 "spawn_subagents",
                 json!({"subagents": [
-                    {"name": "Looker", "brief": "Look around."},
+                    {"write_paths": [], "name": "Looker", "brief": "Look around."},
                     {"name": "Builder", "brief": "Build it.", "write_paths": ["notes/"]}
                 ]}),
             )]),
@@ -846,8 +844,8 @@ async fn write_paths_hold_a_subagent_to_its_own_folder() {
                 "s1",
                 "spawn_subagents",
                 json!({"subagents": [
-                    {"name": "Reader A", "brief": "Read part A"},
-                    {"name": "Reader B", "brief": "Read part B"},
+                    {"write_paths": [], "name": "Reader A", "brief": "Read part A"},
+                    {"write_paths": [], "name": "Reader B", "brief": "Read part B"},
                     {"name": "Writer", "brief": "Write the summary", "write_paths": ["notes/"]}
                 ]}),
             )]),
@@ -959,7 +957,7 @@ async fn the_main_agent_can_send_a_finished_subagent_back() {
                 0 => tools(&[(
                     "s1",
                     "spawn_subagents",
-                    json!({"say": "Starting Adder to do the sum.", "subagents": [{"name": "Adder", "brief": "Add the numbers"}]}),
+                    json!({"say": "Starting Adder to do the sum.", "subagents": [{"write_paths": [], "name": "Adder", "brief": "Add the numbers"}]}),
                 )]),
                 1 => tools(&[("w1", "wait_subagents", json!({}))]),
                 2 => tools(&[("m1", "message_subagent", {
@@ -1146,7 +1144,7 @@ async fn the_person_can_stop_one_subagent_and_the_agent_still_hears_from_it() {
             0 => tools(&[(
                 "s1",
                 "spawn_subagents",
-                json!({"subagents": [{"name": "Slow", "brief": "Look at everything."}]}),
+                json!({"subagents": [{"write_paths": [], "name": "Slow", "brief": "Look at everything."}]}),
             )]),
             _ if mentions(body, NOTE) => reply("Slow was stopped."),
             _ => reply("Waiting for Slow."),
@@ -1286,7 +1284,7 @@ async fn starting_subagents_needs_no_prompt_but_a_deny_rule_still_holds() {
             0 => tools(&[(
                 "s1",
                 "spawn_subagents",
-                json!({"subagents": [{"name": "Quick", "brief": "Say hello."}]}),
+                json!({"subagents": [{"write_paths": [], "name": "Quick", "brief": "Say hello."}]}),
             )]),
             _ if mentions(body, NOTE) => reply("Quick reported back."),
             _ if mentions(body, "approval denied") => reply("Subagents are not allowed here."),
@@ -1356,14 +1354,14 @@ async fn the_person_names_a_model_per_subagent_from_the_allowed_ones() {
             0 => tools(&[(
                 "s0",
                 "spawn_subagents",
-                json!({"subagents": [{"name": "Big", "brief": "b", "model": "claude-opus"}]}),
+                json!({"subagents": [{"write_paths": [], "name": "Big", "brief": "b", "model": "claude-opus"}]}),
             )]),
             1 => tools(&[(
                 "s1",
                 "spawn_subagents",
                 json!({"subagents": [
-                    {"name": "Review", "brief": "Review src/.", "model": "GLM 5"},
-                    {"name": "Docs", "brief": "Check docs/."}
+                    {"write_paths": [], "name": "Review", "brief": "Review src/.", "model": "GLM 5"},
+                    {"write_paths": [], "name": "Docs", "brief": "Check docs/."}
                 ]}),
             )]),
             _ if mentions(body, "Ran on glm-5.") && mentions(body, "Ran on test-model.") => {
@@ -1430,7 +1428,7 @@ async fn a_subagent_whose_model_fails_at_once_falls_back_to_the_chat_model() {
             return reply("Done on the fallback.");
         }
         match tool_results(body) {
-            0 => tools(&[("s1", "spawn_subagents", json!({"subagents": [{"name": "Review", "brief": "Review src/.", "model": "glm-5"}]}))]),
+            0 => tools(&[("s1", "spawn_subagents", json!({"subagents": [{"write_paths": [], "name": "Review", "brief": "Review src/.", "model": "glm-5"}]}))]),
             _ if mentions(body, NOTE) => reply("Reported."),
             _ => reply("Waiting."),
         }
@@ -1467,7 +1465,7 @@ async fn a_subagent_waiting_for_approval_does_not_hold_the_reply() {
             0 => tools(&[(
                 "s1",
                 "spawn_subagents",
-                json!({"subagents": [{"name": "Lister", "brief": "Number the lines of notes.txt."}]}),
+                json!({"subagents": [{"write_paths": [], "name": "Lister", "brief": "Number the lines of notes.txt."}]}),
             )]),
             _ if mentions(body, NOTE) => reply("Done."),
             _ => reply("Waiting."),
@@ -1637,7 +1635,7 @@ async fn a_plugins_subagent_imports_spawns_and_runs_with_its_instructions() {
     let app = app(
         None,
         spawning(
-            json!([{"name": "Review", "brief": "THE-BRIEF: look at notes.txt", "profile": "reviewer"}]),
+            json!([{"write_paths": [], "name": "Review", "brief": "THE-BRIEF: look at notes.txt", "profile": "reviewer"}]),
             |_| reply("Reviewed: all fine."),
         ),
     )
@@ -1712,7 +1710,7 @@ async fn a_project_plugins_subagent_is_kept_in_the_project_and_runs() {
     let app = app(
         None,
         spawning(
-            json!([{"name": "Review", "brief": "Look.", "profile": "local-reviewer"}]),
+            json!([{"write_paths": [], "name": "Review", "brief": "Look.", "profile": "local-reviewer"}]),
             |_| reply("Local review done."),
         ),
     )
@@ -1786,11 +1784,11 @@ async fn a_tool_list_only_narrows() {
         None,
         spawning(
             json!([
-                {"name": "Named", "brief": "names mcp", "profile": "names-mcp"},
-                {"name": "Omits", "brief": "omits mcp", "profile": "omits-mcp"},
-                {"name": "Scoped", "brief": "scoped shell", "profile": "scoped-shell"},
-                {"name": "Denied", "brief": "denied shell", "profile": "no-shell"},
-                {"name": "Plain", "brief": "no list", "profile": "no-list"}
+                {"write_paths": [], "name": "Named", "brief": "names mcp", "profile": "names-mcp"},
+                {"write_paths": [], "name": "Omits", "brief": "omits mcp", "profile": "omits-mcp"},
+                {"write_paths": [], "name": "Scoped", "brief": "scoped shell", "profile": "scoped-shell"},
+                {"write_paths": [], "name": "Denied", "brief": "denied shell", "profile": "no-shell"},
+                {"write_paths": [], "name": "Plain", "brief": "no list", "profile": "no-list"}
             ]),
             |_| reply("Done looking."),
         ),
@@ -1900,7 +1898,7 @@ async fn a_profile_listing_write_still_needs_write_paths() {
         None,
         spawning(
             json!([
-                {"name": "Without", "brief": "no paths given", "profile": "writer"},
+                {"write_paths": [], "name": "Without", "brief": "no paths given", "profile": "writer"},
                 {"name": "With", "brief": "with paths given", "profile": "writer", "write_paths": ["out/"]}
             ]),
             child,
@@ -1985,8 +1983,8 @@ async fn an_unknown_profile_fails_clearly_and_starts_nothing() {
         None,
         spawning(
             json!([
-                {"name": "Good", "brief": "fine", "profile": "reviewer"},
-                {"name": "Bad", "brief": "broken", "profile": "no-such-profile"}
+                {"write_paths": [], "name": "Good", "brief": "fine", "profile": "reviewer"},
+                {"write_paths": [], "name": "Bad", "brief": "broken", "profile": "no-such-profile"}
             ]),
             |_| reply("never"),
         ),
@@ -2014,7 +2012,7 @@ async fn a_disabled_plugins_profiles_are_not_available() {
     let app = app(
         None,
         spawning(
-            json!([{"name": "Review", "brief": "x", "profile": "reviewer"}]),
+            json!([{"write_paths": [], "name": "Review", "brief": "x", "profile": "reviewer"}]),
             |_| reply("never"),
         ),
     )
@@ -2056,10 +2054,10 @@ async fn a_profiles_model_maps_to_the_models_list_or_the_default_applies() {
         None,
         spawning(
             json!([
-                {"name": "Listed", "brief": "a", "profile": "listed"},
-                {"name": "Unlisted", "brief": "b", "profile": "unlisted"},
-                {"name": "Inherit", "brief": "c", "profile": "inherits"},
-                {"name": "Asked", "brief": "d", "profile": "listed", "model": "test-model"}
+                {"write_paths": [], "name": "Listed", "brief": "a", "profile": "listed"},
+                {"write_paths": [], "name": "Unlisted", "brief": "b", "profile": "unlisted"},
+                {"write_paths": [], "name": "Inherit", "brief": "c", "profile": "inherits"},
+                {"write_paths": [], "name": "Asked", "brief": "d", "profile": "listed", "model": "test-model"}
             ]),
             |_| reply("ok"),
         ),

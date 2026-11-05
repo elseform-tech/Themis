@@ -239,3 +239,12 @@
 .themis-subagent-model button:hover:not(:disabled) { color: var(--themis-text); background: var(--themis-nav-hover-bg); }
 .themis-subagent-model button:disabled { opacity: .5; cursor: not-allowed; }
 .themis-subagent-model svg { width: 12px; height: 12px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; }
+/* Settings › Models › Memory models: an ordered list, each row with move and remove. */
+.themis-memory-models { list-style: none; margin: 0; padding: 0; }
+.themis-memory-model-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.themis-memory-model-actions { display: inline-flex; gap: 2px; flex: none; }
+.themis-memory-model-actions button { display: inline-grid; place-items: center; width: 24px; height: 24px; padding: 0; border: 0; border-radius: 6px; background: transparent; color: var(--themis-text-3); cursor: pointer; }
+.themis-memory-model-actions button:hover:not(:disabled) { color: var(--themis-text); background: var(--themis-nav-hover-bg); }
+.themis-memory-model-actions button:disabled { opacity: .35; cursor: not-allowed; }
+.themis-memory-model-actions button:focus-visible { outline: 2px solid var(--themis-accent); outline-offset: 1px; }
+.themis-memory-model-actions svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
