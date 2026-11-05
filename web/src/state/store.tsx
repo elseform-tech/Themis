@@ -134,7 +134,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
       .then(history => {
         if (!live) return;
         if (seq !== undefined) loadedAtRef.current.set(openedThread, seq);
-        dispatch({ type: "thread/history-loaded", threadId: openedThread, history });
+        // A chat opened mid-run is still running: without saying so, loading its history
+        // would mark the run interrupted and drop it from Running while it goes on.
+        const running = currentState.current.running[openedThread] ?? listed?.running ?? false;
+        dispatch({ type: "thread/history-loaded", threadId: openedThread, history, ...(running ? { running: true } : {}) });
       })
       .catch((error: unknown) => { if (live) toast(dispatch, `Could not load this chat: ${describeError(error)}`, "warning"); });
     return () => { live = false; };

@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { act, fireEvent, render, screen, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_SETTINGS } from "../state/reducer";
 import App from "../App";
@@ -49,6 +49,18 @@ const titles = (group: HTMLElement) => [...group.querySelectorAll(".themis-threa
 const row = (sidebar: HTMLElement, title: string) => within(sidebar).getByRole("button", { name: title });
 
 describe("Sidebar", () => {
+  it("keeps a chat that started after the app opened running when it is opened mid-run", async () => {
+    const { sidebar, receive } = await mountWith([chat("a", "Alpha", 2), chat("l", "Later", 1)]);
+    // "Later" starts running (an automation, the CLI) while its history isn't loaded.
+    await act(async () => receive({ thread_id: "l", run_id: "r9", event: { kind: "started", task: "sleep", max_turns: 3 } }));
+    vi.mocked(bridge.getThreadHistory).mockResolvedValue([{ kind: "user", text: "sleep", run_id: "r9" }] as never);
+    await act(async () => fireEvent.click(row(sidebar, "Later")));
+    await waitFor(() => expect(vi.mocked(bridge.getThreadHistory)).toHaveBeenCalledWith("l"));
+    // Still running, and nothing claims the run was interrupted.
+    expect(titles(within(sidebar).getByRole("region", { name: "Running" }))).toEqual(["Later"]);
+    expect(screen.queryByText(/Run interrupted/)).toBeNull();
+  });
+
   it("shows a Running group only while a chat works or waits, and moves chats between the groups", async () => {
     const { sidebar, receive } = await mountWith([chat("a", "Alpha", 3), chat("b", "Bravo", 2, { running: true }), chat("c", "Charlie", 1)]);
     const running = within(sidebar).getByRole("region", { name: "Running" });
