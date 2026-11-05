@@ -168,6 +168,8 @@ describe("Workspace journey", () => {
     vi.mocked(bridge.getThread).mockResolvedValue(idle as never);
     vi.mocked(bridge.getThreadHistory).mockClear();
     await mount();
+    // An idle chat's history loads when it is opened, not at startup.
+    await act(async () => fireEvent.click(screen.getByRole("button", { name: /^Idle chat/ })));
     const loads = () => vi.mocked(bridge.getThreadHistory).mock.calls.filter(call => call[0] === "idle").length;
     const passes = () => vi.mocked(bridge.listThreads).mock.calls.length;
     await waitFor(() => expect(loads()).toBeGreaterThan(0));
@@ -186,6 +188,7 @@ describe("Workspace journey", () => {
     vi.mocked(bridge.getThread).mockResolvedValue(idle as never);
     vi.mocked(bridge.getThreadHistory).mockClear();
     await mount();
+    await act(async () => fireEvent.click(screen.getByRole("button", { name: /^Idle chat/ })));
     await waitFor(() => expect(vi.mocked(bridge.getThreadHistory)).toHaveBeenCalledWith("idle"));
     const changed = { ...idle, last_activity_seq: 6 };
     vi.mocked(bridge.listThreads).mockResolvedValue([changed, busy] as never);

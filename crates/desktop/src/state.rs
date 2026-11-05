@@ -969,6 +969,7 @@ impl AppState {
 fn thread_info(record: &ThreadRecord, transcript: &TranscriptStore) -> Result<ThreadInfo, String> {
     Ok(ThreadInfo {
         last_activity_seq: transcript.last_activity_seq(&record.id)?,
+        last_outcome: transcript.last_outcome(&record.id)?.map(str::to_owned),
         id: record.id.clone(),
         title: record.title.clone(),
         provider: record.provider,

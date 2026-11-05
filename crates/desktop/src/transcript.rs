@@ -57,6 +57,9 @@ pub struct TranscriptStore {
 /// Shortest excerpt that counts as already present when it is merely contained in a turn.
 const MIN_SUBSTRING_DEDUPE_CHARS: usize = 40;
 
+/// Newest history rows read to find how a chat's last run ended.
+const OUTCOME_ROWS: i64 = 64;
+
 impl TranscriptStore {
     pub fn open(path: &Path) -> Result<Self, String> {
         if let Some(parent) = path.parent() {
@@ -139,6 +142,44 @@ impl TranscriptStore {
                 |row| row.get(0),
             )
             .map_err(|error| format!("read conversation activity: {error}"))
+    }
+
+    /// How the chat's last run ended, read from its newest history rows only (at most
+    /// [`OUTCOME_ROWS`]): `done`, `incomplete`, `failed` or `stopped`; `None` with no run end
+    /// among them.
+    pub fn last_outcome(&self, thread_id: &str) -> Result<Option<&'static str>, String> {
+        let connection = self
+            .connection
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        let mut statement = connection
+            .prepare_cached(
+                "SELECT item FROM history WHERE thread_id = ?1 ORDER BY seq DESC LIMIT ?2",
+            )
+            .map_err(|error| format!("read last outcome: {error}"))?;
+        let rows = statement
+            .query_map(rusqlite::params![thread_id, OUTCOME_ROWS], |row| {
+                row.get::<_, String>(0)
+            })
+            .map_err(|error| format!("read last outcome: {error}"))?;
+        for item in rows.flatten() {
+            let Ok(value) = serde_json::from_str::<serde_json::Value>(&item) else {
+                continue;
+            };
+            let event = &value["envelope"]["event"];
+            match event["kind"].as_str() {
+                Some("finished") => return Ok(Some("done")),
+                Some("incomplete") => return Ok(Some("incomplete")),
+                Some("failed") => {
+                    let stopped = event["error"]
+                        .as_str()
+                        .is_some_and(|error| error.starts_with("Stopped by you."));
+                    return Ok(Some(if stopped { "stopped" } else { "failed" }));
+                }
+                _ => {}
+            }
+        }
+        Ok(None)
     }
 
     pub(crate) fn save_document_capsule(
@@ -1296,5 +1337,87 @@ mod reply_tests {
             reply_before([(true, "b"), (true, "a"), (false, "q")].into_iter()),
             "a\n\nb"
         );
+    }
+}
+
+#[cfg(test)]
+mod outcome_tests {
+    use super::*;
+
+    fn end(store: &TranscriptStore, thread: &str, event: ThreadEvent) {
+        store
+            .append_event(&ThreadEventEnvelope {
+                thread_id: thread.into(),
+                run_id: "run".into(),
+                event,
+            })
+            .unwrap();
+    }
+
+    #[test]
+    fn last_outcome_reads_how_the_latest_run_ended() {
+        let directory = tempfile::tempdir().unwrap();
+        let store = TranscriptStore::open(&directory.path().join("t.sqlite")).unwrap();
+        assert_eq!(store.last_outcome("chat").unwrap(), None);
+        store.append_user("chat", "run", "hello").unwrap();
+        assert_eq!(store.last_outcome("chat").unwrap(), None);
+        end(
+            &store,
+            "chat",
+            ThreadEvent::Failed {
+                error: "Stopped by you.".into(),
+            },
+        );
+        assert_eq!(store.last_outcome("chat").unwrap(), Some("stopped"));
+        end(
+            &store,
+            "chat",
+            ThreadEvent::Failed {
+                error: "network".into(),
+            },
+        );
+        assert_eq!(store.last_outcome("chat").unwrap(), Some("failed"));
+        end(
+            &store,
+            "chat",
+            ThreadEvent::Incomplete {
+                model: None,
+                result: "partly".into(),
+            },
+        );
+        assert_eq!(store.last_outcome("chat").unwrap(), Some("incomplete"));
+        end(
+            &store,
+            "chat",
+            ThreadEvent::Finished {
+                model: None,
+                result: "done".into(),
+            },
+        );
+        // Rows after the end (such as a later memory note) do not hide it.
+        store.append_user("chat", "run2", "next").unwrap();
+        assert_eq!(store.last_outcome("chat").unwrap(), Some("done"));
+        assert_eq!(store.last_outcome("other").unwrap(), None);
+    }
+
+    #[test]
+    fn last_outcome_reads_a_bounded_tail() {
+        // Cost stays flat however long the chat: only the newest OUTCOME_ROWS rows are read.
+        let directory = tempfile::tempdir().unwrap();
+        let store = TranscriptStore::open(&directory.path().join("t.sqlite")).unwrap();
+        end(
+            &store,
+            "chat",
+            ThreadEvent::Finished {
+                model: None,
+                result: "old".into(),
+            },
+        );
+        for index in 0..OUTCOME_ROWS {
+            store
+                .append_user("chat", "run", &format!("row {index}"))
+                .unwrap();
+        }
+        assert_eq!(store.last_outcome("chat").unwrap(), None);
     }
 }

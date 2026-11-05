@@ -117,6 +117,10 @@ pub struct ThreadInfo {
     /// Last persisted conversation event; zero means no activity yet.
     #[serde(default)]
     pub last_activity_seq: i64,
+    /// How the chat's last run ended (`done`, `incomplete`, `failed`, `stopped`), so the sidebar
+    /// can show it without loading the chat's history.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_outcome: Option<String>,
     pub id: String,
     pub title: String,
     pub provider: ProviderKind,
@@ -1717,6 +1721,7 @@ mod tests {
     fn thread_info_and_merge_result_match_ts() {
         let info = ThreadInfo {
             last_activity_seq: 42,
+            last_outcome: None,
             id: "t".to_owned(),
             title: "hi".to_owned(),
             provider: ProviderKind::Go,

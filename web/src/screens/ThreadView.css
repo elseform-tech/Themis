@@ -66,6 +66,9 @@
 .themis-jump-latest:hover { color: var(--themis-accent); }
 .themis-thread-start { margin: auto; color: var(--themis-text-2); font-size: .875rem; }
 .themis-thread-msg { max-width: 100%; }
+/* A long chat holds thousands of rows: rows far off screen keep their size but are not laid out
+   or painted until the person scrolls near, so memory and work stay with what is on screen. */
+.themis-thread-stream-content > .themis-thread-msg { content-visibility: auto; contain-intrinsic-size: auto 120px; }
 .themis-thread-msg--user { align-self: flex-end; max-width: 80%; padding: 12px 18px; border-radius: 22px 22px 6px 22px; background: var(--themis-user-message-bg); }
 .themis-thread-msg--system { color: var(--themis-danger); }
 .themis-thread-msg--stopped { color: var(--themis-text-2); }

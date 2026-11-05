@@ -100,6 +100,9 @@ export interface AppState {
   /** Where Settings opens when another screen sends the person there (such as a missing key). */
   settingsFocus: { section: string; key?: string } | null;
   messages: Record<string, ChatMessage[]>;
+  /** Chats whose saved history has been loaded: others load when opened, so memory holds the
+   *  chats in use, not every chat ever had. */
+  historyLoaded: Record<string, true>;
   /** Live streamed assistant text per thread (cleared on finished/failed). */
   streams: Record<string, string>;
   traces: Record<string, ToolTraceEntry[]>;
@@ -257,6 +260,7 @@ export const initialState: AppState = {
   mainView: "thread",
   settingsFocus: null,
   messages: {},
+  historyLoaded: {},
   streams: {},
   traces: {},
   running: {},
@@ -988,7 +992,7 @@ export function reducer(state: AppState, action: AppAction): AppState {
         next = appendMessage(next, action.threadId, { id: newId("msg"), role: "system", text: "Run interrupted. Review any changes, then send a follow-up to continue." });
         next = setThreadRunning(next, action.threadId, false);
       }
-      return { ...next, toasts: state.toasts };
+      return { ...next, toasts: state.toasts, historyLoaded: { ...state.historyLoaded, [action.threadId]: true } };
     }
     case "message/append": {
       return appendMessage(state, action.threadId, action.message);

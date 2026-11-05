@@ -45,6 +45,8 @@ export interface ThreadInfo {
   model: string;
   approval_mode?: "custom" | "auto" | "yolo";
   reasoning_effort?: string | null;
+  /** How the last run ended, for the sidebar before the chat's history is loaded. */
+  last_outcome?: "done" | "incomplete" | "failed" | "stopped";
   running: boolean;
   /** Worktree backing this thread (null for non-git read-only threads). */
   worktree_path: string | null;

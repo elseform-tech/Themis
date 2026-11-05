@@ -257,6 +257,13 @@ export function threadStatus(state: ReturnType<typeof useApp>["state"], thread: 
   const messages = state.messages[thread.id] ?? [];
   const last = messages[messages.length - 1];
   const running = state.running[thread.id] ?? thread.running;
+  // A chat not opened yet has no history loaded: its last run's end comes with the list.
+  if (!running && !state.historyLoaded[thread.id] && !state.sendErrors[thread.id]) {
+    return thread.last_outcome === "failed" ? "Failed"
+      : thread.last_outcome === "stopped" ? "Stopped"
+      : thread.last_outcome === "done" ? "Done"
+      : thread.recovered ? "Interrupted" : "Idle";
+  }
   return running
     ? state.approvals.some(approval => approval.thread_id === thread.id) ? "Needs approval" : "Working"
     : state.sendErrors[thread.id] || (last?.role === "system" && /^(Run failed:|Send failed:|Send rejected:)/.test(last.text)) ? "Failed"
