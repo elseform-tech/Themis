@@ -1155,3 +1155,43 @@ mod commands;
 /// skipped (with the reason) where no backend is usable.
 #[cfg(unix)]
 mod sandboxed;
+
+#[test]
+fn read_only_git_calls_are_reads_and_flags_that_write_or_run_programs_are_not() {
+    let risk = |args: &[&str]| git_call_risk(&json!({ "args": args }));
+    for args in [
+        &["status", "--short"][..],
+        &["diff", "--cached", "--stat", "--", "src/a.rs"],
+        &["log", "--oneline", "-5", "--format=%h %s"],
+        &["log", "-n", "3", "--since=2.weeks"],
+        &["show", "HEAD~1", "--name-only"],
+        &["log", "--oneline", "main..feature"],
+        &["diff", "notes..v2.txt"],
+    ] {
+        assert_eq!(risk(args), RiskLevel::Read, "{args:?}");
+    }
+    for args in [
+        &["diff", "--output=/tmp/out.patch"][..],
+        &["log", "-p", "--ext-diff"],
+        &["show", "--textconv", "HEAD"],
+        &["diff", "--no-index", "/etc/hosts", "x"],
+        &["commit", "-m", "a b"],
+        &["add", "."],
+        &["status", "-"],
+        // Paths outside the project: `git diff` compares them without `--no-index`.
+        &["diff", "/etc/hosts", "/tmp/x"],
+        &["diff", "../outside.txt", "inside.txt"],
+        &["show", "~/notes"],
+        &["diff", "src/../../outside.txt"],
+    ] {
+        assert_eq!(risk(args), RiskLevel::Write, "{args:?}");
+    }
+    for args in [&["checkout", "--", "."][..], &["branch", "-D", "old"]] {
+        assert_eq!(risk(args), RiskLevel::Destructive, "{args:?}");
+    }
+    assert_eq!(
+        git_call_risk(&json!({})),
+        RiskLevel::Write,
+        "unreadable arguments"
+    );
+}

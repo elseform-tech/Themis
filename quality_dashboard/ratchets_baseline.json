@@ -70,8 +70,8 @@
    "total_lines": 3746
   },
   "crates/core/src/runtime.rs": {
-   "code_lines": 4412,
-   "total_lines": 9396
+   "code_lines": 4410,
+   "total_lines": 9394
   },
   "crates/core/src/sandbox.rs": {
    "code_lines": 1362
@@ -447,9 +447,9 @@
    "cyclomatic": 23
   },
   "crates/core/src/runtime.rs::execute_call": {
-   "cognitive": 43,
-   "cyclomatic": 47,
-   "lines": 181
+   "cognitive": 42,
+   "cyclomatic": 45,
+   "lines": 179
   },
   "crates/core/src/runtime.rs::execute_tool_calls": {
    "cognitive": 45,
