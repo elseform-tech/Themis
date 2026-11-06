@@ -265,3 +265,43 @@ class CompareTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class HealthScoreTests(unittest.TestCase):
+    def test_each_part_counts_lines_and_repeated_code_is_scaled_to_five_percent(self):
+        measured = measurements(
+            files={
+                "crates/big.rs": {"code_lines": 1500, "total_lines": 1500},
+                "crates/ok.rs": {"code_lines": 500, "total_lines": 500},
+                "crates/tests/e2e.rs": {"total_lines": 3000},
+            },
+            functions={
+                "crates/ok.rs::long": {"lines": 150, "cognitive": 3, "cyclomatic": 2},
+                "crates/ok.rs::fine": {"lines": 50, "cognitive": 3, "cyclomatic": 2},
+            },
+            duplicates={"crates/ok.rs": 20},
+        )
+        health = ratchets.health_score(measured)
+        # Files: 1,500 of 2,000 code lines sit in a file over its limit (test files don't count).
+        self.assertEqual(health["files"], 25.0)
+        # Functions: 150 of 200 function lines sit in a function over a limit.
+        self.assertEqual(health["functions"], 25.0)
+        # Repeated: 20 of 2,000 lines is 1%, so 100 - 20 * 1 = 80.
+        self.assertEqual(health["repeated"], 80.0)
+        self.assertEqual(health["score"], 43.3)
+
+    def test_five_percent_repeated_or_more_scores_zero_and_clean_code_scores_100(self):
+        clean = measurements(
+            files={"crates/a.rs": {"code_lines": 100, "total_lines": 100}},
+            functions={"crates/a.rs::f": {"lines": 10, "cognitive": 1, "cyclomatic": 1}},
+        )
+        self.assertEqual(ratchets.health_score(clean)["score"], 100.0)
+        copied = measurements(
+            files={"crates/a.rs": {"code_lines": 100, "total_lines": 100}},
+            functions={"crates/a.rs::f": {"lines": 10, "cognitive": 1, "cyclomatic": 1}},
+            duplicates={"crates/a.rs": 9},
+        )
+        self.assertEqual(ratchets.health_score(copied)["repeated"], 0.0)
+
+    def test_nothing_measured_scores_100_rather_than_dividing_by_zero(self):
+        self.assertEqual(ratchets.health_score(measurements())["score"], 100.0)

@@ -16,6 +16,24 @@ from quality_dashboard.dashboard import (
 
 
 class DashboardMetricsTests(unittest.TestCase):
+    def test_health_history_keeps_one_point_per_commit_and_a_bounded_length(self):
+        with TemporaryDirectory() as directory:
+            path = Path(directory) / "health.json"
+            dashboard.record_health(path, "aaa", {"score": 60.0}, limit=3)
+            dashboard.record_health(path, "aaa", {"score": 61.0}, limit=3)
+            for commit, score in (("bbb", 62.0), ("ccc", 63.0), ("ddd", 64.0)):
+                history = dashboard.record_health(path, commit, {"score": score}, limit=3)
+        # The same commit updates its point; a new one adds a point; the oldest drop off.
+        self.assertEqual([(point["commit"], point["score"]) for point in history],
+                         [("bbb", 62.0), ("ccc", 63.0), ("ddd", 64.0)])
+
+    def test_unreadable_health_history_starts_over(self):
+        with TemporaryDirectory() as directory:
+            path = Path(directory) / "health.json"
+            path.write_text("not json")
+            history = dashboard.record_health(path, "aaa", {"score": 70.0})
+        self.assertEqual([point["score"] for point in history], [70.0])
+
     def test_source_files_skip_git_ignored_build_output(self):
         with TemporaryDirectory() as directory:
             root = Path(directory)

@@ -18,6 +18,8 @@ ROOT = Path(__file__).resolve().parents[1]
 STATIC = Path(__file__).resolve().parent
 STATE_DIR = ROOT / ".quality-dashboard"
 HISTORY_PATH = STATE_DIR / "runs.json"
+HEALTH_PATH = STATE_DIR / "health.json"
+MAX_HEALTH_POINTS = 60
 MAX_HISTORY = 60
 IGNORED_DIRS = {".git", "target", "node_modules", "dist", "build", "coverage", ".quality-dashboard"}
 SOURCE_ROOTS = ("crates", "web/src")
@@ -564,6 +566,56 @@ def _run_suites(run_id: str, selected: list[str]) -> None:
             pass
 
 
+_HEALTH_LOCK = threading.Lock()
+_HEALTH_CACHE: dict = {"key": None, "value": None}
+
+
+def record_health(path: Path, commit: str, health: dict, limit: int = MAX_HEALTH_POINTS) -> list[dict]:
+    """Keeps one score per commit (the latest for the commit checked out) and returns them."""
+    try:
+        history = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(history, list):
+            history = []
+    except (OSError, ValueError):
+        history = []
+    point = {"commit": commit, "at": now_iso(), "score": health["score"]}
+    if history and history[-1].get("commit") == commit:
+        history[-1] = point
+    else:
+        history.append(point)
+    history = history[-limit:]
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(history), encoding="utf-8")
+    except OSError:
+        pass
+    return history
+
+
+def health_metrics() -> dict:
+    """The code-health score from the ratchet measurements, measured again only when a
+    source file changed (a measurement takes seconds; the page refreshes every few)."""
+    from quality_dashboard import ratchets
+
+    try:
+        paths = ratchets.code_source_files()
+        key = tuple((str(path), path.stat().st_mtime_ns, path.stat().st_size) for path in paths)
+    except (OSError, RuntimeError) as error:
+        return {"available": False, "error": str(error)[:240]}
+    with _HEALTH_LOCK:
+        if _HEALTH_CACHE["key"] == key:
+            return _HEALTH_CACHE["value"]
+        try:
+            health = ratchets.health_score(ratchets.measure(paths))
+        except (OSError, RuntimeError, ValueError, subprocess.TimeoutExpired) as error:
+            return {"available": False, "error": str(error)[:240]}
+        commit = run_git("rev-parse", "--short", "HEAD").strip() or "unknown"
+        history = record_health(HEALTH_PATH, commit, health)
+        value = {"available": True, **health, "history": [point["score"] for point in history]}
+        _HEALTH_CACHE.update(key=key, value=value)
+        return value
+
+
 def dashboard_data() -> dict:
     with _STATE_LOCK:
         active = json.loads(json.dumps(_ACTIVE_RUN)) if _ACTIVE_RUN else None
@@ -575,6 +627,7 @@ def dashboard_data() -> dict:
         "source": source_metrics(),
         "tests": inventory,
         "complexity": complexity_metrics(),
+        "health": health_metrics(),
         "coverage": coverage_metrics(),
         "activeRun": active,
         "runs": history,
