@@ -67,17 +67,20 @@ def run_git(*args: str, timeout: float = 4) -> str:
 
 
 def tracked_source_files() -> list[Path]:
+    """Source files git knows about: tracked ones and new ones that are not ignored.
+
+    Ignored build output (such as the bundled SearXNG runtime under crates/desktop)
+    exists only on machines that built it, so it is not product code.
+    """
+    listing = run_git("ls-files", "--cached", "--others", "--exclude-standard", "-z", "--", *SOURCE_ROOTS, timeout=30)
     files: list[Path] = []
-    for root_name in SOURCE_ROOTS:
-        root = ROOT / root_name
-        if not root.exists():
+    for name in listing.split("\0"):
+        path = ROOT / name
+        if not name or path.suffix not in SOURCE_SUFFIXES or not path.is_file():
             continue
-        for path in root.rglob("*"):
-            if not path.is_file() or path.suffix not in SOURCE_SUFFIXES:
-                continue
-            if any(part in IGNORED_DIRS for part in path.parts):
-                continue
-            files.append(path)
+        if any(part in IGNORED_DIRS for part in path.relative_to(ROOT).parts):
+            continue
+        files.append(path)
     return sorted(set(files))
 
 
