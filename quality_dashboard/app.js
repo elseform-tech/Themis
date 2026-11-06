@@ -32,8 +32,18 @@ function testTotals(run, productOnly = false) {
   }), { passed: 0, failed: 0, skipped: 0, known });
 }
 
+/** A text sparkline of recent scores, oldest first, with the change since the first. */
+function trendLine(scores) {
+  if (!Array.isArray(scores) || scores.length < 2) return "";
+  const blocks = "▁▂▃▄▅▆▇█";
+  const low = Math.min(...scores), high = Math.max(...scores);
+  const bars = scores.slice(-20).map((score) => blocks[high === low ? 3 : Math.round(((score - low) / (high - low)) * 7)]).join("");
+  const change = scores.at(-1) - scores[0];
+  return `${bars} ${change >= 0 ? "+" : ""}${change.toFixed(1)}`;
+}
+
 function renderOverview(data) {
-  const { repo, source, tests, complexity, coverage, runs, activeRun } = data;
+  const { repo, source, tests, health, coverage, runs, activeRun } = data;
   const productTotal = tests.overallTotal ?? tests.total;
   const overallTotal = tests.overallDiscoveredTotal ?? tests.discoveredTotal;
   const currentChanges = repo.changes.length;
@@ -44,10 +54,13 @@ function renderOverview(data) {
     metricCard("Overall test definitions", number(overallTotal), testCaption, "✓"),
     metricCard("Product source lines", number(source.loc), `${number(source.productionLoc)} production · ${number(source.testLoc)} test-file lines`, "≋"),
     metricCard(
-      "Avg. cyclomatic complexity",
-      complexity.available ? complexity.averageCyclomatic.toFixed(2) : "Unavailable",
-      complexity.available ? "AST average per source file" : "Install rust-code-analysis-cli",
+      "Code health",
+      health.available ? `${health.score.toFixed(1)} / 100` : "Unavailable",
+      health.available
+        ? `files ${health.files.toFixed(0)} · functions ${health.functions.toFixed(0)} · repeated ${health.repeated.toFixed(0)}`
+        : health.error || "Install rust-code-analysis-cli",
       "⌁",
+      health.available ? trendLine(health.history) : "",
     ),
     metricCard("Product code churn", `${number(repo.monthChurn.added)} / ${number(repo.monthChurn.removed)}`, `${number(repo.monthChurn.commits)} app commits · last 30 days`, "↕", "+ / −"),
   ].join("");

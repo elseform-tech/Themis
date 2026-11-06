@@ -647,6 +647,47 @@ class Measurements:
     duplicate_lines: dict[str, int]
 
 
+# Repeated code at this share of the product's lines or more scores 0: below it the
+# score falls 20 points per percent, so small amounts of copying still show.
+REPEATED_ZERO_SHARE = 0.05
+
+
+def health_score(measured: Measurements) -> dict:
+    """A 0-100 code-health score and its three parts, each 0-100.
+
+    - files: share of product code lines (tests left out) in files within the size limits;
+    - functions: share of function lines in functions within every function limit;
+    - repeated: 100 with no repeated code, falling to 0 at ``REPEATED_ZERO_SHARE``.
+    The score is their mean. It is a progress measure, not a gate: the ratchets gate.
+    """
+    code = {path: values["code_lines"] for path, values in measured.files.items() if "code_lines" in values}
+    code_total = sum(code.values())
+    oversized = sum(lines for path, lines in code.items() if over_limits(measured.files[path], FILE_LIMITS))
+    function_total = sum(values["lines"] for values in measured.functions.values())
+    complex_lines = sum(
+        values["lines"] for values in measured.functions.values() if over_limits(values, FUNCTION_LIMITS)
+    )
+    repeated_share = sum(measured.duplicate_lines.values()) / code_total if code_total else 0.0
+    parts = {
+        "files": 100 * (1 - oversized / code_total) if code_total else 100.0,
+        "functions": 100 * (1 - complex_lines / function_total) if function_total else 100.0,
+        "repeated": max(0.0, 100 * (1 - repeated_share / REPEATED_ZERO_SHARE)),
+    }
+    rounded = {name: round(value, 1) for name, value in parts.items()}
+    return {
+        "score": round(sum(parts.values()) / len(parts), 1),
+        **rounded,
+        "repeated_share": round(repeated_share, 4),
+    }
+
+
+def describe_health(health: dict) -> str:
+    return (
+        f"code health {health['score']:.1f}/100 (files {health['files']:.1f}, "
+        f"functions {health['functions']:.1f}, repeated {health['repeated']:.1f})"
+    )
+
+
 def measure(paths: list[Path] | None = None) -> Measurements:
     sources = load_sources(paths if paths is not None else code_source_files())
     configured = os.environ.get("RUST_CODE_ANALYSIS_CLI", "rust-code-analysis-cli")
@@ -810,6 +851,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"ratchets: could not measure: {error}", file=sys.stderr)
         return 2
     report = compare(measured, load_baseline())
+    health = describe_health(health_score(measured))
     for line in report.grew:
         print(f"GREW      {line}")
     for line in report.improved:
@@ -817,17 +859,21 @@ def main(argv: list[str] | None = None) -> int:
     if args.update:
         write_baseline(report.baseline)
         print(f"ratchets: baseline tightened ({len(report.improved)} improvements locked in)")
+        print(health)
         return 1 if report.grew else 0
     if report.grew:
         print(
             "ratchets: new code broke a limit or old code got worse. Split the file or "
             "function, or reuse the repeated code; limits: " + json.dumps(LIMITS),
         )
+        print(health)
         return 1
     if report.improved:
         print(f"ratchets: code got better; lock it in with: {UPDATE_HINT}")
+        print(health)
         return 1
     print("ratchets: ok")
+    print(health)
     return 0
 
 

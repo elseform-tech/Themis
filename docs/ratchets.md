@@ -19,6 +19,16 @@ Repeated code means exact copies of the token sequence: near-copies that differ 
 
 Functions in test files and inline test modules are not held to the function limits. Complexity comes from `rust-code-analysis-cli` 0.0.25 (`cargo install rust-code-analysis-cli --version 0.0.25 --locked`), the same analyzer the quality dashboard uses; the check stops with an error rather than guessing when it is missing.
 
+## Code-health score
+
+The check ends with a 0–100 score and its three parts, and the quality dashboard shows it on the overview with its trend (one point per commit, kept in the ignored `.quality-dashboard/`):
+
+- **files**: the share of product code lines (tests left out) in files within the size limits;
+- **functions**: the share of function lines in functions within every function limit;
+- **repeated**: 100 with no repeated code, falling 20 points per percent of repeated lines, so 5% or more scores 0.
+
+The score is their mean. It shows progress; it does not gate anything (the ratchets do), and it measures structure only: whether the code works is for the tests and the live check.
+
 ## When it fails
 
 - `GREW … > limit`: new code broke a limit. Split the file or function, or reuse the code that already exists. Never add an entry to the baseline by hand to get past it.
