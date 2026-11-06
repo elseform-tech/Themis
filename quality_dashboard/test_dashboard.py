@@ -1,8 +1,10 @@
+import subprocess
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
+from quality_dashboard import dashboard
 from quality_dashboard.dashboard import (
     ROOT,
     _test_names,
@@ -14,6 +16,21 @@ from quality_dashboard.dashboard import (
 
 
 class DashboardMetricsTests(unittest.TestCase):
+    def test_source_files_skip_git_ignored_build_output(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+            (root / ".gitignore").write_text("crates/app/runtime/\n")
+            (root / "crates/app/src").mkdir(parents=True)
+            (root / "crates/app/runtime").mkdir(parents=True)
+            (root / "crates/app/src/lib.rs").write_text("fn a() {}\n")
+            (root / "crates/app/runtime/bundle.js").write_text("var x;\n")
+            subprocess.run(["git", "add", "."], cwd=root, check=True)
+            (root / "crates/app/src/new.rs").write_text("fn b() {}\n")
+            with patch.object(dashboard, "ROOT", root):
+                found = {path.relative_to(root).as_posix() for path in dashboard.tracked_source_files()}
+        self.assertEqual(found, {"crates/app/src/lib.rs", "crates/app/src/new.rs"})
+
     def test_rust_test_totals_sum_test_binaries(self):
         output = """
         test result: ok. 12 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out
@@ -102,7 +119,12 @@ class DashboardMetricsTests(unittest.TestCase):
 
         metrics = source_metrics()
         # Built-in skill verification scripts are product code, unlike dashboard tooling.
-        self.assertEqual(metrics["byLanguage"].get("Python", {}).get("files"), len(list((ROOT / "crates").rglob("*.py"))))
+        # Git-ignored build output (the bundled SearXNG runtime) is not product code.
+        listed = subprocess.run(
+            ["git", "ls-files", "--cached", "--others", "--exclude-standard", "--", "crates/*.py"],
+            cwd=ROOT, capture_output=True, text=True, check=True,
+        ).stdout.split()
+        self.assertEqual(metrics["byLanguage"].get("Python", {}).get("files"), len(listed))
         self.assertIn("Rust", metrics["byLanguage"])
         self.assertIn("TypeScript", metrics["byLanguage"])
 
