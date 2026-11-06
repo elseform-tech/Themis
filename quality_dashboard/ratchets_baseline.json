@@ -1,0 +1,1072 @@
+{
+ "duplicate_lines_by_file": {
+  "crates/core/examples/behavior_eval.rs": 6,
+  "crates/core/examples/compaction_eval.rs": 6,
+  "crates/core/src/browser/cdp.rs": 10,
+  "crates/core/src/browser/session.rs": 99,
+  "crates/core/src/browser/snapshot.rs": 6,
+  "crates/core/src/plugins.rs": 34,
+  "crates/core/src/plugins/agents.rs": 14,
+  "crates/core/src/plugins/hooks.rs": 16,
+  "crates/core/src/plugins/marketplace.rs": 30,
+  "crates/core/src/plugins/package.rs": 22,
+  "crates/core/src/providers.rs": 14,
+  "crates/core/src/runtime.rs": 91,
+  "crates/core/src/runtime/documents.rs": 8,
+  "crates/core/src/runtime/pending.rs": 8,
+  "crates/core/src/tools.rs": 27,
+  "crates/core/src/tools/background.rs": 9,
+  "crates/core/src/tools/recall.rs": 35,
+  "crates/core/src/tools/shell_scope.rs": 14,
+  "crates/desktop/src/approvals.rs": 12,
+  "crates/desktop/src/lib.rs": 22,
+  "crates/desktop/src/secrets.rs": 18,
+  "crates/desktop/src/state/auto_review.rs": 7,
+  "crates/desktop/src/state/automation.rs": 61,
+  "crates/desktop/src/state/goal_tool.rs": 7,
+  "crates/desktop/src/state/memory_auto.rs": 21,
+  "crates/desktop/src/state/question_tool.rs": 7,
+  "crates/desktop/src/state/questions.rs": 19,
+  "crates/desktop/src/state/queue.rs": 19,
+  "crates/desktop/src/transcript.rs": 21,
+  "crates/desktop/src/transcript/source_exports.rs": 7,
+  "crates/desktop/src/types.rs": 18,
+  "web/src/state/reducer.ts": 28
+ },
+ "duplicate_lines_total": 716,
+ "files": {
+  "crates/core/src/browser/session.rs": {
+   "code_lines": 3835,
+   "total_lines": 4072
+  },
+  "crates/core/src/browser/session/devtools.rs": {
+   "code_lines": 1445
+  },
+  "crates/core/src/browser/tools.rs": {
+   "code_lines": 1017
+  },
+  "crates/core/src/configuration.rs": {
+   "code_lines": 2556,
+   "total_lines": 4806
+  },
+  "crates/core/src/plugins.rs": {
+   "code_lines": 1348
+  },
+  "crates/core/src/plugins/connections.rs": {
+   "code_lines": 1389
+  },
+  "crates/core/src/plugins/hooks.rs": {
+   "code_lines": 2482,
+   "total_lines": 3183
+  },
+  "crates/core/src/plugins/marketplace.rs": {
+   "code_lines": 3462,
+   "total_lines": 3928
+  },
+  "crates/core/src/providers.rs": {
+   "code_lines": 1479
+  },
+  "crates/core/src/providers/tests.rs": {
+   "total_lines": 3746
+  },
+  "crates/core/src/runtime.rs": {
+   "code_lines": 4412,
+   "total_lines": 9396
+  },
+  "crates/core/src/sandbox.rs": {
+   "code_lines": 1362
+  },
+  "crates/core/src/tools.rs": {
+   "code_lines": 3392,
+   "total_lines": 5825
+  },
+  "crates/core/src/tools/background.rs": {
+   "code_lines": 1126
+  },
+  "crates/core/src/tools/recall.rs": {
+   "code_lines": 1428
+  },
+  "crates/core/tests/browser_e2e.rs": {
+   "total_lines": 2496
+  },
+  "crates/core/tests/runtime_e2e.rs": {
+   "total_lines": 3130
+  },
+  "crates/desktop/src/cli.rs": {
+   "code_lines": 1016
+  },
+  "crates/desktop/src/server.rs": {
+   "code_lines": 1367
+  },
+  "crates/desktop/src/state.rs": {
+   "code_lines": 1386,
+   "total_lines": 3067
+  },
+  "crates/desktop/src/state/automation.rs": {
+   "code_lines": 1550
+  },
+  "crates/desktop/src/state/goal.rs": {
+   "code_lines": 1351
+  },
+  "crates/desktop/src/state/memory_auto.rs": {
+   "code_lines": 1331
+  },
+  "crates/desktop/src/state/run.rs": {
+   "code_lines": 1198
+  },
+  "crates/desktop/src/state/subagents.rs": {
+   "code_lines": 2058,
+   "total_lines": 2128
+  },
+  "crates/desktop/src/transcript.rs": {
+   "code_lines": 1156
+  },
+  "crates/desktop/src/types.rs": {
+   "code_lines": 1402,
+   "total_lines": 2074
+  },
+  "crates/desktop/tests/attachments_e2e.rs": {
+   "total_lines": 2633
+  },
+  "crates/desktop/tests/plugin_hooks_cli_e2e.rs": {
+   "total_lines": 2670
+  },
+  "crates/desktop/tests/subagents_cli_e2e.rs": {
+   "total_lines": 2237
+  },
+  "web/src/state/reducer.ts": {
+   "code_lines": 1044
+  }
+ },
+ "functions": {
+  "crates/core/examples/behavior_eval.rs::main": {
+   "cyclomatic": 41,
+   "lines": 101
+  },
+  "crates/core/examples/compaction_eval.rs::main": {
+   "cyclomatic": 28
+  },
+  "crates/core/examples/compaction_eval.rs::parse_args": {
+   "cyclomatic": 21
+  },
+  "crates/core/src/browser/audio.js::<anonymous>": {
+   "cognitive": 41,
+   "cyclomatic": 21
+  },
+  "crates/core/src/browser/engine.rs::download_and_unpack": {
+   "cyclomatic": 21
+  },
+  "crates/core/src/browser/layout.js::<anonymous>::walk": {
+   "cognitive": 57
+  },
+  "crates/core/src/browser/looks.js::<anonymous>": {
+   "cognitive": 183,
+   "cyclomatic": 101,
+   "lines": 198
+  },
+  "crates/core/src/browser/looks.js::<anonymous>::preludes": {
+   "cognitive": 28
+  },
+  "crates/core/src/browser/media.rs::encode_mp4": {
+   "cyclomatic": 38,
+   "lines": 136
+  },
+  "crates/core/src/browser/session.rs::ChatBrowser#2::capture": {
+   "cyclomatic": 22,
+   "lines": 129
+  },
+  "crates/core/src/browser/session.rs::ChatBrowser#2::report": {
+   "cyclomatic": 21
+  },
+  "crates/core/src/browser/session.rs::ChatBrowser#2::user_input": {
+   "cognitive": 31,
+   "cyclomatic": 37,
+   "lines": 124
+  },
+  "crates/core/src/browser/session.rs::handle_tab_event": {
+   "cyclomatic": 42,
+   "lines": 131
+  },
+  "crates/core/src/browser/session.rs::parse_key": {
+   "cyclomatic": 47,
+   "lines": 101
+  },
+  "crates/core/src/browser/session.rs::spawn_watcher": {
+   "cognitive": 48,
+   "cyclomatic": 37,
+   "lines": 168
+  },
+  "crates/core/src/browser/session/devtools.rs::ChatBrowser::dev_console": {
+   "cyclomatic": 21
+  },
+  "crates/core/src/browser/session/devtools.rs::ChatBrowser::dev_debugger": {
+   "cognitive": 33,
+   "cyclomatic": 45,
+   "lines": 170
+  },
+  "crates/core/src/browser/session/devtools.rs::ChatBrowser::dev_memory": {
+   "cyclomatic": 27,
+   "lines": 110
+  },
+  "crates/core/src/browser/session/devtools.rs::ChatBrowser::dev_network": {
+   "cyclomatic": 26,
+   "lines": 119
+  },
+  "crates/core/src/browser/session/devtools.rs::ChatBrowser::dev_performance": {
+   "cyclomatic": 22
+  },
+  "crates/core/src/browser/session/devtools.rs::ChatBrowser::dev_storage": {
+   "cyclomatic": 27,
+   "lines": 145
+  },
+  "crates/core/src/browser/session/devtools.rs::record": {
+   "cyclomatic": 30,
+   "lines": 132
+  },
+  "crates/core/src/browser/snapshot.rs::walk": {
+   "cognitive": 36,
+   "cyclomatic": 33
+  },
+  "crates/core/src/browser/tools/devtools.rs::BrowserDevtools::execute": {
+   "cyclomatic": 34
+  },
+  "crates/core/src/chat_grants.rs::GrantEntry::validate": {
+   "cyclomatic": 25
+  },
+  "crates/core/src/configuration.rs::docs_map": {
+   "cognitive": 28
+  },
+  "crates/core/src/configuration.rs::flag_present": {
+   "cyclomatic": 25
+  },
+  "crates/core/src/configuration.rs::resolve": {
+   "cognitive": 40,
+   "cyclomatic": 33,
+   "lines": 110
+  },
+  "crates/core/src/configuration.rs::rule_matches": {
+   "cyclomatic": 23
+  },
+  "crates/core/src/configuration.rs::set_top_level": {
+   "cognitive": 64,
+   "cyclomatic": 44,
+   "lines": 115
+  },
+  "crates/core/src/configuration.rs::strip_jsonc": {
+   "cognitive": 46,
+   "cyclomatic": 28
+  },
+  "crates/core/src/configuration.rs::validate": {
+   "cyclomatic": 23,
+   "lines": 182
+  },
+  "crates/core/src/context_metrics.rs::RequestTrace::begin": {
+   "cyclomatic": 36,
+   "lines": 120
+  },
+  "crates/core/src/memory/auto.rs::plan": {
+   "cyclomatic": 34
+  },
+  "crates/core/src/memory/auto.rs::proposal": {
+   "cyclomatic": 30
+  },
+  "crates/core/src/memory/plans.rs::parse": {
+   "cyclomatic": 26
+  },
+  "crates/core/src/memory/plans.rs::parse_op": {
+   "cyclomatic": 24
+  },
+  "crates/core/src/plugins.rs::PluginStore#2::list_metadata": {
+   "cyclomatic": 24
+  },
+  "crates/core/src/plugins.rs::PluginStore::list": {
+   "cyclomatic": 21
+  },
+  "crates/core/src/plugins.rs::PluginStore::materialize": {
+   "cyclomatic": 26
+  },
+  "crates/core/src/plugins.rs::PluginStore::registry": {
+   "cyclomatic": 23
+  },
+  "crates/core/src/plugins.rs::PluginStore::resolve_prompt": {
+   "cognitive": 66,
+   "cyclomatic": 60,
+   "lines": 163
+  },
+  "crates/core/src/plugins.rs::PluginStore::save": {
+   "cyclomatic": 22
+  },
+  "crates/core/src/plugins.rs::PluginStore::set_component_enabled": {
+   "cyclomatic": 21
+  },
+  "crates/core/src/plugins.rs::edited_skill_source": {
+   "cognitive": 35,
+   "cyclomatic": 25
+  },
+  "crates/core/src/plugins.rs::validate": {
+   "cognitive": 29,
+   "cyclomatic": 38
+  },
+  "crates/core/src/plugins/agents.rs::SubagentProfile::validate": {
+   "cyclomatic": 34
+  },
+  "crates/core/src/plugins/agents.rs::read_frontmatter": {
+   "cognitive": 28,
+   "cyclomatic": 26
+  },
+  "crates/core/src/plugins/agents.rs::resolve_tools": {
+   "cyclomatic": 29
+  },
+  "crates/core/src/plugins/connections.rs::Connection#2::connect_inner": {
+   "cognitive": 33,
+   "cyclomatic": 46,
+   "lines": 162
+  },
+  "crates/core/src/plugins/connections.rs::Connection#2::next_answer": {
+   "cognitive": 26
+  },
+  "crates/core/src/plugins/connections.rs::Connection#2::send": {
+   "cognitive": 47,
+   "cyclomatic": 28
+  },
+  "crates/core/src/plugins/connections.rs::McpServer::validate": {
+   "cognitive": 37,
+   "cyclomatic": 47
+  },
+  "crates/core/src/plugins/connections.rs::open_sse": {
+   "cyclomatic": 21
+  },
+  "crates/core/src/plugins/discovery.rs::discover_scope": {
+   "cognitive": 36,
+   "cyclomatic": 31,
+   "lines": 134
+  },
+  "crates/core/src/plugins/hooks.rs::HookRuntime::ask_prompt_hook": {
+   "lines": 104
+  },
+  "crates/core/src/plugins/hooks.rs::HookRuntime::emit_collect": {
+   "cognitive": 46,
+   "cyclomatic": 38,
+   "lines": 128
+  },
+  "crates/core/src/plugins/hooks.rs::HookRuntime::session_hooks": {
+   "cognitive": 29,
+   "cyclomatic": 27,
+   "lines": 101
+  },
+  "crates/core/src/plugins/hooks.rs::execute": {
+   "cognitive": 43,
+   "cyclomatic": 46,
+   "lines": 163
+  },
+  "crates/core/src/plugins/hooks.rs::with_hooks": {
+   "lines": 111
+  },
+  "crates/core/src/plugins/marketplace.rs::FileWalk<'_>::directory": {
+   "cyclomatic": 23
+  },
+  "crates/core/src/plugins/marketplace.rs::PluginStore::marketplace_spec": {
+   "cognitive": 26,
+   "cyclomatic": 37,
+   "lines": 119
+  },
+  "crates/core/src/plugins/marketplace.rs::PluginStore::repository_spec": {
+   "cyclomatic": 21
+  },
+  "crates/core/src/plugins/marketplace.rs::import_commands": {
+   "cyclomatic": 21
+  },
+  "crates/core/src/plugins/marketplace.rs::import_directory_within": {
+   "cognitive": 42,
+   "cyclomatic": 52,
+   "lines": 208
+  },
+  "crates/core/src/plugins/marketplace.rs::import_headers": {
+   "cyclomatic": 24
+  },
+  "crates/core/src/plugins/marketplace.rs::import_hooks": {
+   "cognitive": 78,
+   "cyclomatic": 83,
+   "lines": 219
+  },
+  "crates/core/src/plugins/marketplace.rs::import_mcp_server": {
+   "cognitive": 42,
+   "cyclomatic": 55,
+   "lines": 183
+  },
+  "crates/core/src/plugins/marketplace.rs::imported_hook_name": {
+   "cyclomatic": 33
+  },
+  "crates/core/src/plugins/marketplace.rs::mcp_server_to_standard": {
+   "cyclomatic": 25
+  },
+  "crates/core/src/plugins/marketplace.rs::read_hook_options": {
+   "cyclomatic": 30
+  },
+  "crates/core/src/plugins/marketplace.rs::read_oauth": {
+   "cyclomatic": 27
+  },
+  "crates/core/src/plugins/oauth.rs::discover": {
+   "cyclomatic": 38,
+   "lines": 118
+  },
+  "crates/core/src/plugins/oauth.rs::sign_in": {
+   "cyclomatic": 32,
+   "lines": 108
+  },
+  "crates/core/src/plugins/scans.rs::PluginStore::check_source_for_changes": {
+   "cyclomatic": 22
+  },
+  "crates/core/src/plugins/scans.rs::PluginStore::run_marketplace_scan": {
+   "cyclomatic": 21
+  },
+  "crates/core/src/providers.rs::ChatEventStream::process_payload": {
+   "cyclomatic": 26
+  },
+  "crates/core/src/providers.rs::CompatibleProvider#2::chat_once": {
+   "cyclomatic": 38,
+   "lines": 106
+  },
+  "crates/core/src/providers.rs::CompatibleProvider#3::chat_stream_with_tools": {
+   "cyclomatic": 29
+  },
+  "crates/core/src/providers.rs::CompatibleProvider::chat_request": {
+   "cognitive": 59,
+   "cyclomatic": 44,
+   "lines": 138
+  },
+  "crates/core/src/providers/gemini.rs::gemini_body": {
+   "cyclomatic": 25
+  },
+  "crates/core/src/providers/messages.rs::messages_body": {
+   "cognitive": 40,
+   "cyclomatic": 34
+  },
+  "crates/core/src/providers/responses.rs::responses_body": {
+   "cognitive": 27
+  },
+  "crates/core/src/runtime.rs::archive_context": {
+   "cyclomatic": 21
+  },
+  "crates/core/src/runtime.rs::compact_context_with_evidence": {
+   "lines": 104
+  },
+  "crates/core/src/runtime.rs::evidence_records": {
+   "cyclomatic": 23
+  },
+  "crates/core/src/runtime.rs::execute_call": {
+   "cognitive": 43,
+   "cyclomatic": 47,
+   "lines": 181
+  },
+  "crates/core/src/runtime.rs::execute_tool_calls": {
+   "cognitive": 45,
+   "cyclomatic": 36,
+   "lines": 198
+  },
+  "crates/core/src/runtime.rs::prepare_compaction": {
+   "cognitive": 41,
+   "lines": 102
+  },
+  "crates/core/src/runtime.rs::replace_context": {
+   "cognitive": 31,
+   "cyclomatic": 33,
+   "lines": 124
+  },
+  "crates/core/src/runtime.rs::request_answer_inner": {
+   "cognitive": 58,
+   "cyclomatic": 67,
+   "lines": 246
+  },
+  "crates/core/src/runtime.rs::run_task_with_evidence_inner": {
+   "cognitive": 264,
+   "cyclomatic": 161,
+   "lines": 1022
+  },
+  "crates/core/src/runtime/documents.rs::prepare": {
+   "cyclomatic": 35,
+   "lines": 129
+  },
+  "crates/core/src/runtime/ledger.rs::collect": {
+   "cognitive": 65,
+   "cyclomatic": 28
+  },
+  "crates/core/src/runtime/summary_evidence.rs::original_excerpt": {
+   "cyclomatic": 41
+  },
+  "crates/core/src/runtime/summary_evidence.rs::records": {
+   "cognitive": 33,
+   "cyclomatic": 21
+  },
+  "crates/core/src/runtime/summary_evidence.rs::recovery_call": {
+   "cyclomatic": 29
+  },
+  "crates/core/src/runtime/summary_job.rs::fragments": {
+   "cognitive": 48
+  },
+  "crates/core/src/runtime/summary_job.rs::stage_with_legacy": {
+   "cyclomatic": 23
+  },
+  "crates/core/src/runtime/summary_job.rs::summarize_for": {
+   "lines": 146
+  },
+  "crates/core/src/sandbox.rs::SandboxPlan#2::status": {
+   "cyclomatic": 22
+  },
+  "crates/core/src/sandbox.rs::SandboxPlan#2::with_enforcement": {
+   "cyclomatic": 22
+  },
+  "crates/core/src/sandbox/detect.rs::denial": {
+   "cognitive": 35,
+   "cyclomatic": 25
+  },
+  "crates/core/src/skills.rs::materialize_scripts": {
+   "cyclomatic": 21
+  },
+  "crates/core/src/tools.rs::GatedTool#5::execute_gated": {
+   "cognitive": 29,
+   "cyclomatic": 28
+  },
+  "crates/core/src/tools.rs::bounded_read_result": {
+   "cognitive": 40,
+   "cyclomatic": 70,
+   "lines": 190
+  },
+  "crates/core/src/tools.rs::boxed_tools_for_run": {
+   "lines": 120
+  },
+  "crates/core/src/tools.rs::git_destructive": {
+   "cyclomatic": 36
+  },
+  "crates/core/src/tools.rs::run_command_blocking": {
+   "cyclomatic": 22
+  },
+  "crates/core/src/tools.rs::summarize_fs_call": {
+   "cyclomatic": 26
+  },
+  "crates/core/src/tools/background.rs::BackgroundTool#2::execute": {
+   "cyclomatic": 26
+  },
+  "crates/core/src/tools/patch.rs::parse_hunk": {
+   "cyclomatic": 23
+  },
+  "crates/core/src/tools/recall.rs::around": {
+   "cyclomatic": 28,
+   "lines": 110
+  },
+  "crates/core/src/tools/recall.rs::best_windows": {
+   "cognitive": 27
+  },
+  "crates/core/src/tools/recall.rs::scan_text": {
+   "cognitive": 32,
+   "cyclomatic": 24
+  },
+  "crates/core/src/tools/recall.rs::search": {
+   "lines": 107
+  },
+  "crates/core/src/tools/sensitive.rs::SensitiveMatcher::classify": {
+   "cyclomatic": 21
+  },
+  "crates/core/src/tools/sensitive.rs::SensitiveMatcher::note_folders": {
+   "cyclomatic": 21
+  },
+  "crates/core/src/tools/sensitive.rs::SensitiveMatcher::note_path": {
+   "cyclomatic": 22
+  },
+  "crates/core/src/tools/sensitive.rs::SensitiveMatcher::note_simple": {
+   "cyclomatic": 22
+  },
+  "crates/core/src/tools/shell_scope.rs::class_allows": {
+   "cyclomatic": 34
+  },
+  "crates/core/src/tools/web.rs::FetchUrlTool#2::execute": {
+   "cyclomatic": 22
+  },
+  "crates/core/src/tools/web.rs::WebSearchTool#2::execute": {
+   "cyclomatic": 25
+  },
+  "crates/core/src/tools/web.rs::parse_searxng": {
+   "cyclomatic": 27
+  },
+  "crates/core/src/tools/wrapped.rs::split_script_with": {
+   "cyclomatic": 38
+  },
+  "crates/core/src/tools/wrapped.rs::unwrap_once": {
+   "cyclomatic": 25
+  },
+  "crates/desktop/src/approvals.rs::DesktopApprovalHook#3::ask": {
+   "cyclomatic": 29,
+   "lines": 102
+  },
+  "crates/desktop/src/cli.rs::configure_provider": {
+   "cyclomatic": 24
+  },
+  "crates/desktop/src/cli.rs::render_permissions": {
+   "cognitive": 60,
+   "cyclomatic": 41,
+   "lines": 187
+  },
+  "crates/desktop/src/cli.rs::run": {
+   "cognitive": 56,
+   "cyclomatic": 158,
+   "lines": 279
+  },
+  "crates/desktop/src/cli.rs::send_message": {
+   "cyclomatic": 31,
+   "lines": 107
+  },
+  "crates/desktop/src/cli/plugins.rs::run": {
+   "cognitive": 58,
+   "cyclomatic": 113,
+   "lines": 109
+  },
+  "crates/desktop/src/doctor.rs::diagnose": {
+   "cognitive": 33,
+   "lines": 156
+  },
+  "crates/desktop/src/doctor.rs::store_checks": {
+   "cyclomatic": 21
+  },
+  "crates/desktop/src/server.rs::dispatch_command": {
+   "cyclomatic": 173,
+   "lines": 610
+  },
+  "crates/desktop/src/server.rs::serve_connection": {
+   "cognitive": 27,
+   "cyclomatic": 46,
+   "lines": 190
+  },
+  "crates/desktop/src/settings.rs::SettingsStore::update": {
+   "cognitive": 43,
+   "cyclomatic": 37,
+   "lines": 118
+  },
+  "crates/desktop/src/state.rs::AppState#2::new_with_dirs": {
+   "lines": 111
+  },
+  "crates/desktop/src/state/attachments.rs::copy_files": {
+   "cyclomatic": 21
+  },
+  "crates/desktop/src/state/attachments.rs::project_storage_directory": {
+   "cyclomatic": 23
+  },
+  "crates/desktop/src/state/automation.rs::AppState::check_automation_input": {
+   "cyclomatic": 35
+  },
+  "crates/desktop/src/state/automation.rs::AppState::fire_automation": {
+   "lines": 136
+  },
+  "crates/desktop/src/state/automation.rs::AppState::get_thread_tasks": {
+   "cyclomatic": 22,
+   "lines": 109
+  },
+  "crates/desktop/src/state/browser_data.rs::clear_profile": {
+   "cyclomatic": 22
+  },
+  "crates/desktop/src/state/changes.rs::read_diff": {
+   "cyclomatic": 23
+  },
+  "crates/desktop/src/state/configuration.rs::AppState::save_runtime_configuration": {
+   "cyclomatic": 34
+  },
+  "crates/desktop/src/state/goal.rs::AppState::goal_for_message": {
+   "cyclomatic": 26
+  },
+  "crates/desktop/src/state/goal.rs::AppState::update_goal_status": {
+   "cyclomatic": 21,
+   "lines": 115
+  },
+  "crates/desktop/src/state/integration_tools.rs::ManagementTool#3::automation_action": {
+   "cyclomatic": 28
+  },
+  "crates/desktop/src/state/integration_tools.rs::ManagementTool#3::merge_patch": {
+   "cognitive": 30,
+   "cyclomatic": 35
+  },
+  "crates/desktop/src/state/mcp.rs::AppState::mcp_entry": {
+   "cyclomatic": 30,
+   "lines": 114
+  },
+  "crates/desktop/src/state/mcp_file.rs::AppState::apply_mcp_file": {
+   "cyclomatic": 49,
+   "lines": 119
+  },
+  "crates/desktop/src/state/media_tool.rs::AttachFileTool#2::execute": {
+   "cyclomatic": 21
+  },
+  "crates/desktop/src/state/memory_auto.rs::AppState::apply_memory_job": {
+   "cognitive": 33,
+   "cyclomatic": 25,
+   "lines": 135
+  },
+  "crates/desktop/src/state/memory_auto.rs::AppState::apply_plan_op": {
+   "cyclomatic": 34
+  },
+  "crates/desktop/src/state/memory_auto.rs::AppState::apply_tasks_and_decisions": {
+   "cognitive": 28,
+   "cyclomatic": 30
+  },
+  "crates/desktop/src/state/memory_auto.rs::AppState::memory_try_pass": {
+   "cyclomatic": 34,
+   "lines": 145
+  },
+  "crates/desktop/src/state/memory_auto.rs::AppState::run_memory_job": {
+   "cognitive": 28,
+   "cyclomatic": 28,
+   "lines": 120
+  },
+  "crates/desktop/src/state/permissions.rs::AppState::get_effective_permissions": {
+   "cyclomatic": 28,
+   "lines": 143
+  },
+  "crates/desktop/src/state/plugins.rs::AppState::plugin_action_with": {
+   "cognitive": 82,
+   "cyclomatic": 174,
+   "lines": 372
+  },
+  "crates/desktop/src/state/projects.rs::AppState::delete_project": {
+   "cyclomatic": 23
+  },
+  "crates/desktop/src/state/providers.rs::AppState::provider_models": {
+   "cyclomatic": 25
+  },
+  "crates/desktop/src/state/questions.rs::AppState::ask_question": {
+   "cyclomatic": 29,
+   "lines": 116
+  },
+  "crates/desktop/src/state/run.rs::AppState::spawn_run": {
+   "cognitive": 146,
+   "cyclomatic": 131,
+   "lines": 998
+  },
+  "crates/desktop/src/state/subagent_tools.rs::SubagentTool#2::spawn": {
+   "cyclomatic": 28
+  },
+  "crates/desktop/src/state/subagent_tools.rs::parse_briefs": {
+   "cyclomatic": 27
+  },
+  "crates/desktop/src/state/subagents.rs::SubagentKit::attempt": {
+   "cyclomatic": 27,
+   "lines": 241
+  },
+  "crates/desktop/src/state/subagents.rs::SubagentKit::mcp_access": {
+   "cyclomatic": 23
+  },
+  "crates/desktop/src/state/subagents.rs::SubagentKit::tools": {
+   "cyclomatic": 24,
+   "lines": 104
+  },
+  "crates/desktop/src/state/threads.rs::AppState::send_message_with_options": {
+   "cognitive": 49,
+   "cyclomatic": 104,
+   "lines": 385
+  },
+  "crates/desktop/src/transcript.rs::TranscriptStore::append": {
+   "cyclomatic": 21
+  },
+  "crates/desktop/src/transcript.rs::TranscriptStore::context": {
+   "cyclomatic": 40
+  },
+  "crates/desktop/src/transcript.rs::TranscriptStore::context_for_request": {
+   "cyclomatic": 51,
+   "lines": 129
+  },
+  "crates/desktop/src/transcript.rs::TranscriptStore::import_legacy": {
+   "cyclomatic": 23
+  },
+  "crates/desktop/src/transcript.rs::TranscriptStore::open": {
+   "cyclomatic": 38
+  },
+  "crates/desktop/src/transcript.rs::session_checks": {
+   "cognitive": 51,
+   "cyclomatic": 76,
+   "lines": 175
+  },
+  "crates/desktop/src/transcript/history_pages.rs::TranscriptStore::history_page": {
+   "cyclomatic": 35
+  },
+  "crates/desktop/src/transcript/source_exports.rs::TranscriptStore::publish_context_sources": {
+   "cyclomatic": 35
+  },
+  "crates/desktop/src/usage.rs::summarize": {
+   "cyclomatic": 23,
+   "lines": 138
+  },
+  "web/src/App.tsx::Shell": {
+   "cognitive": 27,
+   "cyclomatic": 42
+  },
+  "web/src/App.tsx::Shell::onKeyDown": {
+   "cognitive": 35
+  },
+  "web/src/components/DesktopCompanion.tsx::DesktopCompanion": {
+   "cyclomatic": 21
+  },
+  "web/src/components/DesktopCompanion.tsx::useDesktopCompanion": {
+   "cognitive": 31
+  },
+  "web/src/components/KnightCompanion.tsx::KnightCompanion": {
+   "cognitive": 33,
+   "cyclomatic": 33
+  },
+  "web/src/components/PromptInput.tsx::PromptInput": {
+   "cognitive": 119,
+   "cyclomatic": 74
+  },
+  "web/src/components/PromptInput.tsx::PromptInput::keyDown": {
+   "cognitive": 63,
+   "cyclomatic": 33
+  },
+  "web/src/components/ResponseBody.tsx::Diagram": {
+   "cognitive": 31,
+   "cyclomatic": 39
+  },
+  "web/src/components/approval/ApprovalBox.tsx::ApprovalBox": {
+   "cognitive": 26,
+   "cyclomatic": 25
+  },
+  "web/src/components/diff/DiffView.tsx::DiffView": {
+   "cognitive": 64,
+   "cyclomatic": 40
+  },
+  "web/src/components/diff/FileTree.tsx::FileTree": {
+   "cognitive": 29,
+   "cyclomatic": 44,
+   "lines": 141
+  },
+  "web/src/lib/plainText.ts::stripInline": {
+   "cognitive": 44,
+   "cyclomatic": 30
+  },
+  "web/src/lib/useLiveDiff.ts::useLiveDiff": {
+   "cognitive": 28
+  },
+  "web/src/screens/AttachmentPreview.tsx::AttachmentPreview": {
+   "cognitive": 34,
+   "cyclomatic": 27
+  },
+  "web/src/screens/Automations.tsx::Automations": {
+   "cognitive": 111,
+   "cyclomatic": 126,
+   "lines": 283
+  },
+  "web/src/screens/Automations.tsx::Automations::save": {
+   "cognitive": 29
+  },
+  "web/src/screens/BrowserSettings.tsx::BrowserData": {
+   "cognitive": 40,
+   "cyclomatic": 50
+  },
+  "web/src/screens/BrowserSettings.tsx::BrowserSettingsSection": {
+   "cognitive": 33,
+   "cyclomatic": 61,
+   "lines": 112
+  },
+  "web/src/screens/BrowserView.tsx::BrowserView": {
+   "cognitive": 100,
+   "cyclomatic": 117,
+   "lines": 194
+  },
+  "web/src/screens/ComposerStack.tsx::ComposerStack": {
+   "cyclomatic": 34
+  },
+  "web/src/screens/ContextMeter.tsx::ContextMeter": {
+   "cognitive": 26,
+   "cyclomatic": 37
+  },
+  "web/src/screens/GoalBar.tsx::GoalBar": {
+   "cognitive": 28,
+   "cyclomatic": 44
+  },
+  "web/src/screens/HooksByEvent.tsx::HooksByEvent": {
+   "cyclomatic": 24
+  },
+  "web/src/screens/McpFile.tsx::McpFileRow": {
+   "cyclomatic": 33
+  },
+  "web/src/screens/MemoryModels.tsx::MemoryModels": {
+   "cyclomatic": 26
+  },
+  "web/src/screens/MemorySettings.tsx::MemoryLine": {
+   "cyclomatic": 34
+  },
+  "web/src/screens/ModelsSettings.tsx::ModelsSettings": {
+   "cognitive": 49,
+   "cyclomatic": 73,
+   "lines": 117
+  },
+  "web/src/screens/OverviewBox.tsx::OverviewBox": {
+   "cognitive": 28,
+   "cyclomatic": 36
+  },
+  "web/src/screens/OverviewBox.tsx::useOverview": {
+   "cyclomatic": 25
+  },
+  "web/src/screens/Palette.tsx::Palette": {
+   "cognitive": 38,
+   "cyclomatic": 42,
+   "lines": 143
+  },
+  "web/src/screens/PermissionsView.tsx::PermissionsSettings": {
+   "cyclomatic": 35
+  },
+  "web/src/screens/Plugins.tsx::Plugins": {
+   "cognitive": 425,
+   "cyclomatic": 385,
+   "lines": 212
+  },
+  "web/src/screens/Plugins.tsx::Plugins::browse": {
+   "cognitive": 35,
+   "cyclomatic": 27
+  },
+  "web/src/screens/QueueStack.tsx::QueueStack": {
+   "cyclomatic": 22
+  },
+  "web/src/screens/ResourceMeter.tsx::ResourceMeter": {
+   "cyclomatic": 25
+  },
+  "web/src/screens/ReviewQueue.tsx::ReviewQueue": {
+   "lines": 107
+  },
+  "web/src/screens/SecretsSettings.tsx::KeyRow": {
+   "cyclomatic": 23
+  },
+  "web/src/screens/SecretsSettings.tsx::SecretsSettings": {
+   "cyclomatic": 22
+  },
+  "web/src/screens/Settings.tsx::SettingsScreen": {
+   "cyclomatic": 42
+  },
+  "web/src/screens/Sidebar.tsx::Sidebar": {
+   "cognitive": 90,
+   "cyclomatic": 116,
+   "lines": 171
+  },
+  "web/src/screens/Sidebar.tsx::threadStatus": {
+   "cognitive": 49,
+   "cyclomatic": 28
+  },
+  "web/src/screens/Skills.tsx::Skills": {
+   "cognitive": 27,
+   "cyclomatic": 36,
+   "lines": 286
+  },
+  "web/src/screens/Sources.tsx::SourcesDialog": {
+   "cyclomatic": 36
+  },
+  "web/src/screens/SubagentDetail.tsx::SubagentDetail": {
+   "cognitive": 46,
+   "cyclomatic": 41
+  },
+  "web/src/screens/SubagentDetail.tsx::stepsOf": {
+   "cognitive": 58
+  },
+  "web/src/screens/SubagentSettings.tsx::SubagentSettingsSection": {
+   "cyclomatic": 33
+  },
+  "web/src/screens/TasksView.tsx::TasksView": {
+   "cognitive": 45,
+   "cyclomatic": 76,
+   "lines": 163
+  },
+  "web/src/screens/TerminalView.tsx::TerminalView": {
+   "cognitive": 49,
+   "cyclomatic": 31
+  },
+  "web/src/screens/ThreadComposer.tsx::ThreadComposer": {
+   "cognitive": 44,
+   "cyclomatic": 59,
+   "lines": 150
+  },
+  "web/src/screens/ThreadConversation.tsx::ConversationRow": {
+   "cognitive": 41,
+   "cyclomatic": 27
+  },
+  "web/src/screens/ThreadConversation.tsx::EditedFiles": {
+   "cyclomatic": 24
+  },
+  "web/src/screens/ThreadConversation.tsx::Message": {
+   "cognitive": 65,
+   "cyclomatic": 47
+  },
+  "web/src/screens/ThreadConversation.tsx::ThreadConversation": {
+   "cognitive": 57,
+   "cyclomatic": 61,
+   "lines": 134
+  },
+  "web/src/screens/ThreadHeader.tsx::ThreadHeader": {
+   "cyclomatic": 23
+  },
+  "web/src/screens/ThreadView.tsx::ThreadView": {
+   "cognitive": 85,
+   "cyclomatic": 140,
+   "lines": 248
+  },
+  "web/src/screens/ThreadView.tsx::ThreadView::send": {
+   "cyclomatic": 22
+  },
+  "web/src/screens/UsageSettings.tsx::DailyChart": {
+   "cyclomatic": 28
+  },
+  "web/src/screens/WebSettings.tsx::WebSettingsSection": {
+   "cognitive": 42,
+   "cyclomatic": 40
+  },
+  "web/src/screens/WorkspacePanel.tsx::ChangesView": {
+   "cognitive": 37,
+   "cyclomatic": 52
+  },
+  "web/src/screens/WorkspacePanel.tsx::WorkspacePanel": {
+   "cognitive": 41,
+   "cyclomatic": 43
+  },
+  "web/src/screens/followLatest.ts::useFollowLatest": {
+   "cognitive": 36,
+   "cyclomatic": 33,
+   "lines": 101
+  },
+  "web/src/screens/taskSections.ts::doneGroups": {
+   "cognitive": 27,
+   "cyclomatic": 25
+  },
+  "web/src/screens/threadTasks.ts::groupTasks": {
+   "cognitive": 34,
+   "cyclomatic": 23
+  },
+  "web/src/screens/toolActivity.ts::phrase": {
+   "cognitive": 39,
+   "cyclomatic": 43
+  },
+  "web/src/screens/useProjectWorkspace.ts::useProjectWorkspace": {
+   "cognitive": 27,
+   "cyclomatic": 22
+  },
+  "web/src/state/reducer.ts::applyThreadEvent": {
+   "cognitive": 124,
+   "cyclomatic": 119,
+   "lines": 279
+  },
+  "web/src/state/reducer.ts::reducer": {
+   "cognitive": 79,
+   "cyclomatic": 94,
+   "lines": 294
+  },
+  "web/src/state/reducer/collections.ts::reduceCollectionActions": {
+   "cognitive": 32,
+   "cyclomatic": 42,
+   "lines": 101
+  },
+  "web/src/state/store.tsx::AppProvider": {
+   "cognitive": 197,
+   "cyclomatic": 133,
+   "lines": 258
+  },
+  "web/src/state/store.tsx::AppProvider::recover": {
+   "cognitive": 61,
+   "cyclomatic": 27
+  },
+  "web/src/state/store.tsx::AppProvider::refreshSecrets": {
+   "cognitive": 27
+  }
+ }
+}
