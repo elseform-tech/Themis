@@ -213,7 +213,10 @@ jobs:
       - run: python -m pip install -r requirements-dev.txt
       - run: cargo install rust-code-analysis-cli --version 0.0.25 --locked
       - run: ruff check quality_dashboard evals
-      - run: python -m unittest quality_dashboard.test_dashboard
+      - run: python -m unittest quality_dashboard.test_dashboard quality_dashboard.test_ratchets
+      # Size, complexity and repeated-code limits: new code meets them, old code only improves.
+      - name: Code-health ratchets
+        run: python -m quality_dashboard.ratchets
       - name: Verify AST dashboard metrics
         run: python -c 'from quality_dashboard.dashboard import complexity_metrics; metrics = complexity_metrics(); assert metrics["available"], metrics["error"]; print("Analyzed", metrics["filesAnalyzed"], "source files")'
 

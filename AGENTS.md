@@ -54,7 +54,8 @@ npm --prefix web run lint
 npm --prefix web test
 npm --prefix web run build
 ruff check quality_dashboard
-python3 -m unittest quality_dashboard.test_dashboard
+python3 -m unittest quality_dashboard.test_dashboard quality_dashboard.test_ratchets
+python3 -m quality_dashboard.ratchets   # --update after code got smaller
 npm --prefix web run dev
 (cd crates/desktop && npx tauri dev)
 python3 -m quality_dashboard.dashboard
@@ -66,6 +67,10 @@ Run checks and start local apps with these root-level commands.
 ## Style and Testing
 
 Use `rustfmt`, Rust `snake_case`, and `PascalCase` types/components. Frontend uses two spaces and `camelCase`. Required linters are Clippy, ESLint (React Hooks), and Ruff. Rust tests use the built-in harness, web uses Vitest, and dashboard uses `unittest`; no coverage threshold is configured. Keep `*.test.tsx` beside frontend modules and Rust integration tests in crate `tests/`. Add focused regression cases.
+
+Code-health ratchets are a required check, per [docs/ratchets.md](docs/ratchets.md): source files stay within 1000 lines outside tests and 2000 with them, functions within 100 lines, cognitive complexity 25 and cyclomatic complexity 20, and repeated code may not grow. Code listed in `quality_dashboard/ratchets_baseline.json` may only shrink; lock gains in with `--update`, and never add or raise an entry to pass. Splitting a listed file or function is a refactor: one per PR, behaviour unchanged, verified with the full checks, the area's CLI end-to-end tests and the real app before it is done.
+
+When you fix a bug, ask whether a static check could have caught it. If it is a kind of bug that can come back elsewhere, turn on the Clippy or ESLint rule that catches it (or add a small check) in the same PR and record it in docs/ratchets.md; a one-off mistake needs only its regression test.
 
 Think about growth as well as speed. Code on a path that grows with a long chat, a big repository or a long run (history replay, reducers, listings, recall, watchers, anything per event or per file) must not do work that rises faster than its input: no repeated scans inside a loop, no re-reading or re-copying the whole history per event. Add or extend a scale test when you touch such a path: it counts work (database steps, items compared, bytes read, copies) at two sizes, stays cheap enough for CI and has safety limits, per [docs/scale-tests.md](docs/scale-tests.md). Report what you measured, and label any timed stress run separately.
 
