@@ -249,13 +249,16 @@ fn secret(folder: &Path) -> Result<String, String> {
     Ok(secret)
 }
 
-/// Bound to this computer only, JSON output on, no rate limiter or image proxy.
+/// Bound to this computer only, JSON output on, no rate limiter or image proxy. The YouTube
+/// engine is never loaded: the bundle leaves out its module, which carries YouTube's public
+/// web-client key that secret scanners flag.
 fn settings_yml(secret: &str, port: u16) -> String {
     format!(
         "use_default_settings: true\n\
 general:\n  instance_name: \"Themis search\"\n\
 server:\n  secret_key: \"{secret}\"\n  bind_address: \"127.0.0.1\"\n  port: {port}\n  limiter: false\n  image_proxy: false\n  public_instance: false\n\
-search:\n  formats: [html, json]\n"
+search:\n  formats: [html, json]\n\
+engines:\n  - name: youtube\n    inactive: true\n"
     )
 }
 
@@ -290,6 +293,11 @@ mod tests {
         let yml = settings_yml("s".repeat(64).as_str(), 4242);
         assert!(yml.contains("bind_address: \"127.0.0.1\"") && yml.contains("port: 4242"));
         assert!(yml.contains("formats: [html, json]") && yml.contains("limiter: false"));
+        // The bundle leaves out the YouTube engine's module, so it must never be loaded.
+        assert!(
+            yml.ends_with("engines:\n  - name: youtube\n    inactive: true\n"),
+            "{yml}"
+        );
     }
 
     #[test]

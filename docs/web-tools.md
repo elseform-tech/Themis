@@ -34,7 +34,9 @@ when it is still starting or never answers, the run begins without `web_search` 
 run gets it (`logs/` has `web` / `built_in_search_starting`). Its settings, secret and log are in the
 app-data `searxng/` folder; nothing is installed system-wide. Local debug builds use it too
 once `node scripts/bundle-searxng.mjs` has packed it into `crates/desktop/searxng-runtime/`
-(gitignored); `THEMIS_SEARXNG_DIR` still overrides where it is looked for. Settings › Web shows it as
+(gitignored); `THEMIS_SEARXNG_DIR` still overrides where it is looked for. The YouTube engine is left out: the bundle deletes its `youtube_noapi` module, which
+holds YouTube's public web-client key that secret scanners flag, and the settings keep the
+engine inactive, so web search returns no YouTube results. Settings › Web shows it as
 **Built-in** with its live status. This is macOS and Linux only: SearXNG does not run on Windows
 (it needs the Unix `pwd` module), so Windows builds ship without it and Settings › Web shows
 "Not set · web_search is off" until you enter a server's address (such as the Docker one below).
