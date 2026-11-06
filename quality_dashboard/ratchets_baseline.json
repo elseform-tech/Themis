@@ -9,7 +9,7 @@
   "crates/core/src/plugins/agents.rs": 17,
   "crates/core/src/plugins/connections.rs": 5,
   "crates/core/src/plugins/hooks.rs": 23,
-  "crates/core/src/plugins/marketplace.rs": 30,
+  "crates/core/src/plugins/marketplace/directory_import.rs": 30,
   "crates/core/src/plugins/package.rs": 22,
   "crates/core/src/providers.rs": 16,
   "crates/core/src/runtime.rs": 99,
@@ -31,7 +31,7 @@
   "crates/desktop/src/state/queue.rs": 19,
   "crates/desktop/src/transcript.rs": 25,
   "crates/desktop/src/transcript/source_exports.rs": 7,
-  "crates/desktop/src/types.rs": 20,
+  "crates/desktop/src/types/automations.rs": 20,
   "web/src/components/approval/ApprovalBox.tsx": 7,
   "web/src/screens/GoalBar.tsx": 6,
   "web/src/screens/QuestionBox.tsx": 7,
@@ -62,10 +62,6 @@
   "crates/core/src/plugins/hooks.rs": {
    "code_lines": 2482,
    "total_lines": 3183
-  },
-  "crates/core/src/plugins/marketplace.rs": {
-   "code_lines": 3462,
-   "total_lines": 3928
   },
   "crates/core/src/providers.rs": {
    "code_lines": 1479
@@ -120,10 +116,6 @@
   },
   "crates/desktop/src/transcript.rs": {
    "code_lines": 1156
-  },
-  "crates/desktop/src/types.rs": {
-   "code_lines": 1402,
-   "total_lines": 2074
   },
   "crates/desktop/tests/attachments_e2e.rs": {
    "total_lines": 2633
@@ -362,49 +354,49 @@
   "crates/core/src/plugins/hooks.rs::with_hooks": {
    "lines": 111
   },
-  "crates/core/src/plugins/marketplace.rs::FileWalk<'_>::directory": {
+  "crates/core/src/plugins/marketplace/directory_import.rs::FileWalk<'_>::directory": {
    "cyclomatic": 23
   },
-  "crates/core/src/plugins/marketplace.rs::PluginStore::marketplace_spec": {
-   "cognitive": 26,
-   "cyclomatic": 37,
-   "lines": 119
-  },
-  "crates/core/src/plugins/marketplace.rs::PluginStore::repository_spec": {
+  "crates/core/src/plugins/marketplace/directory_import.rs::import_commands": {
    "cyclomatic": 21
   },
-  "crates/core/src/plugins/marketplace.rs::import_commands": {
-   "cyclomatic": 21
-  },
-  "crates/core/src/plugins/marketplace.rs::import_directory_within": {
+  "crates/core/src/plugins/marketplace/directory_import.rs::import_directory_within": {
    "cognitive": 42,
    "cyclomatic": 52,
    "lines": 208
   },
-  "crates/core/src/plugins/marketplace.rs::import_headers": {
-   "cyclomatic": 24
-  },
-  "crates/core/src/plugins/marketplace.rs::import_hooks": {
+  "crates/core/src/plugins/marketplace/hook_import.rs::import_hooks": {
    "cognitive": 78,
    "cyclomatic": 83,
    "lines": 219
   },
-  "crates/core/src/plugins/marketplace.rs::import_mcp_server": {
+  "crates/core/src/plugins/marketplace/hook_import.rs::imported_hook_name": {
+   "cyclomatic": 33
+  },
+  "crates/core/src/plugins/marketplace/hook_import.rs::read_hook_options": {
+   "cyclomatic": 30
+  },
+  "crates/core/src/plugins/marketplace/mcp_import.rs::import_headers": {
+   "cyclomatic": 24
+  },
+  "crates/core/src/plugins/marketplace/mcp_import.rs::import_mcp_server": {
    "cognitive": 42,
    "cyclomatic": 55,
    "lines": 183
   },
-  "crates/core/src/plugins/marketplace.rs::imported_hook_name": {
-   "cyclomatic": 33
-  },
-  "crates/core/src/plugins/marketplace.rs::mcp_server_to_standard": {
+  "crates/core/src/plugins/marketplace/mcp_import.rs::mcp_server_to_standard": {
    "cyclomatic": 25
   },
-  "crates/core/src/plugins/marketplace.rs::read_hook_options": {
-   "cyclomatic": 30
-  },
-  "crates/core/src/plugins/marketplace.rs::read_oauth": {
+  "crates/core/src/plugins/marketplace/mcp_import.rs::read_oauth": {
    "cyclomatic": 27
+  },
+  "crates/core/src/plugins/marketplace/store.rs::PluginStore::marketplace_spec": {
+   "cognitive": 26,
+   "cyclomatic": 37,
+   "lines": 119
+  },
+  "crates/core/src/plugins/marketplace/store.rs::PluginStore::repository_spec": {
+   "cyclomatic": 21
   },
   "crates/core/src/plugins/oauth.rs::discover": {
    "cyclomatic": 38,
