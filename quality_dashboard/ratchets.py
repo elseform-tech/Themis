@@ -555,38 +555,45 @@ def function_measurements(sources: list[SourceFile], executable: str) -> dict[st
 def duplicate_lines(sources: list[SourceFile]) -> dict[str, int]:
     """Lines of production code covered by a token run that also appears elsewhere.
 
-    Each window of ``DUPLICATE_MIN_TOKENS`` tokens is hashed once (a rolling hash), so
-    the work grows linearly with the amount of code.
+    A repeat is a run of at least ``DUPLICATE_MIN_TOKENS`` identical tokens spanning at
+    least ``DUPLICATE_MIN_LINES`` lines. Windows of that many tokens that begin a line
+    are hashed once (a rolling hash); a matching pair is then extended to the full
+    identical run, and each run is extended only once, so the work grows linearly with
+    the amount of code.
     """
-    streams = []
+    streams: list[tuple[str, list[Token], list[int]]] = []
+    vocabulary: dict[str, int] = {}
     for source in sources:
         if source.is_test:
             continue
         tokens = [token for token in source.tokens if token.line not in source.test_lines]
         if len(tokens) >= DUPLICATE_MIN_TOKENS:
-            streams.append((source.relative, tokens))
-    vocabulary: dict[str, int] = {}
+            ids = [vocabulary.setdefault(token.text, len(vocabulary) + 1) for token in tokens]
+            streams.append((source.relative, tokens, ids))
+    covered: dict[int, set[int]] = {}
+    for first, second, end in _matching_windows(streams):
+        _mark_repeat(streams, first, second, end - second[1], covered)
+    return {streams[stream][0]: len(lines) for stream, lines in covered.items()}
+
+
+def _matching_windows(streams: list[tuple[str, list[Token], list[int]]]):
+    """Pairs of (stream, offset) whose next ``DUPLICATE_MIN_TOKENS`` tokens hash alike."""
     seen: dict[int, int] = {}  # window hash -> stream index << 32 | token offset
-    hits: list[tuple[int, int, int, int]] = []
+    extended: dict[tuple[int, int, int], int] = {}  # (stream, stream, shift) -> end offset
     modulus = (1 << 61) - 1
     base = 1_000_003
     width = DUPLICATE_MIN_TOKENS
     top = pow(base, width - 1, modulus)
-    for stream_index, (_, tokens) in enumerate(streams):
-        ids = [vocabulary.setdefault(token.text, len(vocabulary) + 1) for token in tokens]
+    for stream_index, (_, tokens, ids) in enumerate(streams):
         value = 0
         for position, token_id in enumerate(ids):
             if position >= width:
                 value = (value - ids[position - width] * top) % modulus
             value = (value * base + token_id) % modulus
             start = position - width + 1
-            if start < 0:
-                continue
             # Copied code starts on a line of its own, so only windows that begin a line
             # are indexed: one entry per line instead of one per token.
-            if start > 0 and tokens[start - 1].line == tokens[start].line:
-                continue
-            if tokens[position].line - tokens[start].line + 1 < DUPLICATE_MIN_LINES:
+            if start < 0 or (start > 0 and tokens[start - 1].line == tokens[start].line):
                 continue
             packed = seen.get(value)
             if packed is None:
@@ -595,14 +602,42 @@ def duplicate_lines(sources: list[SourceFile]) -> dict[str, int]:
             first = (packed >> 32, packed & 0xFFFFFFFF)
             if first[0] == stream_index and start - first[1] < width:
                 continue  # an overlapping repeat of the same run, like a long table
-            hits.append((*first, stream_index, start))
-    covered: dict[int, set[int]] = {}
-    for first_stream, first_start, stream_index, start in hits:
-        for stream, offset in ((first_stream, first_start), (stream_index, start)):
-            tokens = streams[stream][1]
-            lines = covered.setdefault(stream, set())
-            lines.update(range(tokens[offset].line, tokens[offset + width - 1].line + 1))
-    return {streams[stream][0]: len(lines) for stream, lines in covered.items()}
+            diagonal = (first[0], stream_index, start - first[1])
+            if extended.get(diagonal, -1) > start:
+                continue  # inside a run already measured
+            end = _identical_run_end(streams, first, (stream_index, start))
+            extended[diagonal] = end
+            if end - start >= width:
+                yield first, (stream_index, start), end
+
+
+def _identical_run_end(streams, first: tuple[int, int], second: tuple[int, int]) -> int:
+    """Offset in ``second``'s stream just past the identical run the two start."""
+    first_ids = streams[first[0]][2]
+    second_ids = streams[second[0]][2]
+    shift = second[1] - first[1]
+    index = second[1]
+    while (
+        index < len(second_ids)
+        and index - shift < len(first_ids)
+        and (first[0] != second[0] or index - shift < second[1])
+        and first_ids[index - shift] == second_ids[index]
+    ):
+        index += 1
+    return index
+
+
+def _mark_repeat(
+    streams, first: tuple[int, int], second: tuple[int, int], length: int, covered: dict[int, set[int]],
+) -> None:
+    spans = []
+    for stream, offset in (first, second):
+        tokens = streams[stream][1]
+        spans.append((stream, tokens[offset].line, tokens[offset + length - 1].line))
+    if any(last - first_line + 1 < DUPLICATE_MIN_LINES for _, first_line, last in spans):
+        return
+    for stream, first_line, last in spans:
+        covered.setdefault(stream, set()).update(range(first_line, last + 1))
 
 
 @dataclass

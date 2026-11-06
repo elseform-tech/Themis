@@ -150,6 +150,30 @@ class DuplicateTests(unittest.TestCase):
         self.assertGreaterEqual(found["crates/a.rs"], 6)
         self.assertEqual(found["crates/a.rs"], found["crates/b.rs"])
 
+    def test_a_dense_run_counts_when_the_whole_run_spans_enough_lines(self):
+        # 80 identical tokens over 5 lines: its first 60 tokens fit in 4 lines.
+        dense = "\n".join([
+            "    c.stdin(std::process::Stdio::piped()).stdout(std::process::Stdio::piped());",
+            "    c.stderr(std::process::Stdio::piped()).kill_on_drop(true);",
+            "    for name in [\"PATH\", \"HOME\", \"SYSTEMROOT\", \"TMPDIR\"] {",
+            "        if let Some(value) = std::env::var_os(name) {",
+            "            c.env(name, value).env(name, value);",
+        ])
+        found = duplicate_lines([
+            source("crates/a.rs", f"fn a() {{\n{dense}\n}}}}\n}}"),
+            source("crates/b.rs", f"fn b(x: u8) {{\n    run(x);\n{dense}\n}}}}\n}}"),
+        ])
+        self.assertEqual(found, {"crates/a.rs": 7, "crates/b.rs": 7})
+
+    def test_a_partial_match_is_counted_only_for_the_identical_part(self):
+        tail_a = "\n".join(f"    finish_a({index});" for index in range(10))
+        tail_b = "\n".join(f"    finish_b({index});" for index in range(10))
+        found = duplicate_lines([
+            source("crates/a.rs", f"fn a() {{\n{BLOCK}\n{tail_a}\n}}"),
+            source("crates/b.rs", f"fn b() {{\n{BLOCK}\n{tail_b}\n}}"),
+        ])
+        self.assertEqual(found, {"crates/a.rs": 8, "crates/b.rs": 8})
+
     def test_tests_and_short_repeats_do_not_count(self):
         short = "    let x = compute(alpha, beta, 1);"
         found = duplicate_lines([
