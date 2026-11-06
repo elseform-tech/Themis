@@ -59,6 +59,8 @@ describe("Sidebar", () => {
     // Still running, and nothing claims the run was interrupted.
     expect(titles(within(sidebar).getByRole("region", { name: "Running" }))).toEqual(["Later"]);
     expect(screen.queryByText(/Run interrupted/)).toBeNull();
+    // And it shows what was loaded.
+    await waitFor(() => expect(screen.getByText("sleep")).toBeTruthy());
   });
 
   it("shows a Running group only while a chat works or waits, and moves chats between the groups", async () => {

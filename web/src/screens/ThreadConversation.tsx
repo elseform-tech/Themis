@@ -57,7 +57,8 @@ export function ThreadConversation({
 }: ThreadConversationProps) {
   const project = useActiveProject();
   const { skills, plugins } = usePromptSkills(project?.root, running);
-  const { scrollRef, contentRef, endRef, spacerRef, scrolledUp, onScroll, jumpToLatest } = useFollowLatest(threadId, useMemo(() => [messages, stream], [messages, stream]));
+  const loaded = Boolean(useApp().state.historyLoaded[threadId]);
+  const { scrollRef, contentRef, endRef, spacerRef, scrolledUp, onScroll, jumpToLatest } = useFollowLatest(threadId, useMemo(() => [messages, stream], [messages, stream]), loaded);
   const [now, setNow] = useState(Date.now());
   const toolPending = traces.find(entry => entry.ok === undefined && !entry.summary.startsWith("approval "));
   const media = useMemo(() => messages.flatMap(message => message.media ?? []), [messages]);
