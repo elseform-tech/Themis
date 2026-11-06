@@ -390,11 +390,6 @@
   "crates/core/src/plugins/marketplace/mcp_import.rs::read_oauth": {
    "cyclomatic": 27
   },
-  "crates/core/src/plugins/marketplace/store.rs::PluginStore::marketplace_spec": {
-   "cognitive": 26,
-   "cyclomatic": 37,
-   "lines": 119
-  },
   "crates/core/src/plugins/marketplace/store.rs::PluginStore::repository_spec": {
    "cyclomatic": 21
   },

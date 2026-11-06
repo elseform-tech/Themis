@@ -607,57 +607,9 @@ impl PluginStore {
         let source = &entry["source"];
         let mut temporary_root = None;
         let result = async {
-            let directory = if let Some(path) = source.as_str() {
-                let path = path.strip_prefix("./").unwrap_or(path);
-                if !safe_relative(path) {
-                    bail!("Unsafe marketplace source path");
-                }
-                let directory = root.join(path).canonicalize()?;
-                if !directory.starts_with(root.canonicalize()?) {
-                    bail!("Marketplace source escapes repository");
-                }
-                directory
-            } else {
-                let url = match source["source"].as_str() {
-                    Some("github") => format!(
-                        "https://github.com/{}.git",
-                        source["repo"].as_str().context("Missing repo")?
-                    ),
-                    Some("url" | "git-subdir") => {
-                        source["url"].as_str().context("Missing URL")?.into()
-                    }
-                    _ => bail!("Unsupported marketplace source type"),
-                };
-                validate_source(&url)?;
-                let staging = self
-                    .global
-                    .join("marketplace-cache")
-                    .join(format!("plugin-{}", revision()));
-                temporary_root = Some(staging.clone());
-                clone_repository(
-                    &url,
-                    &staging,
-                    source
-                        .get("sha")
-                        .or_else(|| source.get("ref"))
-                        .map(|value| value.as_str().context("Invalid repository reference"))
-                        .transpose()?,
-                )
+            let directory = self
+                .source_directory(&root, source, &mut temporary_root)
                 .await?;
-                if let Some(path) = source.get("path") {
-                    let path = path.as_str().context("Invalid repository subdirectory")?;
-                    if !safe_relative(path) {
-                        bail!("Unsafe repository subdirectory");
-                    }
-                    let directory = staging.join(path).canonicalize()?;
-                    if !directory.starts_with(staging.canonicalize()?) {
-                        bail!("Plugin directory escapes repository");
-                    }
-                    directory
-                } else {
-                    staging
-                }
-            };
             let mut spec = import_directory(&directory, allow_partial, Some(entry), keep_in)?;
             spec.name = name.into();
             spec.package_kind = Some("plugin".into());
@@ -702,4 +654,74 @@ impl PluginStore {
         }
         result
     }
+
+    /// The folder a catalog entry's `source` names: a folder in the catalog repository, or a
+    /// repository cloned into a temporary folder, which `temporary_root` records for removal.
+    async fn source_directory(
+        &self,
+        root: &Path,
+        source: &Value,
+        temporary_root: &mut Option<PathBuf>,
+    ) -> anyhow::Result<PathBuf> {
+        if let Some(path) = source.as_str() {
+            return catalog_folder(root, path);
+        }
+        if source["source"].as_str() == Some("command") {
+            return command_source_directory(source, ALLOWED_COMMANDS, COMMAND_TIMEOUT).await;
+        }
+        let url = match source["source"].as_str() {
+            Some("github") => format!(
+                "https://github.com/{}.git",
+                source["repo"].as_str().context("Missing repo")?
+            ),
+            Some("url" | "git-subdir") => source["url"].as_str().context("Missing URL")?.into(),
+            _ => bail!("Unsupported marketplace source type"),
+        };
+        validate_source(&url)?;
+        let staging = self
+            .global
+            .join("marketplace-cache")
+            .join(format!("plugin-{}", revision()));
+        *temporary_root = Some(staging.clone());
+        clone_repository(
+            &url,
+            &staging,
+            source
+                .get("sha")
+                .or_else(|| source.get("ref"))
+                .map(|value| value.as_str().context("Invalid repository reference"))
+                .transpose()?,
+        )
+        .await?;
+        repository_subdirectory(&staging, source)
+    }
+}
+
+/// A folder inside the catalog's own repository, named by a relative path.
+fn catalog_folder(root: &Path, path: &str) -> anyhow::Result<PathBuf> {
+    let path = path.strip_prefix("./").unwrap_or(path);
+    if !safe_relative(path) {
+        bail!("Unsafe marketplace source path");
+    }
+    let directory = root.join(path).canonicalize()?;
+    if !directory.starts_with(root.canonicalize()?) {
+        bail!("Marketplace source escapes repository");
+    }
+    Ok(directory)
+}
+
+/// The plugin's folder in a cloned repository: its `path`, or the whole repository.
+fn repository_subdirectory(staging: &Path, source: &Value) -> anyhow::Result<PathBuf> {
+    let Some(path) = source.get("path") else {
+        return Ok(staging.to_path_buf());
+    };
+    let path = path.as_str().context("Invalid repository subdirectory")?;
+    if !safe_relative(path) {
+        bail!("Unsafe repository subdirectory");
+    }
+    let directory = staging.join(path).canonicalize()?;
+    if !directory.starts_with(staging.canonicalize()?) {
+        bail!("Plugin directory escapes repository");
+    }
+    Ok(directory)
 }

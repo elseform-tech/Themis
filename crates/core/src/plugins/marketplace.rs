@@ -2,6 +2,7 @@ use super::connections::McpOauth;
 use super::*;
 use serde_json::{json, Value};
 
+mod command_source;
 mod directory_import;
 mod hook_import;
 mod mcp_import;
@@ -12,6 +13,7 @@ mod source_tests;
 mod sources;
 mod store;
 
+use command_source::*;
 use directory_import::*;
 pub(super) use directory_import::{collect_files, parse_skill};
 use hook_import::*;
