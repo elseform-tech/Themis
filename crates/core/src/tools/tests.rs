@@ -1183,6 +1183,9 @@ fn read_only_git_calls_are_reads_and_flags_that_write_or_run_programs_are_not() 
         &["diff", "../outside.txt", "inside.txt"],
         &["show", "~/notes"],
         &["diff", "src/../../outside.txt"],
+        &["diff", "C:\\Windows\\win.ini", "x"],
+        &["diff", "\\\\server\\share\\file", "x"],
+        &["diff", "\\Windows\\win.ini", "x"],
     ] {
         assert_eq!(risk(args), RiskLevel::Write, "{args:?}");
     }

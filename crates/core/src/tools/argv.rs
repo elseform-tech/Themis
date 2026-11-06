@@ -166,12 +166,20 @@ pub fn git_call_risk(args: &serde_json::Value) -> RiskLevel {
     }
 }
 
+/// A path that starts at a root, whatever the platform: `/x` and `\\x` (on Windows the
+/// current drive's root), `C:` and `C:\\x`, `~` (a home folder), or anything the OS calls absolute.
+fn rooted_path(argument: &str) -> bool {
+    let bytes = argument.as_bytes();
+    let drive = bytes.len() >= 2 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':';
+    argument.starts_with(['/', '\\', '~']) || drive || Path::new(argument).is_absolute()
+}
+
 fn git_read_argument(argument: &str) -> bool {
     if !argument.starts_with('-') {
         // A path, a revision or a count, inside the project: `git diff` given paths outside
         // the repository compares those files, so an absolute path or a `..` step asks.
         let leaves = argument.split(['/', '\\']).any(|part| part == "..");
-        return !leaves && !Path::new(argument).is_absolute() && !argument.starts_with('~');
+        return !leaves && !rooted_path(argument);
     }
     let count = argument.strip_prefix('-').is_some_and(|digits| {
         !digits.is_empty() && digits.bytes().all(|byte| byte.is_ascii_digit())
