@@ -2818,6 +2818,16 @@ fn sandbox_outcome(
         return SandboxOutcome::Done(command_json(&out));
     };
     let Some(reason) = plan.denial(out.success, &out.output, workdir) else {
+        if let Some(reason) = plan.blocked_in_success(out.success, &out.output, workdir) {
+            out.output.push('\n');
+            out.output.push_str(&crate::prompts::fill(
+                crate::prompts::TOOL_SANDBOX_BLOCKED_PARTLY,
+                &[("reason", &reason)],
+            ));
+            let mut value = command_json(&out);
+            value["sandbox_blocked"] = json!(reason);
+            return SandboxOutcome::Done(value);
+        }
         if plan.may_have_blocked(out.success, &out.output) {
             out.output.push('\n');
             out.output.push_str(crate::prompts::TOOL_SANDBOX_NOTE);

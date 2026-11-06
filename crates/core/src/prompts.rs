@@ -363,6 +363,10 @@ pub const TOOL_SANDBOX_BLOCKED_UNAPPROVED: &str =
 /// Note when the sandbox blocked a command without an approval prompt; `{{reason}}`.
 pub const TOOL_SANDBOX_BLOCKED: &str = include_str!("../builtins/prompts/tool-sandbox-blocked.md");
 /// Note when a failed command may have been blocked by the sandbox.
+/// A command that exited successfully although the sandbox blocked one of its steps
+/// (`rm -rf ~/x && echo done; ls`): the blocked step can be asked for on its own.
+pub const TOOL_SANDBOX_BLOCKED_PARTLY: &str =
+    include_str!("../builtins/prompts/tool-sandbox-blocked-partly.md");
 pub const TOOL_SANDBOX_NOTE: &str = include_str!("../builtins/prompts/tool-sandbox-note.md");
 /// read_file warning on generated archive-recovery output.
 pub const TOOL_READ_RECOVERY_WARNING: &str =

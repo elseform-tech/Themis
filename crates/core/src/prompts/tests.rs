@@ -272,6 +272,11 @@ const ALL: &[(&str, &str, &[&str])] = &[
     (TOOL_SANDBOX_BLOCKED, "tool-sandbox-blocked", &["reason"]),
     (TOOL_SANDBOX_NOTE, "tool-sandbox-note", &[]),
     (
+        TOOL_SANDBOX_BLOCKED_PARTLY,
+        "tool-sandbox-blocked-partly",
+        &["reason"],
+    ),
+    (
         TOOL_READ_RECOVERY_WARNING,
         "tool-read-recovery-warning",
         &[],

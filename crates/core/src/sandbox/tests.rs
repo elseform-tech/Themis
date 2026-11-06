@@ -358,6 +358,40 @@ fn file_guard_protects_app_data_secrets_and_yolo_project_config() {
 
 #[cfg(unix)]
 #[test]
+fn a_successful_chain_with_a_blocked_step_is_recognized_without_escalating() {
+    let fx = fixture();
+    let plan = plan_with(
+        Enforcement::Active(Backend::Seatbelt),
+        &SandboxConfig::default(),
+        &fx.root,
+        &fx.app_data,
+        &fx.home,
+    );
+    // `rm -rf ~/x && echo deleted; ls`: the last step passed, so the command exited 0.
+    let output = format!(
+        "total 0\nrm: {}: Operation not permitted\n",
+        fx.outside.join("x").display()
+    );
+    assert!(
+        plan.denial(true, &output, &fx.root).is_none(),
+        "a success never escalates"
+    );
+    assert!(plan.blocked_in_success(true, &output, &fx.root).is_some());
+    // A failed command goes the usual way, and a clean success says nothing.
+    assert!(plan.blocked_in_success(false, &output, &fx.root).is_none());
+    assert!(plan
+        .blocked_in_success(true, "total 0\n", &fx.root)
+        .is_none());
+    // Inside the project nothing is blocked.
+    let inside = format!(
+        "rm: {}: Operation not permitted\n",
+        fx.root.join("x").display()
+    );
+    assert!(plan.blocked_in_success(true, &inside, &fx.root).is_none());
+}
+
+#[cfg(unix)]
+#[test]
 fn denials_are_recognized_only_for_paths_the_sandbox_blocks() {
     let fx = fixture();
     let plan = plan_with(

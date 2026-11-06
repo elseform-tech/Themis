@@ -991,6 +991,16 @@ impl SandboxPlan {
         detect::denial(self, output, cwd)
     }
 
+    /// Why the sandbox blocked a step of a command that still exited successfully (a chain
+    /// whose last command passed), or `None`. Only path-specific signals count, as in
+    /// [`Self::denial`]; such a command is not escalated, the agent is told instead.
+    pub fn blocked_in_success(&self, success: bool, output: &str, cwd: &Path) -> Option<String> {
+        if !success || !self.is_active() {
+            return None;
+        }
+        detect::denial(self, output, cwd)
+    }
+
     /// Whether a failed command's output mentions a permission or network
     /// error at all, so a short note about the sandbox helps the agent.
     pub fn may_have_blocked(&self, success: bool, output: &str) -> bool {

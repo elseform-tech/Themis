@@ -1,0 +1,1 @@
+[Themis sandbox blocked part of this command: {{reason}}. The command as a whole exited successfully, so running it outside the sandbox was not offered; run the blocked step on its own to ask for that.]
