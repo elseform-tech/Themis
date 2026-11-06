@@ -666,6 +666,9 @@ impl PluginStore {
         if let Some(path) = source.as_str() {
             return catalog_folder(root, path);
         }
+        if source["source"].as_str() == Some("command") {
+            return command_source_directory(source, ALLOWED_COMMANDS, COMMAND_TIMEOUT).await;
+        }
         let url = match source["source"].as_str() {
             Some("github") => format!(
                 "https://github.com/{}.git",
