@@ -15,8 +15,8 @@
   "crates/core/src/runtime.rs": 99,
   "crates/core/src/runtime/documents.rs": 9,
   "crates/core/src/runtime/pending.rs": 9,
-  "crates/core/src/tools.rs": 27,
   "crates/core/src/tools/background.rs": 9,
+  "crates/core/src/tools/gated.rs": 27,
   "crates/core/src/tools/recall.rs": 35,
   "crates/core/src/tools/shell_scope.rs": 17,
   "crates/desktop/src/approvals.rs": 12,
@@ -75,10 +75,6 @@
   },
   "crates/core/src/sandbox.rs": {
    "code_lines": 1362
-  },
-  "crates/core/src/tools.rs": {
-   "code_lines": 3392,
-   "total_lines": 5825
   },
   "crates/core/src/tools/background.rs": {
    "code_lines": 1126
@@ -514,28 +510,25 @@
   "crates/core/src/skills.rs::materialize_scripts": {
    "cyclomatic": 21
   },
-  "crates/core/src/tools.rs::GatedTool#5::execute_gated": {
+  "crates/core/src/tools.rs::boxed_tools_for_run": {
+   "lines": 120
+  },
+  "crates/core/src/tools/background.rs::BackgroundTool#2::execute": {
+   "cyclomatic": 26
+  },
+  "crates/core/src/tools/destructive.rs::git_destructive": {
+   "cyclomatic": 36
+  },
+  "crates/core/src/tools/gated.rs::GatedTool#5::execute_gated": {
    "cognitive": 29,
    "cyclomatic": 28
   },
-  "crates/core/src/tools.rs::bounded_read_result": {
+  "crates/core/src/tools/gated.rs::bounded_read_result": {
    "cognitive": 40,
    "cyclomatic": 70,
    "lines": 190
   },
-  "crates/core/src/tools.rs::boxed_tools_for_run": {
-   "lines": 120
-  },
-  "crates/core/src/tools.rs::git_destructive": {
-   "cyclomatic": 36
-  },
-  "crates/core/src/tools.rs::run_command_blocking": {
-   "cyclomatic": 22
-  },
-  "crates/core/src/tools.rs::summarize_fs_call": {
-   "cyclomatic": 26
-  },
-  "crates/core/src/tools/background.rs::BackgroundTool#2::execute": {
+  "crates/core/src/tools/gated.rs::summarize_fs_call": {
    "cyclomatic": 26
   },
   "crates/core/src/tools/patch.rs::parse_hunk": {
@@ -554,6 +547,9 @@
   },
   "crates/core/src/tools/recall.rs::search": {
    "lines": 107
+  },
+  "crates/core/src/tools/runner.rs::run_command_blocking": {
+   "cyclomatic": 22
   },
   "crates/core/src/tools/sensitive.rs::SensitiveMatcher::classify": {
    "cyclomatic": 21
