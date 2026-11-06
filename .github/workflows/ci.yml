@@ -220,6 +220,27 @@ jobs:
       - name: Verify AST dashboard metrics
         run: python -c 'from quality_dashboard.dashboard import complexity_metrics; metrics = complexity_metrics(); assert metrics["available"], metrics["error"]; print("Analyzed", metrics["filesAnalyzed"], "source files")'
 
+  # The one check the main branch ruleset requires. A matrix job skipped by the path
+  # filter reports a single unexpanded name (`rust-test`, not `rust-test (ubuntu-latest)`),
+  # so requiring the matrix names would block every PR that skips them. This job passes
+  # when each required job passed or was skipped, and fails if any failed or was cancelled.
+  ci-ok:
+    if: always()
+    needs: [fmt, clippy, rust-test, web, dashboard-quality]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Every required job passed or was skipped
+        env:
+          RESULTS: ${{ join(needs.*.result, ' ') }}
+        run: |
+          echo "required job results: $RESULTS"
+          for result in $RESULTS; do
+            case "$result" in
+              success|skipped) ;;
+              *) echo "a required job ended with: $result"; exit 1 ;;
+            esac
+          done
+
   tauri-build:
     needs: changes
     if: github.event_name == 'push' || needs.changes.outputs.packaging == 'true'
