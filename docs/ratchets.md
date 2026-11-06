@@ -15,6 +15,8 @@ A ratchet only turns one way. New code must meet the limits. Code that already b
 | Cyclomatic complexity of a function | 20 | Independent paths through the function. |
 | Repeated code | the recorded total | Lines of production code covered by a run of 60 or more tokens over at least 5 lines that appears more than once. Tests are not counted. The total may not grow. |
 
+Repeated code means exact copies of the token sequence: near-copies that differ only in names or text strings are not counted. Checked against jscpd 4.0.5 (`--min-tokens 60 --min-lines 5`, with its default skip of files over 1000 lines turned off), 92% of the lines this check counts are also found by jscpd; jscpd finds more because its tokens are smaller and it also matches some near-copies.
+
 Functions in test files and inline test modules are not held to the function limits. Complexity comes from `rust-code-analysis-cli` 0.0.25 (`cargo install rust-code-analysis-cli --version 0.0.25 --locked`), the same analyzer the quality dashboard uses; the check stops with an error rather than guessing when it is missing.
 
 ## When it fails
