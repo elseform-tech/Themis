@@ -139,7 +139,10 @@ commands stay **Allow once** / **Deny** only. Automation runs never ask for it
 asked: the failure goes back to the agent with a short note that the sandbox
 blocked it. Watch checks are never escalated (the scheduler asks nobody), and
 background tasks cannot be escalated (they are already running when they fail);
-their log shows the error.
+their log shows the error. A command that still exits successfully although the sandbox blocked one of its
+steps (`rm -rf ~/x && echo done; ls`, whose last step passed) is not escalated either: its
+result says which step the sandbox blocked, so the agent runs that step on its own, which fails
+and is escalated as above.
 
 Limits of this signal: a program that hides the error, prints no path, or prints
 only a relative path without a `/` is not recognized (the agent gets the failure
