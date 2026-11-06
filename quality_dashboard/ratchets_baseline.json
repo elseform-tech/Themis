@@ -8,7 +8,8 @@
   "crates/core/src/plugins.rs": 40,
   "crates/core/src/plugins/agents.rs": 17,
   "crates/core/src/plugins/connections.rs": 5,
-  "crates/core/src/plugins/hooks.rs": 23,
+  "crates/core/src/plugins/hooks/process.rs": 5,
+  "crates/core/src/plugins/hooks/runtime.rs": 18,
   "crates/core/src/plugins/marketplace/directory_import.rs": 30,
   "crates/core/src/plugins/package.rs": 22,
   "crates/core/src/providers.rs": 16,
@@ -55,10 +56,6 @@
   "crates/core/src/plugins/connections.rs": {
    "code_lines": 1389
   },
-  "crates/core/src/plugins/hooks.rs": {
-   "code_lines": 2482,
-   "total_lines": 3183
-  },
   "crates/core/src/providers.rs": {
    "code_lines": 1479
   },
@@ -79,7 +76,7 @@
    "code_lines": 1428
   },
   "crates/core/tests/browser_e2e.rs": {
-   "total_lines": 2496
+   "total_lines": 2461
   },
   "crates/core/tests/runtime_e2e.rs": {
    "total_lines": 3130
@@ -326,26 +323,26 @@
    "cyclomatic": 31,
    "lines": 134
   },
-  "crates/core/src/plugins/hooks.rs::HookRuntime::ask_prompt_hook": {
-   "lines": 104
+  "crates/core/src/plugins/hooks.rs::with_hooks": {
+   "lines": 111
   },
-  "crates/core/src/plugins/hooks.rs::HookRuntime::emit_collect": {
-   "cognitive": 46,
-   "cyclomatic": 38,
-   "lines": 128
-  },
-  "crates/core/src/plugins/hooks.rs::HookRuntime::session_hooks": {
-   "cognitive": 29,
-   "cyclomatic": 27,
-   "lines": 101
-  },
-  "crates/core/src/plugins/hooks.rs::execute": {
+  "crates/core/src/plugins/hooks/process.rs::execute": {
    "cognitive": 43,
    "cyclomatic": 46,
    "lines": 163
   },
-  "crates/core/src/plugins/hooks.rs::with_hooks": {
-   "lines": 111
+  "crates/core/src/plugins/hooks/runtime.rs::HookRuntime::ask_prompt_hook": {
+   "lines": 104
+  },
+  "crates/core/src/plugins/hooks/runtime.rs::HookRuntime::emit_collect": {
+   "cognitive": 46,
+   "cyclomatic": 38,
+   "lines": 128
+  },
+  "crates/core/src/plugins/hooks/runtime.rs::HookRuntime::session_hooks": {
+   "cognitive": 29,
+   "cyclomatic": 27,
+   "lines": 101
   },
   "crates/core/src/plugins/marketplace/directory_import.rs::FileWalk<'_>::directory": {
    "cyclomatic": 23
