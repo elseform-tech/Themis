@@ -229,7 +229,12 @@ that interactive restriction. A non-Git folder is not an OS-enforced read-only
 sandbox.
 
 Custom's Git tool limits subcommands; permitted commands still consult approval
-policy, including reads. Skill tool allowlists further filter available tools.
+policy, including reads. `status`, `diff`, `log` and `show` with only flags that shape
+the output (`--short`, `--stat`, `--oneline`, `--cached`, `--format=`, a count such as
+`-5`, …) are reads, so the built-in read rule allows them; any other flag (`--output`
+writes a file, `--ext-diff` and `--textconv` run programs), and any path that is absolute,
+starts with `~` or has a `..` step (`git diff` compares files outside the repository without
+`--no-index`), makes the call a write that asks. Skill tool allowlists further filter available tools.
 Hooks and MCP initialization instructions do not grant permissions.
 
 ## YOLO mode

@@ -4217,11 +4217,9 @@ async fn execute_call(
                 // Destructive variants (`git push --force`, `rm -rf`, ...) carry
                 // the destructive risk class, as the git tool's do.
                 crate::tools::shell_risk(&crate::tools::shell_argv(&approval_args))
-            } else if name == "git"
-                && crate::tools::git_argv(&approval_args)
-                    .is_some_and(|argv| crate::tools::is_destructive_variant(&argv))
-            {
-                RiskLevel::Destructive
+            } else if name == "git" {
+                // Destructive variants are destructive; read-only ones are reads.
+                crate::tools::git_call_risk(&approval_args)
             } else {
                 crate::tools::integration_risk(name, &approval_args)
                     .unwrap_or_else(|| risk_for(name))
