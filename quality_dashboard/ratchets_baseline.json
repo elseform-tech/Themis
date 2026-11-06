@@ -31,7 +31,7 @@
   "crates/desktop/src/state/queue.rs": 19,
   "crates/desktop/src/transcript.rs": 25,
   "crates/desktop/src/transcript/source_exports.rs": 7,
-  "crates/desktop/src/types.rs": 20,
+  "crates/desktop/src/types/automations.rs": 20,
   "web/src/components/approval/ApprovalBox.tsx": 7,
   "web/src/screens/GoalBar.tsx": 6,
   "web/src/screens/QuestionBox.tsx": 7,
@@ -120,10 +120,6 @@
   },
   "crates/desktop/src/transcript.rs": {
    "code_lines": 1156
-  },
-  "crates/desktop/src/types.rs": {
-   "code_lines": 1402,
-   "total_lines": 2074
   },
   "crates/desktop/tests/attachments_e2e.rs": {
    "total_lines": 2633
