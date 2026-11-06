@@ -50,10 +50,6 @@
   "crates/core/src/browser/tools.rs": {
    "code_lines": 1017
   },
-  "crates/core/src/configuration.rs": {
-   "code_lines": 2556,
-   "total_lines": 4806
-  },
   "crates/core/src/plugins.rs": {
    "code_lines": 1348
   },
@@ -219,30 +215,30 @@
   "crates/core/src/chat_grants.rs::GrantEntry::validate": {
    "cyclomatic": 25
   },
-  "crates/core/src/configuration.rs::docs_map": {
-   "cognitive": 28
-  },
-  "crates/core/src/configuration.rs::flag_present": {
+  "crates/core/src/configuration/approval.rs::flag_present": {
    "cyclomatic": 25
   },
-  "crates/core/src/configuration.rs::resolve": {
-   "cognitive": 40,
-   "cyclomatic": 33,
-   "lines": 110
-  },
-  "crates/core/src/configuration.rs::rule_matches": {
+  "crates/core/src/configuration/approval.rs::rule_matches": {
    "cyclomatic": 23
   },
-  "crates/core/src/configuration.rs::set_top_level": {
+  "crates/core/src/configuration/guidance.rs::docs_map": {
+   "cognitive": 28
+  },
+  "crates/core/src/configuration/jsonc.rs::set_top_level": {
    "cognitive": 64,
    "cyclomatic": 44,
    "lines": 115
   },
-  "crates/core/src/configuration.rs::strip_jsonc": {
+  "crates/core/src/configuration/jsonc.rs::strip_jsonc": {
    "cognitive": 46,
    "cyclomatic": 28
   },
-  "crates/core/src/configuration.rs::validate": {
+  "crates/core/src/configuration/resolve.rs::resolve": {
+   "cognitive": 40,
+   "cyclomatic": 33,
+   "lines": 110
+  },
+  "crates/core/src/configuration/resolve.rs::validate": {
    "cyclomatic": 23,
    "lines": 182
   },
