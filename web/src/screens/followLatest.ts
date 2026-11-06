@@ -24,8 +24,10 @@ export function jumpedByItself({ before, top, person }: { before: number; top: n
 
 const distanceFromEnd = (element: HTMLElement) => element.scrollHeight - element.scrollTop - element.clientHeight;
 
-/** Keeps a chat on its latest message until the person scrolls up, and remembers their place when they do. */
-export function useFollowLatest(threadId: string, output: unknown) {
+/** Keeps a chat on its latest message until the person scrolls up, and remembers their place when they do.
+ *  `loaded` changes when the chat's saved history replaces what was shown: the view starts over
+ *  as on opening the chat, so the room kept for shrinking content can't hide a swapped chat. */
+export function useFollowLatest(threadId: string, output: unknown, loaded: unknown = true) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
   const endRef = useRef<HTMLDivElement>(null);
@@ -58,7 +60,7 @@ export function useFollowLatest(threadId: string, output: unknown) {
     lastTop.current = element.scrollTop;
     following.current = distanceFromEnd(element) < FOLLOW_MARGIN;
     setScrolledUp(!following.current);
-  }, [threadId]);
+  }, [threadId, loaded]);
 
   // Heights change without new output: a chart drawn, the Workspace opening, the composer growing.
   // Content that shrinks while the person reads the end (a "checking what to remember" line that

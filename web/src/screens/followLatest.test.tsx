@@ -15,8 +15,8 @@ beforeEach(() => {
 });
 afterEach(() => vi.unstubAllGlobals());
 
-function Chat({ threadId, version = 0 }: { threadId: string; version?: number }) {
-  const follow = useFollowLatest(threadId, version);
+function Chat({ threadId, version = 0, loaded = true }: { threadId: string; version?: number; loaded?: boolean }) {
+  const follow = useFollowLatest(threadId, version, loaded);
   return (
     <div data-testid="scroller" ref={follow.scrollRef} onScroll={follow.onScroll} data-away={follow.scrolledUp}>
       <div data-testid="content" ref={follow.contentRef} />
@@ -167,6 +167,25 @@ it("keeps what the content lost at the end as room, so the text being read never
   contentHeight(content, 2100);
   contentResized();
   expect(room.style.height).toBe("0px");
+});
+
+it("drops the room when the chat's saved history replaces what was shown, and opens at its end", () => {
+  // A chat opened mid-run showed live rows, then its loaded history (shorter) replaced them:
+  // the room took the whole difference and the view showed only blank space under the chat.
+  const { getByTestId, rerender } = render(<Chat threadId="swap" loaded={false} />);
+  const scroller = getByTestId("scroller");
+  const content = getByTestId("content");
+  const room = getByTestId("room");
+  contentHeight(content, 1500);
+  sized(scroller, 1500, 1000);
+  contentResized();
+  contentHeight(content, 600);
+  contentResized();
+  expect(room.style.height).toBe("900px");
+  sized(scroller, 600, 0);
+  rerender(<Chat threadId="swap" loaded />);
+  expect(room.style.height).toBe("0px");
+  expect(scroller.scrollTop).toBe(600);
 });
 
 it("lets the room go once the person scrolls up, where it moves nothing they read", () => {
