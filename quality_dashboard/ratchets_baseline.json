@@ -125,9 +125,6 @@
   },
   "crates/desktop/tests/subagents_cli_e2e.rs": {
    "total_lines": 2237
-  },
-  "web/src/state/reducer.ts": {
-   "code_lines": 1044
   }
  },
  "functions": {
