@@ -222,24 +222,45 @@ jobs:
 
   # The one check the main branch ruleset requires. A matrix job skipped by the path
   # filter reports a single unexpanded name (`rust-test`, not `rust-test (ubuntu-latest)`),
-  # so requiring the matrix names would block every PR that skips them. This job passes
-  # when each required job passed or was skipped, and fails if any failed or was cancelled.
+  # so requiring the matrix names would block every PR that skips them. This job fails
+  # closed: the path filter must have succeeded, every job must pass, and a job may only
+  # be skipped when the filter said its area did not change.
   ci-ok:
     if: always()
-    needs: [fmt, clippy, rust-test, web, dashboard-quality]
+    needs: [changes, fmt, clippy, rust-test, web, dashboard-quality, tauri-build]
     runs-on: ubuntu-latest
+    permissions: {}
     steps:
-      - name: Every required job passed or was skipped
+      - name: Every required job passed, or was skipped because its area did not change
         env:
-          RESULTS: ${{ join(needs.*.result, ' ') }}
+          CHANGES: ${{ needs.changes.result }}
+          FMT: ${{ needs.fmt.result }}
+          DASHBOARD: ${{ needs.dashboard-quality.result }}
+          CLIPPY: ${{ needs.clippy.result }}
+          RUST_TEST: ${{ needs.rust-test.result }}
+          WEB: ${{ needs.web.result }}
+          TAURI_BUILD: ${{ needs.tauri-build.result }}
+          RUST_CHANGED: ${{ github.event_name == 'push' || needs.changes.outputs.rust == 'true' }}
+          WEB_CHANGED: ${{ github.event_name == 'push' || needs.changes.outputs.web == 'true' }}
+          PACKAGING_CHANGED: ${{ github.event_name == 'push' || needs.changes.outputs.packaging == 'true' }}
         run: |
-          echo "required job results: $RESULTS"
-          for result in $RESULTS; do
-            case "$result" in
-              success|skipped) ;;
-              *) echo "a required job ended with: $result"; exit 1 ;;
-            esac
-          done
+          failed=0
+          # name, result, whether the job had to run
+          check() {
+            echo "$1: $2 (required to run: $3)"
+            if [ "$2" = "success" ]; then return; fi
+            if [ "$2" = "skipped" ] && [ "$3" = "false" ]; then return; fi
+            echo "  -> $1 did not pass"
+            failed=1
+          }
+          check changes "$CHANGES" true
+          check fmt "$FMT" true
+          check dashboard-quality "$DASHBOARD" true
+          check clippy "$CLIPPY" "$RUST_CHANGED"
+          check rust-test "$RUST_TEST" "$RUST_CHANGED"
+          check web "$WEB" "$WEB_CHANGED"
+          check tauri-build "$TAURI_BUILD" "$PACKAGING_CHANGED"
+          exit $failed
 
   tauri-build:
     needs: changes
