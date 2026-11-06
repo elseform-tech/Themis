@@ -103,10 +103,6 @@
   "crates/desktop/src/state/run.rs": {
    "code_lines": 1198
   },
-  "crates/desktop/src/state/subagents.rs": {
-   "code_lines": 2058,
-   "total_lines": 2128
-  },
   "crates/desktop/src/transcript.rs": {
    "code_lines": 1156
   },
@@ -722,14 +718,14 @@
   "crates/desktop/src/state/subagent_tools.rs::parse_briefs": {
    "cyclomatic": 27
   },
-  "crates/desktop/src/state/subagents.rs::SubagentKit::attempt": {
+  "crates/desktop/src/state/subagents/access.rs::SubagentKit::mcp_access": {
+   "cyclomatic": 23
+  },
+  "crates/desktop/src/state/subagents/attempt.rs::SubagentKit::attempt": {
    "cyclomatic": 27,
    "lines": 241
   },
-  "crates/desktop/src/state/subagents.rs::SubagentKit::mcp_access": {
-   "cyclomatic": 23
-  },
-  "crates/desktop/src/state/subagents.rs::SubagentKit::tools": {
+  "crates/desktop/src/state/subagents/running.rs::SubagentKit::tools": {
    "cyclomatic": 24,
    "lines": 104
   },
