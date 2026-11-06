@@ -51,6 +51,8 @@ MODEL = (
                       # a recall kind that does not exist; a required ask_user field left out
                       r"|unknown kind '|needs `[a-z_]+`"),
     ("unknown_tool", r"unknown tool '"),
+    # A second goal while the first is unfinished: the tool says to update the first instead.
+    ("goal_exists", r"already has an unfinished goal"),
     ("missing_path", r"(?:no such file|not found|does not exist|cannot find).{0,80}['`\"/]"
                      r"|['`\"][^'`\"]+['`\"].{0,40}(?:no such file|not found|does not exist)"),
     ("outside_project", r"escapes the project root|outside the project|Absolute paths are not allowed"),
