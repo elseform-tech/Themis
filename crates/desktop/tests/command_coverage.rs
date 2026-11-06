@@ -9,7 +9,10 @@ fn server_exposes_all_frontend_backend_commands() {
         include_str!("../../../web/src/lib/browser.ts"),
         include_str!("../../../web/src/lib/terminal.ts")
     );
-    let server = include_str!("../src/server.rs");
+    let server = concat!(
+        include_str!("../src/server.rs"),
+        include_str!("../src/server/commands.rs")
+    );
     let native = concat!(
         include_str!("../src/lib.rs"),
         include_str!("../src/notifications.rs")
