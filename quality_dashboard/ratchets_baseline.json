@@ -3,7 +3,11 @@
   "crates/core/examples/behavior_eval.rs": 6,
   "crates/core/examples/compaction_eval.rs": 6,
   "crates/core/src/browser/cdp.rs": 12,
-  "crates/core/src/browser/session.rs": 112,
+  "crates/core/src/browser/session.rs": 11,
+  "crates/core/src/browser/session/actions.rs": 70,
+  "crates/core/src/browser/session/gestures.rs": 13,
+  "crates/core/src/browser/session/pages.rs": 9,
+  "crates/core/src/browser/session/stream.rs": 9,
   "crates/core/src/browser/snapshot.rs": 11,
   "crates/core/src/plugins.rs": 40,
   "crates/core/src/plugins/agents.rs": 17,
@@ -40,10 +44,6 @@
  },
  "duplicate_lines_total": 822,
  "files": {
-  "crates/core/src/browser/session.rs": {
-   "code_lines": 3835,
-   "total_lines": 4072
-  },
   "crates/core/src/browser/session/devtools.rs": {
    "code_lines": 1445
   },
@@ -153,31 +153,6 @@
    "cyclomatic": 38,
    "lines": 136
   },
-  "crates/core/src/browser/session.rs::ChatBrowser#2::capture": {
-   "cyclomatic": 22,
-   "lines": 129
-  },
-  "crates/core/src/browser/session.rs::ChatBrowser#2::report": {
-   "cyclomatic": 21
-  },
-  "crates/core/src/browser/session.rs::ChatBrowser#2::user_input": {
-   "cognitive": 31,
-   "cyclomatic": 37,
-   "lines": 124
-  },
-  "crates/core/src/browser/session.rs::handle_tab_event": {
-   "cyclomatic": 42,
-   "lines": 131
-  },
-  "crates/core/src/browser/session.rs::parse_key": {
-   "cyclomatic": 47,
-   "lines": 101
-  },
-  "crates/core/src/browser/session.rs::spawn_watcher": {
-   "cognitive": 48,
-   "cyclomatic": 37,
-   "lines": 168
-  },
   "crates/core/src/browser/session/devtools.rs::ChatBrowser::dev_console": {
    "cyclomatic": 21
   },
@@ -204,6 +179,31 @@
   "crates/core/src/browser/session/devtools.rs::record": {
    "cyclomatic": 30,
    "lines": 132
+  },
+  "crates/core/src/browser/session/keys.rs::parse_key": {
+   "cyclomatic": 47,
+   "lines": 101
+  },
+  "crates/core/src/browser/session/pages.rs::ChatBrowser::report": {
+   "cyclomatic": 21
+  },
+  "crates/core/src/browser/session/person.rs::ChatBrowser::user_input": {
+   "cognitive": 31,
+   "cyclomatic": 37,
+   "lines": 124
+  },
+  "crates/core/src/browser/session/stream.rs::ChatBrowser::capture": {
+   "cyclomatic": 22,
+   "lines": 129
+  },
+  "crates/core/src/browser/session/watcher.rs::handle_tab_event": {
+   "cyclomatic": 42,
+   "lines": 131
+  },
+  "crates/core/src/browser/session/watcher.rs::spawn_watcher": {
+   "cognitive": 48,
+   "cyclomatic": 37,
+   "lines": 168
   },
   "crates/core/src/browser/snapshot.rs::walk": {
    "cognitive": 36,
