@@ -108,12 +108,22 @@ try {
   for (const name of existsSync(sitePackages) ? readdirSync(sitePackages) : []) {
     if (/^(setuptools|wheel|_distutils_hack|pip)([-.]|$)/.test(name) || name === "distutils-precedence.pth") rmSync(join(sitePackages, name), { recursive: true, force: true });
   }
+  // The YouTube engine is never used (the app's settings keep it inactive), and its module
+  // carries YouTube's public web-client key, which secret scanners flag in the built app.
+  const engines = join(sitePackages, "searx", "engines");
+  for (const name of existsSync(engines) ? readdirSync(engines) : []) {
+    if (name === "youtube_noapi.py") rmSync(join(engines, name), { force: true });
+  }
+  const cached = join(engines, "__pycache__");
+  for (const name of existsSync(cached) ? readdirSync(cached) : []) {
+    if (/^youtube_noapi\./.test(name)) rmSync(join(cached, name), { force: true });
+  }
   writeFileSync(join(out, "VERSION"), `searxng ${SEARXNG_COMMIT}\npython ${installed}\n`);
 
   // 4. It must load: import the app with a throwaway settings file (a real secret, as
   // SearXNG refuses its placeholder one).
   const settings = join(work, "settings.yml");
-  writeFileSync(settings, `use_default_settings: true\nserver:\n  secret_key: "${randomBytes(32).toString("hex")}"\n  limiter: false\nsearch:\n  formats: [html, json]\n`);
+  writeFileSync(settings, `use_default_settings: true\nserver:\n  secret_key: "${randomBytes(32).toString("hex")}"\n  limiter: false\nsearch:\n  formats: [html, json]\nengines:\n  - name: youtube\n    inactive: true\n`);
   run(python, ["-I", "-c", "import searx.webapp, sys; print('searxng imports with', sys.version.split()[0])"], {
     env: { ...process.env, SEARXNG_SETTINGS_PATH: settings },
   });
