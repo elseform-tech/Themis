@@ -78,6 +78,21 @@ fn ref_of(snapshot: &str, needle: &str) -> String {
     reference.to_owned()
 }
 
+/// The page's text once `want` holds, or after 10 s: input reaches a page asynchronously,
+/// so a snapshot right after an action may come before the page's handlers ran.
+async fn page_once(
+    chat: &Arc<themis_core::browser::ChatBrowser>,
+    want: impl Fn(&str) -> bool,
+) -> String {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    loop {
+        let text = chat.snapshot(None, false).await.unwrap().snapshot;
+        if want(&text) || std::time::Instant::now() > deadline {
+            return text;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+}
 #[tokio::test(flavor = "multi_thread")]
 async fn the_agent_fills_a_form_reads_notes_and_navigates_in_a_real_browser() {
     let _browser = ONE_BROWSER.lock().await;
@@ -1235,22 +1250,24 @@ document.addEventListener('mousemove', e => { if (document.pointerLockElement) {
         delta_x: 0.0,
         delta_y: 0.0,
     };
-    let page = || async { chat.snapshot(None, false).await.unwrap().snapshot };
     chat.user_input(&press("down")).await.unwrap();
     chat.user_input(&press("up")).await.unwrap();
-    let seen = page().await;
+    let seen = page_once(&chat, |text| text.contains("locked moved 0")).await;
     assert!(
         chat.state().await.pointer_locked,
         "the view is told the page locked: {seen}"
     );
-    assert!(page().await.contains("locked moved 0"));
+    assert!(seen.contains("locked moved 0"), "{seen}");
     // Turning far past the page's right edge, as a locked mouse may.
     for _ in 0..6 {
         chat.user_input(&UserInput::MouseBy { dx: 400.0, dy: 0.0 })
             .await
             .unwrap();
     }
-    let text = page().await;
+    let text = page_once(&chat, |text| {
+        !text.contains("moved 0") && text.contains("locked")
+    })
+    .await;
     assert!(
         !text.contains("moved 0") && text.contains("locked"),
         "{text}"
@@ -1258,7 +1275,8 @@ document.addEventListener('mousemove', e => { if (document.pointerLockElement) {
     // A press while locked is a shot where the pointer is held, not a new lock.
     chat.user_input(&press("down")).await.unwrap();
     chat.user_input(&press("up")).await.unwrap();
-    assert!(page().await.contains("shots 1"));
+    let shot = page_once(&chat, |text| text.contains("shots 1")).await;
+    assert!(shot.contains("shots 1"), "{shot}");
     // Escape gives the mouse back.
     chat.user_input(&UserInput::Key {
         kind: "down".into(),
@@ -1271,7 +1289,8 @@ document.addEventListener('mousemove', e => { if (document.pointerLockElement) {
     .await
     .unwrap();
     assert!(!chat.state().await.pointer_locked);
-    assert!(page().await.contains("unlocked"));
+    let freed = page_once(&chat, |text| text.contains("unlocked")).await;
+    assert!(freed.contains("unlocked"), "{freed}");
     // Moves while unlocked are not relative turns.
     chat.user_input(&UserInput::MouseBy { dx: 50.0, dy: 0.0 })
         .await
