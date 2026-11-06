@@ -69,12 +69,24 @@ async fn the_server_reports_and_logs_its_own_resource_use() {
     );
     assert!(usage["cores"].as_u64().unwrap() >= 1);
     assert!(usage["groups"][0].get("growing_bytes").is_none(), "{usage}");
-    let log = std::fs::read_to_string(directory.path().join("logs/diagnostics-0.jsonl")).unwrap();
-    let sample: Value = log
-        .lines()
-        .filter_map(|line| serde_json::from_str::<Value>(line).ok())
-        .find(|record| record["service"] == "resources" && record["event"] == "sample")
-        .expect("a resources sample in the diagnostics log");
+    // A sample is readable before its log line is written: wait for the line.
+    let log_path = directory.path().join("logs/diagnostics-0.jsonl");
+    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+    let sample: Value = loop {
+        let log = std::fs::read_to_string(&log_path).unwrap_or_default();
+        let found = log
+            .lines()
+            .filter_map(|line| serde_json::from_str::<Value>(line).ok())
+            .find(|record| record["service"] == "resources" && record["event"] == "sample");
+        if let Some(sample) = found {
+            break sample;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "a resources sample in the diagnostics log"
+        );
+        std::thread::sleep(Duration::from_millis(100));
+    };
     assert_eq!(sample["level"], "info");
     assert!(sample["details"]["stream"]["frames"].is_u64(), "{sample}");
     tool.kill().unwrap();

@@ -4,6 +4,9 @@
 //! installed.
 
 use std::sync::{Arc, Mutex};
+
+mod browser_support;
+use browser_support::{frame_colour, frame_where, page_once};
 use std::time::Duration;
 
 use serde_json::{json, Value};
@@ -1004,48 +1007,6 @@ requestAnimationFrame(draw);
 }
 
 /// The mean colour of a base64 JPEG frame, and its size.
-fn frame_colour(data: &str) -> ([u8; 3], usize, usize) {
-    use base64::Engine;
-    let jpeg = base64::engine::general_purpose::STANDARD
-        .decode(data)
-        .unwrap();
-    let (rgb, width, height) = themis_core::browser::media::decode_jpeg(&jpeg).unwrap();
-    let mut sum = [0u64; 3];
-    for pixel in rgb.as_chunks::<3>().0 {
-        for (total, value) in sum.iter_mut().zip(pixel) {
-            *total += u64::from(*value);
-        }
-    }
-    let count = (width * height).max(1) as u64;
-    (sum.map(|total| (total / count) as u8), width, height)
-}
-
-/// Waits up to `limit` for a frame of the stream that `matches`; returns how many came.
-async fn frame_where(
-    updates: &mut tokio::sync::broadcast::Receiver<themis_core::browser::BrowserUpdate>,
-    limit: Duration,
-    matches: impl Fn([u8; 3], usize, usize) -> bool,
-) -> Result<usize, usize> {
-    let mut seen = 0;
-    let found = tokio::time::timeout(limit, async {
-        loop {
-            match updates.recv().await {
-                Ok(themis_core::browser::BrowserUpdate::Frame { data, .. }) => {
-                    seen += 1;
-                    let (colour, width, height) = frame_colour(&data);
-                    if matches(colour, width, height) {
-                        return;
-                    }
-                }
-                Ok(_) | Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {}
-                Err(error) => panic!("{error}"),
-            }
-        }
-    })
-    .await;
-    found.map(|()| seen).map_err(|_| seen)
-}
-
 /// Closing Workspace stops its stream as the chat's preview starts. The stop waits for an
 /// agent action in progress, so it can land after the preview began: the preview must keep
 /// following the page (owner report: it stayed on "Click the circles…" after "All done").
@@ -1235,22 +1196,24 @@ document.addEventListener('mousemove', e => { if (document.pointerLockElement) {
         delta_x: 0.0,
         delta_y: 0.0,
     };
-    let page = || async { chat.snapshot(None, false).await.unwrap().snapshot };
     chat.user_input(&press("down")).await.unwrap();
     chat.user_input(&press("up")).await.unwrap();
-    let seen = page().await;
+    let seen = page_once(&chat, |text| text.contains("locked moved 0")).await;
     assert!(
         chat.state().await.pointer_locked,
         "the view is told the page locked: {seen}"
     );
-    assert!(page().await.contains("locked moved 0"));
+    assert!(seen.contains("locked moved 0"), "{seen}");
     // Turning far past the page's right edge, as a locked mouse may.
     for _ in 0..6 {
         chat.user_input(&UserInput::MouseBy { dx: 400.0, dy: 0.0 })
             .await
             .unwrap();
     }
-    let text = page().await;
+    let text = page_once(&chat, |text| {
+        !text.contains("moved 0") && text.contains("locked")
+    })
+    .await;
     assert!(
         !text.contains("moved 0") && text.contains("locked"),
         "{text}"
@@ -1258,7 +1221,8 @@ document.addEventListener('mousemove', e => { if (document.pointerLockElement) {
     // A press while locked is a shot where the pointer is held, not a new lock.
     chat.user_input(&press("down")).await.unwrap();
     chat.user_input(&press("up")).await.unwrap();
-    assert!(page().await.contains("shots 1"));
+    let shot = page_once(&chat, |text| text.contains("shots 1")).await;
+    assert!(shot.contains("shots 1"), "{shot}");
     // Escape gives the mouse back.
     chat.user_input(&UserInput::Key {
         kind: "down".into(),
@@ -1271,7 +1235,8 @@ document.addEventListener('mousemove', e => { if (document.pointerLockElement) {
     .await
     .unwrap();
     assert!(!chat.state().await.pointer_locked);
-    assert!(page().await.contains("unlocked"));
+    let freed = page_once(&chat, |text| text.contains("unlocked")).await;
+    assert!(freed.contains("unlocked"), "{freed}");
     // Moves while unlocked are not relative turns.
     chat.user_input(&UserInput::MouseBy { dx: 50.0, dy: 0.0 })
         .await
