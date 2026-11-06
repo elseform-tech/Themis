@@ -492,6 +492,9 @@ class GraderTests(unittest.TestCase):
                  # From the round after goals stopped giving up: a non-web URL for the browser.
                  ("browser_open", "tool 'browser_open' failed: browser_open: only http and https URLs are supported, "
                                   "not about:", "model"),
+                 # From a free-model soak: a second goal asked for while the first is unfinished.
+                 ("create_goal", "tool 'create_goal' failed: create_goal: this chat already has an unfinished "
+                                 "goal; use update_goal only for its status, and keep working on it", "model"),
                  ("web_search", "web_search: the moon is in the way", "unclassified")]
         for tool, text, cause in cases:
             self.assertEqual(tool_causes.classify(tool, text)[0], cause, text)
