@@ -28,17 +28,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 
-use super::{
-    async_trait, kill_process_tree, parse_tool_args, tool_error, ToolCallError, ToolRuntime, ToolT,
-};
-
-mod log_ring;
-mod process;
-mod tool;
-
-pub use log_ring::{LogChunk, LogRing};
-use process::{pump, request_stop, wait_finished};
-pub use tool::{only_inspects, BackgroundArgs, BackgroundScope, BackgroundTool};
+use super::{async_trait, parse_tool_args, tool_error, ToolCallError, ToolRuntime, ToolT};
 
 /// Rolling log capacity per task, in bytes.
 pub const MAX_LOG_BYTES: usize = 64 * 1024;
@@ -77,6 +67,203 @@ fn now_ms() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_or(0, |elapsed| elapsed.as_millis() as u64)
+}
+
+// ---------------------------------------------------------------------------
+// Rolling log
+// ---------------------------------------------------------------------------
+
+/// Last [`MAX_LOG_BYTES`] of a byte stream with absolute offsets, so readers
+/// can page forward and learn how much rotated away.
+#[derive(Debug, Clone)]
+pub struct LogRing {
+    bytes: VecDeque<u8>,
+    capacity: usize,
+    total: u64,
+}
+
+/// One page of a [`LogRing`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct LogChunk {
+    /// Valid UTF-8 text for `offset..next_offset`.
+    pub text: String,
+    /// Absolute byte offset of the first byte of `text`.
+    pub offset: u64,
+    /// Offset to pass next to continue; equals `total` when caught up.
+    pub next_offset: u64,
+    /// Bytes written over the task's lifetime.
+    pub total: u64,
+    /// Bytes before `retained_from` rotated out of the ring.
+    pub retained_from: u64,
+}
+
+/// Length of an incomplete UTF-8 sequence at the end of `bytes` (0 when none).
+fn incomplete_tail(bytes: &[u8]) -> usize {
+    for back in 1..=bytes.len().min(3) {
+        let byte = bytes[bytes.len() - back];
+        if byte & 0xC0 == 0x80 {
+            continue;
+        }
+        let needed = match byte {
+            0xF0..=0xF7 => 4,
+            0xE0..=0xEF => 3,
+            0xC0..=0xDF => 2,
+            _ => 1,
+        };
+        return if needed > back { back } else { 0 };
+    }
+    0
+}
+
+impl LogRing {
+    /// Ring keeping the last `capacity` bytes.
+    pub fn new(capacity: usize) -> Self {
+        Self {
+            bytes: VecDeque::new(),
+            capacity: capacity.max(1),
+            total: 0,
+        }
+    }
+
+    /// Ring pre-filled with `data` as its whole history.
+    pub fn from_bytes(capacity: usize, data: &[u8]) -> Self {
+        let mut ring = Self::new(capacity);
+        ring.push(data);
+        ring
+    }
+
+    /// Appends output, dropping the oldest bytes beyond capacity.
+    pub fn push(&mut self, data: &[u8]) {
+        self.total += data.len() as u64;
+        if data.len() >= self.capacity {
+            self.bytes.clear();
+            self.bytes.extend(&data[data.len() - self.capacity..]);
+            return;
+        }
+        self.bytes.extend(data);
+        let excess = self.bytes.len().saturating_sub(self.capacity);
+        self.bytes.drain(..excess);
+    }
+
+    /// Bytes written over the lifetime of the stream.
+    pub fn total(&self) -> u64 {
+        self.total
+    }
+
+    /// Absolute offset of the oldest retained byte.
+    pub fn retained_from(&self) -> u64 {
+        self.total - self.bytes.len() as u64
+    }
+
+    /// Bytes currently retained.
+    pub fn retained_len(&self) -> usize {
+        self.bytes.len()
+    }
+
+    /// Retained bytes as one vector (for persistence).
+    pub fn to_vec(&self) -> Vec<u8> {
+        self.bytes.iter().copied().collect()
+    }
+
+    /// Reads up to `max_bytes` from absolute offset `from` (clamped to what is
+    /// retained). Never splits a character: leading continuation bytes are
+    /// skipped and an incomplete trailing sequence waits for the next page.
+    pub fn read(&self, from: u64, max_bytes: usize) -> LogChunk {
+        self.read_with(from, max_bytes, false)
+    }
+
+    /// [`read`](Self::read); with `settled` the stream is over, so an
+    /// incomplete character at the very end is final and decoded lossily
+    /// instead of waiting for bytes that will never arrive.
+    pub fn read_with(&self, from: u64, max_bytes: usize, settled: bool) -> LogChunk {
+        let retained_from = self.retained_from();
+        let mut start = from.clamp(retained_from, self.total);
+        let skip = (start - retained_from) as usize;
+        // Read a little past the budget so a page always holds one whole
+        // character, even when `max_bytes` is smaller than that character.
+        let mut slice: Vec<u8> = self
+            .bytes
+            .iter()
+            .skip(skip)
+            .take(max_bytes.max(4))
+            .copied()
+            .collect();
+        let leading = slice
+            .iter()
+            .take_while(|byte| **byte & 0xC0 == 0x80)
+            .count();
+        // A page that begins inside a character resumes after it.
+        slice.drain(..leading);
+        start += leading as u64;
+        let reaches_end = start + slice.len() as u64 >= self.total;
+        let trim = if settled && reaches_end {
+            0
+        } else {
+            incomplete_tail(&slice)
+        };
+        slice.truncate(slice.len() - trim);
+        if slice.len() > max_bytes {
+            // Cut back to the last whole character within the budget, but
+            // never return an empty page while a character is available.
+            let mut end = max_bytes;
+            while end > 0 && slice[end] & 0xC0 == 0x80 {
+                end -= 1;
+            }
+            if end == 0 {
+                end = 1;
+                while end < slice.len() && slice[end] & 0xC0 == 0x80 {
+                    end += 1;
+                }
+            }
+            slice.truncate(end);
+        }
+        let next_offset = start + slice.len() as u64;
+        LogChunk {
+            text: String::from_utf8_lossy(&slice).into_owned(),
+            offset: start,
+            next_offset,
+            total: self.total,
+            retained_from,
+        }
+    }
+
+    /// The last `max_bytes` of output, aligned to a character boundary.
+    pub fn tail(&self, max_bytes: usize) -> LogChunk {
+        let from = self.total.saturating_sub(max_bytes as u64);
+        self.read(from, max_bytes)
+    }
+
+    /// [`tail`](Self::tail) for a finished stream.
+    pub fn tail_settled(&self, max_bytes: usize) -> LogChunk {
+        let from = self.total.saturating_sub(max_bytes as u64);
+        self.read_with(from, max_bytes, true)
+    }
+
+    /// Up to `lines` most recent non-empty lines, each bounded in length.
+    pub fn tail_lines(&self, lines: usize) -> Vec<String> {
+        self.tail_lines_complete(lines).0
+    }
+
+    /// [`tail_lines`](Self::tail_lines) plus whether they are the entire
+    /// output (nothing rotated out, no line cut, nothing left out).
+    pub fn tail_lines_complete(&self, lines: usize) -> (Vec<String>, bool) {
+        let chunk = self.tail(8 * 1024);
+        let mut complete = self.retained_from() == 0 && chunk.offset == 0;
+        let mut found: Vec<String> = chunk
+            .text
+            .lines()
+            .map(str::trim_end)
+            .filter(|line| !line.is_empty())
+            .map(|line| {
+                complete &= line.chars().count() <= MAX_TAIL_LINE_CHARS;
+                line.chars().take(MAX_TAIL_LINE_CHARS).collect()
+            })
+            .collect();
+        let excess = found.len().saturating_sub(lines);
+        complete &= excess == 0 && chunk.next_offset >= chunk.total;
+        found.drain(..excess);
+        (found, complete)
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -423,6 +610,105 @@ impl BackgroundRegistry {
         Ok(self.view(&task, STATUS_TAIL_LINES.min(3)))
     }
 
+    fn supervise(
+        &self,
+        task: &Arc<Task>,
+        mut child: std::process::Child,
+        readers: Vec<std::thread::JoinHandle<()>>,
+        deadline: Instant,
+    ) {
+        let (state, exit_code) = loop {
+            match child.try_wait() {
+                Ok(Some(status)) => {
+                    // The program is gone; stop anything it left in its group.
+                    sweep_group(child.id());
+                    break (TaskState::Exited, status.code());
+                }
+                Ok(None) => {}
+                Err(_) => break (TaskState::Lost, None),
+            }
+            let timed_out = Instant::now() >= deadline;
+            if task.stop.load(Ordering::SeqCst) == STOP_REQUESTED || timed_out {
+                super::kill_process_tree(&mut child);
+                let status = child.wait().ok();
+                break (
+                    if timed_out && task.stop.load(Ordering::SeqCst) != STOP_REQUESTED {
+                        TaskState::TimedOut
+                    } else {
+                        TaskState::Stopped
+                    },
+                    status.and_then(|status| status.code()),
+                );
+            }
+            std::thread::sleep(SUPERVISOR_TICK);
+        };
+        // Pipes close with the group; a process that escaped it (setsid) may
+        // keep them open, so wait only briefly and detach.
+        let grace = Instant::now() + READER_GRACE;
+        while Instant::now() < grace && !readers.iter().all(|reader| reader.is_finished()) {
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        let thread_id = lock(&task.record).thread_id.clone();
+        let id = lock(&task.record).id.clone();
+        // Only a task that is still registered keeps a log file: a chat removed
+        // while this supervisor was winding down must not leave an orphan.
+        // Holding the registry lock orders this against `remove_thread`.
+        if let Some(path) = self.log_path(&id) {
+            let tasks = lock(&self.tasks);
+            if tasks.iter().any(|registered| Arc::ptr_eq(registered, task)) {
+                if let Some(dir) = &self.dir {
+                    let _ = std::fs::create_dir_all(dir);
+                }
+                let _ = std::fs::write(path, lock(&task.log).to_vec());
+            }
+        }
+        {
+            let mut record = lock(&task.record);
+            record.state = state;
+            record.exit_code = exit_code;
+            record.ended_at_ms = Some(now_ms());
+        }
+        self.prune_finished(&thread_id);
+        self.persist();
+        self.notify(&thread_id);
+        task.settled.store(true, Ordering::SeqCst);
+        // Taking the lock orders the flag before any waiter's next check.
+        drop(lock(&task.record));
+        task.finished.notify_all();
+    }
+
+    fn prune_finished(&self, thread_id: &str) {
+        let mut dropped = Vec::new();
+        {
+            let mut tasks = lock(&self.tasks);
+            let mut finished: Vec<(u64, String)> = tasks
+                .iter()
+                .map(|task| task.record())
+                .filter(|record| {
+                    record.thread_id == thread_id && record.state != TaskState::Running
+                })
+                .map(|record| {
+                    (
+                        record.ended_at_ms.unwrap_or(record.started_at_ms),
+                        record.id,
+                    )
+                })
+                .collect();
+            if finished.len() <= MAX_FINISHED_PER_THREAD {
+                return;
+            }
+            finished.sort();
+            let excess = finished.len() - MAX_FINISHED_PER_THREAD;
+            dropped.extend(finished.into_iter().take(excess).map(|(_, id)| id));
+            tasks.retain(|task| !dropped.contains(&lock(&task.record).id));
+        }
+        for id in dropped {
+            if let Some(path) = self.log_path(&id) {
+                let _ = std::fs::remove_file(path);
+            }
+        }
+    }
+
     fn find(&self, thread_id: &str, id: &str) -> Result<Arc<Task>, String> {
         lock(&self.tasks)
             .iter()
@@ -538,9 +824,303 @@ impl BackgroundRegistry {
     }
 }
 
+fn request_stop(task: &Task) {
+    if lock(&task.record).state == TaskState::Running {
+        task.stop.store(STOP_REQUESTED, Ordering::SeqCst);
+    }
+}
+
+fn wait_finished(task: &Task, wait: Duration) {
+    let deadline = Instant::now() + wait;
+    let mut record = lock(&task.record);
+    while !task.settled.load(Ordering::SeqCst) {
+        let Some(remaining) = deadline.checked_duration_since(Instant::now()) else {
+            return;
+        };
+        record = task
+            .finished
+            .wait_timeout(record, remaining)
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .0;
+    }
+}
+
+fn pump<R: Read + Send + 'static>(mut pipe: R, task: Arc<Task>) -> std::thread::JoinHandle<()> {
+    std::thread::spawn(move || {
+        let mut buffer = [0u8; 8192];
+        loop {
+            match pipe.read(&mut buffer) {
+                Ok(0) | Err(_) => break,
+                Ok(read) => lock(&task.log).push(&buffer[..read]),
+            }
+        }
+    })
+}
+
+/// Stops what is left of `pgid` after its leader exited: SIGTERM, a short
+/// grace, then SIGKILL, only while the group still has members.
+fn sweep_group(pgid: u32) {
+    #[cfg(unix)]
+    {
+        let pgid = pgid as libc::pid_t;
+        // SAFETY: signal 0 only probes for existence.
+        let exists = |pgid| unsafe { libc::killpg(pgid, 0) } == 0;
+        if !exists(pgid) {
+            return;
+        }
+        // SAFETY: the group was created by the spawn that owns this task.
+        unsafe { libc::killpg(pgid, libc::SIGTERM) };
+        let grace = Instant::now() + Duration::from_millis(300);
+        while Instant::now() < grace && exists(pgid) {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        if exists(pgid) {
+            // SAFETY: as above.
+            unsafe { libc::killpg(pgid, libc::SIGKILL) };
+        }
+    }
+    #[cfg(not(unix))]
+    let _ = pgid;
+}
+
 /// Directory used to persist background tasks beside the app data.
 pub fn storage_dir(app_dir: &Path) -> PathBuf {
     app_dir.join("background")
+}
+
+// ---------------------------------------------------------------------------
+// Tools
+// ---------------------------------------------------------------------------
+
+/// The chat a tool belongs to plus the registry holding its tasks.
+#[derive(Clone)]
+pub struct BackgroundScope {
+    pub registry: Arc<BackgroundRegistry>,
+    pub thread_id: String,
+    /// The run whose tasks these are.
+    pub run_id: Option<String>,
+    /// Only that run's tasks can be seen or stopped: a subagent's reach ends at its own.
+    pub own_tasks_only: bool,
+}
+
+fn blocking_error(error: tokio::task::JoinError) -> ToolCallError {
+    tool_error(format!("background_task: worker failed: {error}"))
+}
+
+impl BackgroundScope {
+    /// Scope for `thread_id` backed by `registry`.
+    pub fn new(registry: Arc<BackgroundRegistry>, thread_id: impl Into<String>) -> Self {
+        Self {
+            registry,
+            thread_id: thread_id.into(),
+            run_id: None,
+            own_tasks_only: false,
+        }
+    }
+
+    /// Only this run's tasks can be seen or stopped through this scope.
+    #[must_use]
+    pub fn own_tasks_only(mut self) -> Self {
+        self.own_tasks_only = true;
+        self
+    }
+
+    /// Tasks started through this scope record `run_id`.
+    pub fn with_run(mut self, run_id: impl Into<String>) -> Self {
+        self.run_id = Some(run_id.into());
+        self
+    }
+
+    /// Starts a background task (the caller already obtained approval).
+    pub(super) async fn start(
+        &self,
+        program: String,
+        args: Vec<String>,
+        workdir: PathBuf,
+        timeout_secs: u64,
+        sandbox: Option<Arc<crate::sandbox::SandboxPlan>>,
+    ) -> Result<Value, ToolCallError> {
+        let registry = Arc::clone(&self.registry);
+        let sandboxed = sandbox.as_ref().is_some_and(|plan| plan.is_active());
+        let spec = StartSpec {
+            thread_id: self.thread_id.clone(),
+            run_id: self.run_id.clone(),
+            program,
+            args,
+            workdir,
+            timeout_secs,
+            sandbox,
+            plugin_bins: crate::plugins::hooks::plugin_bins(),
+        };
+        let view = tokio::task::spawn_blocking(move || registry.start(spec))
+            .await
+            .map_err(blocking_error)?
+            .map_err(|error| tool_error(format!("shell: {error}")))?;
+        Ok(json!({
+            "background": true,
+            "task_id": view.record.id,
+            "state": view.record.state,
+            "pid": view.record.pid,
+            "command": view.summary,
+            "timeout_secs": view.record.timeout_secs,
+            "sandboxed": sandboxed,
+            "next": crate::prompts::TOOL_BACKGROUND_NEXT,
+        }))
+    }
+}
+
+fn default_offset() -> i64 {
+    -1
+}
+
+/// Arguments for [`BackgroundTool`].
+#[derive(Debug, Clone, Serialize, Deserialize, ToolInput)]
+pub struct BackgroundArgs {
+    /// `list`, `status`, `log` or `stop`.
+    #[input(description = "list | status | log | stop")]
+    pub action: String,
+    /// Task id returned by shell with background=true.
+    #[serde(default)]
+    #[input(description = "task_id from shell background=true (not needed for list)")]
+    pub task_id: String,
+    /// Byte offset to read the log from; negative reads the newest output.
+    #[serde(default = "default_offset")]
+    #[input(
+        description = "log only: byte offset to read from (next_offset of the previous page); -1 (default) returns the newest output"
+    )]
+    pub offset: i64,
+    /// Largest log page, in bytes.
+    #[serde(default)]
+    #[input(description = "log only: page size in bytes (default 8192, max 16384)")]
+    pub max_bytes: u64,
+}
+
+/// Whether a `background_task` call is one this tool only inspects or stops with. It has no
+/// way to start a program; anything that doesn't read as such a call is not vouched for.
+pub fn only_inspects(arguments: &Value) -> bool {
+    arguments.get("command").is_none()
+        && arguments
+            .get("action")
+            .and_then(Value::as_str)
+            .is_some_and(|action| matches!(action, "list" | "status" | "log" | "stop"))
+}
+
+/// Inspects and stops this chat's background shell tasks.
+///
+/// No approval prompt: it only reaches tasks this chat already started with an
+/// approved `shell` call, and the output is bounded.
+#[tool(
+    name = "background_task",
+    description = "Inspect or stop background programs started with shell background=true. list: this chat's tasks. status: state, exit code and the last output lines. log: bounded page of the rolling log (last 64 KiB; page with next_offset). stop: kills the program and everything it started.",
+    input = BackgroundArgs,
+)]
+pub struct BackgroundTool {
+    scope: Option<BackgroundScope>,
+}
+
+impl BackgroundTool {
+    /// Tool for one chat; without a scope every call reports it is unavailable.
+    pub fn new(scope: Option<BackgroundScope>) -> Self {
+        Self { scope }
+    }
+}
+
+#[async_trait]
+impl ToolRuntime for BackgroundTool {
+    async fn execute(&self, args: Value) -> Result<Value, ToolCallError> {
+        let BackgroundArgs {
+            action,
+            task_id,
+            offset,
+            max_bytes,
+        } = parse_tool_args("background_task", args)?;
+        let scope = self.scope.clone().ok_or_else(|| {
+            tool_error("background_task: background tasks are not available in this context".into())
+        })?;
+        if action != "list" && task_id.trim().is_empty() {
+            return Err(tool_error(format!(
+                "background_task: '{action}' needs a task_id (see action=list)"
+            )));
+        }
+        let fail = |error: String| tool_error(format!("background_task: {error}"));
+        tokio::task::spawn_blocking(move || {
+            let registry = &scope.registry;
+            let thread = scope.thread_id.as_str();
+            let mine = |record: &TaskRecord| !scope.own_tasks_only || record.run_id == scope.run_id;
+            if action != "list" {
+                let found = registry.status(thread, &task_id).map_err(fail)?;
+                if !mine(&found.record) {
+                    return Err(fail(format!(
+                        "unknown background task '{task_id}' in this chat"
+                    )));
+                }
+            }
+            match action.as_str() {
+                "list" => {
+                    let tasks: Vec<Value> = registry
+                        .list(thread, 0)
+                        .into_iter()
+                        .filter(|view| mine(&view.record))
+                        .map(|view| {
+                            json!({
+                                "task_id": view.record.id,
+                                "state": view.record.state,
+                                "exit_code": view.record.exit_code,
+                                "command": view.summary,
+                                "log_bytes": view.log_bytes,
+                            })
+                        })
+                        .collect();
+                    Ok(json!({"tasks": tasks, "running": registry.running_count()}))
+                }
+                "status" => {
+                    let view = registry.status(thread, &task_id).map_err(fail)?;
+                    Ok(json!({
+                        "task_id": view.record.id,
+                        "state": view.record.state,
+                        "exit_code": view.record.exit_code,
+                        "command": view.summary,
+                        "log_bytes": view.log_bytes,
+                        "last_output": view.tail,
+                    }))
+                }
+                "log" => {
+                    let size = match max_bytes {
+                        0 => DEFAULT_LOG_PAGE_BYTES,
+                        bytes => usize::try_from(bytes).unwrap_or(MAX_LOG_PAGE_BYTES),
+                    };
+                    let offset = u64::try_from(offset).ok();
+                    let (record, chunk) =
+                        registry.log(thread, &task_id, offset, size).map_err(fail)?;
+                    Ok(json!({
+                        "task_id": record.id,
+                        "state": record.state,
+                        "exit_code": record.exit_code,
+                        "text": chunk.text,
+                        "offset": chunk.offset,
+                        "next_offset": chunk.next_offset,
+                        "total_bytes": chunk.total,
+                        "oldest_retained_offset": chunk.retained_from,
+                        "more": chunk.next_offset < chunk.total,
+                    }))
+                }
+                "stop" => {
+                    let view = registry.stop(thread, &task_id, STOP_WAIT).map_err(fail)?;
+                    Ok(json!({
+                        "task_id": view.record.id,
+                        "state": view.record.state,
+                        "exit_code": view.record.exit_code,
+                        "last_output": view.tail,
+                    }))
+                }
+                other => Err(tool_error(format!(
+                    "background_task: unknown action '{other}' (use list, status, log or stop)"
+                ))),
+            }
+        })
+        .await
+        .map_err(blocking_error)?
+    }
 }
 
 #[cfg(all(test, unix))]

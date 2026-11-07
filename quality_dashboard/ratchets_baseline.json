@@ -9,13 +9,13 @@
   "crates/core/src/browser/session/pages.rs": 9,
   "crates/core/src/browser/session/stream.rs": 9,
   "crates/core/src/browser/snapshot.rs": 11,
+  "crates/core/src/plugins.rs": 40,
   "crates/core/src/plugins/agents.rs": 17,
   "crates/core/src/plugins/connections.rs": 5,
   "crates/core/src/plugins/hooks/process.rs": 5,
   "crates/core/src/plugins/hooks/runtime.rs": 18,
   "crates/core/src/plugins/marketplace/directory_import.rs": 30,
   "crates/core/src/plugins/package.rs": 22,
-  "crates/core/src/plugins/skill_prompts.rs": 40,
   "crates/core/src/providers/chat.rs": 16,
   "crates/core/src/runtime.rs": 99,
   "crates/core/src/runtime/documents.rs": 9,
@@ -45,8 +45,8 @@
  },
  "duplicate_lines_total": 797,
  "files": {
-  "crates/core/src/browser/tools.rs": {
-   "code_lines": 1017
+  "crates/core/src/plugins.rs": {
+   "code_lines": 1348
   },
   "crates/core/src/providers/tests.rs": {
    "total_lines": 3746
@@ -58,6 +58,9 @@
   "crates/core/src/sandbox.rs": {
    "code_lines": 1362
   },
+  "crates/core/src/tools/background.rs": {
+   "code_lines": 1126
+  },
   "crates/core/tests/browser_e2e.rs": {
    "total_lines": 2461
   },
@@ -66,6 +69,10 @@
   },
   "crates/desktop/src/cli.rs": {
    "code_lines": 1016
+  },
+  "crates/desktop/src/state.rs": {
+   "code_lines": 1386,
+   "total_lines": 3067
   },
   "crates/desktop/src/state/goal.rs": {
    "code_lines": 1351
@@ -227,17 +234,36 @@
   "crates/core/src/memory/plans.rs::parse_op": {
    "cyclomatic": 24
   },
+  "crates/core/src/plugins.rs::PluginStore#2::list_metadata": {
+   "cyclomatic": 24
+  },
   "crates/core/src/plugins.rs::PluginStore::list": {
    "cyclomatic": 21
   },
+  "crates/core/src/plugins.rs::PluginStore::materialize": {
+   "cyclomatic": 26
+  },
   "crates/core/src/plugins.rs::PluginStore::registry": {
    "cyclomatic": 23
+  },
+  "crates/core/src/plugins.rs::PluginStore::resolve_prompt": {
+   "cognitive": 66,
+   "cyclomatic": 60,
+   "lines": 163
   },
   "crates/core/src/plugins.rs::PluginStore::save": {
    "cyclomatic": 22
   },
   "crates/core/src/plugins.rs::PluginStore::set_component_enabled": {
    "cyclomatic": 21
+  },
+  "crates/core/src/plugins.rs::edited_skill_source": {
+   "cognitive": 35,
+   "cyclomatic": 25
+  },
+  "crates/core/src/plugins.rs::validate": {
+   "cognitive": 29,
+   "cyclomatic": 38
   },
   "crates/core/src/plugins/agents.rs::SubagentProfile::validate": {
    "cyclomatic": 34
@@ -294,9 +320,6 @@
    "cyclomatic": 27,
    "lines": 101
   },
-  "crates/core/src/plugins/management.rs::PluginStore::list_metadata": {
-   "cyclomatic": 24
-  },
   "crates/core/src/plugins/marketplace/directory_import.rs::FileWalk<'_>::directory": {
    "cyclomatic": 23
   },
@@ -336,9 +359,6 @@
   "crates/core/src/plugins/marketplace/store.rs::PluginStore::repository_spec": {
    "cyclomatic": 21
   },
-  "crates/core/src/plugins/materialize.rs::PluginStore::materialize": {
-   "cyclomatic": 26
-  },
   "crates/core/src/plugins/oauth.rs::discover": {
    "cyclomatic": 38,
    "lines": 118
@@ -352,19 +372,6 @@
   },
   "crates/core/src/plugins/scans.rs::PluginStore::run_marketplace_scan": {
    "cyclomatic": 21
-  },
-  "crates/core/src/plugins/skill_prompts.rs::PluginStore::resolve_prompt": {
-   "cognitive": 66,
-   "cyclomatic": 60,
-   "lines": 163
-  },
-  "crates/core/src/plugins/skill_prompts.rs::edited_skill_source": {
-   "cognitive": 35,
-   "cyclomatic": 25
-  },
-  "crates/core/src/plugins/validation.rs::validate": {
-   "cognitive": 29,
-   "cyclomatic": 38
   },
   "crates/core/src/providers/chat.rs::CompatibleProvider#2::chat_stream_with_tools": {
    "cyclomatic": 29
@@ -472,7 +479,7 @@
   "crates/core/src/tools.rs::boxed_tools_for_run": {
    "lines": 120
   },
-  "crates/core/src/tools/background/tool.rs::BackgroundTool#2::execute": {
+  "crates/core/src/tools/background.rs::BackgroundTool#2::execute": {
    "cyclomatic": 26
   },
   "crates/core/src/tools/destructive.rs::git_destructive": {
