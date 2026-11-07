@@ -46,9 +46,6 @@
  },
  "duplicate_lines_total": 815,
  "files": {
-  "crates/core/src/browser/session/devtools.rs": {
-   "code_lines": 1445
-  },
   "crates/core/src/browser/tools.rs": {
    "code_lines": 1017
   },
@@ -142,32 +139,32 @@
    "cyclomatic": 38,
    "lines": 136
   },
-  "crates/core/src/browser/session/devtools.rs::ChatBrowser::dev_console": {
-   "cyclomatic": 21
+  "crates/core/src/browser/session/devtools.rs::record": {
+   "cyclomatic": 30,
+   "lines": 132
   },
-  "crates/core/src/browser/session/devtools.rs::ChatBrowser::dev_debugger": {
+  "crates/core/src/browser/session/devtools/debugger.rs::ChatBrowser::dev_debugger": {
    "cognitive": 33,
    "cyclomatic": 45,
    "lines": 170
   },
-  "crates/core/src/browser/session/devtools.rs::ChatBrowser::dev_memory": {
-   "cyclomatic": 27,
-   "lines": 110
+  "crates/core/src/browser/session/devtools/inspect.rs::ChatBrowser::dev_console": {
+   "cyclomatic": 21
   },
-  "crates/core/src/browser/session/devtools.rs::ChatBrowser::dev_network": {
+  "crates/core/src/browser/session/devtools/inspect.rs::ChatBrowser::dev_network": {
    "cyclomatic": 26,
    "lines": 119
   },
-  "crates/core/src/browser/session/devtools.rs::ChatBrowser::dev_performance": {
+  "crates/core/src/browser/session/devtools/profiling.rs::ChatBrowser::dev_memory": {
+   "cyclomatic": 27,
+   "lines": 110
+  },
+  "crates/core/src/browser/session/devtools/profiling.rs::ChatBrowser::dev_performance": {
    "cyclomatic": 22
   },
-  "crates/core/src/browser/session/devtools.rs::ChatBrowser::dev_storage": {
+  "crates/core/src/browser/session/devtools/profiling.rs::ChatBrowser::dev_storage": {
    "cyclomatic": 27,
    "lines": 145
-  },
-  "crates/core/src/browser/session/devtools.rs::record": {
-   "cyclomatic": 30,
-   "lines": 132
   },
   "crates/core/src/browser/session/keys.rs::parse_key": {
    "cyclomatic": 47,
