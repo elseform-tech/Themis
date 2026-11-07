@@ -135,7 +135,8 @@ impl Server {
         self.run_until(std::future::pending()).await
     }
 
-    /// Serves until a `shutdown` request, SIGTERM/SIGINT, or `stop` completes.
+    /// Serves until a `shutdown` request, SIGTERM/SIGINT, `stop` completes, or its `server.json`
+    /// is gone (see [`discovery_lost`]).
     pub async fn run_until(
         self,
         stop: impl std::future::Future<Output = ()>,
@@ -185,12 +186,19 @@ impl Server {
         let mut stopped = self.shutdown.subscribe();
         let mut termination = Termination::install();
         tokio::pin!(stop);
+        let discovery = discovery_lost(self.data_dir.join(DISCOVERY_FILE), self.token.clone());
+        tokio::pin!(discovery);
+        let mut lost = false;
         loop {
             let (stream, _) = tokio::select! {
                 result = self.listener.accept() => result.map_err(|err| err.to_string())?,
                 _ = stopped.recv() => break,
                 _ = termination.requested() => break,
                 _ = &mut stop => break,
+                _ = &mut discovery => {
+                    lost = true;
+                    break;
+                }
             };
             let state = self.state.clone();
             let token = self.token.clone();
@@ -214,8 +222,35 @@ impl Server {
         {
             std::fs::remove_file(path).map_err(|err| err.to_string())?;
         }
-        self.state.log_server_event("stopped");
+        // A deleted data folder stays deleted: the log would make it again.
+        if self.data_dir.is_dir() {
+            if lost {
+                self.state.log_server_event("discovery_lost");
+            }
+            self.state.log_server_event("stopped");
+        }
         Ok(())
+    }
+}
+
+/// How often a server checks that clients can still find it.
+const DISCOVERY_CHECK_EVERY: std::time::Duration = std::time::Duration::from_secs(2);
+
+/// Completes once `server.json` has not named this server on two checks in a row: its data
+/// folder was deleted (a test's temporary folder) or the file removed, so no client can find
+/// it any more and it would otherwise run unseen for days. Two checks, so a file being replaced
+/// is never taken for a missing one.
+async fn discovery_lost(path: PathBuf, token: String) {
+    let mut every = tokio::time::interval(DISCOVERY_CHECK_EVERY);
+    let mut misses = 0;
+    while misses < 2 {
+        every.tick().await;
+        let ours = tokio::fs::read_to_string(&path)
+            .await
+            .ok()
+            .and_then(|text| serde_json::from_str::<Discovery>(&text).ok())
+            .is_some_and(|discovery| discovery.token == token);
+        misses = if ours { 0 } else { misses + 1 };
     }
 }
 

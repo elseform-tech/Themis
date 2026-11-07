@@ -29,7 +29,8 @@ Brave, DuckDuckGo and others. **Themis ships its own SearXNG**: a standalone Pyt
 pinned SearXNG (`scripts/bundle-searxng.mjs`, about 155 MB installed, 50 MB of the download;
 release builds add it with `tauri build --config tauri.searxng.conf.json`),
 started in the background with the app server on a private `127.0.0.1` port and stopped with
-it (a watchdog stops it too if the app is killed). A run waits at most 3 seconds for it:
+it (a watchdog stops it too within a few seconds if the server is killed, even one killed while
+SearXNG was still starting). A run waits at most 3 seconds for it:
 when it is still starting or never answers, the run begins without `web_search` and a later
 run gets it (`logs/` has `web` / `built_in_search_starting`). Its settings, secret and log are in the
 app-data `searxng/` folder; nothing is installed system-wide. Local debug builds use it too
