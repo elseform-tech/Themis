@@ -1,6 +1,7 @@
 //! Installing the CLI and opening or closing the desktop app.
 
-use super::*;
+#[cfg(target_os = "macos")]
+use std::path::PathBuf;
 
 pub(super) fn install_cli(directory: &std::path::Path) -> Result<(), String> {
     #[cfg(unix)]
