@@ -479,10 +479,14 @@ Each `themis` command is approved for what it does. Reading (`themis plugin
 list`, `status`, `doctor`) never asks. A change (saving, importing or
 installing a skill, plugin, MCP server or hook) asks in **Custom**, and **Allow
 in this chat** covers that same command; **Auto**'s reviewer decides. Removing
-something asks every time. Switching on a hook or an MCP server asks every time
-in **Custom**, and in **Auto** always comes to you, never to the reviewer: hooks
-run outside the sandbox. What the agent saves arrives switched off. **YOLO**
-runs them all (an MCP server still waits for your approval to start). To stop
+something asks every time. **YOLO** runs them all.
+
+Switching on a hook or an MCP server that runs a command is yours alone, in
+every mode, YOLO included: they run outside the sandbox. Whatever the agent
+saves arrives with them switched off, and if it tries to switch one on, through
+its tools or `themis`, Themis refuses and it asks you to switch it on in
+Integrations instead. A server by URL it may switch on; it still waits for your
+approval before it starts. To stop
 the agent using `themis` at all, add a deny rule for shell commands starting
 with `themis` to your `runtime.jsonc`; it holds in YOLO too (see "Approvals for
 `themis` calls" in [configuration](configuration.md)).

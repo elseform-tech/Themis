@@ -260,9 +260,10 @@ write the app-data folder or the project's `.themis/` folder, so an agent cannot
 change its own rules, grants or settings; such a write fails with a short note
 and is never escalated. Commands also cannot read the server's `server.json`, so
 the `themis` CLI in an agent's shell stays limited to what its run credential
-allows. YOLO does not ask before a `themis` call switches on a hook (which runs
-outside the sandbox); a deny rule on shell commands starting with `themis` still
-refuses every one. Under Landlock (Linux without bubblewrap) the project's
+allows. Even in YOLO an agent never switches on a hook or an MCP server that runs a
+command (both run outside the sandbox): the server refuses it, by any tool, command
+or script, and what the agent saves arrives switched off. A deny rule on shell
+commands starting with `themis` refuses every `themis` call. Under Landlock (Linux without bubblewrap) the project's
 `.themis/` cannot be carved out of a writable tree, so there only the file tools
 protect it; the app-data folder stays protected on every backend, and Settings ›
 Permissions suggests installing bubblewrap there. With

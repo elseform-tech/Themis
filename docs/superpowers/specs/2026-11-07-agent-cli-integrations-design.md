@@ -55,7 +55,8 @@ server in every mode, YOLO included.
 - **Test** (Execute risk, because these start code): `mcp test`, `hook test`, `skill verify`.
 - **Change integrations** (through the store):
   - install, update, import or save plugins; add or update MCP servers, hooks and skills;
-  - enable or disable an MCP server or hook (Execute risk, so Custom always asks);
+  - disable an MCP server or hook; switching on a hook or a command-based MCP server is refused
+    in every mode (the person switches it on), one by URL may be switched on (Execute risk);
   - uninstall or remove (Destructive risk, never covered by "Allow in this chat");
   - add or remove marketplace sources (Network risk).
   - New MCP servers and hooks still start switched off.
@@ -116,7 +117,13 @@ definition to a scratch file, apply it with the matching `themis` command), **ve
    starting with `themis` turns it off, YOLO included. Tests: property tests and a fuzz target
    over command lines, approval tests per mode with a scripted reviewer, and a CLI end-to-end
    run through the real app server. See "Approvals for `themis` calls" in
-   `docs/configuration.md`.)
+   `docs/configuration.md`.) **Owner decision 2026-11-07 (option A):** the app server never
+   lets an agent switch on a hook or a command-based MCP server, in any mode, YOLO included,
+   whatever the command, script or request. The store refuses it inside the registry write and
+   keeps new or changed ones off on every agent save, import and install, for the CLI and for
+   `manage_integrations` alike; the per-command argv dialog for agent-saved MCP commands is
+   gone. Connections by URL keep the consent rule. The shell still asks every time before
+   `hook/mcp/plugin enable`, though the server refuses the hook or command-based server anyway.
 3. **Clear inputs on the CLI path.** Complete skill, hook and MCP definitions in `--help` and
    errors; defaults for empty lists (`allowedTools`, `scripts`); one error listing every problem.
    Fix the marketplace name lookup and stop single-plugin `preview` from scanning the whole
