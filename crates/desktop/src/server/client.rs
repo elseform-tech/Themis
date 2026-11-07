@@ -149,18 +149,22 @@ impl Client {
 
     /// Whether a server owns this data directory. One whose port still accepts connections
     /// gets up to `patience` to answer a ping: a busy server is not a missing one, and
-    /// starting a second would take its place.
+    /// starting a second would take its place. A server that refuses the token in
+    /// `server.json` is a definite no: it does not own this folder (a server stops once
+    /// `server.json` stops naming it), so it is not asked again. Tries pause between them.
     pub async fn answers(&self, patience: std::time::Duration) -> bool {
-        let ping = || {
-            tokio::time::timeout(
+        const PAUSE: std::time::Duration = std::time::Duration::from_millis(100);
+        let deadline = tokio::time::Instant::now() + patience;
+        loop {
+            match tokio::time::timeout(
                 std::time::Duration::from_millis(500),
                 self.call("ping", Value::Null),
             )
-        };
-        let deadline = tokio::time::Instant::now() + patience;
-        loop {
-            if ping().await.is_ok_and(|result| result.is_ok()) {
-                return true;
+            .await
+            {
+                Ok(Ok(_)) => return true,
+                Ok(Err(error)) if error == UNAUTHORIZED => return false,
+                _ => {}
             }
             let listening = match self.discovery() {
                 Ok(discovery) => {
@@ -170,9 +174,11 @@ impl Client {
                 }
                 Err(_) => false,
             };
-            if !listening || tokio::time::Instant::now() >= deadline {
+            let now = tokio::time::Instant::now();
+            if !listening || now >= deadline {
                 return false;
             }
+            tokio::time::sleep(PAUSE.min(deadline - now)).await;
         }
     }
 

@@ -33,6 +33,9 @@ pub use commands::dispatch;
 /// How long a server that still accepts connections gets to answer before it counts as gone.
 pub const SERVER_PATIENCE: std::time::Duration = std::time::Duration::from_secs(5);
 
+/// The error a server gives a request whose token is not its own.
+const UNAUTHORIZED: &str = "unauthorized";
+
 #[derive(Serialize, Deserialize)]
 struct Discovery {
     port: u16,
@@ -309,7 +312,7 @@ async fn serve_connection(
             &Response {
                 ok: false,
                 value: Value::Null,
-                error: Some("unauthorized".to_owned()),
+                error: Some(UNAUTHORIZED.to_owned()),
             },
         )
         .await;
@@ -573,5 +576,77 @@ mod patience_tests {
         let started = Instant::now();
         assert!(!client.answers(Duration::from_millis(1500)).await);
         assert!(started.elapsed() >= Duration::from_millis(1500));
+    }
+
+    /// Starts a listener for `server.json` in `data` that handles each connection with
+    /// `reply` and counts the connections it accepts.
+    async fn counting_listener(
+        data: &Path,
+        reply: fn(TcpStream) -> futures_util::future::BoxFuture<'static, ()>,
+    ) -> Arc<std::sync::atomic::AtomicUsize> {
+        let listener = TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))
+            .await
+            .unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let count = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let accepted = Arc::clone(&count);
+        tokio::spawn(async move {
+            while let Ok((stream, _)) = listener.accept().await {
+                accepted.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                tokio::spawn(reply(stream));
+            }
+        });
+        let discovery = Discovery {
+            port,
+            token: "stale".into(),
+        };
+        write_discovery(data, &discovery).unwrap();
+        count
+    }
+
+    #[tokio::test]
+    async fn a_server_that_refuses_the_token_is_not_ours_and_is_not_hammered() {
+        let data = tempfile::tempdir().unwrap();
+        let client = Client::new(data.path().to_path_buf());
+        // Another server holds the port named by a stale `server.json` and answers
+        // `unauthorized`: a definite answer, decided without spinning until the deadline.
+        let connections = counting_listener(data.path(), |mut stream| {
+            Box::pin(async move {
+                if read_frame::<Request>(&mut stream).await.is_ok() {
+                    let refusal = Response {
+                        ok: false,
+                        value: Value::Null,
+                        error: Some(UNAUTHORIZED.to_owned()),
+                    };
+                    let _ = write_frame(&mut stream, &refusal).await;
+                }
+            })
+        })
+        .await;
+        let started = Instant::now();
+        assert!(!client.answers(Duration::from_secs(2)).await);
+        let attempts = connections.load(std::sync::atomic::Ordering::SeqCst);
+        eprintln!(
+            "unauthorized: {attempts} connections in {:?}",
+            started.elapsed()
+        );
+        assert!(started.elapsed() < Duration::from_millis(500));
+        assert!(attempts <= 3, "{attempts} connections to a refusing server");
+    }
+
+    #[tokio::test]
+    async fn a_listener_that_hangs_up_at_once_is_retried_with_pauses() {
+        let data = tempfile::tempdir().unwrap();
+        let client = Client::new(data.path().to_path_buf());
+        // Something that accepts and closes straight away fails every ping fast; the wait
+        // still lasts its patience but pauses between tries.
+        let connections =
+            counting_listener(data.path(), |stream| Box::pin(async move { drop(stream) })).await;
+        let started = Instant::now();
+        assert!(!client.answers(Duration::from_secs(1)).await);
+        let attempts = connections.load(std::sync::atomic::Ordering::SeqCst);
+        eprintln!("hang-up: {attempts} connections in {:?}", started.elapsed());
+        assert!(started.elapsed() >= Duration::from_secs(1));
+        assert!(attempts <= 40, "{attempts} connections in one second");
     }
 }
