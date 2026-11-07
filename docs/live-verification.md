@@ -97,7 +97,7 @@ full tour.
 | `tool:create_dir` | tour | `crates/core/src/tools.rs` | Goal makes the directory. |
 | `tool:search_file` | tour | `crates/core/src/tools.rs` | Goal finds `slug`. |
 | `tool:shell` | tour | `crates/core/src/tools.rs`, `crates/core/src/sandbox.rs` | Goal runs the tests; the approval shows the argv. |
-| `tool:background_task` | tour | `crates/core/src/tools/background.rs` | The server runs in the background, shows in Workspace › Tasks and stops at the end. |
+| `tool:background_task` | tour | `crates/core/src/tools/background/tool.rs` | The server runs in the background, shows in Workspace › Tasks and stops at the end. |
 | `tool:apply_patch` | tour | `crates/core/src/tools/patch.rs` | Goal fixes the test with a patch; Changes shows the diff. |
 | `tool:git` | tour | `crates/core/src/tools.rs` | Goal commits on `tour`; the Changes switcher lists it. |
 | `tool:recall` | tour | `crates/core/src/tools/recall.rs` | After a checkpoint, the first test output comes back exact. |
