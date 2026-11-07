@@ -105,7 +105,18 @@ definition to a scratch file, apply it with the matching `themis` command), **ve
    check stays O(1) per call.
 2. **Risk levels for `themis` subcommands** in the shell's risk check: list/show/doctor are Read,
    test/enable are Execute, delete/uninstall are Destructive. This follows the git read-only rule
-   from #268. Property test over parsed command lines.
+   from #268. Property test over parsed command lines. (Built, per the owner's table of
+   2026-11-07: reads, changes (write or network), tests (execute) and removals (destructive,
+   `plugin marketplace remove` included); switching on a hook, an MCP server or a plugin is asked
+   every time, never covered by a chat grant or a broad allow rule, and in Auto goes to the
+   person, never the reviewer. Only a bare `themis` is lowered; wrappers keep the ordinary risk
+   and the removal and switch-on checks look inside them; unknown integration commands count as
+   switching on. The agent's saves and imports keep new or changed MCP servers and hooks switched
+   off, so an allowed change cannot start code. No new setting: a deny rule for shell commands
+   starting with `themis` turns it off, YOLO included. Tests: property tests and a fuzz target
+   over command lines, approval tests per mode with a scripted reviewer, and a CLI end-to-end
+   run through the real app server. See "Approvals for `themis` calls" in
+   `docs/configuration.md`.)
 3. **Clear inputs on the CLI path.** Complete skill, hook and MCP definitions in `--help` and
    errors; defaults for empty lists (`allowedTools`, `scripts`); one error listing every problem.
    Fix the marketplace name lookup and stop single-plugin `preview` from scanning the whole

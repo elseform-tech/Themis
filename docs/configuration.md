@@ -740,8 +740,9 @@ own permissions (`set_thread_approval_mode`, `save_runtime_configuration`,
 (`set_secret`, `clear_secret`, `set_key`, `remove_key`, `list_keys`,
 `check_go_key`), the terminal, projects, sending to or stopping runs, branch
 and review decisions, the Workspace browser controls, memory edits, event
-subscriptions and `shutdown`. Allowed calls still pass the shell's normal
-approvals: the guard only narrows what an approved `themis` command can do.
+subscriptions and `shutdown`. Allowed calls still pass the shell's approvals, at
+the level [below](#approvals-for-themis-calls): the guard only narrows what an
+approved `themis` command can do.
 Calls without a run credential (your own CLI, the desktop app) are unchanged.
 Each refusal is logged as `server`/`agent_call_refused` with the method name
 (`(other)` for anything that is not a plain method name), the `plugin_action`
@@ -764,6 +765,70 @@ agent command from reading or writing in every mode. Limits:
 - The guard limits the server's methods, not the agent's shell: whatever the
   shell itself can already do (for example run a program you allowed) is
   unchanged.
+
+### Approvals for `themis` calls
+
+A `themis` call in the agent's shell is approved at the level of what it does,
+not as a generic command:
+
+| `themis` command | Risk | Custom | Auto | YOLO |
+| --- | --- | --- | --- | --- |
+| Reads: `status`, `doctor`, `usage`, `models`, `permissions`, `auth status`, `--help`; `plugin list/show/export/updates`; `plugin`/`skill`/`mcp`/`hook inspect`; `plugin marketplace list/browse/preview/changes/check`; `skill list`; `skill`/`mcp`/`hook list/show`; `call` with a reading method from the allowed list | `read` | no prompt (the built-in read rule) | no prompt | runs |
+| Changes through the store: `plugin create/save/edit/disable`, `skill save`, `mcp`/`hook add/update`, `skill enable`, any `disable`, `plugin marketplace enable/disable`, a local `import` | `write` | asks; **Allow in this chat** covers the same command (its full argv) | the reviewer decides | runs |
+| Network: `plugin install/update`, an `import` from an `http(s)` URL or with `--ref`/`--subdirectory`, `plugin marketplace add/refresh` | `network` | as a change | the reviewer decides | runs |
+| Tests that start code: `mcp test`, `hook test`, `skill verify` | `execute` | asks | the reviewer decides | runs |
+| Removals: `plugin delete/uninstall`, `skill`/`mcp`/`hook delete/remove`, `plugin marketplace remove` | `destructive` | asks every time, never covered by **Allow in this chat** | the reviewer decides | runs |
+| Switching on: `hook enable`, `mcp enable`, `plugin enable` (which turns on the hooks the plugin has on), `call plugin_action` with `enable` or `set_component_enabled` turning on a hook or MCP server | `execute` | asks every time, never covered by **Allow in this chat** | always the person, like a sandbox escape: blocked with the question box (`auto-switch-on-reason.md`, `auto-switch-on-safer.md`) and only their **Allow once** lets it run | runs (an MCP server still needs your consent to start) |
+
+Other commands (`server`, `thread`, `chat`, `cli install`, `serve`, `call` with any
+other method, which the server refuses anyway) keep the ordinary `execute` risk.
+Saves and imports through the agent's credential store every MCP server and hook
+that is new or changed **switched off**, whatever the definition says (an
+unchanged one keeps its switch), so a change allowed in the chat can never start
+code; only one of the switch-on calls above turns it on.
+
+How it is read:
+
+- **Only a bare `themis`** (found through the run's `PATH`, whose first folder is the
+  app's own CLI) gets a level below `execute`. A `themis` by path (`./themis`,
+  `/tmp/themis`) is a program like any other.
+- **Wrappers never lower it.** `sh -c "themis …"`, pipelines, `&&` lists,
+  `env X=1 themis …`, `xargs themis …` and `timeout` keep the ordinary command risk;
+  the removal and switch-on checks look inside them (the wrappers listed under deny
+  rules above) and at every later word naming `themis` (`find … -exec themis …`), so a
+  wrapped removal is `destructive` and a wrapped switch-on is asked every time. A
+  wrapped script that cannot be read is `destructive`, and if it mentions `themis` it
+  also counts as switching something on.
+- **Unknown words fail closed.** An integration command (`plugin`, `skill`, `mcp`,
+  `hook`) the CLI does not know, with an unknown option or a missing value, and a
+  `call plugin_action` whose arguments come from stdin (`-`), do not parse, or name an
+  unknown action, count as switching something on. Other unknown commands are `execute`.
+- A broad allow rule (`{"tool":"shell","action":"allow"}`, `"tool":"*"` with a risk)
+  does not cover a switch-on, as it does not cover a destructive variant; a rule naming
+  it does (`{"tool":"shell","command":["themis","hook","enable"],"action":"allow"}`).
+  A chat-grant file naming one is ignored like one naming a destructive command.
+
+Script files and other interpreters (`sh setup.sh`, `python3 -c …`) are not read, as for
+deny rules: they are ordinary `execute` commands, so Custom asks about each and Auto's
+reviewer sees the command.
+
+**Turning it off.** There is no setting. A deny rule for shell commands starting with
+`themis` in your user `runtime.jsonc` refuses every `themis` call in every mode, YOLO
+included, bare, by path or wrapped:
+
+```jsonc
+{
+  "approval": {
+    "rules": [
+      { "tool": "shell", "command": ["themis"], "action": "deny" },
+      // `rules` replaces the built-in list, so keep its read rule (and your own rules).
+      { "tool": "*", "risk": "read", "action": "allow" }
+    ]
+  }
+}
+```
+
+A project's `.themis/config.jsonc` may add the same deny rule.
 
 ## Diagnostics
 

@@ -475,6 +475,18 @@ credential (`server.json` in the app data) out of the agent's reach, so on a
 machine without a usable sandbox this limit does not hold. See
 [configuration](configuration.md) ("The `themis` CLI in the agent's shell").
 
+Each `themis` command is approved for what it does. Reading (`themis plugin
+list`, `status`, `doctor`) never asks. A change (saving, importing or
+installing a skill, plugin, MCP server or hook) asks in **Custom**, and **Allow
+in this chat** covers that same command; **Auto**'s reviewer decides. Removing
+something asks every time. Switching on a hook or an MCP server asks every time
+in **Custom**, and in **Auto** always comes to you, never to the reviewer: hooks
+run outside the sandbox. What the agent saves arrives switched off. **YOLO**
+runs them all (an MCP server still waits for your approval to start). To stop
+the agent using `themis` at all, add a deny rule for shell commands starting
+with `themis` to your `runtime.jsonc`; it holds in YOLO too (see "Approvals for
+`themis` calls" in [configuration](configuration.md)).
+
 When the sandbox blocks a command in **Custom**, a dialog asks **Run outside the
 sandbox?** with **Allow once (1)**, **Allow in this chat (2)** and **Deny (3)**;
 allowing runs the same command again without the sandbox. In **YOLO** nothing is
