@@ -16,7 +16,7 @@
   "crates/core/src/plugins/hooks/runtime.rs": 18,
   "crates/core/src/plugins/marketplace/directory_import.rs": 30,
   "crates/core/src/plugins/package.rs": 22,
-  "crates/core/src/providers.rs": 16,
+  "crates/core/src/providers/chat.rs": 16,
   "crates/core/src/runtime.rs": 99,
   "crates/core/src/runtime/documents.rs": 9,
   "crates/core/src/runtime/pending.rs": 9,
@@ -28,7 +28,9 @@
   "crates/desktop/src/lib.rs": 26,
   "crates/desktop/src/secrets.rs": 20,
   "crates/desktop/src/state/auto_review.rs": 9,
-  "crates/desktop/src/state/automation.rs": 65,
+  "crates/desktop/src/state/automation.rs": 5,
+  "crates/desktop/src/state/automation/crud.rs": 26,
+  "crates/desktop/src/state/automation/watch.rs": 27,
   "crates/desktop/src/state/goal_tool.rs": 8,
   "crates/desktop/src/state/memory_auto.rs": 23,
   "crates/desktop/src/state/question_tool.rs": 8,
@@ -42,7 +44,7 @@
   "web/src/screens/QuestionBox.tsx": 7,
   "web/src/state/reducer.ts": 36
  },
- "duplicate_lines_total": 822,
+ "duplicate_lines_total": 815,
  "files": {
   "crates/core/src/browser/session/devtools.rs": {
    "code_lines": 1445
@@ -55,9 +57,6 @@
   },
   "crates/core/src/plugins/connections.rs": {
    "code_lines": 1389
-  },
-  "crates/core/src/providers.rs": {
-   "code_lines": 1479
   },
   "crates/core/src/providers/tests.rs": {
    "total_lines": 3746
@@ -87,9 +86,6 @@
   "crates/desktop/src/state.rs": {
    "code_lines": 1386,
    "total_lines": 3067
-  },
-  "crates/desktop/src/state/automation.rs": {
-   "code_lines": 1550
   },
   "crates/desktop/src/state/goal.rs": {
    "code_lines": 1351
@@ -390,20 +386,12 @@
   "crates/core/src/plugins/scans.rs::PluginStore::run_marketplace_scan": {
    "cyclomatic": 21
   },
-  "crates/core/src/providers.rs::ChatEventStream::process_payload": {
-   "cyclomatic": 26
-  },
-  "crates/core/src/providers.rs::CompatibleProvider#2::chat_once": {
-   "cyclomatic": 38,
-   "lines": 106
-  },
-  "crates/core/src/providers.rs::CompatibleProvider#3::chat_stream_with_tools": {
+  "crates/core/src/providers/chat.rs::CompatibleProvider#2::chat_stream_with_tools": {
    "cyclomatic": 29
   },
-  "crates/core/src/providers.rs::CompatibleProvider::chat_request": {
-   "cognitive": 59,
-   "cyclomatic": 44,
-   "lines": 138
+  "crates/core/src/providers/chat.rs::CompatibleProvider::chat_once": {
+   "cyclomatic": 38,
+   "lines": 106
   },
   "crates/core/src/providers/gemini.rs::gemini_body": {
    "cyclomatic": 25
@@ -412,8 +400,16 @@
    "cognitive": 40,
    "cyclomatic": 34
   },
+  "crates/core/src/providers/request.rs::CompatibleProvider::chat_request": {
+   "cognitive": 59,
+   "cyclomatic": 44,
+   "lines": 138
+  },
   "crates/core/src/providers/responses.rs::responses_body": {
    "cognitive": 27
+  },
+  "crates/core/src/providers/streaming.rs::ChatEventStream::process_payload": {
+   "cyclomatic": 26
   },
   "crates/core/src/runtime.rs::archive_context": {
    "cyclomatic": 21
@@ -620,13 +616,13 @@
   "crates/desktop/src/state/attachments.rs::project_storage_directory": {
    "cyclomatic": 23
   },
-  "crates/desktop/src/state/automation.rs::AppState::check_automation_input": {
-   "cyclomatic": 35
-  },
   "crates/desktop/src/state/automation.rs::AppState::fire_automation": {
    "lines": 136
   },
-  "crates/desktop/src/state/automation.rs::AppState::get_thread_tasks": {
+  "crates/desktop/src/state/automation/crud.rs::AppState::check_automation_input": {
+   "cyclomatic": 35
+  },
+  "crates/desktop/src/state/automation/crud.rs::AppState::get_thread_tasks": {
    "cyclomatic": 22,
    "lines": 109
   },
