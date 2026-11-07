@@ -5,6 +5,7 @@ Copied from `evals/hard/app.py` (`_cli`, `keep_evidence`) and `evals/budget/exec
 `evals.kit.env.isolated_env`, so no Keychain and no real app data are touched.
 """
 
+import contextlib
 import json
 import os
 import shutil
@@ -37,6 +38,19 @@ def cli(binary, data, env, *args, stdin=None, timeout=120):
     """One CLI command against the data folder `data` (CompletedProcess; never raises on exit)."""
     return subprocess.run([binary, "--data-dir", data, *args], input=stdin, capture_output=True,
                           text=True, env=env, timeout=timeout, check=False)
+
+
+@contextlib.contextmanager
+def app_server(binary, data, env, timeout=120):
+    """`themis server start` for the block, and `server stop` however it ends (Ctrl-C, an error, a
+    failed start that may have left one starting): a server left behind runs until someone stops it."""
+    try:
+        boot = cli(binary, data, env, "server", "start", timeout=timeout)
+        if boot.returncode != 0:
+            sys.exit(f"server start: {boot.stderr.strip()[-300:]}")
+        yield
+    finally:
+        cli(binary, data, env, "server", "stop")
 
 
 def call(binary, data, env, method, args=None, timeout=120):
