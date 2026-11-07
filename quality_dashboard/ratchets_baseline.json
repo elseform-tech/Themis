@@ -61,11 +61,8 @@
   "crates/core/tests/runtime_e2e.rs": {
    "total_lines": 3130
   },
-  "crates/desktop/src/state/goal.rs": {
-   "code_lines": 1351
-  },
   "crates/desktop/src/state/run.rs": {
-   "code_lines": 1198
+   "code_lines": 1030
   },
   "crates/desktop/src/transcript.rs": {
    "code_lines": 1098
