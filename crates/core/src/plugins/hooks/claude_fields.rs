@@ -29,14 +29,15 @@ pub(super) fn patch_paths(patch: &str) -> Vec<String> {
             continue;
         };
         let path = path.split('\t').next().unwrap_or_default().trim();
-        if path.is_empty() || path == "/dev/null" {
-            continue;
-        }
         let path = path
             .strip_prefix("b/")
             .or_else(|| path.strip_prefix("a/"))
-            .unwrap_or(path)
-            .to_owned();
+            .unwrap_or(path);
+        // Checked after the prefix goes, so a bare `a/` or `b/` names no file either.
+        if path.is_empty() || path == "/dev/null" {
+            continue;
+        }
+        let path = path.to_owned();
         if !paths.contains(&path) {
             paths.push(path);
         }
