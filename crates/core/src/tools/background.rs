@@ -184,8 +184,8 @@ pub struct StartSpec {
     pub timeout_secs: u64,
     /// Sandbox the task runs in (the run's captured plan); `None` runs it as is.
     pub sandbox: Option<Arc<crate::sandbox::SandboxPlan>>,
-    /// The `bin` folders of the run's plugins.
-    pub plugin_bins: Vec<PathBuf>,
+    /// The run's plugin `bin` folders and `themis` access.
+    pub extras: super::ChildExtras,
 }
 
 /// Tracks background tasks for every chat of one app server.
@@ -364,7 +364,7 @@ impl BackgroundRegistry {
             &spec.program,
             &spec.args,
             spec.sandbox.as_deref(),
-            &spec.plugin_bins,
+            &spec.extras,
         )
         .map_err(|error| super::spawn_failure(&spec.program, &spec.args, &error))?;
         let mut command = prepared.command();
@@ -375,9 +375,7 @@ impl BackgroundRegistry {
             .stderr(Stdio::piped())
             .env_clear()
             .envs(super::scrubbed_env());
-        if let Some(path) = super::child_path(&spec.plugin_bins) {
-            command.env("PATH", path);
-        }
+        spec.extras.apply(&mut command);
         #[cfg(unix)]
         std::os::unix::process::CommandExt::process_group(&mut command, 0);
         let mut child = command
@@ -565,7 +563,7 @@ mod own_tasks_tests {
                     workdir,
                     timeout_secs: 60,
                     sandbox: None,
-                    plugin_bins: Vec::new(),
+                    extras: Default::default(),
                 })
             })
         };
