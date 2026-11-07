@@ -16,7 +16,7 @@
   "crates/core/src/plugins/hooks/runtime.rs": 18,
   "crates/core/src/plugins/marketplace/directory_import.rs": 30,
   "crates/core/src/plugins/package.rs": 22,
-  "crates/core/src/providers.rs": 16,
+  "crates/core/src/providers/chat.rs": 16,
   "crates/core/src/runtime.rs": 99,
   "crates/core/src/runtime/documents.rs": 9,
   "crates/core/src/runtime/pending.rs": 9,
@@ -57,9 +57,6 @@
   },
   "crates/core/src/plugins/connections.rs": {
    "code_lines": 1389
-  },
-  "crates/core/src/providers.rs": {
-   "code_lines": 1479
   },
   "crates/core/src/providers/tests.rs": {
    "total_lines": 3746
@@ -392,20 +389,12 @@
   "crates/core/src/plugins/scans.rs::PluginStore::run_marketplace_scan": {
    "cyclomatic": 21
   },
-  "crates/core/src/providers.rs::ChatEventStream::process_payload": {
-   "cyclomatic": 26
-  },
-  "crates/core/src/providers.rs::CompatibleProvider#2::chat_once": {
-   "cyclomatic": 38,
-   "lines": 106
-  },
-  "crates/core/src/providers.rs::CompatibleProvider#3::chat_stream_with_tools": {
+  "crates/core/src/providers/chat.rs::CompatibleProvider#2::chat_stream_with_tools": {
    "cyclomatic": 29
   },
-  "crates/core/src/providers.rs::CompatibleProvider::chat_request": {
-   "cognitive": 59,
-   "cyclomatic": 44,
-   "lines": 138
+  "crates/core/src/providers/chat.rs::CompatibleProvider::chat_once": {
+   "cyclomatic": 38,
+   "lines": 106
   },
   "crates/core/src/providers/gemini.rs::gemini_body": {
    "cyclomatic": 25
@@ -414,8 +403,16 @@
    "cognitive": 40,
    "cyclomatic": 34
   },
+  "crates/core/src/providers/request.rs::CompatibleProvider::chat_request": {
+   "cognitive": 59,
+   "cyclomatic": 44,
+   "lines": 138
+  },
   "crates/core/src/providers/responses.rs::responses_body": {
    "cognitive": 27
+  },
+  "crates/core/src/providers/streaming.rs::ChatEventStream::process_payload": {
+   "cyclomatic": 26
   },
   "crates/core/src/runtime.rs::archive_context": {
    "cyclomatic": 21
