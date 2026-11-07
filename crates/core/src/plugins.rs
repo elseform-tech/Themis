@@ -166,6 +166,9 @@ pub struct PluginStore {
     pub project: Option<PathBuf>,
     /// Where personal skills are discovered (`~/.agents/skills` and the rest).
     home: Option<PathBuf>,
+    /// Saves for an agent: MCP servers and hooks that are new or changed are stored switched
+    /// off, so only an explicit switch-on (asked every time) turns them on.
+    agent_saves: bool,
 }
 
 impl PluginStore {
@@ -175,7 +178,16 @@ impl PluginStore {
             project,
             skill_paths: crate::configuration::SkillConfig::default().paths,
             home: crate::sandbox::home_dir(),
+            agent_saves: false,
         }
+    }
+
+    /// With `agent` set, saves and imports store new or changed MCP servers and hooks switched
+    /// off (an agent's `themis` calls; see `crate::tools::themis_cli`).
+    #[must_use]
+    pub fn for_agent(mut self, agent: bool) -> Self {
+        self.agent_saves = agent;
+        self
     }
 
     /// The home folder personal skills are discovered in; `None` discovers none.
@@ -356,6 +368,7 @@ impl PluginStore {
             // Set by a marketplace check, never by what is being saved.
             spec.brand = previous.and_then(|p| p.spec.brand.clone());
             spec.icon_asset = previous.and_then(|p| p.spec.icon_asset.clone());
+            self.keep_new_parts_off(previous, &mut spec);
             if let Some(previous) = previous {
                 for skill in &spec.skills {
                     let Some(old) = previous.spec.skills.iter().find(|old| old.id == skill.id)
@@ -408,6 +421,12 @@ impl PluginStore {
                 .insert(plugin.spec.name.clone(), plugin.clone());
             Ok(plugin)
         })
+    }
+    /// For an agent's shell ([`Self::for_agent`]): new or changed MCP servers and hooks switch off.
+    fn keep_new_parts_off(&self, previous: Option<&Plugin>, spec: &mut PluginSpec) {
+        if self.agent_saves {
+            marketplace::switch_off_new_parts(previous.map(|plugin| &plugin.spec), spec);
+        }
     }
     pub fn set_enabled(&self, scope: &str, name: &str, enabled: bool) -> anyhow::Result<()> {
         let discovered = self

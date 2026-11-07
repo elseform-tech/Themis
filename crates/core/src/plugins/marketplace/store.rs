@@ -498,21 +498,7 @@ impl PluginStore {
             spec.package_hash = Some(package_hash(&spec));
             if let Some(previous) = previous {
                 // Parts that are new or changed arrive turned off, however the old one was set.
-                for (name, server) in &mut spec.mcp {
-                    server.enabled = previous
-                        .spec
-                        .mcp
-                        .get(name)
-                        .is_some_and(|old| old.enabled && same_definition(old, &*server));
-                }
-                for hook in &mut spec.hooks {
-                    hook.enabled = previous
-                        .spec
-                        .hooks
-                        .iter()
-                        .find(|old| old.name == hook.name)
-                        .is_some_and(|old| old.enabled && same_definition(old, &*hook));
-                }
+                switch_off_new_parts(Some(&previous.spec), &mut spec);
                 for id in &previous.spec.disabled_skills {
                     if spec.skills.iter().any(|s| &s.id == id) && !spec.disabled_skills.contains(id)
                     {

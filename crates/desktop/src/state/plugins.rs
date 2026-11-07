@@ -2,6 +2,14 @@ use super::*;
 use serde_json::{json, Value};
 use themis_core::plugins::{AvailableSkill, PluginSpec, PluginStore};
 
+/// Who asked for a plugin action when it was an agent.
+struct AgentCall {
+    /// Command-based MCP connections whose exact command the person approved in a dialog.
+    approved: Vec<(String, Option<String>)>,
+    /// From the agent's shell (`themis`) rather than its integration tools.
+    shell: bool,
+}
+
 impl AppState {
     pub(super) fn plugin_store(&self, project: Option<PathBuf>) -> PluginStore {
         let config = self.runtime_configuration(project.as_deref(), None).ok();
@@ -21,6 +29,12 @@ impl AppState {
                 .unwrap_or(store),
             None => store,
         }
+    }
+    /// [`Self::plugin_store`], saving as the agent's shell does for its calls: new or changed
+    /// MCP servers and hooks are stored switched off.
+    fn plugin_store_for(&self, project: Option<PathBuf>, agent: Option<&AgentCall>) -> PluginStore {
+        self.plugin_store(project)
+            .for_agent(agent.is_some_and(|call| call.shell))
     }
     pub async fn prompt_skills(
         &self,
@@ -63,19 +77,37 @@ impl AppState {
         args: Value,
         approved_servers: Vec<(String, Option<String>)>,
     ) -> Result<Value, String> {
-        self.plugin_action_with(args, Some(approved_servers)).await
+        let call = AgentCall {
+            approved: approved_servers,
+            shell: false,
+        };
+        self.plugin_action_with(args, Some(call)).await
+    }
+
+    /// An agent's plugin action from its shell (`themis`): no consent to start a connection,
+    /// and new or changed MCP servers and hooks are saved switched off. Only an explicit
+    /// switch-on, which the shell's approval asks about every time, turns them on.
+    pub(crate) async fn plugin_action_from_agent_shell(
+        &self,
+        args: Value,
+    ) -> Result<Value, String> {
+        let call = AgentCall {
+            approved: Vec::new(),
+            shell: true,
+        };
+        self.plugin_action_with(args, Some(call)).await
     }
 
     async fn plugin_action_with(
         &self,
         args: Value,
-        agent_approved: Option<Vec<(String, Option<String>)>>,
+        agent_approved: Option<AgentCall>,
     ) -> Result<Value, String> {
         let project = args["projectRoot"]
             .as_str()
             .map(canonical_project_dir)
             .transpose()?;
-        let store = self.plugin_store(project.clone());
+        let store = self.plugin_store_for(project.clone(), agent_approved.as_ref());
         let scope = args["scope"].as_str().unwrap_or("global");
         let name = args["name"].as_str().unwrap_or_default();
         let action = args["action"].as_str().unwrap_or("list");
@@ -421,8 +453,8 @@ impl AppState {
                 name
             };
             match &agent_approved {
-                Some(servers) => {
-                    self.record_mcp_consent(project.as_deref(), scope, plugin_name, servers)
+                Some(call) => {
+                    self.record_mcp_consent(project.as_deref(), scope, plugin_name, &call.approved)
                 }
                 None if matches!(action, "save" | "set_component_enabled" | "enable") => self
                     .record_user_mcp_consent(

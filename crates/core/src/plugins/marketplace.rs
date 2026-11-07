@@ -133,6 +133,20 @@ fn same_definition<T: Serialize>(old: &T, new: &T) -> bool {
     };
     plain(old) == plain(new)
 }
+/// Switches off every MCP server and hook of `spec` that is new or changed since `previous`
+/// (all of them without one); an unchanged part keeps its old switch.
+pub(crate) fn switch_off_new_parts(previous: Option<&PluginSpec>, spec: &mut PluginSpec) {
+    for (name, server) in &mut spec.mcp {
+        server.enabled = previous
+            .and_then(|previous| previous.mcp.get(name))
+            .is_some_and(|old| old.enabled && same_definition(old, &*server));
+    }
+    for hook in &mut spec.hooks {
+        hook.enabled = previous
+            .and_then(|previous| previous.hooks.iter().find(|old| old.name == hook.name))
+            .is_some_and(|old| old.enabled && same_definition(old, &*hook));
+    }
+}
 impl ImportPreview {
     pub fn from_spec(spec: PluginSpec) -> anyhow::Result<Self> {
         validate(&spec)?;

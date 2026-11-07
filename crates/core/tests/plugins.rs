@@ -889,3 +889,67 @@ fn only_a_lone_command_server_collapses_to_the_single_argv_dialog() {
     assert!(sole_mcp_command_save("manage_integrations", &remote).is_none());
     assert!(sole_mcp_command_save("save_skill", &one).is_none());
 }
+
+/// Saves for an agent's shell (`themis`) keep new or changed MCP servers and hooks switched off,
+/// whatever the saved definition says; an unchanged part keeps its switch, and the person's own
+/// saves are unchanged.
+#[test]
+fn agent_saves_keep_new_and_changed_hooks_and_servers_switched_off() {
+    let global = tempfile::tempdir().unwrap();
+    let person = PluginStore::new(global.path().to_path_buf(), None);
+    let agent = person.clone().for_agent(true);
+    let hook = |command: &str| json!({"name":"guard","event":"BeforeTool","command":command,"enabled":true,"timeout_seconds":5});
+    let spec = |command: &str, server: &str| -> PluginSpec {
+        serde_json::from_value(json!({
+            "name": "demo",
+            "hooks": [hook(command)],
+            "mcp": {"docs": {"command": server, "enabled": true}},
+        }))
+        .unwrap()
+    };
+    let switches = |name: &str| {
+        let plugin = person
+            .list()
+            .unwrap()
+            .into_iter()
+            .find(|plugin| plugin.spec.name == name)
+            .unwrap();
+        let server = plugin.spec.mcp.get("docs").is_some_and(|docs| docs.enabled);
+        (plugin.spec.hooks[0].enabled, server, plugin.revision)
+    };
+    // New: off, though the definition asked for on.
+    agent.save("global", spec("echo one", "srv"), None).unwrap();
+    let (hook_on, server_on, _) = switches("demo");
+    assert!(!hook_on && !server_on);
+    // Switched on; the agent saving them unchanged keeps them on.
+    agent
+        .set_component_enabled("global", "demo", "hook", "guard", true)
+        .unwrap();
+    agent
+        .set_component_enabled("global", "demo", "mcp", "docs", true)
+        .unwrap();
+    let (.., revision) = switches("demo");
+    agent
+        .save("global", spec("echo one", "srv"), Some(&revision))
+        .unwrap();
+    let (hook_on, server_on, revision) = switches("demo");
+    assert!(hook_on && server_on, "unchanged parts keep their switch");
+    // Changed: off again.
+    agent
+        .save("global", spec("echo two", "other"), Some(&revision))
+        .unwrap();
+    let (hook_on, server_on, revision) = switches("demo");
+    assert!(!hook_on && !server_on, "changed parts are switched off");
+    // An import goes through the same save.
+    let file = global.path().join("import.json");
+    let imported = json!({"name": "imported", "hooks": [hook("echo x")]});
+    std::fs::write(&file, serde_json::to_vec(&imported).unwrap()).unwrap();
+    agent.import_path("global", &file, None).unwrap();
+    assert!(!switches("imported").0);
+    // The person's own save keeps what they wrote.
+    person
+        .save("global", spec("echo three", "srv"), Some(&revision))
+        .unwrap();
+    let (hook_on, server_on, _) = switches("demo");
+    assert!(hook_on && server_on);
+}
