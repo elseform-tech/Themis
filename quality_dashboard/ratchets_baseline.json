@@ -73,10 +73,6 @@
   "crates/desktop/src/cli.rs": {
    "code_lines": 1016
   },
-  "crates/desktop/src/state.rs": {
-   "code_lines": 1386,
-   "total_lines": 3067
-  },
   "crates/desktop/src/state/goal.rs": {
    "code_lines": 1351
   },
