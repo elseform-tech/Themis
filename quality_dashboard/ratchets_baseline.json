@@ -83,9 +83,6 @@
   "crates/desktop/src/cli.rs": {
    "code_lines": 1016
   },
-  "crates/desktop/src/server.rs": {
-   "code_lines": 1367
-  },
   "crates/desktop/src/state.rs": {
    "code_lines": 1386,
    "total_lines": 3067
@@ -596,14 +593,14 @@
   "crates/desktop/src/doctor.rs::store_checks": {
    "cyclomatic": 21
   },
-  "crates/desktop/src/server.rs::dispatch_command": {
-   "cyclomatic": 173,
-   "lines": 610
-  },
   "crates/desktop/src/server.rs::serve_connection": {
    "cognitive": 27,
    "cyclomatic": 46,
    "lines": 190
+  },
+  "crates/desktop/src/server/commands.rs::dispatch_command": {
+   "cyclomatic": 173,
+   "lines": 610
   },
   "crates/desktop/src/settings.rs::SettingsStore::update": {
    "cognitive": 43,
