@@ -19,14 +19,16 @@ use crate::types::{
 };
 
 pub(crate) const MAX_FRAME: usize = 8 * 1024 * 1024;
-const DISCOVERY_FILE: &str = "server.json";
+const DISCOVERY_FILE: &str = themis_core::agent_cli::DISCOVERY_FILE;
 
 #[cfg(test)]
 mod history_transport_tests;
 
+mod agent;
 mod client;
 mod commands;
 
+pub(crate) use client::in_agent_shell;
 pub use client::Client;
 pub use commands::dispatch;
 
@@ -98,6 +100,8 @@ pub struct Server {
     sink: Arc<dyn EventSink>,
     shutdown: broadcast::Sender<()>,
     data_dir: PathBuf,
+    /// The `themis` an agent's shell finds first on its `PATH`.
+    cli: Option<PathBuf>,
 }
 
 impl Server {
@@ -128,7 +132,15 @@ impl Server {
             sink,
             shutdown,
             data_dir: data_dir.to_path_buf(),
+            cli: agent::own_cli(),
         })
+    }
+
+    /// Gives agents' shells `cli` as their `themis` instead of this executable (tests, whose
+    /// executable is not the CLI).
+    pub fn with_agent_cli(mut self, cli: PathBuf) -> Self {
+        self.cli = Some(cli);
+        self
     }
 
     pub async fn run(self) -> Result<(), String> {
@@ -141,6 +153,15 @@ impl Server {
         stop: impl std::future::Future<Output = ()>,
     ) -> Result<(), String> {
         self.state.log_server_event("started");
+        let port = self
+            .listener
+            .local_addr()
+            .map_err(|err| err.to_string())?
+            .port();
+        let bin_dir = agent::link_cli(&self.data_dir, self.cli.as_deref());
+        let agents = Arc::new(agent::AgentTokens::new(self.token.clone(), port, bin_dir));
+        let issuer: Arc<dyn themis_core::agent_cli::Issuer> = agents.clone();
+        themis_core::agent_cli::install(Arc::clone(&issuer));
         // Samples Themis's own CPU and memory use for the title bar and the log.
         let sampler = self.state.clone();
         let mut sampler_stop = self.shutdown.subscribe();
@@ -193,14 +214,15 @@ impl Server {
                 _ = &mut stop => break,
             };
             let state = self.state.clone();
-            let token = self.token.clone();
+            let agents = Arc::clone(&agents);
             let tx = self.tx.clone();
             let sink = Arc::clone(&self.sink);
             let shutdown = self.shutdown.clone();
             tokio::spawn(async move {
-                let _ = serve_connection(stream, state, token, tx, sink, shutdown).await;
+                let _ = serve_connection(stream, state, agents, tx, sink, shutdown).await;
             });
         }
+        themis_core::agent_cli::uninstall(&issuer);
         // Open plugin hook sessions end here, within a short budget.
         self.state.end_all_hook_sessions().await;
         // Background programs belong to this server: stop them with it.
@@ -262,22 +284,15 @@ impl Termination {
 async fn serve_connection(
     mut stream: TcpStream,
     state: AppState,
-    token: String,
+    agents: Arc<agent::AgentTokens>,
     tx: broadcast::Sender<Value>,
     sink: Arc<dyn EventSink>,
     shutdown: broadcast::Sender<()>,
 ) -> Result<(), String> {
     let request: Request = read_frame(&mut stream).await?;
-    if request.token != token {
-        return write_frame(
-            &mut stream,
-            &Response {
-                ok: false,
-                value: Value::Null,
-                error: Some("unauthorized".to_owned()),
-            },
-        )
-        .await;
+    // Unknown credentials and agents' calls end here; the person's go on.
+    if let Some(screened) = agent::screen(&mut stream, &state, &sink, &agents, &request).await {
+        return screened;
     }
     if request.method == "shutdown" {
         write_frame(
@@ -424,30 +439,41 @@ async fn serve_connection(
             }
         }
     }
-    let reply = match dispatch(&state, sink, &request.method, request.args).await {
+    let result = dispatch(&state, sink, &request.method, request.args).await;
+    if let Err(error) = &result {
+        state.record_error(&request.method, error.clone());
+    }
+    reply(&mut stream, &state, &request.method, result).await
+}
+
+/// Writes one call's answer, within the frame limit.
+async fn reply(
+    stream: &mut TcpStream,
+    state: &AppState,
+    method: &str,
+    result: Result<Value, String>,
+) -> Result<(), String> {
+    let reply = match result {
         Ok(value) => Response {
             ok: true,
             value,
             error: None,
         },
-        Err(error) => {
-            state.record_error(&request.method, error.clone());
-            Response {
-                ok: false,
-                value: Value::Null,
-                error: Some(error),
-            }
-        }
+        Err(error) => Response {
+            ok: false,
+            value: Value::Null,
+            error: Some(error),
+        },
     };
     let bytes = serde_json::to_vec(&reply).map_err(|err| err.to_string())?;
     if bytes.len() > MAX_FRAME {
-        state.record_error(&request.method, "server response exceeds size limit".into());
-        return write_frame(&mut stream, &Response {
+        state.record_error(method, "server response exceeds size limit".into());
+        return write_frame(stream, &Response {
             ok: false, value: Value::Null,
             error: Some("Server response exceeds 8 MiB; use a bounded or paged API (get_thread_history_page for history)".into()),
         }).await;
     }
-    write_bytes(&mut stream, &bytes).await
+    write_bytes(stream, &bytes).await
 }
 
 async fn write_frame<T: Serialize>(stream: &mut TcpStream, value: &T) -> Result<(), String> {

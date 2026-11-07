@@ -24,6 +24,8 @@ impl AppState {
         self.touch_hook_session(thread_id);
         self.close_steer_inbox(thread_id);
         self.stop_subagents(thread_id);
+        // The run's `themis` credential (and its subagents') ends with it.
+        themis_core::agent_cli::revoke_thread(thread_id);
         // A recording the agent left running ends with its run, and so do its breakpoints,
         // request blocks and throttling.
         self.stop_agent_recording(thread_id).await;

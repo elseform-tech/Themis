@@ -276,6 +276,7 @@ const ALL: &[(&str, &str, &[&str])] = &[
         &["reason"],
     ),
     (TOOL_SANDBOX_BLOCKED, "tool-sandbox-blocked", &["reason"]),
+    (AGENT_CLI_REFUSED, "agent-cli-refused", &["method"]),
     (TOOL_SANDBOX_NOTE, "tool-sandbox-note", &[]),
     (
         TOOL_SANDBOX_BLOCKED_PARTLY,

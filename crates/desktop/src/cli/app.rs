@@ -63,7 +63,17 @@ pub(super) fn local_app_bundle() -> Option<PathBuf> {
         })
 }
 
+/// Opening or closing the app is the person's: an agent's shell is refused (the server also refuses
+/// its `shutdown`).
+fn refuse_in_agent_shell(action: &str) -> Result<(), String> {
+    if crate::server::in_agent_shell() {
+        return Err(format!("an agent's shell cannot {action} the Themis app"));
+    }
+    Ok(())
+}
+
 pub(super) fn launch_app() -> Result<(), String> {
+    refuse_in_agent_shell("open")?;
     #[cfg(target_os = "macos")]
     let status = {
         let mut command = std::process::Command::new("open");
@@ -86,6 +96,7 @@ pub(super) fn launch_app() -> Result<(), String> {
 }
 
 pub(super) fn quit_app() -> Result<(), String> {
+    refuse_in_agent_shell("quit")?;
     #[cfg(target_os = "macos")]
     let status = std::process::Command::new("osascript")
         .args([

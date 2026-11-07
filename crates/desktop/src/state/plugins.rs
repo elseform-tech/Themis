@@ -58,7 +58,7 @@ impl AppState {
     /// An agent's plugin action. `approved_servers` are the command-based MCP
     /// connections whose exact command the person approved in a dialog; no
     /// other definition gains consent from an agent's change.
-    pub(super) async fn plugin_action_for_agent(
+    pub(crate) async fn plugin_action_for_agent(
         &self,
         args: Value,
         approved_servers: Vec<(String, Option<String>)>,

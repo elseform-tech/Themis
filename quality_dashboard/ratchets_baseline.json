@@ -537,9 +537,9 @@
    "cyclomatic": 21
   },
   "crates/desktop/src/server.rs::serve_connection": {
-   "cognitive": 27,
-   "cyclomatic": 46,
-   "lines": 190
+   "cognitive": 26,
+   "cyclomatic": 42,
+   "lines": 164
   },
   "crates/desktop/src/server/commands.rs::dispatch_command": {
    "cyclomatic": 173,

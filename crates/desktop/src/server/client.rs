@@ -177,6 +177,9 @@ impl Client {
     }
 
     fn discovery(&self) -> Result<Discovery, String> {
+        if let Some(agent) = agent_discovery() {
+            return agent;
+        }
         let text = std::fs::read_to_string(self.data_dir.join(DISCOVERY_FILE))
             .map_err(|err| format!("local server is unavailable: {err}"))?;
         serde_json::from_str(&text).map_err(|err| format!("invalid server discovery file: {err}"))
@@ -189,4 +192,24 @@ impl Client {
             .map_err(|err| format!("cannot connect to local server: {err}"))?;
         Ok((stream, discovery))
     }
+}
+
+/// In an agent's shell: its run's credential and the server's port, instead of the discovery file
+/// (which the sandbox hides). `None` outside one.
+fn agent_discovery() -> Option<Result<Discovery, String>> {
+    let token = std::env::var(themis_core::agent_cli::TOKEN_ENV).ok()?;
+    let port = std::env::var(themis_core::agent_cli::PORT_ENV).unwrap_or_default();
+    Some(match port.parse::<u16>() {
+        Ok(port) if port > 0 && !token.is_empty() => Ok(Discovery { port, token }),
+        _ => Err(format!(
+            "{} needs {} to name the app server's port",
+            themis_core::agent_cli::TOKEN_ENV,
+            themis_core::agent_cli::PORT_ENV
+        )),
+    })
+}
+
+/// Whether this process runs in an agent's shell (its calls carry the run's credential).
+pub(crate) fn in_agent_shell() -> bool {
+    std::env::var_os(themis_core::agent_cli::TOKEN_ENV).is_some()
 }

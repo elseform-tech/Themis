@@ -420,6 +420,8 @@ pub const TOOL_BROWSER_UNTRUSTED: &str =
     include_str!("../builtins/prompts/tool-browser-untrusted.md");
 /// Note when DevTools paused the page in the debugger.
 pub const TOOL_DEVTOOLS_PAUSED: &str = include_str!("../builtins/prompts/tool-devtools-paused.md");
+/// The app server's answer to a call from an agent's shell it refuses; `{{method}}`.
+pub const AGENT_CLI_REFUSED: &str = include_str!("../builtins/prompts/agent-cli-refused.md");
 /// `next` hint after starting a background task.
 pub const TOOL_BACKGROUND_NEXT: &str = include_str!("../builtins/prompts/tool-background-next.md");
 
