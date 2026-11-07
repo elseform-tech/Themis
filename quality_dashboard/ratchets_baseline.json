@@ -47,21 +47,12 @@
  },
  "duplicate_lines_total": 797,
  "files": {
-  "crates/core/src/providers/tests.rs": {
-   "total_lines": 3746
-  },
   "crates/core/src/runtime.rs": {
    "code_lines": 1948,
    "total_lines": 2025
   },
-  "crates/core/tests/runtime_e2e.rs": {
-   "total_lines": 3130
-  },
   "crates/desktop/src/state/run.rs": {
    "code_lines": 1030
-  },
-  "crates/desktop/tests/attachments_e2e.rs": {
-   "total_lines": 2633
   },
   "crates/desktop/tests/plugin_hooks_cli_e2e.rs": {
    "total_lines": 2670
