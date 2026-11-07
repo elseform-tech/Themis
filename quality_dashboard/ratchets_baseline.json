@@ -51,9 +51,6 @@
    "code_lines": 1948,
    "total_lines": 2025
   },
-  "crates/core/tests/browser_e2e.rs": {
-   "total_lines": 2461
-  },
   "crates/desktop/src/state/run.rs": {
    "code_lines": 1030
   },
