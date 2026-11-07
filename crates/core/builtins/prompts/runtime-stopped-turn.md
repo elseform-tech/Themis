@@ -1,0 +1,1 @@
+[The person stopped this reply before it finished. Treat the request above as set aside: don't redo or resume it unless they ask. Work completed before the stop stays as it is.]

@@ -297,6 +297,8 @@ pub const RUNTIME_REPEAT_NOTE: &str = include_str!("../builtins/prompts/runtime-
 /// Note on a result identical to one still in context; `{{earlier_id}}`.
 pub const RUNTIME_REPEAT_IN_CONTEXT: &str =
     include_str!("../builtins/prompts/runtime-repeat-in-context.md");
+/// Stands in the conversation for a reply the person stopped, so a later turn does not redo it.
+pub const RUNTIME_STOPPED_TURN: &str = include_str!("../builtins/prompts/runtime-stopped-turn.md");
 /// Request for a closing answer when a run reaches its turn limit.
 pub const RUNTIME_HANDOFF: &str = include_str!("../builtins/prompts/runtime-handoff.md");
 /// Header before a message the user sent while the agent was working.
