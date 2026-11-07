@@ -35,7 +35,9 @@
   "crates/desktop/src/state/question_tool.rs": 8,
   "crates/desktop/src/state/questions.rs": 19,
   "crates/desktop/src/state/queue.rs": 19,
-  "crates/desktop/src/transcript.rs": 25,
+  "crates/desktop/src/transcript.rs": 9,
+  "crates/desktop/src/transcript/diagnostics.rs": 9,
+  "crates/desktop/src/transcript/request_context.rs": 7,
   "crates/desktop/src/transcript/source_exports.rs": 7,
   "crates/desktop/src/types/automations.rs": 20,
   "web/src/components/approval/ApprovalBox.tsx": 7,
@@ -66,9 +68,6 @@
   },
   "crates/desktop/src/state/run.rs": {
    "code_lines": 1030
-  },
-  "crates/desktop/src/transcript.rs": {
-   "code_lines": 1098
   },
   "crates/desktop/tests/attachments_e2e.rs": {
    "total_lines": 2633
@@ -701,26 +700,26 @@
   "crates/desktop/src/transcript.rs::TranscriptStore::append": {
    "cyclomatic": 21
   },
-  "crates/desktop/src/transcript.rs::TranscriptStore::context": {
-   "cyclomatic": 40
-  },
-  "crates/desktop/src/transcript.rs::TranscriptStore::context_for_request": {
-   "cyclomatic": 51,
-   "lines": 129
-  },
   "crates/desktop/src/transcript.rs::TranscriptStore::import_legacy": {
    "cyclomatic": 23
   },
   "crates/desktop/src/transcript.rs::TranscriptStore::open": {
    "cyclomatic": 38
   },
-  "crates/desktop/src/transcript.rs::session_checks": {
+  "crates/desktop/src/transcript/diagnostics.rs::session_checks": {
    "cognitive": 51,
    "cyclomatic": 76,
    "lines": 175
   },
   "crates/desktop/src/transcript/history_pages.rs::TranscriptStore::history_page": {
    "cyclomatic": 35
+  },
+  "crates/desktop/src/transcript/request_context.rs::TranscriptStore::context": {
+   "cyclomatic": 40
+  },
+  "crates/desktop/src/transcript/request_context.rs::TranscriptStore::context_for_request": {
+   "cyclomatic": 51,
+   "lines": 129
   },
   "crates/desktop/src/transcript/source_exports.rs::TranscriptStore::publish_context_sources": {
    "cyclomatic": 35
