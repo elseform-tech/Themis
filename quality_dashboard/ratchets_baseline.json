@@ -20,9 +20,8 @@
   "crates/core/src/runtime.rs": 99,
   "crates/core/src/runtime/documents.rs": 9,
   "crates/core/src/runtime/pending.rs": 9,
-  "crates/core/src/tools/background.rs": 9,
   "crates/core/src/tools/gated.rs": 27,
-  "crates/core/src/tools/recall.rs": 35,
+  "crates/core/src/tools/recall/records.rs": 26,
   "crates/core/src/tools/shell_scope.rs": 17,
   "crates/desktop/src/approvals.rs": 12,
   "crates/desktop/src/lib.rs": 26,
@@ -44,7 +43,7 @@
   "web/src/screens/QuestionBox.tsx": 7,
   "web/src/state/reducer.ts": 36
  },
- "duplicate_lines_total": 815,
+ "duplicate_lines_total": 797,
  "files": {
   "crates/core/src/browser/session/devtools.rs": {
    "code_lines": 1445
@@ -70,9 +69,6 @@
   },
   "crates/core/src/tools/background.rs": {
    "code_lines": 1126
-  },
-  "crates/core/src/tools/recall.rs": {
-   "code_lines": 1428
   },
   "crates/core/tests/browser_e2e.rs": {
    "total_lines": 2461
@@ -517,15 +513,15 @@
    "cyclomatic": 28,
    "lines": 110
   },
-  "crates/core/src/tools/recall.rs::best_windows": {
-   "cognitive": 27
-  },
-  "crates/core/src/tools/recall.rs::scan_text": {
-   "cognitive": 32,
-   "cyclomatic": 24
-  },
   "crates/core/src/tools/recall.rs::search": {
    "lines": 107
+  },
+  "crates/core/src/tools/recall/matching.rs::best_windows": {
+   "cognitive": 27
+  },
+  "crates/core/src/tools/recall/matching.rs::scan_text": {
+   "cognitive": 32,
+   "cyclomatic": 24
   },
   "crates/core/src/tools/runner.rs::run_command_blocking": {
    "cyclomatic": 22
