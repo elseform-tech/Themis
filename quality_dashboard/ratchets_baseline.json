@@ -77,9 +77,6 @@
    "code_lines": 1386,
    "total_lines": 3067
   },
-  "crates/desktop/src/state/goal.rs": {
-   "code_lines": 1351
-  },
   "crates/desktop/src/state/memory_auto.rs": {
    "code_lines": 1331
   },
