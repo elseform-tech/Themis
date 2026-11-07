@@ -289,11 +289,12 @@ impl ToolAction {
     }
 
     /// Whether a chat grant may cover this action. Destructive actions (the
-    /// `Destructive` risk class and [`is_destructive_variant`] commands) are
-    /// asked about every time and are never stored or matched by a grant.
+    /// `Destructive` risk class and [`is_destructive_variant`] commands) and
+    /// `themis` calls that switch on a hook or an MCP server ([`asks_every_time`])
+    /// are asked about every time and are never stored or matched by a grant.
     pub fn grantable(&self) -> bool {
         self.risk != RiskLevel::Destructive
-            && !is_destructive_variant(&self.command)
+            && !asks_every_time(&self.command)
             && self.tool != MCP_COMMAND_APPROVAL_TOOL
     }
 
@@ -304,7 +305,7 @@ impl ToolAction {
             && SUBCOMMAND_PROGRAMS.contains(&self.command[0].as_str())
             && !self.command[1].starts_with('-')
             && (self.tool == "git" || !EXEC_SUBCOMMANDS.contains(&self.command[1].as_str()))
-            && !is_destructive_variant(&self.command);
+            && !asks_every_time(&self.command);
         if scoped {
             (&self.command[..2], true)
         } else {

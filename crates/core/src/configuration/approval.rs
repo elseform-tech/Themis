@@ -143,20 +143,21 @@ pub(super) fn rule_matches(rule: &ApprovalRule, action: &ToolAction) -> bool {
         && match rule.command.as_ref() {
             // A broad allow without `command` is trust in the tool,
             // not in its destructive variants (`git push --force`,
-            // `rm -rf`): those need a rule that names them or an
-            // explicit `"risk": "destructive"`.
+            // `rm -rf`) or in switching on a hook (`themis hook enable`):
+            // those need a rule that names them (destructive ones also an
+            // explicit `"risk": "destructive"`).
             None => {
                 rule.action != PolicyAction::Allow
                     || rule.risk.as_deref() == Some("destructive")
-                    || !is_destructive_variant(&action.command)
+                    || !asks_every_time(&action.command)
             }
             Some(prefix) => {
                 // A broad allow (`["git","push"]`) must not silently cover
                 // a destructive variant (`git push --force`) unless the
                 // rule itself names that variant.
                 let covers_variant = rule.action != PolicyAction::Allow
-                    || !is_destructive_variant(&action.command)
-                    || is_destructive_variant(prefix);
+                    || !asks_every_time(&action.command)
+                    || asks_every_time(prefix);
                 // Deny rules also see commands inside wrappers, so
                 // `sh -c "git push --force"` is denied by `["git","push","--force"]`.
                 covers_variant

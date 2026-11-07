@@ -28,6 +28,7 @@ pub mod sensitive;
 mod shell;
 pub mod shell_scope;
 pub mod site_permissions;
+pub mod themis_cli;
 pub mod web;
 mod wrapped;
 

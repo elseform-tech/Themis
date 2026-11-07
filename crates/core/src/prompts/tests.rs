@@ -86,6 +86,8 @@ const ALL: &[(&str, &str, &[&str])] = &[
         &["action", "reason"],
     ),
     (AUTO_HARD_BLOCK, "auto-hard-block", &["reason", "safer"]),
+    (AUTO_SWITCH_ON_REASON, "auto-switch-on-reason", &[]),
+    (AUTO_SWITCH_ON_SAFER, "auto-switch-on-safer", &[]),
     (PROJECT_GUIDANCE_DOCS, "project-guidance-docs", &["docs"]),
     (GOAL_CONTEXT_OVER, "goal-context-over", &[]),
     (GOAL_CONTEXT_PAUSED, "goal-context-paused", &["goal"]),

@@ -149,8 +149,8 @@ impl GrantEntry {
                     return Err("command grant needs a command");
                 }
                 // A stored command must stay exactly as safe as a live grant.
-                if crate::tools::is_destructive_variant(&self.command) {
-                    return Err("destructive command");
+                if crate::tools::asks_every_time(&self.command) {
+                    return Err("command asked every time");
                 }
             }
             (None, crate::tools::sensitive::SENSITIVE_TOOL) => {

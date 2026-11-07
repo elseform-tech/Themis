@@ -1,0 +1,1 @@
+switching on a hook, an MCP server or a plugin through `themis` lets code run outside the sandbox, so only the user may allow it

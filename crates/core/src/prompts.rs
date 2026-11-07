@@ -211,6 +211,12 @@ pub const AUTO_BLOCKED_QUESTION: &str =
 pub const AUTO_SOFT_BLOCK: &str = include_str!("../builtins/prompts/auto-soft-block.md");
 /// Tool result note when Auto mode's reviewer hard-blocks an action.
 pub const AUTO_HARD_BLOCK: &str = include_str!("../builtins/prompts/auto-hard-block.md");
+/// Auto mode's reason for asking the person, not its reviewer, about a `themis` call that
+/// switches on a hook, an MCP server or a plugin (`{{reason}}` of [`AUTO_HARD_BLOCK`]).
+pub const AUTO_SWITCH_ON_REASON: &str =
+    include_str!("../builtins/prompts/auto-switch-on-reason.md");
+/// The safer way offered with [`AUTO_SWITCH_ON_REASON`] (`{{safer}}` of [`AUTO_HARD_BLOCK`]).
+pub const AUTO_SWITCH_ON_SAFER: &str = include_str!("../builtins/prompts/auto-switch-on-safer.md");
 /// Description of the `search_memory` tool.
 pub const SEARCH_MEMORY_TOOL: &str = include_str!("../builtins/prompts/tool-search-memory.md");
 /// Description of the `create_goal` tool.
