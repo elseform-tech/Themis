@@ -149,8 +149,8 @@ impl GrantEntry {
                     return Err("command grant needs a command");
                 }
                 // A stored command must stay exactly as safe as a live grant.
-                if crate::tools::is_destructive_variant(&self.command) {
-                    return Err("destructive command");
+                if crate::tools::asks_every_time(&self.command) {
+                    return Err("command asked every time");
                 }
             }
             (None, crate::tools::sensitive::SENSITIVE_TOOL) => {
@@ -477,17 +477,6 @@ mod tests {
             risk: "execute".into(),
         };
         assert!(forged.validate().is_err());
-    }
-
-    #[test]
-    fn enabling_a_command_mcp_server_is_never_grantable() {
-        let mut action = shell(&["sh", "-c", "exit 0"]);
-        action.command.clear();
-        action.tool = crate::tools::MCP_COMMAND_APPROVAL_TOOL.into();
-        assert!(!action.grantable());
-        let grants = ChatGrants::in_memory();
-        assert!(!grants.remember(&action));
-        assert!(!grants.covers(&action));
     }
 
     #[test]

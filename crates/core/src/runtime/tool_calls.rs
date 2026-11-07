@@ -429,32 +429,11 @@ pub(super) async fn execute_call(
     let (decision, review_note) = if self_approving {
         (Approval::AllowOnce, None)
     } else {
-        // Saving one command-based MCP server is approved once, by the dialog
-        // that shows its exact argv and cannot be remembered for the chat.
-        let mcp_command = crate::tools::sole_mcp_command_save(name, &approval_args);
         let action = ToolAction {
-            display: match &mcp_command {
-                Some((_, argv)) => Some(crate::tools::CommandDisplay {
-                    argv: argv.clone(),
-                    cwd: None,
-                    background: false,
-                    sandbox_blocked: None,
-                }),
-                None => crate::tools::command_display_for_call(name, &approval_args),
-            },
-            tool: if mcp_command.is_some() {
-                crate::tools::MCP_COMMAND_APPROVAL_TOOL.to_owned()
-            } else {
-                crate::tools::integration_approval_identity(name, &approval_args)
-            },
-            summary: if mcp_command.is_some() {
-                "Enable a command-based MCP connection".to_owned()
-            } else {
-                summary.to_owned()
-            },
-            risk: if mcp_command.is_some() {
-                RiskLevel::Execute
-            } else if name == "shell" {
+            display: crate::tools::command_display_for_call(name, &approval_args),
+            tool: crate::tools::integration_approval_identity(name, &approval_args),
+            summary: summary.to_owned(),
+            risk: if name == "shell" {
                 // Destructive variants (`git push --force`, `rm -rf`, ...) carry
                 // the destructive risk class, as the git tool's do.
                 crate::tools::shell_risk(&crate::tools::shell_argv(&approval_args))

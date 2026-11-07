@@ -1,5 +1,8 @@
 use super::*;
 
+/// The safer way Auto offers when it stops at a gate only a person may open.
+const SAFER_INSIDE: &str = "stay inside the sandbox and the project's ordinary files";
+
 struct ConfiguredHook {
     mode: ApprovalMode,
     policy: ApprovalPolicy,
@@ -77,7 +80,11 @@ impl ApprovalHook for ConfiguredHook {
             ..action.clone()
         };
         if self.mode == ApprovalMode::Auto {
-            return self.person_only(&asked, "a sensitive file (secrets or keys) needs the user");
+            return self.person_only(
+                &asked,
+                "a sensitive file (secrets or keys) needs the user",
+                SAFER_INSIDE,
+            );
         }
         match self.interactive.approve_sensitive(&asked, access) {
             Approval::AllowAlways => {
@@ -155,7 +162,7 @@ impl ConfiguredHook {
     /// Auto at a gate only a person may open (running outside the sandbox, sensitive files):
     /// the reviewer model never decides. The person's "Allow once" for this exact action lets
     /// it run; otherwise it is blocked and the person is asked in a question box.
-    fn person_only(&self, action: &ToolAction, reason: &str) -> Approval {
+    fn person_only(&self, action: &ToolAction, reason: &str, safer: &str) -> Approval {
         if self
             .reviewer
             .as_ref()
@@ -169,7 +176,6 @@ impl ConfiguredHook {
             "info",
             serde_json::json!({"tool": action.tool, "verdict": "person_only"}),
         );
-        let safer = "stay inside the sandbox and the project's ordinary files";
         if let Some(reviewer) = &self.reviewer {
             reviewer.blocked(action, reason, safer);
         }
@@ -188,6 +194,17 @@ impl ConfiguredHook {
     /// the agent with its reason and a safer way; the third on the same target, a hard block or
     /// no verdict also asks the person in a question box, while the run goes on.
     fn auto(&self, action: &ToolAction) -> Approval {
+        // Switching on a hook or an MCP server through `themis` lets code run outside the
+        // sandbox: like leaving it, never the model's to allow.
+        if crate::tools::is_command_tool(&action.tool)
+            && crate::tools::themis_cli::switches_on_code(&action.command)
+        {
+            return self.person_only(
+                action,
+                crate::prompts::AUTO_SWITCH_ON_REASON,
+                crate::prompts::AUTO_SWITCH_ON_SAFER,
+            );
+        }
         let verdict = match &self.reviewer {
             Some(reviewer) => reviewer.review(action),
             None => crate::tools::AutoVerdict::Unavailable,
@@ -259,7 +276,11 @@ impl ConfiguredHook {
             return Approval::AllowOnce;
         }
         if self.mode == ApprovalMode::Auto {
-            return self.person_only(action, "running outside the sandbox needs the user");
+            return self.person_only(
+                action,
+                "running outside the sandbox needs the user",
+                SAFER_INSIDE,
+            );
         }
         match self.interactive.approve(action) {
             Approval::AllowAlways => {

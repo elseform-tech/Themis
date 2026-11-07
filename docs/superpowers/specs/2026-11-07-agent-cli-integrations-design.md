@@ -55,7 +55,8 @@ server in every mode, YOLO included.
 - **Test** (Execute risk, because these start code): `mcp test`, `hook test`, `skill verify`.
 - **Change integrations** (through the store):
   - install, update, import or save plugins; add or update MCP servers, hooks and skills;
-  - enable or disable an MCP server or hook (Execute risk, so Custom always asks);
+  - disable an MCP server or hook; switching on a hook or a command-based MCP server is refused
+    in every mode (the person switches it on), one by URL may be switched on (Execute risk);
   - uninstall or remove (Destructive risk, never covered by "Allow in this chat");
   - add or remove marketplace sources (Network risk).
   - New MCP servers and hooks still start switched off.
@@ -105,7 +106,24 @@ definition to a scratch file, apply it with the matching `themis` command), **ve
    check stays O(1) per call.
 2. **Risk levels for `themis` subcommands** in the shell's risk check: list/show/doctor are Read,
    test/enable are Execute, delete/uninstall are Destructive. This follows the git read-only rule
-   from #268. Property test over parsed command lines.
+   from #268. Property test over parsed command lines. (Built, per the owner's table of
+   2026-11-07: reads, changes (write or network), tests (execute) and removals (destructive,
+   `plugin marketplace remove` included); switching on a hook, an MCP server or a plugin is asked
+   every time, never covered by a chat grant or a broad allow rule, and in Auto goes to the
+   person, never the reviewer. Only a bare `themis` is lowered; wrappers keep the ordinary risk
+   and the removal and switch-on checks look inside them; unknown integration commands count as
+   switching on. The agent's saves and imports keep new or changed MCP servers and hooks switched
+   off, so an allowed change cannot start code. No new setting: a deny rule for shell commands
+   starting with `themis` turns it off, YOLO included. Tests: property tests and a fuzz target
+   over command lines, approval tests per mode with a scripted reviewer, and a CLI end-to-end
+   run through the real app server. See "Approvals for `themis` calls" in
+   `docs/configuration.md`.) **Owner decision 2026-11-07 (option A):** the app server never
+   lets an agent switch on a hook or a command-based MCP server, in any mode, YOLO included,
+   whatever the command, script or request. The store refuses it inside the registry write and
+   keeps new or changed ones off on every agent save, import and install, for the CLI and for
+   `manage_integrations` alike; the per-command argv dialog for agent-saved MCP commands is
+   gone. Connections by URL keep the consent rule. The shell still asks every time before
+   `hook/mcp/plugin enable`, though the server refuses the hook or command-based server anyway.
 3. **Clear inputs on the CLI path.** Complete skill, hook and MCP definitions in `--help` and
    errors; defaults for empty lists (`allowedTools`, `scripts`); one error listing every problem.
    Fix the marketplace name lookup and stop single-plugin `preview` from scanning the whole
@@ -123,15 +141,30 @@ definition to a scratch file, apply it with the matching `themis` command), **ve
    JSON with `--json`, and logs metadata only. The guides' verify step uses it after every change,
    and it is in the A/B rerun.
 5. **Guides rewritten** around find, change, verify, with resolved paths. `/hooks` uses
-   `themis hook …`.
+   `themis hook …`. A tool advertises itself in every request and a CLI does not, so the agent
+   also needs a reminder once the old tools go (decided 2026-11-07): one short system-prompt line
+   for the main agent (plugins, skills, MCP servers and hooks are managed with `themis` in the
+   shell; the `plugins`, `skills`, `mcp` and `hooks` guides show how) and one for subagents (they
+   may inspect integrations with read-only `themis`; changes are the main agent's). Both are
+   prompt files, verified in the constructed system message.
 6. **A/B rerun of the 2026-11-07 test**: the old tools against the CLI path, same tasks and model.
    Score failed calls, false claims, and whether the store ended up right. Label it as a benchmark
-   audit.
+   audit. It must include requests that never mention `themis` (for example "add an MCP server for
+   X"), where the agent has to find the CLI unprompted, and a delegated task ("find out why this MCP
+   server fails") that a subagent answers with read-only `themis`.
 7. **If the CLI path is equal or better, remove `manage_integrations`, `list_plugins` and
    `save_skill` outright** (no aliases), with docs and live-check rows updated in the same PR.
 
 Each step gets the configuration and visibility it needs per `AGENTS.md`, a live-check row, and a
 real-app check before it is called done.
+
+## Related, separate PR: `/subagents`
+
+People find features in the composer's `/` menu, and nothing there says subagents exist. A
+built-in `/subagents` skill, like `/hooks`: on its own it lists what is available (the built-in
+subagent and plugins' subagent profiles, each read-only or with its write paths, its model, and the
+Settings › Subagents limits) with one example request; `/subagents <task>` hands that task to
+subagents. Its own PR, after steps 1 and 2.
 
 ## Separate question, not part of this plan
 

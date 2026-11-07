@@ -153,3 +153,10 @@ path = "fuzz_targets/subagent_profile.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "themis_cli"
+path = "fuzz_targets/themis_cli.rs"
+test = false
+doc = false
+bench = false

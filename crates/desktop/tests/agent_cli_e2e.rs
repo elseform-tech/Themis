@@ -393,8 +393,14 @@ async fn a_runs_shell_uses_the_apps_themis_and_its_credential_ends_with_the_run(
         .unwrap();
     if sandbox["sandbox"]["state"] == "on" {
         assert!(!outputs[4].contains(&person), "{}", outputs[4]);
+        // The read fails however the platform words it: Seatbelt says "Operation not
+        // permitted", bubblewrap and Landlock "Permission denied".
+        let read: Value = serde_json::from_str(&outputs[4]).unwrap();
+        assert_ne!(read["exit_code"], 0, "{}", outputs[4]);
         assert!(
-            outputs[4].contains("Operation not permitted"),
+            ["Operation not permitted", "Permission denied"]
+                .iter()
+                .any(|refusal| outputs[4].contains(refusal)),
             "{}",
             outputs[4]
         );

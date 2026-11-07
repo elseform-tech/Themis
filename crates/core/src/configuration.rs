@@ -1,7 +1,9 @@
 //! Versioned runtime configuration and immutable per-run approval policy.
 use crate::chat_grants::ChatGrants;
+#[cfg(test)]
+use crate::tools::is_destructive_variant;
 use crate::tools::sensitive::{SensitiveAccess, SensitiveMatcher, SENSITIVE_TOOL};
-use crate::tools::{is_destructive_variant, Approval, ApprovalHook, RiskLevel, ToolAction};
+use crate::tools::{asks_every_time, Approval, ApprovalHook, RiskLevel, ToolAction};
 use anyhow::{ensure, Context, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -183,3 +185,5 @@ pub const REFERENCE: &str = include_str!("configuration_reference.jsonc");
 mod approval_tests;
 #[cfg(test)]
 mod settings_tests;
+#[cfg(test)]
+mod themis_cli_approval_tests;

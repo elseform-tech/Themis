@@ -260,10 +260,9 @@ pub(super) async fn screen(
             Err(refused)
         }
         None if request.method == "plugin_action" => {
-            // As the agent's: saving or enabling a connection gives no consent to start it.
-            state
-                .plugin_action_for_agent(request.args.clone(), Vec::new())
-                .await
+            // As the agent's: no consent to start a connection, and never a hook or a
+            // command-based MCP server left switched on.
+            state.plugin_action_for_agent(request.args.clone()).await
         }
         None => {
             dispatch(
@@ -399,6 +398,22 @@ mod tests {
             refusal(&grant, "plugin_action", &json!({"action": "install"})),
             None
         );
+    }
+
+    /// The shell's approval step treats `themis call METHOD` as a read for exactly the reading
+    /// methods this guard allows (see `themis_core::tools::themis_cli`).
+    #[test]
+    fn the_shell_reads_exactly_the_allowed_reading_methods() {
+        let mut allowed: Vec<&str> = ALLOWED
+            .iter()
+            .chain(OWN_CHAT)
+            .copied()
+            .filter(|method| *method != "plugin_action")
+            .collect();
+        let mut reads = themis_core::tools::themis_cli::AGENT_READ_METHODS.to_vec();
+        allowed.sort_unstable();
+        reads.sort_unstable();
+        assert_eq!(allowed, reads);
     }
 
     #[test]

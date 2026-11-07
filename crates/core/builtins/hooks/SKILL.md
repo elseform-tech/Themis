@@ -11,7 +11,7 @@ When the request does not say what to do, list the hooks, say what each one does
 
 - **List:** `list_plugins` with kind `hook`. Each plugin's `spec.hooks` holds its hooks, and `revision` is its `expectedRevision`. This is all you need to read them: do not search files or ask for the marketplace catalog.
 - **Create or change:** `manage_integrations` with action `save_hook`, `name` (the plugin; use `personal` for a new hook of the user's own), `hook` (`name`, `event`, `command`, and optionally `matcher`, `timeout_seconds` from 1 to 600, `blocking`) and `expectedRevision` when the plugin already exists. Do not use `save` to change one hook: `list_plugins` leaves out each plugin's files, so saving what it returned would lose them. A new or changed hook is saved turned off.
-- **Enable or disable:** `set_component_enabled` with the plugin as `name`, kind `hook`, the hook name as `id`, and `enabled`. Enable only when the user asks. Review a changed command before enabling it.
+- **Disable:** `set_component_enabled` with the plugin as `name`, kind `hook`, the hook name as `id`, and `enabled` false. Switching a hook on is the user's alone: Themis refuses it from you in every mode. When a hook should be on, tell the user which one and ask them to switch it on in Integrations.
 - **Delete:** `remove_component` with the plugin as `name`, kind `hook`, the hook name as `id`.
 - **Test:** `test_hook` with the hook's configuration, only when the user asks: it runs the command. Test with safe resources.
 

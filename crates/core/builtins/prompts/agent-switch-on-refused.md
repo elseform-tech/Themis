@@ -1,0 +1,1 @@
+Themis never lets the agent switch on a hook or an MCP server that runs a command, in any mode: they run code outside the sandbox, so switching them on is the user's. Nothing was switched on. What the agent saves arrives switched off. Ask the user to switch it on in Integrations (with ask_user if the work waits on it), and carry on with the rest.

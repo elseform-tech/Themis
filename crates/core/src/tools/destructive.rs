@@ -339,6 +339,14 @@ pub fn is_destructive_variant(command: &[String]) -> bool {
     direct_destructive(command)
         || wrapped::wrapped_commands(command)
             .is_none_or(|inner| inner.iter().any(|command| direct_destructive(command)))
+        || super::themis_cli::removes_through_themis(command)
+}
+
+/// Whether `command` is asked about every time: a destructive variant, or a `themis` call that
+/// switches on a hook, an MCP server or a plugin (see [`super::themis_cli`]). Neither is ever
+/// covered by "Allow in this chat" or by an allow rule that does not name it.
+pub fn asks_every_time(command: &[String]) -> bool {
+    is_destructive_variant(command) || super::themis_cli::switches_on_code(command)
 }
 
 /// Every command `command` runs, itself first, then those inside wrappers
@@ -365,12 +373,13 @@ fn direct_destructive(command: &[String]) -> bool {
 }
 
 /// Risk class of a `shell` (or `git`) argv: destructive variants
-/// ([`is_destructive_variant`]) are [`RiskLevel::Destructive`], everything
+/// ([`is_destructive_variant`]) are [`RiskLevel::Destructive`], a bare `themis`
+/// call has its own level ([`super::themis_cli::direct_risk`]), and everything
 /// else runs as [`RiskLevel::Execute`].
 pub fn shell_risk(command: &[String]) -> RiskLevel {
     if is_destructive_variant(command) {
         RiskLevel::Destructive
     } else {
-        RiskLevel::Execute
+        super::themis_cli::direct_risk(command).unwrap_or(RiskLevel::Execute)
     }
 }
