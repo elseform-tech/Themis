@@ -141,15 +141,30 @@ definition to a scratch file, apply it with the matching `themis` command), **ve
    JSON with `--json`, and logs metadata only. The guides' verify step uses it after every change,
    and it is in the A/B rerun.
 5. **Guides rewritten** around find, change, verify, with resolved paths. `/hooks` uses
-   `themis hook …`.
+   `themis hook …`. A tool advertises itself in every request and a CLI does not, so the agent
+   also needs a reminder once the old tools go (decided 2026-11-07): one short system-prompt line
+   for the main agent (plugins, skills, MCP servers and hooks are managed with `themis` in the
+   shell; the `plugins`, `skills`, `mcp` and `hooks` guides show how) and one for subagents (they
+   may inspect integrations with read-only `themis`; changes are the main agent's). Both are
+   prompt files, verified in the constructed system message.
 6. **A/B rerun of the 2026-11-07 test**: the old tools against the CLI path, same tasks and model.
    Score failed calls, false claims, and whether the store ended up right. Label it as a benchmark
-   audit.
+   audit. It must include requests that never mention `themis` (for example "add an MCP server for
+   X"), where the agent has to find the CLI unprompted, and a delegated task ("find out why this MCP
+   server fails") that a subagent answers with read-only `themis`.
 7. **If the CLI path is equal or better, remove `manage_integrations`, `list_plugins` and
    `save_skill` outright** (no aliases), with docs and live-check rows updated in the same PR.
 
 Each step gets the configuration and visibility it needs per `AGENTS.md`, a live-check row, and a
 real-app check before it is called done.
+
+## Related, separate PR: `/subagents`
+
+People find features in the composer's `/` menu, and nothing there says subagents exist. A
+built-in `/subagents` skill, like `/hooks`: on its own it lists what is available (the built-in
+subagent and plugins' subagent profiles, each read-only or with its write paths, its model, and the
+Settings › Subagents limits) with one example request; `/subagents <task>` hands that task to
+subagents. Its own PR, after steps 1 and 2.
 
 ## Separate question, not part of this plan
 
