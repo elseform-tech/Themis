@@ -58,9 +58,6 @@
   "crates/core/src/sandbox.rs": {
    "code_lines": 1362
   },
-  "crates/core/src/tools/background.rs": {
-   "code_lines": 1126
-  },
   "crates/core/tests/browser_e2e.rs": {
    "total_lines": 2461
   },
@@ -479,7 +476,7 @@
   "crates/core/src/tools.rs::boxed_tools_for_run": {
    "lines": 120
   },
-  "crates/core/src/tools/background.rs::BackgroundTool#2::execute": {
+  "crates/core/src/tools/background/tool.rs::BackgroundTool#2::execute": {
    "cyclomatic": 26
   },
   "crates/core/src/tools/destructive.rs::git_destructive": {
