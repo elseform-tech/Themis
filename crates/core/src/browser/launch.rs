@@ -13,6 +13,8 @@ use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, BufReader};
 
 use super::cdp::Cdp;
+#[cfg(windows)]
+use crate::kill_on_close::KillOnClose;
 
 /// How long a starting browser may take to report its debugging address.
 /// A first start (fresh profile) on a slow machine can take well over 20 s.
@@ -227,62 +229,6 @@ fn spawn_guard(group: u32) -> std::io::Result<tokio::process::Child> {
         .process_group(group as i32)
         .kill_on_drop(true)
         .spawn()
-}
-
-/// A job that ends every process in it when its last handle closes, which
-/// Windows does however Themis exits.
-#[cfg(windows)]
-#[derive(Debug)]
-struct KillOnClose(windows_sys::Win32::Foundation::HANDLE);
-
-// SAFETY: a job handle may be used and closed from any thread.
-#[cfg(windows)]
-unsafe impl Send for KillOnClose {}
-#[cfg(windows)]
-unsafe impl Sync for KillOnClose {}
-
-#[cfg(windows)]
-impl KillOnClose {
-    /// Puts `process` (and the helpers it starts) in a new job.
-    fn around(process: std::os::windows::io::RawHandle) -> std::io::Result<Self> {
-        use windows_sys::Win32::System::JobObjects::{
-            AssignProcessToJobObject, CreateJobObjectW, JobObjectExtendedLimitInformation,
-            SetInformationJobObject, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
-            JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
-        };
-        // SAFETY: plain Win32 calls on a job this function creates and owns;
-        // the limits struct outlives the call that reads it.
-        unsafe {
-            let job = CreateJobObjectW(std::ptr::null(), std::ptr::null());
-            if job.is_null() {
-                return Err(std::io::Error::last_os_error());
-            }
-            let job = Self(job);
-            let mut limits: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = std::mem::zeroed();
-            limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
-            if SetInformationJobObject(
-                job.0,
-                JobObjectExtendedLimitInformation,
-                (&limits as *const JOBOBJECT_EXTENDED_LIMIT_INFORMATION).cast(),
-                std::mem::size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
-            ) == 0
-                || AssignProcessToJobObject(job.0, process.cast()) == 0
-            {
-                return Err(std::io::Error::last_os_error());
-            }
-            Ok(job)
-        }
-    }
-}
-
-#[cfg(windows)]
-impl Drop for KillOnClose {
-    fn drop(&mut self) {
-        // SAFETY: the handle is ours and closed once; closing it ends the job.
-        unsafe {
-            windows_sys::Win32::Foundation::CloseHandle(self.0);
-        }
-    }
 }
 
 /// A running browser and its protocol connection.

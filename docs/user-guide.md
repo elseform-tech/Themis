@@ -351,7 +351,11 @@ Codex, the chat's own model judges its goal: there is no separate check.
   **Pause** (turn an automation off); stopping never undoes work already done.
   Background programs end when you delete the chat or quit Themis (the app server
   it started quits with it);
-  stopping a run does not end them, but it does end a command the run was waiting for. A small
+  stopping a run does not end them, but it does end a command the run was waiting for.
+  Only these background programs keep running: when an ordinary shell command
+  finishes, anything it left running (a server started with `&` or `nohup`) is
+  stopped with it, and the agent is told to start such programs in the
+  background instead. A small
   stack of icons beside the Workspace button shows the same tasks at a glance and
   opens that tab. Drag its edge to resize. It never changes files or
   runs Git actions. The composer shows the project folder and current branch.

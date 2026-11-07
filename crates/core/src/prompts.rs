@@ -356,9 +356,12 @@ pub const TOOL_REFUSAL: &str = include_str!("../builtins/prompts/tool-refusal.md
 /// Note on a call denied because the person steered a new message in while it waited.
 pub const TOOL_DENIED_NEW_MESSAGE: &str =
     include_str!("../builtins/prompts/tool-denied-new-message.md");
-/// Note when a command's child process kept its output open.
+/// Note when a process that detached from a finished command kept its output open.
 pub const TOOL_SHELL_OUTPUT_HELD: &str =
     include_str!("../builtins/prompts/tool-shell-output-held.md");
+/// Note when a finished command left programs running and Themis stopped them.
+pub const TOOL_SHELL_LEFTOVERS_STOPPED: &str =
+    include_str!("../builtins/prompts/tool-shell-leftovers-stopped.md");
 /// Note when the sandbox blocked a command and running it outside was not approved; `{{reason}}`.
 pub const TOOL_SANDBOX_BLOCKED_UNAPPROVED: &str =
     include_str!("../builtins/prompts/tool-sandbox-blocked-unapproved.md");

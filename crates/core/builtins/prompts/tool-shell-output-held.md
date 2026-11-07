@@ -1,1 +1,1 @@
-[note: a process started by this command still holds its output open; stopped waiting 1.5s after the command exited. Use shell with background=true for programs that keep running.]
+[note: a process started by this command detached from it and still holds its output open, so Themis could not stop it; stopped waiting for output after the command exited. It may still be running: stop it if you do not need it, and use shell with background=true for programs that keep running.]

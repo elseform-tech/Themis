@@ -29,7 +29,8 @@ use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 
 use super::{
-    async_trait, kill_process_tree, parse_tool_args, tool_error, ToolCallError, ToolRuntime, ToolT,
+    async_trait, kill_process_tree, parse_tool_args, sweep_group, tool_error, ToolCallError,
+    ToolRuntime, ToolT,
 };
 
 mod log_ring;
