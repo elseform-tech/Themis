@@ -2,6 +2,8 @@
 //! scripted provider: a read runs without a prompt, a change asks once and "Allow in this chat"
 //! covers the same command, switching on a hook asks every time and never gains a chat grant,
 //! the agent's saves keep a new hook switched off, and a deny rule turns `themis` off in YOLO.
+//! Whatever the shell allows, the server never lets an agent's credential switch a hook or a
+//! command-based MCP server on, by `themis call` or a request on the socket, in any mode.
 //! In-process app server, isolated app data, synthetic credentials only.
 #![cfg(unix)]
 
@@ -27,6 +29,7 @@ static ONE_SERVER: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 struct Fixture {
     _dir: tempfile::TempDir,
     _repo: tempfile::TempDir,
+    data: PathBuf,
     project: PathBuf,
     state: AppState,
     stop: Option<tokio::sync::oneshot::Sender<()>>,
@@ -50,6 +53,7 @@ async fn fixture() -> Fixture {
     Fixture {
         _dir: dir,
         _repo: repo,
+        data,
         project: project.canonicalize().unwrap(),
         state,
         stop: Some(stop),
@@ -238,9 +242,19 @@ async fn custom_lets_reads_run_and_asks_every_time_before_switching_on_a_hook() 
         added["spec"]["hooks"][0]["enabled"], false,
         "the agent's save keeps a new hook off"
     );
-    // The person allowed switching it on once; the last list shows it on.
+    // Even with the command allowed, the server refuses an agent switching a hook on.
+    let refused: Value = serde_json::from_str(&outputs[4]).unwrap();
+    assert_ne!(refused["exit_code"], 0, "{}", outputs[4]);
+    assert!(
+        refused["output"]
+            .as_str()
+            .unwrap()
+            .contains(themis_core::prompts::AGENT_SWITCH_ON_REFUSED),
+        "{}",
+        outputs[4]
+    );
     let listed = command_json(&outputs[7]);
-    assert_eq!(listed[0]["spec"]["hooks"][0]["enabled"], true, "{listed}");
+    assert_eq!(listed[0]["spec"]["hooks"][0]["enabled"], false, "{listed}");
     for denied in &outputs[5..7] {
         assert!(denied.contains("denied"), "{denied}");
     }
@@ -281,5 +295,148 @@ async fn a_deny_rule_turns_themis_off_even_in_yolo() {
         assert!(!denied.contains("exit_code"), "it never ran: {denied}");
     }
     assert!(outputs[2].contains("still-runs"), "{}", outputs[2]);
+    fx.shut_down().await;
+}
+
+/// `themis` with `--data-dir`, as the person (no credential) or with an agent's credential.
+fn cli(fx: &Fixture, agent: Option<&str>, words: &[&str]) -> std::process::Output {
+    let mut command = std::process::Command::new(env!("CARGO_BIN_EXE_themis"));
+    command
+        .arg("--data-dir")
+        .arg(&fx.data)
+        .args(words)
+        .env_remove("OPENCODE_KEY")
+        .env_remove(themis_core::agent_cli::TOKEN_ENV)
+        .env_remove(themis_core::agent_cli::PORT_ENV);
+    if let Some(token) = agent {
+        command
+            .env(themis_core::agent_cli::TOKEN_ENV, token)
+            .env(themis_core::agent_cli::PORT_ENV, port(fx).to_string());
+    }
+    command.output().expect("run CLI")
+}
+
+fn port(fx: &Fixture) -> u16 {
+    let text = std::fs::read_to_string(fx.data.join("server.json")).unwrap();
+    serde_json::from_str::<Value>(&text).unwrap()["port"]
+        .as_u64()
+        .unwrap() as u16
+}
+
+/// One request straight on the server's socket, as a script holding the credential could send.
+fn socket_call(fx: &Fixture, token: &str, method: &str, args: Value) -> Value {
+    use std::io::{Read, Write};
+    let mut stream = std::net::TcpStream::connect(("127.0.0.1", port(fx))).unwrap();
+    let request =
+        serde_json::to_vec(&json!({"token": token, "method": method, "args": args})).unwrap();
+    stream
+        .write_all(&(request.len() as u32).to_be_bytes())
+        .unwrap();
+    stream.write_all(&request).unwrap();
+    let mut length = [0u8; 4];
+    stream.read_exact(&mut length).unwrap();
+    let mut reply = vec![0u8; u32::from_be_bytes(length) as usize];
+    stream.read_exact(&mut reply).unwrap();
+    serde_json::from_slice(&reply).unwrap()
+}
+
+fn switches(fx: &Fixture) -> Value {
+    let listed = cli(fx, None, &["plugin", "list"]);
+    assert!(listed.status.success());
+    let plugins: Value = serde_json::from_slice(&listed.stdout).unwrap();
+    let spec = &plugins[0]["spec"];
+    json!({
+        "hook": spec["hooks"][0]["enabled"],
+        "local": spec["mcp"]["local"]["enabled"],
+        "remote": spec["mcp"]["remote"]["enabled"],
+    })
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn an_agent_credential_never_switches_a_hook_or_command_server_on_in_any_mode() {
+    let _turn = ONE_SERVER.lock().await;
+    let fx = fixture().await;
+    fx.state
+        .plugin_action(json!({"action":"save","scope":"global","spec":{"name":"demo",
+            "hooks":[{"name":"guard","event":"BeforeTool","command":"echo guarded","enabled":false}],
+            "mcp":{"local":{"command":"sh","args":["-c","exit 0"],"enabled":false},
+                   "remote":{"url":"https://example.com/mcp","enabled":false}}}}))
+        .await
+        .unwrap();
+    let switch_on = |kind: &str, id: &str| {
+        json!({"action":"set_component_enabled","scope":"global","name":"demo",
+            "kind":kind,"id":id,"enabled":true})
+    };
+    let refused = themis_core::prompts::AGENT_SWITCH_ON_REFUSED;
+    let mut tokens = Vec::new();
+    for mode in [ApprovalMode::Yolo, ApprovalMode::Auto, ApprovalMode::Custom] {
+        let thread = fx.thread(mode).await;
+        let token = themis_core::agent_cli::issue(&thread, "run-under-test")
+            .unwrap()
+            .env()[0]
+            .1
+            .clone();
+        // `themis call`, as a shell command whatever its approval said.
+        for (kind, id) in [("hook", "guard"), ("mcp", "local")] {
+            let args = switch_on(kind, id).to_string();
+            let output = cli(&fx, Some(&token), &["call", "plugin_action", &args]);
+            let text = String::from_utf8_lossy(&output.stderr);
+            assert!(!output.status.success(), "{mode:?} {kind}");
+            assert!(text.contains(refused), "{mode:?} {kind}: {text}");
+        }
+        // The CLI's own shortcut and a request straight on the socket.
+        let output = cli(&fx, Some(&token), &["hook", "enable", "demo", "guard"]);
+        assert!(
+            String::from_utf8_lossy(&output.stderr).contains(refused),
+            "{mode:?}"
+        );
+        let reply = socket_call(&fx, &token, "plugin_action", switch_on("hook", "guard"));
+        assert_eq!(reply["ok"], false, "{mode:?}: {reply}");
+        assert!(
+            reply["error"].as_str().unwrap().contains(refused),
+            "{reply}"
+        );
+        assert_eq!(
+            switches(&fx),
+            json!({"hook": false, "local": false, "remote": false}),
+            "{mode:?}: nothing was switched on"
+        );
+        tokens.push(token);
+    }
+    // A connection by URL keeps the consent rule: the agent may switch it on, and it still waits
+    // for the person's approval to start.
+    let args = switch_on("mcp", "remote").to_string();
+    let output = cli(&fx, Some(&tokens[0]), &["call", "plugin_action", &args]);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    // The person's own switch-on works.
+    let output = cli(&fx, None, &["hook", "enable", "demo", "guard"]);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        switches(&fx),
+        json!({"hook": true, "local": false, "remote": true})
+    );
+    // A plugin switched off with a hook on inside: the agent may not switch the plugin on.
+    let off = cli(&fx, None, &["plugin", "disable", "demo"]);
+    assert!(off.status.success());
+    let output = cli(&fx, Some(&tokens[2]), &["plugin", "enable", "demo"]);
+    assert!(String::from_utf8_lossy(&output.stderr).contains(refused));
+    // Refusals are logged as metadata: never the credential or the definitions.
+    let logs = std::fs::read_dir(fx.data.join("logs"))
+        .unwrap()
+        .filter_map(Result::ok)
+        .map(|entry| std::fs::read_to_string(entry.path()).unwrap_or_default())
+        .collect::<String>();
+    assert!(logs.contains("agent_call_refused"), "{logs}");
+    assert!(logs.contains("\"reason\":\"switch_on\""), "{logs}");
+    assert!(tokens.iter().all(|token| !logs.contains(token.as_str())));
+    assert!(!logs.contains("echo guarded") && !logs.contains("exit 0"));
     fx.shut_down().await;
 }

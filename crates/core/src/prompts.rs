@@ -426,6 +426,9 @@ pub const TOOL_BROWSER_UNTRUSTED: &str =
     include_str!("../builtins/prompts/tool-browser-untrusted.md");
 /// Note when DevTools paused the page in the debugger.
 pub const TOOL_DEVTOOLS_PAUSED: &str = include_str!("../builtins/prompts/tool-devtools-paused.md");
+/// The answer to an agent's call that would switch on a hook or a command-based MCP server.
+pub const AGENT_SWITCH_ON_REFUSED: &str =
+    include_str!("../builtins/prompts/agent-switch-on-refused.md");
 /// The app server's answer to a call from an agent's shell it refuses; `{{method}}`.
 pub const AGENT_CLI_REFUSED: &str = include_str!("../builtins/prompts/agent-cli-refused.md");
 /// `next` hint after starting a background task.

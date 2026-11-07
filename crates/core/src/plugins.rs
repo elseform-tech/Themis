@@ -1,4 +1,5 @@
 //! Shared, revisioned plugin storage. App and CLI mutations use the same server.
+mod agent_switch;
 pub mod agents;
 pub mod connections;
 mod discovery;
@@ -166,8 +167,8 @@ pub struct PluginStore {
     pub project: Option<PathBuf>,
     /// Where personal skills are discovered (`~/.agents/skills` and the rest).
     home: Option<PathBuf>,
-    /// Saves for an agent: MCP servers and hooks that are new or changed are stored switched
-    /// off, so only an explicit switch-on (asked every time) turns them on.
+    /// An agent's store: it never leaves a hook or a command-based MCP server switched on
+    /// (see `agent_switch`).
     agent_saves: bool,
 }
 
@@ -182,8 +183,8 @@ impl PluginStore {
         }
     }
 
-    /// With `agent` set, saves and imports store new or changed MCP servers and hooks switched
-    /// off (an agent's `themis` calls; see `crate::tools::themis_cli`).
+    /// With `agent` set, the store acts for an agent: saves, imports and installs keep new or
+    /// changed hooks and command-based MCP servers switched off, and switching one on is refused.
     #[must_use]
     pub fn for_agent(mut self, agent: bool) -> Self {
         self.agent_saves = agent;
@@ -422,12 +423,6 @@ impl PluginStore {
             Ok(plugin)
         })
     }
-    /// For an agent's shell ([`Self::for_agent`]): new or changed MCP servers and hooks switch off.
-    fn keep_new_parts_off(&self, previous: Option<&Plugin>, spec: &mut PluginSpec) {
-        if self.agent_saves {
-            marketplace::switch_off_new_parts(previous.map(|plugin| &plugin.spec), spec);
-        }
-    }
     pub fn set_enabled(&self, scope: &str, name: &str, enabled: bool) -> anyhow::Result<()> {
         let discovered = self
             .discovered_plugins()?
@@ -442,6 +437,7 @@ impl PluginStore {
         }
         self.mutate(scope, |registry| {
             if let Some(plugin) = registry.current.get_mut(name) {
+                self.refuse_enabling_plugin(plugin, enabled)?;
                 plugin.enabled = enabled;
             } else if discovered.is_some() {
                 if enabled {
@@ -475,37 +471,8 @@ impl PluginStore {
         }
         self.mutate(scope, |registry| {
             let plugin = registry.current.get_mut(name).context("Unknown plugin")?;
-            match kind {
-                "skill" => {
-                    if !plugin.spec.skills.iter().any(|s| s.id == id) {
-                        bail!("Unknown skill");
-                    }
-                    plugin.spec.disabled_skills.retain(|s| s != id);
-                    if !enabled {
-                        plugin.spec.disabled_skills.push(id.into());
-                    }
-                }
-                "mcp" | "connection" => {
-                    plugin
-                        .spec
-                        .mcp
-                        .get_mut(id)
-                        .context("Unknown connection")?
-                        .enabled = enabled
-                }
-                "hook" => {
-                    plugin
-                        .spec
-                        .hooks
-                        .iter_mut()
-                        .find(|h| h.name == id)
-                        .context("Unknown hook")?
-                        .enabled = enabled
-                }
-                _ => bail!("Component kind must be skill, mcp, connection, or hook"),
-            }
-            // Flags change the current activation policy, not pinned instruction snapshots.
-            Ok(())
+            self.refuse_switching_on(plugin, kind, id, enabled)?;
+            switch_component(plugin, kind, id, enabled)
         })
     }
     pub fn remove_component(
@@ -681,4 +648,44 @@ fn write_bytes(path: &Path, bytes: &[u8], executable: bool) -> anyhow::Result<()
         let _ = fs::remove_file(temp);
     }
     result
+}
+
+/// Turns one skill, MCP server or hook of `plugin` on or off. Flags change the current
+/// activation policy, not pinned instruction snapshots.
+fn switch_component(
+    plugin: &mut Plugin,
+    kind: &str,
+    id: &str,
+    enabled: bool,
+) -> anyhow::Result<()> {
+    match kind {
+        "skill" => {
+            if !plugin.spec.skills.iter().any(|s| s.id == id) {
+                bail!("Unknown skill");
+            }
+            plugin.spec.disabled_skills.retain(|s| s != id);
+            if !enabled {
+                plugin.spec.disabled_skills.push(id.into());
+            }
+        }
+        "mcp" | "connection" => {
+            plugin
+                .spec
+                .mcp
+                .get_mut(id)
+                .context("Unknown connection")?
+                .enabled = enabled
+        }
+        "hook" => {
+            plugin
+                .spec
+                .hooks
+                .iter_mut()
+                .find(|h| h.name == id)
+                .context("Unknown hook")?
+                .enabled = enabled
+        }
+        _ => bail!("Component kind must be skill, mcp, connection, or hook"),
+    }
+    Ok(())
 }

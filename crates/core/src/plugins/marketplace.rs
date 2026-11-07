@@ -125,7 +125,7 @@ async fn download_icon(url: &str) -> anyhow::Result<Vec<u8>> {
     Ok(bytes)
 }
 /// A definition without its switch, to tell a changed part from one only turned on or off.
-fn same_definition<T: Serialize>(old: &T, new: &T) -> bool {
+pub(super) fn same_definition<T: Serialize>(old: &T, new: &T) -> bool {
     let plain = |part: &T| {
         let mut value = serde_json::to_value(part).unwrap_or_default();
         value["enabled"] = Value::Null;

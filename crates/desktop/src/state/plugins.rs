@@ -2,14 +2,6 @@ use super::*;
 use serde_json::{json, Value};
 use themis_core::plugins::{AvailableSkill, PluginSpec, PluginStore};
 
-/// Who asked for a plugin action when it was an agent.
-struct AgentCall {
-    /// Command-based MCP connections whose exact command the person approved in a dialog.
-    approved: Vec<(String, Option<String>)>,
-    /// From the agent's shell (`themis`) rather than its integration tools.
-    shell: bool,
-}
-
 impl AppState {
     pub(super) fn plugin_store(&self, project: Option<PathBuf>) -> PluginStore {
         let config = self.runtime_configuration(project.as_deref(), None).ok();
@@ -30,11 +22,30 @@ impl AppState {
             None => store,
         }
     }
-    /// [`Self::plugin_store`], saving as the agent's shell does for its calls: new or changed
-    /// MCP servers and hooks are stored switched off.
-    fn plugin_store_for(&self, project: Option<PathBuf>, agent: Option<&AgentCall>) -> PluginStore {
-        self.plugin_store(project)
-            .for_agent(agent.is_some_and(|call| call.shell))
+    /// [`Self::plugin_store`], acting for an agent when `agent` is set: it never leaves a hook or
+    /// a command-based MCP server switched on.
+    fn plugin_store_for(&self, project: Option<PathBuf>, agent: bool) -> PluginStore {
+        self.plugin_store(project).for_agent(agent)
+    }
+    /// A person saving or switching on a plugin or connection consents to start what is on (an
+    /// agent's change never does).
+    fn record_person_consent(
+        &self,
+        project: Option<&Path>,
+        scope: &str,
+        plugin_name: &str,
+        args: &Value,
+    ) {
+        let action = args["action"].as_str().unwrap_or("list");
+        if matches!(action, "save" | "set_component_enabled" | "enable") {
+            self.record_user_mcp_consent(
+                project,
+                scope,
+                plugin_name,
+                (action == "set_component_enabled" && args["kind"] == "mcp")
+                    .then(|| args["id"].as_str().unwrap_or_default()),
+            );
+        }
     }
     pub async fn prompt_skills(
         &self,
@@ -66,48 +77,45 @@ impl AppState {
     /// A person's plugin action (UI, CLI): saving or enabling a connection is
     /// their consent to start it.
     pub async fn plugin_action(&self, args: Value) -> Result<Value, String> {
-        self.plugin_action_with(args, None).await
+        self.plugin_action_with(args, false).await
     }
 
-    /// An agent's plugin action. `approved_servers` are the command-based MCP
-    /// connections whose exact command the person approved in a dialog; no
-    /// other definition gains consent from an agent's change.
-    pub(crate) async fn plugin_action_for_agent(
-        &self,
-        args: Value,
-        approved_servers: Vec<(String, Option<String>)>,
-    ) -> Result<Value, String> {
-        let call = AgentCall {
-            approved: approved_servers,
-            shell: false,
+    /// An agent's plugin action, from its integration tools or its shell's `themis`, in any
+    /// mode: no change of its records consent to start a connection, and it never leaves a hook
+    /// or a command-based MCP server switched on (saves keep new or changed ones off, switching
+    /// one on is refused; see `themis_core::plugins::PluginStore::for_agent`). A refusal is
+    /// logged as `server`/`agent_call_refused`, metadata only.
+    pub(crate) async fn plugin_action_for_agent(&self, args: Value) -> Result<Value, String> {
+        let action = match args["action"].as_str() {
+            Some("enable") => "enable",
+            _ => "set_component_enabled",
         };
-        self.plugin_action_with(args, Some(call)).await
-    }
-
-    /// An agent's plugin action from its shell (`themis`): no consent to start a connection,
-    /// and new or changed MCP servers and hooks are saved switched off. Only an explicit
-    /// switch-on, which the shell's approval asks about every time, turns them on.
-    pub(crate) async fn plugin_action_from_agent_shell(
-        &self,
-        args: Value,
-    ) -> Result<Value, String> {
-        let call = AgentCall {
-            approved: Vec::new(),
-            shell: true,
+        let kind = match args["kind"].as_str() {
+            Some("hook") => Some("hook"),
+            Some("mcp" | "connection") => Some("mcp"),
+            _ => None,
         };
-        self.plugin_action_with(args, Some(call)).await
+        let result = self.plugin_action_with(args, true).await;
+        if result
+            .as_ref()
+            .is_err_and(|error| error.contains(themis_core::prompts::AGENT_SWITCH_ON_REFUSED))
+        {
+            self.log_server_details(
+                "agent_call_refused",
+                "warn",
+                json!({"method": "plugin_action", "action": action, "kind": kind,
+                    "reason": "switch_on"}),
+            );
+        }
+        result
     }
 
-    async fn plugin_action_with(
-        &self,
-        args: Value,
-        agent_approved: Option<AgentCall>,
-    ) -> Result<Value, String> {
+    async fn plugin_action_with(&self, args: Value, agent: bool) -> Result<Value, String> {
         let project = args["projectRoot"]
             .as_str()
             .map(canonical_project_dir)
             .transpose()?;
-        let store = self.plugin_store_for(project.clone(), agent_approved.as_ref());
+        let store = self.plugin_store_for(project.clone(), agent);
         let scope = args["scope"].as_str().unwrap_or("global");
         let name = args["name"].as_str().unwrap_or_default();
         let action = args["action"].as_str().unwrap_or("list");
@@ -125,7 +133,7 @@ impl AppState {
         }
         if action == "mcp_allow_secrets" {
             // The person's word alone: an agent can't give it.
-            if agent_approved.is_some() {
+            if agent {
                 return Err("Only you can allow a connection to read a secret".to_owned());
             }
             let root = project
@@ -365,7 +373,7 @@ impl AppState {
                     let spec: themis_core::plugins::McpServer =
                         serde_json::from_value(args["server"].clone())?;
                     // A test the agent asks for runs any definition it writes: no secrets in it.
-                    if agent_approved.is_some() && !spec.key_names().is_empty() {
+                    if agent && !spec.key_names().is_empty() {
                         anyhow::bail!(
                             "A test can't read secrets. Save the connection and have the person enable it."
                         );
@@ -452,19 +460,8 @@ impl AppState {
             } else {
                 name
             };
-            match &agent_approved {
-                Some(call) => {
-                    self.record_mcp_consent(project.as_deref(), scope, plugin_name, &call.approved)
-                }
-                None if matches!(action, "save" | "set_component_enabled" | "enable") => self
-                    .record_user_mcp_consent(
-                        project.as_deref(),
-                        scope,
-                        plugin_name,
-                        (action == "set_component_enabled" && args["kind"] == "mcp")
-                            .then(|| args["id"].as_str().unwrap_or_default()),
-                    ),
-                None => {}
+            if !agent {
+                self.record_person_consent(project.as_deref(), scope, plugin_name, &args);
             }
             self.refresh_mcp_connections();
         }

@@ -161,37 +161,6 @@ pub struct ToolAction {
     pub command: Vec<String>,
 }
 
-/// Approval identity for an agent enabling, creating or changing a command-based
-/// MCP connection. The command is new code the app will launch, so it is shown as
-/// structured argv, asked every time and never covered by a chat grant.
-pub const MCP_COMMAND_APPROVAL_TOOL: &str = "manage_integrations_mcp_command";
-
-/// When an agent's `manage_integrations` save has exactly one executable effect,
-/// a single enabled command-based MCP server and no hooks or skills, returns that
-/// server's name and the argv it would launch. The call is then approved once, by
-/// the non-grantable command dialog, instead of by a generic dialog plus a second one.
-pub fn sole_mcp_command_save(name: &str, args: &Value) -> Option<(String, Vec<String>)> {
-    if name != "manage_integrations" || args["action"] != "save" {
-        return None;
-    }
-    let spec: crate::plugins::PluginSpec = serde_json::from_value(args["spec"].clone()).ok()?;
-    if !spec.hooks.is_empty() || !spec.skills.is_empty() {
-        return None;
-    }
-    let mut enabled = spec.mcp.iter().filter(|(_, server)| server.enabled);
-    let (server_name, server) = enabled.next()?;
-    if enabled.next().is_some() {
-        return None;
-    }
-    let command = server.command.clone()?;
-    Some((
-        server_name.clone(),
-        std::iter::once(command)
-            .chain(server.args.iter().cloned())
-            .collect(),
-    ))
-}
-
 /// The server a connected MCP tool belongs to, read from its generated name
 /// (`mcp_<server>_<16 hex>_<tool>`, see `plugins::connections::tool_identity`):
 /// `<server>_<16 hex>`. One chat grant covers every tool of the server. Startup actions
@@ -293,9 +262,7 @@ impl ToolAction {
     /// `themis` calls that switch on a hook or an MCP server ([`asks_every_time`])
     /// are asked about every time and are never stored or matched by a grant.
     pub fn grantable(&self) -> bool {
-        self.risk != RiskLevel::Destructive
-            && !asks_every_time(&self.command)
-            && self.tool != MCP_COMMAND_APPROVAL_TOOL
+        self.risk != RiskLevel::Destructive && !asks_every_time(&self.command)
     }
 
     /// Command prefix an "allow in this chat" grant covers, and whether it is

@@ -260,11 +260,9 @@ pub(super) async fn screen(
             Err(refused)
         }
         None if request.method == "plugin_action" => {
-            // As the agent's: saving or enabling a connection gives no consent to start it, and
-            // new or changed MCP servers and hooks are saved switched off.
-            state
-                .plugin_action_from_agent_shell(request.args.clone())
-                .await
+            // As the agent's: no consent to start a connection, and never a hook or a
+            // command-based MCP server left switched on.
+            state.plugin_action_for_agent(request.args.clone()).await
         }
         None => {
             dispatch(

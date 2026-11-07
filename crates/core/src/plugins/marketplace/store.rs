@@ -506,6 +506,7 @@ impl PluginStore {
                     }
                 }
             }
+            self.keep_new_parts_off(previous, &mut spec);
             let plugin = Plugin {
                 scope: scope.into(),
                 revision: revision(),
