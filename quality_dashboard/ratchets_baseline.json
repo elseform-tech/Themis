@@ -47,24 +47,15 @@
  },
  "duplicate_lines_total": 797,
  "files": {
-  "crates/core/src/providers/tests.rs": {
-   "total_lines": 3746
-  },
   "crates/core/src/runtime.rs": {
-   "code_lines": 4410,
-   "total_lines": 9394
+   "code_lines": 1948,
+   "total_lines": 2025
   },
   "crates/core/tests/browser_e2e.rs": {
    "total_lines": 2461
   },
-  "crates/core/tests/runtime_e2e.rs": {
-   "total_lines": 3130
-  },
   "crates/desktop/src/state/run.rs": {
    "code_lines": 1030
-  },
-  "crates/desktop/tests/attachments_e2e.rs": {
-   "total_lines": 2633
   },
   "crates/desktop/tests/subagents_cli_e2e.rs": {
    "total_lines": 2237
@@ -372,43 +363,33 @@
   "crates/core/src/providers/streaming.rs::ChatEventStream::process_payload": {
    "cyclomatic": 26
   },
-  "crates/core/src/runtime.rs::archive_context": {
-   "cyclomatic": 21
-  },
-  "crates/core/src/runtime.rs::compact_context_with_evidence": {
-   "lines": 104
-  },
-  "crates/core/src/runtime.rs::evidence_records": {
-   "cyclomatic": 23
-  },
-  "crates/core/src/runtime.rs::execute_call": {
-   "cognitive": 42,
-   "cyclomatic": 45,
-   "lines": 179
-  },
-  "crates/core/src/runtime.rs::execute_tool_calls": {
-   "cognitive": 45,
-   "cyclomatic": 36,
-   "lines": 198
-  },
-  "crates/core/src/runtime.rs::prepare_compaction": {
-   "cognitive": 41,
-   "lines": 102
-  },
-  "crates/core/src/runtime.rs::replace_context": {
-   "cognitive": 31,
-   "cyclomatic": 33,
-   "lines": 124
-  },
-  "crates/core/src/runtime.rs::request_answer_inner": {
-   "cognitive": 58,
-   "cyclomatic": 67,
-   "lines": 246
-  },
   "crates/core/src/runtime.rs::run_task_with_evidence_inner": {
    "cognitive": 264,
    "cyclomatic": 161,
    "lines": 1022
+  },
+  "crates/core/src/runtime/answer.rs::request_answer_inner": {
+   "cognitive": 58,
+   "cyclomatic": 67,
+   "lines": 246
+  },
+  "crates/core/src/runtime/checkpoint.rs::archive_context": {
+   "cyclomatic": 21
+  },
+  "crates/core/src/runtime/checkpoint.rs::evidence_records": {
+   "cyclomatic": 23
+  },
+  "crates/core/src/runtime/checkpoint.rs::replace_context": {
+   "cognitive": 31,
+   "cyclomatic": 33,
+   "lines": 124
+  },
+  "crates/core/src/runtime/compaction.rs::compact_context_with_evidence": {
+   "lines": 104
+  },
+  "crates/core/src/runtime/compaction.rs::prepare_compaction": {
+   "cognitive": 41,
+   "lines": 102
   },
   "crates/core/src/runtime/documents.rs::prepare": {
    "cyclomatic": 35,
@@ -436,6 +417,16 @@
   },
   "crates/core/src/runtime/summary_job.rs::summarize_for": {
    "lines": 146
+  },
+  "crates/core/src/runtime/tool_calls.rs::execute_call": {
+   "cognitive": 42,
+   "cyclomatic": 45,
+   "lines": 179
+  },
+  "crates/core/src/runtime/tool_calls.rs::execute_tool_calls": {
+   "cognitive": 45,
+   "cyclomatic": 36,
+   "lines": 198
   },
   "crates/core/src/sandbox/detect.rs::denial": {
    "cognitive": 35,
