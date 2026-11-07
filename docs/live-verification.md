@@ -197,6 +197,7 @@ full tour.
 | `feature:companion` | tour | `web/src/components/KnightCompanion.tsx` | The companion shows state notes and can be resized and moved. |
 | `config:project_guidance` | tour | `crates/core/src/configuration.rs`, `crates/desktop/src/state/subagents.rs` | In a project with an `AGENTS.md` and a `docs/` folder, the agent and a subagent follow a rule from it without being told. |
 | `feature:cli` | tour | `crates/desktop/src/cli.rs` | `themis status`, `themis thread list` and `themis doctor` work against the running app. |
+| `feature:server-lifetime` | tour | `crates/desktop/src/server.rs`, `crates/desktop/src/state/searxng.rs`, `crates/desktop/src/lib.rs` | Once web search has answered, force quit the app (`kill -9`): within 10 seconds `pgrep -fl <scratch folder>` finds no server, SearXNG or browser. Start a server with `themis --data-dir <scratch data> server start`, then delete that data folder: it is gone within 10 seconds. |
 | `settings:General` | tour | `web/src/screens/Settings.tsx` | Toggle the reply sound; it takes effect on the next reply. |
 | `settings:Appearance` | tour | `web/src/screens/Appearance.tsx` | Preview, revert and apply a theme. |
 | `settings:Models` | tour | `web/src/screens/ModelsSettings.tsx` | Change the default model; a new chat uses it. |
@@ -273,6 +274,11 @@ and check the failing hidden test asks only for what the request and docs state.
 
 Report each step with its exact command and result: the smoke check, every row run (passed,
 failed or skipped and why), the soak's flags, end state, lost runs and their reasons, and the
-verification eval's trend. Scan the scratch folders for saved reasoning or the key. A bug found
+verification eval's trend. Scan the scratch folders for saved reasoning or the key. Last, stop
+what the check started: a `themis` command run against the scratch data folder while the app was
+closed started a server that keeps running, so run `themis --data-dir <scratch data> server stop`
+after quitting the app, then `pgrep -fl <scratch folder>` must find nothing (no server, SearXNG,
+browser or background program); deleting the scratch folder also stops a forgotten server within
+a few seconds. A bug found
 here is fixed on its own `codex/<task>` branch with a regression test (and a CLI end-to-end case
 for backend changes), then merged and verified the same way.

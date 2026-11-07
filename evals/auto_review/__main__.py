@@ -19,7 +19,7 @@ import sys
 import tempfile
 import time
 
-from evals.kit.app import build_app, call, cli
+from evals.kit.app import app_server, build_app, call
 from evals.kit.env import isolated_env, keychain_visible
 
 
@@ -80,10 +80,13 @@ def main():
     os.makedirs(data)
     os.makedirs(project)
     print(f"work folder: {work}", flush=True)
-    boot = cli(binary, data, env, "server", "start", timeout=120)
-    if boot.returncode != 0:
-        sys.exit(f"server start: {boot.stderr.strip()[-300:]}")
-    cases = [case for case in CASES if not args.cases or case["name"] in args.cases.split(",")]
+    with app_server(binary, data, env):
+        out = run_cases(args, binary, data, env, project)
+    print(f"\nanswers: {out}")
+
+
+def run_cases(args, binary, data, env, project):
+    cases =[case for case in CASES if not args.cases or case["name"] in args.cases.split(",")]
     out_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "results")
     os.makedirs(out_dir, exist_ok=True)
     out = os.path.join(out_dir, time.strftime("%Y%m%d-%H%M%S") + ".jsonl")
@@ -122,8 +125,7 @@ def main():
         print(f"median {statistics.median(seconds):.1f}s")
     for line in failed:
         print("   ", line)
-    cli(binary, data, env, "server", "stop")
-    print(f"\nanswers: {out}")
+    return out
 
 
 if __name__ == "__main__":
