@@ -328,6 +328,8 @@ themis hook test personal guard --project /path/to/project
 
 `mcp` and `hook` also support list, show, update, disable, and delete; skills support list/save/delete. `plugin save`/`import` accept a complete JSON bundle; export writes JSON to stdout. Edits use `$EDITOR` and compare the original revision before saving. Changes create a new revision while active runs preserve their immutable snapshot; changes apply on the next run.
 
+The agent's shell can run these commands too: each run's commands find the app's own `themis` first on their `PATH` and carry a credential for that run. The server lets such calls read status and manage plugins, skills, MCP servers and hooks through the store, as the agent's changes (an MCP server it saves or enables records no consent to start, and it cannot allow secrets for a connection or sign in), and refuses everything else. The `themis` command itself still needs the shell's normal approval. See "The `themis` CLI in the agent's shell" in [configuration.md](configuration.md).
+
 ## Verification (2026-10-01)
 
 Fresh local commands and outcomes:

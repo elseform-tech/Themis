@@ -466,6 +466,15 @@ list in `sandbox.writable_paths`; they cannot read secret folders such as
 or the project's `.themis/` folder. Network access is allowed unless you set
 `"network": "block"`.
 
+The agent's commands can also run `themis` (the app's own CLI, first on their
+`PATH`) to check status and manage plugins, skills, MCP servers and hooks. Each
+run gets its own credential, which ends with the run; the app refuses it
+anything else, such as answering approvals, changing permissions, settings or
+keys, or touching other chats, in every mode. The sandbox keeps your own
+credential (`server.json` in the app data) out of the agent's reach, so on a
+machine without a usable sandbox this limit does not hold. See
+[configuration](configuration.md) ("The `themis` CLI in the agent's shell").
+
 When the sandbox blocks a command in **Custom**, a dialog asks **Run outside the
 sandbox?** with **Allow once (1)**, **Allow in this chat (2)** and **Deny (3)**;
 allowing runs the same command again without the sandbox. In **YOLO** nothing is

@@ -26,6 +26,7 @@ inside the normal suites, on every platform, with reproducible shrinking.
 | Browser | Any protocol message or accessibility tree never panics; snapshots stay within budget, refs stay stable and password values are masked; key names parse or are refused | `crates/core/src/browser/` |
 | Model providers | Any `providers` block resolves or fails cleanly, never with a reserved id, literal key or non-https remote URL; any `/models` body keeps unique, usable ids that came from it | `crates/core/src/configuration/providers.rs`, `crates/core/src/providers/tests.rs` |
 | Subagent profiles | Any text as a plugin's `agents/*.md` never panics; what it accepts is valid and bounded; a tool list never widens, and a scoped name is never mapped to the whole tool | `crates/core/src/plugins/agents.rs` |
+| Agent CLI guard | Any method name, chat id and `plugin_action` action from an agent's shell passes only when the method is on the allowed list, any chat named is its own (and named where required), and the action is not the person's | `crates/desktop/src/server/agent.rs` |
 | Web state | Any event stream keeps running state consistent and attaches edited files to the right reply; prompt tokens rebuild exactly | `web/src/state/reducer.property.test.ts` |
 
 ## Fuzz targets (nightly CI)

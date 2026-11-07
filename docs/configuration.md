@@ -702,6 +702,69 @@ first writing the starter when the file does not exist or still sets nothing
 opens that file as plain text in the system text editor. `get_runtime_configuration` also
 returns `rule_sources` beside the resolved configuration.
 
+## The `themis` CLI in the agent's shell
+
+An agent's `shell` commands (foreground and background, subagents' too) can run
+`themis`, which talks to the live app server. Each command of a run gets:
+
+- `THEMIS_AGENT_TOKEN`: a credential for that run and its chat, issued on the
+  run's first command and reused by its later ones. It ends when the chat's run
+  ends (a background task still running after that loses its access). Themis
+  masks it as `[redacted]` in shell and background-task output that goes back to
+  the model, and never logs it.
+- `THEMIS_AGENT_PORT`: the server's local port. With these two set, `themis`
+  uses them instead of `server.json`, never starts a server of its own and
+  refuses `app launch`/`app quit`.
+- `PATH` starting with `agent-cli/` in the app data: a folder holding only a
+  link named `themis` to the CLI the app server runs as (the desktop app's own
+  executable, or the `themis` binary in development). Agents cannot write the
+  app data, so they cannot replace it. Windows ships no console CLI in the app,
+  so there is no folder there; a `themis` you installed yourself still gets the
+  two variables.
+
+The server treats every call carrying a run credential as the agent's and allows
+only an explicit list; anything else, including any method added later, is
+refused in every mode, YOLO included, with a message naming the method:
+
+| Allowed for an agent's call | Methods |
+| --- | --- |
+| Status and diagnostics (metadata only) | `ping`, `get_diagnostics`, `query_diagnostic_logs`, `get_effective_permissions`, `get_usage_summary`, `list_go_models`, `list_model_providers`, `get_secret_status` (whether a key exists, never the key), `mcp_config_status`, `resource_usage` |
+| Reading configuration and settings | `get_runtime_configuration`, `get_settings`, `get_browser_settings`, `get_web_settings`, `get_subagent_settings`, `get_memory_settings` |
+| Skills and integrations | `list_prompt_skills`, `list_skills`, `plugin_action` (as the agent's: saving or enabling an MCP server records no consent to start it; `mcp_allow_secrets` and MCP sign-in/sign-out are refused) |
+| Its own chat only (`threadId` required) | `get_thread`, `get_thread_history_page`, `get_thread_tasks`, `get_background_task_log`, `get_context_usage`, `get_chat_usage` |
+
+A `threadId` naming another chat is refused for every method. Refused, among
+everything else: approvals and answers (`approve_action`, `answer_question`), its
+own permissions (`set_thread_approval_mode`, `save_runtime_configuration`,
+`ensure_runtime_config`, the config editors), settings writes, secrets and keys
+(`set_secret`, `clear_secret`, `set_key`, `remove_key`, `list_keys`,
+`check_go_key`), the terminal, projects, sending to or stopping runs, branch
+and review decisions, the Workspace browser controls, memory edits, event
+subscriptions and `shutdown`. Allowed calls still pass the shell's normal
+approvals: the guard only narrows what an approved `themis` command can do.
+Calls without a run credential (your own CLI, the desktop app) are unchanged.
+Each refusal is logged as `server`/`agent_call_refused` with the method name
+(`(other)` for anything that is not a plain method name), the `plugin_action`
+action, and the chat and run ids, never the credential or arguments.
+
+**Threat model.** The guard relies on the agent never holding your credential.
+It is in `server.json` (owner-only, `0600`), which the sandbox stops every
+agent command from reading or writing in every mode. Limits:
+
+- With the sandbox off or unavailable (`sandbox.enabled: false`, Windows, Linux
+  without bubblewrap or Landlock), nothing stops a command from reading
+  `server.json`, so the guard does not hold there, just as the app-data write
+  wall does not. The same is true for a command you let run outside the
+  sandbox when it was blocked.
+- `sandbox.network: "block"` also blocks the agent's `themis` from reaching the
+  server.
+- A run credential gives only what the list above allows, and only for that
+  run's chat. It is a random 256-bit value: a command can print its own (which
+  then shows masked), but it cannot make one.
+- The guard limits the server's methods, not the agent's shell: whatever the
+  shell itself can already do (for example run a program you allowed) is
+  unchanged.
+
 ## Diagnostics
 
 Logs stay out of the desktop UI. Advanced users can query structured records
@@ -719,7 +782,9 @@ commands), and compaction stages. A failed server command (`server`/`command_fai
 records its method and a fixed `category` (`unknown_method` when a window and the
 server come from different builds, `too_large`, `invalid_request`, `timeout`,
 `not_found`, `conflict`, `denied`, `network`, `credentials` or `other`), never the
-error message, which can name paths or hold user text.
+error message, which can name paths or hold user text. A call from an agent's shell the
+server refuses (`server`/`agent_call_refused`) records the method name, the `plugin_action`
+action and the chat and run ids.
 Request bodies, prompts, tool arguments/results, and provider bodies are excluded.
 Known credential fields and referenced secret environment values are redacted;
 debug subprocess stderr is bounded and filtered. Debug output from third-party
