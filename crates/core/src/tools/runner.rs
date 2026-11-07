@@ -17,6 +17,8 @@ pub(super) struct CommandOutput {
     pub(super) exit_code: Option<i32>,
     pub(super) output: String,
     pub(super) truncated: bool,
+    /// The command left programs running after it exited and they were stopped.
+    pub(super) leftovers_stopped: bool,
 }
 
 /// Run `program` with `args` in `workdir`, capturing combined output.
@@ -110,7 +112,7 @@ pub(super) async fn run_command_with_timeout(
 ) -> Result<CommandOutput, ToolCallError> {
     // Read here: the worker thread is outside the run's scope.
     let plugin_bins = crate::plugins::hooks::plugin_bins();
-    tokio::task::spawn_blocking(move || {
+    let out = tokio::task::spawn_blocking(move || {
         run_command_blocking(
             &program,
             &args,
@@ -123,13 +125,25 @@ pub(super) async fn run_command_with_timeout(
         )
     })
     .await
-    .map_err(|e| tool_error(format!("{tool}: execution task failed: {e}")))?
+    .map_err(|e| tool_error(format!("{tool}: execution task failed: {e}")))??;
+    if out.leftovers_stopped {
+        // Metadata only: never the command, its arguments or its output.
+        crate::diagnostics::emit(
+            "tools",
+            "shell_leftovers_stopped",
+            "info",
+            serde_json::json!({"tool": tool}),
+        );
+    }
+    Ok(out)
 }
 
 /// How long to keep reading output after the direct child has exited. A
 /// backgrounded grandchild (`cmd &`) inherits the pipes and would otherwise
-/// hold them open for as long as it lives.
+/// hold them open for as long as it lives; after this it is stopped.
 const PIPE_GRACE: Duration = Duration::from_millis(1500);
+/// How long to wait for the pipes to close once leftovers were stopped.
+const STOPPED_PIPE_GRACE: Duration = Duration::from_millis(500);
 /// Per-stream capture bound while a command runs; excess is discarded.
 const MAX_CAPTURE_BYTES: usize = 1024 * 1024;
 
@@ -165,8 +179,8 @@ impl Drain {
 /// Blocking child-process driver: spawn, poll with a kill deadline, combine
 /// stdout/stderr, truncate. Both pipes are drained on helper threads so a
 /// chatty child never wedges on a full pipe buffer while we poll `try_wait`.
-/// After the child exits, output is collected for at most [`PIPE_GRACE`]: a
-/// grandchild that kept the pipes open no longer hangs the call.
+/// After the child exits, see [`finish_after_exit`]: nothing it started
+/// outlives the call.
 #[allow(clippy::too_many_arguments)]
 fn run_command_blocking(
     program: &str,
@@ -197,6 +211,7 @@ fn run_command_blocking(
     let mut child = command
         .spawn()
         .map_err(|e| tool_error(format!("{tool}: {}", spawn_failure(program, args, &e))))?;
+    let scope = ProcessScope::around(&child);
 
     let stdout_drain = child.stdout.take().map(Drain::spawn);
     let stderr_drain = child.stderr.take().map(Drain::spawn);
@@ -232,32 +247,138 @@ fn run_command_blocking(
         }
     };
 
-    let drains = [&stdout_drain, &stderr_drain];
-    let grace = Instant::now() + PIPE_GRACE;
-    while Instant::now() < grace
-        && !drains.iter().all(|drain| {
-            drain
-                .as_ref()
-                .is_none_or(|drain| drain.thread.is_finished())
-        })
-    {
+    Ok(finish_after_exit(
+        &status,
+        scope,
+        [stdout_drain.as_ref(), stderr_drain.as_ref()],
+    ))
+}
+
+/// Whether every pipe reached end of file within `grace`.
+fn drained_within(drains: &[Option<&Drain>; 2], grace: Duration) -> bool {
+    let finished = || {
+        drains
+            .iter()
+            .all(|drain| drain.is_none_or(|drain| drain.thread.is_finished()))
+    };
+    let deadline = Instant::now() + grace;
+    while Instant::now() < deadline && !finished() {
         std::thread::sleep(Duration::from_millis(5));
     }
-    let leaked = !drains.iter().all(|drain| {
-        drain
-            .as_ref()
-            .is_none_or(|drain| drain.thread.is_finished())
-    });
-    let stdout = stdout_drain.as_ref().map(Drain::take).unwrap_or_default();
-    let stderr = stderr_drain.as_ref().map(Drain::take).unwrap_or_default();
-    let mut output = combine_output(&status, &stdout, &stderr);
-    if leaked {
-        output.output.push('\n');
-        output
-            .output
-            .push_str(crate::prompts::TOOL_SHELL_OUTPUT_HELD);
+    finished()
+}
+
+/// After the command's own process exited: keep reading for at most
+/// [`PIPE_GRACE`] while something it started still writes, then stop whatever
+/// it left running (`cmd &`, `nohup`) so nothing outlives the call, and say so
+/// in the result. A process that detached from the group or job (`setsid`, a
+/// daemon) cannot be reached; if it still holds the pipes the result says that.
+fn finish_after_exit(
+    status: &std::process::ExitStatus,
+    scope: ProcessScope,
+    drains: [Option<&Drain>; 2],
+) -> CommandOutput {
+    let mut drained = drained_within(&drains, PIPE_GRACE);
+    let leftovers_stopped = scope.stop_leftovers();
+    if leftovers_stopped && !drained {
+        drained = drained_within(&drains, STOPPED_PIPE_GRACE);
     }
-    Ok(output)
+    let [stdout, stderr] = drains.map(|drain| drain.map(Drain::take).unwrap_or_default());
+    let mut output = combine_output(status, &stdout, &stderr);
+    output.leftovers_stopped = leftovers_stopped;
+    let notes = [
+        (
+            leftovers_stopped,
+            crate::prompts::TOOL_SHELL_LEFTOVERS_STOPPED,
+        ),
+        (!drained, crate::prompts::TOOL_SHELL_OUTPUT_HELD),
+    ];
+    for (_, note) in notes.iter().filter(|(applies, _)| *applies) {
+        output.output.push('\n');
+        output.output.push_str(note);
+    }
+    output
+}
+
+/// What a command starts stays reachable through this: on Unix its process
+/// group (the command leads its own), on Windows a kill-on-close job.
+struct ProcessScope {
+    #[cfg(unix)]
+    group: u32,
+    #[cfg(windows)]
+    job: Option<crate::kill_on_close::KillOnClose>,
+}
+
+impl ProcessScope {
+    #[cfg_attr(not(any(unix, windows)), allow(unused_variables))]
+    fn around(child: &std::process::Child) -> Self {
+        Self {
+            #[cfg(unix)]
+            group: child.id(),
+            // Without a job (assigning failed) leftovers are not tracked.
+            #[cfg(windows)]
+            job: crate::kill_on_close::KillOnClose::around(
+                std::os::windows::io::AsRawHandle::as_raw_handle(child),
+            )
+            .ok(),
+        }
+    }
+
+    /// Stops what is still running after the command exited; true when
+    /// anything was.
+    fn stop_leftovers(self) -> bool {
+        #[cfg(unix)]
+        {
+            sweep_group(self.group)
+        }
+        // Dropping the job's only handle ends every process left in it. A
+        // console host may outlive its client by a moment; that is no leftover.
+        #[cfg(windows)]
+        {
+            self.job.is_some_and(|job| {
+                let settle = Instant::now() + Duration::from_millis(300);
+                while job.active_processes() > 0 && Instant::now() < settle {
+                    std::thread::sleep(Duration::from_millis(10));
+                }
+                job.active_processes() > 0
+            })
+        }
+        #[cfg(not(any(unix, windows)))]
+        {
+            false
+        }
+    }
+}
+
+/// Stops what is left of process group `pgid` after its leader exited:
+/// SIGTERM, a short grace, then SIGKILL, only while the group still has
+/// members. Returns whether it had any.
+pub(super) fn sweep_group(pgid: u32) -> bool {
+    #[cfg(unix)]
+    {
+        let pgid = pgid as libc::pid_t;
+        // SAFETY: signal 0 only probes for existence.
+        let exists = |pgid| unsafe { libc::killpg(pgid, 0) } == 0;
+        if !exists(pgid) {
+            return false;
+        }
+        // SAFETY: the group was created by the spawn that owns `pgid`.
+        unsafe { libc::killpg(pgid, libc::SIGTERM) };
+        let grace = Instant::now() + Duration::from_millis(300);
+        while Instant::now() < grace && exists(pgid) {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        if exists(pgid) {
+            // SAFETY: as above.
+            unsafe { libc::killpg(pgid, libc::SIGKILL) };
+        }
+        true
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = pgid;
+        false
+    }
 }
 
 /// The child's `PATH`: the scrubbed one, then the `bin` folders of the run's plugins, so a plugin's
@@ -403,6 +524,7 @@ fn combine_output(
         exit_code: status.code(),
         output: text,
         truncated,
+        leftovers_stopped: false,
     }
 }
 

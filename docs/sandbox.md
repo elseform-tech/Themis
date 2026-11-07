@@ -285,10 +285,21 @@ not signal it. The timeout kills the group, and **stopping a run kills the
 blocking shell command it is waiting for** (whole process group, same
 SIGTERM-then-SIGKILL sequence); the call fails with "command was stopped by you
 and killed". Background tasks (below) are the exception: they outlive the turn.
-After the direct child exits, output is collected for at most 1.5 seconds. A
-backgrounded grandchild (`sh -c 'server &'`) inherits the output pipes and no longer
-hangs the call; the result then ends with a note saying the process still holds
-its output and suggesting `background=true`. That grandchild keeps running.
+After the direct child exits, output is collected for at most 1.5 seconds while
+something it started still holds the output pipes, and then **whatever the
+command left running is stopped**: a backgrounded grandchild (`sh -c 'server &'`,
+`nohup server > log 2>&1 &`, `(cd app && server &)`) gets the same
+SIGTERM, 300 ms, SIGKILL sequence on the command's process group, so a server
+started with a plain `shell` call never outlives the call, the chat or the app.
+The result then ends with a note saying Themis stopped them and pointing to
+`background=true`, and `tools` / `shell_leftovers_stopped` is logged (tool name
+only, never the command). The same applies to the `git` tool and watch checks.
+Limit: a program that leaves the process group (`setsid`, a daemon that starts
+its own session) cannot be reached this way and keeps running; if it still
+holds the output pipes, the result says it may still be running. On Windows
+each command runs in a kill-on-close job object, which ends what is left in it
+when the command exits; a program that breaks away from the job is not
+reached.
 Shell output is bounded at 32 KiB; the default
 execution timeout is 120 seconds. On timeout the whole process tree is killed:
 on Unix the child leads its own process group, which receives SIGTERM, a short

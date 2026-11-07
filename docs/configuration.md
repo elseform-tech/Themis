@@ -332,6 +332,13 @@ Not configurable in `runtime.jsonc`; fixed constants in the core:
 | per-task deadline | default 7,200 s, maximum 86,400 s (`background_timeout_secs`) |
 | finished records kept per chat | 20 |
 | output wait after a blocking command exits | 1.5 s |
+| what a blocking command leaves running after it exits | stopped (SIGTERM, 300 ms, SIGKILL to its process group; its job on Windows) |
+
+A blocking `shell` call, `git` call or watch check never leaves programs
+running: anything it started with `&` or `nohup` is stopped when it exits, the
+result tells the agent so and points it to `background=true`, and `tools` /
+`shell_leftovers_stopped` is logged with the tool name only. This is not
+configurable; programs meant to keep running belong in background tasks.
 
 Approval mode and rules are captured once per run like any shell call; the
 approval mode change affects subsequent runs, not tasks already started. See

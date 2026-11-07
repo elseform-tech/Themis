@@ -282,6 +282,7 @@ fn a_read_only_call_escalates_as_execute_and_only_a_person_lets_it_out() {
         exit_code: Some(1),
         output: format!("error: {}: Operation not permitted", outside.display()),
         truncated: false,
+        leftovers_stopped: false,
     };
     let status = ToolAction {
         display: None,

@@ -14,7 +14,7 @@ impl BackgroundRegistry {
             match child.try_wait() {
                 Ok(Some(status)) => {
                     // The program is gone; stop anything it left in its group.
-                    sweep_group(child.id());
+                    super::sweep_group(child.id());
                     break (TaskState::Exited, status.code());
                 }
                 Ok(None) => {}
@@ -137,30 +137,4 @@ pub(super) fn pump<R: Read + Send + 'static>(
             }
         }
     })
-}
-
-/// Stops what is left of `pgid` after its leader exited: SIGTERM, a short
-/// grace, then SIGKILL, only while the group still has members.
-fn sweep_group(pgid: u32) {
-    #[cfg(unix)]
-    {
-        let pgid = pgid as libc::pid_t;
-        // SAFETY: signal 0 only probes for existence.
-        let exists = |pgid| unsafe { libc::killpg(pgid, 0) } == 0;
-        if !exists(pgid) {
-            return;
-        }
-        // SAFETY: the group was created by the spawn that owns this task.
-        unsafe { libc::killpg(pgid, libc::SIGTERM) };
-        let grace = Instant::now() + Duration::from_millis(300);
-        while Instant::now() < grace && exists(pgid) {
-            std::thread::sleep(Duration::from_millis(10));
-        }
-        if exists(pgid) {
-            // SAFETY: as above.
-            unsafe { libc::killpg(pgid, libc::SIGKILL) };
-        }
-    }
-    #[cfg(not(unix))]
-    let _ = pgid;
 }

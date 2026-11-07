@@ -266,6 +266,11 @@ const ALL: &[(&str, &str, &[&str])] = &[
     (TOOL_DENIED_NEW_MESSAGE, "tool-denied-new-message", &[]),
     (TOOL_SHELL_OUTPUT_HELD, "tool-shell-output-held", &[]),
     (
+        TOOL_SHELL_LEFTOVERS_STOPPED,
+        "tool-shell-leftovers-stopped",
+        &[],
+    ),
+    (
         TOOL_SANDBOX_BLOCKED_UNAPPROVED,
         "tool-sandbox-blocked-unapproved",
         &["reason"],
@@ -685,7 +690,8 @@ fn runtime_note_markers_stay_at_the_start() {
 #[test]
 fn tool_notes_are_byte_identical() {
     assert_eq!(TOOL_REFUSAL, "Do not reach the same result another way (for example with shell or another tool); tell the user it was not allowed and ask how to proceed.");
-    assert_eq!(format!("\n{TOOL_SHELL_OUTPUT_HELD}"), "\n[note: a process started by this command still holds its output open; stopped waiting 1.5s after the command exited. Use shell with background=true for programs that keep running.]");
+    assert_eq!(format!("\n{TOOL_SHELL_OUTPUT_HELD}"), "\n[note: a process started by this command detached from it and still holds its output open, so Themis could not stop it; stopped waiting for output after the command exited. It may still be running: stop it if you do not need it, and use shell with background=true for programs that keep running.]");
+    assert_eq!(format!("\n{TOOL_SHELL_LEFTOVERS_STOPPED}"), "\n[note: this command left programs running after it exited (started with `&`, `nohup` or the like); Themis stopped them, because a shell call ends together with everything it started. For servers and watchers that must keep running, call shell with background=true and manage them with the background_task tool.]");
     let reason = "writes outside the project";
     assert_eq!(
         format!("\n{}", fill(TOOL_SANDBOX_BLOCKED_UNAPPROVED, &[("reason", reason)])),

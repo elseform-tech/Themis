@@ -102,7 +102,8 @@ runtime configuration.
 
 **`check_command`.** Before each due run the scheduler runs the argv through the
 same shell runner as the `shell` tool (no shell string, scrubbed environment,
-process group, 30 s timeout, output capped at 32 KiB), in the project root and
+process group, 30 s timeout, output capped at 32 KiB, nothing left running after
+it exits), in the project root and
 without any model call. Its exit code and output are hashed; the model starts
 only when the hash differs from the last handled one (and on the first look),
 and receives the new output as data. A non-zero exit code is a result, not a

@@ -473,9 +473,6 @@
    "cognitive": 32,
    "cyclomatic": 24
   },
-  "crates/core/src/tools/runner.rs::run_command_blocking": {
-   "cyclomatic": 22
-  },
   "crates/core/src/tools/sensitive.rs::SensitiveMatcher::classify": {
    "cyclomatic": 21
   },

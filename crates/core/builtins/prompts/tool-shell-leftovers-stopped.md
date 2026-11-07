@@ -1,0 +1,1 @@
+[note: this command left programs running after it exited (started with `&`, `nohup` or the like); Themis stopped them, because a shell call ends together with everything it started. For servers and watchers that must keep running, call shell with background=true and manage them with the background_task tool.]

@@ -13,6 +13,8 @@ pub mod context_window;
 pub mod diagnostics;
 pub mod git_guard;
 pub mod goal;
+#[cfg(windows)]
+pub(crate) mod kill_on_close;
 pub mod memory;
 pub mod plugins;
 pub mod prompts;

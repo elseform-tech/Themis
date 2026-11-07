@@ -66,6 +66,30 @@ async fn shell_timeout_kills_the_grandchild_process_tree_on_windows() {
     }
 }
 
+/// Windows counterpart of the leftover tests: `start /b` leaves `ping.exe`
+/// running after `cmd` exits; the command's job ends it when the call returns.
+#[cfg(windows)]
+#[tokio::test(flavor = "multi_thread")]
+async fn shell_stops_a_program_left_running_on_windows() {
+    let (_tmp, root) = rooted_case();
+    let marker = "3147";
+    let result = ShellTool::new(root, allow_all())
+        .execute(json!({
+            "command": "cmd",
+            "args": ["/c", format!("start /b ping -n {marker} 127.0.0.1 >nul & echo launched")],
+        }))
+        .await
+        .unwrap();
+    let text = result["output"].as_str().unwrap();
+    assert!(text.contains("launched"), "{text}");
+    assert!(text.contains("Themis stopped them"), "{text}");
+    let deadline = Instant::now() + Duration::from_secs(30);
+    while windows_ping_count(marker) != 0 {
+        assert!(Instant::now() < deadline, "ping outlived the shell call");
+        tokio::time::sleep(Duration::from_millis(200)).await;
+    }
+}
+
 #[cfg(unix)]
 #[tokio::test]
 async fn shell_env_is_scrubbed() {
@@ -152,12 +176,45 @@ fn child_env_passes_locale_and_term_but_not_lookalikes() {
     }
 }
 
+/// Reads the pid a test script wrote to `pidfile`.
+#[cfg(unix)]
+fn read_pid(pidfile: &std::path::Path) -> libc::pid_t {
+    std::fs::read_to_string(pidfile)
+        .unwrap()
+        .trim()
+        .parse()
+        .unwrap()
+}
+
+/// Whether `pid` is gone within `within` (bounded by a deadline, not a count).
+#[cfg(unix)]
+fn gone_within(pid: libc::pid_t, within: Duration) -> bool {
+    let deadline = Instant::now() + within;
+    loop {
+        // SAFETY: signal 0 only probes for existence.
+        if unsafe { libc::kill(pid, 0) } != 0 {
+            return true;
+        }
+        if Instant::now() >= deadline {
+            // SAFETY: cleanup of the helper process the test started.
+            unsafe { libc::kill(pid, libc::SIGKILL) };
+            return false;
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+}
+
+/// A program left behind with `&` that keeps the output pipes open: the call
+/// still returns promptly, and the program is stopped, not left running.
 #[cfg(unix)]
 #[tokio::test]
-async fn shell_returns_when_a_backgrounded_grandchild_holds_the_pipes() {
+async fn shell_stops_a_backgrounded_grandchild_that_holds_the_pipes() {
     let (_tmp, root) = rooted_case();
     let pidfile = root.join("held.pid");
-    let script = format!("sleep 30 & echo $! > '{}'; echo started", pidfile.display());
+    let script = format!(
+        "sleep 300 & echo $! > '{}'; echo started",
+        pidfile.display()
+    );
     let tool = ShellTool::new(root, allow_all());
     let began = Instant::now();
     let result = tool
@@ -165,18 +222,56 @@ async fn shell_returns_when_a_backgrounded_grandchild_holds_the_pipes() {
         .await
         .unwrap();
     let elapsed = began.elapsed();
-    let pid: libc::pid_t = std::fs::read_to_string(&pidfile)
-        .unwrap()
-        .trim()
-        .parse()
-        .unwrap();
-    // SAFETY: cleanup of the helper process this test started.
-    unsafe { libc::kill(pid, libc::SIGKILL) };
+    let pid = read_pid(&pidfile);
+    let gone = gone_within(pid, Duration::from_secs(5));
     assert!(elapsed < Duration::from_secs(10), "hung for {elapsed:?}");
+    assert!(gone, "backgrounded sleep {pid} outlived the shell call");
     assert_eq!(result["success"], true);
     let text = result["output"].as_str().unwrap();
     assert!(text.contains("started"), "{text}");
-    assert!(text.contains("still holds its output open"), "{text}");
+    assert!(text.contains("Themis stopped them"), "{text}");
+    assert!(!text.contains("still holds its output open"), "{text}");
+}
+
+/// The goal-run leak: `nohup server > log 2>&1 &` holds no pipe, so the call
+/// returned at once and the server lived on after the chat and the app.
+#[cfg(unix)]
+#[tokio::test]
+async fn shell_stops_a_nohup_program_left_running_after_the_command() {
+    let (_tmp, root) = rooted_case();
+    let pidfile = root.join("nohup.pid");
+    let log = root.join("nohup.log");
+    let script = format!(
+        "nohup sleep 300 > '{}' 2>&1 & echo $! > '{}'; echo launched",
+        log.display(),
+        pidfile.display()
+    );
+    let result = ShellTool::new(root, allow_all())
+        .execute(json!({ "command": "sh", "args": ["-c", script] }))
+        .await
+        .unwrap();
+    let pid = read_pid(&pidfile);
+    let gone = gone_within(pid, Duration::from_secs(5));
+    assert!(gone, "nohup sleep {pid} outlived the shell call");
+    let text = result["output"].as_str().unwrap();
+    assert!(text.contains("launched"), "{text}");
+    assert!(text.contains("background=true"), "{text}");
+}
+
+/// A command that leaves nothing behind gets no note.
+#[cfg(unix)]
+#[tokio::test]
+async fn shell_without_leftovers_adds_no_note() {
+    let (_tmp, root) = rooted_case();
+    let result = ShellTool::new(root, allow_all())
+        .execute(
+            json!({ "command": "sh", "args": ["-c", "(sleep 0.1; echo inner) & wait; echo done"] }),
+        )
+        .await
+        .unwrap();
+    let text = result["output"].as_str().unwrap();
+    assert!(text.contains("inner") && text.contains("done"), "{text}");
+    assert!(!text.contains("[note:"), "{text}");
 }
 
 #[cfg(unix)]

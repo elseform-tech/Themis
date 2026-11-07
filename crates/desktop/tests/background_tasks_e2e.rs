@@ -1,7 +1,8 @@
 //! Background shell tasks through the real shared server, `themis call` and a
 //! scripted provider: the agent starts and inspects a task, the person stops
 //! it, chat deletion and server shutdown take it down, a restart reports it
-//! as lost, and Stop kills a running blocking command.
+//! as lost, Stop kills a running blocking command, and a program a plain
+//! shell command left running is stopped when the command returns.
 #![cfg(unix)]
 
 use std::path::Path;
@@ -395,4 +396,58 @@ async fn stopping_a_run_kills_the_blocking_command_it_was_waiting_for() {
             .unwrap_or(false)
     })
     .await;
+}
+
+/// The goal-run leak: an agent started a server with plain `shell` and `&`
+/// (`nohup ... > log 2>&1 &`) instead of `background=true`. The call returns,
+/// the leftover is stopped with it, the agent is told so and pointed to
+/// background tasks, and the diagnostics say so without the command text.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_program_left_running_by_a_plain_shell_command_is_stopped_with_it() {
+    let mut fx = fixture(vec![step(
+        "shell",
+        json!({"command": "sh", "args": ["-c",
+            "nohup sleep 3146 > /dev/null 2>&1 & echo launched-3146"]}),
+    )])
+    .await;
+    let leftover = || {
+        std::process::Command::new("pgrep")
+            .args(["-f", "sleep 3146"])
+            .output()
+            .map(|output| output.status.success())
+            .unwrap_or(false)
+    };
+    assert!(fx.run("start a server the wrong way").await);
+    eventually("leftover sleep stopped", || !leftover()).await;
+    assert!(
+        fx.background().is_empty(),
+        "a plain shell call is no background task"
+    );
+
+    let requests = fx._provider.received_requests().await.unwrap();
+    let last: Value = requests.last().unwrap().body_json().unwrap();
+    let result = last["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .rev()
+        .find(|message| message["role"] == "tool")
+        .map(|message| message["content"].to_string())
+        .unwrap();
+    assert!(result.contains("launched-3146"), "{result}");
+    assert!(result.contains("Themis stopped them"), "{result}");
+    assert!(result.contains("background=true"), "{result}");
+
+    let mut log = String::new();
+    for entry in std::fs::read_dir(fx.data.path().join("logs"))
+        .into_iter()
+        .flatten()
+    {
+        log.push_str(&std::fs::read_to_string(entry.unwrap().path()).unwrap_or_default());
+    }
+    assert!(log.contains("\"shell_leftovers_stopped\""), "{log}");
+    assert!(
+        !log.contains("3146"),
+        "no command text in diagnostics: {log}"
+    );
 }
