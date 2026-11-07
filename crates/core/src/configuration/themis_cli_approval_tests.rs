@@ -199,7 +199,16 @@ fn auto_sends_switching_on_a_hook_to_the_person_not_the_reviewer() {
 /// call in every mode, YOLO included, bare, by path or wrapped.
 #[test]
 fn a_deny_rule_turns_themis_off_in_every_mode() {
-    let rules = r#"{"approval":{"rules":[{"tool":"shell","command":["themis"],"action":"deny"}]}}"#;
+    // The example in docs/configuration.md ("Turning it off"), comment included.
+    let rules = r#"{
+  "approval": {
+    "rules": [
+      { "tool": "shell", "command": ["themis"], "action": "deny" },
+      // `rules` replaces the built-in list, so keep its read rule (and your own rules).
+      { "tool": "*", "risk": "read", "action": "allow" }
+    ]
+  }
+}"#;
     for mode in [ApprovalMode::Yolo, ApprovalMode::Auto, ApprovalMode::Custom] {
         let asked = Arc::new(AtomicUsize::new(0));
         let hook = configured_hook(
