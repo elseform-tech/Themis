@@ -45,9 +45,6 @@
  },
  "duplicate_lines_total": 797,
  "files": {
-  "crates/core/src/browser/tools.rs": {
-   "code_lines": 1017
-  },
   "crates/core/src/providers/tests.rs": {
    "total_lines": 3746
   },
