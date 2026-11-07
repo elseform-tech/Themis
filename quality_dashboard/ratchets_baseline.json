@@ -61,9 +61,6 @@
   "crates/core/tests/runtime_e2e.rs": {
    "total_lines": 3130
   },
-  "crates/desktop/src/cli.rs": {
-   "code_lines": 1016
-  },
   "crates/desktop/src/state/goal.rs": {
    "code_lines": 1351
   },
@@ -541,11 +538,6 @@
   "crates/desktop/src/cli.rs::configure_provider": {
    "cyclomatic": 24
   },
-  "crates/desktop/src/cli.rs::render_permissions": {
-   "cognitive": 60,
-   "cyclomatic": 41,
-   "lines": 187
-  },
   "crates/desktop/src/cli.rs::run": {
    "cognitive": 56,
    "cyclomatic": 158,
@@ -559,6 +551,11 @@
    "cognitive": 58,
    "cyclomatic": 113,
    "lines": 109
+  },
+  "crates/desktop/src/cli/render.rs::render_permissions": {
+   "cognitive": 60,
+   "cyclomatic": 41,
+   "lines": 187
   },
   "crates/desktop/src/doctor.rs::diagnose": {
    "cognitive": 33,
