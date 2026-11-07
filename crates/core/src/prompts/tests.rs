@@ -231,6 +231,7 @@ const ALL: &[(&str, &str, &[&str])] = &[
         "runtime-repeat-in-context",
         &["earlier_id"],
     ),
+    (RUNTIME_STOPPED_TURN, "runtime-stopped-turn", &[]),
     (RUNTIME_HANDOFF, "runtime-handoff", &[]),
     (RUNTIME_SUBAGENT_REACTION, "runtime-subagent-reaction", &[]),
     (RUNTIME_STEERED, "runtime-steered", &[]),
@@ -653,6 +654,7 @@ fn runtime_notes_are_byte_identical() {
         fill(RUNTIME_REPEAT_IN_CONTEXT, &[("earlier_id", earlier_id)]),
         format!("Identical to the result of call {earlier_id}, which is still in context. Reuse it and take the next unresolved action; changed files and other ranges are still returned in full.")
     );
+    assert_eq!(RUNTIME_STOPPED_TURN, "[The person stopped this reply before it finished. Treat the request above as set aside: don't redo or resume it unless they ask. Work completed before the stop stays as it is.]");
     assert_eq!(RUNTIME_HANDOFF, "Without using tools, write a concise, natural response to the user. Say what you completed, what remains, and the concrete next steps. Do not claim unfinished work is done. Do not mention turns, limits, checkpoints, or internal mechanics.");
     let text = "Use tabs {{x}}.";
     assert_eq!(format!("{RUNTIME_STEERED}\n{text}"), format!("[The user sent this while you were working; take it into account from here on. Start your next reply with one short sentence telling them how you will handle it, sent with the tool calls that continue the work; once it is done, say so in a sentence before going on]\n{text}"));

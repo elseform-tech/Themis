@@ -82,6 +82,8 @@ levels are listed.
   Thinking/using-tool status and elapsed time remain visible during gaps. Scrolled up to read, the status shrinks to "…" so it covers nothing.
 - **Stop** requests cancellation at the next safe boundary. A request or tool
   already executing finishes first; completed edits remain available to review.
+  The agent's next turn knows you stopped that request, so it does not pick it
+  up again unless you ask it to.
   Pressing **Esc twice** does the same: after the first press, "Press Esc again to stop"
   shows beside the stop button for a second and a half. An Esc that closes a menu,
   panel or suggestion list only closes it.

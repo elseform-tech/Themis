@@ -9,10 +9,12 @@ use themis_core::runtime::{checkpoint_parts, ChatRole, ConversationRole, Convers
 
 use crate::types::{ThreadEvent, ThreadEventEnvelope};
 
+mod context_turn;
 pub mod history_pages;
 #[cfg(test)]
 mod scale_tests;
 mod source_exports;
+use context_turn::{context_turn, role_name};
 
 /// Most rows [`Transcript::last_reply_text`] reads.
 pub const REPLY_ROWS: usize = 64;
@@ -915,66 +917,6 @@ fn migrate_attachment_paths(connection: &Connection) -> Result<(), String> {
     transaction
         .commit()
         .map_err(|e| format!("finish attachment migration: {e}"))
-}
-
-fn role_name(role: &ConversationRole) -> &'static str {
-    match role {
-        ConversationRole::User => "user",
-        ConversationRole::Assistant | ConversationRole::Checkpoint => "assistant",
-    }
-}
-
-fn context_turn(item: &HistoryItem) -> Option<ConversationTurn> {
-    match item {
-        HistoryItem::Event {
-            envelope:
-                ThreadEventEnvelope {
-                    event: ThreadEvent::ContextSuspended { progress },
-                    ..
-                },
-        } => Some(ConversationTurn {
-            role: ConversationRole::Assistant,
-            text: progress.clone(),
-        }),
-        // A steered message is the user's words, in the order the model saw them.
-        HistoryItem::Event {
-            envelope:
-                ThreadEventEnvelope {
-                    event: ThreadEvent::Steered { text },
-                    ..
-                },
-        } => Some(ConversationTurn {
-            role: ConversationRole::User,
-            text: text.clone(),
-        }),
-        HistoryItem::User { text, .. } => Some(ConversationTurn {
-            role: ConversationRole::User,
-            text: text.clone(),
-        }),
-        HistoryItem::Event {
-            envelope:
-                ThreadEventEnvelope {
-                    event:
-                        ThreadEvent::Finished { result, .. } | ThreadEvent::Incomplete { result, .. },
-                    ..
-                },
-        } => Some(ConversationTurn {
-            role: ConversationRole::Assistant,
-            text: result.clone(),
-        }),
-        HistoryItem::Legacy { message } => {
-            let role = match message.get("role")?.as_str()? {
-                "user" => ConversationRole::User,
-                "assistant" if message.get("final")?.as_bool()? => ConversationRole::Assistant,
-                _ => return None,
-            };
-            Some(ConversationTurn {
-                role,
-                text: message.get("text")?.as_str()?.to_owned(),
-            })
-        }
-        _ => None,
-    }
 }
 
 fn session_checks(
