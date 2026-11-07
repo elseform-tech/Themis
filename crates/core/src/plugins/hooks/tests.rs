@@ -364,6 +364,17 @@ fn a_plugins_prefix_comes_from_its_name() {
     assert!(!env_name_allowed("MY_KIT_2_a", "MY_KIT_2_"));
 }
 
+#[test]
+fn a_header_with_only_a_side_prefix_names_no_file() {
+    // Found by `any_patch_text_is_read_cleanly` in CI: `a/` alone used to become "".
+    assert!(patch_paths("+++ a/\n").is_empty());
+    assert!(patch_paths("--- b/\t2026-11-07\n").is_empty());
+    assert_eq!(
+        patch_paths("--- a/x.rs\n+++ b/x.rs\n"),
+        vec!["x.rs".to_owned()]
+    );
+}
+
 proptest! {
     /// Any text: no panic, and only names under the plugin's prefix ever get through, with
     /// nothing a shell would have to read.
