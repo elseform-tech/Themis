@@ -159,6 +159,43 @@ class CallTests(unittest.TestCase):
             shutil.rmtree(keep)
 
 
+class AppServerTests(unittest.TestCase):
+    """An eval that stops early (Ctrl-C, a crash in a check, a failed start) still stops its
+    `themis serve`; one left behind ran for days."""
+
+    def commands(self, run):
+        with mock.patch.object(app, "cli", return_value=mock.Mock(returncode=0, stderr="")) as cli:
+            try:
+                run()
+            except (KeyboardInterrupt, SystemExit, ValueError):
+                pass
+        return [call.args[3:] for call in cli.call_args_list]
+
+    def test_the_server_stops_however_the_eval_ends(self):
+        def interrupted():
+            with app.app_server("themis", "data", {}):
+                raise KeyboardInterrupt
+
+        def crashed():
+            with app.app_server("themis", "data", {}):
+                raise ValueError("a check failed")
+
+        def finished():
+            with app.app_server("themis", "data", {}):
+                pass
+
+        for run in (interrupted, crashed, finished):
+            self.assertEqual(self.commands(run), [("server", "start"), ("server", "stop")], run.__name__)
+
+    def test_a_failed_start_still_stops_what_may_have_started(self):
+        with mock.patch.object(app, "cli", return_value=mock.Mock(returncode=1, stderr="timed out")) as cli:
+            with self.assertRaises(SystemExit):
+                with app.app_server("themis", "data", {}):
+                    self.fail("ran without a server")
+        self.assertEqual([call.args[3:] for call in cli.call_args_list],
+                         [("server", "start"), ("server", "stop")])
+
+
 # argv: --data-dir DIR call METHOD JSON
 CLI = ("import sys, time; m = sys.argv[4]; "
        "print(sys.argv[5]) if m == 'echo' else None; "

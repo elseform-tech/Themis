@@ -388,10 +388,11 @@ async fn serve(
     {
         crate::state::searxng::start_in_background(&data_dir);
     }
-    let served = server::Server::bind(state, &data_dir)
-        .await?
-        .run_until(stop)
-        .await;
+    let served = match server::Server::bind(state, &data_dir).await {
+        Ok(server) => server.run_until(stop).await,
+        Err(error) => Err(error),
+    };
+    // Also when binding failed: search has started by then.
     crate::state::searxng::stop();
     served
 }

@@ -10,13 +10,24 @@ use std::time::Duration;
 /// How long SearXNG may take to answer its health check after starting.
 const START_LIMIT: Duration = Duration::from_secs(45);
 
-/// Runs `searx.webapp` and exits when the process that started it goes away, so an app that
-/// was killed never leaves SearXNG running.
-const BOOTSTRAP: &str = "import os, threading, time, runpy\n\
-parent = os.getppid()\n\
-def watch():\n    while True:\n        time.sleep(2)\n        if os.getppid() != parent:\n            os._exit(0)\n\
+/// What the bootstrap runs: SearXNG's web app.
+const WEBAPP: &str = "runpy.run_module('searx.webapp', run_name='__main__')";
+
+/// The server's process id, passed to the bootstrap: a server that died while Python was still
+/// starting has already left it with a new parent, so its own `getppid()` cannot be trusted.
+const PARENT_ENV: &str = "THEMIS_SEARXNG_PARENT";
+
+/// Runs `main` and exits when the process that started it (named by [`PARENT_ENV`]) goes away,
+/// so an app that was killed never leaves SearXNG running.
+fn bootstrap(main: &str) -> String {
+    format!(
+        "import os, threading, time, runpy\n\
+parent = int(os.environ.get('{PARENT_ENV}') or os.getppid())\n\
+def watch():\n    while True:\n        if os.getppid() != parent:\n            os._exit(0)\n        time.sleep(2)\n\
 if os.name != 'nt':\n    threading.Thread(target=watch, daemon=True).start()\n\
-runpy.run_module('searx.webapp', run_name='__main__')\n";
+{main}\n"
+    )
+}
 
 /// The running built-in server, or why it is not running.
 #[derive(Default)]
@@ -174,9 +185,10 @@ fn launch(app_dir: &Path) -> Result<(std::process::Child, String), String> {
     let log = std::fs::File::create(folder.join("searxng.log")).map_err(|e| e.to_string())?;
     let mut command = std::process::Command::new(python(&runtime));
     command
-        .args(["-I", "-c", BOOTSTRAP])
+        .args(["-I", "-c", &bootstrap(WEBAPP)])
         .current_dir(&folder)
         .env("SEARXNG_SETTINGS_PATH", &settings)
+        .env(PARENT_ENV, std::process::id().to_string())
         .stdin(std::process::Stdio::null())
         .stdout(log.try_clone().map_err(|e| e.to_string())?)
         .stderr(log);
@@ -286,6 +298,73 @@ mod tests {
         {
             assert_eq!(runtime_dir(), Some(development_runtime()));
         }
+    }
+
+    #[cfg(unix)]
+    fn alive(pid: &str) -> bool {
+        std::process::Command::new("kill")
+            .args(["-0", pid])
+            .stderr(std::process::Stdio::null())
+            .status()
+            .is_ok_and(|status| status.success())
+    }
+
+    /// The server can die while SearXNG's Python is still starting (a crash, `kill -9`, a test
+    /// that stops at once): Python then never sees its real parent, yet must still exit.
+    #[cfg(unix)]
+    #[test]
+    fn search_exits_when_its_server_died_before_python_started() {
+        if std::process::Command::new("python3")
+            .arg("--version")
+            .output()
+            .is_err()
+        {
+            eprintln!("skipped: no python3");
+            return;
+        }
+        let script = bootstrap("time.sleep(120)");
+        // A stand-in server (`sh`) starts the bootstrap the way `launch` does, naming itself
+        // as the parent, and exits before Python has started.
+        let started = std::process::Command::new("sh")
+            .args([
+                "-c",
+                "export \"$2=$$\"; \
+                 (sleep 0.5; exec python3 -I -c \"$1\") </dev/null >/dev/null 2>&1 & echo $!",
+                "sh",
+                &script,
+                PARENT_ENV,
+            ])
+            .output()
+            .unwrap();
+        let pid = String::from_utf8_lossy(&started.stdout).trim().to_owned();
+        assert!(!pid.is_empty());
+        let deadline = std::time::Instant::now() + Duration::from_secs(15);
+        while alive(&pid) {
+            if std::time::Instant::now() > deadline {
+                let _ = std::process::Command::new("kill").arg(&pid).status();
+                panic!("search outlived a server that died before it started");
+            }
+            std::thread::sleep(Duration::from_millis(100));
+        }
+    }
+
+    /// While the server that started it runs, it keeps running.
+    #[cfg(unix)]
+    #[test]
+    fn search_keeps_running_while_its_server_runs() {
+        let Ok(mut child) = std::process::Command::new("python3")
+            .args(["-I", "-c", &bootstrap("time.sleep(120)")])
+            .env(PARENT_ENV, std::process::id().to_string())
+            .spawn()
+        else {
+            eprintln!("skipped: no python3");
+            return;
+        };
+        std::thread::sleep(Duration::from_secs(3));
+        let running = child.try_wait().unwrap().is_none();
+        let _ = child.kill();
+        let _ = child.wait();
+        assert!(running, "search stopped while its server was running");
     }
 
     #[test]

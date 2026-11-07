@@ -128,7 +128,7 @@ impl AgentTokens {
             .get(&Key(token.to_owned()))
             .cloned()
             .map(Some)
-            .ok_or_else(|| "unauthorized".to_owned())
+            .ok_or_else(|| super::UNAUTHORIZED.to_owned())
     }
 
     /// Credentials currently issued (tests).
