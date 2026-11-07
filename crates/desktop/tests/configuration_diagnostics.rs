@@ -60,7 +60,7 @@ fn documented_configuration_examples_use_the_runtime_resolver() {
         .skip(1)
         .map(|block| block.split("```").next().unwrap())
         .collect();
-    assert_eq!(examples.len(), 3);
+    assert_eq!(examples.len(), 4);
     // The model providers example is a valid user file.
     let providers = themis_core::configuration::resolve(Some(examples[2]), None, None).unwrap();
     assert_eq!(providers.config.providers[0].secret_name(), "LOCAL_KEY");
@@ -76,6 +76,14 @@ fn documented_configuration_examples_use_the_runtime_resolver() {
     );
     assert_eq!(resolved.provenance["instructions"], "project");
     assert_eq!(resolved.config.approval.rules[0].tool, "git");
+    // The `themis` off switch is a valid user file: the deny rule first, the read rule kept.
+    let off = themis_core::configuration::resolve(Some(examples[3]), None, None).unwrap();
+    let rules = &off.config.approval.rules;
+    assert_eq!(
+        rules[0].command.as_deref(),
+        Some(&["themis".to_owned()][..])
+    );
+    assert_eq!(rules[1].risk.as_deref(), Some("read"));
 }
 
 #[tokio::test(flavor = "multi_thread")]
