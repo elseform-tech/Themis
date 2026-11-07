@@ -5,7 +5,10 @@ app (it watches its end of a pipe from the app, so a crash or force quit ends it
 CLI starts runs until `themis server stop`. Any server stops by itself once its data folder's
 `server.json` has not named it on two checks two seconds apart (the folder or the file was
 deleted, so no client can find it), logging `server`/`discovery_lost` when the folder still
-exists. Runtime configuration is an
+exists. Before starting a server, the desktop app and CLI give one whose port still accepts
+connections up to five seconds to answer, pausing between tries; a server that refuses the
+token in `server.json` (a stale file naming a port another server now holds) does not own the
+folder, so a new server starts at once and replaces the file. Runtime configuration is an
 advanced file/CLI feature; the desktop does not expose raw configuration or logs.
 The shared API returns effective values, field provenance, schema, and invalid
 configuration for repair. Runs reject invalid configuration rather than ignoring it.
