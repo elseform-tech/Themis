@@ -777,6 +777,8 @@ Open an MCP connection’s details to see its exposed tool count, names and desc
 
 A message sent to a chat from the CLI (`themis thread send`) or another window appears in an open window right away, once, followed by the run as it happens.
 
+The app server the desktop app starts quits with the app, however the app ends (quit, crash or force quit). A server the CLI starts (`themis server start`, or any command that needs one) keeps running until `themis server stop`, and the app uses it and leaves it running. Either kind also stops by itself when its data folder or its `server.json` is deleted, since no window or command could find it again. Background programs, MCP servers and the built-in search stop with the server; the built-in search also stops on its own within a few seconds if the server itself is killed outright, even while it is still starting.
+
 For large shared-server requests, use `themis call METHOD - < arguments.json`. The CLI reads bounded UTF-8 JSON from stdin (8 MiB maximum), avoiding operating-system command-line length limits. The complete request, including its method and envelope, must fit the shared server’s 8 MiB frame limit. Secret entry still requires the existing secure provider setup flow.
 
 Conversation history can grow beyond that transport limit. The app and

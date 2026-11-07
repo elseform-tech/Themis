@@ -1,6 +1,11 @@
 # Configuration, scope, permissions, and diagnostics
 
-Desktop and CLI use the same local app server. Runtime configuration is an
+Desktop and CLI use the same local app server. The one the desktop app starts quits with the
+app (it watches its end of a pipe from the app, so a crash or force quit ends it too); one the
+CLI starts runs until `themis server stop`. Any server stops by itself once its data folder's
+`server.json` has not named it on two checks two seconds apart (the folder or the file was
+deleted, so no client can find it), logging `server`/`discovery_lost` when the folder still
+exists. Runtime configuration is an
 advanced file/CLI feature; the desktop does not expose raw configuration or logs.
 The shared API returns effective values, field provenance, schema, and invalid
 configuration for repair. Runs reject invalid configuration rather than ignoring it.
@@ -702,7 +707,8 @@ through the CLI/API or inspect the local JSONL files. Filters accept exact
 severity, service, or operation ID.
 
 Records contain epoch-millisecond timestamp, severity, service, event, and
-metadata. Events cover server lifecycle, configuration saves, integration
+metadata. Events cover server lifecycle (`server`/`started`, `stopped`, and `discovery_lost`
+when a server stopped because its `server.json` was gone), configuration saves, integration
 inspection/import/test outcomes, approvals (`approval`/`decided`: each gated action's
 `outcome`, `allowed` or `denied`, whether a rule, a chat grant, YOLO or a person settled it;
 `approval`/`answered`: only when a dialog was shown, what the person chose: `once`, `chat`
