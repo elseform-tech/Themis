@@ -45,21 +45,12 @@
  },
  "duplicate_lines_total": 797,
  "files": {
-  "crates/core/src/plugins.rs": {
-   "code_lines": 1348
-  },
   "crates/core/src/providers/tests.rs": {
    "total_lines": 3746
   },
   "crates/core/src/runtime.rs": {
    "code_lines": 4410,
    "total_lines": 9394
-  },
-  "crates/core/src/sandbox.rs": {
-   "code_lines": 1362
-  },
-  "crates/core/src/tools/background.rs": {
-   "code_lines": 1126
   },
   "crates/core/tests/browser_e2e.rs": {
    "total_lines": 2461
@@ -69,10 +60,6 @@
   },
   "crates/desktop/src/cli.rs": {
    "code_lines": 1016
-  },
-  "crates/desktop/src/state.rs": {
-   "code_lines": 1386,
-   "total_lines": 3067
   },
   "crates/desktop/src/state/goal.rs": {
    "code_lines": 1351
@@ -463,15 +450,15 @@
   "crates/core/src/runtime/summary_job.rs::summarize_for": {
    "lines": 146
   },
-  "crates/core/src/sandbox.rs::SandboxPlan#2::status": {
-   "cyclomatic": 22
-  },
-  "crates/core/src/sandbox.rs::SandboxPlan#2::with_enforcement": {
-   "cyclomatic": 22
-  },
   "crates/core/src/sandbox/detect.rs::denial": {
    "cognitive": 35,
    "cyclomatic": 25
+  },
+  "crates/core/src/sandbox/plan.rs::SandboxPlan::status": {
+   "cyclomatic": 22
+  },
+  "crates/core/src/sandbox/plan.rs::SandboxPlan::with_enforcement": {
+   "cyclomatic": 22
   },
   "crates/core/src/skills.rs::materialize_scripts": {
    "cyclomatic": 21
