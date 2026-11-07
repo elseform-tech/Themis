@@ -31,7 +31,7 @@
   "crates/desktop/src/state/automation/crud.rs": 26,
   "crates/desktop/src/state/automation/watch.rs": 27,
   "crates/desktop/src/state/goal_tool.rs": 8,
-  "crates/desktop/src/state/memory_auto.rs": 23,
+  "crates/desktop/src/state/memory_auto/request.rs": 23,
   "crates/desktop/src/state/question_tool.rs": 8,
   "crates/desktop/src/state/questions.rs": 19,
   "crates/desktop/src/state/queue.rs": 19,
@@ -66,9 +66,6 @@
   },
   "crates/desktop/src/state/goal.rs": {
    "code_lines": 1351
-  },
-  "crates/desktop/src/state/memory_auto.rs": {
-   "code_lines": 1331
   },
   "crates/desktop/src/state/run.rs": {
    "code_lines": 1198
@@ -637,26 +634,26 @@
   "crates/desktop/src/state/media_tool.rs::AttachFileTool#2::execute": {
    "cyclomatic": 21
   },
-  "crates/desktop/src/state/memory_auto.rs::AppState::apply_memory_job": {
-   "cognitive": 33,
-   "cyclomatic": 25,
-   "lines": 135
-  },
-  "crates/desktop/src/state/memory_auto.rs::AppState::apply_plan_op": {
-   "cyclomatic": 34
-  },
-  "crates/desktop/src/state/memory_auto.rs::AppState::apply_tasks_and_decisions": {
-   "cognitive": 28,
-   "cyclomatic": 30
-  },
-  "crates/desktop/src/state/memory_auto.rs::AppState::memory_try_pass": {
-   "cyclomatic": 34,
-   "lines": 145
-  },
   "crates/desktop/src/state/memory_auto.rs::AppState::run_memory_job": {
    "cognitive": 28,
    "cyclomatic": 28,
    "lines": 120
+  },
+  "crates/desktop/src/state/memory_auto/apply.rs::AppState::apply_memory_job": {
+   "cognitive": 33,
+   "cyclomatic": 25,
+   "lines": 135
+  },
+  "crates/desktop/src/state/memory_auto/apply.rs::AppState::apply_plan_op": {
+   "cyclomatic": 34
+  },
+  "crates/desktop/src/state/memory_auto/apply.rs::AppState::apply_tasks_and_decisions": {
+   "cognitive": 28,
+   "cyclomatic": 30
+  },
+  "crates/desktop/src/state/memory_auto/request.rs::AppState::memory_try_pass": {
+   "cyclomatic": 34,
+   "lines": 145
   },
   "crates/desktop/src/state/permissions.rs::AppState::get_effective_permissions": {
    "cyclomatic": 28,
