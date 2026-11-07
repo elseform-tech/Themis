@@ -54,9 +54,6 @@
   "crates/core/src/plugins.rs": {
    "code_lines": 1348
   },
-  "crates/core/src/plugins/connections.rs": {
-   "code_lines": 1389
-  },
   "crates/core/src/providers/tests.rs": {
    "total_lines": 3746
   },
@@ -296,11 +293,11 @@
    "cognitive": 47,
    "cyclomatic": 28
   },
-  "crates/core/src/plugins/connections.rs::McpServer::validate": {
+  "crates/core/src/plugins/connections/definition.rs::McpServer::validate": {
    "cognitive": 37,
    "cyclomatic": 47
   },
-  "crates/core/src/plugins/connections.rs::open_sse": {
+  "crates/core/src/plugins/connections/sse.rs::open_sse": {
    "cyclomatic": 21
   },
   "crates/core/src/plugins/discovery.rs::discover_scope": {
