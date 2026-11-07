@@ -13,113 +13,20 @@ use crate::approvals::DesktopApprovalHook;
 use crate::sink::EventSink;
 use crate::types::{ThreadEvent, ThreadEventEnvelope};
 
-use super::{AppState, RunSnapshot};
+use super::{chat_grants, AppState, RunSnapshot};
+
+mod audit;
+mod finish;
+mod setup;
+
+pub(super) use audit::AuditedApprovals;
+use setup::mcp_remote_name;
+pub(super) use setup::permission_mode;
 
 /// Channel capacity for the run-event pump (runs emit a handful of events).
 const EVENT_CHANNEL_CAPACITY: usize = 1024;
 
-/// Logs every gated action's final outcome (`approval/decided`: allowed or denied, by a rule,
-/// a chat grant, YOLO or a person). What a person answered in a dialog is the hook's own
-/// `approval/answered` event.
-pub(super) struct AuditedApprovals {
-    pub(super) inner: Arc<dyn ApprovalHook>,
-    pub(super) context: themis_core::diagnostics::DiagnosticContext,
-}
-impl ApprovalHook for AuditedApprovals {
-    fn denied_by_rule(&self, action: &themis_core::tools::ToolAction) -> bool {
-        self.inner.denied_by_rule(action)
-    }
-
-    fn sensitive_access(
-        &self,
-        tool: &str,
-        args: &serde_json::Value,
-    ) -> Option<themis_core::tools::sensitive::SensitiveAccess> {
-        self.inner.sensitive_access(tool, args)
-    }
-
-    fn approve_sensitive(
-        &self,
-        action: &themis_core::tools::ToolAction,
-        access: &themis_core::tools::sensitive::SensitiveAccess,
-    ) -> themis_core::tools::Approval {
-        self.audited(action, || self.inner.approve_sensitive(action, access))
-    }
-
-    fn would_ask(&self, action: &themis_core::tools::ToolAction) -> bool {
-        self.inner.would_ask(action)
-    }
-
-    fn approve(&self, action: &themis_core::tools::ToolAction) -> themis_core::tools::Approval {
-        self.audited(action, || self.inner.approve(action))
-    }
-}
-
-impl AuditedApprovals {
-    fn audited(
-        &self,
-        action: &themis_core::tools::ToolAction,
-        decide: impl FnOnce() -> themis_core::tools::Approval,
-    ) -> themis_core::tools::Approval {
-        let started = std::time::Instant::now();
-        let decision = decide();
-        let _ = self.context.log.append_with_level("approval", "decided", "info", json!({
-            "thread_id":self.context.thread_id,"run_id":self.context.run_id,"operation_id":self.context.run_id,"tool":action.tool,
-            "risk":format!("{:?}",action.risk),"outcome":if decision.is_denied() { "denied" } else { "allowed" },"elapsed_ms":started.elapsed().as_millis()
-        }), Some(&self.context.level));
-        decision
-    }
-}
-
 impl AppState {
-    /// Warns the agent about secret-looking files the repository could take in or already
-    /// holds. One bounded `git` call per run; its cost and counts go to the diagnostics.
-    async fn project_secrets_note(
-        &self,
-        config: &themis_core::configuration::RuntimeConfig,
-        root: &std::path::Path,
-        thread_id: &str,
-        run_id: &str,
-    ) -> String {
-        use themis_core::tools::sensitive::name_list;
-        let matcher = config.approval.sensitive_matcher(Some(root));
-        let started = std::time::Instant::now();
-        let scan = tokio::task::spawn_blocking(move || matcher.scan_project())
-            .await
-            .ok()
-            .flatten();
-        let _ = self.inner.diagnostics.append_with_level(
-            "approval",
-            "secret_scan",
-            "info",
-            json!({"thread_id": thread_id, "run_id": run_id,
-                "elapsed_ms": started.elapsed().as_millis(), "checked": scan.is_some(),
-                "unignored": scan.as_ref().map_or(0, |scan| scan.unignored.len()),
-                "tracked": scan.as_ref().map_or(0, |scan| scan.tracked.len())}),
-            Some(&config.logging.level),
-        );
-        let Some(scan) = scan else {
-            return String::new();
-        };
-        let mut note = String::new();
-        for (files, prompt) in [
-            (
-                &scan.unignored,
-                themis_core::prompts::DESKTOP_SECRETS_UNIGNORED,
-            ),
-            (&scan.tracked, themis_core::prompts::DESKTOP_SECRETS_TRACKED),
-        ] {
-            if !files.is_empty() {
-                note.push_str(&themis_core::prompts::fill(
-                    prompt,
-                    &[("files", &name_list(files))],
-                ));
-                note.push('\n');
-            }
-        }
-        note
-    }
-
     /// Resolves the provider, builds tools, and spawns the run task.
     pub(super) async fn spawn_run(
         &self,
@@ -1119,81 +1026,6 @@ impl AppState {
         });
         Ok(())
     }
-}
-
-/// App-data folder of what hooks read about a chat (`hook-sessions/<chat id>/`).
-const HOOK_SESSIONS_DIR: &str = "hook-sessions";
-
-impl AppState {
-    pub(super) fn hook_session_dir(&self, thread_id: &str) -> std::path::PathBuf {
-        self.app_data_dir().join(HOOK_SESSIONS_DIR).join(thread_id)
-    }
-
-    /// Forgets what hooks read about deleted chats.
-    pub(super) fn forget_hook_sessions(&self, thread_ids: &[String]) {
-        for id in thread_ids {
-            if super::chat_grants::safe_chat_id(id) {
-                let _ = std::fs::remove_dir_all(self.hook_session_dir(id));
-            }
-        }
-    }
-
-    /// Marks a run idle, releases its concurrency permit, and persists.
-    pub(super) async fn finish_run(&self, thread_id: &str) {
-        self.touch_hook_session(thread_id);
-        self.close_steer_inbox(thread_id);
-        self.stop_subagents(thread_id);
-        // A recording the agent left running ends with its run, and so do its breakpoints,
-        // request blocks and throttling.
-        self.stop_agent_recording(thread_id).await;
-        if let Some(chat) = self.inner.browsers.existing(thread_id) {
-            chat.end_debugging().await;
-        }
-        self.inner
-            .stop_flags
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .remove(thread_id);
-        // Both the terminal-event pump and run tail can finish a run; release
-        // the permit only for the path that still owns the running state.
-        let was_running = self
-            .inner
-            .threads
-            .write()
-            .await
-            .get_mut(thread_id)
-            .map(|record| std::mem::replace(&mut record.running, false))
-            .unwrap_or(false);
-        if was_running {
-            // Keep Rust 1.98 support; the try_update replacement requires Rust 1.99.
-            #[allow(deprecated)]
-            let _ = self.inner.running_count.fetch_update(
-                Ordering::SeqCst,
-                Ordering::SeqCst,
-                |count| count.checked_sub(1),
-            );
-        }
-        self.persist_registry().await;
-    }
-}
-
-/// The mode in the words Claude's hooks read.
-pub(super) fn permission_mode(mode: themis_core::configuration::ApprovalMode) -> &'static str {
-    match mode {
-        themis_core::configuration::ApprovalMode::Yolo => "bypassPermissions",
-        // Auto never prompts, like Claude Code's own auto mode.
-        themis_core::configuration::ApprovalMode::Auto => "auto",
-        themis_core::configuration::ApprovalMode::Custom => "default",
-    }
-}
-
-/// The server's own tool name inside an MCP wire name (`mcp_<server>_<16 hex>_<tool>`).
-fn mcp_remote_name(wire: &str) -> Option<&str> {
-    let server = themis_core::tools::mcp_server_id(wire)?;
-    wire.strip_prefix("mcp_")?
-        .get(server.len()..)?
-        .strip_prefix('_')
-        .filter(|remote| !remote.is_empty())
 }
 
 #[cfg(test)]
