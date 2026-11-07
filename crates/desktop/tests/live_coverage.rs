@@ -69,6 +69,16 @@ fn tool_names() -> BTreeSet<String> {
         rust_sources(&root().join(directory), &mut sources);
     }
     for source in sources {
+        // A test module kept in its own file (`tests.rs`, `*_tests.rs`, or under `tests/`)
+        // offers no tools either.
+        let test_module = source.components().any(|part| part.as_os_str() == "tests")
+            || source.file_name().is_some_and(|name| {
+                let name = name.to_string_lossy();
+                name == "tests.rs" || name.ends_with("_tests.rs")
+            });
+        if test_module {
+            continue;
+        }
         let text = read_at(&source);
         // Stub tools in test modules are not offered.
         let text = text.split("#[cfg(test)]\nmod ").next().unwrap_or_default();
