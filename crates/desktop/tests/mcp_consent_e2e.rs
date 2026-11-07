@@ -49,9 +49,13 @@ async fn requests_to(mcp: &MockServer) -> usize {
         .map_or(0, |requests| requests.len())
 }
 
-/// Waits for the background start to settle (blocked starts fail at once).
+/// Waits for the background start to settle (blocked starts fail at once). The app gives a start
+/// up to 30 seconds before it fails it, so the wait outlasts that: a start that is merely slow
+/// (a busy machine copying a large plugin or spawning a process) settles here, and one that
+/// never does still fails the test.
 async fn settled(state: &AppState, root: &std::path::Path) -> Value {
-    for _ in 0..100 {
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(45);
+    loop {
         let shown = state
             .plugin_action(json!({"action":"mcp_status","projectRoot":root,"connect":true}))
             .await
@@ -59,9 +63,12 @@ async fn settled(state: &AppState, root: &std::path::Path) -> Value {
         if shown["local:docs:mcp:docs"]["status"] != "connecting" {
             return shown;
         }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "start did not settle within 45 s: {shown}"
+        );
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
-    panic!("start did not settle");
 }
 
 fn status(state_value: &Value) -> String {
