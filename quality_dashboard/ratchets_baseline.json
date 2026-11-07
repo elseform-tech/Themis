@@ -47,9 +47,6 @@
  },
  "duplicate_lines_total": 797,
  "files": {
-  "crates/core/src/providers/tests.rs": {
-   "total_lines": 3746
-  },
   "crates/core/src/runtime.rs": {
    "code_lines": 1948,
    "total_lines": 2025
