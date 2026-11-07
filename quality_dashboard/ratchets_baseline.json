@@ -63,9 +63,6 @@
   "crates/desktop/src/state/run.rs": {
    "code_lines": 1030
   },
-  "crates/desktop/tests/attachments_e2e.rs": {
-   "total_lines": 2633
-  },
   "crates/desktop/tests/plugin_hooks_cli_e2e.rs": {
    "total_lines": 2670
   },
