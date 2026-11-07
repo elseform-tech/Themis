@@ -57,9 +57,6 @@
   "crates/core/tests/browser_e2e.rs": {
    "total_lines": 2461
   },
-  "crates/core/tests/runtime_e2e.rs": {
-   "total_lines": 3130
-  },
   "crates/desktop/src/state/run.rs": {
    "code_lines": 1030
   },

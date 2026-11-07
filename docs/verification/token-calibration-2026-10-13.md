@@ -15,7 +15,7 @@ These are deterministic harness tests; the provider is scripted, not a model-qua
 - Property tests: classifier never panics and ignores non-400/413/422 statuses; JSON-like
   bodies without prose are never overflows; embedded markers are always detected; the ratio
   stays bounded for arbitrary observations; linear `context_split` equals the quadratic one.
-- `crates/core/tests/runtime_e2e.rs` (wiremock): provider usage 3x the estimate compacts
+- `crates/core/tests/runtime_e2e/budget_and_notes.rs` (wiremock): provider usage 3x the estimate compacts
   before the second request while the identical run without usage does not;
   overflow -> one compaction -> retry succeeds with the write executed once; two consecutive
   overflows fail explicitly with originals on disk and no tool executed.
