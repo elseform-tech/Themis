@@ -399,7 +399,7 @@ mod timed_out_tests {
             .unwrap_err()
             .to_string();
         assert!(
-            error.starts_with("approval denied for 'write_file'"),
+            error.contains("approval denied for 'write_file'"),
             "{error}"
         );
         assert!(

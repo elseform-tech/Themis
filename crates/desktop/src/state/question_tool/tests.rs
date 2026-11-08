@@ -49,23 +49,20 @@ fn a_choice_missing_details_is_refused_by_name() {
     assert!(refused.contains("choice 2 (\"Spaces\")"), "{refused}");
     // `does` was given: only the rest is named.
     assert!(
-        refused.contains("is missing `advantages`, `disadvantages`, `consequences`."),
+        refused.contains("needs `advantages`, `disadvantages`, `consequences`."),
         "{refused}"
     );
     let bare =
         parse(&json!({"question": "Tabs?", "choices": ["Tabs", choice("Spaces")]})).unwrap_err();
     assert!(
         bare.contains(
-            "choice 1 (\"Tabs\") is missing `does`, `advantages`, `disadvantages`, `consequences`"
+            "choice 1 (\"Tabs\") needs `does`, `advantages`, `disadvantages`, `consequences`"
         ),
         "{bare}"
     );
     let nameless =
         parse(&json!({"question": "Q", "choices": [{"does": "x"}, choice("B")]})).unwrap_err();
-    assert!(
-        nameless.contains("choice 1 is missing `answer`"),
-        "{nameless}"
-    );
+    assert!(nameless.contains("choice 1 needs `answer`"), "{nameless}");
     // A question without choices (a free answer) needs none of it.
     assert!(parse(&json!({"question": "Name?", "recommended": "Pebble"})).is_ok());
 }

@@ -602,7 +602,7 @@ maps each of the agent's choices to `{"does","advantages","disadvantages","conse
 Every choice the agent offers is `{"answer","does","advantages","disadvantages","consequences"}`:
 what it will do if picked (the steps, commands or files), its advantages, disadvantages and
 consequences (what follows, and whether it is hard to undo). A choice missing any of them, or a
-bare string, is refused with a message naming the choice and each missing field, and nothing is
+bare string, is refused with a message naming the choice and each missing field (for example "choice 2 ("Tabs") needs `advantages`, `consequences`", from `ask-user-choice-incomplete.md`), and nothing is
 asked. One call may carry up to 4 questions in `questions` (each with the single question's
 fields) instead of the top-level `question`; giving both, none or more than 4 is refused. They are
 stored as separate questions sharing one `group`, all or none (the 8-open limit counts each), so

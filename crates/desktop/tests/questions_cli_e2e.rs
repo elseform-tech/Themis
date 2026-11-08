@@ -812,7 +812,7 @@ async fn a_choice_that_does_not_say_what_it_does_is_refused() {
             .expect("the turn after asking"),
     );
     assert!(
-        refused.contains("is missing `does`, `advantages`, `disadvantages`, `consequences`"),
+        refused.contains("needs `does`, `advantages`, `disadvantages`, `consequences`"),
         "{refused}"
     );
     app.serving.abort();
