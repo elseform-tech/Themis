@@ -379,7 +379,11 @@ fn direct_destructive(command: &[String]) -> bool {
 pub fn shell_risk(command: &[String]) -> RiskLevel {
     if is_destructive_variant(command) {
         RiskLevel::Destructive
+    } else if let Some(risk) = super::themis_cli::direct_risk(command) {
+        risk
+    } else if super::read_only::read_only_command(command) {
+        RiskLevel::Read
     } else {
-        super::themis_cli::direct_risk(command).unwrap_or(RiskLevel::Execute)
+        RiskLevel::Execute
     }
 }

@@ -286,7 +286,15 @@ fn broad_shell_allow_does_not_cover_destructive_variants() {
         decide(execute, &["git", "reset", "--hard"]),
         PolicyAction::Ask
     );
-    assert_eq!(decide(execute, &["git", "status"]), PolicyAction::Allow);
+    // `git status` only reads now: an execute rule doesn't need to cover it.
+    assert_eq!(
+        crate::tools::shell_risk(&argv(&["git", "status"])),
+        RiskLevel::Read
+    );
+    assert_eq!(
+        decide(execute, &["git", "commit", "-m", "x"]),
+        PolicyAction::Allow
+    );
 }
 
 #[test]
@@ -304,11 +312,11 @@ fn shell_destructive_variants_carry_the_destructive_risk() {
             "{variant:?}"
         );
     }
-    for ordinary in [
-        vec!["rm", "file"],
-        vec!["rm", "-f", "file"],
-        vec!["ls", "-R"],
-    ] {
+    assert_eq!(
+        crate::tools::shell_risk(&argv(&["ls", "-R"])),
+        RiskLevel::Read
+    );
+    for ordinary in [vec!["rm", "file"], vec!["rm", "-f", "file"]] {
         assert_eq!(
             crate::tools::shell_risk(&argv(&ordinary)),
             RiskLevel::Execute,
