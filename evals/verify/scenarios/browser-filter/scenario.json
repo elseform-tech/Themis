@@ -1,0 +1,17 @@
+{
+ "kind": "web",
+ "message": "On the invoice page (python3 -m ledgerly.api.routes --store data/demo_store.json, then open the page in the browser), choosing paid in the Show menu still lists every invoice. Please fix it, and check in the page itself that the filter works.",
+ "source": [
+  "web/app.js"
+ ],
+ "tests": "tests",
+ "hidden_command": [
+  "python3",
+  "-m",
+  "pytest",
+  "-q",
+  "-p",
+  "no:cacheprovider",
+  "_hidden"
+ ]
+}

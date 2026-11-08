@@ -17,6 +17,7 @@ the agent never sees score the share of requirements met.
 | `refactor-split-billing` | split `billing.py` without changing behaviour | 15+ imports in code, tests and docs |
 | `run-to-see` | the import drops some invoices | the code looks right; only running it on the sample data shows why |
 | `web-mismatch` | the page shows NaN | the API and the page disagree on field names |
+| `browser-filter` | the Show menu on the invoice page does not filter | the page reads the menu once at load; the request asks for a check in the page itself, so it measures browser use |
 | `lookup-deprecation` | fix a deprecation as the docs say, cite them | an aware/naive datetime trap in stored data |
 | `interleaved-requests` | add `reports top`, then an urgent unrelated fix, a question, and "now finish it" | the feature must survive interruptions and checkpoints; each step is checked |
 | `accumulating-requests` | `customers show`, then eight more requests piling up (added requirements, a change of direction, unrelated fixes, a test, "update the docs for everything today"); 32k and 64k by default (16k was dropped on 2026-11-05: the tools and instructions alone no longer fit it) | early requests must still be done at the end, under heavy compaction |
