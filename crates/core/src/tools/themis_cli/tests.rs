@@ -21,6 +21,29 @@ const TABLE: &[(&[&str], ThemisCall)] = &[
     (&["plugin", "show", "demo"], Read),
     (&["plugin", "export", "demo"], Read),
     (&["plugin", "preview", "ralph@official"], Read),
+    (&["doctor", "--integrations", "--no-start"], Read),
+    (
+        &[
+            "doctor",
+            "--json",
+            "--integrations",
+            "--no-start",
+            "--project",
+            "p",
+        ],
+        Read,
+    ),
+    (&["doctor", "--integrations"], Execute),
+    (
+        &["doctor", "--integrations", "--json", "--project", "p"],
+        Execute,
+    ),
+    (&["doctor", "--no-start"], Execute),
+    (&["doctor", "--integrations", "--deep"], Execute),
+    (
+        &["doctor", "--integrations", "--no-start", "--project"],
+        Execute,
+    ),
     (&["plugin", "updates"], Read),
     (&["plugin", "inspect", "./pkg"], Read),
     (
