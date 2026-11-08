@@ -486,7 +486,11 @@ every mode, YOLO included: they run outside the sandbox. Whatever the agent
 saves arrives with them switched off, and if it tries to switch one on, through
 its tools or `themis`, Themis refuses and it asks you to switch it on in
 Integrations instead. A server by URL it may switch on; it still waits for your
-approval before it starts. To stop
+approval before it starts. For the same reason the agent cannot test a hook or
+a command-based server through `themis` (`hook test`, `mcp test`); test it
+yourself in Integrations. Its `themis` also works only on your global
+integrations and its own project's, and cannot install or fetch anything when
+the chat's sandbox blocks the network. To stop
 the agent using `themis` at all, add a deny rule for shell commands starting
 with `themis` to your `runtime.jsonc`; it holds in YOLO too (see "Approvals for
 `themis` calls" in [configuration](configuration.md)).

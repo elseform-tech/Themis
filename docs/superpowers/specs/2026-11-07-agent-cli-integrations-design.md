@@ -124,6 +124,16 @@ definition to a scratch file, apply it with the matching `themis` command), **ve
    `manage_integrations` alike; the per-command argv dialog for agent-saved MCP commands is
    gone. Connections by URL keep the consent rule. The shell still asks every time before
    `hook/mcp/plugin enable`, though the server refuses the hook or command-based server anyway.
+   **Security fix 2026-11-08:** steps 1–2 left `plugin_action` open to an agent's credential apart
+   from secrets and sign-in, so a script holding the credential (no `themis` command for the
+   shell's approval step to see) could have the server run `test_hook`/`test_mcp` outside the
+   sandbox, write another project's `.themis/plugins/`, or fetch under `sandbox.network: "block"`.
+   The guard now allows `plugin_action` per action from an explicit list (store reads and writes;
+   fetching actions only when the run's network is not blocked), refuses `test_hook`, `test_mcp`
+   and `mcp_status` with `connect`/`retry` for every agent credential, and binds the credential to
+   its run's project and network block when it is issued. `themis mcp test`/`hook test` from the
+   agent's shell are therefore always refused; step 4's `doctor --integrations` must not start
+   code from an agent's credential either (owner decision on how an agent verifies a hook).
 3. **Clear inputs on the CLI path.** Complete skill, hook and MCP definitions in `--help` and
    errors; defaults for empty lists (`allowedTools`, `scripts`); one error listing every problem.
    Fix the marketplace name lookup and stop single-plugin `preview` from scanning the whole

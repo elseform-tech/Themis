@@ -738,8 +738,40 @@ refused in every mode, YOLO included, with a message naming the method:
 | --- | --- |
 | Status and diagnostics (metadata only) | `ping`, `get_diagnostics`, `query_diagnostic_logs`, `get_effective_permissions`, `get_usage_summary`, `list_go_models`, `list_model_providers`, `get_secret_status` (whether a key exists, never the key), `mcp_config_status`, `resource_usage` |
 | Reading configuration and settings | `get_runtime_configuration`, `get_settings`, `get_browser_settings`, `get_web_settings`, `get_subagent_settings`, `get_memory_settings` |
-| Skills and integrations | `list_prompt_skills`, `list_skills`, `plugin_action` (as the agent's: saving or enabling an MCP server records no consent to start it, a hook or command-based MCP server is never left switched on, and `mcp_allow_secrets` and MCP sign-in/sign-out are refused) |
+| Skills and integrations | `list_prompt_skills`, `list_skills`, `plugin_action` with an action from the list below (as the agent's: saving or enabling an MCP server records no consent to start it, and a hook or command-based MCP server is never left switched on) |
 | Its own chat only (`threadId` required) | `get_thread`, `get_thread_history_page`, `get_thread_tasks`, `get_background_task_log`, `get_context_usage`, `get_chat_usage` |
+
+`plugin_action` is checked per action, again against an explicit list, so an
+action added later stays refused. The server decides on the request itself, so
+a script that sends it straight to `THEMIS_AGENT_PORT` (no `themis` command for
+the shell's approval step to see) meets the same checks:
+
+| `plugin_action` from an agent's call | Actions |
+| --- | --- |
+| Reads (fetch nothing, start nothing) | `list`, `inventory`, `marketplaces`, `sources`, `updates`, `plugin_icon`, `inspect_path`, `inspect_json`, `mcp_tools`, `mcp_status` without `connect` or `retry` |
+| Changes through the store, as the agent's | `save`, `save_skill`, `save_hook`, `set_component_enabled`, `remove_component`, `enable`, `disable`, `delete`, `import_path`, `import_json`, `set_marketplace_enabled`, `remove_marketplace` |
+| May fetch (refused when the run's sandbox blocks the network) | `install`, `update`, `import_repository`, `preview_repository`, `inspect_repository`, `add_marketplace`, `preview_source`, `check_source`, `check_sources`, `scan_marketplace`, `catalog`, `catalog_check`, `preview`, `inspect_marketplace` |
+
+Everything else is refused, in every mode, YOLO included: a missing or unknown
+action; `test_hook`, `test_mcp` and `mcp_status` with `connect` or `retry`,
+which run a command or start a connection outside the sandbox where the server
+cannot know you saw it (the answer, `agent-cli-runs-code-refused.md`, tells the
+agent to ask you to test it in Integrations, or to use `manage_integrations`,
+whose test goes through the chat's approvals); and `mcp_allow_secrets` and MCP
+sign-in/sign-out, which are yours. The credential is also bound to its run when
+it is issued:
+
+- **Project.** A `projectRoot` must be the run's own project (its worktree
+  when it has one), compared after resolving the path; another one, or one
+  that does not exist, is refused (`agent-cli-other-project-refused.md`), so
+  the agent cannot write another project's `.themis/plugins/`. A call without
+  `projectRoot` works on your global integrations, as `themis plugin …` does by
+  default. The other methods' `projectRoot` (reads) is not bound.
+- **Network.** When the run's sandbox blocks the network (`sandbox.network:
+  "block"`; in YOLO only when you wrote it), the actions that may fetch are
+  refused (`agent-cli-network-blocked.md`): the server runs them in its own
+  process, outside the run's sandbox. Otherwise they are allowed, and the
+  shell's approval step treats the `themis` commands behind them as `network`.
 
 A `threadId` naming another chat is refused for every method. Refused, among
 everything else: approvals and answers (`approve_action`, `answer_question`), its
@@ -754,7 +786,9 @@ approved `themis` command can do.
 Calls without a run credential (your own CLI, the desktop app) are unchanged.
 Each refusal is logged as `server`/`agent_call_refused` with the method name
 (`(other)` for anything that is not a plain method name), the `plugin_action`
-action, and the chat and run ids, never the credential or arguments.
+action, a `reason` (`method_not_allowed`, `action_not_allowed`, `runs_code`,
+`other_project`, `network_blocked`, or `switch_on` from the store), and the
+chat and run ids, never the credential, paths or arguments.
 
 **Threat model.** The guard relies on the agent never holding your credential.
 It is in `server.json` (owner-only, `0600`), which the sandbox stops every
@@ -766,7 +800,18 @@ agent command from reading or writing in every mode. Limits:
   wall does not. The same is true for a command you let run outside the
   sandbox when it was blocked.
 - `sandbox.network: "block"` also blocks the agent's `themis` from reaching the
-  server.
+  server. Where the block is not enforced (Landlock below ABI 4) or a command you
+  let run outside the sandbox reaches the server anyway, the credential still
+  carries the run's block, so the server refuses the actions that would fetch.
+- The server runs what an agent's call asks for in its own process, outside the
+  run's sandbox. That is why the list holds only store reads and writes (which
+  keep hooks and command-based MCP servers off), binds them to the run's
+  project, refuses fetching under a network block and never runs a test: a
+  script with the credential cannot use the server to run code, write another
+  project or reach the network for it. Paths in `import_path`/`inspect_path`
+  and local marketplace sources are read by the server, so it can read a
+  plugin or skill folder the sandbox would hide from the agent's commands; only
+  what validates as a plugin, skill or MCP JSON is kept.
 - A run credential gives only what the list above allows, and only for that
   run's chat. It is a random 256-bit value: a command can print its own (which
   then shows masked), but it cannot make one.
@@ -784,7 +829,7 @@ not as a generic command:
 | Reads: `status`, `doctor`, `usage`, `models`, `permissions`, `auth status`, `--help`; `plugin list/show/export/updates`; `plugin`/`skill`/`mcp`/`hook inspect`; `plugin marketplace list/browse/preview/changes/check`; `skill list`; `skill`/`mcp`/`hook list/show`; `call` with a reading method from the allowed list | `read` | no prompt (the built-in read rule) | no prompt | runs |
 | Changes through the store: `plugin create/save/edit/disable`, `skill save`, `mcp`/`hook add/update`, `skill enable`, any `disable`, `plugin marketplace enable/disable`, a local `import` | `write` | asks; **Allow in this chat** covers the same command (its full argv) | the reviewer decides | runs |
 | Network: `plugin install/update`, an `import` from an `http(s)` URL or with `--ref`/`--subdirectory`, `plugin marketplace add/refresh` | `network` | as a change | the reviewer decides | runs |
-| Tests that start code: `mcp test`, `hook test`, `skill verify` | `execute` | asks | the reviewer decides | runs |
+| Tests that start code: `mcp test`, `hook test`, `skill verify` | `execute` | asks (the server then refuses `mcp test` and `hook test` from an agent's credential) | the reviewer decides (likewise refused) | runs `skill verify`; the server refuses `mcp test` and `hook test` |
 | Removals: `plugin delete/uninstall`, `skill`/`mcp`/`hook delete/remove`, `plugin marketplace remove` | `destructive` | asks every time, never covered by **Allow in this chat** | the reviewer decides | runs |
 | Switching on: `hook enable`, `mcp enable`, `plugin enable` (which turns on the hooks the plugin has on), `call plugin_action` with `enable` or `set_component_enabled` turning on a hook or MCP server | `execute` | asks every time, never covered by **Allow in this chat** | always the person, like a sandbox escape: blocked with the question box (`auto-switch-on-reason.md`, `auto-switch-on-safer.md`) and only their **Allow once** lets it run | runs |
 
@@ -863,7 +908,7 @@ server come from different builds, `too_large`, `invalid_request`, `timeout`,
 `not_found`, `conflict`, `denied`, `network`, `credentials` or `other`), never the
 error message, which can name paths or hold user text. A call from an agent's shell the
 server refuses (`server`/`agent_call_refused`) records the method name, the `plugin_action`
-action and the chat and run ids.
+action, the `reason` and the chat and run ids.
 Request bodies, prompts, tool arguments/results, and provider bodies are excluded.
 Known credential fields and referenced secret environment values are redacted;
 debug subprocess stderr is bounded and filtered. Debug output from third-party
