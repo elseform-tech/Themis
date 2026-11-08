@@ -109,8 +109,41 @@ pub async fn run(client: &Client, words: &[String], directory: &Path) -> Result<
         },
         _=>return Err("Use plugin list|updates|create NAME|show NAME|edit NAME|save FILE|inspect SOURCE [NAME]|import SOURCE [NAME]|export NAME|install NAME@MARKET|update NAME|enable NAME|disable NAME|uninstall NAME; plugin marketplace list|preview SOURCE|add SOURCE [NAME]|enable NAME|disable NAME|changes NAME|browse NAME|refresh NAME|check NAME|remove NAME; skill list|save PLUGIN FILE|verify FILE|delete PLUGIN ID; mcp/hook list PLUGIN|add PLUGIN NAME FILE|update PLUGIN NAME FILE|test PLUGIN NAME|delete PLUGIN NAME. Options: --scope local|global --project PATH --expected REVISION --ref REF --subdirectory PATH --allow-partial. For agent creation: skill create THREAD REQUEST.".into()),
     }
+    send(client, request, project.as_deref()).await
+}
+
+/// Sends the request, except an agent's hook or MCP test, which runs here in its sandbox.
+async fn send(client: &Client, request: Value, project: Option<&str>) -> Result<Value, String> {
+    let test = matches!(request["action"].as_str(), Some("test_mcp" | "test_hook"));
+    if test && crate::server::in_agent_shell() {
+        return sandboxed_test(&request, project).await;
+    }
     client.call("plugin_action", request).await
 }
+/// In an agent's shell the server refuses to start a test's command outside the sandbox, so
+/// `themis mcp|hook test` runs it here, in the run's sandbox, with nothing the shell itself lacks.
+async fn sandboxed_test(request: &Value, project: Option<&str>) -> Result<Value, String> {
+    let root = match project {
+        Some(project) => std::path::PathBuf::from(project),
+        None => std::env::current_dir().map_err(|e| e.to_string())?,
+    };
+    let action = request["action"].as_str().unwrap_or_default();
+    match crate::state::definition_test::run(action, request, &root, true).await {
+        Ok(mut value) => {
+            if let Some(object) = value.as_object_mut() {
+                object.insert("sandboxed".into(), json!(true));
+            } else {
+                value = json!({"sandboxed": true, "result": value});
+            }
+            Ok(value)
+        }
+        Err(error) => Err(themis_core::prompts::fill(
+            themis_core::prompts::AGENT_CLI_SANDBOXED_TEST_FAILED,
+            &[("error", &format!("{error:#}"))],
+        )),
+    }
+}
+
 fn field(component: &str) -> &str {
     match component {
         "skill" => "skills",
