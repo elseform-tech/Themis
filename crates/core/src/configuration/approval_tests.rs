@@ -1348,7 +1348,13 @@ mod prop {
                 // Full argv: never shorter than the whole command.
                 prop_assert_eq!(danger.grant_key().split('\0').count(), 1 + danger.command.len());
             } else {
-                prop_assert_eq!(danger.grant_key(), harmless.grant_key());
+                // Shares the harmless key, or (a git helper option such as `-c`, which asks every
+                // time) is keyed by its whole argv: never a key in between.
+                let key = danger.grant_key();
+                prop_assert!(
+                    key == harmless.grant_key() || key.split('\0').count() == 1 + danger.command.len(),
+                    "{key:?}"
+                );
             }
         }
 
