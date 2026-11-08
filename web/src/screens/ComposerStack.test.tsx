@@ -12,6 +12,8 @@ vi.mock("../state/store", async importOriginal => ({
 vi.mock("../lib/tauri", () => ({
   approveAction: vi.fn(async () => undefined),
   answerQuestion: vi.fn(async () => undefined),
+  enqueueMessage: vi.fn(async () => ({ id: "m1" })),
+  steerQueuedMessage: vi.fn(async () => undefined),
 }));
 
 const approval: ApprovalRequest = { approval_id: "a1", thread_id: "t1", tool: "shell", summary: "run", risk: "execute", command: { argv: ["python3", "check.py"] } } as ApprovalRequest;
@@ -31,6 +33,24 @@ beforeEach(() => {
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 
 describe("composer stack", () => {
+  it("asks about a destructive step in Auto or YOLO as a question box, never an approval box", async () => {
+    const tauri = await import("../lib/tauri");
+    const destructive = { ...approval, approval_id: "d1", risk: "destructive", command: { argv: ["rm", "-rf", "build"] }, ask_first: true } as ApprovalRequest;
+    render(stack({ approvals: [destructive] }));
+    expect(screen.getByRole("region", { name: "Question from the agent" })).toHaveTextContent("about to run `rm -rf build`");
+    expect(screen.queryByText("Allow once (1)")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: /Skip it/ }));
+    await waitFor(() => expect(tauri.approveAction).toHaveBeenCalledWith("t1", "d1", "deny"));
+    expect(dispatch).toHaveBeenCalledWith({ type: "approval/dequeued", approvalId: "d1" });
+    cleanup();
+    // A written answer goes to the agent as a steered message, which releases the step unrun.
+    render(stack({ approvals: [destructive] }));
+    fireEvent.change(screen.getByLabelText("Your answer"), { target: { value: "use git clean -n first" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send answer" }));
+    await waitFor(() => expect(tauri.steerQueuedMessage).toHaveBeenCalledWith("t1", "m1"));
+    expect(tauri.enqueueMessage).toHaveBeenCalledWith("t1", "use git clean -n first");
+  });
+
   it("shows the approval first, says a question waits, and lets nothing else in until it is decided", async () => {
     const { rerender } = render(stack({ goal, approvals: [approval], questions: [question] }));
     expect(screen.getByRole("region", { name: "Goal" })).toBeInTheDocument();

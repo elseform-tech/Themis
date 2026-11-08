@@ -39,7 +39,8 @@ interface ThreadComposerProps {
   /** The secret OpenCode Go rejected: sending waits until it is fixed in Settings. */
   keyRejected?: string;
   onDraftChange: (value: string) => void;
-  onSend: () => void;
+  /** Sends; while a run is going, steers it in, or queues it for after the turn (`queue`). */
+  onSend: (queue?: boolean | React.SyntheticEvent) => void;
   onStop: () => void;
   onNewThread: () => void;
   onOpenSettings: () => void;
@@ -171,8 +172,8 @@ export function ThreadComposer({
           </li>)}
         </ul>}
         <PromptInput id="themis-composer" label="Message" value={draft} skills={skills} plugins={plugins} commands={COMMANDS} history={history} disabled={composerDisabled}
-          placeholder={running ? "Queue a message — or steer it in" :"Ask Themis… @ for plugins, / for skills"}
-          onChange={onDraftChange} onSubmit={() => { if (!sendBlocked) onSend(); }} />
+          placeholder={running ? "Steer it in (Enter) — or queue it (⌘Enter)" :"Ask Themis… @ for plugins, / for skills"}
+          onChange={onDraftChange} onSubmit={queue => { if (!sendBlocked) onSend(queue); }} />
         <div className="themis-thread-composer-actions">
           <details className="themis-composer-add" data-popover>
             <summary aria-label="Add files, skills or plugins" title="Add files, skills or plugins">
@@ -221,8 +222,8 @@ export function ThreadComposer({
             <Button
               className="themis-send"
               variant="primary"
-              aria-label={running ? "Queue message" : "Send"}
-              title={running ? "Queue (Enter) · sent when this turn ends, or steer it in" : "Send (Enter) · Shift+Enter for a new line · ⌘/Ctrl+Shift+O new thread"}
+              aria-label={running ? "Steer it in" : "Send"}
+              title={running ? "Steer it in (Enter): the agent reads it after its current step · ⌘/Ctrl+Enter queues it for after this turn" : "Send (Enter) · Shift+Enter for a new line · ⌘/Ctrl+Shift+O new thread"}
               disabled={composerDisabled || sendBlocked || (draft.trim() === "" && attachments.length === 0)}
               onClick={onSend}
             >

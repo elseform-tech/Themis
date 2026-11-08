@@ -429,9 +429,11 @@ It has no configuration editor or advanced settings link.
 
 **Destructive steps ask the person first in Auto and YOLO.** A destructive tool (`delete_file`,
 removals) or a destructive command variant (`rm -rf`, a force push, `git reset --hard`, `git
-clean`, `git branch -D`, a publish, a `themis` delete) waits on an approval box (Allow once or
-Deny, never "in this chat") before the mode's own decision, whatever an allow rule says; a deny
-rule still refuses it without asking. The person's answer decides. With no answer within the
+clean`, `git branch -D`, a publish, a `themis` delete) waits on a question box before the mode's
+own decision, whatever an allow rule says: **Run it once**, **Skip it**, or a written answer, which
+is steered in as a message (the step does not run and the agent reads it first). It is never
+remembered for the chat, and a deny rule still refuses it without asking. Auto and YOLO never show
+an approval box; an automation watch's check command in Auto goes to the reviewer too. The person's answer decides. With no answer within the
 approval timeout (Settings › Permissions, 10 minutes by default) the mode decides as below: Auto
 applies its rules and reviewer, YOLO runs it. An automation, with nobody to ask, and a non-Git
 project go straight to the mode. Custom asks about these every time anyway.
@@ -643,6 +645,14 @@ an allow rule that does not name the variant itself:
   while `npm run publish` (a script that likely publishes) still does. A word right after
   a flag may be that flag's value and never ends the scan: over-flagging costs a prompt only.
 - Recursive `rm` (`-r`, `-R`, `--recursive`, or a cluster such as `-rf`).
+
+Git calls that make git start a program of the caller's choosing, or take their configuration
+from the call, are also asked about every time and never covered by "Allow in this chat" or an
+allow rule that does not name them, inside wrappers too: `-c`, `--config-env` or `--exec-path`
+before the subcommand; `--upload-pack`, `--receive-pack`, `--exec` or `--config` (by any
+abbreviation git accepts) and `ext::`/`fd::` remotes on `fetch`, `pull`, `push`, `clone`,
+`ls-remote`, `submodule` and `remote`; and `clone -u`. (`push -u` is `--set-upstream` and stays an
+ordinary push.)
 
 These variants carry the risk class `destructive` for `shell` calls too (the `git` tool
 also escalates destructive `checkout`, `branch` and `commit` calls, and its `status`, `diff`,

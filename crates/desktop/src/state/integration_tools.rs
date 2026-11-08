@@ -351,7 +351,13 @@ impl ManagementTool {
                     "watch check command (runs every {} min until the watch ends)",
                     input.interval_mins
                 );
-                let decision = self.run.interactive.approve(&action);
+                // Auto never shows an approval box: its reviewer decides (a hard block becomes a
+                // question box); Custom asks the person.
+                let decision = if self.run.mode == ApprovalMode::Auto {
+                    self.approvals.approve(&action)
+                } else {
+                    self.run.interactive.approve(&action)
+                };
                 if decision.is_denied() {
                     Err("The user did not approve the check command, so the watch was not saved. Retry without check_command (read the file yourself on each run), or ask the user to allow this exact command.".to_owned())
                 } else {

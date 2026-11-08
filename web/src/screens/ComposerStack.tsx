@@ -2,10 +2,11 @@ import { useMemo, useState } from "react";
 import { ApprovalBox } from "../components";
 import { answerQuestion, approveAction } from "../lib/tauri";
 import type { ApprovalDecision, ApprovalRequest, Goal, Question } from "../lib/types";
-import { composerQueue, openFor, placeQuestion, readFolded, usePlacements, writeFolded } from "../state/composerSlot";
+import { composerQueue, openFor, placeQuestion, readFolded, usePlacements, writeFolded, type ComposerItem } from "../state/composerSlot";
 import type { ToolTraceEntry } from "../state/reducer";
 import { describeError, toast, useApp } from "../state/store";
 import { GoalBar } from "./GoalBar";
+import { AskFirstBox } from "./AskFirstBox";
 import { QuestionBox, QuestionMark, useNowAt } from "./QuestionBox";
 
 interface ComposerStackProps {
@@ -96,25 +97,39 @@ export function ComposerStack({ threadId, goal, approvals, questions, traces, on
   return (
     <>
       {shownGoal && <GoalBar goal={shownGoal} onEdit={onEditGoal} onPause={onPauseGoal} onResume={onResumeGoal} onRemove={onRemoveGoal} onFold={current ? undefined : fold} />}
-      {current && (
-        <div className="themis-composer-slot">
-          {current.kind === "approval" ? (
-            <ApprovalBox key={current.request.approval_id} request={current.request} open
-              // An MCP tool's readable name ("files · read text file"), as the step list shows it.
-              label={[...traces].reverse().find(entry => entry.tool === current.request.tool && entry.label)?.label}
-              next={waitingText(waiting)}
-              onFold={fold}
-              onDecide={decision => void decide(current.request, decision)} />
-          ) : (
-            <QuestionBox key={current.question.id} question={current.question}
-              onAnswer={async answer => {
-                try { await answerQuestion(threadId, current.question.id, answer); } catch (error) { toast(dispatch, `Could not send the answer: ${describeError(error)}`, "danger"); throw error; }
-              }}
-              onSkip={current.question.blocking ? undefined : () => placeQuestion(current.question.id, "turn")}
-              onFold={fold} />
-          )}
-        </div>
-      )}
+      {current && <ComposerSlot current={current} threadId={threadId} traces={traces} next={waitingText(waiting)} onFold={fold} onDecide={decide} />}
     </>
+  );
+}
+
+/** The one approval or question the composer shows. */
+function ComposerSlot({ current, threadId, traces, next, onFold, onDecide }: {
+  current: ComposerItem; threadId: string; traces: ToolTraceEntry[]; next: string | undefined;
+  onFold: () => void; onDecide: (request: ApprovalRequest, decision: ApprovalDecision) => Promise<void>;
+}) {
+  const { dispatch } = useApp();
+  return (
+    <div className="themis-composer-slot">
+      {current.kind === "approval" && current.request.ask_first ? (
+        // Auto and YOLO ask about a destructive step as a question, never an approval box.
+        <AskFirstBox key={current.request.approval_id} request={current.request} onFold={onFold}
+          onDecided={() => dispatch({ type: "approval/dequeued", approvalId: current.request.approval_id })}
+          onError={error => toast(dispatch, `Could not answer: ${describeError(error)}`, "danger")} />
+      ) : current.kind === "approval" ? (
+        <ApprovalBox key={current.request.approval_id} request={current.request} open
+          // An MCP tool's readable name ("files · read text file"), as the step list shows it.
+          label={[...traces].reverse().find(entry => entry.tool === current.request.tool && entry.label)?.label}
+          next={next}
+          onFold={onFold}
+          onDecide={decision => void onDecide(current.request, decision)} />
+      ) : (
+        <QuestionBox key={current.question.id} question={current.question}
+          onAnswer={async answer => {
+            try { await answerQuestion(threadId, current.question.id, answer); } catch (error) { toast(dispatch, `Could not send the answer: ${describeError(error)}`, "danger"); throw error; }
+          }}
+          onSkip={current.question.blocking ? undefined : () => placeQuestion(current.question.id, "turn")}
+          onFold={onFold} />
+      )}
+    </div>
   );
 }

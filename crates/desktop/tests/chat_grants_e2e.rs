@@ -588,3 +588,56 @@ async fn wrapped_destructive_commands_ask_every_time_and_meet_deny_rules() {
     assert!(denied.approvals.is_empty(), "{:?}", denied.approvals);
     assert_eq!(denied.tools_failed, 1);
 }
+
+/// "Allow in this chat" for `git fetch` covers later ordinary fetches, never one that makes git
+/// run a program of the agent's choosing (`--upload-pack`, `ext::` remotes): those are asked
+/// about every time and cannot be granted.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_chat_grant_for_git_fetch_never_covers_one_that_runs_another_program() {
+    if !common::git_available() {
+        return;
+    }
+    let (_repo, project) = common::init_repo();
+    let data = tempfile::tempdir().unwrap();
+    let state = AppState::new_for_test(data.path().join("settings.json"));
+    let provider = mount_script(vec![
+        ("fetch-plain", vec![vec!["git", "fetch", "--all"]]),
+        (
+            "fetch-helper",
+            vec![vec![
+                "git",
+                "fetch",
+                "--upload-pack=touch helper-ran",
+                "origin",
+            ]],
+        ),
+        (
+            "fetch-ext",
+            vec![vec!["git", "fetch", "ext::sh -c touch% ext-ran"]],
+        ),
+    ])
+    .await;
+    common::use_mock_llm(&state, &provider).await;
+    let chat = new_chat(&state, &project).await;
+
+    let first = run_message(&state, &chat, "fetch-plain first", ApprovalDecision::Chat).await;
+    assert_eq!(first.approvals.len(), 1);
+    assert!(first.approvals[0].grantable);
+    let again = run_message(&state, &chat, "fetch-plain again", ApprovalDecision::Deny).await;
+    assert!(
+        again.approvals.is_empty(),
+        "the grant covers an ordinary fetch"
+    );
+
+    for task in ["fetch-helper now", "fetch-ext now"] {
+        let observed = run_message(&state, &chat, task, ApprovalDecision::Deny).await;
+        assert_eq!(
+            observed.approvals.len(),
+            1,
+            "{task}: asked despite the grant"
+        );
+        assert!(!observed.approvals[0].grantable, "{task}");
+    }
+    assert!(!project.join("helper-ran").exists());
+    assert!(!project.join("ext-ran").exists());
+}
