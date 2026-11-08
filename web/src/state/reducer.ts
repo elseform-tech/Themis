@@ -1,6 +1,6 @@
 // Pure state model for the Themis app shell. No Tauri/DOM imports —
 // safe to load in node-based unit tests.
-import type { SubagentEntry, ThreadEventEnvelope, ThreadInfo } from "../lib/types";
+import type { ApprovalDecision, SubagentEntry, ThreadEventEnvelope, ThreadInfo } from "../lib/types";
 import type { AppAction, AppState, ChatMessage } from "./reducer/model";
 import { APPROVAL_EXPIRED_NOTE, concurrencyToast, isConcurrencyLimitError, newId, pushToast, toLastMerge } from "./reducer/model";
 import { appendTrace, markTurnRejected, memoryChanges, setThreadRunning, updateSubagent, usedPercent, userMessage } from "./reducer/rowHelpers";
@@ -131,13 +131,7 @@ export function applyThreadEvent(
       };
     }
     case "approval_decided": {
-      return appendTrace(state, threadId, {
-        id: newId("trace"),
-        tool: event.tool,
-        // A box nobody answered stays in its turn as one line saying so.
-        summary: event.decision === "timed_out" ? "not run · nobody answered in time" : `approval ${event.decision}`,
-        ok: event.decision === "deny" || event.decision === "timed_out" ? false : undefined,
-      });
+      return appendTrace(state, threadId, { id: newId("trace"), tool: event.tool, ...approvalLine(event.decision) });
     }
     case "context_usage":
     case "context_suspended":
@@ -634,4 +628,10 @@ export function reducer(state: AppState, action: AppAction): AppState {
 /** OpenCode Go can be used: a key is set and OpenCode has not rejected it. */
 export function goUsable(state: Pick<AppState, "secretStatus" | "goKeyCheck">): boolean {
   return state.secretStatus.go && state.goKeyCheck !== "rejected";
+}
+
+/** The line an approval leaves in its turn; a box nobody answered says so. */
+function approvalLine(decision: ApprovalDecision): { summary: string; ok?: boolean } {
+  if (decision === "timed_out") return { summary: "not run · nobody answered in time", ok: false };
+  return { summary: `approval ${decision}`, ok: decision === "deny" ? false : undefined };
 }

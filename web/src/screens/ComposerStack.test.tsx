@@ -7,7 +7,7 @@ import { ComposerStack } from "./ComposerStack";
 const dispatch = vi.fn();
 vi.mock("../state/store", async importOriginal => ({
   ...await importOriginal<typeof import("../state/store")>(),
-  useApp: () => ({ dispatch }),
+  useApp: () => ({ dispatch, state: { settings: { approval_timeout_seconds: 600 } } }),
 }));
 vi.mock("../lib/tauri", () => ({
   approveAction: vi.fn(async () => undefined),
