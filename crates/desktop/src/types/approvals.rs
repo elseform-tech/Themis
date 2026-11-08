@@ -46,6 +46,10 @@ pub struct GrantSite {
     /// `browser`, `fetch_url` or `web_search`.
     pub tools: String,
     pub site: String,
+    /// For the browser: the Settings › Browser permission "Always allow on this site" saves
+    /// (`Browsing`, `Downloads` or `Debugging`), by the action asked about.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub permission: Option<String>,
 }
 
 const fn default_grantable() -> bool {

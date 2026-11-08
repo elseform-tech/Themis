@@ -1,0 +1,1 @@
+- record: record the browser as a video: operation start, act with the other actions, then operation stop to save an MP4 and get its path (it also stops at max_seconds). One recording at a time. To show it to the user, call attach_file with the path.

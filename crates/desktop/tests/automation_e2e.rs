@@ -711,12 +711,7 @@ async fn browser_use_command_reaches_llm_with_the_browser_tools() {
         .iter()
         .filter_map(|t| t["function"]["name"].as_str())
         .collect();
-    for tool in [
-        "browser_open",
-        "browser_click",
-        "browser_screenshot",
-        "attach_file",
-    ] {
+    for tool in ["browser", "attach_file"] {
         assert!(names.contains(&tool), "{tool} offered with /browser-use");
     }
 }

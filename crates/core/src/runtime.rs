@@ -1269,7 +1269,7 @@ async fn run_task_with_evidence_inner(
         for (call, result) in calls.iter().zip(&mut results) {
             // Actions on a page change it, so its results never look unchanged: a run that kept
             // clicking the same spot went unnoticed. These count by the call itself.
-            if is_repeatable_action(&call.function.name) {
+            if is_repeatable_action(&call.function.name, &call.function.arguments) {
                 let times = action_counts
                     .entry(content_fingerprint(&format!(
                         "{}{}",
@@ -1400,7 +1400,7 @@ async fn run_task_with_evidence_inner(
         });
         // Screenshots the tool kept for this model join the next requests (see `vision`).
         for result in &results {
-            if result.function.name != "browser_screenshot" {
+            if result.function.name != crate::tools::BROWSER_TOOL {
                 continue;
             }
             let Some(path) = crate::vision::attached_path(&result.function.arguments) else {

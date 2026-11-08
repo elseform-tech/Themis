@@ -50,17 +50,18 @@ pub fn media_kind(path: &Path) -> Option<&'static str> {
     })
 }
 
-/// Tools whose result names a file they saved for the person to see.
-const MEDIA_TOOLS: [&str; 2] = ["browser_screenshot", "browser_record"];
+/// The tool whose `screenshot` and `record` results name a file saved for the person to see.
+const MEDIA_TOOL: &str = themis_core::tools::BROWSER_TOOL;
 /// Largest pixel side taken from a result; anything bigger is not a real size.
 const MAX_SIDE: u64 = 100_000;
 
-/// What a finished `browser_screenshot` or `browser_record` call saved, for the chat to
+/// What a finished browser `screenshot` or `record` call saved, for the chat to
 /// show: an existing image or video inside `root`'s `.themis/attachments`. The tool's own
 /// JSON result is read here, so clients never parse tool output; `None` for every other
 /// tool, a failed call or a file that doesn't qualify.
 pub fn tool_media(root: &Path, tool: &str, ok: bool, output: &str) -> Option<ToolMedia> {
-    if !ok || !MEDIA_TOOLS.contains(&tool) {
+    // Only those two results carry a `path`; anything else names no image or video.
+    if !ok || tool != MEDIA_TOOL {
         return None;
     }
     let result: Value = serde_json::from_str(output).ok()?;
@@ -200,7 +201,7 @@ impl ToolT for AttachFileTool {
         "attach_file"
     }
     fn description(&self) -> &str {
-        "Show images, videos or PDFs from the project inline under your reply, such as a browser_screenshot or browser_record result, a chart you made, or before/after examples. At most 12 per reply, in the order given; give each a short caption (\"Before\", \"After\"). Example: {\"files\":[{\"path\":\"/project/.themis/attachments/…/screenshot-1652-03.png\",\"caption\":\"Sign-up error\"}]}."
+        "Show images, videos or PDFs from the project inline under your reply, such as a browser screenshot or recording, a chart you made, or before/after examples. At most 12 per reply, in the order given; give each a short caption (\"Before\", \"After\"). Example: {\"files\":[{\"path\":\"/project/.themis/attachments/…/screenshot-1652-03.png\",\"caption\":\"Sign-up error\"}]}."
     }
     fn args_schema(&self) -> Value {
         json!({
@@ -257,7 +258,7 @@ mod tests {
         let shown =
             |tool: &str, ok: bool, output: &str| tool_media(project.path(), tool, ok, output);
         assert_eq!(
-            shown("browser_screenshot", true, &result(&shot)),
+            shown("browser", true, &result(&shot)),
             Some(ToolMedia {
                 path: shot.to_string_lossy().into_owned(),
                 kind: "image".into(),
@@ -267,7 +268,7 @@ mod tests {
         );
         let recorded = json!({"path": video, "seconds": 2.0}).to_string();
         assert_eq!(
-            shown("browser_record", true, &recorded),
+            shown("browser", true, &recorded),
             Some(ToolMedia {
                 path: video.to_string_lossy().into_owned(),
                 kind: "video".into(),
@@ -277,37 +278,33 @@ mod tests {
         );
         // Sizes that are not real are left out, not trusted.
         let odd = json!({"path": shot, "width": 0, "height": 10_000_000}).to_string();
-        let media = shown("browser_screenshot", true, &odd).unwrap();
+        let media = shown("browser", true, &odd).unwrap();
         assert_eq!((media.width, media.height), (None, None));
         // Another tool, a failed call, a result that isn't JSON or names no file.
         assert!(shown("read_file", true, &result(&shot)).is_none());
-        assert!(shown("browser_screenshot", false, &result(&shot)).is_none());
-        assert!(shown("browser_screenshot", true, "screenshot saved").is_none());
-        assert!(shown("browser_record", true, r#"{"recording":true}"#).is_none());
+        assert!(shown("browser_screenshot", true, &result(&shot)).is_none());
+        assert!(shown("browser", false, &result(&shot)).is_none());
+        assert!(shown("browser", true, "screenshot saved").is_none());
+        assert!(shown("browser", true, r#"{"recording":true}"#).is_none());
         // A missing file, one outside the attachments folder, or a path escaping it.
-        assert!(shown(
-            "browser_screenshot",
-            true,
-            &result(&folder.join("gone.png"))
-        )
-        .is_none());
+        assert!(shown("browser", true, &result(&folder.join("gone.png"))).is_none());
         let loose = project.path().join("loose.png");
         std::fs::write(&loose, b"png").unwrap();
-        assert!(shown("browser_screenshot", true, &result(&loose)).is_none());
+        assert!(shown("browser", true, &result(&loose)).is_none());
         let escape = folder.join("../../../loose.png");
-        assert!(shown("browser_screenshot", true, &result(&escape)).is_none());
+        assert!(shown("browser", true, &result(&escape)).is_none());
         let outside = tempfile::Builder::new().suffix(".png").tempfile().unwrap();
-        assert!(shown("browser_screenshot", true, &result(outside.path())).is_none());
+        assert!(shown("browser", true, &result(outside.path())).is_none());
         // Not an image or video.
         let notes = folder.join("notes.txt");
         std::fs::write(&notes, b"text").unwrap();
-        assert!(shown("browser_screenshot", true, &result(&notes)).is_none());
+        assert!(shown("browser", true, &result(&notes)).is_none());
         #[cfg(unix)]
         {
             // A link in storage that points out of the project.
             let link = folder.join("link.png");
             std::os::unix::fs::symlink(outside.path(), &link).unwrap();
-            assert!(shown("browser_screenshot", true, &result(&link)).is_none());
+            assert!(shown("browser", true, &result(&link)).is_none());
         }
     }
 
@@ -328,9 +325,9 @@ mod tests {
             )
             .unwrap();
             std::fs::write(storage.join("a.png"), b"png").unwrap();
-            let _ = tool_media(project.path(), "browser_screenshot", true, &text);
+            let _ = tool_media(project.path(), "browser", true, &text);
             let output = json!({"path": storage.join(&path), "width": width}).to_string();
-            if let Some(media) = tool_media(project.path(), "browser_screenshot", true, &output) {
+            if let Some(media) = tool_media(project.path(), "browser", true, &output) {
                 proptest::prop_assert!(Path::new(&media.path).starts_with(&storage));
                 proptest::prop_assert!(Path::new(&media.path).is_file());
                 proptest::prop_assert!(media.width.is_none_or(|w| (1..=MAX_SIDE).contains(&u64::from(w))));

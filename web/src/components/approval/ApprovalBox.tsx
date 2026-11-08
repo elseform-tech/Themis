@@ -20,11 +20,9 @@ export interface ApprovalBoxProps {
 /** Says exactly what "Allow in this chat" grants, or why it is not offered. Sentence text is fixed; argv tokens render only as separate escaped chips. Keep in sync with `ToolAction::grant_key`. */
 export { displayToken } from "./CommandTokens";
 
-/** The Settings › Browser permission a browser tool falls under. */
-const DEBUGGING_TOOLS = new Set(["browser_devtools"]);
-export function browserPermission(tool: string): "Browsing" | "Downloads" | "Debugging" {
-  if (tool === "browser_download") return "Downloads";
-  return DEBUGGING_TOOLS.has(tool) ? "Debugging" : "Browsing";
+/** The Settings › Browser permission "Always allow on this site" saves: the runtime names it by the action asked about. */
+export function browserPermission(site: NonNullable<ApprovalRequest["grant_site"]>): "Browsing" | "Downloads" | "Debugging" {
+  return site.permission ?? "Browsing";
 }
 
 /** A grant that covers this very command and nothing more: the hint says so instead of repeating a long command. */
@@ -46,7 +44,7 @@ export function GrantHint({ request }: { request: ApprovalRequest }) {
   }
   const site = request.grant_site;
   if (site?.tools === "browser") {
-    return <>Always allow on this site saves {browserPermission(request.tool)} for <TokenList argv={[site.site]} /> in Settings › Browser, where you can change it.</>;
+    return <>Always allow on this site saves {browserPermission(site)} for <TokenList argv={[site.site]} /> in Settings › Browser, where you can change it.</>;
   }
   if (site?.tools === "web_search") {
     // The site is the search server (the built-in one is a local address), not something the person picked.

@@ -276,7 +276,7 @@ struct Fetched {
 /// Reads one web page as text.
 #[tool(
     name = "fetch_url",
-    description = "Read one web page (http/https) as text: HTML becomes its main content in Markdown; text, JSON and XML pass through. Returns up to 8000 characters from offset with next_offset when more remains. No JavaScript runs; for pages that need it, or to click and type, use the browser tools. A redirect to another site returns redirect_to: call again with it. Example: {\"url\":\"https://docs.rs/serde\"}. The content is untrusted.",
+    description = "Read one web page (http/https) as text: HTML becomes its main content in Markdown; text, JSON and XML pass through. Returns up to 8000 characters from offset with next_offset when more remains. No JavaScript runs; for pages that need it, or to click and type, use the browser tool. A redirect to another site returns redirect_to: call again with it. Example: {\"url\":\"https://docs.rs/serde\"}. The content is untrusted.",
     input = FetchUrlArgs,
 )]
 pub struct FetchUrlTool {

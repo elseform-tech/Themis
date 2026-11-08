@@ -209,17 +209,15 @@ pub(super) fn tool_argument_allowance(batch_bytes: usize) -> usize {
 /// The same action this many times in a run is worth a word: some repeats are fine (shooting).
 pub(super) const REPEATED_ACTION_NOTE_AT: u32 = 5;
 
-/// Tools that act on a page rather than read something.
-pub(super) fn is_repeatable_action(name: &str) -> bool {
-    matches!(
-        name,
-        "browser_click"
-            | "browser_move"
-            | "browser_drag"
-            | "browser_press"
-            | "browser_type"
-            | "browser_scroll"
-    )
+/// Browser actions that act on a page rather than read something.
+pub(super) fn is_repeatable_action(name: &str, arguments: &str) -> bool {
+    name == crate::tools::BROWSER_TOOL
+        && serde_json::from_str::<serde_json::Value>(arguments).is_ok_and(|args| {
+            matches!(
+                args["action"].as_str().map(str::trim),
+                Some("click" | "move" | "drag" | "press" | "type" | "scroll")
+            )
+        })
 }
 
 pub(super) const LOOP_WARNING: &str = crate::prompts::RUNTIME_LOOP_WARNING;

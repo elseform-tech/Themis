@@ -1,4 +1,4 @@
-//! The agent's debugging tools against a real Chromium and a local app: console messages
+//! The browser's `devtools` action against a real Chromium and a local app: console messages
 //! and expressions, elements, network with hidden credentials, storage, a breakpoint with
 //! stepping and frame evaluation, performance and memory. Skipped without a Chromium.
 
@@ -56,14 +56,21 @@ fn tools_for(
     )
 }
 
-async fn run(tools: &[Box<dyn ToolT>], name: &str, args: Value) -> Value {
-    let tool = tools
-        .iter()
-        .find(|tool| tool.name() == name)
-        .unwrap_or_else(|| panic!("{name} not offered"));
+/// The browser tool's `action` with `args`, as a model calls it.
+async fn run(tools: &[Box<dyn ToolT>], action: &str, mut args: Value) -> Value {
+    let [tool] = tools else {
+        panic!("one browser tool, not {}", tools.len())
+    };
+    assert!(args.get("action").is_none(), "{args}");
+    args["action"] = json!(action);
     tool.execute(args)
         .await
-        .unwrap_or_else(|error| panic!("{name}: {error}"))
+        .unwrap_or_else(|error| panic!("{action}: {error}"))
+}
+
+/// The actions the browser tool offers.
+fn offered(tools: &[Box<dyn ToolT>]) -> Vec<String> {
+    serde_json::from_value(tools[0].args_schema()["properties"]["action"]["enum"].clone()).unwrap()
 }
 
 /// One browser at a time: three Chromes starting together on a loaded CI machine can miss
@@ -106,14 +113,14 @@ async fn the_agent_debugs_a_local_app_with_the_devtools_toolset() {
     let tools = tools_for(&chat, media.path(), BrowserSettings::default());
     run(
         &tools,
-        "browser_open",
+        "open",
         json!({"url": format!("{}/app", site.uri())}),
     )
     .await;
     tokio::time::sleep(Duration::from_millis(500)).await;
 
     // Console: every level, then expressions and exceptions.
-    let messages = run(&tools, "browser_devtools", json!({"panel": "console"})).await;
+    let messages = run(&tools, "devtools", json!({"panel": "console"})).await;
     let text = messages["messages"].to_string();
     assert!(
         text.contains("booted 42") && text.contains("\"level\":\"warning\"")
@@ -123,7 +130,7 @@ async fn the_agent_debugs_a_local_app_with_the_devtools_toolset() {
     assert_eq!(
         run(
             &tools,
-            "browser_devtools",
+            "devtools",
             json!({"panel": "console", "expression": "document.title"})
         )
         .await["value"],
@@ -132,7 +139,7 @@ async fn the_agent_debugs_a_local_app_with_the_devtools_toolset() {
     assert_eq!(
         run(
             &tools,
-            "browser_devtools",
+            "devtools",
             json!({"panel": "console", "expression": "total([1, 2, 3])"})
         )
         .await["value"],
@@ -140,7 +147,7 @@ async fn the_agent_debugs_a_local_app_with_the_devtools_toolset() {
     );
     let thrown = run(
         &tools,
-        "browser_devtools",
+        "devtools",
         json!({"panel": "console", "expression": "notDefined()"}),
     )
     .await;
@@ -154,7 +161,7 @@ async fn the_agent_debugs_a_local_app_with_the_devtools_toolset() {
     let next = messages["next_since"].as_u64().unwrap();
     run(
         &tools,
-        "browser_devtools",
+        "devtools",
         json!({"panel": "console", "expression": "console.info('later')"}),
     )
     .await;
@@ -163,7 +170,7 @@ async fn the_agent_debugs_a_local_app_with_the_devtools_toolset() {
     for _ in 0..20 {
         newer = run(
             &tools,
-            "browser_devtools",
+            "devtools",
             json!({"panel": "console", "since": next}),
         )
         .await;
@@ -181,7 +188,7 @@ async fn the_agent_debugs_a_local_app_with_the_devtools_toolset() {
     // Elements: inspect, then change a style live.
     let inspected = run(
         &tools,
-        "browser_devtools",
+        "devtools",
         json!({"panel": "elements", "selector": "#t"}),
     )
     .await;
@@ -189,14 +196,14 @@ async fn the_agent_debugs_a_local_app_with_the_devtools_toolset() {
     assert_eq!(inspected["result"]["styles"]["color"], "rgb(255, 0, 0)");
     let restyled = run(
         &tools,
-        "browser_devtools",
-        json!({"panel": "elements", "selector": "#t", "action": "set_style", "name": "color", "value": "blue"}),
+        "devtools",
+        json!({"panel": "elements", "selector": "#t", "operation": "set_style", "name": "color", "value": "blue"}),
     )
     .await;
     assert_eq!(restyled["result"], "rgb(0, 0, 255)");
 
     // Network: the request is listed; its credential header is hidden, its body shown.
-    let listed = run(&tools, "browser_devtools", json!({"panel": "network"})).await;
+    let listed = run(&tools, "devtools", json!({"panel": "network"})).await;
     let api = listed["requests"]
         .as_array()
         .unwrap()
@@ -207,7 +214,7 @@ async fn the_agent_debugs_a_local_app_with_the_devtools_toolset() {
     assert_eq!(api["status"], 200);
     let detail = run(
         &tools,
-        "browser_devtools",
+        "devtools",
         json!({"panel": "network", "id": api["id"]}),
     )
     .await;
@@ -231,7 +238,7 @@ async fn the_agent_debugs_a_local_app_with_the_devtools_toolset() {
     // Storage: ordinary values shown, tokens and cookie values hidden, httpOnly never read.
     let local = run(
         &tools,
-        "browser_devtools",
+        "devtools",
         json!({"panel": "storage", "area": "local"}),
     )
     .await;
@@ -245,7 +252,7 @@ async fn the_agent_debugs_a_local_app_with_the_devtools_toolset() {
     );
     let cookies = run(
         &tools,
-        "browser_devtools",
+        "devtools",
         json!({"panel": "storage", "area": "cookies"}),
     )
     .await;
@@ -265,14 +272,14 @@ async fn the_agent_debugs_a_local_app_with_the_devtools_toolset() {
     // Debugger: a breakpoint inside `total` pauses; the frame's variables and console work.
     let set = run(
         &tools,
-        "browser_devtools",
-        json!({"panel": "debugger", "action": "set", "url": "app.js", "line": 4}),
+        "devtools",
+        json!({"panel": "debugger", "operation": "set", "url": "app.js", "line": 4}),
     )
     .await;
     assert!(set["breakpoint"].is_string(), "{set}");
     run(
         &tools,
-        "browser_devtools",
+        "devtools",
         json!({"panel": "console", "expression": "setTimeout(() => total([5, 6]), 0); 'scheduled'"}),
     )
     .await;
@@ -280,8 +287,8 @@ async fn the_agent_debugs_a_local_app_with_the_devtools_toolset() {
     for _ in 0..30 {
         state = run(
             &tools,
-            "browser_devtools",
-            json!({"panel": "debugger", "action": "state"}),
+            "devtools",
+            json!({"panel": "debugger", "operation": "state"}),
         )
         .await;
         if state["paused"] == true {
@@ -298,7 +305,7 @@ async fn the_agent_debugs_a_local_app_with_the_devtools_toolset() {
     assert_eq!(
         run(
             &tools,
-            "browser_devtools",
+            "devtools",
             json!({"panel": "console", "expression": "items.length"})
         )
         .await["value"],
@@ -306,14 +313,14 @@ async fn the_agent_debugs_a_local_app_with_the_devtools_toolset() {
     );
     run(
         &tools,
-        "browser_devtools",
-        json!({"panel": "debugger", "action": "remove", "id": set["breakpoint"]}),
+        "devtools",
+        json!({"panel": "debugger", "operation": "remove", "id": set["breakpoint"]}),
     )
     .await;
     let resumed = run(
         &tools,
-        "browser_devtools",
-        json!({"panel": "debugger", "action": "resume"}),
+        "devtools",
+        json!({"panel": "debugger", "operation": "resume"}),
     )
     .await;
     assert_eq!(resumed["paused"], false, "{resumed}");
@@ -321,21 +328,21 @@ async fn the_agent_debugs_a_local_app_with_the_devtools_toolset() {
     // The panel repeated as the action is the panel's default.
     let repeated = run(
         &tools,
-        "browser_devtools",
-        json!({"panel": "console", "action": "console", "expression": "1 + 1"}),
+        "devtools",
+        json!({"panel": "console", "operation": "console", "expression": "1 + 1"}),
     )
     .await;
     assert_eq!(repeated["value"], 2, "{repeated}");
     // A promise is awaited, as in the DevTools console.
     let awaited = run(
         &tools,
-        "browser_devtools",
+        "devtools",
         json!({"panel": "console", "expression": "Promise.resolve(5)"}),
     )
     .await;
     assert_eq!(awaited["value"], 5, "{awaited}");
     // Pages never get the camera, microphone, location or notifications.
-    let denied = run(&tools, "browser_devtools", json!({"panel": "console", "expression": "Promise.all(['geolocation','notifications','camera','microphone'].map(n => navigator.permissions.query({name: n}).then(p => p.state, () => 'denied')))"})).await;
+    let denied = run(&tools, "devtools", json!({"panel": "console", "expression": "Promise.all(['geolocation','notifications','camera','microphone'].map(n => navigator.permissions.query({name: n}).then(p => p.state, () => 'denied')))"})).await;
     assert_eq!(
         denied["value"],
         json!(["denied", "denied", "denied", "denied"]),
@@ -343,26 +350,26 @@ async fn the_agent_debugs_a_local_app_with_the_devtools_toolset() {
     );
 
     // Performance and memory, with their files saved.
-    let metrics = run(&tools, "browser_devtools", json!({"panel": "performance"})).await;
+    let metrics = run(&tools, "devtools", json!({"panel": "performance"})).await;
     assert!(
         metrics["page"]["resources"].as_u64().unwrap() >= 2,
         "{metrics}"
     );
     let trace = run(
         &tools,
-        "browser_devtools",
-        json!({"panel": "performance", "action": "trace", "seconds": 1}),
+        "devtools",
+        json!({"panel": "performance", "operation": "trace", "seconds": 1}),
     )
     .await;
     assert!(trace["events"].as_u64().unwrap() > 0, "{trace}");
     assert!(std::path::Path::new(trace["file"].as_str().unwrap()).exists());
-    run(&tools, "browser_devtools", json!({"panel": "memory"})).await;
-    let again = run(&tools, "browser_devtools", json!({"panel": "memory"})).await;
+    run(&tools, "devtools", json!({"panel": "memory"})).await;
+    let again = run(&tools, "devtools", json!({"panel": "memory"})).await;
     assert!(again["growth_since_last_summary"].is_object(), "{again}");
     let snapshot = run(
         &tools,
-        "browser_devtools",
-        json!({"panel": "memory", "action": "snapshot"}),
+        "devtools",
+        json!({"panel": "memory", "operation": "snapshot"}),
     )
     .await;
     assert!(snapshot["objects"].as_u64().unwrap() > 0, "{snapshot}");
@@ -371,22 +378,22 @@ async fn the_agent_debugs_a_local_app_with_the_devtools_toolset() {
     // The run's end clears breakpoints: a breakpoint set now no longer pauses afterwards.
     let set = run(
         &tools,
-        "browser_devtools",
-        json!({"panel": "debugger", "action": "set", "url": "app.js", "line": 4}),
+        "devtools",
+        json!({"panel": "debugger", "operation": "set", "url": "app.js", "line": 4}),
     )
     .await;
     assert!(set["breakpoint"].is_string());
     chat.end_debugging().await;
     run(
         &tools,
-        "browser_devtools",
+        "devtools",
         json!({"panel": "console", "expression": "total([1])"}),
     )
     .await;
     let after = run(
         &tools,
-        "browser_devtools",
-        json!({"panel": "debugger", "action": "state"}),
+        "devtools",
+        json!({"panel": "debugger", "operation": "state"}),
     )
     .await;
     assert_eq!(after["paused"], false, "{after}");
@@ -400,8 +407,8 @@ async fn the_agent_debugs_a_local_app_with_the_devtools_toolset() {
             ..BrowserSettings::default()
         },
     );
-    assert!(off.iter().all(|tool| tool.name() != "browser_devtools"));
-    assert!(off.iter().any(|tool| tool.name() == "browser_open"));
+    assert!(!offered(&off).contains(&"devtools".to_owned()));
+    assert!(offered(&off).contains(&"open".to_owned()));
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -444,7 +451,7 @@ async fn a_download_the_agent_starts_lands_in_the_settings_folder() {
     let tools = tools_for(&chat, media.path(), settings);
     let opened = run(
         &tools,
-        "browser_open",
+        "open",
         json!({"url": format!("{}/files", site.uri())}),
     )
     .await;
@@ -454,7 +461,7 @@ async fn a_download_the_agent_starts_lands_in_the_settings_folder() {
         .find(|l| l.contains("Get the report"))
         .unwrap();
     let reference = line.split('[').nth(1).unwrap().split(']').next().unwrap();
-    let clicked = run(&tools, "browser_click", json!({"ref": reference})).await;
+    let clicked = run(&tools, "click", json!({"ref": reference})).await;
     // The download may still be starting when the click returns; it is saved either way.
     let saved = downloads.path().join("report.csv");
     for _ in 0..50 {

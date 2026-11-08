@@ -1,28 +1,29 @@
-//! The agent's browser tools. Each acts on the chat's own page, approves per
-//! site (the current page's host, or the target of `browser_open`), waits
-//! while the person controls the browser, and answers with a fresh snapshot.
+//! The agent's `browser` tool: one tool whose `action` picks what to do on the chat's own page
+//! (open, click, type, devtools and the rest; see [`args`]). Each action approves per site (the
+//! current page's host, or the target of `open`), keyed by the action, and answers with a
+//! fresh snapshot.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
-use autoagents_derive::{tool, ToolInput};
-use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
-use super::media::{media_name, MediaSink, Recorder, RECORD_DEFAULT, RECORD_MAX};
-use super::session::{site_of, ActionReport, ChatBrowser, DragEnd};
-use crate::tools::site_permissions::{Permission, SitePermissions};
-use crate::tools::web::checked_url;
+use super::media::MediaSink;
+use super::session::{ActionReport, ChatBrowser};
+use crate::tools::site_permissions::SitePermissions;
 use crate::tools::{
-    async_trait, parse_tool_args, tool_error, ApprovalHook, RiskLevel, ToolCallError, ToolRuntime,
-    ToolT,
+    async_trait, tool_error, ApprovalHook, RiskLevel, ToolCallError, ToolRuntime, ToolT,
+    BROWSER_TOOL,
 };
 
 const UNTRUSTED_NOTE: &str = crate::prompts::TOOL_BROWSER_UNTRUSTED;
 /// Shown in approvals for a tab with no page yet.
 const BLANK_SITE: &str = "about:blank";
+/// The approval key of a file a page sends, under the Downloads permission.
+const DOWNLOAD: &str = "download";
+const DOWNLOAD_RISK: RiskLevel = RiskLevel::Network;
 
-/// What the browser tools act on for one run.
+/// What the browser tool acts on for one run.
 #[derive(Clone)]
 pub struct BrowserScope {
     pub chat: Arc<ChatBrowser>,
@@ -47,7 +48,7 @@ pub enum ScreenshotsToModel {
     Seen,
 }
 
-/// The browser tools for one run.
+/// The browser tool for one run.
 pub fn browser_tools(approvals: Arc<dyn ApprovalHook>, scope: BrowserScope) -> Vec<Box<dyn ToolT>> {
     // Downloads the agent starts go to the Settings folder, by its Downloads permission.
     let config = scope.permissions.config();
@@ -61,11 +62,10 @@ pub fn browser_tools(approvals: Arc<dyn ApprovalHook>, scope: BrowserScope) -> V
             permissions
                 .gate(
                     approvals.as_ref(),
-                    "browser_download",
-                    Permission::Downloads,
+                    DOWNLOAD,
                     site,
                     format!("download a file from {site}"),
-                    RiskLevel::Network,
+                    DOWNLOAD_RISK,
                 )
                 .map_err(|error| error.to_string())
         })
@@ -73,41 +73,118 @@ pub fn browser_tools(approvals: Arc<dyn ApprovalHook>, scope: BrowserScope) -> V
     scope
         .chat
         .set_download_policy(Some(super::session::DownloadPolicy { directory, gate }));
-    let base = Base { approvals, scope };
-    let mut tools: Vec<Box<dyn ToolT>> = vec![
-        Box::new(BrowserOpen { base: base.clone() }),
-        Box::new(BrowserNavigate { base: base.clone() }),
-        Box::new(BrowserSnapshot { base: base.clone() }),
-        Box::new(BrowserClick { base: base.clone() }),
-        Box::new(BrowserType { base: base.clone() }),
-        Box::new(BrowserSelect { base: base.clone() }),
-        Box::new(BrowserPress { base: base.clone() }),
-        Box::new(BrowserScroll { base: base.clone() }),
-        Box::new(BrowserMove { base: base.clone() }),
-        Box::new(BrowserDrag { base: base.clone() }),
-        Box::new(BrowserCheckLooks { base: base.clone() }),
-    ];
-    tools.extend(devtools::devtools(&base));
-    if base.scope.media.is_some() {
-        let screenshot = BrowserScreenshot { base: base.clone() };
-        if base.scope.screenshots == ScreenshotsToModel::Seen {
-            tools.push(Box::new(SeeingScreenshot(screenshot)));
-        } else {
-            tools.push(Box::new(screenshot));
-        }
-        tools.push(Box::new(BrowserRecord { base }));
-    }
-    tools
+    let offered: Vec<Action> = args::ACTIONS
+        .iter()
+        .map(|(action, ..)| *action)
+        .filter(|action| match action {
+            Action::Screenshot | Action::Record => scope.media.is_some(),
+            Action::Devtools => config.developer_mode,
+            _ => true,
+        })
+        .collect();
+    let description = description(&offered, scope.screenshots);
+    vec![Box::new(BrowserTool {
+        schema: args::schema(&offered),
+        offered,
+        description,
+        base: Base { approvals, scope },
+    })]
 }
 
+/// The tool's description: what every run has, then a line for each optional action on offer.
+fn description(offered: &[Action], screenshots: ScreenshotsToModel) -> String {
+    let screenshot = match screenshots {
+        ScreenshotsToModel::Seen => crate::prompts::TOOL_BROWSER_SCREENSHOT_SEEING,
+        ScreenshotsToModel::Off => crate::prompts::TOOL_BROWSER_SCREENSHOT,
+    };
+    let optional = [
+        (Action::Screenshot, screenshot),
+        (Action::Record, crate::prompts::TOOL_BROWSER_RECORD),
+        (Action::Devtools, crate::prompts::TOOL_BROWSER_DEVTOOLS),
+    ];
+    let mut text = crate::prompts::TOOL_BROWSER.to_owned();
+    for (action, line) in optional {
+        if offered.contains(&action) {
+            text.push('\n');
+            text.push_str(line);
+        }
+    }
+    text
+}
+
+mod args;
 mod devtools;
 mod input;
+mod pages;
 
-use input::{
-    model_reference, BrowserClick, BrowserDrag, BrowserMove, BrowserPress, BrowserScroll,
-    BrowserSelect, BrowserType,
-};
-pub use input::{ClickArgs, DragArgs, MoveArgs, PressArgs, ScrollArgs, SelectArgs, TypeArgs};
+use args::Action;
+
+struct BrowserTool {
+    base: Base,
+    offered: Vec<Action>,
+    description: String,
+    schema: Value,
+}
+
+impl std::fmt::Debug for BrowserTool {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("BrowserTool").finish_non_exhaustive()
+    }
+}
+
+impl ToolT for BrowserTool {
+    fn name(&self) -> &str {
+        BROWSER_TOOL
+    }
+
+    fn description(&self) -> &str {
+        &self.description
+    }
+
+    fn args_schema(&self) -> Value {
+        self.schema.clone()
+    }
+
+    fn output_schema(&self) -> Option<Value> {
+        None
+    }
+}
+
+#[async_trait]
+impl ToolRuntime for BrowserTool {
+    async fn execute(&self, args: Value) -> Result<Value, ToolCallError> {
+        let base = &self.base;
+        match args::action_of(&args, &self.offered)? {
+            Action::Open => pages::open(base, args).await,
+            Action::Navigate => pages::navigate(base, args).await,
+            Action::Snapshot => pages::snapshot(base, args).await,
+            Action::CheckLooks => pages::check_looks(base, args).await,
+            Action::Screenshot => pages::screenshot(base, args).await,
+            Action::Record => pages::record(base, args).await,
+            Action::Click => input::click(base, args).await,
+            Action::Type => input::type_text(base, args).await,
+            Action::Select => input::select(base, args).await,
+            Action::Press => input::press(base, args).await,
+            Action::Scroll => input::scroll(base, args).await,
+            Action::Move => input::move_mouse(base, args).await,
+            Action::Drag => input::drag(base, args).await,
+            Action::Devtools => devtools::devtools(base, args).await,
+        }
+    }
+}
+
+/// Parses `args` for `action`; a failure names the action and the field.
+fn parse_action<T: serde::de::DeserializeOwned>(
+    action: Action,
+    args: Value,
+) -> Result<T, ToolCallError> {
+    crate::tools::parse_tool_args(&format!("browser {}", action.name()), args)
+}
+
+/// An error from `action`, named as the model called it.
+fn action_error(action: Action, message: impl std::fmt::Display) -> ToolCallError {
+    tool_error(format!("browser {}: {message}", action.name()))
+}
 
 #[derive(Clone)]
 struct Base {
@@ -122,6 +199,16 @@ fn quote(text: &str) -> String {
         short.push('…');
     }
     format!("“{short}”")
+}
+
+/// A ref as a model sends it: models quote refs they saw in JSON, and fill unused fields with
+/// the word for nothing.
+fn model_reference(text: &str) -> String {
+    let text = text.trim().trim_matches('"').trim();
+    match text.to_ascii_lowercase().as_str() {
+        "null" | "none" | "nil" | "undefined" => String::new(),
+        _ => text.to_owned(),
+    }
 }
 
 /// Runs `step` until it ends or the person stops the run; a stopped step is
@@ -147,35 +234,43 @@ async fn until_stopped<T>(
 }
 
 impl Base {
-    /// Settings › Browser for one browsing action on `site`: Block refuses in every mode,
-    /// Allow runs without a prompt, Ask asks.
-    fn gate(
-        &self,
-        tool: &str,
-        site: &str,
-        summary: String,
-        risk: RiskLevel,
-    ) -> Result<(), ToolCallError> {
-        self.scope.permissions.gate(
-            self.approvals.as_ref(),
-            tool,
-            Permission::Browsing,
-            site,
-            summary,
-            risk,
-        )
+    /// The site the current page is on, or `about:blank`.
+    async fn site(&self) -> String {
+        self.scope
+            .chat
+            .current_site()
+            .await
+            .unwrap_or_else(|| BLANK_SITE.to_owned())
     }
 
-    /// Waits for control, approves `tool` on the site, shows `activity` while
-    /// `action` runs, and turns its report into the tool result.
+    /// Settings › Browser for `action` on `site`: Block refuses in every mode, Allow runs
+    /// without a prompt, Ask asks. `detail` follows the action's name in the approval.
+    fn gate(
+        &self,
+        action: Action,
+        site: &str,
+        detail: &str,
+        risk: RiskLevel,
+    ) -> Result<(), ToolCallError> {
+        let summary = if detail.is_empty() {
+            format!("browser {} on {site}", action.name())
+        } else {
+            format!("browser {} {detail} on {site}", action.name())
+        };
+        self.scope
+            .permissions
+            .gate(self.approvals.as_ref(), action.name(), site, summary, risk)
+    }
+
+    /// Waits for control, approves `action` on the site, shows `activity` while
+    /// `step` runs, and turns its report into the tool result.
     async fn act<F, Fut>(
         &self,
-        tool: &str,
-        risk: RiskLevel,
+        action: Action,
         site: Option<String>,
-        summary: String,
+        detail: String,
         activity: String,
-        action: F,
+        step: F,
     ) -> Result<Value, ToolCallError>
     where
         F: FnOnce(Arc<ChatBrowser>) -> Fut,
@@ -184,27 +279,26 @@ impl Base {
         let chat = Arc::clone(&self.scope.chat);
         let site = match site {
             Some(site) => site,
-            None => chat
-                .current_site()
-                .await
-                .unwrap_or_else(|| BLANK_SITE.to_owned()),
+            None => self.site().await,
         };
-        self.gate(tool, &site, format!("{summary} on {site}"), risk)?;
+        self.gate(action, &site, &detail, action.risk())?;
         self.scope.chat.thaw_pages().await;
         chat.set_activity(Some(activity)).await;
         let started = std::time::Instant::now();
-        let result = until_stopped(self.scope.cancel.as_deref(), action(Arc::clone(&chat))).await;
+        let result = until_stopped(self.scope.cancel.as_deref(), step(Arc::clone(&chat))).await;
         chat.set_activity(None).await;
-        let report = result.map_err(|e| tool_error(format!("{tool}: {e}")))?;
+        let report = result.map_err(|e| action_error(action, e))?;
         let downloads = chat.agent_downloads_since(started).await;
         // A click, redirect or script can land on a site the agent may not browse.
         if let Some(landed) = chat.current_site().await {
-            if self.scope.permissions.decide(Permission::Browsing, &landed)
-                == crate::configuration::SiteAccess::Block
+            if self.scope.permissions.decide(
+                crate::tools::site_permissions::Permission::Browsing,
+                &landed,
+            ) == crate::configuration::SiteAccess::Block
             {
                 let _ = chat.open("about:blank").await;
-                return Err(tool_error(format!(
-                    "{tool}: the page went to {landed}, which is blocked in Settings › Browser, so the tab was cleared. {}",
+                return Err(action_error(action, format!(
+                    "the page went to {landed}, which is blocked in Settings › Browser, so the tab was cleared. {}",
                     crate::tools::REFUSAL_NOTE
                 )));
             }
@@ -219,545 +313,5 @@ impl Base {
     }
 }
 
-/// Arguments for `browser_open`.
-#[derive(Debug, Clone, Default, Serialize, Deserialize, ToolInput)]
-pub struct OpenArgs {
-    #[input(description = "Full http or https URL")]
-    pub url: String,
-}
-
-#[tool(
-    name = "browser_open",
-    description = "Open a URL in the built-in browser (the person can watch it in Workspace). Runs JavaScript, unlike fetch_url. Returns a snapshot of the page: an outline with refs like [e12] for elements you can act on, plus new_since_last_action (console errors, failed requests, dialogs). Example: {\"url\":\"http://localhost:5173/signup\"}.",
-    input = OpenArgs,
-)]
-struct BrowserOpen {
-    base: Base,
-}
-
-#[async_trait]
-impl ToolRuntime for BrowserOpen {
-    async fn execute(&self, args: Value) -> Result<Value, ToolCallError> {
-        let args: OpenArgs = parse_tool_args("browser_open", args)?;
-        let url = checked_url(&args.url).map_err(|e| tool_error(format!("browser_open: {e}")))?;
-        let site = site_of(url.as_str()).unwrap_or_default();
-        let target = url.to_string();
-        self.base
-            .act(
-                "browser_open",
-                RiskLevel::Network,
-                Some(site.clone()),
-                format!("browser_open {target}"),
-                format!("opening {site}"),
-                |chat| async move { chat.open(&target).await },
-            )
-            .await
-    }
-}
-
-/// Arguments for `browser_navigate`.
-#[derive(Debug, Clone, Default, Serialize, Deserialize, ToolInput)]
-pub struct NavigateArgs {
-    #[input(description = "back, forward or reload")]
-    pub action: String,
-}
-
-#[tool(
-    name = "browser_navigate",
-    description = "Go back, forward or reload the current page in the built-in browser. Returns a fresh snapshot.",
-    input = NavigateArgs,
-)]
-struct BrowserNavigate {
-    base: Base,
-}
-
-#[async_trait]
-impl ToolRuntime for BrowserNavigate {
-    async fn execute(&self, args: Value) -> Result<Value, ToolCallError> {
-        let args: NavigateArgs = parse_tool_args("browser_navigate", args)?;
-        let action = args.action.trim().to_ascii_lowercase();
-        let label = match action.as_str() {
-            "back" => "going back",
-            "forward" => "going forward",
-            _ => "reloading",
-        };
-        self.base
-            .act(
-                "browser_navigate",
-                RiskLevel::Network,
-                None,
-                format!("browser_navigate {action}"),
-                label.to_owned(),
-                |chat| async move { chat.navigate(&action).await },
-            )
-            .await
-    }
-}
-
-/// Arguments for `browser_snapshot`.
-#[derive(Debug, Clone, Default, Serialize, Deserialize, ToolInput)]
-pub struct SnapshotArgs {
-    #[serde(default, alias = "ref")]
-    #[input(
-        description = "Only this element's part of the page (a ref like e12); omit for the whole page"
-    )]
-    pub reference: String,
-    #[serde(default)]
-    #[input(
-        description = "Also return the page's structure: its containers with positions and a selector for each, and whether each canvas drew anything. Use this rather than guessing where something is."
-    )]
-    pub layout: bool,
-}
-
-#[tool(
-    name = "browser_snapshot",
-    description = "Read the current page of the built-in browser again as an outline with refs. Every other browser tool already returns one, so call this only when the page changed on its own or to read one part (ref).",
-    input = SnapshotArgs,
-)]
-struct BrowserSnapshot {
-    base: Base,
-}
-
-#[async_trait]
-impl ToolRuntime for BrowserSnapshot {
-    async fn execute(&self, args: Value) -> Result<Value, ToolCallError> {
-        self.base.scope.chat.thaw_pages().await;
-        let args: SnapshotArgs = parse_tool_args("browser_snapshot", args)?;
-        let reference = Some(model_reference(&args.reference)).filter(|r| !r.is_empty());
-        self.base
-            .act(
-                "browser_snapshot",
-                RiskLevel::Read,
-                None,
-                "browser_snapshot".to_owned(),
-                "reading the page".to_owned(),
-                |chat| async move { chat.snapshot(reference.as_deref(), args.layout).await },
-            )
-            .await
-    }
-}
-
-/// Arguments for `browser_check_looks` (none).
-#[derive(Debug, Clone, Default, Serialize, Deserialize, ToolInput)]
-pub struct CheckLooksArgs {}
-
-#[tool(
-    name = "browser_check_looks",
-    description = "Measure how the current page looks, in both light and dark colour schemes (the page switches briefly and is put back): text or controls too faint to see against what is behind them, buttons and fields with no visible text or edge, content cut off or off the side of the page, source code showing as page text, CSS rules the browser dropped as invalid, quirks mode, stylesheets, scripts, images or fonts that failed to load, and console errors. Elements carry refs like the snapshot. It finds what can be computed, not every visual problem: colours over images and gradients are not checked.",
-    input = CheckLooksArgs,
-)]
-struct BrowserCheckLooks {
-    base: Base,
-}
-
-#[async_trait]
-impl ToolRuntime for BrowserCheckLooks {
-    async fn execute(&self, args: Value) -> Result<Value, ToolCallError> {
-        let _: CheckLooksArgs = parse_tool_args("browser_check_looks", args)?;
-        let chat = Arc::clone(&self.base.scope.chat);
-        let site = chat
-            .current_site()
-            .await
-            .unwrap_or_else(|| BLANK_SITE.to_owned());
-        self.base.gate(
-            "browser_check_looks",
-            &site,
-            format!("browser_check_looks on {site}"),
-            RiskLevel::Read,
-        )?;
-        chat.thaw_pages().await;
-        chat.set_activity(Some("checking how the page looks".to_owned()))
-            .await;
-        let secrets = self.base.scope.permissions.config().show_secrets;
-        let result =
-            until_stopped(self.base.scope.cancel.as_deref(), chat.check_looks(secrets)).await;
-        chat.set_activity(None).await;
-        let mut value = result.map_err(|e| tool_error(format!("browser_check_looks: {e}")))?;
-        value["untrusted"] = json!(true);
-        value["note"] = json!(UNTRUSTED_NOTE);
-        Ok(value)
-    }
-}
-
-/// Arguments for `browser_screenshot`.
-#[derive(Debug, Clone, Default, Serialize, Deserialize, ToolInput)]
-pub struct ScreenshotArgs {
-    #[serde(default, alias = "ref")]
-    #[input(
-        description = "Only this element: a ref from the latest snapshot like e14, a CSS selector, or text=Some text; omit for the visible page"
-    )]
-    pub reference: String,
-    #[serde(default)]
-    #[input(description = "The whole scrollable page instead of the visible part")]
-    pub full_page: bool,
-}
-
-#[tool(
-    name = "browser_screenshot",
-    description = "Save a PNG screenshot of the current page (or one element, or the whole page) for the user. You cannot see it yourself. Returns its path; to show it to the user, call attach_file with that path. Use snapshots, not screenshots, to read a page.",
-    input = ScreenshotArgs,
-)]
-struct BrowserScreenshot {
-    base: Base,
-}
-
-#[async_trait]
-impl ToolRuntime for BrowserScreenshot {
-    async fn execute(&self, args: Value) -> Result<Value, ToolCallError> {
-        let args: ScreenshotArgs = parse_tool_args("browser_screenshot", args)?;
-        let chat = Arc::clone(&self.base.scope.chat);
-        let media = self
-            .base
-            .scope
-            .media
-            .clone()
-            .ok_or_else(|| tool_error("browser_screenshot: unavailable".into()))?;
-        let site = chat
-            .current_site()
-            .await
-            .unwrap_or_else(|| BLANK_SITE.to_owned());
-        self.base.gate(
-            "browser_screenshot",
-            &site,
-            format!("browser_screenshot on {site}"),
-            RiskLevel::Read,
-        )?;
-        self.base.scope.chat.thaw_pages().await;
-        let reference = Some(model_reference(&args.reference)).filter(|r| !r.is_empty());
-        let (png, width, height) = chat
-            .screenshot(reference.as_deref(), args.full_page)
-            .await
-            .map_err(|e| tool_error(format!("browser_screenshot: {e}")))?;
-        let path = media
-            .save(&media_name("screenshot", "png"), &png)
-            .map_err(|e| tool_error(format!("browser_screenshot: {e}")))?;
-        let screenshots = self.base.scope.screenshots;
-        // The model's copy: the same view, scaled down by the browser. It is kept in memory
-        // only (see `crate::vision`); the runtime attaches it after this result.
-        let kept = screenshots != ScreenshotsToModel::Off
-            && match chat
-                .screenshot_for_model(
-                    reference.as_deref(),
-                    args.full_page,
-                    crate::vision::MAX_SIDE,
-                )
-                .await
-            {
-                Ok(jpeg) => crate::vision::keep(
-                    &path,
-                    crate::vision::Image {
-                        mime: autoagents::llm::chat::ImageMime::JPEG,
-                        bytes: jpeg,
-                    },
-                ),
-                Err(_) => false,
-            };
-        let mut result = json!({
-            "path": path,
-            "width": width,
-            "height": height,
-            "note": screenshot_note(screenshots, kept),
-        });
-        if screenshots == ScreenshotsToModel::Seen && kept {
-            result["image_attached"] = json!(true);
-        }
-        Ok(result)
-    }
-}
-
-/// The note on a screenshot result: a model that reads text only gets the note it always
-/// had; one that reads images is told the image follows, or that this one was too large.
-fn screenshot_note(screenshots: ScreenshotsToModel, kept: bool) -> &'static str {
-    match (screenshots, kept) {
-        (ScreenshotsToModel::Seen, true) => crate::prompts::TOOL_SCREENSHOT_SEEN_NOTE,
-        (ScreenshotsToModel::Seen, false) => crate::prompts::TOOL_SCREENSHOT_UNATTACHED_NOTE,
-        _ => crate::prompts::TOOL_SCREENSHOT_NOTE,
-    }
-}
-
-/// `browser_screenshot` for a model that reads images: described as a tool whose image the
-/// model gets, with no advice on when to use it; otherwise the same tool.
-#[derive(Debug)]
-struct SeeingScreenshot(BrowserScreenshot);
-
-impl ToolT for SeeingScreenshot {
-    fn name(&self) -> &str {
-        self.0.name()
-    }
-
-    fn description(&self) -> &str {
-        crate::prompts::TOOL_SCREENSHOT_SEEING_DESCRIPTION
-    }
-
-    fn args_schema(&self) -> Value {
-        self.0.args_schema()
-    }
-
-    fn output_schema(&self) -> Option<Value> {
-        self.0.output_schema()
-    }
-}
-
-#[async_trait]
-impl ToolRuntime for SeeingScreenshot {
-    async fn execute(&self, args: Value) -> Result<Value, ToolCallError> {
-        self.0.execute(args).await
-    }
-}
-
-/// Arguments for `browser_record`.
-#[derive(Debug, Clone, Default, Serialize, Deserialize, ToolInput)]
-pub struct RecordArgs {
-    #[input(description = "start or stop")]
-    pub action: String,
-    #[serde(default)]
-    #[input(description = "For start: longest length in seconds (default 30, max 120)")]
-    pub max_seconds: u64,
-}
-
-#[tool(
-    name = "browser_record",
-    description = "Record the built-in browser as a video: start, act with the other browser tools, then stop to save an MP4 and get its path (it also stops at max_seconds). One recording at a time. To show it to the user, call attach_file with the path.",
-    input = RecordArgs,
-)]
-struct BrowserRecord {
-    base: Base,
-}
-
-#[async_trait]
-impl ToolRuntime for BrowserRecord {
-    async fn execute(&self, args: Value) -> Result<Value, ToolCallError> {
-        let args: RecordArgs = parse_tool_args("browser_record", args)?;
-        let chat = Arc::clone(&self.base.scope.chat);
-        let media = self
-            .base
-            .scope
-            .media
-            .clone()
-            .ok_or_else(|| tool_error("browser_record: unavailable".into()))?;
-        let action = args.action.trim().to_ascii_lowercase();
-        let site = chat
-            .current_site()
-            .await
-            .unwrap_or_else(|| BLANK_SITE.to_owned());
-        self.base.gate(
-            "browser_record",
-            &site,
-            format!("browser_record {action} on {site}"),
-            RiskLevel::Read,
-        )?;
-        self.base.scope.chat.thaw_pages().await;
-        match action.as_str() {
-            "start" => {
-                let max = match args.max_seconds {
-                    0 => RECORD_DEFAULT,
-                    seconds => std::time::Duration::from_secs(seconds).min(RECORD_MAX),
-                };
-                chat.start_recording(Recorder::Agent, max)
-                    .await
-                    .map_err(|e| tool_error(format!("browser_record: {e}")))?;
-                Ok(
-                    json!({"recording": true, "max_seconds": max.as_secs(), "note": "Recording. Act on the page, then call browser_record with action stop."}),
-                )
-            }
-            "stop" => {
-                let (video, length) = until_stopped(
-                    self.base.scope.cancel.as_deref(),
-                    chat.stop_recording(Recorder::Agent),
-                )
-                .await
-                .map_err(|e| tool_error(format!("browser_record: {e}")))?;
-                let path = media
-                    .save(&media_name("recording", "mp4"), &video)
-                    .map_err(|e| tool_error(format!("browser_record: {e}")))?;
-                Ok(json!({
-                    "path": path,
-                    "seconds": length.as_secs_f64().round(),
-                    "note": "Saved. Call attach_file with this path to show it in your reply.",
-                }))
-            }
-            other => Err(tool_error(format!(
-                "browser_record: action must be start or stop, not '{other}'"
-            ))),
-        }
-    }
-}
-
 #[cfg(test)]
-mod tests {
-    #[test]
-    fn a_ref_of_nothing_is_no_ref() {
-        for empty in ["", " ", "null", "NULL", "\"null\"", "none", "undefined"] {
-            assert_eq!(super::model_reference(empty), "", "{empty}");
-        }
-        assert_eq!(super::model_reference(" \"e14\" "), "e14");
-        assert_eq!(super::model_reference("nullable"), "nullable");
-    }
-
-    use super::*;
-
-    #[tokio::test]
-    async fn a_stopped_run_drops_the_browser_step_in_progress() {
-        struct Dropped(Arc<AtomicBool>);
-        impl Drop for Dropped {
-            fn drop(&mut self) {
-                self.0.store(true, Ordering::SeqCst);
-            }
-        }
-        let cancel = Arc::new(AtomicBool::new(false));
-        let dropped = Arc::new(AtomicBool::new(false));
-        let guard = Dropped(Arc::clone(&dropped));
-        let step = async move {
-            let _guard = guard;
-            std::future::pending::<Result<(), String>>().await
-        };
-        let flag = Arc::clone(&cancel);
-        tokio::spawn(async move {
-            tokio::time::sleep(std::time::Duration::from_millis(150)).await;
-            flag.store(true, Ordering::SeqCst);
-        });
-        let result = tokio::time::timeout(
-            std::time::Duration::from_secs(5),
-            until_stopped(Some(&cancel), step),
-        )
-        .await
-        .expect("a stopped step returns promptly");
-        assert_eq!(result, Err("stopped by you".to_owned()));
-        assert!(dropped.load(Ordering::SeqCst));
-        assert_eq!(
-            until_stopped(Some(&cancel), async { Ok(1) }).await.ok(),
-            Some(1)
-        );
-        assert_eq!(
-            until_stopped(None, async { Ok::<_, String>(2) }).await,
-            Ok(2)
-        );
-    }
-
-    struct NoMedia;
-    impl MediaSink for NoMedia {
-        fn save(&self, _: &str, _: &[u8]) -> Result<String, String> {
-            Err("unused".into())
-        }
-    }
-
-    fn parses(tool: &str, args: Value) -> Result<(), ToolCallError> {
-        match tool {
-            "browser_open" => parse_tool_args::<OpenArgs>(tool, args).map(|_| ()),
-            "browser_navigate" => parse_tool_args::<NavigateArgs>(tool, args).map(|_| ()),
-            "browser_snapshot" => parse_tool_args::<SnapshotArgs>(tool, args).map(|_| ()),
-            "browser_click" => parse_tool_args::<ClickArgs>(tool, args).map(|_| ()),
-            "browser_type" => parse_tool_args::<TypeArgs>(tool, args).map(|_| ()),
-            "browser_select" => parse_tool_args::<SelectArgs>(tool, args).map(|_| ()),
-            "browser_press" => parse_tool_args::<PressArgs>(tool, args).map(|_| ()),
-            "browser_scroll" => parse_tool_args::<ScrollArgs>(tool, args).map(|_| ()),
-            "browser_move" => parse_tool_args::<MoveArgs>(tool, args).map(|_| ()),
-            "browser_drag" => parse_tool_args::<DragArgs>(tool, args).map(|_| ()),
-            "browser_screenshot" => parse_tool_args::<ScreenshotArgs>(tool, args).map(|_| ()),
-            "browser_record" => parse_tool_args::<RecordArgs>(tool, args).map(|_| ()),
-            "browser_check_looks" => parse_tool_args::<CheckLooksArgs>(tool, args).map(|_| ()),
-            "browser_devtools" => parse_tool_args::<devtools::DevtoolsArgs>(tool, args).map(|_| ()),
-            other => panic!("untested tool {other}"),
-        }
-    }
-
-    /// A model fills in exactly what a tool's schema advertises; every one of
-    /// those names must parse (a live run once lost three calls to `reference`
-    /// in the schema but `ref` in the parser).
-    #[test]
-    fn every_advertised_argument_parses_and_ref_is_accepted_too() {
-        let hub = super::super::BrowserHub::new(super::super::BrowserConfig {
-            root: std::env::temp_dir(),
-            executable: None,
-            headless: true,
-        });
-        let tools = browser_tools(
-            Arc::new(crate::tools::AllowAllHook),
-            BrowserScope {
-                permissions: crate::tools::site_permissions::SitePermissions::new(
-                    Default::default(),
-                    None,
-                ),
-                chat: hub.chat("schema-test", &std::env::temp_dir()),
-                cancel: None,
-                media: Some(Arc::new(NoMedia)),
-                screenshots: ScreenshotsToModel::Off,
-            },
-        );
-        let sample = |schema: &Value| match schema["type"].as_str() {
-            Some("boolean") => json!(true),
-            Some("integer" | "number") => json!(1),
-            Some("array") => json!(["x"]),
-            _ => json!("e1"),
-        };
-        for tool in &tools {
-            let schema = tool.args_schema();
-            let properties = schema["properties"]
-                .as_object()
-                .cloned()
-                .unwrap_or_default();
-            let args: serde_json::Map<String, Value> = properties
-                .iter()
-                .map(|(name, spec)| (name.clone(), sample(spec)))
-                .collect();
-            let parsed = parses(tool.name(), Value::Object(args));
-            assert!(parsed.is_ok(), "{}: {parsed:?} from {schema}", tool.name());
-        }
-        assert_eq!(tools.len(), 14);
-        let click: ClickArgs = parse_tool_args("browser_click", json!({"ref": "e4"})).unwrap();
-        assert_eq!(click.reference, "e4");
-        let click: ClickArgs =
-            parse_tool_args("browser_click", json!({"reference": "e5"})).unwrap();
-        assert_eq!(click.reference, "e5");
-    }
-
-    /// A model that reads text only sees `browser_screenshot` exactly as before; one that
-    /// reads images gets the tool described as giving it the image, and its result says
-    /// whether the image follows.
-    #[test]
-    fn the_screenshot_tool_tells_each_model_what_it_gets() {
-        let hub = super::super::BrowserHub::new(super::super::BrowserConfig {
-            root: std::env::temp_dir(),
-            executable: None,
-            headless: true,
-        });
-        let description = |screenshots| {
-            let tools = browser_tools(
-                Arc::new(crate::tools::AllowAllHook),
-                BrowserScope {
-                    permissions: crate::tools::site_permissions::SitePermissions::new(
-                        Default::default(),
-                        None,
-                    ),
-                    chat: hub.chat("screenshot-test", &std::env::temp_dir()),
-                    cancel: None,
-                    media: Some(Arc::new(NoMedia)),
-                    screenshots,
-                },
-            );
-            let tool = tools
-                .iter()
-                .find(|tool| tool.name() == "browser_screenshot")
-                .expect("offered");
-            (tool.description().to_owned(), tool.args_schema())
-        };
-        let (text, text_schema) = description(ScreenshotsToModel::Off);
-        assert!(text.contains("You cannot see it yourself"), "{text}");
-        let (seeing, seeing_schema) = description(ScreenshotsToModel::Seen);
-        assert_eq!(seeing, crate::prompts::TOOL_SCREENSHOT_SEEING_DESCRIPTION);
-        assert!(!seeing.contains("cannot see"));
-        assert_eq!(seeing_schema, text_schema);
-        assert_eq!(
-            screenshot_note(ScreenshotsToModel::Off, false),
-            crate::prompts::TOOL_SCREENSHOT_NOTE
-        );
-        assert_eq!(
-            screenshot_note(ScreenshotsToModel::Seen, true),
-            crate::prompts::TOOL_SCREENSHOT_SEEN_NOTE
-        );
-        assert_eq!(
-            screenshot_note(ScreenshotsToModel::Seen, false),
-            crate::prompts::TOOL_SCREENSHOT_UNATTACHED_NOTE
-        );
-    }
-}
+mod tests;

@@ -79,27 +79,27 @@ async fn cli_run_drives_the_browser_and_the_workspace_commands_see_it() {
             let body: Value = request.body_json().unwrap_or(Value::Null);
             let results = tool_results(&body);
             match results.len() {
-                0 => tool_call("c1", "browser_open", json!({"url": format!("http://127.0.0.1:{port}/app")})),
+                0 => tool_call("c1", "browser", json!({"action": "open", "url": format!("http://127.0.0.1:{port}/app")})),
                 1 => {
                     let snapshot = results[0]["snapshot"].as_str().unwrap_or_default();
                     let reference = ref_after(snapshot, "\"Add one\"").unwrap_or_else(|| "e0".into());
-                    tool_call("c2", "browser_click", json!({"ref": reference}))
+                    tool_call("c2", "browser", json!({"action": "click", "ref": reference}))
                 }
-                2 => tool_call("c3", "browser_open", json!({"url": format!("http://localhost:{port}/app")})),
-                3 => tool_call("c4", "browser_screenshot", json!({})),
+                2 => tool_call("c3", "browser", json!({"action": "open", "url": format!("http://localhost:{port}/app")})),
+                3 => tool_call("c4", "browser", json!({"action": "screenshot"})),
                 4 => tool_call(
                     "c5",
                     "attach_file",
                     json!({"files": [{"path": results[3]["path"], "caption": "Counter at one"}]}),
                 ),
                 // A point of the page, as a canvas game would need, and one outside it.
-                5 => tool_call("c6", "browser_click", json!({"x": 5, "y": 5})),
-                6 => tool_call("c7", "browser_click", json!({"x": 5, "y": 100_000})),
-                7 => tool_call("c8", "browser_check_looks", json!({})),
+                5 => tool_call("c6", "browser", json!({"action": "click", "x": 5, "y": 5})),
+                6 => tool_call("c7", "browser", json!({"action": "click", "x": 5, "y": 100_000})),
+                7 => tool_call("c8", "browser", json!({"action": "check_looks"})),
                 // A short recording of its own, which the chat shows as a video.
-                8 => tool_call("c9", "browser_record", json!({"action": "start"})),
-                9 => tool_call("c10", "browser_click", json!({"x": 5, "y": 5})),
-                10 => tool_call("c11", "browser_record", json!({"action": "stop"})),
+                8 => tool_call("c9", "browser", json!({"action": "record", "operation": "start"})),
+                9 => tool_call("c10", "browser", json!({"action": "click", "x": 5, "y": 5})),
+                10 => tool_call("c11", "browser", json!({"action": "record", "operation": "stop"})),
                 _ => ResponseTemplate::new(200).set_body_json(json!({
                     "choices": [{"message": {"role": "assistant", "content": "Clicked it."}, "finish_reason": "stop"}]
                 })),
@@ -115,8 +115,8 @@ async fn cli_run_drives_the_browser_and_the_workspace_commands_see_it() {
         json!({
             "schema_version": 1,
             "approval": {"rules": [
-                {"tool": "browser_*", "command": ["localhost"], "action": "deny"},
-                {"tool": "browser_*", "command": ["127.0.0.1"], "action": "allow"},
+                {"tool": "browser", "command": ["localhost"], "action": "deny"},
+                {"tool": "browser", "command": ["127.0.0.1"], "action": "allow"},
                 {"tool": "*", "risk": "read", "action": "allow"}
             ]}
         })
@@ -185,19 +185,32 @@ async fn cli_run_drives_the_browser_and_the_workspace_commands_see_it() {
         .unwrap()
         .body_json()
         .unwrap();
-    let offered = last["tools"].to_string();
+    // One browser tool, its action picking what to do.
+    let browser = last["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|tool| tool["function"]["name"] == "browser")
+        .expect("the browser tool is offered");
+    let actions = browser["function"]["parameters"]["properties"]["action"]["enum"].to_string();
     for name in [
-        "browser_open",
-        "browser_click",
-        "browser_type",
-        "browser_snapshot",
-        "browser_check_looks",
+        "open",
+        "click",
+        "type",
+        "snapshot",
+        "check_looks",
+        "screenshot",
+        "record",
     ] {
         assert!(
-            offered.contains(&format!("\"{name}\"")),
-            "{name} not offered"
+            actions.contains(&format!("\"{name}\"")),
+            "{name} not offered: {actions}"
         );
     }
+    assert!(
+        !last["tools"].to_string().contains("\"browser_open\""),
+        "no browser tool of old"
+    );
     let results = tool_results(&last);
     assert_eq!(results[0]["title"], "Counter", "{}", results[0]);
     assert!(
@@ -289,26 +302,32 @@ async fn cli_run_drives_the_browser_and_the_workspace_commands_see_it() {
         // The screenshot and recording steps carry what they saved as structured media,
         // so the chat shows them without reading the tool's output.
         let history: Value = serde_json::from_str(&history).unwrap();
-        let media_of = |tool: &str| {
-            history
-                .as_array()
-                .unwrap()
+        let media: Vec<Value> = history
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|item| &item["envelope"]["event"])
+            .filter(|event| event["kind"] == "tool_finished" && event["tool"] == "browser")
+            .map(|event| event["media"].clone())
+            .filter(|media| !media.is_null())
+            .collect();
+        let media_of = |kind: &str| {
+            media
                 .iter()
-                .map(|item| &item["envelope"]["event"])
-                .rfind(|event| event["kind"] == "tool_finished" && event["tool"] == tool)
-                .map(|event| event["media"].clone())
+                .find(|media| media["kind"] == kind)
+                .cloned()
                 .unwrap_or(Value::Null)
         };
-        let shot_media = media_of("browser_screenshot");
+        let shot_media = media_of("image");
         assert_eq!(shot_media["kind"], "image", "{shot_media}");
         assert_eq!(shot_media["path"], shot.as_str(), "{shot_media}");
         assert!(shot_media["width"].as_u64().unwrap() > 0, "{shot_media}");
         assert!(shot_media["height"].as_u64().unwrap() > 0, "{shot_media}");
-        let video_media = media_of("browser_record");
+        let video_media = media_of("video");
         assert_eq!(video_media["kind"], "video", "{video_media}");
         assert_eq!(video_media["path"], recording.as_str(), "{video_media}");
         // Other steps carry none.
-        assert!(media_of("browser_open").is_null());
+        assert_eq!(media.len(), 2, "{media:?}");
         // The person's Capture and Record save files the composer can attach.
         let captured = call(&data_dir, "browser_capture", json!({"threadId": thread_id}));
         assert!(

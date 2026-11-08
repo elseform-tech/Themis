@@ -54,15 +54,14 @@ fn rust_sources(directory: &Path, found: &mut Vec<PathBuf>) {
 
 /// Every tool a run can offer, from where each kind of tool declares its name.
 fn tool_names() -> BTreeSet<String> {
-    // The toolkit's file tools and the per-run tools, as `skills.rs` lists them; `browser`
-    // there stands for the `browser_*` tools, which are read from their own declarations.
+    // The toolkit's file tools and the per-run tools (`browser` among them), as `skills.rs`
+    // lists them.
     let mut names: BTreeSet<String> = quoted(between(
         &read("crates/core/src/skills.rs"),
         "const KNOWN_TOOL_NAMES",
         "];",
     ))
     .into_iter()
-    .filter(|name| name != "browser")
     .collect();
     let mut sources = Vec::new();
     for directory in ["crates/core/src", "crates/desktop/src"] {
@@ -200,7 +199,7 @@ fn the_source_lists_are_read() {
     // Guards the readers above: a refactor that hides a list must not empty the check.
     let expected = expected();
     for (prefix, at_least) in [
-        ("tool:", 30),
+        ("tool:", 18),
         ("settings:", 9),
         ("workspace:", 5),
         ("view:", 3),
@@ -216,7 +215,7 @@ fn the_source_lists_are_read() {
         "update_goal",
         "ask_user",
         "manage_automations",
-        "browser_devtools",
+        "browser",
     ] {
         assert!(
             expected.contains(&format!("tool:{tool}")),

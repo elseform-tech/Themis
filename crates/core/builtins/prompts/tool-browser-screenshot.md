@@ -1,0 +1,1 @@
+- screenshot: save a PNG of the current page (or one element, or the whole page with full_page) for the user. You cannot see it yourself. Returns its path; to show it to the user, call attach_file with that path. Use snapshots, not screenshots, to read a page.

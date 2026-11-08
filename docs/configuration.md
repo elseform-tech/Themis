@@ -279,13 +279,13 @@ project content, so a cloned repository's guidance reaches the agent, but it nev
 | `web.search_url` | Optional http(s) URL of your SearXNG instance (JSON output enabled), at most 1,024 bytes, no credentials; user file only. Unset: the SearXNG built into Themis is used (when the build has it; otherwise `web_search` is not offered). See [web tools](web-tools.md) |
 | `browser.enabled` | Boolean, default `true`; projects may only set `false` |
 | `browser.executable` | Optional absolute path to a Chrome, Chromium or Edge binary, at most 1,024 bytes; user file only. Unset: the built-in engine (downloaded on first use), else an installed browser |
-| `browser.developer_mode` | Boolean, default `true` ("Enable full CDP access"): off offers no debugging tools on any page; projects may only set `false` |
+| `browser.developer_mode` | Boolean, default `true` ("Enable full CDP access"): off leaves the browser's `devtools` action out on every page; projects may only set `false` |
 | `browser.permissions` | `browsing`, `downloads`, `debugging`: each `"allow"`, `"ask"` or `"block"`; defaults allow, allow, block. Projects may only make a value stricter. See [web tools](web-tools.md#permissions-settings--browser) |
 | `browser.site_exceptions` | Up to 500 `{ "site": "example.com", "browsing"?, "downloads"?, "debugging"? }`: a lowercase host covering its subdomains, most specific wins. Default: the starter blocks. A project's exceptions may only block, and they add to yours instead of replacing them (an exception to "arrays replace") |
 | `browser.show_secrets` | Boolean, default `false`: show cookie values, auth headers and token-like values to the agent; projects may only set `false` |
 | `browser.downloads_directory` | Optional absolute folder for downloads; user file only. Unset: the system Downloads folder |
 | `browser.open_workspace` | Boolean, default `false`: open Workspace on the Browser tab when the agent starts browsing (otherwise the chat's overview box shows a live preview); user file only |
-| `browser.screenshots_to_model` | Boolean, default `true`: when the run's model reads images (`models.<id>.images`, else the models.dev catalog), a `browser_screenshot` it takes also reaches it as an image, at most 1,280 pixels on the longest side and 1.5 MB, in a user message right after the tool result; each request carries only the latest two, older ones go as their text result. The goal check's model gets the turn's latest two the same way when it reads images. `false`, or a model that reads text only, keeps the text result. Projects may only set `false` |
+| `browser.screenshots_to_model` | Boolean, default `true`: when the run's model reads images (`models.<id>.images`, else the models.dev catalog), a browser `screenshot` it takes also reaches it as an image, at most 1,280 pixels on the longest side and 1.5 MB, in a user message right after the tool result; each request carries only the latest two, older ones go as their text result. The goal check's model gets the turn's latest two the same way when it reads images. `false`, or a model that reads text only, keeps the text result. Projects may only set `false` |
 
 `prompt_file` supplements the built-in compaction guidance; it does not replace
 the compaction algorithm. It resolves within the directory of the configuration
@@ -481,12 +481,19 @@ wildcard, prefix and risk-only allow rules and an `allow` default never cover it
 while every matching deny rule (including `*`) refuses it.
 Example allow rule: `{ "tool": "shell", "command": ["cargo", "test"], "action": "allow" }`.
 
-For web and browser tools (`web_search`, `fetch_url`, `browser_*`) `command` names one
-site instead: a host name or IP address without scheme, port, path or wildcard. It matches
-that host and its subdomains, without case: `{ "tool": "browser_*", "command": ["example.com"], "action": "deny" }`
-denies every browser action on `example.com` and `login.example.com`, not `notexample.com`.
-These tools check approval themselves once they know the site (for browser actions, the
-current page), so a rule or grant always sees the real host. See [web tools](web-tools.md).
+For the web tools (`web_search`, `fetch_url`) `command` names one site instead: a host name
+or IP address without scheme, port, path or wildcard. It matches that host and its
+subdomains, without case. The built-in browser is one tool, `browser`, whose `action` picks
+what it does; a browser approval's `command` is the site, then the action (or `download` for
+a file a page sends), so a `browser` rule's `command` names a site, an action or both, in
+either order: `{ "tool": "browser", "command": ["example.com"], "action": "deny" }` denies
+every browser action on `example.com` and `login.example.com`, not `notexample.com`;
+`["devtools"]` names that action on every site; `["example.com", "click"]` clicks on that
+site only. `{ "tool": "browser" }` without `command` covers every action. A rule naming a
+`browser_*` tool (the separate browser tools before they became one) is an error, not a
+rule that quietly matches nothing. These tools check approval themselves once they know the
+site (for browser actions, the current page), so a rule or grant always sees the real host.
+See [web tools](web-tools.md).
 Allow and ask rules match the program token exactly (`/bin/echo` or a project-local
 `./echo` does not match `["echo"]`, so an allow rule never widens). Deny rules also
 match the program by basename, lowercased on macOS/Windows and without

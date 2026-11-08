@@ -557,9 +557,9 @@ export function reducer(state: AppState, action: AppAction): AppState {
       const next = applyThreadEvent(state, action.envelope);
       // The agent's first browser step in a run shows the Browser tab of the
       // chat on screen; later steps leave whatever the person chose.
-      const firstBrowserStep = state.browserOpensWorkspace && event.kind === "tool_started" && event.tool.startsWith("browser_")
+      const firstBrowserStep = state.browserOpensWorkspace && event.kind === "tool_started" && event.tool === "browser"
         && threadId === state.activeThreadId && state.mainView === "thread"
-        && !(state.traces[threadId] ?? []).some((entry) => entry.tool.startsWith("browser_"));
+        && !(state.traces[threadId] ?? []).some((entry) => entry.tool === "browser");
       return firstBrowserStep
         ? { ...next, diffPanelOpen: true, workspaceTabRequest: { tab: "browser", at: Date.now() } }
         : next;

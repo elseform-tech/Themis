@@ -142,7 +142,7 @@ describe("Settings › Browser", () => {
 describe("Open Workspace when the agent starts browsing", () => {
   it("opens Workspace on the first browser step only when the setting is on", () => {
     const state = { ...initialState, activeThreadId: "t1", mainView: "thread" as const };
-    const envelope = { thread_id: "t1", run_id: "r1", event: { kind: "tool_started", tool: "browser_open", summary: "open" } };
+    const envelope = { thread_id: "t1", run_id: "r1", event: { kind: "tool_started", tool: "browser", summary: "open" } };
     // Off by default: the chat's overview box previews the browsing instead.
     expect(state.browserOpensWorkspace).toBe(false);
     const off = reducer(state, { type: "thread/event", envelope } as never);

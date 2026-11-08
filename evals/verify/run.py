@@ -30,6 +30,10 @@ from . import generate, pressure
 
 # Custom-mode rules: enough to read, change, test and look things up, nothing outside the
 # sandbox. The default is deny, so no approval ever waits for a person who is not there.
+# The browser in a rule: the one `browser` tool, and on a build from before it was one tool
+# (an A/B arm on an older main) its `browser_*` tools, so one rule serves both arms.
+BROWSER = "browser*"
+
 APPROVAL = {
     "default": "deny",
     "rules": [{"tool": "shell_unsandboxed", "action": "deny"},
@@ -40,13 +44,13 @@ APPROVAL = {
                 for program in ("python3", "node", "git", "mkdir", "mv", "cp", "rm", "touch")]
              + [{"tool": tool, "action": "allow"}
                 for tool in ("write_file", "apply_patch", "delete_file", "move_file", "copy_file", "create_dir",
-                             "git", "web_search", "fetch_url", "browser_*")],
+                             "git", "web_search", "fetch_url", BROWSER)],
 }
 
 # The `limited` tool set: the same rules after refusing every way to look beyond the project
 # (web, browser), the archive and questions, so a run shows what those tools add. Rules are
 # checked in order, so these refusals come first.
-LIMITED_TOOLS = ("web_search", "fetch_url", "browser_*", "recall", "ask_user")
+LIMITED_TOOLS = ("web_search", "fetch_url", BROWSER, "recall", "ask_user")
 
 
 def approval(tools):

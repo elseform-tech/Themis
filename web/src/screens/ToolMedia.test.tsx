@@ -12,8 +12,8 @@ const shotPath = "/p/.themis/attachments/u1/screenshot-1652-03.png";
 const rawOutput = JSON.stringify({ height: 800, image_attached: true, note: "The image follows.", path: shotPath, width: 1280 });
 const shot: ToolMedia = { path: shotPath, kind: "image", width: 1280, height: 800 };
 
-function toolRow(media?: ToolMedia, name = "browser_screenshot", output = rawOutput): ChatMessage {
-  return { id: "m1", role: "assistant", text: "call `browser_screenshot` with {}", runId: "r1", tool: { name, ok: true, output, ...(media ? { media } : {}) } };
+function toolRow(media?: ToolMedia, name = "browser", output = rawOutput): ChatMessage {
+  return { id: "m1", role: "assistant", text: 'call `browser` with {"action":"screenshot"}', runId: "r1", tool: { name, ok: true, output, ...(media ? { media } : {}) } };
 }
 
 function renderGroup(message: ChatMessage, show = vi.fn<(file: AttachedMedia) => void>()) {
@@ -53,7 +53,7 @@ describe("a screenshot step's output", () => {
     const video: ToolMedia = { path: "/p/.themis/attachments/u2/recording-1.mp4", kind: "video" };
     let container!: HTMLElement;
     let show!: ReturnType<typeof vi.fn>;
-    await act(async () => { ({ container, show } = renderGroup(toolRow(video, "browser_record", JSON.stringify({ path: video.path, seconds: 4 })))); });
+    await act(async () => { ({ container, show } = renderGroup(toolRow(video, "browser", JSON.stringify({ path: video.path, seconds: 4 })))); });
     const thumb = within(container.querySelector(".themis-tool-detail") as HTMLElement).getByRole("button", { name: "Play recording" });
     expect(thumb.querySelector("video")?.getAttribute("src")).toMatch(/recording-1\.mp4#t=0\.1$/);
     expect(thumb.querySelector(".themis-media-play")).not.toBeNull();
@@ -74,15 +74,18 @@ describe("tool media in the reducer", () => {
   const event = (kind: string, extra: object) => ({ type: "thread/event" as const, envelope: { thread_id: "t1", run_id: "r1", event: { kind, ...extra } as never } });
 
   it("keeps the step's media live and from history", () => {
-    let state = reducer(initialState, event("tool_started", { tool: "browser_screenshot", summary: "shot" }));
-    state = reducer(state, event("tool_finished", { tool: "browser_screenshot", ok: true, output: rawOutput, media: shot }));
+    let state = reducer(initialState, event("tool_started", { tool: "browser", summary: "shot" }));
+    state = reducer(state, event("tool_finished", { tool: "browser", ok: true, output: rawOutput, media: shot }));
     expect(state.messages.t1!.find(row => row.tool)!.tool!.media).toEqual(shot);
-    const replayed = reducer(initialState, { type: "thread/history-loaded", threadId: "t1", history: [
-      { kind: "user", run_id: "r1", text: "screenshot it" },
-      { kind: "event", envelope: { thread_id: "t1", run_id: "r1", event: { kind: "tool_started", tool: "browser_screenshot", summary: "shot" } } },
-      { kind: "event", envelope: { thread_id: "t1", run_id: "r1", event: { kind: "tool_finished", tool: "browser_screenshot", ok: true, output: rawOutput, media: shot } } },
-    ] } as never);
-    expect(replayed.messages.t1!.find(row => row.tool)!.tool!.media).toEqual(shot);
+    // A chat saved before the browser was one tool keeps the media its step saved.
+    for (const tool of ["browser", "browser_screenshot"]) {
+      const replayed = reducer(initialState, { type: "thread/history-loaded", threadId: "t1", history: [
+        { kind: "user", run_id: "r1", text: "screenshot it" },
+        { kind: "event", envelope: { thread_id: "t1", run_id: "r1", event: { kind: "tool_started", tool, summary: "shot" } } },
+        { kind: "event", envelope: { thread_id: "t1", run_id: "r1", event: { kind: "tool_finished", tool, ok: true, output: rawOutput, media: shot } } },
+      ] } as never);
+      expect(replayed.messages.t1!.find(row => row.tool)!.tool!.media).toEqual(shot);
+    }
   });
 });
 

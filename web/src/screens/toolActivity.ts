@@ -42,8 +42,13 @@ const KIND: Record<string, Kind> = {
   git: "git", web_search: "web", fetch_url: "fetch", recall: "recall",
 };
 
+/** `browser`, and the `browser_*` tools it replaced, which saved chats still show. */
+export function isBrowserTool(name: string): boolean {
+  return name === "browser" || name.startsWith("browser_");
+}
+
 function kindOf(name: string): Kind {
-  return KIND[name] ?? (name.startsWith("browser_") ? "browser" : "other");
+  return KIND[name] ?? (isBrowserTool(name) ? "browser" : "other");
 }
 
 /** One phrase for the calls of one kind, naming the thing when there is one. */

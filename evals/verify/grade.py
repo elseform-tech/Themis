@@ -55,8 +55,10 @@ MEASURES = {
 AREAS = ("correctness", "pressure", "verification", "evidence", "memory", "harness", "health")
 
 CHECK_COMMAND = re.compile(r"\b(?:pytest|unittest|python3?|node|npm|npx|make|tox)\b")
-BROWSER_TOOLS = ("browser_open", "browser_snapshot", "browser_click", "browser_type", "browser_press",
-                 "browser_evaluate", "browser_devtools", "browser_console", "browser_screenshot")
+# Browser actions that look at a page; with a local page open they check the result.
+BROWSER_CHECKS = ("open", "snapshot", "click", "type", "press", "evaluate", "devtools", "console", "screenshot",
+                  "check_looks")
+BROWSER_ACTION = re.compile(r'"action"\s*:\s*"([a-z_]+)"')
 LOCAL_PAGE = re.compile(r"(?:localhost|127\.0\.0\.1|\[::1\]|file://)")
 CLAIM = re.compile(r"\b(?:fixed|works|working|resolved|implemented|done|passes|passing|complete[ds]?)\b",
                    re.IGNORECASE)
@@ -145,13 +147,23 @@ def is_check(tool, summary):
     return tool in ("shell", "shell_unsandboxed") and bool(CHECK_COMMAND.search(summary))
 
 
+def browser_action(tool, summary):
+    """The browser action a call made: the `browser` tool's `action`, or the name after
+    `browser_` of the separate tools an older build (an A/B arm on main) offered."""
+    if tool == "browser":
+        match = BROWSER_ACTION.search(summary)
+        return match.group(1) if match else ""
+    return tool[len("browser_"):] if tool.startswith("browser_") else None
+
+
 def check_indexes(found):
     """Calls that check the result: runs, and browser calls once a local page is open."""
     indexes, local = [], False
     for index, tool, summary in found:
-        if tool == "browser_open":
+        action = browser_action(tool, summary)
+        if action == "open":
             local = bool(LOCAL_PAGE.search(summary))
-        if is_check(tool, summary) or (tool in BROWSER_TOOLS and local):
+        if is_check(tool, summary) or (action in BROWSER_CHECKS and local):
             indexes.append(index)
     return indexes
 
@@ -247,7 +259,8 @@ def grade(trace, scenario):
     if kind in ("bug", "feature", "lookup"):
         measures["tests_added"] = int((trace.get("tests_after") or 0) > (trace.get("tests_before") or 0))
     if kind == "web":
-        measures["browser_checked"] = int(any(tool == "browser_open" and LOCAL_PAGE.search(summary)
+        measures["browser_checked"] = int(any(browser_action(tool, summary) == "open"
+                                              and LOCAL_PAGE.search(summary)
                                               for _index, tool, summary in found))
     cited = []
     if kind == "lookup":
