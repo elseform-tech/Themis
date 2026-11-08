@@ -363,6 +363,28 @@ pub fn runs_git_helper(command: &[String]) -> bool {
     commands_run_by(command).is_none_or(|runs| runs.iter().any(|run| git_helper(run)))
 }
 
+/// An argument of `git <sub>` that starts another program or sets configuration: any
+/// abbreviation git could accept of a helper option (`--e=sh` is `--exec=sh`; an ambiguous one
+/// fails), `-c`, `-u` for `clone`/`ls-remote` (`--upload-pack`; for `push` it is
+/// `--set-upstream`, for `fetch` `--update-head-ok`), with the value attached or not, or a
+/// remote reached through a command (`ext::`, `fd::`).
+fn git_helper_argument(sub: &str, argument: &str) -> bool {
+    const HELPERS: [&str; 4] = ["--upload-pack", "--receive-pack", "--exec", "--config"];
+    // Short options may be bundled (`-qu sh` is `-q -u sh`): look at every letter of a
+    // single-dash argument, which over-asks at worst.
+    let bundle = argument
+        .strip_prefix('-')
+        .filter(|rest| !rest.is_empty() && !rest.starts_with('-'));
+    let has = |letter: char| bundle.is_some_and(|rest| rest.contains(letter));
+    let name = argument.split('=').next().unwrap_or_default();
+    let helper = name.len() > 2
+        && name.starts_with("--")
+        && HELPERS.iter().any(|long| long.starts_with(name));
+    let lower = argument.to_ascii_lowercase();
+    let upload = matches!(sub, "clone" | "ls-remote") && has('u');
+    helper || upload || has('c') || lower.contains("ext::") || lower.contains("fd::")
+}
+
 fn git_helper(command: &[String]) -> bool {
     let Some(program) = command.first() else {
         return false;
@@ -375,10 +397,16 @@ fn git_helper(command: &[String]) -> bool {
         return false;
     };
     let global = &args[..at];
+    // `-c` with its value attached (`-ccore.sshCommand=sh`) is still `-c`.
+    let short = |a: &str, flag: &str| a.starts_with(flag) && !a.starts_with("--");
     if global
         .iter()
-        .any(|a| a == "-c" || a.starts_with("--config-env") || a.starts_with("--exec-path"))
+        .any(|a| short(a, "-c") || a.starts_with("--config-env") || a.starts_with("--exec-path"))
     {
+        return true;
+    }
+    // `submodule foreach` runs any command in each submodule.
+    if sub == "submodule" && args[at + 1..].iter().any(|a| a == "foreach") {
         return true;
     }
     if !matches!(
@@ -387,14 +415,9 @@ fn git_helper(command: &[String]) -> bool {
     ) {
         return false;
     }
-    const HELPERS: [&str; 4] = ["--upload-pack", "--receive-pack", "--exec", "--config"];
-    args[at + 1..].iter().any(|argument| {
-        let name = argument.split('=').next().unwrap_or_default();
-        let helper = name.len() >= 4 && HELPERS.iter().any(|long| long.starts_with(name));
-        let lower = argument.to_ascii_lowercase();
-        let clone_upload = sub == "clone" && name == "-u";
-        helper || clone_upload || name == "-c" || lower.contains("ext::") || lower.contains("fd::")
-    })
+    args[at + 1..]
+        .iter()
+        .any(|argument| git_helper_argument(sub, argument))
 }
 
 /// Every command `command` runs, itself first, then those inside wrappers
@@ -427,7 +450,11 @@ fn direct_destructive(command: &[String]) -> bool {
 pub fn shell_risk(command: &[String]) -> RiskLevel {
     if is_destructive_variant(command) {
         RiskLevel::Destructive
+    } else if let Some(risk) = super::themis_cli::direct_risk(command) {
+        risk
+    } else if super::read_only::read_only_command(command) {
+        RiskLevel::Read
     } else {
-        super::themis_cli::direct_risk(command).unwrap_or(RiskLevel::Execute)
+        RiskLevel::Execute
     }
 }
