@@ -119,7 +119,7 @@ export function ThreadComposer({
     return () => { clearTimeout(hint); window.removeEventListener("keydown", stopShortcut, true); };
   }, [running, stopping, thread.id]);
   // A click on the box's padding or quiet areas focuses the text area; real controls keep their own behaviour,
-  // and so do the approval and question boxes stacked on top (a click there focuses the box, so 1–3 decide).
+  // and so do the approval and question boxes stacked on top (their own buttons and fields take the click).
   function focusEditorFromBox(event: React.MouseEvent<HTMLDivElement>) {
     if ((event.target as Element).closest("button, summary, a, select, input, textarea, details, label, ul, [role='textbox'], .themis-permissions-panel, .themis-composer-menu, .themis-approval-box, .themis-question")) return;
     event.currentTarget.querySelector<HTMLElement>(".themis-prompt-editor")?.focus();

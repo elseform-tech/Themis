@@ -303,7 +303,7 @@ describe("composer focus and shortcuts", () => {
     expect(details.open).toBe(false);
   });
   it("leaves focus to the approval and question boxes stacked on top", () => {
-    // Seen live: a click on the approval box focused the text area, so 1–3 typed there.
+    // Seen live: a click on the approval box focused the text area.
     const { props } = composer(false);
     cleanup();
     render(<ThreadComposer {...props} top={<>

@@ -21,14 +21,14 @@ function isLiteral(ch: string): boolean {
 }
 
 /** One argv token as display parts: literal text and visibly distinct escapes; long tokens are cut with a marker. */
-export function tokenParts(token: string): TokenPart[] {
+export function tokenParts(token: string, max = MAX_TOKEN_CHARS): TokenPart[] {
   const chars = Array.from(token);
   const parts: TokenPart[] = [];
   const push = (text: string, escaped: boolean) => {
     const last = parts[parts.length - 1];
     if (last && last.escaped === escaped) last.text += text; else parts.push({ text, escaped });
   };
-  for (const ch of chars.slice(0, MAX_TOKEN_CHARS)) {
+  for (const ch of chars.slice(0, max)) {
     if (isLiteral(ch)) push(ch, false); else push(escapeOf(ch), true);
   }
   const needsQuotes = token === "" || parts.some(part => part.escaped) || /[\s"'`]/u.test(token);
@@ -37,28 +37,33 @@ export function tokenParts(token: string): TokenPart[] {
     parts.unshift({ text: '"', escaped: false });
     parts.push({ text: '"', escaped: false });
   }
-  if (chars.length > MAX_TOKEN_CHARS) parts.push({ text: `…(+${chars.length - MAX_TOKEN_CHARS} chars)`, escaped: false });
+  if (chars.length > max) parts.push({ text: `…(+${chars.length - max} chars)`, escaped: false });
   return parts;
 }
 
 /** Plain-text form of [`tokenParts`], for tests and non-React callers. */
-export const displayToken = (token: string): string => tokenParts(token).map(part => part.text).join("");
+export const displayToken = (token: string, max = MAX_TOKEN_CHARS): string => tokenParts(token, max).map(part => part.text).join("");
 
-export function TokenChip({ token }: { token: string }) {
+/** One token as a chip. `full` never cuts it; otherwise a cut token shows its whole (escaped) text on hover. */
+export function TokenChip({ token, full = false }: { token: string; full?: boolean }) {
+  const max = full ? Infinity : MAX_TOKEN_CHARS;
+  const cut = Array.from(token).length > max;
   return (
-    <code className="themis-approval-token">
-      {tokenParts(token).map((part, index) => part.escaped
+    <code className="themis-approval-token" title={cut ? displayToken(token, Infinity) : undefined}>
+      {tokenParts(token, max).map((part, index) => part.escaped
         ? <span key={index} className="themis-approval-escape">{part.text}</span>
         : part.text)}
     </code>
   );
 }
 
-/** Argv as separate chips, capped, with an explicit "more" marker. */
-export function TokenList({ argv }: { argv: string[] }): ReactNode {
+/** Argv as separate chips, capped, with an explicit "more" marker that names the rest on hover. `full` shows every
+ *  token whole, separated by spaces, so a command can be read (and wraps) end to end. */
+export function TokenList({ argv, full = false }: { argv: string[]; full?: boolean }): ReactNode {
+  if (full) return <>{argv.map((token, index) => <span key={index}>{index > 0 && " "}<TokenChip token={token} full /></span>)}</>;
   const shown = argv.slice(0, MAX_TOKENS);
-  const hidden = argv.length - shown.length;
-  return <>{shown.map((token, index) => <TokenChip key={index} token={token} />)}{hidden > 0 && <span> …(+{hidden} more)</span>}</>;
+  const rest = argv.slice(MAX_TOKENS);
+  return <>{shown.map((token, index) => <TokenChip key={index} token={token} />)}{rest.length > 0 && <span title={rest.map(token => displayToken(token, Infinity)).join(" ")}> …(+{rest.length} more)</span>}</>;
 }
 
 /** Untrusted plain text (for example a path from program output) with hidden characters escaped like tokens, unquoted and capped. */

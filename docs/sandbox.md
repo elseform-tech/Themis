@@ -127,7 +127,8 @@ only when:
   unreachable`, ...).
 
 Then, in **Custom**, Themis asks **Run outside the sandbox?** with the usual
-**Allow once (1)** · **Allow in this chat (2)** · **Deny (3)** and the reason.
+**Allow once** · **Allow in this chat** · **Deny**, with the command previewed in the box and the whole
+command and the reason under **Details**.
 Allowing reruns the same argv in the same folder without the sandbox. The
 request is the tool `shell_unsandboxed` with the command's argv, so rules and
 chat grants for it are keyed like other shell commands but kept apart from

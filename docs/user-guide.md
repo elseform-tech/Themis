@@ -399,18 +399,24 @@ When a rule asks, an **Approval needed** box appears on that chat's composer,
 before any question (see **Questions from the agent**). Only that action waits:
 the chat stays readable. Once you decide, the box goes away and leaves nothing in
 the chat (the call itself still shows in its step list). Another chat that waits for
-you sits in the sidebar's **Waiting for you** group with a pause sign and the tag **Approval**. The box shows the tool, summary,
-and risk, with the choices in one row:
+you sits in the sidebar's **Waiting for you** group with a pause sign and the tag **Approval**. The box says in plain words what the agent
+is about to do (for example "Run `git push origin HEAD` in my-app" or "Write notes.txt"). A long
+command is previewed in at most two lines ending in "…", and a chain of commands says how many it
+holds ("(6 commands)"); a long file path shows whole when you hover it. **Details** shows the whole
+command (one command per line for a chain, a likely destructive one tagged **destructive**) with
+**Copy**, and opens by itself when the preview was cut or the command is a chain. It also lists the
+full working folder, any secret files, why it asks and what "Allow in this chat" would cover. The choices sit in one row, and only a
+click decides (there are no keyboard shortcuts):
 
-- **Allow once (1)** — allow this call only.
-- **Allow in this chat (2)** — allow the same command family (for example `cargo test`
+- **Allow once** — allow this call only.
+- **Allow in this chat** — allow the same command family (for example `cargo test`
   with any further arguments, every tool of one MCP server, or reading pages from one
   site) now and in every later run of this chat, including its automations. Other chats
   still ask.
-- **Deny (3)** — refuse; the agent sees the denial and adapts or stops.
+- **Deny** — refuse; the agent sees the denial and adapts or stops.
 
 Destructive actions (force pushes, discarding changes, deleting files and similar) always
-ask: their dialog shows only **Allow once (1)** and **Deny (3)**. Deny rules always win over
+ask: their dialog shows only **Allow once** and **Deny**. Deny rules always win over
 chat grants. Grants live in the chat's own file, `chat_grants/<chat id>.json` in the app data
 folder; to undo one, remove its entry (or delete the file) or start a new chat. Enabling an MCP
 connection is the permission to start it, so no start prompt appears.
@@ -513,7 +519,7 @@ with `themis` to your `runtime.jsonc`; it holds in YOLO too (see "Approvals for
 `themis` calls" in [configuration](configuration.md)).
 
 When the sandbox blocks a command in **Custom**, a dialog asks **Run outside the
-sandbox?** with **Allow once (1)**, **Allow in this chat (2)** and **Deny (3)**;
+sandbox?** with **Allow once**, **Allow in this chat** and **Deny**;
 allowing runs the same command again without the sandbox. In **YOLO** nothing is
 asked and the agent is told the sandbox blocked it. The sandbox is configured
 only in the `sandbox` block of your `runtime.jsonc` (projects can only tighten

@@ -724,10 +724,6 @@
    "cognitive": 31,
    "cyclomatic": 39
   },
-  "web/src/components/approval/ApprovalBox.tsx::ApprovalBox": {
-   "cognitive": 26,
-   "cyclomatic": 25
-  },
   "web/src/components/diff/DiffView.tsx::DiffView": {
    "cognitive": 64,
    "cyclomatic": 40
