@@ -36,7 +36,7 @@ describe("composer stack", () => {
     expect(screen.getByRole("region", { name: "Goal" })).toBeInTheDocument();
     expect(screen.getByRole("region", { name: "Approval needed" })).toHaveTextContent("1 question next");
     expect(screen.queryByRole("region", { name: "Question from the agent" })).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Allow once (1)" }));
+    fireEvent.click(screen.getByRole("button", { name: "Allow once" }));
     const { approveAction } = await import("../lib/tauri");
     await waitFor(() => expect(approveAction).toHaveBeenCalledWith("t1", "a1", "once"));
     expect(dispatch).toHaveBeenCalledWith({ type: "approval/dequeued", approvalId: "a1" });

@@ -1,11 +1,8 @@
 import { toolDisplayName } from "../../lib/toolNames";
-import { useEffect, useRef } from "react";
-import type React from "react";
-import type { ApprovalDecision, ApprovalRequest, RiskLevel } from "../../lib/types";
+import type { ApprovalDecision, ApprovalRequest } from "../../lib/types";
 import { UNSANDBOXED_TOOL } from "../../lib/types";
-import { isBareCharacterKey } from "../../lib/keyboard";
 import { SafeText, TokenChip, TokenList } from "./CommandTokens";
-import { Badge, type BadgeTone } from "../primitives/Badge";
+import { ActionSentence, actionParts, riskWords } from "./plainAction";
 import { Button } from "../primitives/Button";
 import "./ApprovalBox.css";
 
@@ -19,14 +16,6 @@ export interface ApprovalBoxProps {
   next?: string;
   onFold?: () => void;
 }
-
-const RISK_TONE: Record<RiskLevel, BadgeTone> = {
-  read: "info",
-  write: "accent",
-  execute: "warning",
-  network: "warning",
-  destructive: "danger",
-};
 
 /** Says exactly what "Allow in this chat" grants, or why it is not offered. Sentence text is fixed; argv tokens render only as separate escaped chips. Keep in sync with `ToolAction::grant_key`. */
 export { displayToken } from "./CommandTokens";
@@ -75,50 +64,50 @@ export function GrantHint({ request }: { request: ApprovalRequest }) {
   );
 }
 
-const SHORTCUT_DELAY_MS = 500;
+/** The exact call: argv chips for shell and git (never the joined summary), else the runtime's summary. */
+function ExactCall({ request, label }: { request: ApprovalRequest; label?: string }) {
+  if (request.command) return <TokenList argv={request.command.argv} />;
+  const text = request.tool.startsWith("mcp_") ? request.summary.split(request.tool).join(toolDisplayName(request.tool, label)) : request.summary;
+  return <SafeText text={text} />;
+}
+
+/** What the box keeps behind its Details disclosure: the exact call, where it runs, the secret files, why it asks and what a grant covers. */
+function ApprovalDetails({ request, label }: { request: ApprovalRequest; label?: string }) {
+  const { command } = request;
+  const outside = request.tool === UNSANDBOXED_TOOL;
+  const blocked = command?.sandbox_blocked;
+  return (
+    <details className="themis-approval-details">
+      <summary>Details</summary>
+      <dl>
+        <dt>{outside ? "shell (outside the sandbox)" : toolDisplayName(request.tool, label)}</dt>
+        <dd><ExactCall request={request} label={label} />{command?.background && " (in the background)"}</dd>
+        {command?.cwd !== undefined && <><dt>Folder</dt><dd><TokenChip token={command.cwd} /></dd></>}
+        {request.sensitive_files?.length ? <><dt>Secret files</dt><dd><TokenList argv={request.sensitive_files} /></dd></> : null}
+        {outside && <><dt>Why</dt><dd>The sandbox blocked it{blocked ? <>: <SafeText text={blocked} />.</> : "."} Outside the sandbox it can write anywhere you can, read secret folders and use the network.</dd></>}
+        <dt>{request.grantable === false ? "Always asks" : "In this chat"}</dt>
+        <dd><GrantHint request={request} /></dd>
+      </dl>
+    </details>
+  );
+}
 
 /** An action waiting for the person's decision, on the composer of its chat (canvas
  *  board D). Only that action waits; the chat stays readable meanwhile. Once decided it
- *  goes away and leaves nothing in the chat. */
+ *  goes away and leaves nothing in the chat. Only its buttons decide it. */
 export function ApprovalBox({ request, label, open, onDecide, next, onFold }: ApprovalBoxProps) {
+  if (!open) return null;
   const grantable = request.grantable !== false;
   const outside = request.tool === UNSANDBOXED_TOOL;
-  const blocked = request.command?.sandbox_blocked;
-  // Keys typed just before the box appeared must not decide it: the pause counts from
-  // when this request appeared, not from the last re-render (a run re-renders often).
-  const openedAt = useRef(Date.now());
-  const approvalId = request.approval_id;
-  useEffect(() => { openedAt.current = Date.now(); }, [approvalId]);
-  // Digits decide only while focus is inside this box (after a click or Tab into it):
-  // the box sits beside question fields and the composer, and a digit typed after a
-  // missed click must never approve or deny an action.
-  function onKeyDown(event: React.KeyboardEvent) {
-    if (event.repeat || Date.now() - openedAt.current < SHORTCUT_DELAY_MS) return;
-    // The box sits inside the composer, so the composer-wide "this is typing" rule does not
-    // apply here: only a text field inside the box would make a digit typing.
-    const target = event.target as Element;
-    if (event.nativeEvent.isComposing || !isBareCharacterKey(event.nativeEvent)) return;
-    if (target.closest("input, textarea, select, [contenteditable]:not([contenteditable='false']), [role='textbox']")) return;
-    // Numbering is stable: 1 Allow once, 2 Allow in this chat, 3 Deny. Requests that
-    // cannot be allowed for the chat offer only 1 and 3, so a held 2 never denies.
-    const decision = event.key === "1" ? "once" : event.key === "2" && grantable ? "chat" : event.key === "3" ? "deny" : null;
-    if (decision === null) return;
-    // The box goes away on this keydown; the digit must not land anywhere else.
-    event.preventDefault();
-    onDecide(decision);
-  }
-
-  if (!open) return null;
   // A subagent's request names it, so the person knows which agent asks.
   const asker = request.subagent ? `${request.subagent.name} (subagent)` : null;
   const title = outside ? "Run outside the sandbox?" : asker ? `${asker} ${request.command ? "wants to run a command" : "needs approval"}` : "Approval needed";
+  const risks = riskWords(request);
   return (
-    <section className="themis-approval-box" aria-label={title} tabIndex={-1} onKeyDown={onKeyDown}>
+    <section className="themis-approval-box" aria-label={title}>
       <div className="themis-approval-head">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M12 3l7 3v5c0 4.5-3 8.5-7 10-4-1.5-7-5.5-7-10V6l7-3z" /></svg>
         <p className="themis-approval-title">{title}</p>
-        <span className="themis-approval-tool">{outside ? "shell (outside the sandbox)" : request.tool.startsWith("manage_integrations_") ? "Manage integrations" : request.tool.startsWith("mcp_start_") ? "Connect MCP" : toolDisplayName(request.tool, label)}</span>
-        <Badge tone={RISK_TONE[request.risk]}>{request.risk}</Badge>
         {next && <span className="themis-approval-next">{next}</span>}
         {onFold && (
           <button type="button" className="themis-goal-icon themis-icon-tip" data-tooltip="Fold to icons" aria-label="Fold to icons" onClick={onFold}>
@@ -127,31 +116,21 @@ export function ApprovalBox({ request, label, open, onDecide, next, onFold }: Ap
         )}
       </div>
       <div className="themis-approval">
-        {request.command
-          ? <p className="themis-approval-summary">
-              Run <TokenList argv={request.command.argv} />
-              {request.command.cwd !== undefined ? <> in <TokenChip token={request.command.cwd} /></> : " in the project root"}
-              {request.command.background && " in the background"}
-            </p>
-          : <p className="themis-approval-summary">{request.tool.startsWith("mcp_") ? request.summary.split(request.tool).join(toolDisplayName(request.tool, label)) : request.summary}</p>}
-        {request.command && request.sensitive_files?.length ? <p className="themis-approval-summary">Sensitive: <TokenList argv={request.sensitive_files} /></p> : null}
-        {outside && <p className="themis-approval-summary">The sandbox blocked it{blocked ? <>: <SafeText text={blocked} />.</> : "."} Outside the sandbox it can write anywhere you can, read secret folders and use the network.</p>}
+        <p className="themis-approval-summary"><ActionSentence parts={actionParts(request, label)} /></p>
+        {risks.length > 0 && <p className={`themis-approval-risk${request.risk === "destructive" || outside ? " is-danger" : ""}`}>{risks.join(" · ")}</p>}
+        <ApprovalDetails request={request} label={label} />
         <div className="themis-approval-actions">
-          <Button variant="primary" onClick={() => onDecide("once")}>
-            Allow once (1)
-          </Button>
+          <Button variant="primary" onClick={() => onDecide("once")}>Allow once</Button>
           {grantable && (
-            // What the grant covers shows only while this button is hovered or focused.
+            // What the grant covers shows while this button is hovered or focused, and under Details.
             <span className="themis-approval-grant">
               <Button variant="ghost" aria-describedby={`themis-grant-${request.approval_id}`} onClick={() => onDecide("chat")}>
-                {request.grant_site?.tools === "browser" ? "Always allow on this site (2)" : "Allow in this chat (2)"}
+                {request.grant_site?.tools === "browser" ? "Always allow on this site" : "Allow in this chat"}
               </Button>
               <span id={`themis-grant-${request.approval_id}`} role="tooltip" className="themis-thread-hint themis-approval-hint"><GrantHint request={request} /></span>
             </span>
           )}
-          <Button variant="danger" onClick={() => onDecide("deny")}>
-            Deny (3)
-          </Button>
+          <Button variant="danger" onClick={() => onDecide("deny")}>Deny</Button>
         </div>
       </div>
     </section>
