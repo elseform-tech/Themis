@@ -38,7 +38,7 @@ describe("composer stack", () => {
     const destructive = { ...approval, approval_id: "d1", risk: "destructive", command: { argv: ["rm", "-rf", "build"] }, ask_first: true } as ApprovalRequest;
     render(stack({ approvals: [destructive] }));
     expect(screen.getByRole("region", { name: "Question from the agent" })).toHaveTextContent("about to run `rm -rf build`");
-    expect(screen.queryByText("Allow once (1)")).toBeNull();
+    expect(screen.queryByRole("region", { name: "Approval needed" })).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: /Skip it/ }));
     await waitFor(() => expect(tauri.approveAction).toHaveBeenCalledWith("t1", "d1", "deny"));
     expect(dispatch).toHaveBeenCalledWith({ type: "approval/dequeued", approvalId: "d1" });
