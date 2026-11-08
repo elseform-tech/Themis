@@ -204,7 +204,7 @@ Example project `.themis/config.jsonc`:
 ```
 
 The `sandbox` block configures the OS sandbox for commands the agent runs
-(`shell`, background tasks, the `git` tool and watch checks) in Custom; YOLO runs
+(`shell`, git included, background tasks and watch checks) in Custom; YOLO runs
 use an open plan that keeps the app data and `.themis/` read-only and keeps
 `network: "block"` and `allow_keychain: false` only when a file or override wrote
 them (their provenance is not `default`); `writable_paths` does not matter there. See [sandbox](sandbox.md) for what it allows, the secret locations it
@@ -428,8 +428,8 @@ The shield offers **Auto**, **Custom** or **YOLO**, persisted per thread; new ch
 the mode set in Settings › Permissions (Auto unless changed).
 It has no configuration editor or advanced settings link.
 
-**Destructive steps ask the person first in Auto and YOLO.** A destructive tool (`delete_file`,
-removals) or a destructive command variant (`rm -rf`, a force push, `git reset --hard`, `git
+**Destructive steps ask the person first in Auto and YOLO.** A destructive tool (removals) or
+a destructive command variant (`rm -rf`, a force push, `git reset --hard`, `git
 clean`, `git branch -D`, a publish, a `themis` delete) waits on a question box before the mode's
 own decision, whatever an allow rule says: **Run it once**, **Skip it**, or a written answer, which
 is steered in as a message (the step does not run and the agent reads it first). It is never
@@ -500,9 +500,9 @@ Deny rules also match every command a wrapper runs: `sh`/`bash`/`zsh`/`dash`/`ks
 interpreters (`python -c`, `node -e`) are not read: this is a tool policy, not a
 sandbox; deny those interpreters if you need to.
 
-`search_file` and `list_dir` do not consider `.gitignore`: `search_file` matches file names only (never contents) and looks at the first 100 entries it walks, `.git` and dependency folders included; `list_dir` leaves out dotfiles. Neither reaches a file's contents, so neither needs an approval for a sensitive file.
+The agent lists and searches through the shell (`ls`, `rg`, `find`), whose commands that only read inside the project run without asking; the sensitive-file check reads their arguments, so `cat .env` still asks. On Windows, where commands need a wrapper that always asks, `list_dir` and `search_file` remain: they do not consider `.gitignore`, `search_file` matches file names only (never contents) and looks at the first 100 entries it walks, and `list_dir` leaves out dotfiles.
 
-A deny rule holds across the two tools that run git: one on `shell` also covers the `git` tool, and one on `git` that names a `command` also covers a shell call running it (a `git` rule with no `command` stays about the tool). `git -C . push` is matched as `git push`. Allow and ask rules stay on the tool they name.
+Git runs through the shell, so a `shell` rule naming a git `command` covers it: `git -C . push` is matched as `git push`.
 
 Project approval configuration may add deny rules only (including `command` denies). Those restrictions are
 evaluated ahead of user rules; a project cannot grant itself access. Explicit
@@ -617,8 +617,7 @@ flag and the delivery path (`asked`, `updated`, `answered`), never the question 
 Answers grant nothing.
 **To undo** a grant, edit or delete its entry in the chat's file, or start a new chat; there is
 deliberately no UI for this, and the composer shield only chooses Auto, Custom or YOLO.
-Destructive actions (the variants below and the `destructive` risk class such as
-`delete_file`) are never offered for the chat, never stored and never matched: the dialog
+Destructive actions (the variants below and the `destructive` risk class) are never offered for the chat, never stored and never matched: the dialog
 shows only **Allow once** and **Deny** with a fixed explanation, an "allow in this chat"
 answer is downgraded to once, and an unattended automation run denies them without asking.
 
@@ -655,9 +654,8 @@ abbreviation git accepts) and `ext::`/`fd::` remotes on `fetch`, `pull`, `push`,
 `ls-remote`, `submodule` and `remote`; and `clone -u`. (`push -u` is `--set-upstream` and stays an
 ordinary push.)
 
-These variants carry the risk class `destructive` for `shell` calls too (the `git` tool
-also escalates destructive `checkout`, `branch` and `commit` calls, and its `status`, `diff`,
-`log` and `show` calls with only output-shaping flags carry `read`; other `git` calls `write`), so a rule with
+These variants carry the risk class `destructive` for `shell` calls (git runs through the shell;
+`git status`, `diff`, `log` and `show` with only output-shaping flags carry `read`), so a rule with
 `"risk": "execute"` does not cover them. So a rule `["git","push"]` allows
 `git push origin main` but `git push --force` falls through to later rules and the
 default (ask; denied when unattended). A rule such as `["git","push","--force"]` is
@@ -679,8 +677,7 @@ So denying `["git","push","--force"]` also denies `git push -f origin main` and
 `git push origin --force`, and `["rm","-rf"]` denies `rm -fr x` and `rm -r -f x`. Other
 programs' short and long spellings are not related (their meanings differ per program):
 list each spelling, or deny the broader prefix such as `["git","push"]`. Allow and ask
-rules stay exact so they never widen. The `git` tool reports `["git", args...]` as its
-command with the same keys.
+rules stay exact so they never widen.
 
 The `shell` tool schema asks for the program only in `command` and one `args`
 element per argument. If `command` contains whitespace and no executable of that
