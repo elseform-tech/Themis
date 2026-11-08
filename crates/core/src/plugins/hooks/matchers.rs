@@ -100,7 +100,6 @@ pub(super) fn runs_command(
         "shell" if crate::tools::shell_arguments_readable(arguments) => {
             crate::tools::shell_argv(arguments)
         }
-        "git" => crate::tools::git_argv(arguments).unwrap_or_default(),
         "shell" => return true,
         "background_task" => return !crate::tools::background::only_inspects(arguments),
         _ => return false,

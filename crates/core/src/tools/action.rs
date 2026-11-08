@@ -152,16 +152,6 @@ pub struct CommandDisplay {
     pub sandbox_blocked: Option<String>,
 }
 
-pub(super) fn git_display(args: &[String], root: &std::path::Path) -> CommandDisplay {
-    CommandDisplay {
-        argv: std::iter::once("git".to_owned())
-            .chain(args.iter().cloned())
-            .collect(),
-        cwd: Some(root.display().to_string()),
-        background: false,
-        sandbox_blocked: None,
-    }
-}
 
 /// A single proposed action awaiting an approval decision.
 #[derive(Debug, Clone)]

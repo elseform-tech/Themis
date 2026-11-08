@@ -434,12 +434,9 @@ pub(super) async fn execute_call(
             tool: crate::tools::integration_approval_identity(name, &approval_args),
             summary: summary.to_owned(),
             risk: if name == "shell" {
-                // Destructive variants (`git push --force`, `rm -rf`, ...) carry
-                // the destructive risk class, as the git tool's do.
+                // Destructive variants (`git push --force`, `rm -rf`, ...) carry the destructive
+                // risk class; commands that only read inside the project are reads.
                 crate::tools::shell_risk(&crate::tools::shell_argv(&approval_args))
-            } else if name == "git" {
-                // Destructive variants are destructive; read-only ones are reads.
-                crate::tools::git_call_risk(&approval_args)
             } else {
                 crate::tools::integration_risk(name, &approval_args)
                     .unwrap_or_else(|| risk_for(name))
@@ -447,17 +444,9 @@ pub(super) async fn execute_call(
             // Rules and grants on a command see it here: the tool's own check is then skipped.
             command: match name {
                 "shell" => crate::tools::shell_argv(&approval_args),
-                "git" => crate::tools::git_argv(&approval_args).unwrap_or_default(),
                 _ => Vec::new(),
             },
         };
-        // Approving a git subcommand the (restricted) git tool refuses could never make it
-        // run, so nobody is asked. Only Custom asks, and there the git tool is restricted.
-        if name == "git" && approvals.would_ask(&action) {
-            if let Some(refusal) = crate::tools::git_allowlist_refusal(&action.command) {
-                return Err(format!("tool 'git' failed: {refusal}"));
-            }
-        }
         // A plugin may say no before the person is asked, never yes.
         let hook_denied = if approvals.would_ask(&action) {
             crate::plugins::hooks::permission_request(name, &approval_args, events).await

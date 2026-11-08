@@ -88,19 +88,13 @@ full tour.
 
 | ID | Tier | Code | Check |
 | --- | --- | --- | --- |
-| `tool:list_dir` | tour | `crates/core/src/tools.rs` | Goal lists the project. |
 | `tool:read_file` | smoke | `crates/core/src/tools.rs` | Smoke step 1 reads the file back. |
 | `tool:write_file` | smoke | `crates/core/src/tools.rs` | Smoke step 1 writes with one approval. |
-| `tool:copy_file` | tour | `crates/core/src/tools.rs` | Goal copies the scratch file. |
-| `tool:move_file` | tour | `crates/core/src/tools.rs` | Goal moves it. |
-| `tool:delete_file` | tour | `crates/core/src/tools.rs` | Goal deletes it; the approval names the path. |
-| `tool:create_dir` | tour | `crates/core/src/tools.rs` | Goal makes the directory. |
-| `tool:search_file` | tour | `crates/core/src/tools.rs` | Goal finds `slug`. |
-| `tool:shell` | tour | `crates/core/src/tools.rs`, `crates/core/src/sandbox.rs` | Goal runs the tests; the approval shows the argv. |
+| `tool:shell` | tour | `crates/core/src/tools.rs`, `crates/core/src/sandbox.rs`, `crates/core/src/tools/read_only.rs` | Goal lists the project (`ls`), finds `slug` (`rg`), copies, moves and deletes the scratch file, makes the directory and commits on `tour` (the Changes switcher lists it), all through the shell; it runs the tests and the approval shows the argv. On Windows `list_dir` and `search_file` do the listing and search. |
+| `feature:shell-read-only` | tier 1 | `crates/core/src/tools/read_only.rs`, `crates/core/src/tools/destructive.rs` | In a Custom chat ask the agent to run `ls -la`, `rg -n TODO src` and `git status --short` through the shell: none asks. `cat /etc/hosts` asks (outside the project), `rm` asks, and `git fetch --upload-pack=echo origin` asks with only Allow once / Deny. |
 | `tool:background_task` | tour | `crates/core/src/tools/background/tool.rs` | The server runs in the background, shows in Workspace › Tasks and stops at the end. |
 | `feature:shell-leftovers-stopped` | tour | `crates/core/src/tools/runner.rs`, `crates/core/builtins/prompts/tool-shell-leftovers-stopped.md` | Ask the agent to run, as one ordinary (not background) shell call, `sh -c "nohup python3 -m http.server 8137 > /dev/null 2>&1 & echo started"`: the call returns, the tool result ends with the note that Themis stopped what it left running and points to `background=true`, `pgrep -f 'http.server 8137'` finds nothing, Workspace › Tasks shows no task for it, and `logs/` has a `shell_leftovers_stopped` line naming only the tool. |
 | `tool:apply_patch` | tour | `crates/core/src/tools/patch.rs` | Goal fixes the test with a patch; Changes shows the diff. |
-| `tool:git` | tour | `crates/core/src/tools.rs` | Goal commits on `tour`; the Changes switcher lists it. |
 | `tool:recall` | tour | `crates/core/src/tools/recall.rs` | After a checkpoint, the first test output comes back exact. |
 | `tool:fetch_url` | tour | `crates/core/src/tools/web.rs` | Goal reads the `re.sub` page. |
 | `tool:web_search` | tour | `crates/core/src/tools/web.rs` | Goal finds the docs page through search. |

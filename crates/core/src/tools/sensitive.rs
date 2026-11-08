@@ -275,13 +275,6 @@ impl SensitiveMatcher {
                 };
                 self.note_command(&argv, &cwd, &mut found);
             }
-            "git" => {
-                let rest = args.get("args").and_then(Value::as_array)?;
-                let argv: Vec<String> = std::iter::once("git".to_owned())
-                    .chain(rest.iter().filter_map(Value::as_str).map(str::to_owned))
-                    .collect();
-                self.note_command(&argv, &base, &mut found);
-            }
             _ => return None,
         }
         found.finish()

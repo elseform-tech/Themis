@@ -24,17 +24,6 @@ pub fn command_display_for_call(name: &str, args: &serde_json::Value) -> Option<
                 sandbox_blocked: None,
             })
         }
-        "git" => {
-            let rest = args.get("args").and_then(|v| v.as_array())?;
-            Some(CommandDisplay {
-                argv: std::iter::once("git".to_owned())
-                    .chain(rest.iter().filter_map(|v| v.as_str()).map(str::to_owned))
-                    .collect(),
-                cwd: None,
-                background: false,
-                sandbox_blocked: None,
-            })
-        }
         _ => None,
     }
 }
@@ -95,12 +84,6 @@ pub fn shell_arguments_readable(args: &serde_json::Value) -> bool {
     args.get("command").is_some_and(Value::is_string) && args_list(args.get("args")).is_some()
 }
 
-/// `git` and its arguments, from a `git` tool call; `None` when its `args` can't be read.
-pub fn git_argv(args: &serde_json::Value) -> Option<Vec<String>> {
-    let rest = args.get("args").filter(|args| !args.is_null())?;
-    let rest = args_list(Some(rest))?;
-    Some(std::iter::once("git".to_owned()).chain(rest).collect())
-}
 
 /// Flags of `status`, `diff`, `log` and `show` that only change what is printed. Any other
 /// flag needs approval: `--output` writes a file, `--ext-diff` and `--textconv` run programs,
@@ -145,26 +128,6 @@ const GIT_READ_VALUE_FLAGS: [&str; 9] = [
     "--untracked-files=",
 ];
 
-/// The risk of a `git` tool call for the approval step: `status`, `diff`, `log` and `show` with
-/// only the flags above are reads; a destructive variant is destructive; anything else, and
-/// arguments that can't be read, are writes.
-pub fn git_call_risk(args: &serde_json::Value) -> RiskLevel {
-    let Some(argv) = git_argv(args) else {
-        return RiskLevel::Write;
-    };
-    if is_destructive_variant(&argv) {
-        return RiskLevel::Destructive;
-    }
-    let read_only = matches!(
-        argv.get(1).map(String::as_str),
-        Some("status" | "diff" | "log" | "show")
-    ) && argv[2..].iter().all(|argument| git_read_argument(argument));
-    if read_only {
-        RiskLevel::Read
-    } else {
-        RiskLevel::Write
-    }
-}
 
 /// A path that starts at a root, whatever the platform: `/x` and `\\x` (on Windows the
 /// current drive's root), `C:` and `C:\\x`, `~` (a home folder), or anything the OS calls absolute.
@@ -191,24 +154,8 @@ fn git_read_argument(argument: &str) -> bool {
             .any(|flag| argument.starts_with(flag))
 }
 
-/// The git subcommands the restricted git tool runs (YOLO runs any).
-const GIT_ALLOWED: [&str; 8] = [
-    "status", "diff", "log", "show", "add", "commit", "checkout", "branch",
-];
 
-pub(super) fn git_refusal(subcommand: &str) -> String {
-    format!(
-        "git: subcommand '{subcommand}' is denied by the allowlist (allowed: {}). {REFUSAL_NOTE}",
-        GIT_ALLOWED.join(", ")
-    )
-}
 
-/// Why the restricted git tool would refuse `argv` (`git <subcommand> …`), if it would: the
-/// runtime refuses such a call before asking anyone, since approving it could not make it run.
-pub fn git_allowlist_refusal(argv: &[String]) -> Option<String> {
-    let subcommand = argv.get(1)?;
-    (!GIT_ALLOWED.contains(&subcommand.as_str())).then(|| git_refusal(subcommand))
-}
 
 /// A list of strings, or the JSON text of one; nothing at all is an empty list.
 fn args_list(args: Option<&Value>) -> Option<Vec<String>> {
