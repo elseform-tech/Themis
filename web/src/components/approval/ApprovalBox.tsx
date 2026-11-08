@@ -27,6 +27,12 @@ export function browserPermission(tool: string): "Browsing" | "Downloads" | "Deb
   return DEBUGGING_TOOLS.has(tool) ? "Debugging" : "Browsing";
 }
 
+/** A grant that covers this very command and nothing more: the hint says so instead of repeating a long command. */
+function coversExactCommand({ command, grant_scope: scope }: ApprovalRequest): boolean {
+  if (!command || !scope || scope.covers_further_args || command.argv.length !== scope.argv.length) return false;
+  return command.argv.every((token, index) => token === scope.argv[index]);
+}
+
 export function GrantHint({ request }: { request: ApprovalRequest }) {
   if (request.grantable === false) {
     return <>This kind of action always asks, so it cannot be allowed for the chat.</>;
@@ -53,10 +59,7 @@ export function GrantHint({ request }: { request: ApprovalRequest }) {
   if ((request.tool !== "shell" && !outside) || !scope || scope.argv.length === 0) {
     return <>Allow in this chat covers this tool in later runs of this chat.</>;
   }
-  const argv = request.command?.argv;
-  // The whole command is listed just above; repeating it cut short would hide part of what is granted.
-  const exact = !scope.covers_further_args && argv?.length === scope.argv.length && argv.every((token, index) => token === scope.argv[index]);
-  if (exact) {
+  if (coversExactCommand(request)) {
     return <>Allow in this chat {outside ? "lets" : "covers"} this exact command{outside ? " run outside the sandbox" : ""} in later runs of this chat. Other commands still ask.</>;
   }
   return (
