@@ -161,6 +161,9 @@ impl ToolRuntime for QuestionTool {
                 )],
             )
         };
+        let note = self
+            .state
+            .with_still_open(&self.thread_id, &question.id, note);
         Ok(json!({"asked": true, "id": question.id, "blocking": question.blocking, "note": note}))
     }
 }

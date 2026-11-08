@@ -429,25 +429,105 @@ impl AppState {
     /// The open questions as one line for a goal turn, or `None` without any.
     pub(super) fn open_questions_note(&self, thread_id: &str) -> Option<String> {
         let open = self.open_questions(thread_id);
-        if open.is_empty() {
+        (!open.is_empty()).then(|| {
+            themis_core::prompts::fill(
+                themis_core::prompts::GOAL_OPEN_QUESTIONS,
+                &[("questions", &numbered_questions(&open))],
+            )
+        })
+    }
+
+    /// A message the person sent (`person`; not a goal, automation or hook): hooks may start
+    /// turns again, and it answers the questions still open. Returns what the agent's copy of
+    /// the message ends with ("" for nothing).
+    pub(super) fn person_message_arrived(
+        &self,
+        sink: &dyn EventSink,
+        thread_id: &str,
+        text: &str,
+        person: bool,
+    ) -> String {
+        if !person {
+            return String::new();
+        }
+        self.reset_hook_wakes(thread_id);
+        self.answer_open_in_chat(sink, thread_id, text)
+            .map(|note| format!("\n\n{note}"))
+            .unwrap_or_default()
+    }
+
+    /// The `ask_user` result's note, followed by the other questions still open, so a
+    /// reworded question is not asked twice.
+    pub(super) fn with_still_open(&self, thread_id: &str, asked_id: &str, note: String) -> String {
+        let others: Vec<_> = self
+            .open_questions(thread_id)
+            .into_iter()
+            .filter(|open| open.id != asked_id)
+            .collect();
+        if others.is_empty() {
+            return note;
+        }
+        let still_open = themis_core::prompts::fill(
+            themis_core::prompts::ASK_USER_STILL_OPEN,
+            &[("questions", &numbered_questions(&others))],
+        );
+        format!("{note} {still_open}")
+    }
+
+    /// A message the person wrote while questions were open answers them: each is closed with
+    /// that message as its answer (the boxes go away), and the agent is told which ones it
+    /// answered. `None` when nothing was open.
+    pub(super) fn answer_open_in_chat(
+        &self,
+        sink: &dyn EventSink,
+        thread_id: &str,
+        message: &str,
+    ) -> Option<String> {
+        let answer = bounded(message, MAX_ANSWER_CHARS);
+        if answer.is_empty() || message.starts_with(ANSWER_MARKER) {
             return None;
         }
-        let list = open
-            .iter()
-            .enumerate()
-            .map(|(index, question)| match &question.assumption {
-                Some(assumption) => format!(
-                    "{}. {} (assuming: {assumption})",
-                    index + 1,
-                    question.question
-                ),
-                None => format!("{}. {}", index + 1, question.question),
-            })
-            .collect::<Vec<_>>()
-            .join("; ");
+        let closed: Vec<Question> = {
+            let _guard = self
+                .inner
+                .question_lock
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
+            let mut questions = self.questions_for(thread_id);
+            let mut closed = Vec::new();
+            for question in questions.iter_mut().filter(|q| q.answer.is_none()) {
+                question.answer = Some(answer.clone());
+                closed.push(question.clone());
+            }
+            if !closed.is_empty() {
+                self.save_questions(thread_id, &questions);
+            }
+            closed
+        };
+        if closed.is_empty() {
+            return None;
+        }
+        for question in &closed {
+            self.question_event(
+                sink,
+                thread_id,
+                "",
+                ThreadEvent::QuestionAnswered {
+                    id: question.id.clone(),
+                    answer: answer.clone(),
+                },
+            );
+            self.auto_question_answered(&question.id, &answer);
+        }
+        let _ = self.inner.diagnostics.append(
+            "questions",
+            "answered_in_chat",
+            "info",
+            json!({"thread_id": thread_id, "closed": closed.len()}),
+        );
         Some(themis_core::prompts::fill(
-            themis_core::prompts::GOAL_OPEN_QUESTIONS,
-            &[("questions", &list)],
+            themis_core::prompts::CHAT_ANSWERED_QUESTIONS,
+            &[("questions", &numbered_questions(&closed))],
         ))
     }
 
@@ -465,6 +545,23 @@ impl AppState {
             }
         }
     }
+}
+
+/// Questions as one numbered line, each with the assumption the agent works on.
+fn numbered_questions(questions: &[Question]) -> String {
+    questions
+        .iter()
+        .enumerate()
+        .map(|(index, question)| match &question.assumption {
+            Some(assumption) => format!(
+                "{}. {} (assuming: {assumption})",
+                index + 1,
+                question.question
+            ),
+            None => format!("{}. {}", index + 1, question.question),
+        })
+        .collect::<Vec<_>>()
+        .join("; ")
 }
 
 /// The options the agent offered, each with its tradeoff, the recommended one marked:

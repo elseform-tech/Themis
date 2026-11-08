@@ -1,0 +1,1 @@
+The user wrote this message while questions you asked were still open, so it is their answer to them where it applies, and they are now closed: {{questions}}
