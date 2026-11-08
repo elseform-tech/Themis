@@ -414,6 +414,15 @@ async fn ensure_server(client: &Client, directory: &std::path::Path) -> Result<(
             client.call("ping", Value::Null),
         )
     };
+    if crate::server::in_agent_shell() {
+        // An agent's shell uses the app's server; it never starts its own.
+        return match client.call("ping", Value::Null).await {
+            Err(error) if error == "unauthorized" => {
+                Err("unauthorized: this shell's credential ended with the run that got it".into())
+            }
+            other => other.map(|_| ()),
+        };
+    }
     if client.answers(crate::server::SERVER_PATIENCE).await {
         return Ok(());
     }

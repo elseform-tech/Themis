@@ -111,8 +111,9 @@ pub(super) async fn run_command_with_timeout(
     sandbox: Option<Arc<SandboxPlan>>,
 ) -> Result<CommandOutput, ToolCallError> {
     // Read here: the worker thread is outside the run's scope.
-    let plugin_bins = crate::plugins::hooks::plugin_bins();
-    let out = tokio::task::spawn_blocking(move || {
+    let extras = ChildExtras::current();
+    let agent = extras.agent_cli.clone();
+    let mut out = tokio::task::spawn_blocking(move || {
         run_command_blocking(
             &program,
             &args,
@@ -121,11 +122,14 @@ pub(super) async fn run_command_with_timeout(
             timeout,
             cancel.as_deref(),
             sandbox.as_deref(),
-            &plugin_bins,
+            &extras,
         )
     })
     .await
     .map_err(|e| tool_error(format!("{tool}: execution task failed: {e}")))??;
+    if let Some(agent) = agent {
+        out.output = agent.redact(&out.output);
+    }
     if out.leftovers_stopped {
         // Metadata only: never the command, its arguments or its output.
         crate::diagnostics::emit(
@@ -190,9 +194,9 @@ fn run_command_blocking(
     timeout: Duration,
     cancel: Option<&AtomicBool>,
     sandbox: Option<&SandboxPlan>,
-    plugin_bins: &[PathBuf],
+    extras: &ChildExtras,
 ) -> Result<CommandOutput, ToolCallError> {
-    let prepared = prepare_command(program, args, sandbox, plugin_bins)
+    let prepared = prepare_command(program, args, sandbox, extras)
         .map_err(|e| tool_error(format!("{tool}: {}", spawn_failure(program, args, &e))))?;
     let mut command = prepared.command();
     command
@@ -202,9 +206,7 @@ fn run_command_blocking(
         .stderr(Stdio::piped())
         .env_clear()
         .envs(scrubbed_env());
-    if let Some(path) = child_path(plugin_bins) {
-        command.env("PATH", path);
-    }
+    extras.apply(&mut command);
     // Own process group so a timeout can take down grandchildren too.
     #[cfg(unix)]
     std::os::unix::process::CommandExt::process_group(&mut command, 0);
@@ -381,20 +383,56 @@ pub(super) fn sweep_group(pgid: u32) -> bool {
     }
 }
 
-/// The child's `PATH`: the scrubbed one, then the `bin` folders of the run's plugins, so a plugin's
-/// program is found but never comes ahead of a system one of the same name.
-pub(crate) fn child_path(plugin_bins: &[PathBuf]) -> Option<std::ffi::OsString> {
+/// What a run adds to its commands' environment: its plugins' `bin` folders and the `themis` CLI
+/// access (see [`crate::agent_cli`]). Read in the run's task, before a worker thread takes over.
+#[derive(Debug, Clone, Default)]
+pub struct ChildExtras {
+    /// The `bin` folders of the run's plugins.
+    pub plugin_bins: Vec<PathBuf>,
+    /// The run's credential, the app server's port and the folder of the app's `themis`.
+    pub agent_cli: Option<crate::agent_cli::Access>,
+}
+
+impl ChildExtras {
+    /// The extras of the run whose task this is (none outside a run).
+    pub fn current() -> Self {
+        Self {
+            plugin_bins: crate::plugins::hooks::plugin_bins(),
+            agent_cli: crate::agent_cli::current(),
+        }
+    }
+
+    /// Sets `PATH` and the run's `themis` variables on a command whose environment was scrubbed.
+    pub(crate) fn apply(&self, command: &mut std::process::Command) {
+        if let Some(path) = child_path(self) {
+            command.env("PATH", path);
+        }
+        if let Some(access) = &self.agent_cli {
+            command.envs(access.env());
+        }
+    }
+}
+
+/// The child's `PATH`: the app's own `themis` folder first (it holds nothing else), then the
+/// scrubbed `PATH`, then the `bin` folders of the run's plugins, so a plugin's program is found but
+/// never comes ahead of a system one of the same name.
+pub(crate) fn child_path(extras: &ChildExtras) -> Option<std::ffi::OsString> {
     let system = scrubbed_env()
         .into_iter()
         .find(|(name, _)| name.to_string_lossy().eq_ignore_ascii_case("PATH"))
         .map(|(_, value)| value);
-    if plugin_bins.is_empty() {
+    let first = extras
+        .agent_cli
+        .as_ref()
+        .and_then(|access| access.bin_dir())
+        .map(Path::to_path_buf);
+    if extras.plugin_bins.is_empty() && first.is_none() {
         return system;
     }
-    let all = system
-        .iter()
-        .flat_map(std::env::split_paths)
-        .chain(plugin_bins.iter().cloned());
+    let all = first
+        .into_iter()
+        .chain(system.iter().flat_map(std::env::split_paths))
+        .chain(extras.plugin_bins.iter().cloned());
     std::env::join_paths(all).ok().or(system)
 }
 
@@ -404,9 +442,9 @@ pub(crate) fn prepare_command(
     program: &str,
     args: &[String],
     sandbox: Option<&SandboxPlan>,
-    plugin_bins: &[PathBuf],
+    extras: &ChildExtras,
 ) -> std::io::Result<crate::sandbox::Prepared> {
-    let path = child_path(plugin_bins);
+    let path = child_path(extras);
     match sandbox {
         Some(plan) => plan.prepare(program, args, path.as_deref()),
         None => crate::sandbox::SandboxPlan::unsandboxed(program, args),

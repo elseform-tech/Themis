@@ -347,26 +347,6 @@ impl AppState {
         Ok(())
     }
 
-    /// Whether stored consent already covers `server` of a plugin about to change.
-    pub(super) fn mcp_definition_consented(
-        &self,
-        root: &Path,
-        scope: &str,
-        plugin: &str,
-        name: &str,
-        digest: Option<&str>,
-    ) -> bool {
-        let _guard = themis_core::chat_grants::WRITE_LOCK
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
-        digest.is_some_and(|digest| {
-            self.load_consent()
-                .approved
-                .get(&consent_key(root, scope, plugin, name))
-                .is_some_and(|approved| approved == digest)
-        })
-    }
-
     /// Records approval of the named servers. Each carries the digest of what
     /// the dialog showed (`Some`); consent is stored only while the stored
     /// definition still has exactly that digest, so a concurrent change made

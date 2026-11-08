@@ -48,6 +48,13 @@ impl AppState {
             json!({"version":env!("CARGO_PKG_VERSION")}),
         );
     }
+    /// A server event with its metadata (never tokens or payloads).
+    pub(crate) fn log_server_details(&self, event: &str, level: &str, details: Value) {
+        let _ = self
+            .inner
+            .diagnostics
+            .append("server", event, level, details);
+    }
     pub(super) fn runtime_configuration(
         &self,
         project: Option<&Path>,

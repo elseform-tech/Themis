@@ -17,6 +17,14 @@ fn blocking_error(error: tokio::task::JoinError) -> ToolCallError {
     tool_error(format!("background_task: worker failed: {error}"))
 }
 
+/// A result with the run's own credential masked wherever it appears.
+fn redacted(
+    result: Result<Value, ToolCallError>,
+    access: Option<&crate::agent_cli::Access>,
+) -> Result<Value, ToolCallError> {
+    Ok(crate::agent_cli::redact_value(result?, access))
+}
+
 impl BackgroundScope {
     /// Scope for `thread_id` backed by `registry`.
     pub fn new(registry: Arc<BackgroundRegistry>, thread_id: impl Into<String>) -> Self {
@@ -60,7 +68,7 @@ impl BackgroundScope {
             workdir,
             timeout_secs,
             sandbox,
-            plugin_bins: crate::plugins::hooks::plugin_bins(),
+            extras: crate::tools::ChildExtras::current(),
         };
         let view = tokio::task::spawn_blocking(move || registry.start(spec))
             .await
@@ -153,7 +161,9 @@ impl ToolRuntime for BackgroundTool {
             )));
         }
         let fail = |error: String| tool_error(format!("background_task: {error}"));
-        tokio::task::spawn_blocking(move || {
+        // Output the run's own credential appears in goes back masked.
+        let access = crate::agent_cli::current();
+        let result = tokio::task::spawn_blocking(move || {
             let registry = &scope.registry;
             let thread = scope.thread_id.as_str();
             let mine = |record: &TaskRecord| !scope.own_tasks_only || record.run_id == scope.run_id;
@@ -229,6 +239,7 @@ impl ToolRuntime for BackgroundTool {
             }
         })
         .await
-        .map_err(blocking_error)?
+        .map_err(blocking_error)?;
+        redacted(result, access.as_ref())
     }
 }

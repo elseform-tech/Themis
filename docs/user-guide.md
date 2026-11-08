@@ -466,6 +466,31 @@ list in `sandbox.writable_paths`; they cannot read secret folders such as
 or the project's `.themis/` folder. Network access is allowed unless you set
 `"network": "block"`.
 
+The agent's commands can also run `themis` (the app's own CLI, first on their
+`PATH`) to check status and manage plugins, skills, MCP servers and hooks. Each
+run gets its own credential, which ends with the run; the app refuses it
+anything else, such as answering approvals, changing permissions, settings or
+keys, or touching other chats, in every mode. The sandbox keeps your own
+credential (`server.json` in the app data) out of the agent's reach, so on a
+machine without a usable sandbox this limit does not hold. See
+[configuration](configuration.md) ("The `themis` CLI in the agent's shell").
+
+Each `themis` command is approved for what it does. Reading (`themis plugin
+list`, `status`, `doctor`) never asks. A change (saving, importing or
+installing a skill, plugin, MCP server or hook) asks in **Custom**, and **Allow
+in this chat** covers that same command; **Auto**'s reviewer decides. Removing
+something asks every time. **YOLO** runs them all.
+
+Switching on a hook or an MCP server that runs a command is yours alone, in
+every mode, YOLO included: they run outside the sandbox. Whatever the agent
+saves arrives with them switched off, and if it tries to switch one on, through
+its tools or `themis`, Themis refuses and it asks you to switch it on in
+Integrations instead. A server by URL it may switch on; it still waits for your
+approval before it starts. To stop
+the agent using `themis` at all, add a deny rule for shell commands starting
+with `themis` to your `runtime.jsonc`; it holds in YOLO too (see "Approvals for
+`themis` calls" in [configuration](configuration.md)).
+
 When the sandbox blocks a command in **Custom**, a dialog asks **Run outside the
 sandbox?** with **Allow once (1)**, **Allow in this chat (2)** and **Deny (3)**;
 allowing runs the same command again without the sandbox. In **YOLO** nothing is

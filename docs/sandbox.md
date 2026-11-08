@@ -50,6 +50,11 @@ error. Each backend is probed once per app-server process.
   `chat_grants/`, `queues/`, `goals/`, `mcp_consent.json`, `plugins/registry.json`,
   `sessions.sqlite3`, ...) or to the project's `.themis/` folder, even inside a
   writable folder, so an agent cannot grant itself permissions.
+- **Never read** the app server's discovery file (`server.json` in the app data),
+  which holds your own server credential. This wall stays in YOLO too: an
+  agent's commands reach the server only with their run's credential, which the
+  server limits (see "The `themis` CLI in the agent's shell" in
+  [configuration.md](configuration.md)).
 - **Read** everything else except these secret locations under your home folder,
   which can neither be read nor written: `~/.ssh`, `~/.gnupg`, `~/.aws`,
   `~/.azure`, `~/.config/gcloud`, `~/.kube`, `~/.netrc`, `~/.git-credentials`,
@@ -70,7 +75,8 @@ error. Each backend is probed once per app-server process.
 - **Network**: allowed by default (always in YOLO). `"network": "block"` blocks
   all IP traffic, including `localhost` (Seatbelt: outbound, inbound and bind;
   bubblewrap: a private network namespace; Landlock: TCP bind/connect only, and
-  only with Landlock ABI 4, Linux 6.7, or later).
+  only with Landlock ABI 4, Linux 6.7, or later). With it blocked, the agent's
+  `themis` cannot reach the app server either.
 
 Tools that keep caches or locks in your home folder (`cargo` in `~/.cargo`,
 `npm` in `~/.npm`, `pip` in `~/.cache/pip`) need those folders in
@@ -252,7 +258,12 @@ composer's shield names what still applies ("still applies: network blocked, 2
 deny rules"). The one wall left: neither commands nor file tools can
 write the app-data folder or the project's `.themis/` folder, so an agent cannot
 change its own rules, grants or settings; such a write fails with a short note
-and is never escalated. Under Landlock (Linux without bubblewrap) the project's
+and is never escalated. Commands also cannot read the server's `server.json`, so
+the `themis` CLI in an agent's shell stays limited to what its run credential
+allows. Even in YOLO an agent never switches on a hook or an MCP server that runs a
+command (both run outside the sandbox): the server refuses it, by any tool, command
+or script, and what the agent saves arrives switched off. A deny rule on shell
+commands starting with `themis` refuses every `themis` call. Under Landlock (Linux without bubblewrap) the project's
 `.themis/` cannot be carved out of a writable tree, so there only the file tools
 protect it; the app-data folder stays protected on every backend, and Settings ›
 Permissions suggests installing bubblewrap there. With

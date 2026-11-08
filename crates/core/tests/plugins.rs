@@ -865,27 +865,103 @@ fn materialization_preserves_open_resource_readers() {
     );
 }
 
+/// An agent's store never leaves a hook or a command-based MCP server switched on, in any mode:
+/// saves and imports keep new or changed ones off whatever the definition says (an unchanged one
+/// keeps its switch), and switching one on is refused. A connection by URL keeps the consent
+/// rule, and the person's own saves and switches are unchanged.
 #[test]
-fn only_a_lone_command_server_collapses_to_the_single_argv_dialog() {
-    use themis_core::tools::sole_mcp_command_save;
-    let save = |spec: serde_json::Value| json!({"action":"save","spec":spec});
-    let one =
-        save(json!({"name":"d","mcp":{"a":{"command":"node","args":["s.js"],"enabled":true}}}));
-    assert_eq!(
-        sole_mcp_command_save("manage_integrations", &one)
+fn an_agent_never_leaves_a_hook_or_command_server_switched_on() {
+    let global = tempfile::tempdir().unwrap();
+    let person = PluginStore::new(global.path().to_path_buf(), None);
+    let agent = person.clone().for_agent(true);
+    let hook = |command: &str| json!({"name":"guard","event":"BeforeTool","command":command,"enabled":true,"timeout_seconds":5});
+    let spec = |command: &str, server: &str| -> PluginSpec {
+        serde_json::from_value(json!({
+            "name": "demo",
+            "hooks": [hook(command)],
+            "mcp": {"docs": {"command": server, "enabled": true}},
+        }))
+        .unwrap()
+    };
+    let switches = |name: &str| {
+        let plugin = person
+            .list()
             .unwrap()
-            .1,
-        ["node", "s.js"]
-    );
-    let two = save(
-        json!({"name":"d","mcp":{"a":{"command":"x","enabled":true},"b":{"command":"y","enabled":true}}}),
-    );
-    assert!(sole_mcp_command_save("manage_integrations", &two).is_none());
-    let hook = save(
-        json!({"name":"d","hooks":[{"name":"h","event":"RunStart","command":"true","enabled":false}],"mcp":{"a":{"command":"x","enabled":true}}}),
-    );
-    assert!(sole_mcp_command_save("manage_integrations", &hook).is_none());
-    let remote = save(json!({"name":"d","mcp":{"a":{"url":"http://localhost:1","enabled":true}}}));
-    assert!(sole_mcp_command_save("manage_integrations", &remote).is_none());
-    assert!(sole_mcp_command_save("save_skill", &one).is_none());
+            .into_iter()
+            .find(|plugin| plugin.spec.name == name)
+            .unwrap();
+        let server = plugin.spec.mcp.get("docs").is_some_and(|docs| docs.enabled);
+        (plugin.spec.hooks[0].enabled, server, plugin.revision)
+    };
+    // New: off, though the definition asked for on.
+    agent.save("global", spec("echo one", "srv"), None).unwrap();
+    let (hook_on, server_on, _) = switches("demo");
+    assert!(!hook_on && !server_on);
+    // The agent may not switch them on; the person may.
+    let refused = themis_core::prompts::AGENT_SWITCH_ON_REFUSED;
+    for kind in ["hook", "mcp"] {
+        let id = if kind == "hook" { "guard" } else { "docs" };
+        let error = agent
+            .set_component_enabled("global", "demo", kind, id, true)
+            .unwrap_err();
+        assert_eq!(error.to_string(), refused, "{kind}");
+    }
+    let (hook_on, server_on, _) = switches("demo");
+    assert!(!hook_on && !server_on, "nothing was switched on");
+    person
+        .set_component_enabled("global", "demo", "hook", "guard", true)
+        .unwrap();
+    person
+        .set_component_enabled("global", "demo", "mcp", "docs", true)
+        .unwrap();
+    // Already on: switching it on again changes nothing and passes; switching off passes.
+    agent
+        .set_component_enabled("global", "demo", "hook", "guard", true)
+        .unwrap();
+    // A plugin that is off with a hook on inside may not be switched on by the agent.
+    person.set_enabled("global", "demo", false).unwrap();
+    let error = agent.set_enabled("global", "demo", true).unwrap_err();
+    assert_eq!(error.to_string(), refused);
+    person.set_enabled("global", "demo", true).unwrap();
+    // The agent saving them unchanged keeps them on.
+    let (.., revision) = switches("demo");
+    agent
+        .save("global", spec("echo one", "srv"), Some(&revision))
+        .unwrap();
+    let (hook_on, server_on, revision) = switches("demo");
+    assert!(hook_on && server_on, "unchanged parts keep their switch");
+    // Changed: off again.
+    agent
+        .save("global", spec("echo two", "other"), Some(&revision))
+        .unwrap();
+    let (hook_on, server_on, revision) = switches("demo");
+    assert!(!hook_on && !server_on, "changed parts are switched off");
+    // An import goes through the same save.
+    let file = global.path().join("import.json");
+    let imported = json!({"name": "imported", "hooks": [hook("echo x")]});
+    std::fs::write(&file, serde_json::to_vec(&imported).unwrap()).unwrap();
+    agent.import_path("global", &file, None).unwrap();
+    assert!(!switches("imported").0);
+    // The person's own save keeps what they wrote.
+    person
+        .save("global", spec("echo three", "srv"), Some(&revision))
+        .unwrap();
+    let (hook_on, server_on, _) = switches("demo");
+    assert!(hook_on && server_on);
+    // A connection by URL: the agent may leave it on (it still waits for the person's consent).
+    let remote: PluginSpec = serde_json::from_value(
+        json!({"name": "remote", "mcp": {"docs": {"url": "https://example.com/mcp", "enabled": false}}}),
+    )
+    .unwrap();
+    agent.save("global", remote, None).unwrap();
+    agent
+        .set_component_enabled("global", "remote", "mcp", "docs", true)
+        .unwrap();
+    let remote = person
+        .list()
+        .unwrap()
+        .into_iter()
+        .find(|plugin| plugin.spec.name == "remote")
+        .unwrap();
+    assert!(remote.spec.mcp["docs"].enabled);
 }

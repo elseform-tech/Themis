@@ -2,6 +2,14 @@
 
 use super::*;
 
+/// The app server's discovery file, which holds the person's credential (see
+/// [`crate::agent_cli::DISCOVERY_FILE`]). Sandboxed commands can neither read nor write it.
+fn discovery_file(app_data: Option<&Path>) -> Option<PathBuf> {
+    Some(resolve_existing(
+        &app_data?.join(crate::agent_cli::DISCOVERY_FILE),
+    ))
+}
+
 impl SandboxPlan {
     /// Captures the sandbox for one run.
     pub fn new(inputs: PlanInputs<'_>) -> Self {
@@ -59,6 +67,8 @@ impl SandboxPlan {
                 push_unique(&mut secrets, path);
             }
         }
+        // The person's server credential, YOLO included: an agent's shell has only its run's.
+        secrets.extend(discovery_file(inputs.app_data));
         let landlock_abi = match &enforcement {
             Enforcement::Active(Backend::Landlock) => availability(Backend::Landlock).abi,
             _ => 0,

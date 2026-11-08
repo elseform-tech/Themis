@@ -86,6 +86,8 @@ const ALL: &[(&str, &str, &[&str])] = &[
         &["action", "reason"],
     ),
     (AUTO_HARD_BLOCK, "auto-hard-block", &["reason", "safer"]),
+    (AUTO_SWITCH_ON_REASON, "auto-switch-on-reason", &[]),
+    (AUTO_SWITCH_ON_SAFER, "auto-switch-on-safer", &[]),
     (PROJECT_GUIDANCE_DOCS, "project-guidance-docs", &["docs"]),
     (GOAL_CONTEXT_OVER, "goal-context-over", &[]),
     (GOAL_CONTEXT_PAUSED, "goal-context-paused", &["goal"]),
@@ -276,6 +278,8 @@ const ALL: &[(&str, &str, &[&str])] = &[
         &["reason"],
     ),
     (TOOL_SANDBOX_BLOCKED, "tool-sandbox-blocked", &["reason"]),
+    (AGENT_CLI_REFUSED, "agent-cli-refused", &["method"]),
+    (AGENT_SWITCH_ON_REFUSED, "agent-switch-on-refused", &[]),
     (TOOL_SANDBOX_NOTE, "tool-sandbox-note", &[]),
     (
         TOOL_SANDBOX_BLOCKED_PARTLY,

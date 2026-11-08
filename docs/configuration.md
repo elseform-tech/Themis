@@ -445,7 +445,7 @@ never go to the model: running a command outside the sandbox and touching a sens
 always blocked with the question box, and only the person's **Allow once** for that exact action
 lets them run. On a project that isn't a Git
 repository Auto stays read-only, as Custom does, without asking the model. Saving a new MCP
-connection command from a run is refused in Auto (allow it in Integrations, or use Custom).
+connection command from a run is never switched on, in any mode (switch it on in Integrations).
 Subagents are reviewed the same way. Prompts: `auto-review-system.md`, `auto-review-user.md`.
 `logs/` gets `approval` / `auto_reviewed` (tool, risk, verdict, time) and `approval` /
 `auto_review` lines, never the command or the person's words. `auto_try_review` is a read-only
@@ -710,6 +710,139 @@ first writing the starter when the file does not exist or still sets nothing
 opens that file as plain text in the system text editor. `get_runtime_configuration` also
 returns `rule_sources` beside the resolved configuration.
 
+## The `themis` CLI in the agent's shell
+
+An agent's `shell` commands (foreground and background, subagents' too) can run
+`themis`, which talks to the live app server. Each command of a run gets:
+
+- `THEMIS_AGENT_TOKEN`: a credential for that run and its chat, issued on the
+  run's first command and reused by its later ones. It ends when the chat's run
+  ends (a background task still running after that loses its access). Themis
+  masks it as `[redacted]` in shell and background-task output that goes back to
+  the model, and never logs it.
+- `THEMIS_AGENT_PORT`: the server's local port. With these two set, `themis`
+  uses them instead of `server.json`, never starts a server of its own and
+  refuses `app launch`/`app quit`.
+- `PATH` starting with `agent-cli/` in the app data: a folder holding only a
+  link named `themis` to the CLI the app server runs as (the desktop app's own
+  executable, or the `themis` binary in development). Agents cannot write the
+  app data, so they cannot replace it. Windows ships no console CLI in the app,
+  so there is no folder there; a `themis` you installed yourself still gets the
+  two variables.
+
+The server treats every call carrying a run credential as the agent's and allows
+only an explicit list; anything else, including any method added later, is
+refused in every mode, YOLO included, with a message naming the method:
+
+| Allowed for an agent's call | Methods |
+| --- | --- |
+| Status and diagnostics (metadata only) | `ping`, `get_diagnostics`, `query_diagnostic_logs`, `get_effective_permissions`, `get_usage_summary`, `list_go_models`, `list_model_providers`, `get_secret_status` (whether a key exists, never the key), `mcp_config_status`, `resource_usage` |
+| Reading configuration and settings | `get_runtime_configuration`, `get_settings`, `get_browser_settings`, `get_web_settings`, `get_subagent_settings`, `get_memory_settings` |
+| Skills and integrations | `list_prompt_skills`, `list_skills`, `plugin_action` (as the agent's: saving or enabling an MCP server records no consent to start it, a hook or command-based MCP server is never left switched on, and `mcp_allow_secrets` and MCP sign-in/sign-out are refused) |
+| Its own chat only (`threadId` required) | `get_thread`, `get_thread_history_page`, `get_thread_tasks`, `get_background_task_log`, `get_context_usage`, `get_chat_usage` |
+
+A `threadId` naming another chat is refused for every method. Refused, among
+everything else: approvals and answers (`approve_action`, `answer_question`), its
+own permissions (`set_thread_approval_mode`, `save_runtime_configuration`,
+`ensure_runtime_config`, the config editors), settings writes, secrets and keys
+(`set_secret`, `clear_secret`, `set_key`, `remove_key`, `list_keys`,
+`check_go_key`), the terminal, projects, sending to or stopping runs, branch
+and review decisions, the Workspace browser controls, memory edits, event
+subscriptions and `shutdown`. Allowed calls still pass the shell's approvals, at
+the level [below](#approvals-for-themis-calls): the guard only narrows what an
+approved `themis` command can do.
+Calls without a run credential (your own CLI, the desktop app) are unchanged.
+Each refusal is logged as `server`/`agent_call_refused` with the method name
+(`(other)` for anything that is not a plain method name), the `plugin_action`
+action, and the chat and run ids, never the credential or arguments.
+
+**Threat model.** The guard relies on the agent never holding your credential.
+It is in `server.json` (owner-only, `0600`), which the sandbox stops every
+agent command from reading or writing in every mode. Limits:
+
+- With the sandbox off or unavailable (`sandbox.enabled: false`, Windows, Linux
+  without bubblewrap or Landlock), nothing stops a command from reading
+  `server.json`, so the guard does not hold there, just as the app-data write
+  wall does not. The same is true for a command you let run outside the
+  sandbox when it was blocked.
+- `sandbox.network: "block"` also blocks the agent's `themis` from reaching the
+  server.
+- A run credential gives only what the list above allows, and only for that
+  run's chat. It is a random 256-bit value: a command can print its own (which
+  then shows masked), but it cannot make one.
+- The guard limits the server's methods, not the agent's shell: whatever the
+  shell itself can already do (for example run a program you allowed) is
+  unchanged.
+
+### Approvals for `themis` calls
+
+A `themis` call in the agent's shell is approved at the level of what it does,
+not as a generic command:
+
+| `themis` command | Risk | Custom | Auto | YOLO |
+| --- | --- | --- | --- | --- |
+| Reads: `status`, `doctor`, `usage`, `models`, `permissions`, `auth status`, `--help`; `plugin list/show/export/updates`; `plugin`/`skill`/`mcp`/`hook inspect`; `plugin marketplace list/browse/preview/changes/check`; `skill list`; `skill`/`mcp`/`hook list/show`; `call` with a reading method from the allowed list | `read` | no prompt (the built-in read rule) | no prompt | runs |
+| Changes through the store: `plugin create/save/edit/disable`, `skill save`, `mcp`/`hook add/update`, `skill enable`, any `disable`, `plugin marketplace enable/disable`, a local `import` | `write` | asks; **Allow in this chat** covers the same command (its full argv) | the reviewer decides | runs |
+| Network: `plugin install/update`, an `import` from an `http(s)` URL or with `--ref`/`--subdirectory`, `plugin marketplace add/refresh` | `network` | as a change | the reviewer decides | runs |
+| Tests that start code: `mcp test`, `hook test`, `skill verify` | `execute` | asks | the reviewer decides | runs |
+| Removals: `plugin delete/uninstall`, `skill`/`mcp`/`hook delete/remove`, `plugin marketplace remove` | `destructive` | asks every time, never covered by **Allow in this chat** | the reviewer decides | runs |
+| Switching on: `hook enable`, `mcp enable`, `plugin enable` (which turns on the hooks the plugin has on), `call plugin_action` with `enable` or `set_component_enabled` turning on a hook or MCP server | `execute` | asks every time, never covered by **Allow in this chat** | always the person, like a sandbox escape: blocked with the question box (`auto-switch-on-reason.md`, `auto-switch-on-safer.md`) and only their **Allow once** lets it run | runs |
+
+Whatever the shell's approval decided, the server then **refuses** an agent switching on a hook
+or a command-based MCP server, in every mode (see the MCP consent rules under "Background MCP
+connections"); the strict level above only keeps a prompt from coming before a call that cannot
+succeed. Switching on a connection by URL is allowed and still waits for your consent to start.
+
+Other commands (`server`, `thread`, `chat`, `cli install`, `serve`, `call` with any
+other method, which the server refuses anyway) keep the ordinary `execute` risk.
+Saves, imports and installs through the agent's credential store every hook and
+command-based MCP server that is new or changed **switched off**, whatever the
+definition says (an unchanged one keeps its switch), so a change allowed in the
+chat can never start code; only you switch them on.
+
+How it is read:
+
+- **Only a bare `themis`** (found through the run's `PATH`, whose first folder is the
+  app's own CLI) gets a level below `execute`. A `themis` by path (`./themis`,
+  `/tmp/themis`) is a program like any other.
+- **Wrappers never lower it.** `sh -c "themis …"`, pipelines, `&&` lists,
+  `env X=1 themis …`, `xargs themis …` and `timeout` keep the ordinary command risk;
+  the removal and switch-on checks look inside them (the wrappers listed under deny
+  rules above) and at every later word naming `themis` (`find … -exec themis …`), so a
+  wrapped removal is `destructive` and a wrapped switch-on is asked every time. A
+  wrapped script that cannot be read is `destructive`, and if it mentions `themis` it
+  also counts as switching something on.
+- **Unknown words fail closed.** An integration command (`plugin`, `skill`, `mcp`,
+  `hook`) the CLI does not know, with an unknown option or a missing value, and a
+  `call plugin_action` whose arguments come from stdin (`-`), do not parse, or name an
+  unknown action, count as switching something on. Other unknown commands are `execute`.
+- A broad allow rule (`{"tool":"shell","action":"allow"}`, `"tool":"*"` with a risk)
+  does not cover a switch-on, as it does not cover a destructive variant; a rule naming
+  it does (`{"tool":"shell","command":["themis","hook","enable"],"action":"allow"}`).
+  A chat-grant file naming one is ignored like one naming a destructive command.
+
+Script files and other interpreters (`sh setup.sh`, `python3 -c …`) are not read, as for
+deny rules: they are ordinary `execute` commands, so Custom asks about each and Auto's
+reviewer sees the command.
+
+**Turning it off.** There is no setting. A deny rule for shell commands starting with
+`themis` in your user `runtime.jsonc` refuses every `themis` call in every mode, YOLO
+included, bare, by path or wrapped:
+
+```jsonc
+{
+  "approval": {
+    "rules": [
+      { "tool": "shell", "command": ["themis"], "action": "deny" },
+      // `rules` replaces the built-in list, so keep its read rule (and your own rules).
+      { "tool": "*", "risk": "read", "action": "allow" }
+    ]
+  }
+}
+```
+
+A project's `.themis/config.jsonc` may add the same deny rule.
+
 ## Diagnostics
 
 Logs stay out of the desktop UI. Advanced users can query structured records
@@ -728,7 +861,9 @@ commands), and compaction stages. A failed server command (`server`/`command_fai
 records its method and a fixed `category` (`unknown_method` when a window and the
 server come from different builds, `too_large`, `invalid_request`, `timeout`,
 `not_found`, `conflict`, `denied`, `network`, `credentials` or `other`), never the
-error message, which can name paths or hold user text.
+error message, which can name paths or hold user text. A call from an agent's shell the
+server refuses (`server`/`agent_call_refused`) records the method name, the `plugin_action`
+action and the chat and run ids.
 Request bodies, prompts, tool arguments/results, and provider bodies are excluded.
 Known credential fields and referenced secret environment values are redacted;
 debug subprocess stderr is bounded and filtered. Debug output from third-party
@@ -798,7 +933,7 @@ previous benchmark results are dated reports, not automatic runtime audits.
 
 ## Background MCP connections
 
-The app starts enabled global and selected-project MCP connections asynchronously on entry. Enabling a connection authorizes initialization and tool discovery; imported connections still start disabled. Consent is bound to the exact definition: Themis keeps a fingerprint (command, args, url, environment references, bearer variable, and the plugin's resource files and their executable flags, bounded to 1,024 files / 8 MiB, over which consent fails closed) of what a person approved in `mcp_consent.json` beside the plugin registry. A person saving or enabling the connection in the UI or CLI records it; so does answering the dialog for an agent's change, and only while the stored definition still matches what that dialog showed. Agent management calls on one plugin run one at a time. An agent change applied under YOLO or an allow rule takes effect but records no consent: the connection shows "Needs your approval" until you enable it. When the sole executable effect of an agent's save is one command-based connection (no hooks or skills), the single argv dialog replaces the generic one; otherwise both appear. Chat grants for an MCP server also expire with its definition (the definition is part of the server id). A definition that is new or changed by anything else (a repository's `.themis/plugins/` or `.themis/config.jsonc`, a catalog update or import, an unapproved edit) shows "Needs your approval" and does not start, in the background or in a run, in Custom or YOLO, until a person enables it again; imports still arrive disabled. On the first start after upgrading, already-enabled global definitions are seeded as approved; project definitions never are. An agent that creates, edits or enables a command-based connection through `manage_integrations` is asked about the exact command (shown as structured argv, one connection per call) every time; that dialog offers only Allow once and Deny and is never remembered for the chat, YOLO skips it as the user's explicit trust, and a deny rule refuses it. Runs no longer show a "Connect MCP server" prompt: explicit user/project deny rules for `mcp_start_*` (or the server) still prevent startup, in the background and in a run, and YOLO ignores rules as before. Tool calls are separate approvals; one **Allow in this chat** covers the server's other tools. Calls from a chat continue to use that run's captured approval policy and approval mode, including when they reuse an existing transport. Startup has a 30-second deadline per server and failures are isolated. Definitions remain in the existing integration registry; transports and observed status are ephemeral shared-server state. Changing or disabling a definition releases its idle connection while active runs retain their immutable snapshot.
+The app starts enabled global and selected-project MCP connections asynchronously on entry. Enabling a connection authorizes initialization and tool discovery; imported connections still start disabled. Consent is bound to the exact definition: Themis keeps a fingerprint (command, args, url, environment references, bearer variable, and the plugin's resource files and their executable flags, bounded to 1,024 files / 8 MiB, over which consent fails closed) of what a person approved in `mcp_consent.json` beside the plugin registry. A person saving or enabling the connection in the UI or CLI records it; an agent's change never does, in any mode. Agent management calls on one plugin run one at a time. A connection by URL that an agent saves or switches on takes effect but records no consent: it shows "Needs your approval" until you enable it. Chat grants for an MCP server also expire with its definition (the definition is part of the server id). A definition that is new or changed by anything else (a repository's `.themis/plugins/` or `.themis/config.jsonc`, a catalog update or import, an unapproved edit) shows "Needs your approval" and does not start, in the background or in a run, in Custom or YOLO, until a person enables it again; imports still arrive disabled. On the first start after upgrading, already-enabled global definitions are seeded as approved; project definitions never are. **An agent never switches on a hook or a command-based connection**, in any mode, YOLO included, through `manage_integrations` or the `themis` CLI in its shell (by any command, script or request carrying its run credential): what it saves, imports or installs arrives with every new or changed one switched off (an unchanged one keeps its switch), and switching one on (`set_component_enabled`, or `enable` on a plugin that is off while a hook or command-based connection inside is on) is refused with `agent-switch-on-refused.md`, which tells it to ask you to switch it on in Integrations. The check runs inside the registry write, on what the call would leave on, not on the command text. Each refusal is logged as `server`/`agent_call_refused` with `reason: "switch_on"`, the action and the kind, never the definition. Switching off, skills and connections by URL are unchanged. Runs no longer show a "Connect MCP server" prompt: explicit user/project deny rules for `mcp_start_*` (or the server) still prevent startup, in the background and in a run, and YOLO ignores rules as before. Tool calls are separate approvals; one **Allow in this chat** covers the server's other tools. Calls from a chat continue to use that run's captured approval policy and approval mode, including when they reuse an existing transport. Startup has a 30-second deadline per server and failures are isolated. Definitions remain in the existing integration registry; transports and observed status are ephemeral shared-server state. Changing or disabling a definition releases its idle connection while active runs retain their immutable snapshot.
 
 The shared `plugin_action` API accepts `mcp_status` with `projectRoot`. `connect: true` reconciles enabled definitions and starts missing connections without waiting; `retry: true` also retries failed connections. Without those flags it only reads observed status. This supports CLI verification through `themis call plugin_action`. App entry, project selection and server reconnection trigger initialization automatically.
 

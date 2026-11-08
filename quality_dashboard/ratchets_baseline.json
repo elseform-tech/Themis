@@ -202,9 +202,6 @@
   "crates/core/src/plugins.rs::PluginStore::save": {
    "cyclomatic": 22
   },
-  "crates/core/src/plugins.rs::PluginStore::set_component_enabled": {
-   "cyclomatic": 21
-  },
   "crates/core/src/plugins/agents.rs::SubagentProfile::validate": {
    "cyclomatic": 34
   },
@@ -413,9 +410,9 @@
    "lines": 146
   },
   "crates/core/src/runtime/tool_calls.rs::execute_call": {
-   "cognitive": 42,
-   "cyclomatic": 45,
-   "lines": 179
+   "cognitive": 33,
+   "cyclomatic": 40,
+   "lines": 158
   },
   "crates/core/src/runtime/tool_calls.rs::execute_tool_calls": {
    "cognitive": 45,
@@ -537,9 +534,9 @@
    "cyclomatic": 21
   },
   "crates/desktop/src/server.rs::serve_connection": {
-   "cognitive": 27,
-   "cyclomatic": 46,
-   "lines": 190
+   "cognitive": 26,
+   "cyclomatic": 42,
+   "lines": 164
   },
   "crates/desktop/src/server/commands.rs::dispatch_command": {
    "cyclomatic": 173,
@@ -629,9 +626,9 @@
    "lines": 143
   },
   "crates/desktop/src/state/plugins.rs::AppState::plugin_action_with": {
-   "cognitive": 82,
-   "cyclomatic": 174,
-   "lines": 372
+   "cognitive": 81,
+   "cyclomatic": 169,
+   "lines": 357
   },
   "crates/desktop/src/state/projects.rs::AppState::delete_project": {
    "cyclomatic": 23

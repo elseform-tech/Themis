@@ -26,6 +26,8 @@ inside the normal suites, on every platform, with reproducible shrinking.
 | Browser | Any protocol message or accessibility tree never panics; snapshots stay within budget, refs stay stable and password values are masked; key names parse or are refused | `crates/core/src/browser/` |
 | Model providers | Any `providers` block resolves or fails cleanly, never with a reserved id, literal key or non-https remote URL; any `/models` body keeps unique, usable ids that came from it | `crates/core/src/configuration/providers.rs`, `crates/core/src/providers/tests.rs` |
 | Subagent profiles | Any text as a plugin's `agents/*.md` never panics; what it accepts is valid and bounded; a tool list never widens, and a scoped name is never mapped to the whole tool | `crates/core/src/plugins/agents.rs` |
+| Agent CLI guard | Any method name, chat id and `plugin_action` action from an agent's shell passes only when the method is on the allowed list, any chat named is its own (and named where required), and the action is not the person's | `crates/desktop/src/server/agent.rs` |
+| `themis` call risk | Any `themis` command line from the owner-approved table, with options mixed in, is never approved at a lower level than the table, bare or wrapped (`sh -c`, `&&`, pipes, `env`, `xargs`, `timeout`); a switch-on is always asked every time and never grantable; an unknown integration verb counts as a switch-on; arbitrary words never panic | `crates/core/src/tools/themis_cli/tests.rs` |
 | Web state | Any event stream keeps running state consistent and attaches edited files to the right reply; prompt tokens rebuild exactly | `web/src/state/reducer.property.test.ts` |
 
 ## Fuzz targets (nightly CI)
@@ -56,6 +58,7 @@ internal parsers through the off-by-default `fuzzing` feature of
 | `subagent_profile` | Arbitrary bytes as a plugin's `agents/*.md`: never panics; an accepted profile has a safe name, bounded fields and only tools a subagent may have |
 | `sensitive_files` | Tool arguments and `approval.sensitive_files` patterns, and message text: reading which sensitive files a call names, and whether text looks like a secret, never panic |
 | `shell_wrapped` | Shell argv, often behind `sh -c`/`sudo`/`env`/`eval`/`cmd /c`: reading wrapped commands never panics, stays bounded and yields no empty commands |
+| `themis_cli` | A model-written `themis` command line in the agent's shell: reading its risk never panics, a call read as a read never also switches something on or removes something, and wrapping it in `sh -c`, `env` or `xargs` never makes it a read or hides a switch-on |
 
 ```sh
 rustup toolchain install nightly --profile minimal

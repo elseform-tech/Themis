@@ -1,4 +1,5 @@
 //! Shared, revisioned plugin storage. App and CLI mutations use the same server.
+mod agent_switch;
 pub mod agents;
 pub mod connections;
 mod discovery;
@@ -166,6 +167,9 @@ pub struct PluginStore {
     pub project: Option<PathBuf>,
     /// Where personal skills are discovered (`~/.agents/skills` and the rest).
     home: Option<PathBuf>,
+    /// An agent's store: it never leaves a hook or a command-based MCP server switched on
+    /// (see `agent_switch`).
+    agent_saves: bool,
 }
 
 impl PluginStore {
@@ -175,7 +179,16 @@ impl PluginStore {
             project,
             skill_paths: crate::configuration::SkillConfig::default().paths,
             home: crate::sandbox::home_dir(),
+            agent_saves: false,
         }
+    }
+
+    /// With `agent` set, the store acts for an agent: saves, imports and installs keep new or
+    /// changed hooks and command-based MCP servers switched off, and switching one on is refused.
+    #[must_use]
+    pub fn for_agent(mut self, agent: bool) -> Self {
+        self.agent_saves = agent;
+        self
     }
 
     /// The home folder personal skills are discovered in; `None` discovers none.
@@ -356,6 +369,7 @@ impl PluginStore {
             // Set by a marketplace check, never by what is being saved.
             spec.brand = previous.and_then(|p| p.spec.brand.clone());
             spec.icon_asset = previous.and_then(|p| p.spec.icon_asset.clone());
+            self.keep_new_parts_off(previous, &mut spec);
             if let Some(previous) = previous {
                 for skill in &spec.skills {
                     let Some(old) = previous.spec.skills.iter().find(|old| old.id == skill.id)
@@ -423,6 +437,7 @@ impl PluginStore {
         }
         self.mutate(scope, |registry| {
             if let Some(plugin) = registry.current.get_mut(name) {
+                self.refuse_enabling_plugin(plugin, enabled)?;
                 plugin.enabled = enabled;
             } else if discovered.is_some() {
                 if enabled {
@@ -456,37 +471,8 @@ impl PluginStore {
         }
         self.mutate(scope, |registry| {
             let plugin = registry.current.get_mut(name).context("Unknown plugin")?;
-            match kind {
-                "skill" => {
-                    if !plugin.spec.skills.iter().any(|s| s.id == id) {
-                        bail!("Unknown skill");
-                    }
-                    plugin.spec.disabled_skills.retain(|s| s != id);
-                    if !enabled {
-                        plugin.spec.disabled_skills.push(id.into());
-                    }
-                }
-                "mcp" | "connection" => {
-                    plugin
-                        .spec
-                        .mcp
-                        .get_mut(id)
-                        .context("Unknown connection")?
-                        .enabled = enabled
-                }
-                "hook" => {
-                    plugin
-                        .spec
-                        .hooks
-                        .iter_mut()
-                        .find(|h| h.name == id)
-                        .context("Unknown hook")?
-                        .enabled = enabled
-                }
-                _ => bail!("Component kind must be skill, mcp, connection, or hook"),
-            }
-            // Flags change the current activation policy, not pinned instruction snapshots.
-            Ok(())
+            self.refuse_switching_on(plugin, kind, id, enabled)?;
+            switch_component(plugin, kind, id, enabled)
         })
     }
     pub fn remove_component(
@@ -662,4 +648,44 @@ fn write_bytes(path: &Path, bytes: &[u8], executable: bool) -> anyhow::Result<()
         let _ = fs::remove_file(temp);
     }
     result
+}
+
+/// Turns one skill, MCP server or hook of `plugin` on or off. Flags change the current
+/// activation policy, not pinned instruction snapshots.
+fn switch_component(
+    plugin: &mut Plugin,
+    kind: &str,
+    id: &str,
+    enabled: bool,
+) -> anyhow::Result<()> {
+    match kind {
+        "skill" => {
+            if !plugin.spec.skills.iter().any(|s| s.id == id) {
+                bail!("Unknown skill");
+            }
+            plugin.spec.disabled_skills.retain(|s| s != id);
+            if !enabled {
+                plugin.spec.disabled_skills.push(id.into());
+            }
+        }
+        "mcp" | "connection" => {
+            plugin
+                .spec
+                .mcp
+                .get_mut(id)
+                .context("Unknown connection")?
+                .enabled = enabled
+        }
+        "hook" => {
+            plugin
+                .spec
+                .hooks
+                .iter_mut()
+                .find(|h| h.name == id)
+                .context("Unknown hook")?
+                .enabled = enabled
+        }
+        _ => bail!("Component kind must be skill, mcp, connection, or hook"),
+    }
+    Ok(())
 }

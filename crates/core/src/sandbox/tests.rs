@@ -311,10 +311,9 @@ fn a_read_only_plan_keeps_walls_but_writes_only_temp_folders() {
     assert!(open.open());
     assert!(!open.writable().contains(&PathBuf::from("/")));
     assert!(!open.writable().contains(&fx.root));
-    assert_eq!(
-        open.status().secret_paths.is_empty(),
-        open.secrets().is_empty()
-    );
+    assert!(open.status().secret_paths.is_empty());
+    // Only the server's discovery file, which holds the person's credential, stays hidden.
+    assert_eq!(open.secrets(), [fx.app_data.join("server.json")]);
 }
 
 #[test]
@@ -980,7 +979,8 @@ fn the_open_plan_writes_everywhere_but_the_protected_folders() {
     let plan = open_plan(Enforcement::Active(Backend::Seatbelt), &blocked, &fx);
     assert!(plan.open());
     assert_eq!(plan.writable()[0], PathBuf::from("/"));
-    assert!(plan.secrets().is_empty());
+    // No secret locations but the server's discovery file (the person's credential).
+    assert_eq!(plan.secrets(), [fx.app_data.join("server.json")]);
     assert_eq!(plan.network(), NetworkPolicy::Allow);
     assert!(plan.allow_keychain());
     assert_eq!(
@@ -996,11 +996,13 @@ fn the_open_plan_writes_everywhere_but_the_protected_folders() {
         "{profile}"
     );
     assert!(
-        !profile.contains("SECRET")
+        !profile.contains("SECRET_1")
             && !profile.contains("network-outbound")
             && !profile.contains("mach-lookup"),
         "{profile}"
     );
+    assert!(params.iter().any(|(name, path)| name == "SECRET_0"
+        && std::path::Path::new(path) == fx.app_data.join("server.json")));
     // bubblewrap is Linux-only; elsewhere `/` does not canonicalize to itself.
     if cfg!(unix) {
         let args: Vec<String> = bubblewrap::arguments(&plan)
@@ -1055,9 +1057,10 @@ fn the_open_plan_writes_everywhere_but_the_protected_folders() {
     );
     assert_eq!(written.network(), NetworkPolicy::Block);
     assert!(!written.allow_keychain());
-    assert!(
-        written.secrets().is_empty(),
-        "secret locations stay readable"
+    assert_eq!(
+        written.secrets(),
+        [fx.app_data.join("server.json")],
+        "secret locations stay readable; only the server's credential is hidden"
     );
 }
 
@@ -1289,5 +1292,45 @@ proptest::proptest! {
     fn overlap_is_symmetric_and_reflexive(a in "[ab]{1,2}(/[ab]{1,2}){0,2}/?", b in "[ab]{1,2}(/[ab]{1,2}){0,2}/?") {
         proptest::prop_assert_eq!(write_paths_overlap(&a, &b), write_paths_overlap(&b, &a));
         proptest::prop_assert!(write_paths_overlap(&a, &a));
+    }
+}
+
+/// Every plan hides the app server's discovery file (the person's credential) from commands:
+/// Custom's, YOLO's and a subagent's, on every backend.
+#[test]
+fn the_server_discovery_file_is_hidden_in_every_plan() {
+    let fx = fixture();
+    std::fs::write(fx.app_data.join("server.json"), "{}").unwrap();
+    let discovery = fx.app_data.join("server.json");
+    let custom = plan_with(
+        Enforcement::Active(Backend::Seatbelt),
+        &SandboxConfig::default(),
+        &fx.root,
+        &fx.app_data,
+        &fx.home,
+    );
+    let open = open_plan(
+        Enforcement::Active(Backend::Seatbelt),
+        &SandboxConfig::default(),
+        &fx,
+    );
+    for plan in [
+        &custom,
+        &open,
+        &custom.read_only(),
+        &open.confined_to(&fx.root, &[]),
+    ] {
+        assert!(plan.secrets().contains(&discovery), "{:?}", plan.secrets());
+    }
+    // bubblewrap is Linux-only; its arguments still build on any Unix.
+    if cfg!(unix) {
+        let args: Vec<String> = bubblewrap::arguments(&open)
+            .iter()
+            .map(|a| a.to_string_lossy().into_owned())
+            .collect();
+        let hidden = args.windows(3).any(|w| {
+            w[0] == "--ro-bind" && w[1] == "/dev/null" && w[2] == discovery.to_string_lossy()
+        });
+        assert!(hidden, "{args:?}");
     }
 }
