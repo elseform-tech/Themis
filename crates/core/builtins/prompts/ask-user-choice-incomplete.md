@@ -1,0 +1,1 @@
+Not asked: choice {{choice}} is missing {{missing}}. Every choice gives a short `answer`, `does` (what you will do if it is picked: the steps, commands or files), `advantages`, `disadvantages` and `consequences` (what follows from it, and whether it is hard to undo). Ask again with all of them filled in.

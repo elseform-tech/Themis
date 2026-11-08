@@ -119,7 +119,7 @@ impl DesktopApprovalHook {
         let answer = match decision {
             Some(Approval::AllowOnce) => "once",
             Some(Approval::AllowAlways) => "chat",
-            Some(Approval::Deny) => "deny",
+            Some(Approval::Deny | Approval::DenyByPerson) => "deny",
             Some(Approval::DenyForNewMessage) => "new_message",
             Some(Approval::DenyReviewed) => "reviewed",
             Some(Approval::DenyTimedOut) => "timed_out",
@@ -269,9 +269,23 @@ impl DesktopApprovalHook {
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
             .remove(&approval_id);
+        self.settle(decision, approval_id, grantable, ask_first)
+    }
+
+    /// What the box's answer means for the step. The person's own Deny on an approval box tells
+    /// the agent to ask how to go on; a subagent (which cannot stop to wait) and a destructive
+    /// step's question box ("Skip it") keep the plain refusal.
+    fn settle(
+        &self,
+        decision: Option<Approval>,
+        approval_id: String,
+        grantable: bool,
+        ask_first: bool,
+    ) -> Approval {
         match decision {
             // Only grantable actions may be remembered for the chat.
             Some(Approval::AllowAlways) if !grantable => Approval::AllowOnce,
+            Some(Approval::Deny) if !ask_first && self.subagent.is_none() => Approval::DenyByPerson,
             // Sent from here, after the request above, so no client can see them
             // out of order and be left with a dead box.
             Some(Approval::DenyForNewMessage) => {
@@ -544,8 +558,52 @@ mod tests {
             .sender
             .send(Approval::Deny)
             .unwrap();
-        assert_eq!(handle.join().unwrap(), Approval::Deny);
+        // The person's own Deny: the agent is told to ask how to go on.
+        assert_eq!(handle.join().unwrap(), Approval::DenyByPerson);
         assert!(rx.try_recv().is_err(), "no expiry for an answered dialog");
+    }
+
+    /// Answers Deny to the one box `hook` shows (a destructive step's question box when
+    /// `first`), returning what the step was told.
+    fn deny_once(
+        hook: DesktopApprovalHook,
+        mut rx: tokio::sync::mpsc::UnboundedReceiver<TestEvent>,
+        first: bool,
+    ) -> Approval {
+        let pending = Arc::clone(&hook.pending);
+        let hook = hook.with_timeout(Duration::from_secs(30));
+        let handle = std::thread::spawn(move || {
+            let shell = action("shell", CoreRisk::Execute);
+            if first {
+                hook.approve_first(&shell)
+            } else {
+                hook.approve(&shell)
+            }
+        });
+        let TestEvent::Approval(request) = rx.blocking_recv().unwrap() else {
+            panic!("expected a request");
+        };
+        let sender = pending
+            .lock()
+            .unwrap()
+            .remove(&request.approval_id)
+            .unwrap()
+            .sender;
+        sender.send(Approval::Deny).unwrap();
+        handle.join().unwrap()
+    }
+
+    /// Deny pressed on a subagent's box, or "Skip it" on a destructive step's question box,
+    /// stays a plain refusal: neither asks how to go on.
+    #[test]
+    fn only_the_main_agents_approval_box_deny_asks_how_to_go_on() {
+        let (hook, rx) = hook_with_sink(true);
+        assert_eq!(deny_once(hook, rx, false), Approval::DenyByPerson);
+        let (hook, rx) = hook_with_sink(true);
+        assert_eq!(deny_once(hook, rx, true), Approval::Deny);
+        let (hook, rx) = hook_with_sink(true);
+        let hook = hook.with_subagent("sub-1", "Researcher");
+        assert_eq!(deny_once(hook, rx, false), Approval::Deny);
     }
 
     fn destructive() -> ToolAction {

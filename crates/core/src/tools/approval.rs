@@ -59,6 +59,9 @@ pub enum Approval {
     AllowAlways,
     /// Refuse to run this action.
     Deny,
+    /// The person pressed Deny on the approval box (Custom): refused, and the agent asks
+    /// them how to go on instead of trying anything else for that step.
+    DenyByPerson,
     /// Refuse to run this action for now: the person steered a new message in
     /// while it waited (or before it asked), and the agent should read that first.
     DenyForNewMessage,
@@ -76,7 +79,11 @@ impl Approval {
     pub const fn is_denied(self) -> bool {
         matches!(
             self,
-            Self::Deny | Self::DenyForNewMessage | Self::DenyReviewed | Self::DenyTimedOut
+            Self::Deny
+                | Self::DenyByPerson
+                | Self::DenyForNewMessage
+                | Self::DenyReviewed
+                | Self::DenyTimedOut
         )
     }
 
@@ -96,6 +103,7 @@ impl Approval {
         match self {
             Self::DenyForNewMessage => crate::prompts::TOOL_DENIED_NEW_MESSAGE,
             Self::DenyTimedOut => crate::prompts::TOOL_DENIED_TIMED_OUT,
+            Self::DenyByPerson => crate::prompts::TOOL_DENIED_BY_PERSON,
             _ => REFUSAL_NOTE,
         }
     }
@@ -228,12 +236,14 @@ fn check_decision(decision: Approval, action: &ToolAction) -> Result<(), ToolCal
             action.summary,
             Approval::DenyTimedOut.refusal_note()
         ))),
-        denied @ (Approval::Deny | Approval::DenyForNewMessage) => Err(tool_error(format!(
-            "approval denied for '{}': {} {}",
-            action.tool,
-            action.summary,
-            denied.refusal_note()
-        ))),
+        denied @ (Approval::Deny | Approval::DenyByPerson | Approval::DenyForNewMessage) => {
+            Err(tool_error(format!(
+                "approval denied for '{}': {} {}",
+                action.tool,
+                action.summary,
+                denied.refusal_note()
+            )))
+        }
     }
 }
 
@@ -377,6 +387,29 @@ mod timed_out_tests {
         assert_eq!(
             crate::runtime::ApprovalDecision::from(Approval::DenyTimedOut),
             crate::runtime::ApprovalDecision::TimedOut
+        );
+    }
+
+    /// The person's own Deny tells the agent to ask how to go on (a safer way, skip, stop);
+    /// a rule's denial keeps the plain refusal.
+    #[test]
+    fn the_persons_deny_asks_how_to_go_on() {
+        assert!(Approval::DenyByPerson.is_denied());
+        let error = check_approval(&Answers(Approval::DenyByPerson), &write())
+            .unwrap_err()
+            .to_string();
+        assert!(
+            error.starts_with("approval denied for 'write_file'"),
+            "{error}"
+        );
+        assert!(
+            error.contains(crate::prompts::TOOL_DENIED_BY_PERSON),
+            "{error}"
+        );
+        assert!(!error.contains(REFUSAL_NOTE), "{error}");
+        assert_eq!(
+            crate::runtime::ApprovalDecision::from(Approval::DenyByPerson),
+            crate::runtime::ApprovalDecision::Deny
         );
     }
 }

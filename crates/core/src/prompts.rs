@@ -169,6 +169,11 @@ pub const ASK_USER_WAITING: &str = include_str!("../builtins/prompts/ask-user-wa
 pub const ASK_USER_LIMIT: &str = include_str!("../builtins/prompts/ask-user-limit.md");
 /// Added to an `ask_user` result when other questions are still open; `{{questions}}`.
 pub const ASK_USER_STILL_OPEN: &str = include_str!("../builtins/prompts/ask-user-still-open.md");
+/// `ask_user` refusal of a choice without all its details; `{{choice}}`, `{{missing}}`.
+pub const ASK_USER_CHOICE_INCOMPLETE: &str =
+    include_str!("../builtins/prompts/ask-user-choice-incomplete.md");
+/// `ask_user` refusal of a call with no question, both forms or too many pages; `{{max}}`.
+pub const ASK_USER_PAGES: &str = include_str!("../builtins/prompts/ask-user-pages.md");
 /// Added to a person's message that closed the chat's open questions; `{{questions}}`.
 pub const CHAT_ANSWERED_QUESTIONS: &str =
     include_str!("../builtins/prompts/chat-answered-questions.md");
@@ -364,12 +369,15 @@ pub const TOOL_COMPACTED_RECEIPT: &str =
 pub const TOOL_EXCERPT_WARNING: &str = include_str!("../builtins/prompts/tool-excerpt-warning.md");
 /// Refusal guidance added to every denied tool call.
 pub const TOOL_REFUSAL: &str = include_str!("../builtins/prompts/tool-refusal.md");
-/// Note on a call denied because the person steered a new message in while it waited.
 /// The refusal note when nobody answered an approval box in time.
 pub const TOOL_DENIED_TIMED_OUT: &str =
     include_str!("../builtins/prompts/tool-denied-timed-out.md");
+/// Note on a call denied because the person steered a new message in while it waited.
 pub const TOOL_DENIED_NEW_MESSAGE: &str =
     include_str!("../builtins/prompts/tool-denied-new-message.md");
+/// The refusal note when the person pressed Deny on an approval box: ask how to go on.
+pub const TOOL_DENIED_BY_PERSON: &str =
+    include_str!("../builtins/prompts/tool-denied-by-person.md");
 /// Note when a process that detached from a finished command kept its output open.
 pub const TOOL_SHELL_OUTPUT_HELD: &str =
     include_str!("../builtins/prompts/tool-shell-output-held.md");

@@ -106,6 +106,12 @@ const ALL: &[(&str, &str, &[&str])] = &[
     (ASK_USER_LIMIT, "ask-user-limit", &["max"]),
     (ASK_USER_STILL_OPEN, "ask-user-still-open", &["questions"]),
     (
+        ASK_USER_CHOICE_INCOMPLETE,
+        "ask-user-choice-incomplete",
+        &["choice", "missing"],
+    ),
+    (ASK_USER_PAGES, "ask-user-pages", &["max"]),
+    (
         CHAT_ANSWERED_QUESTIONS,
         "chat-answered-questions",
         &["questions"],
@@ -273,6 +279,7 @@ const ALL: &[(&str, &str, &[&str])] = &[
     (TOOL_REFUSAL, "tool-refusal", &[]),
     (TOOL_DENIED_NEW_MESSAGE, "tool-denied-new-message", &[]),
     (TOOL_DENIED_TIMED_OUT, "tool-denied-timed-out", &[]),
+    (TOOL_DENIED_BY_PERSON, "tool-denied-by-person", &[]),
     (TOOL_SHELL_OUTPUT_HELD, "tool-shell-output-held", &[]),
     (
         TOOL_SHELL_LEFTOVERS_STOPPED,

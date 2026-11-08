@@ -264,10 +264,7 @@ impl AutoReviewer for DesktopReviewer {
                 choices: vec![ALLOW_ONCE.to_owned(), SAFER.to_owned(), SKIP.to_owned()],
                 assumption: Some(SAFER.to_owned()),
                 reasons,
-                why: None,
-                blocking: false,
-                topic: None,
-                subagent: None,
+                ..NewQuestion::default()
             },
         );
         if let Ok(question) = asked {

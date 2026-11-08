@@ -26,6 +26,14 @@ pub struct Question {
     /// one's says why it is recommended.
     #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
     pub reasons: std::collections::BTreeMap<String, String>,
+    /// What each choice the agent offered means, by answer: what it will do, its advantages,
+    /// disadvantages and consequences.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub details: std::collections::BTreeMap<String, ChoiceDetails>,
+    /// The questions asked together in one `ask_user` call share this id: one box shows
+    /// them as pages and sends their answers together. Absent for a question asked alone.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub group: Option<String>,
     /// Nothing more could be done without the answer: the run ended on it.
     #[serde(default)]
     pub blocking: bool,
@@ -39,6 +47,17 @@ pub struct Question {
     pub asked_at: i64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub answer: Option<String>,
+}
+
+/// What picking one of the agent's choices means, so the person can decide without guessing.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ChoiceDetails {
+    /// What the agent will do (the steps, commands or files): the line the box shows.
+    pub does: String,
+    pub advantages: String,
+    pub disadvantages: String,
+    /// What follows from it, including whether it is hard to undo.
+    pub consequences: String,
 }
 
 /// A message waiting in a chat's queue for the current run to end.

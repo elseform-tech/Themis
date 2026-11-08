@@ -1,7 +1,9 @@
 //! Questions to the user (`ask_user`) through the real shared server and the
 //! `themis` CLI, with a scripted model: a question that keeps the run going, an
 //! answer during the run and after it, a repeated topic, and in goal mode a
-//! blocking question that makes the goal wait for its answer only.
+//! blocking question that makes the goal wait for its answer only. Several
+//! questions in one call (pages of one box, answered together), choices that
+//! must say what they do, and the question the agent asks after the person's Deny.
 
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -55,6 +57,18 @@ impl Gate {
             std::thread::sleep(Duration::from_millis(10));
         }
     }
+}
+
+/// What a choice says besides its answer.
+fn choice_details(answer: &str) -> Value {
+    json!({"does": format!("re-indent with {answer}"), "advantages": format!("{answer} read well"), "disadvantages": format!("{answer} churn the diff"), "consequences": "easy to undo"})
+}
+
+/// A choice as `ask_user` takes it: the answer and all it means.
+fn choice(answer: &str) -> Value {
+    let mut choice = choice_details(answer);
+    choice["answer"] = json!(answer);
+    choice
 }
 
 fn reply(text: &str) -> ResponseTemplate {
@@ -123,6 +137,12 @@ async fn app(respond: impl Fn(&Value) -> ResponseTemplate + Send + Sync + 'stati
         .await;
     let data = tempfile::tempdir().unwrap();
     let project = tempfile::tempdir().unwrap();
+    // A Git project, so Custom asks before a write (the after-Deny case).
+    std::process::Command::new("git")
+        .args(["init", "-q"])
+        .current_dir(project.path())
+        .status()
+        .expect("git");
     let state = AppState::new_for_test(data.path().join("settings.json"));
     state
         .set_secret("go".into(), "synthetic-test-key".into())
@@ -175,9 +195,9 @@ async fn a_question_keeps_the_run_going_and_its_answer_arrives_during_or_after_i
             return reply("Re-indented with tabs.");
         }
         match results {
-            0 => tools(&[("q1", "ask_user", json!({"question": "Tabs or spaces?", "choices": ["Tabs", "Spaces"], "recommended": "Spaces", "why": "the usual choice", "topic": "indent"}))]),
+            0 => tools(&[("q1", "ask_user", json!({"question": "Tabs or spaces?", "choices": [choice("Tabs"), choice("Spaces")], "recommended": "Spaces", "why": "the usual choice", "topic": "indent"}))]),
             // Asked again on the same open topic: the question is updated, not added.
-            1 => tools(&[("q2", "ask_user", json!({"question": "Tabs or spaces for indentation?", "choices": ["Tabs", "Spaces"], "recommended": "Spaces", "why": "the usual choice", "topic": "indent"}))]),
+            1 => tools(&[("q2", "ask_user", json!({"question": "Tabs or spaces for indentation?", "choices": [choice("Tabs"), choice("Spaces")], "recommended": "Spaces", "why": "the usual choice", "topic": "indent"}))]),
             _ => {
                 // The run keeps working while the user answers.
                 held.wait();
@@ -214,6 +234,8 @@ async fn a_question_keeps_the_run_going_and_its_answer_arrives_during_or_after_i
             // The recommended choice comes first.
             assert_eq!(questions[0]["choices"], json!(["Spaces", "Tabs"]));
             assert_eq!(questions[0]["reasons"]["Spaces"], "the usual choice");
+            // Each choice keeps what it does, its advantages, disadvantages and consequences.
+            assert_eq!(questions[0]["details"]["Tabs"], choice_details("Tabs"));
             assert!(running(&data, &thread), "the question did not stop the run");
             let id = questions[0]["id"].as_str().unwrap().to_owned();
             let answered = call(
@@ -243,7 +265,7 @@ async fn a_question_keeps_the_run_going_and_its_answer_arrives_during_or_after_i
     assert!(
         answered.iter().any(|body| mentions(
             body,
-            "Options you offered: Spaces (recommended: the usual choice); Tabs"
+            "Options you offered: Spaces (recommended: the usual choice): re-indent with Spaces; Tabs: re-indent with Tabs"
         )),
         "the answer names the options"
     );
@@ -613,6 +635,392 @@ async fn a_steered_message_answers_an_open_question() {
         all.iter()
             .any(|body| mentions(body, "they are now closed") && mentions(body, "Tabs or spaces?")),
         "the run never read which question the steer answered"
+    );
+    app.serving.abort();
+}
+
+/// Two questions asked in one call: pages of one box.
+fn two_pages() -> Value {
+    json!({"questions": [
+        {"question": "Tabs or spaces?", "choices": [choice("Tabs"), choice("Spaces")], "recommended": "Spaces", "topic": "indent"},
+        {"question": "Which license?", "recommended": "MIT", "why": "the usual choice", "topic": "license"}
+    ]})
+}
+
+/// The content of the last tool result in a request.
+fn last_tool_result(body: &Value) -> String {
+    messages(body)
+        .iter()
+        .rev()
+        .find(|m| m["role"] == "tool")
+        .and_then(|m| m["content"].as_str())
+        .unwrap_or_default()
+        .to_owned()
+}
+
+/// Answers several of the chat's questions at once, as the box does after its last page.
+fn answer_all(data: &Path, thread: &str, answers: &[(&Value, &str)]) -> Value {
+    let answers: Vec<Value> = answers
+        .iter()
+        .map(|(question, answer)| json!({"questionId": question["id"], "answer": answer}))
+        .collect();
+    call(
+        data,
+        "answer_question",
+        json!({"threadId": thread, "answers": answers}),
+    )
+}
+
+/// Several questions in one call are stored as one group (the box's pages), each its own
+/// question with its rich choices; the run goes on, and the answers given together reach the
+/// agent as one message naming each question and its answer.
+#[tokio::test(flavor = "multi_thread")]
+async fn several_questions_are_pages_of_one_box_and_their_answers_arrive_together() {
+    let app = app(|body| {
+        let (text, results) = last_user(body);
+        if text.starts_with(ANSWER_MARKER) {
+            return reply("Using your answers.");
+        }
+        match results {
+            0 => tools(&[("p", "ask_user", two_pages())]),
+            _ => reply("Working on my recommendations."),
+        }
+    })
+    .await;
+    let (data, thread) = (app.data.path().to_owned(), app.thread.clone());
+    tokio::task::spawn_blocking(move || {
+        call(
+            &data,
+            "send_message",
+            json!({"threadId": thread, "text": "set up the project"}),
+        );
+        until("the first run never finished", || !running(&data, &thread));
+        let questions = call(&data, "list_questions", json!({"threadId": thread}));
+        let all = questions.as_array().unwrap();
+        assert_eq!(all.len(), 2, "{questions}");
+        assert!(all[0]["group"].is_string(), "{questions}");
+        assert_eq!(all[0]["group"], all[1]["group"], "{questions}");
+        assert_eq!(all[0]["choices"], json!(["Spaces", "Tabs"]));
+        assert_eq!(all[0]["details"]["Spaces"], choice_details("Spaces"));
+        assert_eq!(all[1]["assumption"], "MIT");
+        let answered = answer_all(
+            &data,
+            &thread,
+            &[(&all[0], "Tabs"), (&all[1], "Apache-2.0")],
+        );
+        assert_eq!(answered.as_array().map(Vec::len), Some(2), "{answered}");
+        until("the answers never ran", || {
+            !running(&data, &thread)
+                && call(&data, "get_thread_history", json!({"threadId": thread}))
+                    .to_string()
+                    .contains("Using your answers.")
+        });
+        let questions = call(&data, "list_questions", json!({"threadId": thread}));
+        assert_eq!(questions[0]["answer"], "Tabs");
+        assert_eq!(questions[1]["answer"], "Apache-2.0");
+    })
+    .await
+    .unwrap();
+    let all = bodies(&app.llm).await;
+    // The model is offered the tool as the prompt file describes it, with pages and rich choices.
+    let tool = all[0]["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|tool| tool["function"]["name"] == "ask_user")
+        .expect("ask_user offered")["function"]
+        .clone();
+    assert_eq!(
+        tool["description"],
+        themis_core::prompts::ASK_USER_DESCRIPTION
+    );
+    let parameters = &tool["parameters"]["properties"];
+    assert_eq!(parameters["questions"]["maxItems"], 4, "{tool}");
+    assert_eq!(
+        parameters["choices"]["items"]["required"],
+        json!([
+            "answer",
+            "does",
+            "advantages",
+            "disadvantages",
+            "consequences"
+        ])
+    );
+    assert_eq!(
+        parameters["questions"]["items"]["properties"]["choices"],
+        parameters["choices"]
+    );
+    // The call's result named both questions and the run went on with both recommendations.
+    let after = all
+        .iter()
+        .find(|body| last_user(body).1 == 1)
+        .expect("the turn after asking");
+    let note = last_tool_result(after);
+    assert!(note.contains("\"ids\""), "{note}");
+    assert!(
+        note.contains("Tabs or spaces?: Spaces; Which license?: MIT"),
+        "{note}"
+    );
+    // One message carries both answers.
+    let answer = all
+        .iter()
+        .map(|body| last_user(body).0)
+        .find(|text| text.starts_with(ANSWER_MARKER))
+        .expect("the answers reached the agent");
+    assert_eq!(answer.matches(ANSWER_MARKER).count(), 1, "{answer}");
+    for part in [
+        "Question: Tabs or spaces?",
+        "Answer: Tabs",
+        "Question: Which license?",
+        "Answer: Apache-2.0",
+    ] {
+        assert!(answer.contains(part), "{part}: {answer}");
+    }
+    app.serving.abort();
+}
+
+/// A choice that does not say what it does, its advantages, disadvantages and consequences is
+/// refused with the missing fields named, and nothing is asked.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_choice_that_does_not_say_what_it_does_is_refused() {
+    let app = app(|body| match last_user(body).1 {
+        0 => tools(&[(
+            "q",
+            "ask_user",
+            json!({"question": "Tabs or spaces?", "choices": ["Tabs", {"answer": "Spaces", "does": "re-indent"}], "recommended": "Spaces", "why": "usual"}),
+        )]),
+        _ => reply("I'll ask again with the details."),
+    })
+    .await;
+    let (data, thread) = (app.data.path().to_owned(), app.thread.clone());
+    tokio::task::spawn_blocking(move || {
+        call(
+            &data,
+            "send_message",
+            json!({"threadId": thread, "text": "format the file"}),
+        );
+        until("the run never finished", || !running(&data, &thread));
+        let questions = call(&data, "list_questions", json!({"threadId": thread}));
+        assert_eq!(questions, json!([]), "{questions}");
+    })
+    .await
+    .unwrap();
+    let all = bodies(&app.llm).await;
+    let refused = last_tool_result(
+        all.iter()
+            .find(|body| last_user(body).1 == 1)
+            .expect("the turn after asking"),
+    );
+    assert!(
+        refused.contains("is missing `does`, `advantages`, `disadvantages`, `consequences`"),
+        "{refused}"
+    );
+    app.serving.abort();
+}
+
+/// A set ends the run when any of its pages blocks; the answers to all its pages, given
+/// together, start the next turn as one message.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_set_with_a_blocking_page_ends_the_run_until_it_is_answered() {
+    let app = app(|body| {
+        let (text, results) = last_user(body);
+        if text.starts_with(ANSWER_MARKER) {
+            return reply("Got both answers.");
+        }
+        if results == 0 {
+            return tools(&[(
+                "p",
+                "ask_user",
+                json!({"questions": [
+                    {"question": "Which API key name?", "blocking": true},
+                    {"question": "Dark mode by default?", "recommended": "Yes", "why": "the usual choice"}
+                ]}),
+            )]);
+        }
+        reply("THIS RUN SHOULD HAVE ENDED")
+    })
+    .await;
+    let (data, thread) = (app.data.path().to_owned(), app.thread.clone());
+    tokio::task::spawn_blocking(move || {
+        call(
+            &data,
+            "send_message",
+            json!({"threadId": thread, "text": "configure the API"}),
+        );
+        until("the run never ended", || !running(&data, &thread));
+        let history = call(&data, "get_thread_history", json!({"threadId": thread})).to_string();
+        assert!(history.contains("I need your answer to the question above before I can go on."));
+        assert!(!history.contains("THIS RUN SHOULD HAVE ENDED"));
+        let questions = call(&data, "list_questions", json!({"threadId": thread}));
+        let all = questions.as_array().unwrap();
+        assert_eq!(all.len(), 2, "{questions}");
+        assert_eq!(all[0]["blocking"], true, "{questions}");
+        assert_eq!(all[1]["blocking"], false, "{questions}");
+        answer_all(&data, &thread, &[(&all[0], "THEMIS_KEY"), (&all[1], "No")]);
+        until("the answers never ran", || {
+            !running(&data, &thread)
+                && call(&data, "get_thread_history", json!({"threadId": thread}))
+                    .to_string()
+                    .contains("Got both answers.")
+        });
+    })
+    .await
+    .unwrap();
+    let all = bodies(&app.llm).await;
+    let answer = all
+        .iter()
+        .map(|body| last_user(body).0)
+        .find(|text| text.starts_with(ANSWER_MARKER))
+        .expect("the answers reached the agent");
+    assert!(
+        answer.contains("Answer: THEMIS_KEY") && answer.contains("Answer: No"),
+        "{answer}"
+    );
+    app.serving.abort();
+}
+
+/// A message the person writes in the chat closes every page of an open set, as it closes any
+/// open question.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_chat_message_closes_every_page_of_a_set() {
+    let app = app(|body| {
+        let (text, results) = last_user(body);
+        if text.contains("Go with your picks") {
+            return reply("Going with them.");
+        }
+        match results {
+            0 => tools(&[("p", "ask_user", two_pages())]),
+            _ => reply("Working on my recommendations."),
+        }
+    })
+    .await;
+    let (data, thread) = (app.data.path().to_owned(), app.thread.clone());
+    tokio::task::spawn_blocking(move || {
+        call(
+            &data,
+            "send_message",
+            json!({"threadId": thread, "text": "set up the project"}),
+        );
+        until("the first run never finished", || !running(&data, &thread));
+        call(
+            &data,
+            "send_message",
+            json!({"threadId": thread, "text": "Go with your picks"}),
+        );
+        until("the answer run never finished", || !running(&data, &thread));
+        let questions = call(&data, "list_questions", json!({"threadId": thread}));
+        assert_eq!(questions.as_array().map(Vec::len), Some(2), "{questions}");
+        for question in questions.as_array().unwrap() {
+            assert_eq!(question["answer"], "Go with your picks", "{questions}");
+        }
+    })
+    .await
+    .unwrap();
+    let all = bodies(&app.llm).await;
+    let (text, _) = last_user(
+        all.iter()
+            .find(|body| last_user(body).0.contains("Go with your picks"))
+            .expect("the answer turn"),
+    );
+    assert!(text.contains("they are now closed"), "{text}");
+    assert!(
+        text.contains("Tabs or spaces?") && text.contains("Which license?"),
+        "{text}"
+    );
+    app.serving.abort();
+}
+
+/// After the person presses Deny on an approval (Custom), the agent is told to run nothing
+/// else for that step and to ask how to go on: a safer way, skip it, or stop. Following it,
+/// it asks a blocking question with those choices and the run waits.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_persons_deny_has_the_agent_ask_how_to_go_on() {
+    let way = |answer: &str| json!({"answer": answer, "does": format!("{answer} (notes.txt)"), "advantages": "a", "disadvantages": "b", "consequences": "easy to undo"});
+    let choices = json!([
+        way("Write the notes to the chat instead"),
+        way("Skip this step and carry on"),
+        way("Stop here")
+    ]);
+    let app = app(move |body| {
+        let results = last_user(body).1;
+        if results == 0 {
+            return tools(&[(
+                "w",
+                "write_file",
+                json!({"file_path": "notes.txt", "content": "notes\n"}),
+            )]);
+        }
+        if results == 1 && last_tool_result(body).contains("pressed Deny") {
+            return tools(&[(
+                "q",
+                "ask_user",
+                json!({"question": "You denied writing notes.txt. How should I go on?", "blocking": true, "choices": choices}),
+            )]);
+        }
+        reply("THIS RUN SHOULD HAVE ENDED")
+    })
+    .await;
+    let (data, thread) = (app.data.path().to_owned(), app.thread.clone());
+    let project = app._project.path().to_owned();
+    tokio::task::spawn_blocking(move || {
+        call(
+            &data,
+            "set_thread_approval_mode",
+            json!({"threadId": thread, "mode": "custom"}),
+        );
+        call(
+            &data,
+            "send_message",
+            json!({"threadId": thread, "text": "write the notes"}),
+        );
+        let mut approval = Value::Null;
+        until("no approval was asked for", || {
+            let pending = call(&data, "get_pending_approvals", json!({}));
+            approval = pending
+                .as_array()
+                .and_then(|all| {
+                    all.iter()
+                        .find(|a| a["thread_id"] == thread.as_str() && a["tool"] == "write_file")
+                })
+                .cloned()
+                .unwrap_or(Value::Null);
+            !approval.is_null()
+        });
+        call(
+            &data,
+            "approve_action",
+            json!({"threadId": thread, "approvalId": approval["approval_id"], "decision": "deny"}),
+        );
+        until("the run never ended", || !running(&data, &thread));
+        let history = call(&data, "get_thread_history", json!({"threadId": thread})).to_string();
+        assert!(!history.contains("THIS RUN SHOULD HAVE ENDED"), "{history}");
+        let questions = call(&data, "list_questions", json!({"threadId": thread}));
+        assert_eq!(questions[0]["blocking"], true, "{questions}");
+        assert_eq!(
+            questions[0]["choices"],
+            json!([
+                "Write the notes to the chat instead",
+                "Skip this step and carry on",
+                "Stop here"
+            ])
+        );
+        assert!(!project.join("notes.txt").exists());
+    })
+    .await
+    .unwrap();
+    let all = bodies(&app.llm).await;
+    let denied = last_tool_result(
+        all.iter()
+            .find(|body| last_user(body).1 == 1)
+            .expect("the turn after the Deny"),
+    );
+    assert!(
+        denied.contains(themis_core::prompts::TOOL_DENIED_BY_PERSON),
+        "{denied}"
+    );
+    assert!(
+        !denied.contains(themis_core::prompts::TOOL_REFUSAL),
+        "{denied}"
     );
     app.serving.abort();
 }

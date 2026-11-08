@@ -39,12 +39,11 @@
   "crates/desktop/src/transcript/request_context.rs": 7,
   "crates/desktop/src/transcript/source_exports.rs": 7,
   "crates/desktop/src/types/automations.rs": 20,
-  "web/src/components/approval/ApprovalBox.tsx": 7,
+  "web/src/components/approval/ApprovalBox.tsx": 6,
   "web/src/screens/GoalBar.tsx": 6,
-  "web/src/screens/QuestionBox.tsx": 7,
   "web/src/state/reducer.ts": 36
  },
- "duplicate_lines_total": 785,
+ "duplicate_lines_total": 777,
  "files": {
   "crates/core/src/runtime.rs": {
    "code_lines": 1908
@@ -492,9 +491,6 @@
   "crates/core/src/tools/wrapped.rs::unwrap_once": {
    "cyclomatic": 25
   },
-  "crates/desktop/src/approvals.rs::DesktopApprovalHook#3::ask": {
-   "cyclomatic": 25
-  },
   "crates/desktop/src/cli.rs::configure_provider": {
    "cyclomatic": 24
   },
@@ -531,7 +527,7 @@
   },
   "crates/desktop/src/server/commands.rs::dispatch_command": {
    "cyclomatic": 173,
-   "lines": 610
+   "lines": 601
   },
   "crates/desktop/src/settings.rs::SettingsStore::update": {
    "cognitive": 43,
@@ -626,10 +622,6 @@
   },
   "crates/desktop/src/state/providers.rs::AppState::provider_models": {
    "cyclomatic": 25
-  },
-  "crates/desktop/src/state/questions.rs::AppState::ask_question": {
-   "cyclomatic": 29,
-   "lines": 116
   },
   "crates/desktop/src/state/run.rs::AppState::spawn_run": {
    "cognitive": 146,
