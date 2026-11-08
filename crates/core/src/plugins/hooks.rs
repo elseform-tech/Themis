@@ -39,7 +39,7 @@ pub use events::{
 use matchers::*;
 pub use matchers::{compile_matcher, glob_matches, moment_matches};
 use process::*;
-pub use process::{hook_identity, run};
+pub use process::{hook_identity, run, Failed};
 use prompt_hooks::*;
 pub use prompt_hooks::{parse_prompt_verdict, PromptModel, PromptVerdict, PROMPT_HOOK_BYTES};
 use rewake::*;

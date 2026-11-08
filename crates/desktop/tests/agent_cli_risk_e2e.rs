@@ -437,6 +437,40 @@ async fn an_agent_credential_never_switches_a_hook_or_command_server_on_in_any_m
     fx.shut_down().await;
 }
 
+/// `--help` anywhere prints usage and does nothing else, with or without an agent's credential:
+/// `themis hook enable demo probe --help` leaves the hook as it was.
+#[tokio::test(flavor = "multi_thread")]
+async fn help_prints_usage_and_changes_nothing() {
+    let _turn = ONE_SERVER.lock().await;
+    let fx = fixture().await;
+    fx.state
+        .plugin_action(
+            json!({"action": "save", "scope": "global", "spec": {"name": "demo",
+            "hooks": [{"name": "probe", "event": "BeforeTool", "command": "true",
+                "enabled": false}]}}),
+        )
+        .await
+        .unwrap();
+    let thread = fx.thread(ApprovalMode::Custom).await;
+    let token = agent_token(&fx, &thread, false);
+    for agent in [None, Some(token.as_str())] {
+        for words in [
+            &["hook", "--help"][..],
+            &["hook", "enable", "demo", "probe", "--help"],
+            &["plugin", "-h"],
+        ] {
+            let output = cli(&fx, agent, words);
+            let text = String::from_utf8_lossy(&output.stdout);
+            assert!(output.status.success(), "{words:?}: {output:?}");
+            assert!(text.contains("mcp/hook list PLUGIN"), "{words:?}: {text}");
+        }
+    }
+    let general = cli(&fx, None, &["-h"]);
+    assert!(String::from_utf8_lossy(&general.stdout).contains("usage: themis"));
+    assert_eq!(switches(&fx)["hook"], false, "help switched nothing on");
+    fx.shut_down().await;
+}
+
 /// The old `manage_integrations` tool, switching on a hook: the store would refuse it, so the
 /// person is never asked; the agent gets the refusal at once and the hook stays off. Switching
 /// on a connection by URL, which an agent may do, still asks.
@@ -611,13 +645,6 @@ async fn an_agent_credential_never_runs_a_hook_or_server_test_outside_the_sandbo
         // No action at all is not a `list`.
         let reply = socket_call(&fx, &token, "plugin_action", json!({"scope": "global"}));
         assert!(refused_with(&reply, "Themis refused"), "{mode:?}: {reply}");
-        // `themis hook test` sends the same request.
-        let output = cli(&fx, Some(&token), &["hook", "test", "demo", "probe"]);
-        let text = String::from_utf8_lossy(&output.stderr);
-        assert!(text.contains(runs_code), "{mode:?}: {text}");
-        tokio::time::sleep(Duration::from_millis(200)).await;
-        assert!(!marker.exists(), "{mode:?}: the hook ran");
-        assert!(!server_marker.exists(), "{mode:?}: the server ran");
     }
     // The person's own credential still tests a hook.
     let reply = socket_call(&fx, &person_token(&fx), "plugin_action", test_hook);
@@ -629,6 +656,95 @@ async fn an_agent_credential_never_runs_a_hook_or_server_test_outside_the_sandbo
     assert!(!logs.contains("touch '"), "never the definition: {logs}");
     fx.shut_down().await;
 }
+
+/// `themis hook test` and `themis mcp test` in a run's shell start the command themselves, inside
+/// the run's sandbox: a hook that writes in the project works, one that writes to the app data
+/// (a wall in every mode) is stopped and its answer says the sandbox may be in the way, and a
+/// command-based MCP server starts and lists its tools. Nothing runs on the app server.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_runs_themis_tests_start_the_command_inside_its_sandbox() {
+    if !common::git_available() {
+        return;
+    }
+    let _turn = ONE_SERVER.lock().await;
+    let fx = fixture().await;
+    let inside = fx.project.join("inside-ran");
+    let outside = fx.data.join("outside-ran");
+    let hook = |name: &str, target: &std::path::Path| {
+        json!({"name": name, "event": "BeforeTool", "enabled": false,
+            "command": format!("touch '{}'", target.display())})
+    };
+    let script = fx.project.join("server.py");
+    std::fs::write(&script, MCP_STDIO_SERVER).unwrap();
+    let server = json!({"command": "python3", "args": [script], "enabled": false});
+    fx.state
+        .plugin_action(
+            json!({"action": "save", "scope": "global", "spec": {"name": "demo",
+            "hooks": [hook("inside", &inside), hook("outside", &outside)],
+            "mcp": {"local": server}}}),
+        )
+        .await
+        .unwrap();
+    let provider = mount_calls(vec![
+        words("themis hook test demo inside"),
+        words("themis mcp test demo local"),
+        words("themis hook test demo outside"),
+    ])
+    .await;
+    common::use_mock_llm(&fx.state, &provider).await;
+    let thread = fx.thread(ApprovalMode::Custom).await;
+    use ApprovalDecision::Once;
+    // Each test asks once; anything after (such as running outside the sandbox) is denied.
+    let (asked, outputs) = run(&fx, &thread, &[Once, Once, Once]).await;
+    assert_eq!(outputs.len(), 3, "{outputs:#?}");
+    assert_eq!(
+        argv_of(&asked[0])[..3],
+        ["themis", "hook", "test"],
+        "{asked:?}"
+    );
+    let hook_ran = command_json(&outputs[0]);
+    assert_eq!(hook_ran["sandboxed"], true, "{hook_ran}");
+    assert!(inside.exists(), "the hook ran in the project");
+    let connected = command_json(&outputs[1]);
+    assert_eq!(connected["connected"], true, "{connected}");
+    assert_eq!(connected["tools"][0]["name"], "ping", "{connected}");
+    let blocked: Value = serde_json::from_str(&outputs[2]).unwrap();
+    assert_ne!(blocked["exit_code"], 0, "{blocked}");
+    assert!(
+        !outside.exists(),
+        "the sandbox stopped the write to the app data"
+    );
+    let said = blocked.to_string();
+    assert!(said.contains("ran inside this run's sandbox"), "{said}");
+    // What the hook printed shows why: the sandbox's refusal (macOS or Linux wording).
+    assert!(
+        said.contains("Operation not permitted")
+            || said.contains("Permission denied")
+            || said.contains("Read-only file system"),
+        "{said}"
+    );
+    let logs = logs(&fx);
+    assert!(
+        !logs.contains("runs_code"),
+        "nothing asked the server to test: {logs}"
+    );
+    fx.shut_down().await;
+}
+
+/// A command-based MCP server on stdin and stdout with one tool, `ping`.
+const MCP_STDIO_SERVER: &str = r#"import json, sys
+for line in sys.stdin:
+    message = json.loads(line)
+    if "id" not in message:
+        continue
+    result = {
+        "initialize": {"protocolVersion": "2025-03-26", "capabilities": {"tools": {}},
+                       "serverInfo": {"name": "probe", "version": "1"}},
+        "tools/list": {"tools": [{"name": "ping", "description": "Answers pong.",
+                                  "inputSchema": {"type": "object"}}]},
+    }.get(message["method"], {})
+    print(json.dumps({"jsonrpc": "2.0", "id": message["id"], "result": result}), flush=True)
+"#;
 
 /// The credential is bound to its run's project and network: another project's plugins are out
 /// of reach, and a run whose sandbox blocks the network cannot have the server fetch for it.

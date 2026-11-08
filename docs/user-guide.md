@@ -487,9 +487,12 @@ saves arrives with them switched off, and if it tries to switch one on, through
 its tools or `themis`, Themis refuses (without asking you first: there is no
 approval box for a call that cannot succeed) and it asks you to switch it on in
 Integrations instead. A server by URL it may switch on; it still waits for your
-approval before it starts. For the same reason the agent cannot test a hook or
-a command-based server through `themis` (`hook test`, `mcp test`); test it
-yourself in Integrations. Its `themis` also works only on your global
+approval before it starts. The agent can still test a hook or a command-based
+server with `themis hook test` or `themis mcp test`: in its shell the test
+starts the command inside the chat's sandbox, like any command it runs, so a
+server that needs the network, your Keychain or files outside the project may
+fail there even when it is set up right. The agent then tells you, and you can
+run the same command in your own terminal, where it runs as you. Its `themis` also works only on your global
 integrations and its own project's, and cannot install or fetch anything when
 the chat's sandbox blocks the network. To stop
 the agent using `themis` at all, add a deny rule for shell commands starting

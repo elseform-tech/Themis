@@ -755,9 +755,11 @@ the shell's approval step to see) meets the same checks:
 Everything else is refused, in every mode, YOLO included: a missing or unknown
 action; `test_hook`, `test_mcp` and `mcp_status` with `connect` or `retry`,
 which run a command or start a connection outside the sandbox where the server
-cannot know you saw it (the answer, `agent-cli-runs-code-refused.md`, tells the
-agent to ask you to test it in Integrations, or to use `manage_integrations`,
-whose test goes through the chat's approvals); and `mcp_allow_secrets` and MCP
+cannot know you saw it (the answer, `agent-cli-runs-code-refused.md`, points
+the agent to `themis hook test` and `themis mcp test`, which in its shell start
+the command themselves, inside the run's sandbox; a failed one answers with
+what the hook printed and `agent-cli-sandboxed-test-failed.md`, so the agent
+can tell you when the sandbox was in the way); and `mcp_allow_secrets` and MCP
 sign-in/sign-out, which are yours. The credential is also bound to its run when
 it is issued:
 
@@ -826,10 +828,10 @@ not as a generic command:
 
 | `themis` command | Risk | Custom | Auto | YOLO |
 | --- | --- | --- | --- | --- |
-| Reads: `status`, `doctor`, `usage`, `models`, `permissions`, `auth status`, `--help`; `plugin list/show/export/updates`; `plugin`/`skill`/`mcp`/`hook inspect`; `plugin marketplace list/browse/preview/changes/check`; `skill list`; `skill`/`mcp`/`hook list/show`; `call` with a reading method from the allowed list | `read` | no prompt (the built-in read rule) | no prompt | runs |
+| Reads: `status`, `doctor`, `usage`, `models`, `permissions`, `auth status`, `--help` or `-h` anywhere (the CLI then only prints its usage), a bare `plugin`/`skill`/`mcp`/`hook`; `plugin list/show/export/updates`; `plugin`/`skill`/`mcp`/`hook inspect`; `plugin marketplace list/browse/preview/changes/check`; `skill list`; `skill`/`mcp`/`hook list/show`; `call` with a reading method from the allowed list | `read` | no prompt (the built-in read rule) | no prompt | runs |
 | Changes through the store: `plugin create/save/edit/disable`, `skill save`, `mcp`/`hook add/update`, `skill enable`, any `disable`, `plugin marketplace enable/disable`, a local `import` | `write` | asks; **Allow in this chat** covers the same command (its full argv) | the reviewer decides | runs |
 | Network: `plugin install/update`, an `import` from an `http(s)` URL or with `--ref`/`--subdirectory`, `plugin marketplace add/refresh` | `network` | as a change | the reviewer decides | runs |
-| Tests that start code: `mcp test`, `hook test`, `skill verify` | `execute` | asks (the server then refuses `mcp test` and `hook test` from an agent's credential) | the reviewer decides (likewise refused) | runs `skill verify`; the server refuses `mcp test` and `hook test` |
+| Tests that start code: `mcp test`, `hook test`, `skill verify` | `execute` | asks; in an agent's shell the test starts the command inside the run's sandbox, not on the server | the reviewer decides (an ordinary sandboxed command, not a sandbox escape) | runs, inside the sandbox YOLO keeps |
 | Removals: `plugin delete/uninstall`, `skill`/`mcp`/`hook delete/remove`, `plugin marketplace remove` | `destructive` | asks every time, never covered by **Allow in this chat** | the reviewer decides | runs |
 | Switching on: `hook enable`, `mcp enable`, `plugin enable` (which turns on the hooks the plugin has on), `call plugin_action` with `enable` or `set_component_enabled` turning on a hook or MCP server | `execute` | asks every time, never covered by **Allow in this chat** | always the person, like a sandbox escape: blocked with the question box (`auto-switch-on-reason.md`, `auto-switch-on-safer.md`) and only their **Allow once** lets it run | runs |
 
