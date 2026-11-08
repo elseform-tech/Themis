@@ -879,9 +879,9 @@
    "cyclomatic": 31
   },
   "web/src/screens/ThreadComposer.tsx::ThreadComposer": {
-   "cognitive": 44,
-   "cyclomatic": 59,
-   "lines": 150
+   "cognitive": 34,
+   "cyclomatic": 49,
+   "lines": 142
   },
   "web/src/screens/ThreadConversation.tsx::ConversationRow": {
    "cognitive": 41,

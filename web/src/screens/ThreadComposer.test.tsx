@@ -89,28 +89,66 @@ describe("ThreadComposer", () => {
     expect(screen.queryByRole("alert")).toBeNull();
     expect(screen.getByRole("button", {name: "Send"})).toBeEnabled();
   });
-  it("says plainly that YOLO has no approvals and no sandbox, and marks it as a warning",()=>{
+  it("shows the mode on the shield with its own icon and colour, and a one-line summary per mode",()=>{
     const view=composer(false);
     view.rerender(<ThreadComposer {...view.props} thread={{...thread,approval_mode:"yolo"}} />);
-    expect(screen.getByText("YOLO",{selector:"summary span"})).toHaveClass("is-yolo");
-    expect(screen.getByText(/No approvals, no sandbox: the agent can change anything on this computer\. Only Themis settings are protected\./)).toBeInTheDocument();
+    expect(screen.getByLabelText("Permissions: YOLO").closest("details")).toHaveAttribute("data-mode","yolo");
+    expect(screen.getByText("No prompts, no sandbox; asks you before destructive steps.")).toBeInTheDocument();
+    expect(screen.queryByText(/Still applies/)).toBeNull();
     view.rerender(<ThreadComposer {...view.props} thread={{...thread,approval_mode:"yolo"}} yoloKeeps={["network blocked","2 deny rules"]} />);
-    expect(screen.getByText(/Only Themis settings are protected; still applies: network blocked, 2 deny rules\./)).toBeInTheDocument();
+    expect(screen.getByText("Still applies: network blocked, 2 deny rules")).toBeInTheDocument();
+    view.rerender(<ThreadComposer {...view.props} thread={{...thread,approval_mode:"auto"}} />);
+    expect(screen.getByLabelText("Permissions: Auto").closest("details")).toHaveAttribute("data-mode","auto");
+    expect(screen.getByText("A reviewer checks risky steps; asks you before destructive ones.")).toBeInTheDocument();
     view.rerender(<ThreadComposer {...view.props} />);
-    expect(screen.getByText("Custom",{selector:"summary span"})).not.toHaveClass("is-yolo");
+    expect(screen.getByLabelText("Permissions: Custom").closest("details")).toHaveAttribute("data-mode","custom");
+    expect(screen.getByText("Asks you before each change.")).toBeInTheDocument();
+    // Three distinct icons: Auto's shield has a check, YOLO is a bolt, Custom a plain shield.
+    const icons=screen.getAllByRole("radio",{hidden:true}).map(radio=>radio.querySelector("svg")!.innerHTML);
+    expect(new Set(icons).size).toBe(3);
   });
-  it("shows only YOLO, Auto and Custom and permits next-run changes while running",()=>{
+  it("shows only Auto, Custom and YOLO and permits next-run changes while running",()=>{
     const view=composer(true),onApprovalModeChange=vi.fn();
     view.rerender(<ThreadComposer {...view.props} onApprovalModeChange={onApprovalModeChange} />);
     expect(screen.getByText("Custom",{selector:"summary span"})).toBeInTheDocument();
-    const select=screen.getByRole("combobox",{name:"Approval mode",hidden:true});
-    expect(Array.from(select.querySelectorAll("option")).map(option=>option.textContent)).toEqual(["YOLO","Auto","Custom"]);
-    expect(select).toBeEnabled();fireEvent.change(select,{target:{value:"yolo"}});
+    const group=screen.getByRole("radiogroup",{name:"Approval mode",hidden:true});
+    const radios=screen.getAllByRole("radio",{hidden:true});
+    expect(radios.map(radio=>radio.querySelector("strong")!.textContent)).toEqual(["Auto","Custom","YOLO"]);
+    expect(radios.map(radio=>radio.getAttribute("aria-checked"))).toEqual(["false","true","false"]);
+    expect(group).not.toHaveAttribute("aria-disabled");
+    fireEvent.click(screen.getByRole("radio",{name:/^YOLO/,hidden:true}));
     expect(onApprovalModeChange).toHaveBeenCalledWith("yolo");
-    fireEvent.change(select,{target:{value:"auto"}});
+    fireEvent.click(screen.getByRole("radio",{name:/^Auto/,hidden:true}));
     expect(onApprovalModeChange).toHaveBeenCalledWith("auto");
+    // Choosing the current mode again saves nothing.
+    fireEvent.click(screen.getByRole("radio",{name:/^Custom/,hidden:true}));
+    expect(onApprovalModeChange).toHaveBeenCalledTimes(2);
     expect(screen.queryByRole("button", {name:"Edit configuration"})).toBeNull();
-    expect(screen.getByText(/Changes apply to the next run/)).toBeInTheDocument();
+    expect(screen.getByText("Changes apply to the next run.")).toBeInTheDocument();
+    view.rerender(<ThreadComposer {...view.props} running={false} />);
+    expect(screen.queryByText("Changes apply to the next run.")).toBeNull();
+  });
+  it("chooses with the arrow keys and ignores input while a change is saving",()=>{
+    const view=composer(false),onApprovalModeChange=vi.fn();
+    view.rerender(<ThreadComposer {...view.props} onApprovalModeChange={onApprovalModeChange} />);
+    const custom=screen.getByRole("radio",{name:/^Custom/,hidden:true});
+    expect(custom).toHaveAttribute("tabindex","0");
+    expect(screen.getByRole("radio",{name:/^YOLO/,hidden:true})).toHaveAttribute("tabindex","-1");
+    fireEvent.keyDown(custom,{key:"ArrowDown"});
+    expect(onApprovalModeChange).toHaveBeenLastCalledWith("yolo");
+    expect(document.activeElement).toBe(screen.getByRole("radio",{name:/^YOLO/,hidden:true}));
+    fireEvent.keyDown(custom,{key:"ArrowUp"});
+    expect(onApprovalModeChange).toHaveBeenLastCalledWith("auto");
+    view.rerender(<ThreadComposer {...view.props} onApprovalModeChange={onApprovalModeChange} thread={{...thread,approval_mode:"yolo"}} />);
+    fireEvent.keyDown(screen.getByRole("radio",{name:/^YOLO/,hidden:true}),{key:"ArrowRight"});
+    expect(onApprovalModeChange).toHaveBeenLastCalledWith("auto");
+    onApprovalModeChange.mockClear();
+    view.rerender(<ThreadComposer {...view.props} onApprovalModeChange={onApprovalModeChange} permissionSaving />);
+    expect(screen.getByRole("radiogroup",{name:"Approval mode",hidden:true})).toHaveAttribute("aria-disabled","true");
+    expect(screen.getByText("Saving…",{selector:"summary span"})).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("radio",{name:/^YOLO/,hidden:true}));
+    fireEvent.keyDown(screen.getByRole("radio",{name:/^Custom/,hidden:true}),{key:"ArrowDown"});
+    expect(onApprovalModeChange).not.toHaveBeenCalled();
   });
   it("attaches any file type, removes pending files and permits attachment-only sends", () => {
     const view = composer(false);
@@ -239,17 +277,15 @@ describe("composer focus and shortcuts", () => {
     const onApprovalModeChange = vi.fn();
     const view = composer(false);
     view.rerender(<ThreadComposer {...view.props} onApprovalModeChange={onApprovalModeChange} />);
-    const select = screen.getByRole("combobox", { name: "Approval mode", hidden: true });
-    for (const key of ["y", "c", "Y", "C"]) expect(fireEvent.keyDown(select, { key })).toBe(false);
-    // Other keys, IME composition and modified keys keep their native behaviour.
-    expect(fireEvent.keyDown(select, { key: "o" })).toBe(true);
-    expect(fireEvent.keyDown(select, { key: "Process" })).toBe(true);
-    expect(fireEvent.keyDown(select, { key: "y", isComposing: true })).toBe(true);
-    expect(fireEvent.keyDown(select, { key: "c", metaKey: true })).toBe(true);
+    const group = screen.getByRole("radiogroup", { name: "Approval mode", hidden: true });
+    const custom = screen.getByRole("radio", { name: /^Custom/, hidden: true });
+    for (const key of ["y", "c", "a", "Y", "C", "A", "o"]) {
+      fireEvent.keyDown(custom, { key });
+      fireEvent.keyDown(group, { key });
+    }
+    expect(fireEvent.keyDown(custom, { key: "y", isComposing: true })).toBe(true);
     expect(onApprovalModeChange).not.toHaveBeenCalled();
-    // Arrow keys and Space stay available for explicit keyboard use.
-    expect(fireEvent.keyDown(select, { key: "ArrowDown" })).toBe(true);
-    expect(fireEvent.keyDown(select, { key: " " })).toBe(true);
+    expect(custom).toHaveAttribute("aria-checked", "true");
   });
   it("does not move focus to the shield on a mouse press, but still toggles it on click", () => {
     composer(false);
@@ -286,7 +322,7 @@ describe("composer focus and shortcuts", () => {
     (editor as HTMLElement).blur();
     const summary = screen.getByText("Custom", { selector: "summary span" }).closest("summary")!;
     fireEvent.click(summary);
-    fireEvent.click(summary.closest("details")!.querySelector(".themis-permissions-panel p")!);
+    fireEvent.click(summary.closest("details")!.querySelector(".themis-permissions-panel")!);
     expect(document.activeElement).not.toBe(editor);
     fireEvent.click(screen.getByRole("button", { name: "Send" }));
     expect(document.activeElement).not.toBe(editor);

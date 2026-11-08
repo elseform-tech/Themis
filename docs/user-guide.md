@@ -426,8 +426,10 @@ publish) still waits on an approval box first, in YOLO and Auto alike: Allow
 once runs it, Deny skips it, and with no answer in 10 minutes (the approval
 timeout) YOLO runs it and Auto lets its reviewer decide. Blocks you
 wrote still hold: a `deny` rule, `sandbox.network: "block"` and
-`allow_keychain: false`; the shield's panel lists them. The shield
-shows **YOLO** in the warning colour. Mode and
+`allow_keychain: false`; the shield lists them under YOLO ("Still applies: …"). The shield
+shows the chat's mode with its own icon and colour: **Auto** gold, **Custom** grey and
+**YOLO** red. Opening it lists the three modes with one line each; click one (or use the
+arrow keys) to switch. Mode and
 configuration changes apply to the next run; active runs keep their captured
 policy. See [configuration](configuration.md) for examples and
 [sandbox](sandbox.md) for the enforcement boundary.

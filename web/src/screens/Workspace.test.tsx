@@ -244,8 +244,8 @@ describe("Workspace journey", () => {
     await mount();await act(async()=>fireEvent.click(screen.getByRole("button",{name:/^Permission test/})));
     fireEvent.input(screen.getByLabelText("Message"),{target:{textContent:"Hello"}});
     fireEvent.click(screen.getByLabelText("Permissions: Custom"));
-    fireEvent.change(screen.getByRole("combobox",{name:"Approval mode"}),{target:{value:"yolo"}});
-    expect(screen.getByRole("combobox",{name:"Approval mode"})).toBeDisabled();
+    fireEvent.click(screen.getByRole("radio",{name:/^YOLO/}));
+    expect(screen.getByRole("radiogroup",{name:"Approval mode"})).toHaveAttribute("aria-disabled","true");
     expect(screen.getByRole("button",{name:"Send"})).toBeDisabled();
     fireEvent.click(screen.getByRole("button",{name:"Send"}));
     expect(bridge.sendMessage).not.toHaveBeenCalled();
