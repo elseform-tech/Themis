@@ -663,24 +663,34 @@ impl PluginStore {
         preview.package_hash = hash;
         Ok(preview)
     }
-    /// One plugin's check, for its preview or install. A saved check of it is used as it is;
-    /// without one only this plugin is checked, never the rest of its marketplace (a whole scan
-    /// fetches every plugin's repository). The new check is saved for the install that usually
-    /// follows, unless a scan of the marketplace is writing its checks right now.
+    /// One plugin's check, for its preview or install. A saved check of it is used as it is.
+    /// While a scan of the marketplace runs (someone browsed or added it), that scan's own check
+    /// of this plugin is waited for, so a preview and the install after it see the same check.
+    /// Otherwise only this plugin is checked, never the rest of its marketplace (a whole scan
+    /// fetches every plugin's repository), and the check is saved for the install that usually
+    /// follows.
     pub async fn scanned_marketplace_preview(
         &self,
         marketplace: &str,
         name: &str,
     ) -> anyhow::Result<ImportPreview> {
         let source = self.marketplace_source(marketplace)?;
-        let saved = self
-            .scan_state(marketplace)
-            .ok()
-            .filter(|state| state.source == source && state.version == SCAN_VERSION);
-        if let Some(state) = &saved {
-            if state.checks.contains_key(name) || state.errors.contains_key(name) {
-                return self.read_scanned_preview(marketplace, name, state);
+        let started = std::time::Instant::now();
+        loop {
+            let saved = self
+                .scan_state(marketplace)
+                .ok()
+                .filter(|state| state.source == source && state.version == SCAN_VERSION);
+            if let Some(state) = &saved {
+                if state.checks.contains_key(name) || state.errors.contains_key(name) {
+                    return self.read_scanned_preview(marketplace, name, state);
+                }
             }
+            // The lock is free (and let go at once) when no scan is running.
+            if self.scan_lock(marketplace).is_ok() || started.elapsed() >= SCAN_WAIT {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
         }
         let mut preview = self.inspect_for_scan(marketplace, name).await?;
         preview.check_revision = Some(revision());
