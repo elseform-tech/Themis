@@ -200,14 +200,26 @@ class QuestionsRun:
         return [q for q in questions or [] if q.get("answer") is None]
 
     def _answer_questions(self, answered):
+        """Answers each open question; the pages of one set (`group`) together in one reply, as the
+        box sends them."""
+        sets = {}
         for question in self._open_questions():
-            if question.get("id") in answered:
-                continue
-            answered.add(question.get("id"))
-            text, pref = answer_for(question, self.scenario.get("preferences") or [])
-            self.call("answer_question", {"threadId": self.thread, "questionId": question["id"], "answer": text})
-            self.actions.append({"kind": "answer", "question": (question.get("question") or "")[:200],
-                                 "choices": len(question.get("choices") or []), "matched": pref, "answer": text})
+            if question.get("id") not in answered:
+                sets.setdefault(question.get("group") or question["id"], []).append(question)
+        for pages in sets.values():
+            replies = []
+            for question in pages:
+                answered.add(question["id"])
+                text, pref = answer_for(question, self.scenario.get("preferences") or [])
+                replies.append({"questionId": question["id"], "answer": text})
+                self.actions.append({"kind": "answer", "question": (question.get("question") or "")[:200],
+                                     "choices": len(question.get("choices") or []), "matched": pref,
+                                     "answer": text, "pages": len(pages)})
+            if len(replies) == 1:
+                self.call("answer_question", {"threadId": self.thread, **replies[0]})
+            else:
+                self.call("answer_question", {"threadId": self.thread, "answers": replies})
+            self.actions.append({"kind": "reply", "pages": len(replies)})
 
 
 def active_run(events):
