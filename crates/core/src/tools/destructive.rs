@@ -370,14 +370,19 @@ pub fn runs_git_helper(command: &[String]) -> bool {
 /// remote reached through a command (`ext::`, `fd::`).
 fn git_helper_argument(sub: &str, argument: &str) -> bool {
     const HELPERS: [&str; 4] = ["--upload-pack", "--receive-pack", "--exec", "--config"];
-    let short = |flag: &str| argument.starts_with(flag) && !argument.starts_with("--");
+    // Short options may be bundled (`-qu sh` is `-q -u sh`): look at every letter of a
+    // single-dash argument, which over-asks at worst.
+    let bundle = argument
+        .strip_prefix('-')
+        .filter(|rest| !rest.is_empty() && !rest.starts_with('-'));
+    let has = |letter: char| bundle.is_some_and(|rest| rest.contains(letter));
     let name = argument.split('=').next().unwrap_or_default();
     let helper = name.len() > 2
         && name.starts_with("--")
         && HELPERS.iter().any(|long| long.starts_with(name));
     let lower = argument.to_ascii_lowercase();
-    let upload = matches!(sub, "clone" | "ls-remote") && short("-u");
-    helper || upload || short("-c") || lower.contains("ext::") || lower.contains("fd::")
+    let upload = matches!(sub, "clone" | "ls-remote") && has('u');
+    helper || upload || has('c') || lower.contains("ext::") || lower.contains("fd::")
 }
 
 fn git_helper(command: &[String]) -> bool {
