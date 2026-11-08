@@ -44,13 +44,13 @@ OURS = (
 )
 MODEL = (
     ("batch_limit", r"^Not run: this batch|Tool arguments exceed"),
-    ("bad_arguments", r"argument '[^']+' is invalid|invalid arguments|invalid (?:type|value|JSON)"
+    ("bad_arguments", r"argument '[^']+' is (?:invalid|missing)|invalid arguments|invalid (?:type|value|JSON)"
                       r"|missing field|unknown field|must not be empty"
                       # a JSONL field asked of a file that has none; a cwd that is no directory
                       r"|Selected JSONL field is missing|working directory '[^']*' is not a directory"
                       # a recall kind that does not exist; a required ask_user field left out
                       r"|unknown kind '|needs `[a-z_]+`"),
-    ("unknown_tool", r"unknown tool '"),
+    ("unknown_tool", r"unknown tool '|unknown action '"),
     # A second goal while the first is unfinished: the tool says to update the first instead.
     ("goal_exists", r"already has an unfinished goal"),
     ("missing_path", r"(?:no such file|not found|does not exist|cannot find).{0,80}['`\"/]"

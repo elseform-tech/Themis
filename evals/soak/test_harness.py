@@ -492,6 +492,11 @@ class GraderTests(unittest.TestCase):
                  # From the round after goals stopped giving up: a non-web URL for the browser.
                  ("browser_open", "tool 'browser_open' failed: browser_open: only http and https URLs are supported, "
                                   "not about:", "model"),
+                 # The one browser tool: a bad URL, an action it lacks, no action at all.
+                 ("browser", "tool 'browser' failed: browser open: only http and https URLs are supported, not about:",
+                  "model"),
+                 ("browser", "browser: unknown action 'hover'. Use one of: open, navigate, snapshot.", "model"),
+                 ("browser", "browser: argument 'action' is missing. Give one of: open, navigate.", "model"),
                  # From a free-model soak: a second goal asked for while the first is unfinished.
                  ("create_goal", "tool 'create_goal' failed: create_goal: this chat already has an unfinished "
                                  "goal; use update_goal only for its status, and keep working on it", "model"),

@@ -14,7 +14,7 @@ import unittest
 
 from . import generate, pressure, scenarios
 from .__main__ import ab_table, arms, record_of, report, series_key
-from .grade import MEASURES, grade, rereads_after_checkpoint
+from .grade import MEASURES, browser_action, check_indexes, grade, rereads_after_checkpoint
 from .run import APPROVAL, active_run, approval
 
 ALL_PLANTS = ("req-thousands", "req-import-report", "side-country", "side-overdue-sort", "feat-top", "feat-cshow",
@@ -187,11 +187,25 @@ class Reporting(unittest.TestCase):
         self.assertIn("## Budget 32000, pressure none (n = 1 / 1)", table)
         self.assertIn("| requirements_met | 0.5 | 1 |", table)
 
+    def test_browser_checks_count_for_the_one_tool_and_for_an_older_build(self):
+        # A/B arms: this build's `browser` with an action, and main's separate browser_* tools.
+        for open_, click in [
+            ("browser", "browser"),
+            ("browser_open", "browser_click"),
+        ]:
+            found = [(0, open_, 'call `%s` with {"action":"open","url":"http://localhost:8000/"}' % open_),
+                     (1, click, 'call `%s` with {"action":"click","ref":"e4"}' % click)]
+            self.assertEqual(check_indexes(found), [0, 1], open_)
+        remote = [(0, "browser", 'call `browser` with {"action":"open","url":"https://example.com/"}'),
+                  (1, "browser", 'call `browser` with {"action":"click","ref":"e4"}')]
+        self.assertEqual(check_indexes(remote), [])
+        self.assertIsNone(browser_action("shell", "call `shell` with {}"))
+
     def test_the_limited_tool_set_refuses_lookups_before_any_allow(self):
         self.assertIs(approval("full"), APPROVAL)
         limited = approval("limited")["rules"]
         refused = [rule["tool"] for rule in limited if rule["action"] == "deny"][:5]
-        self.assertEqual(refused, ["web_search", "fetch_url", "browser_*", "recall", "ask_user"])
+        self.assertEqual(refused, ["web_search", "fetch_url", "browser*", "recall", "ask_user"])
         # Rules are checked in order: every refusal comes before the first allow.
         first_allow = next(index for index, rule in enumerate(limited) if rule["action"] == "allow")
         self.assertTrue(all(rule["action"] == "deny" for rule in limited[:first_allow]))
