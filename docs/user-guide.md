@@ -500,6 +500,16 @@ installing a skill, plugin, MCP server or hook) asks in **Custom**, and **Allow
 in this chat** covers that same command; **Auto**'s reviewer decides. Removing
 something asks every time. **YOLO** runs them all.
 
+`themis doctor --integrations` checks every plugin, skill, MCP server and hook
+you have installed or made, globally and in the project: each definition, each
+skill's file, each hook's command (found, never run), and each MCP server that
+is switched on (started, its tools listed). It lists every problem with where it
+is and a one-line fix, and `--json` gives the same as JSON. Because it starts
+servers it asks like a test; `--no-start` skips them and is only a read. In the
+agent's shell it starts the servers inside the chat's sandbox, so one that needs
+a secret is listed as not started there: run the same command in your own
+terminal to check it.
+
 Switching on a hook or an MCP server that runs a command is yours alone, in
 every mode, YOLO included: they run outside the sandbox. Whatever the agent
 saves arrives with them switched off, and if it tries to switch one on, through
