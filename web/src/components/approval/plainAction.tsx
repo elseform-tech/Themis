@@ -5,7 +5,7 @@ import { SafeText, TokenChip, TokenList } from "./CommandTokens";
 import { CommandPreview } from "./CommandView";
 
 /** A plain sentence: fixed wording (strings) around untrusted names (paths, argv), which render only as escaped chips. */
-/** `command` is a command's argv, shown as a short preview (the whole command is in Details). */
+/** `command` is a command's argv, shown whole, scrolling when long (one part per line in Details). */
 export type ActionPart = string | { token: string } | { tokens: string[] } | { command: string[] } | { text: string };
 
 const PATCH_OPS = /([\s\S]*?) \((?:create|modify|delete)\)(?:, |$)/g;

@@ -5,7 +5,12 @@ import { ActionSentence, actionParts, type ActionPart } from "./plainAction";
 
 const request = (tool: string, summary: string, extra: Partial<ApprovalRequest> = {}): ApprovalRequest =>
   ({ thread_id: "t", approval_id: "a", tool, summary, risk: "write", ...extra });
-const sentence = (parts: ActionPart[]) => render(<p><ActionSentence parts={parts} /></p>).container.textContent;
+/** The sentence's words, without the Copy button that sits beside a command. */
+const sentence = (parts: ActionPart[]) => {
+  const { container } = render(<p><ActionSentence parts={parts} /></p>);
+  container.querySelectorAll("button").forEach(button => button.remove());
+  return container.textContent;
+};
 
 describe("actionParts", () => {
   it.each([

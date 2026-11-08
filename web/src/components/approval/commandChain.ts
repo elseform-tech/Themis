@@ -1,22 +1,16 @@
-/** Reading a command the agent wants to run: the exact text to copy, a short preview, and, for a chain, its parts.
+/** Reading a command the agent wants to run: the exact text to show and copy, and, for a chain, its parts.
  *  Everything here is untrusted input (model output): it only splits and labels, and the UI renders it escaped. */
 
 /** One command of a chain: its text as written, and its words for the destructive hint. */
 export interface CommandPart { text: string; words: string[] }
 
 export interface CommandView {
-  /** The exact command, shell-quoted, for Copy. */
+  /** The exact command, shell-quoted: shown on one line and copied. */
   copy: string;
-  /** At most `PREVIEW_CHARS` characters of `copy`, ending with "…" when cut. */
-  preview: string;
-  cut: boolean;
-  /** The parts of a chain (two or more), or null for a single command. */
+  /** The parts of a chain (two or more), for the count and the destructive hint, or null for a single command. */
   parts: CommandPart[] | null;
-  /** A `sh -c` script the reader could not split safely: Details shows it as written. */
-  script: string | null;
 }
 
-export const PREVIEW_CHARS = 160;
 const SAFE_WORD = /^[A-Za-z0-9_@%+=:,./-]+$/;
 const CHAIN_TOKENS = new Set(["&&", "||", ";", "|"]);
 const SHELLS = /^(?:.*\/)?(?:sh|bash|zsh|dash)$/;
@@ -95,13 +89,9 @@ function splitArgv(argv: string[]): CommandPart[] {
 
 export function commandView(argv: string[]): CommandView {
   const copy = shellJoin(argv);
-  const chars = Array.from(copy);
-  const cut = chars.length > PREVIEW_CHARS;
-  const preview = cut ? `${chars.slice(0, PREVIEW_CHARS).join("")}…` : copy;
   const isScript = argv.length >= 3 && SHELLS.test(argv[0]) && /^-[a-z]*c$/.test(argv[1]);
   const parts = isScript ? splitScript(argv[2]) : splitArgv(argv);
-  const script = isScript && parts === null ? argv[2] : null;
-  return { copy, preview, cut, parts: parts && parts.length > 1 ? parts : null, script };
+  return { copy, parts: parts && parts.length > 1 ? parts : null };
 }
 
 const RM_FLAG = /^-[a-zA-Z]*[rRf]/;

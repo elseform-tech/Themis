@@ -1,8 +1,6 @@
 import type { ApprovalDecision, ApprovalRequest } from "../../lib/types";
 import { UNSANDBOXED_TOOL } from "../../lib/types";
-import { useState } from "react";
 import { SafeText, TokenChip, TokenList } from "./CommandTokens";
-import { CommandFull, commandNeedsDetails } from "./CommandView";
 import { ActionSentence, actionParts } from "./plainAction";
 import { Button } from "../primitives/Button";
 import "./ApprovalBox.css";
@@ -54,10 +52,16 @@ export function GrantHint({ request }: { request: ApprovalRequest }) {
   if ((request.tool !== "shell" && !outside) || !scope || scope.argv.length === 0) {
     return <>Allow in this chat covers this tool in later runs of this chat.</>;
   }
+  const argv = request.command?.argv;
+  // The whole command is listed just above; repeating it cut short would hide part of what is granted.
+  const exact = !scope.covers_further_args && argv?.length === scope.argv.length && argv.every((token, index) => token === scope.argv[index]);
+  if (exact) {
+    return <>Allow in this chat {outside ? "lets" : "covers"} this exact command{outside ? " run outside the sandbox" : ""} in later runs of this chat. Other commands still ask.</>;
+  }
   return (
     <>
       Allow in this chat {outside ? "lets" : "covers"} the command{" "}
-      <TokenList argv={scope.argv} />
+      <TokenList argv={scope.argv} full />
       {scope.covers_further_args && <span> and any further arguments</span>}
       {outside ? " run outside the sandbox" : ""}
       {" "}in later runs of this chat. Other commands still ask.
@@ -65,24 +69,24 @@ export function GrantHint({ request }: { request: ApprovalRequest }) {
   );
 }
 
-/** What the box keeps behind its Details disclosure: the whole command, where it runs, the secret files, why it asks
- *  and what a grant covers. It opens by itself when the lead could not show the whole command. The raw tool call is
- *  never shown. */
+/** What the box keeps behind its Details disclosure: where it runs, the secret files and why it asks (the command is
+ *  in the lead; what a grant covers shows on the button). Nothing to tell, no Details. The raw tool call is never shown. */
 function ApprovalDetails({ request }: { request: ApprovalRequest }) {
   const { command } = request;
   const outside = request.tool === UNSANDBOXED_TOOL;
   const blocked = command?.sandbox_blocked;
-  const [open, setOpen] = useState(() => command !== undefined && commandNeedsDetails(command.argv));
+  const folder = command?.cwd !== undefined;
+  const secrets = Boolean(request.sensitive_files?.length);
+  const always = request.grantable === false;
+  if (!folder && !secrets && !outside && !always) return null;
   return (
-    <details className="themis-approval-details" open={open} onToggle={event => setOpen(event.currentTarget.open)}>
+    <details className="themis-approval-details">
       <summary>Details</summary>
-      {command && <CommandFull argv={command.argv} />}
       <dl>
-        {command?.cwd !== undefined && <><dt>Folder</dt><dd><TokenChip token={command.cwd} full /></dd></>}
-        {request.sensitive_files?.length ? <><dt>Secret files</dt><dd><TokenList argv={request.sensitive_files} /></dd></> : null}
+        {folder && <><dt>Folder</dt><dd><TokenChip token={command!.cwd!} full /></dd></>}
+        {secrets && <><dt>Secret files</dt><dd><TokenList argv={request.sensitive_files!} /></dd></>}
         {outside && <><dt>Why</dt><dd>The sandbox blocked it{blocked ? <>: <SafeText text={blocked} />.</> : "."} Outside the sandbox it can write anywhere you can, read secret folders and use the network.</dd></>}
-        <dt>{request.grantable === false ? "Always asks" : "In this chat"}</dt>
-        <dd><GrantHint request={request} /></dd>
+        {always && <><dt>Always asks</dt><dd><GrantHint request={request} /></dd></>}
       </dl>
     </details>
   );
