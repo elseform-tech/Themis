@@ -905,3 +905,44 @@ fn shared_tools_convert_to_boxes() {
     assert_eq!(boxes.len(), 12);
     assert_eq!(boxes[8].name(), "shell");
 }
+
+/// `fetch`, `pull` and `push` never run another program or take configuration from the call:
+/// helper options (by any abbreviation git accepts), `-c`, `-u` and `ext::`/`fd::` remotes are
+/// refused before anyone is asked, so a grant for `git fetch` can never cover them.
+#[tokio::test]
+async fn git_remote_calls_refuse_options_that_run_another_program() {
+    let (_tmp, root) = rooted_case();
+    let hook = Arc::new(RecordingHook::new(Approval::AllowOnce));
+    let tool = GitTool::new(root, hook.clone());
+    for args in [
+        vec!["fetch", "--upload-pack=touch /tmp/x", "origin"],
+        vec!["fetch", "--upl", "sh", "origin"],
+        vec!["pull", "--upload-pack", "sh", "origin"],
+        vec!["push", "--receive-pack=sh", "origin"],
+        vec!["push", "--exec=sh", "origin"],
+        vec!["fetch", "-u", "origin"],
+        vec!["push", "-c", "core.sshCommand=sh", "origin"],
+        vec!["fetch", "ext::sh -c touch% /tmp/pwned"],
+        vec!["push", "FD::3", "main"],
+    ] {
+        let err = tool.execute(json!({ "args": args })).await.unwrap_err();
+        assert!(err.to_string().contains("is refused"), "{args:?}: {err}");
+        let argv: Vec<String> = std::iter::once("git")
+            .chain(args.iter().copied())
+            .map(str::to_owned)
+            .collect();
+        assert!(git_allowlist_refusal(&argv).is_some(), "{args:?}");
+    }
+    assert!(hook.seen().is_empty(), "nobody was asked");
+    // Ordinary remote calls are only checked by the approvals.
+    for args in [
+        vec!["fetch", "origin"],
+        vec!["push", "--set-upstream", "origin", "main"],
+    ] {
+        let argv: Vec<String> = std::iter::once("git")
+            .chain(args.iter().copied())
+            .map(str::to_owned)
+            .collect();
+        assert!(git_allowlist_refusal(&argv).is_none(), "{args:?}");
+    }
+}

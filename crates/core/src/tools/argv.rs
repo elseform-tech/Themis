@@ -210,7 +210,32 @@ pub(super) fn git_refusal(subcommand: &str) -> String {
 /// runtime refuses such a call before asking anyone, since approving it could not make it run.
 pub fn git_allowlist_refusal(argv: &[String]) -> Option<String> {
     let subcommand = argv.get(1)?;
-    (!GIT_ALLOWED.contains(&subcommand.as_str())).then(|| git_refusal(subcommand))
+    if !GIT_ALLOWED.contains(&subcommand.as_str()) {
+        return Some(git_refusal(subcommand));
+    }
+    git_helper_refusal(subcommand, &argv[2..])
+}
+
+/// Options of `fetch`, `pull` and `push` that make git run a program of the caller's choosing
+/// (`--upload-pack`, `--receive-pack`, `--exec`), set configuration (`-c`, `--config`) or reach a
+/// remote through a command (`ext::` and `fd::` URLs). The git tool refuses them outright: an
+/// approval or chat grant for `git fetch` must never cover running another program. Long options
+/// are matched by any prefix git would accept as an abbreviation.
+pub fn git_helper_refusal(subcommand: &str, args: &[String]) -> Option<String> {
+    if !matches!(subcommand, "fetch" | "pull" | "push") {
+        return None;
+    }
+    const HELPERS: [&str; 4] = ["--upload-pack", "--receive-pack", "--exec", "--config"];
+    let refused = args.iter().find(|argument| {
+        let name = argument.split('=').next().unwrap_or_default();
+        let helper = name.len() >= 4 && HELPERS.iter().any(|long| long.starts_with(name));
+        let lower = argument.to_ascii_lowercase();
+        helper || name == "-c" || name == "-u" || lower.contains("ext::") || lower.contains("fd::")
+    })?;
+    Some(format!(
+        "git: `{refused}` is refused: it would let git run another program or change its \
+         configuration. Use a configured remote name or an https/ssh URL. {REFUSAL_NOTE}"
+    ))
 }
 
 /// A list of strings, or the JSON text of one; nothing at all is an empty list.

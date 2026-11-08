@@ -83,6 +83,9 @@ impl ToolRuntime for GitTool {
             "fetch" | "pull" | "push" => RiskLevel::Network,
             other => return Err(tool_error(git_refusal(other))),
         };
+        if let Some(refusal) = git_helper_refusal(subcommand, &args[1..]) {
+            return Err(tool_error(refusal));
+        }
         let action = ToolAction {
             display: Some(git_display(&args, &root)),
             command,
@@ -95,7 +98,17 @@ impl ToolRuntime for GitTool {
             return Err(tool_error(format!("git: {refusal}")));
         }
 
-        let mut full_args = vec!["-C".to_string(), root.to_string_lossy().into_owned()];
+        // Never a remote reached through a command, whatever the repository's configuration says.
+        let mut full_args: Vec<String> = [
+            "-c",
+            "protocol.ext.allow=never",
+            "-c",
+            "protocol.fd.allow=never",
+            "-C",
+        ]
+        .map(str::to_owned)
+        .to_vec();
+        full_args.push(root.to_string_lossy().into_owned());
         full_args.extend(args);
         let out = run_command(
             "git".to_string(),
