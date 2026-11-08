@@ -119,12 +119,37 @@ fn top_level(words: &[&str]) -> ThemisCall {
         [] | ["--version"] => Read,
         ["status" | "models"] | ["auth", "status"] | ["usage"] | ["usage", "--json"] => Read,
         ["doctor", flags @ ..] if flags.iter().all(|f| matches!(*f, "--json" | "--deep")) => Read,
+        ["doctor", flags @ ..] => doctor_integrations(flags),
         ["permissions", ..] => Read,
         ["plugin" | "skill" | "mcp" | "hook", ..] => integration(words),
         ["call", method] => call(method, None),
         ["call", method, args] => call(method, Some(args)),
         // Starting runs, servers, the window or the person's own setup: never a read.
         _ => Execute,
+    }
+}
+
+/// `themis doctor --integrations [--json] [--no-start] [--project PATH]`: it starts each
+/// switched-on MCP server to list its tools, so it is an execution; with `--no-start` it only
+/// reads. Anything else after `doctor` keeps the ordinary risk.
+fn doctor_integrations(flags: &[&str]) -> ThemisCall {
+    let mut integrations = false;
+    let mut starts = true;
+    let mut index = 0;
+    while let Some(flag) = flags.get(index) {
+        match *flag {
+            "--integrations" => integrations = true,
+            "--json" => {}
+            "--no-start" => starts = false,
+            "--project" if flags.get(index + 1).is_some() => index += 1,
+            _ => return ThemisCall::Execute,
+        }
+        index += 1;
+    }
+    if integrations && !starts {
+        ThemisCall::Read
+    } else {
+        ThemisCall::Execute
     }
 }
 

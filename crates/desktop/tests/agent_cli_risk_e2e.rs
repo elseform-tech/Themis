@@ -861,11 +861,11 @@ async fn doctor_integrations_in_a_runs_shell_starts_servers_inside_its_sandbox()
     let fx = fixture().await;
     let script = fx.project.join("server.py");
     std::fs::write(&script, MCP_STDIO_SERVER).unwrap();
-    // The person saved and switched these on.
+    // The person saved these and switched the server on (the hook stays off: it would run).
     fx.state
         .plugin_action(
             json!({"action": "save", "scope": "global", "spec": {"name": "demo",
-            "hooks": [{"name": "gone", "event": "BeforeTool", "enabled": true,
+            "hooks": [{"name": "gone", "event": "BeforeTool", "enabled": false,
                 "command": "no-such-program-for-doctor"}],
             "mcp": {"local": {"command": "python3", "args": [script], "enabled": true}}}}),
         )

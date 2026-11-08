@@ -3,6 +3,7 @@
 use crate::server::Client;
 use serde_json::{json, Value};
 use std::path::PathBuf;
+mod integrations;
 mod plugins;
 
 mod app;
@@ -63,6 +64,8 @@ Commands:
   skill                         List, save, verify, delete, or ask agent to create skills
   mcp | hook                    Manage plugin connections and lifecycle hooks
   doctor [--json] [--deep]       Read-only local diagnostics
+  doctor --integrations [--json] [--no-start] [--project PATH]
+                                Check every plugin, skill, MCP server and hook
   permissions [PROJECT] [--thread ID] [--json]
                                 Effective approval rules, sandbox and chat grants (read-only)
   usage [--json]                Tokens Themis used: 5 hours, today, week, month
@@ -139,33 +142,7 @@ pub async fn run() -> Result<(), String> {
         ensure_server(&client, &directory).await?;
     }
     if words.first().is_some_and(|word| word == "doctor") {
-        if words[1..]
-            .iter()
-            .any(|word| !matches!(word.as_str(), "--json" | "--deep"))
-        {
-            return Err(usage().to_owned());
-        }
-        let report =
-            crate::doctor::diagnose(&directory, words.iter().any(|word| word == "--deep")).await;
-        if words.iter().any(|word| word == "--json") {
-            println!(
-                "{}",
-                serde_json::to_string(&report).map_err(|error| error.to_string())?
-            );
-        } else {
-            println!("Themis {} — {}", report.version, report.data_dir);
-            for check in &report.checks {
-                println!("{:?} {}: {}", check.status, check.name, check.detail);
-                if !check.action.is_empty() {
-                    println!("  {}", check.action);
-                }
-            }
-        }
-        return if report.failed() {
-            Err("doctor found failures".to_owned())
-        } else {
-            Ok(())
-        };
+        return integrations::doctor(&client, &directory, &words[1..]).await;
     }
     if words.first().is_some_and(|word| word == "permissions") {
         return permissions(&client, &words[1..]).await;
