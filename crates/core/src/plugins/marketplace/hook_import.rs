@@ -17,8 +17,10 @@ fn themis_tools(claude: &str) -> Option<&'static [&'static str]> {
         "Write" => &["write_file"],
         // Themis has no notebook tool: a notebook is edited like any other file.
         "Edit" | "MultiEdit" | "NotebookEdit" => &["apply_patch", "write_file"],
-        "Grep" => &["search_file"],
-        "Glob" | "LS" => &["list_dir", "search_file"],
+        // Elsewhere listing and searching go through the shell, whose hooks see a command, not
+        // the pattern and path these hooks expect: they are skipped with a reason.
+        "Grep" if cfg!(windows) => &["search_file"],
+        "Glob" | "LS" if cfg!(windows) => &["list_dir", "search_file"],
         "WebFetch" => &["fetch_url"],
         "WebSearch" => &["web_search"],
         // Not a tool here: hooks fire for it when a skill is taken up (`hooks::skill_read_hooks`).

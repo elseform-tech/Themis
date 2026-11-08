@@ -199,14 +199,6 @@ pub fn boxed_tools_for_run(
     let mut tools: Vec<Box<dyn ToolT>> = vec![
         gate(
             Box::new(if yolo {
-                ListDir::new_unrestricted()
-            } else {
-                ListDir::new_with_root_dir(root_string.clone())
-            }),
-            RiskLevel::Read,
-        ),
-        gate(
-            Box::new(if yolo {
                 ReadFile::new_unrestricted()
             } else {
                 ReadFile::new_with_root_dir(root_string.clone())
@@ -221,47 +213,28 @@ pub fn boxed_tools_for_run(
             }),
             RiskLevel::Write,
         ),
-        gate(
+    ];
+    // Listing and searching go through the shell (`ls`, `rg`, `find`), which counts as a read.
+    // Windows runs commands without a shell, so `dir` and PowerShell need a wrapper that always
+    // asks: it keeps the dedicated tools there.
+    if cfg!(windows) {
+        tools.push(gate(
             Box::new(if yolo {
-                CopyFile::new_unrestricted()
+                ListDir::new_unrestricted()
             } else {
-                CopyFile::new_with_root_dir(root_string.clone())
+                ListDir::new_with_root_dir(root_string.clone())
             }),
-            RiskLevel::Write,
-        ),
-        gate(
-            Box::new(if yolo {
-                MoveFile::new_unrestricted()
-            } else {
-                MoveFile::new_with_root_dir(root_string.clone())
-            }),
-            RiskLevel::Write,
-        ),
-        gate(
-            Box::new(if yolo {
-                DeleteFile::new_unrestricted()
-            } else {
-                DeleteFile::new_with_root_dir(root_string.clone())
-            }),
-            RiskLevel::Destructive,
-        ),
-        gate(
-            Box::new(if yolo {
-                CreateDir::new_unrestricted()
-            } else {
-                CreateDir::new_with_root_dir(root_string.clone())
-            }),
-            RiskLevel::Write,
-        ),
-        gate(
+            RiskLevel::Read,
+        ));
+        tools.push(gate(
             Box::new(if yolo {
                 SearchFile::new_unrestricted(100)
             } else {
                 SearchFile::new_with_root_dir(root_string.clone())
             }),
             RiskLevel::Read,
-        ),
-    ];
+        ));
+    }
     let mut shell =
         ShellTool::new(canonical.clone(), Arc::clone(&approvals)).with_unrestricted_paths(yolo);
     if let Some(scope) = background.clone() {
@@ -270,11 +243,8 @@ pub fn boxed_tools_for_run(
     if let Some(cancel) = cancel {
         shell = shell.with_cancel(cancel);
     }
-    let mut git =
-        GitTool::new(canonical.clone(), approvals.clone()).with_unrestricted_commands(yolo);
     if let Some(plan) = sandbox {
-        shell = shell.with_sandbox(Arc::clone(&plan), !yolo && !no_escalation);
-        git = git.with_sandbox(plan, !yolo && !no_escalation);
+        shell = shell.with_sandbox(plan, !yolo && !no_escalation);
     }
     tools.push(Box::new(shell));
     tools.push(Box::new(background::BackgroundTool::new(background)));
@@ -283,7 +253,6 @@ pub fn boxed_tools_for_run(
             .with_unrestricted_paths(yolo)
             .with_guard(guard),
     ));
-    tools.push(Box::new(git));
     Ok(tools)
 }
 

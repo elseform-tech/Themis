@@ -19,28 +19,32 @@ pub const MAX_INSTRUCTIONS_BYTES: usize = 256 * 1024;
 /// Maximum accepted total script content size per skill, in bytes.
 pub const MAX_SCRIPTS_TOTAL_BYTES: usize = 65536;
 
-/// Exact tool names available from [`crate::tools::boxed_tools`], in build order.
-///
-/// Verified against the `#[tool(name = ...)]` attributes in `tools.rs`
-/// (`shell`, `background_task`, `apply_patch`, `git`) and the `autoagents-toolkit` filesystem
-/// tool names (`list_dir`, `read_file`, `write_file`, `copy_file`,
-/// `move_file`, `delete_file`, `create_dir`, `search_file`), then the tools
-/// added per run: `recall`, `fetch_url`, `web_search` and `browser` (which
-/// grants every `browser_*` tool).
-const KNOWN_TOOL_NAMES: [&str; 16] = [
-    "list_dir",
+/// Exact tool names available from [`crate::tools::boxed_tools`], in build order, then the tools
+/// added per run: `recall`, `fetch_url`, `web_search` and `browser` (which grants every
+/// `browser_*` tool). Listing, searching, git and file management go through the shell; Windows
+/// keeps `list_dir` and `search_file`, since its commands need a wrapper that always asks.
+#[cfg(not(windows))]
+const KNOWN_TOOL_NAMES: [&str; 9] = [
     "read_file",
     "write_file",
-    "copy_file",
-    "move_file",
-    "delete_file",
-    "create_dir",
+    "shell",
+    "background_task",
+    "recall",
+    "apply_patch",
+    "fetch_url",
+    "web_search",
+    "browser",
+];
+#[cfg(windows)]
+const KNOWN_TOOL_NAMES: [&str; 11] = [
+    "read_file",
+    "write_file",
+    "list_dir",
     "search_file",
     "shell",
     "background_task",
     "recall",
     "apply_patch",
-    "git",
     "fetch_url",
     "web_search",
     "browser",
@@ -581,7 +585,7 @@ mod tests {
     fn filter_tools_applies_intersection_semantics() {
         let tmp = tempfile::tempdir().unwrap();
         let tools = boxed_tools(tmp.path(), Arc::new(AllowAllHook)).unwrap();
-        assert_eq!(tools.len(), 12);
+        assert_eq!(tools.len(), if cfg!(windows) { 7 } else { 5 });
         let skills = vec![
             skill("a", "A", &["read_file", "list_dir", "shell"], vec![]),
             skill("b", "B", &["read_file", "shell", "git"], vec![]),
@@ -676,10 +680,11 @@ mod tests {
         let tools = boxed_tools(tmp.path(), Arc::new(AllowAllHook)).unwrap();
         let skills = vec![skill("a", "A", &[], vec![])];
         let kept = filter_tools(tools, &skills);
-        assert_eq!(kept.len(), 12);
+        let all = if cfg!(windows) { 7 } else { 5 };
+        assert_eq!(kept.len(), all);
         // Empty skills == passthrough.
         let tools = boxed_tools(tmp.path(), Arc::new(AllowAllHook)).unwrap();
-        assert_eq!(filter_tools(tools, &[]).len(), 12);
+        assert_eq!(filter_tools(tools, &[]).len(), all);
     }
 
     #[test]

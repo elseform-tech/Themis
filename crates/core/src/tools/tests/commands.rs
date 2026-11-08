@@ -849,23 +849,27 @@ fn boxed_tools_returns_full_set() {
     let (_tmp, root) = rooted_case();
     let tools = boxed_tools(&root, allow_all()).unwrap();
     let names: Vec<&str> = tools.iter().map(|tool| tool.name()).collect();
-    assert_eq!(
-        names,
-        vec![
-            "list_dir",
-            "read_file",
-            "write_file",
-            "copy_file",
-            "move_file",
-            "delete_file",
-            "create_dir",
-            "search_file",
-            "shell",
-            "background_task",
-            "apply_patch",
-            "git",
-        ]
-    );
+    // Listing, searching, git and file management go through the shell; Windows keeps the
+    // listing and search tools (its commands need a wrapper that always asks).
+    #[cfg(not(windows))]
+    let expected = vec![
+        "read_file",
+        "write_file",
+        "shell",
+        "background_task",
+        "apply_patch",
+    ];
+    #[cfg(windows)]
+    let expected = vec![
+        "read_file",
+        "write_file",
+        "list_dir",
+        "search_file",
+        "shell",
+        "background_task",
+        "apply_patch",
+    ];
+    assert_eq!(names, expected);
     for tool in &tools {
         assert!(!tool.description().is_empty());
         assert!(tool.args_schema().is_object());
@@ -882,10 +886,11 @@ fn boxed_tools_rejects_missing_root() {
 fn shared_tools_convert_to_boxes() {
     let (_tmp, root) = rooted_case();
     let shared = shared_tools(&root, allow_all()).unwrap();
-    assert_eq!(shared.len(), 12);
+    let expected = if cfg!(windows) { 7 } else { 5 };
+    assert_eq!(shared.len(), expected);
     let boxes = autoagents::core::tool::shared_tools_to_boxes(&shared);
-    assert_eq!(boxes.len(), 12);
-    assert_eq!(boxes[8].name(), "shell");
+    assert_eq!(boxes.len(), expected);
+    assert_eq!(boxes[if cfg!(windows) { 4 } else { 2 }].name(), "shell");
 }
 
 /// Through the shell, git calls that start a program of the caller's choosing (or take their

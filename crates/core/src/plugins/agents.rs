@@ -14,9 +14,37 @@ use std::collections::BTreeSet;
 use std::sync::Arc;
 
 /// The tools a read-only subagent gets.
+#[cfg(not(windows))]
+pub const READ_ONLY_TOOLS: [&str; 2] = ["read_file", "shell"];
+/// Windows runs commands without a shell (`dir` and PowerShell need a wrapper that always asks),
+/// so it keeps the dedicated listing and search tools.
+#[cfg(windows)]
 pub const READ_ONLY_TOOLS: [&str; 4] = ["read_file", "list_dir", "search_file", "shell"];
+/// What Claude's `Read`, `Grep`, `Glob` and `LS` stand for apart from the shell.
+#[cfg(not(windows))]
+const READING_TOOLS: [&str; 1] = ["read_file"];
+#[cfg(windows)]
+const READING_TOOLS: [&str; 3] = ["read_file", "list_dir", "search_file"];
+/// The shell a profile gets for Claude's `Grep`, `Glob` and `LS` where listing and searching go
+/// through it: held to commands that only read, so naming them never grants writes.
+#[cfg(not(windows))]
+const READING_SHELL_SCOPE: [&str; 13] = [
+    "ls:*",
+    "rg:*",
+    "grep:*",
+    "find:*",
+    "cat:*",
+    "head:*",
+    "tail:*",
+    "wc:*",
+    "tree:*",
+    "git status:*",
+    "git diff:*",
+    "git log:*",
+    "git show:*",
+];
 /// The tools a subagent with write paths also gets; the file guard holds them to those paths.
-pub const WRITE_TOOLS: [&str; 3] = ["write_file", "apply_patch", "create_dir"];
+pub const WRITE_TOOLS: [&str; 2] = ["write_file", "apply_patch"];
 /// The web tools; they go through the approval rules, per site, as the main agent's do.
 pub const WEB_TOOLS: [&str; 2] = ["fetch_url", "web_search"];
 /// Tools a subagent has only when its profile's list names them: they cost every subagent context,
@@ -446,9 +474,7 @@ fn mapped(name: &str) -> Option<&'static [&'static str]> {
     match name {
         // `LS` and `NotebookRead` are older names for what `Read` and `Glob` do now; `MultiEdit`
         // for what `Edit` does. A subagent has these tools without any list.
-        "Read" | "Grep" | "Glob" | "LS" | "NotebookRead" => {
-            Some(&["read_file", "list_dir", "search_file"])
-        }
+        "Read" | "Grep" | "Glob" | "LS" | "NotebookRead" => Some(&READING_TOOLS),
         "Bash" => Some(&["shell"]),
         "Edit" | "Write" | "MultiEdit" => Some(&WRITE_TOOLS),
         "WebFetch" => Some(&["fetch_url"]),
@@ -578,6 +604,15 @@ fn resolve_tools(listed: Option<&[String]>, denied: &[String]) -> ResolvedTools 
     if !everything {
         for name in listed.unwrap_or_default() {
             whole_shell |= name == "Bash";
+            #[cfg(not(windows))]
+            if matches!(name.as_str(), "Grep" | "Glob" | "LS") {
+                kept.insert("shell");
+                shell_scopes.extend(
+                    READING_SHELL_SCOPE
+                        .iter()
+                        .map(|pattern| (*pattern).to_owned()),
+                );
+            }
             any_profile |= name == "Agent" || name == "Task";
             match mapped(name) {
                 Some(tools) => kept.extend(tools.iter().copied()),
@@ -933,7 +968,30 @@ mod tests {
         parse(&format!("---\nname: a\ndescription: d\n{line}\n---\nBody"))
     }
 
-    const READS: [&str; 3] = ["read_file", "list_dir", "search_file"];
+    /// What `Read` alone gives.
+    const READS: &[&str] = &READING_TOOLS;
+    /// What `Grep`, `Glob` or `LS` give: on Windows the listing and search tools, elsewhere a
+    /// shell held to commands that only read.
+    #[cfg(not(windows))]
+    const SEARCHES: [&str; 2] = ["read_file", "shell"];
+    #[cfg(windows)]
+    const SEARCHES: [&str; 3] = ["read_file", "list_dir", "search_file"];
+
+    #[cfg(not(windows))]
+    #[test]
+    fn grep_glob_and_ls_give_a_shell_held_to_reading_commands() {
+        let profile = with_tools("tools: Read, Grep");
+        assert!(profile.allows("shell") && !profile.allows_writes());
+        assert!(profile.shell_scopes.iter().any(|pattern| pattern == "rg:*"));
+        assert!(!profile
+            .shell_scopes
+            .iter()
+            .any(|pattern| pattern.starts_with("rm")));
+        // With the whole shell named, nothing narrows it.
+        assert!(with_tools("tools: Grep, Bash").shell_scopes.is_empty());
+        // `Read` alone gets no shell.
+        assert!(!with_tools("tools: Read").allows("shell"));
+    }
 
     #[test]
     fn every_form_of_tool_list_is_read() {
@@ -949,7 +1007,7 @@ mod tests {
             "allowed-tools: Read, Grep",
         ] {
             let profile = with_tools(form);
-            assert_eq!(profile.tools.as_deref().unwrap(), READS, "{form}");
+            assert_eq!(profile.tools.as_deref().unwrap(), SEARCHES, "{form}");
             assert!(profile.dropped_tools.is_empty(), "{form}");
         }
     }
@@ -962,7 +1020,10 @@ mod tests {
         assert_eq!(with_tools("tools: *").tools, None);
         assert_eq!(parse("---\nname: a\ndescription: d\n---\nB").tools, None);
         // Older names for tools a subagent has anyway.
-        assert_eq!(with_tools("tools: LS, NotebookRead").tools.unwrap(), READS);
+        assert_eq!(
+            with_tools("tools: LS, NotebookRead").tools.unwrap(),
+            SEARCHES
+        );
         assert_eq!(with_tools("tools: MultiEdit").tools.unwrap(), WRITE_TOOLS);
     }
 

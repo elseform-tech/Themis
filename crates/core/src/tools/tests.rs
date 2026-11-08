@@ -560,40 +560,6 @@ async fn bounded_find_exposes_later_unicode_matches() {
 }
 
 #[tokio::test]
-async fn gated_delete_denied_under_deny_all() {
-    let (_tmp, root) = rooted_case();
-    let hook = Arc::new(RecordingHook::new(Approval::Deny));
-    let tools = boxed_tools(&root, hook.clone()).unwrap();
-    let delete = find_tool(&tools, "delete_file");
-
-    // Plain file delete.
-    fs::write(root.join("victim.txt"), "x").unwrap();
-    let err = delete
-        .execute(json!({ "path": "victim.txt", "recursive": false }))
-        .await
-        .unwrap_err();
-    assert!(err.to_string().to_lowercase().contains("approv"), "{err}");
-    assert!(root.join("victim.txt").exists());
-
-    // Recursive directory delete flows through the same Destructive gate.
-    fs::create_dir(root.join("dir")).unwrap();
-    fs::write(root.join("dir/inner.txt"), "x").unwrap();
-    let err = delete
-        .execute(json!({ "path": "dir", "recursive": true }))
-        .await
-        .unwrap_err();
-    assert!(err.to_string().to_lowercase().contains("approv"), "{err}");
-    assert!(root.join("dir/inner.txt").exists());
-
-    let seen = hook.seen();
-    assert_eq!(seen.len(), 2);
-    for action in &seen {
-        assert_eq!(action.tool, "delete_file");
-        assert_eq!(action.risk, RiskLevel::Destructive);
-    }
-}
-
-#[tokio::test]
 async fn git_read_obeys_custom_deny_policy() {
     let temporary = tempdir().unwrap();
     let policy = crate::configuration::ApprovalPolicy {

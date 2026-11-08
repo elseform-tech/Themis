@@ -1272,9 +1272,9 @@ async fn dispatch_respects_destructive_policy() {
     let result = execute_call(
         &tools,
         &caching,
-        "delete_file",
-        &serde_json::json!({"path":"keep.txt"}).to_string(),
-        "delete",
+        "shell",
+        &serde_json::json!({"command":"rm","args":["-rf","keep.txt"]}).to_string(),
+        "rm -rf keep.txt",
         &events,
         &AtomicBool::new(false),
     )
@@ -1283,60 +1283,10 @@ async fn dispatch_respects_destructive_policy() {
     assert_eq!(std::fs::read_to_string(victim).unwrap(), "keep");
 }
 
-/// A git subcommand outside the tool's allowlist is refused before anyone is asked:
-/// approving it could never make it run.
-#[tokio::test]
-async fn a_git_subcommand_the_tool_refuses_is_never_put_to_the_person() {
-    /// A person who is asked about everything and says yes.
-    #[derive(Default)]
-    struct Person(std::sync::Mutex<Vec<ToolAction>>);
-    impl ApprovalHook for Person {
-        fn approve(&self, action: &ToolAction) -> Approval {
-            self.0.lock().unwrap().push(action.clone());
-            Approval::AllowOnce
-        }
-        fn would_ask(&self, _action: &ToolAction) -> bool {
-            true
-        }
-    }
-    let person = Arc::new(Person::default());
-    let asked = &person.0;
-    let hook: Arc<dyn ApprovalHook> = person.clone();
-    let root = tempfile::tempdir().unwrap();
-    let tools = crate::tools::boxed_tools(root.path(), Arc::clone(&hook)).unwrap();
-    let caching = CachingApprovals::wrap(hook);
-    let (events, _rx) = tokio::sync::mpsc::channel(16);
-    let refused = execute_call(
-        &tools,
-        &caching,
-        "git",
-        &serde_json::json!({"args": ["rev-parse", "--short", "HEAD"]}).to_string(),
-        "git rev-parse",
-        &events,
-        &AtomicBool::new(false),
-    )
-    .await
-    .unwrap_err();
-    assert!(refused.contains("denied by the allowlist"), "{refused}");
-    assert!(asked.lock().unwrap().is_empty(), "nobody is asked");
-    // An allowed one is still asked about.
-    let _ = execute_call(
-        &tools,
-        &caching,
-        "git",
-        &serde_json::json!({"args": ["add", "x"]}).to_string(),
-        "git add",
-        &events,
-        &AtomicBool::new(false),
-    )
-    .await;
-    assert_eq!(asked.lock().unwrap().len(), 1);
-}
-
-/// The dialog's first prompt for a shell/git call comes from this dispatch
+/// The dialog's first prompt for a shell call (git included) comes from this dispatch
 /// gate, so it must carry the exact argv (not the JSON summary).
 #[tokio::test]
-async fn dispatch_gate_sends_exact_argv_for_shell_and_git_calls() {
+async fn dispatch_gate_sends_exact_argv_for_shell_calls() {
     let seen: Arc<std::sync::Mutex<Vec<ToolAction>>> = Arc::default();
     let recorder = {
         let seen = Arc::clone(&seen);
@@ -1356,7 +1306,6 @@ async fn dispatch_gate_sends_exact_argv_for_shell_and_git_calls() {
             serde_json::json!({"command":"rm","args":["-rf /","x\u{202e}y"],"cwd":"sub dir","background":true}),
         ),
         ("shell", serde_json::json!({"command":"ls","args":["-la"]})),
-        ("git", serde_json::json!({"args":["commit","-m","a b"]})),
         ("read_file", serde_json::json!({"file_path":"a.txt"})),
     ];
     for (name, args) in &calls {
@@ -1383,11 +1332,7 @@ async fn dispatch_gate_sends_exact_argv_for_shell_and_git_calls() {
         (second.argv.as_slice(), second.cwd, second.background),
         (&["ls".to_owned(), "-la".to_owned()][..], None, false)
     );
-    assert_eq!(
-        display(2).expect("git display").argv,
-        ["git", "commit", "-m", "a b"]
-    );
-    assert!(seen[3].display.is_none());
+    assert!(seen[2].display.is_none());
 }
 
 #[tokio::test]
