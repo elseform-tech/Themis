@@ -62,10 +62,14 @@ async fn a_plugins_subagent_imports_spawns_and_runs_with_its_instructions() {
         .find(themis_core::prompts::SUBAGENT_READ_ONLY_NOTE)
         .expect("the access note");
     assert!(role_at < access_at, "{system}");
-    assert_eq!(
-        sorted_tools(child),
-        ["list_dir", "read_file", "search_file"]
-    );
+    // Grep and Glob are the shell, held to commands that only read (`subagent_tools_cli_e2e`);
+    // on Windows they are the listing and search tools, with no shell.
+    let reviewer: &[&str] = if cfg!(windows) {
+        &["read_file"]
+    } else {
+        &["read_file", "shell"]
+    };
+    assert_eq!(sorted_tools(child), with_reads(reviewer));
     // Its result reached the main agent, and the listing names the profile.
     assert!(all.iter().any(|body| mentions(body, "Reviewed: all fine.")));
     let listed = call(
@@ -209,27 +213,26 @@ async fn a_tool_list_only_narrows() {
         names.retain(|name| !name.starts_with("mcp_"));
         names
     };
-    let reads = ["list_dir", "read_file", "search_file"];
     // What the list names, and no more.
     assert_eq!(
         tools_of("names mcp"),
-        ["fetch_url", "list_dir", "read_file", "search_file", "shell"]
+        with_reads(&["fetch_url", "read_file", "shell"])
     );
-    assert_eq!(tools_of("omits mcp"), reads);
+    assert_eq!(tools_of("omits mcp"), with_reads(&["read_file"]));
     // A scoped Bash(...) gives the shell, held to its commands (`subagent_tools_cli_e2e`).
     assert_eq!(
         tools_of("scoped shell"),
-        ["list_dir", "read_file", "search_file", "shell"]
+        with_reads(&["read_file", "shell"])
     );
     // A list that denies part of the shell loses the shell.
     assert_eq!(
         tools_of("denied shell"),
-        ["fetch_url", "list_dir", "read_file", "search_file"]
+        with_reads(&["fetch_url", "read_file"])
     );
     // No list: a subagent's usual read-only tools, and the web (this test has no search address).
     assert_eq!(
         tools_of("no list"),
-        ["fetch_url", "list_dir", "read_file", "search_file", "shell"]
+        with_reads(&["fetch_url", "read_file", "shell"])
     );
     app.serving.abort();
 }
@@ -273,24 +276,14 @@ async fn a_profile_listing_write_still_needs_write_paths() {
         .iter()
         .find(|body| is_subagent(body) && mentions(body, "no paths given"))
         .expect("the read-only child");
-    assert_eq!(
-        sorted_tools(without),
-        ["list_dir", "read_file", "search_file"]
-    );
+    assert_eq!(sorted_tools(without), with_reads(&["read_file"]));
     let with = all
         .iter()
         .find(|body| is_subagent(body) && mentions(body, "with paths given"))
         .expect("the writing child");
     assert_eq!(
         sorted_tools(with),
-        [
-            "apply_patch",
-            "create_dir",
-            "list_dir",
-            "read_file",
-            "search_file",
-            "write_file"
-        ]
+        with_reads(&["apply_patch", "read_file", "write_file"])
     );
     let root = app.project.path();
     assert!(!root.join("stray.txt").exists(), "no write without paths");
@@ -585,4 +578,15 @@ async fn subagent_paths_that_leave_the_plugin_are_not_imported() {
     #[cfg(unix)]
     assert!(unsupported.contains("Link not followed"), "{unsupported}");
     serving.abort();
+}
+
+/// A sorted tool list as a subagent gets it: on Windows, which runs commands without a shell,
+/// reading also brings the dedicated listing and search tools.
+fn with_reads(names: &[&str]) -> Vec<String> {
+    let mut names: Vec<String> = names.iter().map(|name| (*name).to_owned()).collect();
+    if cfg!(windows) && names.iter().any(|name| name == "read_file") {
+        names.extend(["list_dir".to_owned(), "search_file".to_owned()]);
+    }
+    names.sort();
+    names
 }

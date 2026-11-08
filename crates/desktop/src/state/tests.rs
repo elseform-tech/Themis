@@ -835,9 +835,11 @@ async fn skill_crud_validates_and_persists() {
         .await
         .expect_err("unknown tool rejected");
     assert!(err.contains("bogus_tool"), "{err}");
-    for valid in ["read_file", "write_file", "shell", "git", "list_dir"] {
+    for valid in ["read_file", "write_file", "shell", "apply_patch"] {
         assert!(err.contains(valid), "{valid} missing from: {err}");
     }
+    // Listing is the shell's, except on Windows, which keeps the tool.
+    assert_eq!(err.contains("list_dir"), cfg!(windows), "{err}");
     // Empty names and unsafe script names fail too.
     assert!(state.create_skill(skill_input("   ")).await.is_err());
     let mut bad_script = skill_input("BadScript");

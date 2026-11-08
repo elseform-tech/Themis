@@ -475,7 +475,7 @@ the project, under their reply; click one to open the viewer.
 
 ### The sandbox
 
-Commands the agent runs (shell commands, background tasks, the git tool and
+Commands the agent runs (shell commands, git included, background tasks and
 automation checks) run inside an operating-system sandbox in Custom (in YOLO it
 only keeps Themis' own settings read-only): Seatbelt on macOS, bubblewrap or
 Landlock on Linux; Windows has none yet.
@@ -553,9 +553,10 @@ Skill instructions can contain up to 256 KiB of UTF-8 text without truncation. F
 
 - An empty allowlist means "all tools".
 - Unknown tool names are rejected. The valid names are exactly:
-  `list_dir`, `read_file`, `write_file`, `copy_file`, `move_file`,
-  `delete_file`, `create_dir`, `search_file`, `shell`, `apply_patch`, `git`,
-  `fetch_url`, `web_search` and `browser` (every `browser_*` tool).
+  `read_file`, `write_file`, `shell`, `background_task`, `recall`,
+  `apply_patch`, `fetch_url`, `web_search` and `browser` (every `browser_*`
+  tool); on Windows also `list_dir` and `search_file`. Listing, searching,
+  git, and copying, moving, deleting or creating files go through `shell`.
 
 The file tools accept an absolute path when it lies inside the project (it is
 used as the matching project-relative path); paths outside the project stay

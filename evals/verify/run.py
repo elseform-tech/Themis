@@ -34,7 +34,10 @@ APPROVAL = {
     "default": "deny",
     "rules": [{"tool": "shell_unsandboxed", "action": "deny"},
               {"tool": "*", "risk": "read", "action": "allow"}]
-             + [{"tool": "shell", "command": [program], "action": "allow"} for program in ("python3", "node")]
+             # Git and file management run through the shell (the git and file tools are gone on
+             # macOS and Linux); destructive variants (`rm -rf`, a force push) are never covered.
+             + [{"tool": "shell", "command": [program], "action": "allow"}
+                for program in ("python3", "node", "git", "mkdir", "mv", "cp", "rm", "touch")]
              + [{"tool": tool, "action": "allow"}
                 for tool in ("write_file", "apply_patch", "delete_file", "move_file", "copy_file", "create_dir",
                              "git", "web_search", "fetch_url", "browser_*")],

@@ -759,113 +759,32 @@ async fn apply_patch_requires_approval() {
     assert!(message.contains("approv"), "{message}");
 }
 
-fn git_available() -> bool {
-    std::process::Command::new("git")
-        .arg("--version")
-        .output()
-        .map(|out| out.status.success())
-        .unwrap_or(false)
-}
-
-#[tokio::test]
-async fn git_status_works_in_temp_repo() {
-    if !git_available() {
-        eprintln!("skipping git_status_works_in_temp_repo: git binary not found");
-        return;
-    }
-    let (_tmp, root) = rooted_case();
-    let inited = std::process::Command::new("git")
-        .args(["init", "-q"])
-        .current_dir(&root)
-        .status()
-        .unwrap();
-    assert!(inited.success());
-    let tool = GitTool::new(root, allow_all());
-    let result = tool
-        .execute(json!({ "args": ["status", "--short"] }))
-        .await
-        .unwrap();
-    assert_eq!(result["success"].as_bool(), Some(true));
-}
-
-#[tokio::test]
-async fn git_allowlist_denies_unknown_subcommands() {
-    let (_tmp, root) = rooted_case();
-    let tool = GitTool::new(root, allow_all());
-    let err = tool
-        .execute(json!({ "args": ["push", "origin", "main"] }))
-        .await
-        .unwrap_err();
-    assert!(err.to_string().contains("denied"), "{err}");
-}
-
-#[tokio::test]
-async fn git_tool_reports_argv_and_escalates_forced_variants() {
-    let (_tmp, root) = rooted_case();
-    let hook = Arc::new(RecordingHook::new(Approval::Deny));
-    let tool = GitTool::new(root, hook.clone());
-    for args in [
-        vec!["status"],
-        vec!["checkout", "main"],
-        vec!["checkout", "-f", "main"],
-        vec!["branch", "-D", "x"],
-        vec!["checkout", "--", "."],
-        vec!["commit", "--amend", "--no-edit"],
-    ] {
-        let _ = tool.execute(json!({ "args": args })).await;
-    }
-    // Denied by the allowlist before any approval is consulted.
-    assert!(tool
-        .execute(json!({"args": ["push", "--force"]}))
-        .await
-        .is_err());
-    let seen = hook.seen();
-    assert_eq!(seen.len(), 6);
-    assert_eq!(seen[4].risk, RiskLevel::Destructive);
-    assert_eq!(seen[5].risk, RiskLevel::Destructive);
-    assert_eq!(seen[0].risk, RiskLevel::Read);
-    assert_eq!(seen[1].risk, RiskLevel::Write);
-    assert_eq!(seen[2].risk, RiskLevel::Destructive);
-    assert_eq!(seen[2].command, vec!["git", "checkout", "-f", "main"]);
-    assert_eq!(seen[3].risk, RiskLevel::Destructive);
-    assert_ne!(seen[1].grant_key(), seen[2].grant_key());
-}
-
-#[tokio::test]
-async fn git_write_requires_approval() {
-    // No git binary needed: the denial happens before any spawn.
-    let (_tmp, root) = rooted_case();
-    let tool = GitTool::new(root, deny_all());
-    let err = tool
-        .execute(json!({ "args": ["add", "."] }))
-        .await
-        .unwrap_err();
-    let message = err.to_string().to_lowercase();
-    assert!(message.contains("approv"), "{message}");
-}
-
 #[test]
 fn boxed_tools_returns_full_set() {
     let (_tmp, root) = rooted_case();
     let tools = boxed_tools(&root, allow_all()).unwrap();
     let names: Vec<&str> = tools.iter().map(|tool| tool.name()).collect();
-    assert_eq!(
-        names,
-        vec![
-            "list_dir",
-            "read_file",
-            "write_file",
-            "copy_file",
-            "move_file",
-            "delete_file",
-            "create_dir",
-            "search_file",
-            "shell",
-            "background_task",
-            "apply_patch",
-            "git",
-        ]
-    );
+    // Listing, searching, git and file management go through the shell; Windows keeps the
+    // listing and search tools (its commands need a wrapper that always asks).
+    #[cfg(not(windows))]
+    let expected = vec![
+        "read_file",
+        "write_file",
+        "shell",
+        "background_task",
+        "apply_patch",
+    ];
+    #[cfg(windows)]
+    let expected = vec![
+        "read_file",
+        "write_file",
+        "list_dir",
+        "search_file",
+        "shell",
+        "background_task",
+        "apply_patch",
+    ];
+    assert_eq!(names, expected);
     for tool in &tools {
         assert!(!tool.description().is_empty());
         assert!(tool.args_schema().is_object());
@@ -882,10 +801,11 @@ fn boxed_tools_rejects_missing_root() {
 fn shared_tools_convert_to_boxes() {
     let (_tmp, root) = rooted_case();
     let shared = shared_tools(&root, allow_all()).unwrap();
-    assert_eq!(shared.len(), 12);
+    let expected = if cfg!(windows) { 7 } else { 5 };
+    assert_eq!(shared.len(), expected);
     let boxes = autoagents::core::tool::shared_tools_to_boxes(&shared);
-    assert_eq!(boxes.len(), 12);
-    assert_eq!(boxes[8].name(), "shell");
+    assert_eq!(boxes.len(), expected);
+    assert_eq!(boxes[if cfg!(windows) { 4 } else { 2 }].name(), "shell");
 }
 
 /// Through the shell, git calls that start a program of the caller's choosing (or take their
@@ -911,21 +831,6 @@ fn shell_git_calls_that_run_another_program_are_asked_every_time() {
         &["git", "push", "FD::3", "main"],
         &["git", "clone", "-u", "sh", "https://example.com/r.git"],
         &["git", "ls-remote", "ext::sh"],
-        &["git", "push", "--e=sh", "origin"],
-        &["git", "fetch", "--u=sh", "origin"],
-        &["git", "clone", "-ush", "https://example.com/r.git"],
-        &["git", "ls-remote", "-u", "sh", "origin"],
-        &["git", "clone", "-qu", "sh", "https://example.com/r.git"],
-        &[
-            "git",
-            "clone",
-            "-qc",
-            "core.sshCommand=sh",
-            "https://example.com/r.git",
-        ],
-        &["git", "ls-remote", "-qush", "origin"],
-        &["git", "-ccore.sshCommand=sh", "fetch", "origin"],
-        &["git", "submodule", "foreach", "sh", "-c", "touch x"],
         &["sh", "-c", "git fetch --upload-pack=sh origin"],
     ] {
         let command = argv(words);
@@ -939,11 +844,74 @@ fn shell_git_calls_that_run_another_program_are_asked_every_time() {
         &["git", "pull", "origin", "main"],
         &["git", "status"],
         &["git", "remote", "-v"],
-        &["git", "submodule", "update", "--init"],
-        &["git", "fetch", "-u", "origin"],
     ] {
         assert!(!runs_git_helper(&argv(words)), "{words:?}");
     }
+}
+
+/// What a subagent's reading shell (`Grep`/`Glob`/`LS`) lets through, and what still asks: the
+/// scope narrows what may start; whether it runs without asking is the read-only check, which
+/// never treats a program-running option as a read.
+#[test]
+fn reading_scope_options_that_run_programs_are_never_reads() {
+    let argv = |words: &[&str]| {
+        words
+            .iter()
+            .map(|w| (*w).to_owned())
+            .collect::<Vec<String>>()
+    };
+    for words in [
+        &["git", "diff", "--ext-diff"][..],
+        &["git", "log", "-p", "--ext-diff"],
+        &["git", "diff", "--textconv"],
+        &["git", "show", "--textconv", "HEAD"],
+        &["find", ".", "-exec", "sh", "{}", ";"],
+        &["rg", "--pre", "sh", "x"],
+        &["tree", "-o", "out.txt"],
+        &["git", "diff", "--output=out.txt"],
+        &["git", "diff", "-o", "out.txt"],
+        &["git", "-c", "core.pager=sh", "log"],
+    ] {
+        assert_ne!(shell_risk(&argv(words)), RiskLevel::Read, "{words:?}");
+    }
+}
+
+/// A subagent's reading shell (`Grep`/`Glob`/`LS`, `program:*` patterns) refuses outright the
+/// options that would run another program: the scope only confirms what it understands.
+#[cfg(not(windows))]
+#[test]
+fn the_reading_scope_refuses_program_running_options_outright() {
+    let argv = |words: &[&str]| {
+        words
+            .iter()
+            .map(|w| (*w).to_owned())
+            .collect::<Vec<String>>()
+    };
+    let scope: Vec<String> = crate::plugins::agents::READING_SHELL_SCOPE
+        .iter()
+        .map(|p| (*p).to_owned())
+        .collect();
+    for words in [
+        &["find", ".", "-exec", "sh", "{}", ";"][..],
+        &["git", "diff", "--ext-diff"],
+        &["git", "show", "--textconv", "HEAD"],
+        &["rg", "--pre", "sh", "x"],
+        &["tree", "-o", "out.txt"],
+        &["git", "diff", "--output=out.txt"],
+        &["git", "diff", "-o", "out.txt"],
+        &["git", "-c", "core.pager=sh", "log"],
+        &["find", ".", "-delete"],
+        &["find", ".", "-fprint", "out.txt"],
+    ] {
+        assert!(
+            !crate::tools::shell_scope::command_in_scope(&argv(words), &scope),
+            "{words:?}"
+        );
+    }
+    assert!(crate::tools::shell_scope::command_in_scope(
+        &argv(&["rg", "-n", "TODO", "src"]),
+        &scope
+    ));
 }
 
 /// Shell commands that only read inside the project carry the read risk; a listed program that

@@ -209,40 +209,6 @@ async fn secrets_and_app_data_stay_out_of_reach() {
 }
 
 #[tokio::test]
-async fn git_tool_runs_inside_the_sandbox() {
-    if !std::process::Command::new("git")
-        .arg("--version")
-        .output()
-        .is_ok_and(|o| o.status.success())
-    {
-        return;
-    }
-    let env = env();
-    let Some(plan) = active(&env) else { return };
-    let status = std::process::Command::new("git")
-        .args(["init", "-q"])
-        .current_dir(&env.root)
-        .status()
-        .unwrap();
-    assert!(status.success());
-    let git = GitTool::new(env.root.clone(), allow_all())
-        .with_unrestricted_commands(true)
-        .with_sandbox(plan, false);
-    let ok = git
-        .execute(json!({"args": ["status", "--short"]}))
-        .await
-        .unwrap();
-    assert_eq!(ok["success"], true, "{ok}");
-    let target = env.outside.join("gitconfig");
-    let blocked = git
-        .execute(json!({"args": ["config", "--file", target.to_string_lossy(), "user.name", "x"]}))
-        .await
-        .unwrap();
-    assert_eq!(blocked["success"], false, "{blocked}");
-    assert!(!target.exists());
-}
-
-#[tokio::test]
 async fn background_tasks_run_inside_the_sandbox() {
     let env = env();
     let Some(plan) = active(&env) else { return };
@@ -352,64 +318,6 @@ fn a_read_only_call_escalates_as_execute_and_only_a_person_lets_it_out() {
 }
 
 #[tokio::test]
-async fn an_unusable_configured_backend_fails_closed() {
-    let env = env();
-    let backend = if cfg!(target_os = "macos") {
-        "seatbelt"
-    } else {
-        "bubblewrap"
-    };
-    let config: SandboxConfig =
-        serde_json::from_str(&format!(r#"{{"backend":"{backend}"}}"#)).unwrap();
-    let plan = Arc::new(SandboxPlan::with_availability(
-        PlanInputs {
-            config: &config,
-            project_root: &env.root,
-            app_data: Some(&env.app),
-            home: Some(&env.home),
-            open: None,
-        },
-        |_| Availability::no("missing for this test"),
-    ));
-    assert!(matches!(plan.enforcement(), Enforcement::FailClosed(..)));
-    let tool = ShellTool::new(env.root.clone(), allow_all()).with_sandbox(Arc::clone(&plan), true);
-    let error = tool
-        .execute(sh("echo hi > ran.txt"))
-        .await
-        .unwrap_err()
-        .to_string();
-    assert!(error.contains(backend), "{error}");
-    assert!(!env.root.join("ran.txt").exists());
-    let git = GitTool::new(env.root.clone(), allow_all()).with_sandbox(Arc::clone(&plan), true);
-    assert!(git.execute(json!({"args": ["status"]})).await.is_err());
-    let check = run_check_command(
-        vec!["true".into()],
-        env.root.clone(),
-        Duration::from_secs(5),
-        Some(plan),
-    )
-    .await;
-    assert!(check.is_err());
-    // `auto` with nothing usable never blocks: commands run as before.
-    let auto = Arc::new(SandboxPlan::with_availability(
-        PlanInputs {
-            config: &SandboxConfig::default(),
-            project_root: &env.root,
-            app_data: Some(&env.app),
-            home: Some(&env.home),
-            open: None,
-        },
-        |_| Availability::no("missing for this test"),
-    ));
-    let tool = ShellTool::new(env.root.clone(), allow_all()).with_sandbox(auto, true);
-    assert_eq!(
-        tool.execute(sh("echo hi > ran.txt")).await.unwrap()["success"],
-        true
-    );
-    assert!(env.root.join("ran.txt").exists());
-}
-
-#[tokio::test]
 async fn file_tools_never_touch_app_data_or_secrets() {
     let env = env();
     let unavailable = Arc::new(SandboxPlan::with_availability(
@@ -468,4 +376,60 @@ async fn file_tools_never_touch_app_data_or_secrets() {
         .await
         .unwrap();
     assert!(env.root.join("notes.txt").exists());
+}
+
+#[tokio::test]
+async fn an_unusable_configured_backend_fails_closed() {
+    let env = env();
+    let backend = if cfg!(target_os = "macos") {
+        "seatbelt"
+    } else {
+        "bubblewrap"
+    };
+    let config: SandboxConfig =
+        serde_json::from_str(&format!(r#"{{"backend":"{backend}"}}"#)).unwrap();
+    let plan = Arc::new(SandboxPlan::with_availability(
+        PlanInputs {
+            config: &config,
+            project_root: &env.root,
+            app_data: Some(&env.app),
+            home: Some(&env.home),
+            open: None,
+        },
+        |_| Availability::no("missing for this test"),
+    ));
+    assert!(matches!(plan.enforcement(), Enforcement::FailClosed(..)));
+    let tool = ShellTool::new(env.root.clone(), allow_all()).with_sandbox(Arc::clone(&plan), true);
+    let error = tool
+        .execute(sh("echo hi > ran.txt"))
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains(backend), "{error}");
+    assert!(!env.root.join("ran.txt").exists());
+    let check = run_check_command(
+        vec!["true".into()],
+        env.root.clone(),
+        Duration::from_secs(5),
+        Some(plan),
+    )
+    .await;
+    assert!(check.is_err());
+    // `auto` with nothing usable never blocks: commands run as before.
+    let auto = Arc::new(SandboxPlan::with_availability(
+        PlanInputs {
+            config: &SandboxConfig::default(),
+            project_root: &env.root,
+            app_data: Some(&env.app),
+            home: Some(&env.home),
+            open: None,
+        },
+        |_| Availability::no("missing for this test"),
+    ));
+    let tool = ShellTool::new(env.root.clone(), allow_all()).with_sandbox(auto, true);
+    assert_eq!(
+        tool.execute(sh("echo hi > ran.txt")).await.unwrap()["success"],
+        true
+    );
+    assert!(env.root.join("ran.txt").exists());
 }

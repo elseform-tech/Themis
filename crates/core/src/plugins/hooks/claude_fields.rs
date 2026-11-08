@@ -3,7 +3,7 @@ use super::*;
 /// A Themis tool's name in Claude's words, for scripts written for Claude.
 pub(super) fn claude_tool_name(tool: &str) -> Option<&'static str> {
     Some(match tool {
-        "shell" | "background_task" | "git" => "Bash",
+        "shell" | "background_task" => "Bash",
         "read_file" => "Read",
         "write_file" | "copy_file" | "move_file" | "delete_file" | "create_dir" => "Write",
         "apply_patch" => "Edit",
@@ -72,11 +72,6 @@ pub(super) fn claude_tool_input(tool: &str, arguments: &Value) -> Value {
     let mut input = arguments.clone();
     match tool {
         "shell" => input["command"] = crate::tools::shell_argv(arguments).join(" ").into(),
-        "git" => {
-            if let Some(argv) = crate::tools::git_argv(arguments) {
-                input["command"] = argv.join(" ").into();
-            }
-        }
         _ => {
             let paths = paths_touched(tool, arguments);
             if let Some(first) = paths.first() {

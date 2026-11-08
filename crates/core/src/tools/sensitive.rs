@@ -275,13 +275,6 @@ impl SensitiveMatcher {
                 };
                 self.note_command(&argv, &cwd, &mut found);
             }
-            "git" => {
-                let rest = args.get("args").and_then(Value::as_array)?;
-                let argv: Vec<String> = std::iter::once("git".to_owned())
-                    .chain(rest.iter().filter_map(Value::as_str).map(str::to_owned))
-                    .collect();
-                self.note_command(&argv, &base, &mut found);
-            }
             _ => return None,
         }
         found.finish()
@@ -1277,9 +1270,10 @@ mod tests {
         Some((dir, root))
     }
 
+    /// What a shell `git` call touches (git runs through the shell).
     fn git(root: &Path, args: &[&str]) -> Vec<String> {
         defaults(Some(root))
-            .classify("git", &json!({"args": args}))
+            .classify("shell", &json!({"command": "git", "args": args}))
             .map(|access| access.names())
             .unwrap_or_default()
     }
@@ -1331,7 +1325,10 @@ mod tests {
             .unwrap();
         assert_eq!(git(&root, &["commit", "-m", "x"]), [".env"]);
         let access = defaults(Some(&root))
-            .classify("git", &json!({"args": ["commit", "-m", "x"]}))
+            .classify(
+                "shell",
+                &json!({"command": "git", "args": ["commit", "-m", "x"]}),
+            )
             .unwrap();
         assert_eq!(access.committing(), [".env"]);
     }

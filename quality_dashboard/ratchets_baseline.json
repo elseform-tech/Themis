@@ -47,7 +47,7 @@
  "duplicate_lines_total": 785,
  "files": {
   "crates/core/src/runtime.rs": {
-   "code_lines": 1914
+   "code_lines": 1908
   },
   "crates/desktop/src/state/run.rs": {
    "code_lines": 1030
@@ -408,9 +408,9 @@
    "lines": 146
   },
   "crates/core/src/runtime/tool_calls.rs::execute_call": {
-   "cognitive": 33,
-   "cyclomatic": 40,
-   "lines": 158
+   "cognitive": 26,
+   "cyclomatic": 35,
+   "lines": 147
   },
   "crates/core/src/runtime/tool_calls.rs::execute_tool_calls": {
    "cognitive": 45,
@@ -429,9 +429,6 @@
   },
   "crates/core/src/skills.rs::materialize_scripts": {
    "cyclomatic": 21
-  },
-  "crates/core/src/tools.rs::boxed_tools_for_run": {
-   "lines": 120
   },
   "crates/core/src/tools/background/tool.rs::BackgroundTool#2::execute": {
    "cyclomatic": 26
@@ -467,9 +464,6 @@
   "crates/core/src/tools/recall/matching.rs::scan_text": {
    "cognitive": 32,
    "cyclomatic": 24
-  },
-  "crates/core/src/tools/sensitive.rs::SensitiveMatcher::classify": {
-   "cyclomatic": 21
   },
   "crates/core/src/tools/sensitive.rs::SensitiveMatcher::note_folders": {
    "cyclomatic": 21

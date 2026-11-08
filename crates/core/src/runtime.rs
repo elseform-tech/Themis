@@ -282,7 +282,6 @@ fn risk_for(tool: &str) -> RiskLevel {
         // attach_file only shows project files under the reply.
         "read_file" | "list_dir" | "search_file" | "recall" | "attach_file" => RiskLevel::Read,
         "shell" => RiskLevel::Execute,
-        "delete_file" => RiskLevel::Destructive,
         _ => RiskLevel::Write,
     }
 }
@@ -1552,14 +1551,9 @@ async fn until_stopped<T>(
 
 /// Sent once when a run that changed files gives its final answer.
 const SPEC_CHECK: &str = crate::prompts::RUNTIME_SPEC_CHECK;
-/// Tools whose success changes project files.
-const FILE_CHANGES: [&str; 5] = [
-    "write_file",
-    "apply_patch",
-    "delete_file",
-    "move_file",
-    "copy_file",
-];
+/// Tools whose success changes project files (the shell's changes are not counted: most shell
+/// calls run or inspect, and edits go through these).
+const FILE_CHANGES: [&str; 2] = ["write_file", "apply_patch"];
 
 const CUT_OFF_NOTE: &str = crate::prompts::RUNTIME_CUT_OFF;
 const SUBAGENT_REACTION_NOTE: &str = crate::prompts::RUNTIME_SUBAGENT_REACTION;

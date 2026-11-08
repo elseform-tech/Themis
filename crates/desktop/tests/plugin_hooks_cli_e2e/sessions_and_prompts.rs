@@ -256,7 +256,7 @@ async fn in_custom_a_session_end_is_asked_about_when_the_session_opens() {
 async fn a_process_a_hook_detaches_outlives_the_hook() {
     let hooks = json!({"PostToolUse": [{"hooks": [{"type": "command",
         "command": "nohup sh -c 'sleep 1; touch detached-finished' >/dev/null 2>&1 </dev/null &"}]}]});
-    let app = crate::app(hooks, &[], calls_once("list_dir", json!({"path": "."}))).await;
+    let app = crate::app(hooks, &[], calls_once("shell", json!({"command": "ls"}))).await;
     run(&app, "go").await;
     until("the detached process was killed with its hook", || {
         exists(&app, "detached-finished")
@@ -316,10 +316,10 @@ async fn a_batch_of_tool_calls_runs_its_hook_once_and_adds_context() {
         if tool_results(body).is_empty() {
             ResponseTemplate::new(200).set_body_json(json!({"choices": [{"message": {
                 "role": "assistant", "content": "", "tool_calls": [
-                    {"id": "a", "type": "function", "function": {"name": "list_dir",
-                        "arguments": "{\"path\":\".\"}"}},
-                    {"id": "b", "type": "function", "function": {"name": "search_file",
-                        "arguments": "{\"pattern\":\"x\",\"path\":\".\"}"}},
+                    {"id": "a", "type": "function", "function": {"name": "shell",
+                        "arguments": "{\"command\":\"ls\"}"}},
+                    {"id": "b", "type": "function", "function": {"name": "read_file",
+                        "arguments": "{\"file_path\":\"missing.txt\"}"}},
                 ]}, "finish_reason": "tool_calls"}]}))
         } else {
             reply("Done.")
@@ -332,8 +332,8 @@ async fn a_batch_of_tool_calls_runs_its_hook_once_and_adds_context() {
     assert_eq!(batches[0]["hook_event_name"], "PostToolBatch");
     let calls = batches[0]["tool_calls"].as_array().unwrap();
     assert_eq!(calls.len(), 2);
-    assert_eq!(calls[0]["tool_name"], "LS");
-    assert_eq!(calls[1]["tool_name"], "Grep");
+    assert_eq!(calls[0]["tool_name"], "Bash");
+    assert_eq!(calls[1]["tool_name"], "Read");
     assert!(calls[0].get("tool_response").is_some());
     let all = bodies(&app.llm).await;
     assert!(!all[0].to_string().contains("BATCH_MARK"));
@@ -341,7 +341,7 @@ async fn a_batch_of_tool_calls_runs_its_hook_once_and_adds_context() {
     app.serving.abort();
     let hooks = json!({"PostToolBatch": [{"hooks": [{"type": "command",
         "command": "echo 'enough of that' >&2; exit 2"}]}]});
-    let app = crate::app(hooks, &[], calls_once("list_dir", json!({"path": "."}))).await;
+    let app = crate::app(hooks, &[], calls_once("shell", json!({"command": "ls"}))).await;
     run(&app, "go").await;
     assert_eq!(
         bodies(&app.llm).await.len(),
@@ -694,13 +694,13 @@ async fn prompt_hooks_can_be_turned_off_by_the_person_only() {
 /// goes on. A yes says nothing.
 #[tokio::test(flavor = "multi_thread")]
 async fn a_prompt_hook_after_a_tool_tells_the_agent() {
-    let hooks = prompt_hook("PostToolUse", "LS", "Was the listing as expected?");
+    let hooks = prompt_hook("PostToolUse", "Bash", "Was the listing as expected?");
     let app = crate::app(hooks, &[], |body| {
         if is_prompt_hook(body) {
             return reply(r#"{"ok": false, "reason": "Confirm the row count"}"#);
         }
         if tool_results(body).is_empty() {
-            tool_call("c1", "list_dir", &json!({"path": "."}))
+            tool_call("c1", "shell", &json!({"command": "ls"}))
         } else {
             reply("Done.")
         }

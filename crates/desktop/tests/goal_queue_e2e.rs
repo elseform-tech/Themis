@@ -636,7 +636,7 @@ async fn asked_to_stop_the_agent_pauses_the_goal_and_no_turn_follows() {
                 calls("update_goal", json!({"status": "paused"}))
             } else {
                 held.wait();
-                calls("list_dir", json!({"directory_path": "."}))
+                calls("shell", json!({"command": "ls", "args": ["."]}))
             }
         })
         .mount(&server)
@@ -1420,8 +1420,8 @@ fn position(kinds: &[String], kind: &str) -> usize {
 
 fn two_dirs() -> ResponseTemplate {
     let call = |id: &str, dir: &str| {
-        json!({"id": id, "type": "function", "function": {"name": "create_dir",
-            "arguments": json!({"directory_path": dir}).to_string()}})
+        json!({"id": id, "type": "function", "function": {"name": "shell",
+            "arguments": json!({"command": "mkdir", "args": ["-p", dir]}).to_string()}})
     };
     ResponseTemplate::new(200).set_body_json(json!({"choices":[{"message":{"role":"assistant",
         "content":null,"tool_calls":[call("a", "dir_a"), call("b", "dir_b")]},"finish_reason":"tool_calls"}]}))
@@ -1502,7 +1502,10 @@ async fn steering_past_an_approval_shows_at_once_denies_it_and_reaches_the_agent
                 if after_a_tool(&body) {
                     reply("Made it.")
                 } else {
-                    calls("create_dir", json!({"directory_path": "dir_c"}))
+                    calls(
+                        "shell",
+                        json!({"command": "mkdir", "args": ["-p", "dir_c"]}),
+                    )
                 }
             } else if mentions(&body, STEER) {
                 reply("Understood.")

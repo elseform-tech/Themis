@@ -968,16 +968,13 @@ async fn cli_large_source_checkpoint_excerpts_once_and_preserves_restart_recover
         if recovery_original.lock().unwrap().is_none() {
             let system = messages[0]["content"].as_str().unwrap();
             let directory: String = serde_json::Deserializer::from_str(system.split("Recoverable evidence directory: ").nth(1).unwrap()).into_iter().next().unwrap().unwrap();
+            let directory = std::path::Path::new(&directory).strip_prefix(&recovery_root).unwrap().to_string_lossy().into_owned();
             if let Some(result) = messages.iter().find(|message| message["tool_call_id"] == "discover_originals") {
-                let listing: Value = serde_json::from_str(result["content"].as_str().unwrap()).unwrap();
-                let mut entries = listing["entries"].as_array().unwrap().iter().filter(|entry| entry["name"].as_str().unwrap().starts_with("snapshot-")).collect::<Vec<_>>();
-                entries.sort_by_key(|entry| entry["name"].as_str().unwrap());
-                let discovered = entries.first().unwrap()["path"].as_str().unwrap().to_owned();
+                let discovered = first_snapshot(result["content"].as_str().unwrap(), &directory);
                 assert_eq!(slashes(&discovered), slashes(&retained_original), "recovery must discover the immutable original through model-visible tools");
                 *recovery_original.lock().unwrap() = Some(discovered);
             } else {
-                let directory = std::path::Path::new(&directory).strip_prefix(&recovery_root).unwrap().to_string_lossy();
-                return ResponseTemplate::new(200).set_body_json(json!({"choices":[{"message":{"role":"assistant","content":null,"tool_calls":[{"id":"discover_originals","type":"function","function":{"name":"list_dir","arguments":json!({"directory_path":directory}).to_string()}}]},"finish_reason":"tool_calls"}]}));
+                return ResponseTemplate::new(200).set_body_json(json!({"choices":[{"message":{"role":"assistant","content":null,"tool_calls":[listing_call("discover_originals", &directory)]},"finish_reason":"tool_calls"}]}));
             }
         }
         let request_index = observed_calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
@@ -1015,7 +1012,7 @@ async fn cli_large_source_checkpoint_excerpts_once_and_preserves_restart_recover
                 // New bounded excerpts evict the earlier excerpt; narration below supplies real context pressure.
                 (0..3).map(|index| json!({"id":format!("newer_bounded_{index}"),"type":"function","function":{"name":"read_file","arguments":json!({"file_path":"pressure.txt","find":"pressure","offset":index*4000}).to_string()}})).collect::<Vec<_>>()
             } else {
-                vec![json!({"id":format!("navigation_{stage}"),"type":"function","function":{"name":"list_dir","arguments":json!({"directory_path":"."}).to_string()}})]
+                vec![listing_call(&format!("navigation_{stage}"), ".")]
             };
             json!({"choices":[{"message":{"role":"assistant","content":if stage==4 { Value::String("context pressure ".repeat(10_000)) } else {Value::Null},"tool_calls":calls},"finish_reason":"tool_calls"}]})
         } else {
@@ -1324,4 +1321,49 @@ async fn cli_completed_tool_original_survives_restart_without_compaction() {
     assert_eq!(std::fs::read_to_string(&archives[0]).unwrap(), saved);
     client.call("shutdown", json!({})).await.unwrap();
     task.await.unwrap().unwrap();
+}
+
+/// A model call listing `directory`: shell `ls` where the agent has no `list_dir` tool,
+/// `list_dir` on Windows, which keeps it.
+fn listing_call(id: &str, directory: &str) -> Value {
+    let (name, arguments) = if cfg!(windows) {
+        ("list_dir", json!({"directory_path": directory}))
+    } else {
+        ("shell", json!({"command": "ls", "args": [directory]}))
+    };
+    json!({"id": id, "type": "function", "function": {"name": name, "arguments": arguments.to_string()}})
+}
+
+/// The first `snapshot-` entry in a [`listing_call`] result for `directory`, as a path from
+/// the project.
+fn first_snapshot(result: &str, directory: &str) -> String {
+    let listing: Value = serde_json::from_str(result).unwrap();
+    if cfg!(windows) {
+        let mut entries = listing["entries"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|entry| entry["name"].as_str().unwrap().starts_with("snapshot-"))
+            .collect::<Vec<_>>();
+        entries.sort_by_key(|entry| entry["name"].as_str().unwrap());
+        return entries.first().unwrap()["path"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+    }
+    let mut names = listing["output"]
+        .as_str()
+        .unwrap_or_else(|| panic!("no listing in {listing}"))
+        .lines()
+        .filter(|name| name.starts_with("snapshot-"))
+        .collect::<Vec<_>>();
+    names.sort_unstable();
+    Path::new(directory)
+        .join(
+            names
+                .first()
+                .unwrap_or_else(|| panic!("no snapshot in {listing}")),
+        )
+        .to_string_lossy()
+        .into_owned()
 }

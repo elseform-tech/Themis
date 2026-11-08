@@ -1,4 +1,4 @@
-//! Read-only `git` tool calls through the shared app server and the unattended `themis` CLI,
+//! Read-only shell `git` calls through the shared app server and the unattended `themis` CLI,
 //! which refuses anything that would ask: `git status` runs, while `git diff --output=...`
 //! (a flag that writes a file) still needs approval and so is refused.
 #![cfg(unix)]
@@ -13,7 +13,7 @@ use wiremock::{Mock, MockServer, Request, ResponseTemplate};
 #[allow(dead_code)]
 mod common;
 
-/// Mock provider that makes the scripted `git` calls one per round, then answers.
+/// Mock provider that makes the scripted shell `git` calls one per round, then answers.
 async fn mount_git_script(calls: Vec<Vec<&'static str>>) -> MockServer {
     let server = MockServer::builder().start().await;
     Mock::given(method("POST"))
@@ -27,7 +27,7 @@ async fn mount_git_script(calls: Vec<Vec<&'static str>>) -> MockServer {
             let payload = match calls.get(done) {
                 Some(args) => json!({"choices":[{"message":{"role":"assistant","content":null,
                     "tool_calls":[{"id":format!("call_{done}"),"type":"function","function":{
-                        "name":"git","arguments":json!({"args": args}).to_string()}}]}}]}),
+                        "name":"shell","arguments":json!({"command": "git", "args": args}).to_string()}}]}}]}),
                 None => json!({"choices":[{"message":{"role":"assistant","content":"finished"},
                     "finish_reason":"stop"}]}),
             };

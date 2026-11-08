@@ -21,34 +21,6 @@ pub(super) struct CommandOutput {
     pub(super) leftovers_stopped: bool,
 }
 
-/// Run `program` with `args` in `workdir`, capturing combined output.
-///
-/// Enforcement: argv-only (no shell string), a scrubbed environment (see
-/// [`scrubbed_env`]), no inherited stdin, and a [`SHELL_TIMEOUT_SECS`]
-/// kill deadline.
-///
-/// `tokio::process` is intentionally not used (its cargo feature is off);
-/// the blocking `std::process` call runs on `spawn_blocking` instead.
-pub(super) async fn run_command(
-    program: String,
-    args: Vec<String>,
-    workdir: PathBuf,
-    tool: &'static str,
-    cancel: Option<Arc<AtomicBool>>,
-    sandbox: Option<Arc<SandboxPlan>>,
-) -> Result<CommandOutput, ToolCallError> {
-    run_command_with_timeout(
-        program,
-        args,
-        workdir,
-        tool,
-        Duration::from_secs(SHELL_TIMEOUT_SECS),
-        cancel,
-        sandbox,
-    )
-    .await
-}
-
 /// Result of [`run_check_command`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CheckOutput {
@@ -99,7 +71,16 @@ pub async fn run_check_command(
     })
 }
 
-/// [`run_command`] with an explicit kill deadline (tests use a short budget).
+/// Run `program` with `args` in `workdir`, capturing combined output.
+///
+/// Enforcement: argv-only (no shell string), a scrubbed environment (see
+/// [`scrubbed_env`]), no inherited stdin, and a [`SHELL_TIMEOUT_SECS`]
+/// kill deadline.
+///
+/// `tokio::process` is intentionally not used (its cargo feature is off);
+/// the blocking `std::process` call runs on `spawn_blocking` instead.
+///
+/// The kill deadline is explicit (tests use a short budget).
 /// `cancel` kills the whole process tree as soon as it is set (Stop).
 pub(super) async fn run_command_with_timeout(
     program: String,

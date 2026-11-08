@@ -17,11 +17,12 @@ JSONC examples and exact limits.
 | --- | --- |
 | `shell` commands (blocking calls) | Command-based MCP servers |
 | Background tasks (`shell` with `background: true`) | Plugin hooks |
-| The `git` tool | Themis' own in-process work (see the file guard below) |
+| git (through `shell`) | Themis' own in-process work (see the file guard below) |
 | Automation watch `check_command`s | Programs you start outside Themis |
 
-The `git` tool is covered because git runs repository hooks and configured
-helpers, which would otherwise be an unsandboxed way to run code. MCP servers
+git runs through the shell, so it is covered like any command; that matters
+because git runs repository hooks and configured helpers, which would otherwise
+be an unsandboxed way to run code. MCP servers
 and hooks are long-lived integrations you enable yourself (with consent bound to
 their exact definition); they run with your permissions as before.
 
@@ -210,9 +211,10 @@ chat's grants, from the shared app server.
 ## Custom mode
 
 Core file tools confine paths to the canonical project/worktree root and reject
-traversal and symlink escapes. The tools are `list_dir`, `read_file`, `write_file`,
-`copy_file`, `move_file`, `delete_file`, `create_dir`, `search_file`, `shell`,
-`apply_patch`, and `git`. Plugins can supply MCP tools and integration management
+traversal and symlink escapes. The tools are `read_file`, `write_file`, `shell`,
+`background_task` and `apply_patch` (on Windows also `list_dir` and `search_file`);
+listing, searching, git and copying, moving, deleting or creating files go through
+`shell`. Plugins can supply MCP tools and integration management
 adds its own tools.
 
 Actions have a risk (`read`, `write`, `execute`, `network`, `destructive`). Ordered
@@ -306,7 +308,7 @@ SIGTERM, 300 ms, SIGKILL sequence on the command's process group, so a server
 started with a plain `shell` call never outlives the call, the chat or the app.
 The result then ends with a note saying Themis stopped them and pointing to
 `background=true`, and `tools` / `shell_leftovers_stopped` is logged (tool name
-only, never the command). The same applies to the `git` tool and watch checks.
+only, never the command). The same applies to watch checks.
 Limit: a program that leaves the process group (`setsid`, a daemon that starts
 its own session) cannot be reached this way and keeps running; if it still
 holds the output pipes, the result says it may still be running. On Windows
@@ -346,11 +348,11 @@ points at. Whether Git ignores the file makes no difference. See
 
 | Call | What asks |
 | --- | --- |
-| `read_file`, `copy_file` source | Reading an existing sensitive file |
-| `write_file`, `apply_patch`, `move_file`, `delete_file`, `copy_file` target | Writing or removing one, new files included |
-| `shell`, background tasks, `git` | Any word of the command that names one, as far as the words can be read (below) |
+| `read_file` | Reading an existing sensitive file |
+| `write_file`, `apply_patch` | Writing one, new files included |
+| `shell` (git, `cp`, `mv`, `rm` included), background tasks | Any word of the command that names one, as far as the words can be read (below) |
 | `git add`, `git stage`, `git commit` | What Git says it would take in: see below |
-| `search_file`, `list_dir` | Nothing: they return names and sizes, never contents |
+| `search_file`, `list_dir` (Windows only) | Nothing: they return names and sizes, never contents |
 
 **Subagents** ask the same way, under their own name. **YOLO** stays open: nothing
 asks, unless a deny rule says otherwise. **Non-Git projects** ask for reads as usual;
@@ -409,7 +411,7 @@ the key stays in history. Non-Git projects get neither. The system instructions 
 ask the agent to keep `.gitignore` covering secret files whenever it creates or finds
 one, or sets up a project; that part is advice to the model.
 
-`search_file` and `list_dir` do not consider `.gitignore`; see
+On Windows, `search_file` and `list_dir` do not consider `.gitignore`; see
 [configuration](configuration.md).
 
 ### Secrets pasted into a message
