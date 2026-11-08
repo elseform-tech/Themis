@@ -85,6 +85,28 @@ impl AppState {
     /// or a command-based MCP server switched on (saves keep new or changed ones off, switching
     /// one on is refused; see `themis_core::plugins::PluginStore::for_agent`). A refusal is
     /// logged as `server`/`agent_call_refused`, metadata only.
+    /// Whether the store would refuse an agent's switch-on call (`enable`, or
+    /// `set_component_enabled` turning something on), read before anyone is asked about it, so
+    /// a call that cannot succeed is refused at once instead of after the person allows it.
+    /// Logged like the store's own refusal.
+    pub(crate) fn agent_switch_on_refused(&self, project: &Path, args: &Value) -> bool {
+        let store = self.plugin_store_for(Some(project.to_path_buf()), true);
+        let scope = args["scope"].as_str().unwrap_or("global");
+        let name = args["name"].as_str().unwrap_or_default();
+        let refused = store
+            .agent_would_refuse_switch_on(scope, name, args)
+            .unwrap_or(false);
+        if refused {
+            self.log_server_details(
+                "agent_call_refused",
+                "warn",
+                json!({"method": "plugin_action", "action": args["action"], "kind": args["kind"],
+                    "reason": "switch_on"}),
+            );
+        }
+        refused
+    }
+
     pub(crate) async fn plugin_action_for_agent(&self, args: Value) -> Result<Value, String> {
         let action = match args["action"].as_str() {
             Some("enable") => "enable",

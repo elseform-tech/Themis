@@ -110,6 +110,12 @@ impl ToolRuntime for ManagementTool {
             self.name == "manage_automations" && self.targets_own_chat(&args).await;
         if own_chat_automation {
             self.own_chat_policy(&args)?;
+        } else if themis_core::tools::integration_switches_on(self.name, &args)
+            && self.state.agent_switch_on_refused(&self.project, &args)
+        {
+            // Never a hook or a command-based MCP server switched on by an agent: refused before
+            // the person is asked about a call that could not succeed.
+            return Err(error(themis_core::prompts::AGENT_SWITCH_ON_REFUSED));
         } else {
             let action = ToolAction {
                 display: None,

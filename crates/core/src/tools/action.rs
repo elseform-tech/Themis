@@ -65,7 +65,25 @@ pub fn integration_risk(name: &str, args: &Value) -> Option<RiskLevel> {
 /// agent manage its own chat's automations without a prompt and asks for
 /// anything else; the dispatcher therefore neither prompts nor arms a permit.
 #[must_use]
-pub fn tool_approves_itself(name: &str) -> bool {
+pub fn tool_approves_itself(name: &str, args: &Value) -> bool {
+    tool_approves_itself_by_name(name) || integration_switches_on(name, args)
+}
+
+/// A `manage_integrations` call that switches something on: a hook, an MCP server or a whole
+/// plugin. The tool first asks the store whether it would refuse (a hook or a command-based MCP
+/// server is never an agent's to switch on), so nobody is asked about a call that cannot succeed;
+/// otherwise it asks as usual.
+#[must_use]
+pub fn integration_switches_on(name: &str, args: &Value) -> bool {
+    name == "manage_integrations"
+        && match args["action"].as_str() {
+            Some("enable") => true,
+            Some("set_component_enabled") => args["enabled"] == true && args["kind"] != "skill",
+            _ => false,
+        }
+}
+
+fn tool_approves_itself_by_name(name: &str) -> bool {
     // `create_goal` and `update_goal` only change the calling chat's goal and `ask_user` only adds a
     // question to it; `search_memory` only reads the person's own memories (Settings › Memory
     // turns it off); their deny rules apply inside. Web and browser tools

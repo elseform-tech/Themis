@@ -48,18 +48,7 @@ impl PluginStore {
         id: &str,
         enabled: bool,
     ) -> anyhow::Result<()> {
-        let switches_on = self.agent_saves
-            && enabled
-            && match kind {
-                "hook" => plugin.spec.hooks.iter().any(|h| h.name == id && !h.enabled),
-                "mcp" | "connection" => plugin
-                    .spec
-                    .mcp
-                    .get(id)
-                    .is_some_and(|server| runs_a_command(server) && !server.enabled),
-                _ => false,
-            };
-        if switches_on {
+        if self.agent_saves && switches_on_part(plugin, kind, id, enabled) {
             return Err(refused());
         }
         Ok(())
@@ -72,15 +61,66 @@ impl PluginStore {
         plugin: &Plugin,
         enabled: bool,
     ) -> anyhow::Result<()> {
-        let starts_code = plugin.spec.hooks.iter().any(|hook| hook.enabled)
-            || plugin
-                .spec
-                .mcp
-                .values()
-                .any(|server| server.enabled && runs_a_command(server));
-        if self.agent_saves && enabled && !plugin.enabled && starts_code {
+        if self.agent_saves && enabling_starts_code(plugin, enabled) {
             return Err(refused());
         }
         Ok(())
     }
+
+    /// Whether this agent store would refuse `args` (`enable`, or `set_component_enabled` with
+    /// `kind`, `id` and `enabled`) on the plugin `name` in `scope`, read before anyone is asked
+    /// about it. The write itself checks again, inside the registry update.
+    pub fn agent_would_refuse_switch_on(
+        &self,
+        scope: &str,
+        name: &str,
+        args: &serde_json::Value,
+    ) -> anyhow::Result<bool> {
+        if !self.agent_saves {
+            return Ok(false);
+        }
+        let Some(plugin) = self
+            .list()?
+            .into_iter()
+            .find(|plugin| plugin.scope == scope && plugin.spec.name == name)
+        else {
+            return Ok(false);
+        };
+        Ok(match args["action"].as_str() {
+            Some("enable") => enabling_starts_code(&plugin, true),
+            Some("set_component_enabled") => switches_on_part(
+                &plugin,
+                args["kind"].as_str().unwrap_or_default(),
+                args["id"].as_str().unwrap_or_default(),
+                args["enabled"] == true,
+            ),
+            _ => false,
+        })
+    }
+}
+
+/// Switching on a hook or a command-based MCP server of `plugin` that is off.
+fn switches_on_part(plugin: &Plugin, kind: &str, id: &str, enabled: bool) -> bool {
+    enabled
+        && match kind {
+            "hook" => plugin.spec.hooks.iter().any(|h| h.name == id && !h.enabled),
+            "mcp" | "connection" => plugin
+                .spec
+                .mcp
+                .get(id)
+                .is_some_and(|server| runs_a_command(server) && !server.enabled),
+            _ => false,
+        }
+}
+
+/// Switching on a plugin that is off while it holds a hook or a command-based MCP server that
+/// is on, which would start running with it.
+fn enabling_starts_code(plugin: &Plugin, enabled: bool) -> bool {
+    let starts_code = plugin.spec.hooks.iter().any(|hook| hook.enabled)
+        || plugin
+            .spec
+            .mcp
+            .values()
+            .any(|server| server.enabled && runs_a_command(server));
+    enabled && !plugin.enabled && starts_code
 }
