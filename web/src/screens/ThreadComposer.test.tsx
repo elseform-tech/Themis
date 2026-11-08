@@ -93,16 +93,20 @@ describe("ThreadComposer", () => {
     const view=composer(false);
     view.rerender(<ThreadComposer {...view.props} thread={{...thread,approval_mode:"yolo"}} />);
     expect(screen.getByLabelText("Permissions: YOLO").closest("details")).toHaveAttribute("data-mode","yolo");
-    expect(screen.getByText("No prompts; destructive steps ask")).toBeInTheDocument();
+    expect(screen.getByText("Unrestricted, including network; destructive actions require approval.")).toBeInTheDocument();
     expect(screen.queryByText(/Still applies/)).toBeNull();
-    view.rerender(<ThreadComposer {...view.props} thread={{...thread,approval_mode:"yolo"}} yoloKeeps={["network blocked","2 deny rules"]} />);
-    expect(screen.getByText("Still applies: network blocked, 2 deny rules")).toBeInTheDocument();
+    view.rerender(<ThreadComposer {...view.props} thread={{...thread,approval_mode:"yolo"}} yoloKeeps={["Keychain off","2 deny rules"]} />);
+    expect(screen.getByText("Still applies: Keychain off, 2 deny rules")).toBeInTheDocument();
+    // A blocked network is said once, under the list, in any mode.
+    expect(screen.queryByText("Network blocked by your configuration")).toBeNull();
+    view.rerender(<ThreadComposer {...view.props} networkBlocked />);
+    expect(screen.getByText("Network blocked by your configuration")).toBeInTheDocument();
     view.rerender(<ThreadComposer {...view.props} thread={{...thread,approval_mode:"auto"}} />);
     expect(screen.getByLabelText("Permissions: Auto").closest("details")).toHaveAttribute("data-mode","auto");
-    expect(screen.getByText("Reviewer approves; risky steps ask you")).toBeInTheDocument();
+    expect(screen.getByText("Actions are reviewed automatically; destructive actions require approval.")).toBeInTheDocument();
     view.rerender(<ThreadComposer {...view.props} />);
     expect(screen.getByLabelText("Permissions: Custom").closest("details")).toHaveAttribute("data-mode","custom");
-    expect(screen.getByText("Asks before each change")).toBeInTheDocument();
+    expect(screen.getByText("Changes and network access require approval.")).toBeInTheDocument();
     // Three distinct icons: Auto's shield has a check, YOLO is a bolt, Custom a plain shield.
     const icons=screen.getAllByRole("radio",{hidden:true}).map(radio=>radio.querySelector("svg")!.innerHTML);
     expect(new Set(icons).size).toBe(3);

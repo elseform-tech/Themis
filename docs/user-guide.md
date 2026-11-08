@@ -428,7 +428,8 @@ never show an approval box): Run it once runs it, Skip it skips it, writing an
 answer tells the agent what to do instead, and with no answer in 10 minutes (the approval
 timeout) YOLO runs it and Auto lets its reviewer decide. Blocks you
 wrote still hold: a `deny` rule, `sandbox.network: "block"` and
-`allow_keychain: false`; the shield lists them under YOLO ("Still applies: …"). The shield
+`allow_keychain: false`; the shield lists them under YOLO ("Still applies: …") and says
+"Network blocked by your configuration" when the network is blocked. The shield
 shows the chat's mode with its own icon and colour: **Auto** gold, **Custom** grey and
 **YOLO** red. Opening it lists the three modes with one line each; click one (or use the
 arrow keys) to switch. Mode and

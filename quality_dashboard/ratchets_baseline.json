@@ -901,9 +901,9 @@
    "cyclomatic": 23
   },
   "web/src/screens/ThreadView.tsx::ThreadView": {
-   "cognitive": 85,
-   "cyclomatic": 140,
-   "lines": 248
+   "cognitive": 75,
+   "cyclomatic": 131,
+   "lines": 240
   },
   "web/src/screens/ThreadView.tsx::ThreadView::send": {
    "cyclomatic": 22

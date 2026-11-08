@@ -15,9 +15,9 @@ function ModeIcon({ mode }: { mode: ApprovalMode }) {
 }
 
 const MODES: { mode: ApprovalMode; label: string; summary: string }[] = [
-  { mode: "auto", label: "Auto", summary: "Reviewer approves; risky steps ask you" },
-  { mode: "custom", label: "Custom", summary: "Asks before each change" },
-  { mode: "yolo", label: "YOLO", summary: "No prompts; destructive steps ask" },
+  { mode: "auto", label: "Auto", summary: "Actions are reviewed automatically; destructive actions require approval." },
+  { mode: "custom", label: "Custom", summary: "Changes and network access require approval." },
+  { mode: "yolo", label: "YOLO", summary: "Unrestricted, including network; destructive actions require approval." },
 ];
 
 const entry = (mode: ApprovalMode) => MODES.find(item => item.mode === mode) ?? MODES[1];
@@ -31,6 +31,8 @@ interface ComposerShieldProps {
   running: boolean;
   /** Blocks the configuration wrote that YOLO keeps (network, Keychain, deny rules). */
   yoloKeeps?: string[];
+  /** The configuration blocks the network, in every mode. */
+  networkBlocked?: boolean;
   onChange?: (mode: ApprovalMode) => void;
 }
 
@@ -39,7 +41,7 @@ interface ComposerShieldProps {
  * Arrows, Space, Enter and click choose; typed letters never change the mode, and a mouse press on the
  * shield does not move focus to it.
  */
-export function ComposerShield({ mode = "custom", saving, running, yoloKeeps, onChange }: ComposerShieldProps) {
+export function ComposerShield({ mode = "custom", saving, running, yoloKeeps, networkBlocked = false, onChange }: ComposerShieldProps) {
   const current = entry(mode);
   const items = useRef<(HTMLButtonElement | null)[]>([]);
   const choose = (next: ApprovalMode) => { if (!saving && next !== mode) onChange?.(next); };
@@ -67,11 +69,12 @@ export function ComposerShield({ mode = "custom", saving, running, yoloKeeps, on
               <button key={item.mode} ref={node => { items.current[index] = node; }} type="button" role="radio" aria-checked={checked}
                 tabIndex={checked ? 0 : -1} data-mode={item.mode} className="themis-permissions-mode" onClick={() => choose(item.mode)}>
                 <ModeIcon mode={item.mode} />
-                <span><strong>{item.label}</strong><small>{item.summary}</small>{extra}</span>
+                <span><strong>{item.label}</strong><small className="themis-permissions-hint">{item.summary}</small>{extra}</span>
               </button>
             );
           })}
         </div>
+        {networkBlocked && <p>Network blocked by your configuration</p>}
         {running && <p>Changes apply to the next run.</p>}
       </div>
     </details>

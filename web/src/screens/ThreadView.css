@@ -164,14 +164,14 @@
 .themis-permissions-mode { display: flex; align-items: flex-start; gap: 10px; padding: 8px 10px; border: 0; border-radius: 12px; background: transparent; color: var(--themis-text-2); font: inherit; text-align: left; cursor: pointer; }
 .themis-permissions-mode svg { flex-shrink: 0; margin-top: 2px; }
 .themis-permissions-mode > span { display: grid; gap: 2px; min-width: 0; }
-.themis-permissions-mode strong { color: var(--themis-text); font-size: .8125rem; font-weight: 500; }
-.themis-permissions-mode small { font-size: .75rem; line-height: 1.4; }
+.themis-permissions-mode strong { color: var(--themis-text); font-size: .875rem; font-weight: 600; }
+/* The mode name is the focus; its line is a quiet hint under it. */
+.themis-permissions-mode small { font-size: .7rem; font-weight: 400; line-height: 1.35; color: var(--themis-text-3); }
 /* What YOLO still keeps stays one quiet line; the full list is on hover. */
 .themis-permissions-keeps { overflow: hidden; color: var(--themis-text-3); text-overflow: ellipsis; white-space: nowrap; }
 .themis-permissions-mode:hover strong { color: var(--themis-accent-hover); }
 /* The chosen mode reads brighter and bolder, never boxed. */
-.themis-permissions-mode[aria-checked="true"] { color: var(--themis-text); }
-.themis-permissions-mode[aria-checked="true"] strong { font-weight: 650; }
+.themis-permissions-mode[aria-checked="true"] strong { font-weight: 700; }
 [role="radiogroup"][aria-disabled="true"] .themis-permissions-mode { cursor: progress; opacity: .6; }
 .themis-permissions-panel p { margin: 4px 10px 6px; color: var(--themis-text-3); font-size: .75rem; }
 .themis-send { display: grid; place-items: center; width: 36px; height: 36px; min-height: 36px; padding: 0; flex-shrink: 0; color: var(--themis-accent); }

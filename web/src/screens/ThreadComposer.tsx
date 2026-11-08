@@ -39,6 +39,8 @@ interface ThreadComposerProps {
   onApprovalModeChange?: (mode: "custom" | "auto" | "yolo") => void;
   /** Blocks the configuration wrote that YOLO keeps (network, Keychain, deny rules). */
   yoloKeeps?: string[];
+  /** The configuration blocks the network: the shield says so under its list. */
+  networkBlocked?: boolean;
   budget?: ContextBudget;
   /** Project directory and current Git branch shown beside the composer controls. */
   location?: { name: string; root: string; branch: string | null; branches?: string[]; onSwitchBranch?: (branch: string) => void };
@@ -78,7 +80,7 @@ export function ThreadComposer({
   onOpenSettings,
   permissionSaving = false,
   onApprovalModeChange,
-  yoloKeeps,
+  yoloKeeps, networkBlocked,
   budget,
   compacting = false,
   hero = false,
@@ -182,7 +184,7 @@ export function ThreadComposer({
               </button>
             </div>
           </details>
-          <ComposerShield mode={thread.approval_mode} saving={permissionSaving} running={running} yoloKeeps={yoloKeeps} onChange={onApprovalModeChange} />
+          <ComposerShield mode={thread.approval_mode} saving={permissionSaving} running={running} yoloKeeps={yoloKeeps} networkBlocked={networkBlocked} onChange={onApprovalModeChange} />
 
           <span className="themis-composer-spacer" />
           <ContextMeter budget={budget} compacting={compacting} running={running} threadId={thread.id} />
