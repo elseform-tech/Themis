@@ -70,8 +70,7 @@
 .themis-thread-msg--system { color: var(--themis-danger); }
 .themis-thread-msg--stopped { color: var(--themis-text-2); }
 .themis-thread-text { margin: 0; white-space: pre-wrap; word-break: break-word; font-size: .9375rem; line-height: 1.6; }
-.themis-request-error { font-size: .8125rem; }
-.themis-request-error summary { cursor: pointer; }
+.themis-request-error { margin: 0; font-size: .75rem; color: var(--themis-text-3); }
 .themis-response-actions { display: flex; align-items: center; gap: 4px; margin: 6px 0 0 -8px; }
 .themis-response-action { display: grid; place-items: center; width: 36px; height: 36px; border: 0; border-radius: 50%; background: transparent; color: var(--themis-text-2); cursor: pointer; }
 .themis-response-action:hover { color: var(--themis-text); }
