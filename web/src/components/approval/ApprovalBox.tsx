@@ -1,8 +1,7 @@
-import { toolDisplayName } from "../../lib/toolNames";
 import type { ApprovalDecision, ApprovalRequest } from "../../lib/types";
 import { UNSANDBOXED_TOOL } from "../../lib/types";
 import { SafeText, TokenChip, TokenList } from "./CommandTokens";
-import { ActionSentence, actionParts, riskSentence } from "./plainAction";
+import { ActionSentence, actionParts } from "./plainAction";
 import { Button } from "../primitives/Button";
 import "./ApprovalBox.css";
 
@@ -64,15 +63,9 @@ export function GrantHint({ request }: { request: ApprovalRequest }) {
   );
 }
 
-/** The exact call: argv chips for shell and git (never the joined summary), else the runtime's summary. */
-function ExactCall({ request, label }: { request: ApprovalRequest; label?: string }) {
-  if (request.command) return <TokenList argv={request.command.argv} />;
-  const text = request.tool.startsWith("mcp_") ? request.summary.split(request.tool).join(toolDisplayName(request.tool, label)) : request.summary;
-  return <SafeText text={text} />;
-}
-
-/** What the box keeps behind its Details disclosure: the exact call, where it runs, the secret files, why it asks and what a grant covers. */
-function ApprovalDetails({ request, label }: { request: ApprovalRequest; label?: string }) {
+/** What the box keeps behind its Details disclosure: where it runs, the secret files, why it asks and what a grant
+ *  covers. The whole command is already in the box, and the raw tool call is never shown. */
+function ApprovalDetails({ request }: { request: ApprovalRequest }) {
   const { command } = request;
   const outside = request.tool === UNSANDBOXED_TOOL;
   const blocked = command?.sandbox_blocked;
@@ -80,9 +73,7 @@ function ApprovalDetails({ request, label }: { request: ApprovalRequest; label?:
     <details className="themis-approval-details">
       <summary>Details</summary>
       <dl>
-        <dt>{outside ? "shell (outside the sandbox)" : toolDisplayName(request.tool, label)}</dt>
-        <dd><ExactCall request={request} label={label} />{command?.background && " (in the background)"}</dd>
-        {command?.cwd !== undefined && <><dt>Folder</dt><dd><TokenChip token={command.cwd} /></dd></>}
+        {command?.cwd !== undefined && <><dt>Folder</dt><dd><TokenChip token={command.cwd} full /></dd></>}
         {request.sensitive_files?.length ? <><dt>Secret files</dt><dd><TokenList argv={request.sensitive_files} /></dd></> : null}
         {outside && <><dt>Why</dt><dd>The sandbox blocked it{blocked ? <>: <SafeText text={blocked} />.</> : "."} Outside the sandbox it can write anywhere you can, read secret folders and use the network.</dd></>}
         <dt>{request.grantable === false ? "Always asks" : "In this chat"}</dt>
@@ -102,7 +93,6 @@ export function ApprovalBox({ request, label, open, onDecide, next, onFold }: Ap
   // A subagent's request names it, so the person knows which agent asks.
   const asker = request.subagent ? `${request.subagent.name} (subagent)` : null;
   const title = outside ? "Run outside the sandbox?" : asker ? `${asker} ${request.command ? "wants to run a command" : "needs approval"}` : "Approval needed";
-  const risk = riskSentence(request);
   return (
     <section className="themis-approval-box" aria-label={title}>
       <div className="themis-approval-head">
@@ -117,8 +107,7 @@ export function ApprovalBox({ request, label, open, onDecide, next, onFold }: Ap
       </div>
       <div className="themis-approval">
         <p className="themis-approval-summary"><ActionSentence parts={actionParts(request, label)} /></p>
-        {risk && <p className={`themis-approval-risk${risk.danger ? " is-danger" : ""}`}>{risk.text}</p>}
-        <ApprovalDetails request={request} label={label} />
+        <ApprovalDetails request={request} />
         <div className="themis-approval-actions">
           <Button variant="primary" onClick={() => onDecide("once")}>Allow once</Button>
           {grantable && (

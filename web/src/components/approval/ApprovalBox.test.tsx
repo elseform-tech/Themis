@@ -27,26 +27,28 @@ describe("ApprovalBox", () => {
     render(<ApprovalBox request={{ ...REQUEST, tool, summary: `call \`${tool}\` with {}` }} label="files · list_allowed_directories" open onDecide={() => {}} />);
     expect(screen.getAllByText(/files · list allowed directories/).length).toBeGreaterThan(0);
     expect(screen.queryByText(/fb67fe/)).toBeNull();
+    // The raw tool call never shows, Details included.
+    expect(screen.getByRole("region")).not.toHaveTextContent(/call `|with \{/);
   });
 
   afterEach(() => { vi.useRealTimers(); });
-  it("leads with what the agent is about to do, then one risk line, with details closed", () => {
+  it("leads with what the agent is about to do, with no risk line, and details closed", () => {
     setup({ ...REQUEST, tool: "write_file", summary: "write `notes.txt`", risk: "write" });
     expect(lead()).toHaveTextContent(/^Write notes\.txt$/);
-    expect(box().querySelector(".themis-approval-risk")).toHaveTextContent(/^It changes project files, so it needs your approval\.$/);
+    expect(box().querySelector(".themis-approval-risk")).toBeNull();
     const details = box().querySelector("details")!;
     expect(details.open).toBe(false);
     expect(within(details).getByText("Details")).toBeInTheDocument();
-    // The tool's handler name and the runtime's own words wait under Details.
-    expect(within(details).getByText("write file")).toBeInTheDocument();
-    expect(within(details).getByText("write `notes.txt`")).toBeInTheDocument();
-    expect(lead()).not.toHaveTextContent("write_file");
+    // Neither the handler name nor the runtime's raw summary shows anywhere in the box.
+    expect(box()).not.toHaveTextContent("write_file");
+    expect(box()).not.toHaveTextContent("write `notes.txt`");
   });
 
-  it("marks a destructive step in the danger colour", () => {
-    setup({ ...REQUEST, tool: "delete_file", summary: "delete `old.txt`", risk: "destructive", grantable: false });
-    expect(lead()).toHaveTextContent(/^Delete old\.txt$/);
-    expect(screen.getByText("It can't be undone, so it needs your approval.")).toHaveClass("themis-approval-risk", "is-danger");
+  it("names a deleted file plainly and shows a long path whole on hover", () => {
+    const path = `src/${"deep/".repeat(30)}old.txt`;
+    setup({ ...REQUEST, tool: "delete_file", summary: `delete \`${path}\``, risk: "destructive", grantable: false });
+    expect(lead()).toHaveTextContent(/^Delete src\/deep/);
+    expect(lead().querySelector(".themis-approval-token")).toHaveAttribute("title", path);
   });
 
   it("decides via buttons, with no number hints", () => {
@@ -94,7 +96,7 @@ describe("ApprovalBox", () => {
   it("names the subagent that asks", () => {
     setup({ ...REQUEST, subagent: { id: "a1", name: "Test gaps" }, command: { argv: ["cargo", "test"] } });
     expect(screen.getByRole("region", { name: "Test gaps (subagent) wants to run a command" })).toBeInTheDocument();
-    expect(lead()).toHaveTextContent("Run cargotest in the project root");
+    expect(lead()).toHaveTextContent("Run cargo test in the project root");
     cleanup();
     setup({ ...REQUEST, tool: "fetch_url", command: undefined, subagent: { id: "a1", name: "Docs" } });
     expect(screen.getByRole("region", { name: "Docs (subagent) needs approval" })).toBeInTheDocument();
@@ -132,7 +134,6 @@ it.each([
 describe("sensitive files", () => {
   it("names the files for a command, and the grant covers them, not the tool", () => {
     setup({ ...REQUEST, tool: "shell", sensitive_files: [".env", ".env.local"], command: { argv: ["cat", ".env", ".env.local"] }, grant_scope: { argv: ["cat", ".env", ".env.local"], covers_further_args: false } });
-    expect(screen.getByText("It uses secret files (.env, .env.local), so it needs your approval.")).not.toHaveClass("is-danger");
     expect(within(box().querySelector("details")!).getByText("Secret files")).toBeInTheDocument();
     expect(tooltip()).toHaveTextContent("Allow in this chat covers these files and this command in later runs of this chat. Other files still ask.");
   });
@@ -140,7 +141,6 @@ describe("sensitive files", () => {
   it("reads a sensitive file in plain words", () => {
     setup({ ...REQUEST, tool: "read_file", risk: "read", sensitive_files: [".env"], summary: "read .env" });
     expect(lead()).toHaveTextContent(/^Read \.env$/);
-    expect(box().querySelector(".themis-approval-risk")).toHaveTextContent(/^It reads secret files \(\.env\), so it needs your approval\.$/);
     expect(tooltip()).toHaveTextContent("Allow in this chat covers these files in later runs of this chat. Other files still ask.");
   });
 });
@@ -226,10 +226,10 @@ describe("command display", () => {
 
   it("renders shell and git commands from argv, never the joined summary", () => {
     setup(command(["rm", "-rf", "/"]));
-    // The lead names the folder; Details keeps its full path.
+    // The lead shows the whole command and names the folder; Details keeps the folder's full path.
     expect(summaryChips()).toEqual(["rm", "-rf", "/", "project"]);
-    expect(lead()).toHaveTextContent(/^Run rm-rf\/ in project$/);
-    expect(detailChips()).toEqual(["rm", "-rf", "/", "/tmp/project"]);
+    expect(lead()).toHaveTextContent(/^Run rm -rf \/ in project$/);
+    expect(detailChips()).toEqual(["/tmp/project"]);
     expect(screen.queryByText(/run `rm -rf \/`/)).toBeNull();
   });
 
@@ -255,8 +255,8 @@ describe("command display", () => {
     const argv = ["git", "push", "--force", "origin", "main"];
     setup({ ...command(argv, "/repo"), grant_scope: { argv, covers_further_args: false }, risk: "destructive", grantable: false });
     expect(summaryChips()).toEqual([...argv, "repo"]);
-    expect(detailChips()).toEqual([...argv, "/repo"]);
-    expect(screen.getByText("It can't be undone, so it needs your approval.")).toBeInTheDocument();
+    expect(lead()).toHaveTextContent(/^Run git push --force origin main in repo$/);
+    expect(detailChips()).toEqual(["/repo"]);
     // No grant chips: the hint only says why nothing can be allowed for the chat.
     expect(box().querySelector("details")).toHaveTextContent("This kind of action always asks");
     expect(screen.queryByRole("button", { name: /Allow in this chat/ })).toBeNull();
@@ -265,17 +265,19 @@ describe("command display", () => {
   it("says the project root in words when the call has no cwd", () => {
     setup({ ...REQUEST, tool: "shell", summary: "call `shell` with {}", command: { argv: ["ls", "-la"] } });
     expect(summaryChips()).toEqual(["ls", "-la"]);
-    expect(lead()).toHaveTextContent(/^Run ls-la in the project root$/);
+    expect(lead()).toHaveTextContent(/^Run ls -la in the project root$/);
     expect(box()).not.toHaveTextContent(/call `shell` with/);
   });
 
-  it("shows git commands, the background note and the 12-token cap", () => {
+  it("shows the background note and the whole command however long, never cut", () => {
     setup(command(["git", "commit", "-m", "msg"], "/repo", true));
     expect(lead()).toHaveTextContent(/in repo in the background$/);
     cleanup();
-    setup(command(Array.from({ length: 20 }, (_, i) => `a${i}`)));
-    expect(summaryChips()).toHaveLength(13);
-    expect(lead()).toHaveTextContent(/\(\+8 more\)/);
+    const long = "x".repeat(200);
+    setup(command([...Array.from({ length: 20 }, (_, i) => `a${i}`), long]));
+    expect(summaryChips()).toHaveLength(22);
+    expect(summaryChips()[20]).toBe(long);
+    expect(lead()).not.toHaveTextContent(/more\)|chars\)|…/);
   });
 
   it("asks to run a sandbox-blocked command outside the sandbox with the same three buttons, the reason under Details", () => {
@@ -288,9 +290,8 @@ describe("command display", () => {
       command: { argv, cwd: "/repo", sandbox_blocked: "writing to /Users/me/x is blocked\u202E: only the project is writable" },
     });
     expect(screen.getByRole("region", { name: "Run outside the sandbox?" })).toBeInTheDocument();
-    expect(screen.getByText("It runs outside the sandbox, which is blocked unless you allow it.")).toHaveClass("is-danger");
+    expect(lead()).toHaveTextContent(/^Run touch \/Users\/me\/x in repo$/);
     const details = box().querySelector("details")!;
-    expect(within(details).getByText("shell (outside the sandbox)")).toBeInTheDocument();
     expect(within(details).getByText(/The sandbox blocked it/)).toHaveTextContent("writing to /Users/me/x is blocked⟨U+202E⟩: only the project is writable. Outside the sandbox");
     expect(tooltip()).toHaveTextContent(/run outside the sandbox in later runs of this chat/);
     fireEvent.click(screen.getByRole("button", { name: "Allow in this chat" }));
@@ -303,6 +304,5 @@ describe("command display", () => {
     setup({ ...REQUEST, tool: "shell_unsandboxed", risk: "destructive", grantable: false, command: { argv: ["rm", "-rf", "/x"], sandbox_blocked: "writing to /x is blocked" } });
     expect(screen.queryByRole("button", { name: /Allow in this chat/ })).toBeNull();
     expect(screen.getByRole("button", { name: "Deny" })).toBeInTheDocument();
-    expect(box().querySelector(".themis-approval-risk")).toHaveTextContent(/^It can't be undone and runs outside the sandbox, which is blocked unless you allow it\.$/);
   });
 });
