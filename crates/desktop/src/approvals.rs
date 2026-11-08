@@ -171,17 +171,17 @@ impl ApprovalHook for DesktopApprovalHook {
         if action.risk == CoreRisk::Read && !self.confirm_reads && !escape {
             return false;
         }
-        let integration = action.tool.starts_with("mcp_")
-            || action.tool.starts_with("hook_")
-            || action.tool.starts_with("manage_integrations_")
-            || action.tool.starts_with("manage_automations_")
-            || matches!(action.tool.as_str(), "list_plugins" | "save_skill");
+        let integration = integration_tool(&action.tool);
         (self.is_git || (!escape && (action.risk == CoreRisk::Read || integration)))
             && !(self.unattended && (escape || !action.grantable()))
     }
 
     fn approve(&self, action: &ToolAction) -> Approval {
-        self.ask(action, Vec::new())
+        self.ask(action, Vec::new(), false)
+    }
+
+    fn approve_first(&self, action: &ToolAction) -> Approval {
+        self.ask(action, Vec::new(), true)
     }
 
     fn approve_sensitive(
@@ -189,12 +189,12 @@ impl ApprovalHook for DesktopApprovalHook {
         action: &ToolAction,
         access: &themis_core::tools::sensitive::SensitiveAccess,
     ) -> Approval {
-        self.ask(action, access.names())
+        self.ask(action, access.names(), false)
     }
 }
 
 impl DesktopApprovalHook {
-    fn ask(&self, action: &ToolAction, sensitive_files: Vec<String>) -> Approval {
+    fn ask(&self, action: &ToolAction, sensitive_files: Vec<String>, ask_first: bool) -> Approval {
         let escape = action.tool == themis_core::tools::UNSANDBOXED_TOOL;
         if action.risk == CoreRisk::Read
             && !self.confirm_reads
@@ -208,11 +208,7 @@ impl DesktopApprovalHook {
         if escape && self.unattended {
             return Approval::Deny;
         }
-        let integration = action.tool.starts_with("mcp_")
-            || action.tool.starts_with("hook_")
-            || action.tool.starts_with("manage_integrations_")
-            || action.tool.starts_with("manage_automations_")
-            || matches!(action.tool.as_str(), "list_plugins" | "save_skill");
+        let integration = integration_tool(&action.tool);
         if !self.is_git && (escape || (action.risk != CoreRisk::Read && !integration)) {
             return Approval::Deny;
         }
@@ -242,6 +238,7 @@ impl DesktopApprovalHook {
             command: action.display.clone(),
             subagent: self.subagent.clone(),
             sensitive_files,
+            ask_first,
         };
         let (sender, receiver) = std::sync::mpsc::channel();
         {
@@ -296,6 +293,19 @@ impl DesktopApprovalHook {
             }
         }
     }
+}
+
+/// Integration and management tools, which a non-Git project may still be asked about.
+fn integration_tool(tool: &str) -> bool {
+    [
+        "mcp_",
+        "hook_",
+        "manage_integrations_",
+        "manage_automations_",
+    ]
+    .iter()
+    .any(|prefix| tool.starts_with(prefix))
+        || matches!(tool, "list_plugins" | "save_skill")
 }
 
 /// Blocks for the UI decision, yielding the Tokio worker while waiting.

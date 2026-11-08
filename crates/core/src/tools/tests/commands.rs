@@ -888,6 +888,55 @@ fn shared_tools_convert_to_boxes() {
     assert_eq!(boxes[8].name(), "shell");
 }
 
+/// Through the shell, git calls that start a program of the caller's choosing (or take their
+/// configuration from the call) are asked about every time: a chat grant or a broad allow rule
+/// for `git fetch` never covers them, inside wrappers too. Ordinary remote calls stay grantable.
+#[test]
+fn shell_git_calls_that_run_another_program_are_asked_every_time() {
+    let argv = |words: &[&str]| {
+        words
+            .iter()
+            .map(|w| (*w).to_owned())
+            .collect::<Vec<String>>()
+    };
+    for words in [
+        &["git", "fetch", "--upload-pack=touch /tmp/x", "origin"][..],
+        &["git", "fetch", "--upl", "sh", "origin"],
+        &["git", "pull", "--upload-pack", "sh"],
+        &["git", "push", "--receive-pack=sh", "origin"],
+        &["git", "push", "--exec=sh", "origin"],
+        &["git", "-c", "core.sshCommand=sh", "fetch", "origin"],
+        &["git", "--exec-path=/tmp", "status"],
+        &["git", "fetch", "ext::sh -c touch% /tmp/pwned"],
+        &["git", "push", "FD::3", "main"],
+        &["git", "clone", "-u", "sh", "https://example.com/r.git"],
+        &["git", "ls-remote", "ext::sh"],
+        &["git", "push", "--e=sh", "origin"],
+        &["git", "fetch", "--u=sh", "origin"],
+        &["git", "clone", "-ush", "https://example.com/r.git"],
+        &["git", "ls-remote", "-u", "sh", "origin"],
+        &["git", "-ccore.sshCommand=sh", "fetch", "origin"],
+        &["git", "submodule", "foreach", "sh", "-c", "touch x"],
+        &["sh", "-c", "git fetch --upload-pack=sh origin"],
+    ] {
+        let command = argv(words);
+        assert!(runs_git_helper(&command), "{words:?}");
+        assert!(asks_every_time(&command), "{words:?}");
+    }
+    for words in [
+        &["git", "fetch", "origin"][..],
+        &["git", "push", "-u", "origin", "main"],
+        &["git", "push", "--set-upstream", "origin", "main"],
+        &["git", "pull", "origin", "main"],
+        &["git", "status"],
+        &["git", "remote", "-v"],
+        &["git", "submodule", "update", "--init"],
+        &["git", "fetch", "-u", "origin"],
+    ] {
+        assert!(!runs_git_helper(&argv(words)), "{words:?}");
+    }
+}
+
 /// Shell commands that only read inside the project carry the read risk; a listed program that
 /// would write, run another program, reach outside the project, or isn't the bare program keeps
 /// the command risk.
@@ -926,6 +975,11 @@ fn shell_commands_that_only_read_inside_the_project_are_reads() {
         &["rg", "-z", "x"],
         &["sort", "-o", "out.txt", "in.txt"],
         &["sort", "--compress-program=sh", "in.txt"],
+        &["sort", "--comp=sh", "in.txt"],
+        &["sort", "--out=out.txt", "in.txt"],
+        &["sort", "-nooutput.txt", "in.txt"],
+        &["rg", "--pr=sh", "x"],
+        &["file", "--comp", "-m", "magic"],
         &["tree", "-o", "out.txt"],
         &["file", "-C", "-m", "magic"],
         &["cat", "/etc/hosts"],
