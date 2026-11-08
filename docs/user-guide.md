@@ -463,7 +463,10 @@ clicks, so you can follow it. A page that locks the pointer (a first-person game
 **Click to control the view**: a click takes your mouse into the page and turns the view as
 you move it, and **Esc** gives it back. The speaker button turns the
 page's sound on (it starts off). **DevTools** opens Chrome's
-DevTools for the page. Browser actions ask per site, like page reads. Start a
+DevTools for the page. The agent drives the page with one **browser** tool whose action
+(open, click, type, screenshot…) each approval names ("Browser click … on example.com").
+Browser actions ask per site, like page reads; a rule in `runtime.jsonc` can name a site,
+an action or both (see [configuration](configuration.md#composer-permissions)). Start a
 message with **/browser-use** to have the agent do a task in the browser (it
 follows built-in guidance: act on snapshot refs, check console errors, never enter
 secrets you did not give it, ask before anything irreversible, and attach a
@@ -554,8 +557,8 @@ Skill instructions can contain up to 256 KiB of UTF-8 text without truncation. F
 - An empty allowlist means "all tools".
 - Unknown tool names are rejected. The valid names are exactly:
   `read_file`, `write_file`, `shell`, `background_task`, `recall`,
-  `apply_patch`, `fetch_url`, `web_search` and `browser` (every `browser_*`
-  tool); on Windows also `list_dir` and `search_file`. Listing, searching,
+  `apply_patch`, `fetch_url`, `web_search` and `browser` (the built-in browser,
+  every action); on Windows also `list_dir` and `search_file`. Listing, searching,
   git, and copying, moving, deleting or creating files go through `shell`.
 
 The file tools accept an absolute path when it lies inside the project (it is
