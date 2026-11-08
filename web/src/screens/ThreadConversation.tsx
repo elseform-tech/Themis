@@ -412,7 +412,7 @@ function Message({ message, threadId, activeRunId, durationMs, skills, plugins, 
             <span aria-hidden="true">{message.tool.ok === undefined ? "◌" : message.tool.ok ? "✓" : "!"}</span>
             {toolDisplayName(message.tool.name, message.tool.label)}
             <span className="themis-tool-status">
-              {message.tool.ok === undefined ? isActiveRun ? "Running" : "Interrupted" : message.tool.ok ? "Done" : "Failed"}
+              {message.tool.ok === undefined ? isActiveRun ? "Running" : "Interrupted" : message.tool.ok ? "Done" : message.tool.unanswered ? "Not run · nobody answered in time" : "Failed"}
             </span>
           </summary>
           <div className="themis-tool-detail">
