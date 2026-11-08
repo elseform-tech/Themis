@@ -50,13 +50,11 @@ pub(super) async fn resolve_object(
             json!({"backendNodeId": backend}),
         )
         .await
-        .map_err(|_| {
-            "that element is gone from the page; take a new browser_snapshot".to_owned()
-        })?;
+        .map_err(|_| "that element is gone from the page; take a new snapshot".to_owned())?;
     resolved["object"]["objectId"]
         .as_str()
         .map(str::to_owned)
-        .ok_or_else(|| "that element is gone from the page; take a new browser_snapshot".to_owned())
+        .ok_or_else(|| "that element is gone from the page; take a new snapshot".to_owned())
 }
 
 /// Scrolls an element into view and returns its center in CSS pixels.
@@ -107,7 +105,7 @@ pub(super) fn relative_path(
         return Err("dx and dy must be numbers".to_owned());
     }
     if width < 1.0 || height < 1.0 {
-        return Err("the page has no visible size yet; take a browser_snapshot".to_owned());
+        return Err("the page has no visible size yet; take a snapshot".to_owned());
     }
     // A page that shrank may have left the last position outside it.
     let from = (
@@ -156,7 +154,7 @@ pub(super) async fn check_visible_point(
         return Ok(());
     }
     Err(format!(
-        "the point ({x}, {y}) is outside the visible page ({}×{} CSS pixels); take a browser_screenshot",
+        "the point ({x}, {y}) is outside the visible page ({}×{} CSS pixels); take a screenshot",
         width.round(),
         height.round()
     ))
@@ -181,9 +179,7 @@ pub(super) async fn element_center(
             json!({"backendNodeId": backend}),
         )
         .await
-        .map_err(|_| {
-            "that element is gone or not visible; take a new browser_snapshot".to_owned()
-        })?;
+        .map_err(|_| "that element is gone or not visible; take a new snapshot".to_owned())?;
     let quad: Vec<f64> = quads["quads"][0]
         .as_array()
         .into_iter()
@@ -291,7 +287,7 @@ pub(super) fn drag_outcome(pressed: &str, target: &str, native: bool) -> String 
     if native {
         format!("pressed on {pressed}; a native drag started and was dropped on {target}")
     } else {
-        format!("pressed on {pressed}; no native drag started, so nothing was dragged unless this page follows the mouse itself; let go over {target}. browser_snapshot with layout shows where everything is")
+        format!("pressed on {pressed}; no native drag started, so nothing was dragged unless this page follows the mouse itself; let go over {target}. a snapshot with layout shows where everything is")
     }
 }
 
@@ -311,7 +307,7 @@ pub(super) async fn selected_element(
 ) -> Result<i64, String> {
     let missing = || {
         format!(
-            "nothing on this page matches {}; take a new browser_snapshot and use a ref from it, a CSS selector or text=...",
+            "nothing on this page matches {}; take a new snapshot and use a ref from it, a CSS selector or text=...",
             cap(selector, 80)
         )
     };

@@ -48,18 +48,10 @@ async fn the_agent_fills_a_form_reads_notes_and_navigates_in_a_real_browser() {
             screenshots: Default::default(),
         },
     );
-    let tool = |name: &str| {
-        tools
-            .iter()
-            .find(|tool| tool.name() == name)
-            .unwrap_or_else(|| panic!("{name}"))
-    };
+    let tool = |action: &'static str| act(&tools, action);
     let url = format!("{}/signup", site.uri());
 
-    let opened = tool("browser_open")
-        .execute(json!({"url": url}))
-        .await
-        .unwrap();
+    let opened = tool("open").execute(json!({"url": url})).await.unwrap();
     let snapshot = opened["snapshot"].as_str().unwrap().to_owned();
     assert_eq!(opened["title"], "Sign up · Acme");
     assert!(
@@ -76,16 +68,16 @@ async fn the_agent_fills_a_form_reads_notes_and_navigates_in_a_real_browser() {
         .lock()
         .unwrap()
         .iter()
-        .all(|a| a.command == ["127.0.0.1"]));
+        .all(|a| a.tool == "browser" && a.command[0] == "127.0.0.1"));
 
     let email = ref_of(&snapshot, "\"Email\"");
     let country = ref_of(&snapshot, "\"Country\"");
     let submit = ref_of(&snapshot, "\"Create account\"");
-    tool("browser_type")
+    tool("type")
         .execute(json!({"ref": email, "text": "ada@example.com"}))
         .await
         .unwrap();
-    tool("browser_select")
+    tool("select")
         .execute(json!({"ref": country, "values": ["France"]}))
         .await
         .unwrap();
@@ -93,7 +85,7 @@ async fn the_agent_fills_a_form_reads_notes_and_navigates_in_a_real_browser() {
     let mut updates = chat.subscribe();
     chat.start_screencast(800, 600, 1.0, true).await.unwrap();
     // A ref quoted as it looks in a JSON result still works, as models send it.
-    let clicked = tool("browser_click")
+    let clicked = tool("click")
         .execute(json!({"ref": format!("\"{submit}\"")}))
         .await
         .unwrap();
@@ -123,10 +115,7 @@ async fn the_agent_fills_a_form_reads_notes_and_navigates_in_a_real_browser() {
 
     // A confirm dialog is dismissed, never answered yes.
     let danger = ref_of(after, "\"Danger\"");
-    let confirmed = tool("browser_click")
-        .execute(json!({"ref": danger}))
-        .await
-        .unwrap();
+    let confirmed = tool("click").execute(json!({"ref": danger})).await.unwrap();
     assert!(
         confirmed["snapshot"].as_str().unwrap().contains("kept"),
         "{confirmed}"
@@ -138,7 +127,7 @@ async fn the_agent_fills_a_form_reads_notes_and_navigates_in_a_real_browser() {
     );
 
     // Clearing and typing again, then Enter submits.
-    tool("browser_type")
+    tool("type")
         .execute(json!({"ref": email, "text": "grace@example.com", "clear": true, "submit": true}))
         .await
         .unwrap();
@@ -151,27 +140,21 @@ async fn the_agent_fills_a_form_reads_notes_and_navigates_in_a_real_browser() {
 
     // Following a link, then back.
     let next = ref_of(&state.snapshot, "\"Next page\"");
-    let second = tool("browser_click")
-        .execute(json!({"ref": next}))
-        .await
-        .unwrap();
+    let second = tool("click").execute(json!({"ref": next})).await.unwrap();
     assert!(
         second["url"].as_str().unwrap().ends_with("/second"),
         "{second}"
     );
     assert!(second["snapshot"].as_str().unwrap().contains("Second page"));
-    let back = tool("browser_navigate")
-        .execute(json!({"action": "back"}))
+    let back = tool("navigate")
+        .execute(json!({"direction": "back"}))
         .await
         .unwrap();
     assert!(back["url"].as_str().unwrap().ends_with("/signup"), "{back}");
 
     // Keys, and windows a page opens load in the chat's one page.
-    tool("browser_press")
-        .execute(json!({"key": "Tab"}))
-        .await
-        .unwrap();
-    let error = tool("browser_press")
+    tool("press").execute(json!({"key": "Tab"})).await.unwrap();
+    let error = tool("press")
         .execute(json!({"key": "Hyper+x"}))
         .await
         .unwrap_err();
@@ -180,12 +163,12 @@ async fn the_agent_fills_a_form_reads_notes_and_navigates_in_a_real_browser() {
         ("\"Open second\"", "/second"),
         ("\"Script window\"", "/second?script"),
     ] {
-        let opener = tool("browser_open")
+        let opener = tool("open")
             .execute(json!({"url": format!("{}/opener", site.uri())}))
             .await
             .unwrap();
         let reference = ref_of(opener["snapshot"].as_str().unwrap(), button);
-        let clicked = tool("browser_click")
+        let clicked = tool("click")
             .execute(json!({"ref": reference}))
             .await
             .unwrap();
@@ -198,20 +181,17 @@ async fn the_agent_fills_a_form_reads_notes_and_navigates_in_a_real_browser() {
             state = chat.state().await;
         }
         assert!(state.url.ends_with(landed), "{state:?}");
-        let snapshot = tool("browser_snapshot").execute(json!({})).await.unwrap();
+        let snapshot = tool("snapshot").execute(json!({})).await.unwrap();
         let reports = format!("{clicked}{snapshot}");
         assert!(reports.contains("tried to open a new window"), "{reports}");
     }
-    assert!(tool_names(&tools).iter().all(|name| name != "browser_tabs"));
-    tool("browser_open")
-        .execute(json!({"url": url}))
-        .await
-        .unwrap();
+    assert!(offered(&tools).iter().all(|name| name != "tabs"));
+    tool("open").execute(json!({"url": url})).await.unwrap();
     let state = chat.state().await;
     assert!(state.url.ends_with("/signup"), "{state:?}");
 
     // A screenshot of the page and of one element, and a short recording.
-    let shot = tool("browser_screenshot").execute(json!({})).await.unwrap();
+    let shot = tool("screenshot").execute(json!({})).await.unwrap();
     let png = std::fs::read(shot["path"].as_str().unwrap()).unwrap();
     assert_eq!(&png[..8], b"\x89PNG\r\n\x1a\n");
     assert!(shot["width"].as_u64().unwrap() > 100, "{shot}");
@@ -220,7 +200,7 @@ async fn the_agent_fills_a_form_reads_notes_and_navigates_in_a_real_browser() {
     assert_eq!(u64::from(png_width), shot["width"].as_u64().unwrap());
     let state = chat.snapshot(None, false).await.unwrap();
     let heading_button = ref_of(&state.snapshot, "\"Create account\"");
-    let part = tool("browser_screenshot")
+    let part = tool("screenshot")
         .execute(json!({"ref": heading_button}))
         .await
         .unwrap();
@@ -231,7 +211,7 @@ async fn the_agent_fills_a_form_reads_notes_and_navigates_in_a_real_browser() {
     // A CSS selector or text=… works as for clicks: a live goal run asked for `body` and
     // `#scene` and went in circles on a ref-only error.
     for element in ["button", "body", "text=Create account"] {
-        let by_selector = tool("browser_screenshot")
+        let by_selector = tool("screenshot")
             .execute(json!({"ref": element}))
             .await
             .unwrap();
@@ -240,28 +220,28 @@ async fn the_agent_fills_a_form_reads_notes_and_navigates_in_a_real_browser() {
             "{element}: {by_selector}"
         );
     }
-    let missing = tool("browser_screenshot")
+    let missing = tool("screenshot")
         .execute(json!({"ref": "#no-such-thing"}))
         .await
         .unwrap_err()
         .to_string();
     assert!(missing.contains("#no-such-thing"), "{missing}");
-    tool("browser_record")
-        .execute(json!({"action": "start", "max_seconds": 5}))
+    tool("record")
+        .execute(json!({"operation": "start", "max_seconds": 5}))
         .await
         .unwrap();
-    let again = tool("browser_record")
-        .execute(json!({"action": "start"}))
+    let again = tool("record")
+        .execute(json!({"operation": "start"}))
         .await
         .unwrap_err();
     assert!(again.to_string().contains("already recording"), "{again}");
-    tool("browser_type")
+    tool("type")
         .execute(json!({"ref": email, "text": " typing on camera"}))
         .await
         .unwrap();
     tokio::time::sleep(std::time::Duration::from_millis(600)).await;
-    let video = tool("browser_record")
-        .execute(json!({"action": "stop"}))
+    let video = tool("record")
+        .execute(json!({"operation": "stop"}))
         .await
         .unwrap();
     let mp4 = std::fs::read(video["path"].as_str().unwrap()).unwrap();
@@ -270,14 +250,11 @@ async fn the_agent_fills_a_form_reads_notes_and_navigates_in_a_real_browser() {
     assert!(chat.recorder().is_none());
 
     // A stale ref explains itself.
-    let stale = tool("browser_click")
+    let stale = tool("click")
         .execute(json!({"ref": "e999"}))
         .await
         .unwrap_err();
-    assert!(
-        stale.to_string().contains("new browser_snapshot"),
-        "{stale}"
-    );
+    assert!(stale.to_string().contains("new snapshot"), "{stale}");
     hub.close_chat("chat-1").await;
 }
 
@@ -527,9 +504,9 @@ async fn pages_dont_bounce_at_their_edges_unless_they_ask_to() {
             screenshots: Default::default(),
         },
     );
-    let tool = |name: &str| tools.iter().find(|tool| tool.name() == name).unwrap();
+    let tool = |action: &'static str| act(&tools, action);
     let read = |page: &'static str| {
-        let (open, snapshot) = (tool("browser_open"), tool("browser_snapshot"));
+        let (open, snapshot) = (tool("open"), tool("snapshot"));
         let url = format!("{}/{page}", site.uri());
         async move {
             open.execute(json!({"url": url})).await.unwrap();
@@ -571,24 +548,21 @@ async fn the_agent_moves_the_mouse_and_reopening_a_page_reuses_its_tab() {
             screenshots: Default::default(),
         },
     );
-    let tool = |name: &str| tools.iter().find(|tool| tool.name() == name).unwrap();
+    let tool = |action: &'static str| act(&tools, action);
     let url = format!("{}/aim", site.uri());
-    tool("browser_open")
-        .execute(json!({"url": url}))
-        .await
-        .unwrap();
+    tool("open").execute(json!({"url": url})).await.unwrap();
     // Models fill every field: a ref of "null" means no ref, and a zero point beside a ref means no point.
-    tool("browser_click")
+    tool("click")
         .execute(json!({"reference": "null", "x": 20, "y": 20}))
         .await
         .unwrap();
-    let snapshot = tool("browser_snapshot")
+    let snapshot = tool("snapshot")
         .execute(json!({}))
         .await
         .unwrap()
         .to_string();
     assert!(snapshot.contains("moved to 20"), "{snapshot}");
-    let moved = tool("browser_move")
+    let moved = tool("move")
         .execute(json!({"x": 300, "y": 100}))
         .await
         .unwrap();
@@ -596,7 +570,7 @@ async fn the_agent_moves_the_mouse_and_reopening_a_page_reuses_its_tab() {
         moved["snapshot"].as_str().unwrap().contains("moved to 300"),
         "{moved}"
     );
-    assert!(tool("browser_move")
+    assert!(tool("move")
         .execute(json!({"x": 99999, "y": 1}))
         .await
         .is_err());
@@ -739,23 +713,23 @@ document.addEventListener('mousedown', () => {
             screenshots: Default::default(),
         },
     );
-    let tool = |name: &str| tools.iter().find(|tool| tool.name() == name).unwrap();
-    tool("browser_open")
+    let tool = |action: &'static str| act(&tools, action);
+    tool("open")
         .execute(json!({"url": format!("{}/look", site.uri())}))
         .await
         .unwrap();
     // No lock yet: the page has an edge, and a move past it says so.
-    let refused = tool("browser_move")
+    let refused = tool("move")
         .execute(json!({"dx": 99999}))
         .await
         .unwrap_err()
         .to_string();
     assert!(refused.contains("pointer lock"), "{refused}");
-    assert!(tool("browser_move")
+    assert!(tool("move")
         .execute(json!({"x": 1, "dx": 1}))
         .await
         .is_err());
-    tool("browser_click")
+    tool("click")
         .execute(json!({"x": 300, "y": 300}))
         .await
         .unwrap();
@@ -771,7 +745,7 @@ document.addEventListener('mousedown', () => {
             })
             .unwrap_or_else(|| panic!("no reading in {snapshot}"))
     };
-    let first = tool("browser_move")
+    let first = tool("move")
         .execute(json!({"dx": 0, "dy": 0}))
         .await
         .unwrap();
@@ -779,20 +753,17 @@ document.addEventListener('mousedown', () => {
     // Five full page widths right, then a good way up: every pixel arrives.
     let mut last = first;
     for _ in 0..5 {
-        last = tool("browser_move")
-            .execute(json!({"dx": 2000}))
-            .await
-            .unwrap();
+        last = tool("move").execute(json!({"dx": 2000})).await.unwrap();
     }
     assert_eq!(reading(&last)[0] - base[0], 10_000, "{last}");
-    let up = tool("browser_move")
+    let up = tool("move")
         .execute(json!({"dx": -7, "dy": -3000}))
         .await
         .unwrap();
     assert_eq!(reading(&up)[0] - base[0], 9_993, "{up}");
     assert_eq!(reading(&up)[1] - base[1], -3000, "{up}");
     // A click at some other point shoots and doesn't turn the view.
-    let shot = tool("browser_click")
+    let shot = tool("click")
         .execute(json!({"x": 640, "y": 300}))
         .await
         .unwrap();
@@ -843,8 +814,8 @@ requestAnimationFrame(draw);
             screenshots: Default::default(),
         },
     );
-    let tool = |name: &str| tools.iter().find(|tool| tool.name() == name).unwrap();
-    tool("browser_open")
+    let tool = |action: &'static str| act(&tools, action);
+    tool("open")
         .execute(json!({"url": format!("{}/game", site.uri())}))
         .await
         .unwrap();
@@ -852,7 +823,7 @@ requestAnimationFrame(draw);
     chat.freeze_pages().await;
     tokio::time::sleep(Duration::from_millis(2000)).await;
     let read = || async {
-        let snapshot = tool("browser_snapshot").execute(json!({})).await.unwrap();
+        let snapshot = tool("snapshot").execute(json!({})).await.unwrap();
         let text = snapshot["snapshot"].as_str().unwrap().to_owned();
         let number = |after: &str| -> u64 {
             let start = text.find(after).unwrap_or_else(|| panic!("{text}")) + after.len();
@@ -937,11 +908,7 @@ async fn the_preview_follows_the_page_when_a_late_stop_from_workspace_lands() {
         },
     );
     let tools = Arc::new(tools);
-    let tool = |tools: &[Box<dyn themis_core::tools::ToolT>], name: &str| {
-        tools.iter().position(|tool| tool.name() == name).unwrap()
-    };
-    let open = tool(&tools, "browser_open");
-    tools[open]
+    act(&tools, "open")
         .execute(json!({"url": format!("{}/game", site.uri())}))
         .await
         .unwrap();
@@ -949,11 +916,10 @@ async fn the_preview_follows_the_page_when_a_late_stop_from_workspace_lands() {
     chat.start_screencast(800, 600, 1.0, true).await.unwrap();
     let mut updates = chat.subscribe();
     // The agent is busy: a held key keeps its action going for a while.
-    let press = tool(&tools, "browser_press");
     let busy = {
         let tools = Arc::clone(&tools);
         tokio::spawn(async move {
-            tools[press]
+            act(&tools, "press")
                 .execute(json!({"key": "x", "hold_ms": 2500}))
                 .await
         })
@@ -976,7 +942,7 @@ async fn the_preview_follows_the_page_when_a_late_stop_from_workspace_lands() {
     // The game ends; the preview must show it.
     let snapshot = chat.snapshot(None, false).await.unwrap().snapshot;
     let finish = ref_of(&snapshot, "\"Finish\"");
-    tools[tool(&tools, "browser_click")]
+    act(&tools, "click")
         .execute(json!({"ref": finish}))
         .await
         .unwrap();
@@ -1029,12 +995,12 @@ document.addEventListener('mousemove', e => { if (document.pointerLockElement) {
             screenshots: Default::default(),
         },
     );
-    let tool = |name: &str| tools.iter().find(|tool| tool.name() == name).unwrap();
-    tool("browser_open")
+    let tool = |action: &'static str| act(&tools, action);
+    tool("open")
         .execute(json!({"url": format!("{}/fps", site.uri())}))
         .await
         .unwrap();
-    let locked = tool("browser_click")
+    let locked = tool("click")
         .execute(json!({"x": 100, "y": 100}))
         .await
         .unwrap();
@@ -1045,10 +1011,7 @@ document.addEventListener('mousemove', e => { if (document.pointerLockElement) {
         "{text}"
     );
     // A real mouse move while locked reaches the page with its movement.
-    let moved = tool("browser_move")
-        .execute(json!({"dx": 200}))
-        .await
-        .unwrap();
+    let moved = tool("move").execute(json!({"dx": 200})).await.unwrap();
     let text = moved["snapshot"].as_str().unwrap();
     assert!(!text.contains("moved 0"), "{text}");
 }
@@ -1172,8 +1135,8 @@ document.addEventListener('keyup', e => { document.getElementById('out').textCon
             screenshots: Default::default(),
         },
     );
-    let tool = |name: &str| tools.iter().find(|tool| tool.name() == name).unwrap();
-    let opened = tool("browser_open")
+    let tool = |action: &'static str| act(&tools, action);
+    let opened = tool("open")
         .execute(json!({"url": format!("{}/keys", site.uri())}))
         .await
         .unwrap();
@@ -1181,15 +1144,12 @@ document.addEventListener('keyup', e => { document.getElementById('out').textCon
     let (width, height) = size.split_once('x').unwrap();
     assert!(width.parse::<u32>().unwrap() > 0, "{opened}");
     assert!(height.parse::<u32>().unwrap() > 0, "{opened}");
-    let tapped = tool("browser_press")
-        .execute(json!({"key": "KeyW"}))
-        .await
-        .unwrap();
+    let tapped = tool("press").execute(json!({"key": "KeyW"})).await.unwrap();
     assert!(
         tapped["snapshot"].as_str().unwrap().contains("KeyW held"),
         "{tapped}"
     );
-    let held = tool("browser_press")
+    let held = tool("press")
         .execute(json!({"key": "KeyW", "hold_ms": 1200}))
         .await
         .unwrap();
@@ -1234,18 +1194,18 @@ async fn the_agent_clicks_a_point_of_a_canvas_seen_in_a_screenshot() {
             screenshots: Default::default(),
         },
     );
-    let tool = |name: &str| tools.iter().find(|tool| tool.name() == name).unwrap();
-    tool("browser_open")
+    let tool = |action: &'static str| act(&tools, action);
+    tool("open")
         .execute(json!({"url": format!("{}/board", site.uri())}))
         .await
         .unwrap();
-    let clicked = tool("browser_click")
+    let clicked = tool("click")
         .execute(json!({"x": 175, "y": 125}))
         .await
         .unwrap();
     let snapshot = clicked["snapshot"].as_str().unwrap();
     assert!(snapshot.contains("square 3,2 x1"), "{snapshot}");
-    let twice = tool("browser_click")
+    let twice = tool("click")
         .execute(json!({"x": 25, "y": 25, "double": true}))
         .await
         .unwrap();
@@ -1263,10 +1223,7 @@ async fn the_agent_clicks_a_point_of_a_canvas_seen_in_a_screenshot() {
         json!({"x": -1, "y": 10}),
         json!({"x": 10, "y": 99999}),
     ] {
-        let error = tool("browser_click")
-            .execute(wrong.clone())
-            .await
-            .unwrap_err();
+        let error = tool("click").execute(wrong.clone()).await.unwrap_err();
         assert!(!error.to_string().is_empty(), "{wrong}");
     }
     hub.close_chat("chat-4").await;

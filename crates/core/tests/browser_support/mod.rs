@@ -3,6 +3,35 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use serde_json::{json, Value};
+use themis_core::tools::{ToolCallError, ToolT};
+
+/// One action of the `browser` tool, called as a model calls it: `{"action": …}` and that
+/// action's fields.
+pub struct Act<'a> {
+    tool: &'a dyn ToolT,
+    action: &'a str,
+}
+
+impl Act<'_> {
+    pub async fn execute(&self, mut args: Value) -> Result<Value, ToolCallError> {
+        assert!(args.get("action").is_none(), "{args}");
+        args["action"] = json!(self.action);
+        self.tool.execute(args).await
+    }
+}
+
+/// `action` of the run's one browser tool.
+pub fn act<'a>(tools: &'a [Box<dyn ToolT>], action: &'a str) -> Act<'a> {
+    let [tool] = tools else {
+        panic!("one browser tool, not {}", tools.len())
+    };
+    Act {
+        tool: tool.as_ref(),
+        action,
+    }
+}
+
 /// The page's text once `want` holds, or after 10 s: input reaches a page asynchronously,
 /// so a snapshot right after an action may come before the page's handlers ran.
 pub async fn page_once(

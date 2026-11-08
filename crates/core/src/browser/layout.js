@@ -1,4 +1,4 @@
-// The page's structure for browser_snapshot's `layout`: visible containers, where they are and a
+// The page's structure for the snapshot action's `layout`: visible containers, where they are and a
 // selector for each. The accessibility outline leaves plain containers out, so without this an
 // agent can only guess where a column is. Text is page data; a field's value is never read.
 (function () {
@@ -77,6 +77,6 @@
     }
   };
   walk(document.body, 0);
-  if (omitted || visited > MAX_VISITED) lines.push((omitted || "some") + " more not shown; ask for one part with a selector in browser_devtools");
+  if (omitted || visited > MAX_VISITED) lines.push((omitted || "some") + " more not shown; ask for one part with a selector in the devtools action");
   return "visible page " + innerWidth + "×" + innerHeight + ", positions are (left,top width×height)\n" + lines.join("\n");
 })()

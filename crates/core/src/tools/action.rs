@@ -97,21 +97,16 @@ fn tool_approves_itself_by_name(name: &str) -> bool {
         || is_site_tool(name)
 }
 
+/// The built-in browser's one tool. Its `action` field picks what it does; an approval's
+/// `command` is the site, then the action (or `download`, for a file a page sends).
+pub const BROWSER_TOOL: &str = "browser";
+
 /// Tools whose approval identity is a site: the action's `command` holds the
 /// host, rules may name one (`"command": ["example.com"]`, subdomains match)
 /// and an "allow in this chat" grant covers that site.
 #[must_use]
 pub fn is_site_tool(name: &str) -> bool {
-    matches!(name, "web_search" | "fetch_url") || name.starts_with("browser_")
-}
-
-/// What one site grant covers: every browser action on the site, or one web tool.
-fn site_grant_group(tool: &str) -> &str {
-    if tool.starts_with("browser_") {
-        "browser"
-    } else {
-        tool
-    }
+    matches!(name, "web_search" | "fetch_url" | BROWSER_TOOL)
 }
 
 pub fn integration_approval_identity(name: &str, args: &Value) -> String {
@@ -234,7 +229,7 @@ impl ToolAction {
             return format!("mcp\0{server}");
         }
         if let Some(site) = self.site() {
-            return format!("{}\0{site}", site_grant_group(&self.tool));
+            return format!("{}\0{site}", self.tool);
         }
         if self.tool == sensitive::SENSITIVE_TOOL {
             // One file and one kind of access: reading `.env` is not writing it.
@@ -246,6 +241,14 @@ impl ToolAction {
         let (prefix, _) = self.shell_grant_prefix();
         // NUL cannot occur in argv, so the join is unambiguous.
         format!("{}\0{}", self.tool, prefix.join("\0"))
+    }
+
+    /// The browser action (or `download`) this approval is for: what follows the site.
+    pub fn browser_action(&self) -> Option<&str> {
+        (self.tool == BROWSER_TOOL)
+            .then(|| self.command.get(1))
+            .flatten()
+            .map(String::as_str)
     }
 
     /// The host a web or browser action acts on, lowercased.
@@ -260,8 +263,7 @@ impl ToolAction {
     /// approval dialog: `("browser", "localhost")` covers every browser action
     /// on that site.
     pub fn site_grant(&self) -> Option<(String, String)> {
-        self.site()
-            .map(|site| (site_grant_group(&self.tool).to_owned(), site))
+        self.site().map(|site| (self.tool.clone(), site))
     }
 
     /// Whether a chat grant may cover this action. Destructive actions (the

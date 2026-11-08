@@ -7,7 +7,7 @@ use std::sync::{Arc, Mutex};
 
 #[path = "../browser_support/mod.rs"]
 mod browser_support;
-use browser_support::{frame_colour, frame_where, page_once};
+use browser_support::{act, frame_colour, frame_where, page_once};
 use std::time::Duration;
 
 use serde_json::{json, Value};
@@ -106,8 +106,9 @@ async fn next_frame(
     .expect("a frame")
 }
 
-fn tool_names(tools: &[Box<dyn themis_core::tools::ToolT>]) -> Vec<String> {
-    tools.iter().map(|tool| tool.name().to_owned()).collect()
+/// The actions the browser tool offers.
+fn offered(tools: &[Box<dyn themis_core::tools::ToolT>]) -> Vec<String> {
+    serde_json::from_value(tools[0].args_schema()["properties"]["action"]["enum"].clone()).unwrap()
 }
 
 /// Waits for a frame and the page `title` after a navigation, as the Workspace view sees them.

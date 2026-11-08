@@ -74,6 +74,22 @@ async fn results_after(
     }
 }
 
+/// The actions the browser tool offers in a model request.
+fn browser_actions(body: &Value) -> Vec<String> {
+    body["tools"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .find(|tool| tool["function"]["name"] == "browser")
+        .and_then(|tool| {
+            serde_json::from_value(
+                tool["function"]["parameters"]["properties"]["action"]["enum"].clone(),
+            )
+            .ok()
+        })
+        .unwrap_or_default()
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn cli_browser_permissions_block_in_every_mode_and_always_allow_is_saved() {
     if themis_core::browser::launch::find_browser(None, None).is_none() {
@@ -93,9 +109,9 @@ async fn cli_browser_permissions_block_in_every_mode_and_always_allow_is_saved()
                 "http://shop.example.invalid/"
             };
             match results.len() {
-                0 => tool_call("c1", "browser_open", json!({"url": first})),
+                0 => tool_call("c1", "browser", json!({"action": "open", "url": first})),
                 1 if task.contains("Open the pay site") => {
-                    tool_call("c2", "browser_open", json!({"url": "http://shop.example.invalid/"}))
+                    tool_call("c2", "browser", json!({"action": "open", "url": "http://shop.example.invalid/"}))
                 }
                 _ => ResponseTemplate::new(200).set_body_json(json!({
                     "choices": [{"message": {"role": "assistant", "content": "Done."}, "finish_reason": "stop"}]
@@ -203,6 +219,14 @@ async fn cli_browser_permissions_block_in_every_mode_and_always_allow_is_saved()
         approval.grant_site.as_ref().map(|site| site.tools.as_str()),
         Some("browser")
     );
+    // "Always allow on this site" saves the permission the action falls under.
+    assert_eq!(
+        approval
+            .grant_site
+            .as_ref()
+            .and_then(|site| site.permission.as_deref()),
+        Some("Browsing")
+    );
     {
         let (data, id, approval_id) = (
             data.path().to_owned(),
@@ -263,13 +287,13 @@ async fn cli_debugging_tools_run_on_a_local_app_and_a_project_can_turn_them_off(
         .respond_with(move |request: &Request| {
             let body: Value = request.body_json().unwrap_or(Value::Null);
             match tool_results(&body).len() {
-                0 => tool_call("c1", "browser_open", json!({"url": page})),
-                1 if body["tools"].to_string().contains("browser_devtools") => tool_call(
+                0 => tool_call("c1", "browser", json!({"action": "open", "url": page})),
+                1 if browser_actions(&body).contains(&"devtools".to_owned()) => tool_call(
                     "c2",
-                    "browser_devtools",
-                    json!({"panel": "console", "expression": "document.title + '!'"}),
+                    "browser",
+                    json!({"action": "devtools", "panel": "console", "expression": "document.title + '!'"}),
                 ),
-                2 => tool_call("c3", "browser_devtools", json!({"panel": "console"})),
+                2 => tool_call("c3", "browser", json!({"action": "devtools", "panel": "console"})),
                 _ => ResponseTemplate::new(200).set_body_json(json!({
                     "choices": [{"message": {"role": "assistant", "content": "Done."}, "finish_reason": "stop"}]
                 })),
@@ -358,9 +382,9 @@ async fn cli_debugging_tools_run_on_a_local_app_and_a_project_can_turn_them_off(
     loop {
         let requests = llm.received_requests().await.unwrap_or_default();
         if requests.len() > before && !state.get_thread(&quiet.id).await.is_ok_and(|t| t.running) {
-            let offered = requests[before].body_json::<Value>().unwrap()["tools"].to_string();
-            assert!(offered.contains("\"browser_open\""), "{offered}");
-            assert!(!offered.contains("\"browser_devtools\""));
+            let offered = browser_actions(&requests[before].body_json::<Value>().unwrap());
+            assert!(offered.contains(&"open".to_owned()), "{offered:?}");
+            assert!(!offered.contains(&"devtools".to_owned()), "{offered:?}");
             break;
         }
         assert!(

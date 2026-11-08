@@ -367,7 +367,7 @@ impl ChatBrowser {
     async fn devtools_target(&self) -> Result<Target, String> {
         let inner = self.inner.lock().await;
         let (Some(browser), Some(tab)) = (&inner.browser, inner.tab.as_ref()) else {
-            return Err("no page is open; use browser_open first".into());
+            return Err("no page is open; use the browser's open action first".into());
         };
         let url = tab
             .state
@@ -397,9 +397,7 @@ impl ChatBrowser {
                     .as_ref()
                     .and_then(|tab| tab.refs.resolve(reference))
             }
-            .ok_or_else(|| {
-                format!("no element {reference} on this page; take a new browser_snapshot")
-            })?;
+            .ok_or_else(|| format!("no element {reference} on this page; take a new snapshot"))?;
             return resolve_object(&target.cdp, &target.session, backend).await;
         }
         let selector = selector.ok_or("give a selector or a ref")?;

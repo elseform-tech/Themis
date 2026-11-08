@@ -146,10 +146,10 @@ document.addEventListener('mouseup', e => { if (held) out.textContent = 'let go 
             screenshots: Default::default(),
         },
     );
-    let tool = |name: &str| tools.iter().find(|tool| tool.name() == name).unwrap();
+    let tool = |action: &'static str| act(&tools, action);
 
     // By refs, on a page using native drag and drop.
-    let opened = tool("browser_open")
+    let opened = tool("open")
         .execute(json!({"url": format!("{}/board", site.uri())}))
         .await
         .unwrap();
@@ -158,7 +158,7 @@ document.addEventListener('mouseup', e => { if (held) out.textContent = 'let go 
         ref_of(snapshot, "Card one\""),
         ref_of(snapshot, "Done column\""),
     );
-    let dropped = tool("browser_drag")
+    let dropped = tool("drag")
         .execute(json!({"from_reference": card, "to_reference": done}))
         .await
         .unwrap();
@@ -166,11 +166,11 @@ document.addEventListener('mouseup', e => { if (held) out.textContent = 'let go 
     assert!(text.contains("dropped card-1 trusted true"), "{text}");
 
     // By points, on a page using plain mouse events; a model's zero points beside refs are ignored.
-    tool("browser_open")
+    tool("open")
         .execute(json!({"url": format!("{}/slider", site.uri())}))
         .await
         .unwrap();
-    let slid = tool("browser_drag")
+    let slid = tool("drag")
         .execute(json!({"from_x": 65, "from_y": 65, "to_x": 400, "to_y": 65}))
         .await
         .unwrap();
@@ -187,14 +187,11 @@ document.addEventListener('mouseup', e => { if (held) out.textContent = 'let go 
         json!({"from_x": 10, "to_x": 20, "to_y": 20}),
         json!({"from_x": 10, "from_y": 10, "to_x": 99999, "to_y": 10}),
     ] {
-        assert!(
-            tool("browser_drag").execute(args.clone()).await.is_err(),
-            "{args}"
-        );
+        assert!(tool("drag").execute(args.clone()).await.is_err(), "{args}");
     }
 
     // Holding the button needs somewhere to hold it, and letting go needs a press.
-    let up = tool("browser_press")
+    let up = tool("press")
         .execute(json!({"key": "mouseUp"}))
         .await
         .unwrap_err()
@@ -242,8 +239,8 @@ done.addEventListener('drop', e => { e.preventDefault(); done.appendChild(card);
             screenshots: Default::default(),
         },
     );
-    let tool = |name: &str| tools.iter().find(|tool| tool.name() == name).unwrap();
-    let opened = tool("browser_open")
+    let tool = |action: &'static str| act(&tools, action);
+    let opened = tool("open")
         .execute(json!({"url": format!("{}/cards", site.uri())}))
         .await
         .unwrap();
@@ -257,7 +254,7 @@ done.addEventListener('drop', e => { e.preventDefault(); done.appendChild(card);
     let card = ref_of(snapshot, "Write the report\"");
 
     // Over nothing, and over the card: it reads which, without a screenshot.
-    let moved = tool("browser_move")
+    let moved = tool("move")
         .execute(json!({"x": 100, "y": 60}))
         .await
         .unwrap();
@@ -270,7 +267,7 @@ done.addEventListener('drop', e => { e.preventDefault(); done.appendChild(card);
     assert_eq!(chat.state().await.pointer, Some((100.0, 60.0)));
 
     // A miss says so: it pressed on the column, and no drag began.
-    let missed = tool("browser_drag")
+    let missed = tool("drag")
         .execute(json!({"from_x": 100, "from_y": 250, "to_x": 400, "to_y": 150}))
         .await
         .unwrap();
@@ -279,13 +276,13 @@ done.addEventListener('drop', e => { e.preventDefault(); done.appendChild(card);
     assert!(result.contains("nothing was dragged"), "{result}");
 
     // A hit names both ends and the outcome, by ref.
-    let snapshot = tool("browser_snapshot")
+    let snapshot = tool("snapshot")
         .execute(json!({}))
         .await
         .unwrap()
         .to_string();
     let done = {
-        let after = tool("browser_drag")
+        let after = tool("drag")
             .execute(json!({"from_reference": card, "to_x": 400, "to_y": 150}))
             .await
             .unwrap();
@@ -327,18 +324,13 @@ async fn the_agent_aims_by_selector_and_can_hold_the_mouse_down() {
             screenshots: Default::default(),
         },
     );
-    let tool = |name: &str| tools.iter().find(|tool| tool.name() == name).unwrap();
+    let tool = |action: &'static str| act(&tools, action);
     let url = format!("{}/board", site.uri());
-    let open = || async {
-        tool("browser_open")
-            .execute(json!({"url": url}))
-            .await
-            .unwrap()
-    };
+    let open = || async { tool("open").execute(json!({"url": url})).await.unwrap() };
 
     // By text and by CSS, for either end.
     open().await;
-    let moved = tool("browser_drag")
+    let moved = tool("drag")
         .execute(json!({"from_reference": "text=Write the report", "to_reference": "#done"}))
         .await
         .unwrap();
@@ -347,11 +339,11 @@ async fn the_agent_aims_by_selector_and_can_hold_the_mouse_down() {
         "{moved}"
     );
 
-    tool("browser_navigate")
-        .execute(json!({"action": "reload"}))
+    tool("navigate")
+        .execute(json!({"direction": "reload"}))
         .await
         .unwrap();
-    let moved = tool("browser_drag")
+    let moved = tool("drag")
         .execute(json!({"from_reference": ".task-card", "to_reference": "text=Done"}))
         .await
         .unwrap();
@@ -361,36 +353,36 @@ async fn the_agent_aims_by_selector_and_can_hold_the_mouse_down() {
     );
 
     // Nothing matching says so, and names what to do.
-    let missing = tool("browser_drag")
+    let missing = tool("drag")
         .execute(json!({"from_reference": "text=No such card", "to_reference": "#done"}))
         .await
         .unwrap_err()
         .to_string();
     assert!(
-        missing.contains("No such card") && missing.contains("browser_snapshot"),
+        missing.contains("No such card") && missing.contains("new snapshot"),
         "{missing}"
     );
 
     // Clicking takes them too.
-    tool("browser_navigate")
-        .execute(json!({"action": "reload"}))
+    tool("navigate")
+        .execute(json!({"direction": "reload"}))
         .await
         .unwrap();
-    tool("browser_click")
+    tool("click")
         .execute(json!({"reference": "text=Write the report"}))
         .await
         .unwrap();
 
     // The mouse by hand, as the agent tried: move, press, move, let go.
-    tool("browser_navigate")
-        .execute(json!({"action": "reload"}))
+    tool("navigate")
+        .execute(json!({"direction": "reload"}))
         .await
         .unwrap();
-    tool("browser_move")
+    tool("move")
         .execute(json!({"x": 100, "y": 80}))
         .await
         .unwrap();
-    let down = tool("browser_press")
+    let down = tool("press")
         .execute(json!({"key": "mouseDown"}))
         .await
         .unwrap();
@@ -401,11 +393,11 @@ async fn the_agent_aims_by_selector_and_can_hold_the_mouse_down() {
             .contains("Write the report"),
         "{down}"
     );
-    tool("browser_move")
+    tool("move")
         .execute(json!({"x": 400, "y": 150}))
         .await
         .unwrap();
-    let up = tool("browser_press")
+    let up = tool("press")
         .execute(json!({"key": "mouseUp"}))
         .await
         .unwrap();
@@ -416,7 +408,7 @@ async fn the_agent_aims_by_selector_and_can_hold_the_mouse_down() {
     assert!(up["drag"].as_str().unwrap().contains("native drag"), "{up}");
 
     // Having let go, moving is just moving again, with no button held.
-    tool("browser_move")
+    tool("move")
         .execute(json!({"x": 10, "y": 10}))
         .await
         .unwrap();
@@ -457,14 +449,14 @@ async fn the_agent_reads_the_pages_structure_instead_of_guessing() {
             screenshots: Default::default(),
         },
     );
-    let tool = |name: &str| tools.iter().find(|tool| tool.name() == name).unwrap();
-    let opened = tool("browser_open")
+    let tool = |action: &'static str| act(&tools, action);
+    let opened = tool("open")
         .execute(json!({"url": format!("{}/skeleton", site.uri())}))
         .await
         .unwrap();
     assert!(opened.get("layout").is_none(), "only when asked: {opened}");
 
-    let read = tool("browser_snapshot")
+    let read = tool("snapshot")
         .execute(json!({"layout": true}))
         .await
         .unwrap();
@@ -504,7 +496,7 @@ async fn the_agent_reads_the_pages_structure_instead_of_guessing() {
 
     // The selector printed for a line is one the tools take.
     let selector = done.rsplit("→ ").next().unwrap().trim().to_owned();
-    let moved = tool("browser_drag")
+    let moved = tool("drag")
         .execute(json!({"from_reference": "#card", "to_reference": selector}))
         .await
         .unwrap();
@@ -514,11 +506,11 @@ async fn the_agent_reads_the_pages_structure_instead_of_guessing() {
     );
 
     // A huge page stays bounded, and says so.
-    tool("browser_open")
+    tool("open")
         .execute(json!({"url": format!("{}/many", site.uri())}))
         .await
         .unwrap();
-    let read = tool("browser_snapshot")
+    let read = tool("snapshot")
         .execute(json!({"layout": true}))
         .await
         .unwrap();
@@ -580,25 +572,17 @@ async fn the_looks_check_finds_what_broke_trailboard_and_nothing_on_a_clean_page
             screenshots: Default::default(),
         },
     );
-    let tool = |name: &str| {
-        tools
-            .iter()
-            .find(|tool| tool.name() == name)
-            .unwrap_or_else(|| panic!("{name}"))
-    };
+    let tool = |action: &'static str| act(&tools, action);
     let dark = "window.matchMedia('(prefers-color-scheme: dark)').matches";
     let scheme =
         || async { chat.dev_console(Some(dark), 0, false).await.unwrap()["value"].clone() };
 
-    let opened = tool("browser_open")
+    let opened = tool("open")
         .execute(json!({"url": format!("{}/trail/", site.uri())}))
         .await
         .unwrap();
     let before = scheme().await;
-    let looks = tool("browser_check_looks")
-        .execute(json!({}))
-        .await
-        .unwrap();
+    let looks = tool("check_looks").execute(json!({})).await.unwrap();
     let text = looks.to_string();
     assert_eq!(looks["untrusted"], true, "{looks:#}");
     assert!(looks["problems"].as_u64().unwrap() >= 6, "{looks:#}");
@@ -649,14 +633,11 @@ async fn the_looks_check_finds_what_broke_trailboard_and_nothing_on_a_clean_page
     // The page is back in the scheme it had.
     assert_eq!(scheme().await, before);
 
-    tool("browser_open")
+    tool("open")
         .execute(json!({"url": format!("{}/cut/", site.uri())}))
         .await
         .unwrap();
-    let cut = tool("browser_check_looks")
-        .execute(json!({}))
-        .await
-        .unwrap();
+    let cut = tool("check_looks").execute(json!({})).await.unwrap();
     let found = cut["both"]
         .as_array()
         .map(|lines| {
@@ -681,14 +662,11 @@ async fn the_looks_check_finds_what_broke_trailboard_and_nothing_on_a_clean_page
         "{cut:#}"
     );
 
-    tool("browser_open")
+    tool("open")
         .execute(json!({"url": format!("{}/clean/", site.uri())}))
         .await
         .unwrap();
-    let clean = tool("browser_check_looks")
-        .execute(json!({}))
-        .await
-        .unwrap();
+    let clean = tool("check_looks").execute(json!({})).await.unwrap();
     assert_eq!(clean["problems"], 0, "{clean:#}");
     assert_eq!(scheme().await, before);
 
@@ -701,14 +679,11 @@ async fn the_looks_check_finds_what_broke_trailboard_and_nothing_on_a_clean_page
         .respond_with(ResponseTemplate::new(200).set_body_raw(big, "text/html"))
         .mount(&site)
         .await;
-    tool("browser_open")
+    tool("open")
         .execute(json!({"url": format!("{}/big/", site.uri())}))
         .await
         .unwrap();
-    let big = tool("browser_check_looks")
-        .execute(json!({}))
-        .await
-        .unwrap();
+    let big = tool("check_looks").execute(json!({})).await.unwrap();
     assert_eq!(
         big["checked"], "the first 5000 elements, in light and dark",
         "{big:#}"
@@ -751,20 +726,12 @@ async fn the_looks_check_never_shows_field_values_or_tokens_in_urls() {
             screenshots: Default::default(),
         },
     );
-    let tool = |name: &str| {
-        tools
-            .iter()
-            .find(|tool| tool.name() == name)
-            .unwrap_or_else(|| panic!("{name}"))
-    };
-    tool("browser_open")
+    let tool = |action: &'static str| act(&tools, action);
+    tool("open")
         .execute(json!({"url": format!("{}/sec/", site.uri())}))
         .await
         .unwrap();
-    let looks = tool("browser_check_looks")
-        .execute(json!({}))
-        .await
-        .unwrap();
+    let looks = tool("check_looks").execute(json!({})).await.unwrap();
     let text = looks.to_string();
     for secret in [
         "hunter2",

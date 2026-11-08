@@ -1,4 +1,4 @@
-// What a page's looks check measures in one colour scheme (run by `browser_check_looks`).
+// What a page's looks check measures in one colour scheme (run by the `check_looks` action).
 // Returns {report, elements}: `report` is plain data whose items point into `elements` by
 // index, so the caller can name each element with the snapshot's refs. The work is bounded:
 // at most ELEMENTS elements and TEXTS text nodes are looked at, ITEMS items kept per kind.

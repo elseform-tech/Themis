@@ -55,7 +55,7 @@ impl ChatBrowser {
     pub async fn navigate(self: &Arc<Self>, action: &str) -> Result<ActionReport, String> {
         let mut inner = self.inner.lock().await;
         if !self.has_page(&inner) {
-            return Err("no page is open; use browser_open first".into());
+            return Err("no page is open; use the browser's open action first".into());
         }
         self.reopen_if_closed(&mut inner).await?;
         let (cdp, session) = self.current(&mut inner).await?;
@@ -85,7 +85,7 @@ impl ChatBrowser {
     ) -> Result<ActionReport, String> {
         let mut inner = self.inner.lock().await;
         if !self.has_page(&inner) {
-            return Err("no page is open; use browser_open first".into());
+            return Err("no page is open; use the browser's open action first".into());
         }
         self.reopen_if_closed(&mut inner).await?;
         let report = self.report(&mut inner, reference).await?;
@@ -130,17 +130,19 @@ impl ChatBrowser {
         let browser = inner
             .browser
             .as_ref()
-            .ok_or("no page is open; use browser_open first")?;
+            .ok_or("no page is open; use the browser's open action first")?;
         let tab = inner
             .tab
             .as_ref()
-            .ok_or("no page is open; use browser_open first")?;
+            .ok_or("no page is open; use the browser's open action first")?;
         if !is_ref(reference) {
             let backend = selected_element(&browser.cdp, &tab.session_id, reference).await?;
             return Ok((Arc::clone(&browser.cdp), tab.session_id.clone(), backend));
         }
         let backend = tab.refs.resolve(reference).ok_or_else(|| {
-            format!("no element {reference} on this page; take a new browser_snapshot and use a ref from it")
+            format!(
+                "no element {reference} on this page; take a new snapshot and use a ref from it"
+            )
         })?;
         Ok((Arc::clone(&browser.cdp), tab.session_id.clone(), backend))
     }
@@ -175,11 +177,11 @@ impl ChatBrowser {
         let browser = inner
             .browser
             .clone()
-            .ok_or("no page is open; use browser_open first")?;
+            .ok_or("no page is open; use the browser's open action first")?;
         let session = inner
             .tab
             .as_ref()
-            .ok_or("no page is open; use browser_open first")?
+            .ok_or("no page is open; use the browser's open action first")?
             .session_id
             .clone();
         check_visible_point(&browser.cdp, &session, x, y).await?;
@@ -213,11 +215,11 @@ impl ChatBrowser {
         let browser = inner
             .browser
             .clone()
-            .ok_or("no page is open; use browser_open first")?;
+            .ok_or("no page is open; use the browser's open action first")?;
         let session = inner
             .tab
             .as_ref()
-            .ok_or("no page is open; use browser_open first")?
+            .ok_or("no page is open; use the browser's open action first")?
             .session_id
             .clone();
         // The far end first: reaching it may scroll, and the near end is read where it then is.
@@ -265,11 +267,11 @@ impl ChatBrowser {
         let browser = inner
             .browser
             .clone()
-            .ok_or("no page is open; use browser_open first")?;
+            .ok_or("no page is open; use the browser's open action first")?;
         let session = inner
             .tab
             .as_ref()
-            .ok_or("no page is open; use browser_open first")?
+            .ok_or("no page is open; use the browser's open action first")?
             .session_id
             .clone();
         check_visible_point(&browser.cdp, &session, x, y).await?;
@@ -332,21 +334,21 @@ impl ChatBrowser {
         Ok(())
     }
 
-    /// Holds the button down where the mouse is, for `browser_press` with `mouseDown`.
+    /// Holds the button down where the mouse is, for the `press` action with `mouseDown`.
     pub(super) async fn mouse_down(self: &Arc<Self>) -> Result<ActionReport, String> {
         let mut inner = self.inner.lock().await;
         let browser = inner
             .browser
             .clone()
-            .ok_or("no page is open; use browser_open first")?;
+            .ok_or("no page is open; use the browser's open action first")?;
         let session = inner
             .tab
             .as_ref()
-            .ok_or("no page is open; use browser_open first")?
+            .ok_or("no page is open; use the browser's open action first")?
             .session_id
             .clone();
         let at = (*self.pointer.lock().unwrap_or_else(|e| e.into_inner()))
-            .ok_or("the mouse isn't anywhere yet: put it there with browser_move first")?;
+            .ok_or("the mouse isn't anywhere yet: put it there with the move action first")?;
         let pressed = under_point(&browser.cdp, &session, at).await;
         let events = browser.cdp.subscribe();
         browser
@@ -372,17 +374,17 @@ impl ChatBrowser {
         })
     }
 
-    /// Lets go of the button, for `browser_press` with `mouseUp`.
+    /// Lets go of the button, for the `press` action with `mouseUp`.
     pub(super) async fn mouse_up(self: &Arc<Self>) -> Result<ActionReport, String> {
         let mut inner = self.inner.lock().await;
         let browser = inner
             .browser
             .clone()
-            .ok_or("no page is open; use browser_open first")?;
+            .ok_or("no page is open; use the browser's open action first")?;
         let session = inner
             .tab
             .as_ref()
-            .ok_or("no page is open; use browser_open first")?
+            .ok_or("no page is open; use the browser's open action first")?
             .session_id
             .clone();
         let held = self.held.lock().unwrap_or_else(|e| e.into_inner()).take();
@@ -425,11 +427,11 @@ impl ChatBrowser {
         let browser = inner
             .browser
             .clone()
-            .ok_or("no page is open; use browser_open first")?;
+            .ok_or("no page is open; use the browser's open action first")?;
         let session = inner
             .tab
             .as_ref()
-            .ok_or("no page is open; use browser_open first")?
+            .ok_or("no page is open; use the browser's open action first")?
             .session_id
             .clone();
         let (width, height) = visible_size(&browser.cdp, &session).await?;
@@ -557,7 +559,7 @@ impl ChatBrowser {
         })?;
         let mut inner = self.inner.lock().await;
         if !self.has_page(&inner) {
-            return Err("no page is open; use browser_open first".into());
+            return Err("no page is open; use the browser's open action first".into());
         }
         self.reopen_if_closed(&mut inner).await?;
         let (cdp, session) = self.current(&mut inner).await?;
@@ -577,7 +579,7 @@ impl ChatBrowser {
     ) -> Result<ActionReport, String> {
         let mut inner = self.inner.lock().await;
         if !self.has_page(&inner) {
-            return Err("no page is open; use browser_open first".into());
+            return Err("no page is open; use the browser's open action first".into());
         }
         self.reopen_if_closed(&mut inner).await?;
         let (cdp, session) = self.current(&mut inner).await?;

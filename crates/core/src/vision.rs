@@ -1,6 +1,6 @@
 //! Screenshots for models that read images.
 //!
-//! `browser_screenshot` saves a PNG for the person. When screenshots go to the model
+//! The browser's `screenshot` action saves a PNG for the person. When screenshots go to the model
 //! (`browser.screenshots_to_model`), it also keeps a smaller copy here, keyed by the saved
 //! file's path: at most [`MAX_SIDE`] pixels on its longest side and [`MAX_BYTES`] bytes.
 //! The copies live in memory only, at most [`KEPT_COPIES`] of them, so neither transcripts,
@@ -62,7 +62,7 @@ pub fn copy_of(path: &str) -> Option<Image> {
         .map(|(_, image)| image.clone())
 }
 
-/// The path a `browser_screenshot` result says it attached for the model, if any.
+/// The path a browser `screenshot` result says it attached for the model, if any.
 pub fn attached_path(result: &str) -> Option<String> {
     let value: serde_json::Value = serde_json::from_str(result).ok()?;
     if value["image_attached"] != true {
@@ -165,7 +165,7 @@ mod tests {
             id: id.into(),
             call_type: "function".into(),
             function: FunctionCall {
-                name: "browser_screenshot".into(),
+                name: "browser".into(),
                 arguments: format!(r#"{{"path":"/p/{id}.png","image_attached":true}}"#),
             },
         }
