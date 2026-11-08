@@ -74,14 +74,16 @@ pub struct Skill {
     pub id: String,
     /// Human-readable name, shown in the composed prompt.
     pub name: String,
-    /// Short description for pickers and listings.
+    /// Short description for pickers and listings; empty when left out.
+    #[serde(default)]
     pub description: String,
     /// Extra instructions appended to the task (see [`compose_task`]).
     pub instructions: String,
-    /// Tool-name allowlist. Empty means "restrict nothing".
-    #[serde(alias = "allowed_tools")]
+    /// Tool-name allowlist. Empty (also when left out) means "restrict nothing".
+    #[serde(default, alias = "allowed_tools")]
     pub allowed_tools: Vec<String>,
-    /// Helper scripts written by [`materialize_scripts`].
+    /// Helper scripts written by [`materialize_scripts`]; none when left out.
+    #[serde(default)]
     pub scripts: Vec<SkillScript>,
 }
 
@@ -99,7 +101,7 @@ fn is_safe_file_name(name: &str) -> bool {
             .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '.' || c == '-')
 }
 
-/// Validates skill input before it is stored or used.
+/// Validates skill input before it is stored or used, reporting every problem at once.
 ///
 /// Rejects: empty names, instructions over [`MAX_INSTRUCTIONS_BYTES`],
 /// scripts totaling over [`MAX_SCRIPTS_TOTAL_BYTES`], unsafe script names,
@@ -110,42 +112,61 @@ pub fn validate_skill_input(
     allowed_tools: &[String],
     scripts: &[SkillScript],
 ) -> anyhow::Result<()> {
+    crate::plugins::definitions::none(skill_input_problems(
+        name,
+        instructions,
+        allowed_tools,
+        scripts,
+    ))
+}
+
+/// Every problem [`validate_skill_input`] finds, one line each.
+pub fn skill_input_problems(
+    name: &str,
+    instructions: &str,
+    allowed_tools: &[String],
+    scripts: &[SkillScript],
+) -> Vec<String> {
+    let mut problems = Vec::new();
     if name.trim().is_empty() {
-        anyhow::bail!("skill name must not be empty");
+        problems.push("skill name must not be empty".to_owned());
     }
     if instructions.len() > MAX_INSTRUCTIONS_BYTES {
-        anyhow::bail!(
+        problems.push(format!(
             "skill instructions exceed the {MAX_INSTRUCTIONS_BYTES}-byte cap ({} bytes)",
             instructions.len()
-        );
+        ));
     }
     let total: usize = scripts.iter().map(|script| script.content.len()).sum();
     if total > MAX_SCRIPTS_TOTAL_BYTES {
-        anyhow::bail!(
+        problems.push(format!(
             "skill scripts exceed the {MAX_SCRIPTS_TOTAL_BYTES}-byte total cap ({total} bytes)"
-        );
+        ));
     }
-    for script in scripts {
-        if !is_safe_file_name(&script.name) {
-            anyhow::bail!(
-                "unsafe script name '{}': use only [a-zA-Z0-9_.-], no leading dot, no slashes",
-                script.name
-            );
-        }
-    }
+    problems.extend(
+        scripts
+            .iter()
+            .filter(|script| !is_safe_file_name(&script.name))
+            .map(|script| {
+                format!(
+                    "unsafe script name '{}': use only [a-zA-Z0-9_.-], no leading dot, no slashes",
+                    script.name
+                )
+            }),
+    );
     let unknown: Vec<&str> = allowed_tools
         .iter()
         .map(String::as_str)
         .filter(|name| !KNOWN_TOOL_NAMES.contains(name))
         .collect();
     if !unknown.is_empty() {
-        anyhow::bail!(
+        problems.push(format!(
             "unknown tool name(s) [{}]; valid names: {}",
             unknown.join(", "),
             KNOWN_TOOL_NAMES.join(", ")
-        );
+        ));
     }
-    Ok(())
+    problems
 }
 
 /// Composes the task prompt with one `## Skill: <name>` section per skill.
