@@ -128,127 +128,91 @@ pub(crate) const FIELDS: &[(&str, &[Action])] = &[
 #[derive(Debug, Default, ToolInput)]
 pub(crate) struct BrowserArgs {
     #[input(
-        description = "What to do. Each action reads only the fields that name it.",
+        description = "What to do; each action reads only the fields that name it.",
         choice = ["open", "navigate", "snapshot", "click", "type", "select", "press", "scroll", "move", "drag", "check_looks", "screenshot", "record", "devtools"]
     )]
     action: String,
-    #[input(
-        description = "open: full http or https URL. devtools debugger set: script URL or part of it"
-    )]
+    #[input(description = "open: http(s) URL. devtools debugger: script URL")]
     url: Option<String>,
-    #[input(description = "navigate: back, forward or reload. scroll: up, down, left or right")]
+    #[input(description = "navigate: back|forward|reload. scroll: up|down|left|right")]
     direction: Option<String>,
     #[input(
-        description = "An element: a ref from the latest snapshot like e14, a CSS selector, or text=Some text. click, type, select: the element to act on (click: or a point with x and y). snapshot, screenshot: only this element; scroll: scroll inside it; omit for the page. devtools elements: or a snapshot ref"
+        description = "click, type, select, snapshot, screenshot, scroll, devtools: element ref (e14), CSS selector or text=..."
     )]
     reference: Option<String>,
-    #[input(
-        description = "snapshot: also return the page's structure: its containers with positions and a selector for each, and whether each canvas drew anything. Use this rather than guessing where something is."
-    )]
+    #[input(description = "snapshot: include element positions")]
     layout: Option<bool>,
-    #[input(description = "screenshot: the whole scrollable page instead of the visible part")]
+    #[input(description = "screenshot: whole page")]
     full_page: Option<bool>,
     #[input(
-        description = "record: start or stop. devtools: elements: inspect|set_attribute|remove_attribute|set_style|set_text|remove; debugger: set|remove|pause_on_exceptions|pause|resume|step_over|step_into|step_out|state; storage: read|set|remove|clear; performance: metrics|trace; memory: summary|snapshot"
+        description = "record: start|stop. devtools: the panel operation (see the tool description)"
     )]
     operation: Option<String>,
-    #[input(description = "record start: longest length in seconds (default 30, max 120)")]
+    #[input(description = "record: max seconds (30, up to 120)")]
     max_seconds: Option<u64>,
-    #[input(
-        description = "click: a point to click instead of a ref, CSS pixels from the left of the visible page (canvas, maps and games; a page holding the pointer lock is clicked where the mouse is). move: go to this point; goes with y"
-    )]
+    #[input(description = "click, move: CSS px from left")]
     x: Option<f64>,
-    #[input(
-        description = "click, move: the point's CSS pixels from the top of the visible page; goes with x"
-    )]
+    #[input(description = "click, move: CSS px from top")]
     y: Option<f64>,
-    #[input(description = "click: double-click instead")]
+    #[input(description = "click: double-click")]
     double: Option<bool>,
-    #[input(description = "type: text to type")]
+    #[input(description = "type: text")]
     text: Option<String>,
-    #[input(description = "type: press Enter afterwards (submits most forms)")]
+    #[input(description = "type: press Enter after")]
     submit: Option<bool>,
-    #[input(description = "type: clear the field first")]
+    #[input(description = "type: clear first")]
     clear: Option<bool>,
-    #[input(
-        description = "select: option values or labels to choose (one, or several for a multi-select)"
-    )]
+    #[input(description = "select: option values or labels")]
     values: Option<Vec<String>>,
-    #[input(
-        description = "press: key name: Enter, Escape, Tab, ArrowDown, Backspace, PageDown, a letter or digit like w or 1, a shortcut like Control+a, or mouseDown and mouseUp to hold the mouse button"
-    )]
+    #[input(description = "press: key name, shortcut, mouseDown or mouseUp")]
     key: Option<String>,
-    #[input(
-        description = "press: milliseconds to keep the key down, up to 5000, to move in a game; omit for a plain press"
-    )]
+    #[input(description = "press: hold milliseconds (up to 5000)")]
     hold_ms: Option<u64>,
-    #[input(
-        description = "move: instead of x and y, CSS pixels to move right (negative for left) from where the mouse is"
-    )]
+    #[input(description = "move: px right from the mouse")]
     dx: Option<f64>,
-    #[input(
-        description = "move: instead of x and y, CSS pixels to move down (negative for up) from where the mouse is"
-    )]
+    #[input(description = "move: px down from the mouse")]
     dy: Option<f64>,
-    #[input(
-        description = "drag: where to press: a ref from the latest snapshot like e14, a CSS selector like .card, or text=Some text; or use from_x and from_y"
-    )]
+    #[input(description = "drag: start element")]
     from_reference: Option<String>,
-    #[input(
-        description = "drag: where to press: CSS pixels from the left of the visible page; goes with from_y"
-    )]
+    #[input(description = "drag: start x")]
     from_x: Option<f64>,
-    #[input(
-        description = "drag: where to press: CSS pixels from the top of the visible page; goes with from_x"
-    )]
+    #[input(description = "drag: start y")]
     from_y: Option<f64>,
-    #[input(
-        description = "drag: where to let go: a ref, a CSS selector like .column, or text=Some text; or use to_x and to_y"
-    )]
+    #[input(description = "drag: end element")]
     to_reference: Option<String>,
-    #[input(
-        description = "drag: where to let go: CSS pixels from the left of the visible page; goes with to_y"
-    )]
+    #[input(description = "drag: end x")]
     to_x: Option<f64>,
-    #[input(
-        description = "drag: where to let go: CSS pixels from the top of the visible page; goes with to_x"
-    )]
+    #[input(description = "drag: end y")]
     to_y: Option<f64>,
     #[input(
-        description = "devtools: console, elements, network, debugger, storage, performance or memory"
+        description = "devtools: console|elements|network|debugger|storage|performance|memory"
     )]
     panel: Option<String>,
-    #[input(description = "devtools console: JavaScript to run (awaited); omit to read messages")]
+    #[input(description = "devtools console: JavaScript to run")]
     expression: Option<String>,
-    #[input(description = "devtools console/network: only entries newer than this next_since")]
+    #[input(description = "devtools console, network: newer than this next_since")]
     since: Option<u64>,
     #[input(description = "devtools elements: CSS selector")]
     selector: Option<String>,
-    #[input(
-        description = "devtools elements: attribute or CSS property; storage: cookie name or key"
-    )]
+    #[input(description = "devtools: attribute, style or storage key")]
     name: Option<String>,
-    #[input(description = "devtools: new value (elements, storage)")]
+    #[input(description = "devtools: new value")]
     value: Option<String>,
-    #[input(description = "devtools elements: computed styles to read")]
+    #[input(description = "devtools elements: styles to read")]
     properties: Option<Vec<String>>,
-    #[input(
-        description = "devtools network: request id for headers and body; debugger: breakpoint id"
-    )]
+    #[input(description = "devtools network: request id; debugger: breakpoint id")]
     id: Option<String>,
-    #[input(description = "devtools network: URL patterns to block (* wildcards); [] unblocks")]
+    #[input(description = "devtools network: URL patterns to block")]
     block: Option<Vec<String>>,
     #[input(description = "devtools network: off|offline|slow3g|fast3g")]
     throttle: Option<String>,
     #[input(description = "devtools debugger set: line (1-based)")]
     line: Option<u64>,
-    #[input(
-        description = "devtools debugger: breakpoint condition, or all|uncaught|none for pause_on_exceptions"
-    )]
+    #[input(description = "devtools debugger: breakpoint condition or all|uncaught|none")]
     condition: Option<String>,
     #[input(description = "devtools storage: cookies, local or session")]
     area: Option<String>,
-    #[input(description = "devtools performance trace: seconds, 1-15 (default 5)")]
+    #[input(description = "devtools performance: trace seconds (1-15)")]
     seconds: Option<u64>,
 }
 

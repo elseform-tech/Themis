@@ -5,7 +5,7 @@ description: Do a task in the built-in browser (open pages, click, type, fill fo
 
 # Browser use
 
-Do the user's task in the built-in browser with the `browser` tool; its `action` field picks what to do (`{"action": "click", "ref": "e14"}`). The user can watch in Workspace → Browser and may click or type in the same page while you work, so take a new snapshot when a ref is gone or the page changed unexpectedly.
+Do the user's task in the built-in browser with the `browser` tool; its `action` field picks what to do (`{"action": "click", "reference": "e14"}`). The user can watch in Workspace → Browser and may click or type in the same page while you work, so take a new snapshot when a ref is gone or the page changed unexpectedly.
 
 1. `open` the page (a full http or https URL; for a local app use the address and port it runs on). Use `fetch_url` instead when you only need to read static text.
 2. Read the snapshot every browser action returns: elements you can act on carry a ref right after their name, like `button "Create account" [e14]`. Act with that ref: `click` (a canvas, map or game has no refs: click a point with `x` and `y` in CSS pixels of the visible page, worked out from the page's own layout), `type` (`clear` to replace, `submit` to press Enter), `select` for dropdowns, `press` for keys, `scroll` for content that loads as you scroll. Take a `snapshot` again only when the page changed on its own.
