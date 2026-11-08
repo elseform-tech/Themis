@@ -75,6 +75,8 @@ pub enum ApprovalDecision {
     AllowAlways,
     /// Refuse to run this action.
     Deny,
+    /// Not run: nobody answered the approval before its wait ran out.
+    TimedOut,
 }
 
 impl From<Approval> for ApprovalDecision {
@@ -83,6 +85,7 @@ impl From<Approval> for ApprovalDecision {
             Approval::AllowOnce => Self::AllowOnce,
             Approval::AllowAlways => Self::AllowAlways,
             Approval::Deny | Approval::DenyForNewMessage | Approval::DenyReviewed => Self::Deny,
+            Approval::DenyTimedOut => Self::TimedOut,
         }
     }
 }
@@ -93,6 +96,7 @@ impl fmt::Display for ApprovalDecision {
             Self::AllowOnce => "allow-once",
             Self::AllowAlways => "allow-always",
             Self::Deny => "deny",
+            Self::TimedOut => "timed-out",
         };
         f.write_str(name)
     }

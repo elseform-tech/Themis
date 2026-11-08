@@ -134,8 +134,9 @@ export function applyThreadEvent(
       return appendTrace(state, threadId, {
         id: newId("trace"),
         tool: event.tool,
-        summary: `approval ${event.decision}`,
-        ok: event.decision === "deny" ? false : undefined,
+        // A box nobody answered stays in its turn as one line saying so.
+        summary: event.decision === "timed_out" ? "not run · nobody answered in time" : `approval ${event.decision}`,
+        ok: event.decision === "deny" || event.decision === "timed_out" ? false : undefined,
       });
     }
     case "context_usage":

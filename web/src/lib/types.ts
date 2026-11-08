@@ -26,7 +26,7 @@ export interface ModelProvider {
 }
 export type RiskLevel = 'read' | 'write' | 'execute' | 'network' | 'destructive';
 /** `chat` is "Allow in this chat": allow now and for every later run of this chat. */
-export type ApprovalDecision = 'once' | 'chat' | 'deny';
+export type ApprovalDecision = 'once' | 'chat' | 'deny' | 'timed_out';
 export type ThemeMode = 'dark' | 'light' | 'system';
 
 export interface ProjectInfo {

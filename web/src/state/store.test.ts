@@ -304,6 +304,12 @@ describe("thread lifecycle events", () => {
     expect(s.traces[THREAD.id]?.[0]?.summary).toContain("once");
   });
 
+  it("a box nobody answered stays in its turn as one line saying so", () => {
+    let s = withThread();
+    s = applyThreadEvent(s, envelope({ kind: "approval_decided", tool: "exec", decision: "timed_out" }));
+    expect(s.traces[THREAD.id]?.[0]).toMatchObject({ summary: "not run · nobody answered in time", ok: false });
+  });
+
   it("finished appends an assistant message and clears running", () => {
     let s = withThread();
     s = applyThreadEvent(

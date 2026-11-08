@@ -169,7 +169,8 @@ impl SitePermissions {
                     &crate::tools::take_review_note(&action)
                         .unwrap_or_else(|| REFUSAL_NOTE.to_owned()),
                 )),
-                denied @ (Approval::Deny | Approval::DenyForNewMessage) => {
+                denied
+                @ (Approval::Deny | Approval::DenyForNewMessage | Approval::DenyTimedOut) => {
                     Err(refused(denied.refusal_note()))
                 }
             },

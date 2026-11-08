@@ -117,8 +117,10 @@ pub const fn default_max_total_turns() -> u32 {
     200
 }
 
+/// Ten minutes: long enough to come back from a short break, short enough that a run never
+/// hangs for long on an absent person (the most Settings allows).
 pub const fn default_approval_timeout_seconds() -> u32 {
-    300
+    600
 }
 
 impl Default for Settings {

@@ -2,7 +2,7 @@ import { useMemo, useState } from "react";
 import { ApprovalBox } from "../components";
 import { answerQuestion, approveAction } from "../lib/tauri";
 import type { ApprovalDecision, ApprovalRequest, Goal, Question } from "../lib/types";
-import { composerQueue, placeQuestion, QUESTION_OPEN_MS, readFolded, usePlacements, writeFolded } from "../state/composerSlot";
+import { composerQueue, openFor, placeQuestion, readFolded, usePlacements, writeFolded } from "../state/composerSlot";
 import type { ToolTraceEntry } from "../state/reducer";
 import { describeError, toast, useApp } from "../state/store";
 import { GoalBar } from "./GoalBar";
@@ -42,9 +42,10 @@ export function ComposerStack({ threadId, goal, approvals, questions, traces, on
   const { dispatch } = useApp();
   const [folded, setFoldedState] = useState(readFolded);
   const placements = usePlacements();
-  const expiries = questions.filter(question => question.answer === undefined && !question.blocking).map(question => question.asked_at + QUESTION_OPEN_MS).filter(at => at > Date.now());
+  const blockingMs = useApp().state.settings.approval_timeout_seconds * 1000;
+  const expiries = questions.filter(question => question.answer === undefined).map(question => question.asked_at + openFor(question, blockingMs)).filter(at => at > Date.now());
   const now = useNowAt(expiries.length ? Math.min(...expiries) : undefined);
-  const { current, waiting } = useMemo(() => composerQueue(approvals, questions, placements, now), [approvals, questions, placements, now]);
+  const { current, waiting } = useMemo(() => composerQueue(approvals, questions, placements, now, blockingMs), [approvals, questions, placements, now, blockingMs]);
   const shownGoal = goal ?? null;
   const setFolded = (value: boolean) => { setFoldedState(value); writeFolded(value); };
 

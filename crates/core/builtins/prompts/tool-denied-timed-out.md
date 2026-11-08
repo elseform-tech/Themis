@@ -1,0 +1,1 @@
+Nobody answered this approval in time, so it did not run. Do not ask for the same action again now: finish what needs no approval, use another way if there is one, and say in your summary what was left undone so the person can do it or allow it when they are back.
