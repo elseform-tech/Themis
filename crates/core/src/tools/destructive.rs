@@ -63,6 +63,23 @@ pub(crate) fn git_from_subcommand(args: &[String]) -> &[String] {
 /// Whether a `git` argv (without the program name) is a destructive,
 /// history-rewriting or working-tree-discarding variant that must not share a
 /// grant or an allow rule with its harmless siblings.
+/// A push that overwrites or deletes on the remote: forced, mirrored, pruning, deleting, or a
+/// `+ref` / `:ref` refspec.
+fn push_destructive(rest: &[String]) -> bool {
+    const LONGS: [&str; 6] = [
+        "force",
+        "force-with-lease",
+        "force-if-includes",
+        "mirror",
+        "delete",
+        "prune",
+    ];
+    rest.iter().any(|a| has_flag(a, &LONGS, "fd"))
+        || rest
+            .iter()
+            .any(|a| a.starts_with(':') || (a.starts_with('+') && a.len() > 1))
+}
+
 fn git_destructive(args: &[String]) -> bool {
     let Some((at, sub)) = first_subcommand(args, GIT_VALUE_OPTIONS) else {
         return false;
@@ -72,21 +89,7 @@ fn git_destructive(args: &[String]) -> bool {
     let has_separator = rest.iter().any(|a| a == "--");
     let first_positional = positionals(rest).next();
     match sub {
-        "push" => {
-            any(
-                &[
-                    "force",
-                    "force-with-lease",
-                    "force-if-includes",
-                    "mirror",
-                    "delete",
-                    "prune",
-                ],
-                "fd",
-            ) || rest
-                .iter()
-                .any(|a| a.starts_with(':') || (a.starts_with('+') && a.len() > 1))
-        }
+        "push" => push_destructive(rest),
         "clean" => any(&["force"], "fdxX"),
         "reset" => {
             // A revision moves the branch (and `--hard` discards edits); only a
