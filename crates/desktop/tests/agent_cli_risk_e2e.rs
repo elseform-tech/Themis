@@ -371,11 +371,7 @@ async fn an_agent_credential_never_switches_a_hook_or_command_server_on_in_any_m
     let mut tokens = Vec::new();
     for mode in [ApprovalMode::Yolo, ApprovalMode::Auto, ApprovalMode::Custom] {
         let thread = fx.thread(mode).await;
-        let token = themis_core::agent_cli::issue(&thread, "run-under-test")
-            .unwrap()
-            .env()[0]
-            .1
-            .clone();
+        let token = agent_token(&fx, &thread, false);
         // `themis call`, as a shell command whatever its approval said.
         for (kind, id) in [("hook", "guard"), ("mcp", "local")] {
             let args = switch_on(kind, id).to_string();
@@ -438,5 +434,169 @@ async fn an_agent_credential_never_switches_a_hook_or_command_server_on_in_any_m
     assert!(logs.contains("\"reason\":\"switch_on\""), "{logs}");
     assert!(tokens.iter().all(|token| !logs.contains(token.as_str())));
     assert!(!logs.contains("echo guarded") && !logs.contains("exit 0"));
+    fx.shut_down().await;
+}
+
+/// A run credential bound to the fixture's project, with or without a network block.
+fn agent_token(fx: &Fixture, thread: &str, network_blocked: bool) -> String {
+    let scope = themis_core::agent_cli::RunScope {
+        project_root: Some(fx.project.clone()),
+        network_blocked,
+    };
+    themis_core::agent_cli::issue(thread, "run-under-test", &scope)
+        .unwrap()
+        .env()[0]
+        .1
+        .clone()
+}
+
+fn person_token(fx: &Fixture) -> String {
+    let text = std::fs::read_to_string(fx.data.join("server.json")).unwrap();
+    serde_json::from_str::<Value>(&text).unwrap()["token"]
+        .as_str()
+        .unwrap()
+        .to_owned()
+}
+
+fn logs(fx: &Fixture) -> String {
+    std::fs::read_dir(fx.data.join("logs"))
+        .unwrap()
+        .filter_map(Result::ok)
+        .map(|entry| std::fs::read_to_string(entry.path()).unwrap_or_default())
+        .collect()
+}
+
+fn refused_with(reply: &Value, text: &str) -> bool {
+    reply["ok"] == false && reply["error"].as_str().is_some_and(|e| e.contains(text))
+}
+
+/// A script holding the run credential talks to the server directly (no `themis` command for the
+/// shell's approval step to see). The server alone decides: a hook or MCP test, which would run
+/// its command outside the sandbox, an unknown action and a missing one are refused in every mode.
+#[tokio::test(flavor = "multi_thread")]
+async fn an_agent_credential_never_runs_a_hook_or_server_test_outside_the_sandbox() {
+    let _turn = ONE_SERVER.lock().await;
+    let fx = fixture().await;
+    let marker = fx.data.join("hook-ran");
+    let server_marker = fx.data.join("server-ran");
+    let project = fx.project.to_string_lossy().into_owned();
+    let hook = json!({"name": "probe", "event": "BeforeTool",
+        "command": format!("touch '{}'", marker.display())});
+    let test_hook = json!({"action": "test_hook", "projectRoot": project, "hook": hook});
+    let test_mcp = json!({"action": "test_mcp", "projectRoot": project,
+        "server": {"command": "sh",
+            "args": ["-c", format!("touch '{}'", server_marker.display())]}});
+    let mut saved = hook.clone();
+    saved["enabled"] = json!(false);
+    fx.state
+        .plugin_action(json!({"action": "save", "scope": "global",
+            "spec": {"name": "demo", "hooks": [saved]}}))
+        .await
+        .unwrap();
+    let runs_code = themis_core::prompts::AGENT_CLI_RUNS_CODE_REFUSED;
+    for mode in [ApprovalMode::Custom, ApprovalMode::Auto, ApprovalMode::Yolo] {
+        let thread = fx.thread(mode).await;
+        let token = agent_token(&fx, &thread, false);
+        let reply = socket_call(&fx, &token, "plugin_action", test_hook.clone());
+        assert!(!marker.exists(), "{mode:?}: the hook ran: {reply}");
+        assert!(refused_with(&reply, runs_code), "{mode:?}: {reply}");
+        let reply = socket_call(&fx, &token, "plugin_action", test_mcp.clone());
+        assert!(!server_marker.exists(), "{mode:?}: the server ran: {reply}");
+        assert!(refused_with(&reply, runs_code), "{mode:?}: {reply}");
+        let unknown = json!({"action": "no_such_action"});
+        let reply = socket_call(&fx, &token, "plugin_action", unknown);
+        assert!(
+            refused_with(&reply, "Themis refused `plugin_action no_such_action`"),
+            "{mode:?}: {reply}"
+        );
+        // No action at all is not a `list`.
+        let reply = socket_call(&fx, &token, "plugin_action", json!({"scope": "global"}));
+        assert!(refused_with(&reply, "Themis refused"), "{mode:?}: {reply}");
+        // `themis hook test` sends the same request.
+        let output = cli(&fx, Some(&token), &["hook", "test", "demo", "probe"]);
+        let text = String::from_utf8_lossy(&output.stderr);
+        assert!(text.contains(runs_code), "{mode:?}: {text}");
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        assert!(!marker.exists(), "{mode:?}: the hook ran");
+        assert!(!server_marker.exists(), "{mode:?}: the server ran");
+    }
+    // The person's own credential still tests a hook.
+    let reply = socket_call(&fx, &person_token(&fx), "plugin_action", test_hook);
+    assert_eq!(reply["ok"], true, "{reply}");
+    assert!(marker.exists(), "the person's test runs the hook");
+    let logs = logs(&fx);
+    assert!(logs.contains("\"reason\":\"runs_code\""), "{logs}");
+    assert!(logs.contains("\"reason\":\"action_not_allowed\""), "{logs}");
+    assert!(!logs.contains("touch '"), "never the definition: {logs}");
+    fx.shut_down().await;
+}
+
+/// The credential is bound to its run's project and network: another project's plugins are out
+/// of reach, and a run whose sandbox blocks the network cannot have the server fetch for it.
+/// Store actions in its own project and globally still work.
+#[tokio::test(flavor = "multi_thread")]
+async fn an_agent_credential_stays_in_its_project_and_behind_its_network_block() {
+    let _turn = ONE_SERVER.lock().await;
+    let fx = fixture().await;
+    let (_other_repo, other) = common::init_repo();
+    let project = fx.project.to_string_lossy().into_owned();
+    let thread = fx.thread(ApprovalMode::Yolo).await;
+    let token = agent_token(&fx, &thread, false);
+    let save = |root: &str, name: &str| {
+        json!({"action": "save", "scope": "local", "projectRoot": root,
+            "spec": {"name": name}})
+    };
+    let elsewhere = save(&other.to_string_lossy(), "elsewhere");
+    let reply = socket_call(&fx, &token, "plugin_action", elsewhere);
+    let other_project = themis_core::prompts::AGENT_CLI_OTHER_PROJECT_REFUSED;
+    assert!(refused_with(&reply, other_project), "{reply}");
+    assert!(!other.join(".themis").exists(), "nothing was written there");
+    // Its own project, globally, and the plain store actions.
+    for args in [
+        save(&project, "here"),
+        json!({"action": "save", "scope": "global", "spec": {"name": "everywhere"}}),
+        json!({"action": "list", "projectRoot": project}),
+        json!({"action": "inventory"}),
+        json!({"action": "disable", "scope": "global", "name": "everywhere"}),
+        json!({"action": "enable", "scope": "global", "name": "everywhere"}),
+        json!({"action": "marketplaces"}),
+        json!({"action": "sources"}),
+        json!({"action": "updates"}),
+        json!({"action": "mcp_status", "projectRoot": project}),
+        json!({"action": "delete", "scope": "global", "name": "everywhere"}),
+    ] {
+        let reply = socket_call(&fx, &token, "plugin_action", args.clone());
+        assert_eq!(reply["ok"], true, "{args}: {reply}");
+    }
+    assert!(fx.project.join(".themis/plugins").is_dir());
+    // A fetching action: allowed without a network block, refused behind one.
+    let source = fx.data.join("local-source");
+    std::fs::create_dir_all(source.join(".claude-plugin")).unwrap();
+    std::fs::write(
+        source.join(".claude-plugin/marketplace.json"),
+        r#"{"name":"local-source","plugins":[]}"#,
+    )
+    .unwrap();
+    let preview = json!({"action": "preview_source", "source": source});
+    let reply = socket_call(&fx, &token, "plugin_action", preview.clone());
+    assert_eq!(reply["ok"], true, "{reply}");
+    let blocked_thread = fx.thread(ApprovalMode::Yolo).await;
+    let blocked = agent_token(&fx, &blocked_thread, true);
+    let network_blocked = themis_core::prompts::AGENT_CLI_NETWORK_BLOCKED;
+    for args in [
+        preview,
+        json!({"action": "install", "scope": "global", "name": "x", "marketplace": "y"}),
+        json!({"action": "import_repository", "scope": "global",
+            "url": "https://example.com/x.git"}),
+        json!({"action": "catalog", "name": "claude-plugins-official"}),
+    ] {
+        let reply = socket_call(&fx, &blocked, "plugin_action", args.clone());
+        assert!(refused_with(&reply, network_blocked), "{args}: {reply}");
+    }
+    let reply = socket_call(&fx, &blocked, "plugin_action", json!({"action": "list"}));
+    assert_eq!(reply["ok"], true, "{reply}");
+    let logs = logs(&fx);
+    assert!(logs.contains("\"reason\":\"other_project\""), "{logs}");
+    assert!(logs.contains("\"reason\":\"network_blocked\""), "{logs}");
     fx.shut_down().await;
 }

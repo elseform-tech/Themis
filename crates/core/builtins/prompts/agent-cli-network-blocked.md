@@ -1,0 +1,1 @@
+Themis refused this call from the agent's shell: it would fetch from the network, and this chat's sandbox blocks the network (`sandbox.network: "block"`). Nothing was fetched. Ask the user to do it in Integrations if it is needed, and carry on with the rest.

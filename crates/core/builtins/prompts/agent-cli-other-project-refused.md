@@ -1,0 +1,1 @@
+Themis refused this call from the agent's shell: it names a project other than the one this chat works in. Commands an agent runs may manage integrations globally (no projectRoot) or in this chat's own project only. Nothing was changed. Ask the user if another project needs this.

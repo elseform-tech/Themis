@@ -93,10 +93,44 @@ pub fn redact_value(value: serde_json::Value, access: Option<&Access>) -> serde_
     }
 }
 
+/// What a run's credential is bound to, captured with the run: the project it works in (the
+/// server refuses a `plugin_action` naming another one) and whether its sandbox blocks the
+/// network (the server then refuses the `plugin_action` actions that fetch).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct RunScope {
+    /// The run's project root (its worktree when it has one).
+    pub project_root: Option<PathBuf>,
+    /// The run's sandbox plan blocks the network (`sandbox.network: "block"`; in YOLO only when
+    /// written).
+    pub network_blocked: bool,
+}
+
+impl RunScope {
+    /// The scope of a run working in `project_root` under `sandbox` (none: the network is not
+    /// blocked, as nothing would block it).
+    pub fn new(project_root: &Path, sandbox: Option<&crate::sandbox::SandboxPlan>) -> Self {
+        Self {
+            project_root: Some(project_root.to_path_buf()),
+            network_blocked: sandbox
+                .is_some_and(|plan| plan.network() == crate::sandbox::NetworkPolicy::Block),
+        }
+    }
+}
+
+tokio::task_local! {
+    static RUN_SCOPE: RunScope;
+}
+
+/// Runs `future` as a run bound to `scope`: the credential its commands get carries it.
+pub async fn with_run_scope<F: std::future::Future>(scope: RunScope, future: F) -> F::Output {
+    RUN_SCOPE.scope(scope, future).await
+}
+
 /// Issues and revokes run credentials (the app server).
 pub trait Issuer: Send + Sync {
     /// The access for one run of a chat, issued once per run and reused by its later commands.
-    fn issue(&self, thread_id: &str, run_id: &str) -> Option<Access>;
+    /// The first issue binds the credential to `scope`.
+    fn issue(&self, thread_id: &str, run_id: &str, scope: &RunScope) -> Option<Access>;
     /// Ends every credential the chat's runs hold.
     fn revoke_thread(&self, thread_id: &str);
 }
@@ -127,20 +161,22 @@ fn installed() -> Option<Arc<dyn Issuer>> {
         .clone()
 }
 
-/// The access for a run of `thread_id`, when an app server runs in this process.
-pub fn issue(thread_id: &str, run_id: &str) -> Option<Access> {
+/// The access for a run of `thread_id` bound to `scope`, when an app server runs in this process.
+pub fn issue(thread_id: &str, run_id: &str, scope: &RunScope) -> Option<Access> {
     if thread_id.is_empty() || run_id.is_empty() {
         return None;
     }
-    installed()?.issue(thread_id, run_id)
+    installed()?.issue(thread_id, run_id, scope)
 }
 
-/// The access for the run whose task this is (from its diagnostics context), if any.
+/// The access for the run whose task this is (its diagnostics context and run scope), if any.
+/// A task without a run scope gets none: a credential is never issued unbound.
 pub fn current() -> Option<Access> {
     let (thread_id, run_id) = crate::diagnostics::ACTIVE
         .try_with(|context| (context.thread_id.clone(), context.run_id.clone()))
         .ok()?;
-    issue(&thread_id, &run_id)
+    let scope = RUN_SCOPE.try_with(Clone::clone).ok()?;
+    issue(&thread_id, &run_id, &scope)
 }
 
 /// Ends the credentials of a chat's runs (its run finished).
@@ -178,7 +214,53 @@ mod tests {
     #[test]
     fn nothing_is_issued_outside_a_run() {
         assert!(current().is_none());
-        assert!(issue("", "run").is_none());
-        assert!(issue("thread", "").is_none());
+        let scope = RunScope::default();
+        assert!(issue("", "run", &scope).is_none());
+        assert!(issue("thread", "", &scope).is_none());
+    }
+
+    struct Recorder(std::sync::Mutex<Vec<RunScope>>);
+
+    impl Issuer for Recorder {
+        fn issue(&self, _thread_id: &str, _run_id: &str, scope: &RunScope) -> Option<Access> {
+            self.0
+                .lock()
+                .unwrap_or_else(|error| error.into_inner())
+                .push(scope.clone());
+            Some(Access::new("t".into(), 1, None))
+        }
+        fn revoke_thread(&self, _thread_id: &str) {}
+    }
+
+    /// A run's commands get a credential bound to the run's scope; a task with a diagnostics
+    /// context but no run scope gets none.
+    #[tokio::test]
+    async fn a_credential_is_issued_only_with_the_runs_scope() {
+        let recorder = Arc::new(Recorder(std::sync::Mutex::new(Vec::new())));
+        let issuer: Arc<dyn Issuer> = recorder.clone();
+        install(Arc::clone(&issuer));
+        let logs = tempfile::tempdir().unwrap();
+        let context = || crate::diagnostics::DiagnosticContext {
+            log: Arc::new(crate::diagnostics::DiagnosticLog::new(logs.path().into())),
+            thread_id: "chat".into(),
+            run_id: "run".into(),
+            level: "info".into(),
+        };
+        let unbound = crate::diagnostics::ACTIVE.scope(context(), async { current() });
+        assert!(unbound.await.is_none(), "no run scope, no credential");
+        let scope = RunScope {
+            project_root: Some(PathBuf::from("/projects/a")),
+            network_blocked: true,
+        };
+        let bound = crate::diagnostics::ACTIVE.scope(
+            context(),
+            with_run_scope(scope.clone(), async { current() }),
+        );
+        assert!(bound.await.is_some());
+        uninstall(&issuer);
+        assert_eq!(
+            *recorder.0.lock().unwrap_or_else(|error| error.into_inner()),
+            vec![scope]
+        );
     }
 }

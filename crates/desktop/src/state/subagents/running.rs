@@ -157,6 +157,16 @@ impl SubagentKit {
         }
     }
 
+    /// `run` as a subagent of this chat's run: the `themis` credential its commands get is bound
+    /// to the project it works in and to its sandbox's network block.
+    pub(super) fn bound<F: std::future::Future>(
+        &self,
+        run: F,
+    ) -> impl std::future::Future<Output = F::Output> {
+        let scope = themis_core::agent_cli::RunScope::new(&self.work_root, Some(&self.sandbox));
+        themis_core::agent_cli::with_run_scope(scope, run)
+    }
+
     pub(super) fn diagnostic_context(
         &self,
         agent: &Subagent,
