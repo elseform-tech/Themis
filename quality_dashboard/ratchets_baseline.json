@@ -240,9 +240,9 @@
    "lines": 111
   },
   "crates/core/src/plugins/hooks/process.rs::execute": {
-   "cognitive": 43,
-   "cyclomatic": 46,
-   "lines": 163
+   "cognitive": 41,
+   "cyclomatic": 44,
+   "lines": 160
   },
   "crates/core/src/plugins/hooks/runtime.rs::HookRuntime::ask_prompt_hook": {
    "lines": 104
@@ -626,9 +626,9 @@
    "lines": 143
   },
   "crates/desktop/src/state/plugins.rs::AppState::plugin_action_with": {
-   "cognitive": 81,
-   "cyclomatic": 169,
-   "lines": 357
+   "cognitive": 78,
+   "cyclomatic": 162,
+   "lines": 334
   },
   "crates/desktop/src/state/projects.rs::AppState::delete_project": {
    "cyclomatic": 23

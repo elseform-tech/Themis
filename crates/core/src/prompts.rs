@@ -434,6 +434,10 @@ pub const AGENT_CLI_REFUSED: &str = include_str!("../builtins/prompts/agent-cli-
 /// The app server's answer to a hook or MCP test asked for from an agent's shell.
 pub const AGENT_CLI_RUNS_CODE_REFUSED: &str =
     include_str!("../builtins/prompts/agent-cli-runs-code-refused.md");
+/// What `themis mcp|hook test` in an agent's shell answers when the test, run in the sandbox,
+/// fails; `{{error}}`.
+pub const AGENT_CLI_SANDBOXED_TEST_FAILED: &str =
+    include_str!("../builtins/prompts/agent-cli-sandboxed-test-failed.md");
 /// The app server's answer to an agent's `plugin_action` naming another project.
 pub const AGENT_CLI_OTHER_PROJECT_REFUSED: &str =
     include_str!("../builtins/prompts/agent-cli-other-project-refused.md");

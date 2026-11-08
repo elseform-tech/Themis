@@ -1,0 +1,2 @@
+The test failed: {{error}}
+It ran inside this run's sandbox, as your shell commands do. If the error looks like the sandbox in the way (a blocked network connection, "Operation not permitted", a file or Keychain item it could not read), the definition may still be right: tell the user it was blocked and ask them to run the same `themis` test in their own terminal (with ask_user if the work waits on it). Otherwise fix the definition and test again.

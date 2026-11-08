@@ -369,38 +369,15 @@ impl AppState {
                     if action == "update" && !args["expectedCheck"].is_string() { store.wait_marketplace_scan(marketplace, true).await?; }
                     serde_json::to_value(store.install_scanned(scope, marketplace, name, args["allowPartial"].as_bool().unwrap_or(false), args["expectedCheck"].as_str()).await?)?
                 },
-                "test_mcp" => {
-                    let spec: themis_core::plugins::McpServer =
-                        serde_json::from_value(args["server"].clone())?;
-                    // A test the agent asks for runs any definition it writes: no secrets in it.
-                    if agent && !spec.key_names().is_empty() {
-                        anyhow::bail!(
-                            "A test can't read secrets. Save the connection and have the person enable it."
-                        );
-                    }
-                    let root = project
-                        .as_ref()
-                        .ok_or_else(|| anyhow::anyhow!("Choose a project to test a connection"))?;
-                    let mut connection =
-                        themis_core::plugins::connections::Connection::connect(&spec, root).await?;
-                    json!({"connected":true,"tools":connection.tools().await?})
-                }
-                "test_hook" => {
-                    let hook: themis_core::plugins::Hook =
-                        serde_json::from_value(args["hook"].clone())?;
-                    let root = project
-                        .as_ref()
-                        .ok_or_else(|| anyhow::anyhow!("Choose a project to test a hook"))?;
-                    // This explicitly requested test runs its displayed command; ordinary runs use approvals.
-                    let approvals: Arc<dyn themis_core::tools::ApprovalHook> =
-                        Arc::new(themis_core::tools::AllowAllHook);
-                    themis_core::plugins::hooks::run(
-                        &hook,
-                        root,
-                        &json!({"event":hook.event,"test":true}),
-                        &approvals,
-                    )
-                    .await?
+                "test_mcp" | "test_hook" => {
+                    let root = project.as_ref().ok_or_else(|| {
+                        anyhow::anyhow!(if action == "test_mcp" {
+                            "Choose a project to test a connection"
+                        } else {
+                            "Choose a project to test a hook"
+                        })
+                    })?;
+                    super::definition_test::run(action, &args, root, agent).await?
                 }
                 _ => return Err(anyhow::anyhow!("Unknown plugin action")),
             })
