@@ -285,6 +285,11 @@ const ALL: &[(&str, &str, &[&str])] = &[
         &[],
     ),
     (
+        AGENT_CLI_SANDBOXED_TEST_FAILED,
+        "agent-cli-sandboxed-test-failed",
+        &["error"],
+    ),
+    (
         AGENT_CLI_OTHER_PROJECT_REFUSED,
         "agent-cli-other-project-refused",
         &[],

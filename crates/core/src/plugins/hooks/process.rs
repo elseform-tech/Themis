@@ -77,6 +77,30 @@ fn keep_stderr(
 }
 
 /// Runs an authorized hook.
+/// A hook that exited unsuccessfully. Its message names only the exit status; what it printed on
+/// stderr stays out of logs and model notes, and only an explicit test shows it ([`Failed::stderr`]).
+#[derive(Debug)]
+pub struct Failed {
+    status: String,
+    stderr: String,
+}
+
+impl Failed {
+    /// What the hook printed on stderr, capped as kept.
+    #[must_use]
+    pub fn stderr(&self) -> &str {
+        &self.stderr
+    }
+}
+
+impl std::fmt::Display for Failed {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(formatter, "Hook exited unsuccessfully ({})", self.status)
+    }
+}
+
+impl std::error::Error for Failed {}
+
 pub(super) async fn execute(hook: &Hook, root: &Path, payload: &Value) -> anyhow::Result<Value> {
     #[cfg(not(windows))]
     let mut command = {
@@ -198,7 +222,18 @@ pub(super) async fn execute(hook: &Hook, root: &Path, payload: &Value) -> anyhow
                 .into());
             }
             if !status.success() {
-                bail!("Hook exited unsuccessfully ({status})");
+                let mut kept_stderr = String::new();
+                if let Some((kept, reader)) = stderr {
+                    let _ =
+                        tokio::time::timeout(std::time::Duration::from_millis(200), reader).await;
+                    let kept = kept.lock().unwrap_or_else(|e| e.into_inner());
+                    kept_stderr = String::from_utf8_lossy(&kept).trim().to_owned();
+                }
+                return Err(Failed {
+                    status: status.to_string(),
+                    stderr: kept_stderr,
+                }
+                .into());
             }
             let text = String::from_utf8(output)?;
             if text.trim().is_empty() {

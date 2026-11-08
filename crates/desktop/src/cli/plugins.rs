@@ -104,6 +104,7 @@ pub async fn run(client: &Client, words: &[String], directory: &Path) -> Result<
             } else if *component!="skill" {
                 request["action"]=json!(if *component=="mcp"{"test_mcp"}else{"test_hook"});
                 request[if *component=="mcp"{"server"}else{"hook"}]=if *component=="mcp"{spec["mcp"].get(name).cloned().ok_or("Unknown connection")?}else{spec["hooks"].as_array().ok_or("Invalid hooks")?.iter().find(|h|h["name"]==*name).cloned().ok_or("Unknown hook")?};
+                if crate::server::in_agent_shell() {return sandboxed_test(&request, project.as_deref()).await;}
             } else { return Err("Use skill verify FILE".into()); }
 
         },
@@ -111,6 +112,30 @@ pub async fn run(client: &Client, words: &[String], directory: &Path) -> Result<
     }
     client.call("plugin_action", request).await
 }
+/// In an agent's shell the server refuses to start a test's command outside the sandbox, so
+/// `themis mcp|hook test` runs it here, in the run's sandbox, with nothing the shell itself lacks.
+async fn sandboxed_test(request: &Value, project: Option<&str>) -> Result<Value, String> {
+    let root = match project {
+        Some(project) => std::path::PathBuf::from(project),
+        None => std::env::current_dir().map_err(|e| e.to_string())?,
+    };
+    let action = request["action"].as_str().unwrap_or_default();
+    match crate::state::definition_test::run(action, request, &root, true).await {
+        Ok(mut value) => {
+            if let Some(object) = value.as_object_mut() {
+                object.insert("sandboxed".into(), json!(true));
+            } else {
+                value = json!({"sandboxed": true, "result": value});
+            }
+            Ok(value)
+        }
+        Err(error) => Err(themis_core::prompts::fill(
+            themis_core::prompts::AGENT_CLI_SANDBOXED_TEST_FAILED,
+            &[("error", &format!("{error:#}"))],
+        )),
+    }
+}
+
 fn field(component: &str) -> &str {
     match component {
         "skill" => "skills",
