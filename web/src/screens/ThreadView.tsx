@@ -15,7 +15,7 @@ import { useNewThread } from "./actions";
 import { ThreadComposer } from "./ThreadComposer";
 import { ThreadConversation } from "./ThreadConversation";
 import { ThreadHeader } from "./ThreadHeader";
-import { ComposerStack } from "./ComposerStack";
+import { ComposerStack, useComposerQuestions } from "./ComposerStack";
 import { QueueStack } from "./QueueStack";
 import { CompactionNotice } from "./ContextMeter";
 import { WorkspacePanel } from "./WorkspacePanel";
@@ -28,6 +28,12 @@ import "./ThreadView.css";
 
 
 const EMPTY_MESSAGES: never[] = [];
+
+/** Whether the composer takes no input now: no chat or project, a chat on another provider, or
+ *  something it waits on (sending, attaching, saving the mode, a question box to answer). */
+function composerBusy(thread: { provider: string } | null, project: object | null, waits: boolean[]): boolean {
+  return thread === null || thread.provider !== "go" || project === null || waits.some(Boolean);
+}
 
 export function ThreadView() {
   const { state, dispatch, armManualRun, cancelManualRun } = useApp();
@@ -89,7 +95,8 @@ export function ThreadView() {
   const sendError = thread === null ? undefined : state.sendErrors[thread.id];
   // A message sent while a run is going waits in the chat's queue. A project
   // without Git chats too: in Custom the backend refuses its writes, not the chat.
-  const composerDisabled = thread === null || thread.provider !== "go" || sending || attaching || permissionSaving || project === null;
+  const { questions, locked: questionOpen } = useComposerQuestions(thread?.id ?? "", messages);
+  const composerDisabled = composerBusy(thread, project, [sending, attaching, permissionSaving, questionOpen]);
   const trace = thread ? state.traces[thread.id] ?? [] : [];
   useEffect(() => {
     function shortcut(event: KeyboardEvent) {
@@ -257,7 +264,6 @@ export function ThreadView() {
   const goal = state.goals[thread.id] ?? null;
   const queue = state.queues[thread.id] ?? [];
   const approvals = state.approvals.filter(approval => approval.thread_id === thread.id);
-  const questions = messages.flatMap(message => message.question ? [message.question] : []);
   const compacting = state.compacting[thread.id] ?? false;
   const diff = state.diffs[thread.id];
   const changedFiles = diff?.available ? visibleFiles(diff.files).length : undefined;
@@ -286,7 +292,7 @@ export function ThreadView() {
       skills={promptSkills}
       plugins={promptPlugins}
       history={history}
-      composerDisabled={composerDisabled}
+      composerDisabled={composerDisabled} locked={questionOpen}
       running={running}
       stopping={stopping}
       sendError={sendError ?? (skillsError ? `Skills unavailable: ${skillsError}` : undefined)}

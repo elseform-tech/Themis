@@ -13,12 +13,10 @@ use super::integration_tools::RunApproval;
 use super::questions::{AskRefused, NewQuestion, MAX_OPEN};
 use super::AppState;
 use crate::sink::EventSink;
-use crate::types::{ChoiceDetails, Question};
+use crate::types::Question;
 
 /// Most questions one `ask_user` call may carry: the pages of one box.
 pub(super) const MAX_PAGES: usize = 4;
-/// What every choice must say besides its `answer`, in the order a refusal names them.
-const DETAIL_FIELDS: [&str; 4] = ["does", "advantages", "disadvantages", "consequences"];
 
 pub(super) struct QuestionTool {
     pub(super) state: AppState,
@@ -62,9 +60,9 @@ fn pages(args: &Value) -> Result<Vec<&Value>, String> {
     }
 }
 
-/// One choice: its answer and what picking it means, or why it is refused (naming each
-/// missing field). A bare string is a choice with nothing said about it.
-fn parse_choice(index: usize, choice: &Value) -> Result<(String, ChoiceDetails), String> {
+/// One choice: its answer and its hint (one paragraph on what picking it means), or why it
+/// is refused (naming each missing field). A bare string is a choice without a hint.
+fn parse_choice(index: usize, choice: &Value) -> Result<(String, String), String> {
     let field = |key: &str| {
         choice
             .get(key)
@@ -77,7 +75,7 @@ fn parse_choice(index: usize, choice: &Value) -> Result<(String, ChoiceDetails),
         .filter(|answer| !answer.is_empty())
         .map_or(&["answer"][..], |_| &[])
         .iter()
-        .chain(DETAIL_FIELDS.iter().filter(|key| field(key).is_none()))
+        .chain(["hint"].iter().filter(|key| field(key).is_none()))
         .map(|key| format!("`{key}`"))
         .collect();
     if !missing.is_empty() {
@@ -90,22 +88,16 @@ fn parse_choice(index: usize, choice: &Value) -> Result<(String, ChoiceDetails),
             ],
         ));
     }
-    let text = |key: &str| field(key).unwrap_or_default().to_owned();
     Ok((
         answer.unwrap_or_default().to_owned(),
-        ChoiceDetails {
-            does: text("does"),
-            advantages: text("advantages"),
-            disadvantages: text("disadvantages"),
-            consequences: text("consequences"),
-        },
+        field("hint").unwrap_or_default().to_owned(),
     ))
 }
 
 /// One question as the model sent it, or why it is refused.
 fn parse(args: &Value) -> Result<NewQuestion, String> {
     let text = |key: &str| args[key].as_str().map(str::to_owned);
-    let details = args["choices"]
+    let hints = args["choices"]
         .as_array()
         .into_iter()
         .flatten()
@@ -116,9 +108,8 @@ fn parse(args: &Value) -> Result<NewQuestion, String> {
     let recommended = text("recommended").or_else(|| text("assumption"));
     Ok(NewQuestion {
         question: text("question").unwrap_or_default(),
-        choices: details.iter().map(|(answer, _)| answer.clone()).collect(),
-        details,
-        reasons: Vec::new(),
+        choices: hints.iter().map(|(answer, _)| answer.clone()).collect(),
+        reasons: hints,
         why: text("why"),
         // A question the agent can recommend an answer to never stops the work: it works
         // on that answer meanwhile. Only one it cannot answer at all may block.
@@ -158,7 +149,7 @@ impl QuestionTool {
             .as_deref()
             .is_some_and(|why| !why.trim().is_empty())
             || asked
-                .details
+                .reasons
                 .iter()
                 .any(|(answer, _)| answer == recommended);
         if !explained {
@@ -278,19 +269,15 @@ impl ToolRuntime for QuestionTool {
 
 /// One question's fields, at the top level or as an item of `questions`.
 fn question_properties() -> Value {
-    let detail = json!({"type": "string"});
     json!({
         "question": {"type": "string"},
         "choices": {"type": "array", "minItems": 2, "maxItems": 4, "items": {
             "type": "object",
             "properties": {
                 "answer": {"type": "string"},
-                "does": detail,
-                "advantages": detail,
-                "disadvantages": detail,
-                "consequences": detail
+                "hint": {"type": "string"}
             },
-            "required": ["answer", "does", "advantages", "disadvantages", "consequences"],
+            "required": ["answer", "hint"],
             "additionalProperties": false
         }},
         "recommended": {"type": "string"},

@@ -59,16 +59,14 @@ impl Gate {
     }
 }
 
-/// What a choice says besides its answer.
-fn choice_details(answer: &str) -> Value {
-    json!({"does": format!("re-indent with {answer}"), "advantages": format!("{answer} read well"), "disadvantages": format!("{answer} churn the diff"), "consequences": "easy to undo"})
+/// A choice's hint: one paragraph on what picking it means.
+fn hint(answer: &str) -> String {
+    format!("Re-indents every file with {answer}; it reads well but churns the diff, and is easy to undo.")
 }
 
-/// A choice as `ask_user` takes it: the answer and all it means.
+/// A choice as `ask_user` takes it: the answer and its hint.
 fn choice(answer: &str) -> Value {
-    let mut choice = choice_details(answer);
-    choice["answer"] = json!(answer);
-    choice
+    json!({"answer": answer, "hint": hint(answer)})
 }
 
 fn reply(text: &str) -> ResponseTemplate {
@@ -233,9 +231,9 @@ async fn a_question_keeps_the_run_going_and_its_answer_arrives_during_or_after_i
             assert_eq!(questions[0]["assumption"], "Spaces");
             // The recommended choice comes first.
             assert_eq!(questions[0]["choices"], json!(["Spaces", "Tabs"]));
-            assert_eq!(questions[0]["reasons"]["Spaces"], "the usual choice");
-            // Each choice keeps what it does, its advantages, disadvantages and consequences.
-            assert_eq!(questions[0]["details"]["Tabs"], choice_details("Tabs"));
+            // Each choice keeps its hint; the recommendation's own hint wins over `why`.
+            assert_eq!(questions[0]["reasons"]["Spaces"], hint("Spaces"));
+            assert_eq!(questions[0]["reasons"]["Tabs"], hint("Tabs"));
             assert!(running(&data, &thread), "the question did not stop the run");
             let id = questions[0]["id"].as_str().unwrap().to_owned();
             let answered = call(
@@ -265,7 +263,11 @@ async fn a_question_keeps_the_run_going_and_its_answer_arrives_during_or_after_i
     assert!(
         answered.iter().any(|body| mentions(
             body,
-            "Options you offered: Spaces (recommended: the usual choice): re-indent with Spaces; Tabs: re-indent with Tabs"
+            &format!(
+                "Options you offered: Spaces (recommended: {}); Tabs ({})",
+                hint("Spaces"),
+                hint("Tabs")
+            )
         )),
         "the answer names the options"
     );
@@ -701,7 +703,7 @@ async fn several_questions_are_pages_of_one_box_and_their_answers_arrive_togethe
         assert!(all[0]["group"].is_string(), "{questions}");
         assert_eq!(all[0]["group"], all[1]["group"], "{questions}");
         assert_eq!(all[0]["choices"], json!(["Spaces", "Tabs"]));
-        assert_eq!(all[0]["details"]["Spaces"], choice_details("Spaces"));
+        assert_eq!(all[0]["reasons"]["Spaces"], hint("Spaces"));
         assert_eq!(all[1]["assumption"], "MIT");
         let answered = answer_all(
             &data,
@@ -718,6 +720,12 @@ async fn several_questions_are_pages_of_one_box_and_their_answers_arrive_togethe
         let questions = call(&data, "list_questions", json!({"threadId": thread}));
         assert_eq!(questions[0]["answer"], "Tabs");
         assert_eq!(questions[1]["answer"], "Apache-2.0");
+        // The history records the answers where they were given (after the reply that came in
+        // between), which is where the chat shows "question → answer".
+        let history = call(&data, "get_thread_history", json!({"threadId": thread})).to_string();
+        let replied = history.find("Working on my recommendations.").unwrap();
+        let answered = history.find("question_answered").unwrap();
+        assert!(replied < answered, "{history}");
     })
     .await
     .unwrap();
@@ -738,13 +746,7 @@ async fn several_questions_are_pages_of_one_box_and_their_answers_arrive_togethe
     assert_eq!(parameters["questions"]["maxItems"], 4, "{tool}");
     assert_eq!(
         parameters["choices"]["items"]["required"],
-        json!([
-            "answer",
-            "does",
-            "advantages",
-            "disadvantages",
-            "consequences"
-        ])
+        json!(["answer", "hint"])
     );
     assert_eq!(
         parameters["questions"]["items"]["properties"]["choices"],
@@ -779,15 +781,14 @@ async fn several_questions_are_pages_of_one_box_and_their_answers_arrive_togethe
     app.serving.abort();
 }
 
-/// A choice that does not say what it does, its advantages, disadvantages and consequences is
-/// refused with the missing fields named, and nothing is asked.
+/// A choice without its hint is refused with the missing field named, and nothing is asked.
 #[tokio::test(flavor = "multi_thread")]
-async fn a_choice_that_does_not_say_what_it_does_is_refused() {
+async fn a_choice_without_a_hint_is_refused() {
     let app = app(|body| match last_user(body).1 {
         0 => tools(&[(
             "q",
             "ask_user",
-            json!({"question": "Tabs or spaces?", "choices": ["Tabs", {"answer": "Spaces", "does": "re-indent"}], "recommended": "Spaces", "why": "usual"}),
+            json!({"question": "Tabs or spaces?", "choices": ["Tabs", {"answer": "Spaces", "hint": "re-indent"}], "recommended": "Spaces", "why": "usual"}),
         )]),
         _ => reply("I'll ask again with the details."),
     })
@@ -812,7 +813,7 @@ async fn a_choice_that_does_not_say_what_it_does_is_refused() {
             .expect("the turn after asking"),
     );
     assert!(
-        refused.contains("needs `does`, `advantages`, `disadvantages`, `consequences`"),
+        refused.contains("choice 1 (\"Tabs\") needs `hint`"),
         "{refused}"
     );
     app.serving.abort();
@@ -935,7 +936,7 @@ async fn a_chat_message_closes_every_page_of_a_set() {
 /// it asks a blocking question with those choices and the run waits.
 #[tokio::test(flavor = "multi_thread")]
 async fn the_persons_deny_has_the_agent_ask_how_to_go_on() {
-    let way = |answer: &str| json!({"answer": answer, "does": format!("{answer} (notes.txt)"), "advantages": "a", "disadvantages": "b", "consequences": "easy to undo"});
+    let way = |answer: &str| json!({"answer": answer, "hint": format!("{answer} (notes.txt); easy to undo.")});
     let choices = json!([
         way("Write the notes to the chat instead"),
         way("Skip this step and carry on"),

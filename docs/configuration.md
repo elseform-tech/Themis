@@ -593,17 +593,17 @@ and neither a plain queued message nor an answer to `ask_user` denies anything. 
 `queue`/`steered` with `approvals_denied`, a count.
 **Questions.** The agent's `ask_user` tool (no approval prompt, like `create_goal`; a deny rule
 for `ask_user` still wins) stores a chat's questions in `questions/<chat id>.json` (app data):
-`[{"id","run_id","question","choices","assumption","reasons","details","group","blocking","topic","asked_at","answer"}]`
+`[{"id","run_id","question","choices","assumption","reasons","group","blocking","topic","asked_at","answer"}]`
 (`assumption` holds the tool's `recommended` answer, which the agent works on until answered;
-`reasons` maps an answer to its one-line note, the recommended one's from the tool's `why`, which
-a non-blocking question must give unless the recommended answer is one of its choices; `details`
-maps each of the agent's choices to `{"does","advantages","disadvantages","consequences"}`, at most
-400 characters each; `group` is shared by the questions asked in one call).
-Every choice the agent offers is `{"answer","does","advantages","disadvantages","consequences"}`:
-what it will do if picked (the steps, commands or files), its advantages, disadvantages and
-consequences (what follows, and whether it is hard to undo). A choice missing any of them, or a
-bare string, is refused with a message naming the choice and each missing field (for example "choice 2 ("Tabs") needs `advantages`, `consequences`", from `ask-user-choice-incomplete.md`), and nothing is
-asked. One call may carry up to 4 questions in `questions` (each with the single question's
+`reasons` maps an answer to its hint, at most 600 characters; `group` is shared by the questions
+asked in one call). Every choice the agent offers is `{"answer","hint"}`: the hint is one plain
+paragraph on what picking it means (what the agent will do, advantages, disadvantages,
+consequences including whether it is hard to undo, anything else that helps decide). A choice
+without a hint, or a bare string, is refused naming the choice and the missing field ("choice 2
+("Tabs") needs `hint`", from `ask-user-choice-incomplete.md`), and nothing is asked. The tool's
+`why` says why the recommendation is recommended; it is stored as the recommendation's hint only
+when that has none (a suggestion without choices), and a non-blocking question must give it unless
+its recommended answer is a choice with a hint. One call may carry up to 4 questions in `questions` (each with the single question's
 fields) instead of the top-level `question`; giving both, none or more than 4 is refused. They are
 stored as separate questions sharing one `group`, all or none (the 8-open limit counts each), so
 the de-duplication by topic or wording, the still-open listing and a chat message closing open

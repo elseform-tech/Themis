@@ -19,7 +19,7 @@ use serde_json::json;
 use super::chat_grants::safe_chat_id;
 use super::AppState;
 use crate::sink::EventSink;
-use crate::types::{ChoiceDetails, Question, QueuedMessage, ThreadEvent, ThreadEventEnvelope};
+use crate::types::{Question, QueuedMessage, ThreadEvent, ThreadEventEnvelope};
 
 /// Directory name under the app data directory.
 pub(super) const QUESTIONS_DIR: &str = "questions";
@@ -33,9 +33,9 @@ const MAX_ASSUMPTION_CHARS: usize = 1_000;
 const MAX_CHOICES: usize = 4;
 const MAX_CHOICE_CHARS: usize = 200;
 const MAX_TOPIC_CHARS: usize = 80;
-/// A reason, and each detail of a choice (what it does, advantages, disadvantages,
-/// consequences): long enough to say it, short enough to scan.
-const MAX_REASON_CHARS: usize = 400;
+/// A choice's hint (one paragraph: what happens, its advantages, disadvantages and
+/// consequences) or a reason: long enough to say it, short enough to read at a glance.
+const MAX_HINT_CHARS: usize = 600;
 const MAX_ANSWER_CHARS: usize = 10_000;
 
 /// Starts the message that delivers answers; the goal supervisor reads it back
@@ -50,12 +50,10 @@ pub(super) struct NewQuestion {
     /// The agent's recommended answer (`recommended`), which it works on until the
     /// answer comes: one of the choices, or a suggestion when there are none.
     pub assumption: Option<String>,
-    /// One short line per answer on its tradeoff (`why` on a choice), and why the
-    /// recommendation is recommended (the top-level `why`).
+    /// Each answer's hint: one paragraph on what picking it means (`hint` on a choice).
     pub reasons: Vec<(String, String)>,
-    /// What each of the agent's choices means (what it will do, advantages,
-    /// disadvantages, consequences).
-    pub details: Vec<(String, ChoiceDetails)>,
+    /// Why the recommendation is recommended (the top-level `why`): the recommendation's
+    /// hint when it has none of its own.
     pub why: Option<String>,
     pub blocking: bool,
     pub topic: Option<String>,
@@ -98,15 +96,14 @@ fn bounded(text: &str, max: usize) -> String {
     themis_core::goal::one_line(text, max)
 }
 
-/// A question ready to store: bounded, its choices shaped, and reasons and details only for
-/// the answers on offer.
+/// A question ready to store: bounded, its choices shaped, and hints only for the answers
+/// on offer.
 struct Shaped {
     text: String,
     topic: Option<String>,
     choices: Vec<String>,
     assumption: Option<String>,
     reasons: BTreeMap<String, String>,
-    details: BTreeMap<String, ChoiceDetails>,
     blocking: bool,
     subagent: Option<String>,
 }
@@ -133,43 +130,28 @@ fn shape(asked: NewQuestion) -> Result<Shaped, AskRefused> {
     let (choices, assumption) = shape_choices(choices, assumption);
     let offered =
         |answer: &str| choices.iter().any(|c| c == answer) || assumption.as_deref() == Some(answer);
-    // Reasons only for answers on offer; the recommendation's own `why` wins.
+    // Hints only for answers on offer; the recommendation's `why` stands in for a hint it
+    // lacks (a suggestion has none).
     let mut reasons = BTreeMap::new();
-    for (answer, why) in asked.reasons {
-        let (answer, why) = (
+    for (answer, hint) in asked.reasons {
+        let (answer, hint) = (
             bounded(&answer, MAX_CHOICE_CHARS),
-            bounded(&why, MAX_REASON_CHARS),
+            bounded(&hint, MAX_HINT_CHARS),
         );
-        if offered(&answer) && !why.is_empty() {
-            reasons.insert(answer, why);
+        if offered(&answer) && !hint.is_empty() {
+            reasons.insert(answer, hint);
         }
     }
-    let why = asked.why.map(|why| bounded(&why, MAX_REASON_CHARS));
+    let why = asked.why.map(|why| bounded(&why, MAX_HINT_CHARS));
     if let (Some(answer), Some(why)) = (&assumption, why.filter(|why| !why.is_empty())) {
-        reasons.insert(answer.clone(), why);
+        reasons.entry(answer.clone()).or_insert(why);
     }
-    let field = |text: &str| bounded(text, MAX_REASON_CHARS);
-    let details = asked
-        .details
-        .into_iter()
-        .map(|(answer, d)| {
-            let details = ChoiceDetails {
-                does: field(&d.does),
-                advantages: field(&d.advantages),
-                disadvantages: field(&d.disadvantages),
-                consequences: field(&d.consequences),
-            };
-            (bounded(&answer, MAX_CHOICE_CHARS), details)
-        })
-        .filter(|(answer, _)| offered(answer))
-        .collect();
     Ok(Shaped {
         text,
         topic,
         choices,
         assumption,
         reasons,
-        details,
         blocking: asked.blocking,
         subagent: asked.subagent,
     })
@@ -198,7 +180,6 @@ fn store_question(
         question.choices = asked.choices;
         question.assumption = asked.assumption;
         question.reasons = asked.reasons;
-        question.details = asked.details;
         question.group = group;
         question.blocking = asked.blocking;
         question.topic = asked.topic.or(question.topic.take());
@@ -213,7 +194,6 @@ fn store_question(
         choices: asked.choices,
         assumption: asked.assumption,
         reasons: asked.reasons,
-        details: asked.details,
         group,
         blocking: asked.blocking,
         topic: asked.topic,
@@ -698,16 +678,11 @@ fn offered_options(question: &Question) -> String {
         .iter()
         .map(|choice| {
             let recommended = question.assumption.as_deref() == Some(choice.as_str());
-            let offered = match (question.reasons.get(choice), recommended) {
-                (Some(reason), true) => format!("{choice} (recommended: {reason})"),
-                (Some(reason), false) => format!("{choice} ({reason})"),
+            match (question.reasons.get(choice), recommended) {
+                (Some(hint), true) => format!("{choice} (recommended: {hint})"),
+                (Some(hint), false) => format!("{choice} ({hint})"),
                 (None, true) => format!("{choice} (recommended)"),
                 (None, false) => choice.clone(),
-            };
-            // What the agent said it would do on that answer, so the decision keeps it.
-            match question.details.get(choice) {
-                Some(details) => format!("{offered}: {}", details.does),
-                None => offered,
             }
         })
         .collect::<Vec<_>>()
@@ -759,5 +734,33 @@ mod tests {
         // Repeats count once.
         let (choices, _) = shape_choices(strings(&["x", "x", "y"]), None);
         assert_eq!(choices, strings(&["x", "y"]));
+    }
+
+    /// A hint is one bounded paragraph; `why` speaks for a recommendation without a hint of
+    /// its own and never replaces one.
+    #[test]
+    fn hints_are_bounded_and_why_fills_only_a_missing_one() {
+        let long = "word ".repeat(400);
+        let shaped = shape(NewQuestion {
+            question: "Tabs?".into(),
+            choices: strings(&["Tabs", "Spaces"]),
+            assumption: Some("Spaces".into()),
+            reasons: vec![("Tabs".into(), long), ("Spaces".into(), "Matches.".into())],
+            why: Some("usual".into()),
+            ..NewQuestion::default()
+        })
+        .ok()
+        .unwrap();
+        assert!(shaped.reasons["Tabs"].chars().count() <= MAX_HINT_CHARS);
+        assert_eq!(shaped.reasons["Spaces"], "Matches.");
+        let suggestion = shape(NewQuestion {
+            question: "Name?".into(),
+            assumption: Some("Pebble".into()),
+            why: Some("short".into()),
+            ..NewQuestion::default()
+        })
+        .ok()
+        .unwrap();
+        assert_eq!(suggestion.reasons["Pebble"], "short");
     }
 }

@@ -2,12 +2,13 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ApprovalRequest, Goal, Question } from "../lib/types";
-import { ComposerStack } from "./ComposerStack";
+import { ComposerStack, useComposerQuestions } from "./ComposerStack";
+import type { ChatMessage } from "../state/reducer";
 
 const dispatch = vi.fn();
 vi.mock("../state/store", async importOriginal => ({
   ...await importOriginal<typeof import("../state/store")>(),
-  useApp: () => ({ dispatch, state: { settings: { approval_timeout_seconds: 600 } } }),
+  useApp: () => ({ dispatch, state: { approvals: [], settings: { approval_timeout_seconds: 600 } } }),
 }));
 vi.mock("../lib/tauri", () => ({
   approveAction: vi.fn(async () => undefined),
@@ -74,6 +75,7 @@ describe("composer stack", () => {
     fireEvent.click(screen.getByRole("button", { name: /^Own file too/ }));
     await waitFor(() => expect(screen.getByText("Question 2 of 2")).toBeInTheDocument());
     fireEvent.click(screen.getByRole("button", { name: /^MIT/ }));
+    fireEvent.click(await screen.findByRole("button", { name: "Submit" }));
     const { answerQuestions } = await import("../lib/tauri");
     await waitFor(() => expect(answerQuestions).toHaveBeenCalledWith("t1", [{ questionId: "g1", answer: "Own file too" }, { questionId: "g2", answer: "MIT" }]));
   });
@@ -104,5 +106,23 @@ describe("composer stack", () => {
     cleanup();
     const { container } = render(stack({ goal: null }));
     expect(container).toBeEmptyDOMElement();
+  });
+});
+
+describe("the composer lock", () => {
+  function Lock({ messages }: { messages: ChatMessage[] }) {
+    return <span>{useComposerQuestions("t1", messages).locked ? "locked" : "open"}</span>;
+  }
+  const row = (overrides: Partial<Question>): ChatMessage => ({ id: "question-q1", role: "system", text: "", question: { ...question, ...overrides } });
+
+  it("holds while a question box is on the composer, and lets go once it is answered or has moved into its turn", () => {
+    const { rerender } = render(<Lock messages={[row({})]} />);
+    expect(screen.getByText("locked")).toBeInTheDocument();
+    rerender(<Lock messages={[row({ answer: "INDEX.md only" })]} />);
+    expect(screen.getByText("open")).toBeInTheDocument();
+    rerender(<Lock messages={[row({ asked_at: Date.now() - 60 * 60 * 1000 })]} />);
+    expect(screen.getByText("open")).toBeInTheDocument();
+    rerender(<Lock messages={[]} />);
+    expect(screen.getByText("open")).toBeInTheDocument();
   });
 });

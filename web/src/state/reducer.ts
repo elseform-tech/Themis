@@ -51,6 +51,18 @@ function appendMessage(
   };
 }
 
+/** An answer arrived: the question where it was asked records it (and shows nothing more), and a
+ *  "question → answer" row joins the chat here, where it was answered. */
+function questionAnswered(state: AppState, threadId: string, id: string, answer: string): AppState {
+  const rows = ownedRows(state, threadId);
+  const at = rows.findIndex(row => row.question?.id === id && !row.answeredHere);
+  if (at < 0) return state;
+  const question = { ...rows[at]!.question!, answer };
+  rows[at] = { ...rows[at]!, question };
+  rows.push({ id: `answered-${id}`, role: "system", text: question.question, question, answeredHere: true });
+  return { ...state, messages: { ...state.messages, [threadId]: rows } };
+}
+
 /**
  * Apply one backend thread event to state. Pure — the provider calls this
  * via dispatch and performs the diff refresh side effect on `finished`.
@@ -186,11 +198,8 @@ export function applyThreadEvent(
       }
       return appendMessage(state, threadId, { id: `question-${event.question.id}`, role: "system", text: event.question.question, runId: event.question.run_id, question: event.question });
     }
-    case "question_answered": {
-      const rows = state.messages[threadId] ?? [];
-      const updated = rows.map(row => row.question?.id === event.id ? { ...row, question: { ...row.question, answer: event.answer } } : row);
-      return { ...state, messages: { ...state.messages, [threadId]: updated } };
-    }
+    case "question_answered":
+      return questionAnswered(state, threadId, event.id, event.answer);
     case "subagent_started": {
       const entry: SubagentEntry = { id: event.id, name: event.name, brief: event.brief, model: event.model, confined: event.confined, writePaths: event.write_paths ?? [], connections: event.connections, web: event.web, shellScopes: event.shell_scopes, startedBy: event.started_by, status: "running", text: "", toolCalls: 0, startedAt: measureDuration ? Date.now() : undefined, at: event.at };
       const rows = state.messages[threadId] ?? [];

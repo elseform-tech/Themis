@@ -58,40 +58,24 @@ function PageNav({ page }: { page: QuestionPage }) {
   );
 }
 
-/** One answer on offer: what picking it does on the first line, and its advantages,
- *  disadvantages and consequences behind its own disclosure. */
+/** One answer on offer: its label first, and under it the agent's hint as small muted text,
+ *  two lines until clicked open. Clicking the label picks it; clicking the hint only reads. */
 function Choice({ question, option, chosen, disabled, onPick }: { question: Question; option: string; chosen: boolean; disabled: boolean; onPick: (answer: string) => void }) {
   const [open, setOpen] = useState(false);
-  const details = question.details?.[option];
   const recommended = option === question.assumption;
-  const line = details?.does ?? question.reasons?.[option];
-  const why = recommended && details ? question.reasons?.[option] : undefined;
+  const hint = question.reasons?.[option];
   return (
-    <div className="themis-question-option">
-      <button type="button" className={`themis-question-choice${recommended ? " is-recommended" : ""}${chosen ? " is-chosen" : ""}`} aria-pressed={chosen || undefined} disabled={disabled} onClick={() => onPick(option)}>
-        <span className="themis-question-choice-head">
-          <span>{option}</span>
-          {recommended && <small className="themis-question-tag">{question.choices?.length ? "Recommended" : "Suggested"}</small>}
-        </span>
-        {line && <small className="themis-question-reason">{line}</small>}
+    <div className={`themis-question-option${recommended ? " is-recommended" : ""}${chosen ? " is-chosen" : ""}`}>
+      <button type="button" className="themis-question-choice" aria-pressed={chosen || undefined} disabled={disabled} onClick={() => onPick(option)}>
+        <span>{option}</span>
+        {recommended && <small className="themis-question-tag">{question.choices?.length ? "Recommended" : "Suggested"}</small>}
       </button>
-      {details && (
-        <button type="button" className="themis-goal-icon themis-icon-tip themis-question-more" data-tooltip={open ? "Less" : "More"} aria-label={`More about ${option}`} aria-expanded={open} onClick={() => setOpen(!open)}>
-          <Chevron d={open ? "m6 15 6-6 6 6" : "m6 9 6 6 6-6"} />
-        </button>
-      )}
-      {details && open && (
-        <dl className="themis-question-details">
-          {why && <><dt>Why recommended</dt><dd>{why}</dd></>}
-          <dt>Advantages</dt><dd>{details.advantages}</dd>
-          <dt>Disadvantages</dt><dd>{details.disadvantages}</dd>
-          <dt>Consequences</dt><dd>{details.consequences}</dd>
-        </dl>
+      {hint && (
+        <button type="button" className={`themis-question-hint${open ? " is-open" : ""}`} aria-expanded={open} onClick={() => setOpen(!open)}>{hint}</button>
       )}
     </div>
   );
 }
-
 /** A question from the agent on the composer: the question, its choices one per line
  *  (a choice can be a long sentence) with the one the agent works on meanwhile marked,
  *  a field for another answer, and Skip, which leaves it open in its turn. */
@@ -147,15 +131,15 @@ export function QuestionBox({ question, onAnswer, onSkip, onFold, page, focusFir
   );
 }
 
-/** A question in the turn it was asked in, as one line: with its answer, or, while it is
- *  open and not on the composer, a button that puts it back there. */
+/** A question in the chat as one line: "question → answer" where it was answered, or, while it
+ *  is open and not on the composer, a button where it was asked that puts it back there. */
 export function QuestionNote({ question, onComposer, onOpen }: { question: Question; onComposer: boolean; onOpen: () => void }) {
   const anchor = `themis-question-${question.id}`;
   if (question.answer !== undefined) {
     return (
-      <div id={anchor} className="themis-question-note" role="note" title={`${question.question} — ${question.answer}`}>
+      <div id={anchor} className="themis-question-note" role="note" title={`${question.question} → ${question.answer}`}>
         <QuestionMark size={14} />
-        <span className="themis-question-line">{question.question}<span className="themis-question-answer"> — {question.answer}</span></span>
+        <span className="themis-question-line">{question.question}<span className="themis-question-answer"> → {question.answer}</span></span>
       </div>
     );
   }

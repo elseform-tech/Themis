@@ -466,10 +466,8 @@ export interface Question {
   choices?: string[];
   /** The agent's recommended answer (one of the choices, or its suggestion), which it works on meanwhile. */
   assumption?: string;
-  /** One short line per answer on its tradeoff; the recommended one's says why. */
+  /** Each answer's hint: one paragraph on what picking it means. */
   reasons?: Record<string, string>;
-  /** What each of the agent's choices means, by answer. */
-  details?: Record<string, ChoiceDetails>;
   /** Shared by the questions asked together: one box shows them as pages. */
   group?: string;
   /** Nothing more could be done without the answer. */
@@ -479,29 +477,8 @@ export interface Question {
   answer?: string;
 }
 
-/** What picking one of the agent's choices means. */
-export interface ChoiceDetails {
-  /** What the agent will do: the line the box shows. */
-  does: string;
-  advantages: string;
-  disadvantages: string;
-  /** What follows, including whether it is hard to undo. */
-  consequences: string;
-}
-
 /** Starts the message that delivers an answer to the agent. */
 export const ANSWER_MARKER = "[Answer to your question — from the user]";
-
-/** The person's own answers inside such a message (what they chose or wrote), one per line
- *  when it answers several questions, else undefined. */
-export function answerOf(text: string): string | undefined {
-  if (!text.startsWith(ANSWER_MARKER)) return undefined;
-  const answers = text.split("\nAnswer: ").slice(1).map(rest => {
-    const end = rest.indexOf("\nIf the answer differs");
-    return (end < 0 ? rest : rest.slice(0, end)).trim();
-  });
-  return answers.length ? answers.join("\n") : undefined;
-}
 
 /** A message waiting for the chat's current run to end. */
 export interface QueuedMessage {
@@ -683,6 +660,8 @@ export interface PersistedMessage {
   /** What the goal check concluded after a turn. */
   /** A question the agent asked the user. */
   question?: Question;
+  /** This row is where the question was answered: "question → answer". */
+  answeredHere?: boolean;
   /** Subagents started together in this run, shown as one card. */
   subagents?: SubagentEntry[];
   /** What the memory models changed after this turn: one slim line under the reply. */
