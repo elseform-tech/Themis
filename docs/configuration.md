@@ -644,6 +644,14 @@ an allow rule that does not name the variant itself:
   a flag may be that flag's value and never ends the scan: over-flagging costs a prompt only.
 - Recursive `rm` (`-r`, `-R`, `--recursive`, or a cluster such as `-rf`).
 
+Git calls that make git start a program of the caller's choosing, or take their configuration
+from the call, are also asked about every time and never covered by "Allow in this chat" or an
+allow rule that does not name them, inside wrappers too: `-c`, `--config-env` or `--exec-path`
+before the subcommand; `--upload-pack`, `--receive-pack`, `--exec` or `--config` (by any
+abbreviation git accepts) and `ext::`/`fd::` remotes on `fetch`, `pull`, `push`, `clone`,
+`ls-remote`, `submodule` and `remote`; and `clone -u`. (`push -u` is `--set-upstream` and stays an
+ordinary push.)
+
 These variants carry the risk class `destructive` for `shell` calls too (the `git` tool
 also escalates destructive `checkout`, `branch` and `commit` calls, and its `status`, `diff`,
 `log` and `show` calls with only output-shaping flags carry `read`; other `git` calls `write`), so a rule with

@@ -346,7 +346,55 @@ pub fn is_destructive_variant(command: &[String]) -> bool {
 /// switches on a hook, an MCP server or a plugin (see [`super::themis_cli`]). Neither is ever
 /// covered by "Allow in this chat" or by an allow rule that does not name it.
 pub fn asks_every_time(command: &[String]) -> bool {
-    is_destructive_variant(command) || super::themis_cli::switches_on_code(command)
+    is_destructive_variant(command)
+        || super::themis_cli::switches_on_code(command)
+        || runs_git_helper(command)
+}
+
+/// Whether `command` (or a command inside a wrapper) runs git in a way that starts a program of
+/// the caller's choosing or takes configuration from the call: `-c`/`--config-env`/`--exec-path`
+/// before the subcommand, `--upload-pack`, `--receive-pack`, `--exec` or `--config` (by any
+/// abbreviation git accepts), `clone -u` (its short `--upload-pack`), or an `ext::`/`fd::` remote
+/// on `fetch`/`pull`/`push`/`clone`/`ls-remote`/`submodule`/`remote`. (`push -u` is
+/// `--set-upstream` and harmless.) Such a
+/// call is asked about every time, so a chat grant or an allow rule for `git fetch` never covers
+/// one. A wrapped script that cannot be read counts.
+pub fn runs_git_helper(command: &[String]) -> bool {
+    commands_run_by(command).is_none_or(|runs| runs.iter().any(|run| git_helper(run)))
+}
+
+fn git_helper(command: &[String]) -> bool {
+    let Some(program) = command.first() else {
+        return false;
+    };
+    if program_basename(program) != "git" {
+        return false;
+    }
+    let args = &command[1..];
+    let Some((at, sub)) = first_subcommand(args, GIT_VALUE_OPTIONS) else {
+        return false;
+    };
+    let global = &args[..at];
+    if global
+        .iter()
+        .any(|a| a == "-c" || a.starts_with("--config-env") || a.starts_with("--exec-path"))
+    {
+        return true;
+    }
+    if !matches!(
+        sub,
+        "fetch" | "pull" | "push" | "clone" | "ls-remote" | "submodule" | "remote"
+    ) {
+        return false;
+    }
+    const HELPERS: [&str; 4] = ["--upload-pack", "--receive-pack", "--exec", "--config"];
+    args[at + 1..].iter().any(|argument| {
+        let name = argument.split('=').next().unwrap_or_default();
+        let helper = name.len() >= 4 && HELPERS.iter().any(|long| long.starts_with(name));
+        let lower = argument.to_ascii_lowercase();
+        let clone_upload = sub == "clone" && name == "-u";
+        helper || clone_upload || name == "-c" || lower.contains("ext::") || lower.contains("fd::")
+    })
 }
 
 /// Every command `command` runs, itself first, then those inside wrappers
