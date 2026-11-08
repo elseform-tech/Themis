@@ -254,8 +254,9 @@ a configuration wrote: a `sandbox.network: "block"` or `allow_keychain: false`
 set in the user file, the project's `.themis/config.jsonc` or a run override
 still holds, and so does every approval `deny` rule (the built-in rules include
 none); `ask` rules and the default action allow, since YOLO never asks. The
-composer's shield names what still applies ("still applies: network blocked, 2
-deny rules"). The one wall left: neither commands nor file tools can
+composer's shield names what still applies ("Still applies: Keychain off, 2
+deny rules") and, in any mode, says "Network blocked by your configuration" when
+`sandbox.network` is `"block"`. The one wall left: neither commands nor file tools can
 write the app-data folder or the project's `.themis/` folder, so an agent cannot
 change its own rules, grants or settings; such a write fails with a short note
 and is never escalated. Commands also cannot read the server's `server.json`, so

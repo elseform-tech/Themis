@@ -21,6 +21,7 @@ mod destructive;
 mod gated;
 mod patch;
 mod paths;
+pub mod read_only;
 pub mod recall;
 mod runner;
 pub mod sensitive;
