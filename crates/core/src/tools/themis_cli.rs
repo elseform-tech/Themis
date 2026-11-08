@@ -106,13 +106,17 @@ pub fn classify(command: &[String]) -> Option<ThemisCall> {
         words = rest;
     }
     let words: Vec<&str> = words.iter().map(String::as_str).collect();
+    // The CLI prints its help and does nothing else when any word asks for it.
+    if words.iter().any(|word| matches!(*word, "--help" | "-h")) {
+        return Some(ThemisCall::Read);
+    }
     Some(top_level(&words))
 }
 
 fn top_level(words: &[&str]) -> ThemisCall {
     use ThemisCall::*;
     match words {
-        [] | ["--help" | "-h" | "--version"] => Read,
+        [] | ["--version"] => Read,
         ["status" | "models"] | ["auth", "status"] | ["usage"] | ["usage", "--json"] => Read,
         ["doctor", flags @ ..] if flags.iter().all(|f| matches!(*f, "--json" | "--deep")) => Read,
         ["permissions", ..] => Read,
@@ -231,6 +235,8 @@ fn integration_words(words: &[&str], from_repository: bool) -> ThemisCall {
             }
         }
         [_, "inspect", _] | [_, "inspect", _, _] => Read,
+        // A bare `themis hook` only prints its usage.
+        [_] => Read,
         ["plugin", rest @ ..] => plugin_words(rest),
         ["skill", "list"] => Read,
         ["skill", "verify", _] | ["skill", "create", _, _] => Execute,

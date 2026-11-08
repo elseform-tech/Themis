@@ -37,6 +37,16 @@ fn data_dir() -> Result<PathBuf, String> {
     }
 }
 
+/// `--help` or `-h` anywhere (or no command) prints help and does nothing else, so the agent's
+/// shell treats it as a read: the integration usage for `plugin`/`skill`/`mcp`/`hook`.
+fn help_for(words: &[String]) -> Option<&'static str> {
+    let asks = words.is_empty() || words.iter().any(|word| word == "--help" || word == "-h");
+    let integration = words
+        .first()
+        .is_some_and(|word| matches!(word.as_str(), "plugin" | "skill" | "mcp" | "hook"));
+    asks.then(|| if integration { plugins::USAGE } else { usage() })
+}
+
 fn usage() -> &'static str {
     "usage: themis [--data-dir DIR] COMMAND
 Commands:
@@ -85,8 +95,8 @@ pub async fn run() -> Result<(), String> {
         data_dir()?
     };
     let client = Client::new(directory.clone());
-    if words.is_empty() || words == ["--help"] || words == ["-h"] {
-        println!("{}", usage());
+    if let Some(help) = help_for(&words) {
+        println!("{help}");
         return Ok(());
     }
     if words == ["--version"] {
