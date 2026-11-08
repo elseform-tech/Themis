@@ -15,9 +15,9 @@ function ModeIcon({ mode }: { mode: ApprovalMode }) {
 }
 
 const MODES: { mode: ApprovalMode; label: string; summary: string }[] = [
-  { mode: "auto", label: "Auto", summary: "A reviewer checks risky steps; asks you before destructive ones." },
-  { mode: "custom", label: "Custom", summary: "Asks you before each change." },
-  { mode: "yolo", label: "YOLO", summary: "No prompts, no sandbox; asks you before destructive steps." },
+  { mode: "auto", label: "Auto", summary: "Reviewer approves; risky steps ask you" },
+  { mode: "custom", label: "Custom", summary: "Asks before each change" },
+  { mode: "yolo", label: "YOLO", summary: "No prompts; destructive steps ask" },
 ];
 
 const entry = (mode: ApprovalMode) => MODES.find(item => item.mode === mode) ?? MODES[1];
@@ -62,7 +62,7 @@ export function ComposerShield({ mode = "custom", saving, running, yoloKeeps, on
           {MODES.map((item, index) => {
             const checked = item.mode === mode;
             let extra: ReactNode = null;
-            if (item.mode === "yolo" && yoloKeeps?.length) extra = <small>Still applies: {yoloKeeps.join(", ")}</small>;
+            if (item.mode === "yolo" && yoloKeeps?.length) extra = <small className="themis-permissions-keeps" title={`Still applies: ${yoloKeeps.join(", ")}`}>Still applies: {yoloKeeps.join(", ")}</small>;
             return (
               <button key={item.mode} ref={node => { items.current[index] = node; }} type="button" role="radio" aria-checked={checked}
                 tabIndex={checked ? 0 : -1} data-mode={item.mode} className="themis-permissions-mode" onClick={() => choose(item.mode)}>

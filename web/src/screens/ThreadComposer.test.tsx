@@ -93,16 +93,16 @@ describe("ThreadComposer", () => {
     const view=composer(false);
     view.rerender(<ThreadComposer {...view.props} thread={{...thread,approval_mode:"yolo"}} />);
     expect(screen.getByLabelText("Permissions: YOLO").closest("details")).toHaveAttribute("data-mode","yolo");
-    expect(screen.getByText("No prompts, no sandbox; asks you before destructive steps.")).toBeInTheDocument();
+    expect(screen.getByText("No prompts; destructive steps ask")).toBeInTheDocument();
     expect(screen.queryByText(/Still applies/)).toBeNull();
     view.rerender(<ThreadComposer {...view.props} thread={{...thread,approval_mode:"yolo"}} yoloKeeps={["network blocked","2 deny rules"]} />);
     expect(screen.getByText("Still applies: network blocked, 2 deny rules")).toBeInTheDocument();
     view.rerender(<ThreadComposer {...view.props} thread={{...thread,approval_mode:"auto"}} />);
     expect(screen.getByLabelText("Permissions: Auto").closest("details")).toHaveAttribute("data-mode","auto");
-    expect(screen.getByText("A reviewer checks risky steps; asks you before destructive ones.")).toBeInTheDocument();
+    expect(screen.getByText("Reviewer approves; risky steps ask you")).toBeInTheDocument();
     view.rerender(<ThreadComposer {...view.props} />);
     expect(screen.getByLabelText("Permissions: Custom").closest("details")).toHaveAttribute("data-mode","custom");
-    expect(screen.getByText("Asks you before each change.")).toBeInTheDocument();
+    expect(screen.getByText("Asks before each change")).toBeInTheDocument();
     // Three distinct icons: Auto's shield has a check, YOLO is a bolt, Custom a plain shield.
     const icons=screen.getAllByRole("radio",{hidden:true}).map(radio=>radio.querySelector("svg")!.innerHTML);
     expect(new Set(icons).size).toBe(3);
