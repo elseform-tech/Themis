@@ -2,6 +2,12 @@ use crate::server::Client;
 use serde_json::{json, Value};
 use std::path::Path;
 
+/// The plugin, skill, MCP and hook commands, for `themis plugin --help` and malformed calls.
+#[rustfmt::skip]
+pub const USAGE: &str = "Use plugin list|updates|create NAME|show NAME|edit NAME|save FILE|inspect SOURCE [NAME]|import SOURCE [NAME]|export NAME|install NAME@MARKET|update NAME|enable NAME|disable NAME|uninstall NAME; plugin marketplace list|preview SOURCE|add SOURCE [NAME]|enable NAME|disable NAME|changes NAME|browse NAME|refresh NAME|check NAME|remove NAME; skill list|save PLUGIN FILE|verify FILE|delete PLUGIN ID; mcp/hook list PLUGIN|add PLUGIN NAME FILE|update PLUGIN NAME FILE|test PLUGIN NAME|delete PLUGIN NAME. Options: --scope local|global --project PATH --expected REVISION --ref REF --subdirectory PATH --allow-partial. For agent creation: skill create THREAD REQUEST.";
+
+// One line per command shape, as before the usage text moved out (rustfmt skipped it then).
+#[rustfmt::skip]
 pub async fn run(client: &Client, words: &[String], directory: &Path) -> Result<Value, String> {
     let mut positional = Vec::new();
     let mut project = None;
@@ -107,7 +113,7 @@ pub async fn run(client: &Client, words: &[String], directory: &Path) -> Result<
             } else { return Err("Use skill verify FILE".into()); }
 
         },
-        _=>return Err("Use plugin list|updates|create NAME|show NAME|edit NAME|save FILE|inspect SOURCE [NAME]|import SOURCE [NAME]|export NAME|install NAME@MARKET|update NAME|enable NAME|disable NAME|uninstall NAME; plugin marketplace list|preview SOURCE|add SOURCE [NAME]|enable NAME|disable NAME|changes NAME|browse NAME|refresh NAME|check NAME|remove NAME; skill list|save PLUGIN FILE|verify FILE|delete PLUGIN ID; mcp/hook list PLUGIN|add PLUGIN NAME FILE|update PLUGIN NAME FILE|test PLUGIN NAME|delete PLUGIN NAME. Options: --scope local|global --project PATH --expected REVISION --ref REF --subdirectory PATH --allow-partial. For agent creation: skill create THREAD REQUEST.".into()),
+        _=>return Err(USAGE.into()),
     }
     send(client, request, project.as_deref()).await
 }

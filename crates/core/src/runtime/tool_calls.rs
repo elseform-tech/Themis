@@ -420,7 +420,7 @@ pub(super) async fn execute_call(
         ));
     };
     let approval_args: serde_json::Value = serde_json::from_str(args).unwrap_or_default();
-    let self_approving = crate::tools::tool_approves_itself(name);
+    let self_approving = crate::tools::tool_approves_itself(name, &approval_args);
     let sensitive = if self_approving {
         None
     } else {

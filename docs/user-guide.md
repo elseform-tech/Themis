@@ -488,7 +488,8 @@ something asks every time. **YOLO** runs them all.
 Switching on a hook or an MCP server that runs a command is yours alone, in
 every mode, YOLO included: they run outside the sandbox. Whatever the agent
 saves arrives with them switched off, and if it tries to switch one on, through
-its tools or `themis`, Themis refuses and it asks you to switch it on in
+its tools or `themis`, Themis refuses (without asking you first: there is no
+approval box for a call that cannot succeed) and it asks you to switch it on in
 Integrations instead. A server by URL it may switch on; it still waits for your
 approval before it starts. The agent can still test a hook or a command-based
 server with `themis hook test` or `themis mcp test`: in its shell the test

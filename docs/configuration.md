@@ -829,7 +829,7 @@ not as a generic command:
 
 | `themis` command | Risk | Custom | Auto | YOLO |
 | --- | --- | --- | --- | --- |
-| Reads: `status`, `doctor`, `usage`, `models`, `permissions`, `auth status`, `--help`; `plugin list/show/export/updates`; `plugin`/`skill`/`mcp`/`hook inspect`; `plugin marketplace list/browse/preview/changes/check`; `skill list`; `skill`/`mcp`/`hook list/show`; `call` with a reading method from the allowed list | `read` | no prompt (the built-in read rule) | no prompt | runs |
+| Reads: `status`, `doctor`, `usage`, `models`, `permissions`, `auth status`, `--help` or `-h` anywhere (the CLI then only prints its usage), a bare `plugin`/`skill`/`mcp`/`hook`; `plugin list/show/export/updates`; `plugin`/`skill`/`mcp`/`hook inspect`; `plugin marketplace list/browse/preview/changes/check`; `skill list`; `skill`/`mcp`/`hook list/show`; `call` with a reading method from the allowed list | `read` | no prompt (the built-in read rule) | no prompt | runs |
 | Changes through the store: `plugin create/save/edit/disable`, `skill save`, `mcp`/`hook add/update`, `skill enable`, any `disable`, `plugin marketplace enable/disable`, a local `import` | `write` | asks; **Allow in this chat** covers the same command (its full argv) | the reviewer decides | runs |
 | Network: `plugin install/update`, an `import` from an `http(s)` URL or with `--ref`/`--subdirectory`, `plugin marketplace add/refresh` | `network` | as a change | the reviewer decides | runs |
 | Tests that start code: `mcp test`, `hook test`, `skill verify` | `execute` | asks; in an agent's shell the test starts the command inside the run's sandbox, not on the server | the reviewer decides (an ordinary sandboxed command, not a sandbox escape) | runs, inside the sandbox YOLO keeps |
