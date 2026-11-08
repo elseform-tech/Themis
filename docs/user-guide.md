@@ -87,9 +87,10 @@ levels are listed.
   Pressing **Esc twice** does the same: after the first press, "Press Esc again to stop"
   shows beside the stop button for a second and a half. An Esc that closes a menu,
   panel or suggestion list only closes it.
-- **While a run is going** you can keep typing: **Send** queues the message
-  above the composer, and queued messages go out by themselves, oldest first,
-  when the run ends. Each one has three icons: **Steer** sends it into the
+- **While a run is going** you can keep typing: **Enter** (or Send) steers the
+  message straight in, so the agent reads it right after its current step, and
+  **⌘/Ctrl+Enter** queues it above the composer instead. Queued messages go out
+  by themselves, oldest first, when the run ends. Each one has three icons: **Steer** sends it into the
   running run now (the agent reads it before its next step, without stopping;
   a message with attached files waits for the next turn instead), **Edit**
   changes it while it waits (it is skipped while you edit), and **Remove**
