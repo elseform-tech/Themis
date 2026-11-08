@@ -130,10 +130,7 @@ export function applyThreadEvent(
         })() },
       };
     }
-    case "approval_decided": {
-      const next = appendTrace(state, threadId, { id: newId("trace"), tool: event.tool, ...approvalLine(event.decision) });
-      return event.decision === "timed_out" ? markUnanswered(next, threadId, runId, event.tool) : next;
-    }
+    case "approval_decided": return approvalDecided(state, threadId, runId, event.tool, event.decision);
     case "context_usage":
     case "context_suspended":
     case "background_tasks_changed": return state;
@@ -649,4 +646,10 @@ function markUnanswered(state: AppState, threadId: string, runId: string | undef
     }
   }
   return state;
+}
+
+/** An approval decided: a line in the turn, and a box nobody answered marks its step. */
+function approvalDecided(state: AppState, threadId: string, runId: string | undefined, tool: string, decision: ApprovalDecision): AppState {
+  const next = appendTrace(state, threadId, { id: newId("trace"), tool, ...approvalLine(decision) });
+  return decision === "timed_out" ? markUnanswered(next, threadId, runId, tool) : next;
 }

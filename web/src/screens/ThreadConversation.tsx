@@ -412,7 +412,7 @@ function Message({ message, threadId, activeRunId, durationMs, skills, plugins, 
             <span aria-hidden="true">{message.tool.ok === undefined ? "◌" : message.tool.ok ? "✓" : "!"}</span>
             {toolDisplayName(message.tool.name, message.tool.label)}
             <span className="themis-tool-status">
-              {message.tool.ok === undefined ? isActiveRun ? "Running" : "Interrupted" : message.tool.ok ? "Done" : message.tool.unanswered ? "Not run · nobody answered in time" : "Failed"}
+              {toolStatus(message.tool, isActiveRun)}
             </span>
           </summary>
           <div className="themis-tool-detail">
@@ -451,4 +451,11 @@ function Message({ message, threadId, activeRunId, durationMs, skills, plugins, 
     </div>
     </>
   );
+}
+
+/** A tool row's status word; a step whose box nobody answered says so rather than Failed. */
+function toolStatus(tool: NonNullable<ChatMessage["tool"]>, isActiveRun: boolean): string {
+  if (tool.ok === undefined) return isActiveRun ? "Running" : "Interrupted";
+  if (tool.ok) return "Done";
+  return tool.unanswered ? "Not run · nobody answered in time" : "Failed";
 }
