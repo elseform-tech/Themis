@@ -583,6 +583,24 @@ struct ResolvedTools {
 /// plain `Bash` beside it is all of it. Denying part of a tool takes the whole tool away. MCP
 /// names are kept as they are: which tools they mean depends on the chat's connections when a
 /// subagent starts.
+/// Claude's `Grep`, `Glob` and `LS`: where listing and searching go through the shell, a shell
+/// held to commands that only read (a profile naming `Bash` too gets the whole shell).
+#[cfg(not(windows))]
+fn add_reading_shell(name: &str, kept: &mut BTreeSet<&'static str>, scopes: &mut Vec<String>) {
+    if matches!(name, "Grep" | "Glob" | "LS") {
+        kept.insert("shell");
+        scopes.extend(
+            READING_SHELL_SCOPE
+                .iter()
+                .map(|pattern| (*pattern).to_owned()),
+        );
+    }
+}
+
+/// On Windows the listing and search tools stand for them; no shell is added.
+#[cfg(windows)]
+fn add_reading_shell(_: &str, _: &mut BTreeSet<&'static str>, _: &mut Vec<String>) {}
+
 fn resolve_tools(listed: Option<&[String]>, denied: &[String]) -> ResolvedTools {
     let everyday = READ_ONLY_TOOLS
         .iter()
@@ -604,15 +622,7 @@ fn resolve_tools(listed: Option<&[String]>, denied: &[String]) -> ResolvedTools 
     if !everything {
         for name in listed.unwrap_or_default() {
             whole_shell |= name == "Bash";
-            #[cfg(not(windows))]
-            if matches!(name.as_str(), "Grep" | "Glob" | "LS") {
-                kept.insert("shell");
-                shell_scopes.extend(
-                    READING_SHELL_SCOPE
-                        .iter()
-                        .map(|pattern| (*pattern).to_owned()),
-                );
-            }
+            add_reading_shell(name, &mut kept, &mut shell_scopes);
             any_profile |= name == "Agent" || name == "Task";
             match mapped(name) {
                 Some(tools) => kept.extend(tools.iter().copied()),
