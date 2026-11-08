@@ -169,7 +169,7 @@ export function ThreadView() {
     finally { setAttaching(false); }
   }
 
-  async function send() {
+  async function send(queue = false) {
     if (thread === null || permissionPending.current) return;
     const text = draft.trim() || (attachments.length ? "Inspect the attached files." : "");
     if (text === "" || composerDisabled) return;
@@ -177,8 +177,9 @@ export function ThreadView() {
     setSending(true);
     if (running) {
       try {
-        await enqueueMessage(thread.id, text, effort, attachments.map(file => file.path));
+        const queued = await enqueueMessage(thread.id, text, effort, attachments.map(file => file.path));
         updateAttachments(thread.id, files => files.filter(file => !attachments.some(sent => sent.path === file.path)));
+        await steerIn(thread.id, queued.id, queue, dispatch);
       } catch (error: unknown) {
         setDraft(text);
         toast(dispatch, `Could not queue the message: ${describeError(error)}`, "danger");
@@ -303,7 +304,7 @@ export function ThreadView() {
       secretConfigured={state.secretStatus.go || !state.secretStatusLoaded || !usesGo(thread.model, models)}
       keyRejected={state.goKeyCheck === "rejected" && usesGo(thread.model, models) ? (state.settings.go_secret ?? "OPENCODE_KEY") : undefined}
       onDraftChange={setDraft}
-      onSend={() => void send()}
+      onSend={queue => void send(queue === true)}
       onStop={() => void stop()}
       onNewThread={() => void newThread()}
       permissionSaving={permissionSaving}
@@ -391,4 +392,11 @@ export function ThreadView() {
     {state.diffPanelOpen && <WorkspacePanel projectRoot={project.root} threadId={thread.id} workspace={workspace} />}
     </div>
   );
+}
+
+/** While a run goes, a sent message is steered straight in, unless `queue` (⌘/Ctrl+Enter) keeps
+ *  it queued for after the turn; one whose steer fails stays queued, to go out then. */
+async function steerIn(threadId: string, messageId: string, queue: boolean, dispatch: ReturnType<typeof useApp>["dispatch"]) {
+  if (queue) return;
+  await steerQueuedMessage(threadId, messageId).catch(error => toast(dispatch, `Queued, but could not steer it in: ${describeError(error)}`, "warning"));
 }

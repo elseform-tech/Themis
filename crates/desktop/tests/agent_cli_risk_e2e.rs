@@ -593,6 +593,10 @@ async fn yolo_asks_the_person_before_a_destructive_step() {
         assert_eq!(asked.len(), 1, "only the destructive step: {asked:#?}");
         assert_eq!(argv_of(&asked[0]), ["rm", "-rf", "build"]);
         assert_eq!(asked[0]["grantable"], false, "never for the chat");
+        assert_eq!(
+            asked[0]["ask_first"], true,
+            "shown as a question box, not an approval box"
+        );
         assert_eq!(!build.exists(), removed, "{answer:?}");
     }
     fx.shut_down().await;

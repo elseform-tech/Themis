@@ -23,7 +23,6 @@
   "crates/core/src/tools/gated.rs": 27,
   "crates/core/src/tools/recall/records.rs": 26,
   "crates/core/src/tools/shell_scope.rs": 17,
-  "crates/desktop/src/approvals.rs": 12,
   "crates/desktop/src/lib.rs": 26,
   "crates/desktop/src/secrets.rs": 20,
   "crates/desktop/src/state/auto_review.rs": 9,
@@ -45,7 +44,7 @@
   "web/src/screens/QuestionBox.tsx": 7,
   "web/src/state/reducer.ts": 36
  },
- "duplicate_lines_total": 797,
+ "duplicate_lines_total": 785,
  "files": {
   "crates/core/src/runtime.rs": {
    "code_lines": 1914
@@ -500,8 +499,7 @@
    "cyclomatic": 25
   },
   "crates/desktop/src/approvals.rs::DesktopApprovalHook#3::ask": {
-   "cyclomatic": 29,
-   "lines": 102
+   "cyclomatic": 25
   },
   "crates/desktop/src/cli.rs::configure_provider": {
    "cyclomatic": 24
@@ -773,7 +771,7 @@
    "lines": 194
   },
   "web/src/screens/ComposerStack.tsx::ComposerStack": {
-   "cyclomatic": 33
+   "cyclomatic": 25
   },
   "web/src/screens/ContextMeter.tsx::ContextMeter": {
    "cognitive": 26,

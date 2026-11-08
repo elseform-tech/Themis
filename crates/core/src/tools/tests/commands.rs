@@ -887,3 +887,44 @@ fn shared_tools_convert_to_boxes() {
     assert_eq!(boxes.len(), 12);
     assert_eq!(boxes[8].name(), "shell");
 }
+
+/// Through the shell, git calls that start a program of the caller's choosing (or take their
+/// configuration from the call) are asked about every time: a chat grant or a broad allow rule
+/// for `git fetch` never covers them, inside wrappers too. Ordinary remote calls stay grantable.
+#[test]
+fn shell_git_calls_that_run_another_program_are_asked_every_time() {
+    let argv = |words: &[&str]| {
+        words
+            .iter()
+            .map(|w| (*w).to_owned())
+            .collect::<Vec<String>>()
+    };
+    for words in [
+        &["git", "fetch", "--upload-pack=touch /tmp/x", "origin"][..],
+        &["git", "fetch", "--upl", "sh", "origin"],
+        &["git", "pull", "--upload-pack", "sh"],
+        &["git", "push", "--receive-pack=sh", "origin"],
+        &["git", "push", "--exec=sh", "origin"],
+        &["git", "-c", "core.sshCommand=sh", "fetch", "origin"],
+        &["git", "--exec-path=/tmp", "status"],
+        &["git", "fetch", "ext::sh -c touch% /tmp/pwned"],
+        &["git", "push", "FD::3", "main"],
+        &["git", "clone", "-u", "sh", "https://example.com/r.git"],
+        &["git", "ls-remote", "ext::sh"],
+        &["sh", "-c", "git fetch --upload-pack=sh origin"],
+    ] {
+        let command = argv(words);
+        assert!(runs_git_helper(&command), "{words:?}");
+        assert!(asks_every_time(&command), "{words:?}");
+    }
+    for words in [
+        &["git", "fetch", "origin"][..],
+        &["git", "push", "-u", "origin", "main"],
+        &["git", "push", "--set-upstream", "origin", "main"],
+        &["git", "pull", "origin", "main"],
+        &["git", "status"],
+        &["git", "remote", "-v"],
+    ] {
+        assert!(!runs_git_helper(&argv(words)), "{words:?}");
+    }
+}

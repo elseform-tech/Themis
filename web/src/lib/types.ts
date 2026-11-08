@@ -701,6 +701,8 @@ export interface ApprovalRequest {
   grant_site?: { tools: string; site: string };
   /** The sensitive project files this action touches: "Allow in this chat" covers these, not the whole tool. */
   sensitive_files?: string[];
+  /** A destructive step Auto or YOLO asks about first: shown as a question box, not an approval box. */
+  ask_first?: boolean;
   /** False for destructive actions: they ask every time, so only Allow once and Deny are offered. */
   grantable?: boolean;
   /** Structured command for shell/git approvals; show this instead of the joined summary. */
