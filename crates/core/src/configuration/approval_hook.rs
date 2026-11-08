@@ -121,7 +121,7 @@ impl ApprovalHook for ConfiguredHook {
         if self.asks_first(action) {
             // Destructive in Auto or YOLO: the person first, whatever the rules allow; with no
             // answer in time, the mode decides as it always did.
-            match self.interactive.approve(action) {
+            match self.interactive.approve_first(action) {
                 Approval::AllowOnce | Approval::AllowAlways => return Approval::AllowOnce,
                 Approval::DenyTimedOut => {}
                 refused => return refused,

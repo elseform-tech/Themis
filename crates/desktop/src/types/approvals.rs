@@ -34,6 +34,10 @@ pub struct ApprovalRequest {
     /// (and, for a command, that command), not the whole tool.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub sensitive_files: Vec<String>,
+    /// A destructive step Auto or YOLO asks about before deciding itself: the composer shows it
+    /// as a question box (Run it once / Skip it / say what to do instead), not an approval box.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub ask_first: bool,
 }
 
 /// What a site grant covers (`GrantSite` in types.ts).

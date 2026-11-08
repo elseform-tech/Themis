@@ -28,6 +28,12 @@ pub trait ApprovalHook: Send + Sync {
         None
     }
 
+    /// [`Self::approve`] for a destructive step Auto or YOLO puts to the person before deciding
+    /// itself: shown as a question box (never an approval box) in those modes.
+    fn approve_first(&self, action: &ToolAction) -> Approval {
+        self.approve(action)
+    }
+
     /// [`Self::approve`] for a call that touches sensitive files.
     fn approve_sensitive(
         &self,

@@ -464,6 +464,10 @@ impl ApprovalHook for OwnGrants {
         }
     }
 
+    fn approve_first(&self, action: &ToolAction) -> Approval {
+        self.inner.approve_first(action)
+    }
+
     /// Asks past a grant this subagent has for the tool or command alone, and remembers each
     /// file with it, in the same place: "allow in this chat" stays its own.
     fn approve_sensitive(
