@@ -400,10 +400,12 @@ before any question (see **Questions from the agent**). Only that action waits:
 the chat stays readable. Once you decide, the box goes away and leaves nothing in
 the chat (the call itself still shows in its step list). Another chat that waits for
 you sits in the sidebar's **Waiting for you** group with a pause sign and the tag **Approval**. The box says in plain words what the agent
-is about to do (for example "Run `git push origin HEAD` in my-app" or "Write notes.txt"). A
-command is always shown whole, wrapped over lines if it is long; a long file path shows whole when
-you hover it. **Details** opens the full working folder, any secret files, why it asks and what
-"Allow in this chat" would cover. The choices sit in one row, and only a
+is about to do (for example "Run `git push origin HEAD` in my-app" or "Write notes.txt"). A long
+command is previewed in at most two lines ending in "…", and a chain of commands says how many it
+holds ("(6 commands)"); a long file path shows whole when you hover it. **Details** shows the whole
+command (one command per line for a chain, a likely destructive one tagged **destructive**) with
+**Copy**, and opens by itself when the preview was cut or the command is a chain. It also lists the
+full working folder, any secret files, why it asks and what "Allow in this chat" would cover. The choices sit in one row, and only a
 click decides (there are no keyboard shortcuts):
 
 - **Allow once** — allow this call only.

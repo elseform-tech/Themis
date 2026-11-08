@@ -2,10 +2,11 @@ import type { ReactNode } from "react";
 import { toolDisplayName } from "../../lib/toolNames";
 import type { ApprovalRequest } from "../../lib/types";
 import { SafeText, TokenChip, TokenList } from "./CommandTokens";
+import { CommandPreview } from "./CommandView";
 
 /** A plain sentence: fixed wording (strings) around untrusted names (paths, argv), which render only as escaped chips. */
-/** `full` tokens are a command shown whole, never cut. */
-export type ActionPart = string | { token: string } | { tokens: string[]; full?: boolean } | { text: string };
+/** `command` is a command's argv, shown as a short preview (the whole command is in Details). */
+export type ActionPart = string | { token: string } | { tokens: string[] } | { command: string[] } | { text: string };
 
 const PATCH_OPS = /([\s\S]*?) \((?:create|modify|delete)\)(?:, |$)/g;
 
@@ -37,7 +38,7 @@ export function actionParts(request: ApprovalRequest, label?: string): ActionPar
   const { command, summary, tool } = request;
   if (command) {
     const where: ActionPart[] = command.cwd !== undefined ? [" in ", { token: folderName(command.cwd) }] : [" in the project root"];
-    return ["Run ", { tokens: command.argv, full: true }, ...where, command.background ? " in the background" : ""];
+    return ["Run ", { command: command.argv }, ...where, command.background ? " in the background" : ""];
   }
   for (const [pattern, parts] of FILE_SUMMARIES) {
     const match = pattern.exec(summary);
@@ -58,7 +59,8 @@ export function ActionSentence({ parts }: { parts: ActionPart[] }): ReactNode {
   return <>{parts.map((part, index) => {
     if (typeof part === "string") return part;
     if ("token" in part) return <TokenChip key={index} token={part.token} />;
-    if ("tokens" in part) return <TokenList key={index} argv={part.tokens} full={part.full} />;
+    if ("tokens" in part) return <TokenList key={index} argv={part.tokens} />;
+    if ("command" in part) return <CommandPreview key={index} argv={part.command} />;
     return <SafeText key={index} text={part.text} />;
   })}</>;
 }

@@ -221,63 +221,104 @@ describe("command display", () => {
   const command = (argv: string[], cwd = "/tmp/project", background = false): ApprovalRequest => ({
     ...REQUEST, tool: "shell", summary: "run `rm -rf /` in /tmp/project", command: { argv, cwd, background },
   });
-  const summaryChips = () => Array.from(lead().querySelectorAll(".themis-approval-token")).map(el => el.textContent);
-  const detailChips = () => Array.from(box().querySelectorAll("details .themis-approval-token")).map(el => el.textContent);
+  const preview = () => lead().querySelector(".themis-approval-preview")!;
+  const details = () => box().querySelector("details")!;
+  const fullChips = () => Array.from(details().querySelectorAll(".themis-approval-command .themis-approval-token")).map(el => el.textContent);
+  const folderChip = () => details().querySelector("dd .themis-approval-token")!.textContent;
 
-  it("renders shell and git commands from argv, never the joined summary", () => {
+  it("previews the command in the lead and keeps the whole of it in Details, never the joined summary", () => {
     setup(command(["rm", "-rf", "/"]));
-    // The lead shows the whole command and names the folder; Details keeps the folder's full path.
-    expect(summaryChips()).toEqual(["rm", "-rf", "/", "project"]);
     expect(lead()).toHaveTextContent(/^Run rm -rf \/ in project$/);
-    expect(detailChips()).toEqual(["/tmp/project"]);
-    expect(screen.queryByText(/run `rm -rf \/`/)).toBeNull();
+    expect(fullChips()).toEqual(["rm", "-rf", "/"]);
+    expect(folderChip()).toBe("/tmp/project");
+    expect(box()).not.toHaveTextContent(/run `rm -rf \/`/);
+    // Short and single: Details stays folded, but rm -rf is tagged as a hint.
+    expect(details().open).toBe(false);
+    expect(within(details()).getByText("destructive")).toHaveClass("themis-approval-destructive");
   });
 
-  it("keeps ['rm','-rf /'] and ['rm','-rf','/'] distinct in the summary", () => {
+  it("keeps ['rm','-rf /'] and ['rm','-rf','/'] distinct", () => {
     setup(command(["rm", "-rf /"]));
-    expect(summaryChips().slice(0, 2)).toEqual(["rm", '"-rf /"']);
+    expect(preview()).toHaveTextContent(/^rm '-rf \/'$/);
+    expect(fullChips()).toEqual(["rm", '"-rf /"']);
   });
 
-  it("makes newline, bidi and look-alike controls visible in the summary", () => {
-    setup(command(["echo", "a\nb", "x\u202Ey", "q\u0338", "\u3164", "\u2800", "v\uFE0F"], "/tmp/pro\u202Eject"));
-    const chips = summaryChips();
-    expect(chips).toEqual(['echo', '"a⟨U+000A⟩b"', '"x⟨U+202E⟩y"', '"q⟨U+0338⟩"', '"⟨U+3164⟩"', '"⟨U+2800⟩"', '"v⟨U+FE0F⟩"', '"pro⟨U+202E⟩ject"']);
-    expect(detailChips().slice(-1)[0]).toBe('"/tmp/pro⟨U+202E⟩ject"');
+  it("makes newline, bidi and look-alike controls visible", () => {
+    setup(command(["echo", "a\nb", "x‮y", "q̸", "ㅤ", "⠀", "v️"], "/tmp/pro‮ject"));
+    expect(fullChips()).toEqual(['echo', '"a⟨U+000A⟩b"', '"x⟨U+202E⟩y"', '"q⟨U+0338⟩"', '"⟨U+3164⟩"', '"⟨U+2800⟩"', '"v⟨U+FE0F⟩"']);
+    expect(preview().textContent).toContain("⟨U+202E⟩");
+    expect(preview().textContent).not.toMatch(/[‮\n]/);
+    expect(folderChip()).toBe('"/tmp/pro⟨U+202E⟩ject"');
   });
 
   it("escapes a literal escape-looking token so it cannot imitate a hidden character", () => {
     expect(displayToken("a⟨U+202E⟩b")).toBe('"a⟨U+27E8⟩U+202E⟨U+27E9⟩b"');
-    setup(command(["echo", "x\u202Ey"]));
-    expect(lead().querySelectorAll(".themis-approval-escape")).toHaveLength(1);
+    setup(command(["echo", "x‮y"]));
+    expect(preview().querySelectorAll(".themis-approval-escape")).toHaveLength(1);
   });
 
-  it("shows the full `git push --force` command and no grant for it", () => {
+  it("shows the `git push --force` command, tagged destructive, and no grant for it", () => {
     const argv = ["git", "push", "--force", "origin", "main"];
     setup({ ...command(argv, "/repo"), grant_scope: { argv, covers_further_args: false }, risk: "destructive", grantable: false });
-    expect(summaryChips()).toEqual([...argv, "repo"]);
     expect(lead()).toHaveTextContent(/^Run git push --force origin main in repo$/);
-    expect(detailChips()).toEqual(["/repo"]);
-    // No grant chips: the hint only says why nothing can be allowed for the chat.
-    expect(box().querySelector("details")).toHaveTextContent("This kind of action always asks");
+    expect(fullChips()).toEqual(argv);
+    expect(within(details()).getByText("destructive")).toBeInTheDocument();
+    expect(details()).toHaveTextContent("This kind of action always asks");
     expect(screen.queryByRole("button", { name: /Allow in this chat/ })).toBeNull();
   });
 
   it("says the project root in words when the call has no cwd", () => {
     setup({ ...REQUEST, tool: "shell", summary: "call `shell` with {}", command: { argv: ["ls", "-la"] } });
-    expect(summaryChips()).toEqual(["ls", "-la"]);
     expect(lead()).toHaveTextContent(/^Run ls -la in the project root$/);
+    expect(within(details()).queryByText("destructive")).toBeNull();
     expect(box()).not.toHaveTextContent(/call `shell` with/);
   });
 
-  it("shows the background note and the whole command however long, never cut", () => {
+  it("cuts a long command in the lead with …, keeps it whole in Details and opens Details", () => {
     setup(command(["git", "commit", "-m", "msg"], "/repo", true));
     expect(lead()).toHaveTextContent(/in repo in the background$/);
+    expect(details().open).toBe(false);
     cleanup();
     const long = "x".repeat(200);
-    setup(command([...Array.from({ length: 20 }, (_, i) => `a${i}`), long]));
-    expect(summaryChips()).toHaveLength(22);
-    expect(summaryChips()[20]).toBe(long);
-    expect(lead()).not.toHaveTextContent(/more\)|chars\)|…/);
+    setup(command(["echo", ...Array.from({ length: 20 }, (_, i) => `a${i}`), long]));
+    expect(preview().textContent).toHaveLength(161);
+    expect(preview().textContent!.endsWith("…")).toBe(true);
+    expect(fullChips()).toHaveLength(22);
+    expect(fullChips()[21]).toBe(long);
+    expect(details().open).toBe(true);
+  });
+
+  it("counts a six-command chain, lists one per line, tags the destructive one and opens Details", () => {
+    const script = "cd web && npm ci && npm test | tee out.log; rm -rf build || git status";
+    setup(command(["bash", "-c", script]));
+    expect(lead()).toHaveTextContent(/\(6 commands\) in project$/);
+    expect(details().open).toBe(true);
+    const lines = Array.from(details().querySelectorAll(".themis-approval-chain li"));
+    expect(lines.map(line => line.querySelector("code")!.textContent)).toEqual(["cd web", "npm ci", "npm test", "tee out.log", "rm -rf build", "git status"]);
+    expect(lines.map(line => line.querySelector(".themis-approval-destructive") !== null)).toEqual([false, false, false, false, true, false]);
+  });
+
+  it("does not split at operators inside quotes", () => {
+    setup(command(["sh", "-c", `echo "a && b" && echo 'c; d'`]));
+    const lines = Array.from(details().querySelectorAll(".themis-approval-chain li code")).map(code => code.textContent);
+    expect(lines).toEqual([`echo "a && b"`, `echo 'c; d'`]);
+    expect(lead()).toHaveTextContent("(2 commands)");
+  });
+
+  it("shows a script it cannot split as written", () => {
+    setup(command(["bash", "-c", "for f in $(ls); do rm \"$f\"; done"]));
+    expect(details().querySelector("pre.themis-approval-command")).toHaveTextContent('for f in $(ls); do rm "$f"; done');
+    expect(details().querySelector(".themis-approval-chain")).toBeNull();
+    expect(details().open).toBe(true);
+  });
+
+  it("copies the exact command", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText } });
+    setup(command(["bash", "-c", "echo 'it''s' && rm -rf /tmp/x"]));
+    fireEvent.click(within(details()).getByRole("button", { name: "Copy" }));
+    expect(writeText).toHaveBeenCalledWith(String.raw`bash -c 'echo '\''it'\'''\''s'\'' && rm -rf /tmp/x'`);
+    expect(await within(details()).findByRole("button", { name: "Copied" })).toBeInTheDocument();
   });
 
   it("asks to run a sandbox-blocked command outside the sandbox with the same three buttons, the reason under Details", () => {

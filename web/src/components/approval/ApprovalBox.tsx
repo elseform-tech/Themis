@@ -1,6 +1,8 @@
 import type { ApprovalDecision, ApprovalRequest } from "../../lib/types";
 import { UNSANDBOXED_TOOL } from "../../lib/types";
+import { useState } from "react";
 import { SafeText, TokenChip, TokenList } from "./CommandTokens";
+import { CommandFull, commandNeedsDetails } from "./CommandView";
 import { ActionSentence, actionParts } from "./plainAction";
 import { Button } from "../primitives/Button";
 import "./ApprovalBox.css";
@@ -63,15 +65,18 @@ export function GrantHint({ request }: { request: ApprovalRequest }) {
   );
 }
 
-/** What the box keeps behind its Details disclosure: where it runs, the secret files, why it asks and what a grant
- *  covers. The whole command is already in the box, and the raw tool call is never shown. */
+/** What the box keeps behind its Details disclosure: the whole command, where it runs, the secret files, why it asks
+ *  and what a grant covers. It opens by itself when the lead could not show the whole command. The raw tool call is
+ *  never shown. */
 function ApprovalDetails({ request }: { request: ApprovalRequest }) {
   const { command } = request;
   const outside = request.tool === UNSANDBOXED_TOOL;
   const blocked = command?.sandbox_blocked;
+  const [open, setOpen] = useState(() => command !== undefined && commandNeedsDetails(command.argv));
   return (
-    <details className="themis-approval-details">
+    <details className="themis-approval-details" open={open} onToggle={event => setOpen(event.currentTarget.open)}>
       <summary>Details</summary>
+      {command && <CommandFull argv={command.argv} />}
       <dl>
         {command?.cwd !== undefined && <><dt>Folder</dt><dd><TokenChip token={command.cwd} full /></dd></>}
         {request.sensitive_files?.length ? <><dt>Secret files</dt><dd><TokenList argv={request.sensitive_files} /></dd></> : null}
