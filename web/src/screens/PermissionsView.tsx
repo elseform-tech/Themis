@@ -80,7 +80,7 @@ export function PermissionsSettings({ editor = "", onEditor, prefs, onPrefs }: {
   return (<>
     {prefs && <SettingsGroup title="Approvals">
       <label className="themis-settings-control" title="Each chat can switch in its composer. YOLO asks nothing; the sandbox and Browser blocks still apply.">New chats start in
-        <select aria-label="New chats start in" value={prefs.default_approval_mode ?? "custom"} onChange={event => onPrefs?.({ default_approval_mode: event.target.value as "custom" | "auto" | "yolo" })}>
+        <select aria-label="New chats start in" value={prefs.default_approval_mode ?? "auto"} onChange={event => onPrefs?.({ default_approval_mode: event.target.value as "custom" | "auto" | "yolo" })}>
           <option value="custom">Custom</option><option value="auto">Auto</option><option value="yolo">YOLO</option>
         </select>
       </label>

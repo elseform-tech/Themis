@@ -430,7 +430,7 @@ fn settings_defaults_and_shapes_match_ts() {
             "completion_haptic": false,
             "goal_notifications": true,
             "config_editor": "",
-            "default_approval_mode": "custom",
+            "default_approval_mode": "auto",
             "go_secret": "OPENCODE_KEY",
             "onboarded": false,
         })
