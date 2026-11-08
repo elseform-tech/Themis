@@ -1,5 +1,6 @@
 use super::*;
 use serde_json::{json, Value};
+use themis_core::plugins::definitions::{self, Definition};
 use themis_core::plugins::{AvailableSkill, PluginSpec, PluginStore};
 
 impl AppState {
@@ -132,6 +133,88 @@ impl AppState {
         result
     }
 
+    /// The MCP actions that act on connections rather than the store: their tools, secrets,
+    /// sign-in and status. `None` for any other action.
+    async fn mcp_action(
+        &self,
+        action: &str,
+        args: &Value,
+        project: Option<&Path>,
+        scope: &str,
+        name: &str,
+        agent: bool,
+    ) -> Option<Result<Value, String>> {
+        if action == "mcp_tools" {
+            let Some(root) = project else {
+                return Some(Err("Choose a project for MCP connections".into()));
+            };
+            return Some(self.mcp_tool_summaries(
+                root,
+                &format!(
+                    "{scope}:{name}:mcp:{}",
+                    args["id"].as_str().unwrap_or_default()
+                ),
+            ));
+        }
+        if action == "mcp_allow_secrets" {
+            // The person's word alone: an agent can't give it.
+            if agent {
+                return Some(Err(
+                    "Only you can allow a connection to read a secret".to_owned()
+                ));
+            }
+            let Some(root) = project else {
+                return Some(Err("Choose a project for MCP connections".into()));
+            };
+            return Some((|| {
+                let shown: Vec<String> = serde_json::from_value(args["secrets"].clone())
+                    .map_err(|_| "Name the secrets you allow".to_owned())?;
+                self.allow_mcp_secrets(
+                    root,
+                    scope,
+                    name,
+                    args["id"].as_str().unwrap_or_default(),
+                    &shown,
+                )?;
+                self.mcp_status(root, true)
+            })());
+        }
+        if action == "mcp_sign_in_cancel" {
+            let Some(url) = args["url"].as_str() else {
+                return Some(Err("Missing MCP server address".into()));
+            };
+            return Some(self.mcp_sign_in_cancel(url));
+        }
+        if action == "mcp_sign_in" || action == "mcp_sign_out" {
+            let Some(root) = project else {
+                return Some(Err("Choose a project for MCP connections".into()));
+            };
+            let Some(url) = args["url"].as_str() else {
+                return Some(Err("Missing MCP server address".into()));
+            };
+            return Some(if action == "mcp_sign_in" {
+                self.mcp_sign_in(root, url).await
+            } else {
+                self.mcp_sign_out(root, url)
+            });
+        }
+        if action == "mcp_status" {
+            let Some(root) = project else {
+                return Some(Err("Choose a project for MCP connections".into()));
+            };
+            return Some(
+                if args["connect"].as_bool().unwrap_or(false)
+                    || args["retry"].as_bool().unwrap_or(false)
+                {
+                    self.mcp_status(root, args["retry"].as_bool().unwrap_or(false))
+                } else {
+                    Ok(self.mcp_snapshot(root))
+                },
+            );
+        }
+        None
+    }
+
     async fn plugin_action_with(&self, args: Value, agent: bool) -> Result<Value, String> {
         let project = args["projectRoot"]
             .as_str()
@@ -139,65 +222,13 @@ impl AppState {
             .transpose()?;
         let store = self.plugin_store_for(project.clone(), agent);
         let scope = args["scope"].as_str().unwrap_or("global");
-        let name = args["name"].as_str().unwrap_or_default();
         let action = args["action"].as_str().unwrap_or("list");
-        if action == "mcp_tools" {
-            let root = project
-                .as_deref()
-                .ok_or("Choose a project for MCP connections")?;
-            return self.mcp_tool_summaries(
-                root,
-                &format!(
-                    "{scope}:{name}:mcp:{}",
-                    args["id"].as_str().unwrap_or_default()
-                ),
-            );
-        }
-        if action == "mcp_allow_secrets" {
-            // The person's word alone: an agent can't give it.
-            if agent {
-                return Err("Only you can allow a connection to read a secret".to_owned());
-            }
-            let root = project
-                .as_deref()
-                .ok_or("Choose a project for MCP connections")?;
-            let shown: Vec<String> = serde_json::from_value(args["secrets"].clone())
-                .map_err(|_| "Name the secrets you allow".to_owned())?;
-            self.allow_mcp_secrets(
-                root,
-                scope,
-                name,
-                args["id"].as_str().unwrap_or_default(),
-                &shown,
-            )?;
-            return self.mcp_status(root, true);
-        }
-        if action == "mcp_sign_in_cancel" {
-            let url = args["url"].as_str().ok_or("Missing MCP server address")?;
-            return self.mcp_sign_in_cancel(url);
-        }
-        if action == "mcp_sign_in" || action == "mcp_sign_out" {
-            let root = project
-                .as_deref()
-                .ok_or("Choose a project for MCP connections")?;
-            let url = args["url"].as_str().ok_or("Missing MCP server address")?;
-            return if action == "mcp_sign_in" {
-                self.mcp_sign_in(root, url).await
-            } else {
-                self.mcp_sign_out(root, url)
-            };
-        }
-        if action == "mcp_status" {
-            let root = project
-                .as_deref()
-                .ok_or("Choose a project for MCP connections")?;
-            return if args["connect"].as_bool().unwrap_or(false)
-                || args["retry"].as_bool().unwrap_or(false)
-            {
-                self.mcp_status(root, args["retry"].as_bool().unwrap_or(false))
-            } else {
-                Ok(self.mcp_snapshot(root))
-            };
+        let name = marketplace_or_name(action, &args);
+        if let Some(answer) = self
+            .mcp_action(action, &args, project.as_deref(), scope, name, agent)
+            .await
+        {
+            return answer;
         }
         // Active runs retain their immutable snapshot; changes apply to the next run.
         let started = std::time::Instant::now();
@@ -326,19 +357,19 @@ impl AppState {
                 }
                 "save" => serde_json::to_value(store.save(
                     scope,
-                    serde_json::from_value::<PluginSpec>(args["spec"].clone())?,
+                    parse_definition(&args["spec"], None)?,
                     args["expectedRevision"].as_str(),
                 )?)?,
                 "save_skill" => serde_json::to_value(store.save_skill(
                     scope,
                     args["plugin"].as_str().unwrap_or("personal"),
-                    serde_json::from_value(args["skill"].clone())?,
+                    parse_definition(&args["skill"], Some(Definition::Skill))?,
                     args["expectedRevision"].as_str(),
                 )?)?,
                 "save_hook" => serde_json::to_value(store.save_hook(
                     scope,
                     if name.is_empty() { "personal" } else { name },
-                    serde_json::from_value(args["hook"].clone())?,
+                    parse_definition(&args["hook"], Some(Definition::Hook))?,
                     args["expectedRevision"].as_str(),
                 )?)?,
                 "delete" => {
@@ -466,4 +497,47 @@ impl AppState {
         }
         outcome.map_err(|e| format!("{e:#}\nDiagnostic operation: {operation_id}"))
     }
+}
+
+/// The name an action reads. A marketplace-level action also takes the marketplace's name as
+/// `marketplace` (as `preview` and `install` do), so either field finds it.
+fn marketplace_or_name<'a>(action: &str, args: &'a Value) -> &'a str {
+    let name = args["name"].as_str().unwrap_or_default();
+    let marketplace_level = matches!(
+        action,
+        "scan_marketplace"
+            | "catalog"
+            | "catalog_check"
+            | "check_source"
+            | "set_marketplace_enabled"
+            | "remove_marketplace"
+    );
+    if name.is_empty() && marketplace_level {
+        args["marketplace"].as_str().unwrap_or_default()
+    } else {
+        name
+    }
+}
+
+/// A skill, hook or whole plugin from a request. One that does not parse is answered with
+/// every problem in it at once and, for a component, its exact shape (`themis skill --help`).
+fn parse_definition<T: serde::de::DeserializeOwned>(
+    value: &Value,
+    definition: Option<Definition>,
+) -> anyhow::Result<T> {
+    serde_json::from_value(value.clone()).map_err(|error| {
+        let (what, mut problems) = match definition {
+            Some(definition) => (definition.label(), definition.problems(value)),
+            None => ("plugin", definitions::plugin_problems(value)),
+        };
+        if problems.is_empty() {
+            problems.push(error.to_string());
+        }
+        let mut message = definitions::report(&format!("The {what}"), &problems);
+        if let Some(definition) = definition {
+            message.push_str("\n\n");
+            message.push_str(&definition.reference());
+        }
+        anyhow::anyhow!(message)
+    })
 }

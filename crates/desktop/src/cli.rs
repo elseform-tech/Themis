@@ -38,13 +38,17 @@ fn data_dir() -> Result<PathBuf, String> {
 }
 
 /// `--help` or `-h` anywhere (or no command) prints help and does nothing else, so the agent's
-/// shell treats it as a read: the integration usage for `plugin`/`skill`/`mcp`/`hook`.
-fn help_for(words: &[String]) -> Option<&'static str> {
+/// shell treats it as a read: the integration usage for `plugin`/`skill`/`mcp`/`hook`, with the
+/// exact definition of a skill, hook or MCP server.
+fn help_for(words: &[String]) -> Option<String> {
     let asks = words.is_empty() || words.iter().any(|word| word == "--help" || word == "-h");
     let integration = words
         .first()
-        .is_some_and(|word| matches!(word.as_str(), "plugin" | "skill" | "mcp" | "hook"));
-    asks.then(|| if integration { plugins::USAGE } else { usage() })
+        .filter(|word| matches!(word.as_str(), "plugin" | "skill" | "mcp" | "hook"));
+    asks.then(|| match integration {
+        Some(command) => plugins::help(command),
+        None => usage().to_owned(),
+    })
 }
 
 fn usage() -> &'static str {
