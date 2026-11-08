@@ -911,6 +911,21 @@ fn shell_git_calls_that_run_another_program_are_asked_every_time() {
         &["git", "push", "FD::3", "main"],
         &["git", "clone", "-u", "sh", "https://example.com/r.git"],
         &["git", "ls-remote", "ext::sh"],
+        &["git", "push", "--e=sh", "origin"],
+        &["git", "fetch", "--u=sh", "origin"],
+        &["git", "clone", "-ush", "https://example.com/r.git"],
+        &["git", "ls-remote", "-u", "sh", "origin"],
+        &["git", "clone", "-qu", "sh", "https://example.com/r.git"],
+        &[
+            "git",
+            "clone",
+            "-qc",
+            "core.sshCommand=sh",
+            "https://example.com/r.git",
+        ],
+        &["git", "ls-remote", "-qush", "origin"],
+        &["git", "-ccore.sshCommand=sh", "fetch", "origin"],
+        &["git", "submodule", "foreach", "sh", "-c", "touch x"],
         &["sh", "-c", "git fetch --upload-pack=sh origin"],
     ] {
         let command = argv(words);
@@ -924,7 +939,71 @@ fn shell_git_calls_that_run_another_program_are_asked_every_time() {
         &["git", "pull", "origin", "main"],
         &["git", "status"],
         &["git", "remote", "-v"],
+        &["git", "submodule", "update", "--init"],
+        &["git", "fetch", "-u", "origin"],
     ] {
         assert!(!runs_git_helper(&argv(words)), "{words:?}");
+    }
+}
+
+/// Shell commands that only read inside the project carry the read risk; a listed program that
+/// would write, run another program, reach outside the project, or isn't the bare program keeps
+/// the command risk.
+#[test]
+fn shell_commands_that_only_read_inside_the_project_are_reads() {
+    let argv = |words: &[&str]| {
+        words
+            .iter()
+            .map(|w| (*w).to_owned())
+            .collect::<Vec<String>>()
+    };
+    for words in [
+        &["ls", "-la"][..],
+        &["ls", "src"],
+        &["cat", "README.md"],
+        &["head", "-n", "20", "src/main.rs"],
+        &["wc", "-l", "a.txt"],
+        &["rg", "-n", "TODO", "src"],
+        &["grep", "-rn", "fn main", "."],
+        &["find", ".", "-name", "*.rs"],
+        &["sort", "names.txt"],
+        &["tree", "src"],
+        &["git", "status", "--short"],
+        &["git", "diff", "--stat"],
+        &["git", "log", "--oneline", "-5"],
+        &["diff", "a.txt", "b.txt"],
+        &["pwd"],
+    ] {
+        assert_eq!(shell_risk(&argv(words)), RiskLevel::Read, "{words:?}");
+    }
+    for words in [
+        &["find", ".", "-delete"][..],
+        &["find", ".", "-exec", "rm", "{}", ";"],
+        &["find", ".", "-fprint", "out.txt"],
+        &["rg", "--pre", "sh", "x"],
+        &["rg", "-z", "x"],
+        &["sort", "-o", "out.txt", "in.txt"],
+        &["sort", "--compress-program=sh", "in.txt"],
+        &["sort", "--comp=sh", "in.txt"],
+        &["sort", "--out=out.txt", "in.txt"],
+        &["sort", "-nooutput.txt", "in.txt"],
+        &["rg", "--pr=sh", "x"],
+        &["file", "--comp", "-m", "magic"],
+        &["tree", "-o", "out.txt"],
+        &["file", "-C", "-m", "magic"],
+        &["cat", "/etc/hosts"],
+        &["cat", "../secret.txt"],
+        &["grep", "-f/etc/passwd", "x"],
+        &["grep", "--file=/etc/passwd", "x"],
+        &["ls", "~"],
+        &["./ls"],
+        &["/bin/cat", "a"],
+        &["git", "-c", "core.pager=sh", "log"],
+        &["git", "diff", "--output=out.txt"],
+        &["sed", "-n", "1p", "a.txt"],
+        &["awk", "{print}", "a.txt"],
+        &["sh", "-c", "ls"],
+    ] {
+        assert_ne!(shell_risk(&argv(words)), RiskLevel::Read, "{words:?}");
     }
 }

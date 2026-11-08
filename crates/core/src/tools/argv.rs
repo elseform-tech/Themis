@@ -155,11 +155,7 @@ pub fn git_call_risk(args: &serde_json::Value) -> RiskLevel {
     if is_destructive_variant(&argv) {
         return RiskLevel::Destructive;
     }
-    let read_only = matches!(
-        argv.get(1).map(String::as_str),
-        Some("status" | "diff" | "log" | "show")
-    ) && argv[2..].iter().all(|argument| git_read_argument(argument));
-    if read_only {
+    if git_read_only(&argv) {
         RiskLevel::Read
     } else {
         RiskLevel::Write
@@ -168,7 +164,16 @@ pub fn git_call_risk(args: &serde_json::Value) -> RiskLevel {
 
 /// A path that starts at a root, whatever the platform: `/x` and `\\x` (on Windows the
 /// current drive's root), `C:` and `C:\\x`, `~` (a home folder), or anything the OS calls absolute.
-fn rooted_path(argument: &str) -> bool {
+/// `git status|diff|log|show` (the subcommand first) with only output-shaping arguments inside
+/// the project: it reads.
+pub(super) fn git_read_only(argv: &[String]) -> bool {
+    matches!(
+        argv.get(1).map(String::as_str),
+        Some("status" | "diff" | "log" | "show")
+    ) && argv[2..].iter().all(|argument| git_read_argument(argument))
+}
+
+pub(super) fn rooted_path(argument: &str) -> bool {
     let bytes = argument.as_bytes();
     let drive = bytes.len() >= 2 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':';
     argument.starts_with(['/', '\\', '~']) || drive || Path::new(argument).is_absolute()

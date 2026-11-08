@@ -424,7 +424,8 @@ failing the call.
 
 ## Composer permissions
 
-The shield offers **YOLO**, **Auto** or **Custom** (default), persisted per thread.
+The shield offers **Auto**, **Custom** or **YOLO**, persisted per thread; new chats start in
+the mode set in Settings › Permissions (Auto unless changed).
 It has no configuration editor or advanced settings link.
 
 **Destructive steps ask the person first in Auto and YOLO.** A destructive tool (`delete_file`,
@@ -615,7 +616,7 @@ damaged file is ignored (`questions_ignored`); diagnostics record question ids, 
 flag and the delivery path (`asked`, `updated`, `answered`), never the question or answer text.
 Answers grant nothing.
 **To undo** a grant, edit or delete its entry in the chat's file, or start a new chat; there is
-deliberately no UI for this, and the composer shield stays YOLO/Custom only.
+deliberately no UI for this, and the composer shield only chooses Auto, Custom or YOLO.
 Destructive actions (the variants below and the `destructive` risk class such as
 `delete_file`) are never offered for the chat, never stored and never matched: the dialog
 shows only **Allow once** and **Deny** with a fixed explanation, an "allow in this chat"

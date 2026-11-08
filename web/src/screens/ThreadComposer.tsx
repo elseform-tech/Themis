@@ -5,22 +5,13 @@ import type { Attachment } from "../lib/tauri";
 import type { PromptPlugin, PromptSkill } from "../lib/prompt";
 import { Button } from "../components/primitives/Button";
 import type { ContextBudget, ThreadInfo } from "../lib/types";
-import { isModeInitial } from "../lib/keyboard";
 import { looksLikeSecret } from "../lib/secretLook";
 import { ContextMeter } from "./ContextMeter";
+import { ComposerShield } from "./ComposerShield";
 
 const COMMANDS: PromptCommand[] = [
   { id: "goal", name: "/goal", description: "Keep working until a goal is met — checked before every stop", command: true },
 ];
-
-
-/** The shield's mode names. */
-const modeLabel = (mode?: "custom" | "auto" | "yolo") => mode === "yolo" ? "YOLO" : mode === "auto" ? "Auto" : "Custom";
-const MODE_TITLE = {
-  yolo: "YOLO: no approvals, no sandbox; only Themis settings are protected",
-  auto: "Auto: no prompts; a reviewer model steers or blocks risky actions",
-  custom: "Custom applies your rules and asks for tool approvals",
-} as const;
 
 interface ThreadComposerProps {
   thread: ThreadInfo;
@@ -48,6 +39,8 @@ interface ThreadComposerProps {
   onApprovalModeChange?: (mode: "custom" | "auto" | "yolo") => void;
   /** Blocks the configuration wrote that YOLO keeps (network, Keychain, deny rules). */
   yoloKeeps?: string[];
+  /** The configuration blocks the network: the shield says so under its list. */
+  networkBlocked?: boolean;
   budget?: ContextBudget;
   /** Project directory and current Git branch shown beside the composer controls. */
   location?: { name: string; root: string; branch: string | null; branches?: string[]; onSwitchBranch?: (branch: string) => void };
@@ -87,7 +80,7 @@ export function ThreadComposer({
   onOpenSettings,
   permissionSaving = false,
   onApprovalModeChange,
-  yoloKeeps,
+  yoloKeeps, networkBlocked,
   budget,
   compacting = false,
   hero = false,
@@ -191,15 +184,7 @@ export function ThreadComposer({
               </button>
             </div>
           </details>
-          <details className="themis-composer-permissions" data-popover data-mode={thread.approval_mode ?? "custom"}>
-            <summary onMouseDown={event => event.preventDefault()} aria-label={`Permissions: ${modeLabel(thread.approval_mode)}`} title={MODE_TITLE[thread.approval_mode ?? "custom"]}>
-              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" aria-hidden="true"><path d="M12 3 4 6.5V12c0 4.5 8 9 8 9s8-4.5 8-9V6.5Z" /></svg>
-              <span className={`themis-composer-label${thread.approval_mode === "yolo" ? " is-yolo" : ""}`}>{permissionSaving ? "Saving…" : modeLabel(thread.approval_mode)}</span>
-            </summary>
-            <div className="themis-permissions-panel"><p>{thread.approval_mode === "yolo" ? `No approvals, no sandbox: the agent can change anything on this computer. Only Themis settings are protected${yoloKeeps?.length ? `; still applies: ${yoloKeeps.join(", ")}` : ""}.` : thread.approval_mode === "auto" ? "No approval prompts: a reviewer model checks risky actions against what you asked. It steers the agent to a safer way, or blocks and asks you in the chat while the work goes on. Your rules and the sandbox still apply." : "Apply your rules and ask for tool approvals."} Changes apply to the next run.</p>
-              <label><select aria-label="Approval mode" onKeyDown={event => { if (!event.nativeEvent.isComposing && isModeInitial(event.nativeEvent)) event.preventDefault(); }} value={thread.approval_mode ?? "custom"} disabled={permissionSaving} onChange={event => onApprovalModeChange?.(event.target.value as "custom" | "auto" | "yolo")}><option value="yolo">YOLO</option><option value="auto">Auto</option><option value="custom">Custom</option></select></label>
-            </div>
-          </details>
+          <ComposerShield mode={thread.approval_mode} saving={permissionSaving} running={running} yoloKeeps={yoloKeeps} networkBlocked={networkBlocked} onChange={onApprovalModeChange} />
 
           <span className="themis-composer-spacer" />
           <ContextMeter budget={budget} compacting={compacting} running={running} threadId={thread.id} />
