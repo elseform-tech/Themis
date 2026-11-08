@@ -1380,3 +1380,36 @@ async fn dispatch_and_execute_consult_hook_exactly_once() {
     assert_eq!(direct, serde_json::json!({"ok": true}));
     assert_eq!(consults.load(Ordering::SeqCst), 2);
 }
+
+/// The approval for a file write the run asks about names the file in plain words, as the
+/// file tool's own approval does, never a raw tool call.
+#[tokio::test]
+async fn dispatch_gate_names_the_file_a_write_changes() {
+    let seen: Arc<std::sync::Mutex<Vec<ToolAction>>> = Arc::default();
+    let recorder = {
+        let seen = Arc::clone(&seen);
+        move |action: &ToolAction| {
+            seen.lock().unwrap().push(action.clone());
+            Approval::Deny
+        }
+    };
+    let hook: Arc<dyn ApprovalHook> = Arc::new(FnHook::new(recorder));
+    let root = tempfile::tempdir().unwrap();
+    let tools = crate::tools::boxed_tools(root.path(), Arc::clone(&hook)).unwrap();
+    let caching = CachingApprovals::wrap(hook);
+    let (events, _rx) = tokio::sync::mpsc::channel(16);
+    let args = serde_json::json!({"file_path":"backup.sh","append":false,"content":"#!/bin/sh\necho hi\n"});
+    let text = args.to_string();
+    let _ = execute_call(
+        &tools,
+        &caching,
+        "write_file",
+        &text,
+        &summarize_call("write_file", &text),
+        &events,
+        &AtomicBool::new(false),
+    )
+    .await;
+    let seen = seen.lock().unwrap();
+    assert_eq!(seen[0].summary, "write `backup.sh`");
+}
