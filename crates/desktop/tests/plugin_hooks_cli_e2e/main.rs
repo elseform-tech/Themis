@@ -199,7 +199,8 @@ fn plugin_folder(parent: &Path, hooks: &Value, files: &[(&str, &str)]) -> PathBu
     root
 }
 
-/// Sends `task` in YOLO and waits until the run is over.
+/// Sends `task` in YOLO and waits until the run is over, allowing once any destructive step
+/// it asks about first.
 async fn run(app: &App, task: &'static str) {
     let (data, thread) = (app.data.path().to_owned(), app.thread.clone());
     tokio::task::spawn_blocking(move || {
@@ -214,6 +215,17 @@ async fn run(app: &App, task: &'static str) {
             json!({"threadId": thread, "text": task}),
         );
         until("the run never finished", || {
+            // A destructive step asks the person first even in YOLO: answer as one would.
+            if let Some(waiting) = call(&data, "get_pending_approvals", json!({})).as_array() {
+                for approval in waiting.iter().filter(|a| a["thread_id"] == thread.as_str()) {
+                    call(
+                        &data,
+                        "approve_action",
+                        json!({"threadId": thread, "approvalId": approval["approval_id"],
+                            "decision": "once"}),
+                    );
+                }
+            }
             call(&data, "get_thread", json!({"threadId": thread}))["running"] != true
         });
     })
