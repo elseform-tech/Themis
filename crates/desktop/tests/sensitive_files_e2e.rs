@@ -305,7 +305,7 @@ async fn a_chat_grant_for_writes_does_not_cover_a_sensitive_write() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn search_file_lists_names_without_contents_and_does_not_ask() {
+async fn shell_searches_list_names_without_contents_and_do_not_ask() {
     let fx = fixture();
     let run = run(
         &fx,
@@ -313,15 +313,24 @@ async fn search_file_lists_names_without_contents_and_does_not_ask() {
         "go",
         vec![
             (
-                "search_file",
-                json!({"directory": ".", "pattern": "API_TOKEN"}),
+                "shell",
+                json!({"command": "rg", "args": ["-l", "API_TOKEN", "."]}),
             ),
-            ("search_file", json!({"directory": ".", "pattern": ".env"})),
+            (
+                "shell",
+                json!({"command": "rg", "args": ["--files", "--hidden"]}),
+            ),
+            ("shell", json!({"command": "ls", "args": ["-a"]})),
         ],
         deny,
     )
     .await;
-    assert!(run.approvals.is_empty(), "names are not contents");
+    assert!(
+        run.approvals.is_empty(),
+        "names are not contents: {:?}",
+        run.approvals.iter().map(|a| &a.summary).collect::<Vec<_>>()
+    );
+    assert!(run.wire.contains(".env"), "the listing reached the model");
     assert!(!run.wire.contains(VALUE));
 }
 
@@ -520,7 +529,7 @@ async fn git_add_of_everything_asks_only_when_a_secret_would_be_staged() {
         &fx,
         ApprovalMode::Custom,
         "go",
-        vec![("git", json!({"args": ["add", "."]}))],
+        vec![("shell", json!({"command": "git", "args": ["add", "."]}))],
         deny,
     )
     .await;
@@ -533,13 +542,16 @@ async fn git_add_of_everything_asks_only_when_a_secret_would_be_staged() {
         &fx,
         ApprovalMode::Custom,
         "go",
-        vec![("git", json!({"args": ["add", "."]}))],
+        vec![("shell", json!({"command": "git", "args": ["add", "."]}))],
         deny,
     )
     .await;
     assert_eq!(ignored.approvals.len(), 1, "git add still asks as a write");
     assert!(ignored.sensitive(0).is_empty());
 }
+
+/// How an approval summary spells a shell `git add` call.
+const GIT_ADD: &str = r#"{"command":"git","args":["add","#;
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_grant_for_git_add_does_not_stage_a_secret_silently() {
@@ -551,7 +563,7 @@ async fn a_grant_for_git_add_does_not_stage_a_secret_silently() {
         ApprovalMode::Custom,
         "go",
         vec![
-            ("git", json!({"args": ["add", "a.txt"]})),
+            ("shell", json!({"command": "git", "args": ["add", "a.txt"]})),
             (
                 "shell",
                 json!({"command": "touch", "args": ["placeholder"]}),
@@ -560,12 +572,13 @@ async fn a_grant_for_git_add_does_not_stage_a_secret_silently() {
                 "write_file",
                 json!({"file_path": ".env", "content": "X=1\n"}),
             ),
-            ("git", json!({"args": ["add", "."]})),
+            ("shell", json!({"command": "git", "args": ["add", "."]})),
         ],
         |request| {
-            if request.tool == "git" && request.summary.contains("a.txt") {
+            let git_add = request.summary.contains(GIT_ADD);
+            if git_add && request.summary.contains("a.txt") {
                 ApprovalDecision::Chat
-            } else if request.tool == "git" {
+            } else if git_add {
                 ApprovalDecision::Deny
             } else {
                 ApprovalDecision::Once
@@ -574,7 +587,8 @@ async fn a_grant_for_git_add_does_not_stage_a_secret_silently() {
     )
     .await;
     let last = run.approvals.last().unwrap();
-    assert_eq!(last.tool, "git");
+    assert_eq!(last.tool, "shell");
+    assert!(last.summary.contains(GIT_ADD), "{}", last.summary);
     assert_eq!(run.sensitive(run.approvals.len() - 1), [".env"]);
     let status = std::process::Command::new("git")
         .args(["status", "--porcelain"])
@@ -596,7 +610,10 @@ async fn git_commit_asks_when_a_secret_is_staged_and_the_agent_is_told() {
         &fx,
         ApprovalMode::Custom,
         "go",
-        vec![("git", json!({"args": ["commit", "-m", "x"]}))],
+        vec![(
+            "shell",
+            json!({"command": "git", "args": ["commit", "-m", "x"]}),
+        )],
         deny,
     )
     .await;
@@ -608,7 +625,10 @@ async fn git_commit_asks_when_a_secret_is_staged_and_the_agent_is_told() {
         &fx,
         ApprovalMode::Yolo,
         "go",
-        vec![("git", json!({"args": ["commit", "-m", "x"]}))],
+        vec![(
+            "shell",
+            json!({"command": "git", "args": ["commit", "-m", "x"]}),
+        )],
         deny,
     )
     .await;
