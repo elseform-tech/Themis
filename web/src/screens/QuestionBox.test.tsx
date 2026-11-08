@@ -168,6 +168,11 @@ describe("several questions in one box", () => {
     const alone = question({ id: "alone", asked_at: now - 5 });
     const queue = composerQueue([], [alone, ...set], new Map(), now);
     expect(queue.current).toEqual({ kind: "question", questions: set });
+    // A page reopened from its turn brings its box first; the pages keep the order asked.
+    const reopened = composerQueue([], [alone, ...set], new Map([["p3", "composer" as const]]), now);
+    expect(reopened.current).toEqual({ kind: "question", questions: set });
+    const newer = question({ id: "newer", asked_at: now - 1 });
+    expect(composerQueue([], [alone, newer], new Map([["newer", "composer" as const]]), now).current).toEqual({ kind: "question", questions: [newer] });
     expect(queue.waiting).toEqual({ approvals: 0, questions: 1 });
   });
 });
@@ -204,6 +209,22 @@ describe("what the composer shows", () => {
     expect(next.current).toEqual({ kind: "question", questions: [older] });
     expect(next.waiting).toEqual({ approvals: 0, questions: 1 });
     expect(composerQueue([], [question({ answer: "Tabs" })], none, now).current).toBeNull();
+  });
+
+  it("shows a question opened from its turn first, even with an older one still on the composer", () => {
+    const now = Date.now();
+    const older = question({ id: "old", asked_at: now - 20 });
+    const opened = question({ id: "opened", asked_at: now - 10 * QUESTION_OPEN_MS });
+    // Left its turn long ago; the person clicks it while the older question waits on the composer.
+    const queue = composerQueue([], [older, opened], new Map([["opened", "composer"]]), now);
+    expect(queue.current).toEqual({ kind: "question", questions: [opened] });
+    expect(queue.waiting).toEqual({ approvals: 0, questions: 1 });
+    // The one opened last comes first; approvals still lead.
+    const both = new Map([["old", "composer"], ["opened", "composer"]]) as Map<string, "composer">;
+    expect(composerQueue([], [older, opened], both, now).current).toEqual({ kind: "question", questions: [opened] });
+    both.delete("old"); both.set("old", "composer");
+    expect(composerQueue([], [older, opened], both, now).current).toEqual({ kind: "question", questions: [older] });
+    expect(composerQueue([approval("a1")] as never, [older, opened], both, now).current?.kind).toBe("approval");
   });
 
   it("moves a question back into its turn when skipped or after a while", () => {

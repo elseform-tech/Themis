@@ -60,21 +60,31 @@ export type ComposerItem =
   /** The pages of one box: questions asked together (one `group`), in the order asked. */
   | { kind: "question"; questions: Question[] };
 
-/** Open questions as boxes, oldest first: the questions of one group are one box. */
+/** Open questions as boxes, in the order given (a box where its first question falls): the
+ *  questions of one group are one box, its pages in the order asked. */
 function questionBoxes(open: Question[]): Question[][] {
   const boxes = new Map<string, Question[]>();
   for (const question of open) {
     const key = question.group ?? question.id;
     boxes.set(key, [...boxes.get(key) ?? [], question]);
   }
-  return [...boxes.values()];
+  return [...boxes.values()].map(pages => [...pages].sort((a, b) => a.asked_at - b.asked_at));
+}
+
+/** Open questions in the order the composer shows them: the one the person opened from its turn
+ *  most recently first (they just asked for it), then the rest oldest first. */
+function questionOrder(open: Question[], placements: ReadonlyMap<string, Placement>): Question[] {
+  const opened = [...placements].filter(([, placement]) => placement === "composer").map(([id]) => id);
+  const rank = (question: Question) => opened.lastIndexOf(question.id);
+  return [...open].sort((a, b) => rank(b) - rank(a) || a.asked_at - b.asked_at);
 }
 
 /** What the composer shows, one at a time: approvals first (the run waits on them), then
- *  questions, oldest first, those asked together as the pages of one box; `waiting` is how
- *  many more are behind it. */
+ *  questions, the one just opened from its turn first and otherwise oldest first, those asked
+ *  together as the pages of one box (in the order asked); `waiting` is how many more are
+ *  behind it. */
 export function composerQueue(approvals: ApprovalRequest[], questions: Question[], placements: ReadonlyMap<string, Placement>, now: number, blockingMs = BLOCKING_OPEN_MS): { current: ComposerItem | null; waiting: { approvals: number; questions: number } } {
-  const open = questions.filter(question => questionOnComposer(question, placements, now, blockingMs)).sort((a, b) => a.asked_at - b.asked_at);
+  const open = questionOrder(questions.filter(question => questionOnComposer(question, placements, now, blockingMs)), placements);
   const items: ComposerItem[] = [
     ...approvals.map(request => ({ kind: "approval" as const, request })),
     ...questionBoxes(open).map(questions => ({ kind: "question" as const, questions })),
