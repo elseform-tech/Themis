@@ -601,7 +601,12 @@ at most 8 open at once (the tool then tells the agent to keep working on its ass
 100 kept (the oldest answered go first); a question is at most 1,000 characters, with 2 to 4
 choices of 200 (the recommended one first; a single choice becomes the suggestion), and an
 answer at most 10,000. Asking again on an open `topic`, or with the same
-wording, updates that question. The transcript records `question_asked` and `question_answered`
+wording, updates that question, and each `ask_user` result lists the other questions still open
+so the agent does not ask one again in new words. A message the person writes in the chat (sent,
+or steered into a run) while questions are open answers them: each closes with that message as
+its answer, the boxes go away, and the agent's copy of the message ends with which questions it
+answered (diagnostics: `questions`/`answered_in_chat`, a count). Answers from the question box
+itself and messages from goals, automations and hooks close nothing. The transcript records `question_asked` and `question_answered`
 events so the chat shows them. A non-blocking question needs a `recommended` answer and the run goes on (a question with
 a recommendation is never blocking, whatever the model asks for);
 a blocking one ends the run after that tool batch with a fixed sentence (it stays on the composer

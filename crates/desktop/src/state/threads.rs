@@ -273,9 +273,8 @@ impl AppState {
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .contains_key(&run_id);
-        if !from_server && !automation_run {
-            self.reset_hook_wakes(&thread_id);
-        }
+        let person = !from_server && !automation_run;
+        let answered = self.person_message_arrived(sink.as_ref(), &thread_id, &text, person);
         let settings = self.inner.settings.get().await;
         let mut history = Vec::new();
         let project_root = {
@@ -380,7 +379,7 @@ impl AppState {
         // message, so a long chat holds no copies and a turn follows the latest version.
         themis_core::configuration::load_instructions(&runtime_configuration, &project_root)
             .map_err(|e| format!("repository instructions: {e:#}"))?;
-        let resolved_text = format!("{resolved_text}{manifest}");
+        let resolved_text = format!("{resolved_text}{manifest}{answered}");
         let display_text = format!("{text}{manifest}");
         let mut plugins: Vec<_> = store
             .list()
