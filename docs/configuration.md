@@ -592,7 +592,8 @@ answer at most 10,000. Asking again on an open `topic`, or with the same
 wording, updates that question. The transcript records `question_asked` and `question_answered`
 events so the chat shows them. A non-blocking question needs a `recommended` answer and the run goes on (a question with
 a recommendation is never blocking, whatever the model asks for);
-a blocking one ends the run after that tool batch with a fixed sentence, and in goal mode the
+a blocking one ends the run after that tool batch with a fixed sentence (it stays on the composer
+for the approval timeout, then moves into its turn; nothing starts until it is answered), and in goal mode the
 goal waits until that question is answered (answers to other questions run but leave it
 waiting). `answer_question` (`threadId`, `questionId`, `answer`) delivers the answer like a
 steer when a run is going (unread, it returns to the front of the queue), otherwise first in

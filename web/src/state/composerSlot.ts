@@ -35,15 +35,24 @@ export function usePlacements(): ReadonlyMap<string, Placement> {
   return useSyncExternalStore(subscribe, () => placed);
 }
 
-/** Whether an unanswered question is on the composer at `now`: a blocking one always
- *  (the work waits for it); another until it is put back into its turn or
- *  `QUESTION_OPEN_MS` passes, unless the person opened it again. */
-export function questionOnComposer(question: Question, placements: ReadonlyMap<string, Placement>, now: number): boolean {
+/** How long a blocking question waits on the composer by default: the approval timeout's
+ *  default (Settings › Permissions › Approval timeout, 10 minutes). */
+export const BLOCKING_OPEN_MS = 600 * 1000;
+
+/** How long an unanswered question stays on the composer: `QUESTION_OPEN_MS`, or for one the
+ *  work waits on, the approval timeout (`blockingMs`). Then it moves into its turn as one line
+ *  and nothing starts; answering it there still starts the next turn. */
+export function openFor(question: Question, blockingMs: number): number {
+  return question.blocking ? blockingMs : QUESTION_OPEN_MS;
+}
+
+/** Whether an unanswered question is on the composer at `now`: until it is put back into its
+ *  turn or its wait (`openFor`) passes, unless the person opened it again. */
+export function questionOnComposer(question: Question, placements: ReadonlyMap<string, Placement>, now: number, blockingMs = BLOCKING_OPEN_MS): boolean {
   if (question.answer !== undefined) return false;
-  if (question.blocking) return true;
   const placement = placements.get(question.id);
   if (placement) return placement === "composer";
-  return now - question.asked_at < QUESTION_OPEN_MS;
+  return now - question.asked_at < openFor(question, blockingMs);
 }
 
 export type ComposerItem =
@@ -52,8 +61,8 @@ export type ComposerItem =
 
 /** What the composer shows, one at a time: approvals first (the run waits on them), then
  *  questions, oldest first; `waiting` is how many more are behind it. */
-export function composerQueue(approvals: ApprovalRequest[], questions: Question[], placements: ReadonlyMap<string, Placement>, now: number): { current: ComposerItem | null; waiting: { approvals: number; questions: number } } {
-  const open = questions.filter(question => questionOnComposer(question, placements, now)).sort((a, b) => a.asked_at - b.asked_at);
+export function composerQueue(approvals: ApprovalRequest[], questions: Question[], placements: ReadonlyMap<string, Placement>, now: number, blockingMs = BLOCKING_OPEN_MS): { current: ComposerItem | null; waiting: { approvals: number; questions: number } } {
+  const open = questions.filter(question => questionOnComposer(question, placements, now, blockingMs)).sort((a, b) => a.asked_at - b.asked_at);
   const items: ComposerItem[] = [
     ...approvals.map(request => ({ kind: "approval" as const, request })),
     ...open.map(question => ({ kind: "question" as const, question })),

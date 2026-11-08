@@ -421,7 +421,7 @@ fn settings_defaults_and_shapes_match_ts() {
             "default_model": "muse-spark-1.3-contributor",
             "max_total_turns": 200,
             "context_token_cap": 0,
-            "approval_timeout_seconds": 300,
+            "approval_timeout_seconds": 600,
             "confirm_reads": false,
             "recent_roots": [],
             "concurrency_limit": 3,

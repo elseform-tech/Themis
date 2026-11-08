@@ -125,7 +125,11 @@ another option or write your own.
   answer, the question leaves the composer and stays in its turn, where it was
   asked, as one line with your answer. **Skip** (or five minutes without an
   answer) also moves it back into its turn as an **Open question** line; click
-  that line to put it on the composer again and answer whenever you like.
+  that line to put it on the composer again and answer whenever you like. A
+  question the work waits on has no Skip; it stays on the composer for the
+  approval timeout (Settings › Permissions, 10 minutes by default), then moves
+  into its turn the same way. Nothing starts while it waits: answering it later
+  starts the next turn.
 - **Fold to icons** (the chevron) turns the goal, the approval and the questions
   into one row of small pills: the goal, the waiting
   command, the number of questions. Click any pill to unfold. The fold is
@@ -410,7 +414,7 @@ chat grants. Grants live in the chat's own file, `chat_grants/<chat id>.json` in
 folder; to undo one, remove its entry (or delete the file) or start a new chat. Enabling an MCP
 connection is the permission to start it, so no start prompt appears.
 
-Approval timeouts deny pending requests and remove the box with a short note. Reopening the app restores requests still pending in the running backend. With no explicit approval
+An approval box nobody answers within the approval timeout (Settings › Permissions, 10 minutes by default) is denied: the box leaves the composer with a short note and stays in its turn as one line, "not run · nobody answered in time", and the agent is told nobody answered, so it finishes what needs no approval and says what was left undone. Reopening the app restores requests still pending in the running backend. With no explicit approval
 configuration, **Ask before read tools** still controls reads. **YOLO** means no
 approval prompts and no sandbox: it bypasses harness approval and tool
 restrictions, including the filesystem root and Git allowlist, and its commands
@@ -721,7 +725,7 @@ key. Keep Steps per reply low when testing long tasks.
 
 **What are the limits?**
 Steps per reply caps the steps one reply may take; Working memory caps the context the model keeps in view (Auto follows the model); Chats at once (`concurrency_limit`) caps how many chats work at the same time;
-approval dialogs deny after the configured timeout (default 5 minutes); each shell invocation captures at most
+approval dialogs deny after the configured timeout (default 10 minutes, at most 10); each shell invocation captures at most
 32 KiB of output; provider HTTP calls time out after 120 s.
 
 **Where are my keys?**

@@ -59,6 +59,8 @@ pub enum Approval {
     /// Refused by Auto mode's reviewer; the reason and a safer way go back to the agent
     /// (see [`take_review_note`]).
     DenyReviewed,
+    /// Refused because nobody answered the approval box before its wait ran out.
+    DenyTimedOut,
 }
 
 impl Approval {
@@ -68,8 +70,18 @@ impl Approval {
     pub const fn is_denied(self) -> bool {
         matches!(
             self,
-            Self::Deny | Self::DenyForNewMessage | Self::DenyReviewed
+            Self::Deny | Self::DenyForNewMessage | Self::DenyReviewed | Self::DenyTimedOut
         )
+    }
+
+    /// How a refused tool result starts: a box nobody answered is never called a refusal, so
+    /// the agent does not tell the person they said no.
+    #[must_use]
+    pub const fn refusal_prefix(self) -> &'static str {
+        match self {
+            Self::DenyTimedOut => "not run, nobody answered the approval for",
+            _ => "approval denied for",
+        }
     }
 
     /// The guidance a refusal carries in the tool result.
@@ -77,6 +89,7 @@ impl Approval {
     pub const fn refusal_note(self) -> &'static str {
         match self {
             Self::DenyForNewMessage => crate::prompts::TOOL_DENIED_NEW_MESSAGE,
+            Self::DenyTimedOut => crate::prompts::TOOL_DENIED_TIMED_OUT,
             _ => REFUSAL_NOTE,
         }
     }
@@ -202,6 +215,13 @@ fn check_decision(decision: Approval, action: &ToolAction) -> Result<(), ToolCal
             action.summary,
             take_review_note(action).unwrap_or_else(|| REFUSAL_NOTE.to_owned())
         ))),
+        Approval::DenyTimedOut => Err(tool_error(format!(
+            "{} '{}': {} {}",
+            Approval::DenyTimedOut.refusal_prefix(),
+            action.tool,
+            action.summary,
+            Approval::DenyTimedOut.refusal_note()
+        ))),
         denied @ (Approval::Deny | Approval::DenyForNewMessage) => Err(tool_error(format!(
             "approval denied for '{}': {} {}",
             action.tool,
@@ -304,4 +324,53 @@ pub(crate) fn parse_tool_args<T: serde::de::DeserializeOwned>(
         }
         None => format!("{tool}: invalid arguments: {error}"),
     }))
+}
+
+#[cfg(test)]
+mod timed_out_tests {
+    use super::*;
+
+    struct Answers(Approval);
+    impl ApprovalHook for Answers {
+        fn approve(&self, _action: &ToolAction) -> Approval {
+            self.0
+        }
+    }
+
+    fn write() -> ToolAction {
+        ToolAction {
+            display: None,
+            command: Vec::new(),
+            tool: "write_file".into(),
+            summary: "write a.txt".into(),
+            risk: RiskLevel::Write,
+        }
+    }
+
+    /// A box nobody answered is a refusal, but the agent is told that nobody answered (finish
+    /// the rest, say what was left), not that the person said no (stop and ask).
+    #[test]
+    fn a_box_nobody_answered_tells_the_agent_so() {
+        assert!(Approval::DenyTimedOut.is_denied());
+        let error = check_approval(&Answers(Approval::DenyTimedOut), &write())
+            .unwrap_err()
+            .to_string();
+        assert!(
+            error.contains(crate::prompts::TOOL_DENIED_TIMED_OUT),
+            "{error}"
+        );
+        assert!(!error.contains(REFUSAL_NOTE), "{error}");
+        assert!(
+            error.contains("not run, nobody answered"),
+            "never called a refusal: {error}"
+        );
+        let refused = check_approval(&Answers(Approval::Deny), &write())
+            .unwrap_err()
+            .to_string();
+        assert!(refused.contains(REFUSAL_NOTE), "{refused}");
+        assert_eq!(
+            crate::runtime::ApprovalDecision::from(Approval::DenyTimedOut),
+            crate::runtime::ApprovalDecision::TimedOut
+        );
+    }
 }

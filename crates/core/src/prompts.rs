@@ -360,6 +360,9 @@ pub const TOOL_EXCERPT_WARNING: &str = include_str!("../builtins/prompts/tool-ex
 /// Refusal guidance added to every denied tool call.
 pub const TOOL_REFUSAL: &str = include_str!("../builtins/prompts/tool-refusal.md");
 /// Note on a call denied because the person steered a new message in while it waited.
+/// The refusal note when nobody answered an approval box in time.
+pub const TOOL_DENIED_TIMED_OUT: &str =
+    include_str!("../builtins/prompts/tool-denied-timed-out.md");
 pub const TOOL_DENIED_NEW_MESSAGE: &str =
     include_str!("../builtins/prompts/tool-denied-new-message.md");
 /// Note when a process that detached from a finished command kept its output open.

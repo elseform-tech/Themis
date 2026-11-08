@@ -13,8 +13,9 @@ use crate::sink::EventSink;
 use crate::types::{ApprovalExpired, ApprovalRequest, RiskLevel};
 
 /// How long [`DesktopApprovalHook::approve`] waits for a UI decision before
-/// denying (~300s per the bridge contract).
-pub const APPROVAL_TIMEOUT: Duration = Duration::from_secs(300);
+/// denying, unless Settings › Permissions › Approval timeout says otherwise.
+pub const APPROVAL_TIMEOUT: Duration =
+    Duration::from_secs(crate::types::default_approval_timeout_seconds() as u64);
 
 /// One outstanding approval dialog: the owning thread plus the rendezvous the
 /// decision arrives on.
@@ -121,6 +122,7 @@ impl DesktopApprovalHook {
             Some(Approval::Deny) => "deny",
             Some(Approval::DenyForNewMessage) => "new_message",
             Some(Approval::DenyReviewed) => "reviewed",
+            Some(Approval::DenyTimedOut) => "timed_out",
             None => "none",
         };
         let _ = context.log.append_with_level(
@@ -290,7 +292,7 @@ impl DesktopApprovalHook {
                     approval_id,
                     steered: false,
                 });
-                Approval::Deny
+                Approval::DenyTimedOut
             }
         }
     }
@@ -375,7 +377,7 @@ mod tests {
             summary: "run git".into(),
             risk: CoreRisk::Execute,
         };
-        assert_eq!(hook.approve(&git), Approval::Deny);
+        assert_eq!(hook.approve(&git), Approval::DenyTimedOut);
         let Ok(TestEvent::Approval(request)) = rx.try_recv() else {
             panic!("expected an approval request");
         };
@@ -396,7 +398,10 @@ mod tests {
         // The read shortcut does not apply: a dialog is raised (and expires).
         let (hook, mut rx) = hook_with_sink(true);
         let hook = hook.with_timeout(Duration::from_millis(10));
-        assert_eq!(hook.approve(&escape(CoreRisk::Read)), Approval::Deny);
+        assert_eq!(
+            hook.approve(&escape(CoreRisk::Read)),
+            Approval::DenyTimedOut
+        );
         assert!(matches!(rx.try_recv(), Ok(TestEvent::Approval(_))));
         // Unattended runs never ask for it.
         let (hook, mut rx) = hook_with_sink(true);
@@ -436,7 +441,7 @@ mod tests {
             .with_timeout(Duration::from_millis(10));
         assert_eq!(
             hook.approve(&action("read_file", CoreRisk::Read)),
-            Approval::Deny
+            Approval::DenyTimedOut
         );
         assert!(matches!(rx.try_recv(), Ok(TestEvent::Approval(_))));
     }
@@ -493,7 +498,7 @@ mod tests {
         .with_timeout(Duration::from_millis(50));
         assert_eq!(
             hook.approve(&action("shell", CoreRisk::Execute)),
-            Approval::Deny
+            Approval::DenyTimedOut
         );
         // The dialog was raised, the stale entry removed and the UI told so.
         let event = rx.try_recv().expect("approval request emitted");
@@ -636,7 +641,7 @@ mod tests {
         // Ordinary actions still ask (and expire when nobody answers).
         assert_eq!(
             hook.approve(&action("shell", CoreRisk::Execute)),
-            Approval::Deny
+            Approval::DenyTimedOut
         );
         assert!(matches!(rx.try_recv(), Ok(TestEvent::Approval(_))));
     }
@@ -720,7 +725,7 @@ mod tests {
         assert_eq!(handle.join().expect("hook thread"), Approval::AllowAlways);
         assert_eq!(
             hook.approve(&action("shell", CoreRisk::Execute)),
-            Approval::Deny
+            Approval::DenyTimedOut
         );
 
         let text = std::fs::read_to_string(directory.path().join("logs/diagnostics-0.jsonl"))
