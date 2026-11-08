@@ -754,8 +754,8 @@ mod tests {
         let left = state.pending_approvals();
         assert_eq!(left.len(), 1);
         assert_eq!(left[0].thread_id, "other chat");
-        // The other chat's box runs its own course.
-        assert_eq!(other.join().unwrap(), Approval::Deny);
+        // The other chat's box runs its own course: nobody answers it, so it times out.
+        assert_eq!(other.join().unwrap(), Approval::DenyTimedOut);
     }
 
     #[tokio::test(flavor = "multi_thread")]

@@ -1,6 +1,6 @@
 // Pure state model for the Themis app shell. No Tauri/DOM imports —
 // safe to load in node-based unit tests.
-import type { SubagentEntry, ThreadEventEnvelope, ThreadInfo } from "../lib/types";
+import type { ApprovalDecision, SubagentEntry, ThreadEventEnvelope, ThreadInfo } from "../lib/types";
 import type { AppAction, AppState, ChatMessage } from "./reducer/model";
 import { APPROVAL_EXPIRED_NOTE, concurrencyToast, isConcurrencyLimitError, newId, pushToast, toLastMerge } from "./reducer/model";
 import { appendTrace, markTurnRejected, memoryChanges, setThreadRunning, updateSubagent, usedPercent, userMessage } from "./reducer/rowHelpers";
@@ -130,14 +130,7 @@ export function applyThreadEvent(
         })() },
       };
     }
-    case "approval_decided": {
-      return appendTrace(state, threadId, {
-        id: newId("trace"),
-        tool: event.tool,
-        summary: `approval ${event.decision}`,
-        ok: event.decision === "deny" ? false : undefined,
-      });
-    }
+    case "approval_decided": return approvalDecided(state, threadId, runId, event.tool, event.decision);
     case "context_usage":
     case "context_suspended":
     case "background_tasks_changed": return state;
@@ -633,4 +626,30 @@ export function reducer(state: AppState, action: AppAction): AppState {
 /** OpenCode Go can be used: a key is set and OpenCode has not rejected it. */
 export function goUsable(state: Pick<AppState, "secretStatus" | "goKeyCheck">): boolean {
   return state.secretStatus.go && state.goKeyCheck !== "rejected";
+}
+
+/** The line an approval leaves in its turn; a box nobody answered says so. */
+function approvalLine(decision: ApprovalDecision): { summary: string; ok?: boolean } {
+  if (decision === "timed_out") return { summary: "not run · nobody answered in time", ok: false };
+  return { summary: `approval ${decision}`, ok: decision === "deny" ? false : undefined };
+}
+
+/** The step whose approval box nobody answered keeps that in its row, so its turn says
+ *  "Not run · nobody answered in time" rather than a bare failure. */
+function markUnanswered(state: AppState, threadId: string, runId: string | undefined, tool: string): AppState {
+  const rows = ownedRows(state, threadId);
+  for (let i = rows.length - 1; i >= 0; i--) {
+    const row = rows[i]!;
+    if (row.runId === runId && row.tool?.name === tool && row.tool.ok === undefined) {
+      rows[i] = { ...row, tool: { ...row.tool, unanswered: true } };
+      return { ...state, messages: { ...state.messages, [threadId]: rows } };
+    }
+  }
+  return state;
+}
+
+/** An approval decided: a line in the turn, and a box nobody answered marks its step. */
+function approvalDecided(state: AppState, threadId: string, runId: string | undefined, tool: string, decision: ApprovalDecision): AppState {
+  const next = appendTrace(state, threadId, { id: newId("trace"), tool, ...approvalLine(decision) });
+  return decision === "timed_out" ? markUnanswered(next, threadId, runId, tool) : next;
 }

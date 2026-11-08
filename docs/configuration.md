@@ -427,7 +427,16 @@ failing the call.
 The shield offers **YOLO**, **Auto** or **Custom** (default), persisted per thread.
 It has no configuration editor or advanced settings link.
 
-**Auto** never prompts. Rules decide first, exactly as in Custom (a deny rule refuses, an allow
+**Destructive steps ask the person first in Auto and YOLO.** A destructive tool (`delete_file`,
+removals) or a destructive command variant (`rm -rf`, a force push, `git reset --hard`, `git
+clean`, `git branch -D`, a publish, a `themis` delete) waits on an approval box (Allow once or
+Deny, never "in this chat") before the mode's own decision, whatever an allow rule says; a deny
+rule still refuses it without asking. The person's answer decides. With no answer within the
+approval timeout (Settings › Permissions, 10 minutes by default) the mode decides as below: Auto
+applies its rules and reviewer, YOLO runs it. An automation, with nobody to ask, and a non-Git
+project go straight to the mode. Custom asks about these every time anyway.
+
+**Auto** otherwise never prompts. Rules decide first, exactly as in Custom (a deny rule refuses, an allow
 rule or an "allow in this chat" grant proceeds), and Custom's sandbox applies; where Custom
 would ask, a reviewer model decides instead, against the person's own messages in the chat (the
 latest 12, at most 6000 characters), the chat's goal and the project's guidance (at most 3000
@@ -592,7 +601,8 @@ answer at most 10,000. Asking again on an open `topic`, or with the same
 wording, updates that question. The transcript records `question_asked` and `question_answered`
 events so the chat shows them. A non-blocking question needs a `recommended` answer and the run goes on (a question with
 a recommendation is never blocking, whatever the model asks for);
-a blocking one ends the run after that tool batch with a fixed sentence, and in goal mode the
+a blocking one ends the run after that tool batch with a fixed sentence (it stays on the composer
+for the approval timeout, then moves into its turn; nothing starts until it is answered), and in goal mode the
 goal waits until that question is answered (answers to other questions run but leave it
 waiting). `answer_question` (`threadId`, `questionId`, `answer`) delivers the answer like a
 steer when a run is going (unread, it returns to the front of the queue), otherwise first in

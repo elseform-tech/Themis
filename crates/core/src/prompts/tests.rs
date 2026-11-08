@@ -266,6 +266,7 @@ const ALL: &[(&str, &str, &[&str])] = &[
     (TOOL_EXCERPT_WARNING, "tool-excerpt-warning", &[]),
     (TOOL_REFUSAL, "tool-refusal", &[]),
     (TOOL_DENIED_NEW_MESSAGE, "tool-denied-new-message", &[]),
+    (TOOL_DENIED_TIMED_OUT, "tool-denied-timed-out", &[]),
     (TOOL_SHELL_OUTPUT_HELD, "tool-shell-output-held", &[]),
     (
         TOOL_SHELL_LEFTOVERS_STOPPED,

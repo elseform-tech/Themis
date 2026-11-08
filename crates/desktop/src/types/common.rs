@@ -52,7 +52,7 @@ impl From<themis_core::tools::RiskLevel> for RiskLevel {
     }
 }
 
-/// Approval outcome (`ApprovalDecision` in types.ts: `once|chat|deny`).
+/// Approval outcome (`ApprovalDecision` in types.ts: `once|chat|deny|timed_out`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ApprovalDecision {
@@ -62,6 +62,9 @@ pub enum ApprovalDecision {
     #[serde(alias = "always")]
     Chat,
     Deny,
+    /// Nobody answered before the wait ran out (only ever reported, never sent as an answer).
+    #[serde(rename = "timed_out")]
+    TimedOut,
 }
 
 impl ApprovalDecision {
@@ -72,6 +75,7 @@ impl ApprovalDecision {
             Self::Once => themis_core::tools::Approval::AllowOnce,
             Self::Chat => themis_core::tools::Approval::AllowAlways,
             Self::Deny => themis_core::tools::Approval::Deny,
+            Self::TimedOut => themis_core::tools::Approval::DenyTimedOut,
         }
     }
 }
@@ -82,6 +86,7 @@ impl From<CoreApprovalDecision> for ApprovalDecision {
             CoreApprovalDecision::AllowOnce => Self::Once,
             CoreApprovalDecision::AllowAlways => Self::Chat,
             CoreApprovalDecision::Deny => Self::Deny,
+            CoreApprovalDecision::TimedOut => Self::TimedOut,
         }
     }
 }

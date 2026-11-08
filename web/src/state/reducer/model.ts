@@ -229,7 +229,7 @@ export const DEFAULT_SETTINGS: Settings = {
   default_model: DEFAULT_MODEL,
   max_total_turns: 200,
   context_token_cap: 0,
-  approval_timeout_seconds: 300,
+  approval_timeout_seconds: 600,
   confirm_reads: false,
   recent_roots: [],
   concurrency_limit: 3,

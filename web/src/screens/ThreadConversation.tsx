@@ -8,7 +8,7 @@ import { browserOpenUrl } from "../lib/browser";
 import { ANSWER_MARKER, answerOf, type AttachedMedia, type ChangedFile, type Question } from "../lib/types";
 import { hiddenFilesLabel, visibleFiles } from "../lib/hiddenFiles";
 import { QuestionNote, useNowAt } from "./QuestionBox";
-import { placeQuestion, questionOnComposer, QUESTION_OPEN_MS, usePlacements } from "../state/composerSlot";
+import { openFor, placeQuestion, questionOnComposer, usePlacements } from "../state/composerSlot";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { GoalWait } from "./GoalWait";
 import { ResponseBody, ResponseFiles, ResponseLinks } from "../components/ResponseBody";
@@ -363,8 +363,9 @@ function CheckpointDivider({ checkpoint }: { checkpoint: NonNullable<ChatMessage
  *  unanswered, a line that puts it back there. */
 function QuestionRow({ question }: { question: Question }) {
   const placements = usePlacements();
-  const now = useNowAt(question.answer === undefined && !question.blocking ? question.asked_at + QUESTION_OPEN_MS : undefined);
-  return <QuestionNote question={question} onComposer={questionOnComposer(question, placements, now)} onOpen={() => placeQuestion(question.id, "composer")} />;
+  const blockingMs = useApp().state.settings.approval_timeout_seconds * 1000;
+  const now = useNowAt(question.answer === undefined ? question.asked_at + openFor(question, blockingMs) : undefined);
+  return <QuestionNote question={question} onComposer={questionOnComposer(question, placements, now, blockingMs)} onOpen={() => placeQuestion(question.id, "composer")} />;
 }
 
 /** `12s` or `2m 32s`. */
@@ -411,7 +412,7 @@ function Message({ message, threadId, activeRunId, durationMs, skills, plugins, 
             <span aria-hidden="true">{message.tool.ok === undefined ? "◌" : message.tool.ok ? "✓" : "!"}</span>
             {toolDisplayName(message.tool.name, message.tool.label)}
             <span className="themis-tool-status">
-              {message.tool.ok === undefined ? isActiveRun ? "Running" : "Interrupted" : message.tool.ok ? "Done" : "Failed"}
+              {toolStatus(message.tool, isActiveRun)}
             </span>
           </summary>
           <div className="themis-tool-detail">
@@ -450,4 +451,11 @@ function Message({ message, threadId, activeRunId, durationMs, skills, plugins, 
     </div>
     </>
   );
+}
+
+/** A tool row's status word; a step whose box nobody answered says so rather than Failed. */
+function toolStatus(tool: NonNullable<ChatMessage["tool"]>, isActiveRun: boolean): string {
+  if (tool.ok === undefined) return isActiveRun ? "Running" : "Interrupted";
+  if (tool.ok) return "Done";
+  return tool.unanswered ? "Not run · nobody answered in time" : "Failed";
 }

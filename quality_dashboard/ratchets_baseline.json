@@ -48,8 +48,7 @@
  "duplicate_lines_total": 797,
  "files": {
   "crates/core/src/runtime.rs": {
-   "code_lines": 1948,
-   "total_lines": 2025
+   "code_lines": 1914
   },
   "crates/desktop/src/state/run.rs": {
    "code_lines": 1030
@@ -774,7 +773,7 @@
    "lines": 194
   },
   "web/src/screens/ComposerStack.tsx::ComposerStack": {
-   "cyclomatic": 34
+   "cyclomatic": 33
   },
   "web/src/screens/ContextMeter.tsx::ContextMeter": {
    "cognitive": 26,
@@ -892,8 +891,8 @@
    "cyclomatic": 24
   },
   "web/src/screens/ThreadConversation.tsx::Message": {
-   "cognitive": 65,
-   "cyclomatic": 47
+   "cognitive": 57,
+   "cyclomatic": 44
   },
   "web/src/screens/ThreadConversation.tsx::ThreadConversation": {
    "cognitive": 57,
@@ -948,9 +947,9 @@
    "cyclomatic": 22
   },
   "web/src/state/reducer.ts::applyThreadEvent": {
-   "cognitive": 124,
-   "cyclomatic": 119,
-   "lines": 279
+   "cognitive": 122,
+   "cyclomatic": 118,
+   "lines": 272
   },
   "web/src/state/reducer.ts::reducer": {
    "cognitive": 79,

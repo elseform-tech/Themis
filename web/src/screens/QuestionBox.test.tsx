@@ -3,7 +3,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/re
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ANSWER_MARKER, answerOf, type Question } from "../lib/types";
 import { initialState, reducer } from "../state/reducer";
-import { composerQueue, QUESTION_OPEN_MS, questionOnComposer } from "../state/composerSlot";
+import { BLOCKING_OPEN_MS, composerQueue, QUESTION_OPEN_MS, questionOnComposer } from "../state/composerSlot";
 import { QuestionBox, QuestionNote } from "./QuestionBox";
 
 afterEach(() => { cleanup(); vi.useRealTimers(); });
@@ -101,14 +101,26 @@ describe("what the composer shows", () => {
     expect(composerQueue([], [question({ answer: "Tabs" })], none, now).current).toBeNull();
   });
 
-  it("moves a question back into its turn when skipped or after a while, but never a blocking one", () => {
+  it("moves a question back into its turn when skipped or after a while", () => {
     const now = Date.now();
     expect(questionOnComposer(question(), none, now)).toBe(true);
     expect(questionOnComposer(question(), new Map([["q1", "turn"]]), now)).toBe(false);
     expect(questionOnComposer(question({ asked_at: now - QUESTION_OPEN_MS - 1 }), none, now)).toBe(false);
     // Opened again from its turn, it stays until answered.
     expect(questionOnComposer(question({ asked_at: now - 10 * QUESTION_OPEN_MS }), new Map([["q1", "composer"]]), now)).toBe(true);
-    expect(questionOnComposer(question({ blocking: true, asked_at: now - 10 * QUESTION_OPEN_MS }), new Map([["q1", "turn"]]), now)).toBe(true);
+  });
+
+  it("keeps a blocking question on the composer for the approval timeout, then moves it into its turn", () => {
+    const now = Date.now();
+    const blocking = (asked_at: number) => question({ blocking: true, asked_at });
+    // Past the 5 minutes other questions get, but within the approval timeout: still there.
+    expect(questionOnComposer(blocking(now - QUESTION_OPEN_MS - 1), none, now)).toBe(true);
+    expect(questionOnComposer(blocking(now - BLOCKING_OPEN_MS - 1), none, now)).toBe(false);
+    // The wait follows Settings › Permissions › Approval timeout.
+    expect(questionOnComposer(blocking(now - 61_000), none, now, 60_000)).toBe(false);
+    expect(composerQueue([], [blocking(now - 61_000)], none, now, 60_000).current).toBeNull();
+    // Opened again from its turn, it stays until answered.
+    expect(questionOnComposer(blocking(now - 10 * BLOCKING_OPEN_MS), new Map([["q1", "composer"]]), now)).toBe(true);
   });
 });
 

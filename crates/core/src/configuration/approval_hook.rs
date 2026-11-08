@@ -103,6 +103,9 @@ impl ApprovalHook for ConfiguredHook {
     }
 
     fn would_ask(&self, action: &ToolAction) -> bool {
+        if self.asks_first(action) {
+            return true;
+        }
         if action.tool == crate::tools::UNSANDBOXED_TOOL || self.mode != ApprovalMode::Custom {
             return false;
         }
@@ -115,6 +118,36 @@ impl ApprovalHook for ConfiguredHook {
         if action.tool == crate::tools::UNSANDBOXED_TOOL {
             return self.approve_escape(action);
         }
+        if self.asks_first(action) {
+            // Destructive in Auto or YOLO: the person first, whatever the rules allow; with no
+            // answer in time, the mode decides as it always did.
+            match self.interactive.approve(action) {
+                Approval::AllowOnce | Approval::AllowAlways => return Approval::AllowOnce,
+                Approval::DenyTimedOut => {}
+                refused => return refused,
+            }
+        }
+        self.decide(action)
+    }
+}
+impl ConfiguredHook {
+    /// Whether a person is asked first: a destructive action (a destructive tool or a
+    /// destructive variant of a command: `rm -rf`, a force push, `git reset --hard`, a publish,
+    /// a `themis` delete) in Auto or YOLO, unless a deny rule refuses it anyway or nobody can be
+    /// asked (an automation, a non-Git project). Custom already asks about it every time.
+    fn asks_first(&self, action: &ToolAction) -> bool {
+        let destructive = action.risk == RiskLevel::Destructive
+            || crate::tools::is_destructive_variant(&action.command);
+        self.mode != ApprovalMode::Custom
+            && destructive
+            && action.tool != crate::tools::UNSANDBOXED_TOOL
+            && !self.rule_denies(action)
+            && self.interactive.would_ask(action)
+    }
+
+    /// The mode's own decision: YOLO runs what no deny rule refuses; Custom and Auto apply the
+    /// rules and grants, then ask the person (Custom) or the reviewer (Auto).
+    fn decide(&self, action: &ToolAction) -> Approval {
         if self.mode == ApprovalMode::Yolo {
             // No prompts, but a deny rule you wrote still holds.
             return match self.policy.yolo_decision(action) {

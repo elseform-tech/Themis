@@ -124,8 +124,10 @@ pub const fn default_new_chat_mode() -> themis_core::configuration::ApprovalMode
     themis_core::configuration::ApprovalMode::Auto
 }
 
+/// Ten minutes: long enough to come back from a short break, short enough that a run never
+/// hangs for long on an absent person (the most Settings allows).
 pub const fn default_approval_timeout_seconds() -> u32 {
-    300
+    600
 }
 
 impl Default for Settings {
