@@ -280,7 +280,7 @@ async fn a_tampered_plugin_file_never_runs() {
 }
 
 /// Every door to a command meets the guard: a guard on `git push` refuses it through `shell`, in
-/// the background and through the `git` tool (which YOLO lets run anything).
+/// the background and when Git is pointed at a folder first.
 #[tokio::test(flavor = "multi_thread")]
 async fn a_command_guard_holds_on_every_tool_that_runs_commands() {
     let hooks = json!({"PreToolUse": [{"matcher": "Bash", "hooks": [{
@@ -294,8 +294,10 @@ async fn a_command_guard_holds_on_every_tool_that_runs_commands() {
             "shell",
             json!({"command": "git", "args": ["push"], "background": true}),
         ),
-        ("git", json!({"args": ["push"]})),
-        ("git", json!({"args": ["-C", ".", "push"]})),
+        (
+            "shell",
+            json!({"command": "git", "args": ["-C", ".", "push"]}),
+        ),
     ] {
         let app = crate::app(hooks.clone(), &[], calls_once(tool, args.clone())).await;
         run(&app, "push").await;
@@ -314,7 +316,7 @@ async fn a_command_guard_holds_on_every_tool_that_runs_commands() {
             "shell",
             json!({"command": "touch", "args": ["other-ran"], "background": true}),
         ),
-        ("git", json!({"args": ["status"]})),
+        ("shell", json!({"command": "git", "args": ["status"]})),
         ("background_task", json!({"action": "list"})),
         (
             "background_task",
@@ -331,8 +333,6 @@ async fn a_command_guard_holds_on_every_tool_that_runs_commands() {
         ("shell", json!({"command": 5})),
         ("shell", json!({"command": "git", "args": "push"})),
         ("shell", json!({"command": "git", "args": ["push", 5]})),
-        ("git", json!({"args": "push"})),
-        ("git", json!({})),
         ("background_task", json!({"action": "run"})),
         ("background_task", json!({})),
         (
@@ -347,34 +347,11 @@ async fn a_command_guard_holds_on_every_tool_that_runs_commands() {
     }
 }
 
-/// A guard reading Claude's fields finds the `git` tool's command like a shell call's.
+/// A deny rule on `git push` holds in YOLO however the shell call spells it.
 #[tokio::test(flavor = "multi_thread")]
-async fn a_bash_guard_sees_the_git_tool_as_bash() {
-    let hooks = json!({"PreToolUse": [{"matcher": "Bash", "hooks": [{
-        "type": "command", "command": "bash ${CLAUDE_PLUGIN_ROOT}/guard.sh"
-    }]}]});
-    let app = crate::app(
-        hooks,
-        &[("guard.sh", GUARD)],
-        calls_once("git", json!({"args": ["push", "origin"]})),
-    )
-    .await;
-    run(&app, "push").await;
-    let seen: Value =
-        serde_json::from_slice(&std::fs::read(app.project.path().join("seen.json")).unwrap())
-            .unwrap();
-    assert_eq!(seen["tool_name"], "Bash");
-    assert_eq!(seen["tool_input"]["command"], "git push origin");
-    assert!(last_tool_result(&app).await.contains("pushes are frozen"));
-    app.serving.abort();
-}
-
-/// A deny rule on `git push` holds in YOLO through the `git` tool too, not only through `shell`.
-#[tokio::test(flavor = "multi_thread")]
-async fn a_shell_deny_rule_holds_on_the_git_tool_in_yolo() {
+async fn a_shell_deny_rule_holds_on_git_push_in_yolo() {
     for (tool, args) in [
-        ("git", json!({"args": ["push"]})),
-        ("git", json!({"args": ["-C", ".", "push"]})),
+        ("shell", json!({"command": "git", "args": ["push"]})),
         (
             "shell",
             json!({"command": "git", "args": ["push"], "background": true}),
@@ -715,6 +692,9 @@ EOF
 }
 
 /// A guard on paths sees every file a call touches, and refusing any refuses the call.
+/// Moving, copying and deleting run through `shell` (`mv`, `cp`, `rm`), a `Bash` call as in
+/// Claude Code: an `Edit|Write` guard does not see them, and a guard that wants them matches
+/// `Bash` and reads the command.
 #[tokio::test(flavor = "multi_thread")]
 async fn a_path_guard_sees_every_file_a_call_touches() {
     const PATH_GUARD: &str = r#"#!/bin/sh
@@ -738,21 +718,10 @@ exit 0
         ("apply_patch", json!({"patch": patch("secret.txt")}), true),
         ("apply_patch", json!({"patch": deleting}), true),
         (
-            "move_file",
-            json!({"source_path": "fine.txt", "destination_path": "secret.txt"}),
+            "write_file",
+            json!({"file_path": "secret.txt", "content": "b\n"}),
             true,
         ),
-        (
-            "move_file",
-            json!({"source_path": "secret.txt", "destination_path": "elsewhere.txt"}),
-            true,
-        ),
-        (
-            "copy_file",
-            json!({"source_path": "fine.txt", "destination_path": "secret.txt"}),
-            true,
-        ),
-        ("delete_file", json!({"file_path": "secret.txt"}), true),
         ("apply_patch", json!({"patch": patch("other.txt")}), false),
     ] {
         let app = crate::app(

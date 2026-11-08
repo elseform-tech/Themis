@@ -457,7 +457,7 @@ async fn real_plugin(folder: PathBuf) -> App {
         |body| {
             // One call for each message of the person's, so each turn really uses a tool.
             match tool_results(body).len() % 2 {
-                0 => tool_call("c", "list_dir", &json!({"path": "."})),
+                0 => tool_call("c", "shell", &json!({"command": "ls"})),
                 _ => reply("Done."),
             }
         },
