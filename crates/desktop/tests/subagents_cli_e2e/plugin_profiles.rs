@@ -62,8 +62,14 @@ async fn a_plugins_subagent_imports_spawns_and_runs_with_its_instructions() {
         .find(themis_core::prompts::SUBAGENT_READ_ONLY_NOTE)
         .expect("the access note");
     assert!(role_at < access_at, "{system}");
-    // Grep and Glob are the shell, held to commands that only read (`subagent_tools_cli_e2e`).
-    assert_eq!(sorted_tools(child), with_reads(&["read_file", "shell"]));
+    // Grep and Glob are the shell, held to commands that only read (`subagent_tools_cli_e2e`);
+    // on Windows they are the listing and search tools, with no shell.
+    let reviewer: &[&str] = if cfg!(windows) {
+        &["read_file"]
+    } else {
+        &["read_file", "shell"]
+    };
+    assert_eq!(sorted_tools(child), with_reads(reviewer));
     // Its result reached the main agent, and the listing names the profile.
     assert!(all.iter().any(|body| mentions(body, "Reviewed: all fine.")));
     let listed = call(
