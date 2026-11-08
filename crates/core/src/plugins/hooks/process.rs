@@ -52,10 +52,7 @@ const STDERR_LIMIT: usize = 4096;
 
 /// Drains a hook's stderr, keeping up to `limit` bytes of its start so a refusal can give the
 /// reason.
-fn keep_stderr(
-    mut stderr: tokio::process::ChildStderr,
-    limit: usize,
-) -> (Arc<std::sync::Mutex<Vec<u8>>>, tokio::task::JoinHandle<()>) {
+fn keep_stderr(mut stderr: tokio::process::ChildStderr, limit: usize) -> KeptStderr {
     let kept = Arc::new(std::sync::Mutex::new(Vec::new()));
     let filling = Arc::clone(&kept);
     let reader = tokio::spawn(async move {
@@ -100,6 +97,20 @@ impl std::fmt::Display for Failed {
 }
 
 impl std::error::Error for Failed {}
+
+/// The stderr a hook printed, filled in the background up to its limit.
+type KeptStderr = (Arc<std::sync::Mutex<Vec<u8>>>, tokio::task::JoinHandle<()>);
+
+/// What the hook printed on stderr, as kept. A process the hook left behind may hold stderr
+/// open: don't wait for it.
+async fn kept_text(stderr: Option<KeptStderr>) -> String {
+    let Some((kept, reader)) = stderr else {
+        return String::new();
+    };
+    let _ = tokio::time::timeout(std::time::Duration::from_millis(200), reader).await;
+    let kept = kept.lock().unwrap_or_else(|e| e.into_inner());
+    String::from_utf8_lossy(&kept).trim().to_owned()
+}
 
 pub(super) async fn execute(hook: &Hook, root: &Path, payload: &Value) -> anyhow::Result<Value> {
     #[cfg(not(windows))]
@@ -205,14 +216,7 @@ pub(super) async fn execute(hook: &Hook, root: &Path, payload: &Value) -> anyhow
                 };
             }
             if hook.exit_two_blocks && status.code() == Some(2) {
-                let mut reason = String::new();
-                if let Some((kept, reader)) = stderr {
-                    // A process the hook left behind may hold stderr open: don't wait for it.
-                    let _ =
-                        tokio::time::timeout(std::time::Duration::from_millis(200), reader).await;
-                    let kept = kept.lock().unwrap_or_else(|e| e.into_inner());
-                    reason = String::from_utf8_lossy(&kept).trim().to_owned();
-                }
+                let reason = kept_text(stderr).await;
                 if hook.rewake.is_some() {
                     return Err(HookReport::read(&reason, &output).into());
                 }
@@ -222,16 +226,9 @@ pub(super) async fn execute(hook: &Hook, root: &Path, payload: &Value) -> anyhow
                 .into());
             }
             if !status.success() {
-                let mut kept_stderr = String::new();
-                if let Some((kept, reader)) = stderr {
-                    let _ =
-                        tokio::time::timeout(std::time::Duration::from_millis(200), reader).await;
-                    let kept = kept.lock().unwrap_or_else(|e| e.into_inner());
-                    kept_stderr = String::from_utf8_lossy(&kept).trim().to_owned();
-                }
                 return Err(Failed {
                     status: status.to_string(),
-                    stderr: kept_stderr,
+                    stderr: kept_text(stderr).await,
                 }
                 .into());
             }

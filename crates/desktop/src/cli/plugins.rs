@@ -104,11 +104,19 @@ pub async fn run(client: &Client, words: &[String], directory: &Path) -> Result<
             } else if *component!="skill" {
                 request["action"]=json!(if *component=="mcp"{"test_mcp"}else{"test_hook"});
                 request[if *component=="mcp"{"server"}else{"hook"}]=if *component=="mcp"{spec["mcp"].get(name).cloned().ok_or("Unknown connection")?}else{spec["hooks"].as_array().ok_or("Invalid hooks")?.iter().find(|h|h["name"]==*name).cloned().ok_or("Unknown hook")?};
-                if crate::server::in_agent_shell() {return sandboxed_test(&request, project.as_deref()).await;}
             } else { return Err("Use skill verify FILE".into()); }
 
         },
         _=>return Err("Use plugin list|updates|create NAME|show NAME|edit NAME|save FILE|inspect SOURCE [NAME]|import SOURCE [NAME]|export NAME|install NAME@MARKET|update NAME|enable NAME|disable NAME|uninstall NAME; plugin marketplace list|preview SOURCE|add SOURCE [NAME]|enable NAME|disable NAME|changes NAME|browse NAME|refresh NAME|check NAME|remove NAME; skill list|save PLUGIN FILE|verify FILE|delete PLUGIN ID; mcp/hook list PLUGIN|add PLUGIN NAME FILE|update PLUGIN NAME FILE|test PLUGIN NAME|delete PLUGIN NAME. Options: --scope local|global --project PATH --expected REVISION --ref REF --subdirectory PATH --allow-partial. For agent creation: skill create THREAD REQUEST.".into()),
+    }
+    send(client, request, project.as_deref()).await
+}
+
+/// Sends the request, except an agent's hook or MCP test, which runs here in its sandbox.
+async fn send(client: &Client, request: Value, project: Option<&str>) -> Result<Value, String> {
+    let test = matches!(request["action"].as_str(), Some("test_mcp" | "test_hook"));
+    if test && crate::server::in_agent_shell() {
+        return sandboxed_test(&request, project).await;
     }
     client.call("plugin_action", request).await
 }
