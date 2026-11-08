@@ -419,3 +419,27 @@ proptest! {
         let _ = shell_risk(&command);
     }
 }
+
+/// `--help` anywhere makes the CLI print its usage and do nothing else, and a bare `themis hook`
+/// prints its usage too: both are reads, so the agent can look up a command without a prompt.
+#[test]
+fn asking_for_help_is_a_read() {
+    for words in [
+        &["themis", "hook", "--help"][..],
+        &["themis", "hook", "enable", "demo", "guard", "--help"],
+        &["themis", "-h"],
+        &["themis", "plugin", "install", "x@y", "-h"],
+        &["themis", "--data-dir", "/d", "mcp", "--help"],
+        &["themis", "hook"],
+        &["themis", "plugin"],
+    ] {
+        let command = argv(words);
+        assert_eq!(classify(&command), Some(ThemisCall::Read), "{words:?}");
+        assert!(!switches_on_code(&command), "{words:?}");
+    }
+    // Without the flag, switching on stays switching on.
+    assert_eq!(
+        classify(&argv(&["themis", "hook", "enable", "demo", "guard"])),
+        Some(ThemisCall::SwitchOn)
+    );
+}

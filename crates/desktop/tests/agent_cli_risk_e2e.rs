@@ -437,6 +437,40 @@ async fn an_agent_credential_never_switches_a_hook_or_command_server_on_in_any_m
     fx.shut_down().await;
 }
 
+/// `--help` anywhere prints usage and does nothing else, with or without an agent's credential:
+/// `themis hook enable demo probe --help` leaves the hook as it was.
+#[tokio::test(flavor = "multi_thread")]
+async fn help_prints_usage_and_changes_nothing() {
+    let _turn = ONE_SERVER.lock().await;
+    let fx = fixture().await;
+    fx.state
+        .plugin_action(
+            json!({"action": "save", "scope": "global", "spec": {"name": "demo",
+            "hooks": [{"name": "probe", "event": "BeforeTool", "command": "true",
+                "enabled": false}]}}),
+        )
+        .await
+        .unwrap();
+    let thread = fx.thread(ApprovalMode::Custom).await;
+    let token = agent_token(&fx, &thread, false);
+    for agent in [None, Some(token.as_str())] {
+        for words in [
+            &["hook", "--help"][..],
+            &["hook", "enable", "demo", "probe", "--help"],
+            &["plugin", "-h"],
+        ] {
+            let output = cli(&fx, agent, words);
+            let text = String::from_utf8_lossy(&output.stdout);
+            assert!(output.status.success(), "{words:?}: {output:?}");
+            assert!(text.contains("mcp/hook list PLUGIN"), "{words:?}: {text}");
+        }
+    }
+    let general = cli(&fx, None, &["-h"]);
+    assert!(String::from_utf8_lossy(&general.stdout).contains("usage: themis"));
+    assert_eq!(switches(&fx)["hook"], false, "help switched nothing on");
+    fx.shut_down().await;
+}
+
 /// A run credential bound to the fixture's project, with or without a network block.
 fn agent_token(fx: &Fixture, thread: &str, network_blocked: bool) -> String {
     let scope = themis_core::agent_cli::RunScope {

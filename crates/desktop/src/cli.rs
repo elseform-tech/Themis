@@ -85,8 +85,12 @@ pub async fn run() -> Result<(), String> {
         data_dir()?
     };
     let client = Client::new(directory.clone());
-    if words.is_empty() || words == ["--help"] || words == ["-h"] {
-        println!("{}", usage());
+    // `--help` anywhere prints help and does nothing else, so the agent's shell treats it as a read.
+    if words.is_empty() || words.iter().any(|word| word == "--help" || word == "-h") {
+        let integration = words
+            .first()
+            .is_some_and(|word| matches!(word.as_str(), "plugin" | "skill" | "mcp" | "hook"));
+        println!("{}", if integration { plugins::USAGE } else { usage() });
         return Ok(());
     }
     if words == ["--version"] {
