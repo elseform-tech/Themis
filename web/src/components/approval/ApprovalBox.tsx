@@ -1,6 +1,7 @@
 import type { ApprovalDecision, ApprovalRequest } from "../../lib/types";
 import { UNSANDBOXED_TOOL } from "../../lib/types";
 import { SafeText, TokenChip, TokenList } from "./CommandTokens";
+import { CommandFull } from "./CommandView";
 import { ActionSentence, actionParts } from "./plainAction";
 import { Button } from "../primitives/Button";
 import "./ApprovalBox.css";
@@ -69,8 +70,8 @@ export function GrantHint({ request }: { request: ApprovalRequest }) {
   );
 }
 
-/** What the box keeps behind its Details disclosure: where it runs, the secret files and why it asks (the command is
- *  in the lead; what a grant covers shows on the button). Nothing to tell, no Details. The raw tool call is never shown. */
+/** What the box keeps behind its Details disclosure: the whole command, where it runs, the secret files and why it asks
+ *  (what a grant covers shows on the button). Nothing to tell, no Details. The raw tool call is never shown. */
 function ApprovalDetails({ request }: { request: ApprovalRequest }) {
   const { command } = request;
   const outside = request.tool === UNSANDBOXED_TOOL;
@@ -78,10 +79,11 @@ function ApprovalDetails({ request }: { request: ApprovalRequest }) {
   const folder = command?.cwd !== undefined;
   const secrets = Boolean(request.sensitive_files?.length);
   const always = request.grantable === false;
-  if (!folder && !secrets && !outside && !always) return null;
+  if (!command && !secrets && !outside && !always) return null;
   return (
     <details className="themis-approval-details">
       <summary>Details</summary>
+      {command && <CommandFull argv={command.argv} />}
       <dl>
         {folder && <><dt>Folder</dt><dd><TokenChip token={command!.cwd!} full /></dd></>}
         {secrets && <><dt>Secret files</dt><dd><TokenList argv={request.sensitive_files!} /></dd></>}

@@ -43,9 +43,9 @@
 .themis-approval-escape { color: var(--themis-warning); background: var(--themis-raised); border-radius: 3px; padding: 0 2px; font-weight: 600; }
 
 /* A command: a two-line preview in the lead; the whole of it in Details, wrapped, scrolling when very long. */
-.themis-approval-preview { flex: 1; min-width: 0; overflow-x: auto; overflow-y: hidden; white-space: pre; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--themis-text); }
-.themis-approval-full { display: flex; align-items: baseline; gap: 8px; margin: 4px 0; }
-.themis-approval-count { flex: none; color: var(--themis-text-3); }
+.themis-approval-preview { display: -webkit-inline-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; max-width: 100%; vertical-align: top; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--themis-text); overflow-wrap: anywhere; white-space: pre-wrap; }
+.themis-approval-full { display: flex; align-items: flex-start; gap: 8px; margin: 6px 0; }
+.themis-approval-command { flex: 1; min-width: 0; max-height: 12rem; overflow-y: auto; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--themis-text); white-space: pre-wrap; overflow-wrap: anywhere; }
 .themis-approval-destructive { margin-left: 6px; font-family: inherit; font-size: .6875rem; color: var(--themis-danger); white-space: nowrap; }
 .themis-approval-copy { flex: none; padding: 0 4px; border: 0; background: transparent; color: var(--themis-text-2); font: inherit; cursor: pointer; }
 .themis-approval-copy:hover { color: var(--themis-text); }

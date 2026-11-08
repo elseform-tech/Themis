@@ -1,16 +1,19 @@
-/** Reading a command the agent wants to run: the exact text to show and copy, and, for a chain, its parts.
+/** Reading a command the agent wants to run: the exact text to show and copy, a short preview, and, for a chain, its parts.
  *  Everything here is untrusted input (model output): it only splits and labels, and the UI renders it escaped. */
 
 /** One command of a chain: its text as written, and its words for the destructive hint. */
 export interface CommandPart { text: string; words: string[] }
 
 export interface CommandView {
-  /** The exact command, shell-quoted: shown on one line and copied. */
+  /** The exact command, shell-quoted: shown whole in Details and copied. */
   copy: string;
+  /** At most `PREVIEW_CHARS` characters of `copy`, ending with "…" when cut. */
+  preview: string;
   /** The parts of a chain (two or more), for the count and the destructive hint, or null for a single command. */
   parts: CommandPart[] | null;
 }
 
+export const PREVIEW_CHARS = 160;
 const SAFE_WORD = /^[A-Za-z0-9_@%+=:,./-]+$/;
 const CHAIN_TOKENS = new Set(["&&", "||", ";", "|"]);
 const SHELLS = /^(?:.*\/)?(?:sh|bash|zsh|dash)$/;
@@ -91,7 +94,9 @@ export function commandView(argv: string[]): CommandView {
   const copy = shellJoin(argv);
   const isScript = argv.length >= 3 && SHELLS.test(argv[0]) && /^-[a-z]*c$/.test(argv[1]);
   const parts = isScript ? splitScript(argv[2]) : splitArgv(argv);
-  return { copy, parts: parts && parts.length > 1 ? parts : null };
+  const chars = Array.from(copy);
+  const preview = chars.length > PREVIEW_CHARS ? `${chars.slice(0, PREVIEW_CHARS).join("")}…` : copy;
+  return { copy, preview, parts: parts && parts.length > 1 ? parts : null };
 }
 
 const RM_FLAG = /^-[a-zA-Z]*[rRf]/;

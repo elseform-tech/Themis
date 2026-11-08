@@ -95,7 +95,7 @@ describe("ApprovalBox", () => {
   it("names the subagent that asks", () => {
     setup({ ...REQUEST, subagent: { id: "a1", name: "Test gaps" }, command: { argv: ["cargo", "test"] } });
     expect(screen.getByRole("region", { name: "Test gaps (subagent) wants to run a command" })).toBeInTheDocument();
-    expect(lead()).toHaveTextContent(/^Run cargo test\s*Copy in the project root$/);
+    expect(lead()).toHaveTextContent("Run cargo test in the project root");
     cleanup();
     setup({ ...REQUEST, tool: "fetch_url", command: undefined, subagent: { id: "a1", name: "Docs" } });
     expect(screen.getByRole("region", { name: "Docs (subagent) needs approval" })).toBeInTheDocument();
@@ -231,30 +231,34 @@ describe("command display", () => {
   const preview = () => lead().querySelector(".themis-approval-preview")!;
   const details = () => box().querySelector("details")!;
   const folderChip = () => details().querySelector("dd .themis-approval-token")!.textContent;
-  const tag = () => lead().querySelector(".themis-approval-destructive");
-  const count = () => lead().querySelector(".themis-approval-count")?.textContent ?? null;
+  const full = () => details().querySelector(".themis-approval-command")!;
+  const tag = () => details().querySelector(".themis-approval-destructive");
 
-  it("shows the whole command in the lead, never the joined summary, with the folder under Details", () => {
+  it("previews the command in the lead and keeps the whole of it in Details, never the joined summary", () => {
     setup(command(["rm", "-rf", "/"]));
-    expect(lead()).toHaveTextContent(/^Run rm -rf \//);
-    expect(lead()).toHaveTextContent(/in project$/);
-    expect(preview()).toHaveTextContent(/^rm -rf \/$/);
+    expect(lead()).toHaveTextContent(/^Run rm -rf \/ in project$/);
+    expect(full()).toHaveTextContent(/^rm -rf \/$/);
     expect(folderChip()).toBe("/tmp/project");
     expect(box()).not.toHaveTextContent(/run `rm -rf \/`/);
     expect(details().open).toBe(false);
     expect(tag()).toHaveTextContent("destructive");
+    // No grant row: what "Allow in this chat" covers shows only on the button.
+    expect(details()).not.toHaveTextContent(/In this chat/);
   });
 
   it("keeps ['rm','-rf /'] and ['rm','-rf','/'] distinct", () => {
     setup(command(["rm", "-rf /"]));
     expect(preview()).toHaveTextContent(/^rm '-rf \/'$/);
+    expect(full()).toHaveTextContent(/^rm '-rf \/'$/);
   });
 
-  it("makes newline and bidi controls visible on the one line", () => {
+  it("makes newline and bidi controls visible", () => {
     setup(command(["echo", "a\nb", "x‮y"], "/tmp/pro‮ject"));
-    expect(preview().textContent).toContain("⟨U+202E⟩");
-    expect(preview().textContent).toContain("⟨U+000A⟩");
-    expect(preview().textContent).not.toMatch(/[‮\n]/);
+    for (const shown of [preview(), full()]) {
+      expect(shown.textContent).toContain("⟨U+202E⟩");
+      expect(shown.textContent).toContain("⟨U+000A⟩");
+      expect(shown.textContent).not.toMatch(/[‮\n]/);
+    }
     expect(folderChip()).toBe('"/tmp/pro⟨U+202E⟩ject"');
   });
 
@@ -267,57 +271,58 @@ describe("command display", () => {
   it("shows the `git push --force` command, tagged destructive, and no grant for it", () => {
     const argv = ["git", "push", "--force", "origin", "main"];
     setup({ ...command(argv, "/repo"), grant_scope: { argv, covers_further_args: false }, risk: "destructive", grantable: false });
-    expect(preview()).toHaveTextContent(/^git push --force origin main$/);
+    expect(lead()).toHaveTextContent(/^Run git push --force origin main in repo$/);
     expect(tag()).not.toBeNull();
     expect(details()).toHaveTextContent("This kind of action always asks");
     expect(screen.queryByRole("button", { name: /Allow in this chat/ })).toBeNull();
   });
 
-  it("says the project root in words when the call has no cwd, and has no Details then", () => {
+  it("says the project root in words when the call has no cwd", () => {
     setup({ ...REQUEST, tool: "shell", summary: "call `shell` with {}", command: { argv: ["ls", "-la"] } });
-    expect(lead()).toHaveTextContent(/^Run ls -la.*in the project root$/);
+    expect(lead()).toHaveTextContent(/^Run ls -la in the project root$/);
     expect(tag()).toBeNull();
-    expect(box().querySelector("details")).toBeNull();
     expect(box()).not.toHaveTextContent(/call `shell` with/);
   });
 
-  it("keeps a long command whole on one line, never cut", () => {
+  it("cuts a long command in the lead with … and keeps it whole in Details", () => {
     setup(command(["git", "commit", "-m", "msg"], "/repo", true));
     expect(lead()).toHaveTextContent(/in repo in the background$/);
     cleanup();
     const long = "x".repeat(200);
     setup(command(["echo", ...Array.from({ length: 20 }, (_, i) => `a${i}`), long]));
-    expect(preview().textContent!.endsWith(long)).toBe(true);
-    expect(preview().textContent).not.toContain("…");
+    expect(preview().textContent).toHaveLength(161);
+    expect(preview().textContent!.endsWith("…")).toBe(true);
+    expect(full().textContent!.endsWith(long)).toBe(true);
+    expect(full().textContent).not.toContain("…");
   });
 
-  it("keeps a chain as written on one line, pipes and && included, counts it and tags it destructive", () => {
+  it("keeps a chain whole as written in Details, pipes and && included, and counts it in the lead", () => {
     const script = "cd web && npm ci && npm test | tee out.log; rm -rf build || git status";
     setup(command(["bash", "-c", script]));
-    expect(preview()).toHaveTextContent(`bash -c '${script}'`);
-    expect(count()).toBe("6 commands");
+    expect(lead()).toHaveTextContent(/\(6 commands\) in project$/);
+    expect(full()).toHaveTextContent(`bash -c '${script}'`);
+    expect(details().querySelectorAll(".themis-approval-command")).toHaveLength(1);
     expect(tag()).not.toBeNull();
-    expect(box().querySelector(".themis-approval-chain")).toBeNull();
   });
 
   it("does not count operators inside quotes", () => {
     setup(command(["sh", "-c", `echo "a && b" && echo 'c; d'`]));
-    expect(count()).toBe("2 commands");
+    expect(lead()).toHaveTextContent("(2 commands)");
   });
 
   it("shows a script it cannot split as written, with no count", () => {
     setup(command(["bash", "-c", "for f in $(ls); do rm \"$f\"; done"]));
-    expect(preview()).toHaveTextContent(`for f in $(ls); do rm "$f"; done`);
-    expect(count()).toBeNull();
+    expect(full()).toHaveTextContent(`for f in $(ls); do rm "$f"; done`);
+    expect(lead()).not.toHaveTextContent(/commands\)/);
   });
 
   it("copies the exact command", async () => {
     const writeText = vi.fn().mockResolvedValue(undefined);
     Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText } });
     setup(command(["bash", "-c", "echo 'it''s' && rm -rf /tmp/x"]));
-    fireEvent.click(within(lead()).getByRole("button", { name: "Copy" }));
+    fireEvent.click(within(details()).getByRole("button", { name: "Copy" }));
     expect(writeText).toHaveBeenCalledWith(String.raw`bash -c 'echo '\''it'\'''\''s'\'' && rm -rf /tmp/x'`);
-    expect(await within(lead()).findByRole("button", { name: "Copied" })).toBeInTheDocument();
+    expect(await within(details()).findByRole("button", { name: "Copied" })).toBeInTheDocument();
   });
 
   it("asks to run a sandbox-blocked command outside the sandbox with the same three buttons, the reason under Details", () => {
@@ -330,7 +335,7 @@ describe("command display", () => {
       command: { argv, cwd: "/repo", sandbox_blocked: "writing to /Users/me/x is blocked\u202E: only the project is writable" },
     });
     expect(screen.getByRole("region", { name: "Run outside the sandbox?" })).toBeInTheDocument();
-    expect(lead()).toHaveTextContent(/^Run touch \/Users\/me\/x\s*Copy in repo$/);
+    expect(lead()).toHaveTextContent(/^Run touch \/Users\/me\/x in repo$/);
     const details = box().querySelector("details")!;
     expect(within(details).getByText(/The sandbox blocked it/)).toHaveTextContent("writing to /Users/me/x is blocked⟨U+202E⟩: only the project is writable. Outside the sandbox");
     expect(tooltip()).toHaveTextContent(/run outside the sandbox in later runs of this chat/);

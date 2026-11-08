@@ -2,9 +2,20 @@ import { useState } from "react";
 import { SafeText } from "./CommandTokens";
 import { commandView, looksDestructive } from "./commandChain";
 
-/** The lead's command, exactly as the agent wrote it: one line (pipes, `&&` and all, never split or wrapped) that
- *  scrolls sideways when long, how many commands a chain holds, a destructive hint, and Copy for the exact text. */
+/** The lead's short preview: "…" when cut, and how many commands a chain holds (the whole command is in Details). */
 export function CommandPreview({ argv }: { argv: string[] }) {
+  const view = commandView(argv);
+  return (
+    <>
+      <code className="themis-approval-preview"><SafeText text={view.preview} max={Infinity} /></code>
+      {view.parts && ` (${view.parts.length} commands)`}
+    </>
+  );
+}
+
+/** The whole command in Details, exactly as written: one piece (pipes and `&&` kept, never split into lines),
+ *  wrapping and scrolling top to bottom when long, a destructive hint, and Copy for the exact text. */
+export function CommandFull({ argv }: { argv: string[] }) {
   const view = commandView(argv);
   const [copied, setCopied] = useState<"" | "Copied" | "Select to copy">("");
   async function copy() {
@@ -12,11 +23,10 @@ export function CommandPreview({ argv }: { argv: string[] }) {
   }
   const destructive = (view.parts ?? [{ words: argv }]).some(part => looksDestructive(part.words));
   return (
-    <span className="themis-approval-full">
-      <code className="themis-approval-preview" tabIndex={0}><SafeText text={view.copy} max={Infinity} /></code>
+    <div className="themis-approval-full">
+      <code className="themis-approval-command" tabIndex={0}><SafeText text={view.copy} max={Infinity} /></code>
       {destructive && <span className="themis-approval-destructive" title="Looks like it discards work (a hint)">destructive</span>}
       <button type="button" className="themis-approval-copy" onClick={() => void copy()}>{copied || "Copy"}</button>
-      {view.parts && <span className="themis-approval-count">{view.parts.length} commands</span>}
-    </span>
+    </div>
   );
 }
