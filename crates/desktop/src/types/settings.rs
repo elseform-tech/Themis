@@ -74,7 +74,7 @@ pub struct Settings {
     #[serde(default)]
     pub config_editor: String,
     /// The approval mode a new chat starts in (Settings › Permissions); each chat can change it.
-    #[serde(default)]
+    #[serde(default = "default_new_chat_mode")]
     pub default_approval_mode: themis_core::configuration::ApprovalMode,
     /// The Settings › Secrets secret OpenCode Go uses (Settings › Models › Connections).
     #[serde(default = "default_go_secret")]
@@ -117,6 +117,13 @@ pub const fn default_max_total_turns() -> u32 {
     200
 }
 
+/// New chats start in Auto: a reviewer checks risky steps, the person is asked only when it
+/// blocks (and before destructive steps). YOLO and Custom stay one click away on the shield.
+/// Chats keep the mode they were saved with.
+pub const fn default_new_chat_mode() -> themis_core::configuration::ApprovalMode {
+    themis_core::configuration::ApprovalMode::Auto
+}
+
 pub const fn default_approval_timeout_seconds() -> u32 {
     300
 }
@@ -146,7 +153,7 @@ impl Default for Settings {
             completion_haptic: false,
             goal_notifications: default_goal_notifications(),
             config_editor: String::new(),
-            default_approval_mode: Default::default(),
+            default_approval_mode: default_new_chat_mode(),
             go_secret: default_go_secret(),
             onboarded: false,
         }
