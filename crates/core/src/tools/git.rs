@@ -11,12 +11,14 @@ pub struct GitArgs {
 ///
 /// Allowlist: `status`, `diff`, `log`, `show` are auto-allowed
 /// ([`RiskLevel::Read`]); `add`, `commit`, `checkout`, `branch` require
-/// approval ([`RiskLevel::Write`]); everything else is denied outright.
+/// approval ([`RiskLevel::Write`]), `fetch`/`pull`/`push` talk to a remote
+/// ([`RiskLevel::Network`]), destructive variants (a force push, `pull --rebase`, `merge
+/// --abort`) are [`RiskLevel::Destructive`]; everything else is denied outright.
 /// The child runs with a scrubbed environment and a [`SHELL_TIMEOUT_SECS`]
 /// kill deadline (shared runner with [`ShellTool`]).
 #[tool(
     name = "git",
-    description = "Run allowlisted git subcommands (status/diff/log/show auto-allowed; add/commit/checkout/branch need approval; all else denied).",
+    description = "Run allowlisted git subcommands (status/diff/log/show auto-allowed; add/commit/checkout/branch/merge/fetch/pull/push need approval; force pushes and other destructive variants are asked about every time; all else denied).",
     input = GitArgs,
 )]
 pub struct GitTool {
@@ -72,9 +74,13 @@ impl ToolRuntime for GitTool {
         let destructive = is_destructive_variant(&command);
         let risk = match subcommand {
             _ if self.unrestricted => RiskLevel::Execute,
-            "checkout" | "branch" | "commit" if destructive => RiskLevel::Destructive,
+            "checkout" | "branch" | "commit" | "merge" | "pull" | "push" if destructive => {
+                RiskLevel::Destructive
+            }
             "status" | "diff" | "log" | "show" => RiskLevel::Read,
-            "add" | "commit" | "checkout" | "branch" => RiskLevel::Write,
+            "add" | "commit" | "checkout" | "branch" | "merge" => RiskLevel::Write,
+            // Talks to a remote: refused under `sandbox.network: "block"`.
+            "fetch" | "pull" | "push" => RiskLevel::Network,
             other => return Err(tool_error(git_refusal(other))),
         };
         let action = ToolAction {

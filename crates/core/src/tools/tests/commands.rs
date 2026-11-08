@@ -793,7 +793,7 @@ async fn git_allowlist_denies_unknown_subcommands() {
     let (_tmp, root) = rooted_case();
     let tool = GitTool::new(root, allow_all());
     let err = tool
-        .execute(json!({ "args": ["push", "origin", "main"] }))
+        .execute(json!({ "args": ["rebase", "main"] }))
         .await
         .unwrap_err();
     assert!(err.to_string().contains("denied"), "{err}");
@@ -811,16 +811,34 @@ async fn git_tool_reports_argv_and_escalates_forced_variants() {
         vec!["branch", "-D", "x"],
         vec!["checkout", "--", "."],
         vec!["commit", "--amend", "--no-edit"],
+        vec!["push", "origin", "main"],
+        vec!["push", "--force"],
+        vec!["fetch"],
+        vec!["pull", "--rebase"],
+        vec!["merge", "feature"],
+        vec!["merge", "--abort"],
     ] {
         let _ = tool.execute(json!({ "args": args })).await;
     }
     // Denied by the allowlist before any approval is consulted.
     assert!(tool
-        .execute(json!({"args": ["push", "--force"]}))
+        .execute(json!({"args": ["reset", "--hard"]}))
         .await
         .is_err());
     let seen = hook.seen();
-    assert_eq!(seen.len(), 6);
+    assert_eq!(seen.len(), 12);
+    let risks: Vec<RiskLevel> = seen[6..].iter().map(|action| action.risk).collect();
+    assert_eq!(
+        risks,
+        [
+            RiskLevel::Network,
+            RiskLevel::Destructive,
+            RiskLevel::Network,
+            RiskLevel::Destructive,
+            RiskLevel::Write,
+            RiskLevel::Destructive
+        ]
+    );
     assert_eq!(seen[4].risk, RiskLevel::Destructive);
     assert_eq!(seen[5].risk, RiskLevel::Destructive);
     assert_eq!(seen[0].risk, RiskLevel::Read);

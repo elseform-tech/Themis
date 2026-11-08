@@ -645,8 +645,11 @@ an allow rule that does not name the variant itself:
 - Recursive `rm` (`-r`, `-R`, `--recursive`, or a cluster such as `-rf`).
 
 These variants carry the risk class `destructive` for `shell` calls too (the `git` tool
-also escalates destructive `checkout`, `branch` and `commit` calls, and its `status`, `diff`,
-`log` and `show` calls with only output-shaping flags carry `read`; other `git` calls `write`), so a rule with
+also escalates destructive `checkout`, `branch`, `commit`, `merge` (`--abort`), `pull`
+(`--rebase`, `--force`) and `push` (forced, `--delete`, `--mirror`, `+ref`) calls, and its
+`status`, `diff`, `log` and `show` calls with only output-shaping flags carry `read`; `fetch`,
+`pull` and `push` carry `network`, so `sandbox.network: "block"` refuses them; other `git`
+calls `write`), so a rule with
 `"risk": "execute"` does not cover them. So a rule `["git","push"]` allows
 `git push origin main` but `git push --force` falls through to later rules and the
 default (ask; denied when unattended). A rule such as `["git","push","--force"]` is

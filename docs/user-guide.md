@@ -464,6 +464,13 @@ the project, under their reply; click one to open the viewer.
 
 ### The sandbox
 
+The agent's built-in git tool runs `status`, `diff`, `log` and `show` freely,
+and `add`, `commit`, `checkout`, `branch`, `merge`, `fetch`, `pull` and `push`
+with approval: Custom asks (Allow in this chat covers later ordinary pushes or
+merges), Auto's reviewer decides, YOLO runs them. A force push, `pull --rebase`
+or `merge --abort` is asked about every time (a question box first in Auto and
+YOLO). A network block refuses fetch, pull and push.
+
 Commands the agent runs (shell commands, background tasks, the git tool and
 automation checks) run inside an operating-system sandbox in Custom (in YOLO it
 only keeps Themis' own settings read-only): Seatbelt on macOS, bubblewrap or

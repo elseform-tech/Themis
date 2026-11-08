@@ -155,12 +155,14 @@ pub fn git_call_risk(args: &serde_json::Value) -> RiskLevel {
     if is_destructive_variant(&argv) {
         return RiskLevel::Destructive;
     }
-    let read_only = matches!(
-        argv.get(1).map(String::as_str),
-        Some("status" | "diff" | "log" | "show")
-    ) && argv[2..].iter().all(|argument| git_read_argument(argument));
+    let subcommand = argv.get(1).map(String::as_str);
+    let read_only = matches!(subcommand, Some("status" | "diff" | "log" | "show"))
+        && argv[2..].iter().all(|argument| git_read_argument(argument));
     if read_only {
         RiskLevel::Read
+    } else if matches!(subcommand, Some("fetch" | "pull" | "push")) {
+        // Talks to a remote: refused under `sandbox.network: "block"`.
+        RiskLevel::Network
     } else {
         RiskLevel::Write
     }
@@ -192,8 +194,9 @@ fn git_read_argument(argument: &str) -> bool {
 }
 
 /// The git subcommands the restricted git tool runs (YOLO runs any).
-const GIT_ALLOWED: [&str; 8] = [
-    "status", "diff", "log", "show", "add", "commit", "checkout", "branch",
+const GIT_ALLOWED: [&str; 12] = [
+    "status", "diff", "log", "show", "add", "commit", "checkout", "branch", "merge", "fetch",
+    "pull", "push",
 ];
 
 pub(super) fn git_refusal(subcommand: &str) -> String {

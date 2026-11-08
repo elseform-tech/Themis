@@ -114,6 +114,10 @@ fn git_destructive(args: &[String]) -> bool {
         "branch" => any(&["force"], "DfMC"),
         "tag" => any(&["delete", "force"], "df"),
         "commit" => any(&["amend"], ""),
+        // Rebasing local commits on top of the remote rewrites them; a forced pull overwrites.
+        "pull" => any(&["rebase", "force"], "rf"),
+        // Throwing away a merge in progress discards the conflict fixes made so far.
+        "merge" => any(&["abort"], ""),
         "stash" => matches!(first_positional, Some("drop" | "clear")),
         "reflog" => matches!(first_positional, Some("expire" | "delete")),
         "worktree" => matches!(first_positional, Some("remove")) && any(&["force"], "f"),
