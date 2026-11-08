@@ -153,8 +153,8 @@ async fn a_budget_too_small_for_the_work_stops_with_advice() {
     assert!(!budgets.is_empty());
 }
 
-/// A budget that leaves the run no room after its instructions and tools (16k since the tools grew
-/// past 10k tokens) stops before the first request, saying how much they need, instead of failing
+/// A budget that leaves the run no room after its instructions and tools (12k: 16k fitted once the
+/// browser became one tool) stops before the first request, saying how much they need, instead of failing
 /// checkpoint after checkpoint. Found by the verify eval on 2026-11-05.
 #[tokio::test(flavor = "multi_thread")]
 async fn a_budget_the_instructions_overflow_stops_at_once_with_advice() {
@@ -163,7 +163,7 @@ async fn a_budget_the_instructions_overflow_stops_at_once_with_advice() {
     std::fs::create_dir(project.path().join(".themis")).unwrap();
     std::fs::write(
         project.path().join(".themis/config.jsonc"),
-        r#"{"context_token_budget":16000}"#,
+        r#"{"context_token_budget":12000}"#,
     )
     .unwrap();
     let provider = MockServer::builder().start().await;
@@ -216,7 +216,7 @@ async fn a_budget_the_instructions_overflow_stops_at_once_with_advice() {
     assert_eq!(terminal["kind"], "failed", "{terminal}");
     let error = terminal["error"].as_str().unwrap();
     assert!(
-        error.starts_with("Stopped: the context budget of 16,000 tokens is too small."),
+        error.starts_with("Stopped: the context budget of 12,000 tokens is too small."),
         "{error}"
     );
     assert!(
