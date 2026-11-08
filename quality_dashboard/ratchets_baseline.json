@@ -891,8 +891,8 @@
    "cyclomatic": 24
   },
   "web/src/screens/ThreadConversation.tsx::Message": {
-   "cognitive": 65,
-   "cyclomatic": 47
+   "cognitive": 57,
+   "cyclomatic": 44
   },
   "web/src/screens/ThreadConversation.tsx::ThreadConversation": {
    "cognitive": 57,
@@ -949,7 +949,7 @@
   "web/src/state/reducer.ts::applyThreadEvent": {
    "cognitive": 122,
    "cyclomatic": 118,
-   "lines": 274
+   "lines": 272
   },
   "web/src/state/reducer.ts::reducer": {
    "cognitive": 79,

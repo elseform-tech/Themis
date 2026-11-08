@@ -310,6 +310,20 @@ describe("thread lifecycle events", () => {
     expect(s.traces[THREAD.id]?.[0]).toMatchObject({ summary: "not run · nobody answered in time", ok: false });
   });
 
+  it("marks the step whose box nobody answered, so its row says so instead of Failed", () => {
+    let s = withThread();
+    s = applyThreadEvent(s, envelope({ kind: "tool_started", tool: "write_file", summary: "write notes.txt" }));
+    s = applyThreadEvent(s, envelope({ kind: "approval_decided", tool: "write_file", decision: "timed_out" }));
+    s = applyThreadEvent(s, envelope({ kind: "tool_finished", tool: "write_file", ok: false, output: "not run" }));
+    const row = s.messages[THREAD.id]?.find(message => message.tool);
+    expect(row?.tool).toMatchObject({ name: "write_file", ok: false, unanswered: true });
+    // A refusal the person gave is not marked.
+    s = applyThreadEvent(s, envelope({ kind: "tool_started", tool: "exec", summary: "run make" }));
+    s = applyThreadEvent(s, envelope({ kind: "approval_decided", tool: "exec", decision: "deny" }));
+    s = applyThreadEvent(s, envelope({ kind: "tool_finished", tool: "exec", ok: false, output: "denied" }));
+    expect(s.messages[THREAD.id]?.filter(message => message.tool?.unanswered)).toHaveLength(1);
+  });
+
   it("finished appends an assistant message and clears running", () => {
     let s = withThread();
     s = applyThreadEvent(

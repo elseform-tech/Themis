@@ -508,7 +508,7 @@ pub(super) async fn execute_call(
         let note = review_note.unwrap_or_else(|| decision.refusal_note().to_owned());
         let reason = format!("{summary}{files} {note}");
         crate::plugins::hooks::permission_denied(name, &approval_args, &reason, events).await;
-        return Err(format!("approval denied for '{name}': {reason}"));
+        return Err(format!("{} '{name}': {reason}", decision.refusal_prefix()));
     }
     let parsed: serde_json::Value = match serde_json::from_str(args) {
         Ok(parsed) => parsed,

@@ -74,6 +74,16 @@ impl Approval {
         )
     }
 
+    /// How a refused tool result starts: a box nobody answered is never called a refusal, so
+    /// the agent does not tell the person they said no.
+    #[must_use]
+    pub const fn refusal_prefix(self) -> &'static str {
+        match self {
+            Self::DenyTimedOut => "not run, nobody answered the approval for",
+            _ => "approval denied for",
+        }
+    }
+
     /// The guidance a refusal carries in the tool result.
     #[must_use]
     pub const fn refusal_note(self) -> &'static str {
@@ -205,14 +215,19 @@ fn check_decision(decision: Approval, action: &ToolAction) -> Result<(), ToolCal
             action.summary,
             take_review_note(action).unwrap_or_else(|| REFUSAL_NOTE.to_owned())
         ))),
-        denied @ (Approval::Deny | Approval::DenyForNewMessage | Approval::DenyTimedOut) => {
-            Err(tool_error(format!(
-                "approval denied for '{}': {} {}",
-                action.tool,
-                action.summary,
-                denied.refusal_note()
-            )))
-        }
+        Approval::DenyTimedOut => Err(tool_error(format!(
+            "{} '{}': {} {}",
+            Approval::DenyTimedOut.refusal_prefix(),
+            action.tool,
+            action.summary,
+            Approval::DenyTimedOut.refusal_note()
+        ))),
+        denied @ (Approval::Deny | Approval::DenyForNewMessage) => Err(tool_error(format!(
+            "approval denied for '{}': {} {}",
+            action.tool,
+            action.summary,
+            denied.refusal_note()
+        ))),
     }
 }
 
@@ -345,6 +360,10 @@ mod timed_out_tests {
             "{error}"
         );
         assert!(!error.contains(REFUSAL_NOTE), "{error}");
+        assert!(
+            error.contains("not run, nobody answered"),
+            "never called a refusal: {error}"
+        );
         let refused = check_approval(&Answers(Approval::Deny), &write())
             .unwrap_err()
             .to_string();

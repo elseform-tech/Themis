@@ -644,7 +644,7 @@ export interface PersistedMessage {
   incomplete?: boolean;
   /** Partial answer kept after the run was stopped by the user or failed. */
   interrupted?: 'stopped' | 'failed';
-  tool?: { name: string; label?: string; ok?: boolean; output?: string; media?: ToolMedia };
+  tool?: { name: string; label?: string; ok?: boolean; output?: string; media?: ToolMedia; /** Its approval box timed out: nobody answered, so it did not run. */ unanswered?: boolean };
   /** Context checkpoint divider; percentages of usable context before and after. */
   checkpoint?: { before?: number; after?: number };
   /** Files this run changed, shown under its final response. */

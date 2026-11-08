@@ -130,9 +130,7 @@ export function applyThreadEvent(
         })() },
       };
     }
-    case "approval_decided": {
-      return appendTrace(state, threadId, { id: newId("trace"), tool: event.tool, ...approvalLine(event.decision) });
-    }
+    case "approval_decided": return approvalDecided(state, threadId, runId, event.tool, event.decision);
     case "context_usage":
     case "context_suspended":
     case "background_tasks_changed": return state;
@@ -634,4 +632,24 @@ export function goUsable(state: Pick<AppState, "secretStatus" | "goKeyCheck">): 
 function approvalLine(decision: ApprovalDecision): { summary: string; ok?: boolean } {
   if (decision === "timed_out") return { summary: "not run · nobody answered in time", ok: false };
   return { summary: `approval ${decision}`, ok: decision === "deny" ? false : undefined };
+}
+
+/** The step whose approval box nobody answered keeps that in its row, so its turn says
+ *  "Not run · nobody answered in time" rather than a bare failure. */
+function markUnanswered(state: AppState, threadId: string, runId: string | undefined, tool: string): AppState {
+  const rows = ownedRows(state, threadId);
+  for (let i = rows.length - 1; i >= 0; i--) {
+    const row = rows[i]!;
+    if (row.runId === runId && row.tool?.name === tool && row.tool.ok === undefined) {
+      rows[i] = { ...row, tool: { ...row.tool, unanswered: true } };
+      return { ...state, messages: { ...state.messages, [threadId]: rows } };
+    }
+  }
+  return state;
+}
+
+/** An approval decided: a line in the turn, and a box nobody answered marks its step. */
+function approvalDecided(state: AppState, threadId: string, runId: string | undefined, tool: string, decision: ApprovalDecision): AppState {
+  const next = appendTrace(state, threadId, { id: newId("trace"), tool, ...approvalLine(decision) });
+  return decision === "timed_out" ? markUnanswered(next, threadId, runId, tool) : next;
 }
