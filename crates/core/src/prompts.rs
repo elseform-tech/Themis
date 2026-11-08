@@ -431,6 +431,15 @@ pub const AGENT_SWITCH_ON_REFUSED: &str =
     include_str!("../builtins/prompts/agent-switch-on-refused.md");
 /// The app server's answer to a call from an agent's shell it refuses; `{{method}}`.
 pub const AGENT_CLI_REFUSED: &str = include_str!("../builtins/prompts/agent-cli-refused.md");
+/// The app server's answer to a hook or MCP test asked for from an agent's shell.
+pub const AGENT_CLI_RUNS_CODE_REFUSED: &str =
+    include_str!("../builtins/prompts/agent-cli-runs-code-refused.md");
+/// The app server's answer to an agent's `plugin_action` naming another project.
+pub const AGENT_CLI_OTHER_PROJECT_REFUSED: &str =
+    include_str!("../builtins/prompts/agent-cli-other-project-refused.md");
+/// The app server's answer to an agent's fetching `plugin_action` when its run blocks the network.
+pub const AGENT_CLI_NETWORK_BLOCKED: &str =
+    include_str!("../builtins/prompts/agent-cli-network-blocked.md");
 /// `next` hint after starting a background task.
 pub const TOOL_BACKGROUND_NEXT: &str = include_str!("../builtins/prompts/tool-background-next.md");
 

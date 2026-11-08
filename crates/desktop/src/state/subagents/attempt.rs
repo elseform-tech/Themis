@@ -296,7 +296,7 @@ impl SubagentKit {
                                             // unboxed they overflow a runtime worker's stack.
                                             Box::pin(themis_core::runtime::with_system_head(
                                                 head,
-                                                Box::pin(run),
+                                                Box::pin(self.bound(run)),
                                             )),
                                         ),
                                     ),

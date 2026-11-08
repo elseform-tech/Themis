@@ -180,7 +180,11 @@ async fn an_agent_credential_is_refused_the_persons_methods_which_still_work_wit
     let thread = fx.thread().await;
     let other = fx.thread().await;
     let project = fx.project.to_string_lossy().into_owned();
-    let access = themis_core::agent_cli::issue(&thread, "run-under-test").expect("issued");
+    let scope = themis_core::agent_cli::RunScope {
+        project_root: Some(fx.project.clone()),
+        network_blocked: false,
+    };
+    let access = themis_core::agent_cli::issue(&thread, "run-under-test", &scope).expect("issued");
     let token = access.env()[0].1.clone();
 
     // Approvals and the permission mode first: refused for the agent, working for the person.

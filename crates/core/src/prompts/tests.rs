@@ -279,6 +279,17 @@ const ALL: &[(&str, &str, &[&str])] = &[
     ),
     (TOOL_SANDBOX_BLOCKED, "tool-sandbox-blocked", &["reason"]),
     (AGENT_CLI_REFUSED, "agent-cli-refused", &["method"]),
+    (
+        AGENT_CLI_RUNS_CODE_REFUSED,
+        "agent-cli-runs-code-refused",
+        &[],
+    ),
+    (
+        AGENT_CLI_OTHER_PROJECT_REFUSED,
+        "agent-cli-other-project-refused",
+        &[],
+    ),
+    (AGENT_CLI_NETWORK_BLOCKED, "agent-cli-network-blocked", &[]),
     (AGENT_SWITCH_ON_REFUSED, "agent-switch-on-refused", &[]),
     (TOOL_SANDBOX_NOTE, "tool-sandbox-note", &[]),
     (
