@@ -877,9 +877,9 @@
    "cyclomatic": 31
   },
   "web/src/screens/ThreadComposer.tsx::ThreadComposer": {
-   "cognitive": 44,
-   "cyclomatic": 59,
-   "lines": 150
+   "cognitive": 34,
+   "cyclomatic": 49,
+   "lines": 142
   },
   "web/src/screens/ThreadConversation.tsx::ConversationRow": {
    "cognitive": 41,
@@ -901,9 +901,9 @@
    "cyclomatic": 23
   },
   "web/src/screens/ThreadView.tsx::ThreadView": {
-   "cognitive": 85,
-   "cyclomatic": 140,
-   "lines": 248
+   "cognitive": 75,
+   "cyclomatic": 131,
+   "lines": 240
   },
   "web/src/screens/ThreadView.tsx::ThreadView::send": {
    "cyclomatic": 22
