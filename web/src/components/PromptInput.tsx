@@ -4,7 +4,7 @@ import "./PromptInput.css";
 
 /** A built-in command offered first in the `/` menu, at the start of a message only. */
 export interface PromptCommand { id:string; name:string; description:string; command:true }
-interface Props { value:string; onChange:(value:string)=>void; skills:PromptSkill[]; plugins?:PromptPlugin[]; commands?:PromptCommand[]; label:string; id?:string; disabled?:boolean; placeholder?:string; onSubmit?:()=>void; history?:string[] }
+interface Props { value:string; onChange:(value:string)=>void; skills:PromptSkill[]; plugins?:PromptPlugin[]; commands?:PromptCommand[]; label:string; id?:string; disabled?:boolean; placeholder?:string; onSubmit?:(queue:boolean)=>void; history?:string[] }
 type Choice=PromptSkill|PromptPlugin|PromptCommand;
 export function GoalIcon() { return <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true"><circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="4"/></svg>; }
 function serialize(node:Node):string {
@@ -140,7 +140,8 @@ export function PromptInput({value,onChange,skills,plugins=[],commands=[],label,
       if(event.key==="ArrowUp"){if(saved.index===-1)saved.draft=value;saved.index=Math.min(history.length-1,saved.index+1);}else saved.index--;
       const next=saved.index<0?saved.draft:history[history.length-1-saved.index];pendingCaret.current=event.key==="ArrowUp"?0:next.length;onChange(next);return;
     }
-    if(event.key==="Enter"&&!event.shiftKey&&onSubmit){event.preventDefault();onSubmit();}
+    // ⌘/Ctrl+Enter asks to queue rather than steer (only matters while a run is going).
+    if(event.key==="Enter"&&!event.shiftKey&&onSubmit){event.preventDefault();onSubmit(event.metaKey||event.ctrlKey);}
   }
   return <div className="themis-prompt-input">
     <div ref={editor} id={id} role="textbox" aria-label={label} aria-multiline="true" aria-disabled={disabled} aria-autocomplete="list" aria-controls={slash?listId:undefined} aria-activedescendant={slash&&choices[active]?`${listId}-${active}`:undefined} contentEditable={!disabled} tabIndex={disabled ? -1 : 0} suppressContentEditableWarning className="themis-prompt-editor" data-placeholder={placeholder} onFocus={detectSlash} onKeyUp={event=>{if(!["ArrowUp","ArrowDown","Enter","Tab","Escape"].includes(event.key))detectSlash();}} onKeyDown={keyDown} onInput={()=>{if(editor.current){update(serialize(editor.current));recall.current.index=-1;detectSlash();}}} onPaste={event=>{event.preventDefault();const text=event.clipboardData.getData("text/plain");document.execCommand("insertText",false,text);if(editor.current){update(serialize(editor.current));detectSlash();}}} onCopy={event=>{const selection=window.getSelection();if(selection?.rangeCount){event.clipboardData.setData("text/plain",serialize(selection.getRangeAt(0).cloneContents()));event.preventDefault();}}} />

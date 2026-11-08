@@ -169,7 +169,9 @@ export function ThreadView() {
     finally { setAttaching(false); }
   }
 
-  async function send() {
+  /** Sends; while a run is going, queues the message and steers it in at once, unless `queue`
+   *  (⌘/Ctrl+Enter) keeps it queued for after the turn. */
+  async function send(queue = false) {
     if (thread === null || permissionPending.current) return;
     const text = draft.trim() || (attachments.length ? "Inspect the attached files." : "");
     if (text === "" || composerDisabled) return;
@@ -177,8 +179,10 @@ export function ThreadView() {
     setSending(true);
     if (running) {
       try {
-        await enqueueMessage(thread.id, text, effort, attachments.map(file => file.path));
+        const queued = await enqueueMessage(thread.id, text, effort, attachments.map(file => file.path));
         updateAttachments(thread.id, files => files.filter(file => !attachments.some(sent => sent.path === file.path)));
+        // Queued already: a steer that fails leaves it there, to go out when the turn ends.
+        if (!queue) await steerQueuedMessage(thread.id, queued.id).catch(error => toast(dispatch, `Queued, but could not steer it in: ${describeError(error)}`, "warning"));
       } catch (error: unknown) {
         setDraft(text);
         toast(dispatch, `Could not queue the message: ${describeError(error)}`, "danger");
@@ -303,7 +307,7 @@ export function ThreadView() {
       secretConfigured={state.secretStatus.go || !state.secretStatusLoaded || !usesGo(thread.model, models)}
       keyRejected={state.goKeyCheck === "rejected" && usesGo(thread.model, models) ? (state.settings.go_secret ?? "OPENCODE_KEY") : undefined}
       onDraftChange={setDraft}
-      onSend={() => void send()}
+      onSend={queue => void send(queue)}
       onStop={() => void stop()}
       onNewThread={() => void newThread()}
       permissionSaving={permissionSaving}

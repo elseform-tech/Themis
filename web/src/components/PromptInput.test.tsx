@@ -308,3 +308,14 @@ it("renders a sent /goal as a sticker, but not /goal later in the message or /go
   rerender(<PromptText value="/goals list" skills={[]} />);
   expect(container.querySelector(".themis-command-chip")).toBeNull();
 });
+
+it("submits on Enter to steer, and asks to queue with ⌘ or Ctrl+Enter", () => {
+  const send = vi.fn();
+  render(<PromptInput label="Steer" value="look at the tests too" onChange={() => {}} skills={[]} onSubmit={send} />);
+  const input = screen.getByRole("textbox", { name: "Steer" });
+  fireEvent.keyDown(input, { key: "Enter" });
+  fireEvent.keyDown(input, { key: "Enter", metaKey: true });
+  fireEvent.keyDown(input, { key: "Enter", ctrlKey: true });
+  fireEvent.keyDown(input, { key: "Enter", shiftKey: true });
+  expect(send.mock.calls).toEqual([[false], [true], [true]]);
+});
