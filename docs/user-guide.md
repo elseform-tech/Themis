@@ -116,10 +116,11 @@ levels are listed.
 
 When the agent needs your input, it asks without stopping its work. The
 question shows on the composer with 2–4 options, one per line, its recommended one
-marked **Recommended**, or, for an open question such as a name, its
-**Suggested** answer. Each option has one short line on its tradeoff, and the
-recommended one says why. The agent carries on with that answer until you click
-another option or write your own.
+first and marked **Recommended**, or, for an open question such as a name, its
+**Suggested** answer. Each option's line says what the agent will do if you pick
+it; the chevron beside it opens its advantages, disadvantages and consequences
+(including whether it is hard to undo). The agent carries on with its
+recommendation until you click another option or write your own.
 
 - **One box at a time.** The composer shows one approval or question at a time,
   approvals first; what waits behind it is a count ("1 question next"). Once you
@@ -131,6 +132,14 @@ another option or write your own.
   approval timeout (Settings › Permissions, 10 minutes by default), then moves
   into its turn the same way. Nothing starts while it waits: answering it later
   starts the next turn.
+- **Several questions at once.** When the agent asks up to four related things
+  together, one box shows them as pages, "1/3" with Back and Next. Picking or
+  writing an answer, or **Skip**, turns to the next page; after the last page the
+  answers reach the agent together, in one message. A skipped page stays open in
+  its turn. A page the work waits on has no Skip.
+- **After you press Deny.** When you deny an approval (Custom), the agent runs
+  nothing else for that step and asks you how to go on: a safer way to do it
+  (when there is one), skip the step and carry on, or stop.
 - **Fold to icons** (the chevron) turns the goal, the approval and the questions
   into one row of small pills: the goal, the waiting
   command, the number of questions. Click any pill to unfold. The fold is

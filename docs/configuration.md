@@ -593,10 +593,28 @@ and neither a plain queued message nor an answer to `ask_user` denies anything. 
 `queue`/`steered` with `approvals_denied`, a count.
 **Questions.** The agent's `ask_user` tool (no approval prompt, like `create_goal`; a deny rule
 for `ask_user` still wins) stores a chat's questions in `questions/<chat id>.json` (app data):
-`[{"id","run_id","question","choices","assumption","reasons","blocking","topic","asked_at","answer"}]`
+`[{"id","run_id","question","choices","assumption","reasons","details","group","blocking","topic","asked_at","answer"}]`
 (`assumption` holds the tool's `recommended` answer, which the agent works on until answered;
-`reasons` maps an answer to its one-line tradeoff, at most 160 characters, the recommended one's
-from the tool's `why`, which a non-blocking question must give),
+`reasons` maps an answer to its one-line note, the recommended one's from the tool's `why`, which
+a non-blocking question must give unless the recommended answer is one of its choices; `details`
+maps each of the agent's choices to `{"does","advantages","disadvantages","consequences"}`, at most
+400 characters each; `group` is shared by the questions asked in one call).
+Every choice the agent offers is `{"answer","does","advantages","disadvantages","consequences"}`:
+what it will do if picked (the steps, commands or files), its advantages, disadvantages and
+consequences (what follows, and whether it is hard to undo). A choice missing any of them, or a
+bare string, is refused with a message naming the choice and each missing field, and nothing is
+asked. One call may carry up to 4 questions in `questions` (each with the single question's
+fields) instead of the top-level `question`; giving both, none or more than 4 is refused. They are
+stored as separate questions sharing one `group`, all or none (the 8-open limit counts each), so
+the de-duplication by topic or wording, the still-open listing and a chat message closing open
+questions apply to each; the result carries `ids` instead of `id`. A set is blocking when any of
+its questions is (a question blocks only without a recommendation): the run ends after that tool
+batch and, in goal mode, the goal waits until no blocking question is open. The person's Deny on an
+approval box (Custom, the main agent's step) returns `tool-denied-by-person.md` instead of
+`tool-refusal.md`: run nothing else for that step and ask with a blocking `ask_user` offering a
+safer way (when there is one), skipping the step, or stopping, each in full. A subagent's box, a
+destructive step's question box in Auto and YOLO ("Skip it"), a deny rule, a timeout
+(`tool-denied-timed-out.md`) and a steered message keep their own notes.
 at most 8 open at once (the tool then tells the agent to keep working on its assumption) and
 100 kept (the oldest answered go first); a question is at most 1,000 characters, with 2 to 4
 choices of 200 (the recommended one first; a single choice becomes the suggestion), and an
@@ -614,11 +632,15 @@ for the approval timeout, then moves into its turn; nothing starts until it is a
 goal waits until that question is answered (answers to other questions run but leave it
 waiting). `answer_question` (`threadId`, `questionId`, `answer`) delivers the answer like a
 steer when a run is going (unread, it returns to the front of the queue), otherwise first in
-the queue as the next message, joining an answer already waiting there; `list_questions`
+the queue as the next message, joining an answer already waiting there. With `answers`
+(`[{"questionId","answer"}]`) in place of `questionId` and `answer` it answers several at once,
+all or none, and delivers them as one message listing each question and its answer (the question
+box sends a set's pages this way); `list_questions`
 (`threadId`) lists them. The answer message starts with a fixed marker the goal supervisor
 reads. Open questions are listed in each goal turn's message. A
 damaged file is ignored (`questions_ignored`); diagnostics record question ids, the blocking
-flag and the delivery path (`asked`, `updated`, `answered`), never the question or answer text.
+flag, the number of questions asked or answered together (`pages`) and the delivery path
+(`asked`, `updated`, `answered`), never the question or answer text.
 Answers grant nothing.
 **To undo** a grant, edit or delete its entry in the chat's file, or start a new chat; there is
 deliberately no UI for this, and the composer shield only chooses Auto, Custom or YOLO.
