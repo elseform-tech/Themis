@@ -1,3 +1,4 @@
+import { runErrorSummary } from "../lib/runError";
 import { AttachmentPreview } from "./AttachmentPreview";
 import { MediaGallery, MediaStrip, MediaViewer, ToolMediaPreview } from "./MediaStrip";
 import type { PromptPlugin, PromptSkill } from "../lib/prompt";
@@ -426,10 +427,8 @@ function Message({ message, threadId, activeRunId, durationMs, skills, plugins, 
         </details>
       ) : message.text.startsWith("Run failed:") ? (
         <>
-        <details className="themis-request-error">
-          <summary>Request failed · Details</summary>
-          <p className="themis-thread-text"><PromptText value={message.text} skills={skills} plugins={plugins} /></p>
-        </details>
+        {/* One quiet line; the provider's whole answer is in the tooltip and the diagnostics log. */}
+        <p className="themis-request-error" title={message.text}>{runErrorSummary(message.text)}</p>
         {!!message.changedFiles?.length && <EditedFiles files={message.changedFiles} />}
         </>
       ) : message.role === "assistant" ? (
