@@ -401,8 +401,10 @@ the chat stays readable. Once you decide, the box goes away and leaves nothing i
 the chat (the call itself still shows in its step list). Another chat that waits for
 you sits in the sidebar's **Waiting for you** group with a pause sign and the tag **Approval**. The box says in plain words what the agent
 is about to do (for example "Run `git push origin HEAD` in my-app" or "Write notes.txt") and,
-on one short line, what makes it risky (destructive, outside the sandbox, the network, secret
-files, changes). **Details** opens the exact command or arguments, the full working folder,
+in one short sentence, what the step reaches and whether it needs you (for example "It changes
+project files, so it needs your approval.", "It can't be undone and uses the network, so it needs
+your approval." or "It reads secret files (.env) and runs outside the sandbox, which is blocked
+unless you allow it."). **Details** opens the exact command or arguments, the full working folder,
 why it asks and what "Allow in this chat" would cover. The choices sit in one row, and only a
 click decides (there are no keyboard shortcuts):
 

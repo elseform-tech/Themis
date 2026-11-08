@@ -33,7 +33,7 @@ describe("ApprovalBox", () => {
   it("leads with what the agent is about to do, then one risk line, with details closed", () => {
     setup({ ...REQUEST, tool: "write_file", summary: "write `notes.txt`", risk: "write" });
     expect(lead()).toHaveTextContent(/^Write notes\.txt$/);
-    expect(screen.getByText("Makes changes")).toBeInTheDocument();
+    expect(box().querySelector(".themis-approval-risk")).toHaveTextContent(/^It changes project files, so it needs your approval\.$/);
     const details = box().querySelector("details")!;
     expect(details.open).toBe(false);
     expect(within(details).getByText("Details")).toBeInTheDocument();
@@ -46,7 +46,7 @@ describe("ApprovalBox", () => {
   it("marks a destructive step in the danger colour", () => {
     setup({ ...REQUEST, tool: "delete_file", summary: "delete `old.txt`", risk: "destructive", grantable: false });
     expect(lead()).toHaveTextContent(/^Delete old\.txt$/);
-    expect(screen.getByText("Destructive")).toHaveClass("themis-approval-risk", "is-danger");
+    expect(screen.getByText("It can't be undone, so it needs your approval.")).toHaveClass("themis-approval-risk", "is-danger");
   });
 
   it("decides via buttons, with no number hints", () => {
@@ -132,7 +132,7 @@ it.each([
 describe("sensitive files", () => {
   it("names the files for a command, and the grant covers them, not the tool", () => {
     setup({ ...REQUEST, tool: "shell", sensitive_files: [".env", ".env.local"], command: { argv: ["cat", ".env", ".env.local"] }, grant_scope: { argv: ["cat", ".env", ".env.local"], covers_further_args: false } });
-    expect(screen.getByText("Touches secret files")).toBeInTheDocument();
+    expect(screen.getByText("It uses secret files (.env, .env.local), so it needs your approval.")).not.toHaveClass("is-danger");
     expect(within(box().querySelector("details")!).getByText("Secret files")).toBeInTheDocument();
     expect(tooltip()).toHaveTextContent("Allow in this chat covers these files and this command in later runs of this chat. Other files still ask.");
   });
@@ -140,7 +140,7 @@ describe("sensitive files", () => {
   it("reads a sensitive file in plain words", () => {
     setup({ ...REQUEST, tool: "read_file", risk: "read", sensitive_files: [".env"], summary: "read .env" });
     expect(lead()).toHaveTextContent(/^Read \.env$/);
-    expect(box().querySelector(".themis-approval-risk")).toHaveTextContent(/^Touches secret files$/);
+    expect(box().querySelector(".themis-approval-risk")).toHaveTextContent(/^It reads secret files \(\.env\), so it needs your approval\.$/);
     expect(tooltip()).toHaveTextContent("Allow in this chat covers these files in later runs of this chat. Other files still ask.");
   });
 });
@@ -256,7 +256,7 @@ describe("command display", () => {
     setup({ ...command(argv, "/repo"), grant_scope: { argv, covers_further_args: false }, risk: "destructive", grantable: false });
     expect(summaryChips()).toEqual([...argv, "repo"]);
     expect(detailChips()).toEqual([...argv, "/repo"]);
-    expect(screen.getByText("Destructive")).toBeInTheDocument();
+    expect(screen.getByText("It can't be undone, so it needs your approval.")).toBeInTheDocument();
     // No grant chips: the hint only says why nothing can be allowed for the chat.
     expect(box().querySelector("details")).toHaveTextContent("This kind of action always asks");
     expect(screen.queryByRole("button", { name: /Allow in this chat/ })).toBeNull();
@@ -288,7 +288,7 @@ describe("command display", () => {
       command: { argv, cwd: "/repo", sandbox_blocked: "writing to /Users/me/x is blocked\u202E: only the project is writable" },
     });
     expect(screen.getByRole("region", { name: "Run outside the sandbox?" })).toBeInTheDocument();
-    expect(screen.getByText("Outside the sandbox")).toHaveClass("is-danger");
+    expect(screen.getByText("It runs outside the sandbox, which is blocked unless you allow it.")).toHaveClass("is-danger");
     const details = box().querySelector("details")!;
     expect(within(details).getByText("shell (outside the sandbox)")).toBeInTheDocument();
     expect(within(details).getByText(/The sandbox blocked it/)).toHaveTextContent("writing to /Users/me/x is blocked⟨U+202E⟩: only the project is writable. Outside the sandbox");
@@ -303,6 +303,6 @@ describe("command display", () => {
     setup({ ...REQUEST, tool: "shell_unsandboxed", risk: "destructive", grantable: false, command: { argv: ["rm", "-rf", "/x"], sandbox_blocked: "writing to /x is blocked" } });
     expect(screen.queryByRole("button", { name: /Allow in this chat/ })).toBeNull();
     expect(screen.getByRole("button", { name: "Deny" })).toBeInTheDocument();
-    expect(screen.getByText("Destructive · Outside the sandbox")).toBeInTheDocument();
+    expect(box().querySelector(".themis-approval-risk")).toHaveTextContent(/^It can't be undone and runs outside the sandbox, which is blocked unless you allow it\.$/);
   });
 });

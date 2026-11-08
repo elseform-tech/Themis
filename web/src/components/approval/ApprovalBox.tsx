@@ -2,7 +2,7 @@ import { toolDisplayName } from "../../lib/toolNames";
 import type { ApprovalDecision, ApprovalRequest } from "../../lib/types";
 import { UNSANDBOXED_TOOL } from "../../lib/types";
 import { SafeText, TokenChip, TokenList } from "./CommandTokens";
-import { ActionSentence, actionParts, riskWords } from "./plainAction";
+import { ActionSentence, actionParts, riskSentence } from "./plainAction";
 import { Button } from "../primitives/Button";
 import "./ApprovalBox.css";
 
@@ -102,7 +102,7 @@ export function ApprovalBox({ request, label, open, onDecide, next, onFold }: Ap
   // A subagent's request names it, so the person knows which agent asks.
   const asker = request.subagent ? `${request.subagent.name} (subagent)` : null;
   const title = outside ? "Run outside the sandbox?" : asker ? `${asker} ${request.command ? "wants to run a command" : "needs approval"}` : "Approval needed";
-  const risks = riskWords(request);
+  const risk = riskSentence(request);
   return (
     <section className="themis-approval-box" aria-label={title}>
       <div className="themis-approval-head">
@@ -117,7 +117,7 @@ export function ApprovalBox({ request, label, open, onDecide, next, onFold }: Ap
       </div>
       <div className="themis-approval">
         <p className="themis-approval-summary"><ActionSentence parts={actionParts(request, label)} /></p>
-        {risks.length > 0 && <p className={`themis-approval-risk${request.risk === "destructive" || outside ? " is-danger" : ""}`}>{risks.join(" · ")}</p>}
+        {risk && <p className={`themis-approval-risk${risk.danger ? " is-danger" : ""}`}>{risk.text}</p>}
         <ApprovalDetails request={request} label={label} />
         <div className="themis-approval-actions">
           <Button variant="primary" onClick={() => onDecide("once")}>Allow once</Button>

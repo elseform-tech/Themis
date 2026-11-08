@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { render } from "@testing-library/react";
 import type { ApprovalRequest } from "../../lib/types";
-import { ActionSentence, actionParts, riskWords, type ActionPart } from "./plainAction";
+import { ActionSentence, actionParts, riskSentence, type ActionPart } from "./plainAction";
 
 const request = (tool: string, summary: string, extra: Partial<ApprovalRequest> = {}): ApprovalRequest =>
   ({ thread_id: "t", approval_id: "a", tool, summary, risk: "write", ...extra });
@@ -48,12 +48,30 @@ describe("actionParts", () => {
   });
 });
 
-describe("riskWords", () => {
-  it("says only what applies", () => {
-    expect(riskWords(request("shell", "x", { risk: "execute" }))).toEqual([]);
-    expect(riskWords(request("write_file", "x"))).toEqual(["Makes changes"]);
-    expect(riskWords(request("fetch_url", "x", { risk: "network" }))).toEqual(["Uses the network"]);
-    expect(riskWords(request("shell_unsandboxed", "x", { risk: "destructive" }))).toEqual(["Destructive", "Outside the sandbox"]);
-    expect(riskWords(request("read_file", "x", { risk: "read", sensitive_files: [".env"] }))).toEqual(["Touches secret files"]);
+describe("riskSentence", () => {
+  const say = (extra: Partial<ApprovalRequest>, tool = "shell") => riskSentence(request(tool, "x", extra))?.text ?? null;
+  it.each([
+    [{ risk: "write" }, "write_file", "It changes project files, so it needs your approval."],
+    [{ risk: "execute" }, "shell", "It runs a command, so it needs your approval."],
+    [{ risk: "destructive" }, "delete_file", "It can't be undone, so it needs your approval."],
+    [{ risk: "network" }, "fetch_url", "It uses the network, so it needs your approval."],
+    [{ risk: "read", sensitive_files: [".env"] }, "read_file", "It reads secret files (.env), so it needs your approval."],
+    [{ risk: "write", sensitive_files: [".env"] }, "write_file", "It changes secret files (.env), so it needs your approval."],
+    [{ risk: "execute", command: { argv: ["touch", "x"], sandbox_blocked: "blocked" } }, "shell", "It runs outside the sandbox, which is blocked unless you allow it."],
+    [{ risk: "execute" }, "shell_unsandboxed", "It runs outside the sandbox, which is blocked unless you allow it."],
+    [{ risk: "read", sensitive_files: [".env"] }, "shell_unsandboxed", "It reads secret files (.env) and runs outside the sandbox, which is blocked unless you allow it."],
+    [{ risk: "destructive" }, "shell_unsandboxed", "It can't be undone and runs outside the sandbox, which is blocked unless you allow it."],
+  ] as [Partial<ApprovalRequest>, string, string][])("%j on %s reads as one sentence", (extra, tool, text) => {
+    expect(say(extra, tool)).toBe(text);
+  });
+  it("says nothing for a plain read, and is red only when it can't be undone or runs outside the sandbox", () => {
+    expect(say({ risk: "read" }, "read_file")).toBeNull();
+    expect(riskSentence(request("delete_file", "x", { risk: "destructive" }))?.danger).toBe(true);
+    expect(riskSentence(request("shell_unsandboxed", "x", { risk: "execute" }))?.danger).toBe(true);
+    expect(riskSentence(request("fetch_url", "x", { risk: "network", sensitive_files: [".env"] }))?.danger).toBe(false);
+  });
+  it("caps the secret file names and escapes them", () => {
+    expect(say({ risk: "read", sensitive_files: [".env", "id_rsa", "a.pem", "b.key"] }, "read_file")).toBe("It reads secret files (.env, id_rsa and 2 more), so it needs your approval.");
+    expect(say({ risk: "read", sensitive_files: [".env\u202E"] }, "read_file")).toBe('It reads secret files (".env⟨U+202E⟩"), so it needs your approval.');
   });
 });
