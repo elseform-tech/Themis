@@ -167,6 +167,11 @@ pub const ASK_USER_BLOCKING: &str = include_str!("../builtins/prompts/ask-user-b
 pub const ASK_USER_WAITING: &str = include_str!("../builtins/prompts/ask-user-waiting.md");
 /// `ask_user` refusal when too many questions are open; `{{max}}`.
 pub const ASK_USER_LIMIT: &str = include_str!("../builtins/prompts/ask-user-limit.md");
+/// Added to an `ask_user` result when other questions are still open; `{{questions}}`.
+pub const ASK_USER_STILL_OPEN: &str = include_str!("../builtins/prompts/ask-user-still-open.md");
+/// Added to a person's message that closed the chat's open questions; `{{questions}}`.
+pub const CHAT_ANSWERED_QUESTIONS: &str =
+    include_str!("../builtins/prompts/chat-answered-questions.md");
 
 // Memory across chats.
 /// The memory index at the start of a run (main agent and subagents); `{{global}}`,

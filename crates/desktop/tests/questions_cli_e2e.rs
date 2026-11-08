@@ -474,3 +474,145 @@ async fn yolo_keeps_a_deny_rule_for_ask_user() {
     .unwrap();
     app.serving.abort();
 }
+
+/// A reworded second question learns what is still open, and a message the person writes in
+/// the chat instead of the box answers both: they close, and the agent is told which ones.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_chat_message_answers_open_questions_and_a_new_question_sees_what_is_open() {
+    let app = app(|body| {
+        let (text, results) = last_user(body);
+        if text.contains("Go with playful") {
+            return reply("Playful it is.");
+        }
+        match results {
+            0 => tools(&[(
+                "q1",
+                "ask_user",
+                json!({"question": "Which tone for the README?", "recommended": "friendly", "why": "versatile"}),
+            )]),
+            1 => tools(&[(
+                "q2",
+                "ask_user",
+                json!({"question": "What style should CONTRIBUTING use?", "recommended": "match the README", "why": "consistent"}),
+            )]),
+            _ => reply("Drafting on my assumptions."),
+        }
+    })
+    .await;
+    let (data, thread) = (app.data.path().to_owned(), app.thread.clone());
+    let ask = data.clone();
+    let asked = thread.clone();
+    tokio::task::spawn_blocking(move || {
+        call(
+            &ask,
+            "send_message",
+            json!({"threadId": asked, "text": "write the docs"}),
+        );
+        until("the first run never finished", || !running(&ask, &asked));
+        let open = call(&ask, "list_questions", json!({"threadId": asked}));
+        assert_eq!(open.as_array().map(Vec::len), Some(2), "{open}");
+        call(
+            &ask,
+            "send_message",
+            json!({"threadId": asked, "text": "Go with playful"}),
+        );
+        until("the answer run never finished", || !running(&ask, &asked));
+        let questions = call(&ask, "list_questions", json!({"threadId": asked}));
+        for question in questions.as_array().unwrap() {
+            assert_eq!(question["answer"], "Go with playful", "{questions}");
+        }
+    })
+    .await
+    .unwrap();
+    let all = bodies(&app.llm).await;
+    // The second question's result named the first as still open.
+    let second = all
+        .iter()
+        .find(|body| last_user(body).1 == 2)
+        .expect("the turn after the second question");
+    let note = messages(second)
+        .iter()
+        .rev()
+        .find(|m| m["role"] == "tool")
+        .and_then(|m| m["content"].as_str())
+        .unwrap_or_default();
+    assert!(
+        note.contains("Still open") && note.contains("Which tone for the README?"),
+        "{note}"
+    );
+    // The chat answer reached the agent with the questions it closed.
+    let answered = all
+        .iter()
+        .find(|body| last_user(body).0.contains("Go with playful"))
+        .expect("the answer turn");
+    let (text, _) = last_user(answered);
+    assert!(text.contains("they are now closed"), "{text}");
+    assert!(
+        text.contains("Which tone for the README?")
+            && text.contains("What style should CONTRIBUTING use?"),
+        "{text}"
+    );
+    assert!(!mentions(answered, ANSWER_MARKER));
+    app.serving.abort();
+}
+
+/// A message steered into a running run (Enter) answers the open question too: it closes, and
+/// the run reads which question the message answered right after the message itself.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_steered_message_answers_an_open_question() {
+    let gate = Gate::default();
+    let held = gate.clone();
+    let app = app(move |body| {
+        if mentions(body, "they are now closed") {
+            return reply("Using tabs as you said.");
+        }
+        match last_user(body).1 {
+            0 => tools(&[(
+                "q1",
+                "ask_user",
+                json!({"question": "Tabs or spaces?", "recommended": "Spaces", "why": "usual"}),
+            )]),
+            _ => {
+                held.wait();
+                tools(&[("r1", "read_file", json!({"file_path": "missing.txt"}))])
+            }
+        }
+    })
+    .await;
+    let (data, thread) = (app.data.path().to_owned(), app.thread.clone());
+    tokio::task::spawn_blocking(move || {
+        call(
+            &data,
+            "send_message",
+            json!({"threadId": thread, "text": "format the file"}),
+        );
+        until("the question was never asked", || {
+            call(&data, "list_questions", json!({"threadId": thread}))
+                .as_array()
+                .is_some_and(|open| !open.is_empty())
+        });
+        let queued = call(
+            &data,
+            "enqueue_message",
+            json!({"threadId": thread, "text": "use tabs please"}),
+        );
+        call(
+            &data,
+            "steer_queued_message",
+            json!({"threadId": thread, "messageId": queued["id"]}),
+        );
+        let questions = call(&data, "list_questions", json!({"threadId": thread}));
+        assert_eq!(questions[0]["answer"], "use tabs please", "{questions}");
+        gate.open();
+        until("the run never finished", || !running(&data, &thread));
+    })
+    .await
+    .unwrap();
+    let all = bodies(&app.llm).await;
+    assert!(
+        all.iter()
+            .any(|body| mentions(body, "they are now closed") && mentions(body, "Tabs or spaces?")),
+        "the run never read which question the steer answered"
+    );
+    app.serving.abort();
+}

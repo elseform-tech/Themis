@@ -289,6 +289,22 @@ impl AppState {
             Ok((text, entry.run_id.clone()))
         })?;
         let (steered, _run_id) = steered;
+        // It answers questions still open; the run reads which ones next, unseen in the chat.
+        if let Some(note) = self.answer_open_in_chat(sink.as_ref(), &thread_id, &steered) {
+            if let Some(entry) = self
+                .inner
+                .steer_inboxes
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .get(&thread_id)
+            {
+                entry
+                    .inbox
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .push_back(note);
+            }
+        }
         // Steered into a goal, it joins the goal word for word.
         self.add_also_asked(&sink, &thread_id, &steered);
         // After the inbox: an approval asked from here on sees the message there

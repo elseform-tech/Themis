@@ -104,6 +104,12 @@ const ALL: &[(&str, &str, &[&str])] = &[
     (ASK_USER_BLOCKING, "ask-user-blocking", &[]),
     (ASK_USER_WAITING, "ask-user-waiting", &[]),
     (ASK_USER_LIMIT, "ask-user-limit", &["max"]),
+    (ASK_USER_STILL_OPEN, "ask-user-still-open", &["questions"]),
+    (
+        CHAT_ANSWERED_QUESTIONS,
+        "chat-answered-questions",
+        &["questions"],
+    ),
     (SYSTEM_MEMORY, "system-memory", &["global", "project"]),
     (MEMORY_CHANGED_NOTE, "memory-changed-note", &["changes"]),
     (
