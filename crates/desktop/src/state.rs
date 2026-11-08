@@ -498,6 +498,7 @@ impl AppState {
         settings_path: PathBuf,
         secrets: Arc<dyn SecretStore>,
     ) -> Self {
+        seed_test_settings(&settings_path);
         let app_dir = settings_app_dir(&settings_path);
         let worktrees_root = app_dir.join("worktrees");
         let registry_path = app_dir.join("threads.json");
@@ -519,6 +520,7 @@ impl AppState {
         settings_path: PathBuf,
         worktrees_root: PathBuf,
     ) -> Self {
+        seed_test_settings(&settings_path);
         let app_dir = settings_app_dir(&settings_path);
         let registry_path = app_dir.join("threads.json");
         Self::new_with_dirs(
@@ -935,3 +937,22 @@ use titles::*;
 
 #[cfg(test)]
 mod tests;
+
+/// Headless test state with no settings file yet starts new chats in Custom, where every
+/// approval is put to the person, so tests see each prompt; the app's own default is Auto
+/// (`default_new_chat_mode`). A test that wants another mode sets it on the chat.
+fn seed_test_settings(settings_path: &Path) {
+    if settings_path.exists() {
+        return;
+    }
+    if let Some(parent) = settings_path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    let settings = crate::types::Settings {
+        default_approval_mode: themis_core::configuration::ApprovalMode::Custom,
+        ..Default::default()
+    };
+    if let Ok(text) = serde_json::to_vec_pretty(&settings) {
+        let _ = std::fs::write(settings_path, text);
+    }
+}

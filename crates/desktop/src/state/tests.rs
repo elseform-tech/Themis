@@ -594,6 +594,8 @@ async fn comments_and_settings_flow() {
                 .join("projects")
                 .to_string_lossy()
                 .into_owned(),
+            // Test state starts chats in Custom; the app's own default is Auto.
+            default_approval_mode: themis_core::configuration::ApprovalMode::Custom,
             ..Settings::default()
         }
     );
