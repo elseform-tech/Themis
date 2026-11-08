@@ -1464,3 +1464,132 @@ fn policy_order_and_project_restrictions() {
     );
     assert_eq!(hook.approve(&action("shell")), Approval::AllowOnce);
 }
+
+/// A person who answers `answer` and can be asked unless `attended` is false (an automation).
+struct Person {
+    answer: Approval,
+    attended: bool,
+    asked: std::sync::atomic::AtomicUsize,
+}
+
+impl ApprovalHook for Person {
+    fn approve(&self, _: &ToolAction) -> Approval {
+        self.asked.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        self.answer
+    }
+    fn would_ask(&self, _: &ToolAction) -> bool {
+        self.attended
+    }
+}
+
+/// Auto's reviewer, always answering `verdict`, counting its reviews.
+struct Reviews {
+    verdict: crate::tools::AutoVerdict,
+    reviewed: std::sync::atomic::AtomicUsize,
+}
+
+impl crate::tools::AutoReviewer for Reviews {
+    fn review(&self, _: &ToolAction) -> crate::tools::AutoVerdict {
+        self.reviewed
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        self.verdict.clone()
+    }
+    fn blocked(&self, _: &ToolAction, _: &str, _: &str) {}
+    fn allowed_once(&self, _: &ToolAction) -> bool {
+        false
+    }
+}
+
+/// In Auto and YOLO a destructive step asks the person first, whatever the rules allow: their
+/// answer decides, and with no answer in time the mode decides as before (YOLO runs it, Auto
+/// asks its reviewer). A deny rule still refuses without asking, an automation (nobody to ask)
+/// goes straight to the mode, ordinary steps are never asked, and Custom asks once, as ever.
+#[test]
+fn destructive_steps_ask_the_person_first_in_auto_and_yolo() {
+    use std::sync::atomic::Ordering::SeqCst;
+    let rules = r#"{"approval":{"rules":[
+            {"tool":"shell","command":["git","clean"],"action":"deny"},
+            {"tool":"shell","command":["rm"],"action":"allow"}]}}"#;
+    let policy = resolve(Some(rules), None, None).unwrap().config.approval;
+    let rm = shell_action(&["rm", "-rf", "build"]);
+    let hook = |mode, answer, attended, verdict| {
+        let person = Arc::new(Person {
+            answer,
+            attended,
+            asked: Default::default(),
+        });
+        let reviewer = Arc::new(Reviews {
+            verdict,
+            reviewed: Default::default(),
+        });
+        let hook = configured_hook_with_reviewer(
+            mode,
+            policy.clone(),
+            person.clone(),
+            ChatGrants::in_memory(),
+            None,
+            Some(reviewer.clone() as Arc<dyn crate::tools::AutoReviewer>),
+        );
+        (hook, person, reviewer)
+    };
+    let allow = crate::tools::AutoVerdict::Allow;
+    let hard = || crate::tools::AutoVerdict::Hard {
+        reason: "it deletes the build".into(),
+        safer: String::new(),
+    };
+    for mode in [ApprovalMode::Yolo, ApprovalMode::Auto] {
+        // The person's answer decides, even over an allow rule for `rm`.
+        let (h, person, _) = hook(mode, Approval::AllowOnce, true, hard());
+        assert!(h.would_ask(&rm), "{mode:?}");
+        assert_eq!(h.approve(&rm), Approval::AllowOnce, "{mode:?}");
+        assert_eq!(person.asked.load(SeqCst), 1, "{mode:?}");
+        let (h, _, _) = hook(mode, Approval::Deny, true, allow.clone());
+        assert_eq!(h.approve(&rm), Approval::Deny, "{mode:?}");
+        // Not destructive: never asked first.
+        let (h, person, _) = hook(mode, Approval::Deny, true, allow.clone());
+        assert_eq!(
+            h.approve(&shell_action(&["ls"])),
+            Approval::AllowOnce,
+            "{mode:?}"
+        );
+        assert_eq!(person.asked.load(SeqCst), 0, "{mode:?}");
+        // A deny rule refuses without asking.
+        let (h, person, _) = hook(mode, Approval::AllowOnce, true, allow.clone());
+        assert_eq!(
+            h.approve(&shell_action(&["git", "clean", "-fd"])),
+            Approval::Deny
+        );
+        assert_eq!(person.asked.load(SeqCst), 0, "{mode:?}");
+    }
+    // No answer in time: YOLO runs it; Auto decides as before (a broad `rm` allow rule never
+    // covers `rm -rf`, so its reviewer does).
+    let (h, _, _) = hook(ApprovalMode::Yolo, Approval::DenyTimedOut, true, hard());
+    assert_eq!(h.approve(&rm), Approval::AllowOnce);
+    let (h, _, reviewer) = hook(
+        ApprovalMode::Auto,
+        Approval::DenyTimedOut,
+        true,
+        allow.clone(),
+    );
+    assert_eq!(h.approve(&rm), Approval::AllowOnce);
+    assert_eq!(reviewer.reviewed.load(SeqCst), 1);
+    let push = shell_action(&["git", "push", "--force"]);
+    let (h, person, reviewer) = hook(ApprovalMode::Auto, Approval::DenyTimedOut, true, hard());
+    assert_eq!(
+        h.approve(&push),
+        Approval::DenyReviewed,
+        "the reviewer decides"
+    );
+    assert_eq!(
+        (person.asked.load(SeqCst), reviewer.reviewed.load(SeqCst)),
+        (1, 1)
+    );
+    // An automation: nobody to ask, the mode decides at once.
+    let (h, person, _) = hook(ApprovalMode::Yolo, Approval::Deny, false, allow.clone());
+    assert_eq!(h.approve(&push), Approval::AllowOnce);
+    assert_eq!(person.asked.load(SeqCst), 0);
+    // Custom asks once, as it always did.
+    let (h, person, _) = hook(ApprovalMode::Custom, Approval::AllowOnce, true, allow);
+    assert_eq!(h.approve(&push), Approval::AllowOnce);
+    assert_eq!(person.asked.load(SeqCst), 1);
+}

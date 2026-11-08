@@ -570,6 +570,34 @@ async fn switching_a_hook_on_with_the_old_tool_is_refused_without_asking() {
     fx.shut_down().await;
 }
 
+/// A destructive step asks the person first even in YOLO: Allow once runs it, Deny keeps the
+/// folder, and an ordinary step in the same run is never asked about.
+#[tokio::test(flavor = "multi_thread")]
+async fn yolo_asks_the_person_before_a_destructive_step() {
+    if !common::git_available() {
+        return;
+    }
+    let _turn = ONE_SERVER.lock().await;
+    let fx = fixture().await;
+    let build = fx.project.join("build");
+    let provider = mount_calls(vec![words("ls"), words("rm -rf build")]).await;
+    common::use_mock_llm(&fx.state, &provider).await;
+    for (answer, removed) in [
+        (ApprovalDecision::Deny, false),
+        (ApprovalDecision::Once, true),
+    ] {
+        std::fs::create_dir_all(build.join("out")).unwrap();
+        let thread = fx.thread(ApprovalMode::Yolo).await;
+        let (asked, outputs) = run(&fx, &thread, &[answer]).await;
+        assert_eq!(outputs.len(), 2, "{outputs:#?}");
+        assert_eq!(asked.len(), 1, "only the destructive step: {asked:#?}");
+        assert_eq!(argv_of(&asked[0]), ["rm", "-rf", "build"]);
+        assert_eq!(asked[0]["grantable"], false, "never for the chat");
+        assert_eq!(!build.exists(), removed, "{answer:?}");
+    }
+    fx.shut_down().await;
+}
+
 /// A run credential bound to the fixture's project, with or without a network block.
 fn agent_token(fx: &Fixture, thread: &str, network_blocked: bool) -> String {
     let scope = themis_core::agent_cli::RunScope {
