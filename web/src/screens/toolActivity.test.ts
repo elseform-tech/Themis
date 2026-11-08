@@ -35,7 +35,10 @@ describe("tool rows say what the calls did", () => {
   it("describes searches, pages, the browser, the to-do list and other tools in plain words", () => {
     expect(describeTools([call("web_search", 'call `web_search` with {"query":"semver precedence rules"}')])).toBe("Searched the web for “semver precedence rules”");
     expect(describeTools([call("fetch_url", 'call `fetch_url` with {"url":"https://semver.org/#spec"}')])).toBe("Opened semver.org");
+    expect(describeTools([call("browser", 'call `browser` with {"action":"click","ref":"e4"}'), call("browser", 'call `browser` with {"action":"open"}')])).toBe("Used the browser");
+    // A chat saved before the browser was one tool still reads the same.
     expect(describeTools([call("browser_click", "x"), call("browser_open", "y")])).toBe("Used the browser");
+    expect(describeTools([call("mcp_0123456789abcdef01234567_browser_click", "x")])).toBe("Used MCP · browser click");
     expect(describeTools([call("list_dir", "list `.`")])).toBe("Listed the project");
     expect(describeTools([call("read_file", "check.txt")])).toBe("Read a file");
     expect(describeTools([call("mcp_0123456789abcdef01234567_read_text", "x", "files · read text file")])).toBe("Used files · read text file");

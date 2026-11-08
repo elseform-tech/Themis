@@ -83,12 +83,12 @@ describe("ApprovalBox", () => {
   });
 
   it("offers browser actions Always allow on this site, saved in Settings", () => {
-    setup({ ...REQUEST, tool: "browser_devtools", grant_site: { tools: "browser", site: "example.com" } });
+    setup({ ...REQUEST, tool: "browser", grant_site: { tools: "browser", site: "example.com", permission: "Debugging" } });
     expect(screen.getByRole("button", { name: "Always allow on this site" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /Allow in this chat/ })).toBeNull();
     expect(tooltip()).toHaveTextContent("saves Debugging for example.com in Settings › Browser");
     cleanup();
-    setup({ ...REQUEST, tool: "browser_download", grant_site: { tools: "browser", site: "files.example.com" } });
+    setup({ ...REQUEST, tool: "browser", grant_site: { tools: "browser", site: "files.example.com", permission: "Downloads" } });
     expect(tooltip()).toHaveTextContent("saves Downloads for files.example.com");
   });
 
@@ -208,7 +208,8 @@ describe("grant hint", () => {
   });
 
   it("names the site and the Settings permission a browser grant saves", () => {
-    setup({ ...REQUEST, tool: "browser_click", risk: "network", grant_site: { tools: "browser", site: "example.org" } });
+    setup({ ...REQUEST, tool: "browser", summary: "browser click e4 “Create account” on example.org", risk: "network", grant_site: { tools: "browser", site: "example.org", permission: "Browsing" } });
+    expect(screen.getByText(/Browser click e4/)).toBeInTheDocument();
     expect(tooltip()).toHaveTextContent("Always allow on this site saves Browsing for example.org in Settings › Browser, where you can change it.");
   });
 
