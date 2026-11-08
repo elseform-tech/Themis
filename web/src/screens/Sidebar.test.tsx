@@ -100,6 +100,15 @@ describe("Sidebar", () => {
     expect(row(sidebar, "Waiting chat").querySelector(".themis-sidebar-icon")).toBeNull();
   });
 
+  it("calls a destructive step Auto or YOLO asks about first a question, like other questions", async () => {
+    vi.mocked(bridge.getPendingApprovals).mockResolvedValue([{ thread_id: "q", approval_id: "d", tool: "shell", risk: "destructive", summary: "rm", command: { argv: ["rm", "-rf", "build"] }, ask_first: true }]);
+    const { sidebar } = await mountWith([chat("q", "Asking chat", 1, { running: true })]);
+    expect(titles(within(sidebar).getByRole("region", { name: "Waiting for you" }))).toEqual(["Asking chat"]);
+    expect(within(row(sidebar, "Asking chat")).getByText("Question")).toBeTruthy();
+    expect(within(row(sidebar, "Asking chat")).queryByText("Approval")).toBeNull();
+    expect(within(row(sidebar, "Asking chat")).getByRole("img", { name: "Waiting for your answer" })).toBeTruthy();
+  });
+
   it("draws status in the icon slot: walking dots, a cross for failure, the bubble otherwise, nothing on the right", async () => {
     const { sidebar, receive } = await mountWith([chat("s", "Status chat", 1, { running: true })]);
     const working = within(row(sidebar, "Status chat")).getByRole("img", { name: "Working" });

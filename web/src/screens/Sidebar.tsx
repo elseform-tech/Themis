@@ -258,15 +258,25 @@ export function SidebarIcon({ name }: { name: SidebarIconName }) {
 }
 
 type ThreadState = "Working" | "Needs approval" | "Question" | "Goal paused" | "Goal blocked" | "Goal waiting" | "Failed" | "Stopped" | "Done" | "Idle" | "Interrupted";
+
+/** What waits on the person in this chat, if anything: an approval box, else a question box. A destructive step Auto or
+ *  YOLO asks about first (`ask_first`) shows as a question box, so it reads as a question here too. */
+function waitingOn(state: ReturnType<typeof useApp>["state"], thread: ThreadInfo): "Needs approval" | "Question" | null {
+  const approvals = state.approvals.filter(approval => approval.thread_id === thread.id);
+  if (approvals.some(approval => !approval.ask_first)) return "Needs approval";
+  if (approvals.length > 0) return "Question";
+  const asking = (state.messages[thread.id] ?? []).some(row => row.question && row.question.answer === undefined)
+    || (!state.historyLoaded[thread.id] && (thread.open_questions ?? 0) > 0);
+  return asking ? "Question" : null;
+}
+
 export function threadStatus(state: ReturnType<typeof useApp>["state"], thread: ThreadInfo): ThreadState {
   const messages = state.messages[thread.id] ?? [];
   const last = messages[messages.length - 1];
   const running = state.running[thread.id] ?? thread.running;
   // What waits on the person comes first: an approval, then a question box, then a held goal.
-  if (state.approvals.some(approval => approval.thread_id === thread.id)) return "Needs approval";
-  const asking = messages.some(row => row.question && row.question.answer === undefined)
-    || (!state.historyLoaded[thread.id] && (thread.open_questions ?? 0) > 0);
-  if (asking) return "Question";
+  const waiting = waitingOn(state, thread);
+  if (waiting) return waiting;
   const goal = thread.id in state.goals ? state.goals[thread.id]?.status : thread.goal_status;
   if (goal === "paused") return "Goal paused";
   if (goal === "blocked") return "Goal blocked";

@@ -846,8 +846,8 @@
    "lines": 171
   },
   "web/src/screens/Sidebar.tsx::threadStatus": {
-   "cognitive": 49,
-   "cyclomatic": 28
+   "cognitive": 45,
+   "cyclomatic": 22
   },
   "web/src/screens/Skills.tsx::Skills": {
    "cognitive": 27,
