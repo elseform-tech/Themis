@@ -655,8 +655,8 @@ After each save the pane heading shows **Saved** for a few seconds; in Models, M
 Permissions, Browser, Web, Subagents and Advanced it adds *applies from each chat's next message*, because a reply
 already running keeps the settings it started with. Nothing needs a restart.
 Errors appear inline, and rejected changes leave the previous preferences intact.
-Permissions sets the mode new chats start in (Custom or YOLO; each chat can still switch in
-its composer) and the approval timeout, lists your Custom rules from `runtime.jsonc`
+Permissions sets the mode new chats start in (Auto by default, or Custom or YOLO; each chat
+can still switch in its composer, and a chat keeps the mode it was saved with) and the approval timeout, lists your Custom rules from `runtime.jsonc`
 read-only (first match wins, then the default for anything else), and shows whether that
 file was read, with **Open with** to edit it.
 
