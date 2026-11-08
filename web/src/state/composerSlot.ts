@@ -59,10 +59,19 @@ export type ComposerItem =
   | { kind: "approval"; request: ApprovalRequest }
   | { kind: "question"; question: Question };
 
+/** Open questions in the order the composer shows them: the one the person opened from its turn
+ *  most recently first (they just asked for it), then the rest oldest first. */
+function questionOrder(open: Question[], placements: ReadonlyMap<string, Placement>): Question[] {
+  const opened = [...placements].filter(([, placement]) => placement === "composer").map(([id]) => id);
+  const rank = (question: Question) => opened.lastIndexOf(question.id);
+  return [...open].sort((a, b) => rank(b) - rank(a) || a.asked_at - b.asked_at);
+}
+
 /** What the composer shows, one at a time: approvals first (the run waits on them), then
- *  questions, oldest first; `waiting` is how many more are behind it. */
+ *  questions, the one just opened from its turn first and otherwise oldest first; `waiting` is
+ *  how many more are behind it. */
 export function composerQueue(approvals: ApprovalRequest[], questions: Question[], placements: ReadonlyMap<string, Placement>, now: number, blockingMs = BLOCKING_OPEN_MS): { current: ComposerItem | null; waiting: { approvals: number; questions: number } } {
-  const open = questions.filter(question => questionOnComposer(question, placements, now, blockingMs)).sort((a, b) => a.asked_at - b.asked_at);
+  const open = questionOrder(questions.filter(question => questionOnComposer(question, placements, now, blockingMs)), placements);
   const items: ComposerItem[] = [
     ...approvals.map(request => ({ kind: "approval" as const, request })),
     ...open.map(question => ({ kind: "question" as const, question })),
