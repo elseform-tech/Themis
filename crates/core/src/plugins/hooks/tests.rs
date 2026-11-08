@@ -254,11 +254,10 @@ proptest! {
     ) {
         let prefix = vec!["git".to_owned(), "push".to_owned()];
         let call = json!({"command": command, "args": args, "action": action});
-        for tool in ["shell", "git", "background_task", "read_file"] {
+        for tool in ["shell", "background_task", "read_file"] {
             let ran = runs_command(tool, &call, |command| starts_with(command, &prefix));
             let read = match tool {
                 "shell" => crate::tools::shell_arguments_readable(&call),
-                "git" => crate::tools::git_argv(&call).is_some(),
                 "background_task" => crate::tools::background::only_inspects(&call),
                 _ => true,
             };

@@ -1239,7 +1239,7 @@ mod tests {
         let denied = with_tools("disallowedTools: Bash(rm:*), Write");
         assert_eq!(
             denied.tools.as_deref().unwrap(),
-            [&READS[..], &WEB_TOOLS[..]].concat()
+            [READS, &WEB_TOOLS[..]].concat()
         );
         let both = with_tools("tools: Read, Bash\ndisallowedTools: Bash");
         assert_eq!(both.tools.as_deref().unwrap(), READS);

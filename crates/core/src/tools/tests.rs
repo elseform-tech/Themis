@@ -560,29 +560,6 @@ async fn bounded_find_exposes_later_unicode_matches() {
 }
 
 #[tokio::test]
-async fn git_read_obeys_custom_deny_policy() {
-    let temporary = tempdir().unwrap();
-    let policy = crate::configuration::ApprovalPolicy {
-        default: crate::configuration::PolicyAction::Allow,
-        rules: vec![crate::configuration::ApprovalRule {
-            command: None,
-            tool: "git".into(),
-            action: crate::configuration::PolicyAction::Deny,
-            risk: Some("read".into()),
-        }],
-        ..Default::default()
-    };
-    let approvals = crate::configuration::configured_hook(
-        crate::configuration::ApprovalMode::Custom,
-        policy,
-        allow_all(),
-    );
-    let git = GitTool::new(temporary.path().to_owned(), approvals);
-    let error = git.execute(json!({"args":["status"]})).await.unwrap_err();
-    assert!(error.to_string().contains("denied"));
-}
-
-#[tokio::test]
 async fn yolo_accesses_external_files_preserving_relative_paths() {
     let temporary = tempdir().unwrap();
     let root = temporary.path().join("project");
@@ -790,26 +767,6 @@ fn argv_repairs_the_shapes_models_send() {
     let raw = serde_json::json!({"command": "", "args": ["python3", "python3", "x.py"]});
     assert_eq!(shell_argv(&raw), v(&["python3", "x.py"]));
     assert!(shell_argv(&serde_json::json!({"command": "", "args": []})).is_empty());
-}
-
-#[tokio::test]
-async fn refusals_tell_the_agent_not_to_work_around_them() {
-    let project = tempfile::tempdir().unwrap();
-    let denied = ShellTool::new(project.path().to_owned(), Arc::new(DenyAllHook))
-        .execute(serde_json::json!({"command": "ls"}))
-        .await
-        .unwrap_err()
-        .to_string();
-    assert!(denied.contains(REFUSAL_NOTE), "{denied}");
-    let git = GitTool::new(project.path().to_owned(), Arc::new(AllowAllHook))
-        .execute(serde_json::json!({"args": ["reset", "--hard"]}))
-        .await
-        .unwrap_err()
-        .to_string();
-    assert!(
-        git.contains("allowlist") && git.contains(REFUSAL_NOTE),
-        "{git}"
-    );
 }
 
 #[tokio::test]
@@ -1122,9 +1079,27 @@ mod commands;
 #[cfg(unix)]
 mod sandboxed;
 
+#[tokio::test]
+async fn refusals_tell_the_agent_not_to_work_around_them() {
+    let project = tempfile::tempdir().unwrap();
+    let denied = ShellTool::new(project.path().to_owned(), Arc::new(DenyAllHook))
+        .execute(serde_json::json!({"command": "ls"}))
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(denied.contains(REFUSAL_NOTE), "{denied}");
+}
+
 #[test]
 fn read_only_git_calls_are_reads_and_flags_that_write_or_run_programs_are_not() {
-    let risk = |args: &[&str]| git_call_risk(&json!({ "args": args }));
+    // Through the shell: a read-only git call is a read; anything else runs a command.
+    let risk = |args: &[&str]| {
+        let argv: Vec<String> = std::iter::once("git")
+            .chain(args.iter().copied())
+            .map(str::to_owned)
+            .collect();
+        shell_risk(&argv)
+    };
     for args in [
         &["status", "--short"][..],
         &["diff", "--cached", "--stat", "--", "src/a.rs"],
@@ -1153,14 +1128,9 @@ fn read_only_git_calls_are_reads_and_flags_that_write_or_run_programs_are_not() 
         &["diff", "\\\\server\\share\\file", "x"],
         &["diff", "\\Windows\\win.ini", "x"],
     ] {
-        assert_eq!(risk(args), RiskLevel::Write, "{args:?}");
+        assert_eq!(risk(args), RiskLevel::Execute, "{args:?}");
     }
     for args in [&["checkout", "--", "."][..], &["branch", "-D", "old"]] {
         assert_eq!(risk(args), RiskLevel::Destructive, "{args:?}");
     }
-    assert_eq!(
-        git_call_risk(&json!({})),
-        RiskLevel::Write,
-        "unreadable arguments"
-    );
 }

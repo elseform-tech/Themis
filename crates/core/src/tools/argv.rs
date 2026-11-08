@@ -84,7 +84,6 @@ pub fn shell_arguments_readable(args: &serde_json::Value) -> bool {
     args.get("command").is_some_and(Value::is_string) && args_list(args.get("args")).is_some()
 }
 
-
 /// Flags of `status`, `diff`, `log` and `show` that only change what is printed. Any other
 /// flag needs approval: `--output` writes a file, `--ext-diff` and `--textconv` run programs,
 /// and a flag not listed here may do either.
@@ -128,7 +127,6 @@ const GIT_READ_VALUE_FLAGS: [&str; 9] = [
     "--untracked-files=",
 ];
 
-
 /// A path that starts at a root, whatever the platform: `/x` and `\\x` (on Windows the
 /// current drive's root), `C:` and `C:\\x`, `~` (a home folder), or anything the OS calls absolute.
 /// `git status|diff|log|show` (the subcommand first) with only output-shaping arguments inside
@@ -162,9 +160,6 @@ fn git_read_argument(argument: &str) -> bool {
             .iter()
             .any(|flag| argument.starts_with(flag))
 }
-
-
-
 
 /// A list of strings, or the JSON text of one; nothing at all is an empty list.
 fn args_list(args: Option<&Value>) -> Option<Vec<String>> {

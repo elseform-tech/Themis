@@ -152,7 +152,6 @@ pub struct CommandDisplay {
     pub sandbox_blocked: Option<String>,
 }
 
-
 /// A single proposed action awaiting an approval decision.
 #[derive(Debug, Clone)]
 pub struct ToolAction {
