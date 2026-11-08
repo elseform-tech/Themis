@@ -1211,7 +1211,8 @@ mod tests {
         let (hook, asked) = always_hook();
         let (state, _tool, thread, data, project) = watch_tool(hook.clone()).await;
         let tool = rebuild(&state, hook.clone(), project.path(), &thread);
-        let a: Vec<String> = vec!["cat".into(), "a.txt".into()];
+        // `echo`, not a read like `cat` (reads run without asking).
+        let a: Vec<String> = vec!["echo".into(), "a.txt".into()];
         let b: Vec<String> = vec!["curl".into(), "https://example.invalid".into()];
         tool.execute(create_args(&a)).await.unwrap();
         // "Always allow" for argv A does not cover argv B.
@@ -1225,7 +1226,7 @@ mod tests {
         )
         .unwrap();
         let tool = rebuild(&state, hook.clone(), project.path(), &thread);
-        tool.execute(create_args(&["cat".into(), "c.txt".into()]))
+        tool.execute(create_args(&["echo".into(), "c.txt".into()]))
             .await
             .unwrap();
         assert_eq!(asked.lock().unwrap().len(), 3);

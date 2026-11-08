@@ -363,6 +363,23 @@ pub fn runs_git_helper(command: &[String]) -> bool {
     commands_run_by(command).is_none_or(|runs| runs.iter().any(|run| git_helper(run)))
 }
 
+/// An argument of `git <sub>` that starts another program or sets configuration: any
+/// abbreviation git could accept of a helper option (`--e=sh` is `--exec=sh`; an ambiguous one
+/// fails), `-c`, `-u` for `clone`/`ls-remote` (`--upload-pack`; for `push` it is
+/// `--set-upstream`, for `fetch` `--update-head-ok`), with the value attached or not, or a
+/// remote reached through a command (`ext::`, `fd::`).
+fn git_helper_argument(sub: &str, argument: &str) -> bool {
+    const HELPERS: [&str; 4] = ["--upload-pack", "--receive-pack", "--exec", "--config"];
+    let short = |flag: &str| argument.starts_with(flag) && !argument.starts_with("--");
+    let name = argument.split('=').next().unwrap_or_default();
+    let helper = name.len() > 2
+        && name.starts_with("--")
+        && HELPERS.iter().any(|long| long.starts_with(name));
+    let lower = argument.to_ascii_lowercase();
+    let upload = matches!(sub, "clone" | "ls-remote") && short("-u");
+    helper || upload || short("-c") || lower.contains("ext::") || lower.contains("fd::")
+}
+
 fn git_helper(command: &[String]) -> bool {
     let Some(program) = command.first() else {
         return false;
@@ -393,23 +410,9 @@ fn git_helper(command: &[String]) -> bool {
     ) {
         return false;
     }
-    const HELPERS: [&str; 4] = ["--upload-pack", "--receive-pack", "--exec", "--config"];
-    args[at + 1..].iter().any(|argument| {
-        let name = argument.split('=').next().unwrap_or_default();
-        // Any abbreviation git could accept (`--e=sh` is `--exec=sh`); an ambiguous one fails.
-        let helper = name.len() > 2
-            && name.starts_with("--")
-            && HELPERS.iter().any(|long| long.starts_with(name));
-        let lower = argument.to_ascii_lowercase();
-        // `-u` is `--upload-pack` for `clone` and `ls-remote` (value attached or not); for `push`
-        // it is `--set-upstream`, and for `fetch` `--update-head-ok`.
-        let upload = matches!(sub, "clone" | "ls-remote") && short(argument, "-u");
-        helper
-            || upload
-            || short(argument, "-c")
-            || lower.contains("ext::")
-            || lower.contains("fd::")
-    })
+    args[at + 1..]
+        .iter()
+        .any(|argument| git_helper_argument(sub, argument))
 }
 
 /// Every command `command` runs, itself first, then those inside wrappers

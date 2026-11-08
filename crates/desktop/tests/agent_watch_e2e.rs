@@ -420,7 +420,8 @@ async fn scripted_agent(with_check: bool) -> MockServer {
                     "name":"Watch status.txt","task":"Read status.txt and report it",
                     "interval_mins":2,"stop_when":"status.txt says DONE"});
                 if with_check {
-                    input["check_command"] = json!(["cat", "status.txt"]);
+                    // Not a read (a read like `cat` runs without asking), so it is asked about.
+                    input["check_command"] = json!(["echo", "status.txt"]);
                 }
                 tool_call(
                     "manage_automations",
@@ -571,9 +572,9 @@ async fn an_agent_check_command_needs_the_users_answer_in_a_git_project() {
     let asked = asked.expect("the user was asked about the exact command");
     assert_eq!(asked.tool, "shell");
     // The exact argv travels as structured tokens, never as a joined string.
-    assert_eq!(asked.command.unwrap().argv, ["cat", "status.txt"]);
+    assert_eq!(asked.command.unwrap().argv, ["echo", "status.txt"]);
     assert!(
-        !asked.summary.contains("cat status.txt"),
+        !asked.summary.contains("echo status.txt"),
         "{}",
         asked.summary
     );
