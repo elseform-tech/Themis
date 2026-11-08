@@ -16,6 +16,17 @@
 .themis-question-choice-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
 .themis-question-reason { font-size: .75rem; color: var(--themis-text-2); }
 .themis-question-tag { flex: none; font-size: .75rem; color: var(--themis-accent); }
+.themis-question-choice.is-chosen { border-color: var(--themis-accent); }
+/* A choice and its "More" disclosure on one line; what it means opens below both. */
+.themis-question-option { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: start; gap: 2px 4px; }
+.themis-question-option .themis-question-more { width: 28px; height: 28px; margin-top: 2px; }
+.themis-question-details { grid-column: 1 / -1; display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 2px 10px; margin: 2px 0 4px; padding: 0 10px; font-size: .75rem; line-height: 1.4; }
+.themis-question-details dt { color: var(--themis-text-3); }
+.themis-question-details dd { margin: 0; color: var(--themis-text-2); overflow-wrap: anywhere; }
+/* "2/3" with Back and Next, only when a box holds several questions. */
+.themis-question-pages { flex: none; display: flex; align-items: center; gap: 2px; margin-top: -4px; font-size: .75rem; color: var(--themis-text-2); font-variant-numeric: tabular-nums; }
+.themis-question-head .themis-question-pages .themis-goal-icon { width: 24px; height: 24px; margin: 0; }
+.themis-question-pages .themis-goal-icon:disabled { opacity: .35; cursor: default; }
 .themis-question-choice:hover:not(:disabled) { background: var(--themis-nav-hover-bg); }
 .themis-question-choice:disabled { opacity: .5; cursor: not-allowed; }
 .themis-question-form { display: flex; align-items: center; gap: 6px; }

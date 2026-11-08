@@ -57,22 +57,34 @@ export function questionOnComposer(question: Question, placements: ReadonlyMap<s
 
 export type ComposerItem =
   | { kind: "approval"; request: ApprovalRequest }
-  | { kind: "question"; question: Question };
+  /** The pages of one box: questions asked together (one `group`), in the order asked. */
+  | { kind: "question"; questions: Question[] };
+
+/** Open questions as boxes, oldest first: the questions of one group are one box. */
+function questionBoxes(open: Question[]): Question[][] {
+  const boxes = new Map<string, Question[]>();
+  for (const question of open) {
+    const key = question.group ?? question.id;
+    boxes.set(key, [...boxes.get(key) ?? [], question]);
+  }
+  return [...boxes.values()];
+}
 
 /** What the composer shows, one at a time: approvals first (the run waits on them), then
- *  questions, oldest first; `waiting` is how many more are behind it. */
+ *  questions, oldest first, those asked together as the pages of one box; `waiting` is how
+ *  many more are behind it. */
 export function composerQueue(approvals: ApprovalRequest[], questions: Question[], placements: ReadonlyMap<string, Placement>, now: number, blockingMs = BLOCKING_OPEN_MS): { current: ComposerItem | null; waiting: { approvals: number; questions: number } } {
   const open = questions.filter(question => questionOnComposer(question, placements, now, blockingMs)).sort((a, b) => a.asked_at - b.asked_at);
   const items: ComposerItem[] = [
     ...approvals.map(request => ({ kind: "approval" as const, request })),
-    ...open.map(question => ({ kind: "question" as const, question })),
+    ...questionBoxes(open).map(questions => ({ kind: "question" as const, questions })),
   ];
   const current = items[0] ?? null;
   return {
     current,
     waiting: {
       approvals: approvals.length - (current?.kind === "approval" ? 1 : 0),
-      questions: open.length - (current?.kind === "question" ? 1 : 0),
+      questions: open.length - (current?.kind === "question" ? current.questions.length : 0),
     },
   };
 }

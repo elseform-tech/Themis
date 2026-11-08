@@ -468,6 +468,10 @@ export interface Question {
   assumption?: string;
   /** One short line per answer on its tradeoff; the recommended one's says why. */
   reasons?: Record<string, string>;
+  /** What each of the agent's choices means, by answer. */
+  details?: Record<string, ChoiceDetails>;
+  /** Shared by the questions asked together: one box shows them as pages. */
+  group?: string;
   /** Nothing more could be done without the answer. */
   blocking: boolean;
   topic?: string;
@@ -475,17 +479,28 @@ export interface Question {
   answer?: string;
 }
 
+/** What picking one of the agent's choices means. */
+export interface ChoiceDetails {
+  /** What the agent will do: the line the box shows. */
+  does: string;
+  advantages: string;
+  disadvantages: string;
+  /** What follows, including whether it is hard to undo. */
+  consequences: string;
+}
+
 /** Starts the message that delivers an answer to the agent. */
 export const ANSWER_MARKER = "[Answer to your question — from the user]";
 
-/** The person's own answer inside such a message (what they chose or wrote), else undefined. */
+/** The person's own answers inside such a message (what they chose or wrote), one per line
+ *  when it answers several questions, else undefined. */
 export function answerOf(text: string): string | undefined {
   if (!text.startsWith(ANSWER_MARKER)) return undefined;
-  const at = text.lastIndexOf("\nAnswer: ");
-  if (at < 0) return undefined;
-  const rest = text.slice(at + "\nAnswer: ".length);
-  const end = rest.indexOf("\nIf the answer differs");
-  return (end < 0 ? rest : rest.slice(0, end)).trim();
+  const answers = text.split("\nAnswer: ").slice(1).map(rest => {
+    const end = rest.indexOf("\nIf the answer differs");
+    return (end < 0 ? rest : rest.slice(0, end)).trim();
+  });
+  return answers.length ? answers.join("\n") : undefined;
 }
 
 /** A message waiting for the chat's current run to end. */

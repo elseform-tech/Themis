@@ -12,6 +12,7 @@ vi.mock("../state/store", async importOriginal => ({
 vi.mock("../lib/tauri", () => ({
   approveAction: vi.fn(async () => undefined),
   answerQuestion: vi.fn(async () => undefined),
+  answerQuestions: vi.fn(async () => undefined),
   enqueueMessage: vi.fn(async () => ({ id: "m1" })),
   steerQueuedMessage: vi.fn(async () => undefined),
 }));
@@ -64,6 +65,17 @@ describe("composer stack", () => {
     rerender(stack({ goal, questions: [question] }));
     expect(screen.queryByRole("region", { name: "Approval needed" })).not.toBeInTheDocument();
     expect(screen.getByRole("region", { name: "Question from the agent" })).toHaveTextContent("Recommended");
+  });
+
+  it("shows questions asked together as pages of one box and sends their answers together", async () => {
+    const pages = [{ ...question, id: "g1", group: "g" }, { ...question, id: "g2", group: "g", question: "Which license?", choices: ["MIT", "Apache-2.0"], assumption: "MIT" }];
+    render(stack({ questions: pages }));
+    expect(screen.getByText("Question 1 of 2")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /^Own file too/ }));
+    await waitFor(() => expect(screen.getByText("Question 2 of 2")).toBeInTheDocument());
+    fireEvent.click(screen.getByRole("button", { name: /^MIT/ }));
+    const { answerQuestions } = await import("../lib/tauri");
+    await waitFor(() => expect(answerQuestions).toHaveBeenCalledWith("t1", [{ questionId: "g1", answer: "Own file too" }, { questionId: "g2", answer: "MIT" }]));
   });
 
   it("puts a skipped question back into its turn", () => {

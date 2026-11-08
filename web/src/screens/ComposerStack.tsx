@@ -1,13 +1,14 @@
 import { useMemo, useState } from "react";
 import { ApprovalBox } from "../components";
-import { answerQuestion, approveAction } from "../lib/tauri";
+import { answerQuestion, answerQuestions, approveAction } from "../lib/tauri";
 import type { ApprovalDecision, ApprovalRequest, Goal, Question } from "../lib/types";
 import { composerQueue, openFor, placeQuestion, readFolded, usePlacements, writeFolded, type ComposerItem } from "../state/composerSlot";
 import type { ToolTraceEntry } from "../state/reducer";
 import { describeError, toast, useApp } from "../state/store";
 import { GoalBar } from "./GoalBar";
 import { AskFirstBox } from "./AskFirstBox";
-import { QuestionBox, QuestionMark, useNowAt } from "./QuestionBox";
+import { QuestionMark, useNowAt } from "./QuestionBox";
+import { QuestionPages, type PageAnswer } from "./QuestionPages";
 
 interface ComposerStackProps {
   threadId: string;
@@ -62,7 +63,7 @@ export function ComposerStack({ threadId, goal, approvals, questions, traces, on
   if (!shownGoal && !current) return null;
 
   if (folded) {
-    const questionCount = waiting.questions + (current?.kind === "question" ? 1 : 0);
+    const questionCount = waiting.questions + (current?.kind === "question" ? current.questions.length : 0);
     const approval = current?.kind === "approval" ? current.request : null;
     const approvalPreview = approval ? approval.command?.argv.join(" ") ?? approval.tool : "";
     return (
@@ -108,6 +109,15 @@ function ComposerSlot({ current, threadId, traces, next, onFold, onDecide }: {
   onFold: () => void; onDecide: (request: ApprovalRequest, decision: ApprovalDecision) => Promise<void>;
 }) {
   const { dispatch } = useApp();
+  async function send(answers: PageAnswer[]) {
+    try {
+      if (answers.length === 1) await answerQuestion(threadId, answers[0]!.questionId, answers[0]!.answer);
+      else await answerQuestions(threadId, answers);
+    } catch (error) {
+      toast(dispatch, `Could not send the answer: ${describeError(error)}`, "danger");
+      throw error;
+    }
+  }
   return (
     <div className="themis-composer-slot">
       {current.kind === "approval" && current.request.ask_first ? (
@@ -123,12 +133,8 @@ function ComposerSlot({ current, threadId, traces, next, onFold, onDecide }: {
           onFold={onFold}
           onDecide={decision => void onDecide(current.request, decision)} />
       ) : (
-        <QuestionBox key={current.question.id} question={current.question}
-          onAnswer={async answer => {
-            try { await answerQuestion(threadId, current.question.id, answer); } catch (error) { toast(dispatch, `Could not send the answer: ${describeError(error)}`, "danger"); throw error; }
-          }}
-          onSkip={current.question.blocking ? undefined : () => placeQuestion(current.question.id, "turn")}
-          onFold={onFold} />
+        <QuestionPages key={current.questions[0]!.group ?? current.questions[0]!.id} pages={current.questions} onSend={send}
+          onLeave={ids => ids.forEach(id => placeQuestion(id, "turn"))} onFold={onFold} />
       )}
     </div>
   );
