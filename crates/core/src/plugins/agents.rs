@@ -26,9 +26,10 @@ const READING_TOOLS: [&str; 1] = ["read_file"];
 #[cfg(windows)]
 const READING_TOOLS: [&str; 3] = ["read_file", "list_dir", "search_file"];
 /// The shell a profile gets for Claude's `Grep`, `Glob` and `LS` where listing and searching go
-/// through it: held to commands that only read, so naming them never grants writes.
+/// through it: held to commands that only read, so naming them never grants writes. Programs the
+/// scope can't read option by option are left out when an option of theirs writes (`tree -o`).
 #[cfg(not(windows))]
-const READING_SHELL_SCOPE: [&str; 13] = [
+pub(crate) const READING_SHELL_SCOPE: [&str; 12] = [
     "ls:*",
     "rg:*",
     "grep:*",
@@ -37,7 +38,6 @@ const READING_SHELL_SCOPE: [&str; 13] = [
     "head:*",
     "tail:*",
     "wc:*",
-    "tree:*",
     "git status:*",
     "git diff:*",
     "git log:*",

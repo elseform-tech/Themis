@@ -933,3 +933,68 @@ fn shell_git_calls_that_run_another_program_are_asked_every_time() {
         assert!(!runs_git_helper(&argv(words)), "{words:?}");
     }
 }
+
+/// What a subagent's reading shell (`Grep`/`Glob`/`LS`) lets through, and what still asks: the
+/// scope narrows what may start; whether it runs without asking is the read-only check, which
+/// never treats a program-running option as a read.
+#[test]
+fn reading_scope_options_that_run_programs_are_never_reads() {
+    let argv = |words: &[&str]| {
+        words
+            .iter()
+            .map(|w| (*w).to_owned())
+            .collect::<Vec<String>>()
+    };
+    for words in [
+        &["git", "diff", "--ext-diff"][..],
+        &["git", "log", "-p", "--ext-diff"],
+        &["git", "diff", "--textconv"],
+        &["git", "show", "--textconv", "HEAD"],
+        &["find", ".", "-exec", "sh", "{}", ";"],
+        &["rg", "--pre", "sh", "x"],
+        &["tree", "-o", "out.txt"],
+        &["git", "diff", "--output=out.txt"],
+        &["git", "diff", "-o", "out.txt"],
+        &["git", "-c", "core.pager=sh", "log"],
+    ] {
+        assert_ne!(shell_risk(&argv(words)), RiskLevel::Read, "{words:?}");
+    }
+}
+
+/// A subagent's reading shell (`Grep`/`Glob`/`LS`, `program:*` patterns) refuses outright the
+/// options that would run another program: the scope only confirms what it understands.
+#[cfg(not(windows))]
+#[test]
+fn the_reading_scope_refuses_program_running_options_outright() {
+    let argv = |words: &[&str]| {
+        words
+            .iter()
+            .map(|w| (*w).to_owned())
+            .collect::<Vec<String>>()
+    };
+    let scope: Vec<String> = crate::plugins::agents::READING_SHELL_SCOPE
+        .iter()
+        .map(|p| (*p).to_owned())
+        .collect();
+    for words in [
+        &["find", ".", "-exec", "sh", "{}", ";"][..],
+        &["git", "diff", "--ext-diff"],
+        &["git", "show", "--textconv", "HEAD"],
+        &["rg", "--pre", "sh", "x"],
+        &["tree", "-o", "out.txt"],
+        &["git", "diff", "--output=out.txt"],
+        &["git", "diff", "-o", "out.txt"],
+        &["git", "-c", "core.pager=sh", "log"],
+        &["find", ".", "-delete"],
+        &["find", ".", "-fprint", "out.txt"],
+    ] {
+        assert!(
+            !crate::tools::shell_scope::command_in_scope(&argv(words), &scope),
+            "{words:?}"
+        );
+    }
+    assert!(crate::tools::shell_scope::command_in_scope(
+        &argv(&["rg", "-n", "TODO", "src"]),
+        &scope
+    ));
+}
