@@ -422,8 +422,9 @@ may write anywhere, read secret folders and use the network. Only Themis' own
 settings (its app data and the project's `.themis/` folder) stay read-only, and
 the agent is told to avoid destructive actions you did not ask for. A
 destructive step (deleting files, `rm -rf`, a force push, `git reset --hard`, a
-publish) still waits on an approval box first, in YOLO and Auto alike: Allow
-once runs it, Deny skips it, and with no answer in 10 minutes (the approval
+publish) still waits on a question box first, in YOLO and Auto alike (they
+never show an approval box): Run it once runs it, Skip it skips it, writing an
+answer tells the agent what to do instead, and with no answer in 10 minutes (the approval
 timeout) YOLO runs it and Auto lets its reviewer decide. Blocks you
 wrote still hold: a `deny` rule, `sandbox.network: "block"` and
 `allow_keychain: false`; the shield's panel lists them. The shield

@@ -429,9 +429,11 @@ It has no configuration editor or advanced settings link.
 
 **Destructive steps ask the person first in Auto and YOLO.** A destructive tool (`delete_file`,
 removals) or a destructive command variant (`rm -rf`, a force push, `git reset --hard`, `git
-clean`, `git branch -D`, a publish, a `themis` delete) waits on an approval box (Allow once or
-Deny, never "in this chat") before the mode's own decision, whatever an allow rule says; a deny
-rule still refuses it without asking. The person's answer decides. With no answer within the
+clean`, `git branch -D`, a publish, a `themis` delete) waits on a question box before the mode's
+own decision, whatever an allow rule says: **Run it once**, **Skip it**, or a written answer, which
+is steered in as a message (the step does not run and the agent reads it first). It is never
+remembered for the chat, and a deny rule still refuses it without asking. Auto and YOLO never show
+an approval box; an automation watch's check command in Auto goes to the reviewer too. The person's answer decides. With no answer within the
 approval timeout (Settings › Permissions, 10 minutes by default) the mode decides as below: Auto
 applies its rules and reviewer, YOLO runs it. An automation, with nobody to ask, and a non-Git
 project go straight to the mode. Custom asks about these every time anyway.

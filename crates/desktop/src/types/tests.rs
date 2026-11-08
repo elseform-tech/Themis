@@ -200,6 +200,7 @@ fn envelopes_use_snake_case_keys() {
         command: None,
         subagent: None,
         sensitive_files: Vec::new(),
+        ask_first: false,
     };
     assert_eq!(
         to_value(&request),
