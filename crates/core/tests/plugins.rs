@@ -44,7 +44,7 @@ fn init_is_a_short_built_in_skill_described_by_its_frontmatter() {
 fn subagents_is_a_built_in_skill_that_lists_or_hands_over_the_task() {
     const SKILL: &str = include_str!("../builtins/subagents/SKILL.md");
     for needed in [
-        "list_plugins` with kind `subagent`",
+        "`themis plugin list --kind subagent`",
         "`read_only`",
         "`model`",
         "write_paths",

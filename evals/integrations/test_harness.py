@@ -75,6 +75,26 @@ class Measures(unittest.TestCase):
         self.assertEqual((measures["old_tool_calls"], measures["themis_calls"], measures["failed_themis_calls"]),
                          (1, 2, 1))
 
+    def test_a_loaded_guide_and_a_doctor_run_are_counted(self):
+        trace = {"store": [], "actions": [], "approvals": [], "events": [
+            item("started"),
+            item("tool_started", tool="Skill", summary='call `Skill` with {"skill":"mcp"}'),
+            item("tool_finished", tool="Skill", ok=True, output="..."),
+            item("tool_started", tool="shell",
+                 summary='call `shell` with {"command":"themis","args":["doctor","--json","--integrations"]}'),
+            item("tool_finished", tool="shell", ok=True, output='{"exit_code": 0}'),
+        ]}
+        measures = grade.evaluate(trace, scenarios.load("add-mcp"), "/nowhere")
+        self.assertEqual((measures["guide_loaded"], measures["doctor_run"]), (1, 1))
+        quiet = {"store": [], "actions": [], "approvals": [], "events": [
+            item("started"),
+            item("tool_started", tool="Skill", summary='call `Skill` with {"skill":"init"}'),
+            item("tool_started", tool="shell", summary='call `shell` with {"command":"themis","args":["doctor"]}'),
+            item("tool_started", tool="read_file", summary="read .themis/skills/hooks/SKILL.md"),
+        ]}
+        measures = grade.evaluate(quiet, scenarios.load("add-mcp"), "/nowhere")
+        self.assertEqual((measures["guide_loaded"], measures["doctor_run"]), (1, 0))
+
     def test_a_reply_saying_it_could_not_is_no_false_claim(self):
         trace = {"store": [], "actions": [], "approvals": [], "events": [
             item("started"), item("assistant_text", text="I could not remove it: the plugin was not found.")]}

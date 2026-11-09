@@ -24,3 +24,6 @@ crates/desktop/searxng-runtime/
 
 # Screenshots and page dumps from browser-tool sessions
 .playwright-mcp/
+
+# Staged by scripts/stage-cli.mjs (or an empty stand-in from build.rs), shipped on Windows
+crates/desktop/binaries/

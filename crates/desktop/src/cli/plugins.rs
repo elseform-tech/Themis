@@ -6,7 +6,7 @@ use themis_core::plugins::definitions::{self, Definition};
 
 /// The plugin, skill, MCP and hook commands, for `themis plugin --help` and malformed calls.
 #[rustfmt::skip]
-pub const USAGE: &str = "Use plugin list|updates|create NAME|show NAME|edit NAME|save DEF|inspect SOURCE [NAME]|import SOURCE [NAME]|export NAME|preview NAME@MARKET|install NAME@MARKET|update NAME|enable NAME|disable NAME|uninstall NAME (SOURCE: a folder, repository or .mcp.json file); plugin marketplace list|preview SOURCE|add SOURCE [NAME]|enable NAME|disable NAME|changes NAME|browse NAME|refresh NAME|check NAME|remove NAME; skill list [PLUGIN]|save PLUGIN DEF|verify DEF|delete PLUGIN ID; mcp|hook list [PLUGIN]|add PLUGIN NAME DEF|update PLUGIN NAME DEF|test PLUGIN NAME|delete PLUGIN NAME; mcp add PLUGIN DEF adds every server of a .mcp.json ({\"mcpServers\": ...}). A missing PLUGIN is created by add and save. DEF is a file, - (stdin) or inline JSON: themis mcp add docs fetch '{\"command\":\"uvx\",\"args\":[\"mcp-server-fetch\"]}'. Options: --scope local|global --project PATH --expected REVISION --ref REF --subdirectory PATH --allow-partial. For agent creation: skill create THREAD REQUEST. `themis skill|mcp|hook --help` shows each definition's exact JSON with every field.";
+pub const USAGE: &str = "Use plugin list [--kind subagent]|updates|create NAME|show NAME|edit NAME|save DEF|inspect SOURCE [NAME]|import SOURCE [NAME]|export NAME|preview NAME@MARKET|install NAME@MARKET|update NAME|enable NAME|disable NAME|uninstall NAME (SOURCE: a folder, repository or .mcp.json file); plugin marketplace list|preview SOURCE|add SOURCE [NAME]|enable NAME|disable NAME|changes NAME|browse NAME|refresh NAME|check NAME|remove NAME; skill list [PLUGIN]|save PLUGIN DEF|verify DEF|delete PLUGIN ID; mcp|hook list [PLUGIN]|add PLUGIN NAME DEF|update PLUGIN NAME DEF|test PLUGIN NAME|delete PLUGIN NAME; mcp add PLUGIN DEF adds every server of a .mcp.json ({\"mcpServers\": ...}). A missing PLUGIN is created by add and save. DEF is a file, - (stdin) or inline JSON: themis mcp add docs fetch '{\"command\":\"uvx\",\"args\":[\"mcp-server-fetch\"]}'. Options: --scope local|global --project PATH --expected REVISION --ref REF --subdirectory PATH --allow-partial. For agent creation: skill create THREAD REQUEST. `themis skill|mcp|hook --help` shows each definition's exact JSON with every field.";
 
 /// `--help` for `plugin`, `skill`, `mcp` or `hook`: the usage, and for a component its exact
 /// definition (every field, required or optional, and an example).
@@ -34,6 +34,7 @@ pub(super) struct Options<'a> {
     expected: Option<String>,
     reference: Option<String>,
     subdirectory: Option<String>,
+    kind: Option<String>,
     pub(super) allow_partial: bool,
 }
 
@@ -46,13 +47,15 @@ impl<'a> Options<'a> {
             expected: None,
             reference: None,
             subdirectory: None,
+            kind: None,
             allow_partial: false,
         };
         let mut index = 0;
         while index < words.len() {
             match words[index].as_str() {
                 "--allow-partial" => options.allow_partial = true,
-                key @ ("--project" | "--scope" | "--expected" | "--ref" | "--subdirectory") => {
+                key @ ("--project" | "--scope" | "--expected" | "--ref" | "--subdirectory"
+                | "--kind") => {
                     index += 1;
                     let value = words.get(index).ok_or("Missing option value")?.clone();
                     match key {
@@ -60,6 +63,7 @@ impl<'a> Options<'a> {
                         "--scope" => options.scope = value,
                         "--ref" => options.reference = Some(value),
                         "--subdirectory" => options.subdirectory = Some(value),
+                        "--kind" => options.kind = Some(value),
                         _ => options.expected = Some(value),
                     }
                 }
@@ -90,7 +94,7 @@ pub(super) fn read(source: &str) -> Result<Value, String> {
             .map_err(|e| format!("Cannot read the definition from stdin: {e}"))?;
         input
     } else if is_inline(source) {
-        source.as_bytes().to_vec()
+        inline(source).as_bytes().to_vec()
     } else {
         let metadata = std::fs::metadata(source).map_err(|e| {
             format!("{source}: {e} (a definition is a file path, - for stdin, or JSON starting with {{)")
@@ -107,7 +111,17 @@ pub(super) fn read(source: &str) -> Result<Value, String> {
 }
 
 fn is_inline(source: &str) -> bool {
-    source.trim_start().starts_with('{')
+    inline(source).starts_with('{')
+}
+
+/// Inline JSON without surrounding space, or the single quotes a shell would have removed: the
+/// agent's shell tool passes each argument as it is, with no shell in between, so a definition
+/// copied as `'{…}'` arrives with its quotes.
+fn inline(source: &str) -> &str {
+    let text = source.trim();
+    text.strip_prefix("'{")
+        .and_then(|rest| rest.strip_suffix("}'"))
+        .map_or(text, |_| &text[1..text.len() - 1])
 }
 
 /// How a definition's source is named in messages.
@@ -128,7 +142,7 @@ pub async fn run(client: &Client, words: &[String], directory: &Path) -> Result<
     let (positional, project, reference, subdirectory) = (&options.positional, &options.project, &options.reference, &options.subdirectory);
     let mut request = json!({"scope":options.scope,"projectRoot":project,"expectedRevision":options.expected,"allowPartial":options.allow_partial});
     match positional.as_slice(){
-        ["plugin","list"]=>request["action"]=json!("list"),
+        ["plugin","list"]=>return list(client,request,options.kind.as_deref(),project.as_deref()).await,
         ["plugin","create",name]=>{request["action"]=json!("save");request["spec"]=json!({"name":name});},
         ["plugin","save",file]=>{
             let spec=read(file)?;let problems=definitions::plugin_problems(&spec);
@@ -147,8 +161,7 @@ pub async fn run(client: &Client, words: &[String], directory: &Path) -> Result<
         ["plugin","updates"]=>request["action"]=json!("updates"),
         ["plugin","marketplace","changes",name]=>{request["action"]=json!("check_source");request["name"]=json!(name);},
         ["plugin","marketplace","preview",source]=>{request["action"]=json!("preview_source");request["source"]=json!(source);},
-        ["plugin","marketplace","add",source]=>{request["action"]=json!("add_marketplace");request["source"]=json!(source);},
-        ["plugin","marketplace","add",source,name]=>{request["action"]=json!("add_marketplace");request["source"]=json!(source);request["name"]=json!(name);},
+        ["plugin","marketplace","add",source] | ["plugin","marketplace","add",source,_]=>{request["action"]=json!("add_marketplace");request["source"]=json!(source);request["name"]=json!(positional.get(4));},
         ["plugin","marketplace",switch,name] if matches!(*switch,"enable"|"disable")=>{request["action"]=json!("set_marketplace_enabled");request["name"]=json!(name);request["enabled"]=json!(*switch=="enable");},
         ["plugin","marketplace","remove",name]=>{request["action"]=json!("remove_marketplace");request["name"]=json!(name);},
         ["plugin","marketplace",action,name] if matches!(*action,"browse"|"refresh")=>{request["action"]=json!("catalog");request["name"]=json!(name);request["refresh"]=json!(*action=="refresh");},
@@ -168,6 +181,56 @@ pub async fn run(client: &Client, words: &[String], directory: &Path) -> Result<
         _=>return Err(USAGE.into()),
     }
     send(client, request, project.as_deref()).await
+}
+
+/// `plugin list`: every installed plugin in full, or with `--kind subagent` their profiles.
+async fn list(
+    client: &Client,
+    mut request: Value,
+    kind: Option<&str>,
+    project: Option<&str>,
+) -> Result<Value, String> {
+    if kind.is_some() {
+        return subagent_profiles(client, kind, project).await;
+    }
+    request["action"] = json!("list");
+    send(client, request, project).await
+}
+
+/// `plugin list --kind subagent`: every subagent profile of the installed plugins, global and in
+/// the project, with its plugin, whether that plugin is on, its model (none: the subagent default),
+/// tools and whether it only reads; no instructions.
+async fn subagent_profiles(
+    client: &Client,
+    kind: Option<&str>,
+    project: Option<&str>,
+) -> Result<Value, String> {
+    if kind != Some("subagent") {
+        return Err("--kind takes subagent (themis mcp|hook|skill list lists the others)".into());
+    }
+    let mut profiles = Vec::new();
+    let mut offset = Some(0);
+    while let Some(start) = offset {
+        let page = client
+            .call(
+                "plugin_action",
+                json!({"action": "inventory", "kind": "subagent", "offset": start, "limit": 100,
+                    "projectRoot": project}),
+            )
+            .await?;
+        for plugin in page["items"].as_array().into_iter().flatten() {
+            for profile in plugin["spec"]["subagents"].as_array().into_iter().flatten() {
+                let mut row = json!({"plugin": plugin["spec"]["name"], "scope": plugin["scope"],
+                    "enabled": plugin["enabled"]});
+                if let (Some(row), Some(fields)) = (row.as_object_mut(), profile.as_object()) {
+                    row.extend(fields.clone());
+                }
+                profiles.push(row);
+            }
+        }
+        offset = page["next_offset"].as_u64();
+    }
+    Ok(Value::Array(profiles))
 }
 
 /// `plugin edit NAME`: the definition opens in `$EDITOR`, then is saved against its revision.

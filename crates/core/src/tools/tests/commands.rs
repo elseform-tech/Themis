@@ -342,73 +342,27 @@ async fn shell_child_sees_locale_variables() {
 }
 
 #[test]
-fn management_approvals_separate_read_mutation_and_changed_execution() {
-    assert_eq!(
-        integration_risk("save_skill", &json!({"action":"list"})),
-        Some(RiskLevel::Write)
-    );
-    assert_eq!(
-        integration_risk("manage_integrations", &json!({"action":"list"})),
-        Some(RiskLevel::Read)
-    );
-    for action in [
-        "scan_marketplace",
-        "add_marketplace",
-        "inspect_marketplace",
-        "inspect_repository",
-    ] {
-        assert_eq!(
-            integration_risk("manage_integrations", &json!({"action":action})),
-            Some(RiskLevel::Network)
-        );
+fn automation_approvals_separate_reads_changes_and_removals() {
+    let risk = |action: &str| automation_risk("manage_automations", &json!({"action": action}));
+    assert_eq!(risk("list"), Some(RiskLevel::Read));
+    assert_eq!(risk("create"), Some(RiskLevel::Write));
+    assert_eq!(risk("disable"), Some(RiskLevel::Write));
+    assert_eq!(risk("delete"), Some(RiskLevel::Destructive));
+    // The removed integration tools are ordinary unknown tools now.
+    for name in ["manage_integrations", "list_plugins", "save_skill"] {
+        assert_eq!(automation_risk(name, &json!({"action": "list"})), None);
+        assert_eq!(automation_approval_identity(name, &json!({})), name);
     }
-    // Cached catalog requests can still fetch when the source cache is absent.
+    let identity = |action: &str| {
+        automation_approval_identity("manage_automations", &json!({"action": action}))
+    };
+    assert_ne!(identity("create"), identity("delete"));
+    // The identity grants were saved under before the integration tools went.
     assert_eq!(
-        integration_risk(
-            "manage_integrations",
-            &json!({"action":"catalog","refresh":false})
-        ),
-        Some(RiskLevel::Network)
-    );
-    // Preview does not install, but uncached sources can fetch repositories.
-    assert_eq!(
-        integration_risk(
-            "manage_integrations",
-            &json!({"action":"preview","refresh":false})
-        ),
-        Some(RiskLevel::Network)
-    );
-    assert_eq!(
-        integration_risk(
-            "manage_integrations",
-            &json!({"action":"preview_repository"})
-        ),
-        Some(RiskLevel::Network)
-    );
-    assert_eq!(
-        integration_risk("manage_integrations", &json!({"action":"delete"})),
-        Some(RiskLevel::Destructive)
-    );
-    assert_eq!(
-        integration_risk("manage_integrations", &json!({"action":"remove_component"})),
-        Some(RiskLevel::Destructive)
-    );
-    assert_eq!(
-        integration_risk("manage_integrations", &json!({"action":"test_hook"})),
-        Some(RiskLevel::Execute)
-    );
-    assert_ne!(
-        integration_approval_identity("manage_integrations", &json!({"action":"list"})),
-        integration_approval_identity("manage_integrations", &json!({"action":"save"}))
-    );
-    assert_ne!(
-        integration_approval_identity(
-            "manage_integrations",
-            &json!({"action":"test_hook","hook":{"command":"true"}})
-        ),
-        integration_approval_identity(
-            "manage_integrations",
-            &json!({"action":"test_hook","hook":{"command":":"}})
+        identity("create"),
+        format!(
+            "manage_automations_create_Some(Write)_{:016x}",
+            std::hash::Hasher::finish(&std::collections::hash_map::DefaultHasher::new())
         )
     );
 }

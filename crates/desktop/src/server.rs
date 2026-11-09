@@ -26,6 +26,7 @@ const DISCOVERY_FILE: &str = themis_core::agent_cli::DISCOVERY_FILE;
 mod history_transport_tests;
 
 mod agent;
+mod agent_path;
 mod client;
 mod commands;
 
@@ -142,7 +143,7 @@ impl Server {
             sink,
             shutdown,
             data_dir: data_dir.to_path_buf(),
-            cli: agent::own_cli(),
+            cli: agent_path::own_cli(),
         })
     }
 
@@ -214,7 +215,7 @@ impl Server {
             .local_addr()
             .map_err(|err| err.to_string())?
             .port();
-        let bin_dir = agent::link_cli(&self.data_dir, self.cli.as_deref());
+        let bin_dir = agent_path::link_cli(&self.data_dir, self.cli.as_deref());
         let agents = Arc::new(agent::AgentTokens::new(self.token.clone(), port, bin_dir));
         let issuer: Arc<dyn themis_core::agent_cli::Issuer> = agents.clone();
         themis_core::agent_cli::install(Arc::clone(&issuer));

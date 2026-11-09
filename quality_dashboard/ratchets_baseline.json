@@ -486,7 +486,7 @@
    "lines": 107
   },
   "crates/desktop/src/cli/plugins.rs::run": {
-   "cyclomatic": 42
+   "cyclomatic": 41
   },
   "crates/desktop/src/cli/render.rs::render_permissions": {
    "cognitive": 60,
@@ -515,7 +515,7 @@
    "lines": 118
   },
   "crates/desktop/src/state.rs::AppState#2::new_with_dirs": {
-   "lines": 111
+   "lines": 110
   },
   "crates/desktop/src/state/attachments.rs::copy_files": {
    "cyclomatic": 21

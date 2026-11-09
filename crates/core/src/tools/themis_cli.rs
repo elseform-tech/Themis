@@ -225,6 +225,7 @@ const VALUE_OPTIONS: &[&str] = &[
     "--expected",
     "--ref",
     "--subdirectory",
+    "--kind",
 ];
 
 /// `themis plugin|skill|mcp|hook …`, read the way the CLI reads it: options anywhere, then the
@@ -340,6 +341,25 @@ pub fn switches_on_code(command: &[String]) -> bool {
 #[must_use]
 pub(super) fn removes_through_themis(command: &[String]) -> bool {
     themis_calls(command).is_some_and(|calls| calls.contains(&ThemisCall::Destructive))
+}
+
+/// Whether `command` is a bare `themis` call about integrations (`plugin`, `skill`, `mcp`,
+/// `hook`, or `doctor --integrations`): it changes the integrations store, never the project's
+/// files, so a non-Git project's person may still allow it.
+#[must_use]
+pub fn manages_integrations(command: &[String]) -> bool {
+    if command.first().map(String::as_str) != Some("themis") {
+        return false;
+    }
+    let mut words = &command[1..];
+    if words.first().is_some_and(|word| word == "--data-dir") {
+        words = words.get(2..).unwrap_or_default();
+    }
+    match words.first().map(String::as_str) {
+        Some("plugin" | "skill" | "mcp" | "hook") => true,
+        Some("doctor") => words.iter().any(|word| word == "--integrations"),
+        _ => false,
+    }
 }
 
 /// The risk of a bare `themis …` shell call (the app's own CLI, first on the run's `PATH`);

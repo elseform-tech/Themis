@@ -1399,8 +1399,7 @@ async fn the_subagents_skill_lists_profiles_and_hands_the_task_to_one() {
                 return reply("REVIEWED");
             }
             match results(body).len() {
-                0 => tool_call("l1", "list_plugins", &json!({"kind": "subagent"})),
-                1 => tool_call(
+                0 => tool_call(
                     "s1",
                     "spawn_subagents",
                     &json!({"say": "Starting.", "subagents": [{"write_paths": [],
@@ -1437,19 +1436,27 @@ async fn the_subagents_skill_lists_profiles_and_hands_the_task_to_one() {
         .unwrap_or_default();
     assert!(first.starts_with("Subagents review the docs"), "{first}");
     assert!(first.contains(SKILL), "{first}");
-    // `list_plugins` kind `subagent` names each profile's model and whether it only reads.
+    // The command the skill names, `themis plugin list --kind subagent`, lists each profile with
+    // its plugin, model and whether it only reads.
+    assert!(SKILL.contains("`themis plugin list --kind subagent`"));
     let main = all.iter().rfind(|body| !is_subagent(body)).unwrap();
-    let inventory: Value = serde_json::from_str(results(main)[0]).unwrap();
-    let profiles = &inventory["items"][0]["spec"]["subagents"];
+    let data = app.data.path().to_owned();
+    let profiles = tokio::task::spawn_blocking(move || {
+        themis(&data, &["plugin", "list", "--kind", "subagent"])
+    })
+    .await
+    .unwrap();
     let profile = |name: &str| {
         profiles
             .as_array()
             .unwrap()
             .iter()
             .find(|profile| profile["name"] == name)
-            .unwrap_or_else(|| panic!("no {name} in {inventory}"))
+            .unwrap_or_else(|| panic!("no {name} in {profiles}"))
             .clone()
     };
+    assert_eq!(profile("reviewer")["plugin"], "kit");
+    assert_eq!(profile("reviewer")["enabled"], true);
     assert_eq!(profile("reviewer")["read_only"], true);
     assert_eq!(profile("reviewer")["model"], "test-model");
     assert_eq!(profile("builder")["read_only"], false);

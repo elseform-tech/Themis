@@ -38,10 +38,7 @@ pub(super) fn install_cli(directory: &std::path::Path) -> Result<(), String> {
     #[cfg(not(unix))]
     {
         let _ = directory;
-        Err(
-            "Build the Windows console CLI with cargo install --path crates/desktop --bin themis"
-                .to_owned(),
-        )
+        Err("On Windows the console CLI is installed next to the app as themis-cli.exe; add that folder to PATH".to_owned())
     }
 }
 

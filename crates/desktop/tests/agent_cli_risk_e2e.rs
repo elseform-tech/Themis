@@ -397,6 +397,22 @@ async fn an_agent_credential_never_switches_a_hook_or_command_server_on_in_any_m
             json!({"hook": false, "local": false, "remote": false}),
             "{mode:?}: nothing was switched on"
         );
+        // An agent's `mcp add` saves a command-based server switched off, whatever it says.
+        let name = format!("added-{}", tokens.len());
+        let definition = r#"{"command": "sh", "args": ["-c", "exit 0"], "enabled": true}"#;
+        let output = cli(
+            &fx,
+            Some(&token),
+            &["mcp", "add", "demo", &name, definition],
+        );
+        assert!(output.status.success(), "{mode:?}: {output:?}");
+        let listed = fx
+            .state
+            .plugin_action(json!({"action": "list"}))
+            .await
+            .unwrap();
+        let added = &listed[0]["spec"]["mcp"][&name];
+        assert_eq!(added["enabled"], false, "{mode:?}: {added}");
         tokens.push(token);
     }
     // A connection by URL keeps the consent rule: the agent may switch it on, and it still waits
@@ -468,105 +484,6 @@ async fn help_prints_usage_and_changes_nothing() {
     let general = cli(&fx, None, &["-h"]);
     assert!(String::from_utf8_lossy(&general.stdout).contains("usage: themis"));
     assert_eq!(switches(&fx)["hook"], false, "help switched nothing on");
-    fx.shut_down().await;
-}
-
-/// The old `manage_integrations` tool, switching on a hook: the store would refuse it, so the
-/// person is never asked; the agent gets the refusal at once and the hook stays off. Switching
-/// on a connection by URL, which an agent may do, still asks.
-#[tokio::test(flavor = "multi_thread")]
-async fn switching_a_hook_on_with_the_old_tool_is_refused_without_asking() {
-    if !common::git_available() {
-        return;
-    }
-    let _turn = ONE_SERVER.lock().await;
-    let fx = fixture().await;
-    fx.state
-        .plugin_action(
-            json!({"action": "save", "scope": "global", "spec": {"name": "demo",
-            "hooks": [{"name": "probe", "event": "BeforeTool", "command": "true",
-                "enabled": false}],
-            "mcp": {"remote": {"url": "https://example.com/mcp", "enabled": false}}}}),
-        )
-        .await
-        .unwrap();
-    let calls = [
-        json!({"action": "set_component_enabled", "name": "demo", "kind": "hook",
-            "id": "probe", "enabled": true}),
-        json!({"action": "set_component_enabled", "name": "demo", "kind": "mcp",
-            "id": "remote", "enabled": true}),
-    ];
-    let provider = MockServer::builder().start().await;
-    Mock::given(method("POST"))
-        .and(path("/chat/completions"))
-        .respond_with(move |request: &Request| {
-            let body: Value = serde_json::from_slice(&request.body).unwrap_or(Value::Null);
-            let done = body["messages"]
-                .as_array()
-                .map(|m| m.iter().filter(|m| m["role"] == "tool").count())
-                .unwrap_or(0);
-            let payload = match calls.get(done) {
-                Some(args) => json!({"choices":[{"message":{"role":"assistant","content":null,
-                    "tool_calls":[{"id":format!("call_{done}"),"type":"function","function":{
-                        "name":"manage_integrations","arguments":args.to_string()}}]}}]}),
-                None => json!({"choices":[{"message":{"role":"assistant","content":"finished"},
-                    "finish_reason":"stop"}]}),
-            };
-            ResponseTemplate::new(200).set_body_json(payload)
-        })
-        .mount(&provider)
-        .await;
-    common::use_mock_llm(&fx.state, &provider).await;
-    let thread = fx.thread(ApprovalMode::Custom).await;
-    let (sink, mut rx) = ChannelSink::channel();
-    fx.state
-        .send_message(Arc::new(sink), thread.clone(), "switch them on".into())
-        .await
-        .unwrap();
-    let mut asked = Vec::new();
-    let mut results = Vec::new();
-    let finished = tokio::time::timeout(Duration::from_secs(120), async {
-        while let Some(event) = rx.recv().await {
-            match event {
-                TestEvent::Approval(request) => {
-                    asked.push(serde_json::to_value(&request).unwrap());
-                    fx.state
-                        .approve_action(
-                            thread.clone(),
-                            request.approval_id.clone(),
-                            ApprovalDecision::Once,
-                        )
-                        .await
-                        .unwrap();
-                }
-                TestEvent::Thread(envelope) => match envelope.event {
-                    ThreadEvent::ToolFinished {
-                        tool, ok, output, ..
-                    } if tool == "manage_integrations" => results.push((ok, output)),
-                    ThreadEvent::Finished { .. } => break,
-                    ThreadEvent::Failed { error, .. } => panic!("run failed: {error}"),
-                    _ => {}
-                },
-                _ => {}
-            }
-        }
-    })
-    .await;
-    assert!(finished.is_ok(), "run did not finish");
-    assert_eq!(results.len(), 2, "{results:?}");
-    let (ok, output) = &results[0];
-    assert!(!ok, "{output}");
-    assert!(
-        output.contains(themis_core::prompts::AGENT_SWITCH_ON_REFUSED),
-        "{output}"
-    );
-    // Only the connection by URL was asked about.
-    assert_eq!(asked.len(), 1, "{asked:#?}");
-    assert!(results[1].0, "{:?}", results[1]);
-    let state = switches(&fx);
-    assert_eq!(state["hook"], false, "{state}");
-    assert_eq!(state["remote"], true, "{state}");
-    assert!(logs(&fx).contains("\"reason\":\"switch_on\""));
     fx.shut_down().await;
 }
 

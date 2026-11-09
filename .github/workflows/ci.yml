@@ -334,6 +334,15 @@ jobs:
       - if: runner.os == 'Windows'
         run: npx -y @tauri-apps/cli@2 build
         working-directory: crates/desktop
+      # The Windows bundle ships the console `themis` CLI next to the app (tauri.windows.conf.json,
+      # staged by scripts/stage-cli.mjs): the copy tauri-build made must be the real one, not
+      # build.rs's empty stand-in.
+      - if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $cli = Get-Item target/release/themis-cli.exe
+          if ($cli.Length -eq 0) { throw "themis-cli.exe is the empty stand-in" }
+          & $cli.FullName --version
       # The packaged app's search server starts and answers (uses the built runtime).
       - if: runner.os != 'Windows'
         run: cargo test -p themis-desktop --test browser_permissions_cli_e2e cli_the_built_in_search_server_answers -- --nocapture

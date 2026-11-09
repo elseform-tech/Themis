@@ -26,11 +26,6 @@ const FILE_SUMMARIES: [RegExp, (match: RegExpExecArray) => ActionPart[]][] = [
   }],
 ];
 
-/** The `"action"` of a raw ``call `tool` with {...}`` summary, when it is a plain word. */
-function integrationAction(summary: string): string | null {
-  return /"action":"([a-z_]{1,40})"/.exec(summary)?.[1] ?? null;
-}
-
 const folderName = (cwd: string) => cwd.split("/").filter(Boolean).pop() ?? cwd;
 
 /** What the agent is about to do, as a plain sentence. Never invents: what it cannot read stays the runtime's own words. */
@@ -43,10 +38,6 @@ export function actionParts(request: ApprovalRequest, label?: string): ActionPar
   for (const [pattern, parts] of FILE_SUMMARIES) {
     const match = pattern.exec(summary);
     if (match && parts(match).length) return parts(match);
-  }
-  if (tool === "manage_integrations" || tool.startsWith("manage_integrations_")) {
-    const action = integrationAction(summary);
-    return [action ? `Change an integration: ${action.replace(/_/g, " ")}` : "Change an integration"];
   }
   if (tool.startsWith("mcp_start_")) return ["Connect an MCP server"];
   if (tool.startsWith("mcp_")) return [`Use ${toolDisplayName(tool, label)}`];

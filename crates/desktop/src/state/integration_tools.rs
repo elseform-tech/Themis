@@ -1,4 +1,5 @@
-//! Agent-facing management uses the same validated state APIs as the UI and CLI.
+//! `manage_automations`, the agent's tool for its chat's automations. Plugins, skills, MCP servers
+//! and hooks are managed with the `themis` CLI in the agent's shell (see `server::agent_path`).
 use super::automation::{
     schedule_summary, shell_policy_for, CheckGrant, CheckPolicy, CALENDAR_EXPIRY_MINS,
 };
@@ -22,9 +23,9 @@ pub(super) struct RunApproval {
 }
 
 impl AppState {
-    /// Management tools outside a run (tests): capture the live mode and policy.
+    /// The automation tool outside a run (tests): capture the live mode and policy.
     #[cfg(test)]
-    pub(super) fn integration_management_tools(
+    pub(super) fn automation_tools(
         &self,
         approvals: Arc<dyn ApprovalHook>,
         project: PathBuf,
@@ -47,39 +48,30 @@ impl AppState {
             interactive: approvals.clone(),
             grants: self.chat_grants_for(&thread_id),
         };
-        self.integration_management_tools_for_run(approvals, project, thread_id, run)
+        self.automation_tools_for_run(approvals, project, thread_id, run)
     }
 
-    pub(super) fn integration_management_tools_for_run(
+    pub(super) fn automation_tools_for_run(
         &self,
         approvals: Arc<dyn ApprovalHook>,
         project: PathBuf,
         thread_id: String,
         run: RunApproval,
     ) -> Vec<Box<dyn ToolT>> {
-        [
-            "list_plugins",
-            "save_skill",
-            "manage_integrations",
-            "manage_automations",
-        ]
-        .into_iter()
-        .map(|name| {
-            Box::new(ManagementTool {
-                name,
-                state: self.clone(),
-                approvals: approvals.clone(),
-                project: project.clone(),
-                thread_id: thread_id.clone(),
-                run: run.clone(),
-            }) as Box<dyn ToolT>
-        })
-        .collect()
+        vec![Box::new(ManagementTool {
+            state: self.clone(),
+            approvals,
+            project,
+            thread_id,
+            run,
+        }) as Box<dyn ToolT>]
     }
 }
 
+/// The tool's name, as the model calls it.
+const NAME: &str = "manage_automations";
+
 struct ManagementTool {
-    name: &'static str,
     state: AppState,
     approvals: Arc<dyn ApprovalHook>,
     project: PathBuf,
@@ -88,80 +80,32 @@ struct ManagementTool {
 }
 impl std::fmt::Debug for ManagementTool {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_tuple("ManagementTool").field(&self.name).finish()
+        f.debug_tuple("ManagementTool").field(&NAME).finish()
     }
 }
 #[async_trait]
 impl ToolRuntime for ManagementTool {
-    async fn execute(&self, mut args: Value) -> Result<Value, ToolCallError> {
+    async fn execute(&self, args: Value) -> Result<Value, ToolCallError> {
         if !args.is_object() {
             return Err(error("Management arguments must be an object"));
-        }
-        if self.name == "list_plugins" {
-            args["action"] = "list".into();
-        }
-        if self.name == "save_skill" {
-            args["action"] = "save_skill".into();
         }
         // An agent manages the automations of its own chat without asking:
         // the user stops them from Workspace Tasks. Anything else (another
         // chat's automation) follows the normal approval rules.
-        let own_chat_automation =
-            self.name == "manage_automations" && self.targets_own_chat(&args).await;
-        if own_chat_automation {
+        if self.targets_own_chat(&args).await {
             self.own_chat_policy(&args)?;
-        } else if themis_core::tools::integration_switches_on(self.name, &args)
-            && self.state.agent_switch_on_refused(&self.project, &args)
-        {
-            // Never a hook or a command-based MCP server switched on by an agent: refused before
-            // the person is asked about a call that could not succeed.
-            return Err(error(themis_core::prompts::AGENT_SWITCH_ON_REFUSED));
         } else {
             let action = ToolAction {
                 display: None,
                 command: Vec::new(),
-                tool: themis_core::tools::integration_approval_identity(self.name, &args),
-                summary: format!(
-                    "{} {}",
-                    self.name,
-                    args["action"].as_str().unwrap_or("list")
-                ),
-                risk: themis_core::tools::integration_risk(self.name, &args)
+                tool: themis_core::tools::automation_approval_identity(NAME, &args),
+                summary: format!("{} {}", NAME, args["action"].as_str().unwrap_or("list")),
+                risk: themis_core::tools::automation_risk(NAME, &args)
                     .expect("known management tool"),
             };
             themis_core::tools::check_approval_permitted(self.approvals.as_ref(), &action)?;
         }
-        if self.name == "manage_automations" {
-            return self.automation_action(args).await.map_err(error);
-        }
-        if args.get("projectRoot").is_none() {
-            args["projectRoot"] = self.project.to_string_lossy().as_ref().into();
-        }
-        if args.get("scope").is_none() {
-            args["scope"] = "global".into();
-        }
-        if args["action"].as_str().unwrap_or("list") == "list" {
-            args["action"] = "inventory".into();
-        }
-        // One management call per plugin at a time: the definition a dialog
-        // shows is then the one that is saved.
-        let plugin_name = if args["action"] == "save" {
-            args["spec"]["name"].as_str()
-        } else {
-            args["name"].as_str()
-        }
-        .unwrap_or_default()
-        .to_owned();
-        let lock = self
-            .state
-            .plugin_call_lock(args["scope"].as_str().unwrap_or("global"), &plugin_name);
-        let _serialized = lock.lock().await;
-        // Never a hook or a command-based MCP server left on, in any mode: the person switches
-        // those on in Integrations.
-        self.state
-            .plugin_action_for_agent(args)
-            .await
-            .map_err(error)
+        self.automation_action(args).await.map_err(error)
     }
 }
 
@@ -173,14 +117,9 @@ impl ManagementTool {
         let action = ToolAction {
             display: None,
             command: Vec::new(),
-            tool: themis_core::tools::integration_approval_identity(self.name, args),
-            summary: format!(
-                "{} {}",
-                self.name,
-                args["action"].as_str().unwrap_or("list")
-            ),
-            risk: themis_core::tools::integration_risk(self.name, args)
-                .expect("known management tool"),
+            tool: themis_core::tools::automation_approval_identity(NAME, args),
+            summary: format!("{} {}", NAME, args["action"].as_str().unwrap_or("list")),
+            risk: themis_core::tools::automation_risk(NAME, args).expect("known management tool"),
         };
         let decision = if self.run.mode == ApprovalMode::Yolo {
             self.run.policy.yolo_decision(&action)
@@ -196,7 +135,7 @@ impl ManagementTool {
         if decision == PolicyAction::Deny {
             return Err(error(format!(
                 "approval denied for '{}': the approval rules deny this automation action",
-                self.name
+                NAME
             )));
         }
         Ok(())
@@ -519,18 +458,13 @@ fn error(message: impl ToString) -> ToolCallError {
 }
 impl ToolT for ManagementTool {
     fn name(&self) -> &str {
-        self.name
+        "manage_automations"
     }
     fn description(&self) -> &str {
-        match self.name {
-            "list_plugins" => "Read paginated integration metadata, each plugin's hook definitions and subagent profiles, and configured/enabled MCP counts in the current project and user scope, without bundled contents. Use kind, offset and limit (default 25, maximum 100); follow next_offset. Enabled does not imply connected or healthy.",
-            "save_skill" => "Create or update a personal skill through the shared registry. Supply skill, plugin, scope and expectedRevision when updating.",
-            "manage_integrations" => "Manage integrations through shared validated APIs. Actions: list (paginated metadata and MCP counts; kind/offset/limit, next_offset), save, save_skill, save_hook, set_component_enabled, remove_component, enable, disable, delete, marketplaces, sources, updates, check_source, preview_source, scan_marketplace, catalog, preview, add_marketplace, set_marketplace_enabled, remove_marketplace, install, update, import_path, import_json, import_repository, preview_repository, test_mcp, test_hook. import_path takes path; import_json takes content as a JSON string; import_repository and preview_repository take url with optional reference and subdirectory; preview_repository reads package contents without installing. save_hook takes name (the plugin) and hook, and keeps the rest of the plugin; the hook is saved turned off. Component actions take name, kind (skill/mcp/hook), id and enabled for set_component_enabled. Marketplace actions take source or marketplace as appropriate; source is owner/repo, an HTTPS Git URL or a local folder. preview_source reads a source's name, publisher and plugin count before adding it, and add_marketplace takes its name from the source. updates lists installed plugins whose upstream changed, and check_source (marketplace as name) looks for changes now; update installs the newly checked package, and new or changed connections and hooks arrive turned off. preview takes marketplace and name to inspect supported package contents without installing; it reuses the completed marketplace scan. scan_marketplace returns saved status and starts or resumes background work; refresh requests a new scan. test_mcp takes server configuration; test_hook takes hook configuration. New integrations default to global scope, available across projects; preserve the existing scope when editing. Executable operations require approval.",
-            _ => "Manage this chat's recurring automations and short-interval watches. No approval is needed for automations of this chat. Actions: list, create, update, enable, disable, delete, complete. Results echo the STORED schedule_summary, interval_mins, schedule, expires_at, max_runs and next_run_at; report those exact facts to the user, never what you intended. Put fields in `input` (or at the top level). create needs name, task and exactly ONE timing: (a) interval watch: interval_mins 2-60 (every N minutes; optionally repeat \"interval\"), or (b) calendar: repeat daily|weekdays|weekly (weekdays = Monday to Friday) with time HH:MM, timezone (IANA, e.g. Europe/Berlin) and weekday 0=Monday for weekly. interval_mins and a calendar schedule cannot be mixed. A watch is temporary: it expires in 2 hours by default (set expires_in_mins up to 1440); calendar automations expire after 7 days by default (up to 10080); only the user can extend or remove an expiry. A watch also stops after max_runs (default 60) runs; set stop_when to a short plain-language goal (shown to the user), and when that goal is met call action complete (with id, optional when this chat has one automation) to end it. Optional check_command (an argv array such as [\"cat\",\"status.txt\"]) polls cheaply: it runs without the model each interval and the model starts only when its output (or exit code) changes. It is a shell command, so it follows the shell approval policy, unlike the lifecycle actions: in Custom mode the user is asked to approve that exact argv when you create or update the watch (declined means the watch is not saved; then create it without check_command and read the file yourself on each run), and it stops if the policy later denies it. Three failures in a row stop an automation. Updates merge input into the saved fields; update with interval_mins switches to an interval, with a calendar schedule switches to the calendar. Automations always continue this chat; delete removes one that is no longer wanted.",
-        }
+        "Manage this chat's recurring automations and short-interval watches. No approval is needed for automations of this chat. Actions: list, create, update, enable, disable, delete, complete. Results echo the STORED schedule_summary, interval_mins, schedule, expires_at, max_runs and next_run_at; report those exact facts to the user, never what you intended. Put fields in `input` (or at the top level). create needs name, task and exactly ONE timing: (a) interval watch: interval_mins 2-60 (every N minutes; optionally repeat \"interval\"), or (b) calendar: repeat daily|weekdays|weekly (weekdays = Monday to Friday) with time HH:MM, timezone (IANA, e.g. Europe/Berlin) and weekday 0=Monday for weekly. interval_mins and a calendar schedule cannot be mixed. A watch is temporary: it expires in 2 hours by default (set expires_in_mins up to 1440); calendar automations expire after 7 days by default (up to 10080); only the user can extend or remove an expiry. A watch also stops after max_runs (default 60) runs; set stop_when to a short plain-language goal (shown to the user), and when that goal is met call action complete (with id, optional when this chat has one automation) to end it. Optional check_command (an argv array such as [\"cat\",\"status.txt\"]) polls cheaply: it runs without the model each interval and the model starts only when its output (or exit code) changes. It is a shell command, so it follows the shell approval policy, unlike the lifecycle actions: in Custom mode the user is asked to approve that exact argv when you create or update the watch (declined means the watch is not saved; then create it without check_command and read the file yourself on each run), and it stops if the policy later denies it. Three failures in a row stop an automation. Updates merge input into the saved fields; update with interval_mins switches to an interval, with a calendar schedule switches to the calendar. Automations always continue this chat; delete removes one that is no longer wanted."
     }
     fn args_schema(&self) -> Value {
-        let mut schema = json!({"type":"object","properties":{"action":{"type":"string"},"scope":{"type":"string","enum":["local","global"]},"projectRoot":{"type":"string"},"name":{"type":"string"},"plugin":{"type":"string"},"expectedRevision":{"type":"string"},"skill":{"type":"object"},"spec":{"type":"object"},"id":{"type":"string"},"path":{"type":"string"},"source":{"type":"string"},"url":{"type":"string"},"reference":{"type":"string"},"subdirectory":{"type":"string"},"content":{"type":"string"},"kind":{"type":"string","enum":["plugin","skill","mcp","hook","subagent"]},"offset":{"type":"integer","minimum":0},"limit":{"type":"integer","minimum":1,"maximum":100},"marketplace":{"type":"string"},"refresh":{"type":"boolean"},"server":{"type":"object"},"hook":{"type":"object"},"enabled":{"type":"boolean"}},"additionalProperties":true});
+        let mut schema = json!({"type":"object","properties":{"action":{"type":"string"},"id":{"type":"string"}},"additionalProperties":true});
         schema["properties"]["input"] = automation_input_schema();
         schema
     }
@@ -545,149 +479,6 @@ mod tests {
     use themis_core::tools::{AllowAllHook, DenyAllHook};
 
     #[tokio::test]
-    async fn advertised_import_and_component_arguments_use_shared_api() {
-        let data = tempfile::tempdir().unwrap();
-        let project = tempfile::tempdir().unwrap();
-        let state = AppState::new_for_test(data.path().join("settings.json"));
-        let tools = state.integration_management_tools(
-            Arc::new(AllowAllHook),
-            project.path().into(),
-            "chat".into(),
-        );
-        let manager = tools
-            .iter()
-            .find(|tool| tool.name() == "manage_integrations")
-            .unwrap();
-        for field in [
-            "content",
-            "url",
-            "reference",
-            "subdirectory",
-            "kind",
-            "server",
-            "hook",
-        ] {
-            assert!(manager.args_schema()["properties"].get(field).is_some());
-        }
-        let content = json!({"name":"imported","mcp":{"example":{"command":"missing-server","enabled":false}}}).to_string();
-        manager
-            .execute(json!({"action":"import_json","content":content}))
-            .await
-            .unwrap();
-        // Switching on a command-based server is the person's, in every mode.
-        let enable = json!({"action":"set_component_enabled","scope":"global","name":"imported","kind":"mcp","id":"example","enabled":true});
-        let refused = manager
-            .execute(enable.clone())
-            .await
-            .unwrap_err()
-            .to_string();
-        assert!(
-            refused.contains(themis_core::prompts::AGENT_SWITCH_ON_REFUSED),
-            "{refused}"
-        );
-        state.plugin_action(enable).await.unwrap();
-        let listed = manager.execute(json!({"action":"list"})).await.unwrap();
-        let imported = listed["items"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .find(|plugin| plugin["spec"]["name"] == "imported")
-            .unwrap();
-        assert_eq!(imported["spec"]["mcp"]["example"]["enabled"], true);
-    }
-
-    #[tokio::test]
-    async fn hooks_can_be_created_changed_tested_and_deleted_without_touching_the_plugin() {
-        let data = tempfile::tempdir().unwrap();
-        let project = tempfile::tempdir().unwrap();
-        let state = AppState::new_for_test(data.path().join("settings.json"));
-        let tools = state.integration_management_tools(
-            Arc::new(AllowAllHook),
-            project.path().into(),
-            "chat".into(),
-        );
-        let manager = tools
-            .iter()
-            .find(|tool| tool.name() == "manage_integrations")
-            .unwrap();
-        state
-            .plugin_action(json!({"action":"save","scope":"global","spec":{"name":"guards","files":{"notes.md":"keep me"}}}))
-            .await
-            .unwrap();
-        let hook = |command: &str| json!({"name":"guard","event":"BeforeTool","command":command,"matcher":"shell","enabled":true,"timeout_seconds":5});
-        let current = || async {
-            let plugins = state.plugin_action(json!({"action":"list"})).await.unwrap();
-            plugins
-                .as_array()
-                .unwrap()
-                .iter()
-                .find(|plugin| plugin["spec"]["name"] == "guards")
-                .unwrap()
-                .clone()
-        };
-        let save = |command: &str, revision: Value| json!({"action":"save_hook","name":"guards","hook":hook(command),"expectedRevision":revision});
-        // Create: saved off, even when asked for on; the plugin's files stay.
-        let revision = current().await["revision"].clone();
-        manager.execute(save("echo one", revision)).await.unwrap();
-        let plugin = current().await;
-        // The agent reads hooks through `list_plugins`, which has no plugin files.
-        let lister = tools
-            .iter()
-            .find(|tool| tool.name() == "list_plugins")
-            .unwrap();
-        let listed = lister.execute(json!({"kind":"hook"})).await.unwrap();
-        let spec = &listed["items"][0]["spec"];
-        assert_eq!(spec["hooks"][0]["command"], "echo one");
-        assert_eq!(spec["hooks"][0]["matcher"], "shell");
-        assert!(spec.get("files").is_none());
-        assert_eq!(plugin["spec"]["hooks"][0]["name"], "guard");
-        assert_eq!(plugin["spec"]["hooks"][0]["enabled"], false);
-        assert_eq!(plugin["spec"]["files"]["notes.md"], "keep me");
-        // Only the person switches it on; saving it unchanged keeps it on; a revision from before
-        // that save is refused.
-        let revision = plugin["revision"].clone();
-        let enable = json!({"action":"set_component_enabled","scope":"global","name":"guards","kind":"hook","id":"guard","enabled":true});
-        let refused = manager
-            .execute(enable.clone())
-            .await
-            .unwrap_err()
-            .to_string();
-        assert!(
-            refused.contains(themis_core::prompts::AGENT_SWITCH_ON_REFUSED),
-            "{refused}"
-        );
-        assert_eq!(current().await["spec"]["hooks"][0]["enabled"], false);
-        state.plugin_action(enable).await.unwrap();
-        manager
-            .execute(save("echo one", revision.clone()))
-            .await
-            .unwrap();
-        assert_eq!(current().await["spec"]["hooks"][0]["enabled"], true);
-        assert!(manager.execute(save("echo stale", revision)).await.is_err());
-        // Changing the command turns it off.
-        let revision = current().await["revision"].clone();
-        manager.execute(save("echo two", revision)).await.unwrap();
-        let plugin = current().await;
-        assert_eq!(plugin["spec"]["hooks"].as_array().unwrap().len(), 1);
-        assert_eq!(plugin["spec"]["hooks"][0]["command"], "echo two");
-        assert_eq!(plugin["spec"]["hooks"][0]["enabled"], false);
-        // Test, then delete.
-        manager
-            .execute(json!({"action":"test_hook","hook":hook("exit 0")}))
-            .await
-            .unwrap();
-        manager
-            .execute(
-                json!({"action":"remove_component","name":"guards","kind":"hook","id":"guard"}),
-            )
-            .await
-            .unwrap();
-        let plugin = current().await;
-        assert!(plugin["spec"]["hooks"].as_array().unwrap().is_empty());
-        assert_eq!(plugin["spec"]["files"]["notes.md"], "keep me");
-    }
-
-    #[tokio::test]
     async fn agent_automation_creation_uses_current_chat_and_update_preserves_fields() {
         let data = tempfile::tempdir().unwrap();
         let project = tempfile::tempdir().unwrap();
@@ -700,7 +491,7 @@ mod tests {
             )
             .await
             .unwrap();
-        let tools = state.integration_management_tools(
+        let tools = state.automation_tools(
             Arc::new(AllowAllHook),
             project.path().into(),
             thread.id.clone(),
@@ -746,7 +537,7 @@ mod tests {
             .await
             .unwrap();
         let tool = state
-            .integration_management_tools(hook, project.path().into(), thread.id.clone())
+            .automation_tools(hook, project.path().into(), thread.id.clone())
             .into_iter()
             .find(|tool| tool.name() == "manage_automations")
             .unwrap();
@@ -1070,11 +861,8 @@ mod tests {
         // The scheduler never asks: a different argv has no approval of its own.
         let stored = state.list_automations().await.remove(0);
         assert_eq!(stored.watch_state.approved_check, Some(argv.clone()));
-        let denying = state.integration_management_tools(
-            Arc::new(DenyAllHook),
-            project.path().into(),
-            thread.clone(),
-        );
+        let denying =
+            state.automation_tools(Arc::new(DenyAllHook), project.path().into(), thread.clone());
         let manage = denying
             .iter()
             .find(|t| t.name() == "manage_automations")
@@ -1187,7 +975,7 @@ mod tests {
         thread: &str,
     ) -> Box<dyn ToolT> {
         state
-            .integration_management_tools(hook, project.into(), thread.to_owned())
+            .automation_tools(hook, project.into(), thread.to_owned())
             .into_iter()
             .find(|tool| tool.name() == "manage_automations")
             .unwrap()
@@ -1323,34 +1111,16 @@ mod tests {
         let project = tempfile::tempdir().unwrap();
         let state = AppState::new_for_test(data.path().join("settings.json"));
         state.plugin_action(json!({"action":"import_json","name":"large","content":json!({"name":"large","files":{"README.md":"bulk".repeat(60_000)},"mcp":{"example":{"command":"missing-server","enabled":false}}}).to_string()})).await.unwrap();
-        let tools = state.integration_management_tools(
-            Arc::new(AllowAllHook),
-            project.path().into(),
-            "chat".into(),
-        );
-        for name in ["list_plugins", "manage_integrations"] {
-            let listed = tools
-                .iter()
-                .find(|t| t.name() == name)
-                .unwrap()
-                .execute(json!({"action":"list","kind":"mcp"}))
-                .await
-                .unwrap();
-            assert_eq!(listed["counts"]["mcp"]["total"], 1);
-            assert_eq!(listed["counts"]["mcp"]["enabled"], 0);
-            assert_eq!(listed["items"][0]["spec"]["name"], "large");
-            assert!(listed["items"][0]["spec"].get("files").is_none());
-            assert!(listed.to_string().len() < 4096);
-        }
-        let default = tools
-            .iter()
-            .find(|t| t.name() == "manage_integrations")
-            .unwrap()
-            .execute(json!({}))
+        // The agent's `themis plugin list --kind …` reads this metadata-only inventory.
+        let listed = state
+            .plugin_action(json!({"action":"inventory","kind":"mcp","projectRoot":project.path()}))
             .await
             .unwrap();
-        assert_eq!(default["counts"]["mcp"]["total"], 1);
-        assert!(default["items"][0]["spec"].get("files").is_none());
+        assert_eq!(listed["counts"]["mcp"]["total"], 1);
+        assert_eq!(listed["counts"]["mcp"]["enabled"], 0);
+        assert_eq!(listed["items"][0]["spec"]["name"], "large");
+        assert!(listed["items"][0]["spec"].get("files").is_none());
+        assert!(listed.to_string().len() < 4096);
         for args in [
             json!({"limit":0}),
             json!({"limit":101}),
@@ -1370,62 +1140,5 @@ mod tests {
                 .len(),
             240_000
         );
-    }
-
-    #[tokio::test]
-    async fn agent_management_is_approval_gated_and_uses_shared_storage() {
-        let data = tempfile::tempdir().unwrap();
-        let project = tempfile::tempdir().unwrap();
-        let state = AppState::new_for_test(data.path().join("settings.json"));
-        let args = json!({"plugin":"personal","skill":{"id":"review","name":"Review","description":"Review changes","instructions":"Inspect source","allowedTools":[],"scripts":[]}});
-        let denied = state.integration_management_tools(
-            Arc::new(DenyAllHook),
-            project.path().into(),
-            "chat".into(),
-        );
-        assert!(denied
-            .iter()
-            .find(|t| t.name() == "save_skill")
-            .unwrap()
-            .execute(args.clone())
-            .await
-            .is_err());
-        assert!(state
-            .plugin_store(Some(project.path().into()))
-            .list()
-            .unwrap()
-            .iter()
-            .all(|plugin| plugin.spec.name != "personal"));
-        let allowed = state.integration_management_tools(
-            Arc::new(AllowAllHook),
-            project.path().into(),
-            "chat".into(),
-        );
-        allowed
-            .iter()
-            .find(|t| t.name() == "save_skill")
-            .unwrap()
-            .execute(args)
-            .await
-            .unwrap();
-        let saved = state
-            .plugin_action(json!({"action":"list","projectRoot":project.path()}))
-            .await
-            .unwrap();
-        assert_eq!(saved[0]["spec"]["skills"][0]["id"], "review");
-        assert_eq!(saved[0]["scope"], "global");
-        assert!(state
-            .plugin_store(None)
-            .available_skills()
-            .unwrap()
-            .iter()
-            .any(|skill| skill.name == "Review"));
-        let restarted = AppState::new_for_test(data.path().join("settings.json"));
-        assert!(restarted
-            .prompt_skills(Some(project.path().to_string_lossy().into()))
-            .await
-            .unwrap()
-            .iter()
-            .any(|s| s.name == "Review"));
     }
 }

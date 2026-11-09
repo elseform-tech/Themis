@@ -18,9 +18,8 @@
 //! person sees the secret's name and the host, and allows that pair. Connections a person wrote
 //! themselves name their own secrets, and need no second word.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -425,24 +424,6 @@ impl AppState {
             })
             .unwrap_or_default();
         self.record_mcp_consent(root, scope, plugin_name, &servers);
-    }
-
-    /// One async lock per plugin: agent management calls on the same plugin run
-    /// one at a time, so the definition a dialog shows is the one that is saved.
-    pub(super) fn plugin_call_lock(
-        &self,
-        scope: &str,
-        plugin: &str,
-    ) -> Arc<tokio::sync::Mutex<()>> {
-        let mut locks: std::sync::MutexGuard<HashMap<String, Arc<tokio::sync::Mutex<()>>>> = self
-            .inner
-            .plugin_locks
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
-        locks
-            .entry(format!("{scope}\0{plugin}"))
-            .or_default()
-            .clone()
     }
 }
 

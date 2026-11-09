@@ -195,7 +195,7 @@ async fn every_problem_in_a_definition_comes_back_at_once() {
     for wanted in ["skills[0]", "Duplicate hook name"] {
         assert!(error.contains(wanted), "{wanted} missing from:\n{error}");
     }
-    // The server answers a raw call (an agent's script, `manage_integrations`) the same way.
+    // The server answers a raw call (an agent's script, `themis call plugin_action`) the same way.
     let error = fails(
         data.path(),
         &[

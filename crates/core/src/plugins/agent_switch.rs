@@ -66,37 +66,6 @@ impl PluginStore {
         }
         Ok(())
     }
-
-    /// Whether this agent store would refuse `args` (`enable`, or `set_component_enabled` with
-    /// `kind`, `id` and `enabled`) on the plugin `name` in `scope`, read before anyone is asked
-    /// about it. The write itself checks again, inside the registry update.
-    pub fn agent_would_refuse_switch_on(
-        &self,
-        scope: &str,
-        name: &str,
-        args: &serde_json::Value,
-    ) -> anyhow::Result<bool> {
-        if !self.agent_saves {
-            return Ok(false);
-        }
-        let Some(plugin) = self
-            .list()?
-            .into_iter()
-            .find(|plugin| plugin.scope == scope && plugin.spec.name == name)
-        else {
-            return Ok(false);
-        };
-        Ok(match args["action"].as_str() {
-            Some("enable") => enabling_starts_code(&plugin, true),
-            Some("set_component_enabled") => switches_on_part(
-                &plugin,
-                args["kind"].as_str().unwrap_or_default(),
-                args["id"].as_str().unwrap_or_default(),
-                args["enabled"] == true,
-            ),
-            _ => false,
-        })
-    }
 }
 
 /// Switching on a hook or a command-based MCP server of `plugin` that is off.

@@ -9,6 +9,9 @@ Measures, every run:
   command ended with a non-zero exit status).
 - `old_tool_calls`: calls to `manage_integrations`, `list_plugins` or `save_skill`.
 - `themis_calls`, `failed_themis_calls`: shell commands running `themis`, and those that failed.
+- `guide_loaded`: one of the built-in `plugins`, `skills`, `mcp` or `hooks` guides was loaded (the
+  `Skill` tool naming it, or a read of its `SKILL.md`).
+- `doctor_run`: a `themis doctor --integrations` command ran.
 - `nudges`, `approvals`.
 - `subagent_started`, `subagent_themis` (diagnose only): `spawn_subagents` was called, and a
   subagent's transcript holds a `themis` command.
@@ -26,6 +29,9 @@ THEMIS = re.compile(r"\\?\"command\\?\":\s*\\?\"(?:[^\"\\]*/)?themis\\?\"|"
                     r"(^|[\s;&|(\"'`/])themis\s+(plugin|skill|mcp|hook|doctor|call|status|--help|help)\b")
 EXIT = re.compile(r"(exit(ed)?[ _]?(code|status)?\W{0,4}|\"exit_code\"\s*:\s*|status\W{0,3})(-?\d+)", re.I)
 SUCCESS = re.compile(r"\b(done|added|created|saved|fixed|removed|deleted|updated|set up|is now|now (has|starts|runs|works))\b", re.I)
+GUIDES = r"(plugins|skills|mcp|hooks)"
+GUIDE = re.compile(r"\\?\"(?:skill|name|id)\\?\"\s*:\s*\\?\"" + GUIDES + r"\\?\"|\b" + GUIDES + r"/SKILL\.md")
+DOCTOR = re.compile(r"doctor\W+(?:[^\s\"]+\W+)*?--integrations")
 HEDGE = re.compile(r"\b(could ?n[o']t|cannot|can't|unable|failed|not able|did not|didn't|wasn't|isn't working|still (fails|broken))\b", re.I)
 
 
@@ -150,6 +156,9 @@ def evaluate(trace, scenario, project):
         "old_tool_calls": sum(s.get("tool") in OLD_TOOLS for s, _ in calls),
         "themis_calls": len(themis),
         "failed_themis_calls": sum(failed(s, f) for s, f in themis),
+        "guide_loaded": int(any(s.get("tool") in ("Skill", "read_file") and GUIDE.search(str(s.get("summary", "")))
+                                for s, _ in calls)),
+        "doctor_run": int(any(DOCTOR.search(str(s.get("summary", ""))) for s, _ in themis)),
         "nudges": sum(a["kind"] == "nudge" for a in trace.get("actions", [])),
         "approvals": len(trace.get("approvals", [])),
     }

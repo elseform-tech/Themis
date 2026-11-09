@@ -587,7 +587,7 @@ and which of writes, MCP, web and nested subagents are off), and one example
 request. Followed by a task, as in `/subagents review the tests and the docs`,
 the agent hands that task to subagents, picking a profile where one fits, and
 reports what they found once it has checked it. It reads profiles with
-`list_plugins` kind `subagent` and the limits with `themis call
+`themis plugin list --kind subagent` and the limits with `themis call
 get_subagent_settings`. It lives in `crates/core/builtins/subagents/SKILL.md`.
 
 Skill instructions can contain up to 256 KiB of UTF-8 text without truncation. File reads are paged at 8,000 content characters; the agent must follow `next_offset` to read longer instructions. Large tool results are saved to disk and represented by a small receipt, so the agent can extract the relevant facts. An oversized tool result normally continues the run. Storage failures or repeated recovery can stop the current run; the chat remains available. Oversized tool arguments are rejected before execution, without partial writes. See [context limits and recovery](context-and-attachments.md).
