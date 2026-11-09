@@ -28,6 +28,7 @@ const ALL: &[(&str, &str, &[&str])] = &[
         &["workspace"],
     ),
     (DESKTOP_RUN_YOLO, "desktop-run-yolo", &[]),
+    (DESKTOP_RUN_INTEGRATIONS, "desktop-run-integrations", &[]),
     (
         DESKTOP_SECRETS_UNIGNORED,
         "desktop-secrets-unignored",
@@ -41,6 +42,11 @@ const ALL: &[(&str, &str, &[&str])] = &[
     (TOOL_SENSITIVE_COMMIT, "tool-sensitive-commit", &["files"]),
     (TOOL_SENSITIVE_DENIED, "tool-sensitive-denied", &["files"]),
     (SUBAGENT_SECRETS_NOTE, "subagent-secrets-note", &[]),
+    (
+        SUBAGENT_INTEGRATIONS_NOTE,
+        "subagent-integrations-note",
+        &[],
+    ),
     (RUNTIME_PASTED_SECRET, "runtime-pasted-secret", &[]),
     (DESKTOP_VERIFY_BROWSER, "desktop-verify-browser", &[]),
     (DESKTOP_MCP_GUIDANCE, "desktop-mcp-guidance", &[]),
@@ -535,8 +541,16 @@ When you choose between real options (an approach, a library, a design), say why
     let (plugin, name, reason) = ("p", "srv", "server process could not start");
     assert_eq!(
             fill(DESKTOP_MCP_UNAVAILABLE, &[("plugin", plugin), ("name", name), ("reason", reason)]),
-            format!("MCP {}/{name} is unavailable: {reason}. No tools from this connection are available for this run. Use manage_integrations list to inspect its configuration, test_mcp to troubleshoot, or set_component_enabled with kind=mcp to disable it. Management tools remain available; configuration changes apply on the next run.", plugin)
+            format!("MCP {plugin}/{name} is unavailable: {reason}. No tools from this connection are available for this run. Run `themis mcp list {plugin}` in the shell to read its definition, `themis mcp test {plugin} {name}` to troubleshoot, or `themis mcp disable {plugin} {name}` to switch it off. Changes apply on the next run.")
         );
+    assert_eq!(
+        DESKTOP_RUN_INTEGRATIONS,
+        "Plugins, skills, MCP servers and hooks are managed with the `themis` command in your shell (`themis plugin|skill|mcp|hook …`; `themis doctor --integrations` checks them all). The plugins, skills, mcp and hooks skills show how to find, change and verify each; load the one that fits before changing anything."
+    );
+    assert_eq!(
+        SUBAGENT_INTEGRATIONS_NOTE,
+        "You may inspect plugins, skills, MCP servers and hooks with read-only `themis` commands in your shell, such as `themis plugin list`, `themis mcp list PLUGIN`, `themis hook list PLUGIN` and `themis doctor --integrations --no-start`. Changing them is the main agent's job: report what should change and why."
+    );
 }
 
 #[test]

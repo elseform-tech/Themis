@@ -1,4 +1,5 @@
-//! Run setup helpers: the project secrets note, the hooks' permission mode and MCP tool names.
+//! Run setup helpers: the run's workspace head, the project secrets note, the hooks' permission
+//! mode and MCP tool names.
 
 use super::*;
 
@@ -50,6 +51,19 @@ impl AppState {
         }
         note
     }
+}
+
+/// The head of every desktop run's additions to the system message: its workspace, then where
+/// integrations are managed (a tool advertises itself in every request; the `themis` CLI does not).
+pub(super) fn run_head(workspace: &str) -> String {
+    format!(
+        "{}\n{}",
+        themis_core::prompts::fill(
+            themis_core::prompts::DESKTOP_RUN_WORKSPACE,
+            &[("workspace", workspace)]
+        ),
+        themis_core::prompts::DESKTOP_RUN_INTEGRATIONS
+    )
 }
 
 /// The mode in the words Claude's hooks read.

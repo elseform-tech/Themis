@@ -1,0 +1,1 @@
+Plugins, skills, MCP servers and hooks are managed with the `themis` command in your shell (`themis plugin|skill|mcp|hook …`; `themis doctor --integrations` checks them all). The plugins, skills, mcp and hooks skills show how to find, change and verify each; load the one that fits before changing anything.

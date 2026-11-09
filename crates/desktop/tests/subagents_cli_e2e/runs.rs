@@ -101,6 +101,50 @@ async fn agents_and_subagents_read_the_projects_guidance_and_get_a_map_of_its_do
     }
 }
 
+/// The main agent is told integrations are managed with `themis` in its shell, and a subagent
+/// with an open shell that it may read them that way; neither gets the other's line.
+#[tokio::test(flavor = "multi_thread")]
+async fn agents_are_told_where_integrations_are_managed() {
+    let app = app(None, |body| {
+        if is_subagent(body) {
+            return reply("Done.");
+        }
+        match tool_results(body) {
+            0 => tools(&[(
+                "s1",
+                "spawn_subagents",
+                json!({"subagents": [{"write_paths": [], "name": "Reader", "brief": "Look."}]}),
+            )]),
+            _ if mentions(body, "Done.") => reply("All done."),
+            _ => reply("Waiting."),
+        }
+    })
+    .await;
+    let (data, thread) = (app.data.path().to_owned(), app.thread.clone());
+    tokio::task::spawn_blocking(move || run(&data, &thread, "look"))
+        .await
+        .unwrap();
+    let requests = bodies(&app.llm).await;
+    let main = requests.iter().find(|b| !is_subagent(b)).unwrap();
+    let child = requests.iter().find(|b| is_subagent(b)).unwrap();
+    let main_system = text(&messages(main)[0]);
+    let child_system = text(&messages(child)[0]);
+    assert!(
+        main_system.contains(themis_core::prompts::DESKTOP_RUN_INTEGRATIONS),
+        "{main_system}"
+    );
+    assert!(!main_system.contains(themis_core::prompts::SUBAGENT_INTEGRATIONS_NOTE));
+    assert_eq!(
+        child_system.contains(themis_core::prompts::SUBAGENT_INTEGRATIONS_NOTE),
+        tool_names(child).iter().any(|name| name == "shell"),
+        "{child_system}"
+    );
+    if !cfg!(windows) {
+        assert!(child_system.contains(themis_core::prompts::SUBAGENT_INTEGRATIONS_NOTE));
+    }
+    assert!(!child_system.contains(themis_core::prompts::DESKTOP_RUN_INTEGRATIONS));
+}
+
 /// CLAUDE.md is read when there is no AGENTS.md, and the setting turns all of this off.
 #[tokio::test(flavor = "multi_thread")]
 async fn claude_md_stands_in_and_the_setting_turns_guidance_off() {

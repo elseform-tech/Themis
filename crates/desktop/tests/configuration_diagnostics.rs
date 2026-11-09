@@ -50,6 +50,11 @@ fn assert_current_project(body: &Value, root: &Path) {
         .collect();
     assert!(system.contains(themis_core::prompts::SYSTEM_VERIFY));
     assert!(system.contains(themis_core::prompts::DESKTOP_VERIFY_BROWSER));
+    // Right after the workspace: integrations are managed with `themis` in the shell.
+    assert!(system.contains(&format!(
+        "Follow the user's task scope when choosing paths.\n{}\n",
+        themis_core::prompts::DESKTOP_RUN_INTEGRATIONS
+    )));
 }
 
 #[test]
