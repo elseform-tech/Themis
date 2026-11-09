@@ -41,24 +41,36 @@ fn arguments_are_read_leniently() {
     );
 }
 
-/// A hint too short to say what happens, what it costs and what follows is refused, naming the
-/// choice, its length and the floor; one at the floor is taken.
+/// Hints too short to say what happens, what it costs and what follows are refused all at
+/// once, each named with its page, choice and length, so one retry fixes them; hints at the
+/// floor are taken.
 #[test]
-fn a_thin_hint_is_refused_with_its_length() {
+fn every_thin_hint_is_named_in_one_refusal() {
     let thin = "Largest ecosystem, huge hiring pool. Good default for most SaaS.";
-    let refused = parse(&json!({"question": "Stack?", "choices": [choice("Go"), {"answer": "TypeScript", "hint": thin}]}))
-        .unwrap_err();
-    assert!(refused.contains("choice 2 (\"TypeScript\")"), "{refused}");
+    let page = |hints: [&str; 2]| {
+        parse(&json!({"question": "Stack?", "choices": [
+            {"answer": "Go", "hint": hints[0]}, {"answer": "TypeScript", "hint": hints[1]}
+        ]}))
+        .unwrap()
+    };
+    let full = "é".repeat(MIN_HINT_CHARS);
+    let refused = thin_hints(&[page([&full, thin]), page([thin, &full])]).unwrap();
+    let chars = thin.chars().count();
     assert!(
-        refused.contains(&format!("{} characters", thin.chars().count())),
+        refused.contains(&format!(
+            "question 1 choice 2 (\"TypeScript\", {chars} characters)"
+        )),
+        "{refused}"
+    );
+    assert!(
+        refused.contains(&format!("question 2 choice 1 (\"Go\", {chars} characters)")),
         "{refused}"
     );
     assert!(refused.contains(&MIN_HINT_CHARS.to_string()), "{refused}");
-    let at_floor = "é".repeat(MIN_HINT_CHARS);
-    assert!(
-        parse(&json!({"question": "Stack?", "choices": [{"answer": "Go", "hint": at_floor}]}))
-            .is_ok()
-    );
+    let single = thin_hints(&[page([&full, thin])]).unwrap();
+    assert!(single.contains("choice 2 (\"TypeScript\""), "{single}");
+    assert!(!single.contains("question 1"), "{single}");
+    assert_eq!(thin_hints(&[page([&full, &full])]), None);
 }
 
 /// A choice without its hint is refused, naming what is missing; a bare string has none.
@@ -149,7 +161,7 @@ proptest! {
                     prop_assert_eq!(asked.choices.len(), asked.reasons.len());
                     for (answer, hint) in &asked.reasons {
                         prop_assert!(!answer.trim().is_empty());
-                        prop_assert!(hint.trim().chars().count() >= MIN_HINT_CHARS);
+                        prop_assert!(!hint.trim().is_empty());
                     }
                     if asked.blocking {
                         prop_assert!(asked.assumption.as_deref().is_none_or(|a| a.trim().is_empty()));

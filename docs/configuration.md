@@ -607,8 +607,8 @@ asked in one call). Every choice the agent offers is `{"answer","hint"}`: the hi
 paragraph of two to four sentences on what picking it means (what the agent will do, what it
 gains, what it costs or risks, what follows including whether it is hard to undo). A choice
 without a hint, or a bare string, is refused naming the choice and the missing field ("choice 2
-("Tabs") needs `hint`", from `ask-user-choice-incomplete.md`); a hint under 200 characters is
-refused naming the choice and its length (`ask-user-hint-thin.md`); either way nothing is asked.
+("Tabs") needs `hint`", from `ask-user-choice-incomplete.md`); a hint under 160 characters is
+refused, every such choice named with its length in one refusal (`ask-user-hint-thin.md`); either way nothing is asked.
 The tool's description also rules out choices that only invite the person's own words ("Other",
 "I have a preference, tell me"), since the box always has a field for them. The tool's
 `why` says why the recommendation is recommended; it is stored as the recommendation's hint only

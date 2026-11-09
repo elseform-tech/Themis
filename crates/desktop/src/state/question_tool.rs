@@ -19,7 +19,7 @@ use crate::types::Question;
 pub(super) const MAX_PAGES: usize = 4;
 /// The shortest hint taken, in characters: shorter ones rarely say what happens, what it costs
 /// and what follows.
-pub(super) const MIN_HINT_CHARS: usize = 200;
+pub(super) const MIN_HINT_CHARS: usize = 160;
 
 pub(super) struct QuestionTool {
     pub(super) state: AppState,
@@ -63,9 +63,8 @@ fn pages(args: &Value) -> Result<Vec<&Value>, String> {
     }
 }
 
-/// One choice: its answer and its hint (one paragraph on what picking it means, at least
-/// [`MIN_HINT_CHARS`] characters), or why it is refused (naming each missing field, or the
-/// hint's length). A bare string is a choice without a hint.
+/// One choice: its answer and its hint (one paragraph on what picking it means), or why it
+/// is refused (naming each missing field). A bare string is a choice without a hint.
 fn parse_choice(index: usize, choice: &Value) -> Result<(String, String), String> {
     let field = |key: &str| {
         choice
@@ -92,20 +91,10 @@ fn parse_choice(index: usize, choice: &Value) -> Result<(String, String), String
             ],
         ));
     }
-    let answer = answer.unwrap_or_default();
-    let hint = field("hint").unwrap_or_default();
-    let chars = hint.chars().count();
-    if chars < MIN_HINT_CHARS {
-        return Err(themis_core::prompts::fill(
-            themis_core::prompts::ASK_USER_HINT_THIN,
-            &[
-                ("choice", &format!("{} (\"{answer}\")", index + 1)),
-                ("chars", &chars.to_string()),
-                ("min", &MIN_HINT_CHARS.to_string()),
-            ],
-        ));
-    }
-    Ok((answer.to_owned(), hint.to_owned()))
+    Ok((
+        answer.unwrap_or_default().to_owned(),
+        field("hint").unwrap_or_default().to_owned(),
+    ))
 }
 
 /// One question as the model sent it, or why it is refused.
@@ -134,6 +123,42 @@ fn parse(args: &Value) -> Result<NewQuestion, String> {
         assumption: recommended,
         topic: text("topic"),
         subagent: None,
+    })
+}
+
+/// Why the pages are refused for hints under [`MIN_HINT_CHARS`] characters, naming every such
+/// choice at once (with its page when there are several) so one retry can fix them all.
+fn thin_hints(asked: &[NewQuestion]) -> Option<String> {
+    let several = asked.len() > 1;
+    let thin: Vec<String> = asked
+        .iter()
+        .enumerate()
+        .flat_map(|(page, question)| {
+            question
+                .reasons
+                .iter()
+                .enumerate()
+                .filter_map(move |(index, (answer, hint))| {
+                    let chars = hint.chars().count();
+                    (chars < MIN_HINT_CHARS).then(|| {
+                        let place = if several {
+                            format!("question {} choice {}", page + 1, index + 1)
+                        } else {
+                            format!("choice {}", index + 1)
+                        };
+                        format!("{place} (\"{answer}\", {chars} characters)")
+                    })
+                })
+        })
+        .collect();
+    (!thin.is_empty()).then(|| {
+        themis_core::prompts::fill(
+            themis_core::prompts::ASK_USER_HINT_THIN,
+            &[
+                ("hints", &thin.join("; ")),
+                ("min", &MIN_HINT_CHARS.to_string()),
+            ],
+        )
     })
 }
 
@@ -174,11 +199,12 @@ impl QuestionTool {
         Ok(asked)
     }
 
-    /// Every page checked, or the first refusal (naming its page when there are several).
+    /// Every page checked, or the first refusal (naming its page when there are several), then
+    /// every hint that is too short, all named in one refusal.
     fn check_all(&self, args: &Value) -> Result<Vec<NewQuestion>, String> {
         let pages = pages(args)?;
         let several = pages.len() > 1;
-        pages
+        let asked = pages
             .into_iter()
             .enumerate()
             .map(|(index, page)| {
@@ -190,7 +216,8 @@ impl QuestionTool {
                     }
                 })
             })
-            .collect()
+            .collect::<Result<Vec<_>, _>>()?;
+        thin_hints(&asked).map_or(Ok(asked), Err)
     }
 
     fn denied_by_rule(&self) -> bool {
