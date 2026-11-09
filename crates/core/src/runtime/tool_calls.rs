@@ -393,6 +393,17 @@ pub(super) fn hook_refusal(reason: &str) -> String {
     )
 }
 
+/// What an approval box says a call does: a file tool's plain words ("write `notes.txt`") as
+/// the file tools' own approvals say them, otherwise the run's summary of the call.
+fn approval_summary(name: &str, args: &serde_json::Value, summary: &str) -> String {
+    let plain = crate::tools::summarize_fs_call(name, args);
+    if plain.starts_with("call `") {
+        summary.to_owned()
+    } else {
+        plain
+    }
+}
+
 /// Approval-checks and executes one tool call.
 ///
 /// Returns the result text for the model on success, or the error text (denial,
@@ -430,7 +441,7 @@ pub(super) async fn execute_call(
         let action = ToolAction {
             display: crate::tools::command_display_for_call(name, &approval_args),
             tool: crate::tools::integration_approval_identity(name, &approval_args),
-            summary: summary.to_owned(),
+            summary: approval_summary(name, &approval_args, summary),
             risk: if name == "shell" {
                 // Destructive variants (`git push --force`, `rm -rf`, ...) carry the destructive
                 // risk class; commands that only read inside the project are reads.
