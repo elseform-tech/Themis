@@ -696,9 +696,10 @@ for line in sys.stdin:
     print(json.dumps({"jsonrpc": "2.0", "id": message["id"], "result": result}), flush=True)
 "#;
 
-/// The credential is bound to its run's project and network: another project's plugins are out
-/// of reach, and a run whose sandbox blocks the network cannot have the server fetch for it.
-/// Store actions in its own project and globally still work.
+/// The credential is bound to its run's project and network: another project (its skills, its
+/// server starts) is out of reach, and a run whose sandbox blocks the network cannot have the
+/// server fetch for it. Global store actions and reads of its own project still work; a project
+/// holds no plugins, so a save into its own one is refused too.
 #[tokio::test(flavor = "multi_thread")]
 async fn an_agent_credential_stays_in_its_project_and_behind_its_network_block() {
     let _turn = ONE_SERVER.lock().await;
@@ -711,14 +712,22 @@ async fn an_agent_credential_stays_in_its_project_and_behind_its_network_block()
         json!({"action": "save", "scope": "local", "projectRoot": root,
             "spec": {"name": name}})
     };
-    let elsewhere = save(&other.to_string_lossy(), "elsewhere");
-    let reply = socket_call(&fx, &token, "plugin_action", elsewhere);
     let other_project = themis_core::prompts::AGENT_CLI_OTHER_PROJECT_REFUSED;
-    assert!(refused_with(&reply, other_project), "{reply}");
-    assert!(!other.join(".themis").exists(), "nothing was written there");
-    // Its own project, globally, and the plain store actions.
+    let elsewhere = other.to_string_lossy().into_owned();
     for args in [
-        save(&project, "here"),
+        save(&elsewhere, "elsewhere"),
+        json!({"action": "list", "projectRoot": elsewhere}),
+        json!({"action": "mcp_status", "projectRoot": elsewhere}),
+    ] {
+        let reply = socket_call(&fx, &token, "plugin_action", args.clone());
+        assert!(refused_with(&reply, other_project), "{args}: {reply}");
+    }
+    assert!(!other.join(".themis").exists(), "nothing was written there");
+    let reply = socket_call(&fx, &token, "plugin_action", save(&project, "here"));
+    let gone = themis_core::plugins::PROJECT_SCOPE_GONE;
+    assert!(refused_with(&reply, gone), "{reply}");
+    // Globally, its own project's reads, and the plain store actions.
+    for args in [
         json!({"action": "save", "scope": "global", "spec": {"name": "everywhere"}}),
         json!({"action": "list", "projectRoot": project}),
         json!({"action": "inventory"}),
@@ -733,7 +742,7 @@ async fn an_agent_credential_stays_in_its_project_and_behind_its_network_block()
         let reply = socket_call(&fx, &token, "plugin_action", args.clone());
         assert_eq!(reply["ok"], true, "{args}: {reply}");
     }
-    assert!(fx.project.join(".themis/plugins").is_dir());
+    assert!(!fx.project.join(".themis/plugins").exists());
     // A fetching action: allowed without a network block, refused behind one.
     let source = fx.data.join("local-source");
     std::fs::create_dir_all(source.join(".claude-plugin")).unwrap();

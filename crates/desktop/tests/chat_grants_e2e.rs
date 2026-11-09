@@ -314,10 +314,8 @@ async fn mcp_server_starts_without_a_prompt_and_one_grant_covers_its_other_tools
         .await;
     common::use_mock_llm(&state, &llm).await;
     state
-        .plugin_action(
-            json!({"action":"save","scope":"local","projectRoot":project.path(),
-            "spec":{"name":"docs","mcp":{"docs":{"url":mcp.uri(),"enabled":true}}}}),
-        )
+        .plugin_action(json!({"action":"save","scope":"global",
+            "spec":{"name":"docs","mcp":{"docs":{"url":mcp.uri(),"enabled":true}}}}))
         .await
         .unwrap();
     let chat = new_chat(&state, project.path()).await;
@@ -379,10 +377,8 @@ async fn an_explicit_deny_rule_still_blocks_mcp_startup() {
         )
         .unwrap();
     state
-        .plugin_action(
-            json!({"action":"save","scope":"local","projectRoot":project.path(),
-            "spec":{"name":"docs","mcp":{"docs":{"url":mcp.uri(),"enabled":true}}}}),
-        )
+        .plugin_action(json!({"action":"save","scope":"global",
+            "spec":{"name":"docs","mcp":{"docs":{"url":mcp.uri(),"enabled":true}}}}))
         .await
         .unwrap();
     let chat = new_chat(&state, project.path()).await;

@@ -36,7 +36,7 @@ fn until(what: &str, mut done: impl FnMut() -> bool) {
     }
 }
 
-/// A chat in YOLO whose project has a plugin with one `PromptSubmit` hook running `command`.
+/// A chat in YOLO with a (global) plugin with one `PromptSubmit` hook running `command`.
 async fn chat_with_prompt_hook(
     command: &str,
 ) -> (
@@ -67,7 +67,7 @@ async fn chat_with_prompt_hook(
         .unwrap();
     state.set_go_base_url_override(Some(llm.uri()));
     state
-        .plugin_action(json!({"action": "save", "scope": "local", "projectRoot": project.path(), "spec": {
+        .plugin_action(json!({"action": "save", "scope": "global", "spec": {
             "name": "tickets",
             "hooks": [{"name": "ticket-context", "event": "PromptSubmit", "command": command, "enabled": true}],
             "files": {}

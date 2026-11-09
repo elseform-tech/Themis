@@ -9,11 +9,11 @@ A hook is a command Themis runs at a set point of a run. The events, in run orde
 
 Hooks belong to plugins and are managed with `themis hook …` in your shell. When the request does not say what to do, list the hooks, say what each one does and whether it is on, and change nothing.
 
-Where they live: global plugins in `{{global_plugins}}`, this project's in `{{project_plugins}}`. Read them through `themis`; never edit those files by hand (Themis refuses it). Commands default to global scope; add `--scope local --project {{project_root}}` for the project's own.
+Where they live: in plugins in `{{global_plugins}}`, the person's own, in every chat and project. A project holds none: never write a `--scope` or a project file for them. Read them through `themis`; never edit those files by hand (Themis refuses it).
 
 ## Find
 
-- `themis hook list` lists every hook, global and in this project, with its plugin; `themis plugin list` shows the plugins and whether each is on.
+- `themis hook list` lists every hook with its plugin; `themis plugin list` shows the plugins and whether each is on.
 - `themis hook list PLUGIN` prints that plugin's hook definitions in full: name, event, command, matcher, and `enabled`.
 
 ## Change

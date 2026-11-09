@@ -551,7 +551,7 @@ When you choose between real options (an approach, a library, a design), say why
         );
     assert_eq!(
         DESKTOP_RUN_INTEGRATIONS,
-        "Plugins, skills, MCP servers and hooks are managed with the `themis` command in your shell; never write .mcp.json or other config files into the project for Themis. Add an MCP server with `themis mcp add PLUGIN NAME '<json>'` (or `themis mcp add PLUGIN FILE` for a whole .mcp.json), a hook with `themis hook add PLUGIN NAME '<json>'` and a skill with `themis skill save PLUGIN '<json>'` (a missing PLUGIN is created; `--help` shows each definition), list them with `themis mcp|hook|skill list`, and run `themis doctor --integrations` after every change. The plugins, skills, mcp and hooks skills show more; load the one that fits before changing anything."
+        "Plugins, skills, MCP servers and hooks are managed with the `themis` command in your shell; never write .mcp.json or other config files into the project for Themis. Add an MCP server with `themis mcp add PLUGIN NAME '<json>'` (or `themis mcp add PLUGIN FILE` for a whole .mcp.json), a hook with `themis hook add PLUGIN NAME '<json>'` and a skill with `themis skill save PLUGIN '<json>'` (a missing PLUGIN is created; `--help` shows each definition); these are the person's own, in every project, and a project holds none, except that a skill the person wants for this project and its team is a SKILL.md folder you write in .agents/skills; list them with `themis mcp|hook|skill list`, and run `themis doctor --integrations` after every change. The plugins, skills, mcp and hooks skills show more; load the one that fits before changing anything."
     );
     assert_eq!(
         SUBAGENT_INTEGRATIONS_NOTE,

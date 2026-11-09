@@ -77,7 +77,16 @@ DIAGNOSE_MCP = {
     "check": {"kind": "diagnosed", "plugin": "tools", "name": "weather", "cause": "wether_server.py"},
 }
 
-ALL = {s["name"]: s for s in (CREATE_SKILL, ADD_MCP, FIX_MCP, ADD_HOOK, DELETE_HOOK, DIAGNOSE_MCP)}
+PROJECT_SKILL = {
+    "name": "project-skill",
+    "message": ("Add a skill called release-checklist for this project that lists the steps to check "
+                "before a release. My team should get it too through the repository."),
+    "seed": [],
+    "check": {"kind": "project_skill", "id_contains": "release"},
+}
+
+ALL = {s["name"]: s for s in (CREATE_SKILL, ADD_MCP, FIX_MCP, ADD_HOOK, DELETE_HOOK, DIAGNOSE_MCP,
+                              PROJECT_SKILL)}
 
 
 def load(name):

@@ -83,16 +83,14 @@ async fn a_plugins_subagent_imports_spawns_and_runs_with_its_instructions() {
     app.serving.abort();
 }
 
+/// A project holds no plugins: importing one (and its subagents) into it is refused with where
+/// to put it instead, and nothing is written there or saved anywhere.
 #[tokio::test(flavor = "multi_thread")]
-async fn a_project_plugins_subagent_is_kept_in_the_project_and_runs() {
-    let app = app(
-        None,
-        spawning(
-            json!([{"write_paths": [], "name": "Review", "brief": "Look.", "profile": "local-reviewer"}]),
-            |_| reply("Local review done."),
-        ),
-    )
-    .await;
+async fn importing_a_plugins_subagents_into_a_project_is_refused() {
+    let data = tempfile::tempdir().unwrap();
+    let project = tempfile::tempdir().unwrap();
+    let state = AppState::new_for_test(data.path().join("settings.json"));
+    let serving = tokio::spawn(Server::bind(state, data.path()).await.unwrap().run());
     let parent = tempfile::tempdir().unwrap();
     let folder = plugin_folder(
         parent.path(),
@@ -102,10 +100,10 @@ async fn a_project_plugins_subagent_is_kept_in_the_project_and_runs() {
             &agent_file("local-reviewer", ""),
         )],
     );
-    let (data, project) = (app.data.path().to_owned(), app.project.path().to_owned());
-    let plugin = on_cli(move || {
-        let (ok, plugin, error) = themis(
-            &data,
+    let (path, root) = (data.path().to_owned(), project.path().to_owned());
+    let (ok, plugin, error) = on_cli(move || {
+        themis(
+            &path,
             &[
                 "plugin",
                 "import",
@@ -113,25 +111,21 @@ async fn a_project_plugins_subagent_is_kept_in_the_project_and_runs() {
                 "--scope",
                 "local",
                 "--project",
-                project.to_str().unwrap(),
+                root.to_str().unwrap(),
             ],
-        );
-        assert!(ok, "{error}");
-        plugin
+        )
     })
     .await;
-    assert_eq!(profile_names(&plugin), ["local-reviewer"], "{plugin}");
+    assert!(!ok, "{plugin}");
     assert!(
-        std::fs::read_to_string(app.project.path().join(".themis/plugins/registry.json"))
-            .unwrap()
-            .contains("local-reviewer")
+        error.contains(themis_core::plugins::PROJECT_SCOPE_GONE),
+        "{error}"
     );
-    run_in_yolo(&app, "review the project").await;
-    let all = bodies(&app.llm).await;
-    let child = all.iter().find(|body| is_subagent(body)).expect("a child");
-    assert!(mentions(child, PROFILE_BODY));
-    assert!(all.iter().any(|body| mentions(body, "Local review done.")));
-    app.serving.abort();
+    assert!(!project.path().join(".themis").exists());
+    let path = data.path().to_owned();
+    let (_, listed, _) = on_cli(move || themis(&path, &["plugin", "list"])).await;
+    assert_eq!(listed, json!([]), "nothing was saved");
+    serving.abort();
 }
 
 #[tokio::test(flavor = "multi_thread")]

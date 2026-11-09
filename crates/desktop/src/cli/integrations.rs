@@ -92,14 +92,11 @@ const STARTING_AT_ONCE: usize = 4;
 /// The longest part of an error the report keeps.
 const ERROR_CHARS: usize = 400;
 
-/// Runs every check. The project is `--project`, or the current folder when it has project
-/// integrations (`.themis/plugins/`).
+/// Runs every check. Every integration is global; `--project` (else the current folder) is
+/// where a hook's relative command runs from.
 pub async fn run(client: &Client, directory: &Path, options: &Options) -> Result<Report, String> {
     let here = std::env::current_dir().map_err(|error| error.to_string())?;
-    let project = options
-        .project
-        .clone()
-        .or_else(|| here.join(".themis/plugins").is_dir().then(|| here.clone()));
+    let project = options.project.clone();
     let list = client
         .call(
             "plugin_action",
@@ -125,7 +122,8 @@ pub async fn run(client: &Client, directory: &Path, options: &Options) -> Result
     Ok(report)
 }
 
-/// Where each scope keeps its plugins.
+/// Where the plugins keep their packages (only the global store has any), and the project
+/// a hook's relative command is run from.
 struct Stores<'a> {
     data: &'a Path,
     project: Option<&'a Path>,
@@ -133,11 +131,7 @@ struct Stores<'a> {
 
 impl Stores<'_> {
     fn packages(&self, scope: &str) -> Option<PathBuf> {
-        let directory = match scope {
-            "local" => self.project?.join(".themis/plugins"),
-            _ => self.data.join("plugins"),
-        };
-        Some(directory.join("packages"))
+        (scope == "global").then(|| self.data.join("plugins").join("packages"))
     }
 }
 

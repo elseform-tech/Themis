@@ -15,7 +15,7 @@ fn themis_call(id: &str, args: &[&str]) -> Value {
         "arguments": json!({"command": "themis", "args": args}).to_string()}})
 }
 
-fn cli(dir: &Path, args: &[&str]) -> Value {
+fn cli_output(dir: &Path, args: &[&str]) -> (std::process::Output, String) {
     let out = std::process::Command::new(env!("CARGO_BIN_EXE_themis"))
         .arg("--data-dir")
         .arg(dir)
@@ -23,6 +23,12 @@ fn cli(dir: &Path, args: &[&str]) -> Value {
         .env_remove("OPENCODE_KEY")
         .output()
         .unwrap();
+    let stderr = String::from_utf8_lossy(&out.stderr).into_owned();
+    (out, stderr)
+}
+
+fn cli(dir: &Path, args: &[&str]) -> Value {
+    let (out, _) = cli_output(dir, args);
     assert!(
         out.status.success(),
         "{}",
@@ -38,7 +44,9 @@ async fn cli_plugin_crud_is_visible_to_app_and_preserves_pinned_skills() {
     let state = AppState::new_for_test(data.path().join("settings.json"));
     let server = Server::bind(state.clone(), data.path()).await.unwrap();
     let task = tokio::spawn(server.run());
-    let created = cli(
+    let root = project.path().to_str().unwrap();
+    // A project holds no plugins: `--scope` is refused and nothing is written into it.
+    let (refused, stderr) = cli_output(
         data.path(),
         &[
             "plugin",
@@ -47,42 +55,30 @@ async fn cli_plugin_crud_is_visible_to_app_and_preserves_pinned_skills() {
             "--scope",
             "local",
             "--project",
-            project.path().to_str().unwrap(),
+            root,
         ],
     );
+    assert!(!refused.status.success());
+    assert!(
+        stderr.contains(themis_core::plugins::PROJECT_SCOPE_GONE),
+        "{stderr}"
+    );
+    assert!(!project.path().join(".themis").exists());
+    let created = cli(data.path(), &["plugin", "create", "personal"]);
     assert_eq!(created["spec"]["name"], "personal");
+    assert_eq!(created["scope"], "global");
     let draft = project.path().join("review.json");
     std::fs::write(&draft,r#"{"id":"review","name":"Review","description":"Inspect changes","instructions":"Inspect ownership","allowedTools":[],"scripts":[]}"#).unwrap();
     cli(
         data.path(),
-        &[
-            "skill",
-            "save",
-            "personal",
-            draft.to_str().unwrap(),
-            "--scope",
-            "local",
-            "--project",
-            project.path().to_str().unwrap(),
-        ],
+        &["skill", "save", "personal", draft.to_str().unwrap()],
     );
     let skills = state
         .prompt_skills(Some(project.path().to_str().unwrap().into()))
         .await
         .unwrap();
     assert!(skills.iter().any(|s| s.name == "Review"));
-    cli(
-        data.path(),
-        &[
-            "plugin",
-            "disable",
-            "personal",
-            "--scope",
-            "local",
-            "--project",
-            project.path().to_str().unwrap(),
-        ],
-    );
+    cli(data.path(), &["plugin", "disable", "personal"]);
     assert!(!state
         .prompt_skills(Some(project.path().to_str().unwrap().into()))
         .await
@@ -123,8 +119,13 @@ async fn plain_cli_prompt_loads_catalog_mcp_hooks_and_refreshes_next_turn() {
         ResponseTemplate::new(200).set_body_json(json!({"jsonrpc":"2.0","id":body["id"],"result":result}))
     }).mount(&mcp).await;
     let plugin = |description: &str| json!({"name":"docs","skills":[{"id":"review","name":"Review docs","description":description,"instructions":"PRIVATE_SKILL_BODY","allowedTools":[],"scripts":[]}],"mcp":{"docs":{"url":mcp.uri(),"enabled":true}},"hooks":[{"name":"started","event":"RunStart","command":if cfg!(windows) { "more > run-start.json" } else { "cat > run-start.json" },"enabled":true}],"files":{}});
-    let first = state.plugin_action(json!({"action":"save","scope":"local","projectRoot":project.path(),"spec":plugin("Initial description")})).await.unwrap();
-    state.plugin_action(json!({"action":"save","scope":"local","projectRoot":project.path(),"spec":{"name":"browser-only","mcp":{"browser":{"url":mcp.uri(),"enabled":true}}}})).await.unwrap();
+    let first = state
+        .plugin_action(
+            json!({"action":"save","scope":"global","spec":plugin("Initial description")}),
+        )
+        .await
+        .unwrap();
+    state.plugin_action(json!({"action":"save","scope":"global","spec":{"name":"browser-only","mcp":{"browser":{"url":mcp.uri(),"enabled":true}}}})).await.unwrap();
     assert!(!state
         .prompt_skills(Some(project.path().to_str().unwrap().into()))
         .await
@@ -158,17 +159,17 @@ async fn plain_cli_prompt_loads_catalog_mcp_hooks_and_refreshes_next_turn() {
             let mut spec = plugin(description);
             spec["skills"].as_array_mut().unwrap().push(json!({"id":"new-sibling","name":"New sibling","description":"Newly installed sibling","instructions":"New workflow","allowedTools":[],"scripts":[]}));
             spec["manual_skills"] = json!(["new-sibling"]);
-            state.plugin_action(json!({"action":"save","scope":"local","projectRoot":project.path(),"spec":spec,"expectedRevision":first["revision"]})).await.unwrap();
+            state.plugin_action(json!({"action":"save","scope":"global","spec":spec,"expectedRevision":first["revision"]})).await.unwrap();
         }
         let dir = data.path().to_path_buf();
         let thread_id = id.clone();
         let prompt = if pinned {
             format!(
-                "[[skill:l--docs--{}--review]] Inspect documents",
+                "[[skill:g--docs--{}--review]] Inspect documents",
                 first["revision"].as_str().unwrap()
             )
         } else if mentioned {
-            "[[plugin:l--docs]] Inspect documents".into()
+            "[[plugin:g--docs]] Inspect documents".into()
         } else {
             "Inspect documents".into()
         };
@@ -228,11 +229,11 @@ async fn plain_cli_prompt_loads_catalog_mcp_hooks_and_refreshes_next_turn() {
             .unwrap();
         assert!(guide.contains("Plugins are managed with `themis plugin …` in your shell"));
         assert!(guide.contains("installs with one click"));
-        assert!(guide.contains("Commands default to global scope"));
+        assert!(guide.contains("a project holds no plugins"));
         assert!(guide.contains("never run an install script"));
-        // The guide names this run's own store folders.
-        let local = std::path::Path::new(".themis").join("plugins");
-        assert!(guide.contains(&format!("{}`", local.display())) && !guide.contains("{{"));
+        // The guide names this run's own store folder.
+        let store = data.path().join("plugins");
+        assert!(guide.contains(&format!("`{}`", store.display())) && !guide.contains("{{"));
         // `/hooks` is listed without the old `manage-` prefix, and says how to edit one hook.
         let hooks = catalog
             .as_array()
@@ -297,7 +298,7 @@ async fn agent_can_disable_broken_enabled_mcp_without_losing_chat() {
         let handled = body["messages"].as_array().unwrap().iter().any(|message| message["role"] == "tool");
         let message = if handled { json!({"role":"assistant","content":"Disabled the broken connection"}) }
             else {
-                json!({"role":"assistant","tool_calls":[themis_call("disable", &["mcp","disable","broken","missing","--scope","local","--project",&root])]})
+                json!({"role":"assistant","tool_calls":[themis_call("disable", &["mcp","disable","broken","missing","--project",&root])]})
             };
         ResponseTemplate::new(200).set_body_json(json!({"choices":[{"message":message,"finish_reason":if handled {"stop"} else {"tool_calls"}}]}))
     }).mount(&provider).await;
@@ -306,7 +307,7 @@ async fn agent_can_disable_broken_enabled_mcp_without_losing_chat() {
         .await
         .unwrap();
     state.set_go_base_url_override(Some(provider.uri()));
-    state.plugin_action(json!({"action":"save","scope":"local","projectRoot":project.path(),"spec":{"name":"broken","mcp":{"missing":{"command":project.path().join("nonexistent-mcp"),"args":["SENSITIVE_TEST_ARGUMENT"],"enabled":true}}}})).await.unwrap();
+    state.plugin_action(json!({"action":"save","scope":"global","spec":{"name":"broken","mcp":{"missing":{"command":project.path().join("nonexistent-mcp"),"args":["SENSITIVE_TEST_ARGUMENT"],"enabled":true}}}})).await.unwrap();
     let server = Server::bind(state.clone(), data.path())
         .await
         .unwrap()
@@ -698,4 +699,66 @@ async fn mcp_startup_is_background_isolated_and_reuses_connections() {
             .count(),
         2
     );
+}
+
+/// A project's own skill is a `SKILL.md` folder in the repository, listed as scope `local`; the
+/// person switching it off and on is kept in the global registry, never in the project.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_project_skill_is_switched_in_the_global_registry() {
+    let data = tempfile::tempdir().unwrap();
+    let project = tempfile::tempdir().unwrap();
+    let folder = project.path().join(".agents/skills/demo");
+    std::fs::create_dir_all(&folder).unwrap();
+    std::fs::write(
+        folder.join("SKILL.md"),
+        "---\nname: demo\ndescription: Team demo\n---\nShow the demo.",
+    )
+    .unwrap();
+    let state = AppState::new_for_test(data.path().join("settings.json"));
+    let root = project.path();
+    let demo = |state: AppState| async move {
+        let listed = state
+            .plugin_action(json!({"action":"list","projectRoot":root}))
+            .await
+            .unwrap();
+        let found = listed.as_array().unwrap().iter().find(|p| {
+            p["scope"] == "local" && p["spec"]["skills"][0]["description"] == "Team demo"
+        });
+        found.cloned().unwrap_or_else(|| panic!("{listed}"))
+    };
+    let skill = demo(state.clone()).await;
+    assert_eq!(skill["enabled"], true, "{skill}");
+    let name = skill["spec"]["name"].as_str().unwrap().to_owned();
+    let registry = data.path().join("plugins/registry.json");
+    let disabled = || -> Value {
+        let text = std::fs::read_to_string(&registry).unwrap();
+        serde_json::from_str::<Value>(&text).unwrap()["discovery_disabled"].clone()
+    };
+    for (action, enabled) in [("disable", false), ("enable", true)] {
+        state
+            .plugin_action(json!({"action":action,"scope":"local","projectRoot":root,"name":name}))
+            .await
+            .unwrap();
+        assert_eq!(demo(state.clone()).await["enabled"], enabled);
+        let listed = disabled()
+            .as_array()
+            .is_some_and(|names| names.contains(&json!(name)));
+        assert_eq!(listed, !enabled, "{}", disabled());
+        assert!(
+            !root.join(".themis").exists(),
+            "nothing is written into the project"
+        );
+    }
+    // Saving a plugin into the project is refused with where to put it instead.
+    let refused = state
+        .plugin_action(
+            json!({"action":"save","scope":"local","projectRoot":root,"spec":{"name":"kit"}}),
+        )
+        .await
+        .unwrap_err();
+    assert!(
+        refused.contains(themis_core::plugins::PROJECT_SCOPE_GONE),
+        "{refused}"
+    );
+    assert!(!root.join(".themis").exists());
 }

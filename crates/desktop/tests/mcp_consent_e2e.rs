@@ -1,6 +1,6 @@
 //! Enabling an MCP connection is the consent to start it, but only when a
 //! person enabled that exact definition. Definitions that arrive any other way
-//! (a repository's files, an unapproved change) never start by themselves. That an agent never
+//! (another program writing the registry, an unapproved change) never start by themselves. That an agent never
 //! switches a command-based server on, in any mode, is in `agent_cli_risk_e2e`.
 #![cfg(unix)]
 
@@ -58,7 +58,7 @@ async fn settled(state: &AppState, root: &std::path::Path) -> Value {
             .plugin_action(json!({"action":"mcp_status","projectRoot":root,"connect":true}))
             .await
             .unwrap();
-        if shown["local:docs:mcp:docs"]["status"] != "connecting" {
+        if shown["global:docs:mcp:docs"]["status"] != "connecting" {
             return shown;
         }
         assert!(
@@ -70,7 +70,7 @@ async fn settled(state: &AppState, root: &std::path::Path) -> Value {
 }
 
 fn status(state_value: &Value) -> String {
-    state_value["local:docs:mcp:docs"]["reason"]
+    state_value["global:docs:mcp:docs"]["reason"]
         .as_str()
         .unwrap_or_default()
         .to_owned()
@@ -152,10 +152,10 @@ async fn enabling_a_server_of_a_plugin_with_many_files_starts_it() {
             .insert(format!("skills/x/{index}.md"), "x".into());
     }
     PluginStore::new(data.path().to_owned(), Some(root.clone()))
-        .save("local", spec, None)
+        .save("global", spec, None)
         .unwrap();
     state
-        .plugin_action(json!({"action":"set_component_enabled","scope":"local","projectRoot":root,"name":"docs","kind":"mcp","id":"docs","enabled":true}))
+        .plugin_action(json!({"action":"set_component_enabled","scope":"global","projectRoot":root,"name":"docs","kind":"mcp","id":"docs","enabled":true}))
         .await
         .unwrap();
     let shown = settled(&state, &root).await;
@@ -170,9 +170,16 @@ async fn definitions_that_a_person_did_not_enable_never_start() {
     let root = project.path().canonicalize().unwrap();
     let state = AppState::new_for_test(data.path().join("settings.json"));
     let mcp = mcp_server().await;
-    // A cloned repository (or any non-user writer) leaves an enabled definition behind.
+    // The app already keeps its consent file (as a running app does), so the first-read seeding
+    // of servers already on (the upgrade path) does not cover what comes next.
+    std::fs::write(
+        data.path().join("mcp_consent.json"),
+        r#"{"version":1,"approved":{}}"#,
+    )
+    .unwrap();
+    // Another program (any non-user writer) leaves an enabled definition in the registry.
     PluginStore::new(data.path().to_owned(), Some(root.clone()))
-        .save("local", url_spec(&mcp.uri(), true), None)
+        .save("global", url_spec(&mcp.uri(), true), None)
         .unwrap();
     let shown = settled(&state, &root).await;
     assert!(status(&shown).contains("Needs your approval"), "{shown}");
@@ -192,7 +199,7 @@ async fn definitions_that_a_person_did_not_enable_never_start() {
 
     // The person enabling it (UI/CLI) is the consent; it starts now.
     state
-        .plugin_action(json!({"action":"set_component_enabled","scope":"local","projectRoot":root,"name":"docs","kind":"mcp","id":"docs","enabled":true}))
+        .plugin_action(json!({"action":"set_component_enabled","scope":"global","projectRoot":root,"name":"docs","kind":"mcp","id":"docs","enabled":true}))
         .await
         .unwrap();
     let shown = settled(&state, &root).await;
@@ -209,7 +216,7 @@ async fn definitions_that_a_person_did_not_enable_never_start() {
         .unwrap()
         .revision;
     store
-        .save("local", url_spec(&other.uri(), true), Some(&revision))
+        .save("global", url_spec(&other.uri(), true), Some(&revision))
         .unwrap();
     let shown = settled(&state, &root).await;
     assert!(status(&shown).contains("Needs your approval"), "{shown}");

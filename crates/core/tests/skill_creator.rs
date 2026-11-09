@@ -167,11 +167,11 @@ fn integration_guides_use_the_cli_with_resolved_paths() {
         }
         let global = dir.path().join("global").join("plugins");
         assert!(text.contains(&format!("`{}`", global.display())), "{id}");
-        let local = project.join(".themis").join("plugins");
-        assert!(text.contains(&format!("`{}`", local.display())), "{id}");
+        // A project holds no plugins, servers or hooks: no guide points at a project store.
+        assert!(!text.contains(".themis"), "{id} names a project store");
         assert!(
-            text.contains(&format!("--project {}", project.display())),
-            "{id}"
+            !text.contains("--scope local"),
+            "{id} teaches --scope local"
         );
         for old in [
             "manage_integrations",
@@ -187,9 +187,14 @@ fn integration_guides_use_the_cli_with_resolved_paths() {
     assert!(skills[0]
         .instructions
         .contains(&format!("`{}`", personal.display())));
+    // A skill for the project and its team is a folder in the repository.
+    let shared = project.join(".agents").join("skills");
+    assert!(skills[0]
+        .instructions
+        .contains(&format!("{}/NAME/SKILL.md", shared.display())));
     // Without a project the guides say so rather than naming a folder.
     let (_, skills, _) = themis_core::plugins::PluginStore::new(dir.path().join("global"), None)
-        .resolve_prompt("[[skill:hooks]] go", &[])
+        .resolve_prompt("[[skill:skills]] go", &[])
         .unwrap();
     assert!(skills[0].instructions.contains("this run has no project"));
 }

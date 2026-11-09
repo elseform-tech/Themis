@@ -183,9 +183,6 @@
   "crates/core/src/memory/plans.rs::parse_op": {
    "cyclomatic": 24
   },
-  "crates/core/src/plugins.rs::PluginStore::list": {
-   "cyclomatic": 21
-  },
   "crates/core/src/plugins.rs::PluginStore::registry": {
    "cyclomatic": 23
   },

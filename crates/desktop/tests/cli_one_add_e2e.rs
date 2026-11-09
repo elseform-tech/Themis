@@ -290,13 +290,20 @@ async fn a_whole_mcp_json_adds_every_server() {
     task.abort();
 }
 
-/// `mcp list`, `hook list` and `skill list` without a plugin list every one, global and in this
-/// project, each with its plugin.
+/// `mcp list`, `hook list` and `skill list` without a plugin list every one, each with its
+/// plugin; from a project folder `skill list` adds the project's own `SKILL.md` skills. A project
+/// holds no plugins, so `--scope` is refused with where to add them instead.
 #[tokio::test(flavor = "multi_thread")]
 async fn lists_without_a_plugin_show_every_one_with_its_plugin() {
     let data = tempfile::tempdir().unwrap();
     let project = tempfile::tempdir().unwrap();
-    std::fs::create_dir(project.path().join(".themis")).unwrap();
+    let shared = project.path().join(".agents/skills/demo");
+    std::fs::create_dir_all(&shared).unwrap();
+    std::fs::write(
+        shared.join("SKILL.md"),
+        "---\nname: demo\ndescription: Team demo\n---\nShow the demo.",
+    )
+    .unwrap();
     let task = server(data.path()).await;
     let root = project.path().to_str().unwrap();
     let server_json = r#"{"command": "printf"}"#;
@@ -305,17 +312,29 @@ async fn lists_without_a_plugin_show_every_one_with_its_plugin() {
     ok(data.path(), &["mcp", "add", "alpha", "one", server_json]);
     ok(data.path(), &["hook", "add", "alpha", "guard", hook]);
     ok(data.path(), &["skill", "save", "alpha", skill]);
-    let local = ["--scope", "local", "--project", root];
-    ok(
+    ok(data.path(), &["mcp", "add", "beta", "two", server_json]);
+    ok(data.path(), &["hook", "add", "beta", "watch", hook]);
+    let refused = fails(
         data.path(),
-        &[&["mcp", "add", "beta", "two", server_json][..], &local].concat(),
+        &[
+            "mcp",
+            "add",
+            "gamma",
+            "three",
+            server_json,
+            "--scope",
+            "local",
+            "--project",
+            root,
+        ],
+        "",
     );
-    ok(
-        data.path(),
-        &[&["hook", "add", "beta", "watch", hook][..], &local].concat(),
+    assert!(
+        refused.contains(themis_core::plugins::PROJECT_SCOPE_GONE),
+        "{refused}"
     );
+    assert!(!project.path().join(".themis").exists());
 
-    // From the project folder, its integrations come with the global ones.
     let servers = ok_in(data.path(), project.path(), &["mcp", "list"], "");
     let rows: Vec<(String, String, String)> = servers
         .as_array()
@@ -335,9 +354,10 @@ async fn lists_without_a_plugin_show_every_one_with_its_plugin() {
         "{rows:?}"
     );
     assert!(
-        rows.contains(&("beta".into(), "local".into(), "two".into())),
+        rows.contains(&("beta".into(), "global".into(), "two".into())),
         "{rows:?}"
     );
+    assert!(!servers.to_string().contains("three"), "{servers}");
     let hooks = ok_in(data.path(), project.path(), &["hook", "list"], "").to_string();
     assert!(
         hooks.contains("\"guard\"") && hooks.contains("\"watch\""),
@@ -347,20 +367,33 @@ async fn lists_without_a_plugin_show_every_one_with_its_plugin() {
         hooks.contains("\"alpha\"") && hooks.contains("\"beta\""),
         "{hooks}"
     );
-    let skills = ok(data.path(), &["skill", "list"]);
+    let skills = ok_in(
+        data.path(),
+        project.path(),
+        &["skill", "list", "--project", root],
+        "",
+    );
+    let listed = skills.as_array().unwrap();
     assert!(
-        skills
-            .as_array()
-            .unwrap()
+        listed
             .iter()
             .any(|s| s["name"] == "Notes" && s["plugin"] == "alpha"),
         "{skills}"
     );
-    // Elsewhere, only the global ones.
-    let global = ok(data.path(), &["mcp", "list"]).to_string();
     assert!(
-        global.contains("\"one\"") && !global.contains("\"two\""),
-        "{global}"
+        listed
+            .iter()
+            .any(|s| s["name"] == "demo" && s["scope"] == "local"),
+        "the project's own skill: {skills}"
+    );
+    // From the project folder itself (it holds `.agents/skills`), no `--project` needed.
+    let here = ok_in(data.path(), project.path(), &["skill", "list"], "").to_string();
+    assert!(here.contains("Team demo"), "{here}");
+    // Elsewhere, not the project's skill.
+    let elsewhere = ok(data.path(), &["skill", "list"]).to_string();
+    assert!(
+        elsewhere.contains("Notes") && !elsewhere.contains("Team demo"),
+        "{elsewhere}"
     );
     // With a plugin, that plugin's definitions in full, as before.
     assert_eq!(

@@ -122,7 +122,7 @@ impl AppState {
         retry: bool,
     ) -> Arc<McpEntry> {
         let checked = plugin.spec.mcp.get(name).map_or(Ok(Vec::new()), |written| {
-            self.secrets_awaiting_ok(root, plugin, name, written)
+            self.secrets_awaiting_ok(plugin, name, written)
         });
         let (secrets_waiting, unchecked) = match checked {
             Ok(waiting) => (waiting, None),
@@ -272,7 +272,7 @@ impl AppState {
                 let blocked =
                     if policy.decision(&action) == themis_core::configuration::PolicyAction::Deny {
                         Some("Connection blocked by project or user approval policy")
-                    } else if !self.mcp_consented(root, plugin, name, &plugin.spec.mcp[name]) {
+                    } else if !self.mcp_consented(plugin, name, &plugin.spec.mcp[name]) {
                         Some(NEEDS_CONSENT)
                     } else {
                         None
@@ -306,11 +306,11 @@ impl AppState {
         // nothing here, and only an explicit deny rule stops startup (YOLO
         // callers pass the policy's YOLO view: deny rules only).
         // A new or changed definition starts only after a person enabled it.
-        if !self.mcp_consented(root, plugin, name, &plugin.spec.mcp[name]) {
+        if !self.mcp_consented(plugin, name, &plugin.spec.mcp[name]) {
             anyhow::bail!("MCP startup needs your approval");
         }
         if self
-            .secrets_awaiting_ok(root, plugin, name, &plugin.spec.mcp[name])
+            .secrets_awaiting_ok(plugin, name, &plugin.spec.mcp[name])
             .map_or(true, |waiting| !waiting.is_empty())
         {
             anyhow::bail!("{NEEDS_SECRET_OK}");
@@ -429,7 +429,7 @@ impl AppState {
             plugin.spec.mcp.iter().any(|(name, server)| {
                 server.url.as_deref() == Some(url)
                     && self
-                        .secrets_awaiting_ok(root, plugin, name, server)
+                        .secrets_awaiting_ok(plugin, name, server)
                         .map_or(true, |waiting| !waiting.is_empty())
             })
         }))

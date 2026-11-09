@@ -7,11 +7,11 @@ description: Install, import, configure, create, test and troubleshoot local or 
 
 MCP servers belong to plugins and are managed with `themis mcp …` in your shell. Integrations in the app browses them and switches them on and off; changes in chat go through `themis`.
 
-Where they live: global plugins in `{{global_plugins}}`, this project's in `{{project_plugins}}`. Read them through `themis`; never edit those files by hand (Themis refuses it). Commands default to global scope, which is right for new servers so they work in every chat; keep the scope of an existing one, adding `--scope local --project {{project_root}}` for the project's own.
+Where they live: in plugins in `{{global_plugins}}`, the person's own, in every chat and project. A project holds none: never write a `--scope` or a project file for them. Read them through `themis`; never edit those files by hand (Themis refuses it).
 
 ## Find
 
-- `themis mcp list` lists every server, global and in this project, with its plugin; `themis plugin list` shows the plugins and whether each server is on.
+- `themis mcp list` lists every server with its plugin; `themis plugin list` shows the plugins and whether each server is on.
 - `themis mcp list PLUGIN` prints that plugin's server definitions in full: `command`, `args`, `cwd`, `url`, environment names and `enabled`. Read this before changing or diagnosing a server; do not search the disk for its configuration.
 - `themis mcp --help` shows every field of a definition with an example.
 

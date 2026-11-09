@@ -771,9 +771,10 @@ app, the built-in browser and tools such as dev servers.
 
 The desktop keeps configuration files and logs out of normal user flows.
 Advanced users can inspect local rotating JSONL logs and configure User or
-Project runtime JSONC through files and the shared CLI/API. Global integration
-definitions use the revisioned app-data registry; project imports use
-`.themis/plugins/`. See the [configuration guide](configuration.md) for paths,
+Project runtime JSONC through files and the shared CLI/API. Plugins, MCP
+servers, hooks and your own skills use the revisioned app-data registry; a
+project shares skills with its team as `SKILL.md` folders in `.agents/skills`.
+See the [configuration guide](configuration.md) for paths,
 schema, limits, and CLI examples.
 
 ## FAQ
