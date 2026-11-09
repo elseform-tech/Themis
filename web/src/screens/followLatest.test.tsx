@@ -230,3 +230,26 @@ it("jumps back to the latest message and follows it again", () => {
   expect(scroller.scrollTo).toHaveBeenCalledWith({ top: 3000, behavior: "smooth" });
   expect(scroller.dataset.away).toBe("false");
 });
+
+it("a wider chat column rewraps the text shorter without leaving the drop as blank room", () => {
+  // Closing or narrowing the Workspace widens the chat: the text rewraps and the content gets
+  // much shorter. Kept as room, the whole drop showed as a blank column under the last message.
+  const { getByTestId } = render(<Chat threadId="rewrap" />);
+  const scroller = getByTestId("scroller");
+  const content = getByTestId("content");
+  const room = getByTestId("room");
+  const contentWidth = (width: number) => Object.defineProperty(content, "offsetWidth", { configurable: true, value: width });
+  contentWidth(440);
+  contentHeight(content, 3000);
+  sized(scroller, 3000, 2500);
+  scrollTo(scroller, 2500);
+  contentResized();
+  contentWidth(600);
+  contentHeight(content, 1800);
+  contentResized();
+  expect(room.style.height).toBe("0px");
+  // A line going away at the same width is still kept as room.
+  contentHeight(content, 1776);
+  contentResized();
+  expect(room.style.height).toBe("24px");
+});

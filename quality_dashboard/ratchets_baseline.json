@@ -883,9 +883,8 @@
    "cyclomatic": 43
   },
   "web/src/screens/followLatest.ts::useFollowLatest": {
-   "cognitive": 36,
-   "cyclomatic": 33,
-   "lines": 101
+   "cognitive": 31,
+   "cyclomatic": 31
   },
   "web/src/screens/taskSections.ts::doneGroups": {
    "cognitive": 27,
