@@ -574,7 +574,7 @@ impl PluginStore {
                     .find_map(|line| line.strip_prefix("description: "))
                     .unwrap_or(name)
                     .into(),
-                instructions: instructions.into(),
+                instructions: self.guide_paths(id, instructions),
                 allowed_tools: vec![],
                 scripts: if id == "skills" {
                     vec![crate::skills::SkillScript {
@@ -587,6 +587,53 @@ impl PluginStore {
             });
         }
         skills
+    }
+
+    /// The integration guides (`plugins`, `skills`, `mcp`, `hooks`) with this store's folders
+    /// filled in, so the agent reads where things live instead of searching the disk.
+    fn guide_paths(&self, id: &str, instructions: &str) -> String {
+        if !matches!(id, "plugins" | "skills" | "mcp" | "hooks") {
+            return instructions.to_owned();
+        }
+        let shown = |path: &Path| format!("`{}`", path.display());
+        let none = "(none: this run has no project)";
+        let project_plugins = self.project.as_ref().map_or_else(
+            || none.to_owned(),
+            |root| shown(&root.join(".themis/plugins")),
+        );
+        let project_root = self
+            .project
+            .as_ref()
+            .map_or_else(|| "PROJECT".to_owned(), |root| root.display().to_string());
+        let folders = |base: Option<&PathBuf>, paths: &[String]| match base {
+            Some(base) => paths
+                .iter()
+                .map(|path| shown(&base.join(path)))
+                .collect::<Vec<_>>()
+                .join(", "),
+            None => none.to_owned(),
+        };
+        let defaults = crate::configuration::SkillConfig::default().paths;
+        let mut values = vec![
+            ("global_plugins", shown(&self.global.join("plugins"))),
+            ("project_plugins", project_plugins),
+            ("project_root", project_root),
+        ];
+        if id == "skills" {
+            values.push((
+                "personal_skill_folders",
+                folders(self.home.as_ref(), &defaults),
+            ));
+            values.push((
+                "project_skill_folders",
+                folders(self.project.as_ref(), &self.skill_paths),
+            ));
+        }
+        let values: Vec<(&str, &str)> = values
+            .iter()
+            .map(|(name, value)| (*name, value.as_str()))
+            .collect();
+        crate::prompts::fill(instructions, &values)
     }
 }
 

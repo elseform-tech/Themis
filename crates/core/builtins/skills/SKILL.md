@@ -5,25 +5,27 @@ description: Find, import, install, create, inspect, enable, disable, update and
 
 # Skills
 
-Use global scope for new installations and personal packages so they are available in every chat. Preserve the scope of existing items when updating them.
+A skill is Markdown instructions, with optional helper scripts, that a run loads when its description fits. Skills you create belong to plugins and are managed with `themis skill …` in your shell. Do the work as an agent; do not ask the person to fill in a form.
 
-Create, configure and troubleshoot integrations in chat through the shared management tools. Integrations provides browsing, one-click plugin/skill installation, and basic lifecycle controls. Use shared tools for requested changes. Runtime and MCP configuration use advanced files or CLI APIs; raw configuration and logs stay out of the desktop UI.
+Where they live: skills saved in plugins in `{{global_plugins}}` (every chat) and `{{project_plugins}}` (this project). Skills found on disk, read-only here: personal folders {{personal_skill_folders}}, and this project's {{project_skill_folders}}. Never edit the plugin store's files by hand (Themis refuses it). Commands default to global scope, which is right for a new skill; keep the scope of an existing one, adding `--scope local --project {{project_root}}` for the project's own.
 
-Inspect `list_plugins` and the available skill catalog before creating duplicates. Read relevant SKILL.md instructions and supporting Markdown through `read_file`. Skills in user scope are available across chats; project skills apply to chats in that project.
+## Find
 
-Import local skill files/folders or supported marketplace/repository bundles through `manage_integrations`.
+- `themis skill list` lists every skill a run can use, with its plugin and scope. Look before creating a duplicate.
+- `themis skill list PLUGIN` prints that plugin's skill definitions in full (`id`, `name`, `description`, `instructions`, `allowedTools`, `scripts`). A skill found on disk is its `SKILL.md`: read it with `read_file`.
+- `themis skill --help` shows every field of a definition with an example.
 
-To create or update a skill, do the work as an agent; do not ask the user to fill in a manual authoring form.
+## Change
 
-1. Read existing plugins with `list_plugins`. Reuse a user-owned plugin when appropriate; the default is `personal`. Never edit a marketplace package in place.
-2. Design concise instructions with a clear trigger, inputs, workflow, expected outputs, and verification. Include scripts only when deterministic execution is useful. Do not embed secrets, credentials, or speculative scaffolding.
-3. Write a JSON skill draft in the project. It contains `id`, `name`, `description`, `instructions`, `allowedTools`, and `scripts`. Each script has `name` and `content`. IDs and script names are single safe file names; scripts cannot use parent directories or absolute paths. Empty `allowedTools` adds no restriction and never grants permissions.
-4. Run `python3 .themis/skills/skills/verify.py <draft.json>`. Fix every reported error. Test generated scripts with synthetic inputs through approved tools. The verifier checks structure and safety, not task quality; report unverified behavior explicitly.
-5. Persist with `save_skill`, passing scope, plugin, skill, and the plugin's current `expectedRevision` from `list_plugins`. Use null for a new plugin. If an edit conflicts, reload and reconcile instead of overwriting.
-6. Report the saved skill, its scope, the validation result, script checks, and any limitations. It becomes available in slash autocomplete on the next refresh.
+1. Write the definition as one JSON object to a scratch file, for example `"$TMPDIR/skill.json"`: `id`, `name`, `instructions`, and optionally `description`, `allowedTools` (empty restricts nothing and never grants a permission) and `scripts` (`name`, `content`; plain file names). Give it a clear trigger in the description, then inputs, steps, expected output and how to check it. Add scripts only when a fixed program helps. No secrets, no permission bypasses, no speculative scaffolding.
+2. Check it: `themis skill verify FILE` reports every problem at once with the exact shape. Fix them all. Test any script with made-up inputs.
+3. Save it: `themis skill save PLUGIN FILE`. Use `personal` as PLUGIN unless the person names another plugin they own; a missing plugin is created. Saving a skill with an existing `id` replaces it and keeps the plugin's other skills. Start an update from `themis skill list PLUGIN` and keep its `id`.
+4. Remove one only when asked: `themis skill delete PLUGIN ID`. A skill found on disk is not in the store: tell the person which file it comes from.
 
-When updating a skill, preserve its ID and other skills in the plugin. Use local scope only when explicitly requested. A generated skill must never bypass Themis approvals.
+Import a skill folder or bundle with `themis plugin inspect SOURCE`, then `themis plugin import SOURCE` (see the plugins skill). A marketplace plugin's skills are not edited in place.
 
-Use `manage_integrations` with `set_component_enabled`, the package name, kind `skill`, the skill's stored id, and enabled boolean. Use `remove_component` with the same name/kind/id to remove the requested skill while preserving its siblings. Discovered source files remain read-only; disable those skills or explain how to remove the original file. Read supporting files only as needed. Never claim an imported skill works without testing the relevant behavior. Secrets and permission bypasses do not belong in instructions.
+## Verify
 
-To check every installed integration after a change, run `themis doctor --integrations` in the shell: it lists each problem with where it is and a one-line fix (`--no-start` checks without starting MCP servers).
+- `themis skill list PLUGIN` again, and `themis skill list` to see it among the skills a run gets: report what the store says.
+- `themis doctor --integrations --no-start` after every change: it lists every problem with where it is and a one-line fix.
+- Report the saved skill, its scope, the check's result and what you did not test. A skill appears in the `/` menu on the next refresh and reaches the next run. A skill never bypasses Themis approvals.

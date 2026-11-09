@@ -5,14 +5,32 @@ description: Install, import, configure, create, test and troubleshoot local or 
 
 # MCP
 
-Use global scope for new installations and personal packages so they are available in every chat. Preserve the scope of existing items when updating them.
+MCP servers belong to plugins and are managed with `themis mcp …` in your shell. Integrations in the app browses them and switches them on and off; changes in chat go through `themis`.
 
-Create, configure and troubleshoot integrations in chat through the shared management tools. Integrations provides browsing, one-click plugin/skill installation, and basic lifecycle controls. Use shared tools for requested changes. Runtime and MCP configuration use advanced files or CLI APIs; raw configuration and logs stay out of the desktop UI.
+Where they live: global plugins in `{{global_plugins}}`, this project's in `{{project_plugins}}`. Read them through `themis`; never edit those files by hand (Themis refuses it). Commands default to global scope, which is right for new servers so they work in every chat; keep the scope of an existing one, adding `--scope local --project {{project_root}}` for the project's own.
 
-Inspect existing servers with `list_plugins`. Prefer an existing maintained server over building one. Accept a user's configuration file, JSON, command, endpoint, package or repository; do not assume every source is a repository URL.
+## Find
 
-Use `manage_integrations` import_json for supported mcpServers/OpenCode mcp configuration and import_path for files. JSON describes a connection or launch command, not proof that server software exists. Check required runtimes and pinned package versions before executing. Import never grants executable approval or account access. Configure required environment variables without embedding their values in bundles or messages.
+- `themis plugin list` shows every plugin, its servers and whether each is on.
+- `themis mcp list PLUGIN` prints that plugin's server definitions in full: `command`, `args`, `cwd`, `url`, environment names and `enabled`. Read this before changing or diagnosing a server; do not search the disk for its configuration.
+- `themis mcp --help` shows every field of a definition with an example.
 
-Use test_mcp after configuring an enabled server; inspect discovered tools and exercise a harmless tool when appropriate. Diagnose missing runtimes, process errors, protocol errors, timeouts and authentication separately. Use `set_component_enabled` with the package name, kind `mcp`, the connection key as id, and enabled boolean for availability. A server that runs a command is switched on by the user alone: Themis saves it switched off and refuses switching it on from you in every mode, so ask the user to switch it on in Integrations, then test it. Do not require a skill selection to use MCP tools. For unsupported OAuth flows, report the limitation instead of inventing a connected account.
+Prefer an existing maintained server over building one. Accept what the person gives: a configuration file, pasted JSON, a command, an address, a package or a repository.
 
-To check every installed integration after a change, run `themis doctor --integrations` in the shell: it lists each problem with where it is and a one-line fix (`--no-start` checks without starting MCP servers).
+## Change
+
+- **One server:** write its definition as one JSON object to a scratch file, for example `"$TMPDIR/server.json"` (`{"command": "node", "args": ["server.js"]}` or `{"url": "https://…"}`), then `themis mcp add PLUGIN NAME FILE` for a new one or `themis mcp update PLUGIN NAME FILE` to replace one. Use `personal` as PLUGIN for the person's own; a missing plugin is created. To fix one, start from `themis mcp list PLUGIN`, change only what is wrong and keep the rest.
+- **A standard `.mcp.json`** (`{"mcpServers": {…}}`, also pasted JSON saved to a file): `themis mcp import FILE PLUGIN`. `themis mcp inspect FILE` shows what would be imported first.
+- **Off or gone:** `themis mcp disable PLUGIN NAME`; `themis mcp delete PLUGIN NAME` only when asked.
+
+Each file is checked first and every problem is reported at once with the exact shape; fix them all and run it again. JSON describes a launch command or an address, not proof that the software exists: check the runtime it needs (`node`, `uvx`, `python3`) and pinned package versions. Keys are never written into a definition: `env` maps a variable to the name of a secret, and the person stores the secret in Settings.
+
+A server that runs a command is saved switched off and only the person switches it on: Themis refuses it from you in every mode. Tell the person which server to switch on in Integrations, then test it. A server by address may be switched on with `themis mcp enable PLUGIN NAME`. For sign-in flows Themis does not support, say so instead of inventing a connected account.
+
+## Verify
+
+- `themis mcp list PLUGIN` again: report what the store says, not what you meant to save.
+- `themis mcp test PLUGIN NAME` starts the server inside your sandbox and lists its tools. Diagnose a missing runtime, a process error, a protocol error, a timeout and missing authentication separately. A failure may be the sandbox (network, files outside the project): then ask the person to run the same test in their own terminal.
+- `themis doctor --integrations` after every change: it starts each switched-on server and lists every problem with where it is and a one-line fix (`--no-start` checks without starting servers).
+
+Tools from a server reach the next run, not the current one. Do not require a skill selection to use MCP tools.

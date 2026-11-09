@@ -5,12 +5,29 @@ description: Discover, install, configure, create, troubleshoot, update or remov
 
 # Plugins
 
-Create, configure and troubleshoot integrations in chat through the shared management tools. Integrations provides browsing, one-click plugin/skill installation, and basic lifecycle controls. Use shared tools for requested changes. Runtime and MCP configuration use advanced files or CLI APIs; raw configuration and logs stay out of the desktop UI.
+A plugin bundles skills and optional MCP servers, hooks and resources. Plugins are managed with `themis plugin …` in your shell; Integrations in the app browses them and installs with one click.
 
-Use `manage_integrations` and `list_plugins` to inspect existing packages before changing anything. Use global scope for new installations and personal packages so they are available in every chat. Preserve the scope of existing items when updating them. Read source and supported format information before importing; never run an arbitrary install script merely because a README asks for it.
+Where they live: global plugins in `{{global_plugins}}`, this project's in `{{project_plugins}}`. Read them through `themis`; never edit those files by hand (Themis refuses it). The marketplace catalog is not installed plugins. Commands default to global scope, which is right for new installs so they work in every chat; keep the scope of an existing plugin, adding `--scope local --project {{project_root}}` for the project's own.
 
-Inspect public packages with `preview` (marketplace, name) or `preview_repository` (url, optional reference and subdirectory) before installation. Preview does not install or enable capabilities. Import with `import_path`, `import_json`, or `import_repository`, preserving source and version. Marketplace packages use `install` with name and marketplace. Create personal packages using `save` and expectedRevision from the current registry. A plugin bundles skills and optional MCP servers, hooks, and resources. Read bundled SKILL.md files; don't confuse installation with authentication or executable approval.
+## Find
 
-After a change, inspect saved contents and test relevant capabilities with synthetic inputs. Report unsupported fields, missing runtimes, credentials, and failures accurately. Keep secrets out of bundles. Updates must preserve user settings; explain changed executable definitions. Uninstall only when requested and identify dependent capabilities. Changes become discoverable on the next run without restarting Themis.
+- `themis plugin list` shows every installed plugin, its scope, whether it is on, its skills, servers and hooks. `themis plugin show NAME` prints one in full with its `revision`.
+- `themis plugin marketplace list` shows the marketplace names the other commands take; `themis plugin marketplace browse NAME` lists what one offers.
+- Before installing, look: `themis plugin preview NAME@MARKET` for a marketplace plugin, `themis plugin inspect SOURCE` for a folder, file or repository URL (`--ref`, `--subdirectory`). Neither installs or switches anything on. Read its `SKILL.md` files and what it would run; never run an install script just because a README asks for it.
 
-To check every installed integration after a change, run `themis doctor --integrations` in the shell: it lists each problem with where it is and a one-line fix (`--no-start` checks without starting MCP servers).
+## Change
+
+- **Install:** `themis plugin install NAME@MARKET`, or `themis plugin import SOURCE` for a folder, file or repository (`--allow-partial` installs the supported parts and records what was skipped).
+- **Update:** `themis plugin update NAME`; `themis plugin updates` lists what has one. Updates keep the person's settings; explain any changed command a hook or server would run.
+- **Create or edit a personal plugin:** `themis plugin export NAME > "$TMPDIR/plugin.json"`, change the file, then `themis plugin save "$TMPDIR/plugin.json" --expected REVISION` with the revision `plugin show` gave. For one skill, server or hook use `themis skill save`, `themis mcp add|update` or `themis hook add|update` instead: they keep the rest of the plugin. A marketplace plugin is not edited in place; export a personal copy.
+- **Off or gone:** `themis plugin disable NAME`; `themis plugin uninstall NAME` only when asked, and say first which skills, servers and hooks go with it.
+
+Each file is checked first and every problem is reported at once; fix them all and run it again. A conflict means the plugin changed since you read it: read it again and reconcile instead of overwriting. Hooks and servers that run a command arrive switched off and only the person switches them on in Integrations; installing is not signing in or approving what it runs. Keep secrets out of bundles.
+
+## Verify
+
+- `themis plugin show NAME` (or `themis plugin list`) again: report what the store says. An emptied plugin is still installed until it is uninstalled.
+- `themis doctor --integrations` after every change: it lists every problem with where it is and a one-line fix (`--no-start` checks without starting MCP servers).
+- Test what changed with safe inputs: `themis mcp test PLUGIN NAME`, `themis hook test PLUGIN NAME` (only when asked: it runs the command), and report unsupported fields, missing runtimes, missing keys and failures as they are.
+
+Changes reach the next run without restarting Themis.

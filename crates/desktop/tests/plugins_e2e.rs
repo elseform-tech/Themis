@@ -214,10 +214,12 @@ async fn plain_cli_prompt_loads_catalog_mcp_hooks_and_refreshes_next_turn() {
             .unwrap();
         let guide = std::fs::read_to_string(project.path().join(manager["path"].as_str().unwrap()))
             .unwrap();
-        assert!(guide.contains("configure and troubleshoot integrations in chat"));
-        assert!(guide.contains("one-click plugin/skill installation"));
-        assert!(guide.contains("Use global scope for new installations"));
-        assert!(guide.contains("raw configuration and logs stay out of the desktop UI"));
+        assert!(guide.contains("Plugins are managed with `themis plugin …` in your shell"));
+        assert!(guide.contains("installs with one click"));
+        assert!(guide.contains("Commands default to global scope"));
+        assert!(guide.contains("never run an install script"));
+        // The guide names this run's own store folders.
+        assert!(guide.contains("/.themis/plugins`") && !guide.contains("{{"));
         // `/hooks` is listed without the old `manage-` prefix, and says how to edit one hook.
         let hooks = catalog
             .as_array()
@@ -227,13 +229,13 @@ async fn plain_cli_prompt_loads_catalog_mcp_hooks_and_refreshes_next_turn() {
             .unwrap();
         let hooks_guide =
             std::fs::read_to_string(project.path().join(hooks["path"].as_str().unwrap())).unwrap();
-        assert!(hooks_guide.contains("`save_hook`"));
+        assert!(hooks_guide.contains("`themis hook update PLUGIN NAME FILE`"));
         assert!(!catalog
             .as_array()
             .unwrap()
             .iter()
             .any(|skill| skill["id"].as_str().unwrap_or("").starts_with("manage-")));
-        assert!(!system.contains("raw configuration and logs stay out of the desktop UI"));
+        assert!(!system.contains("never run an install script"));
         assert!(!system.contains("PRIVATE_SKILL_BODY"));
         assert!(system.contains("GLOBAL_LEGACY_DESCRIPTION"));
         assert!(!system.contains("LEGACY_BODY_STAYS_LAZY"));

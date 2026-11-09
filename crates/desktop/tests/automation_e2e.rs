@@ -742,9 +742,7 @@ async fn creator_prompt_reaches_llm_with_management_tools_and_verifier() {
     drive_one_run(&state, &mut rx).await;
     let requests = server.received_requests().await.unwrap();
     let request: Value = serde_json::from_slice(&requests[0].body).unwrap();
-    assert!(request
-        .to_string()
-        .contains("python3 .themis/skills/skills/verify.py"));
+    assert!(request.to_string().contains("themis skill verify FILE"));
     let names: Vec<_> = request["tools"]
         .as_array()
         .unwrap()
