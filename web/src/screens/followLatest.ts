@@ -71,14 +71,19 @@ export function useFollowLatest(threadId: string, output: unknown, loaded: unkno
     const content = contentRef.current;
     if (!element || !content || typeof ResizeObserver === "undefined") return;
     contentHeight.current = content.offsetHeight;
+    let contentWidth = content.offsetWidth;
     const observer = new ResizeObserver(() => {
       const spacer = spacerRef.current;
       const height = content.offsetHeight;
       const change = height - contentHeight.current;
       contentHeight.current = height;
+      // A new column width rewraps everything, so nothing stays put anyway: what the
+      // content lost isn't kept as room, or a wider chat shows a blank column at its end.
+      const rewrapped = content.offsetWidth !== contentWidth;
+      contentWidth = content.offsetWidth;
       if (spacer) {
-        const room = parseFloat(spacer.style.height || "0");
-        const next = change < 0 && following.current ? room - change : Math.max(0, room - Math.max(0, change));
+        const room = rewrapped ? 0 : parseFloat(spacer.style.height || "0");
+        const next = change < 0 && following.current && !rewrapped ? room - change : Math.max(0, room - Math.max(0, change));
         spacer.style.height = `${next}px`;
       }
       toEnd();
