@@ -388,7 +388,13 @@ or `rsync`. It does not see:
 
 It can also ask when nothing would leak: `jq .env notes.json` reads as naming `.env` when
 that file exists. Shell commands usually ask anyway, so this costs one answer. The first
-word after `grep` and the like is its pattern, so `grep .env .gitignore` doesn't ask.
+word after `grep` and the like is its pattern, so `grep .env .gitignore` doesn't ask; with
+`-e` or `-f` only the `-e` values (`-e X`, `-eX`, `--regexp X`, `--regexp=X`) are patterns, and
+`grep -e KEY .env` or `grep -f .env x` still asks. The value of a `find` name test (`-name`,
+`-iname`, `-path`, `-ipath`, `-wholename`, `-iwholename`, `-regex`, `-iregex`, `-lname`,
+`-ilname`) is a pattern too, so `find . -name .env` doesn't ask, unless the same `find`
+runs a program on what it matches or deletes it (`-exec`, `-execdir`, `-ok`, `-okdir`,
+`-delete`): then the value names the files it touches and asks.
 
 ### Secrets and Git
 

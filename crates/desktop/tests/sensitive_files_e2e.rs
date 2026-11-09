@@ -321,6 +321,9 @@ async fn shell_searches_list_names_without_contents_and_do_not_ask() {
                 json!({"command": "rg", "args": ["--files", "--hidden"]}),
             ),
             ("shell", json!({"command": "ls", "args": ["-a"]})),
+            // `-name .env` is a pattern, not a file read.
+            shell("find", &[".", "-name", ".env"]),
+            shell("grep", &["-n", "-e", ".env", ".gitignore"]),
         ],
         deny,
     )
