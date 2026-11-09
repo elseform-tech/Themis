@@ -481,7 +481,11 @@ fn turn_off_text_substitutions() {
     };
     let stored = preferences.persistentDomainForName(&bundle);
     for key in &keys {
-        if stored.as_ref().and_then(|own| own.objectForKey(key)).is_none() {
+        if stored
+            .as_ref()
+            .and_then(|own| own.objectForKey(key))
+            .is_none()
+        {
             preferences.setBool_forKey(false, key);
         }
     }
