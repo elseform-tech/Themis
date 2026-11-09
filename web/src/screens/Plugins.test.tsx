@@ -19,7 +19,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   projectRoot = "/project";
   mcpConnections = {};
-  installed = [{ scope: "global", revision: "v1", enabled: true, source: null, spec: { name: "docs", description: "Documents", version: "1", skills: [{ id: "draft", name: "Draft", description: "Draft a document", instructions: "Read the sources before drafting.", allowedTools: [], scripts: [] }], mcp: { filesystem: { command: "node", args: [], env: { SECRET: "hidden-secret" }, enabled: true } }, hooks: [{ name: "startup-check", event: "RunStart", command: "printf '{}'", enabled: false, blocking: false, timeout_seconds: 10 }], files: {}, unsupported: [] } }];
+  installed = [{ scope: "global", revision: "v1", enabled: true, source: null, spec: { name: "docs", origin: { kind: "local", location: "/plugins/docs" }, description: "Documents", version: "1", skills: [{ id: "draft", name: "Draft", description: "Draft a document", instructions: "Read the sources before drafting.", allowedTools: [], scripts: [] }], mcp: { filesystem: { command: "node", args: [], env: { SECRET: "hidden-secret" }, enabled: true } }, hooks: [{ name: "startup-check", event: "RunStart", command: "printf '{}'", enabled: false, blocking: false, timeout_seconds: 10 }], files: {}, unsupported: [] } }];
   availableUpdates = [];
   vi.mocked(pluginAction).mockImplementation(async args => {
     if (args.action === "mcp_tools") return [{ name: "lookup", description: "Find a document" }] as never;
@@ -581,6 +581,18 @@ describe("Integration browsing and lifecycle", () => {
     // The counts arrive after the tabs render.
     await waitFor(() => expect(within(screen.getByRole("navigation", { name: "Integration categories" })).getByRole("button", { name: "Plugins" })).toHaveTextContent(/Plugins\s*1/));
     expect(tab).toBeVisible();
+  });
+  it("keeps the person's own holder out of Plugins and labels its parts Yours", async () => {
+    installed.push({ scope: "global", revision: "o1", enabled: true, source: null, spec: { name: "personal", description: "", version: "", skills: [{ id: "my-greet", name: "my-greet", description: "Greets", instructions: "Say hi.", allowedTools: [], scripts: [] }], mcp: {}, hooks: [{ name: "guard", event: "BeforeTool", command: "true", enabled: false, blocking: false, timeout_seconds: 10 }], files: {}, unsupported: [] } });
+    render(<Plugins />);
+    const tabs = await screen.findByRole("navigation", { name: "Integration categories" });
+    await waitFor(() => expect(within(tabs).getByRole("button", { name: "Plugins" })).toHaveTextContent(/Plugins\s*1/));
+    expect(screen.queryByRole("button", { name: "View personal" })).toBeNull();
+    fireEvent.click(within(tabs).getByRole("button", { name: "Skills" }));
+    const row = (await screen.findByRole("button", { name: "View my-greet" })).closest("li")!;
+    expect(row).toHaveTextContent("Yours");
+    expect(row).not.toHaveTextContent("personal");
+    expect(screen.getByRole("button", { name: "View Draft" }).closest("li")).toHaveTextContent("docs");
   });
   it("keeps an unsupported card in place until the catalog is done, then filters it", async () => {
     const previous = vi.mocked(pluginAction).getMockImplementation()!;
