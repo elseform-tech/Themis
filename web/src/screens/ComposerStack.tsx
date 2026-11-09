@@ -1,13 +1,14 @@
 import { useMemo, useState } from "react";
 import { ApprovalBox } from "../components";
-import { answerQuestion, approveAction } from "../lib/tauri";
+import { answerQuestion, answerQuestions, approveAction } from "../lib/tauri";
 import type { ApprovalDecision, ApprovalRequest, Goal, Question } from "../lib/types";
 import { composerQueue, openFor, placeQuestion, readFolded, usePlacements, writeFolded, type ComposerItem } from "../state/composerSlot";
-import type { ToolTraceEntry } from "../state/reducer";
+import type { ChatMessage, ToolTraceEntry } from "../state/reducer";
 import { describeError, toast, useApp } from "../state/store";
 import { GoalBar } from "./GoalBar";
 import { AskFirstBox } from "./AskFirstBox";
-import { QuestionBox, QuestionMark, useNowAt } from "./QuestionBox";
+import { QuestionMark, useNowAt } from "./QuestionBox";
+import { QuestionPages, type PageAnswer } from "./QuestionPages";
 
 interface ComposerStackProps {
   threadId: string;
@@ -35,6 +36,25 @@ function Shield() {
   return <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M12 3l7 3v5c0 4.5-3 8.5-7 10-4-1.5-7-5.5-7-10V6l7-3z" /></svg>;
 }
 
+/** What the composer shows now (see `composerQueue`), following each question's wait. */
+export function useComposerItem(approvals: ApprovalRequest[], questions: Question[]) {
+  const placements = usePlacements();
+  const blockingMs = useApp().state.settings.approval_timeout_seconds * 1000;
+  const expiries = questions.filter(question => question.answer === undefined).map(question => question.asked_at + openFor(question, blockingMs)).filter(at => at > Date.now());
+  const now = useNowAt(expiries.length ? Math.min(...expiries) : undefined);
+  return useMemo(() => composerQueue(approvals, questions, placements, now, blockingMs), [approvals, questions, placements, now, blockingMs]);
+}
+
+/** The chat's questions, and whether a question box is on its composer (`locked`): the
+ *  composer's own input then waits for its answer (Stop still works). It unlocks when the box
+ *  moves into its turn. */
+export function useComposerQuestions(threadId: string, messages: ChatMessage[]): { questions: Question[]; locked: boolean } {
+  const { state } = useApp();
+  const approvals = useMemo(() => state.approvals.filter(approval => approval.thread_id === threadId), [state.approvals, threadId]);
+  const questions = useMemo(() => messages.flatMap(message => message.question ? [message.question] : []), [messages]);
+  return { questions, locked: useComposerItem(approvals, questions).current?.kind === "question" };
+}
+
 /** The boxes on top of the composer (canvas board D): the goal as one row, then one box at
  *  a time, an approval before any question, with what waits behind it as a count. All of
  *  it folds to one row of pills; the fold is remembered. An answered or skipped question
@@ -42,11 +62,7 @@ function Shield() {
 export function ComposerStack({ threadId, goal, approvals, questions, traces, onEditGoal, onPauseGoal, onResumeGoal, onRemoveGoal }: ComposerStackProps) {
   const { dispatch } = useApp();
   const [folded, setFoldedState] = useState(readFolded);
-  const placements = usePlacements();
-  const blockingMs = useApp().state.settings.approval_timeout_seconds * 1000;
-  const expiries = questions.filter(question => question.answer === undefined).map(question => question.asked_at + openFor(question, blockingMs)).filter(at => at > Date.now());
-  const now = useNowAt(expiries.length ? Math.min(...expiries) : undefined);
-  const { current, waiting } = useMemo(() => composerQueue(approvals, questions, placements, now, blockingMs), [approvals, questions, placements, now, blockingMs]);
+  const { current, waiting } = useComposerItem(approvals, questions);
   const shownGoal = goal ?? null;
   const setFolded = (value: boolean) => { setFoldedState(value); writeFolded(value); };
 
@@ -62,7 +78,7 @@ export function ComposerStack({ threadId, goal, approvals, questions, traces, on
   if (!shownGoal && !current) return null;
 
   if (folded) {
-    const questionCount = waiting.questions + (current?.kind === "question" ? 1 : 0);
+    const questionCount = waiting.questions + (current?.kind === "question" ? current.questions.length : 0);
     const approval = current?.kind === "approval" ? current.request : null;
     const approvalPreview = approval ? approval.command?.argv.join(" ") ?? approval.tool : "";
     return (
@@ -108,6 +124,15 @@ function ComposerSlot({ current, threadId, traces, next, onFold, onDecide }: {
   onFold: () => void; onDecide: (request: ApprovalRequest, decision: ApprovalDecision) => Promise<void>;
 }) {
   const { dispatch } = useApp();
+  async function send(answers: PageAnswer[]) {
+    try {
+      if (answers.length === 1) await answerQuestion(threadId, answers[0]!.questionId, answers[0]!.answer);
+      else await answerQuestions(threadId, answers);
+    } catch (error) {
+      toast(dispatch, `Could not send the answer: ${describeError(error)}`, "danger");
+      throw error;
+    }
+  }
   return (
     <div className="themis-composer-slot">
       {current.kind === "approval" && current.request.ask_first ? (
@@ -123,12 +148,8 @@ function ComposerSlot({ current, threadId, traces, next, onFold, onDecide }: {
           onFold={onFold}
           onDecide={decision => void onDecide(current.request, decision)} />
       ) : (
-        <QuestionBox key={current.question.id} question={current.question}
-          onAnswer={async answer => {
-            try { await answerQuestion(threadId, current.question.id, answer); } catch (error) { toast(dispatch, `Could not send the answer: ${describeError(error)}`, "danger"); throw error; }
-          }}
-          onSkip={current.question.blocking ? undefined : () => placeQuestion(current.question.id, "turn")}
-          onFold={onFold} />
+        <QuestionPages key={current.questions[0]!.group ?? current.questions[0]!.id} pages={current.questions} onSend={send}
+          onLeave={ids => ids.forEach(id => placeQuestion(id, "turn"))} onFold={onFold} />
       )}
     </div>
   );

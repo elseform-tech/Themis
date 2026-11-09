@@ -77,6 +77,23 @@ describe("ThreadComposer", () => {
     view.rerender(<ThreadComposer {...view.props} running={false} secretConfigured={false} />);
     expect(screen.getByText(/Connect OpenCode Go/)).toBeInTheDocument();
   });
+  it("waits for an open question box: no typing or sending, a quiet placeholder, and Stop still works", () => {
+    const view = composer(true, "", true);
+    view.rerender(<ThreadComposer {...view.props} locked />);
+    const input = screen.getByRole("textbox", {name: "Message"});
+    expect(input).toHaveAttribute("aria-disabled", "true");
+    expect(input).toHaveAttribute("contenteditable", "false");
+    expect(input).toHaveAttribute("data-placeholder", "Answer the question above to continue");
+    fireEvent.click(screen.getByRole("button", {name: "Stop"}));
+    expect(view.onStop).toHaveBeenCalledOnce();
+    // Not running: Send is there but disabled.
+    view.rerender(<ThreadComposer {...view.props} running={false} draft="hi" locked />);
+    expect(screen.getByRole("button", {name: "Send"})).toBeDisabled();
+    // The box moved into its turn: the composer unlocks.
+    view.rerender(<ThreadComposer {...view.props} running={false} composerDisabled={false} draft="hi" locked={false} />);
+    expect(screen.getByRole("button", {name: "Send"})).toBeEnabled();
+    expect(screen.getByRole("textbox", {name: "Message"})).toHaveAttribute("data-placeholder", "Ask Themis… @ for plugins, / for skills");
+  });
   it("explains a rejected key and does not send until it is fixed", () => {
     const view = composer(false, "Build the chess app");
     view.rerender(<ThreadComposer {...view.props} keyRejected="OPENCODE_KEY" />);

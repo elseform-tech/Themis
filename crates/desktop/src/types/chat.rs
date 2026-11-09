@@ -22,10 +22,14 @@ pub struct Question {
     /// which it works on until the answer comes.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub assumption: Option<String>,
-    /// One short line per answer on its tradeoff, by answer; the recommended
-    /// one's says why it is recommended.
+    /// Each answer's hint, by answer: one paragraph on what picking it means (what happens,
+    /// advantages, disadvantages, consequences); the recommended one's may say why.
     #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
     pub reasons: std::collections::BTreeMap<String, String>,
+    /// The questions asked together in one `ask_user` call share this id: one box shows
+    /// them as pages and sends their answers together. Absent for a question asked alone.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub group: Option<String>,
     /// Nothing more could be done without the answer: the run ended on it.
     #[serde(default)]
     pub blocking: bool,

@@ -463,16 +463,7 @@ async fn dispatch_command(
             &arg::<String>(&args, "threadId")?,
             &arg::<String>(&args, "subagentId")?
         )),
-        "answer_question" => output!(
-            state
-                .answer_question(
-                    sink,
-                    arg(&args, "threadId")?,
-                    arg(&args, "questionId")?,
-                    arg(&args, "answer")?,
-                )
-                .await?
-        ),
+        "answer_question" => answer_question(state, sink, &args).await,
         "get_goal" => output!(state.get_goal(arg(&args, "threadId")?).await?),
         "create_goal" => output!(
             state
@@ -681,4 +672,45 @@ async fn dispatch_command(
         ),
         _ => Err(format!("unknown server method '{method}'")),
     }
+}
+
+/// One answer (`questionId`, `answer`: the question back), or the pages of one box together
+/// (`answers`: `[{questionId, answer}]`, delivered in one message: the questions back).
+async fn answer_question(
+    state: &AppState,
+    sink: Arc<dyn EventSink>,
+    args: &Value,
+) -> Result<Value, String> {
+    #[derive(serde::Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct Answer {
+        question_id: String,
+        answer: String,
+    }
+    let thread_id = arg(args, "threadId")?;
+    let answered = match arg::<Option<Vec<Answer>>>(args, "answers")? {
+        Some(answers) => serde_json::to_value(
+            state
+                .answer_questions(
+                    sink,
+                    thread_id,
+                    answers
+                        .into_iter()
+                        .map(|answer| (answer.question_id, answer.answer))
+                        .collect(),
+                )
+                .await?,
+        ),
+        None => serde_json::to_value(
+            state
+                .answer_question(
+                    sink,
+                    thread_id,
+                    arg(args, "questionId")?,
+                    arg(args, "answer")?,
+                )
+                .await?,
+        ),
+    };
+    answered.map_err(|err| err.to_string())
 }

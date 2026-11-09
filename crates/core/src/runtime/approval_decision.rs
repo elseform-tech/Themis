@@ -28,7 +28,10 @@ impl From<Approval> for ApprovalDecision {
         match value {
             Approval::AllowOnce => Self::AllowOnce,
             Approval::AllowAlways => Self::AllowAlways,
-            Approval::Deny | Approval::DenyForNewMessage | Approval::DenyReviewed => Self::Deny,
+            Approval::Deny
+            | Approval::DenyByPerson
+            | Approval::DenyForNewMessage
+            | Approval::DenyReviewed => Self::Deny,
             Approval::DenyTimedOut => Self::TimedOut,
         }
     }

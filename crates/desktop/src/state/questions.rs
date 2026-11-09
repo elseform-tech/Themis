@@ -6,8 +6,11 @@
 //! each one and its answer so the chat shows them. An answer is delivered like
 //! a steer when a run is going (a steer the run never reads returns to the
 //! queue), otherwise it goes out first as the next message, so it is never
-//! lost. Only a blocking question ends the run that asked it.
+//! lost. Only a blocking question ends the run that asked it. Questions asked
+//! together share a group: one box shows them as pages and sends their answers
+//! in one message.
 
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -30,9 +33,9 @@ const MAX_ASSUMPTION_CHARS: usize = 1_000;
 const MAX_CHOICES: usize = 4;
 const MAX_CHOICE_CHARS: usize = 200;
 const MAX_TOPIC_CHARS: usize = 80;
-/// A reason says what picking that answer does (steps, commands, files) and its tradeoff:
-/// long enough for that, short enough to scan.
-const MAX_REASON_CHARS: usize = 400;
+/// A choice's hint (one paragraph: what happens, its advantages, disadvantages and
+/// consequences) or a reason: long enough to say it, short enough to read at a glance.
+const MAX_HINT_CHARS: usize = 600;
 const MAX_ANSWER_CHARS: usize = 10_000;
 
 /// Starts the message that delivers answers; the goal supervisor reads it back
@@ -47,9 +50,10 @@ pub(super) struct NewQuestion {
     /// The agent's recommended answer (`recommended`), which it works on until the
     /// answer comes: one of the choices, or a suggestion when there are none.
     pub assumption: Option<String>,
-    /// One short line per answer on its tradeoff (`why` on a choice), and why the
-    /// recommendation is recommended (the top-level `why`).
+    /// Each answer's hint: one paragraph on what picking it means (`hint` on a choice).
     pub reasons: Vec<(String, String)>,
+    /// Why the recommendation is recommended (the top-level `why`): the recommendation's
+    /// hint when it has none of its own.
     pub why: Option<String>,
     pub blocking: bool,
     pub topic: Option<String>,
@@ -90,6 +94,115 @@ fn shape_choices(
 
 fn bounded(text: &str, max: usize) -> String {
     themis_core::goal::one_line(text, max)
+}
+
+/// A question ready to store: bounded, its choices shaped, and hints only for the answers
+/// on offer.
+struct Shaped {
+    text: String,
+    topic: Option<String>,
+    choices: Vec<String>,
+    assumption: Option<String>,
+    reasons: BTreeMap<String, String>,
+    blocking: bool,
+    subagent: Option<String>,
+}
+
+fn shape(asked: NewQuestion) -> Result<Shaped, AskRefused> {
+    let text = bounded(&asked.question, MAX_QUESTION_CHARS);
+    if text.is_empty() {
+        return Err(AskRefused::Empty);
+    }
+    let topic = asked
+        .topic
+        .map(|topic| bounded(&topic, MAX_TOPIC_CHARS))
+        .filter(|topic| !topic.is_empty());
+    let choices: Vec<String> = asked
+        .choices
+        .iter()
+        .map(|choice| bounded(choice, MAX_CHOICE_CHARS))
+        .filter(|choice| !choice.is_empty())
+        .collect();
+    let assumption = asked
+        .assumption
+        .map(|text| bounded(&text, MAX_ASSUMPTION_CHARS))
+        .filter(|text| !text.is_empty());
+    let (choices, assumption) = shape_choices(choices, assumption);
+    let offered =
+        |answer: &str| choices.iter().any(|c| c == answer) || assumption.as_deref() == Some(answer);
+    // Hints only for answers on offer; the recommendation's `why` stands in for a hint it
+    // lacks (a suggestion has none).
+    let mut reasons = BTreeMap::new();
+    for (answer, hint) in asked.reasons {
+        let (answer, hint) = (
+            bounded(&answer, MAX_CHOICE_CHARS),
+            bounded(&hint, MAX_HINT_CHARS),
+        );
+        if offered(&answer) && !hint.is_empty() {
+            reasons.insert(answer, hint);
+        }
+    }
+    let why = asked.why.map(|why| bounded(&why, MAX_HINT_CHARS));
+    if let (Some(answer), Some(why)) = (&assumption, why.filter(|why| !why.is_empty())) {
+        reasons.entry(answer.clone()).or_insert(why);
+    }
+    Ok(Shaped {
+        text,
+        topic,
+        choices,
+        assumption,
+        reasons,
+        blocking: asked.blocking,
+        subagent: asked.subagent,
+    })
+}
+
+/// The open question `asked` updates: the same topic, or the same wording.
+fn same_open(questions: &[Question], asked: &Shaped) -> Option<usize> {
+    questions.iter().position(|question| {
+        question.answer.is_none()
+            && (asked.topic.is_some() && question.topic == asked.topic
+                || question.question == asked.text)
+    })
+}
+
+/// Stores `asked` in `questions`, updating the open question it repeats. Returns the stored
+/// question and whether it was an update.
+fn store_question(
+    questions: &mut Vec<Question>,
+    asked: Shaped,
+    run_id: &str,
+    group: Option<String>,
+) -> (Question, bool) {
+    if let Some(index) = same_open(questions, &asked) {
+        let question = &mut questions[index];
+        question.question = asked.text;
+        question.choices = asked.choices;
+        question.assumption = asked.assumption;
+        question.reasons = asked.reasons;
+        question.group = group;
+        question.blocking = asked.blocking;
+        question.topic = asked.topic.or(question.topic.take());
+        question.subagent = asked.subagent;
+        question.run_id = run_id.to_owned();
+        return (question.clone(), true);
+    }
+    let question = Question {
+        id: uuid::Uuid::new_v4().to_string(),
+        run_id: run_id.to_owned(),
+        question: asked.text,
+        choices: asked.choices,
+        assumption: asked.assumption,
+        reasons: asked.reasons,
+        group,
+        blocking: asked.blocking,
+        topic: asked.topic,
+        subagent: asked.subagent,
+        asked_at: now_ms(),
+        answer: None,
+    };
+    questions.push(question.clone());
+    (question, false)
 }
 
 fn now_ms() -> i64 {
@@ -178,114 +291,72 @@ impl AppState {
         run_id: &str,
         asked: NewQuestion,
     ) -> Result<Question, AskRefused> {
-        let text = bounded(&asked.question, MAX_QUESTION_CHARS);
-        if text.is_empty() {
-            return Err(AskRefused::Empty);
-        }
-        let topic = asked
-            .topic
-            .map(|topic| bounded(&topic, MAX_TOPIC_CHARS))
-            .filter(|topic| !topic.is_empty());
-        let choices: Vec<String> = asked
-            .choices
-            .iter()
-            .map(|choice| bounded(choice, MAX_CHOICE_CHARS))
-            .filter(|choice| !choice.is_empty())
-            .collect();
-        let assumption = asked
-            .assumption
-            .map(|text| bounded(&text, MAX_ASSUMPTION_CHARS))
-            .filter(|text| !text.is_empty());
-        let (choices, assumption) = shape_choices(choices, assumption);
-        // Reasons only for answers on offer; the recommendation's own `why` wins.
-        let offered = |answer: &str| {
-            choices.iter().any(|c| c == answer) || assumption.as_deref() == Some(answer)
-        };
-        let mut reasons = std::collections::BTreeMap::new();
-        for (answer, why) in asked.reasons {
-            let (answer, why) = (
-                bounded(&answer, MAX_CHOICE_CHARS),
-                bounded(&why, MAX_REASON_CHARS),
-            );
-            if offered(&answer) && !why.is_empty() {
-                reasons.insert(answer, why);
-            }
-        }
-        if let (Some(answer), Some(why)) = (
-            &assumption,
-            asked.why.map(|why| bounded(&why, MAX_REASON_CHARS)),
-        ) {
-            if !why.is_empty() {
-                reasons.insert(answer.clone(), why);
-            }
-        }
+        let mut asked = self.ask_questions(sink, thread_id, run_id, vec![asked])?;
+        asked.pop().ok_or(AskRefused::Empty)
+    }
+
+    /// Stores the questions of one `ask_user` call from `run_id`, all or none. Several share a
+    /// group: one box shows them as pages. Each is still its own question, so an open one on
+    /// the same topic, or with the same wording, is updated instead of adding another.
+    pub(super) fn ask_questions(
+        &self,
+        sink: &dyn EventSink,
+        thread_id: &str,
+        run_id: &str,
+        asked: Vec<NewQuestion>,
+    ) -> Result<Vec<Question>, AskRefused> {
+        let shaped = asked
+            .into_iter()
+            .map(shape)
+            .collect::<Result<Vec<_>, _>>()?;
+        let group = (shaped.len() > 1).then(|| uuid::Uuid::new_v4().to_string());
         let _guard = self
             .inner
             .question_lock
             .lock()
             .unwrap_or_else(|e| e.into_inner());
         let mut questions = self.questions_for(thread_id);
-        let same = questions.iter().position(|question| {
-            question.answer.is_none()
-                && (topic.is_some() && question.topic == topic || question.question == text)
-        });
-        let question = match same {
-            Some(index) => {
-                let question = &mut questions[index];
-                question.question = text;
-                question.choices = choices;
-                question.assumption = assumption;
-                question.reasons = reasons;
-                question.blocking = asked.blocking;
-                question.topic = topic.or(question.topic.take());
-                question.subagent = asked.subagent;
-                question.run_id = run_id.to_owned();
-                question.clone()
-            }
-            None => {
-                if questions.iter().filter(|q| q.answer.is_none()).count() >= MAX_OPEN {
-                    return Err(AskRefused::TooMany);
-                }
-                let question = Question {
-                    id: uuid::Uuid::new_v4().to_string(),
-                    run_id: run_id.to_owned(),
-                    question: text,
-                    choices,
-                    assumption,
-                    reasons,
-                    blocking: asked.blocking,
-                    topic,
-                    subagent: asked.subagent,
-                    asked_at: now_ms(),
-                    answer: None,
-                };
-                questions.push(question.clone());
-                // Keep the newest; the oldest answered questions go first.
-                while questions.len() > MAX_KEPT {
-                    let Some(oldest) = questions.iter().position(|q| q.answer.is_some()) else {
-                        break;
-                    };
-                    questions.remove(oldest);
-                }
-                question
-            }
-        };
+        let open = questions.iter().filter(|q| q.answer.is_none()).count();
+        let new = shaped
+            .iter()
+            .filter(|asked| same_open(&questions, asked).is_none())
+            .count();
+        if new > 0 && open + new > MAX_OPEN {
+            return Err(AskRefused::TooMany);
+        }
+        let stored: Vec<(Question, bool)> = shaped
+            .into_iter()
+            .map(|asked| store_question(&mut questions, asked, run_id, group.clone()))
+            .collect();
+        // Keep the newest; the oldest answered questions go first.
+        while questions.len() > MAX_KEPT {
+            let Some(oldest) = questions.iter().position(|q| q.answer.is_some()) else {
+                break;
+            };
+            questions.remove(oldest);
+        }
         self.save_questions(thread_id, &questions);
-        let _ = self.inner.diagnostics.append(
-            "questions",
-            if same.is_some() { "updated" } else { "asked" },
-            "info",
-            json!({"thread_id": thread_id, "question_id": question.id, "blocking": question.blocking}),
-        );
-        self.question_event(
-            sink,
-            thread_id,
-            run_id,
-            ThreadEvent::QuestionAsked {
-                question: question.clone(),
-            },
-        );
-        Ok(question)
+        let pages = stored.len();
+        Ok(stored
+            .into_iter()
+            .map(|(question, updated)| {
+                let _ = self.inner.diagnostics.append(
+                    "questions",
+                    if updated { "updated" } else { "asked" },
+                    "info",
+                    json!({"thread_id": thread_id, "question_id": question.id, "blocking": question.blocking, "pages": pages}),
+                );
+                self.question_event(
+                    sink,
+                    thread_id,
+                    run_id,
+                    ThreadEvent::QuestionAsked {
+                        question: question.clone(),
+                    },
+                );
+                question
+            })
+            .collect())
     }
 
     /// The chat's questions, oldest first.
@@ -303,21 +374,75 @@ impl AppState {
         question_id: String,
         answer: String,
     ) -> Result<Question, String> {
+        let mut answered = self
+            .answer_questions(sink, thread_id, vec![(question_id, answer)])
+            .await?;
+        answered.pop().ok_or_else(|| "Write an answer".to_owned())
+    }
+
+    /// Answers several open questions at once (the pages of one box) and delivers the answers
+    /// together, in one message. All are answered, or none (an unknown, answered, empty or
+    /// too long answer refuses the lot).
+    pub async fn answer_questions(
+        &self,
+        sink: Arc<dyn EventSink>,
+        thread_id: String,
+        answers: Vec<(String, String)>,
+    ) -> Result<Vec<Question>, String> {
         let running = self.require_thread(&thread_id).await?;
-        let answer = answer.trim().to_owned();
-        if answer.is_empty() {
+        let answered = self.record_answers(&thread_id, answers)?;
+        for (question, answer) in &answered {
+            self.question_event(
+                sink.as_ref(),
+                &thread_id,
+                "",
+                ThreadEvent::QuestionAnswered {
+                    id: question.id.clone(),
+                    answer: answer.clone(),
+                },
+            );
+            // An "Allow once" to an Auto block lets that exact action run once.
+            self.auto_question_answered(&question.id, answer);
+        }
+        let steered = self.deliver_answers(sink.as_ref(), &thread_id, &answered)?;
+        for (question, _) in &answered {
+            let _ = self.inner.diagnostics.append(
+                "questions",
+                "answered",
+                "info",
+                json!({"thread_id": thread_id, "question_id": question.id, "delivery": if steered { "run" } else { "queue" }, "pages": answered.len()}),
+            );
+        }
+        if !running || !steered {
+            self.dispatch_queue(sink, &thread_id).await;
+        }
+        Ok(answered.into_iter().map(|(question, _)| question).collect())
+    }
+
+    /// Stores the answers, all or none, returning each answered question with its answer.
+    fn record_answers(
+        &self,
+        thread_id: &str,
+        answers: Vec<(String, String)>,
+    ) -> Result<Vec<(Question, String)>, String> {
+        if answers.is_empty() {
             return Err("Write an answer".to_owned());
         }
-        if answer.chars().count() > MAX_ANSWER_CHARS {
-            return Err("This answer is too long".to_owned());
-        }
-        let question = {
-            let _guard = self
-                .inner
-                .question_lock
-                .lock()
-                .unwrap_or_else(|e| e.into_inner());
-            let mut questions = self.questions_for(&thread_id);
+        let _guard = self
+            .inner
+            .question_lock
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let mut questions = self.questions_for(thread_id);
+        let mut answered = Vec::new();
+        for (question_id, answer) in answers {
+            let answer = answer.trim().to_owned();
+            if answer.is_empty() {
+                return Err("Write an answer".to_owned());
+            }
+            if answer.chars().count() > MAX_ANSWER_CHARS {
+                return Err("This answer is too long".to_owned());
+            }
             let question = questions
                 .iter_mut()
                 .find(|question| question.id == question_id)
@@ -326,69 +451,47 @@ impl AppState {
                 return Err("That question is already answered".to_owned());
             }
             question.answer = Some(answer.clone());
-            let question = question.clone();
-            self.save_questions(&thread_id, &questions);
-            question
-        };
-        self.question_event(
-            sink.as_ref(),
-            &thread_id,
-            "",
-            ThreadEvent::QuestionAnswered {
-                id: question.id.clone(),
-                answer: answer.clone(),
-            },
-        );
-        // An "Allow once" to an Auto block lets that exact action run once.
-        self.auto_question_answered(&question.id, &answer);
-        let steered = self.deliver_answer(sink.as_ref(), &thread_id, &question, &answer)?;
-        let _ = self.inner.diagnostics.append(
-            "questions",
-            "answered",
-            "info",
-            json!({"thread_id": thread_id, "question_id": question.id, "delivery": if steered { "run" } else { "queue" }}),
-        );
-        if !running || !steered {
-            self.dispatch_queue(sink, &thread_id).await;
+            answered.push((question.clone(), answer));
         }
-        Ok(question)
+        self.save_questions(thread_id, &questions);
+        Ok(answered)
     }
 
-    /// Hands the answer to the running run, or puts it first in the queue
-    /// (joining an answer already waiting there). Returns whether a run took it.
-    fn deliver_answer(
+    /// Hands the answers to the running run, or puts them first in the queue
+    /// (joining an answer already waiting there), as one message. A running subagent that
+    /// asked gets its own. Returns whether a run took the main agent's answers.
+    fn deliver_answers(
         &self,
         sink: &dyn EventSink,
         thread_id: &str,
-        question: &Question,
-        answer: &str,
+        answered: &[(Question, String)],
     ) -> Result<bool, String> {
-        let body = themis_core::prompts::fill(
-            themis_core::prompts::QUESTION_ANSWER,
-            &[
-                ("question", &question.question),
-                ("options", &offered_options(question)),
-                (
-                    "assumption",
-                    question.assumption.as_deref().unwrap_or("nothing stated"),
-                ),
-                ("answer", answer),
-            ],
-        );
         // The subagent that asked gets it while it is running; once it has ended, the main
         // agent does, like any answer.
-        if let Some(agent) = question
-            .subagent
-            .as_deref()
-            .and_then(|id| self.running_subagent(thread_id, id))
-        {
-            agent
-                .inbox
-                .lock()
-                .unwrap_or_else(|e| e.into_inner())
-                .push_back(format!("{ANSWER_MARKER}\n{body}"));
+        let mut main = Vec::new();
+        let mut subagents: BTreeMap<String, Vec<String>> = BTreeMap::new();
+        for (question, answer) in answered {
+            let body = answer_body(question, answer);
+            match question.subagent.as_deref() {
+                Some(id) if self.running_subagent(thread_id, id).is_some() => {
+                    subagents.entry(id.to_owned()).or_default().push(body);
+                }
+                _ => main.push(body),
+            }
+        }
+        for (id, bodies) in subagents {
+            if let Some(agent) = self.running_subagent(thread_id, &id) {
+                agent
+                    .inbox
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .push_back(format!("{ANSWER_MARKER}\n{}", bodies.join("\n\n")));
+            }
+        }
+        if main.is_empty() {
             return Ok(true);
         }
+        let body = main.join("\n\n");
         // Under the queue lock, like a steer: closing the inbox takes the same
         // lock, so the answer lands in a live inbox or in the queue.
         self.edit_queue(sink, thread_id, |queue| {
@@ -458,11 +561,11 @@ impl AppState {
 
     /// The `ask_user` result's note, followed by the other questions still open, so a
     /// reworded question is not asked twice.
-    pub(super) fn with_still_open(&self, thread_id: &str, asked_id: &str, note: String) -> String {
+    pub(super) fn with_still_open(&self, thread_id: &str, asked: &[&str], note: String) -> String {
         let others: Vec<_> = self
             .open_questions(thread_id)
             .into_iter()
-            .filter(|open| open.id != asked_id)
+            .filter(|open| !asked.contains(&open.id.as_str()))
             .collect();
         if others.is_empty() {
             return note;
@@ -576,14 +679,30 @@ fn offered_options(question: &Question) -> String {
         .map(|choice| {
             let recommended = question.assumption.as_deref() == Some(choice.as_str());
             match (question.reasons.get(choice), recommended) {
-                (Some(reason), true) => format!("{choice} (recommended: {reason})"),
-                (Some(reason), false) => format!("{choice} ({reason})"),
+                (Some(hint), true) => format!("{choice} (recommended: {hint})"),
+                (Some(hint), false) => format!("{choice} ({hint})"),
                 (None, true) => format!("{choice} (recommended)"),
                 (None, false) => choice.clone(),
             }
         })
         .collect::<Vec<_>>()
         .join("; ")
+}
+
+/// One question and its answer, as the agent reads it.
+fn answer_body(question: &Question, answer: &str) -> String {
+    themis_core::prompts::fill(
+        themis_core::prompts::QUESTION_ANSWER,
+        &[
+            ("question", &question.question),
+            ("options", &offered_options(question)),
+            (
+                "assumption",
+                question.assumption.as_deref().unwrap_or("nothing stated"),
+            ),
+            ("answer", answer),
+        ],
+    )
 }
 
 #[cfg(test)]
@@ -615,5 +734,33 @@ mod tests {
         // Repeats count once.
         let (choices, _) = shape_choices(strings(&["x", "x", "y"]), None);
         assert_eq!(choices, strings(&["x", "y"]));
+    }
+
+    /// A hint is one bounded paragraph; `why` speaks for a recommendation without a hint of
+    /// its own and never replaces one.
+    #[test]
+    fn hints_are_bounded_and_why_fills_only_a_missing_one() {
+        let long = "word ".repeat(400);
+        let shaped = shape(NewQuestion {
+            question: "Tabs?".into(),
+            choices: strings(&["Tabs", "Spaces"]),
+            assumption: Some("Spaces".into()),
+            reasons: vec![("Tabs".into(), long), ("Spaces".into(), "Matches.".into())],
+            why: Some("usual".into()),
+            ..NewQuestion::default()
+        })
+        .ok()
+        .unwrap();
+        assert!(shaped.reasons["Tabs"].chars().count() <= MAX_HINT_CHARS);
+        assert_eq!(shaped.reasons["Spaces"], "Matches.");
+        let suggestion = shape(NewQuestion {
+            question: "Name?".into(),
+            assumption: Some("Pebble".into()),
+            why: Some("short".into()),
+            ..NewQuestion::default()
+        })
+        .ok()
+        .unwrap();
+        assert_eq!(suggestion.reasons["Pebble"], "short");
     }
 }

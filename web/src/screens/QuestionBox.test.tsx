@@ -1,10 +1,11 @@
 // @vitest-environment jsdom
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { ANSWER_MARKER, answerOf, type Question } from "../lib/types";
+import { ANSWER_MARKER, type Question } from "../lib/types";
 import { initialState, reducer } from "../state/reducer";
 import { BLOCKING_OPEN_MS, composerQueue, QUESTION_OPEN_MS, questionOnComposer } from "../state/composerSlot";
 import { QuestionBox, QuestionNote } from "./QuestionBox";
+import { QuestionPages } from "./QuestionPages";
 
 afterEach(() => { cleanup(); vi.useRealTimers(); });
 
@@ -25,10 +26,28 @@ describe("QuestionBox", () => {
     await waitFor(() => expect(answer).toHaveBeenCalledWith("Tabs"));
   });
 
-  it("shows each option's one-line reason under it", () => {
-    render(<QuestionBox question={question({ choices: ["Spaces", "Tabs"], reasons: { Spaces: "matches the existing files", Tabs: "smaller diffs" } })} onAnswer={vi.fn()} />);
-    expect(screen.getByRole("button", { name: /^Spaces/ })).toHaveTextContent("matches the existing files");
-    expect(screen.getByRole("button", { name: /^Tabs/ })).toHaveTextContent("smaller diffs");
+  it("picks an option from anywhere on it, hint included; More opens a cut hint and picks nothing", async () => {
+    const answer = vi.fn().mockResolvedValue(undefined);
+    const long = "Re-indents every file with spaces. It matches the existing files and the formatter, but touches every line once; easy to undo with one revert.";
+    // jsdom lays nothing out: a hint taller than its two lines is what the browser reports for a cut one.
+    const height = vi.spyOn(HTMLElement.prototype, "scrollHeight", "get").mockImplementation(function (this: HTMLElement) {
+      return this.textContent === long ? 60 : 0;
+    });
+    render(<QuestionBox question={question({ choices: ["Spaces", "Tabs"], reasons: { Spaces: long, Tabs: "smaller diffs" } })} onAnswer={answer} />);
+    // The card is one button: label and hint together.
+    const spaces = screen.getByRole("button", { name: /^Spaces/ });
+    expect(spaces).toHaveTextContent(long);
+    // Only the cut hint gets a More toggle; opening it picks nothing.
+    const more = screen.getByRole("button", { name: "More" });
+    expect(screen.getAllByRole("button", { name: "More" })).toHaveLength(1);
+    fireEvent.click(more);
+    expect(screen.getByRole("button", { name: "Less" })).toHaveAttribute("aria-expanded", "true");
+    expect(spaces.querySelector(".themis-question-hint")).toHaveClass("is-open");
+    expect(answer).not.toHaveBeenCalled();
+    // Clicking the hint text picks its option.
+    fireEvent.click(screen.getByText("smaller diffs"));
+    await waitFor(() => expect(answer).toHaveBeenCalledWith("Tabs"));
+    height.mockRestore();
   });
 
   it("offers an open question's suggestion as one answer, beside a written one", async () => {
@@ -67,10 +86,108 @@ describe("QuestionBox", () => {
   });
 });
 
+describe("several questions in one box", () => {
+  const pages = () => [
+    question({ id: "p1", group: "g", question: "Tabs or spaces?" }),
+    question({ id: "p2", group: "g", question: "Which license?", choices: ["MIT", "Apache-2.0"], assumption: "MIT" }),
+    question({ id: "p3", group: "g", question: "Project name?", choices: [], assumption: "Pebble" }),
+  ];
+
+  it("shows one page at a time, then a review, and sends every answer together on Submit", async () => {
+    const send = vi.fn().mockResolvedValue(undefined);
+    const leave = vi.fn();
+    render(<QuestionPages pages={pages()} onSend={send} onLeave={leave} />);
+    expect(screen.getByRole("region", { name: "Question from the agent" })).toHaveTextContent("Tabs or spaces?");
+    expect(screen.getByText("Question 1 of 3")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Back" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Next" })).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: /^Tabs/ }));
+    await waitFor(() => expect(screen.getByText("Question 2 of 3")).toBeInTheDocument());
+    expect(send).not.toHaveBeenCalled();
+    // Back shows the answer given, and Next keeps it.
+    fireEvent.click(screen.getByRole("button", { name: "Back" }));
+    expect(screen.getByRole("button", { name: /^Tabs/ })).toHaveAttribute("aria-pressed", "true");
+    fireEvent.click(screen.getByRole("button", { name: "Next" }));
+    fireEvent.click(screen.getByRole("button", { name: /^Apache-2.0/ }));
+    await waitFor(() => expect(screen.getByText("Question 3 of 3")).toBeInTheDocument());
+    fireEvent.change(screen.getByLabelText("Your answer"), { target: { value: "Rock" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send answer" }));
+    // The review lists every answer; nothing is sent yet.
+    const review = await screen.findByRole("region", { name: "Your answers" });
+    expect(review).toHaveTextContent("Tabs or spaces?Tabs");
+    expect(review).toHaveTextContent("Which license?Apache-2.0");
+    expect(review).toHaveTextContent("Project name?Rock");
+    expect(send).not.toHaveBeenCalled();
+    // A click goes back to change one; answering it returns to the review.
+    fireEvent.click(screen.getByRole("button", { name: "Change: Which license?" }));
+    expect(screen.getByText("Question 2 of 3")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /^MIT/ }));
+    expect(await screen.findByRole("region", { name: "Your answers" })).toHaveTextContent("Which license?MIT");
+    fireEvent.click(screen.getByRole("button", { name: "Submit" }));
+    await waitFor(() => expect(send).toHaveBeenCalledTimes(1));
+    expect(send).toHaveBeenCalledWith([
+      { questionId: "p1", answer: "Tabs" },
+      { questionId: "p2", answer: "MIT" },
+      { questionId: "p3", answer: "Rock" },
+    ]);
+    expect(leave).not.toHaveBeenCalled();
+  });
+
+  it("shows a skipped page as Skipped, leaves it open in its turn and sends the rest", async () => {
+    const send = vi.fn().mockResolvedValue(undefined);
+    const leave = vi.fn();
+    render(<QuestionPages pages={pages().slice(0, 2)} onSend={send} onLeave={leave} />);
+    fireEvent.click(screen.getByRole("button", { name: "Skip" }));
+    await waitFor(() => expect(screen.getByText("Question 2 of 2")).toBeInTheDocument());
+    fireEvent.click(screen.getByRole("button", { name: /^MIT/ }));
+    expect(await screen.findByRole("region", { name: "Your answers" })).toHaveTextContent("Tabs or spaces?Skipped");
+    fireEvent.click(screen.getByRole("button", { name: "Submit" }));
+    await waitFor(() => expect(send).toHaveBeenCalledWith([{ questionId: "p2", answer: "MIT" }]));
+    expect(leave).toHaveBeenCalledWith(["p1"]);
+  });
+
+  it("offers no Skip on a page the work waits on", () => {
+    render(<QuestionPages pages={[question({ id: "b", group: "g", blocking: true, assumption: undefined }), question({ id: "n", group: "g" })]} onSend={vi.fn()} onLeave={vi.fn()} />);
+    expect(screen.queryByRole("button", { name: "Skip" })).not.toBeInTheDocument();
+  });
+
+  it("moves keyboard focus to the next page's first answer", async () => {
+    render(<QuestionPages pages={pages()} onSend={vi.fn()} onLeave={vi.fn()} />);
+    const first = screen.getByRole("button", { name: /^Tabs/ });
+    first.focus();
+    fireEvent.click(first);
+    await waitFor(() => expect(document.activeElement).toBe(screen.getByRole("button", { name: /^MIT/ })));
+  });
+
+  it("is a plain question box for a single question: no page count, no review, sent at once", async () => {
+    const send = vi.fn().mockResolvedValue(undefined);
+    render(<QuestionPages pages={[question()]} onSend={send} onLeave={vi.fn()} />);
+    expect(screen.queryByRole("button", { name: "Back" })).not.toBeInTheDocument();
+    expect(screen.queryByText(/Question 1 of/)).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /^Tabs/ }));
+    await waitFor(() => expect(send).toHaveBeenCalledWith([{ questionId: "q1", answer: "Tabs" }]));
+    expect(screen.queryByRole("region", { name: "Your answers" })).not.toBeInTheDocument();
+  });
+
+  it("is one box on the composer, its questions counted", () => {
+    const now = Date.now();
+    const set = pages().map((page, i) => ({ ...page, asked_at: now - 10 + i }));
+    const alone = question({ id: "alone", asked_at: now - 5 });
+    const queue = composerQueue([], [alone, ...set], new Map(), now);
+    expect(queue.current).toEqual({ kind: "question", questions: set });
+    // A page reopened from its turn brings its box first; the pages keep the order asked.
+    const reopened = composerQueue([], [alone, ...set], new Map([["p3", "composer" as const]]), now);
+    expect(reopened.current).toEqual({ kind: "question", questions: set });
+    const newer = question({ id: "newer", asked_at: now - 1 });
+    expect(composerQueue([], [alone, newer], new Map([["newer", "composer" as const]]), now).current).toEqual({ kind: "question", questions: [newer] });
+    expect(queue.waiting).toEqual({ approvals: 0, questions: 1 });
+  });
+});
+
 describe("a question in its turn", () => {
-  it("is one quiet line with its answer once answered", () => {
+  it("is one quiet line, question → answer, once answered", () => {
     render(<QuestionNote question={question({ answer: "Tabs" })} onComposer={false} onOpen={vi.fn()} />);
-    expect(screen.getByRole("note")).toHaveTextContent("Tabs or spaces? — Tabs");
+    expect(screen.getByRole("note")).toHaveTextContent("Tabs or spaces? → Tabs");
     expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
   });
 
@@ -96,7 +213,7 @@ describe("what the composer shows", () => {
     expect(first.current).toEqual({ kind: "approval", request: approval("a1") });
     expect(first.waiting).toEqual({ approvals: 1, questions: 2 });
     const next = composerQueue([], [newer, older], none, now);
-    expect(next.current).toEqual({ kind: "question", question: older });
+    expect(next.current).toEqual({ kind: "question", questions: [older] });
     expect(next.waiting).toEqual({ approvals: 0, questions: 1 });
     expect(composerQueue([], [question({ answer: "Tabs" })], none, now).current).toBeNull();
   });
@@ -107,13 +224,13 @@ describe("what the composer shows", () => {
     const opened = question({ id: "opened", asked_at: now - 10 * QUESTION_OPEN_MS });
     // Left its turn long ago; the person clicks it while the older question waits on the composer.
     const queue = composerQueue([], [older, opened], new Map([["opened", "composer"]]), now);
-    expect(queue.current).toEqual({ kind: "question", question: opened });
+    expect(queue.current).toEqual({ kind: "question", questions: [opened] });
     expect(queue.waiting).toEqual({ approvals: 0, questions: 1 });
     // The one opened last comes first; approvals still lead.
     const both = new Map([["old", "composer"], ["opened", "composer"]]) as Map<string, "composer">;
-    expect(composerQueue([], [older, opened], both, now).current).toEqual({ kind: "question", question: opened });
+    expect(composerQueue([], [older, opened], both, now).current).toEqual({ kind: "question", questions: [opened] });
     both.delete("old"); both.set("old", "composer");
-    expect(composerQueue([], [older, opened], both, now).current).toEqual({ kind: "question", question: older });
+    expect(composerQueue([], [older, opened], both, now).current).toEqual({ kind: "question", questions: [older] });
     expect(composerQueue([approval("a1")] as never, [older, opened], both, now).current?.kind).toBe("approval");
   });
 
@@ -140,17 +257,6 @@ describe("what the composer shows", () => {
   });
 });
 
-describe("answerOf", () => {
-  it("reads the person's answer out of the message the agent was sent", () => {
-    const text = `${ANSWER_MARKER}\nQuestion: Tabs or spaces?\nOptions you offered: Tabs; Spaces\nYou assumed: Tabs\nAnswer: it sounds good and the controls are fine\nIf the answer differs from your assumption, first fix what you did on it, then continue.`;
-    expect(answerOf(text)).toBe("it sounds good and the controls are fine");
-    expect(answerOf("Answer: not one")).toBeUndefined();
-    // A chosen option is sent the same way: its label is the bubble.
-    const chosen = `${ANSWER_MARKER}\nQuestion: Tabs or spaces?\nOptions you offered: Tabs (recommended); Spaces\nYou assumed: Tabs\nAnswer: Spaces\nIf the answer differs from your assumption, first fix what you did on it, then continue.`;
-    expect(answerOf(chosen)).toBe("Spaces");
-  });
-});
-
 describe("question events", () => {
   const thread = "t1";
   const envelope = (event: object, run_id = "r1") => ({ type: "thread/event" as const, envelope: { thread_id: thread, run_id, event: event as never } });
@@ -161,9 +267,13 @@ describe("question events", () => {
     state = reducer(state, envelope({ kind: "question_asked", question: question({ question: "Tabs or spaces for indentation?" }) }));
     let rows = state.messages[thread]!.filter(row => row.question);
     expect(rows.map(row => row.question!.question)).toEqual(["Tabs or spaces for indentation?"]);
+    state = reducer(state, envelope({ kind: "assistant_text", text: "Still working." }));
     state = reducer(state, envelope({ kind: "question_answered", id: "q1", answer: "Tabs" }, ""));
     rows = state.messages[thread]!.filter(row => row.question);
     expect(rows[0]!.question!.answer).toBe("Tabs");
+    // The answer joins the chat where it was given: after what came in between.
+    const all = state.messages[thread]!;
+    expect(all[all.length - 1]).toMatchObject({ answeredHere: true, question: { id: "q1", answer: "Tabs" } });
     // The same history replayed on load gives the same box.
     const loaded = reducer(initialState, { type: "thread/history-loaded", threadId: thread, history: [
       { kind: "event", envelope: { thread_id: thread, run_id: "r1", event: { kind: "question_asked", question: question() } } },
@@ -171,5 +281,6 @@ describe("question events", () => {
       { kind: "user", run_id: "r2", text: `${ANSWER_MARKER}\nQuestion: Tabs or spaces?\nAnswer: Tabs` },
     ] });
     expect(loaded.messages[thread]![0]!.question!.answer).toBe("Tabs");
+    expect(loaded.messages[thread]!.filter(row => row.answeredHere)).toHaveLength(1);
   });
 });

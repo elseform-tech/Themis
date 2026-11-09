@@ -466,8 +466,10 @@ export interface Question {
   choices?: string[];
   /** The agent's recommended answer (one of the choices, or its suggestion), which it works on meanwhile. */
   assumption?: string;
-  /** One short line per answer on its tradeoff; the recommended one's says why. */
+  /** Each answer's hint: one paragraph on what picking it means. */
   reasons?: Record<string, string>;
+  /** Shared by the questions asked together: one box shows them as pages. */
+  group?: string;
   /** Nothing more could be done without the answer. */
   blocking: boolean;
   topic?: string;
@@ -477,16 +479,6 @@ export interface Question {
 
 /** Starts the message that delivers an answer to the agent. */
 export const ANSWER_MARKER = "[Answer to your question — from the user]";
-
-/** The person's own answer inside such a message (what they chose or wrote), else undefined. */
-export function answerOf(text: string): string | undefined {
-  if (!text.startsWith(ANSWER_MARKER)) return undefined;
-  const at = text.lastIndexOf("\nAnswer: ");
-  if (at < 0) return undefined;
-  const rest = text.slice(at + "\nAnswer: ".length);
-  const end = rest.indexOf("\nIf the answer differs");
-  return (end < 0 ? rest : rest.slice(0, end)).trim();
-}
 
 /** A message waiting for the chat's current run to end. */
 export interface QueuedMessage {
@@ -668,6 +660,8 @@ export interface PersistedMessage {
   /** What the goal check concluded after a turn. */
   /** A question the agent asked the user. */
   question?: Question;
+  /** This row is where the question was answered: "question → answer". */
+  answeredHere?: boolean;
   /** Subagents started together in this run, shown as one card. */
   subagents?: SubagentEntry[];
   /** What the memory models changed after this turn: one slim line under the reply. */

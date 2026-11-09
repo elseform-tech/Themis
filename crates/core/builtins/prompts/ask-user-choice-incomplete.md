@@ -1,0 +1,1 @@
+Not asked: choice {{choice}} needs {{missing}}. Every choice gives a short `answer` and a `hint`: one plain paragraph saying what you will do if it is picked, its advantages and disadvantages, its consequences (including whether it is hard to undo) and anything else the user needs to decide. Ask again with both filled in.

@@ -6,7 +6,7 @@ import { PromptText } from "../components/PromptInput";
 import { usePromptSkills } from "../lib/usePromptSkills";
 import { describeError, toast, useActiveProject, useApp } from "../state/store";
 import { browserOpenUrl } from "../lib/browser";
-import { ANSWER_MARKER, answerOf, type AttachedMedia, type ChangedFile, type Question } from "../lib/types";
+import { ANSWER_MARKER, type AttachedMedia, type ChangedFile, type Question } from "../lib/types";
 import { hiddenFilesLabel, visibleFiles } from "../lib/hiddenFiles";
 import { QuestionNote, useNowAt } from "./QuestionBox";
 import { openFor, placeQuestion, questionOnComposer, usePlacements } from "../state/composerSlot";
@@ -206,7 +206,7 @@ function ConversationRow({
   memory: InlineMemory;
 }) {
   if (row.kind === "message" && row.message.question) {
-    return <QuestionRow question={row.message.question} />;
+    return <QuestionRow question={row.message.question} answeredHere={row.message.answeredHere} />;
   }
   if (row.kind === "message" && row.message.memory) {
     // Only a line that arrived live shows, inside its reply, and then fades; history keeps none.
@@ -360,12 +360,14 @@ function CheckpointDivider({ checkpoint }: { checkpoint: NonNullable<ChatMessage
 
 /** What the goal check concluded after a turn, or a warning as the goal starts (no title). */
 
-/** A question in its turn: one line with its answer, or, once it has left the composer
- *  unanswered, a line that puts it back there. */
-function QuestionRow({ question }: { question: Question }) {
+/** A question in the chat: "question → answer" where it was answered; where it was asked,
+ *  nothing once answered, or, once it has left the composer unanswered, a line that puts it
+ *  back there. */
+function QuestionRow({ question, answeredHere = false }: { question: Question; answeredHere?: boolean }) {
   const placements = usePlacements();
   const blockingMs = useApp().state.settings.approval_timeout_seconds * 1000;
   const now = useNowAt(question.answer === undefined ? question.asked_at + openFor(question, blockingMs) : undefined);
+  if (question.answer !== undefined && !answeredHere) return null;
   return <QuestionNote question={question} onComposer={questionOnComposer(question, placements, now, blockingMs)} onOpen={() => placeQuestion(question.id, "composer")} />;
 }
 
@@ -384,12 +386,9 @@ type InlineMemory = { memoryByRun: Record<string, ChatMessage>; finalRuns: Set<s
 
 function Message({ message, threadId, activeRunId, durationMs, skills, plugins, memory, memoryWorking }: { message: ChatMessage; threadId?: string; activeRunId: string | undefined; durationMs?: number; skills: PromptSkill[]; plugins: PromptPlugin[]; memory?: ChatMessage; memoryWorking?: "checking" | "waiting" }) {
   if (message.checkpoint) return <CheckpointDivider checkpoint={message.checkpoint} />;
-  // An answer to the agent's question is the person's next message: their words in a bubble,
-  // so a long chat shows what they said where they said it.
-  if (message.role === "user" && message.text.startsWith(ANSWER_MARKER)) {
-    const answer = answerOf(message.text);
-    return answer ? <div className="themis-thread-msg themis-thread-msg--user"><p className="themis-thread-text">{answer}</p></div> : null;
-  }
+  // An answer to the agent's question shows as "question → answer" rows where it was given
+  // (the question_answered events), never as a bubble; older chats' answer messages too.
+  if (message.role === "user" && message.text.startsWith(ANSWER_MARKER)) return null;
   // A goal turn starts with a runtime message: a divider, not a bubble from the user.
   if (message.goalStatus) return <div className="themis-thread-msg themis-thread-msg--assistant themis-thread-msg--completed"><ResponseBody text={message.text} /></div>;
   if (message.goalCheck) return <div className="themis-thread-msg themis-thread-msg--user"><span className="themis-goal-check-label">Goal check</span><p className="themis-thread-text">{message.text}</p></div>;

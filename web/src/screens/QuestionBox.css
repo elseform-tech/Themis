@@ -5,17 +5,46 @@
 .themis-question-head .themis-goal-icon { width: 28px; height: 28px; margin: -4px -4px 0 auto; }
 .themis-question-text { flex: 1; min-width: 0; margin: 0; font-weight: 600; overflow-wrap: anywhere; }
 .themis-question-body { display: grid; gap: 6px; padding-left: 24px; }
-/* One choice per line, full width: a choice can be a long sentence. */
+/* One choice per line, full width: its label first, the agent's hint small and muted under it. */
 .themis-question-choices { display: flex; flex-direction: column; gap: 4px; }
+.themis-question-option { display: grid; border: 1px solid var(--themis-border); border-radius: 10px; overflow: hidden; }
+.themis-question-option.is-recommended { border-color: color-mix(in srgb, var(--themis-accent) 70%, transparent); background: color-mix(in srgb, var(--themis-accent) 8%, transparent); }
+.themis-question-option.is-chosen { border-color: var(--themis-accent); }
+.themis-question-option { position: relative; }
 .themis-question-choice {
-  display: grid; gap: 1px; width: 100%; padding: 6px 10px; border: 1px solid var(--themis-border); border-radius: 10px;
-  background: transparent; color: var(--themis-text); font: inherit; font-size: .8125rem; line-height: 1.4;
+  display: flex; flex-direction: column; gap: 2px; width: 100%; padding: 6px 10px;
+  border: 0; background: transparent; color: var(--themis-text); font: inherit; font-size: .8125rem; font-weight: 500; line-height: 1.4;
   text-align: left; white-space: normal; overflow-wrap: anywhere; cursor: pointer;
 }
-.themis-question-choice.is-recommended { border-color: color-mix(in srgb, var(--themis-accent) 70%, transparent); background: color-mix(in srgb, var(--themis-accent) 8%, transparent); }
-.themis-question-choice-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
-.themis-question-reason { font-size: .75rem; color: var(--themis-text-2); }
-.themis-question-tag { flex: none; font-size: .75rem; color: var(--themis-accent); }
+.themis-question-label { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
+.themis-question-tag { flex: none; font-size: .75rem; font-weight: 400; color: var(--themis-accent); }
+/* Two lines until "More" opens it. */
+.themis-question-hint {
+  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden;
+  color: var(--themis-text-2); font-size: .75rem; font-weight: 400; line-height: 1.4; overflow-wrap: anywhere;
+}
+.themis-question-hint.is-open { display: block; -webkit-line-clamp: unset; }
+.themis-question-more {
+  justify-self: start; margin: -4px 0 4px 10px; padding: 0; border: 0; background: transparent;
+  color: var(--themis-text-3); font: inherit; font-size: .75rem; cursor: pointer;
+}
+.themis-question-more:hover { color: var(--themis-text); }
+.themis-question-more:focus-visible { outline: 2px solid var(--themis-accent); outline-offset: 2px; }
+/* The answers before they are sent: one row each, a click goes back to that page. */
+.themis-question-review { display: grid; gap: 2px; margin: 0; padding: 0; list-style: none; }
+.themis-question-review button {
+  display: flex; gap: 8px; width: 100%; padding: 4px 8px; border: 0; border-radius: 8px; background: transparent;
+  color: var(--themis-text-2); font: inherit; font-size: .8125rem; text-align: left; cursor: pointer;
+}
+.themis-question-review button:hover { background: var(--themis-nav-hover-bg); }
+.themis-question-review button:focus-visible { outline: 2px solid var(--themis-accent); outline-offset: 2px; }
+.themis-question-review-answer { color: var(--themis-text); overflow-wrap: anywhere; }
+.themis-question-review-answer.is-skipped { color: var(--themis-text-3); }
+.themis-question-submit { justify-self: end; }
+/* "2/3" with Back and Next, only when a box holds several questions. */
+.themis-question-pages { flex: none; display: flex; align-items: center; gap: 2px; margin-top: -4px; font-size: .75rem; color: var(--themis-text-2); font-variant-numeric: tabular-nums; }
+.themis-question-head .themis-question-pages .themis-goal-icon { width: 24px; height: 24px; margin: 0; }
+.themis-question-pages .themis-goal-icon:disabled { opacity: .35; cursor: default; }
 .themis-question-choice:hover:not(:disabled) { background: var(--themis-nav-hover-bg); }
 .themis-question-choice:disabled { opacity: .5; cursor: not-allowed; }
 .themis-question-form { display: flex; align-items: center; gap: 6px; }

@@ -162,6 +162,11 @@ export function answerQuestion(threadId: string, questionId: string, answer: str
   return invoke('answer_question', { threadId, questionId, answer });
 }
 
+/** Answers the pages of one question box together; the agent reads them as one message. */
+export function answerQuestions(threadId: string, answers: { questionId: string; answer: string }[]): Promise<Question[]> {
+  return invoke('answer_question', { threadId, answers });
+}
+
 export function getGoal(threadId: string): Promise<Goal | null> {
   return invoke('get_goal', { threadId });
 }

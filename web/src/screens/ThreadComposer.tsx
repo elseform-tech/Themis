@@ -23,6 +23,8 @@ interface ThreadComposerProps {
   plugins?: PromptPlugin[];
   history?: string[];
   composerDisabled: boolean;
+  /** A question box is on the composer: the input waits for its answer (Stop still works). */
+  locked?: boolean;
   running: boolean;
   stopping: boolean;
   sendError: string | undefined;
@@ -51,6 +53,18 @@ interface ThreadComposerProps {
   top?: ReactNode;
 }
 
+/** What the empty input says: the question to answer first, how a message joins a run, or what to ask. */
+export function composerPlaceholder(running: boolean, locked = false): string {
+  if (locked) return "Answer the question above to continue";
+  return running ? "Steer it in (Enter) — or queue it (⌘Enter)" : "Ask Themis… @ for plugins, / for skills";
+}
+
+/** A rejected key would only fail a new run: sending waits for it to be fixed (steering and
+ *  queueing into a running run still work). */
+function keyBlocksSend(running: boolean, keyRejected: string | undefined): boolean {
+  return !running && Boolean(keyRejected);
+}
+
 /** How long after a first Esc a second one stops the run (and the hint shows). */
 const ESC_STOP_WINDOW_MS = 1500;
 
@@ -68,7 +82,7 @@ export function ThreadComposer({
   skills = [],
   plugins = [],
   history = [],
-  composerDisabled,
+  composerDisabled, locked,
   running,
   stopping,
   sendError,
@@ -132,8 +146,7 @@ export function ThreadComposer({
   const secretLook = useMemo(() => looksLikeSecret(draft), [draft]);
   const [secretDismissed, setSecretDismissed] = useState(false);
   if (secretDismissed && !secretLook) setSecretDismissed(false);
-  // A rejected key would only fail the run: wait for it to be fixed (queueing still works).
-  const sendBlocked = !running && Boolean(keyRejected);
+  const sendBlocked = keyBlocksSend(running, keyRejected);
   return (
     <>
       {sendError && <p className="themis-thread-senderror" role="alert">{sendError}</p>}
@@ -165,7 +178,7 @@ export function ThreadComposer({
           </li>)}
         </ul>}
         <PromptInput id="themis-composer" label="Message" value={draft} skills={skills} plugins={plugins} commands={COMMANDS} history={history} disabled={composerDisabled}
-          placeholder={running ? "Steer it in (Enter) — or queue it (⌘Enter)" :"Ask Themis… @ for plugins, / for skills"}
+          placeholder={composerPlaceholder(running, locked)}
           onChange={onDraftChange} onSubmit={queue => { if (!sendBlocked) onSend(queue); }} />
         <div className="themis-thread-composer-actions">
           <details className="themis-composer-add" data-popover>

@@ -116,21 +116,37 @@ levels are listed.
 
 When the agent needs your input, it asks without stopping its work. The
 question shows on the composer with 2–4 options, one per line, its recommended one
-marked **Recommended**, or, for an open question such as a name, its
-**Suggested** answer. Each option has one short line on its tradeoff, and the
-recommended one says why. The agent carries on with that answer until you click
-another option or write your own.
+first and marked **Recommended**, or, for an open question such as a name, its
+**Suggested** answer. Under each option a short hint in small grey text says what
+happens if you pick it: what the agent will do, the upsides and downsides, and
+whether it is hard to undo. It shows two lines; click it to read the rest. The
+agent carries on with its recommendation until you click another option or write
+your own.
 
 - **One box at a time.** The composer shows one approval or question at a time,
   approvals first; what waits behind it is a count ("1 question next"). Once you
-  answer, the question leaves the composer and stays in its turn, where it was
-  asked, as one line with your answer. **Skip** (or five minutes without an
+  answer, the question leaves the composer and the chat shows one quiet line,
+  "question → your answer", where you answered (not a message bubble). **Skip** (or five minutes without an
   answer) also moves it back into its turn as an **Open question** line; click
   that line to put it on the composer again and answer whenever you like. A
   question the work waits on has no Skip; it stays on the composer for the
   approval timeout (Settings › Permissions, 10 minutes by default), then moves
   into its turn the same way. Nothing starts while it waits: answering it later
   starts the next turn.
+- **The message box waits for the question.** While a question box is on the
+  composer, you can't type a message ("Answer the question above to continue");
+  answer, Skip, or wait until the box moves into its turn. **Stop** still works.
+  Approvals don't lock it.
+- **Several questions at once.** When the agent asks up to four related things
+  together, one box shows them as pages, "1/3" with Back and Next. Picking or
+  writing an answer, or **Skip**, turns to the next page. After the last page a
+  review lists every question with your answer (or **Skipped**); click one to
+  change it, then **Submit** sends them to the agent together, in one message. A
+  skipped question stays open in its turn. A page the work waits on has no Skip.
+  A single question needs no review: your answer goes at once.
+- **After you press Deny.** When you deny an approval (Custom), the agent runs
+  nothing else for that step and asks you how to go on: a safer way to do it
+  (when there is one), skip the step and carry on, or stop.
 - **Fold to icons** (the chevron) turns the goal, the approval and the questions
   into one row of small pills: the goal, the waiting
   command, the number of questions. Click any pill to unfold. The fold is

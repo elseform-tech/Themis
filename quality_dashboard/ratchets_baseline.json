@@ -39,12 +39,11 @@
   "crates/desktop/src/transcript/request_context.rs": 7,
   "crates/desktop/src/transcript/source_exports.rs": 7,
   "crates/desktop/src/types/automations.rs": 20,
-  "web/src/components/approval/ApprovalBox.tsx": 7,
+  "web/src/components/approval/ApprovalBox.tsx": 6,
   "web/src/screens/GoalBar.tsx": 6,
-  "web/src/screens/QuestionBox.tsx": 7,
   "web/src/state/reducer.ts": 36
  },
- "duplicate_lines_total": 785,
+ "duplicate_lines_total": 777,
  "files": {
   "crates/core/src/runtime.rs": {
    "code_lines": 1908
@@ -488,9 +487,6 @@
   "crates/core/src/tools/wrapped.rs::unwrap_once": {
    "cyclomatic": 25
   },
-  "crates/desktop/src/approvals.rs::DesktopApprovalHook#3::ask": {
-   "cyclomatic": 24
-  },
   "crates/desktop/src/cli.rs::configure_provider": {
    "cyclomatic": 24
   },
@@ -527,7 +523,7 @@
   },
   "crates/desktop/src/server/commands.rs::dispatch_command": {
    "cyclomatic": 173,
-   "lines": 610
+   "lines": 601
   },
   "crates/desktop/src/settings.rs::SettingsStore::update": {
    "cognitive": 43,
@@ -622,10 +618,6 @@
   },
   "crates/desktop/src/state/providers.rs::AppState::provider_models": {
    "cyclomatic": 25
-  },
-  "crates/desktop/src/state/questions.rs::AppState::ask_question": {
-   "cyclomatic": 29,
-   "lines": 116
   },
   "crates/desktop/src/state/run.rs::AppState::spawn_run": {
    "cognitive": 146,
@@ -756,9 +748,6 @@
    "cyclomatic": 117,
    "lines": 194
   },
-  "web/src/screens/ComposerStack.tsx::ComposerStack": {
-   "cyclomatic": 25
-  },
   "web/src/screens/ContextMeter.tsx::ContextMeter": {
    "cognitive": 26,
    "cyclomatic": 37
@@ -864,8 +853,8 @@
   },
   "web/src/screens/ThreadComposer.tsx::ThreadComposer": {
    "cognitive": 34,
-   "cyclomatic": 49,
-   "lines": 142
+   "cyclomatic": 47,
+   "lines": 141
   },
   "web/src/screens/ThreadConversation.tsx::ConversationRow": {
    "cognitive": 41,
@@ -875,8 +864,8 @@
    "cyclomatic": 24
   },
   "web/src/screens/ThreadConversation.tsx::Message": {
-   "cognitive": 57,
-   "cyclomatic": 44
+   "cognitive": 55,
+   "cyclomatic": 43
   },
   "web/src/screens/ThreadConversation.tsx::ThreadConversation": {
    "cognitive": 57,
@@ -887,8 +876,8 @@
    "cyclomatic": 23
   },
   "web/src/screens/ThreadView.tsx::ThreadView": {
-   "cognitive": 75,
-   "cyclomatic": 131,
+   "cognitive": 72,
+   "cyclomatic": 124,
    "lines": 240
   },
   "web/src/screens/ThreadView.tsx::ThreadView::send": {
@@ -931,9 +920,9 @@
    "cyclomatic": 22
   },
   "web/src/state/reducer.ts::applyThreadEvent": {
-   "cognitive": 122,
-   "cyclomatic": 118,
-   "lines": 272
+   "cognitive": 119,
+   "cyclomatic": 116,
+   "lines": 269
   },
   "web/src/state/reducer.ts::reducer": {
    "cognitive": 79,
