@@ -113,7 +113,7 @@ const REWAKE: &[Field] = &[
 ];
 
 const HOOK: &[Field] = &[
-    required("name", Kind::Text, "A safe single name, unique in its plugin (`hook add|update PLUGIN NAME FILE` sets it from NAME)."),
+    required("name", Kind::Text, "A safe single name, unique in its plugin (`hook add|update PLUGIN NAME DEF` sets it from NAME)."),
     required("event", Kind::Text, "When it runs; one of the events listed below."),
     field("command", Kind::Text, "The shell command to run; it gets the event as JSON on stdin. Required unless `prompt` is given."),
     field("prompt", Kind::Text, "Ask the chat's model this instead of running a command ($ARGUMENTS is the input). Leave `command` out then."),
