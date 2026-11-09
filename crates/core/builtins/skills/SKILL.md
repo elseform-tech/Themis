@@ -8,8 +8,8 @@ description: Find, import, install, create, inspect, enable, disable, update and
 A skill is Markdown instructions, with optional helper scripts, that a run loads when its description fits. Do the work as an agent; do not ask the person to fill in a form.
 
 Two kinds, and the person's words decide which:
-- **The person's own skill** (the default: every chat, only them, only Themis): saved in a plugin in `{{global_plugins}}` with `themis skill …` in your shell. Never edit the plugin store's files by hand (Themis refuses it).
-- **A skill for this project, shared with the team** (when they say so: "for this project", "for the team", "in the repo"): a `SKILL.md` folder in the repository, `{{project_skill_dir}}/NAME/SKILL.md`, written with your file tools and committed like any project file. Other coding agents read it too.
+- **The person's own skill** (the default, also when they say "global", "personal" or "for me": every chat, only them, only Themis): saved in a plugin in `{{global_plugins}}` with `themis skill …` in your shell. Never edit the plugin store's files by hand (Themis refuses it).
+- **A skill for this project, shared with the team** (when they say so: "local", "project", "for this project", "for the team", "in the repo"): a `SKILL.md` folder in the repository, `{{project_skill_dir}}/NAME/SKILL.md`, written with your file tools and committed like any project file. Other coding agents read it too.
 
 Skills Themis also finds on disk, read-only through `themis`: personal folders {{personal_skill_folders}}, and this project's {{project_skill_folders}}.
 

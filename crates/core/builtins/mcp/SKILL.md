@@ -7,7 +7,7 @@ description: Install, import, configure, create, test and troubleshoot local or 
 
 MCP servers belong to plugins and are managed with `themis mcp …` in your shell. Integrations in the app browses them and switches them on and off; changes in chat go through `themis`.
 
-Where they live: in plugins in `{{global_plugins}}`, the person's own, in every chat and project. A project holds none: never write a `--scope` or a project file for them. Read them through `themis`; never edit those files by hand (Themis refuses it).
+Where they live: in plugins in `{{global_plugins}}`, the person's own, in every chat and project. A project holds none: never write a `--scope` or a project file for them. Asked for one "only for this project", add it as the person's own and tell them plainly that it applies in every project. A "local" server means one that runs a command on this machine (as opposed to a remote `url`), not one for this project. Read them through `themis`; never edit those files by hand (Themis refuses it).
 
 ## Find
 
