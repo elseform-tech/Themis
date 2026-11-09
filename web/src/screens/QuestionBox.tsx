@@ -61,7 +61,8 @@ function PageNav({ page }: { page: QuestionPage }) {
 }
 
 /** One answer on offer: the whole card picks it, its label first and under it the agent's hint as
- *  small muted text, two lines until "More" opens it (the toggle shows only when the hint is cut). */
+ *  small muted text, two lines until "More" opens it (the toggle shows only when the hint is cut).
+ *  The picked one is the only gold card, with a check; the recommended one only carries its tag. */
 function Choice({ question, option, chosen, disabled, onPick }: { question: Question; option: string; chosen: boolean; disabled: boolean; onPick: (answer: string) => void }) {
   const [open, setOpen] = useState(false);
   const [cut, setCut] = useState(false);
@@ -73,10 +74,13 @@ function Choice({ question, option, chosen, disabled, onPick }: { question: Ques
     if (element && !open) setCut(element.scrollHeight > element.clientHeight + 1);
   }, [hint, open]);
   return (
-    <div className={`themis-question-option${recommended ? " is-recommended" : ""}${chosen ? " is-chosen" : ""}`}>
+    <div className={`themis-question-option${chosen ? " is-chosen" : ""}`}>
       <button type="button" className="themis-question-choice" aria-pressed={chosen || undefined} disabled={disabled} onClick={() => onPick(option)}>
         <span className="themis-question-label">
-          <span>{option}</span>
+          <span className="themis-question-name">
+            {chosen && <svg className="themis-question-check" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="m5 12 5 5 9-10" /></svg>}
+            {option}
+          </span>
           {recommended && <small className="themis-question-tag">{question.choices?.length ? "Recommended" : "Suggested"}</small>}
         </span>
         {hint && <span ref={hintRef} className={`themis-question-hint${open ? " is-open" : ""}`}>{hint}</span>}

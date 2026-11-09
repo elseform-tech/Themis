@@ -168,6 +168,20 @@ describe("several questions in one box", () => {
     expect(send).not.toHaveBeenCalled();
   });
 
+  it("marks the picked answer with a check, apart from the recommended one", async () => {
+    render(<QuestionPages pages={pages()} onSend={vi.fn()} onLeave={vi.fn()} />);
+    fireEvent.click(screen.getByRole("button", { name: /^Tabs/ }));
+    await waitFor(() => expect(screen.getByText("Question 2 of 3")).toBeInTheDocument());
+    fireEvent.click(screen.getByRole("button", { name: "Back" }));
+    const tabs = screen.getByRole("button", { name: /^Tabs/ });
+    const spaces = screen.getByRole("button", { name: /^Spaces/ });
+    expect(tabs.querySelector(".themis-question-check")).not.toBeNull();
+    expect(spaces.querySelector(".themis-question-check")).toBeNull();
+    expect(spaces).toHaveTextContent("Recommended");
+    expect(tabs.closest(".themis-question-option")).toHaveClass("is-chosen");
+    expect(spaces.closest(".themis-question-option")).not.toHaveClass("is-chosen");
+  });
+
   it("clears a pick when it is clicked again, staying on the page", async () => {
     render(<QuestionPages pages={pages()} onSend={vi.fn()} onLeave={vi.fn()} />);
     fireEvent.click(screen.getByRole("button", { name: /^Tabs/ }));
