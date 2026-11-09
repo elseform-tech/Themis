@@ -17,6 +17,9 @@ use crate::types::Question;
 
 /// Most questions one `ask_user` call may carry: the pages of one box.
 pub(super) const MAX_PAGES: usize = 4;
+/// The shortest hint taken, in characters: shorter ones rarely say what happens, what it costs
+/// and what follows.
+pub(super) const MIN_HINT_CHARS: usize = 200;
 
 pub(super) struct QuestionTool {
     pub(super) state: AppState,
@@ -60,8 +63,9 @@ fn pages(args: &Value) -> Result<Vec<&Value>, String> {
     }
 }
 
-/// One choice: its answer and its hint (one paragraph on what picking it means), or why it
-/// is refused (naming each missing field). A bare string is a choice without a hint.
+/// One choice: its answer and its hint (one paragraph on what picking it means, at least
+/// [`MIN_HINT_CHARS`] characters), or why it is refused (naming each missing field, or the
+/// hint's length). A bare string is a choice without a hint.
 fn parse_choice(index: usize, choice: &Value) -> Result<(String, String), String> {
     let field = |key: &str| {
         choice
@@ -88,10 +92,20 @@ fn parse_choice(index: usize, choice: &Value) -> Result<(String, String), String
             ],
         ));
     }
-    Ok((
-        answer.unwrap_or_default().to_owned(),
-        field("hint").unwrap_or_default().to_owned(),
-    ))
+    let answer = answer.unwrap_or_default();
+    let hint = field("hint").unwrap_or_default();
+    let chars = hint.chars().count();
+    if chars < MIN_HINT_CHARS {
+        return Err(themis_core::prompts::fill(
+            themis_core::prompts::ASK_USER_HINT_THIN,
+            &[
+                ("choice", &format!("{} (\"{answer}\")", index + 1)),
+                ("chars", &chars.to_string()),
+                ("min", &MIN_HINT_CHARS.to_string()),
+            ],
+        ));
+    }
+    Ok((answer.to_owned(), hint.to_owned()))
 }
 
 /// One question as the model sent it, or why it is refused.

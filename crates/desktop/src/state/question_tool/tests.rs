@@ -2,7 +2,10 @@ use super::*;
 use proptest::prelude::*;
 
 fn choice(answer: &str) -> Value {
-    json!({"answer": answer, "hint": format!("Does {answer}: quick, but noisy; easy to undo.")})
+    json!({"answer": answer, "hint": format!(
+        "Does {answer} across the project in one pass, which is quick and keeps the code consistent, \
+         but it touches many files at once and makes the history noisy for a while; it is easy to undo with one plain revert."
+    )})
 }
 
 #[test]
@@ -13,10 +16,7 @@ fn arguments_are_read_leniently() {
     .unwrap();
     assert_eq!(asked.question, "Tabs?");
     assert_eq!(asked.choices, ["Yes", "No"]);
-    assert_eq!(
-        asked.reasons[0].1,
-        "Does Yes: quick, but noisy; easy to undo."
-    );
+    assert_eq!(asked.reasons[0].1, choice("Yes")["hint"]);
     assert_eq!(asked.assumption.as_deref(), Some("Yes"));
     assert!(!asked.blocking);
     assert_eq!(asked.topic.as_deref(), Some("indent"));
@@ -38,6 +38,26 @@ fn arguments_are_read_leniently() {
             .assumption
             .as_deref(),
         Some("A")
+    );
+}
+
+/// A hint too short to say what happens, what it costs and what follows is refused, naming the
+/// choice, its length and the floor; one at the floor is taken.
+#[test]
+fn a_thin_hint_is_refused_with_its_length() {
+    let thin = "Largest ecosystem, huge hiring pool. Good default for most SaaS.";
+    let refused = parse(&json!({"question": "Stack?", "choices": [choice("Go"), {"answer": "TypeScript", "hint": thin}]}))
+        .unwrap_err();
+    assert!(refused.contains("choice 2 (\"TypeScript\")"), "{refused}");
+    assert!(
+        refused.contains(&format!("{} characters", thin.chars().count())),
+        "{refused}"
+    );
+    assert!(refused.contains(&MIN_HINT_CHARS.to_string()), "{refused}");
+    let at_floor = "é".repeat(MIN_HINT_CHARS);
+    assert!(
+        parse(&json!({"question": "Stack?", "choices": [{"answer": "Go", "hint": at_floor}]}))
+            .is_ok()
     );
 }
 
@@ -129,7 +149,7 @@ proptest! {
                     prop_assert_eq!(asked.choices.len(), asked.reasons.len());
                     for (answer, hint) in &asked.reasons {
                         prop_assert!(!answer.trim().is_empty());
-                        prop_assert!(!hint.trim().is_empty());
+                        prop_assert!(hint.trim().chars().count() >= MIN_HINT_CHARS);
                     }
                     if asked.blocking {
                         prop_assert!(asked.assumption.as_deref().is_none_or(|a| a.trim().is_empty()));

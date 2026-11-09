@@ -92,11 +92,13 @@ class HintMeasureTest(unittest.TestCase):
         full = ("One server holds the state and every edit goes through it, which is simple to reason "
                 "about, but you run and scale that server and each edit pays a round trip; moving off "
                 "it later means migrating every client.")
-        actions = [{"kind": "answer", "hints": [thin, full]}, {"kind": "reply"}]
+        actions = [{"kind": "answer", "hints": [thin, full],
+                    "options": ["Centralized server", "I have a preferred stack already"]}, {"kind": "reply"}]
         measures = grade.hint_measures(actions)
         self.assertEqual(measures["hint_chars"], round((len(thin) + len(full)) / 2))
         self.assertEqual(measures["thin_hints"], 0.5)
         self.assertEqual(measures["downside_hints"], 0.5)
+        self.assertEqual(measures["catch_all_choices"], 1)
 
     def test_measures_nothing_without_hints(self):
         self.assertEqual(grade.hint_measures([{"kind": "reply"}]), {})
