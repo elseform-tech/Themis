@@ -8,8 +8,9 @@
 /* One choice per line, full width: its label first, the agent's hint small and muted under it. */
 .themis-question-choices { display: flex; flex-direction: column; gap: 4px; }
 .themis-question-option { display: grid; border: 1px solid var(--themis-border); border-radius: 10px; overflow: hidden; }
-.themis-question-option.is-recommended { border-color: color-mix(in srgb, var(--themis-accent) 70%, transparent); background: color-mix(in srgb, var(--themis-accent) 8%, transparent); }
-.themis-question-option.is-chosen { border-color: var(--themis-accent); }
+/* Only the picked answer is a gold card, with a check before its label; the recommended one has just its tag. */
+.themis-question-option.is-chosen { border-color: var(--themis-accent); background: color-mix(in srgb, var(--themis-accent) 10%, transparent); }
+.themis-question-check { margin-right: 6px; vertical-align: -1px; color: var(--themis-accent); }
 .themis-question-option { position: relative; }
 .themis-question-choice {
   display: flex; flex-direction: column; gap: 2px; width: 100%; padding: 6px 10px;
