@@ -4,6 +4,7 @@ use crate::server::Client;
 use serde_json::{json, Value};
 use std::path::PathBuf;
 mod chat_reads;
+mod components;
 mod integrations;
 mod plugins;
 

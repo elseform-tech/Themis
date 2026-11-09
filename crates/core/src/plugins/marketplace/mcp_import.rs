@@ -1,5 +1,9 @@
 use super::*;
 
+/// A plugin named `name` holding the connections of an MCP configuration: a standard `.mcp.json`
+/// (`{"mcpServers": {...}}`), OpenCode's `{"mcp": {...}}`, or the bare map of servers. Every
+/// connection starts switched off; with `allow_partial`, one this cannot convert is listed in
+/// `import_issues` instead of failing the whole configuration.
 pub fn mcp_spec(name: &str, value: &Value, allow_partial: bool) -> anyhow::Result<PluginSpec> {
     let (servers, opencode) = if let Some(servers) = value.get("mcpServers") {
         if value

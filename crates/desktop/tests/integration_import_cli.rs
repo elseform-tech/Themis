@@ -38,7 +38,7 @@ async fn imports_skill_folder_and_mcp_json_then_toggles_and_uninstalls() {
     .unwrap();
     let imported = cli(
         data.path(),
-        &["skill", "import", folder.to_str().unwrap(), "reviews"],
+        &["plugin", "import", folder.to_str().unwrap(), "reviews"],
     );
     assert_eq!(imported["spec"]["package_kind"], "skill");
     assert_eq!(imported["spec"]["skills"][0]["id"], "review");
@@ -65,7 +65,7 @@ async fn imports_skill_folder_and_mcp_json_then_toggles_and_uninstalls() {
     .unwrap();
     let connection = cli(
         data.path(),
-        &["mcp", "import", config.to_str().unwrap(), "connections"],
+        &["plugin", "import", config.to_str().unwrap(), "connections"],
     );
     assert_eq!(connection["spec"]["package_kind"], "mcp");
     assert_eq!(connection["spec"]["mcp"]["fixture"]["command"], "printf");
@@ -176,7 +176,13 @@ async fn imports_skill_folder_and_mcp_json_then_toggles_and_uninstalls() {
     }
     let repository = cli(
         data.path(),
-        &["skill", "import", folder.to_str().unwrap(), "--ref", "HEAD"],
+        &[
+            "plugin",
+            "import",
+            folder.to_str().unwrap(),
+            "--ref",
+            "HEAD",
+        ],
     );
     assert_eq!(repository["spec"]["name"], "review");
     Client::new(data.path().into())
@@ -459,7 +465,7 @@ async fn mcp_import_keeps_plain_values_and_reads_install_settings_as_keys() {
     .unwrap();
     let imported = cli(
         data.path(),
-        &["mcp", "import", config.to_str().unwrap(), "values"],
+        &["plugin", "import", config.to_str().unwrap(), "values"],
     );
     let mcp = &imported["spec"]["mcp"];
     assert_eq!(
@@ -481,7 +487,7 @@ async fn mcp_import_keeps_plain_values_and_reads_install_settings_as_keys() {
     let refused = std::process::Command::new(env!("CARGO_BIN_EXE_themis"))
         .arg("--data-dir")
         .arg(data.path())
-        .args(["mcp", "import", config.to_str().unwrap(), "bad"])
+        .args(["plugin", "import", config.to_str().unwrap(), "bad"])
         .output()
         .unwrap();
     assert!(!refused.status.success());

@@ -230,7 +230,7 @@ async fn plain_cli_prompt_loads_catalog_mcp_hooks_and_refreshes_next_turn() {
             .unwrap();
         let hooks_guide =
             std::fs::read_to_string(project.path().join(hooks["path"].as_str().unwrap())).unwrap();
-        assert!(hooks_guide.contains("`themis hook update PLUGIN NAME FILE`"));
+        assert!(hooks_guide.contains("`themis hook update PLUGIN NAME '<json>'`"));
         assert!(!catalog
             .as_array()
             .unwrap()

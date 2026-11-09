@@ -18,8 +18,8 @@ Where they live: skills saved in plugins in `{{global_plugins}}` (every chat) an
 ## Change
 
 1. Write the definition as one JSON object to a scratch file, for example `"$TMPDIR/skill.json"`: `id`, `name`, `instructions`, and optionally `description`, `allowedTools` (empty restricts nothing and never grants a permission) and `scripts` (`name`, `content`; plain file names). Give it a clear trigger in the description, then inputs, steps, expected output and how to check it. Add scripts only when a fixed program helps. No secrets, no permission bypasses, no speculative scaffolding.
-2. Check it: `themis skill verify FILE` reports every problem at once with the exact shape. Fix them all. Test any script with made-up inputs.
-3. Save it: `themis skill save PLUGIN FILE`. Use `personal` as PLUGIN unless the person names another plugin they own; a missing plugin is created. Saving a skill with an existing `id` replaces it and keeps the plugin's other skills. Start an update from `themis skill list PLUGIN` and keep its `id`.
+2. Check it: `themis skill verify DEF` (DEF: the file, `-` for stdin, or the JSON inline in quotes) reports every problem at once with the exact shape. Fix them all. Test any script with made-up inputs.
+3. Save it: `themis skill save PLUGIN DEF`. Use `personal` as PLUGIN unless the person names another plugin they own; a missing plugin is created. Saving a skill with an existing `id` replaces it and keeps the plugin's other skills. Start an update from `themis skill list PLUGIN` and keep its `id`.
 4. Remove one only when asked: `themis skill delete PLUGIN ID`. A skill found on disk is not in the store: tell the person which file it comes from.
 
 Import a skill folder or bundle with `themis plugin inspect SOURCE`, then `themis plugin import SOURCE` (see the plugins skill). A marketplace plugin's skills are not edited in place.

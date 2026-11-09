@@ -551,11 +551,11 @@ When you choose between real options (an approach, a library, a design), say why
         );
     assert_eq!(
         DESKTOP_RUN_INTEGRATIONS,
-        "Plugins, skills, MCP servers and hooks are managed with the `themis` command in your shell (`themis plugin|skill|mcp|hook …`; `themis doctor --integrations` checks them all). The plugins, skills, mcp and hooks skills show how to find, change and verify each; load the one that fits before changing anything."
+        "Plugins, skills, MCP servers and hooks are managed with the `themis` command in your shell; never write .mcp.json or other config files into the project for Themis. Add an MCP server with `themis mcp add PLUGIN NAME '<json>'` (or `themis mcp add PLUGIN FILE` for a whole .mcp.json), a hook with `themis hook add PLUGIN NAME '<json>'` and a skill with `themis skill save PLUGIN '<json>'` (a missing PLUGIN is created; `--help` shows each definition), list them with `themis mcp|hook|skill list`, and run `themis doctor --integrations` after every change. The plugins, skills, mcp and hooks skills show more; load the one that fits before changing anything."
     );
     assert_eq!(
         SUBAGENT_INTEGRATIONS_NOTE,
-        "You may inspect plugins, skills, MCP servers and hooks with read-only `themis` commands in your shell, such as `themis plugin list`, `themis mcp list PLUGIN`, `themis hook list PLUGIN` and `themis doctor --integrations --no-start`. Changing them is the main agent's job: report what should change and why."
+        "You may inspect plugins, skills, MCP servers and hooks with read-only `themis` commands in your shell, such as `themis plugin list`, `themis mcp list`, `themis hook list` and `themis doctor --integrations --no-start`. Changing them is the main agent's job: report what should change and why."
     );
 }
 

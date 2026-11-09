@@ -486,8 +486,7 @@
    "lines": 107
   },
   "crates/desktop/src/cli/plugins.rs::run": {
-   "cognitive": 30,
-   "cyclomatic": 68
+   "cyclomatic": 42
   },
   "crates/desktop/src/cli/render.rs::render_permissions": {
    "cognitive": 60,

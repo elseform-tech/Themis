@@ -35,6 +35,13 @@ describe("commandView", () => {
     expect(commandView(["make", "&&", "rm", "-rf", "out"]).parts?.map(part => part.text)).toEqual(["make", "rm -rf out"]);
     expect(commandView(["git", "status"]).parts).toBeNull();
   });
+  it("shows a themis definition given inline as one quoted word, never split", () => {
+    const json = `{"command":"uvx","args":["a|b; c && it's"]}`;
+    const view = commandView(["themis", "mcp", "add", "docs", "fetch", json]);
+    expect(view.parts).toBeNull();
+    expect(view.copy).toBe(`themis mcp add docs fetch '{"command":"uvx","args":["a|b; c && it'\\''s"]}'`);
+    expect(view.preview).toBe(view.copy);
+  });
   it("quotes for copying exactly", () => {
     expect(shellJoin(["echo", "a b", "", "it's", "x=1"])).toBe(`echo 'a b' '' 'it'\\''s' x=1`);
   });

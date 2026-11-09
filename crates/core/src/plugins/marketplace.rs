@@ -18,7 +18,7 @@ use directory_import::*;
 pub(super) use directory_import::{collect_files, parse_skill};
 use hook_import::*;
 use mcp_import::*;
-pub use mcp_import::{mcp_server_from_standard, mcp_server_to_standard};
+pub use mcp_import::{mcp_server_from_standard, mcp_server_to_standard, mcp_spec};
 use sources::*;
 pub(super) use sources::{git_remote_ref, tree_fingerprint};
 

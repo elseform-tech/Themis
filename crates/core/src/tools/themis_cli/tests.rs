@@ -56,6 +56,8 @@ const TABLE: &[(&[&str], ThemisCall)] = &[
     (&["plugin", "marketplace", "changes", "official"], Read),
     (&["plugin", "marketplace", "check", "official"], Read),
     (&["skill", "list"], Read),
+    (&["mcp", "list"], Read),
+    (&["hook", "list"], Read),
     (&["hook", "list", "demo"], Read),
     (&["mcp", "show", "demo"], Read),
     (&["call", "ping"], Read),
@@ -81,6 +83,40 @@ const TABLE: &[(&[&str], ThemisCall)] = &[
     (&["skill", "save", "demo", "skill.json"], Write),
     (&["hook", "add", "demo", "guard", "hook.json"], Write),
     (&["mcp", "update", "demo", "docs", "server.json"], Write),
+    // A definition is a file, `-` (stdin) or inline JSON; a whole .mcp.json needs no NAME.
+    (
+        &[
+            "mcp",
+            "add",
+            "demo",
+            "docs",
+            r#"{"command":"uvx","args":["x"]}"#,
+        ],
+        Write,
+    ),
+    (&["mcp", "add", "demo", "docs", "-"], Write),
+    (&["mcp", "add", "demo", ".mcp.json"], Write),
+    (
+        &[
+            "mcp",
+            "add",
+            "demo",
+            r#"{"mcpServers":{"a":{"command":"x"}}}"#,
+        ],
+        Write,
+    ),
+    (&["mcp", "add", "demo", "-"], Write),
+    (&["hook", "update", "demo", "guard", "-"], Write),
+    (
+        &[
+            "skill",
+            "save",
+            "demo",
+            r#"{"id":"n","name":"N","instructions":"i"}"#,
+        ],
+        Write,
+    ),
+    (&["skill", "save", "demo", "-"], Write),
     (&["plugin", "disable", "demo"], Write),
     (&["hook", "disable", "demo", "guard"], Write),
     (&["skill", "enable", "demo", "notes"], Write),
@@ -96,7 +132,7 @@ const TABLE: &[(&[&str], ThemisCall)] = &[
     (&["plugin", "install", "ralph@official"], Network),
     (&["plugin", "update", "demo"], Network),
     (&["plugin", "import", "https://example.com/x.git"], Network),
-    (&["skill", "import", "./pkg", "--ref", "main"], Network),
+    (&["plugin", "import", "./pkg", "--ref", "main"], Network),
     (&["plugin", "marketplace", "add", "owner/repo"], Network),
     (&["plugin", "marketplace", "refresh", "official"], Network),
     (&["mcp", "test", "demo", "docs"], Execute),
@@ -130,7 +166,11 @@ const TABLE: &[(&[&str], ThemisCall)] = &[
         &["call", "plugin_action", r#"{"action":"enable","name":"x"}"#],
         SwitchOn,
     ),
-    // Unknown or unreadable: as strict as they could be.
+    // Unknown or unreadable: as strict as they could be. `skill|mcp|hook import|inspect` were
+    // removed (the CLI refuses them, pointing to `plugin import|inspect`).
+    (&["skill", "import", "./pkg"], SwitchOn),
+    (&["mcp", "inspect", "mcp.json"], SwitchOn),
+    (&["mcp", "add", "demo", "docs", "-", "-"], SwitchOn),
     (&["hook", "enabel", "demo", "guard"], SwitchOn),
     (&["plugin", "frobnicate"], SwitchOn),
     (&["mcp", "enable", "demo"], SwitchOn),
@@ -472,6 +512,45 @@ proptest! {
         other.extend(words);
         let asks_help = other.iter().any(|w| w == "--help" || w == "-h");
         prop_assert_eq!(classify(&other) == Some(Read), asks_help, "{:?}", other);
+    }
+
+    /// `mcp|hook add|update` and `skill save` with the definition inline or from stdin are
+    /// classified exactly like the same call with a file, whatever the JSON holds and wherever
+    /// the options are.
+    #[test]
+    fn an_inline_or_stdin_definition_classifies_like_a_file(
+        call in "(mcp add|mcp update|hook add|hook update|skill save|mcp add-all)",
+        text in "\\PC{0,24}",
+        scope_first in any::<bool>(),
+        stdin in any::<bool>(),
+    ) {
+        let mut words: Vec<String> = call.replace("add-all", "add").split(' ').map(str::to_owned).collect();
+        words.push("demo".into());
+        if !call.starts_with("skill") && !call.ends_with("add-all") {
+            words.push("docs".into());
+        }
+        let inline = serde_json::json!({"command": text, "args": [text]}).to_string();
+        let definition = if stdin { "-".to_owned() } else { inline };
+        let scope = argv(&["--scope", "global"]);
+        let build = |source: &str| {
+            // Options go anywhere after the command word (`themis mcp --scope global add …`).
+            let mut command = vec!["themis".to_owned(), words[0].clone()];
+            if scope_first {
+                command.extend(scope.clone());
+            }
+            command.extend(words[1..].iter().cloned());
+            command.push(source.to_owned());
+            if !scope_first {
+                command.extend(scope.clone());
+            }
+            command
+        };
+        let (with_file, with_definition) = (build("definition.json"), build(&definition));
+        prop_assert_eq!(classify(&with_definition), classify(&with_file), "{:?}", with_definition);
+        prop_assert_eq!(classify(&with_file), Some(Write));
+        prop_assert_eq!(shell_risk(&with_definition), shell_risk(&with_file));
+        prop_assert!(!switches_on_code(&with_definition));
+        prop_assert!(!is_destructive_variant(&with_definition));
     }
 
     /// Whatever words a model sends, classifying them never panics.
