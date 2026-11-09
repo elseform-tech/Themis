@@ -47,7 +47,7 @@ export function SecretsSettings({ focusKey }: { focusKey?: string }) {
   const [newName, setNewName] = useState("");
   const [error, setError] = useState("");
   const load = () => listKeys(state.activeProjectRoot).then(setEntries).catch(reason => setError(describeError(reason)));
-  useEffect(() => { void load(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { void load(); }, [state.settingsChanges.secrets]); // eslint-disable-line react-hooks/exhaustive-deps
   if (!entries) return error ? <p role="alert" className="themis-form-error">{error}</p> : null;
   // A key asked for by name (from a server's card) shows even before anything uses it.
   const shown = focusKey && !entries.some(entry => entry.name === focusKey)

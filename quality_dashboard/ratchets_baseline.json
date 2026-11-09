@@ -777,7 +777,7 @@
    "lines": 143
   },
   "web/src/screens/PermissionsView.tsx::PermissionsSettings": {
-   "cyclomatic": 35
+   "cyclomatic": 33
   },
   "web/src/screens/Plugins.tsx::Plugins": {
    "cognitive": 425,
@@ -804,7 +804,7 @@
    "cyclomatic": 22
   },
   "web/src/screens/Settings.tsx::SettingsScreen": {
-   "cyclomatic": 42
+   "cyclomatic": 41
   },
   "web/src/screens/Sidebar.tsx::Sidebar": {
    "cognitive": 90,
@@ -921,14 +921,13 @@
    "lines": 294
   },
   "web/src/state/reducer/collections.ts::reduceCollectionActions": {
-   "cognitive": 32,
-   "cyclomatic": 42,
-   "lines": 101
+   "cognitive": 30,
+   "cyclomatic": 37
   },
   "web/src/state/store.tsx::AppProvider": {
-   "cognitive": 197,
-   "cyclomatic": 133,
-   "lines": 258
+   "cognitive": 184,
+   "cyclomatic": 128,
+   "lines": 245
   },
   "web/src/state/store.tsx::AppProvider::recover": {
    "cognitive": 61,

@@ -24,6 +24,7 @@ vi.mock("../lib/tauri", () => ({
   onApprovalExpired: vi.fn(),
   onReviewItemAdded: vi.fn(),
   onThreadChanged: vi.fn(async () => () => {}),
+  onSettingsChanged: vi.fn(async () => () => {}),
   onThreadEvent: vi.fn(),
   openProject: vi.fn(),
   setSecret: vi.fn(),

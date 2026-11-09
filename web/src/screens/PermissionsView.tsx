@@ -1,8 +1,9 @@
 import { useEffect, useState } from "react";
 import { getEffectivePermissions, listEditors, openRuntimeConfig } from "../lib/tauri";
 import type { EffectivePermissions, EffectiveRule } from "../lib/types";
-import { describeError } from "../state/store";
+import { describeError, useSettingsChanges } from "../state/store";
 import { SettingsGroup } from "./SettingsGroup";
+import { useDraft } from "./settingsDrafts";
 
 /**
  * Problems with the global configuration that change what runs do. The normal
@@ -57,8 +58,8 @@ type ApprovalPrefs = { default_approval_mode?: "custom" | "auto" | "yolo"; appro
 
 /** Settings → Permissions: new-chat mode and timeout, the Custom rules, and the global file. */
 export function PermissionsSettings({ editor = "", onEditor, prefs, onPrefs }: { editor?: string; onEditor?: (editor: string) => void; prefs?: ApprovalPrefs; onPrefs?: (patch: Partial<ApprovalPrefs>) => void }) {
-  const [timeout, setTimeoutDraft] = useState(prefs?.approval_timeout_seconds ?? 300);
-  useEffect(() => { if (prefs) setTimeoutDraft(prefs.approval_timeout_seconds); }, [prefs]);
+  const [timeout, setTimeoutDraft] = useDraft(prefs?.approval_timeout_seconds ?? 300);
+  const changes = useSettingsChanges("runtime");
   const [view, setView] = useState<EffectivePermissions | null>(null);
   const [editors, setEditors] = useState<Array<{ id: string; name: string }>>([{ id: "", name: "Text editor" }]);
   const [error, setError] = useState("");
@@ -71,7 +72,7 @@ export function PermissionsSettings({ editor = "", onEditor, prefs, onPrefs }: {
       .then(found => { if (active && found?.editors?.length) setEditors(found.editors); })
       .catch(() => { /* the system text editor stays available */ });
     return () => { active = false; };
-  }, []);
+  }, [changes]);
   const chosen = editors.some(entry => entry.id === editor) ? editor : "";
   const open = () => { setError(""); void openRuntimeConfig(chosen || undefined).catch((failure: unknown) => setError(describeError(failure))); };
   const path = view?.files.find(entry => entry.scope === "user")?.path;
