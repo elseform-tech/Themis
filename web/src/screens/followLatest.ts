@@ -22,6 +22,17 @@ export function jumpedByItself({ before, top, person }: { before: number; top: n
   return !person && before - top > BIG_JUMP;
 }
 
+/**
+ * The room under the last message after the content changed height by `change`. What the content
+ * lost while the end was being read is kept, and new output takes it back first. A new column width
+ * rewraps everything, so nothing stays put anyway: the room goes, or a wider chat shows a blank column.
+ */
+export function nextRoom(room: number, change: number, following: boolean, rewrapped: boolean): number {
+  if (rewrapped) return 0;
+  if (change < 0 && following) return room - change;
+  return Math.max(0, room - Math.max(0, change));
+}
+
 const distanceFromEnd = (element: HTMLElement) => element.scrollHeight - element.scrollTop - element.clientHeight;
 
 /** Keeps a chat on its latest message until the person scrolls up, and remembers their place when they do.
@@ -74,18 +85,11 @@ export function useFollowLatest(threadId: string, output: unknown, loaded: unkno
     let contentWidth = content.offsetWidth;
     const observer = new ResizeObserver(() => {
       const spacer = spacerRef.current;
-      const height = content.offsetHeight;
-      const change = height - contentHeight.current;
-      contentHeight.current = height;
-      // A new column width rewraps everything, so nothing stays put anyway: what the
-      // content lost isn't kept as room, or a wider chat shows a blank column at its end.
+      const change = content.offsetHeight - contentHeight.current;
+      contentHeight.current = content.offsetHeight;
       const rewrapped = content.offsetWidth !== contentWidth;
       contentWidth = content.offsetWidth;
-      if (spacer) {
-        const room = rewrapped ? 0 : parseFloat(spacer.style.height || "0");
-        const next = change < 0 && following.current && !rewrapped ? room - change : Math.max(0, room - Math.max(0, change));
-        spacer.style.height = `${next}px`;
-      }
+      if (spacer) spacer.style.height = `${nextRoom(parseFloat(spacer.style.height || "0"), change, following.current, rewrapped)}px`;
       toEnd();
     });
     observer.observe(content);
