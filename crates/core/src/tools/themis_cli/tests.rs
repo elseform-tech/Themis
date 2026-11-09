@@ -61,6 +61,19 @@ const TABLE: &[(&[&str], ThemisCall)] = &[
     (&["call", "ping"], Read),
     (&["call", "get_thread_tasks", r#"{"threadId":"t"}"#], Read),
     (&["call", "plugin_action", r#"{"action":"list"}"#], Read),
+    (&["recall", "dock", "code"], Read),
+    (
+        &["recall", "--limit", "3", "--source", "User", "dock code"],
+        Read,
+    ),
+    (&["recall", "--around", "a|b|c"], Read),
+    (&["memory", "search", "release", "steps"], Read),
+    (&["memory", "show", "tasks"], Read),
+    (&["memory", "search", "--thread", "t", "words"], Read),
+    (&["call", "recall", r#"{"query":"dock"}"#], Read),
+    (&["call", "search_memory", r#"{"name":"tasks"}"#], Read),
+    (&["memory", "delete", "m"], Execute),
+    (&["memory"], Execute),
     (&["plugin", "create", "demo"], Write),
     (&["plugin", "save", "spec.json"], Write),
     (&["plugin", "edit", "demo"], Write),
@@ -311,7 +324,12 @@ fn the_read_methods_are_only_reads() {
                 || method.starts_with("list_")
                 || matches!(
                     *method,
-                    "ping" | "query_diagnostic_logs" | "mcp_config_status" | "resource_usage"
+                    "ping"
+                        | "query_diagnostic_logs"
+                        | "mcp_config_status"
+                        | "resource_usage"
+                        | "recall"
+                        | "search_memory"
                 ),
             "{method}"
         );
@@ -431,6 +449,29 @@ proptest! {
         command.extend(rest);
         prop_assert_eq!(classify(&command), Some(SwitchOn), "{:?}", command);
         prop_assert!(switches_on_code(&command));
+    }
+
+    /// `themis recall` and `themis memory search|show` only read, whatever keywords or options
+    /// follow (the server binds them to the run's own chat), and are never destructive or a
+    /// switch-on; any other `memory` verb is not a read unless it asks for help.
+    #[test]
+    fn recall_and_memory_reads_are_reads_whatever_the_words(
+        command in "(recall|memory search|memory show)",
+        words in proptest::collection::vec("[a-z|-]{1,10}|\\PC{0,10}", 0..5),
+        verb in "[a-z]{1,8}",
+    ) {
+        let mut call = vec!["themis".to_owned()];
+        call.extend(command.split(' ').map(str::to_owned));
+        call.extend(words.iter().cloned());
+        prop_assert_eq!(classify(&call), Some(Read), "{:?}", call);
+        prop_assert_eq!(shell_risk(&call), RiskLevel::Read, "{:?}", call);
+        prop_assert!(!switches_on_code(&call));
+        prop_assert!(!is_destructive_variant(&call), "{:?}", call);
+        prop_assume!(!matches!(verb.as_str(), "search" | "show"));
+        let mut other = argv(&["themis", "memory", &verb]);
+        other.extend(words);
+        let asks_help = other.iter().any(|w| w == "--help" || w == "-h");
+        prop_assert_eq!(classify(&other) == Some(Read), asks_help, "{:?}", other);
     }
 
     /// Whatever words a model sends, classifying them never panics.

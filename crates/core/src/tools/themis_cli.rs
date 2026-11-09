@@ -2,7 +2,7 @@
 //!
 //! The CLI goes through the live app server, which refuses an agent's calls outside its allowed
 //! list in every mode. What it allows still passes the shell's approval, at the level this module
-//! gives it: reads (`plugin list`, `status`, `doctor`) are reads, changes are writes or network,
+//! gives it: reads (`plugin list`, `status`, `doctor`, `recall`, `memory search`) are reads, changes are writes or network,
 //! tests that start code are executions, removals are destructive, and switching on a hook or an
 //! MCP server is a [`ThemisCall::SwitchOn`], which is asked every time, never covered by a chat
 //! grant or a broad allow rule, and in Auto mode is the person's to allow, never the reviewer's.
@@ -76,6 +76,9 @@ pub const AGENT_READ_METHODS: &[&str] = &[
     "get_background_task_log",
     "get_context_usage",
     "get_chat_usage",
+    // The run's own chat's saved originals and memory (see `agent_cli::CHAT_READ_TOOLS`).
+    "recall",
+    "search_memory",
 ];
 
 /// Whether `program` names the `themis` CLI, wherever it lives.
@@ -121,6 +124,9 @@ fn top_level(words: &[&str]) -> ThemisCall {
         ["doctor", flags @ ..] if flags.iter().all(|f| matches!(*f, "--json" | "--deep")) => Read,
         ["doctor", flags @ ..] => doctor_integrations(flags),
         ["permissions", ..] => Read,
+        // Search this chat's saved originals, or what Themis remembers: reads only, whatever the
+        // words (they are keywords or a name).
+        ["recall", ..] | ["memory", "search" | "show", ..] => Read,
         ["plugin" | "skill" | "mcp" | "hook", ..] => integration(words),
         ["call", method] => call(method, None),
         ["call", method, args] => call(method, Some(args)),

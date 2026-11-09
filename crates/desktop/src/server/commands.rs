@@ -19,7 +19,12 @@ pub async fn dispatch(
         ("discard_thread", Some(id)) => state.thread_project_root(id).await,
         _ => None,
     };
-    let result = dispatch_command(state, Arc::clone(&sink), method, args).await;
+    let result = match method {
+        // A chat's read-only lookups, the work of the tools of the same names.
+        "recall" => state.chat_read(method, args).await,
+        "search_memory" => state.chat_read(method, args).await,
+        _ => dispatch_command(state, Arc::clone(&sink), method, args).await,
+    };
     if let Ok(value) = &result {
         announce_thread_change(state, sink.as_ref(), method, value, thread_id, removed_root).await;
     }

@@ -103,7 +103,17 @@ pub struct RunScope {
     /// The run's sandbox plan blocks the network (`sandbox.network: "block"`; in YOLO only when
     /// written).
     pub network_blocked: bool,
+    /// The read-only built-in tools of [`CHAT_READ_TOOLS`] the run has (`recall` unless a rule
+    /// denies it, `search_memory` while memory is on and no rule denies it). The server allows
+    /// the method of the same name only for these, so `themis recall` and `themis memory` give
+    /// a run exactly what its tools give; a subagent's run has none.
+    pub reads: Vec<String>,
 }
+
+/// Read-only built-in tools the agent's `themis` mirrors, by the app-server method of the same
+/// name (`themis recall`, `themis memory search|show`). The server binds each call to the run's
+/// own chat.
+pub const CHAT_READ_TOOLS: [&str; 2] = ["recall", "search_memory"];
 
 impl RunScope {
     /// The scope of a run working in `project_root` under `sandbox` (none: the network is not
@@ -113,7 +123,22 @@ impl RunScope {
             project_root: Some(project_root.to_path_buf()),
             network_blocked: sandbox
                 .is_some_and(|plan| plan.network() == crate::sandbox::NetworkPolicy::Block),
+            reads: Vec::new(),
         }
+    }
+
+    /// The scope with the run's mirrored read tools: the names of [`CHAT_READ_TOOLS`] among
+    /// `tools` (the run's tools), so a tool the run lacks stays refused through `themis` too.
+    #[must_use]
+    pub fn with_reads<'a>(mut self, tools: impl IntoIterator<Item = &'a str>) -> Self {
+        self.reads = tools
+            .into_iter()
+            .filter(|tool| CHAT_READ_TOOLS.contains(tool))
+            .map(str::to_owned)
+            .collect();
+        self.reads.sort_unstable();
+        self.reads.dedup();
+        self
     }
 }
 
@@ -211,6 +236,17 @@ mod tests {
         assert_eq!(env[1], (PORT_ENV, "4711".to_owned()));
     }
 
+    /// Only the mirrored read tools are kept, once each, whatever else the run has.
+    #[test]
+    fn a_scope_keeps_only_the_mirrored_read_tools_the_run_has() {
+        let scope = RunScope::new(Path::new("/p"), None);
+        assert!(scope.reads.is_empty(), "nothing unless given");
+        let scope = scope.with_reads(["shell", "search_memory", "recall", "recall", "write"]);
+        assert_eq!(scope.reads, vec!["recall", "search_memory"]);
+        let scope = RunScope::new(Path::new("/p"), None).with_reads(["shell"]);
+        assert!(scope.reads.is_empty());
+    }
+
     #[test]
     fn nothing_is_issued_outside_a_run() {
         assert!(current().is_none());
@@ -251,6 +287,7 @@ mod tests {
         let scope = RunScope {
             project_root: Some(PathBuf::from("/projects/a")),
             network_blocked: true,
+            reads: vec!["recall".into()],
         };
         let bound = crate::diagnostics::ACTIVE.scope(
             context(),
