@@ -165,9 +165,9 @@ fn integration_guides_use_the_cli_with_resolved_paths() {
         for section in ["## Find", "## Change", "## Verify"] {
             assert!(text.contains(section), "{id}: {section}");
         }
-        let global = dir.path().join("global/plugins");
+        let global = dir.path().join("global").join("plugins");
         assert!(text.contains(&format!("`{}`", global.display())), "{id}");
-        let local = project.join(".themis/plugins");
+        let local = project.join(".themis").join("plugins");
         assert!(text.contains(&format!("`{}`", local.display())), "{id}");
         assert!(
             text.contains(&format!("--project {}", project.display())),
@@ -183,7 +183,7 @@ fn integration_guides_use_the_cli_with_resolved_paths() {
         }
     }
     let (_, skills, _) = store.resolve_prompt("[[skill:skills]] go", &[]).unwrap();
-    let personal = home.join(".claude/skills");
+    let personal = home.join(".claude").join("skills");
     assert!(skills[0]
         .instructions
         .contains(&format!("`{}`", personal.display())));

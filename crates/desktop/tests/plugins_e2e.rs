@@ -219,7 +219,8 @@ async fn plain_cli_prompt_loads_catalog_mcp_hooks_and_refreshes_next_turn() {
         assert!(guide.contains("Commands default to global scope"));
         assert!(guide.contains("never run an install script"));
         // The guide names this run's own store folders.
-        assert!(guide.contains("/.themis/plugins`") && !guide.contains("{{"));
+        let local = std::path::Path::new(".themis").join("plugins");
+        assert!(guide.contains(&format!("{}`", local.display())) && !guide.contains("{{"));
         // `/hooks` is listed without the old `manage-` prefix, and says how to edit one hook.
         let hooks = catalog
             .as_array()

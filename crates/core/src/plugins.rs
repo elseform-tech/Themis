@@ -595,11 +595,18 @@ impl PluginStore {
         if !matches!(id, "plugins" | "skills" | "mcp" | "hooks") {
             return instructions.to_owned();
         }
+        // Each `/` part joined on its own, so the path shows in the platform's own separators.
+        let native = |base: &Path, relative: &str| {
+            relative
+                .split('/')
+                .filter(|part| !part.is_empty())
+                .fold(base.to_path_buf(), |path, part| path.join(part))
+        };
         let shown = |path: &Path| format!("`{}`", path.display());
         let none = "(none: this run has no project)";
         let project_plugins = self.project.as_ref().map_or_else(
             || none.to_owned(),
-            |root| shown(&root.join(".themis/plugins")),
+            |root| shown(&native(root, ".themis/plugins")),
         );
         let project_root = self
             .project
@@ -608,7 +615,7 @@ impl PluginStore {
         let folders = |base: Option<&PathBuf>, paths: &[String]| match base {
             Some(base) => paths
                 .iter()
-                .map(|path| shown(&base.join(path)))
+                .map(|path| shown(&native(base, path)))
                 .collect::<Vec<_>>()
                 .join(", "),
             None => none.to_owned(),
