@@ -33,7 +33,7 @@ pub(super) async fn execute_tool_calls(
     for (index, call) in calls.iter().enumerate() {
         check_stopped(stopped, events).await?;
         let name = call.function.name.clone();
-        let args = crate::tools::repair_list_arguments(&name, &call.function.arguments);
+        let args = crate::tools::repair_shell_arguments(&name, &call.function.arguments);
         let summary = summarize_call(&name, &args);
         events
             .send(RunEvent::ToolCallStarted {
