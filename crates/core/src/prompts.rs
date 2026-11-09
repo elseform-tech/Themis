@@ -172,6 +172,8 @@ pub const ASK_USER_STILL_OPEN: &str = include_str!("../builtins/prompts/ask-user
 /// `ask_user` refusal of a choice without all its details; `{{choice}}`, `{{missing}}`.
 pub const ASK_USER_CHOICE_INCOMPLETE: &str =
     include_str!("../builtins/prompts/ask-user-choice-incomplete.md");
+/// `ask_user` refusal naming every hint that is too short; `{{hints}}`, `{{min}}`.
+pub const ASK_USER_HINT_THIN: &str = include_str!("../builtins/prompts/ask-user-hint-thin.md");
 /// `ask_user` refusal of a call with no question, both forms or too many pages; `{{max}}`.
 pub const ASK_USER_PAGES: &str = include_str!("../builtins/prompts/ask-user-pages.md");
 /// Added to a person's message that closed the chat's open questions; `{{questions}}`.

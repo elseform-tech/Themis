@@ -1,0 +1,1 @@
+Not asked: these hints are too short (each needs at least {{min}} characters): {{hints}}. Rewrite each as one plain paragraph of two to four sentences: what you will do if it is picked, what it gains, what it costs or risks (every choice has a downside, the recommended one too), and what follows from it, including whether it is hard to undo. Then ask again with all of them fixed.

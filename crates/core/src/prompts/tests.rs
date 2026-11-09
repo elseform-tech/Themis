@@ -110,6 +110,7 @@ const ALL: &[(&str, &str, &[&str])] = &[
         "ask-user-choice-incomplete",
         &["choice", "missing"],
     ),
+    (ASK_USER_HINT_THIN, "ask-user-hint-thin", &["hints", "min"]),
     (ASK_USER_PAGES, "ask-user-pages", &["max"]),
     (
         CHAT_ANSWERED_QUESTIONS,

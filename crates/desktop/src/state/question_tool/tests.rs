@@ -2,7 +2,10 @@ use super::*;
 use proptest::prelude::*;
 
 fn choice(answer: &str) -> Value {
-    json!({"answer": answer, "hint": format!("Does {answer}: quick, but noisy; easy to undo.")})
+    json!({"answer": answer, "hint": format!(
+        "Does {answer} across the project in one pass, which is quick and keeps the code consistent, \
+         but it touches many files at once and makes the history noisy for a while; it is easy to undo with one plain revert."
+    )})
 }
 
 #[test]
@@ -13,10 +16,7 @@ fn arguments_are_read_leniently() {
     .unwrap();
     assert_eq!(asked.question, "Tabs?");
     assert_eq!(asked.choices, ["Yes", "No"]);
-    assert_eq!(
-        asked.reasons[0].1,
-        "Does Yes: quick, but noisy; easy to undo."
-    );
+    assert_eq!(asked.reasons[0].1, choice("Yes")["hint"]);
     assert_eq!(asked.assumption.as_deref(), Some("Yes"));
     assert!(!asked.blocking);
     assert_eq!(asked.topic.as_deref(), Some("indent"));
@@ -39,6 +39,38 @@ fn arguments_are_read_leniently() {
             .as_deref(),
         Some("A")
     );
+}
+
+/// Hints too short to say what happens, what it costs and what follows are refused all at
+/// once, each named with its page, choice and length, so one retry fixes them; hints at the
+/// floor are taken.
+#[test]
+fn every_thin_hint_is_named_in_one_refusal() {
+    let thin = "Largest ecosystem, huge hiring pool. Good default for most SaaS.";
+    let page = |hints: [&str; 2]| {
+        parse(&json!({"question": "Stack?", "choices": [
+            {"answer": "Go", "hint": hints[0]}, {"answer": "TypeScript", "hint": hints[1]}
+        ]}))
+        .unwrap()
+    };
+    let full = "é".repeat(MIN_HINT_CHARS);
+    let refused = thin_hints(&[page([&full, thin]), page([thin, &full])]).unwrap();
+    let chars = thin.chars().count();
+    assert!(
+        refused.contains(&format!(
+            "question 1 choice 2 (\"TypeScript\", {chars} characters)"
+        )),
+        "{refused}"
+    );
+    assert!(
+        refused.contains(&format!("question 2 choice 1 (\"Go\", {chars} characters)")),
+        "{refused}"
+    );
+    assert!(refused.contains(&MIN_HINT_CHARS.to_string()), "{refused}");
+    let single = thin_hints(&[page([&full, thin])]).unwrap();
+    assert!(single.contains("choice 2 (\"TypeScript\""), "{single}");
+    assert!(!single.contains("question 1"), "{single}");
+    assert_eq!(thin_hints(&[page([&full, &full])]), None);
 }
 
 /// A choice without its hint is refused, naming what is missing; a bare string has none.
