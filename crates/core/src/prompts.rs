@@ -88,6 +88,10 @@ pub const SUBAGENT_SECRETS_NOTE: &str =
     include_str!("../builtins/prompts/subagent-secrets-note.md");
 /// A subagent's result, delivered to the main agent; `{{name}}`, `{{id}}`, `{{status}}`, `{{result}}`.
 pub const SUBAGENT_RESULT_NOTE: &str = include_str!("../builtins/prompts/subagent-result-note.md");
+/// A subagent with an unrestricted shell may read integrations with `themis`; changes are the
+/// main agent's.
+pub const SUBAGENT_INTEGRATIONS_NOTE: &str =
+    include_str!("../builtins/prompts/subagent-integrations-note.md");
 
 // Desktop run setup.
 /// Current run workspace preamble before the skill catalog; `{{workspace}}`.
@@ -101,6 +105,9 @@ pub const DESKTOP_SECRETS_TRACKED: &str =
     include_str!("../builtins/prompts/desktop-secrets-tracked.md");
 /// Added to the system prompt of YOLO runs only: no approvals or sandbox, so caution.
 pub const DESKTOP_RUN_YOLO: &str = include_str!("../builtins/prompts/desktop-run-yolo.md");
+/// Every desktop run: integrations are managed with `themis` in the shell, the guides show how.
+pub const DESKTOP_RUN_INTEGRATIONS: &str =
+    include_str!("../builtins/prompts/desktop-run-integrations.md");
 /// Browser verification habit, for runs with the built-in browser.
 pub const DESKTOP_VERIFY_BROWSER: &str =
     include_str!("../builtins/prompts/desktop-verify-browser.md");

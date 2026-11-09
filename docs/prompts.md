@@ -65,6 +65,14 @@ that declares it. Its text is appended after the built-in summary prompt under
 the heading in `summary-configured-guidance.md`; it supplements the built-in
 rules and does not replace them.
 
+The built-in skills (`crates/core/builtins/<name>/SKILL.md`) are not prompt
+files: the agent loads them on demand. The integration guides among them
+(`plugins`, `skills`, `mcp`, `hooks`) carry `{{global_plugins}}`,
+`{{project_plugins}}`, `{{project_root}}` and, in `skills`,
+`{{personal_skill_folders}}` and `{{project_skill_folders}}`, which the plugin
+store fills with its own folders when it lists them
+(`PluginStore::guide_paths`).
+
 Text that is not a prompt stays in code: short UI strings, log messages,
 human-facing errors, tool JSON schemas and tool descriptions, and the
 checkpoint envelopes and ledger markers the runtime parses back out of saved

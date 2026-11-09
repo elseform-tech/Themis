@@ -242,10 +242,7 @@ impl AppState {
         let memory_block = memory_note.clone();
         skill_catalog = format!(
             "\n{}\n{project_guidance}\n{memory_line}{}{secrets_note}{}",
-            themis_core::prompts::fill(
-                themis_core::prompts::DESKTOP_RUN_WORKSPACE,
-                &[("workspace", &workspace)]
-            ),
+            setup::run_head(&workspace),
             // No approvals and no sandbox walls: the caution travels with the run.
             if yolo {
                 format!("{}\n", themis_core::prompts::DESKTOP_RUN_YOLO)

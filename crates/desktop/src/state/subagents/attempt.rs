@@ -1,5 +1,6 @@
 //! One subagent run from first request to its ending and result.
 
+use super::access::{access_note, integrations_note};
 use super::*;
 use crate::state::{attachments, subagent_tools};
 
@@ -156,14 +157,7 @@ impl SubagentKit {
             .iter()
             .find(|entry| entry.id == model)
             .and_then(|entry| entry.context_tokens);
-        let access = if agent.write_paths.is_empty() {
-            themis_core::prompts::SUBAGENT_READ_ONLY_NOTE.to_owned()
-        } else {
-            themis_core::prompts::fill(
-                themis_core::prompts::SUBAGENT_WRITE_PATHS_NOTE,
-                &[("paths", &agent.write_paths.join(", "))],
-            )
-        };
+        let access = access_note(agent);
         // Before the brief, and with its access stated after it, so that has the last word. In
         // the system message it outlasts a checkpoint, a fallback and being picked up again.
         let role = agent.profile.as_ref().map(|named| {
@@ -228,6 +222,7 @@ impl SubagentKit {
             .chain(names_note.as_deref())
             .chain([access.as_str()])
             .chain(shell_note.as_deref())
+            .chain(integrations_note(&tools, &shell_limit))
             .chain(background_note)
             .chain(ask_note)
             .chain(nested_note)

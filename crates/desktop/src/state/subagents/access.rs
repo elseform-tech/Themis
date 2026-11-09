@@ -2,6 +2,28 @@
 
 use super::*;
 
+/// What the subagent may change: nothing, or its write paths.
+pub(super) fn access_note(agent: &Subagent) -> String {
+    if agent.write_paths.is_empty() {
+        themis_core::prompts::SUBAGENT_READ_ONLY_NOTE.to_owned()
+    } else {
+        themis_core::prompts::fill(
+            themis_core::prompts::SUBAGENT_WRITE_PATHS_NOTE,
+            &[("paths", &agent.write_paths.join(", "))],
+        )
+    }
+}
+
+/// With a shell held to no list of commands, the subagent may read integrations with `themis`;
+/// changing them stays the main agent's.
+pub(super) fn integrations_note(
+    tools: &[Box<dyn ToolT>],
+    shell_limit: &[String],
+) -> Option<&'static str> {
+    (shell_limit.is_empty() && tools.iter().any(|tool| tool.name() == "shell"))
+        .then_some(themis_core::prompts::SUBAGENT_INTEGRATIONS_NOTE)
+}
+
 impl SubagentKit {
     /// The kit `agent` starts its own subagents with, when it may: its profile's list names
     /// `Agent` or `Task`, the setting allows it, and the main agent started it, so nesting stops

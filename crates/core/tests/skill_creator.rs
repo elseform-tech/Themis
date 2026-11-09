@@ -35,8 +35,10 @@ fn creator_bundle_is_resolved_and_materializes_its_verifier() {
         .resolve_prompt("[[skill:skills]] Make a local review skill", &[])
         .unwrap();
     assert_eq!(skills[0].id, "skills");
-    assert!(skills[0].instructions.contains("save_skill"));
-    assert!(skills[0].instructions.contains("verify.py"));
+    assert!(skills[0]
+        .instructions
+        .contains("themis skill save PLUGIN FILE"));
+    assert!(skills[0].instructions.contains("themis skill verify FILE"));
     themis_core::skills::materialize_scripts(&skills, dir.path()).unwrap();
     let verifier = dir.path().join(".themis/skills/skills/verify.py");
     assert!(verifier.is_file());
@@ -135,4 +137,59 @@ fn the_verifier_takes_optional_lists_and_reports_every_problem() {
     ] {
         assert!(error.contains(wanted), "{wanted} in {error}");
     }
+}
+
+/// The integration guides teach find, change and verify with the `themis` CLI, with this
+/// store's folders filled in, and none names the old management tools.
+#[test]
+fn integration_guides_use_the_cli_with_resolved_paths() {
+    let dir = tempfile::tempdir().unwrap();
+    let home = dir.path().join("home");
+    let project = dir.path().join("project");
+    let store =
+        themis_core::plugins::PluginStore::new(dir.path().join("global"), Some(project.clone()))
+            .with_home(Some(home.clone()));
+    for (id, command) in [
+        ("plugins", "themis plugin show NAME"),
+        ("skills", "themis skill save PLUGIN FILE"),
+        ("mcp", "themis mcp update PLUGIN NAME FILE"),
+        ("hooks", "themis hook update PLUGIN NAME FILE"),
+    ] {
+        let (_, skills, _) = store
+            .resolve_prompt(&format!("[[skill:{id}]] go"), &[])
+            .unwrap();
+        let text = &skills[0].instructions;
+        assert!(!text.contains("{{"), "{id} keeps a placeholder");
+        assert!(text.contains(command), "{id}: {command}");
+        assert!(text.contains("themis doctor --integrations"), "{id}");
+        for section in ["## Find", "## Change", "## Verify"] {
+            assert!(text.contains(section), "{id}: {section}");
+        }
+        let global = dir.path().join("global").join("plugins");
+        assert!(text.contains(&format!("`{}`", global.display())), "{id}");
+        let local = project.join(".themis").join("plugins");
+        assert!(text.contains(&format!("`{}`", local.display())), "{id}");
+        assert!(
+            text.contains(&format!("--project {}", project.display())),
+            "{id}"
+        );
+        for old in [
+            "manage_integrations",
+            "list_plugins",
+            "save_skill",
+            "test_mcp",
+        ] {
+            assert!(!text.contains(old), "{id} names {old}");
+        }
+    }
+    let (_, skills, _) = store.resolve_prompt("[[skill:skills]] go", &[]).unwrap();
+    let personal = home.join(".claude").join("skills");
+    assert!(skills[0]
+        .instructions
+        .contains(&format!("`{}`", personal.display())));
+    // Without a project the guides say so rather than naming a folder.
+    let (_, skills, _) = themis_core::plugins::PluginStore::new(dir.path().join("global"), None)
+        .resolve_prompt("[[skill:hooks]] go", &[])
+        .unwrap();
+    assert!(skills[0].instructions.contains("this run has no project"));
 }
