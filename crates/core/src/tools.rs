@@ -291,6 +291,11 @@ pub mod fuzzing {
         super::wrapped::wrapped_commands(command)
     }
 
+    /// The one plain command a `sh -c` script is, as the read-only check reads it.
+    pub fn plain_words(script: &str) -> Option<Vec<String>> {
+        super::wrapped::plain_words(script)
+    }
+
     /// Parses every `@@` hunk in `patch` and applies them to `old` (the hunk parser and the
     /// forgiving applier `apply_patch` uses, without touching files).
     pub fn apply_hunk_text(old: &str, patch: &str) -> Result<Vec<String>, String> {
