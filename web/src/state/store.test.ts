@@ -385,14 +385,17 @@ describe("thread lifecycle events", () => {
       s,
       envelope({ kind: "started", task: "t", max_turns: 1 }),
     );
-    s = applyThreadEvent(s, envelope({ kind: "failed", error: "boom" }));
+    s = applyThreadEvent(s, envelope({ kind: "failed", error: "LLM request failed: Rate Limit Error (429): request failed with HTTP 429. Response: {\"error\":{\"message\":\"slow down\"}}" }));
     expect(s.running[THREAD.id]).toBe(false);
     const msgs = s.messages[THREAD.id] ?? [];
     expect(msgs).toHaveLength(1);
     expect(msgs[0]?.role).toBe("system");
-    expect(msgs[0]?.text).toContain("boom");
+    expect(msgs[0]?.text).toContain("slow down");
+    // The notice is quiet: neutral tone and the short "code · reason", not the provider's raw body.
     expect(s.toasts).toHaveLength(1);
-    expect(s.toasts[0]?.tone).toBe("danger");
+    expect(s.toasts[0]?.tone).toBe("info");
+    expect(s.toasts[0]?.message).toMatch(/^Run failed · 429 · /);
+    expect(s.toasts[0]?.message).not.toContain("slow down");
   });
 });
 
@@ -730,6 +733,7 @@ describe("concurrency-limit send failures", () => {
       error: "connection refused",
     });
     expect(s.sendErrors[THREAD.id]).toBe("Send failed: connection refused");
+    expect(s.toasts[0]?.tone).toBe("info");
   });
 
   it("send-cleared drops the recorded error", () => {
