@@ -375,6 +375,7 @@ impl AppState {
         let (resolved_text, inline_skills, selected_plugins) = store
             .resolve_prompt(&text, &legacy)
             .map_err(|e| e.to_string())?;
+        let guides = self.integration_guides(&store, &legacy, &text, automation_run, &thread_id);
         // Files someone asked for by name must exist; each run then reads them into its system
         // message, so a long chat holds no copies and a turn follows the latest version.
         themis_core::configuration::load_instructions(&runtime_configuration, &project_root)
@@ -505,11 +506,10 @@ impl AppState {
                 .filter(|_| !automation_run)
                 .filter_map(|id| legacy.iter().find(|s| s.id == *id).cloned())
                 .collect();
-            for skill in inline_skills {
-                if !resolved.iter().any(|s| s.id == skill.id) {
-                    resolved.push(skill);
-                }
-            }
+            super::integration_guides::add_new(
+                &mut resolved,
+                inline_skills.into_iter().chain(guides),
+            );
             RunSnapshot {
                 reasoning_effort: reasoning_effort.or_else(|| record.reasoning_effort.clone()),
                 history,

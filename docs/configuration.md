@@ -1012,7 +1012,9 @@ inspection/import/test outcomes, approvals (`approval`/`decided`: each gated act
 `approval`/`answered`: only when a dialog was shown, what the person chose: `once`, `chat`
 for Allow in this chat, `deny`, `new_message` when they steered a message past it, or `none` when it expired, with `waited_ms`), the sandbox state each run
 captured (`sandbox`/`run_plan`: state, backend and network, never paths or
-commands), and compaction stages. A failed server command (`server`/`command_failed`)
+commands), the integration guides a turn got from the person's words (`skills`/`guides_attached`
+with the guide ids, never the message; `guides_unavailable` when one could not be resolved), and
+compaction stages. A failed server command (`server`/`command_failed`)
 records its method and a fixed `category` (`unknown_method` when a window and the
 server come from different builds, `too_large`, `invalid_request`, `timeout`,
 `not_found`, `conflict`, `denied`, `network`, `credentials` or `other`), never the

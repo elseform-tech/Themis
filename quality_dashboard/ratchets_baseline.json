@@ -626,8 +626,8 @@
    "lines": 104
   },
   "crates/desktop/src/state/threads.rs::AppState::send_message_with_options": {
-   "cognitive": 48,
-   "cyclomatic": 103,
+   "cognitive": 45,
+   "cyclomatic": 100,
    "lines": 384
   },
   "crates/desktop/src/transcript.rs::TranscriptStore::append": {
