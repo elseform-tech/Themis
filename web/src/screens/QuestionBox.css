@@ -10,7 +10,8 @@
 .themis-question-option { display: grid; border: 1px solid var(--themis-border); border-radius: 10px; overflow: hidden; }
 /* Only the picked answer is a gold card, with a check before its label; the recommended one has just its tag. */
 .themis-question-option.is-chosen { border-color: var(--themis-accent); background: color-mix(in srgb, var(--themis-accent) 10%, transparent); }
-.themis-question-check { margin-right: 6px; vertical-align: -1px; color: var(--themis-accent); }
+.themis-question-name { display: inline-flex; align-items: baseline; gap: 6px; }
+.themis-question-check { flex: none; align-self: center; color: var(--themis-accent); }
 .themis-question-option { position: relative; }
 .themis-question-choice {
   display: flex; flex-direction: column; gap: 2px; width: 100%; padding: 6px 10px;
