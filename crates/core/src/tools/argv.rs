@@ -28,28 +28,51 @@ pub fn command_display_for_call(name: &str, args: &serde_json::Value) -> Option<
     }
 }
 
-/// Repairs a `shell` or `git` call whose `args` list arrived as one string holding
-/// that list as JSON (`"args": "[\"grep\", \"-L\"]"`), a shape some models send.
-/// Such a call always fails as sent, so reading the list never changes a call that
-/// would work; anything else, including a string that is not a list of strings,
-/// is returned unchanged for the usual error.
-pub fn repair_list_arguments(tool: &str, arguments: &str) -> String {
+/// Repairs two shapes some models send in a `shell` or `git` call, each of which
+/// always fails as sent, so a call that would work is never changed:
+/// - an `args` list arriving as one string holding that list as JSON
+///   (`"args": "[\"grep\", \"-L\"]"`); a string that is not a list of strings is
+///   left for the usual error;
+/// - a `cwd` wrapped in one pair of matching quotes (`"cwd": "\"\""` for the
+///   project root, `"'src'"`), read without them.
+pub fn repair_shell_arguments(tool: &str, arguments: &str) -> String {
     if !matches!(tool, "shell" | "git") {
         return arguments.to_owned();
     }
     let Ok(Value::Object(mut fields)) = serde_json::from_str::<Value>(arguments) else {
         return arguments.to_owned();
     };
-    let Some(Value::String(text)) = fields.get("args") else {
-        return arguments.to_owned();
+    let list = match fields.get("args") {
+        Some(Value::String(text)) => argv_text(text),
+        _ => None,
     };
-    match argv_text(text) {
-        Some(list) => {
-            fields.insert("args".to_owned(), json!(list));
-            Value::Object(fields).to_string()
-        }
-        None => arguments.to_owned(),
+    let cwd = match fields.get("cwd") {
+        Some(Value::String(cwd)) => unquoted(cwd),
+        _ => None,
+    };
+    if list.is_none() && cwd.is_none() {
+        return arguments.to_owned();
     }
+    if let Some(list) = list {
+        fields.insert("args".to_owned(), json!(list));
+    }
+    if let Some(cwd) = cwd {
+        fields.insert("cwd".to_owned(), json!(cwd));
+    }
+    Value::Object(fields).to_string()
+}
+
+/// `text` without one pair of matching surrounding quotes (and the spaces inside
+/// them), or `None` when it has no such pair.
+fn unquoted(text: &str) -> Option<String> {
+    let trimmed = text.trim();
+    ['"', '\''].into_iter().find_map(|quote| {
+        trimmed
+            .strip_prefix(quote)
+            .and_then(|rest| rest.strip_suffix(quote))
+            .filter(|inner| !inner.contains(quote))
+            .map(|inner| inner.trim().to_owned())
+    })
 }
 
 /// Program and arguments of a `shell` tool call, as validated arguments or raw
