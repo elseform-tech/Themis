@@ -6,6 +6,7 @@ import { APPROVAL_EXPIRED_NOTE, concurrencyToast, isConcurrencyLimitError, newId
 import { appendTrace, markTurnRejected, memoryChanges, setThreadRunning, updateSubagent, usedPercent, userMessage } from "./reducer/rowHelpers";
 import { reduceCollectionActions } from "./reducer/collections";
 import { reduceUiActions } from "./reducer/ui";
+// A failed run's pop-up is quiet, like the chat's own line: the short "code · reason" (full text in that line's tooltip).
 import { runErrorSummary } from "../lib/runError";
 
 export * from "./reducer/model";
@@ -322,7 +323,6 @@ export function applyThreadEvent(
           runDurations: { ...next.runDurations, [runId]: Math.max(0, Date.now() - startedAt) },
         };
       }
-      // Quiet, like the chat's own line: the short "code · reason"; the full text is in the chat's tooltip.
       if (!stopped) next = pushToast(next, `Run failed · ${runErrorSummary(event.error)}`, "info");
       next = {
         ...next,
