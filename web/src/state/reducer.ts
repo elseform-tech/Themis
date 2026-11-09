@@ -6,6 +6,8 @@ import { APPROVAL_EXPIRED_NOTE, concurrencyToast, isConcurrencyLimitError, newId
 import { appendTrace, markTurnRejected, memoryChanges, setThreadRunning, updateSubagent, usedPercent, userMessage } from "./reducer/rowHelpers";
 import { reduceCollectionActions } from "./reducer/collections";
 import { reduceUiActions } from "./reducer/ui";
+// A failed run's pop-up is quiet, like the chat's own line: the short "code · reason" (full text in that line's tooltip).
+import { runErrorSummary } from "../lib/runError";
 
 export * from "./reducer/model";
 export { GOAL_TURN_MARKER, goalTurnNumber, HOOK_WAKE_MARKER, hookWakeSummary, usedPercent } from "./reducer/rowHelpers";
@@ -321,7 +323,7 @@ export function applyThreadEvent(
           runDurations: { ...next.runDurations, [runId]: Math.max(0, Date.now() - startedAt) },
         };
       }
-      if (!stopped) next = pushToast(next, `Run failed: ${event.error}`, "danger");
+      if (!stopped) next = pushToast(next, `Run failed · ${runErrorSummary(event.error)}`, "info");
       next = {
         ...next,
         streams: { ...next.streams, [threadId]: "" },
@@ -521,7 +523,7 @@ export function reducer(state: AppState, action: AppAction): AppState {
       const message = isConcurrencyLimitError(action.error)
         ? concurrencyToast(state.settings.concurrency_limit)
         : `Send failed: ${action.error}`;
-      const next = pushToast(state, message, "danger");
+      const next = pushToast(state, message, "info");
       return {
         ...next,
         sendErrors: { ...next.sendErrors, [action.threadId]: message },

@@ -52,7 +52,7 @@ fn subagents_is_a_built_in_skill_that_lists_or_hands_over_the_task() {
         "max_parallel",
         "Settings › Subagents",
         "change nothing",
-        "one example request",
+        "Always finish with one line that starts \"Try:\"",
         "spawn_subagents",
         "rather than doing it yourself",
         "check what they claim",

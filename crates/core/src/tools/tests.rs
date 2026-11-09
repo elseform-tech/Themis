@@ -911,7 +911,7 @@ fn shell_args_sent_as_text_survive_raw_line_breaks_and_a_bad_list_says_what_to_d
 
 #[test]
 fn list_arguments_sent_as_a_string_are_read_as_the_list() {
-    let repaired = repair_list_arguments(
+    let repaired = repair_shell_arguments(
         "shell",
         r#"{"command":"grep","args":"[\"-L\", \"x\", \"out\"]","cwd":"."}"#,
     );
@@ -919,7 +919,7 @@ fn list_arguments_sent_as_a_string_are_read_as_the_list() {
     assert_eq!(value["args"], json!(["-L", "x", "out"]));
     assert_eq!(value["cwd"], json!("."));
     assert_eq!(shell_argv(&value), ["grep", "-L", "x", "out"]);
-    let git = repair_list_arguments("git", r#"{"args":"[\"status\"]"}"#);
+    let git = repair_shell_arguments("git", r#"{"args":"[\"status\"]"}"#);
     assert_eq!(
         serde_json::from_str::<Value>(&git).unwrap()["args"],
         json!(["status"])
@@ -932,12 +932,12 @@ fn list_arguments_sent_as_a_string_are_read_as_the_list() {
         r#"{"command":"grep","args":"{\"a\":1}"}"#,
         "not json",
     ] {
-        assert_eq!(repair_list_arguments("shell", unchanged), unchanged);
+        assert_eq!(repair_shell_arguments("shell", unchanged), unchanged);
     }
     let other = r#"{"args":"[\"a\"]"}"#;
-    assert_eq!(repair_list_arguments("read_file", other), other);
+    assert_eq!(repair_shell_arguments("read_file", other), other);
     // The person approves what will run, so a repaired script reads the same both ways.
-    let script = repair_list_arguments(
+    let script = repair_shell_arguments(
         "shell",
         &json!({"command":"python3","args":"[\"-c\", \"a\nb\"]"}).to_string(),
     );
@@ -948,7 +948,36 @@ fn list_arguments_sent_as_a_string_are_read_as_the_list() {
     assert_eq!(shell_argv(&raw), ["sh", "-c", "rm -rf x\ny"]);
 }
 
-mod repair_list_arguments_props {
+#[test]
+fn a_working_directory_wrapped_in_quotes_is_read_without_them() {
+    // Some models send `"cwd": "\"\""` (the two quote characters) for the project root.
+    for (sent, read) in [
+        (r#""""#, ""),
+        (r#""src""#, "src"),
+        ("'docs'", "docs"),
+        (r#"" ""#, ""),
+    ] {
+        let repaired =
+            repair_shell_arguments("shell", &json!({"command":"ls","cwd":sent}).to_string());
+        let value: Value = serde_json::from_str(&repaired).unwrap();
+        assert_eq!(value["cwd"], json!(read), "{sent}");
+        assert_eq!(
+            command_display_for_call("shell", &value).unwrap().cwd,
+            (!read.is_empty()).then(|| read.to_owned())
+        );
+    }
+    // One matching pair around text free of that quote only; anything else is left as sent.
+    for kept in [r#""a"b""#, r#"'a""#, "a", r#""""""#] {
+        let call = json!({"command":"ls","cwd":kept}).to_string();
+        let value: Value = serde_json::from_str(&repair_shell_arguments("shell", &call)).unwrap();
+        assert_eq!(value["cwd"], json!(kept), "{kept}");
+    }
+    // Only shell calls are repaired.
+    let other = json!({"cwd": r#""""#}).to_string();
+    assert_eq!(repair_shell_arguments("read_file", &other), other);
+}
+
+mod repair_shell_arguments_props {
     use super::*;
     use proptest::prelude::*;
 
@@ -965,21 +994,36 @@ mod repair_list_arguments_props {
                 "command": command,
                 "args": serde_json::to_string(&list).unwrap(),
             }).to_string();
-            let from_proper: Value = serde_json::from_str(&repair_list_arguments("shell", &proper)).unwrap();
-            let from_string: Value = serde_json::from_str(&repair_list_arguments("shell", &as_string)).unwrap();
+            let from_proper: Value = serde_json::from_str(&repair_shell_arguments("shell", &proper)).unwrap();
+            let from_string: Value = serde_json::from_str(&repair_shell_arguments("shell", &as_string)).unwrap();
             prop_assert_eq!(&from_proper, &serde_json::from_str::<Value>(&proper).unwrap());
             prop_assert_eq!(from_string, from_proper);
         }
 
         /// Arbitrary input never panics, and a result that changed is valid JSON whose
-        /// `args` is a list of strings.
+        /// `args`, when present, is a list of strings.
         #[test]
         fn arbitrary_arguments_are_safe(tool in "shell|git|read_file", arguments in any::<String>()) {
-            let repaired = repair_list_arguments(&tool, &arguments);
+            let repaired = repair_shell_arguments(&tool, &arguments);
             if repaired != arguments {
                 let value: Value = serde_json::from_str(&repaired).unwrap();
-                prop_assert!(value["args"].as_array().unwrap().iter().all(Value::is_string));
+                if let Some(args) = value.get("args") {
+                    prop_assert!(args.as_array().unwrap().iter().all(Value::is_string));
+                }
             }
+        }
+
+        /// Stripping quotes from `cwd` takes off exactly one matching pair and never
+        /// touches a value without one.
+        #[test]
+        fn a_quoted_cwd_loses_exactly_one_matching_pair(inner in "[a-z/. ]{0,12}", quote in "[\"']") {
+            let sent = format!("{quote}{inner}{quote}");
+            let value: Value = serde_json::from_str(&repair_shell_arguments(
+                "shell", &json!({"command":"ls","cwd":sent}).to_string())).unwrap();
+            prop_assert_eq!(value["cwd"].as_str().unwrap(), inner.trim());
+            let plain: Value = serde_json::from_str(&repair_shell_arguments(
+                "shell", &json!({"command":"ls","cwd":inner}).to_string())).unwrap();
+            prop_assert_eq!(plain["cwd"].as_str().unwrap(), inner.as_str());
         }
     }
 }
