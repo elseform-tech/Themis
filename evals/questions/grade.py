@@ -9,6 +9,7 @@ after the first), `asked_after_deny` (an `ask_user` after the refusal) and `choi
 
 import json
 import os
+import re
 import subprocess
 
 WRITES = ("write_file", "apply_patch")
@@ -72,6 +73,26 @@ def _events(trace):
     return [item["event"] for item in trace.get("events", [])]
 
 
+# A hint "names a downside" when it uses one of these words (a word heuristic, not a judgment).
+DOWNSIDE = re.compile(r"\b(but|however|cost|costs|slower|slow|risk|risks|harder|hard to|downside|trade-?off|"
+                      r"drawback|weaker|less|lose|loses|more work|complex|complexity|can't|cannot|only if|"
+                      r"limit|limited|breaks?|irreversible|undo)\b", re.IGNORECASE)
+THIN = 200  # characters: below this a hint rarely says what happens, its cost and what follows
+
+
+def hint_measures(actions):
+    """The hints of the choices the person saw: their mean length, the share under THIN
+    characters, and the share that names a downside (by DOWNSIDE)."""
+    hints = [hint for action in actions if action["kind"] == "answer" for hint in action.get("hints") or []]
+    if not hints:
+        return {}
+    return {
+        "hint_chars": round(sum(len(hint) for hint in hints) / len(hints)),
+        "thin_hints": round(sum(len(hint) < THIN for hint in hints) / len(hints), 3),
+        "downside_hints": round(sum(bool(DOWNSIDE.search(hint)) for hint in hints) / len(hints), 3),
+    }
+
+
 def evaluate(trace, scenario, project):
     events = _events(trace)
     actions = trace.get("actions", [])
@@ -89,6 +110,7 @@ def evaluate(trace, scenario, project):
         "tool_calls": len(started),
         "failed_calls": sum(e.get("ok") is False for e in finished),
     }
+    measures.update(hint_measures(actions))
     if scenario["name"] == "export-decisions":
         order = [(i, e) for i, e in enumerate(events)]
         first_answer = next((i for i, e in order if e.get("kind") == "question_answered"), None)

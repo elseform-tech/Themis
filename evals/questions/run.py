@@ -214,7 +214,8 @@ class QuestionsRun:
                 replies.append({"questionId": question["id"], "answer": text})
                 self.actions.append({"kind": "answer", "question": (question.get("question") or "")[:200],
                                      "choices": len(question.get("choices") or []), "matched": pref,
-                                     "answer": text, "pages": len(pages)})
+                                     "answer": text, "pages": len(pages),
+                                     "hints": list((question.get("reasons") or {}).values())})
             if len(replies) == 1:
                 self.call("answer_question", {"threadId": self.thread, **replies[0]})
             else:
