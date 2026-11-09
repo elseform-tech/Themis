@@ -578,6 +578,18 @@ stops at about 3,000 (12 KB). The agent also loads it by itself when you ask it
 to write or improve `AGENTS.md` or `CLAUDE.md`. It lives in
 `crates/core/builtins/init/SKILL.md`.
 
+**`/subagents`** is another built-in skill. On its own it changes nothing: the
+agent lists the subagents it can start (the built-in one and the profiles of
+your switched-on plugins), each with its model and whether it can only read or
+may change the files it is given, then the Settings › Subagents limits (on or
+off, how many run at once, model requests each, the default and allowed models,
+and which of writes, MCP, web and nested subagents are off), and one example
+request. Followed by a task, as in `/subagents review the tests and the docs`,
+the agent hands that task to subagents, picking a profile where one fits, and
+reports what they found once it has checked it. It reads profiles with
+`list_plugins` kind `subagent` and the limits with `themis call
+get_subagent_settings`. It lives in `crates/core/builtins/subagents/SKILL.md`.
+
 Skill instructions can contain up to 256 KiB of UTF-8 text without truncation. File reads are paged at 8,000 content characters; the agent must follow `next_offset` to read longer instructions. Large tool results are saved to disk and represented by a small receipt, so the agent can extract the relevant facts. An oversized tool result normally continues the run. Storage failures or repeated recovery can stop the current run; the chat remains available. Oversized tool arguments are rejected before execution, without partial writes. See [context limits and recovery](context-and-attachments.md).
 
 **Recalling older details.** After a chat is compacted, details that only appear in earlier messages, long tool output or attached files are not in the summary. The agent has a read-only `recall` tool that searches this chat's saved originals (never other chats) and returns short excerpts; it needs no approval. Answers tell you what was said in plain words ("you mentioned earlier…"), never internal archive paths or record numbers. Excerpts are treated as untrusted data, not instructions. If an answer needs a detail it could not find, ask for it again or attach the file. Details are in [context limits and recovery](context-and-attachments.md#the-recall-tool).

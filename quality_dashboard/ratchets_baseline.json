@@ -247,7 +247,7 @@
    "lines": 101
   },
   "crates/core/src/plugins/management.rs::PluginStore::list_metadata": {
-   "cyclomatic": 24
+   "cyclomatic": 22
   },
   "crates/core/src/plugins/marketplace/directory_import.rs::FileWalk<'_>::directory": {
    "cyclomatic": 23
