@@ -428,15 +428,9 @@ impl SensitiveMatcher {
             .map(|(word, _)| *word)
             .filter(|word| !word.starts_with('-'))
             .collect();
-        // The first word after a search program is its pattern, so checking `.gitignore` with
-        // `grep .env .gitignore` doesn't ask. With -e or -f every word may be a file.
-        let searches = matches!(program.as_str(), "grep" | "egrep" | "fgrep" | "rg" | "ag")
-            && !words
-                .iter()
-                .any(|(word, _)| has_flag(word, &["regexp", "file"], "ef"));
-        let pattern = plain.get(1).copied().filter(|_| searches);
+        let patterns = pattern_words(&program, &words, &plain);
         for (word, _) in &words {
-            if pattern.is_some_and(|pattern| std::ptr::eq(pattern, *word)) {
+            if patterns.iter().any(|pattern| std::ptr::eq(*pattern, *word)) {
                 continue;
             }
             let (access, creates) = access_of(&program, word, &plain);
@@ -761,6 +755,73 @@ fn opens_nothing(program: &str) -> bool {
     )
 }
 
+/// `find` tests whose value is a pattern matched against names, not a file opened.
+const FIND_NAME_TESTS: [&str; 10] = [
+    "-name",
+    "-iname",
+    "-path",
+    "-ipath",
+    "-wholename",
+    "-iwholename",
+    "-regex",
+    "-iregex",
+    "-lname",
+    "-ilname",
+];
+
+/// `find` actions that open or remove what it matches (a program run on each, or `-delete`),
+/// so a name test names the files touched.
+const FIND_ACTS_ON_MATCHES: [&str; 5] = ["-exec", "-execdir", "-ok", "-okdir", "-delete"];
+
+/// Words of a simple command that are patterns matched against names or text, not files
+/// opened: the first word after a search program (`grep .env .gitignore`), or with `-e` or
+/// `-f` only the values given to `-e`; and the values of `find`'s name tests (`-name .env`),
+/// unless `find` runs a program on what it matches or deletes it. `plain` is the words without options.
+fn pattern_words<'a>(
+    program: &str,
+    words: &[(&'a str, Access)],
+    plain: &[&'a str],
+) -> Vec<&'a str> {
+    let words: Vec<&'a str> = words.iter().map(|(word, _)| *word).collect();
+    match program {
+        "grep" | "egrep" | "fgrep" | "rg" | "ag" => {
+            if words
+                .iter()
+                .any(|word| has_flag(word, &["regexp", "file"], "ef"))
+            {
+                regexp_values(&words)
+            } else {
+                plain.get(1).copied().into_iter().collect()
+            }
+        }
+        "find" if !words.iter().any(|word| FIND_ACTS_ON_MATCHES.contains(word)) => words
+            .windows(2)
+            .filter(|pair| FIND_NAME_TESTS.contains(&pair[0]))
+            .map(|pair| pair[1])
+            .collect(),
+        _ => Vec::new(),
+    }
+}
+
+/// The `-e` patterns of a search, spelt exactly `-e X`, `-eX`, `--regexp X` or
+/// `--regexp=X` (the whole word, then), up to a `--`. Clusters such as `-ie X` are not
+/// read, so their value still counts as a file.
+fn regexp_values<'a>(words: &[&'a str]) -> Vec<&'a str> {
+    let mut patterns = Vec::new();
+    let mut rest = words.iter().skip(1);
+    while let Some(word) = rest.next() {
+        match *word {
+            "--" => break,
+            "-e" | "--regexp" => patterns.extend(rest.next().copied()),
+            _ if word.starts_with("--regexp=") || (word.len() > 2 && word.starts_with("-e")) => {
+                patterns.push(word);
+            }
+            _ => {}
+        }
+    }
+    patterns
+}
+
 /// What `program` does to `word`, and whether that may create the file: a copy's target
 /// is written, `tee` and friends write what they are given, the rest read.
 fn access_of(program: &str, word: &str, plain: &[&str]) -> (Access, bool) {
@@ -1044,6 +1105,65 @@ mod tests {
         ] {
             assert!(
                 shell(&root, command, &args).is_empty(),
+                "{command} {args:?}"
+            );
+        }
+    }
+
+    /// A pattern a program matches names or text against is not a file it opens: `find`'s
+    /// name tests and `grep -e`. A real read next to one still asks, and so does `find` when
+    /// it runs a program on what it matches.
+    #[test]
+    fn find_and_search_patterns_are_not_files_read() {
+        let (_dir, root) = project();
+        for (command, args) in [
+            ("find", vec![".", "-name", ".env"]),
+            ("find", vec![".", "-iname", ".ENV", "-type", "f"]),
+            ("find", vec![".", "-path", "./.env"]),
+            ("find", vec![".", "-ipath", ".env"]),
+            ("find", vec![".", "-wholename", ".env"]),
+            ("find", vec![".", "-iwholename", ".env"]),
+            ("find", vec![".", "-regex", ".env"]),
+            ("find", vec![".", "-iregex", ".env"]),
+            ("find", vec![".", "-lname", ".env"]),
+            ("find", vec![".", "-ilname", ".env"]),
+            ("find", vec![".", "-name", ".env", "-print"]),
+            ("sh", vec!["-c", "find . -name .env | wc -l"]),
+            ("grep", vec!["-e", ".env", ".gitignore"]),
+            ("grep", vec!["-n", "--regexp", ".env", ".gitignore"]),
+            ("grep", vec!["--regexp=.env", ".gitignore"]),
+            ("grep", vec!["-e.env", ".gitignore"]),
+            ("rg", vec!["-e", ".env", "-e", "TOKEN", "notes.txt"]),
+        ] {
+            assert!(
+                shell(&root, command, &args).is_empty(),
+                "{command} {args:?}"
+            );
+        }
+        for (command, args) in [
+            ("cat", vec![".env"]),
+            ("find", vec![".env"]),
+            (
+                "find",
+                vec![".", "-name", ".env", "-exec", "cat", "{}", ";"],
+            ),
+            (
+                "find",
+                vec![".", "-name", ".env", "-execdir", "cat", "{}", "+"],
+            ),
+            ("find", vec![".", "-name", ".env", "-ok", "cat", "{}", ";"]),
+            ("find", vec![".", "-name", ".env", "-delete"]),
+            ("find", vec![".", "-name", "x", "-newer", ".env"]),
+            ("grep", vec!["KEY", ".env"]),
+            ("grep", vec!["-e", "KEY", ".env"]),
+            ("grep", vec!["-e", ".env", ".env"]),
+            ("grep", vec!["-f", ".env", "notes.txt"]),
+            ("grep", vec!["-ie", "KEY", ".env"]),
+            ("grep", vec!["--", "-e", ".env"]),
+            ("rg", vec!["-e", "KEY", ".env"]),
+        ] {
+            assert!(
+                shell(&root, command, &args).contains(&".env".to_owned()),
                 "{command} {args:?}"
             );
         }
@@ -1466,6 +1586,52 @@ mod tests {
     }
 
     proptest! {
+        #[test]
+        fn a_find_name_pattern_is_never_a_file_read_unless_find_acts_on_it(
+            test in proptest::sample::select(FIND_NAME_TESTS.to_vec()),
+            secret in "(sub/)?(\\.env|\\.env\\.prod|id_rsa|server\\.pem|secrets\\.json)",
+            extra in proptest::sample::select(vec!["", "-type", "-print", "-maxdepth"]),
+            act in proptest::sample::select(FIND_ACTS_ON_MATCHES.to_vec()),
+        ) {
+            let matcher = defaults(None);
+            let names = |args: &[&str]| {
+                matcher
+                    .classify("shell", &json!({"command": "find", "args": args}))
+                    .map(|found| found.names())
+                    .unwrap_or_default()
+            };
+            let mut args = vec![".", test, secret.as_str()];
+            args.extend([extra].into_iter().filter(|word| !word.is_empty()));
+            prop_assert!(names(&args).is_empty(), "{:?}", args);
+            args.extend([act, "cat", "{}", ";"]);
+            prop_assert!(!names(&args).is_empty(), "{:?}", args);
+        }
+
+        #[test]
+        fn a_file_after_a_search_pattern_is_always_read(
+            patterns in proptest::collection::vec("[a-zA-Z.]{1,8}", 0..3),
+            flags in proptest::collection::vec(
+                proptest::sample::select(vec!["-n", "-i", "-l", "-r", "--color=never"]),
+                0..3,
+            ),
+            program in proptest::sample::select(vec!["grep", "egrep", "rg"]),
+        ) {
+            let matcher = defaults(None);
+            let mut args: Vec<String> = flags.iter().map(|flag| (*flag).to_owned()).collect();
+            if patterns.is_empty() {
+                args.push("KEY".to_owned());
+            }
+            for pattern in &patterns {
+                args.extend(["-e".to_owned(), pattern.clone()]);
+            }
+            args.push(".env".to_owned());
+            let found = matcher
+                .classify("shell", &json!({"command": program, "args": args}))
+                .map(|found| found.names())
+                .unwrap_or_default();
+            prop_assert!(found.iter().any(|name| name.ends_with(".env")), "{:?}", args);
+        }
+
         #[test]
         fn names_and_patterns_never_panic(name in ".*", pattern in ".*") {
             let matcher = SensitiveMatcher::new(&[pattern], None);

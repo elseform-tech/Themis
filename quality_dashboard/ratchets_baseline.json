@@ -458,9 +458,6 @@
   "crates/core/src/tools/sensitive.rs::SensitiveMatcher::note_path": {
    "cyclomatic": 22
   },
-  "crates/core/src/tools/sensitive.rs::SensitiveMatcher::note_simple": {
-   "cyclomatic": 22
-  },
   "crates/core/src/tools/shell_scope.rs::class_allows": {
    "cyclomatic": 34
   },
