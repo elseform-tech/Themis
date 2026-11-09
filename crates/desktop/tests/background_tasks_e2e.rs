@@ -446,8 +446,12 @@ async fn a_program_left_running_by_a_plain_shell_command_is_stopped_with_it() {
         log.push_str(&std::fs::read_to_string(entry.unwrap().path()).unwrap_or_default());
     }
     assert!(log.contains("\"shell_leftovers_stopped\""), "{log}");
-    assert!(
-        !log.contains("3146"),
-        "no command text in diagnostics: {log}"
-    );
+    // Look for the command text itself: a bare "3146" also turns up inside
+    // unrelated numbers such as `memory_bytes`.
+    for text in ["sleep 3146", "launched-3146", "nohup"] {
+        assert!(
+            !log.contains(text),
+            "no command text ({text}) in diagnostics: {log}"
+        );
+    }
 }
