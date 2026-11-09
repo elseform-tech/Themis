@@ -10,16 +10,17 @@ export function isPluginPackage(plugin: Plugin): boolean {
  *  agent saved, with no package, catalog or import behind it. It is a holder, not a plugin to show. */
 export function isOwn(plugin: Plugin): boolean {
   const origin = plugin.spec.origin?.kind;
-  return !plugin.source && (origin == null || origin === "mcp-json");
+  // Global only, as the server's own rule: a repository's project plugin is never "Yours".
+  return plugin.scope === "global" && !plugin.source && (origin == null || origin === "mcp-json");
 }
 
 /** Where an item comes from, in a word: "Yours" (the `personal` holder; "Yours · NAME" for one the
  *  person named), "Project" for a skill folder in the repository, "Discovered" for one in a personal
- *  skill folder, else the plugin's name. */
+ *  skill folder, else the plugin's name ("Project · NAME" for a project's own plugin). */
 export function itemSource(plugin: Plugin, pluginName: string): string {
   if (plugin.source === "discovered" || plugin.spec.origin?.kind === "discovered") return plugin.scope === "local" ? "Project" : "Discovered";
   if (isOwn(plugin)) return plugin.spec.name === "personal" ? "Yours" : `Yours · ${plugin.spec.name}`;
-  return pluginName;
+  return plugin.scope === "local" ? `Project · ${pluginName}` : pluginName;
 }
 
 export interface OffPart { kind: "mcp" | "hook"; id: string }
