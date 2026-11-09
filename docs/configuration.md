@@ -764,6 +764,13 @@ returns `rule_sources` beside the resolved configuration.
 
 ## The `themis` CLI in the agent's shell
 
+Every desktop run's system message tells the main agent that plugins, skills, MCP servers and
+hooks are managed with `themis` in its shell and that the `plugins`, `skills`, `mcp` and `hooks`
+guides show how (find, change, verify, with the store's folders filled in; see
+[plugins](plugins.md#cli)). A subagent whose shell is not held to a list of commands is told it
+may inspect them with read-only `themis` commands and that changes are the main agent's. Neither
+line is a setting: a deny rule for `themis` (below) still refuses the commands.
+
 An agent's `shell` commands (foreground and background, subagents' too) can run
 `themis`, which talks to the live app server. Each command of a run gets:
 
