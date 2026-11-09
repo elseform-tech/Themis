@@ -18,8 +18,11 @@ interface QuestionPagesProps {
   onFold?: () => void;
 }
 
+/** Whether a page may be left unanswered: only a question the work waits on may not. */
+const mayLeave = (page: Question, answers: Record<string, string>) => !page.blocking || answers[page.id] !== undefined;
+
 /** The answers before they go: each question with its answer (or "Skipped"), a click goes
- *  back to that page, and Submit sends them all. */
+ *  back to that page, and Submit sends them all (not while a question the work waits on has no answer). */
 function Review({ pages, answers, onEdit, onSubmit }: { pages: Question[]; answers: Record<string, string>; onEdit: (index: number) => void; onSubmit: () => Promise<void> }) {
   const [sending, setSending] = useState(false);
   async function submit() {
@@ -43,17 +46,19 @@ function Review({ pages, answers, onEdit, onSubmit }: { pages: Question[]; answe
             </li>
           ))}
         </ul>
-        <Button className="themis-question-submit" variant="primary" size="small" disabled={sending} onClick={() => void submit()}>Submit</Button>
+        <Button className="themis-question-submit" variant="primary" size="small" disabled={sending || !pages.every(page => mayLeave(page, answers))} onClick={() => void submit()}>Submit</Button>
       </div>
     </section>
   );
 }
 
 /** One question box for the questions the agent asked together: a page each ("1/3"), Back
- *  and Next between them. Picking or writing an answer, or Skip, turns to the next page; after
- *  the last, a review lists every answer, a click goes back to change one, and Submit sends
- *  them together (skipped questions stay open in their turns). A single question sends at
- *  once. A question the work waits on has no Skip. */
+ *  and Next between them, free to look ahead before answering (Next on the last page opens the
+ *  review). Picking or writing an answer, or Skip, turns to the next page; clicking the picked
+ *  answer again clears it. After the last, a review lists every answer (unanswered ones as
+ *  Skipped), a click goes back to change one, and Submit sends them together (skipped questions
+ *  stay open in their turns). A single question sends at once. A question the work waits on
+ *  has no Skip, and Next stays closed on it until it has an answer. */
 export function QuestionPages({ pages, onSend, onLeave, onFold }: QuestionPagesProps) {
   const [index, setIndex] = useState(0);
   const [answers, setAnswers] = useState<Record<string, string>>({});
@@ -92,6 +97,18 @@ export function QuestionPages({ pages, onSend, onLeave, onFold }: QuestionPagesP
     else onward();
   }
 
+  /** Next: the following page, or the review from the last; answers nothing. */
+  function next() {
+    if (last) {
+      setReview(true);
+      setReviewed(true);
+    } else go(at + 1);
+  }
+
+  function clear() {
+    setAnswers(Object.fromEntries(Object.entries(answers).filter(([id]) => id !== page.id)));
+  }
+
   function skip() {
     const given = Object.fromEntries(Object.entries(answers).filter(([id]) => id !== page.id));
     setAnswers(given);
@@ -108,7 +125,8 @@ export function QuestionPages({ pages, onSend, onLeave, onFold }: QuestionPagesP
         count: pages.length,
         chosen,
         onBack: at > 0 ? () => go(at - 1) : undefined,
-        onNext: chosen !== undefined ? onward : undefined,
+        onNext: mayLeave(page, answers) ? next : undefined,
+        onClear: clear,
       } : undefined} />
   );
 }
