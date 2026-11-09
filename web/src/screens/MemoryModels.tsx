@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { getMemorySettings, updateMemorySettings } from "../lib/tauri";
 import type { GoModel } from "../lib/types";
-import { describeError } from "../state/store";
+import { describeError, useSettingsChanges } from "../state/store";
 import { SettingsGroup } from "./SettingsGroup";
 
 /** Fewest memory models `memory.models` may list. */
@@ -21,7 +21,8 @@ export function MemoryModels({ models }: { models: GoModel[] }) {
   const load = () => getMemorySettings()
     .then(loaded => setView({ models: loaded.settings.models, budget: loaded.settings.daily_budget_usd, revision: loaded.revision }))
     .catch(reason => setError(describeError(reason)));
-  useEffect(() => { void load(); }, []);
+  const changes = useSettingsChanges("runtime");
+  useEffect(() => { void load(); }, [changes]);
   if (!view) return error ? <p role="alert" className="themis-form-error">{error}</p> : null;
 
   const write = async (next: string[]) => {

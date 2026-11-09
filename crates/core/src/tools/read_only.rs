@@ -4,16 +4,21 @@
 //! The list is deliberately short and strict: a program reached by its bare name (a project
 //! script called `./ls` is not `ls`), every argument inside the project (no absolute path, no
 //! `..` step, which is also what the file tools allow), and none of the options that make a
-//! listed program write a file or start another program. Anything else, including a command
-//! inside a wrapper (`sh -c`, a pipeline) keeps the ordinary command risk and is asked about.
-//! Secret files are still asked about through the sensitive-file check, which reads the same
-//! arguments.
+//! listed program write a file or start another program. A plain `sh -c 'cat a.txt'` (also
+//! `bash`, `zsh` or `dash`, with `-c`, `-lc` or `-cl`) is judged by the one command inside it
+//! when the script is that command in plain words (see `wrapped::plain_shell_command`); any
+//! other wrapper, a pipeline, a list, a redirect, a substitution or a glob keeps the ordinary
+//! command risk and is asked about. Secret files are still asked about through the
+//! sensitive-file check, which reads the same arguments, inside wrappers too.
 
 use super::destructive::has_flag;
 
 /// Whether `command` (program followed by arguments) only reads inside the project.
 #[must_use]
 pub fn read_only_command(command: &[String]) -> bool {
+    if let Some(inner) = super::wrapped::plain_shell_command(command) {
+        return read_only_command(&inner);
+    }
     let Some((program, args)) = command.split_first() else {
         return false;
     };

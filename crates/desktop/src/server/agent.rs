@@ -3,7 +3,8 @@
 //! The person's credential lives in `server.json`, which sandboxed commands cannot read. Each
 //! run's commands get their own credential instead (`THEMIS_AGENT_TOKEN`, issued on the run's
 //! first command and revoked when the chat's run ends, bound to the run's project and network
-//! block). A call carrying it is the agent's: it may read status and manage integrations through
+//! block). A call carrying it is the agent's: it may read status, search its own chat's saved
+//! originals and memory when its run has those tools, and manage integrations through
 //! the store, and nothing else. The allowed lists, of methods and of `plugin_action` actions, are
 //! explicit, so a method or action added later stays refused until someone decides otherwise. A
 //! script holding the credential reaches the same checks as `themis` does: they look at the
@@ -50,6 +51,11 @@ const OWN_CHAT: &[&str] = &[
     "get_context_usage",
     "get_chat_usage",
 ];
+
+/// Read-only methods mirroring a built-in tool of the run (`recall`, `search_memory`): only for
+/// the agent's own chat, whose `threadId` the server fills in when the call names none, and only
+/// when its run has that tool (memory on, no rule denying it; a subagent's run has neither).
+const CHAT_READS: [&str; 2] = themis_core::agent_cli::CHAT_READ_TOOLS;
 
 /// `plugin_action` actions an agent's call may take that fetch nothing and start no code: reads of
 /// the store (and of what the app already holds), and changes through the store as the agent's,
@@ -115,6 +121,8 @@ pub(crate) struct Grant {
     pub run_id: String,
     pub project_root: Option<PathBuf>,
     pub network_blocked: bool,
+    /// The [`CHAT_READS`] tools its run has.
+    pub reads: Vec<String>,
 }
 
 /// Why an agent's call was refused, as the log keeps it.
@@ -130,6 +138,8 @@ pub(crate) enum Reason {
     OtherProject,
     /// A fetching action from a run whose sandbox blocks the network.
     NetworkBlocked,
+    /// A chat read (`recall`, `search_memory`) whose tool the run does not have.
+    ToolUnavailable,
 }
 
 impl Reason {
@@ -140,6 +150,7 @@ impl Reason {
             Self::RunsCode => "runs_code",
             Self::OtherProject => "other_project",
             Self::NetworkBlocked => "network_blocked",
+            Self::ToolUnavailable => "tool_unavailable",
         }
     }
 }
@@ -251,6 +262,7 @@ impl themis_core::agent_cli::Issuer for AgentTokens {
                         run_id: run.1.clone(),
                         project_root,
                         network_blocked: scope.network_blocked,
+                        reads: scope.reads.clone(),
                     },
                 );
                 issued
@@ -291,13 +303,23 @@ fn same(left: &[u8], right: &[u8]) -> bool {
 /// Why an agent's call is refused, or `None` when it may go ahead.
 pub(crate) fn refusal(grant: &Grant, method: &str, args: &Value) -> Option<Refusal> {
     let own_chat = OWN_CHAT.contains(&method);
+    let chat_read = CHAT_READS.contains(&method);
     let thread = args.get("threadId").and_then(Value::as_str);
-    let permitted = (ALLOWED.contains(&method) || own_chat)
+    let permitted = (ALLOWED.contains(&method) || own_chat || chat_read)
         && thread.is_none_or(|thread| thread == grant.thread_id)
         && (!own_chat || thread.is_some());
     if !permitted {
         // Only plain names go back: the method is the caller's own text.
         return Some(refused(Reason::MethodNotAllowed, method_label(method)));
+    }
+    if chat_read && !grant.reads.iter().any(|read| read == method) {
+        return Some(Refusal {
+            reason: Reason::ToolUnavailable,
+            message: themis_core::prompts::fill(
+                themis_core::prompts::AGENT_CLI_READ_UNAVAILABLE,
+                &[("method", method)],
+            ),
+        });
     }
     if method != "plugin_action" {
         return None;
@@ -342,6 +364,18 @@ fn plugin_action_refusal(grant: &Grant, args: &Value) -> Option<Refusal> {
             refused(reason, &shown)
         }
     })
+}
+
+/// An agent's call as the server runs it: a chat read names the agent's own chat (the refusal
+/// check already turned away any other one).
+fn bound(grant: &Grant, method: &str, mut args: Value) -> Value {
+    if CHAT_READS.contains(&method) {
+        if !args.is_object() {
+            args = json!({});
+        }
+        args["threadId"] = json!(grant.thread_id);
+    }
+    args
 }
 
 /// A call without `projectRoot` (or with a non-text one, which the handler reads as none) works
@@ -415,13 +449,8 @@ pub(super) async fn screen(
             state.plugin_action_for_agent(request.args.clone()).await
         }
         None => {
-            dispatch(
-                state,
-                Arc::clone(sink),
-                &request.method,
-                request.args.clone(),
-            )
-            .await
+            let args = bound(&grant, &request.method, request.args.clone());
+            dispatch(state, Arc::clone(sink), &request.method, args).await
         }
     };
     Some(reply(stream, state, &request.method, result).await)
@@ -478,6 +507,7 @@ mod tests {
             run_id: "run-1".into(),
             project_root: None,
             network_blocked: false,
+            reads: Vec::new(),
         }
     }
 
@@ -521,6 +551,7 @@ mod tests {
         let scope = RunScope {
             project_root: Some(project.path().join(".").join("")),
             network_blocked: true,
+            reads: vec!["recall".into()],
         };
         let access = tokens.issue("chat-a", "run-1", &scope).unwrap();
         let _ = tokens.issue("chat-a", "run-1", &unbound()).unwrap();
@@ -530,6 +561,7 @@ mod tests {
             Some(project.path().canonicalize().unwrap())
         );
         assert!(grant.network_blocked);
+        assert_eq!(grant.reads, vec!["recall"], "a later issue cannot widen it");
     }
 
     #[test]
@@ -715,6 +747,7 @@ mod tests {
         let mut allowed: Vec<&str> = ALLOWED
             .iter()
             .chain(OWN_CHAT)
+            .chain(&CHAT_READS)
             .copied()
             .filter(|method| *method != "plugin_action")
             .collect();
@@ -722,6 +755,47 @@ mod tests {
         allowed.sort_unstable();
         reads.sort_unstable();
         assert_eq!(allowed, reads);
+    }
+
+    /// `recall` and `search_memory` pass only when the run has the tool and only for its own
+    /// chat; a call naming none is bound to it, one naming another chat is refused.
+    #[test]
+    fn chat_reads_pass_only_for_the_runs_own_tools_and_chat() {
+        let with = Grant {
+            reads: vec!["recall".into(), "search_memory".into()],
+            ..grant()
+        };
+        for method in CHAT_READS {
+            assert_eq!(refusal(&with, method, &json!({"query": "x"})), None);
+            assert_eq!(refusal(&with, method, &json!({"threadId": "chat-a"})), None);
+            assert_eq!(refusal(&with, method, &Value::Null), None);
+            assert_eq!(
+                reason(refusal(&with, method, &json!({"threadId": "chat-b"}))),
+                Some(Reason::MethodNotAllowed)
+            );
+            let lacking = refusal(&grant(), method, &json!({"query": "x"})).unwrap();
+            assert_eq!(lacking.reason, Reason::ToolUnavailable);
+            assert!(lacking.message.contains(method), "{lacking:?}");
+            for args in [
+                json!({"query": "x"}),
+                Value::Null,
+                json!({"threadId": "chat-b"}),
+            ] {
+                assert_eq!(bound(&with, method, args)["threadId"], "chat-a");
+            }
+        }
+        let only_recall = Grant {
+            reads: vec!["recall".into()],
+            ..grant()
+        };
+        assert_eq!(refusal(&only_recall, "recall", &Value::Null), None);
+        assert_eq!(
+            reason(refusal(&only_recall, "search_memory", &Value::Null)),
+            Some(Reason::ToolUnavailable)
+        );
+        // Other methods keep their arguments as sent.
+        let args = json!({"threadId": "chat-b"});
+        assert_eq!(bound(&with, "get_thread", args.clone()), args);
     }
 
     #[test]
@@ -742,6 +816,7 @@ mod tests {
             let mut args = json!({"action": "list"});
             if let Some(thread) = &thread { args["threadId"] = json!(thread); }
             let passed = refusal(&grant(), &method, &args).is_none();
+            // `grant()` has no chat-read tools, so those never pass either.
             let listed = ALLOWED.contains(&method.as_str()) || OWN_CHAT.contains(&method.as_str());
             let own = thread.as_deref().is_none_or(|thread| thread == "chat-a");
             let needs_chat = OWN_CHAT.contains(&method.as_str());

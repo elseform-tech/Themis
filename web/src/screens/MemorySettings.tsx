@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { Switch } from "../components";
 import { getMemorySettings, updateMemorySettings } from "../lib/tauri";
 import type { MemoryChange, MemoryWaiting } from "../lib/types";
-import { describeError } from "../state/store";
+import { describeError, useSettingsChanges } from "../state/store";
 import { SectionIcon, SettingsGroup } from "./SettingsGroup";
 import "./MemorySettings.css";
 
@@ -129,7 +129,8 @@ export function MemorySettingsSection({ onSaved }: { onSaved?: () => void } = {}
   const [settings, setSettings] = useState<{ enabled: boolean; revision: string; waiting: MemoryWaiting | null } | null>(null);
   const [error, setError] = useState("");
   const loadSettings = () => getMemorySettings().then(view => setSettings({ enabled: view.settings.enabled, revision: view.revision, waiting: view.waiting ?? null })).catch(reason => setError(describeError(reason)));
-  useEffect(() => { void loadSettings(); }, []);
+  const changes = useSettingsChanges("runtime");
+  useEffect(() => { void loadSettings(); }, [changes]);
   if (!settings) return error ? <p role="alert" className="themis-form-error">{error}</p> : null;
 
   const toggle = async (changes: { enabled: boolean }) => {

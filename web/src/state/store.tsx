@@ -37,6 +37,7 @@ import { getBrowserSettings,
   onApprovalExpired,
   onApprovalRequest,
   onReviewItemAdded,
+  onSettingsChanged,
   onThreadChanged,
   onThreadEvent,
   openProject,
@@ -45,10 +46,12 @@ import { failureMessage as describeError } from "../lib/errors";
 import { reviewToast } from "../screens/reviewFlow";
 import { readSession, writeSession } from "./session";
 import { loadPhase4Lists, openProjectOfNewChat, restoreRecentProjects } from "./boot";
+import { settingsSync } from "./settingsSync";
 import {
   initialState,
   newId,
   reducer,
+  type AppAction,
   type AppState,
 } from "./reducer";
 
@@ -68,6 +71,13 @@ export function useApp(): AppContextValue {
   const ctx = useContext(AppContext);
   if (ctx === null) throw new Error("useApp must be used inside <AppProvider>");
   return ctx;
+}
+
+/** Changes to runtime.jsonc or the stored keys announced since the window opened (0 outside
+ *  the app): a Settings section lists it in the dependencies of the effect that loads it, so it
+ *  reads its settings again when another client writes them. */
+export function useSettingsChanges(scope: "runtime" | "secrets"): number {
+  return useContext(AppContext)?.state.settingsChanges[scope] ?? 0;
 }
 
 export function useDispatch(): AppContextValue["dispatch"] {
@@ -109,6 +119,26 @@ export function useThreadRunning(threadId: string | null): boolean {
 }
 
 export { describeError };
+
+/** Chats and settings changed through the shared server (the `themis` CLI, another client)
+ *  follow into this window without a reload; settings written while the connection was down
+ *  are read again when it comes back. */
+async function listenOutsideChanges(dispatch: Dispatch<AppAction>, isCancelled: () => boolean, isOpen: (root: string) => boolean, refreshSecrets: () => void): Promise<() => void> {
+  const opening = new Set<string>();
+  const offThreads = await onThreadChanged((change) => {
+    if (isCancelled()) return;
+    dispatch({ type: "thread/changed", change });
+    if (opening.has(change.project_root)) return;
+    opening.add(change.project_root);
+    void openProjectOfNewChat(change, { isOpen, api: { openProject, listThreads }, dispatch: action => { if (!isCancelled()) dispatch(action); } })
+      .catch(error => toast(dispatch, `Could not open the new chat's project: ${describeError(error)}`, "warning"))
+      .finally(() => opening.delete(change.project_root));
+  });
+  const follow = settingsSync({ getSettings, getBrowserSettings, refreshSecrets }, dispatch, isCancelled);
+  const offSettings = await onSettingsChanged(follow);
+  const offResync = await onBackendResync(() => { follow({ scope: "app" }); follow({ scope: "runtime" }); });
+  return () => { offThreads(); offSettings(); offResync(); };
+}
 
 export function AppProvider({ children }: { children: ReactNode }) {
   const [state, dispatch] = useReducer(reducer, initialState);
@@ -279,20 +309,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
           eventVersion++;
           dispatch({ type: "approval/expired", approvalId: expired.approval_id, steered: expired.steered });
         });
-        const opening = new Set<string>();
-        const offThreadChanged = await onThreadChanged((change) => {
-          if (cancelled) return;
-          dispatch({ type: "thread/changed", change });
-          if (opening.has(change.project_root)) return;
-          opening.add(change.project_root);
-          void openProjectOfNewChat(change, {
-            isOpen: root => currentState.current.threadsByProject[root] !== undefined,
-            api: { openProject, listThreads },
-            dispatch: action => { if (!cancelled) dispatch(action); },
-          })
-            .catch(error => toast(dispatch, `Could not open the new chat's project: ${describeError(error)}`, "warning"))
-            .finally(() => opening.delete(change.project_root));
-        });
         const offReview = await onReviewItemAdded((item) => {
           if (cancelled) return;
           dispatch({ type: "review/added", review: item });
@@ -307,6 +323,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
           }).catch(() => {});
         });
         const offRecovery = await onBackendResync(() => { clearTimeout(retry); refreshSecretStatus.current(); window.dispatchEvent(new Event("themis-mcp-reconnect")); void recover(); });
+        const offThreadChanged = await listenOutsideChanges(dispatch, () => cancelled, root => currentState.current.threadsByProject[root] !== undefined, () => refreshSecretStatus.current());
         if (cancelled) {
           offRecovery();
           offThread();

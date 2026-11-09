@@ -59,6 +59,10 @@ fn server_exposes_all_frontend_backend_commands() {
             // The desktop's terminal lives until the project or the app goes; the CLI asks and closes.
             "terminal_state",
             "terminal_close",
+            // A chat's saved originals and memory for `themis recall`/`themis memory`; the app
+            // never lists memories, and the agent's tools do the same work in a run.
+            "recall",
+            "search_memory",
         ])
         .collect();
     let handled: BTreeSet<_> = server

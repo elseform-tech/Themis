@@ -1380,3 +1380,84 @@ async fn stopping_a_subagent_stops_what_it_started() {
     }
     app.serving.abort();
 }
+
+// `/subagents`: the built-in skill lists what there is and hands a task to subagents.
+
+#[tokio::test(flavor = "multi_thread")]
+async fn the_subagents_skill_lists_profiles_and_hands_the_task_to_one() {
+    const SKILL: &str = include_str!("../../core/builtins/subagents/SKILL.md");
+    let app = app(
+        Setup {
+            agents: &[
+                ("reviewer", "tools: Read, Grep\nmodel: test-model"),
+                ("builder", "tools: Read, Write"),
+            ],
+            ..Setup::default()
+        },
+        |body| {
+            if is_subagent(body) {
+                return reply("REVIEWED");
+            }
+            match results(body).len() {
+                0 => tool_call("l1", "list_plugins", &json!({"kind": "subagent"})),
+                1 => tool_call(
+                    "s1",
+                    "spawn_subagents",
+                    &json!({"say": "Starting.", "subagents": [{"write_paths": [],
+                        "name": "Docs", "brief": "Review the docs.", "profile": "reviewer"}]}),
+                ),
+                _ if mentions(body, NOTE) => reply("Done."),
+                _ => reply("Waiting."),
+            }
+        },
+    )
+    .await;
+    let data = app.data.path().to_owned();
+    let listed = tokio::task::spawn_blocking(move || {
+        call(&data, "list_prompt_skills", json!({"projectRoot": null}))
+    })
+    .await
+    .unwrap();
+    let skill = listed
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|skill| skill["id"] == "subagents")
+        .unwrap_or_else(|| panic!("no subagents skill in {listed}"));
+    assert_eq!(skill["scope"], "built-in");
+    assert_eq!(skill["name"], "Subagents");
+    run(&app, "yolo", "[[skill:subagents]] review the docs").await;
+    let all = bodies(&app.llm).await;
+    // The person's message carries the task and the skill, word for word.
+    let first = messages(&all[0])
+        .iter()
+        .rev()
+        .find(|m| m["role"] == "user")
+        .map(text)
+        .unwrap_or_default();
+    assert!(first.starts_with("Subagents review the docs"), "{first}");
+    assert!(first.contains(SKILL), "{first}");
+    // `list_plugins` kind `subagent` names each profile's model and whether it only reads.
+    let main = all.iter().rfind(|body| !is_subagent(body)).unwrap();
+    let inventory: Value = serde_json::from_str(results(main)[0]).unwrap();
+    let profiles = &inventory["items"][0]["spec"]["subagents"];
+    let profile = |name: &str| {
+        profiles
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|profile| profile["name"] == name)
+            .unwrap_or_else(|| panic!("no {name} in {inventory}"))
+            .clone()
+    };
+    assert_eq!(profile("reviewer")["read_only"], true);
+    assert_eq!(profile("reviewer")["model"], "test-model");
+    assert_eq!(profile("builder")["read_only"], false);
+    assert!(profile("builder")["model"].is_null());
+    assert!(profile("reviewer").get("instructions").is_none());
+    // The task went to a subagent with the profile, and its report came back.
+    let started = subagent_list(&app).await;
+    assert_eq!(started[0]["profile"], "reviewer", "{started}");
+    assert!(mentions(main, "REVIEWED"), "{main}");
+    app.serving.abort();
+}

@@ -29,7 +29,7 @@ export function BrowserSettingsSection({ onSaved }: { onSaved?: () => void } = {
     load();
     window.addEventListener("focus", load);
     return () => window.removeEventListener("focus", load);
-  }, []);
+  }, [state.settingsChanges.runtime]);
   if (error && !view) return <p role="alert" className="themis-form-error">{error}</p>;
   if (!view) return null;
   const settings = view.settings;

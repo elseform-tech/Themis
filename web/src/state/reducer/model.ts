@@ -124,6 +124,9 @@ export interface AppState {
   reviews: ReviewItem[];
   settings: Settings;
   settingsLoaded: boolean;
+  /** Counts runtime.jsonc and stored-key writes announced by the server, so open Settings
+   *  sections read theirs again (settings.json changes arrive as `settings/loaded`). */
+  settingsChanges: { runtime: number; secrets: number };
   secretStatus: SecretStatus;
   /** The secret status has loaded once (before that, nothing claims a key is missing). */
   secretStatusLoaded: boolean;
@@ -203,6 +206,7 @@ export type AppAction =
   | { type: "approval/expired"; approvalId: string; steered?: boolean }
   | { type: "settings/loaded"; settings: Settings }
   | { type: "settings/patched"; settings: Settings }
+  | { type: "settings/changed"; scope: "runtime" | "secrets" }
   | { type: "secrets/loaded"; status: SecretStatus }
   | { type: "provider/checked"; state: NonNullable<AppState["goKeyCheck"]> }
   | { type: "toast/push"; toast: ToastItem }
@@ -276,6 +280,7 @@ export const initialState: AppState = {
   reviews: [],
   settings: DEFAULT_SETTINGS,
   settingsLoaded: false,
+  settingsChanges: { runtime: 0, secrets: 0 },
   secretStatus: DEFAULT_SECRET_STATUS,
   secretStatusLoaded: false,
   goKeyCheck: null,

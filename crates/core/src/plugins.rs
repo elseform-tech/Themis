@@ -565,6 +565,11 @@ impl PluginStore {
                 include_str!("../builtins/browser-use/SKILL.md"),
             ),
             ("init", "Init", include_str!("../builtins/init/SKILL.md")),
+            (
+                "subagents",
+                "Subagents",
+                include_str!("../builtins/subagents/SKILL.md"),
+            ),
         ] {
             skills.push(Skill {
                 id: id.into(),

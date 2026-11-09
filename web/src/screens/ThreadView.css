@@ -67,8 +67,10 @@
 .themis-thread-start { margin: auto; color: var(--themis-text-2); font-size: .875rem; }
 .themis-thread-msg { max-width: 100%; }
 .themis-thread-msg--user { align-self: flex-end; max-width: 80%; padding: 12px 18px; border-radius: 22px 22px 6px 22px; background: var(--themis-user-message-bg); }
-.themis-thread-msg--system { color: var(--themis-danger); }
-.themis-thread-msg--stopped { color: var(--themis-text-2); }
+/* Notices in the chat ("Run interrupted…", "Stopped by you.", a failed request) are one small
+   muted line, like a hint: they report what happened without shouting. */
+.themis-thread-msg--system { color: var(--themis-text-3); }
+.themis-thread-msg--system > .themis-thread-text { font-size: .75rem; line-height: 1.45; }
 .themis-thread-text { margin: 0; white-space: pre-wrap; word-break: break-word; font-size: .9375rem; line-height: 1.6; }
 .themis-request-error { margin: 0; font-size: .75rem; color: var(--themis-text-3); }
 .themis-response-actions { display: flex; align-items: center; gap: 4px; margin: 6px 0 0 -8px; }
@@ -114,7 +116,7 @@
 }
 
 /* Composer: a rounded pill. A sweeping ring marks an active run. */
-.themis-thread-senderror { width: min(calc(100% - 2 * var(--themis-thread-gutter)), var(--themis-thread-column)); margin: 0 auto 6px; color: var(--themis-danger); font-size: .8125rem; }
+.themis-thread-senderror { width: min(calc(100% - 2 * var(--themis-thread-gutter)), var(--themis-thread-column)); margin: 0 auto 6px; color: var(--themis-text-3); font-size: .75rem; }
 /* z-index 2: the composer's pop-ups (context, menus) open over the sticky run-progress row (z-index 1). */
 .themis-thread-composer { position: relative; display: flex; flex-direction: column; gap: 6px; width: min(calc(100% - 2 * var(--themis-thread-gutter)), var(--themis-thread-column)); margin: 4px auto 20px; padding: 12px 12px 10px 20px; border-radius: var(--themis-radius-composer); background: var(--themis-composer-bg); isolation: isolate; z-index: 2; }
 /* A narrow chat keeps the composer's controls as icons; names stay in tooltips and accessible labels. */

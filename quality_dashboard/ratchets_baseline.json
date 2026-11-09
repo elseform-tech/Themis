@@ -49,7 +49,7 @@
    "code_lines": 1908
   },
   "crates/desktop/src/state/run.rs": {
-   "code_lines": 1030
+   "code_lines": 1002
   }
  },
  "functions": {
@@ -247,7 +247,7 @@
    "lines": 101
   },
   "crates/core/src/plugins/management.rs::PluginStore::list_metadata": {
-   "cyclomatic": 24
+   "cyclomatic": 22
   },
   "crates/core/src/plugins/marketplace/directory_import.rs::FileWalk<'_>::directory": {
    "cyclomatic": 23
@@ -480,9 +480,9 @@
    "cyclomatic": 24
   },
   "crates/desktop/src/cli.rs::run": {
-   "cognitive": 40,
-   "cyclomatic": 148,
-   "lines": 253
+   "cognitive": 35,
+   "cyclomatic": 145,
+   "lines": 244
   },
   "crates/desktop/src/cli.rs::send_message": {
    "cyclomatic": 31,
@@ -608,9 +608,9 @@
    "cyclomatic": 25
   },
   "crates/desktop/src/state/run.rs::AppState::spawn_run": {
-   "cognitive": 146,
-   "cyclomatic": 131,
-   "lines": 998
+   "cognitive": 144,
+   "cyclomatic": 128,
+   "lines": 970
   },
   "crates/desktop/src/state/subagent_tools.rs::SubagentTool#2::spawn": {
    "cyclomatic": 28
@@ -774,7 +774,7 @@
    "lines": 143
   },
   "web/src/screens/PermissionsView.tsx::PermissionsSettings": {
-   "cyclomatic": 35
+   "cyclomatic": 33
   },
   "web/src/screens/Plugins.tsx::Plugins": {
    "cognitive": 425,
@@ -801,7 +801,7 @@
    "cyclomatic": 22
   },
   "web/src/screens/Settings.tsx::SettingsScreen": {
-   "cyclomatic": 42
+   "cyclomatic": 41
   },
   "web/src/screens/Sidebar.tsx::Sidebar": {
    "cognitive": 90,
@@ -918,14 +918,13 @@
    "lines": 294
   },
   "web/src/state/reducer/collections.ts::reduceCollectionActions": {
-   "cognitive": 32,
-   "cyclomatic": 42,
-   "lines": 101
+   "cognitive": 30,
+   "cyclomatic": 37
   },
   "web/src/state/store.tsx::AppProvider": {
-   "cognitive": 197,
-   "cyclomatic": 133,
-   "lines": 258
+   "cognitive": 184,
+   "cyclomatic": 128,
+   "lines": 245
   },
   "web/src/state/store.tsx::AppProvider::recover": {
    "cognitive": 61,

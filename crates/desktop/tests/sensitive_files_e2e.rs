@@ -381,6 +381,32 @@ async fn shell_reads_ask_and_exact_names_survive_spelling_and_links() {
     assert!(run.wire.contains("plain notes"));
 }
 
+/// Custom with no rules of its own: a plain read wrapped in `sh -c` runs like the bare read,
+/// while the same wrapper around a secret file or a longer script still asks.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_plain_wrapped_read_runs_but_wrapped_secrets_and_scripts_ask() {
+    let fx = fixture();
+    let run = run(
+        &fx,
+        ApprovalMode::Custom,
+        "go",
+        vec![
+            shell("sh", &["-c", "cat notes.txt"]),
+            shell("bash", &["-lc", "cat '.env'"]),
+            shell("sh", &["-c", "cat notes.txt; ls"]),
+            shell("sh", &["-c", "cat notes.txt > copy.txt"]),
+        ],
+        deny,
+    )
+    .await;
+    let asked: Vec<&String> = run.approvals.iter().map(|a| &a.summary).collect();
+    assert_eq!(run.approvals.len(), 3, "{asked:?}");
+    assert_eq!(run.sensitive(0), [".env"]);
+    assert!(run.wire.contains("plain notes"), "the wrapped read ran");
+    assert!(!run.wire.contains(VALUE));
+    assert!(!fx.project.join("copy.txt").exists());
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn examples_are_exempt_and_never_ask() {
     let fx = fixture();

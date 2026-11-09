@@ -46,6 +46,7 @@ vi.mock("../lib/tauri", () => ({
   },
   onReviewItemAdded: async () => () => {},
   onThreadChanged: async () => () => {},
+  onSettingsChanged: async () => () => {},
   onNotificationOpened: async (callback: typeof backend.opened) => {
     backend.opened = callback;
     return () => { backend.opened = null; };

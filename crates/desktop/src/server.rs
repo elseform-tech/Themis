@@ -15,7 +15,8 @@ use crate::sink::EventSink;
 use crate::state::AppState;
 use crate::transcript::history_pages::{HistoryCursor, HistoryPage, MAX_PAGE_BYTES};
 use crate::types::{
-    ApprovalRequest, ReviewItem, ThreadChange, ThreadChangeKind, ThreadEventEnvelope,
+    ApprovalRequest, ReviewItem, SettingsChange, SettingsScope, ThreadChange, ThreadChangeKind,
+    ThreadEventEnvelope, SETTINGS_CHANGED_NAME,
 };
 
 pub(crate) const MAX_FRAME: usize = 8 * 1024 * 1024;
@@ -92,6 +93,12 @@ impl EventSink for BroadcastSink {
         let _ = self
             .tx
             .send(json!({"name": "thread-changed", "payload": change}));
+    }
+
+    fn emit_settings_changed(&self, change: &SettingsChange) {
+        let _ = self
+            .tx
+            .send(json!({"name": SETTINGS_CHANGED_NAME, "payload": change}));
     }
 }
 

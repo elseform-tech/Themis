@@ -13,7 +13,8 @@ vi.mock("../lib/tauri", async importOriginal => ({
   pluginAction: vi.fn(async () => []), listPromptSkills: vi.fn(async () => []),
   getDefaultProject: vi.fn(async () => ({ name: "Themis", root: "/tmp/fixed-themis", is_git: true, is_default: true })), getSettings: vi.fn(), getSecretStatus: vi.fn(), updateSettings: vi.fn(),
   onBackendResync: vi.fn(async () => () => {}), getPendingApprovals: vi.fn(async () => []),
-  onThreadEvent: vi.fn(async () => () => {}), onApprovalRequest: vi.fn(async () => () => {}), onApprovalExpired: vi.fn(async () => () => {}), onReviewItemAdded: vi.fn(async () => () => {}), onThreadChanged: vi.fn(async () => () => {}),
+  onThreadEvent: vi.fn(async () => () => {}), onApprovalRequest: vi.fn(async () => () => {}), onApprovalExpired: vi.fn(async () => () => {}), onReviewItemAdded: vi.fn(async () => () => {}), onThreadChanged: vi.fn(async () => () => {}), onSettingsChanged: vi.fn(async () => () => {}),
+  getEffectivePermissions: vi.fn(async () => null), listEditors: vi.fn(async () => ({ editors: [] })), getBrowserSettings: vi.fn(async () => ({ settings: { open_workspace: false } })),
   listSkills: vi.fn(async () => []), listAutomations: vi.fn(async () => []), listReviewItems: vi.fn(async () => []),
   renameThread: vi.fn(), setThreadApprovalMode: vi.fn(), setProvider: vi.fn(), setThreadEffort: vi.fn(), getThread: vi.fn(), getThreadHistory: vi.fn(async () => []), sendMessage: vi.fn(async () => ({ run_id: "test-run" })),
   openProject: vi.fn(), listThreads: vi.fn(), createProject: vi.fn(), renameProject: vi.fn(), createThread: vi.fn(), listGoModels: vi.fn(async () => [{ id: "muse-spark-1.3-contributor", effort_levels: [] }, { id: "gpt-5.6-luna", effort_levels: ["low", "medium", "high"] }]),
@@ -67,6 +68,32 @@ describe("Workspace journey", () => {
     expect(chats()).not.toContain("Made by CLI");
     await act(async () => receive({ kind: "removed", project_root: alpha.root, thread_id: made.id }));
     expect(chats()).toEqual(["First chat"]);
+  });
+  it("shows settings changed through the shared server without a reload, keeping a number being typed", async () => {
+    let receive!: Parameters<typeof bridge.onSettingsChanged>[0];
+    vi.mocked(bridge.onSettingsChanged).mockImplementationOnce(async callback => { receive = callback; return () => {}; });
+    vi.mocked(bridge.getSettings).mockResolvedValueOnce({ ...settings, default_approval_mode: "auto", approval_timeout_seconds: 600 });
+    await mount();
+    fireEvent.click(screen.getByRole("button", { name: "Settings" }));
+    fireEvent.click(within(screen.getByRole("navigation", { name: "Settings sections" })).getByRole("button", { name: "Permissions" }));
+    const mode = () => screen.getByRole("combobox", { name: "New chats start in" });
+    const timeout = () => screen.getByRole("spinbutton", { name: "Approval timeout (seconds)" });
+    expect([mode(), timeout()].map(field => (field as HTMLInputElement).value)).toEqual(["auto", "600"]);
+    // The live-check case: `themis call update_settings` set Custom and 30 seconds.
+    vi.mocked(bridge.getSettings).mockResolvedValueOnce({ ...settings, default_approval_mode: "custom", approval_timeout_seconds: 30 });
+    await act(async () => receive({ scope: "app" }));
+    expect([mode(), timeout()].map(field => (field as HTMLInputElement).value)).toEqual(["custom", "30"]);
+    // A timeout being typed keeps its draft while another field changes elsewhere, then saves on blur.
+    fireEvent.change(timeout(), { target: { value: "45" } });
+    vi.mocked(bridge.getSettings).mockResolvedValueOnce({ ...settings, default_approval_mode: "yolo", approval_timeout_seconds: 30 });
+    await act(async () => receive({ scope: "app" }));
+    expect([mode(), timeout()].map(field => (field as HTMLInputElement).value)).toEqual(["yolo", "45"]);
+    await act(async () => fireEvent.blur(timeout()));
+    expect(bridge.updateSettings).toHaveBeenCalledWith({ approval_timeout_seconds: 45 });
+    // runtime.jsonc written elsewhere: the rules shown are read again.
+    expect(bridge.getEffectivePermissions).toHaveBeenCalledTimes(1);
+    await act(async () => receive({ scope: "runtime" }));
+    expect(bridge.getEffectivePermissions).toHaveBeenCalledTimes(2);
   });
   it("lists only the chosen project's chats, most recent first, and switches projects", async () => {
     let receive!: Parameters<typeof bridge.onThreadEvent>[0];

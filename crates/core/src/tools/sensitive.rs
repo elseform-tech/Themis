@@ -1060,6 +1060,10 @@ mod tests {
             ("source", vec![".env"]),
             (".", vec![".env"]),
             ("sh", vec!["-c", "cat .env"]),
+            // Plain wrapped reads now count as reads; the file inside still asks.
+            ("sh", vec!["-c", "cat '.env'"]),
+            ("bash", vec!["-lc", "head -n 1 \".env\""]),
+            ("/bin/zsh", vec!["-c", "git show HEAD:.env"]),
             ("bash", vec!["-lc", "set -a; . ./.env; env"]),
             ("sh", vec!["-c", "cat<.env"]),
             ("sh", vec!["-c", "while read l; do :; done < .env"]),

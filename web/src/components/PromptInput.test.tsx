@@ -67,6 +67,7 @@ const builtinSkills=[
   ["automations","Automations"],
   ["browser-use","Browser use"],
   ["init","Init"],
+  ["subagents","Subagents"],
 ].map(([id,name])=>({id,name,description:"Manage capabilities",plugin:"Themis"}));
 
 it.each(builtinSkills.flatMap(skill=>["Enter","Tab"].map(key=>({skill,key}))))("selects /$skill.id with $key using its canonical command",({skill,key})=>{
@@ -99,6 +100,15 @@ it("finds the hooks command without any prefix",()=>{
   window.getSelection()!.removeAllRanges();window.getSelection()!.addRange(range);
   fireEvent.focus(input);
   expect(screen.getByRole("option",{name:/Hooks/})).toBeInTheDocument();
+});
+
+it("offers the subagents command from its first letters",()=>{
+  render(<PromptInput label="Subagents" value="/sub" onChange={vi.fn()} skills={builtinSkills} />);
+  const input=screen.getByRole("textbox",{name:"Subagents"});
+  const range=document.createRange();range.selectNodeContents(input);range.collapse(false);
+  window.getSelection()!.removeAllRanges();window.getSelection()!.addRange(range);
+  fireEvent.focus(input);
+  expect(screen.getByRole("option",{name:/Subagents/})).toBeInTheDocument();
 });
 
 it("keeps reference icons and labels together despite Tailwind's block image reset",()=>{

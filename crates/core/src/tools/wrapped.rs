@@ -337,6 +337,89 @@ fn finish(
     Some(())
 }
 
+/// Shells whose `-c` script [`plain_shell_command`] reads.
+const PLAIN_SHELLS: [&str; 4] = ["sh", "bash", "zsh", "dash"];
+
+/// The one command a plain `sh -c 'SCRIPT'` runs, for the read-only check: `sh`, `bash`,
+/// `zsh` or `dash`, named bare or from `/bin` or `/usr/bin`, then `-c` (or `-lc`/`-cl`), the
+/// script and nothing after it, and a script that is one simple command in plain words
+/// ([`plain_words`]). `None` for anything else, so the command keeps its own risk.
+pub(super) fn plain_shell_command(command: &[String]) -> Option<Vec<String>> {
+    let [program, flag, script] = command else {
+        return None;
+    };
+    let name = program
+        .strip_prefix("/usr/bin/")
+        .or_else(|| program.strip_prefix("/bin/"))
+        .unwrap_or(program);
+    if !PLAIN_SHELLS.contains(&name) || !matches!(flag.as_str(), "-c" | "-lc" | "-cl") {
+        return None;
+    }
+    plain_words(script)
+}
+
+/// The words of a script that is exactly one simple command the shell runs as written:
+/// words split by spaces or tabs, made of letters, digits and `-_./:,@+=%` outside quotes,
+/// whole `'single-quoted'` text, and `"double-quoted"` text without `$`, backticks,
+/// backslashes or `!`. Anything that could run, redirect, expand or join another command
+/// (`;`, `&`, `|`, `<`, `>`, `$`, backticks, parentheses, globs, `~`, braces, backslashes,
+/// newlines, comments), a variable assignment before the program and zsh's `=name`
+/// expansion are refused (`None`), as is an empty script.
+pub fn plain_words(script: &str) -> Option<Vec<String>> {
+    let mut words = Vec::new();
+    let mut chars = script.chars().peekable();
+    loop {
+        while chars.next_if(|c| matches!(c, ' ' | '\t')).is_some() {}
+        if chars.peek().is_none() {
+            break;
+        }
+        words.push(plain_word(&mut chars)?);
+    }
+    // `NAME=value program` runs the program with a variable set.
+    if words.first()?.contains('=') {
+        return None;
+    }
+    Some(words)
+}
+
+type ScriptChars<'a> = std::iter::Peekable<std::str::Chars<'a>>;
+
+fn plain_word(chars: &mut ScriptChars<'_>) -> Option<String> {
+    let mut word = String::new();
+    let mut started = false;
+    while let Some(c) = chars.next_if(|c| !matches!(c, ' ' | '\t')) {
+        match c {
+            '\'' => single_quoted(chars, &mut word)?,
+            '"' => double_quoted(chars, &mut word)?,
+            // zsh expands a word starting `=name` to the path of program `name`.
+            '=' if !started => return None,
+            c if c.is_ascii_alphanumeric() || "-_./:,@+=%".contains(c) => word.push(c),
+            _ => return None,
+        }
+        started = true;
+    }
+    Some(word)
+}
+
+fn single_quoted(chars: &mut ScriptChars<'_>, word: &mut String) -> Option<()> {
+    loop {
+        match chars.next()? {
+            '\'' => return Some(()),
+            c => word.push(c),
+        }
+    }
+}
+
+fn double_quoted(chars: &mut ScriptChars<'_>, word: &mut String) -> Option<()> {
+    loop {
+        match chars.next()? {
+            '"' => return Some(()),
+            '$' | '`' | '\\' | '!' => return None,
+            c => word.push(c),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -514,7 +597,141 @@ mod tests {
         }
     }
 
+    fn plain(words: &[&str]) -> Option<Vec<String>> {
+        plain_shell_command(&argv(words))
+    }
+
+    #[test]
+    fn plain_shell_scripts_give_their_one_command() {
+        assert_eq!(
+            plain(&["sh", "-c", "cat hello.txt"]),
+            Some(argv(&["cat", "hello.txt"]))
+        );
+        assert_eq!(
+            plain(&["bash", "-lc", "ls -la src"]),
+            Some(argv(&["ls", "-la", "src"]))
+        );
+        assert_eq!(
+            plain(&["/bin/zsh", "-c", "  git\tstatus  "]),
+            Some(argv(&["git", "status"]))
+        );
+        assert_eq!(
+            plain(&["/usr/bin/dash", "-cl", r#"grep -n 'a; b' "c | d" e'f'"#]),
+            Some(argv(&["grep", "-n", "a; b", "c | d", "ef"]))
+        );
+        assert_eq!(
+            plain(&["sh", "-c", "find . -name '*.rs' --x=1 a,b@c+d%e:f"]),
+            Some(argv(&[
+                "find",
+                ".",
+                "-name",
+                "*.rs",
+                "--x=1",
+                "a,b@c+d%e:f"
+            ]))
+        );
+        assert_eq!(plain(&["sh", "-c", "cat ''"]), Some(argv(&["cat", ""])));
+    }
+
+    #[test]
+    fn anything_but_one_plain_command_is_refused() {
+        for script in [
+            "",
+            "   ",
+            "cat a; rm b",
+            "cat a && rm b",
+            "cat a || rm b",
+            "cat a | head",
+            "cat a &",
+            "cat a > b",
+            "cat < a",
+            "cat $(x)",
+            "cat `x`",
+            "cat $HOME",
+            "cat \"$HOME\"",
+            "cat \"`x`\"",
+            "cat \"a\\b\"",
+            "cat \"a!b\"",
+            "cat *.txt",
+            "cat a?",
+            "cat [ab]",
+            "cat ~/x",
+            "cat {a,b}",
+            "(cat a)",
+            "cat a\nrm b",
+            "cat a # x",
+            "cat a\\ b",
+            "cat 'unclosed",
+            "cat \"unclosed",
+            "X=1 cat a",
+            "'X=1' cat a",
+            "cat =ls",
+            "cat <<EOF",
+            "cat a^b",
+        ] {
+            assert_eq!(plain(&["sh", "-c", script]), None, "{script:?}");
+        }
+        for command in [
+            &["sh", "-c", "cat a", "x"][..],
+            &["sh", "-c", "--", "cat a"],
+            &["sh", "-e", "-c", "cat a"],
+            &["sh", "-x", "cat a"],
+            &["sh", "cat a"],
+            &["env", "sh", "-c", "cat a"],
+            &["./sh", "-c", "cat a"],
+            &["/tmp/sh", "-c", "cat a"],
+            &["fish", "-c", "cat a"],
+            &["python", "-c", "cat a"],
+        ] {
+            assert_eq!(plain(command), None, "{command:?}");
+        }
+    }
+
+    /// Characters that mean something to a shell outside quotes.
+    const SHELL_SPECIAL: &str = ";&|<>()$`\\\n*?[]{}~#!^\"'";
+
     proptest! {
+        #[test]
+        fn a_script_with_a_bare_special_character_is_refused(
+            before in "[a-z]{1,6}( [a-z.-]{1,6}){0,2}",
+            special in proptest::sample::select(SHELL_SPECIAL.chars().collect::<Vec<_>>()),
+            after in "[a-z .-]{0,8}",
+        ) {
+            let text = format!("{before}{special}{after}");
+            prop_assert_eq!(plain_words(&text), None);
+        }
+
+        #[test]
+        fn accepted_words_rejoin_to_the_same_words(script in ".{0,40}") {
+            if let Some(words) = plain_words(&script) {
+                prop_assert!(!words.is_empty());
+                // Single-quoting each word gives the same command back.
+                if words.iter().all(|word| !word.contains('\'')) {
+                    let quoted: Vec<String> = words.iter().map(|w| format!("'{w}'")).collect();
+                    prop_assert_eq!(plain_words(&quoted.join(" ")), Some(words.clone()));
+                }
+                // The general script reader sees the same single command.
+                if !KEYWORDS.contains(&words[0].as_str()) {
+                    prop_assert_eq!(split_script(&script), Some(vec![words]));
+                }
+            }
+        }
+
+        #[test]
+        fn plain_words_joined_by_spaces_split_back(
+            words in proptest::collection::vec("[A-Za-z0-9_./:,@+%-][A-Za-z0-9_./:,@+%=-]{0,8}", 1..6),
+            quoted in proptest::collection::vec(".{0,8}", 0..3),
+        ) {
+            prop_assume!(!words[0].contains('='));
+            let mut expected = words.clone();
+            let mut text = words.join(" ");
+            for piece in quoted.iter().filter(|piece| !piece.contains('\'')) {
+                text.push_str(&format!(" '{piece}'"));
+                expected.push(piece.clone());
+            }
+            prop_assert_eq!(plain_words(&text), Some(expected));
+        }
+
         #[test]
         fn never_panics_and_stays_bounded(words in proptest::collection::vec(".{0,24}", 0..6)) {
             if let Some(found) = wrapped_commands(&words) {

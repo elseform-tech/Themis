@@ -310,6 +310,11 @@ const ALL: &[(&str, &str, &[&str])] = &[
         &[],
     ),
     (AGENT_CLI_NETWORK_BLOCKED, "agent-cli-network-blocked", &[]),
+    (
+        AGENT_CLI_READ_UNAVAILABLE,
+        "agent-cli-read-unavailable",
+        &["method"],
+    ),
     (AGENT_SWITCH_ON_REFUSED, "agent-switch-on-refused", &[]),
     (TOOL_SANDBOX_NOTE, "tool-sandbox-note", &[]),
     (

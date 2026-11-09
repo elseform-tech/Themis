@@ -472,6 +472,10 @@ pub const AGENT_CLI_OTHER_PROJECT_REFUSED: &str =
 /// The app server's answer to an agent's fetching `plugin_action` when its run blocks the network.
 pub const AGENT_CLI_NETWORK_BLOCKED: &str =
     include_str!("../builtins/prompts/agent-cli-network-blocked.md");
+/// The app server's answer to an agent's `recall` or `search_memory` when its run lacks that tool;
+/// `{{method}}`.
+pub const AGENT_CLI_READ_UNAVAILABLE: &str =
+    include_str!("../builtins/prompts/agent-cli-read-unavailable.md");
 /// `next` hint after starting a background task.
 pub const TOOL_BACKGROUND_NEXT: &str = include_str!("../builtins/prompts/tool-background-next.md");
 

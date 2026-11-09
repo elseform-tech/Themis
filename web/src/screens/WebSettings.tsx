@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
 import { checkSearchServer, getWebSettings, updateWebSettings, type SearchServerStatus } from "../lib/tauri";
-import { describeError } from "../state/store";
+import { describeError, useSettingsChanges } from "../state/store";
 import { SettingsGroup } from "./SettingsGroup";
+import { useDraft } from "./settingsDrafts";
 
 const STATE_LABEL: Record<SearchServerStatus["state"], string> = {
   working: "Working",
@@ -23,10 +24,11 @@ function statusText(status: SearchServerStatus) {
 export function WebSettingsSection({ onSaved }: { onSaved?: () => void } = {}) {
   const [saved, setSaved] = useState<string | null | undefined>(undefined);
   const [builtIn, setBuiltIn] = useState(false);
-  const [draft, setDraft] = useState("");
+  const [draft, setDraft] = useDraft(saved ?? "");
   const [status, setStatus] = useState<SearchServerStatus | null>(null);
   const [checking, setChecking] = useState(false);
   const [error, setError] = useState("");
+  const changes = useSettingsChanges("runtime");
   const check = async (url?: string) => {
     setChecking(true);
     try { setStatus(await checkSearchServer(url)); } catch (reason) { setStatus({ state: "error", message: describeError(reason) }); } finally { setChecking(false); }
@@ -34,11 +36,10 @@ export function WebSettingsSection({ onSaved }: { onSaved?: () => void } = {}) {
   useEffect(() => {
     void getWebSettings().then(web => {
       setSaved(web.search_url);
-      setDraft(web.search_url ?? "");
       setBuiltIn(!!web.built_in?.available);
       if (web.search_url || web.built_in?.available) void check();
     }).catch(reason => setError(describeError(reason)));
-  }, []);
+  }, [changes]);
   if (saved === undefined) return error ? <p role="alert" className="themis-form-error">{error}</p> : null;
   const save = async () => {
     if (draft.trim() === (saved ?? "")) return;
