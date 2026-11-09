@@ -483,9 +483,9 @@
    "cyclomatic": 24
   },
   "crates/desktop/src/cli.rs::run": {
-   "cognitive": 55,
-   "cyclomatic": 156,
-   "lines": 279
+   "cognitive": 40,
+   "cyclomatic": 148,
+   "lines": 253
   },
   "crates/desktop/src/cli.rs::send_message": {
    "cyclomatic": 31,

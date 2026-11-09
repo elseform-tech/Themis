@@ -883,6 +883,18 @@ may be left out. Unknown marketplace names list the known ones, and
 [plugins.md](plugins.md). This adds no setting and no method or action to the
 agent's allowed lists.
 
+**`themis doctor --integrations`** gives the agent nothing new either: it reads
+the store with `plugin_action` `list` (with the run's project as `projectRoot`
+only when `--project` or the current folder's `.themis/plugins/` names it) and
+checks the rest in the `themis` process. In an agent's shell it starts each
+switched-on MCP server there, inside the run's sandbox and with its network
+setting, exactly as `themis mcp test` does, and never asks the server's
+`test_mcp`; a server that reads a secret is listed as not started (a test from
+the agent's shell never reads secrets). Without a run credential it asks the app
+server's `test_mcp`, as your own `themis mcp test` does. It writes no log of its
+own; the app server's `integration` operation lines (metadata only) record its
+`list` and, for you, each `test_mcp`.
+
 ### Approvals for `themis` calls
 
 A `themis` call in the agent's shell is approved at the level of what it does,
@@ -890,10 +902,10 @@ not as a generic command:
 
 | `themis` command | Risk | Custom | Auto | YOLO |
 | --- | --- | --- | --- | --- |
-| Reads: `status`, `doctor`, `usage`, `models`, `permissions`, `auth status`, `--help` or `-h` anywhere (the CLI then only prints its usage), a bare `plugin`/`skill`/`mcp`/`hook`; `plugin list/show/export/preview/updates`; `plugin`/`skill`/`mcp`/`hook inspect`; `plugin marketplace list/browse/preview/changes/check`; `skill list`; `skill`/`mcp`/`hook list/show`; `call` with a reading method from the allowed list | `read` | no prompt (the built-in read rule) | no prompt | runs |
+| Reads: `status`, `doctor` (also `doctor --integrations --no-start`), `usage`, `models`, `permissions`, `auth status`, `--help` or `-h` anywhere (the CLI then only prints its usage), a bare `plugin`/`skill`/`mcp`/`hook`; `plugin list/show/export/preview/updates`; `plugin`/`skill`/`mcp`/`hook inspect`; `plugin marketplace list/browse/preview/changes/check`; `skill list`; `skill`/`mcp`/`hook list/show`; `call` with a reading method from the allowed list | `read` | no prompt (the built-in read rule) | no prompt | runs |
 | Changes through the store: `plugin create/save/edit/disable`, `skill save`, `mcp`/`hook add/update`, `skill enable`, any `disable`, `plugin marketplace enable/disable`, a local `import` | `write` | asks; **Allow in this chat** covers the same command (its full argv) | the reviewer decides | runs |
 | Network: `plugin install/update`, an `import` from an `http(s)` URL or with `--ref`/`--subdirectory`, `plugin marketplace add/refresh` | `network` | as a change | the reviewer decides | runs |
-| Tests that start code: `mcp test`, `hook test`, `skill verify` | `execute` | asks; in an agent's shell the test starts the command inside the run's sandbox, not on the server | the reviewer decides (an ordinary sandboxed command, not a sandbox escape) | runs, inside the sandbox YOLO keeps |
+| Tests that start code: `mcp test`, `hook test`, `skill verify`, `doctor --integrations` (it starts each switched-on MCP server) | `execute` | asks; in an agent's shell the test starts the command inside the run's sandbox, not on the server | the reviewer decides (an ordinary sandboxed command, not a sandbox escape) | runs, inside the sandbox YOLO keeps |
 | Removals: `plugin delete/uninstall`, `skill`/`mcp`/`hook delete/remove`, `plugin marketplace remove` | `destructive` | asks every time, never covered by **Allow in this chat** | the reviewer decides | runs |
 | Switching on: `hook enable`, `mcp enable`, `plugin enable` (which turns on the hooks the plugin has on), `call plugin_action` with `enable` or `set_component_enabled` turning on a hook or MCP server | `execute` | asks every time, never covered by **Allow in this chat** | always the person, like a sandbox escape: blocked with the question box (`auto-switch-on-reason.md`, `auto-switch-on-safer.md`) and only their **Allow once** lets it run | runs |
 

@@ -847,3 +847,66 @@ async fn an_agent_credential_stays_in_its_project_and_behind_its_network_block()
     assert!(logs.contains("\"reason\":\"network_blocked\""), "{logs}");
     fx.shut_down().await;
 }
+
+/// `themis doctor --integrations` in a run's shell: asked once as an execution (it starts the
+/// switched-on MCP servers), it starts them itself inside the run's sandbox (the server is never
+/// asked to run a test), reports a hook whose program is missing, and gains the agent's
+/// credential nothing: `--no-start` is a read and asks nothing.
+#[tokio::test(flavor = "multi_thread")]
+async fn doctor_integrations_in_a_runs_shell_starts_servers_inside_its_sandbox() {
+    if !common::git_available() {
+        return;
+    }
+    let _turn = ONE_SERVER.lock().await;
+    let fx = fixture().await;
+    let script = fx.project.join("server.py");
+    std::fs::write(&script, MCP_STDIO_SERVER).unwrap();
+    // The person saved these and switched the server on (the hook stays off: it would run).
+    fx.state
+        .plugin_action(
+            json!({"action": "save", "scope": "global", "spec": {"name": "demo",
+            "hooks": [{"name": "gone", "event": "BeforeTool", "enabled": false,
+                "command": "no-such-program-for-doctor"}],
+            "mcp": {"local": {"command": "python3", "args": [script], "enabled": true}}}}),
+        )
+        .await
+        .unwrap();
+    let provider = mount_calls(vec![
+        words("themis doctor --integrations --json"),
+        words("themis doctor --integrations --no-start --json"),
+    ])
+    .await;
+    common::use_mock_llm(&fx.state, &provider).await;
+    let thread = fx.thread(ApprovalMode::Custom).await;
+    let (asked, outputs) = run(&fx, &thread, &[ApprovalDecision::Once]).await;
+    assert_eq!(asked.len(), 1, "only the starting check asks: {asked:?}");
+    assert_eq!(
+        argv_of(&asked[0])[..3],
+        ["themis", "doctor", "--integrations"]
+    );
+    assert_eq!(outputs.len(), 2, "{outputs:#?}");
+    for (output, started) in outputs.iter().zip([1, 0]) {
+        let result: Value = serde_json::from_str(output).unwrap();
+        assert_ne!(result["exit_code"], 0, "a problem fails it: {result}");
+        let printed = result["output"].as_str().unwrap();
+        let line = printed.lines().find(|line| line.starts_with('{'));
+        let report: Value = line
+            .and_then(|line| serde_json::from_str(line).ok())
+            .unwrap_or_else(|| panic!("{result}"));
+        assert_eq!(report["checked"]["mcp_started"], started, "{report}");
+        assert!(
+            report["problems"].to_string().contains("demo/gone"),
+            "{report}"
+        );
+    }
+    let logs = logs(&fx);
+    assert!(
+        !logs.contains("agent_call_refused"),
+        "the check asks the server for nothing the agent may not: {logs}"
+    );
+    assert!(
+        !logs.contains("\"action\":\"test_mcp\""),
+        "the server started nothing: {logs}"
+    );
+    fx.shut_down().await;
+}

@@ -142,7 +142,13 @@ definition to a scratch file, apply it with the matching `themis` command), **ve
 3. **Clear inputs on the CLI path.** Complete skill, hook and MCP definitions in `--help` and
    errors; defaults for empty lists (`allowedTools`, `scripts`); one error listing every problem.
    Fix the marketplace name lookup and stop single-plugin `preview` from scanning the whole
-   marketplace.
+   marketplace. (Built on `codex/cli-clear-inputs`: `themis skill|hook|mcp --help` and every
+   definition error print the exact JSON shape; the store and the CLI report every problem at
+   once; a skill's `description`, `allowedTools` and `scripts` default to empty; a missing PLUGIN
+   is created. The name bug was `manage_integrations`' `marketplace` field, which
+   marketplace-level actions ignored; they now take it, and an unknown name lists the known ones.
+   `themis plugin preview NAME@MARKET` and `install` check only that plugin when it has no saved
+   check.)
 4. **One command that checks every installed integration**: `themis doctor --integrations`
    (Read risk except where it starts code). Today verification is piecemeal: `plugin inspect`
    checks a package before install, `mcp test` and `hook test` check one installed item and need
@@ -154,7 +160,11 @@ definition to a scratch file, apply it with the matching `themis` command), **ve
    hook's command found and runnable (not executed); each skill's paths present and its
    `SKILL.md` readable. It reports every problem with its item, scope and a one-line fix hint, as
    JSON with `--json`, and logs metadata only. The guides' verify step uses it after every change,
-   and it is in the A/B rerun.
+   and it is in the A/B rerun. (Built on `codex/doctor-integrations`: the checks run in the
+   `themis` process from the store's `list`, so the agent's credential gains nothing; servers
+   start through the server's `test_mcp` for the person and inside the run's sandbox for an
+   agent, like `mcp test`. `--no-start` skips them and is a read; with servers it is `execute`.
+   It writes no log of its own beyond the server's existing metadata-only operation lines.)
 5. **Guides rewritten** around find, change, verify, with resolved paths. `/hooks` uses
    `themis hook …`. A tool advertises itself in every request and a CLI does not, so the agent
    also needs a reminder once the old tools go (decided 2026-11-07): one short system-prompt line

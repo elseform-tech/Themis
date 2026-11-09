@@ -25,3 +25,5 @@ To create or update a skill, do the work as an agent; do not ask the user to fil
 When updating a skill, preserve its ID and other skills in the plugin. Use local scope only when explicitly requested. A generated skill must never bypass Themis approvals.
 
 Use `manage_integrations` with `set_component_enabled`, the package name, kind `skill`, the skill's stored id, and enabled boolean. Use `remove_component` with the same name/kind/id to remove the requested skill while preserving its siblings. Discovered source files remain read-only; disable those skills or explain how to remove the original file. Read supporting files only as needed. Never claim an imported skill works without testing the relevant behavior. Secrets and permission bypasses do not belong in instructions.
+
+To check every installed integration after a change, run `themis doctor --integrations` in the shell: it lists each problem with where it is and a one-line fix (`--no-start` checks without starting MCP servers).
