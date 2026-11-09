@@ -159,13 +159,22 @@ async fn cli_large_mcp_response_uses_bounded_context() {
         ResponseTemplate::new(200).set_body_json(json!({"jsonrpc":"2.0","id":body["id"],"result":result}))
     }).mount(&mcp).await;
     let provider = MockServer::builder().start().await;
+    // The person's words open their message; a guide their words call for may follow.
+    let asked = |messages: &Vec<Value>, prompt: &str| {
+        messages.iter().any(|m| {
+            m["role"] == "user"
+                && m["content"]
+                    .as_str()
+                    .is_some_and(|text| text.starts_with(prompt))
+        })
+    };
     Mock::given(method("POST")).respond_with(move |request: &Request| {
         let body: Value = request.body_json().unwrap();
         assert!(!body["messages"][0]["content"].as_str().unwrap().contains("You summarize agent context"), "selective retrieval must not compact");
         assert!(request.body.len() < 100_000, "bulk MCP data must stay outside model requests");
         let messages = body["messages"].as_array().unwrap();
         let last = messages.last().unwrap();
-        let (id,name,args) = if messages.iter().any(|m|m["role"]=="user" && m["content"]=="Read the small MCP result") {
+        let (id,name,args) = if asked(messages, "Read the small MCP result") {
             if last["role"] == "tool" {
                 let invocation = &messages[messages.len()-2]["tool_calls"][0]["function"]["arguments"];
                 assert_eq!(invocation,"{}","untrusted output must not rewrite an executed invocation");
@@ -173,7 +182,7 @@ async fn cli_large_mcp_response_uses_bounded_context() {
             }
             let name = body["tools"].as_array().unwrap().iter().find_map(|t|t["function"]["name"].as_str().filter(|n|n.ends_with("small"))).unwrap();
             ("small".to_owned(),name.to_owned(),json!({}))
-        } else if messages.iter().any(|m|m["role"]=="user" && m["content"]=="Process the large JSONL and generate a file locally") {
+        } else if asked(messages, "Process the large JSONL and generate a file locally") {
             if last["role"] == "tool" {
                 let result: Value = serde_json::from_str(last["content"].as_str().unwrap()).unwrap();
                 assert_eq!(result["exit_code"],0);
