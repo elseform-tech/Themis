@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useLayoutEffect } from "react";
 import type { Question } from "../lib/types";
 import "./QuestionBox.css";
 
@@ -58,20 +58,29 @@ function PageNav({ page }: { page: QuestionPage }) {
   );
 }
 
-/** One answer on offer: its label first, and under it the agent's hint as small muted text,
- *  two lines until clicked open. Clicking the label picks it; clicking the hint only reads. */
+/** One answer on offer: the whole card picks it, its label first and under it the agent's hint as
+ *  small muted text, two lines until "More" opens it (the toggle shows only when the hint is cut). */
 function Choice({ question, option, chosen, disabled, onPick }: { question: Question; option: string; chosen: boolean; disabled: boolean; onPick: (answer: string) => void }) {
   const [open, setOpen] = useState(false);
+  const [cut, setCut] = useState(false);
+  const hintRef = useRef<HTMLSpanElement>(null);
   const recommended = option === question.assumption;
   const hint = question.reasons?.[option];
+  useLayoutEffect(() => {
+    const element = hintRef.current;
+    if (element && !open) setCut(element.scrollHeight > element.clientHeight + 1);
+  }, [hint, open]);
   return (
     <div className={`themis-question-option${recommended ? " is-recommended" : ""}${chosen ? " is-chosen" : ""}`}>
       <button type="button" className="themis-question-choice" aria-pressed={chosen || undefined} disabled={disabled} onClick={() => onPick(option)}>
-        <span>{option}</span>
-        {recommended && <small className="themis-question-tag">{question.choices?.length ? "Recommended" : "Suggested"}</small>}
+        <span className="themis-question-label">
+          <span>{option}</span>
+          {recommended && <small className="themis-question-tag">{question.choices?.length ? "Recommended" : "Suggested"}</small>}
+        </span>
+        {hint && <span ref={hintRef} className={`themis-question-hint${open ? " is-open" : ""}`}>{hint}</span>}
       </button>
-      {hint && (
-        <button type="button" className={`themis-question-hint${open ? " is-open" : ""}`} aria-expanded={open} onClick={() => setOpen(!open)}>{hint}</button>
+      {hint && (cut || open) && (
+        <button type="button" className="themis-question-more" aria-expanded={open} onClick={() => setOpen(!open)}>{open ? "Less" : "More"}</button>
       )}
     </div>
   );

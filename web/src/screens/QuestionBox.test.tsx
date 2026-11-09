@@ -26,21 +26,28 @@ describe("QuestionBox", () => {
     await waitFor(() => expect(answer).toHaveBeenCalledWith("Tabs"));
   });
 
-  it("shows each option's hint under its label, two lines until opened, and opening picks nothing", async () => {
+  it("picks an option from anywhere on it, hint included; More opens a cut hint and picks nothing", async () => {
     const answer = vi.fn().mockResolvedValue(undefined);
     const long = "Re-indents every file with spaces. It matches the existing files and the formatter, but touches every line once; easy to undo with one revert.";
+    // jsdom lays nothing out: a hint taller than its two lines is what the browser reports for a cut one.
+    const height = vi.spyOn(HTMLElement.prototype, "scrollHeight", "get").mockImplementation(function (this: HTMLElement) {
+      return this.textContent === long ? 60 : 0;
+    });
     render(<QuestionBox question={question({ choices: ["Spaces", "Tabs"], reasons: { Spaces: long, Tabs: "smaller diffs" } })} onAnswer={answer} />);
-    // The label is the button; the hint is its own small control under it.
-    expect(screen.getByRole("button", { name: /^Spaces/ })).not.toHaveTextContent(long);
-    const hint = screen.getByRole("button", { name: long });
-    expect(hint).toHaveClass("themis-question-hint");
-    expect(hint).toHaveAttribute("aria-expanded", "false");
-    fireEvent.click(hint);
-    expect(hint).toHaveAttribute("aria-expanded", "true");
-    expect(hint).toHaveClass("is-open");
+    // The card is one button: label and hint together.
+    const spaces = screen.getByRole("button", { name: /^Spaces/ });
+    expect(spaces).toHaveTextContent(long);
+    // Only the cut hint gets a More toggle; opening it picks nothing.
+    const more = screen.getByRole("button", { name: "More" });
+    expect(screen.getAllByRole("button", { name: "More" })).toHaveLength(1);
+    fireEvent.click(more);
+    expect(screen.getByRole("button", { name: "Less" })).toHaveAttribute("aria-expanded", "true");
+    expect(spaces.querySelector(".themis-question-hint")).toHaveClass("is-open");
     expect(answer).not.toHaveBeenCalled();
-    fireEvent.click(screen.getByRole("button", { name: /^Tabs/ }));
+    // Clicking the hint text picks its option.
+    fireEvent.click(screen.getByText("smaller diffs"));
     await waitFor(() => expect(answer).toHaveBeenCalledWith("Tabs"));
+    height.mockRestore();
   });
 
   it("offers an open question's suggestion as one answer, beside a written one", async () => {
