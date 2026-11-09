@@ -103,6 +103,14 @@ async fn a_definition_is_a_file_stdin_or_inline_json() {
             &format!("  {server_json}"),
         ],
     );
+    // So do the single quotes of a shell command passed as one argument: the agent's shell
+    // tool runs the program with its arguments as given, no shell in between.
+    let quoted = format!("'{server_json}'");
+    ok(data.path(), &["mcp", "add", "demo", "quoted", &quoted]);
+    assert_eq!(
+        plugin(data.path(), "demo")["spec"]["mcp"]["quoted"]["command"],
+        "printf"
+    );
 
     let hook = json!({"event": "BeforeTool", "command": "true"}).to_string();
     ok_in(

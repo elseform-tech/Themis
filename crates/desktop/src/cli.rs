@@ -23,12 +23,18 @@ fn data_dir() -> Result<PathBuf, String> {
             .ok_or("HOME is unset")?
             .join("Library/Application Support/ai.themis.desktop"))
     }
+    // An agent's shell passes `USERPROFILE` but not `APPDATA` (see
+    // `themis_core::tools::scrubbed_env`), so the roaming folder is found from it too.
     #[cfg(target_os = "windows")]
     {
         std::env::var_os("APPDATA")
             .map(PathBuf::from)
+            .or_else(|| {
+                std::env::var_os("USERPROFILE")
+                    .map(|profile| PathBuf::from(profile).join("AppData").join("Roaming"))
+            })
             .map(|path| path.join("ai.themis.desktop"))
-            .ok_or_else(|| "APPDATA is unset".to_owned())
+            .ok_or_else(|| "APPDATA and USERPROFILE are unset".to_owned())
     }
     #[cfg(not(any(target_os = "macos", target_os = "windows")))]
     {

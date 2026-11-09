@@ -1,8 +1,9 @@
 //! The app's own `themis` is on every agent run's `PATH`, on every OS (CI runs this on macOS,
 //! Linux and Windows): the folder a run's credential names holds `themis` (a link on macOS and
 //! Linux, a copy of the console CLI on Windows), a bare `themis` resolves there first, and it
-//! reaches the live app server with the run's credential. In-process app server, isolated app
-//! data, synthetic credentials only.
+//! reaches the live app server with the run's credential, in the scrubbed environment a shell
+//! command gets (no `APPDATA` on Windows, which once stopped every agent `themis` call there).
+//! In-process app server, isolated app data, synthetic credentials only.
 use std::path::PathBuf;
 use std::time::Duration;
 use themis_desktop::server::Server;
@@ -43,16 +44,18 @@ async fn a_bare_themis_on_the_agent_path_is_the_apps_cli() {
         .collect();
     assert_eq!(names.len(), 1, "{names:?}");
 
-    // A bare `themis`, resolved through a PATH with that folder first (as a run's shell has it),
-    // answers with the run's credential.
+    // A bare `themis`, resolved through a PATH with that folder first and started with only the
+    // variables a shell command keeps (as a run's shell has it), answers with the run's
+    // credential.
     let path = std::env::join_paths(std::iter::once(folder.to_path_buf()).chain(
         std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default()),
     ))
     .unwrap();
     let output = std::process::Command::new("themis")
         .args(["plugin", "list"])
+        .env_clear()
+        .envs(themis_core::tools::scrubbed_env())
         .env("PATH", &path)
-        .env_remove("OPENCODE_KEY")
         .envs(access.env())
         .output()
         .expect("`themis` is found on the agent's PATH");
@@ -64,6 +67,8 @@ async fn a_bare_themis_on_the_agent_path_is_the_apps_cli() {
     assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "[]");
     let version = std::process::Command::new("themis")
         .arg("--version")
+        .env_clear()
+        .envs(themis_core::tools::scrubbed_env())
         .env("PATH", &path)
         .output()
         .unwrap();

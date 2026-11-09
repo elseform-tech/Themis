@@ -94,7 +94,7 @@ pub(super) fn read(source: &str) -> Result<Value, String> {
             .map_err(|e| format!("Cannot read the definition from stdin: {e}"))?;
         input
     } else if is_inline(source) {
-        source.as_bytes().to_vec()
+        inline(source).as_bytes().to_vec()
     } else {
         let metadata = std::fs::metadata(source).map_err(|e| {
             format!("{source}: {e} (a definition is a file path, - for stdin, or JSON starting with {{)")
@@ -111,7 +111,17 @@ pub(super) fn read(source: &str) -> Result<Value, String> {
 }
 
 fn is_inline(source: &str) -> bool {
-    source.trim_start().starts_with('{')
+    inline(source).starts_with('{')
+}
+
+/// Inline JSON without surrounding space, or the single quotes a shell would have removed: the
+/// agent's shell tool passes each argument as it is, with no shell in between, so a definition
+/// copied as `'{…}'` arrives with its quotes.
+fn inline(source: &str) -> &str {
+    let text = source.trim();
+    text.strip_prefix("'{")
+        .and_then(|rest| rest.strip_suffix("}'"))
+        .map_or(text, |_| &text[1..text.len() - 1])
 }
 
 /// How a definition's source is named in messages.

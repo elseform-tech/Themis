@@ -798,7 +798,10 @@ An agent's `shell` commands (foreground and background, subagents' too) can run
   holds is replaced at the next start). Agents cannot write the app data, so
   they cannot replace it. Ordinary cargo builds on Windows give the bundler an
   empty `binaries/themis-cli-<target>.exe` stand-in (`build.rs`), which the
-  app never copies; it then uses the `themis.exe` built beside it.
+  app never copies; it then uses the `themis.exe` built beside it. A shell
+  command keeps only a short list of variables (`USERPROFILE` but not
+  `APPDATA` on Windows), so the CLI finds the app data from `USERPROFILE` when
+  `APPDATA` is missing.
 
 The server treats every call carrying a run credential as the agent's and allows
 only an explicit list; anything else, including any method added later, is

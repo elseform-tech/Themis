@@ -564,7 +564,7 @@ fn combine_output(
 /// (case-insensitive) is **never** inherited, even if it were allowlisted —
 /// the blocklist is checked first (see [`child_env_allowed`]). Values are
 /// never inspected. Locale names never contain those words, so they pass.
-pub(super) fn scrubbed_env() -> Vec<(std::ffi::OsString, std::ffi::OsString)> {
+pub fn scrubbed_env() -> Vec<(std::ffi::OsString, std::ffi::OsString)> {
     std::env::vars_os()
         .filter(|(name, _)| child_env_allowed(&name.to_string_lossy()))
         .collect()
