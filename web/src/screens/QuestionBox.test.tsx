@@ -100,7 +100,6 @@ describe("several questions in one box", () => {
     expect(screen.getByRole("region", { name: "Question from the agent" })).toHaveTextContent("Tabs or spaces?");
     expect(screen.getByText("Question 1 of 3")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Back" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Next" })).toBeDisabled();
     fireEvent.click(screen.getByRole("button", { name: /^Tabs/ }));
     await waitFor(() => expect(screen.getByText("Question 2 of 3")).toBeInTheDocument());
     expect(send).not.toHaveBeenCalled();
@@ -144,6 +143,53 @@ describe("several questions in one box", () => {
     fireEvent.click(screen.getByRole("button", { name: "Submit" }));
     await waitFor(() => expect(send).toHaveBeenCalledWith([{ questionId: "p2", answer: "MIT" }]));
     expect(leave).toHaveBeenCalledWith(["p1"]);
+  });
+
+  it("moves freely between pages before answering, and a later page's answer keeps the earlier ones open", async () => {
+    const send = vi.fn().mockResolvedValue(undefined);
+    const leave = vi.fn();
+    render(<QuestionPages pages={pages()} onSend={send} onLeave={leave} />);
+    // Next looks ahead without answering; Back returns.
+    fireEvent.click(screen.getByRole("button", { name: "Next" }));
+    expect(screen.getByText("Question 2 of 3")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Next" }));
+    expect(screen.getByText("Question 3 of 3")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Back" }));
+    fireEvent.click(screen.getByRole("button", { name: "Back" }));
+    expect(screen.getByText("Question 1 of 3")).toBeInTheDocument();
+    // Next on the last page opens the review, unanswered pages shown as Skipped.
+    fireEvent.click(screen.getByRole("button", { name: "Next" }));
+    fireEvent.click(screen.getByRole("button", { name: /^MIT/ }));
+    await waitFor(() => expect(screen.getByText("Question 3 of 3")).toBeInTheDocument());
+    fireEvent.click(screen.getByRole("button", { name: "Next" }));
+    const review = await screen.findByRole("region", { name: "Your answers" });
+    expect(review).toHaveTextContent("Tabs or spaces?Skipped");
+    expect(review).toHaveTextContent("Which license?MIT");
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it("clears a pick when it is clicked again, staying on the page", async () => {
+    render(<QuestionPages pages={pages()} onSend={vi.fn()} onLeave={vi.fn()} />);
+    fireEvent.click(screen.getByRole("button", { name: /^Tabs/ }));
+    await waitFor(() => expect(screen.getByText("Question 2 of 3")).toBeInTheDocument());
+    fireEvent.click(screen.getByRole("button", { name: "Back" }));
+    const tabs = screen.getByRole("button", { name: /^Tabs/ });
+    expect(tabs).toHaveAttribute("aria-pressed", "true");
+    fireEvent.click(tabs);
+    expect(screen.getByText("Question 1 of 3")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^Tabs/ })).not.toHaveAttribute("aria-pressed");
+  });
+
+  it("keeps Next and Submit closed past an unanswered question the work waits on", async () => {
+    render(<QuestionPages pages={[question({ id: "b", group: "g", blocking: true }), question({ id: "n", group: "g" })]} onSend={vi.fn()} onLeave={vi.fn()} />);
+    expect(screen.getByRole("button", { name: "Next" })).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: /^Tabs/ }));
+    await waitFor(() => expect(screen.getByText("Question 2 of 2")).toBeInTheDocument());
+    fireEvent.click(screen.getByRole("button", { name: "Back" }));
+    fireEvent.click(screen.getByRole("button", { name: /^Tabs/ }));
+    // Cleared again: the review cannot be sent while the waiting question has no answer.
+    fireEvent.click(screen.getByRole("button", { name: "Next" }));
+    expect(screen.getByText("Question 1 of 2")).toBeInTheDocument();
   });
 
   it("offers no Skip on a page the work waits on", () => {

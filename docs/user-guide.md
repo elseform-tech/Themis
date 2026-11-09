@@ -138,12 +138,14 @@ your own.
   answer, Skip, or wait until the box moves into its turn. **Stop** still works.
   Approvals don't lock it.
 - **Several questions at once.** When the agent asks up to four related things
-  together, one box shows them as pages, "1/3" with Back and Next. Picking or
-  writing an answer, or **Skip**, turns to the next page. After the last page a
-  review lists every question with your answer (or **Skipped**); click one to
-  change it, then **Submit** sends them to the agent together, in one message. A
-  skipped question stays open in its turn. A page the work waits on has no Skip.
-  A single question needs no review: your answer goes at once.
+  together, one box shows them as pages, "1/3" with Back and Next, which move
+  freely, so you can read ahead before answering. Picking or writing an answer,
+  or **Skip**, turns to the next page; clicking your pick again clears it. After
+  the last page (or Next there) a review lists every question with your answer
+  (or **Skipped**); click one to change it, then **Submit** sends them to the
+  agent together, in one message. A skipped question stays open in its turn. A
+  page the work waits on has no Skip, and Next and Submit wait for its answer. A
+  single question needs no review: your answer goes at once.
 - **After you press Deny.** When you deny an approval (Custom), the agent runs
   nothing else for that step and asks you how to go on: a safer way to do it
   (when there is one), skip the step and carry on, or stop.

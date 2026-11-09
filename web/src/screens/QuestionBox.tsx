@@ -33,6 +33,8 @@ export interface QuestionPage {
   chosen?: string;
   onBack?: () => void;
   onNext?: () => void;
+  /** Clears this page's answer: a click on the picked choice. */
+  onClear?: () => void;
 }
 
 interface QuestionBoxProps {
@@ -120,7 +122,7 @@ export function QuestionBox({ question, onAnswer, onSkip, onFold, page, focusFir
       <div className="themis-question-body">
         {options.length > 0 && (
           <div className="themis-question-choices">
-            {options.map(option => <Choice key={option} question={question} option={option} chosen={page?.chosen === option} disabled={sending} onPick={answer => void send(answer)} />)}
+            {options.map(option => <Choice key={option} question={question} option={option} chosen={page?.chosen === option} disabled={sending} onPick={answer => page?.chosen === answer && page.onClear ? page.onClear() : void send(answer)} />)}
           </div>
         )}
         <form className="themis-question-form" onSubmit={event => { event.preventDefault(); void send(draft); }}>
