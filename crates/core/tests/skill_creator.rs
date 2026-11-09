@@ -37,8 +37,8 @@ fn creator_bundle_is_resolved_and_materializes_its_verifier() {
     assert_eq!(skills[0].id, "skills");
     assert!(skills[0]
         .instructions
-        .contains("themis skill save PLUGIN FILE"));
-    assert!(skills[0].instructions.contains("themis skill verify FILE"));
+        .contains("themis skill save PLUGIN DEF"));
+    assert!(skills[0].instructions.contains("themis skill verify DEF"));
     themis_core::skills::materialize_scripts(&skills, dir.path()).unwrap();
     let verifier = dir.path().join(".themis/skills/skills/verify.py");
     assert!(verifier.is_file());
@@ -151,9 +151,9 @@ fn integration_guides_use_the_cli_with_resolved_paths() {
             .with_home(Some(home.clone()));
     for (id, command) in [
         ("plugins", "themis plugin show NAME"),
-        ("skills", "themis skill save PLUGIN FILE"),
-        ("mcp", "themis mcp update PLUGIN NAME FILE"),
-        ("hooks", "themis hook update PLUGIN NAME FILE"),
+        ("skills", "themis skill save PLUGIN DEF"),
+        ("mcp", "themis mcp add PLUGIN NAME '{"),
+        ("hooks", "themis hook update PLUGIN NAME '<json>'"),
     ] {
         let (_, skills, _) = store
             .resolve_prompt(&format!("[[skill:{id}]] go"), &[])

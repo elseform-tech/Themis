@@ -1,3 +1,4 @@
+use super::components;
 use crate::server::Client;
 use serde_json::{json, Value};
 use std::path::Path;
@@ -5,7 +6,7 @@ use themis_core::plugins::definitions::{self, Definition};
 
 /// The plugin, skill, MCP and hook commands, for `themis plugin --help` and malformed calls.
 #[rustfmt::skip]
-pub const USAGE: &str = "Use plugin list|updates|create NAME|show NAME|edit NAME|save FILE|inspect SOURCE [NAME]|import SOURCE [NAME]|export NAME|preview NAME@MARKET|install NAME@MARKET|update NAME|enable NAME|disable NAME|uninstall NAME; plugin marketplace list|preview SOURCE|add SOURCE [NAME]|enable NAME|disable NAME|changes NAME|browse NAME|refresh NAME|check NAME|remove NAME; skill list|save PLUGIN FILE|verify FILE|delete PLUGIN ID; mcp/hook list PLUGIN|add PLUGIN NAME FILE|update PLUGIN NAME FILE|test PLUGIN NAME|delete PLUGIN NAME. Options: --scope local|global --project PATH --expected REVISION --ref REF --subdirectory PATH --allow-partial. For agent creation: skill create THREAD REQUEST. A missing PLUGIN is created. `themis skill|mcp|hook --help` shows each definition's exact JSON with every field.";
+pub const USAGE: &str = "Use plugin list|updates|create NAME|show NAME|edit NAME|save DEF|inspect SOURCE [NAME]|import SOURCE [NAME]|export NAME|preview NAME@MARKET|install NAME@MARKET|update NAME|enable NAME|disable NAME|uninstall NAME (SOURCE: a folder, repository or .mcp.json file); plugin marketplace list|preview SOURCE|add SOURCE [NAME]|enable NAME|disable NAME|changes NAME|browse NAME|refresh NAME|check NAME|remove NAME; skill list [PLUGIN]|save PLUGIN DEF|verify DEF|delete PLUGIN ID; mcp|hook list [PLUGIN]|add PLUGIN NAME DEF|update PLUGIN NAME DEF|test PLUGIN NAME|delete PLUGIN NAME; mcp add PLUGIN DEF adds every server of a .mcp.json ({\"mcpServers\": ...}). A missing PLUGIN is created by add and save. DEF is a file, - (stdin) or inline JSON: themis mcp add docs fetch '{\"command\":\"uvx\",\"args\":[\"mcp-server-fetch\"]}'. Options: --scope local|global --project PATH --expected REVISION --ref REF --subdirectory PATH --allow-partial. For agent creation: skill create THREAD REQUEST. `themis skill|mcp|hook --help` shows each definition's exact JSON with every field.";
 
 /// `--help` for `plugin`, `skill`, `mcp` or `hook`: the usage, and for a component its exact
 /// definition (every field, required or optional, and an example).
@@ -26,14 +27,14 @@ fn definition(component: &str) -> Option<Definition> {
 }
 
 /// The options every integration command takes, anywhere among its words.
-struct Options<'a> {
-    positional: Vec<&'a str>,
-    project: Option<String>,
+pub(super) struct Options<'a> {
+    pub(super) positional: Vec<&'a str>,
+    pub(super) project: Option<String>,
     scope: String,
     expected: Option<String>,
     reference: Option<String>,
     subdirectory: Option<String>,
-    allow_partial: bool,
+    pub(super) allow_partial: bool,
 }
 
 impl<'a> Options<'a> {
@@ -62,7 +63,10 @@ impl<'a> Options<'a> {
                         _ => options.expected = Some(value),
                     }
                 }
-                value if value.starts_with('-') => return Err(format!("Unknown option {value}")),
+                // A lone `-` is a definition read from stdin.
+                value if value.starts_with('-') && value != "-" => {
+                    return Err(format!("Unknown option {value}"))
+                }
                 value => options.positional.push(value),
             }
             index += 1;
@@ -71,27 +75,50 @@ impl<'a> Options<'a> {
     }
 }
 
-/// Reads a JSON definition file (at most 8 MiB).
-fn read(path: &str) -> Result<Value, String> {
-    let metadata = std::fs::metadata(path).map_err(|e| format!("{path}: {e}"))?;
-    if metadata.len() > 8 * 1024 * 1024 {
-        return Err("Configuration exceeds 8 MiB".into());
+/// The largest definition read from a file, stdin or the command line.
+const MAX_DEFINITION: usize = 8 * 1024 * 1024;
+
+/// Reads a JSON definition (at most 8 MiB) from `source`: `-` is stdin, text starting with `{` is
+/// the JSON itself, anything else a file path. Errors name the form that failed.
+pub(super) fn read(source: &str) -> Result<Value, String> {
+    let bytes = if source == "-" {
+        use std::io::Read;
+        let mut input = Vec::new();
+        std::io::stdin()
+            .take(MAX_DEFINITION as u64 + 1)
+            .read_to_end(&mut input)
+            .map_err(|e| format!("Cannot read the definition from stdin: {e}"))?;
+        input
+    } else if is_inline(source) {
+        source.as_bytes().to_vec()
+    } else {
+        let metadata = std::fs::metadata(source).map_err(|e| {
+            format!("{source}: {e} (a definition is a file path, - for stdin, or JSON starting with {{)")
+        })?;
+        if metadata.len() > MAX_DEFINITION as u64 {
+            return Err(format!("{source} exceeds 8 MiB"));
+        }
+        std::fs::read(source).map_err(|e| format!("{source}: {e}"))?
+    };
+    if bytes.len() > MAX_DEFINITION {
+        return Err(format!("{} exceeds 8 MiB", label(source)));
     }
-    serde_json::from_slice(&std::fs::read(path).map_err(|e| e.to_string())?)
-        .map_err(|e| format!("{path} is not valid JSON: {e}"))
+    serde_json::from_slice(&bytes).map_err(|e| format!("{} is not valid JSON: {e}", label(source)))
 }
 
-/// Every problem with a definition before it is sent, with its exact shape.
-fn checked(definition: Definition, value: &Value, path: &str) -> Result<(), String> {
-    let problems = definition.problems(value);
-    if problems.is_empty() {
-        return Ok(());
+fn is_inline(source: &str) -> bool {
+    source.trim_start().starts_with('{')
+}
+
+/// How a definition's source is named in messages.
+pub(super) fn label(source: &str) -> String {
+    if source == "-" {
+        "stdin".into()
+    } else if is_inline(source) {
+        "the inline JSON".into()
+    } else {
+        source.into()
     }
-    Err(format!(
-        "{}\n\n{}",
-        definitions::report(&format!("The {} in {path}", definition.label()), &problems),
-        definition.reference()
-    ))
 }
 
 // One line per command shape, as before the usage text moved out (rustfmt skipped it then).
@@ -105,10 +132,10 @@ pub async fn run(client: &Client, words: &[String], directory: &Path) -> Result<
         ["plugin","create",name]=>{request["action"]=json!("save");request["spec"]=json!({"name":name});},
         ["plugin","save",file]=>{
             let spec=read(file)?;let problems=definitions::plugin_problems(&spec);
-            if !problems.is_empty(){return Err(definitions::report(&format!("The plugin in {file}"),&problems));}
+            if !problems.is_empty(){return Err(definitions::report(&format!("The plugin in {}",label(file)),&problems));}
             request["action"]=json!("save");request["spec"]=spec;
         },
-        [component,import_action,source] | [component,import_action,source,_] if matches!(*component,"plugin"|"skill"|"mcp"|"hook") && matches!(*import_action,"import"|"inspect")=>{
+        ["plugin",import_action,source] | ["plugin",import_action,source,_] if matches!(*import_action,"import"|"inspect")=>{
             if source.starts_with("https://") || source.starts_with("http://") || reference.is_some() || subdirectory.is_some() {
                 request["action"]=json!(if *import_action=="inspect" {"inspect_repository"}else{"import_repository"}); request["url"]=json!(source);
                 request["name"]=json!(positional.get(3).copied().unwrap_or(""));
@@ -137,29 +164,7 @@ pub async fn run(client: &Client, words: &[String], directory: &Path) -> Result<
             if *action=="update"{request["action"]=json!("update");request["name"]=json!(name);request["marketplace"]=plugin["source"].clone();}
             else { return edit(client,request,&plugin,directory).await; }
         },
-        ["skill","list"]=>return client.call("list_prompt_skills",json!({"projectRoot":project})).await,
-        ["skill","verify",file]=>return verify_skill(file,directory),
-        [component,"list",plugin]|[component,"show",plugin] if matches!(*component,"skill"|"mcp"|"hook")=>{let p=find(client,&request,plugin).await?;return Ok(p["spec"][field(component)].clone());},
-        [component,action,plugin,name,file] if matches!(*component,"mcp"|"hook")&&matches!(*action,"add"|"update")=>{
-            put_component(client,&mut request,component,*action=="add",plugin,name,file).await?;
-        },
-        ["skill","save",plugin,file]=>{
-            let skill=read(file)?;checked(Definition::Skill,&skill,file)?;
-            let existing=find_or_new(client,&request,plugin).await?;
-            request["action"]=json!("save_skill");request["plugin"]=json!(plugin);request["skill"]=skill;request["expectedRevision"]=existing["revision"].clone();
-        },
-        [component,action,plugin,name] if matches!(*component,"skill"|"mcp"|"hook")&&matches!(*action,"delete"|"remove"|"enable"|"disable"|"test")=>{
-            let p=find(client,&request,plugin).await?;let spec=p["spec"].clone();
-            if matches!(*action,"delete"|"remove") {
-                request["action"]=json!("remove_component");request["name"]=json!(plugin);request["kind"]=json!(component);request["id"]=json!(name);
-            } else if matches!(*action,"enable"|"disable") {
-                request["action"]=json!("set_component_enabled");request["name"]=json!(plugin);request["kind"]=json!(component);request["id"]=json!(name);request["enabled"]=json!(*action=="enable");
-            } else if *component!="skill" {
-                request["action"]=json!(if *component=="mcp"{"test_mcp"}else{"test_hook"});
-                request[if *component=="mcp"{"server"}else{"hook"}]=if *component=="mcp"{spec["mcp"].get(name).cloned().ok_or("Unknown connection")?}else{spec["hooks"].as_array().ok_or("Invalid hooks")?.iter().find(|h|h["name"]==*name).cloned().ok_or("Unknown hook")?};
-            } else { return Err("Use skill verify FILE".into()); }
-
-        },
+        [component,..] if matches!(*component,"skill"|"mcp"|"hook")=>return components::run(client,request,&options,directory).await,
         _=>return Err(USAGE.into()),
     }
     send(client, request, project.as_deref()).await
@@ -202,76 +207,12 @@ async fn edit(
     saved
 }
 
-/// `skill verify FILE`: a JSON draft is checked as the store checks it, every problem at once; a
-/// SKILL.md or skill folder goes through the bundled verifier.
-fn verify_skill(file: &str, directory: &Path) -> Result<Value, String> {
-    if file.ends_with(".json") {
-        checked(Definition::Skill, &read(file)?, file)?;
-        return Ok(json!({"valid": true}));
-    }
-    let path = directory.join("builtins/skills/verify.py");
-    std::fs::create_dir_all(path.parent().ok_or("Missing verifier directory")?)
-        .map_err(|e| e.to_string())?;
-    std::fs::write(
-        &path,
-        include_str!("../../../core/builtins/skills/scripts/verify.py"),
-    )
-    .map_err(|e| e.to_string())?;
-    let output = std::process::Command::new("python3")
-        .arg(path)
-        .arg(file)
-        .output()
-        .map_err(|e| e.to_string())?;
-    if !output.status.success() {
-        return Err(String::from_utf8_lossy(&output.stderr).into());
-    }
-    Ok(json!({"valid": true}))
-}
-
-/// `mcp|hook add|update PLUGIN NAME FILE`: checks the definition, then saves the plugin with it
-/// (a new plugin when there is none by that name).
-async fn put_component(
-    client: &Client,
-    request: &mut Value,
-    component: &str,
-    add: bool,
-    plugin: &str,
-    name: &str,
-    file: &str,
-) -> Result<(), String> {
-    let mut value = read(file)?;
-    let existing = find_or_new(client, request, plugin).await?;
-    let mut spec = existing["spec"].clone();
-    if component == "mcp" {
-        checked(Definition::Mcp, &value, file)?;
-        if add && spec["mcp"].get(name).is_some() {
-            return Err(format!(
-                "Connection '{name}' already exists in '{plugin}'; use mcp update"
-            ));
-        }
-        spec["mcp"][name] = value;
-    } else {
-        if let Some(object) = value.as_object_mut() {
-            object.insert("name".into(), json!(name));
-        }
-        checked(Definition::Hook, &value, file)?;
-        let hooks = spec["hooks"].as_array_mut().ok_or("Invalid hook list")?;
-        if add && hooks.iter().any(|h| h["name"] == *name) {
-            return Err(format!(
-                "Hook '{name}' already exists in '{plugin}'; use hook update"
-            ));
-        }
-        hooks.retain(|h| h["name"] != *name);
-        hooks.push(value);
-    }
-    request["action"] = json!("save");
-    request["spec"] = spec;
-    request["expectedRevision"] = existing["revision"].clone();
-    Ok(())
-}
-
 /// Sends the request, except an agent's hook or MCP test, which runs here in its sandbox.
-async fn send(client: &Client, request: Value, project: Option<&str>) -> Result<Value, String> {
+pub(super) async fn send(
+    client: &Client,
+    request: Value,
+    project: Option<&str>,
+) -> Result<Value, String> {
     let test = matches!(request["action"].as_str(), Some("test_mcp" | "test_hook"));
     if test && crate::server::in_agent_shell() {
         return sandboxed_test(&request, project).await;
@@ -302,14 +243,7 @@ async fn sandboxed_test(request: &Value, project: Option<&str>) -> Result<Value,
     }
 }
 
-fn field(component: &str) -> &str {
-    match component {
-        "skill" => "skills",
-        "mcp" => "mcp",
-        _ => "hooks",
-    }
-}
-async fn find(client: &Client, args: &Value, name: &str) -> Result<Value, String> {
+pub(super) async fn find(client: &Client, args: &Value, name: &str) -> Result<Value, String> {
     let plugin = find_or_new(client, args, name).await?;
     if plugin.get("scope").is_none() {
         return Err(format!(
@@ -321,7 +255,11 @@ async fn find(client: &Client, args: &Value, name: &str) -> Result<Value, String
 }
 /// The plugin by this name in the request's scope, or a new, empty one (no `scope`, no
 /// `revision`) to save into.
-async fn find_or_new(client: &Client, args: &Value, name: &str) -> Result<Value, String> {
+pub(super) async fn find_or_new(
+    client: &Client,
+    args: &Value,
+    name: &str,
+) -> Result<Value, String> {
     let list = client
         .call(
             "plugin_action",

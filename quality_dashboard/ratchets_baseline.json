@@ -486,8 +486,7 @@
    "lines": 107
   },
   "crates/desktop/src/cli/plugins.rs::run": {
-   "cognitive": 30,
-   "cyclomatic": 68
+   "cyclomatic": 42
   },
   "crates/desktop/src/cli/render.rs::render_permissions": {
    "cognitive": 60,
@@ -627,8 +626,8 @@
    "lines": 104
   },
   "crates/desktop/src/state/threads.rs::AppState::send_message_with_options": {
-   "cognitive": 48,
-   "cyclomatic": 103,
+   "cognitive": 45,
+   "cyclomatic": 100,
    "lines": 384
   },
   "crates/desktop/src/transcript.rs::TranscriptStore::append": {

@@ -11,7 +11,7 @@ Where they live: global plugins in `{{global_plugins}}`, this project's in `{{pr
 
 ## Find
 
-- `themis plugin list` shows every plugin, its servers and whether each is on.
+- `themis mcp list` lists every server, global and in this project, with its plugin; `themis plugin list` shows the plugins and whether each server is on.
 - `themis mcp list PLUGIN` prints that plugin's server definitions in full: `command`, `args`, `cwd`, `url`, environment names and `enabled`. Read this before changing or diagnosing a server; do not search the disk for its configuration.
 - `themis mcp --help` shows every field of a definition with an example.
 
@@ -19,11 +19,11 @@ Prefer an existing maintained server over building one. Accept what the person g
 
 ## Change
 
-- **One server:** write its definition as one JSON object to a scratch file, for example `"$TMPDIR/server.json"` (`{"command": "node", "args": ["server.js"]}` or `{"url": "https://…"}`), then `themis mcp add PLUGIN NAME FILE` for a new one or `themis mcp update PLUGIN NAME FILE` to replace one. Use `personal` as PLUGIN for the person's own; a missing plugin is created. To fix one, start from `themis mcp list PLUGIN`, change only what is wrong and keep the rest.
-- **A standard `.mcp.json`** (`{"mcpServers": {…}}`, also pasted JSON saved to a file): `themis mcp import FILE PLUGIN`. `themis mcp inspect FILE` shows what would be imported first.
+- **One server:** give its definition as one JSON object, inline in quotes, from stdin with `-`, or as a file: `themis mcp add PLUGIN NAME '{"command": "node", "args": ["server.js"]}'` (or `'{"url": "https://…"}'`) for a new one, `themis mcp update PLUGIN NAME '<json>'` to replace one. Use `personal` as PLUGIN for the person's own; a missing plugin is created. To fix one, start from `themis mcp list PLUGIN`, change only what is wrong and keep the rest.
+- **A standard `.mcp.json`** (`{"mcpServers": {…}}`, a file or pasted JSON): `themis mcp add PLUGIN FILE` (or `'<json>'`) adds every server in it, converted the way an import converts them, and says which it added and which it could not use (`--allow-partial` adds the rest). With a NAME, `themis mcp add PLUGIN NAME FILE` adds only that server. Never write a `.mcp.json` into the project for Themis: it does not read one there.
 - **Off or gone:** `themis mcp disable PLUGIN NAME`; `themis mcp delete PLUGIN NAME` only when asked.
 
-Each file is checked first and every problem is reported at once with the exact shape; fix them all and run it again. JSON describes a launch command or an address, not proof that the software exists: check the runtime it needs (`node`, `uvx`, `python3`) and pinned package versions. Keys are never written into a definition: `env` maps a variable to the name of a secret, and the person stores the secret in Settings.
+Each definition is checked first and every problem is reported at once with the exact shape; fix them all and run it again. JSON describes a launch command or an address, not proof that the software exists: check the runtime it needs (`node`, `uvx`, `python3`) and pinned package versions. Keys are never written into a definition: `env` maps a variable to the name of a secret, and the person stores the secret in Settings.
 
 A server that runs a command is saved switched off and only the person switches it on: Themis refuses it from you in every mode. Tell the person which server to switch on in Integrations, then test it. A server by address may be switched on with `themis mcp enable PLUGIN NAME`. For sign-in flows Themis does not support, say so instead of inventing a connected account.
 

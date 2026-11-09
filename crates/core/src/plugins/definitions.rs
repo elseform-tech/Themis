@@ -113,7 +113,7 @@ const REWAKE: &[Field] = &[
 ];
 
 const HOOK: &[Field] = &[
-    required("name", Kind::Text, "A safe single name, unique in its plugin (`hook add|update PLUGIN NAME FILE` sets it from NAME)."),
+    required("name", Kind::Text, "A safe single name, unique in its plugin (`hook add|update PLUGIN NAME DEF` sets it from NAME)."),
     required("event", Kind::Text, "When it runs; one of the events listed below."),
     field("command", Kind::Text, "The shell command to run; it gets the event as JSON on stdin. Required unless `prompt` is given."),
     field("prompt", Kind::Text, "Ask the chat's model this instead of running a command ($ARGUMENTS is the input). Leave `command` out then."),
@@ -224,9 +224,9 @@ impl Definition {
 
     fn command(self) -> &'static str {
         match self {
-            Self::Skill => "themis skill save PLUGIN FILE",
-            Self::Hook => "themis hook add|update PLUGIN NAME FILE",
-            Self::Mcp => "themis mcp add|update PLUGIN NAME FILE",
+            Self::Skill => "themis skill save PLUGIN DEF",
+            Self::Hook => "themis hook add|update PLUGIN NAME DEF",
+            Self::Mcp => "themis mcp add|update PLUGIN NAME DEF",
         }
     }
 
@@ -278,7 +278,7 @@ impl Definition {
                 super::hooks::EVENTS.join(", ")
             )),
             Self::Mcp => text.push_str(
-                "Exactly one of `command` (a local server) and `url` (a remote one) is required.\nA standard .mcp.json file ({\"mcpServers\": {...}}) is imported with `themis mcp import FILE PLUGIN` instead.\n",
+                "Exactly one of `command` (a local server) and `url` (a remote one) is required.\nThe standard .mcp.json shape is converted too: `themis mcp add PLUGIN NAME DEF` takes one entry (with its `type`) or the server NAME from a whole file, and `themis mcp add PLUGIN DEF` adds every server of a .mcp.json ({\"mcpServers\": {...}}).\n",
             ),
         }
         text.push_str("Example:\n");
@@ -294,7 +294,7 @@ impl Definition {
         shape_problems(self.fields(), value, "", &mut problems);
         if self == Self::Mcp && (value.get("mcpServers").is_some() || value.get("type").is_some()) {
             problems.push(
-                "this looks like a standard .mcp.json entry; import it with `themis mcp import FILE PLUGIN`".into(),
+                "this looks like a standard .mcp.json entry; `themis mcp add PLUGIN NAME DEF` converts it (`themis mcp add PLUGIN DEF` for a whole .mcp.json)".into(),
             );
         }
         if problems.is_empty() {
@@ -543,10 +543,12 @@ mod tests {
     }
 
     #[test]
-    fn a_standard_mcp_entry_points_to_import() {
+    fn a_standard_mcp_entry_points_to_mcp_add() {
         let problems = Definition::Mcp.problems(&json!({"type": "stdio", "command": "node"}));
         assert!(
-            problems.iter().any(|p| p.contains("themis mcp import")),
+            problems
+                .iter()
+                .any(|p| p.contains("themis mcp add PLUGIN DEF")),
             "{problems:?}"
         );
     }

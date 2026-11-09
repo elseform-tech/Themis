@@ -21,6 +21,7 @@ mod goal;
 mod goal_tool;
 mod hook_sessions;
 mod hook_wakes;
+mod integration_guides;
 mod integration_tools;
 mod keys;
 mod mcp;

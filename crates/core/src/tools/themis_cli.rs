@@ -242,11 +242,11 @@ fn integration(words: &[&str]) -> ThemisCall {
             index += 2;
             continue;
         }
-        if word.starts_with('-') && *word != "--allow-partial" {
-            return ThemisCall::SwitchOn;
-        }
-        if !word.starts_with('-') {
+        // A lone `-` is a definition read from stdin, a positional word like a file path.
+        if *word == "-" || !word.starts_with('-') {
             positional.push(*word);
+        } else if *word != "--allow-partial" {
+            return ThemisCall::SwitchOn;
         }
         index += 1;
     }
@@ -256,7 +256,7 @@ fn integration(words: &[&str]) -> ThemisCall {
 fn integration_words(words: &[&str], from_repository: bool) -> ThemisCall {
     use ThemisCall::*;
     match words {
-        [_, "import", source] | [_, "import", source, _] => {
+        ["plugin", "import", source] | ["plugin", "import", source, _] => {
             let remote =
                 from_repository || source.starts_with("https://") || source.starts_with("http://");
             if remote {
@@ -265,15 +265,16 @@ fn integration_words(words: &[&str], from_repository: bool) -> ThemisCall {
                 Write
             }
         }
-        [_, "inspect", _] | [_, "inspect", _, _] => Read,
+        ["plugin", "inspect", _] | ["plugin", "inspect", _, _] => Read,
         // A bare `themis hook` only prints its usage.
         [_] => Read,
         ["plugin", rest @ ..] => plugin_words(rest),
-        ["skill", "list"] => Read,
+        ["skill" | "mcp" | "hook", "list"] => Read,
         ["skill", "verify", _] | ["skill", "create", _, _] => Execute,
         ["skill", "save", _, _] => Write,
         [_, "list" | "show", _] => Read,
-        ["mcp" | "hook", "add" | "update", _, _, _] => Write,
+        // A definition is a file, `-` or inline JSON: one word, whichever it is.
+        ["mcp" | "hook", "add" | "update", _, _, _] | ["mcp", "add", _, _] => Write,
         [_, "delete" | "remove", _, _] => Destructive,
         ["skill", "enable", _, _] | [_, "disable", _, _] => Write,
         ["mcp" | "hook", "test", _, _] => Execute,

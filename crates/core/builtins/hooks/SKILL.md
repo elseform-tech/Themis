@@ -13,13 +13,13 @@ Where they live: global plugins in `{{global_plugins}}`, this project's in `{{pr
 
 ## Find
 
-- `themis plugin list` shows every plugin with its hooks (`spec.hooks`) and whether each plugin is on.
+- `themis hook list` lists every hook, global and in this project, with its plugin; `themis plugin list` shows the plugins and whether each is on.
 - `themis hook list PLUGIN` prints that plugin's hook definitions in full: name, event, command, matcher, and `enabled`.
 
 ## Change
 
-1. Write the definition as one JSON object to a scratch file, for example `"$TMPDIR/hook.json"`: `event` and `command` (or `prompt`), optionally `matcher`, `timeout_seconds` (1 to 600), `blocking`. Start from `themis hook list PLUGIN` when you change an existing hook, and keep the fields you do not mean to change.
-2. Apply it: `themis hook add PLUGIN NAME FILE` for a new hook, `themis hook update PLUGIN NAME FILE` for an existing one. Use `personal` as PLUGIN for a new hook of the person's own; a missing plugin is created. The file is checked first and every problem is reported at once with the exact shape; fix them all and run it again.
+1. Write the definition as one JSON object: `event` and `command` (or `prompt`), optionally `matcher`, `timeout_seconds` (1 to 600), `blocking`. Start from `themis hook list PLUGIN` when you change an existing hook, and keep the fields you do not mean to change.
+2. Apply it, inline in quotes, from stdin with `-`, or as a file: `themis hook add PLUGIN NAME '{"event": "BeforeTool", "command": "…"}'` for a new hook, `themis hook update PLUGIN NAME '<json>'` for an existing one. Use `personal` as PLUGIN for a new hook of the person's own; a missing plugin is created. The definition is checked first and every problem is reported at once with the exact shape; fix them all and run it again.
 3. Switch one off with `themis hook disable PLUGIN NAME`; remove one with `themis hook delete PLUGIN NAME` (only when asked).
 
 A new or changed hook is saved switched off. Switching a hook on is the person's alone: Themis refuses it from you in every mode. Tell the person which hook to switch on in Integrations.
