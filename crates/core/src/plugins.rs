@@ -4,6 +4,7 @@ pub mod agents;
 pub mod connections;
 pub mod definitions;
 mod discovery;
+pub mod guides;
 pub mod hooks;
 pub mod keys;
 mod management;
