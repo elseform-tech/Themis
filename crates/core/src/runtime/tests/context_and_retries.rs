@@ -67,11 +67,11 @@ fn runtime_notes_are_never_the_active_request() {
 #[test]
 fn tool_failures_read_as_the_tool_wrote_them() {
     let error = crate::tools::tool_error(
-        "browser_devtools: Debugging is blocked for example.com in Settings › Browser.".into(),
+        "browser devtools: Debugging is blocked for example.com in Settings › Browser.".into(),
     );
     assert_eq!(
         tool_failure(&error),
-        "browser_devtools: Debugging is blocked for example.com in Settings › Browser."
+        "browser devtools: Debugging is blocked for example.com in Settings › Browser."
     );
 }
 

@@ -70,12 +70,13 @@ async fn requests_for(provider: &MockServer, model: &str) -> Vec<Value> {
         .collect()
 }
 
+/// The browser tool's description, which has the `screenshot` action's line.
 fn screenshot_description(body: &Value) -> String {
     body["tools"]
         .as_array()
         .into_iter()
         .flatten()
-        .find(|tool| tool["function"]["name"] == "browser_screenshot")
+        .find(|tool| tool["function"]["name"] == "browser")
         .map(|tool| tool["function"]["description"].as_str().unwrap().to_owned())
         .unwrap_or_default()
 }
@@ -123,10 +124,10 @@ async fn screenshots_reach_only_a_model_that_reads_images() {
             match tool_results(&body).len() {
                 0 => tool_call(
                     "c1",
-                    "browser_open",
-                    json!({"url": format!("http://127.0.0.1:{port}/app")}),
+                    "browser",
+                    json!({"action": "open", "url": format!("http://127.0.0.1:{port}/app")}),
                 ),
-                1 => tool_call("c2", "browser_screenshot", json!({})),
+                1 => tool_call("c2", "browser", json!({"action": "screenshot"})),
                 _ => ResponseTemplate::new(200).set_body_json(json!({
                     "choices": [{"message": {"role": "assistant", "content": "The heading is red."}, "finish_reason": "stop"}]
                 })),
@@ -144,7 +145,7 @@ async fn screenshots_reach_only_a_model_that_reads_images() {
                            "secret": "${LOCAL_KEY}"}],
             "models": {"local/vision": {"images": true}},
             "approval": {"rules": [
-                {"tool": "browser_*", "command": ["127.0.0.1"], "action": "allow"},
+                {"tool": "browser", "command": ["127.0.0.1"], "action": "allow"},
                 {"tool": "*", "risk": "read", "action": "allow"}
             ]}
         })
@@ -226,10 +227,10 @@ async fn screenshots_reach_only_a_model_that_reads_images() {
     let url = image["content"][1]["image_url"]["url"].as_str().unwrap();
     assert!(url.starts_with("data:image/jpeg;base64,/9j/"), "a JPEG");
     assert!(url.len() < 2_100_000, "bounded: {} bytes", url.len());
-    assert_eq!(
-        screenshot_description(last),
-        themis_core::prompts::TOOL_SCREENSHOT_SEEING_DESCRIPTION
+    assert!(
+        screenshot_description(last).contains(themis_core::prompts::TOOL_BROWSER_SCREENSHOT_SEEING)
     );
+    assert!(!screenshot_description(last).contains("cannot see"));
     // Only requests after the screenshot carry it.
     assert!(!vision[1].to_string().contains("image_url"));
     // The model that reads text only: exactly the text result it always had.

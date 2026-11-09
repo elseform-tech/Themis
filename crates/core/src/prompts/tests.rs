@@ -347,11 +347,15 @@ const ALL: &[(&str, &str, &[&str])] = &[
         "tool-screenshot-unattached-note",
         &[],
     ),
+    (TOOL_BROWSER, "tool-browser", &[]),
+    (TOOL_BROWSER_SCREENSHOT, "tool-browser-screenshot", &[]),
     (
-        TOOL_SCREENSHOT_SEEING_DESCRIPTION,
-        "tool-screenshot-seeing-description",
+        TOOL_BROWSER_SCREENSHOT_SEEING,
+        "tool-browser-screenshot-seeing",
         &[],
     ),
+    (TOOL_BROWSER_RECORD, "tool-browser-record", &[]),
+    (TOOL_BROWSER_DEVTOOLS, "tool-browser-devtools", &[]),
     (
         RUNTIME_SCREENSHOT_IMAGE,
         "runtime-screenshot-image",

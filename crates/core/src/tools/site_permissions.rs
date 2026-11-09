@@ -18,8 +18,40 @@ pub enum Permission {
     Debugging,
 }
 
+/// Every key the browser is approved by, with the permission it falls under: each action of
+/// the `browser` tool, and `download` for a file a page sends. An approval's `command` is the
+/// site, then the key.
+pub const BROWSER_KEYS: [(&str, Permission); 15] = [
+    ("open", Permission::Browsing),
+    ("navigate", Permission::Browsing),
+    ("snapshot", Permission::Browsing),
+    ("click", Permission::Browsing),
+    ("type", Permission::Browsing),
+    ("select", Permission::Browsing),
+    ("press", Permission::Browsing),
+    ("scroll", Permission::Browsing),
+    ("move", Permission::Browsing),
+    ("drag", Permission::Browsing),
+    ("check_looks", Permission::Browsing),
+    ("screenshot", Permission::Browsing),
+    ("record", Permission::Browsing),
+    ("devtools", Permission::Debugging),
+    ("download", Permission::Downloads),
+];
+
+/// The Settings › Browser permission a browser key falls under.
+#[must_use]
+pub fn browser_permission(key: &str) -> Option<Permission> {
+    BROWSER_KEYS
+        .iter()
+        .find(|(known, _)| *known == key)
+        .map(|(_, permission)| *permission)
+}
+
 impl Permission {
-    fn label(self) -> &'static str {
+    /// The name Settings › Browser shows.
+    #[must_use]
+    pub fn label(self) -> &'static str {
         match self {
             Self::Browsing => "Browsing",
             Self::Downloads => "Downloads",
@@ -119,28 +151,29 @@ impl SitePermissions {
             })
     }
 
-    /// Decides `permission` for `tool` on `site`, asking the person when the answer is Ask.
-    /// Block refuses in every approval mode; Allow skips the prompt (a deny rule in
-    /// `runtime.jsonc` still refuses in Custom); "Always allow on this site" is saved.
+    /// Decides the permission browser `key` (an action, or `download`) falls under on `site`,
+    /// asking the person when the answer is Ask. Block refuses in every approval mode; Allow
+    /// skips the prompt (a deny rule in `runtime.jsonc` still refuses in Custom); "Always allow
+    /// on this site" is saved.
     pub fn gate(
         &self,
         approvals: &dyn ApprovalHook,
-        tool: &str,
-        permission: Permission,
+        key: &str,
         site: &str,
         summary: String,
         risk: RiskLevel,
     ) -> Result<(), ToolCallError> {
+        let permission = browser_permission(key).unwrap_or(Permission::Browsing);
         let action = ToolAction {
             display: None,
-            tool: tool.to_owned(),
+            tool: super::BROWSER_TOOL.to_owned(),
             summary,
             risk,
-            command: vec![site.to_owned()],
+            command: vec![site.to_owned(), key.to_owned()],
         };
         let refused = |note: &str| {
             tool_error(format!(
-                "approval denied for '{tool}': {} {note}",
+                "approval denied for 'browser {key}': {} {note}",
                 action.summary
             ))
         };
@@ -150,7 +183,7 @@ impl SitePermissions {
             "browser",
             "permission_decided",
             "info",
-            serde_json::json!({"tool": tool, "permission": permission.label(), "access": format!("{access:?}").to_ascii_lowercase()}),
+            serde_json::json!({"tool": super::BROWSER_TOOL, "action": key, "permission": permission.label(), "access": format!("{access:?}").to_ascii_lowercase()}),
         );
         match access {
             SiteAccess::Block => Err(tool_error(format!(
@@ -235,15 +268,14 @@ mod tests {
         permission: Permission,
         site: &str,
     ) -> Result<(), String> {
+        // One browser key that falls under each permission.
+        let key = match permission {
+            Permission::Browsing => "open",
+            Permission::Downloads => "download",
+            Permission::Debugging => "devtools",
+        };
         permissions
-            .gate(
-                hook,
-                "browser_open",
-                permission,
-                site,
-                format!("open {site}"),
-                RiskLevel::Network,
-            )
+            .gate(hook, key, site, format!("open {site}"), RiskLevel::Network)
             .map_err(|error| error.to_string())
     }
 

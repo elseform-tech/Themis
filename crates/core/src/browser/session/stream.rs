@@ -212,7 +212,9 @@ impl ChatBrowser {
                 .try_lock()
                 .is_ok_and(|inner| !self.has_page(&inner))
             {
-                return Err("no page is open to record; use browser_open first".into());
+                return Err(
+                    "no page is open to record; use the browser's open action first".into(),
+                );
             }
             *recording = Some(Recording::new(by, max));
         }
@@ -321,11 +323,11 @@ impl ChatBrowser {
         let browser = inner
             .browser
             .clone()
-            .ok_or("no page is open; use browser_open first")?;
+            .ok_or("no page is open; use the browser's open action first")?;
         let tab = inner
             .tab
             .as_ref()
-            .ok_or("no page is open; use browser_open first")?;
+            .ok_or("no page is open; use the browser's open action first")?;
         let cdp = &browser.cdp;
         let session = tab.session_id.clone();
         let metrics = cdp
@@ -351,7 +353,7 @@ impl ChatBrowser {
                 // screenshots the same way, and a ref-only error sent them in circles.
                 let backend = if is_ref(reference) {
                     tab.refs.resolve(reference).ok_or_else(|| {
-                        format!("no element {reference} on this page; take a new browser_snapshot")
+                        format!("no element {reference} on this page; take a new snapshot")
                     })?
                 } else {
                     selected_element(cdp, &session, reference).await?

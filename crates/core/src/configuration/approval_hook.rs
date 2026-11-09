@@ -110,7 +110,7 @@ impl ApprovalHook for ConfiguredHook {
             return false;
         }
         self.policy.decision(action) == PolicyAction::Ask
-            && (action.tool.starts_with("browser_") || !self.grants.covers(action))
+            && (action.tool == crate::tools::BROWSER_TOOL || !self.grants.covers(action))
             && self.interactive.would_ask(action)
     }
 
@@ -157,7 +157,7 @@ impl ConfiguredHook {
         }
         // Browser permissions are kept in Settings › Browser, not chat grants: an "always"
         // answer goes back to the browser tool, which saves it as a site exception.
-        let browser = action.tool.starts_with("browser_");
+        let browser = action.tool == crate::tools::BROWSER_TOOL;
         // Rules decide first, so a deny rule always beats a chat grant.
         match self.policy.decision(action) {
             PolicyAction::Allow => Approval::AllowOnce,

@@ -1107,14 +1107,14 @@ fn the_catalog_reads_which_models_accept_images() {
     assert!(!applied[0].images && applied[4].images && !applied[1].images);
 }
 
-/// A tool call to `browser_screenshot`, its result, and the image message after it.
+/// A browser `screenshot` call, its result, and the image message after it.
 fn screenshot_history(image: &[u8]) -> Vec<ChatMessage> {
     let call = ToolCall {
         id: "shot-1".into(),
         call_type: "function".into(),
         function: FunctionCall {
-            name: "browser_screenshot".into(),
-            arguments: "{}".into(),
+            name: "browser".into(),
+            arguments: r#"{"action":"screenshot"}"#.into(),
         },
     };
     vec![
@@ -1133,7 +1133,7 @@ fn screenshot_history(image: &[u8]) -> Vec<ChatMessage> {
             role: ChatRole::Tool,
             message_type: MessageType::ToolResult(vec![ToolCall {
                 function: FunctionCall {
-                    name: "browser_screenshot".into(),
+                    name: "browser".into(),
                     arguments: r#"{"path":"/p/shot.png"}"#.into(),
                 },
                 ..call

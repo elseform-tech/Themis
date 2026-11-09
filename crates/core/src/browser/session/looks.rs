@@ -1,4 +1,4 @@
-//! The looks check (`browser_check_looks`): what can be measured about how the current page
+//! The looks check (the `check_looks` action): what can be measured about how the current page
 //! looks, without seeing it. `looks.js` runs once with the page emulating a light colour scheme
 //! and once dark; problems found in both are listed once. Whole-page problems (quirks mode,
 //! CSS rules the browser dropped, resources that failed to load, console errors) come first.
@@ -388,7 +388,7 @@ impl ChatBrowser {
     pub async fn check_looks(self: &Arc<Self>, show_secrets: bool) -> Result<Value, String> {
         let mut inner = self.inner.lock().await;
         if inner.tab.is_none() {
-            return Err("no page is open; use browser_open first".into());
+            return Err("no page is open; use the browser's open action first".into());
         }
         let (cdp, session) = self.current(&mut inner).await?;
         let restore = Restore {

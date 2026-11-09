@@ -1,1 +1,1 @@
-Saved for the person, but too large to show you, so this tells you nothing about the page: read it with browser_snapshot or browser_devtools. Call attach_file with this path to show it in your reply.
+Saved for the person, but too large to show you, so this tells you nothing about the page: read it with the browser's snapshot or devtools actions. Call attach_file with this path to show it in your reply.

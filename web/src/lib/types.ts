@@ -691,8 +691,9 @@ export interface ApprovalRequest {
   risk: RiskLevel;
   /** What "allow in this chat" covers for shell, as raw argv tokens; render as data only. */
   grant_scope?: { argv: string[]; covers_further_args: boolean };
-  /** For web and browser tools: the site "allow in this chat" covers; `tools` is `browser` (every browser action), `fetch_url` or `web_search`. */
-  grant_site?: { tools: string; site: string };
+  /** For web and browser tools: the site "allow in this chat" covers; `tools` is `browser` (every browser action), `fetch_url` or `web_search`.
+   *  `permission` is the Settings › Browser permission a browser grant saves, by the action asked about. */
+  grant_site?: { tools: string; site: string; permission?: "Browsing" | "Downloads" | "Debugging" };
   /** The sensitive project files this action touches: "Allow in this chat" covers these, not the whole tool. */
   sensitive_files?: string[];
   /** A destructive step Auto or YOLO asks about first: shown as a question box, not an approval box. */

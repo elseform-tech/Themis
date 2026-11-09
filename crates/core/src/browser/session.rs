@@ -294,7 +294,7 @@ pub struct ChatBrowser {
     pointer: Mutex<Option<(f64, f64)>>,
     /// The page held the pointer lock when last checked (after the person's clicks and keys).
     page_locked: AtomicBool,
-    /// The mouse button held down by `browser_press`.
+    /// The mouse button held down by the `press` action.
     held: Mutex<Option<HeldMouse>>,
     /// Session id of the tab being streamed to the Workspace view.
     screencast: Mutex<Option<String>>,

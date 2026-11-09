@@ -41,15 +41,16 @@
     // Each rule:
     //   "tool"    which tool: "*" for every tool, an exact name, or a prefix ending in *.
     //             Common names: "shell", "shell_unsandboxed", "git", "read_file",
-    //             "write_file", "apply_patch", "fetch_url", "web_search", "browser_*",
+    //             "write_file", "apply_patch", "fetch_url", "web_search", "browser",
     //             "mcp_*" (all MCP tools) or "mcp_<server>_<tool>".
     //   "action"  "allow", "ask" or "deny".
     //   "risk"    optional; only actions of this kind: "read", "write", "execute",
     //             "network" or "destructive" (force push, recursive delete, ...).
     //   "command" optional, for "shell" (and "shell_unsandboxed") only: the command must
-    //             start with these words, e.g. ["cargo", "test"]. With a web or browser tool
-    //             it names one site instead, e.g. ["github.com"]. An allow rule never covers
-    //             destructive forms unless it says "risk": "destructive".
+    //             start with these words, e.g. ["cargo", "test"]. With a web tool it names
+    //             one site instead, e.g. ["github.com"]; with "browser" a site, an action or
+    //             both, e.g. ["github.com"], ["devtools"] or ["github.com", "click"]. An allow
+    //             rule never covers destructive forms unless it says "risk": "destructive".
     // Writing "rules" replaces this built-in list, so keep the read rule if you want reads
     // to run without asking.
     "rules": [

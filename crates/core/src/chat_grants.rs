@@ -381,17 +381,25 @@ mod tests {
         }
     }
 
+    /// A browser action: its command is the site, then the action.
+    fn browser_action(what: &str, host: &str) -> ToolAction {
+        ToolAction {
+            command: vec![host.into(), what.into()],
+            ..site_action("browser", host)
+        }
+    }
+
     #[test]
     fn a_site_grant_covers_that_site_for_its_tool_group_and_survives_reload() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("grants.json");
         let grants = ChatGrants::load(&path);
-        assert!(grants.remember(&site_action("browser_click", "LocalHost")));
+        assert!(grants.remember(&browser_action("click", "LocalHost")));
         let reloaded = ChatGrants::load(&path);
         for grants in [&grants, &reloaded] {
-            assert!(grants.covers(&site_action("browser_type", "localhost")));
-            assert!(grants.covers(&site_action("browser_open", "localhost")));
-            assert!(!grants.covers(&site_action("browser_open", "example.com")));
+            assert!(grants.covers(&browser_action("type", "localhost")));
+            assert!(grants.covers(&browser_action("open", "localhost")));
+            assert!(!grants.covers(&browser_action("open", "example.com")));
             assert!(!grants.covers(&site_action("fetch_url", "localhost")));
         }
         assert!(grants.remember(&site_action("fetch_url", "docs.rs")));

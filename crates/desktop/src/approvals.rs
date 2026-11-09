@@ -231,9 +231,7 @@ impl DesktopApprovalHook {
             summary: action.summary.clone(),
             risk: RiskLevel::from(action.risk),
             grant_scope: action.grant_scope(),
-            grant_site: action
-                .site_grant()
-                .map(|(tools, site)| crate::types::GrantSite { tools, site }),
+            grant_site: grant_site(action),
             grantable,
             command: action.display.clone(),
             subagent: self.subagent.clone(),
@@ -310,6 +308,21 @@ impl DesktopApprovalHook {
 }
 
 /// Integration and management tools, which a non-Git project may still be asked about.
+/// The site an "allow" answer covers and, for the browser, the Settings › Browser permission
+/// "Always allow on this site" saves for the action asked about.
+fn grant_site(action: &ToolAction) -> Option<crate::types::GrantSite> {
+    action
+        .site_grant()
+        .map(|(tools, site)| crate::types::GrantSite {
+            tools,
+            site,
+            permission: action
+                .browser_action()
+                .and_then(themis_core::tools::site_permissions::browser_permission)
+                .map(|permission| permission.label().to_owned()),
+        })
+}
+
 fn integration_tool(tool: &str) -> bool {
     [
         "mcp_",

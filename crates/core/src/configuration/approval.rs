@@ -126,14 +126,11 @@ pub(super) fn rule_matches(rule: &ApprovalRule, action: &ToolAction) -> bool {
         })
         || deny_crosses_command_tools(rule, action);
     if crate::tools::is_site_tool(&action.tool) {
-        // Web and browser rules name a site: the host or any of its subdomains.
         return matches
-            && rule.command.as_ref().is_none_or(|sites| {
-                action
-                    .command
-                    .first()
-                    .is_some_and(|host| site_matches(host, &sites[0]))
-            })
+            && rule
+                .command
+                .as_ref()
+                .is_none_or(|tokens| site_rule_covers(tokens, action))
             && rule
                 .risk
                 .as_ref()
@@ -174,6 +171,22 @@ pub(super) fn rule_matches(rule: &ApprovalRule, action: &ToolAction) -> bool {
             .as_ref()
             .is_none_or(|risk| risk == risk_name(action.risk))
 }
+/// Web and browser rules name a site (the host or any of its subdomains) and, for the browser,
+/// an action (or `download`): every one a rule names must match.
+fn site_rule_covers(tokens: &[String], action: &ToolAction) -> bool {
+    tokens.iter().all(|token| {
+        if action.tool == crate::tools::BROWSER_TOOL
+            && crate::tools::site_permissions::browser_permission(token).is_some()
+        {
+            action.browser_action() == Some(token.as_str())
+        } else {
+            action
+                .command
+                .first()
+                .is_some_and(|host| site_matches(host, token))
+        }
+    })
+}
 /// `shell` and the `git` tool both run git, so a deny rule on one holds on the other: a rule on
 /// `shell` (with or without a command) covers the `git` tool, and a rule on `git` naming a
 /// command covers a shell call running it. A rule on `git` with no command stays about the tool.
@@ -195,6 +208,21 @@ pub fn site_matches(host: &str, site: &str) -> bool {
             || host
                 .strip_suffix(&site)
                 .is_some_and(|rest| rest.ends_with('.')))
+}
+
+/// A browser rule's `command`: one site, one action (or `download`), or a site and an action.
+pub(super) fn valid_browser_rule_command(command: &[String]) -> bool {
+    let actions = command
+        .iter()
+        .filter(|token| crate::tools::site_permissions::browser_permission(token).is_some())
+        .count();
+    let sites = command.len() - actions;
+    (1..=2).contains(&command.len())
+        && actions <= 1
+        && sites <= 1
+        && command.iter().all(|token| {
+            crate::tools::site_permissions::browser_permission(token).is_some() || valid_site(token)
+        })
 }
 
 /// A site in an approval rule: a host name or IP address, without scheme,

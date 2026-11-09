@@ -20,8 +20,7 @@ pub const MAX_INSTRUCTIONS_BYTES: usize = 256 * 1024;
 pub const MAX_SCRIPTS_TOTAL_BYTES: usize = 65536;
 
 /// Exact tool names available from [`crate::tools::boxed_tools`], in build order, then the tools
-/// added per run: `recall`, `fetch_url`, `web_search` and `browser` (which grants every
-/// `browser_*` tool). Listing, searching, git and file management go through the shell; Windows
+/// added per run: `recall`, `fetch_url`, `web_search` and `browser`. Listing, searching, git and file management go through the shell; Windows
 /// keeps `list_dir` and `search_file`, since its commands need a wrapper that always asks.
 #[cfg(not(windows))]
 const KNOWN_TOOL_NAMES: [&str; 9] = [
@@ -203,23 +202,19 @@ pub fn filter_tools(tools: Vec<Box<dyn ToolT>>, skills: &[Skill]) -> Vec<Box<dyn
         .into_iter()
         .filter(|tool| {
             let name = tool.name();
-            let browser = name.starts_with("browser_");
             let subagents = SUBAGENT_TOOLS.contains(&name);
             // Built-in skill grants do not describe independently authorized integrations.
-            if !KNOWN_TOOL_NAMES.contains(&name) && !browser && !subagents && name != "attach_file"
-            {
+            if !KNOWN_TOOL_NAMES.contains(&name) && !subagents && name != "attach_file" {
                 return true;
             }
             // Managing a background task is part of granting `shell`.
             // Recalling saved originals is a read of the chat's own evidence,
             // and showing project files under a reply is a read of them.
-            // `browser` grants every browser tool.
             let granted = match name {
                 "background_task" => "shell",
                 "recall" | "attach_file" => "read_file",
                 // A subagent runs shell commands, so starting one is part of granting `shell`.
                 _ if subagents => "shell",
-                _ if browser => "browser",
                 name => name,
             };
             skills.iter().all(|skill| {
@@ -632,8 +627,7 @@ mod tests {
         let names = [
             "fetch_url",
             "web_search",
-            "browser_open",
-            "browser_click",
+            "browser",
             "attach_file",
             "create_goal",
         ];
@@ -649,11 +643,8 @@ mod tests {
                 .map(|tool| tool.name().to_owned())
                 .collect()
         };
-        // `browser` grants every browser tool; `read_file` grants attach_file.
-        assert_eq!(
-            kept(&["browser"]),
-            ["browser_open", "browser_click", "create_goal"]
-        );
+        // `browser` grants the browser; `read_file` grants attach_file.
+        assert_eq!(kept(&["browser"]), ["browser", "create_goal"]);
         assert_eq!(kept(&["read_file"]), ["attach_file", "create_goal"]);
         assert_eq!(kept(&["fetch_url"]), ["fetch_url", "create_goal"]);
         assert_eq!(kept(&[]).len(), names.len());

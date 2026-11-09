@@ -141,9 +141,6 @@
    "cognitive": 36,
    "cyclomatic": 33
   },
-  "crates/core/src/browser/tools/devtools.rs::BrowserDevtools::execute": {
-   "cyclomatic": 34
-  },
   "crates/core/src/chat_grants.rs::GrantEntry::validate": {
    "cyclomatic": 25
   },
@@ -151,7 +148,7 @@
    "cyclomatic": 25
   },
   "crates/core/src/configuration/approval.rs::rule_matches": {
-   "cyclomatic": 23
+   "cyclomatic": 22
   },
   "crates/core/src/configuration/guidance.rs::docs_map": {
    "cognitive": 28
@@ -171,8 +168,7 @@
    "lines": 110
   },
   "crates/core/src/configuration/resolve.rs::validate": {
-   "cyclomatic": 23,
-   "lines": 182
+   "lines": 146
   },
   "crates/core/src/context_metrics.rs::RequestTrace::begin": {
    "cyclomatic": 36,

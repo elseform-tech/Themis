@@ -345,43 +345,60 @@ pub fn validate(config: &RuntimeConfig) -> Result<()> {
         "approval.rules exceeds 256 rules"
     );
     for rule in &config.approval.rules {
-        let stem = rule.tool.strip_suffix('*').unwrap_or(&rule.tool);
+        validate_approval_rule(rule)?;
+    }
+    Ok(())
+}
+
+/// One approval rule: its tool name, its `command` for the tools that take one, its risk.
+fn validate_approval_rule(rule: &ApprovalRule) -> Result<()> {
+    let stem = rule.tool.strip_suffix('*').unwrap_or(&rule.tool);
+    ensure!(
+        !rule.tool.is_empty()
+            && stem
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-' || c == '.'),
+        "approval rule tool must be an exact name or trailing-star prefix"
+    );
+    // A rule on a browser tool name of old would quietly match nothing, a deny included.
+    ensure!(
+        !stem.starts_with("browser_"),
+        "approval rule tool \"{}\" no longer exists: the browser is one tool, \"browser\", and a rule names its action in command, such as [\"click\"] or [\"example.com\", \"click\"]",
+        rule.tool
+    );
+    if let Some(command) = &rule.command {
+        if matches!(rule.tool.as_str(), "browser" | "browser*") {
+            ensure!(
+                valid_browser_rule_command(command),
+                "approval rule command for the browser must be a site, an action or both, such as [\"example.com\"], [\"devtools\"] or [\"example.com\", \"devtools\"]"
+            );
+        } else if crate::tools::is_site_tool(&rule.tool) {
+            ensure!(
+                command.len() == 1 && valid_site(&command[0]),
+                "approval rule command for a web tool must be one site, such as [\"example.com\"]"
+            );
+        } else {
+            ensure!(
+                rule.tool == "shell"
+                    || rule.tool == crate::tools::UNSANDBOXED_TOOL
+                    || rule.tool == SENSITIVE_TOOL,
+                "approval rule command is only valid with tool \"shell\", \"shell_unsandboxed\" or \"sensitive_file\", or one site with a web or browser tool"
+            );
+        }
         ensure!(
-            !rule.tool.is_empty()
-                && stem
-                    .chars()
-                    .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-' || c == '.'),
-            "approval rule tool must be an exact name or trailing-star prefix"
+            !command.is_empty() && command.len() <= 16,
+            "approval rule command must have 1..16 tokens"
         );
-        if let Some(command) = &rule.command {
-            if crate::tools::is_site_tool(&rule.tool) || rule.tool == "browser_*" {
-                ensure!(
-                    command.len() == 1 && valid_site(&command[0]),
-                    "approval rule command for a web or browser tool must be one site, such as [\"example.com\"]"
-                );
-            } else {
-                ensure!(
-                    rule.tool == "shell"
-                        || rule.tool == crate::tools::UNSANDBOXED_TOOL
-                        || rule.tool == SENSITIVE_TOOL,
-                    "approval rule command is only valid with tool \"shell\", \"shell_unsandboxed\" or \"sensitive_file\", or one site with a web or browser tool"
-                );
-            }
-            ensure!(
-                !command.is_empty() && command.len() <= 16,
-                "approval rule command must have 1..16 tokens"
-            );
-            ensure!(
-                command.iter().all(|t| !t.is_empty() && t.len() <= 256),
-                "approval rule command tokens must be 1..256 bytes"
-            );
-        }
-        if let Some(risk) = &rule.risk {
-            ensure!(
-                ["read", "write", "execute", "network", "destructive"].contains(&risk.as_str()),
-                "invalid approval rule risk"
-            );
-        }
+        ensure!(
+            command.iter().all(|t| !t.is_empty() && t.len() <= 256),
+            "approval rule command tokens must be 1..256 bytes"
+        );
+    }
+    if let Some(risk) = &rule.risk {
+        ensure!(
+            ["read", "write", "execute", "network", "destructive"].contains(&risk.as_str()),
+            "invalid approval rule risk"
+        );
     }
     Ok(())
 }

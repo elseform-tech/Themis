@@ -430,9 +430,19 @@ pub const TOOL_SCREENSHOT_SEEN_NOTE: &str =
 /// Note on a screenshot too large to show a model that reads images.
 pub const TOOL_SCREENSHOT_UNATTACHED_NOTE: &str =
     include_str!("../builtins/prompts/tool-screenshot-unattached-note.md");
-/// `browser_screenshot`'s description for a model that reads images.
-pub const TOOL_SCREENSHOT_SEEING_DESCRIPTION: &str =
-    include_str!("../builtins/prompts/tool-screenshot-seeing-description.md");
+/// The `browser` tool's description: what it is and every action every run has.
+pub const TOOL_BROWSER: &str = include_str!("../builtins/prompts/tool-browser.md");
+/// The `browser` tool's `screenshot` line, for a model that reads text only.
+pub const TOOL_BROWSER_SCREENSHOT: &str =
+    include_str!("../builtins/prompts/tool-browser-screenshot.md");
+/// The `browser` tool's `screenshot` line, for a model that reads images.
+pub const TOOL_BROWSER_SCREENSHOT_SEEING: &str =
+    include_str!("../builtins/prompts/tool-browser-screenshot-seeing.md");
+/// The `browser` tool's `record` line.
+pub const TOOL_BROWSER_RECORD: &str = include_str!("../builtins/prompts/tool-browser-record.md");
+/// The `browser` tool's `devtools` line (Settings › Browser › Developer mode).
+pub const TOOL_BROWSER_DEVTOOLS: &str =
+    include_str!("../builtins/prompts/tool-browser-devtools.md");
 /// Text with a screenshot image in a request; `{{path}}`.
 pub const RUNTIME_SCREENSHOT_IMAGE: &str =
     include_str!("../builtins/prompts/runtime-screenshot-image.md");

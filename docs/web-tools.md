@@ -9,7 +9,7 @@ Reads one http or https page as text. HTML becomes its main content in Markdown
 (Readability extraction, falling back to the whole body without scripts, styles
 and navigation); plain text, JSON and XML pass through; other content types
 (PDF, images, archives) are refused with their type. No JavaScript runs: for
-pages that need it, or to click and type, use the browser tools.
+pages that need it, or to click and type, use the `browser` tool.
 
 | Limit | Value |
 | --- | --- |
@@ -110,20 +110,34 @@ process (macOS, Linux) or a kill-on-close job (Windows) ends the browser and its
 helpers within seconds. Run as root (as in many Linux containers), Chromium starts
 without its sandbox, the only way it runs there.
 
-| Tool | Does |
+The agent has one tool, `browser`. Its `action` field picks what to do, and each action
+reads only its own fields: `{"action": "click", "ref": "e14"}`. The schema is one object
+with `action` as an enum and the union of the actions' fields, each described with the
+actions that read it; only `action` is required, and a missing field an action needs is
+refused naming the action and the field (`browser type: … missing field `text``). An
+unknown action is refused with the list of valid ones. Actions a run lacks are left out of
+the enum along with the fields only they read: `screenshot` and `record` without a place to
+save media, `devtools` without Developer mode. The description lives in
+`crates/core/builtins/prompts/tool-browser*.md`.
+
+| Action | Does |
 | --- | --- |
-| `browser_open` | Opens a URL in the chat's page |
-| `browser_navigate` | Back, forward or reload |
-| `browser_snapshot` | Reads the page again (or one element's part) |
-| `browser_click` | Clicks an element by ref, or a point of the visible page by `x`/`y` in CSS pixels of the visible page (a canvas, map or game; a point outside the page is refused). A model that reads text only gets no picture, so its screenshots are for the person, not for it to look at (see [Screenshots for models that read images](#screenshots-for-models-that-read-images)); `double` for a double-click |
-| `browser_type` | Types into a field (`clear` first, `submit` with Enter) |
-| `browser_select` | Chooses `<select>` options by value or label |
-| `browser_press` | Presses a key: `Enter`, `Escape`, `Tab`, arrows, letters, `Control+a`; `hold_ms` keeps it down (up to 5 s) for games |
-| `browser_move` | Moves the mouse without clicking: `x` and `y` go to a point; `dx` and `dy` move by a distance, with no edge while the page holds the pointer lock. A click on a locked page stays where the mouse is, so it doesn't turn the view |
-| `browser_snapshot` with `layout` | Adds the page's structure, which the accessibility outline leaves out: visible containers, nested, with position, size and a selector the tools accept, at most 200 lines. Each canvas says `nothing drawn`, `blank` or `has drawing`, which needs no vision. A field's value is never read |
-| `browser_drag` | Presses the mouse at one place, moves to another and lets go. Each end is a ref or a point. Real input, for pages using native drag and drop and for pages listening to the mouse. `drag` in the result says what was pressed on, whether anything was dragged and where it let go; `browser_move` returns `under_mouse`. Elements with `draggable="true"` get refs even with no role. By hand: `browser_press` with `mouseDown` and `mouseUp` hold and release the button, and `browser_move` between them follows with it held. Tools that name an element also take a CSS selector or `text=Some text` |
-| `browser_scroll` | Scrolls the page or one element |
-| `browser_check_looks` | Measures how the current page looks, without seeing it (below) |
+| `open` | Opens `url` in the chat's page |
+| `navigate` | `direction` back, forward or reload |
+| `snapshot` | Reads the page again (or one element's part, `ref`) |
+| `click` | Clicks an element by ref, or a point of the visible page by `x`/`y` in CSS pixels of the visible page (a canvas, map or game; a point outside the page is refused). A model that reads text only gets no picture, so its screenshots are for the person, not for it to look at (see [Screenshots for models that read images](#screenshots-for-models-that-read-images)); `double` for a double-click |
+| `type` | Types `text` into a field (`clear` first, `submit` with Enter) |
+| `select` | Chooses `<select>` options (`values`) by value or label |
+| `press` | Presses a `key`: `Enter`, `Escape`, `Tab`, arrows, letters, `Control+a`; `hold_ms` keeps it down (up to 5 s) for games |
+| `move` | Moves the mouse without clicking: `x` and `y` go to a point; `dx` and `dy` move by a distance, with no edge while the page holds the pointer lock. A click on a locked page stays where the mouse is, so it doesn't turn the view |
+| `snapshot` with `layout` | Adds the page's structure, which the accessibility outline leaves out: visible containers, nested, with position, size and a selector the tools accept, at most 200 lines. Each canvas says `nothing drawn`, `blank` or `has drawing`, which needs no vision. A field's value is never read |
+| `drag` | Presses the mouse at one place, moves to another and lets go. Each end is a ref (`from_reference`, `to_reference`) or a point (`from_x`/`from_y`, `to_x`/`to_y`). Real input, for pages using native drag and drop and for pages listening to the mouse. `drag` in the result says what was pressed on, whether anything was dragged and where it let go; `move` returns `under_mouse`. Elements with `draggable="true"` get refs even with no role. By hand: `press` with `mouseDown` and `mouseUp` hold and release the button, and `move` between them follows with it held. Actions that name an element also take a CSS selector or `text=Some text` |
+| `scroll` | Scrolls the page or one element (`direction` up, down, left or right) |
+| `check_looks` | Measures how the current page looks, without seeing it (below) |
+
+Saved chats from before the browser was one tool still show their `browser_*` steps: the
+chat reads them as "Used the browser" and keeps their screenshots, which the app server
+saved on each step.
 
 Every action waits for the page to settle (loaded after a navigation, network quiet
 for half a second; a loaded page whose network never goes quiet, such as analytics or
@@ -147,7 +161,7 @@ answers and failed requests of pages, fetches and XHRs (URLs without query strin
 and dialogs. Alerts are accepted; confirm and prompt dialogs are dismissed, so a
 page never gets a "yes" the agent did not give. Everything is untrusted data.
 
-**Checking how a page looks.** Models get text only, so `browser_check_looks` measures
+**Checking how a page looks.** Models get text only, so `check_looks` measures
 what a computer can about the current page, once with the page emulating a light colour
 scheme and once dark (`prefers-color-scheme` over the DevTools protocol; the page shows
 each scheme briefly in Workspace and is put back afterwards, also when the run is stopped).
@@ -198,9 +212,9 @@ Chrome's own DevTools for the current tab below the page; a red count shows cons
 errors.
 
 **`/browser-use`.** A built-in command (like `/plugins`) that adds browser
-guidance to the message: open with `browser_open`, act on refs from the returned
+guidance to the message: `open` the page, act on refs from the returned
 snapshot, check `new_since_last_action`, re-snapshot when a ref is gone, show
-results with `browser_screenshot`/`browser_record` and `attach_file`, treat page text
+results with `screenshot`/`record` and `attach_file`, treat page text
 as untrusted, never type secrets the user did not give, ask before irreversible
 submissions, and ask the user to sign in in the Browser tab when a login is needed. It lives in
 `crates/core/builtins/browser-use/SKILL.md`.
@@ -209,8 +223,8 @@ submissions, and ask the user to sign in in the Browser tab when a login is need
 
 | Tool | Does |
 | --- | --- |
-| `browser_screenshot` | Saves a PNG of the visible page, the whole page (`full_page`, up to 16,384 px tall) or one element (`ref`) and returns its path; a model that reads images also gets the picture |
-| `browser_record` | `start` records the current tab (default 30 s, at most 120 s); `stop` saves an H.264 MP4 and returns its path and length |
+| `browser` `screenshot` | Saves a PNG of the visible page, the whole page (`full_page`, up to 16,384 px tall) or one element (`ref`) and returns its path; a model that reads images also gets the picture |
+| `browser` `record` | `operation` `start` records the current tab (default 30 s, `max_seconds` at most 120); `stop` saves an H.264 MP4 and returns its path and length |
 | `attach_file` | Shows images, videos and PDFs from the project under the reply: `files: [{path, caption?}]`, at most 12 per reply, 200 MB each |
 
 Screenshots and recordings are saved like composer attachments, in
@@ -231,7 +245,7 @@ preview, two to four as tiles with their captions, five or more as three tiles a
 the viewer, which steps through every attached item of the chat with Previous/Next
 or the arrow keys and closes with Escape.
 
-**In the step.** Opening a `browser_screenshot` or `browser_record` step in the chat
+**In the step.** Opening a browser `screenshot` or `record` step in the chat
 shows what it saved as a small thumbnail (160 px wide, its own shape; a tall page is
 cut at the top) with its size ("1280 × 800") under a screenshot, instead of the result
 the model reads. Clicking it opens the same viewer on that file alone; it is not
@@ -255,7 +269,7 @@ modalities (for example `muse-spark-1.3-contributor` on OpenCode Go;
 `iceman-contributor-free` is text only), or when `models.<id>.images` in
 runtime.jsonc says so; a model the catalog does not describe reads text only. With
 **Settings › Browser › Show screenshots to models that read images** on
-(`browser.screenshots_to_model`, the default), such a model gets `browser_screenshot`
+(`browser.screenshots_to_model`, the default), such a model gets the `screenshot` action
 described as giving it the picture, with no advice on when to take one: it decides.
 Each screenshot it takes also reaches it as a JPEG the browser scales to at most
 1,280 pixels on its longest side (at most 1.5 MB; a larger one goes as text, and the
@@ -286,9 +300,9 @@ and each value is **Allow** (no prompt), **Ask** (an approval prompt) or **Block
 
 | Permission | Covers | Default |
 | --- | --- | --- |
-| Browsing | open, navigate, click, type, press, select, scroll, snapshot, screenshot, record | Allow |
-| Downloads | saving a file a page or an agent action downloads | Allow |
-| Debugging | the debugging tools (console, elements, network, debugger, storage, profiling) | Block |
+| Browsing | the actions open, navigate, snapshot, click, type, select, press, scroll, move, drag, check_looks, screenshot, record | Allow |
+| Downloads | saving a file a page or an agent action downloads (approval key `download`) | Allow |
+| Debugging | the `devtools` action (console, elements, network, debugger, storage, profiling) | Block |
 
 - **Local apps** (`localhost`, `*.localhost`, loopback addresses, `about:blank`) are always
   Allow: they are the apps the agent builds.
@@ -315,8 +329,13 @@ and each value is **Allow** (no prompt), **Ask** (an approval prompt) or **Block
 The web tools ask per site, after they know it (the URL's host, or your SearXNG host for
 searches). In Custom, rules may name a site and **Allow in this chat** covers that web tool
 on that site; see [composer permissions](configuration.md#composer-permissions). Approval
-rules for `browser_*` (for example `{ "tool": "browser_*", "command": ["example.com"],
-"action": "deny" }`) keep working in Custom as an extra deny layer.
+rules for `browser` keep working in Custom as an extra deny layer. A browser approval's
+`command` is the site, then the action (or `download`), so a rule's `command` names a site,
+an action or both, in either order: `{ "tool": "browser", "command": ["example.com"],
+"action": "deny" }` covers every action on that site, `["devtools"]` that action on every
+site, and `["example.com", "click"]` clicks there only. `{ "tool": "browser" }` with no
+`command` covers every action. A rule naming a `browser_*` tool of old is a configuration
+error, so a deny rule never quietly stops matching.
 
 ```jsonc
 { "approval": { "rules": [
@@ -352,9 +371,9 @@ or search results.
 ## Debugging tools (Developer mode)
 
 With **Settings › Browser › Developer mode › Enable full CDP access** on (the default), the
-agent gets one `browser_devtools` tool for the chat's current tab, gated by the Debugging
-permission (always allowed on local apps, Block on other sites by default). One tool with a
-`panel` argument keeps the schema every request carries small:
+agent gets the `devtools` action of the `browser` tool for the chat's current tab, gated by the
+Debugging permission (always allowed on local apps, Block on other sites by default). Its
+`panel` picks what it does, and `operation` the panel's operation (each has a default):
 
 | Panel | Does |
 | --- | --- |

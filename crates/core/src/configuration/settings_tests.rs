@@ -129,23 +129,28 @@ fn site_rules_match_the_host_and_its_subdomains() {
         summary: String::new(),
         risk: RiskLevel::Network,
     };
+    // A browser approval's command is the site, then the action.
+    let browser = |what: &str, host: &str| ToolAction {
+        command: vec![host.into(), what.into()],
+        ..action("browser", host)
+    };
     let resolved = resolve(
             Some(r#"{"approval":{"rules":[{"tool":"fetch_url","command":["docs.rs"],"action":"allow"}]}}"#),
-            Some(r#"{"approval":{"rules":[{"tool":"browser_*","command":["Example.com"],"action":"deny"}]}}"#),
+            Some(r#"{"approval":{"rules":[{"tool":"browser","command":["Example.com"],"action":"deny"}]}}"#),
             None,
         )
         .unwrap();
     let policy = &resolved.config.approval;
     assert_eq!(
-        policy.decision(&action("browser_click", "example.com")),
+        policy.decision(&browser("click", "example.com")),
         PolicyAction::Deny
     );
     assert_eq!(
-        policy.decision(&action("browser_open", "login.example.com")),
+        policy.decision(&browser("open", "login.example.com")),
         PolicyAction::Deny
     );
     assert_eq!(
-        policy.decision(&action("browser_open", "notexample.com")),
+        policy.decision(&browser("open", "notexample.com")),
         PolicyAction::Ask
     );
     assert_eq!(
@@ -163,9 +168,67 @@ fn site_rules_match_the_host_and_its_subdomains() {
         r#"{"tool":"fetch_url","command":["a.com","b.com"],"action":"deny"}"#,
         r#"{"tool":"fetch_url","command":["*.a.com"],"action":"deny"}"#,
         r#"{"tool":"read_file","command":["a.com"],"action":"deny"}"#,
+        r#"{"tool":"browser","command":["a.com","b.com"],"action":"deny"}"#,
+        r#"{"tool":"browser","command":["click","open"],"action":"deny"}"#,
+        r#"{"tool":"browser","command":["a.com","click","x.com"],"action":"deny"}"#,
+        r#"{"tool":"browser","command":["*.a.com"],"action":"deny"}"#,
+        r#"{"tool":"browser","command":["https://a.com","click"],"action":"deny"}"#,
     ] {
         let file = format!(r#"{{"approval":{{"rules":[{bad}]}}}}"#);
         assert!(resolve(Some(&file), None, None).is_err(), "{bad}");
+    }
+}
+
+/// A browser rule names a site, an action (or `download`), or both, in either order; `browser`
+/// covers every action, and a rule naming an action covers only that one.
+#[test]
+fn browser_rules_name_a_site_an_action_or_both() {
+    let browser = |what: &str, host: &str| ToolAction {
+        display: None,
+        command: vec![host.into(), what.into()],
+        tool: "browser".into(),
+        summary: String::new(),
+        risk: RiskLevel::Network,
+    };
+    let resolved = resolve(
+        Some(
+            r#"{"approval":{"rules":[
+                {"tool":"browser","command":["devtools"],"action":"deny"},
+                {"tool":"browser","command":["click","shop.example"],"action":"deny"},
+                {"tool":"browser","command":["docs.rs","download"],"action":"allow"},
+                {"tool":"browser*","command":["localhost"],"action":"allow"},
+                {"tool":"browser","command":["open"],"action":"allow"}
+            ]}}"#,
+        ),
+        None,
+        None,
+    )
+    .unwrap();
+    let policy = &resolved.config.approval;
+    for (what, host, decision) in [
+        ("devtools", "example.com", PolicyAction::Deny),
+        ("devtools", "localhost", PolicyAction::Deny),
+        ("click", "shop.example", PolicyAction::Deny),
+        ("click", "a.shop.example", PolicyAction::Deny),
+        ("type", "shop.example", PolicyAction::Ask),
+        ("download", "docs.rs", PolicyAction::Allow),
+        ("download", "example.com", PolicyAction::Ask),
+        ("click", "localhost", PolicyAction::Allow),
+        ("open", "example.com", PolicyAction::Allow),
+        ("navigate", "example.com", PolicyAction::Ask),
+    ] {
+        assert_eq!(
+            policy.decision(&browser(what, host)),
+            decision,
+            "{what} on {host}"
+        );
+    }
+    // The browser tools of old are gone: a rule naming one is an error, not a rule that
+    // quietly matches nothing.
+    for old in ["browser_*", "browser_click", "browser_devtools*"] {
+        let file = format!(r#"{{"approval":{{"rules":[{{"tool":"{old}","action":"deny"}}]}}}}"#);
+        let error = resolve(Some(&file), None, None).unwrap_err().to_string();
+        assert!(error.contains("no longer exists"), "{old}: {error}");
     }
 }
 

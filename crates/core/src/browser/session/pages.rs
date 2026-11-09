@@ -350,7 +350,7 @@ impl ChatBrowser {
         tab.forget_refs_of_old_page(document);
         let root = match reference {
             Some(reference) => Some(tab.refs.resolve(reference).ok_or_else(|| {
-                format!("no element {reference} on this page; take a new browser_snapshot")
+                format!("no element {reference} on this page; take a new snapshot")
             })?),
             None => None,
         };
@@ -428,7 +428,7 @@ impl ChatBrowser {
             drag: None,
             layout: None,
             snapshot_note: truncated.then(|| {
-                format!("{omitted_lines} more lines not shown; use browser_snapshot with a ref to read one part, or browser_scroll")
+                format!("{omitted_lines} more lines not shown; use the snapshot action with a reference to read one part, or scroll")
             }),
         })
     }

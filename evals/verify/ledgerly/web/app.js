@@ -1,7 +1,14 @@
 // Wires the page: load invoices, render them, refilter on change.
 
+// >>> plant:browser-filter
+const filter = document.getElementById("status-filter").value;
+// <<< plant:browser-filter
+
 async function refresh() {
+  // >>> plant:browser-filter
+  // === plant:browser-filter
   const filter = document.getElementById("status-filter").value;
+  // <<< plant:browser-filter
   const error = document.getElementById("error");
   try {
     const invoices = await fetchInvoices(filter);

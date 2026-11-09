@@ -6,7 +6,7 @@
 //! - [`engine`]: the built-in engine (chrome-headless-shell) downloaded on first use.
 //! - [`snapshot`]: the accessibility outline with refs the model acts on.
 //! - [`session`]: per-chat page, actions and the Workspace stream (the person and the agent use it at once).
-//! - [`tools`]: the agent's `browser_*` tools; [`redact`]: hiding secrets in debugging output.
+//! - [`tools`]: the agent's `browser` tool; [`redact`]: hiding secrets in debugging output.
 
 pub mod cdp;
 pub mod engine;
