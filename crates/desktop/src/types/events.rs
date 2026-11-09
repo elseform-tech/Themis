@@ -283,3 +283,44 @@ pub struct ThreadChange {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub thread: Option<ThreadInfo>,
 }
+
+/// Tauri event name carrying [`SettingsChange`] payloads.
+pub const SETTINGS_CHANGED_NAME: &str = "settings-changed";
+
+/// Which stored settings a `settings-changed` event says to read again.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SettingsScope {
+    /// The app's `settings.json`: defaults for new chats, approvals, limits, appearance.
+    App,
+    /// The user (or a project) `runtime.jsonc`, including the Settings sections that write
+    /// its `browser`, `web`, `subagents` and `memory` blocks.
+    Runtime,
+    /// Stored keys: which ones exist, never their values.
+    Secrets,
+}
+
+impl SettingsScope {
+    /// The settings a successful call to `method` wrote, if any.
+    #[must_use]
+    pub fn written_by(method: &str) -> Option<Self> {
+        match method {
+            "update_settings" | "rename_project" | "delete_project" => Some(Self::App),
+            "save_runtime_configuration"
+            | "ensure_runtime_config"
+            | "update_browser_settings"
+            | "update_web_settings"
+            | "update_subagent_settings"
+            | "update_memory_settings" => Some(Self::Runtime),
+            "set_key" | "remove_key" | "set_secret" | "clear_secret" => Some(Self::Secrets),
+            _ => None,
+        }
+    }
+}
+
+/// `settings-changed` payload (`SettingsChange` in types.ts): settings were written through
+/// the shared server. Metadata only; a window reads the settings of that scope again.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SettingsChange {
+    pub scope: SettingsScope,
+}
