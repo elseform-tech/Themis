@@ -20,7 +20,12 @@ pub async fn dispatch(
         ("discard_thread", Some(id)) => state.thread_project_root(id).await,
         _ => None,
     };
-    let result = dispatch_command(state, Arc::clone(&sink), method, args).await;
+    let result = match method {
+        // A chat's read-only lookups, the work of the tools of the same names.
+        "recall" => state.chat_read(method, args).await,
+        "search_memory" => state.chat_read(method, args).await,
+        _ => dispatch_command(state, Arc::clone(&sink), method, args).await,
+    };
     if let Ok(value) = &result {
         if let Some(scope) = SettingsScope::written_by(method) {
             sink.emit_settings_changed(&SettingsChange { scope });

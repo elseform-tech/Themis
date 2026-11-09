@@ -49,7 +49,7 @@
    "code_lines": 1908
   },
   "crates/desktop/src/state/run.rs": {
-   "code_lines": 1030
+   "code_lines": 1002
   }
  },
  "functions": {
@@ -483,9 +483,9 @@
    "cyclomatic": 24
   },
   "crates/desktop/src/cli.rs::run": {
-   "cognitive": 40,
-   "cyclomatic": 148,
-   "lines": 253
+   "cognitive": 35,
+   "cyclomatic": 145,
+   "lines": 244
   },
   "crates/desktop/src/cli.rs::send_message": {
    "cyclomatic": 31,
@@ -611,9 +611,9 @@
    "cyclomatic": 25
   },
   "crates/desktop/src/state/run.rs::AppState::spawn_run": {
-   "cognitive": 146,
-   "cyclomatic": 131,
-   "lines": 998
+   "cognitive": 144,
+   "cyclomatic": 128,
+   "lines": 970
   },
   "crates/desktop/src/state/subagent_tools.rs::SubagentTool#2::spawn": {
    "cyclomatic": 28

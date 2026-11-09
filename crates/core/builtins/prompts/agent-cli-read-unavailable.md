@@ -1,0 +1,1 @@
+Themis refused `{{method}}` from the agent's shell: this run does not have that tool (memory is off, an approval rule denies it, or this is a subagent's run). Nothing was read. Carry on without it, or ask the person if it is needed.

@@ -795,6 +795,7 @@ refused in every mode, YOLO included, with a message naming the method:
 | Reading configuration and settings | `get_runtime_configuration`, `get_settings`, `get_browser_settings`, `get_web_settings`, `get_subagent_settings`, `get_memory_settings` |
 | Skills and integrations | `list_prompt_skills`, `list_skills`, `plugin_action` with an action from the list below (as the agent's: saving or enabling an MCP server records no consent to start it, and a hook or command-based MCP server is never left switched on) |
 | Its own chat only (`threadId` required) | `get_thread`, `get_thread_history_page`, `get_thread_tasks`, `get_background_task_log`, `get_context_usage`, `get_chat_usage` |
+| Its own chat's reads, only when its run has the tool | `recall` (the chat's saved originals, `themis recall`) and `search_memory` (what Themis remembers in the chat's project, `themis memory search\|show`): the server fills in the run's own `threadId` when the call names none and refuses another chat's |
 
 `plugin_action` is checked per action, again against an explicit list, so an
 action added later stays refused. The server decides on the request itself, so
@@ -806,6 +807,22 @@ the shell's approval step to see) meets the same checks:
 | Reads (fetch nothing, start nothing) | `list`, `inventory`, `marketplaces`, `sources`, `updates`, `plugin_icon`, `inspect_path`, `inspect_json`, `mcp_tools`, `mcp_status` without `connect` or `retry` |
 | Changes through the store, as the agent's | `save`, `save_skill`, `save_hook`, `set_component_enabled`, `remove_component`, `enable`, `disable`, `delete`, `import_path`, `import_json`, `set_marketplace_enabled`, `remove_marketplace` |
 | May fetch (refused when the run's sandbox blocks the network) | `install`, `update`, `import_repository`, `preview_repository`, `inspect_repository`, `add_marketplace`, `preview_source`, `check_source`, `check_sources`, `scan_marketplace`, `catalog`, `catalog_check`, `preview`, `inspect_marketplace` |
+
+`recall` and `search_memory` give the agent's shell exactly what the built-in
+tools of the same names give its run, no more: the same arguments (`query`,
+`limit`, `kinds`, `source`, `around` for `recall`; `query` or `name` for
+`search_memory`), limits and bounded results (recall's result stays near
+12,000 bytes, a memory search returns at most 10 lines), for the run's own
+chat and the project that chat works in. The credential records which of the
+two tools the run has when it is issued: `recall` unless the run's captured
+rules deny it (YOLO keeps it), `search_memory` only while memory is on and no
+rule denies it. A run without the tool, and every subagent's run (subagents
+have neither tool), is refused with `agent-cli-read-unavailable.md` and the
+reason `tool_unavailable`. Your own CLI names the chat with `--thread ID` and
+reads any chat's originals or memory, as `themis call` always could. Each call
+is logged as `recall`/`searched` or `memory`/`searched` with the chat id, `by`
+(`query`, `around` or `name`), `via` (`cli` or `tool`) and whether it worked,
+never the words or results.
 
 Everything else is refused, in every mode, YOLO included: a missing or unknown
 action; `test_hook`, `test_mcp` and `mcp_status` with `connect` or `retry`,
@@ -844,7 +861,7 @@ Calls without a run credential (your own CLI, the desktop app) are unchanged.
 Each refusal is logged as `server`/`agent_call_refused` with the method name
 (`(other)` for anything that is not a plain method name), the `plugin_action`
 action, a `reason` (`method_not_allowed`, `action_not_allowed`, `runs_code`,
-`other_project`, `network_blocked`, or `switch_on` from the store), and the
+`other_project`, `network_blocked`, `tool_unavailable`, or `switch_on` from the store), and the
 chat and run ids, never the credential, paths or arguments.
 
 **Threat model.** The guard relies on the agent never holding your credential.
@@ -905,7 +922,7 @@ not as a generic command:
 
 | `themis` command | Risk | Custom | Auto | YOLO |
 | --- | --- | --- | --- | --- |
-| Reads: `status`, `doctor` (also `doctor --integrations --no-start`), `usage`, `models`, `permissions`, `auth status`, `--help` or `-h` anywhere (the CLI then only prints its usage), a bare `plugin`/`skill`/`mcp`/`hook`; `plugin list/show/export/preview/updates`; `plugin`/`skill`/`mcp`/`hook inspect`; `plugin marketplace list/browse/preview/changes/check`; `skill list`; `skill`/`mcp`/`hook list/show`; `call` with a reading method from the allowed list | `read` | no prompt (the built-in read rule) | no prompt | runs |
+| Reads: `status`, `doctor` (also `doctor --integrations --no-start`), `usage`, `models`, `permissions`, `auth status`, `--help` or `-h` anywhere (the CLI then only prints its usage), a bare `plugin`/`skill`/`mcp`/`hook`; `plugin list/show/export/preview/updates`; `plugin`/`skill`/`mcp`/`hook inspect`; `plugin marketplace list/browse/preview/changes/check`; `skill list`; `skill`/`mcp`/`hook list/show`; `recall …` and `memory search`/`show …` whatever words follow; `call` with a reading method from the allowed list (`recall` and `search_memory` included) | `read` | no prompt (the built-in read rule) | no prompt | runs |
 | Changes through the store: `plugin create/save/edit/disable`, `skill save`, `mcp`/`hook add/update`, `skill enable`, any `disable`, `plugin marketplace enable/disable`, a local `import` | `write` | asks; **Allow in this chat** covers the same command (its full argv) | the reviewer decides | runs |
 | Network: `plugin install/update`, an `import` from an `http(s)` URL or with `--ref`/`--subdirectory`, `plugin marketplace add/refresh` | `network` | as a change | the reviewer decides | runs |
 | Tests that start code: `mcp test`, `hook test`, `skill verify`, `doctor --integrations` (it starts each switched-on MCP server) | `execute` | asks; in an agent's shell the test starts the command inside the run's sandbox, not on the server | the reviewer decides (an ordinary sandboxed command, not a sandbox escape) | runs, inside the sandbox YOLO keeps |

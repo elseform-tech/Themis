@@ -451,6 +451,8 @@ impl AppState {
             }));
         }
         // What Themis remembers, beyond the index and the few memories the run gets in full.
+        // `themis memory` reaches it only when the tool could answer (see `agent_cli::RunScope`).
+        let memory_denied = super::memory_tool::denied_by(&check_approval);
         if run_configuration.memory.enabled {
             tools.push(Box::new(super::memory_tool::SearchMemoryTool {
                 state: self.clone(),
@@ -673,41 +675,14 @@ impl AppState {
         };
         let skills = snapshot.skills;
 
-        let evidence_directory = super::attachments::project_storage_directory(
-            &snapshot.work_root,
-            &["context", thread_id],
-        )?;
         // Saved originals of this chat only; the tool is read-only and bounded.
-        let attachment_root = snapshot.work_root.join(".themis/attachments");
-        let attachments = self
-            .inner
-            .transcript
-            .attachment_paths(thread_id)?
-            .into_iter()
-            .map(std::path::PathBuf::from)
-            .collect();
-        // A tool every call to which would be denied is not advertised; the prompt then
-        // falls back to the read_file pointer. YOLO bypasses rules.
-        let recall_probe = themis_core::tools::ToolAction {
-            display: None,
-            command: Vec::new(),
-            tool: "recall".into(),
-            summary: String::new(),
-            risk: themis_core::tools::RiskLevel::Read,
-        };
-        let recall_denied = !yolo
-            && run_configuration.approval.decision(&recall_probe)
-                == themis_core::configuration::PolicyAction::Deny;
-        if !recall_denied {
-            tools.push(Box::new(themis_core::tools::recall::RecallTool::new(
-                themis_core::tools::recall::RecallScope {
-                    evidence_dir: evidence_directory.clone(),
-                    attachments,
-                    attachment_root: Some(attachment_root),
-                    project_root: snapshot.work_root.canonicalize().ok(),
-                },
-            )));
-        }
+        let recall_scope = self.recall_scope(&snapshot.work_root, thread_id)?;
+        let evidence_directory = recall_scope.evidence_dir.clone();
+        tools.extend(super::chat_reads::recall_tool(
+            yolo,
+            &run_configuration.approval,
+            recall_scope,
+        ));
         // Every checkpoint request carries the chat's first message (empty when unreadable).
         let first_request = self
             .inner
@@ -965,17 +940,14 @@ impl AppState {
                                                         return Err(error);
                                                     }
                                                 }
+                                                let tools = if yolo { tools } else { themis_core::skills::filter_tools(tools, &skills) };
+                                                // Its `themis recall`/`themis memory` reach only the read tools it has.
+                                                let run_scope = super::chat_reads::run_scope(&snapshot.work_root, &sandbox, &tools, memory_denied);
                                                 // Boxed: the run's future is large, and the
                                                 // steer scope must not copy it on the stack.
-                                                themis_core::agent_cli::with_run_scope(themis_core::agent_cli::RunScope::new(&snapshot.work_root, Some(&sandbox)), themis_core::runtime::with_memory_block(memory_block, themis_core::runtime::with_checkpoint_note(checkpoint_note, themis_core::runtime::with_first_request(first_request, themis_core::runtime::with_end_request(end_request, themis_core::runtime::with_steer_inbox(steer_inbox, themis_core::runtime::with_run_notes(run_notes, Box::pin(run_task_with_evidence(
+                                                themis_core::agent_cli::with_run_scope(run_scope, themis_core::runtime::with_memory_block(memory_block, themis_core::runtime::with_checkpoint_note(checkpoint_note, themis_core::runtime::with_first_request(first_request, themis_core::runtime::with_end_request(end_request, themis_core::runtime::with_steer_inbox(steer_inbox, themis_core::runtime::with_run_notes(run_notes, Box::pin(run_task_with_evidence(
                                                 llm,
-                                                if yolo {
-                                                    tools
-                                                } else {
-                                                    themis_core::skills::filter_tools(
-                                                        tools, &skills,
-                                                    )
-                                                },
+                                                tools,
                                                 themis_core::skills::compose_task(&task, &skills),
                                                 history,
                                                 approvals,
