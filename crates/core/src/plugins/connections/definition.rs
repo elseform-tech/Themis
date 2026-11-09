@@ -120,6 +120,27 @@ pub fn tool_call_deadline(tool_timeout_secs: Option<u64>) -> Duration {
 
 impl McpServer {
     pub fn validate(&self) -> anyhow::Result<()> {
+        crate::plugins::definitions::none(self.problems())
+    }
+
+    /// Every problem [`Self::validate`] finds: each group of checks reports its first.
+    pub fn problems(&self) -> Vec<String> {
+        [
+            self.validate_launch(),
+            self.validate_cwd(),
+            self.validate_remote(),
+            self.validate_plain_values(),
+            self.validate_env(),
+            self.validate_headers(),
+        ]
+        .into_iter()
+        .filter_map(Result::err)
+        .map(|error| format!("{error:#}"))
+        .collect()
+    }
+
+    /// How it starts: a command or an address, and its tool time limit.
+    fn validate_launch(&self) -> anyhow::Result<()> {
         if self
             .tool_timeout_secs
             .is_some_and(|secs| !(1..=MAX_TOOL_SECS).contains(&secs))
@@ -129,6 +150,16 @@ impl McpServer {
         if self.sse && self.url.is_none() {
             bail!("The SSE transport needs a URL");
         }
+        if self.command.is_some() == self.url.is_some() {
+            bail!("Specify exactly one MCP command or URL");
+        }
+        if self.command.as_ref().is_some_and(|c| c.trim().is_empty()) {
+            bail!("MCP command is empty");
+        }
+        Ok(())
+    }
+
+    fn validate_cwd(&self) -> anyhow::Result<()> {
         if let Some(cwd) = &self.cwd {
             let inside = cwd
                 .strip_prefix("${CLAUDE_PLUGIN_ROOT}")
@@ -139,12 +170,11 @@ impl McpServer {
                 bail!("MCP cwd must be a folder inside the project, for a local server");
             }
         }
-        if self.command.is_some() == self.url.is_some() {
-            bail!("Specify exactly one MCP command or URL");
-        }
-        if self.command.as_ref().is_some_and(|c| c.trim().is_empty()) {
-            bail!("MCP command is empty");
-        }
+        Ok(())
+    }
+
+    /// A remote server's address and sign-in.
+    fn validate_remote(&self) -> anyhow::Result<()> {
         if let Some(url) = &self.url {
             let names = super::keys::template_names(url);
             if names.iter().any(|name| !super::keys::valid_name(name)) {
@@ -161,7 +191,10 @@ impl McpServer {
             }
             oauth.validate()?;
         }
-        self.validate_plain_values()?;
+        Ok(())
+    }
+
+    fn validate_env(&self) -> anyhow::Result<()> {
         if !self.header_values.is_empty() && self.url.is_none() {
             bail!("Only remote MCP servers take headers");
         }
@@ -174,6 +207,10 @@ impl McpServer {
         {
             bail!("MCP environment values must name environment variables");
         }
+        Ok(())
+    }
+
+    fn validate_headers(&self) -> anyhow::Result<()> {
         if !self.headers.is_empty() && self.url.is_none() {
             bail!("Only remote MCP servers take headers");
         }

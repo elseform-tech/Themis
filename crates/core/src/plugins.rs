@@ -2,6 +2,7 @@
 mod agent_switch;
 pub mod agents;
 pub mod connections;
+pub mod definitions;
 mod discovery;
 pub mod hooks;
 pub mod keys;

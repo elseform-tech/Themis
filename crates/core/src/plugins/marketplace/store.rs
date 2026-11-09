@@ -233,6 +233,14 @@ impl PluginStore {
         }
         result
     }
+    /// A marketplace's source by its name. An unknown name lists the names there are.
+    pub(in crate::plugins) fn marketplace_source(&self, name: &str) -> anyhow::Result<String> {
+        let sources = self.marketplaces()?;
+        match sources.iter().find(|source| source.name == name) {
+            Some(found) => Ok(found.source.clone()),
+            None => Err(unknown_marketplace(name, &sources)),
+        }
+    }
     pub fn marketplaces(&self) -> anyhow::Result<Vec<Marketplace>> {
         // Registration writes use atomic rename; existing snapshots need no exclusive read lock.
         if self.global.join("marketplaces.json").is_file() {
@@ -364,10 +372,11 @@ impl PluginStore {
     pub fn set_marketplace_enabled(&self, name: &str, enabled: bool) -> anyhow::Result<()> {
         let lock = self.marketplace_lock()?;
         let mut sources = self.read_marketplaces()?;
+        let unknown = unknown_marketplace(name, &sources);
         sources
             .iter_mut()
             .find(|source| source.name == name)
-            .context("Unknown marketplace")?
+            .ok_or(unknown)?
             .enabled = enabled;
         let result = write_json(
             &self.global.join("marketplaces.json"),
@@ -385,7 +394,7 @@ impl PluginStore {
         let lock = self.marketplace_lock()?;
         let mut sources = self.read_marketplaces()?;
         if !sources.iter().any(|s| s.name == name) {
-            bail!("Unknown marketplace");
+            return Err(unknown_marketplace(name, &sources));
         }
         sources.retain(|s| s.name != name);
         let scan = self
@@ -425,12 +434,7 @@ impl PluginStore {
         name: &str,
         refresh: bool,
     ) -> anyhow::Result<PathBuf> {
-        let source = self
-            .marketplaces()?
-            .into_iter()
-            .find(|s| s.name == name)
-            .context("Unknown marketplace")?
-            .source;
+        let source = self.marketplace_source(name)?;
         if !source.starts_with("https://") {
             return Ok(PathBuf::from(source).canonicalize()?);
         }
@@ -590,7 +594,9 @@ impl PluginStore {
             .context("Missing plugins")?
             .iter()
             .find(|e| e["name"] == name)
-            .context("Plugin not listed")?;
+            .with_context(|| {
+                format!("Plugin '{name}' is not listed in marketplace '{marketplace}'")
+            })?;
         let source = &entry["source"];
         let mut temporary_root = None;
         let result = async {
@@ -711,4 +717,13 @@ fn repository_subdirectory(staging: &Path, source: &Value) -> anyhow::Result<Pat
         bail!("Plugin directory escapes repository");
     }
     Ok(directory)
+}
+
+/// "Unknown marketplace", naming the one asked for and every one there is.
+fn unknown_marketplace(name: &str, sources: &[Marketplace]) -> anyhow::Error {
+    let known: Vec<&str> = sources.iter().map(|source| source.name.as_str()).collect();
+    anyhow::anyhow!(
+        "Unknown marketplace '{name}'; the marketplaces are: {} (themis plugin marketplace list)",
+        known.join(", ")
+    )
 }

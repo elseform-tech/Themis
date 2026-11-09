@@ -20,6 +20,7 @@ const TABLE: &[(&[&str], ThemisCall)] = &[
     (&["plugin", "list"], Read),
     (&["plugin", "show", "demo"], Read),
     (&["plugin", "export", "demo"], Read),
+    (&["plugin", "preview", "ralph@official"], Read),
     (&["plugin", "updates"], Read),
     (&["plugin", "inspect", "./pkg"], Read),
     (
@@ -400,7 +401,7 @@ proptest! {
         const KNOWN: &[&str] = &[
             "list", "show", "export", "updates", "inspect", "import", "create", "save", "edit",
             "disable", "install", "update", "delete", "uninstall", "marketplace", "verify",
-            "enable", "add", "remove", "test",
+            "enable", "add", "remove", "test", "preview",
         ];
         prop_assume!(!KNOWN.contains(&verb.as_str()));
         let mut command = argv(&["themis", &kind, &verb]);

@@ -217,10 +217,6 @@
    "cognitive": 47,
    "cyclomatic": 28
   },
-  "crates/core/src/plugins/connections/definition.rs::McpServer::validate": {
-   "cognitive": 37,
-   "cyclomatic": 47
-  },
   "crates/core/src/plugins/connections/sse.rs::open_sse": {
    "cyclomatic": 21
   },
@@ -317,10 +313,6 @@
   "crates/core/src/plugins/skill_prompts.rs::edited_skill_source": {
    "cognitive": 35,
    "cyclomatic": 25
-  },
-  "crates/core/src/plugins/validation.rs::validate": {
-   "cognitive": 29,
-   "cyclomatic": 38
   },
   "crates/core/src/providers/chat.rs::CompatibleProvider#2::chat_stream_with_tools": {
    "cyclomatic": 29
@@ -500,9 +492,8 @@
    "lines": 107
   },
   "crates/desktop/src/cli/plugins.rs::run": {
-   "cognitive": 58,
-   "cyclomatic": 113,
-   "lines": 109
+   "cognitive": 30,
+   "cyclomatic": 68
   },
   "crates/desktop/src/cli/render.rs::render_permissions": {
    "cognitive": 60,
@@ -609,9 +600,9 @@
    "lines": 143
   },
   "crates/desktop/src/state/plugins.rs::AppState::plugin_action_with": {
-   "cognitive": 78,
-   "cyclomatic": 162,
-   "lines": 334
+   "cognitive": 64,
+   "cyclomatic": 144,
+   "lines": 282
   },
   "crates/desktop/src/state/projects.rs::AppState::delete_project": {
    "cyclomatic": 23

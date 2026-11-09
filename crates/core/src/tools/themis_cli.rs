@@ -255,7 +255,7 @@ fn integration_words(words: &[&str], from_repository: bool) -> ThemisCall {
 fn plugin_words(words: &[&str]) -> ThemisCall {
     use ThemisCall::*;
     match words {
-        ["list" | "updates"] | ["show" | "export", _] => Read,
+        ["list" | "updates"] | ["show" | "export" | "preview", _] => Read,
         ["create" | "save" | "edit", _] | ["disable", _] => Write,
         ["install" | "update", _] => Network,
         ["delete" | "uninstall", _] => Destructive,

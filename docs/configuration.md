@@ -873,6 +873,16 @@ agent command from reading or writing in every mode. Limits:
   shell itself can already do (for example run a program you allowed) is
   unchanged.
 
+**Clear inputs.** `themis skill|hook|mcp --help` prints the exact JSON of each
+definition (every field, required or optional, an example), and a definition with
+problems is refused with every problem at once, each naming its field, followed by
+that reference; the server answers a malformed `save`, `save_skill` or
+`save_hook` the same way. A skill's `description`, `allowedTools` and `scripts`
+may be left out. Unknown marketplace names list the known ones, and
+`themis plugin preview NAME@MARKET` checks only that plugin. See "CLI" in
+[plugins.md](plugins.md). This adds no setting and no method or action to the
+agent's allowed lists.
+
 ### Approvals for `themis` calls
 
 A `themis` call in the agent's shell is approved at the level of what it does,
@@ -880,7 +890,7 @@ not as a generic command:
 
 | `themis` command | Risk | Custom | Auto | YOLO |
 | --- | --- | --- | --- | --- |
-| Reads: `status`, `doctor`, `usage`, `models`, `permissions`, `auth status`, `--help` or `-h` anywhere (the CLI then only prints its usage), a bare `plugin`/`skill`/`mcp`/`hook`; `plugin list/show/export/updates`; `plugin`/`skill`/`mcp`/`hook inspect`; `plugin marketplace list/browse/preview/changes/check`; `skill list`; `skill`/`mcp`/`hook list/show`; `call` with a reading method from the allowed list | `read` | no prompt (the built-in read rule) | no prompt | runs |
+| Reads: `status`, `doctor`, `usage`, `models`, `permissions`, `auth status`, `--help` or `-h` anywhere (the CLI then only prints its usage), a bare `plugin`/`skill`/`mcp`/`hook`; `plugin list/show/export/preview/updates`; `plugin`/`skill`/`mcp`/`hook inspect`; `plugin marketplace list/browse/preview/changes/check`; `skill list`; `skill`/`mcp`/`hook list/show`; `call` with a reading method from the allowed list | `read` | no prompt (the built-in read rule) | no prompt | runs |
 | Changes through the store: `plugin create/save/edit/disable`, `skill save`, `mcp`/`hook add/update`, `skill enable`, any `disable`, `plugin marketplace enable/disable`, a local `import` | `write` | asks; **Allow in this chat** covers the same command (its full argv) | the reviewer decides | runs |
 | Network: `plugin install/update`, an `import` from an `http(s)` URL or with `--ref`/`--subdirectory`, `plugin marketplace add/refresh` | `network` | as a change | the reviewer decides | runs |
 | Tests that start code: `mcp test`, `hook test`, `skill verify` | `execute` | asks; in an agent's shell the test starts the command inside the run's sandbox, not on the server | the reviewer decides (an ordinary sandboxed command, not a sandbox escape) | runs, inside the sandbox YOLO keeps |

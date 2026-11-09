@@ -99,6 +99,8 @@ pub enum HookFailurePolicy {
 pub struct Hook {
     pub name: String,
     pub event: String,
+    /// Empty (also when left out) only for a prompt hook.
+    #[serde(default)]
     pub command: String,
     #[serde(default)]
     pub enabled: bool,
@@ -179,20 +181,50 @@ fn whole_seconds<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<u6
 }
 impl Hook {
     pub fn validate(&self) -> anyhow::Result<()> {
-        if !super::safe_name(&self.name)
-            || !EVENTS.contains(&canonical_event(&self.event))
-            || self.command.trim().is_empty() == self.prompt.is_none()
-            || !(1..=MAX_TIMEOUT_SECONDS).contains(&self.timeout_seconds)
-        {
-            bail!(
-                "Invalid hook name, event, command, or timeout (1–{MAX_TIMEOUT_SECONDS} seconds)"
-            );
+        crate::plugins::definitions::none(self.problems())
+    }
+
+    /// Every problem [`Self::validate`] finds, one line each, naming the field.
+    pub fn problems(&self) -> Vec<String> {
+        let mut problems = Vec::new();
+        if !super::safe_name(&self.name) {
+            problems.push(format!(
+                "name '{}' must be a safe single name: letters, digits, '_', '.', '-', no leading dot, no '--'",
+                self.name
+            ));
         }
+        if !EVENTS.contains(&canonical_event(&self.event)) {
+            problems.push(format!(
+                "event '{}' is not an event; use one of {}",
+                self.event,
+                EVENTS.join(", ")
+            ));
+        }
+        match (self.command.trim().is_empty(), self.prompt.is_some()) {
+            (true, false) => {
+                problems.push("command is missing: give a command (or a prompt)".into())
+            }
+            (false, true) => problems.push("give a command or a prompt, not both".into()),
+            _ => {}
+        }
+        if !(1..=MAX_TIMEOUT_SECONDS).contains(&self.timeout_seconds) {
+            problems.push(format!(
+                "timeout_seconds {} must be from 1 to {MAX_TIMEOUT_SECONDS}",
+                self.timeout_seconds
+            ));
+        }
+        problems.extend(self.option_problems());
+        problems
+    }
+
+    /// Problems with the optional fields: shell, report and matchers.
+    fn option_problems(&self) -> Vec<String> {
+        let mut problems = Vec::new();
         if self.shell.as_deref().is_some_and(|shell| shell != "bash") {
-            bail!("Hook shell must be bash");
+            problems.push("Hook shell must be bash".to_owned());
         }
         if self.rewake.is_some() && !self.background {
-            bail!("A hook that reports back runs in the background");
+            problems.push("A hook that reports back runs in the background".to_owned());
         }
         if self.rewake.as_ref().is_some_and(|rewake| {
             [&rewake.message, &rewake.summary]
@@ -200,17 +232,23 @@ impl Hook {
                 .flatten()
                 .any(|text| text.len() > REWAKE_LABEL_LIMIT)
         }) {
-            bail!("A hook's report labels are at most {REWAKE_LABEL_LIMIT} bytes");
+            problems.push(format!(
+                "A hook's report labels are at most {REWAKE_LABEL_LIMIT} bytes"
+            ));
         }
         if let Some(pattern) = self.matcher.as_deref().and_then(matcher_regex) {
-            compile_matcher(pattern).context("Invalid hook matcher")?;
+            if let Err(error) = compile_matcher(pattern) {
+                problems.push(format!("Invalid hook matcher: {error:#}"));
+            }
         }
         if let Some(pattern) = &self.moment_matcher {
             if !plain_matcher(pattern) {
-                compile_matcher(pattern).context("Invalid hook matcher")?;
+                if let Err(error) = compile_matcher(pattern) {
+                    problems.push(format!("Invalid hook matcher: {error:#}"));
+                }
             }
         }
-        Ok(())
+        problems
     }
 
     /// Whether this hook runs for `payload` of its event.

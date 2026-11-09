@@ -79,3 +79,60 @@ fn creator_verifier_accepts_large_utf8_instructions_and_rejects_overflow() {
         );
     }
 }
+
+/// The verifier and the store accept the same tool names, so a draft that verifies also saves.
+#[cfg(not(windows))]
+#[test]
+fn the_verifier_knows_exactly_the_store_tool_names() {
+    let script = include_str!("../builtins/skills/scripts/verify.py");
+    let line = script
+        .lines()
+        .find(|line| line.starts_with("TOOLS = {"))
+        .unwrap();
+    let mut listed: Vec<String> = line
+        .split('"')
+        .skip(1)
+        .step_by(2)
+        .map(str::to_owned)
+        .collect();
+    listed.sort();
+    let mut known = themis_core::skills::known_tool_names();
+    known.sort();
+    assert_eq!(listed, known);
+}
+
+/// A draft without lists verifies, and one with several problems names each of them.
+#[test]
+fn the_verifier_takes_optional_lists_and_reports_every_problem() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("skill.json");
+    let script = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/builtins/skills/scripts/verify.py"
+    );
+    let verify = |draft: &str| {
+        std::fs::write(&path, draft).unwrap();
+        Command::new("python3")
+            .arg(script)
+            .arg(&path)
+            .output()
+            .unwrap()
+    };
+    let output = verify(r#"{"id":"notes","name":"Notes","instructions":"Write notes."}"#);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let output = verify(r#"{"id":"bad id","instructions":"x","allowedTools":["nope"],"colour":1}"#);
+    let error = String::from_utf8_lossy(&output.stderr);
+    assert!(!output.status.success());
+    for wanted in [
+        "colour: unknown field",
+        "name must be nonempty text",
+        "id must be a safe single name",
+        "allowedTools contains an unknown tool",
+    ] {
+        assert!(error.contains(wanted), "{wanted} in {error}");
+    }
+}
