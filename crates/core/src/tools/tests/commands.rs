@@ -970,8 +970,59 @@ fn shell_commands_that_only_read_inside_the_project_are_reads() {
         &["git", "diff", "--output=out.txt"],
         &["sed", "-n", "1p", "a.txt"],
         &["awk", "{print}", "a.txt"],
-        &["sh", "-c", "ls"],
+        &["sh", "build.sh"],
     ] {
         assert_ne!(shell_risk(&argv(words)), RiskLevel::Read, "{words:?}");
     }
+}
+
+/// A read wrapped in a plain shell (`sh -c 'cat a.txt'`) is judged by the one command inside;
+/// a script that is anything more, or a read the bare command would not allow, keeps the
+/// command risk.
+#[test]
+fn a_plain_read_wrapped_in_a_shell_is_a_read() {
+    let argv = |words: &[&str]| {
+        words
+            .iter()
+            .map(|w| (*w).to_owned())
+            .collect::<Vec<String>>()
+    };
+    for words in [
+        &["sh", "-c", "cat hello.txt"][..],
+        &["bash", "-c", "ls -la src"],
+        &["sh", "-c", "git status"],
+        &["bash", "-lc", "rg -n 'fn main' src"],
+        &["/bin/zsh", "-c", "find . -name '*.rs'"],
+        &["sh", "-c", "head -n 5 \"my notes.txt\""],
+    ] {
+        assert_eq!(shell_risk(&argv(words)), RiskLevel::Read, "{words:?}");
+    }
+    for words in [
+        &["sh", "-c", "cat a; rm b"][..],
+        &["sh", "-c", "cat $(x)"],
+        &["sh", "-c", "cat /etc/passwd"],
+        &["sh", "-c", "cat ../x"],
+        &["sh", "-c", "cat a > b"],
+        &["sh", "-c", "cat a | head"],
+        &["sh", "-c", "cat *.txt"],
+        &["sh", "-c", "cat ~/x"],
+        &["sh", "-c", "cat a", "extra"],
+        &["sh", "-c", "--", "cat a"],
+        &["env", "sh", "-c", "cat a"],
+        &["sh", "-c", "sed -i s/a/b/ a.txt"],
+        &["sh", "-c", "find . -delete"],
+        &["sh", "-c", "git diff --ext-diff"],
+        &["sh", "-c", "git push --force"],
+        &["sh", "-c", "themis status"],
+        &["sh", "-c", "./ls"],
+        &["sh", "-c", "sh -c 'rm a'"],
+        &["python3", "-c", "print(1)"],
+    ] {
+        assert_ne!(shell_risk(&argv(words)), RiskLevel::Read, "{words:?}");
+    }
+    // A shell inside a shell is read through each plain level.
+    assert_eq!(
+        shell_risk(&argv(&["sh", "-c", "sh -c 'cat a.txt'"])),
+        RiskLevel::Read
+    );
 }
