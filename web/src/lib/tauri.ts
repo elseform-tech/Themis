@@ -42,6 +42,7 @@ import type {
   BackgroundTaskLog,
   ThreadInfo,
   ThreadChange,
+  SettingsChange,
   UsageSummary,
   UsageTotals,
 } from './types';
@@ -49,6 +50,7 @@ import {
   APPROVAL_EXPIRED_NAME,
   APPROVAL_REQUEST_NAME,
   REVIEW_ITEM_NAME,
+  SETTINGS_CHANGED_NAME,
   THREAD_CHANGED_NAME,
   THREAD_EVENT_NAME,
 } from './types';
@@ -462,6 +464,12 @@ export function onThreadChanged(
   cb: (change: ThreadChange) => void,
 ): Promise<UnlistenFn> {
   return listen<ThreadChange>(THREAD_CHANGED_NAME, (event) => cb(event.payload));
+}
+
+export function onSettingsChanged(
+  cb: (change: SettingsChange) => void,
+): Promise<UnlistenFn> {
+  return listen<SettingsChange>(SETTINGS_CHANGED_NAME, (event) => cb(event.payload));
 }
 
 export async function attachmentFile(threadId: string, path: string): Promise<string> {

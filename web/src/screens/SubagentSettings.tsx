@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { Switch } from "../components";
 import { listGoModels, getSubagentSettings, updateSubagentSettings } from "../lib/tauri";
 import type { GoModel, SubagentSettings } from "../lib/types";
-import { describeError } from "../state/store";
+import { describeError, useSettingsChanges } from "../state/store";
 import { SettingsGroup } from "./SettingsGroup";
 
 const COUNTS = [1, 2, 3, 4, 5, 6];
@@ -16,10 +16,11 @@ export function SubagentSettingsSection({ onSaved }: { onSaved?: () => void } = 
   const [models, setModels] = useState<GoModel[]>([]);
   const [error, setError] = useState("");
   const load = () => getSubagentSettings().then(setView).catch(reason => setError(describeError(reason)));
+  const changes = useSettingsChanges("runtime");
   useEffect(() => {
     void load();
     void listGoModels().then(setModels).catch(() => setModels([]));
-  }, []);
+  }, [changes]);
   if (!view) return error ? <p role="alert" className="themis-form-error">{error}</p> : null;
   const { settings } = view;
   const patch = async (changes: Parameters<typeof updateSubagentSettings>[0]) => {
