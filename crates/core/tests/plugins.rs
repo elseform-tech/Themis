@@ -41,6 +41,43 @@ fn init_is_a_short_built_in_skill_described_by_its_frontmatter() {
 }
 
 #[test]
+fn subagents_is_a_built_in_skill_that_lists_or_hands_over_the_task() {
+    const SKILL: &str = include_str!("../builtins/subagents/SKILL.md");
+    for needed in [
+        "list_plugins` with kind `subagent`",
+        "`read_only`",
+        "`model`",
+        "write_paths",
+        "themis call get_subagent_settings",
+        "max_parallel",
+        "Settings › Subagents",
+        "change nothing",
+        "one example request",
+        "spawn_subagents",
+        "rather than doing it yourself",
+        "check what they claim",
+    ] {
+        assert!(SKILL.contains(needed), "{needed}");
+    }
+    let global = tempfile::tempdir().unwrap();
+    let store = PluginStore::new(global.path().to_path_buf(), None);
+    let listed = store
+        .available_skills()
+        .unwrap()
+        .into_iter()
+        .find(|skill| skill.id == "subagents")
+        .expect("built-in subagents skill");
+    assert_eq!(listed.scope, "built-in");
+    assert_eq!(listed.name, "Subagents");
+    assert!(listed.description.contains("/subagents"));
+    let (text, skills, _) = store
+        .resolve_prompt("[[skill:subagents]] review the tests", &[])
+        .unwrap();
+    assert_eq!(text, "Subagents review the tests");
+    assert_eq!(skills[0].instructions, SKILL);
+}
+
+#[test]
 fn plugin_revisions_preserve_saved_prompts_and_reject_stale_edits() {
     let global = tempfile::tempdir().unwrap();
     let project = tempfile::tempdir().unwrap();
