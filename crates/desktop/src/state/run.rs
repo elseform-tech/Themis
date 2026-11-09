@@ -588,7 +588,7 @@ impl AppState {
                 },
             ));
         }
-        tools.extend(self.integration_management_tools_for_run(
+        tools.extend(self.automation_tools_for_run(
             approvals.clone(),
             snapshot.work_root.clone(),
             thread_id.to_owned(),

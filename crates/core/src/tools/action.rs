@@ -19,43 +19,15 @@ pub enum RiskLevel {
     Destructive,
 }
 
-/// Management tools carry distinct approvals for reads, changes and executable tests.
-pub fn integration_risk(name: &str, args: &Value) -> Option<RiskLevel> {
-    if !matches!(
-        name,
-        "list_plugins" | "save_skill" | "manage_integrations" | "manage_automations"
-    ) {
+/// `manage_automations` asks, for another chat's automation, at the level of its action: a list
+/// reads, a deletion is destructive, anything else changes an automation.
+pub fn automation_risk(name: &str, args: &Value) -> Option<RiskLevel> {
+    if name != "manage_automations" {
         return None;
     }
-    let action = match name {
-        "save_skill" => "save_skill",
-        "list_plugins" => "list",
-        _ => args["action"].as_str().unwrap_or("list"),
-    };
-    Some(match action {
-        "list" | "inventory" | "marketplaces" | "sources" | "updates" | "plugin_icon" => {
-            RiskLevel::Read
-        }
-        "catalog"
-        | "preview"
-        | "preview_source"
-        | "check_sources"
-        | "check_source"
-        | "install"
-        | "update"
-        | "scan_marketplace"
-        | "add_marketplace"
-        | "inspect_marketplace"
-        | "inspect_repository"
-            if name == "manage_integrations" =>
-        {
-            RiskLevel::Network
-        }
-        "import_repository" | "preview_repository" => RiskLevel::Network,
-        "test_hook" => RiskLevel::Execute,
-        "test_mcp" if args["server"]["command"].is_string() => RiskLevel::Execute,
-        "test_mcp" => RiskLevel::Network,
-        "delete" | "remove_marketplace" | "remove_component" => RiskLevel::Destructive,
+    Some(match args["action"].as_str().unwrap_or("list") {
+        "list" => RiskLevel::Read,
+        "delete" => RiskLevel::Destructive,
         _ => RiskLevel::Write,
     })
 }
@@ -65,25 +37,7 @@ pub fn integration_risk(name: &str, args: &Value) -> Option<RiskLevel> {
 /// agent manage its own chat's automations without a prompt and asks for
 /// anything else; the dispatcher therefore neither prompts nor arms a permit.
 #[must_use]
-pub fn tool_approves_itself(name: &str, args: &Value) -> bool {
-    tool_approves_itself_by_name(name) || integration_switches_on(name, args)
-}
-
-/// A `manage_integrations` call that switches something on: a hook, an MCP server or a whole
-/// plugin. The tool first asks the store whether it would refuse (a hook or a command-based MCP
-/// server is never an agent's to switch on), so nobody is asked about a call that cannot succeed;
-/// otherwise it asks as usual.
-#[must_use]
-pub fn integration_switches_on(name: &str, args: &Value) -> bool {
-    name == "manage_integrations"
-        && match args["action"].as_str() {
-            Some("enable") => true,
-            Some("set_component_enabled") => args["enabled"] == true && args["kind"] != "skill",
-            _ => false,
-        }
-}
-
-fn tool_approves_itself_by_name(name: &str) -> bool {
+pub fn tool_approves_itself(name: &str) -> bool {
     // `create_goal` and `update_goal` only change the calling chat's goal and `ask_user` only adds a
     // question to it; `search_memory` only reads the person's own memories (Settings › Memory
     // turns it off); their deny rules apply inside. Web and browser tools
@@ -109,18 +63,18 @@ pub fn is_site_tool(name: &str) -> bool {
     matches!(name, "web_search" | "fetch_url" | BROWSER_TOOL)
 }
 
-pub fn integration_approval_identity(name: &str, args: &Value) -> String {
-    if matches!(name, "manage_integrations" | "manage_automations") {
-        use std::hash::{Hash, Hasher};
-        let action = args["action"].as_str().unwrap_or("list");
-        let mut definition = std::collections::hash_map::DefaultHasher::new();
-        if matches!(action, "test_hook" | "test_mcp") {
-            args.to_string().hash(&mut definition);
-        }
+/// The approval identity of a tool call: its name, or for `manage_automations` the action and
+/// its risk, so a grant for one action never covers another.
+pub fn automation_approval_identity(name: &str, args: &Value) -> String {
+    if name == "manage_automations" {
+        // The hash of nothing keeps the identity grants were saved under.
+        let definition = std::collections::hash_map::DefaultHasher::new();
+        use std::hash::Hasher;
         format!(
-            "{}_{action}_{:?}_{:016x}",
+            "{}_{}_{:?}_{:016x}",
             name,
-            integration_risk(name, args),
+            args["action"].as_str().unwrap_or("list"),
+            automation_risk(name, args),
             definition.finish()
         )
     } else {

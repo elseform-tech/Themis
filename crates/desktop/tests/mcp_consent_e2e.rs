@@ -1,19 +1,18 @@
 //! Enabling an MCP connection is the consent to start it, but only when a
 //! person enabled that exact definition. Definitions that arrive any other way
-//! (a repository's files, an unapproved change) never start by themselves, and
-//! an agent never switches a command-based server on, in any mode.
+//! (a repository's files, an unapproved change) never start by themselves. That an agent never
+//! switches a command-based server on, in any mode, is in `agent_cli_risk_e2e`.
 #![cfg(unix)]
 
 use std::sync::Arc;
 use std::time::Duration;
 
 use serde_json::{json, Value};
-use themis_core::configuration::ApprovalMode;
 use themis_core::plugins::{PluginSpec, PluginStore};
 use themis_desktop::sink::{ChannelSink, TestEvent};
 use themis_desktop::state::AppState;
 use themis_desktop::types::{ApprovalDecision, ApprovalRequest, ProviderKind, ThreadEvent};
-use wiremock::matchers::{method, path};
+use wiremock::matchers::method;
 use wiremock::{Mock, MockServer, Request, ResponseTemplate};
 
 #[allow(dead_code)]
@@ -138,35 +137,6 @@ async fn new_chat(state: &AppState, project: &std::path::Path) -> String {
         .id
 }
 
-/// Provider that, on the first round, asks the agent tool to save `spec`.
-async fn agent_saving(spec: Value) -> MockServer {
-    agent_calling(json!({"action":"save","scope":"local","spec":spec})).await
-}
-
-/// Provider that, on the first round, makes one `manage_integrations` call with `args`.
-async fn agent_calling(args: Value) -> MockServer {
-    let llm = MockServer::builder().start().await;
-    Mock::given(method("POST"))
-        .and(path("/chat/completions"))
-        .respond_with(move |request: &Request| {
-            let body: Value = serde_json::from_slice(&request.body).unwrap();
-            let messages = body["messages"].as_array().unwrap();
-            let last_user = messages.iter().rposition(|m| m["role"] == "user").unwrap();
-            let done = messages[last_user..].iter().any(|m| m["role"] == "tool");
-            let message = if done {
-                json!({"role":"assistant","content":"finished"})
-            } else {
-                json!({"role":"assistant","content":null,"tool_calls":[{"id":"c","type":"function","function":{
-                    "name":"manage_integrations",
-                    "arguments":args.to_string()}}]})
-            };
-            ResponseTemplate::new(200).set_body_json(json!({"choices":[{"message":message}]}))
-        })
-        .mount(&llm)
-        .await;
-    llm
-}
-
 /// A plugin with as many text files as the registry takes can be enabled like any other: seven
 /// catalog plugins (cloudflare and sentry among them) ship 360 to 800.
 #[tokio::test(flavor = "multi_thread")]
@@ -244,64 +214,4 @@ async fn definitions_that_a_person_did_not_enable_never_start() {
     let shown = settled(&state, &root).await;
     assert!(status(&shown).contains("Needs your approval"), "{shown}");
     assert_eq!(requests_to(&other).await, 0);
-}
-
-/// In Custom, Auto and YOLO alike, with a rule allowing the tool: an agent's save keeps a
-/// command-based server off (no command dialog), its switch-on is refused and logged as metadata,
-/// and the person's own switch-on still works.
-#[tokio::test(flavor = "multi_thread")]
-async fn an_agent_never_switches_on_a_command_server_in_any_mode() {
-    for mode in [ApprovalMode::Custom, ApprovalMode::Auto, ApprovalMode::Yolo] {
-        let data = tempfile::tempdir().unwrap();
-        let project = tempfile::tempdir().unwrap();
-        let root = project.path().canonicalize().unwrap();
-        let state = AppState::new_for_test(data.path().join("settings.json"));
-        state
-            .save_runtime_configuration(
-                "user",
-                Some(root.to_string_lossy().into_owned()),
-                r#"{"approval":{"rules":[{"tool":"manage_integrations*","action":"allow"},{"tool":"*","risk":"read","action":"allow"}]}}"#,
-            )
-            .unwrap();
-        let chat = new_chat(&state, &root).await;
-        state
-            .set_thread_approval_mode(chat.clone(), mode)
-            .await
-            .unwrap();
-        let store = PluginStore::new(data.path().to_owned(), Some(root.clone()));
-        let switched_on = || {
-            store
-                .list()
-                .unwrap()
-                .into_iter()
-                .find(|p| p.spec.name == "docs")
-                .is_some_and(|p| p.spec.mcp["docs"].enabled)
-        };
-        let spec = json!({"name":"docs","mcp":{"docs":{"command":"sh","args":["-c","exit 0"],"enabled":true}}});
-        let llm = agent_saving(spec).await;
-        common::use_mock_llm(&state, &llm).await;
-        let (asked, _) = run_to_end(&state, &chat, "add it", &[]).await;
-        assert!(asked.is_empty(), "{mode:?}: no command dialog: {asked:?}");
-        assert!(store.list().unwrap().iter().any(|p| p.spec.name == "docs"));
-        assert!(!switched_on(), "{mode:?}: saved switched off");
-
-        let enable = json!({"action":"set_component_enabled","scope":"local","projectRoot":root,
-            "name":"docs","kind":"mcp","id":"docs","enabled":true});
-        let llm = agent_calling(enable.clone()).await;
-        common::use_mock_llm(&state, &llm).await;
-        let (asked, _) = run_to_end(&state, &chat, "switch it on", &[]).await;
-        assert!(asked.is_empty(), "{mode:?}: {asked:?}");
-        assert!(!switched_on(), "{mode:?}: the agent's switch-on is refused");
-        let logs = std::fs::read_dir(data.path().join("logs"))
-            .unwrap()
-            .filter_map(Result::ok)
-            .map(|entry| std::fs::read_to_string(entry.path()).unwrap_or_default())
-            .collect::<String>();
-        assert!(logs.contains("agent_call_refused"), "{mode:?}: {logs}");
-        assert!(logs.contains("\"reason\":\"switch_on\""), "{logs}");
-        assert!(!logs.contains("exit 0"), "metadata only: {logs}");
-
-        state.plugin_action(enable).await.unwrap();
-        assert!(switched_on(), "{mode:?}: the person's switch-on works");
-    }
 }

@@ -456,42 +456,6 @@ pub(super) async fn screen(
     Some(reply(stream, state, &request.method, result).await)
 }
 
-/// The folder that puts the app's own `themis` first on an agent's `PATH`: `agent-cli/` in the
-/// app data (which agents cannot write), holding only a link named `themis` to `cli`. `None`
-/// where it cannot be made (Windows ships no console CLI in the app).
-pub(super) fn link_cli(data_dir: &Path, cli: Option<&Path>) -> Option<PathBuf> {
-    #[cfg(unix)]
-    {
-        let target = cli?.canonicalize().ok()?;
-        let folder = data_dir.join("agent-cli");
-        std::fs::create_dir_all(&folder).ok()?;
-        let link = folder.join("themis");
-        if std::fs::read_link(&link).ok().as_deref() == Some(target.as_path()) {
-            return Some(folder);
-        }
-        let fresh = folder.join(format!(".themis-{}", uuid::Uuid::new_v4()));
-        std::os::unix::fs::symlink(&target, &fresh).ok()?;
-        if std::fs::rename(&fresh, &link).is_err() {
-            let _ = std::fs::remove_file(&fresh);
-            return None;
-        }
-        Some(folder)
-    }
-    #[cfg(not(unix))]
-    {
-        let _ = (data_dir, cli);
-        None
-    }
-}
-
-/// The CLI this server's executable provides, when it is one (`themis` or the desktop app,
-/// which acts as the CLI when started as `themis`).
-pub(super) fn own_cli() -> Option<PathBuf> {
-    let exe = std::env::current_exe().ok()?;
-    let stem = exe.file_stem()?.to_str()?;
-    matches!(stem, "themis" | "themis-desktop").then_some(exe)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -119,8 +119,7 @@ describe("ApprovalBox", () => {
 });
 
 it.each([
-  ["manage_integrations_save_Some(Write)_123", "call `manage_integrations_save_Some(Write)_123` with {}", "Change an integration"],
-  ["manage_integrations", 'call `manage_integrations` with {"action":"set_component_enabled","enabled":false}', "Change an integration: set component enabled"],
+  ["manage_automations", 'call `manage_automations` with {"action":"delete"}', "Use manage automations"],
   ["mcp_start_g--fixture--123--lookup", "start `lookup`", "Connect an MCP server"],
 ])("gives %s a plain sentence without changing the decision", (tool, summary, sentence) => {
   const { onDecide } = setup({ ...REQUEST, tool, summary });

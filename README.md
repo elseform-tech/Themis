@@ -115,5 +115,7 @@ install the optional command without a second download:
 
 The installer creates a `themis` symlink in `~/.local/bin` (or an explicit absolute
 directory), refuses to overwrite existing commands, and leaves shell configuration
-unchanged. Moving or deleting the app breaks that link. On Windows, build the
-console CLI with `cargo install --path crates/desktop --bin themis`.
+unchanged. Moving or deleting the app breaks that link. On Windows the installer
+puts the console CLI next to the app as `themis-cli.exe`; add that folder to
+`PATH` (or copy it as `themis.exe`) to use it in your own terminal. Agents in the
+app always find it as `themis` without any setup.

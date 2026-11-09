@@ -1,7 +1,6 @@
 //! Testing a hook or an MCP server definition: start its command once and report what came back.
 //!
-//! The app server runs this for the person (`themis mcp|hook test`, the `manage_integrations`
-//! tool after its approval). In an agent's shell the `themis` command runs it itself, inside the
+//! The app server runs this for the person (`themis mcp|hook test`). In an agent's shell the `themis` command runs it itself, inside the
 //! run's sandbox, because the server refuses an agent's request to start a command outside it.
 
 use std::path::Path;

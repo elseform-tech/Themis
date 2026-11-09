@@ -18,6 +18,7 @@ const TABLE: &[(&[&str], ThemisCall)] = &[
     (&["auth", "status"], Read),
     (&["--help"], Read),
     (&["plugin", "list"], Read),
+    (&["plugin", "list", "--kind", "subagent"], Read),
     (&["plugin", "show", "demo"], Read),
     (&["plugin", "export", "demo"], Read),
     (&["plugin", "preview", "ralph@official"], Read),
@@ -586,4 +587,27 @@ fn asking_for_help_is_a_read() {
         classify(&argv(&["themis", "hook", "enable", "demo", "guard"])),
         Some(ThemisCall::SwitchOn)
     );
+}
+
+#[test]
+fn only_bare_integration_calls_manage_integrations() {
+    for words in [
+        &["themis", "plugin", "install", "x@y"][..],
+        &["themis", "mcp", "add", "p", "-"],
+        &["themis", "--data-dir", "/d", "hook", "list"],
+        &["themis", "doctor", "--integrations"],
+    ] {
+        assert!(manages_integrations(&argv(words)), "{words:?}");
+    }
+    for words in [
+        &["themis", "thread", "send", "t", "hi"][..],
+        &["themis", "doctor"],
+        &["themis", "call", "plugin_action", "{}"],
+        &["/tmp/themis", "plugin", "list"],
+        &["sh", "-c", "themis plugin list"],
+        &["themis", "--data-dir"],
+        &["themis"],
+    ] {
+        assert!(!manages_integrations(&argv(words)), "{words:?}");
+    }
 }

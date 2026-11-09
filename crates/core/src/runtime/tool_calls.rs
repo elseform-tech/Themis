@@ -429,7 +429,7 @@ pub(super) async fn execute_call(
         ));
     };
     let approval_args: serde_json::Value = serde_json::from_str(args).unwrap_or_default();
-    let self_approving = crate::tools::tool_approves_itself(name, &approval_args);
+    let self_approving = crate::tools::tool_approves_itself(name);
     let sensitive = if self_approving {
         None
     } else {
@@ -440,14 +440,14 @@ pub(super) async fn execute_call(
     } else {
         let action = ToolAction {
             display: crate::tools::command_display_for_call(name, &approval_args),
-            tool: crate::tools::integration_approval_identity(name, &approval_args),
+            tool: crate::tools::automation_approval_identity(name, &approval_args),
             summary: approval_summary(name, &approval_args, summary),
             risk: if name == "shell" {
                 // Destructive variants (`git push --force`, `rm -rf`, ...) carry the destructive
                 // risk class; commands that only read inside the project are reads.
                 crate::tools::shell_risk(&crate::tools::shell_argv(&approval_args))
             } else {
-                crate::tools::integration_risk(name, &approval_args)
+                crate::tools::automation_risk(name, &approval_args)
                     .unwrap_or_else(|| risk_for(name))
             },
             // Rules and grants on a command see it here: the tool's own check is then skipped.

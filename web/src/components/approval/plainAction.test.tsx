@@ -33,7 +33,7 @@ describe("actionParts", () => {
 
   it("keeps a summary it cannot read in the runtime's own words, or names the tool for a raw argument dump", () => {
     expect(actionParts(request("fetch_url", "fetch https://docs.rs"))).toEqual([{ text: "Fetch https://docs.rs" }]);
-    expect(actionParts(request("save_skill", "call `save_skill` with {\"name\":\"x\"}"))).toEqual(["Use save skill"]);
+    expect(actionParts(request("manage_automations", "call `manage_automations` with {\"name\":\"x\"}"))).toEqual(["Use manage automations"]);
   });
 
   it("never throws and never puts summary text into fixed wording (property)", () => {
@@ -43,7 +43,7 @@ describe("actionParts", () => {
     const next = () => { seed = (seed * 1103515245 + 12345) % 2147483648; return seed; };
     for (let run = 0; run < 500; run += 1) {
       const summary = Array.from({ length: next() % 12 }, () => alphabet[next() % alphabet.length]).join("");
-      for (const tool of ["write_file", "apply_patch", "manage_integrations", "other"]) {
+      for (const tool of ["write_file", "apply_patch", "manage_automations", "other"]) {
         const parts = actionParts(request(tool, summary));
         expect(parts.length).toBeGreaterThan(0);
         // Fixed wording never carries hidden characters: those only reach the page escaped, in chips or SafeText.

@@ -12,7 +12,7 @@ The person picked /subagents, so their message starts with "Subagents". A subage
 When nothing follows "Subagents" in the message, change nothing and list:
 
 - **The built-in subagent:** the plain one, with no profile. It reads, lists and searches files and runs shell commands; it may create or change only the `write_paths` you give it, and with none it only reads.
-- **Plugins' profiles:** `list_plugins` with kind `subagent`. Each item's `spec.subagents` holds its profiles with `name`, `description`, `model` (none means the subagent default) and `tools`; `read_only` true means it can never change files, otherwise it may change only the `write_paths` you give it. Leave out plugins that are not `enabled`.
+- **Plugins' profiles:** run `themis plugin list --kind subagent` in the shell. Each entry is one profile with its `plugin`, `name`, `description`, `model` (none means the subagent default) and `tools`; `read_only` true means it can never change files, otherwise it may change only the `write_paths` you give it. Leave out profiles whose plugin is not `enabled`.
 - **Limits and models:** run `themis call get_subagent_settings` in the shell. Report from `settings`: whether subagents are on (`enabled`), how many run at once (`max_parallel`), model requests each (`max_turns`), the default model (`model`, or the chat's model when absent), the other allowed models (`models`), and which of `allow_writes`, `allow_mcp`, `allow_web` and `allow_nested` are off. These are set in Settings › Subagents.
 
 Keep it short: one line per subagent. End with one example request that fits this project, such as `/subagents review the tests in one subagent and the docs in another`.

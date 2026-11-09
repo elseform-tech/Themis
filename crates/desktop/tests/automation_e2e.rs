@@ -202,9 +202,6 @@ async fn skilled_run_filters_tools_composes_instructions_and_materializes() {
             // Showing project files under the reply comes with `read_file`.
             "attach_file",
             "Skill",
-            "list_plugins",
-            "save_skill",
-            "manage_integrations",
             "manage_automations",
             "recall"
         ]
@@ -717,7 +714,7 @@ async fn browser_use_command_reaches_llm_with_the_browser_tools() {
 }
 
 #[tokio::test]
-async fn creator_prompt_reaches_llm_with_management_tools_and_verifier() {
+async fn creator_prompt_reaches_llm_with_the_shell_and_verifier() {
     let (_repo_temp, root) = init_repo();
     let (state, _settings_temp) = test_state();
     let server = mount_final_text_llm("creator ready").await;
@@ -749,7 +746,11 @@ async fn creator_prompt_reaches_llm_with_management_tools_and_verifier() {
         .iter()
         .filter_map(|t| t["function"]["name"].as_str())
         .collect();
-    assert!(names.contains(&"save_skill"));
-    assert!(names.contains(&"list_plugins"));
+    // Skills, plugins, MCP servers and hooks are managed with `themis` in the shell: the old
+    // integration tools are gone.
+    for gone in ["save_skill", "list_plugins", "manage_integrations"] {
+        assert!(!names.contains(&gone), "{gone} is still offered");
+    }
+    assert!(names.contains(&"shell"));
     assert!(root.join(".themis/skills/skills/verify.py").is_file());
 }

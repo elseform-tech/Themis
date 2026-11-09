@@ -712,9 +712,11 @@ mod tests {
 
     #[test]
     fn builtin_grants_preserve_independently_authorized_plugin_tools() {
-        let tmp = tempfile::tempdir().unwrap();
-        let store = crate::plugins::PluginStore::new(tmp.path().into(), None);
-        let tools = store.management_tools(Arc::new(AllowAllHook));
+        // An MCP tool or `manage_automations`: authorized on its own, not by a skill's grants.
+        let tools: Vec<Box<dyn ToolT>> = vec![
+            Box::new(Named("mcp__docs__search")),
+            Box::new(Named("manage_automations")),
+        ];
         let count = tools.len();
         assert!(count > 0);
         assert_eq!(

@@ -96,11 +96,6 @@ fn tool_names() -> BTreeSet<String> {
             }
         }
     }
-    // The integration tools share one implementation, named from a list.
-    let integrations = read("crates/desktop/src/state/integration_tools.rs");
-    let list_end = integrations.find("Box::new(ManagementTool").unwrap();
-    let list_start = integrations[..list_end].rfind('[').unwrap();
-    names.extend(quoted(&integrations[list_start..list_end]));
     names
 }
 
@@ -199,7 +194,7 @@ fn the_source_lists_are_read() {
     // Guards the readers above: a refactor that hides a list must not empty the check.
     let expected = expected();
     for (prefix, at_least) in [
-        ("tool:", 18),
+        ("tool:", 17),
         ("settings:", 9),
         ("workspace:", 5),
         ("view:", 3),

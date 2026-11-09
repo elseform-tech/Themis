@@ -171,7 +171,7 @@ impl ApprovalHook for DesktopApprovalHook {
         if action.risk == CoreRisk::Read && !self.confirm_reads && !escape {
             return false;
         }
-        let integration = integration_tool(&action.tool);
+        let integration = integration_tool(action);
         (self.is_git || (!escape && (action.risk == CoreRisk::Read || integration)))
             && !(self.unattended && (escape || !action.grantable()))
     }
@@ -208,7 +208,7 @@ impl DesktopApprovalHook {
         if escape && self.unattended {
             return Approval::Deny;
         }
-        let integration = integration_tool(&action.tool);
+        let integration = integration_tool(action);
         if !self.is_git && (escape || (action.risk != CoreRisk::Read && !integration)) {
             return Approval::Deny;
         }
@@ -323,16 +323,15 @@ fn grant_site(action: &ToolAction) -> Option<crate::types::GrantSite> {
         })
 }
 
-fn integration_tool(tool: &str) -> bool {
-    [
-        "mcp_",
-        "hook_",
-        "manage_integrations_",
-        "manage_automations_",
-    ]
-    .iter()
-    .any(|prefix| tool.starts_with(prefix))
-        || matches!(tool, "list_plugins" | "save_skill")
+/// Calls that change integrations, not the project: an MCP tool, a hook, an automation, or a
+/// bare `themis plugin|skill|mcp|hook …` in the shell. A non-Git project still lets the person
+/// allow them.
+fn integration_tool(action: &ToolAction) -> bool {
+    ["mcp_", "hook_", "manage_automations_"]
+        .iter()
+        .any(|prefix| action.tool.starts_with(prefix))
+        || (action.tool == "shell"
+            && themis_core::tools::themis_cli::manages_integrations(&action.command))
 }
 
 /// Blocks for the UI decision, yielding the Tokio worker while waiting.
@@ -385,8 +384,36 @@ mod tests {
         let (hook, _) = hook_with_sink(false);
         let hook = hook.with_test_decisions(vec![Approval::AllowOnce]);
         assert_eq!(
-            hook.approve(&action("manage_integrations_save", CoreRisk::Write)),
+            hook.approve(&action("manage_automations_create", CoreRisk::Write)),
             Approval::AllowOnce
+        );
+        // A bare `themis` integration change, as the old integration tools were; any other
+        // shell write stays refused.
+        let shell = |argv: &[&str], risk| ToolAction {
+            command: argv.iter().map(|word| (*word).to_owned()).collect(),
+            ..action("shell", risk)
+        };
+        let hook = hook.with_test_decisions(vec![Approval::AllowOnce, Approval::AllowOnce]);
+        assert_eq!(
+            hook.approve(&shell(
+                &["themis", "plugin", "install", "x@y"],
+                CoreRisk::Network
+            )),
+            Approval::AllowOnce
+        );
+        assert_eq!(
+            hook.approve(&shell(
+                &["themis", "thread", "send", "t", "hi"],
+                CoreRisk::Execute
+            )),
+            Approval::Deny
+        );
+        assert_eq!(
+            hook.approve(&shell(
+                &["./themis", "mcp", "add", "p", "-"],
+                CoreRisk::Execute
+            )),
+            Approval::Deny
         );
         assert_eq!(
             hook.approve(&action("write_file", CoreRisk::Write)),

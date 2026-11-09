@@ -5,6 +5,16 @@ use themis_desktop::{
     state::AppState,
 };
 
+/// One app server per process installs the run-credential issuer an agent's `themis` uses, so
+/// the tests that start one take turns.
+static ONE_SERVER: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+/// A shell call to the app's own `themis`, found first on the run's `PATH`.
+fn themis_call(id: &str, args: &[&str]) -> Value {
+    json!({"id": id, "type": "function", "function": {"name": "shell",
+        "arguments": json!({"command": "themis", "args": args}).to_string()}})
+}
+
 fn cli(dir: &Path, args: &[&str]) -> Value {
     let out = std::process::Command::new(env!("CARGO_BIN_EXE_themis"))
         .arg("--data-dir")
@@ -22,6 +32,7 @@ fn cli(dir: &Path, args: &[&str]) -> Value {
 }
 #[tokio::test(flavor = "multi_thread")]
 async fn cli_plugin_crud_is_visible_to_app_and_preserves_pinned_skills() {
+    let _turn = ONE_SERVER.lock().await;
     let data = tempfile::tempdir().unwrap();
     let project = tempfile::tempdir().unwrap();
     let state = AppState::new_for_test(data.path().join("settings.json"));
@@ -87,6 +98,7 @@ async fn cli_plugin_crud_is_visible_to_app_and_preserves_pinned_skills() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn plain_cli_prompt_loads_catalog_mcp_hooks_and_refreshes_next_turn() {
+    let _turn = ONE_SERVER.lock().await;
     use std::time::Duration;
     use wiremock::{matchers::method, Mock, MockServer, Request, ResponseTemplate};
     let data = tempfile::tempdir().unwrap();
@@ -272,17 +284,21 @@ async fn plain_cli_prompt_loads_catalog_mcp_hooks_and_refreshes_next_turn() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn agent_can_disable_broken_enabled_mcp_without_losing_chat() {
+    let _turn = ONE_SERVER.lock().await;
     use std::time::Duration;
     use wiremock::{matchers::method, Mock, MockServer, Request, ResponseTemplate};
     let data = tempfile::tempdir().unwrap();
     let project = tempfile::tempdir().unwrap();
     let state = AppState::new_for_test(data.path().join("settings.json"));
     let provider = MockServer::builder().start().await;
-    Mock::given(method("POST")).respond_with(|request: &Request| {
+    let root = project.path().to_string_lossy().into_owned();
+    Mock::given(method("POST")).respond_with(move |request: &Request| {
         let body: Value = serde_json::from_slice(&request.body).unwrap();
         let handled = body["messages"].as_array().unwrap().iter().any(|message| message["role"] == "tool");
         let message = if handled { json!({"role":"assistant","content":"Disabled the broken connection"}) }
-            else { json!({"role":"assistant","tool_calls":[{"id":"disable","type":"function","function":{"name":"manage_integrations","arguments":json!({"action":"set_component_enabled","scope":"local","name":"broken","kind":"mcp","id":"missing","enabled":false}).to_string()}}]}) };
+            else {
+                json!({"role":"assistant","tool_calls":[themis_call("disable", &["mcp","disable","broken","missing","--scope","local","--project",&root])]})
+            };
         ResponseTemplate::new(200).set_body_json(json!({"choices":[{"message":message,"finish_reason":if handled {"stop"} else {"tool_calls"}}]}))
     }).mount(&provider).await;
     state
@@ -291,7 +307,10 @@ async fn agent_can_disable_broken_enabled_mcp_without_losing_chat() {
         .unwrap();
     state.set_go_base_url_override(Some(provider.uri()));
     state.plugin_action(json!({"action":"save","scope":"local","projectRoot":project.path(),"spec":{"name":"broken","mcp":{"missing":{"command":project.path().join("nonexistent-mcp"),"args":["SENSITIVE_TEST_ARGUMENT"],"enabled":true}}}})).await.unwrap();
-    let server = Server::bind(state.clone(), data.path()).await.unwrap();
+    let server = Server::bind(state.clone(), data.path())
+        .await
+        .unwrap()
+        .with_agent_cli(env!("CARGO_BIN_EXE_themis").into());
     let serving = tokio::spawn(server.run());
     let created = cli(
         data.path(),
@@ -385,9 +404,10 @@ async fn agent_can_disable_broken_enabled_mcp_without_losing_chat() {
     assert!(warning.contains("server process could not start"));
     assert!(!warning.contains("SENSITIVE_TEST_ARGUMENT"));
     assert!(warning.len() < 1024);
-    assert!(first["tools"]
-        .as_array()
-        .unwrap()
+    // Integrations are managed with `themis` in the shell; the old tool is gone.
+    let tools = first["tools"].as_array().unwrap();
+    assert!(tools.iter().any(|tool| tool["function"]["name"] == "shell"));
+    assert!(!tools
         .iter()
         .any(|tool| tool["function"]["name"] == "manage_integrations"));
     Client::new(data.path().into())
@@ -399,6 +419,7 @@ async fn agent_can_disable_broken_enabled_mcp_without_losing_chat() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn agent_marketplace_management_dispatches_approvals_and_refreshes_catalog() {
+    let _turn = ONE_SERVER.lock().await;
     use std::time::Duration;
     use wiremock::{matchers::method, Mock, MockServer, Request, ResponseTemplate};
     let data = tempfile::tempdir().unwrap();
@@ -420,16 +441,16 @@ async fn agent_marketplace_management_dispatches_approvals_and_refreshes_catalog
         let messages = body["messages"].as_array().unwrap();
         let latest = messages.iter().rfind(|message|message["role"] == "user").unwrap()["content"].as_str().unwrap();
         let step = messages.iter().filter(|message|message["role"] == "tool").count();
-        let actions = if latest.contains("Clean up") { vec![
-            json!({"action":"set_component_enabled","name":"agent-bundle","kind":"skill","id":"review","enabled":false}),
-            json!({"action":"remove_component","name":"agent-bundle","kind":"skill","id":"review"}),
-            json!({"action":"delete","name":"agent-bundle"}),
+        let actions: Vec<&[&str]> = if latest.contains("Clean up") { vec![
+            &["skill","disable","agent-bundle","review"],
+            &["skill","delete","agent-bundle","review"],
+            &["plugin","uninstall","agent-bundle"],
         ] } else if latest.contains("Install") { vec![
-            json!({"action":"preview","marketplace":"fixture","name":"agent-bundle"}),
-            json!({"action":"install","marketplace":"fixture","name":"agent-bundle"}),
+            &["plugin","preview","agent-bundle@fixture"],
+            &["plugin","install","agent-bundle@fixture"],
         ] } else { vec![] };
         let message = if let Some(args) = actions.get(step) {
-            json!({"role":"assistant","tool_calls":[{"id":format!("operation-{step}"),"type":"function","function":{"name":"manage_integrations","arguments":args.to_string()}}]})
+            json!({"role":"assistant","tool_calls":[themis_call(&format!("operation-{step}"), args)]})
         } else { json!({"role":"assistant","content":"Requested management completed"}) };
         ResponseTemplate::new(200).set_body_json(json!({"choices":[{"message":message,"finish_reason":if step<actions.len() {"tool_calls"} else {"stop"}}]}))
     }).mount(&provider).await;
@@ -438,7 +459,10 @@ async fn agent_marketplace_management_dispatches_approvals_and_refreshes_catalog
         .await
         .unwrap();
     state.set_go_base_url_override(Some(provider.uri()));
-    let server = Server::bind(state.clone(), data.path()).await.unwrap();
+    let server = Server::bind(state.clone(), data.path())
+        .await
+        .unwrap()
+        .with_agent_cli(env!("CARGO_BIN_EXE_themis").into());
     let serving = tokio::spawn(server.run());
     let thread = cli(
         data.path(),
@@ -490,8 +514,14 @@ async fn agent_marketplace_management_dispatches_approvals_and_refreshes_catalog
             .collect();
         assert_eq!(results.len(), expected_tool_results);
         for result in results {
-            serde_json::from_str::<Value>(result["content"].as_str().unwrap())
-                .expect("Shared management mutations return JSON, not tool errors");
+            serde_json::from_str::<Value>(result["content"].as_str().unwrap()).unwrap_or_else(
+                |e| {
+                    panic!(
+                        "a shell result, not a tool error: {e}: {}",
+                        result["content"]
+                    )
+                },
+            );
         }
         let packages = state
             .plugin_action(json!({"action":"list","projectRoot":project.path()}))
@@ -509,8 +539,8 @@ async fn agent_marketplace_management_dispatches_approvals_and_refreshes_catalog
         }
     }
     assert_eq!(
-        approval_count, 5,
-        "Every preview/install/mutation received explicit one-time approval"
+        approval_count, 4,
+        "The install and each change asked once; `plugin preview` is a read"
     );
     Client::new(data.path().into())
         .call("shutdown", json!({}))
@@ -521,6 +551,7 @@ async fn agent_marketplace_management_dispatches_approvals_and_refreshes_catalog
 
 #[tokio::test(flavor = "multi_thread")]
 async fn mcp_startup_is_background_isolated_and_reuses_connections() {
+    let _turn = ONE_SERVER.lock().await;
     use wiremock::{matchers::method, Mock, MockServer, Request, ResponseTemplate};
     let data = tempfile::tempdir().unwrap();
     let project = tempfile::tempdir().unwrap();

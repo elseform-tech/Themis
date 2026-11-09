@@ -137,7 +137,7 @@ async fn cli_checkpoint_keeps_the_goal_and_budget_events_reach_clients() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn cli_mcp_inventory_and_large_response_use_bounded_context() {
+async fn cli_large_mcp_response_uses_bounded_context() {
     let data = tempfile::tempdir().unwrap();
     let project_parent = tempfile::tempdir().unwrap();
     let project = project_parent.path().join(".themis/project");
@@ -161,7 +161,7 @@ async fn cli_mcp_inventory_and_large_response_use_bounded_context() {
     let provider = MockServer::builder().start().await;
     Mock::given(method("POST")).respond_with(move |request: &Request| {
         let body: Value = request.body_json().unwrap();
-        assert!(!body["messages"][0]["content"].as_str().unwrap().contains("You summarize agent context"), "ordinary inventory and selective retrieval must not compact");
+        assert!(!body["messages"][0]["content"].as_str().unwrap().contains("You summarize agent context"), "selective retrieval must not compact");
         assert!(request.body.len() < 100_000, "bulk MCP data must stay outside model requests");
         let messages = body["messages"].as_array().unwrap();
         let last = messages.last().unwrap();
@@ -182,14 +182,6 @@ async fn cli_mcp_inventory_and_large_response_use_bounded_context() {
                 return ResponseTemplate::new(200).set_body_json(json!({"choices":[{"message":{"role":"assistant","content":"Counted 10000 records and wrote 300000 characters locally."},"finish_reason":"stop"}]}));
             }
             ("local".to_owned(),"shell".to_owned(),json!({"command":"python3","args":["-c","import json; from pathlib import Path; n=sum(1 for line in Path('bulk.jsonl').open() if json.loads(line)); written=Path('generated.txt').write_text('z'*300000); print(json.dumps(dict(records=n,written=written)))"],"cwd":""}))
-        } else if messages.iter().any(|m|m["role"]=="user" && m["content"]=="Count configured MCP servers") {
-            if last["role"] == "tool" {
-                let result: Value = serde_json::from_str(last["content"].as_str().unwrap()).unwrap();
-                assert_eq!(result["counts"]["mcp"]["total"],1);
-                assert_eq!(result["counts"]["mcp"]["enabled"],1);
-                return ResponseTemplate::new(200).set_body_json(json!({"choices":[{"message":{"role":"assistant","content":"1 MCP server configured and enabled."},"finish_reason":"stop"}]}));
-            }
-            ("inventory".to_owned(),"list_plugins".to_owned(),json!({"kind":"mcp"}))
         } else if last["tool_call_id"] == "blob" {
             let receipt: Value = serde_json::from_str(last["content"].as_str().unwrap()).unwrap();
             assert_eq!(receipt["result_offloaded"],true);
@@ -221,10 +213,6 @@ async fn cli_mcp_inventory_and_large_response_use_bounded_context() {
     let client = Client::new(data.path().into());
     let mut events = client.subscribe().await.unwrap();
     for (prompt, answer) in [
-        (
-            "Count configured MCP servers",
-            "1 MCP server configured and enabled.",
-        ),
         (
             "Retrieve the marker from the large MCP result",
             "Recovered MCP_TARGET_753 from the original.",
