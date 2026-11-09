@@ -90,9 +90,19 @@ export function reduceCollectionActions(
           (approval) => approval.approval_id !== action.approvalId,
         ),
       };
+    default:
+      return reduceSettingsActions(state, action);
+  }
+}
+
+/** Stored settings and key status, including changes other clients announce. */
+function reduceSettingsActions(state: AppState, action: AppAction): AppState | null {
+  switch (action.type) {
     case "settings/loaded":
     case "settings/patched":
       return { ...state, settings: action.settings, settingsLoaded: true };
+    case "settings/changed":
+      return { ...state, settingsChanges: { ...state.settingsChanges, [action.scope]: state.settingsChanges[action.scope] + 1 } };
     case "secrets/loaded":
       return { ...state, secretStatus: action.status, secretStatusLoaded: true, goKeyCheck: action.status.go ? state.goKeyCheck : "missing" };
     case "provider/checked":

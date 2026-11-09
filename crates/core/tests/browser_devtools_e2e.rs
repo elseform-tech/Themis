@@ -6,7 +6,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use serde_json::{json, Value};
-use themis_core::browser::{BrowserConfig, BrowserHub};
+use themis_core::browser::launch::BrowserProcess;
+use themis_core::browser::{BrowserConfig, BrowserHub, ChatBrowser};
 use themis_core::configuration::BrowserConfig as BrowserSettings;
 use themis_core::tools::site_permissions::SitePermissions;
 use themis_core::tools::{Approval, FnHook, ToolAction, ToolT};
@@ -76,20 +77,63 @@ fn offered(tools: &[Box<dyn ToolT>]) -> Vec<String> {
 /// One browser at a time: three Chromes starting together on a loaded CI machine can miss
 /// the startup limit.
 static ONE_BROWSER: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+static WARMED: tokio::sync::OnceCell<()> = tokio::sync::OnceCell::const_new();
 
-#[tokio::test(flavor = "multi_thread")]
-async fn the_agent_debugs_a_local_app_with_the_devtools_toolset() {
-    let _browser = ONE_BROWSER.lock().await;
-    let data = tempfile::tempdir().unwrap();
+/// Starts `executable` once per test process before any test times its own start. The first
+/// Chrome start on a fresh CI machine is cold: on Windows runners it took 27 to 53 s in about
+/// one run in eight and sometimes passed the 45 s startup limit, failing whichever test took
+/// the lock first. A start that runs out of time still warms the machine, so it is tried
+/// again (each try has the product's own limit); later starts take a few seconds.
+async fn warm_up(executable: &std::path::Path) {
+    WARMED
+        .get_or_init(|| async {
+            for attempt in 1..=3 {
+                let profile = tempfile::tempdir().unwrap();
+                match BrowserProcess::launch(executable, profile.path(), true).await {
+                    Ok(_browser) => return,
+                    Err(error) => eprintln!("warm-up start {attempt} failed: {error}"),
+                }
+            }
+        })
+        .await;
+}
+
+/// `check` of the browser's state, asked again until it holds or `limit` runs out; the
+/// last answer either way. Browser events arrive whenever the page and machine get to them.
+async fn eventually<T>(limit: Duration, mut check: impl AsyncFnMut() -> (bool, T)) -> T {
+    let deadline = tokio::time::Instant::now() + limit;
+    loop {
+        let (done, value) = check().await;
+        if done || tokio::time::Instant::now() >= deadline {
+            return value;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+}
+
+/// A browser hub with its own data folder, after the one-time warm-up; `None` (the test is
+/// skipped) without a Chromium browser.
+async fn started_hub(data: &tempfile::TempDir) -> Option<Arc<BrowserHub>> {
     let hub = BrowserHub::new(BrowserConfig {
         root: data.path().to_path_buf(),
         executable: None,
         headless: true,
     });
-    if hub.executable().is_none() {
+    let Some(executable) = hub.executable() else {
         eprintln!("skipping: no Chromium browser installed");
+        return None;
+    };
+    warm_up(&executable).await;
+    Some(hub)
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn the_agent_debugs_a_local_app_with_the_devtools_toolset() {
+    let _browser = ONE_BROWSER.lock().await;
+    let data = tempfile::tempdir().unwrap();
+    let Some(hub) = started_hub(&data).await else {
         return;
-    }
+    };
     let site = MockServer::builder().start().await;
     Mock::given(path("/app"))
         .respond_with(ResponseTemplate::new(200).set_body_raw(PAGE, "text/html"))
@@ -415,15 +459,9 @@ async fn the_agent_debugs_a_local_app_with_the_devtools_toolset() {
 async fn a_download_the_agent_starts_lands_in_the_settings_folder() {
     let _browser = ONE_BROWSER.lock().await;
     let data = tempfile::tempdir().unwrap();
-    let hub = BrowserHub::new(BrowserConfig {
-        root: data.path().to_path_buf(),
-        executable: None,
-        headless: true,
-    });
-    if hub.executable().is_none() {
-        eprintln!("skipping: no Chromium browser installed");
+    let Some(hub) = started_hub(&data).await else {
         return;
-    }
+    };
     let site = MockServer::builder().start().await;
     Mock::given(path("/files"))
         .respond_with(ResponseTemplate::new(200).set_body_raw(
@@ -464,15 +502,14 @@ async fn a_download_the_agent_starts_lands_in_the_settings_folder() {
     let clicked = run(&tools, "click", json!({"ref": reference})).await;
     // The download may still be starting when the click returns; it is saved either way.
     let saved = downloads.path().join("report.csv");
-    for _ in 0..50 {
-        if saved.exists() {
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(100)).await;
-    }
+    let contents = eventually(Duration::from_secs(20), async || {
+        let contents = std::fs::read_to_string(&saved).ok();
+        (contents.as_deref() == Some("a,b\n1,2\n"), contents)
+    })
+    .await;
     assert_eq!(
-        std::fs::read_to_string(&saved).unwrap(),
-        "a,b\n1,2\n",
+        contents.as_deref(),
+        Some("a,b\n1,2\n"),
         "click result: {clicked}"
     );
     if let Some(reported) = clicked["downloads"].as_array() {
@@ -490,15 +527,9 @@ async fn a_download_the_agent_starts_lands_in_the_settings_folder() {
 async fn a_download_nobody_allowed_is_cancelled() {
     let _browser = ONE_BROWSER.lock().await;
     let data = tempfile::tempdir().unwrap();
-    let hub = BrowserHub::new(BrowserConfig {
-        root: data.path().to_path_buf(),
-        executable: None,
-        headless: true,
-    });
-    if hub.executable().is_none() {
-        eprintln!("skipping: no Chromium browser installed");
+    let Some(hub) = started_hub(&data).await else {
         return;
-    }
+    };
     let site = MockServer::builder().start().await;
     Mock::given(path("/files"))
         .respond_with(ResponseTemplate::new(200).set_body_raw(
@@ -529,8 +560,7 @@ async fn a_download_nobody_allowed_is_cancelled() {
         .evaluate_for_test("document.getElementById('get').click()")
         .await;
     assert!(clicked.is_ok(), "{clicked:?}");
-    tokio::time::sleep(Duration::from_millis(1500)).await;
-    let reported = chat.agent_downloads_for_test(started).await;
+    let reported = refused_since(&chat, started, "blocked").await;
     assert!(
         reported
             .iter()
@@ -544,12 +574,24 @@ async fn a_download_nobody_allowed_is_cancelled() {
     chat.evaluate_for_test("document.getElementById('get').click()")
         .await
         .unwrap();
-    tokio::time::sleep(Duration::from_millis(1500)).await;
-    let reported = chat.agent_downloads_for_test(started).await;
+    let reported = refused_since(&chat, started, "no run").await;
     assert!(
         reported
             .iter()
             .any(|d| d["refused"].as_str().is_some_and(|r| r.contains("no run"))),
         "{reported:?}"
     );
+}
+
+/// The agent's downloads since `since`, once one was refused with a reason containing
+/// `reason` (or after 20 s): the click's download event reaches Themis when it does.
+async fn refused_since(chat: &ChatBrowser, since: std::time::Instant, reason: &str) -> Vec<Value> {
+    eventually(Duration::from_secs(20), async || {
+        let reported = chat.agent_downloads_for_test(since).await;
+        let refused = reported
+            .iter()
+            .any(|d| d["refused"].as_str().is_some_and(|r| r.contains(reason)));
+        (refused, reported)
+    })
+    .await
 }

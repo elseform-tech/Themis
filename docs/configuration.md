@@ -507,7 +507,7 @@ Deny rules also match every command a wrapper runs: `sh`/`bash`/`zsh`/`dash`/`ks
 interpreters (`python -c`, `node -e`) are not read: this is a tool policy, not a
 sandbox; deny those interpreters if you need to.
 
-The agent lists and searches through the shell (`ls`, `rg`, `find`), whose commands that only read inside the project run without asking; the sensitive-file check reads their arguments, so `cat .env` still asks. On Windows, where commands need a wrapper that always asks, `list_dir` and `search_file` remain: they do not consider `.gitignore`, `search_file` matches file names only (never contents) and looks at the first 100 entries it walks, and `list_dir` leaves out dotfiles.
+The agent lists and searches through the shell (`ls`, `rg`, `find`), whose commands that only read inside the project run without asking; the sensitive-file check reads their arguments, so `cat .env` still asks. A read wrapped in a plain shell script counts the same: `sh -c 'cat notes.txt'` (also `bash`, `zsh` or `dash`, bare or from `/bin` or `/usr/bin`, with `-c`, `-lc` or `-cl`, the script last) is judged by the one command inside it when the script is exactly that command in plain words: words of letters, digits and `-_./:,@+=%`, whole single-quoted text, and double-quoted text without `$`, backticks, backslashes or `!`. Any separator, pipe, redirect, `$`, backtick, glob, `~`, brace, backslash, newline or comment, a variable set before the program, extra arguments after the script, `--`, other shell options and other wrappers (`env sh -c ...`) keep the command risk and ask; `sh -c 'cat .env'` still asks through the sensitive-file check. On Windows, where commands need a wrapper that always asks, `list_dir` and `search_file` remain: they do not consider `.gitignore`, `search_file` matches file names only (never contents) and looks at the first 100 entries it walks, and `list_dir` leaves out dotfiles.
 
 Git runs through the shell, so a `shell` rule naming a git `command` covers it: `git -C . push` is matched as `git push`.
 
@@ -604,10 +604,13 @@ for `ask_user` still wins) stores a chat's questions in `questions/<chat id>.jso
 (`assumption` holds the tool's `recommended` answer, which the agent works on until answered;
 `reasons` maps an answer to its hint, at most 600 characters; `group` is shared by the questions
 asked in one call). Every choice the agent offers is `{"answer","hint"}`: the hint is one plain
-paragraph on what picking it means (what the agent will do, advantages, disadvantages,
-consequences including whether it is hard to undo, anything else that helps decide). A choice
+paragraph of two to four sentences on what picking it means (what the agent will do, what it
+gains, what it costs or risks, what follows including whether it is hard to undo). A choice
 without a hint, or a bare string, is refused naming the choice and the missing field ("choice 2
-("Tabs") needs `hint`", from `ask-user-choice-incomplete.md`), and nothing is asked. The tool's
+("Tabs") needs `hint`", from `ask-user-choice-incomplete.md`); a hint under 160 characters is
+refused, every such choice named with its length in one refusal (`ask-user-hint-thin.md`); either way nothing is asked.
+The tool's description also rules out choices that only invite the person's own words ("Other",
+"I have a preference, tell me"), since the box always has a field for them. The tool's
 `why` says why the recommendation is recommended; it is stored as the recommendation's hint only
 when that has none (a suggestion without choices), and a non-blocking question must give it unless
 its recommended answer is a choice with a hint. One call may carry up to 4 questions in `questions` (each with the single question's
@@ -799,6 +802,7 @@ refused in every mode, YOLO included, with a message naming the method:
 | Reading configuration and settings | `get_runtime_configuration`, `get_settings`, `get_browser_settings`, `get_web_settings`, `get_subagent_settings`, `get_memory_settings` |
 | Skills and integrations | `list_prompt_skills`, `list_skills`, `plugin_action` with an action from the list below (as the agent's: saving or enabling an MCP server records no consent to start it, and a hook or command-based MCP server is never left switched on) |
 | Its own chat only (`threadId` required) | `get_thread`, `get_thread_history_page`, `get_thread_tasks`, `get_background_task_log`, `get_context_usage`, `get_chat_usage` |
+| Its own chat's reads, only when its run has the tool | `recall` (the chat's saved originals, `themis recall`) and `search_memory` (what Themis remembers in the chat's project, `themis memory search\|show`): the server fills in the run's own `threadId` when the call names none and refuses another chat's |
 
 `plugin_action` is checked per action, again against an explicit list, so an
 action added later stays refused. The server decides on the request itself, so
@@ -810,6 +814,22 @@ the shell's approval step to see) meets the same checks:
 | Reads (fetch nothing, start nothing) | `list`, `inventory`, `marketplaces`, `sources`, `updates`, `plugin_icon`, `inspect_path`, `inspect_json`, `mcp_tools`, `mcp_status` without `connect` or `retry` |
 | Changes through the store, as the agent's | `save`, `save_skill`, `save_hook`, `set_component_enabled`, `remove_component`, `enable`, `disable`, `delete`, `import_path`, `import_json`, `set_marketplace_enabled`, `remove_marketplace` |
 | May fetch (refused when the run's sandbox blocks the network) | `install`, `update`, `import_repository`, `preview_repository`, `inspect_repository`, `add_marketplace`, `preview_source`, `check_source`, `check_sources`, `scan_marketplace`, `catalog`, `catalog_check`, `preview`, `inspect_marketplace` |
+
+`recall` and `search_memory` give the agent's shell exactly what the built-in
+tools of the same names give its run, no more: the same arguments (`query`,
+`limit`, `kinds`, `source`, `around` for `recall`; `query` or `name` for
+`search_memory`), limits and bounded results (recall's result stays near
+12,000 bytes, a memory search returns at most 10 lines), for the run's own
+chat and the project that chat works in. The credential records which of the
+two tools the run has when it is issued: `recall` unless the run's captured
+rules deny it (YOLO keeps it), `search_memory` only while memory is on and no
+rule denies it. A run without the tool, and every subagent's run (subagents
+have neither tool), is refused with `agent-cli-read-unavailable.md` and the
+reason `tool_unavailable`. Your own CLI names the chat with `--thread ID` and
+reads any chat's originals or memory, as `themis call` always could. Each call
+is logged as `recall`/`searched` or `memory`/`searched` with the chat id, `by`
+(`query`, `around` or `name`), `via` (`cli` or `tool`) and whether it worked,
+never the words or results.
 
 Everything else is refused, in every mode, YOLO included: a missing or unknown
 action; `test_hook`, `test_mcp` and `mcp_status` with `connect` or `retry`,
@@ -848,7 +868,7 @@ Calls without a run credential (your own CLI, the desktop app) are unchanged.
 Each refusal is logged as `server`/`agent_call_refused` with the method name
 (`(other)` for anything that is not a plain method name), the `plugin_action`
 action, a `reason` (`method_not_allowed`, `action_not_allowed`, `runs_code`,
-`other_project`, `network_blocked`, or `switch_on` from the store), and the
+`other_project`, `network_blocked`, `tool_unavailable`, or `switch_on` from the store), and the
 chat and run ids, never the credential, paths or arguments.
 
 **Threat model.** The guard relies on the agent never holding your credential.
@@ -909,7 +929,7 @@ not as a generic command:
 
 | `themis` command | Risk | Custom | Auto | YOLO |
 | --- | --- | --- | --- | --- |
-| Reads: `status`, `doctor` (also `doctor --integrations --no-start`), `usage`, `models`, `permissions`, `auth status`, `--help` or `-h` anywhere (the CLI then only prints its usage), a bare `plugin`/`skill`/`mcp`/`hook`; `plugin list/show/export/preview/updates`; `plugin`/`skill`/`mcp`/`hook inspect`; `plugin marketplace list/browse/preview/changes/check`; `skill list`; `skill`/`mcp`/`hook list/show`; `call` with a reading method from the allowed list | `read` | no prompt (the built-in read rule) | no prompt | runs |
+| Reads: `status`, `doctor` (also `doctor --integrations --no-start`), `usage`, `models`, `permissions`, `auth status`, `--help` or `-h` anywhere (the CLI then only prints its usage), a bare `plugin`/`skill`/`mcp`/`hook`; `plugin list/show/export/preview/updates`; `plugin`/`skill`/`mcp`/`hook inspect`; `plugin marketplace list/browse/preview/changes/check`; `skill list`; `skill`/`mcp`/`hook list/show`; `recall …` and `memory search`/`show …` whatever words follow; `call` with a reading method from the allowed list (`recall` and `search_memory` included) | `read` | no prompt (the built-in read rule) | no prompt | runs |
 | Changes through the store: `plugin create/save/edit/disable`, `skill save`, `mcp`/`hook add/update`, `skill enable`, any `disable`, `plugin marketplace enable/disable`, a local `import` | `write` | asks; **Allow in this chat** covers the same command (its full argv) | the reviewer decides | runs |
 | Network: `plugin install/update`, an `import` from an `http(s)` URL or with `--ref`/`--subdirectory`, `plugin marketplace add/refresh` | `network` | as a change | the reviewer decides | runs |
 | Tests that start code: `mcp test`, `hook test`, `skill verify`, `doctor --integrations` (it starts each switched-on MCP server) | `execute` | asks; in an agent's shell the test starts the command inside the run's sandbox, not on the server | the reviewer decides (an ordinary sandboxed command, not a sandbox escape) | runs, inside the sandbox YOLO keeps |
@@ -1333,4 +1353,4 @@ the `memory` block, its `revision` and `waiting` (`null`, or `{jobs, reasons, ne
 
 ## Shared-server event stream additions
 
-Besides thread, approval and review events, the server broadcasts `thread-changed` (`{kind: created|updated|removed, project_root, thread_id, thread?}`) after a successful `create_thread`, `rename_thread`, `set_thread_approval_mode`, `set_thread_effort`, `set_thread_skills` or `discard_thread`, so an open desktop window follows changes made by `themis call` or another client. It carries metadata only. The `approval-request` event carries `grant_scope` (`{argv, covers_further_args}`, shell only): the raw command prefix an "allow in this chat" grant covers, matching the stored grant key. It also carries `grantable` (`false` for destructive actions, which only offer Allow once and Deny) and the `approve_action` decision is `once`, `chat` (formerly `always`, still accepted) or `deny`. When a dialog times out the server emits `approval-expired` (`{thread_id, approval_id}`) after denying it, so clients remove the stale dialog. Streamed assistant text is persisted before a run's terminal event, including Stopped and failed runs.
+Besides thread, approval and review events, the server broadcasts `thread-changed` (`{kind: created|updated|removed, project_root, thread_id, thread?}`) after a successful `create_thread`, `rename_thread`, `set_thread_approval_mode`, `set_thread_effort`, `set_thread_skills` or `discard_thread`, so an open desktop window follows changes made by `themis call` or another client. It carries metadata only. Likewise `settings-changed` (`{scope: app|runtime|secrets}`, nothing else) follows every successful settings write: `app` after `update_settings`, `rename_project` or `delete_project` (the app's `settings.json`: new-chat approval mode, approval timeout, default model and the rest), `runtime` after `save_runtime_configuration`, `ensure_runtime_config`, `update_browser_settings`, `update_web_settings`, `update_subagent_settings` or `update_memory_settings`, and `secrets` after `set_key`, `remove_key`, `set_secret` or `clear_secret` (never a key name or value). A window reads that scope's settings again; refused writes and reads announce nothing. A runtime.jsonc edited by hand in an editor is not watched: Settings shows it the next time a section loads (Settings › Browser also on window focus) or after the next announced write. The `approval-request` event carries `grant_scope` (`{argv, covers_further_args}`, shell only): the raw command prefix an "allow in this chat" grant covers, matching the stored grant key. It also carries `grantable` (`false` for destructive actions, which only offer Allow once and Deny) and the `approve_action` decision is `once`, `chat` (formerly `always`, still accepted) or `deny`. When a dialog times out the server emits `approval-expired` (`{thread_id, approval_id}`) after denying it, so clients remove the stale dialog. Streamed assistant text is persisted before a run's terminal event, including Stopped and failed runs.

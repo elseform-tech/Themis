@@ -3,8 +3,9 @@
 use super::*;
 
 /// Runs one command, then tells every subscribed window about thread
-/// creation, metadata changes and removal, so an open app follows changes
-/// made through the shared server (for example `themis call create_thread`).
+/// creation, metadata changes and removal, and about settings it wrote, so an
+/// open app follows changes made through the shared server (for example
+/// `themis call create_thread` or `themis call update_settings`).
 pub async fn dispatch(
     state: &AppState,
     sink: Arc<dyn EventSink>,
@@ -19,8 +20,16 @@ pub async fn dispatch(
         ("discard_thread", Some(id)) => state.thread_project_root(id).await,
         _ => None,
     };
-    let result = dispatch_command(state, Arc::clone(&sink), method, args).await;
+    let result = match method {
+        // A chat's read-only lookups, the work of the tools of the same names.
+        "recall" => state.chat_read(method, args).await,
+        "search_memory" => state.chat_read(method, args).await,
+        _ => dispatch_command(state, Arc::clone(&sink), method, args).await,
+    };
     if let Ok(value) = &result {
+        if let Some(scope) = SettingsScope::written_by(method) {
+            sink.emit_settings_changed(&SettingsChange { scope });
+        }
         announce_thread_change(state, sink.as_ref(), method, value, thread_id, removed_root).await;
     }
     result

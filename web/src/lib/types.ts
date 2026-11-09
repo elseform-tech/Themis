@@ -892,6 +892,15 @@ export interface ThreadChange {
   thread?: ThreadInfo;
 }
 
+export const SETTINGS_CHANGED_NAME = 'settings-changed';
+
+/** Settings were written through the shared server (this window, the CLI or another client):
+ *  `app` is settings.json, `runtime` a runtime.jsonc, `secrets` which keys are stored. */
+export type SettingsScope = 'app' | 'runtime' | 'secrets';
+export interface SettingsChange {
+  scope: SettingsScope;
+}
+
 export type McpConnections = Record<string, {
   status: "connecting" | "connected" | "failed" | "needs_sign_in" | "needs_key" | "needs_secret_ok";
   /** needs_secret_ok: each secret a plugin's connection reads, and where it would go. */

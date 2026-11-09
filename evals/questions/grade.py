@@ -9,6 +9,7 @@ after the first), `asked_after_deny` (an `ask_user` after the refusal) and `choi
 
 import json
 import os
+import re
 import subprocess
 
 WRITES = ("write_file", "apply_patch")
@@ -72,6 +73,33 @@ def _events(trace):
     return [item["event"] for item in trace.get("events", [])]
 
 
+# A hint "names a downside" when it uses one of these words (a word heuristic, not a judgment).
+DOWNSIDE = re.compile(r"\b(but|however|cost|costs|slower|slow|risk|risks|harder|hard to|downside|trade-?off|"
+                      r"drawback|weaker|less|lose|loses|more work|complex|complexity|can't|cannot|only if|"
+                      r"limit|limited|breaks?|irreversible|undo)\b", re.IGNORECASE)
+# A choice that only invites the person's own words, which the box's field already offers.
+CATCH_ALL = re.compile(r"\b(other|something else|none of (these|the above)|my own|i have a (preferred|preference)|"
+                       r"tell me|let me (choose|decide|specify)|custom)\b", re.IGNORECASE)
+THIN = 200  # characters: below this a hint rarely says what happens, its cost and what follows
+
+
+def hint_measures(actions):
+    """The choices the person saw: how many only invite their own words (by CATCH_ALL), and
+    their hints' mean length, the share under THIN characters and the share that names a
+    downside (by DOWNSIDE)."""
+    answered = [action for action in actions if action["kind"] == "answer"]
+    hints = [hint for action in answered for hint in action.get("hints") or []]
+    if not hints:
+        return {}
+    options = [option for action in answered for option in action.get("options") or []]
+    return {
+        "catch_all_choices": sum(bool(CATCH_ALL.search(option)) for option in options),
+        "hint_chars": round(sum(len(hint) for hint in hints) / len(hints)),
+        "thin_hints": round(sum(len(hint) < THIN for hint in hints) / len(hints), 3),
+        "downside_hints": round(sum(bool(DOWNSIDE.search(hint)) for hint in hints) / len(hints), 3),
+    }
+
+
 def evaluate(trace, scenario, project):
     events = _events(trace)
     actions = trace.get("actions", [])
@@ -89,6 +117,7 @@ def evaluate(trace, scenario, project):
         "tool_calls": len(started),
         "failed_calls": sum(e.get("ok") is False for e in finished),
     }
+    measures.update(hint_measures(actions))
     if scenario["name"] == "export-decisions":
         order = [(i, e) for i, e in enumerate(events)]
         first_answer = next((i for i, e in order if e.get("kind") == "question_answered"), None)

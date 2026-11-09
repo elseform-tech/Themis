@@ -3,6 +3,7 @@
 use crate::server::Client;
 use serde_json::{json, Value};
 use std::path::PathBuf;
+mod chat_reads;
 mod integrations;
 mod plugins;
 
@@ -46,9 +47,11 @@ fn help_for(words: &[String]) -> Option<String> {
     let integration = words
         .first()
         .filter(|word| matches!(word.as_str(), "plugin" | "skill" | "mcp" | "hook"));
-    asks.then(|| match integration {
-        Some(command) => plugins::help(command),
-        None => usage().to_owned(),
+    asks.then(|| match (integration, words.first().map(String::as_str)) {
+        (Some(command), _) => plugins::help(command),
+        (None, Some("recall")) => chat_reads::RECALL_USAGE.to_owned(),
+        (None, Some("memory")) => chat_reads::MEMORY_USAGE.to_owned(),
+        _ => usage().to_owned(),
     })
 }
 
@@ -69,6 +72,9 @@ Commands:
   permissions [PROJECT] [--thread ID] [--json]
                                 Effective approval rules, sandbox and chat grants (read-only)
   usage [--json]                Tokens Themis used: 5 hours, today, week, month
+  recall [--thread ID] KEYWORDS  Search a chat's saved originals (read-only; recall --help)
+  memory search|show [--thread ID] WORDS|NAME
+                                Search or show what Themis remembers (read-only)
   providers                     Select OpenCode Go and enter a hidden API key
   auth status                   Report key availability only
   thread create PROJECT [MODEL]  Create a shared desktop conversation
@@ -137,6 +143,8 @@ pub async fn run() -> Result<(), String> {
                 | "hook"
                 | "permissions"
                 | "usage"
+                | "recall"
+                | "memory"
         )
     }) {
         ensure_server(&client, &directory).await?;
@@ -148,25 +156,14 @@ pub async fn run() -> Result<(), String> {
         return permissions(&client, &words[1..]).await;
     }
     if words.first().is_some_and(|word| word == "usage") {
-        let as_json = match &words[1..] {
-            [] => false,
-            [flag] if flag == "--json" => true,
-            _ => return Err(usage().to_owned()),
-        };
-        let summary = client.call("get_usage_summary", Value::Null).await?;
-        if as_json {
-            println!(
-                "{}",
-                serde_json::to_string(&summary).map_err(|err| err.to_string())?
-            );
-        } else {
-            print!("{}", render_usage(&summary));
-        }
-        return Ok(());
+        return usage_report(&client, &words[1..]).await;
     }
     let result = match words.as_slice() {
         [kind, create, id, request] if kind == "skill" && create == "create" => {
             return send_message(&client, id, &format!("[[skill:skills]] {request}"), false).await;
+        }
+        [command, rest @ ..] if matches!(command.as_str(), "recall" | "memory") => {
+            chat_reads::run(&client, command, rest).await?
         }
         [kind, ..] if matches!(kind.as_str(), "plugin" | "skill" | "mcp" | "hook") => {
             plugins::run(&client, &words, &directory).await?
@@ -337,6 +334,25 @@ pub async fn run() -> Result<(), String> {
         "{}",
         serde_json::to_string(&result).map_err(|err| err.to_string())?
     );
+    Ok(())
+}
+
+/// `themis usage [--json]` (`flags` after `usage`).
+async fn usage_report(client: &Client, flags: &[String]) -> Result<(), String> {
+    let as_json = match flags {
+        [] => false,
+        [flag] if flag == "--json" => true,
+        _ => return Err(usage().to_owned()),
+    };
+    let summary = client.call("get_usage_summary", Value::Null).await?;
+    if as_json {
+        println!(
+            "{}",
+            serde_json::to_string(&summary).map_err(|err| err.to_string())?
+        );
+    } else {
+        print!("{}", render_usage(&summary));
+    }
     Ok(())
 }
 

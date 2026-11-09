@@ -443,27 +443,52 @@ fn ensure_server(
     Err("local server did not become ready within five seconds".to_owned())
 }
 
-/// Turns off macOS smart quotes and smart dashes in the app's text boxes (they are on by
-/// default system-wide and turn `"x"` into `“x”` and `--` into `—`, which corrupts code
-/// typed into prompts). Registered as this app's defaults only: a person's own choice in
-/// Edit > Substitutions still wins, and system settings are untouched.
+/// The macOS text substitutions the app turns off in its own text boxes. Smart quotes and
+/// smart dashes (on by default system-wide) turn `"x"` into `“x”` and `--` into `—`, which
+/// corrupts code typed into prompts. "Add period with double-space" checks a double space
+/// asynchronously, and in the web view its replacement lands after the next typed character,
+/// so `a␣␣bcd` became `a␣b␣cd`: typed text came out reordered.
+#[cfg(any(target_os = "macos", test))]
+const TEXT_SUBSTITUTIONS_OFF: [&str; 6] = [
+    "WebAutomaticQuoteSubstitutionEnabled",
+    "WebAutomaticDashSubstitutionEnabled",
+    "NSAutomaticQuoteSubstitutionEnabled",
+    "NSAutomaticDashSubstitutionEnabled",
+    "WebAutomaticPeriodSubstitutionEnabled",
+    "NSAutomaticPeriodSubstitutionEnabled",
+];
+
+/// Turns off [`TEXT_SUBSTITUTIONS_OFF`] in the app's text boxes. A setting stored system-wide
+/// (System Settings › Keyboard stores "Add period with double-space" explicitly) beats an app's
+/// registered defaults, so each one is written to this app's own preferences instead, and
+/// only when the app has none stored for it yet: a person's own choice in Edit > Substitutions
+/// is kept, and system settings are untouched. An unbundled binary (a dev build) only
+/// registers them as defaults.
 #[cfg(target_os = "macos")]
 fn turn_off_text_substitutions() {
-    use objc2_foundation::{NSDictionary, NSNumber, NSString, NSUserDefaults};
-    let keys = [
-        "WebAutomaticQuoteSubstitutionEnabled",
-        "WebAutomaticDashSubstitutionEnabled",
-        "NSAutomaticQuoteSubstitutionEnabled",
-        "NSAutomaticDashSubstitutionEnabled",
-    ]
-    .map(NSString::from_str);
-    let off = NSNumber::new_bool(false);
-    let off: &objc2::runtime::AnyObject = &off;
-    let values = keys.each_ref().map(|_| off);
-    let defaults = NSDictionary::from_slices(&keys.each_ref().map(|key| &**key), &values);
-    // SAFETY: every key is an NSString and every value an NSNumber, both property-list
-    // types, which is all `registerDefaults` requires.
-    unsafe { NSUserDefaults::standardUserDefaults().registerDefaults(&defaults) };
+    use objc2_foundation::{NSBundle, NSDictionary, NSNumber, NSString, NSUserDefaults};
+    let preferences = NSUserDefaults::standardUserDefaults();
+    let keys = TEXT_SUBSTITUTIONS_OFF.map(NSString::from_str);
+    let Some(bundle) = NSBundle::mainBundle().bundleIdentifier() else {
+        let off = NSNumber::new_bool(false);
+        let off: &objc2::runtime::AnyObject = &off;
+        let values = keys.each_ref().map(|_| off);
+        let defaults = NSDictionary::from_slices(&keys.each_ref().map(|key| &**key), &values);
+        // SAFETY: every key is an NSString and every value an NSNumber, both property-list
+        // types, which is all `registerDefaults` requires.
+        unsafe { preferences.registerDefaults(&defaults) };
+        return;
+    };
+    let stored = preferences.persistentDomainForName(&bundle);
+    for key in &keys {
+        if stored
+            .as_ref()
+            .and_then(|own| own.objectForKey(key))
+            .is_none()
+        {
+            preferences.setBool_forKey(false, key);
+        }
+    }
 }
 
 /// Runs the Tauri application.
@@ -616,6 +641,18 @@ fn a_panics_place_is_kept_and_the_file_stays_small() {
     std::fs::write(&file, vec![b'x'; PANIC_LOG_LIMIT as usize]).unwrap();
     append_panic(&file, Some("src/b.rs:9"), None);
     assert_eq!(std::fs::metadata(&file).unwrap().len(), PANIC_LOG_LIMIT);
+}
+
+#[cfg(test)]
+#[test]
+fn typed_text_is_never_rewritten_by_macos_substitutions() {
+    // Each substitution is turned off for both the web view and native text boxes.
+    for kind in ["Quote", "Dash", "Period"] {
+        for prefix in ["Web", "NS"] {
+            let key = format!("{prefix}Automatic{kind}SubstitutionEnabled");
+            assert!(TEXT_SUBSTITUTIONS_OFF.contains(&key.as_str()), "{key}");
+        }
+    }
 }
 
 #[cfg(test)]

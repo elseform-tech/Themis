@@ -15,10 +15,12 @@ import { ModelsSettings } from "./ModelsSettings";
 import { UsageSettingsSection } from "./UsageSettings";
 import { ResetIcon, SettingsGroup, SettingsIconButton } from "./SettingsGroup";
 import { useSettingsSection } from "./SettingsNav";
+import { useFormDraft } from "./settingsDrafts";
 
 /** Backend field names in validation messages, as the labels the person sees. */
 const FIELD_LABELS: Array<[string, string]> = [["max_total_turns", "Steps per reply"], ["context_token_cap", "Working memory"], ["concurrency_limit", "Chats at once"], ["approval_timeout_seconds", "Approval timeout"]];
 type NumberSetting = "max_total_turns" | "context_token_cap" | "concurrency_limit" | "approval_timeout_seconds";
+const NUMBER_SETTINGS: readonly NumberSetting[] = ["max_total_turns", "context_token_cap", "concurrency_limit", "approval_timeout_seconds"];
 /** The cap Custom starts from: the Auto ceiling, so switching changes nothing until edited. */
 const CUSTOM_CONTEXT_START = 200000;
 
@@ -116,7 +118,8 @@ const RUN_SECTIONS = new Set(["Models", "Memory", "Permissions", "Browser", "Web
 
 export function SettingsScreen() {
   const { state, dispatch } = useApp();
-  const [form, setForm] = useState<Settings>(state.settings);
+  // A change made elsewhere (CLI, another client) shows at once; a number being typed keeps its draft.
+  const [form, setForm] = useFormDraft<Settings>(state.settings, NUMBER_SETTINGS);
   const [saving, setSaving] = useState(false);
   // The section list lives in the sidebar (SettingsNav); the pane shows the chosen section.
   const section = useSettingsSection();
@@ -124,9 +127,6 @@ export function SettingsScreen() {
   const [update, setUpdate] = useState<UpdateStatus | null>(null);
   const [checking, setChecking] = useState(false);
 
-  useEffect(() => {
-    setForm(state.settings);
-  }, [state.settings]);
   // "Saved" after each change; where it changes what agents do, also when that takes effect.
   const [savedNote, setSavedNote] = useState("");
   useEffect(() => { setError(""); setSavedNote(""); }, [section]);

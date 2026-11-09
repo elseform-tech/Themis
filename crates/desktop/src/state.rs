@@ -13,6 +13,7 @@ mod browser;
 mod browser_data;
 mod changes;
 mod chat_grants;
+mod chat_reads;
 pub(crate) mod configuration;
 pub(crate) mod definition_test;
 pub(crate) mod editors;

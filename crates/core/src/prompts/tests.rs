@@ -116,6 +116,7 @@ const ALL: &[(&str, &str, &[&str])] = &[
         "ask-user-choice-incomplete",
         &["choice", "missing"],
     ),
+    (ASK_USER_HINT_THIN, "ask-user-hint-thin", &["hints", "min"]),
     (ASK_USER_PAGES, "ask-user-pages", &["max"]),
     (
         CHAT_ANSWERED_QUESTIONS,
@@ -315,6 +316,11 @@ const ALL: &[(&str, &str, &[&str])] = &[
         &[],
     ),
     (AGENT_CLI_NETWORK_BLOCKED, "agent-cli-network-blocked", &[]),
+    (
+        AGENT_CLI_READ_UNAVAILABLE,
+        "agent-cli-read-unavailable",
+        &["method"],
+    ),
     (AGENT_SWITCH_ON_REFUSED, "agent-switch-on-refused", &[]),
     (TOOL_SANDBOX_NOTE, "tool-sandbox-note", &[]),
     (

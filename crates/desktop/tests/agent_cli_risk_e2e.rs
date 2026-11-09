@@ -607,6 +607,7 @@ fn agent_token(fx: &Fixture, thread: &str, network_blocked: bool) -> String {
     let scope = themis_core::agent_cli::RunScope {
         project_root: Some(fx.project.clone()),
         network_blocked,
+        reads: Vec::new(),
     };
     themis_core::agent_cli::issue(thread, "run-under-test", &scope)
         .unwrap()

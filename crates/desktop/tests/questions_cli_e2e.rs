@@ -61,7 +61,10 @@ impl Gate {
 
 /// A choice's hint: one paragraph on what picking it means.
 fn hint(answer: &str) -> String {
-    format!("Re-indents every file with {answer}; it reads well but churns the diff, and is easy to undo.")
+    format!(
+        "Re-indents every file with {answer} in one pass, so the code reads the same everywhere; \
+         it churns the diff and makes blame noisy for a while, and it is easy to undo with one revert of the formatting commit."
+    )
 }
 
 /// A choice as `ask_user` takes it: the answer and its hint.
@@ -936,7 +939,7 @@ async fn a_chat_message_closes_every_page_of_a_set() {
 /// it asks a blocking question with those choices and the run waits.
 #[tokio::test(flavor = "multi_thread")]
 async fn the_persons_deny_has_the_agent_ask_how_to_go_on() {
-    let way = |answer: &str| json!({"answer": answer, "hint": format!("{answer} (notes.txt); easy to undo.")});
+    let way = |answer: &str| json!({"answer": answer, "hint": format!("{answer} (notes.txt): the step you denied stays undone and nothing else runs for it, which keeps the project as it was, but the notes are not saved to a file until you say so; it is easy to undo by asking again.")});
     let choices = json!([
         way("Write the notes to the chat instead"),
         way("Skip this step and carry on"),

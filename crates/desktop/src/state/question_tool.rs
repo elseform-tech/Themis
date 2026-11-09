@@ -17,6 +17,9 @@ use crate::types::Question;
 
 /// Most questions one `ask_user` call may carry: the pages of one box.
 pub(super) const MAX_PAGES: usize = 4;
+/// The shortest hint taken, in characters: shorter ones rarely say what happens, what it costs
+/// and what follows.
+pub(super) const MIN_HINT_CHARS: usize = 160;
 
 pub(super) struct QuestionTool {
     pub(super) state: AppState,
@@ -123,6 +126,42 @@ fn parse(args: &Value) -> Result<NewQuestion, String> {
     })
 }
 
+/// Why the pages are refused for hints under [`MIN_HINT_CHARS`] characters, naming every such
+/// choice at once (with its page when there are several) so one retry can fix them all.
+fn thin_hints(asked: &[NewQuestion]) -> Option<String> {
+    let several = asked.len() > 1;
+    let thin: Vec<String> = asked
+        .iter()
+        .enumerate()
+        .flat_map(|(page, question)| {
+            question
+                .reasons
+                .iter()
+                .enumerate()
+                .filter_map(move |(index, (answer, hint))| {
+                    let chars = hint.chars().count();
+                    (chars < MIN_HINT_CHARS).then(|| {
+                        let place = if several {
+                            format!("question {} choice {}", page + 1, index + 1)
+                        } else {
+                            format!("choice {}", index + 1)
+                        };
+                        format!("{place} (\"{answer}\", {chars} characters)")
+                    })
+                })
+        })
+        .collect();
+    (!thin.is_empty()).then(|| {
+        themis_core::prompts::fill(
+            themis_core::prompts::ASK_USER_HINT_THIN,
+            &[
+                ("hints", &thin.join("; ")),
+                ("min", &MIN_HINT_CHARS.to_string()),
+            ],
+        )
+    })
+}
+
 impl QuestionTool {
     /// One page checked for asking: a subagent never blocks, and a question that does not
     /// block says what the agent recommends and why.
@@ -160,11 +199,12 @@ impl QuestionTool {
         Ok(asked)
     }
 
-    /// Every page checked, or the first refusal (naming its page when there are several).
+    /// Every page checked, or the first refusal (naming its page when there are several), then
+    /// every hint that is too short, all named in one refusal.
     fn check_all(&self, args: &Value) -> Result<Vec<NewQuestion>, String> {
         let pages = pages(args)?;
         let several = pages.len() > 1;
-        pages
+        let asked = pages
             .into_iter()
             .enumerate()
             .map(|(index, page)| {
@@ -176,7 +216,8 @@ impl QuestionTool {
                     }
                 })
             })
-            .collect()
+            .collect::<Result<Vec<_>, _>>()?;
+        thin_hints(&asked).map_or(Ok(asked), Err)
     }
 
     fn denied_by_rule(&self) -> bool {

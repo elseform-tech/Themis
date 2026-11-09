@@ -179,6 +179,8 @@ pub const ASK_USER_STILL_OPEN: &str = include_str!("../builtins/prompts/ask-user
 /// `ask_user` refusal of a choice without all its details; `{{choice}}`, `{{missing}}`.
 pub const ASK_USER_CHOICE_INCOMPLETE: &str =
     include_str!("../builtins/prompts/ask-user-choice-incomplete.md");
+/// `ask_user` refusal naming every hint that is too short; `{{hints}}`, `{{min}}`.
+pub const ASK_USER_HINT_THIN: &str = include_str!("../builtins/prompts/ask-user-hint-thin.md");
 /// `ask_user` refusal of a call with no question, both forms or too many pages; `{{max}}`.
 pub const ASK_USER_PAGES: &str = include_str!("../builtins/prompts/ask-user-pages.md");
 /// Added to a person's message that closed the chat's open questions; `{{questions}}`.
@@ -477,6 +479,10 @@ pub const AGENT_CLI_OTHER_PROJECT_REFUSED: &str =
 /// The app server's answer to an agent's fetching `plugin_action` when its run blocks the network.
 pub const AGENT_CLI_NETWORK_BLOCKED: &str =
     include_str!("../builtins/prompts/agent-cli-network-blocked.md");
+/// The app server's answer to an agent's `recall` or `search_memory` when its run lacks that tool;
+/// `{{method}}`.
+pub const AGENT_CLI_READ_UNAVAILABLE: &str =
+    include_str!("../builtins/prompts/agent-cli-read-unavailable.md");
 /// `next` hint after starting a background task.
 pub const TOOL_BACKGROUND_NEXT: &str = include_str!("../builtins/prompts/tool-background-next.md");
 
