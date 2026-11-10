@@ -1,1 +1,1 @@
-Do not reach the same result another way (for example with shell or another tool); tell the user it was not allowed and ask how to proceed.
+Do not reach the same result another way (for example with shell or another tool), and do not ask to run it again: that was already decided. Carry on with what you can do without it. If you cannot go on, ask once how to proceed (a question box is fine), and say in your reply what was not done.
