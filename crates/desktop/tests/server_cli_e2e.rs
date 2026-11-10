@@ -661,7 +661,7 @@ async fn cli_turn_records_the_files_it_edited_in_history() {
 }
 
 /// Hidden changes (`.github/…`, `.gitignore`) come through the shared server marked and after
-/// the rest, so Workspace › Changes can fold them into one line.
+/// the rest, so Workspace › Changes can fold them into one line; a project skill is not hidden.
 #[tokio::test(flavor = "multi_thread")]
 async fn cli_list_diff_marks_hidden_files_and_lists_them_last() {
     if !common::git_available() {
@@ -680,6 +680,14 @@ async fn cli_list_diff_marks_hidden_files_and_lists_them_last() {
     std::fs::write(project.join(".github/workflows/ci.yml"), "on: push\n").unwrap();
     std::fs::write(project.join(".gitignore"), "target\n").unwrap();
     std::fs::write(project.join("README.md"), "# edited\n").unwrap();
+    // A project skill is shared with the team: listed like any other file.
+    let skill = project.join(".agents/skills/release-checklist");
+    std::fs::create_dir_all(&skill).unwrap();
+    std::fs::write(
+        skill.join("SKILL.md"),
+        "---\nname: release-checklist\n---\n",
+    )
+    .unwrap();
     let diff = cli(
         dir.path(),
         &["call", "list_diff", &json!({"threadId": id}).to_string()],
@@ -699,6 +707,7 @@ async fn cli_list_diff_marks_hidden_files_and_lists_them_last() {
         listed,
         [
             ("README.md", false),
+            (".agents/skills/release-checklist/SKILL.md", false),
             (".github/workflows/ci.yml", true),
             (".gitignore", true),
         ],
