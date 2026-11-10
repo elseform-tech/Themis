@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type UIEvent } from "react";
+import { useCallback, useEffect, useRef, useState, type RefObject, type UIEvent } from "react";
 
 /** Where the person had scrolled up to, by chat, while the app is open. Not kept across restarts:
  *  a pixel position from another session means little, and a chat reopens at its latest. */
@@ -33,7 +33,53 @@ export function nextRoom(room: number, change: number, following: boolean, rewra
   return Math.max(0, room - Math.max(0, change));
 }
 
+/**
+ * Whether the view, while following, was pulled up by a layout the observer hasn't reported yet
+ * rather than by the person: a block folding or a question box closing at the composer lets a
+ * forced layout clamp the position, and new replies can land before the scroll event, so it looks
+ * like a scroll up from short of the end.
+ */
+export function pulledUpByLayout({ following, before, top, person, resized }: { following: boolean; before: number; top: number; person: boolean; resized: boolean }): boolean {
+  return following && !person && resized && top < before;
+}
+
+/** The heights the resize observer last reported. */
+type Seen = { content: number; view: number };
+const see = (seen: Seen, element: HTMLElement, content: HTMLElement) => {
+  seen.content = content.offsetHeight;
+  seen.view = element.clientHeight;
+};
+const resizedSince = (seen: Seen, element: HTMLElement, content: HTMLElement | null) =>
+  content !== null && (content.offsetHeight !== seen.content || element.clientHeight !== seen.view);
+
 const distanceFromEnd = (element: HTMLElement) => element.scrollHeight - element.scrollTop - element.clientHeight;
+
+/** Whether the chat's last move is the person's: a wheel, touch, key or press a moment ago, or a
+ *  press inside the chat not yet let go (a scrollbar dragged however slowly). Listened to on the
+ *  element rather than as props so a wheel stays a passive, smooth scroll. */
+function usePersonInput(scrollRef: RefObject<HTMLDivElement | null>) {
+  const personAt = useRef(0);
+  const held = useRef(false);
+  useEffect(() => {
+    const element = scrollRef.current;
+    if (!element) return;
+    const kinds = ["wheel", "touchmove", "pointerdown", "keydown"] as const;
+    const person = () => { personAt.current = Date.now(); };
+    const press = () => { held.current = true; };
+    const release = () => { held.current = false; };
+    kinds.forEach(kind => element.addEventListener(kind, person, { passive: true }));
+    element.addEventListener("pointerdown", press, { passive: true });
+    window.addEventListener("pointerup", release);
+    window.addEventListener("pointercancel", release);
+    return () => {
+      kinds.forEach(kind => element.removeEventListener(kind, person));
+      element.removeEventListener("pointerdown", press);
+      window.removeEventListener("pointerup", release);
+      window.removeEventListener("pointercancel", release);
+    };
+  }, [scrollRef]);
+  return useCallback(() => held.current || Date.now() - personAt.current < PERSON_MS, []);
+}
 
 /** Keeps a chat on its latest message until the person scrolls up, and remembers their place when they do.
  *  `loaded` changes when the chat's saved history replaces what was shown: the view starts over
@@ -45,14 +91,13 @@ export function useFollowLatest(threadId: string, output: unknown, loaded: unkno
   /** Empty room under the latest message that takes back what the content lost while it was
    *  being read at the end (a status line that went away), so the text never slides by itself. */
   const spacerRef = useRef<HTMLDivElement>(null);
-  const contentHeight = useRef(0);
+  const seen = useRef<Seen>({ content: 0, view: 0 });
   const following = useRef(true);
   const lastTop = useRef(0);
-  const personAt = useRef(0);
+  const byPerson = usePersonInput(scrollRef);
   /** Away from the latest output: the status shrinks, so it doesn't cover what's being read. */
   const [scrolledUp, setScrolledUp] = useState(false);
 
-  const person = useCallback(() => { personAt.current = Date.now(); }, []);
   const toEnd = useCallback(() => {
     const element = scrollRef.current;
     if (!element || !following.current) return;
@@ -81,12 +126,12 @@ export function useFollowLatest(threadId: string, output: unknown, loaded: unkno
     const element = scrollRef.current;
     const content = contentRef.current;
     if (!element || !content || typeof ResizeObserver === "undefined") return;
-    contentHeight.current = content.offsetHeight;
+    see(seen.current, element, content);
     let contentWidth = content.offsetWidth;
     const observer = new ResizeObserver(() => {
       const spacer = spacerRef.current;
-      const change = content.offsetHeight - contentHeight.current;
-      contentHeight.current = content.offsetHeight;
+      const change = content.offsetHeight - seen.current.content;
+      see(seen.current, element, content);
       const rewrapped = content.offsetWidth !== contentWidth;
       contentWidth = content.offsetWidth;
       if (spacer) spacer.style.height = `${nextRoom(parseFloat(spacer.style.height || "0"), change, following.current, rewrapped)}px`;
@@ -97,24 +142,18 @@ export function useFollowLatest(threadId: string, output: unknown, loaded: unkno
     return () => observer.disconnect();
   }, [toEnd]);
 
-  // Listened to here rather than as props so a wheel stays a passive, smooth scroll.
-  useEffect(() => {
-    const element = scrollRef.current;
-    if (!element) return;
-    const kinds = ["wheel", "touchmove", "pointerdown", "keydown"] as const;
-    kinds.forEach(kind => element.addEventListener(kind, person, { passive: true }));
-    return () => kinds.forEach(kind => element.removeEventListener(kind, person));
-  }, [person]);
-
   const onScroll = useCallback((event: UIEvent<HTMLDivElement>) => {
     const element = event.currentTarget;
     const top = element.scrollTop;
-    const byPerson = Date.now() - personAt.current < PERSON_MS;
-    if (jumpedByItself({ before: lastTop.current, top, person: byPerson })) {
+    const person = byPerson();
+    if (jumpedByItself({ before: lastTop.current, top, person })) {
       element.scrollTop = following.current ? element.scrollHeight : lastTop.current;
       lastTop.current = element.scrollTop;
       return;
     }
+    // The resize still to be reported puts the view back on the latest message.
+    const resized = resizedSince(seen.current, element, contentRef.current);
+    if (pulledUpByLayout({ following: following.current, before: lastTop.current, top, person, resized })) return;
     const distance = distanceFromEnd(element);
     following.current = distance < FOLLOW_MARGIN || (following.current && top >= lastTop.current);
     lastTop.current = top;
@@ -123,7 +162,7 @@ export function useFollowLatest(threadId: string, output: unknown, loaded: unkno
     else places.set(threadId, top);
     // Away from the end, the room under the last message can go without moving what is read.
     if (!following.current && spacerRef.current) spacerRef.current.style.height = "0px";
-  }, [threadId]);
+  }, [threadId, byPerson]);
 
   /** Back to the latest message, following it again. */
   const jumpToLatest = useCallback(() => {
