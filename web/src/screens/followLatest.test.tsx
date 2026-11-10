@@ -128,8 +128,10 @@ it("the same jump leaves someone reading further up where they were", () => {
 it("dragging the scrollbar, which reports no input, still leaves the latest message", () => {
   const { getByTestId } = render(<Chat threadId="scrollbar" />);
   const scroller = getByTestId("scroller");
-  sized(scroller, 5966, 5465);
-  scrollTo(scroller, 5465);
+  browserLike(scroller, getByTestId("content"), getByTestId("room"), { content: 5965, view: 500 });
+  // A browser's ResizeObserver reports the sizes once on its own after observing.
+  contentResized();
+  expect(scroller.scrollTop).toBe(5465);
   scrollTo(scroller, 5300);
   expect(scroller.dataset.away).toBe("true");
   expect(scroller.scrollTop).toBe(5300);
