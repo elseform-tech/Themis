@@ -2,8 +2,25 @@ import type { Plugin } from "./types";
 import { readSession, writeSession } from "../state/session";
 
 export function isPluginPackage(plugin: Plugin): boolean {
-  return plugin.source !== "discovered" && plugin.spec.origin?.kind !== "discovered"
+  return plugin.source !== "discovered" && plugin.spec.origin?.kind !== "discovered" && !isOwn(plugin)
     && (plugin.spec.package_kind == null || plugin.spec.package_kind === "plugin");
+}
+
+/** The person's own container (`personal`, or one they named): skills, servers and hooks they or the
+ *  agent saved, with no package, catalog or import behind it. It is a holder, not a plugin to show. */
+export function isOwn(plugin: Plugin): boolean {
+  const origin = plugin.spec.origin?.kind;
+  // Global only, as the server's own rule: a repository's project plugin is never "Yours".
+  return plugin.scope === "global" && !plugin.source && (origin == null || origin === "mcp-json");
+}
+
+/** Where an item comes from, in a word: "Yours" (the `personal` holder; "Yours · NAME" for one the
+ *  person named), "Project" for a skill folder in the repository, "Discovered" for one in a personal
+ *  skill folder, else the plugin's name ("Project · NAME" for a project's own plugin). */
+export function itemSource(plugin: Plugin, pluginName: string): string {
+  if (plugin.source === "discovered" || plugin.spec.origin?.kind === "discovered") return plugin.scope === "local" ? "Project" : "Discovered";
+  if (isOwn(plugin)) return plugin.spec.name === "personal" ? "Yours" : `Yours · ${plugin.spec.name}`;
+  return plugin.scope === "local" ? `Project · ${pluginName}` : pluginName;
 }
 
 export interface OffPart { kind: "mcp" | "hook"; id: string }

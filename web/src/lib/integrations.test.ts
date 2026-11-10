@@ -1,5 +1,5 @@
 import { beforeEach, expect, it, vi } from "vitest";
-import { markOffSeen, offParts, offSummary, unseenOff } from "./integrations";
+import { isOwn, isPluginPackage, itemSource, markOffSeen, offParts, offSummary, unseenOff } from "./integrations";
 import type { Plugin, PluginSpec } from "./types";
 
 const plugin = (name: string, spec: Partial<PluginSpec>, enabled = true): Plugin => ({
@@ -35,4 +35,19 @@ it("the sidebar's mark stays until the Installed list has been seen, and returns
   markOffSeen([one]);
   expect(unseenOff([one])).toBe(false);
   expect(unseenOff([one, plugin("other", { hooks: [hook("b", false)] })])).toBe(true);
+});
+
+it("only the person's global holder is theirs; a repository's look-alike says Project", () => {
+  const own = { ...plugin("personal", {}), source: null };
+  expect(isOwn(own)).toBe(true);
+  expect(isPluginPackage(own)).toBe(false);
+  expect(itemSource(own, "personal")).toBe("Yours");
+  expect(itemSource({ ...own, spec: { ...own.spec, name: "guards" } }, "guards")).toBe("Yours · guards");
+  // The same holder in a project (from a cloned repository's .themis/plugins) is not the person's.
+  const fromRepo: Plugin = { ...own, scope: "local" };
+  expect(isOwn(fromRepo)).toBe(false);
+  expect(itemSource(fromRepo, "personal")).toBe("Project · personal");
+  // Installed or imported: a package, named by its plugin.
+  expect(itemSource(plugin("docs", {}), "docs")).toBe("docs");
+  expect(isOwn({ ...own, spec: { ...own.spec, origin: { kind: "repository", location: "x" } } })).toBe(false);
 });
