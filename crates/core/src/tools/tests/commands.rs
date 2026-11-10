@@ -895,6 +895,12 @@ fn shell_commands_that_only_read_inside_the_project_are_reads() {
         &["git", "log", "--oneline", "-5"],
         &["diff", "a.txt", "b.txt"],
         &["pwd"],
+        &[
+            "sed",
+            "-n",
+            "1,40p",
+            ".agents/skills/release-checklist/SKILL.md",
+        ],
     ] {
         assert_eq!(shell_risk(&argv(words)), RiskLevel::Read, "{words:?}");
     }
@@ -922,7 +928,9 @@ fn shell_commands_that_only_read_inside_the_project_are_reads() {
         &["/bin/cat", "a"],
         &["git", "-c", "core.pager=sh", "log"],
         &["git", "diff", "--output=out.txt"],
-        &["sed", "-n", "1p", "a.txt"],
+        &["sed", "1p", "a.txt"],
+        &["sed", "-n", "-i", "1p", "a.txt"],
+        &["sed", "-n", "1w out.txt", "a.txt"],
         &["awk", "{print}", "a.txt"],
         &["sh", "build.sh"],
     ] {
