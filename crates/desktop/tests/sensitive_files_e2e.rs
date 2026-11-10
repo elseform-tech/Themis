@@ -337,6 +337,40 @@ async fn shell_searches_list_names_without_contents_and_do_not_ask() {
     assert!(!run.wire.contains(VALUE));
 }
 
+/// `sed -n 1,40p FILE` is a read Custom runs without asking; the same read of a secret file
+/// still asks, and a `sed` that edits in place asks as a command.
+#[tokio::test(flavor = "multi_thread")]
+async fn sed_printing_lines_runs_as_a_read_but_secrets_and_edits_ask() {
+    let fx = fixture();
+    let run = run(
+        &fx,
+        ApprovalMode::Custom,
+        "go",
+        vec![
+            shell("sed", &["-n", "1,40p", "notes.txt"]),
+            shell("sed", &["-n", "1p", ".env"]),
+            shell("sed", &["-i.bak", "s/plain/edited/", "notes.txt"]),
+        ],
+        deny,
+    )
+    .await;
+    let asked: Vec<&str> = run.approvals.iter().map(|a| a.summary.as_str()).collect();
+    assert_eq!(
+        run.approvals.len(),
+        2,
+        "only the secret and the edit ask: {asked:?}"
+    );
+    assert_eq!(run.sensitive(0), [".env"]);
+    assert!(run.sensitive(1).is_empty(), "{asked:?}");
+    assert!(
+        run.wire.contains("plain notes"),
+        "the printed lines reached the model"
+    );
+    assert!(!run.wire.contains(VALUE));
+    let notes = std::fs::read_to_string(fx.project.join("notes.txt")).unwrap();
+    assert_eq!(notes, "plain notes\n", "the denied edit must not happen");
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn shell_reads_ask_and_exact_names_survive_spelling_and_links() {
     let fx = fixture();

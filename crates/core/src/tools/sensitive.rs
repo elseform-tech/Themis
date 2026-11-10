@@ -1051,6 +1051,7 @@ mod tests {
             ("less", vec![".env"]),
             ("head", vec!["-n1", ".env"]),
             ("tail", vec![".env"]),
+            ("sed", vec!["-n", "1,5p", ".env"]),
             ("grep", vec!["TOKEN", ".env"]),
             ("grep", vec![".env", ".env"]),
             ("grep", vec!["-e", "TOKEN", ".env"]),
