@@ -107,6 +107,15 @@ fn help_shows_every_field_of_each_definition() {
             "{help}"
         );
         assert!(help.contains("Example"), "{help}");
+        // Its own commands first, without the plugin and marketplace ones.
+        assert!(
+            help.starts_with(&format!("Use {command} list [PLUGIN]")),
+            "{help}"
+        );
+        assert!(
+            !help.contains("marketplace") && !help.contains("preview NAME@MARKET"),
+            "`{command} --help` repeats the plugin usage:\n{help}"
+        );
     }
     let (_, plugin_help, _) = themis(data.path(), &["plugin", "--help"]);
     assert!(plugin_help.contains("preview NAME@MARKET"), "{plugin_help}");

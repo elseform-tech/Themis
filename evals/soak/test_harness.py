@@ -307,6 +307,7 @@ class GraderTests(unittest.TestCase):
         measures, details = grade(trace, trace["spec"])
         self.assertEqual(harness_flags(measures), set())
         self.assertEqual(measures["reached"], 1)
+        self.assertEqual(measures["false_reached"], 0)
         self.assertEqual(measures["checkpoints"], 3)
         self.assertEqual(measures["rule_retention"], 1.0)
         self.assertEqual(measures["redone_items"], 0)
@@ -323,6 +324,16 @@ class GraderTests(unittest.TestCase):
         self.assertFalse(infrastructure(trace))
         # Checkpoints after the follow-up must also keep the format change.
         self.assertIn("format_change", details["retention"][-1]["kept"])
+
+    def test_a_goal_reached_with_work_missing_is_a_false_reach(self):
+        # Seen 2026-11-10 on beam-free: complete after one turn, most items missing.
+        trace = clean()
+        trace["final"]["files"].pop(next(f for f in trace["final"]["files"] if f != "out/INDEX.md"))
+        measures, _details = grade(trace, trace["spec"])
+        self.assertEqual((measures["reached"], measures["false_reached"]), (1, 1))
+        trace = clean()
+        trace["final"]["check_passed"] = False
+        self.assertEqual(grade(trace, trace["spec"])[0]["false_reached"], 1)
 
     def test_goal_not_continuing(self):
         trace = clean()
@@ -500,6 +511,8 @@ class GraderTests(unittest.TestCase):
                  # From a free-model soak: a second goal asked for while the first is unfinished.
                  ("create_goal", "tool 'create_goal' failed: create_goal: this chat already has an unfinished "
                                  "goal; use update_goal only for its status, and keep working on it", "model"),
+                 # From a free-model soak: read_file given the project folder.
+                 ("read_file", "tool 'read_file' failed: Path is not a file: /tmp/soak-x/proj", "model"),
                  ("web_search", "web_search: the moon is in the way", "unclassified")]
         for tool, text, cause in cases:
             self.assertEqual(tool_causes.classify(tool, text)[0], cause, text)
@@ -683,8 +696,11 @@ class RunnerTests(unittest.TestCase):
         measures, _details = grade(trace, trace["spec"])
         self.assertEqual(measures["health_breakage"], 0)
         self.assertEqual(measures["goal_continuation_breaks"], 0)
-        # Stopped at the first turns, long before the goal could finish.
-        self.assertLess(measures["goal_turns"], 4)
+        # Stopped before the goal could finish: the stand-in writes one item per turn. The cap
+        # stops the goal from another thread, so a loaded machine lets a turn or two more start;
+        # counting them against a fixed small number made this test flaky.
+        self.assertEqual(measures["reached"], 0)
+        self.assertLess(measures["goal_turns"], self.OPTIONS["items"])
 
     def test_goal_that_stops_continuing_is_caught(self):
         trace = self.soak("stall")

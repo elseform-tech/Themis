@@ -56,6 +56,8 @@ MODEL = (
     ("missing_path", r"(?:no such file|not found|does not exist|cannot find).{0,80}['`\"/]"
                      r"|['`\"][^'`\"]+['`\"].{0,40}(?:no such file|not found|does not exist)"),
     ("outside_project", r"escapes the project root|outside the project|Absolute paths are not allowed"),
+    # A folder given where a file is wanted (the error names the path).
+    ("not_a_file", r"Path is not a file: \S"),
     ("read_past_end", r"Read offset \d+ is past the end"),
     ("unsupported_url", r"only http and https URLs are supported"),
     ("patch_mismatch", r"patch does not apply|context mismatch|ambiguous|No files were changed"),

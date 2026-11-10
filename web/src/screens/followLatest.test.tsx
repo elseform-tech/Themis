@@ -128,8 +128,10 @@ it("the same jump leaves someone reading further up where they were", () => {
 it("dragging the scrollbar, which reports no input, still leaves the latest message", () => {
   const { getByTestId } = render(<Chat threadId="scrollbar" />);
   const scroller = getByTestId("scroller");
-  sized(scroller, 5966, 5465);
-  scrollTo(scroller, 5465);
+  browserLike(scroller, getByTestId("content"), getByTestId("room"), { content: 5965, view: 500 });
+  // A browser's ResizeObserver reports the sizes once on its own after observing.
+  contentResized();
+  expect(scroller.scrollTop).toBe(5465);
   scrollTo(scroller, 5300);
   expect(scroller.dataset.away).toBe("true");
   expect(scroller.scrollTop).toBe(5300);
@@ -252,4 +254,101 @@ it("a wider chat column rewraps the text shorter without leaving the drop as bla
   contentHeight(content, 1776);
   contentResized();
   expect(room.style.height).toBe("24px");
+});
+
+/** A scroller that moves like a browser's: the end is the content plus the room, the position
+ *  never passes it, and `layout()` clamps it the way a forced layout does before any event. */
+function browserLike(scroller: HTMLElement, content: HTMLElement, room: HTMLElement, sizes: { content: number; view: number }) {
+  let top = 0;
+  const end = () => sizes.content + parseFloat(room.style.height || "0");
+  const clamp = (value: number) => Math.max(0, Math.min(value, end() - sizes.view));
+  Object.defineProperty(content, "offsetHeight", { configurable: true, get: () => sizes.content });
+  Object.defineProperty(scroller, "scrollHeight", { configurable: true, get: end });
+  Object.defineProperty(scroller, "clientHeight", { configurable: true, get: () => sizes.view });
+  Object.defineProperty(scroller, "scrollTop", { configurable: true, get: () => top, set: (value: number) => { top = clamp(value); } });
+  return { layout: () => { top = clamp(top); } };
+}
+const scrolled = (scroller: HTMLElement) => act(() => { scroller.dispatchEvent(new Event("scroll", { bubbles: true })); });
+
+it("a block folding while the reply arrives keeps the view on the reply", () => {
+  // Seen in the real app: a tool block's long output folded as the turn finished, a forced layout
+  // pulled the view up, the reply landed before the scroll event, and the view stopped following.
+  const { getByTestId } = render(<Chat threadId="fold" />);
+  const scroller = getByTestId("scroller");
+  const content = getByTestId("content");
+  const room = getByTestId("room");
+  const sizes = { content: 3000, view: 500 };
+  const browser = browserLike(scroller, content, room, sizes);
+  contentResized();
+  scrolled(scroller);
+  expect(scroller.scrollTop).toBe(2500);
+  sizes.content = 2700;
+  browser.layout();
+  sizes.content = 3100;
+  scrolled(scroller);
+  contentResized();
+  expect(scroller.dataset.away).toBe("false");
+  expect(scroller.scrollTop).toBe(2600);
+  expect(room.style.height).toBe("0px");
+});
+
+it("question boxes closing at the composer while replies arrive keep the view on the replies", () => {
+  // Seen in the real app: answering two question boxes made the chat taller, a forced layout pulled
+  // the view up, and the answers' replies landed before the scroll event.
+  const { getByTestId } = render(<Chat threadId="boxes" />);
+  const scroller = getByTestId("scroller");
+  const content = getByTestId("content");
+  const room = getByTestId("room");
+  const sizes = { content: 3000, view: 400 };
+  const browser = browserLike(scroller, content, room, sizes);
+  contentResized();
+  scrolled(scroller);
+  expect(scroller.scrollTop).toBe(2600);
+  sizes.view = 700;
+  browser.layout();
+  sizes.content = 3400;
+  scrolled(scroller);
+  contentResized();
+  expect(scroller.dataset.away).toBe("false");
+  expect(scroller.scrollTop).toBe(2700);
+});
+
+it("the same moves leave someone reading further up where they were", () => {
+  const { getByTestId } = render(<Chat threadId="boxes-reading" />);
+  const scroller = getByTestId("scroller");
+  const content = getByTestId("content");
+  const room = getByTestId("room");
+  const sizes = { content: 3000, view: 400 };
+  const browser = browserLike(scroller, content, room, sizes);
+  contentResized();
+  scrolled(scroller);
+  personScrollsTo(scroller, 1000);
+  sizes.view = 700;
+  browser.layout();
+  sizes.content = 3400;
+  scrolled(scroller);
+  contentResized();
+  expect(scroller.dataset.away).toBe("true");
+  expect(scroller.scrollTop).toBe(1000);
+});
+
+it("a scrollbar held down while a reply streams in still leaves the latest message", () => {
+  const { getByTestId } = render(<Chat threadId="held" />);
+  const scroller = getByTestId("scroller");
+  const content = getByTestId("content");
+  const room = getByTestId("room");
+  const sizes = { content: 3000, view: 500 };
+  browserLike(scroller, content, room, sizes);
+  contentResized();
+  scrolled(scroller);
+  act(() => { scroller.dispatchEvent(new Event("pointerdown", { bubbles: true })); });
+  const later = Date.now() + 5000;
+  const clock = vi.spyOn(Date, "now").mockReturnValue(later);
+  sizes.content = 3030;
+  scrollTo(scroller, 2300);
+  contentResized();
+  clock.mockRestore();
+  act(() => { window.dispatchEvent(new Event("pointerup")); });
+  expect(scroller.dataset.away).toBe("true");
+  expect(scroller.scrollTop).toBe(2300);
 });

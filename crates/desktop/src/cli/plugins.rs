@@ -8,20 +8,25 @@ use themis_core::plugins::definitions::{self, Definition};
 #[rustfmt::skip]
 pub const USAGE: &str = "Use plugin list [--kind subagent]|updates|create NAME|show NAME|edit NAME|save DEF|inspect SOURCE [NAME]|import SOURCE [NAME]|export NAME|preview NAME@MARKET|install NAME@MARKET|update NAME|enable NAME|disable NAME|uninstall NAME (SOURCE: a folder, repository or .mcp.json file); plugin marketplace list|preview SOURCE|add SOURCE [NAME]|enable NAME|disable NAME|changes NAME|browse NAME|refresh NAME|check NAME|remove NAME; skill list [PLUGIN]|save PLUGIN DEF|verify DEF|delete PLUGIN ID; mcp|hook list [PLUGIN]|add PLUGIN NAME DEF|update PLUGIN NAME DEF|test PLUGIN NAME|delete PLUGIN NAME; mcp add PLUGIN DEF adds every server of a .mcp.json ({\"mcpServers\": ...}). A missing PLUGIN is created by add and save. DEF is a file, - (stdin) or inline JSON: themis mcp add docs fetch '{\"command\":\"uvx\",\"args\":[\"mcp-server-fetch\"]}'. Options: --project PATH --expected REVISION --ref REF --subdirectory PATH --allow-partial. For agent creation: skill create THREAD REQUEST. `themis skill|mcp|hook --help` shows each definition's exact JSON with every field.";
 
-/// `--help` for `plugin`, `skill`, `mcp` or `hook`: the usage, and for a component its exact
-/// definition (every field, required or optional, and an example).
+/// `--help` for `plugin`, `skill`, `mcp` or `hook`: `plugin` gives the whole usage; a component
+/// gives only its own commands, then its exact definition (every field, required or optional,
+/// and an example).
 pub fn help(command: &str) -> String {
-    match definition(command) {
-        Some(definition) => format!("{USAGE}\n\n{}", definition.reference()),
+    match component(command) {
+        Some((usage, definition)) => format!("{usage} {DEF_NOTE}\n\n{}", definition.reference()),
         None => USAGE.to_owned(),
     }
 }
 
-fn definition(component: &str) -> Option<Definition> {
-    match component {
-        "skill" => Some(Definition::Skill),
-        "hook" => Some(Definition::Hook),
-        "mcp" => Some(Definition::Mcp),
+/// What every component command's DEF and options are.
+const DEF_NOTE: &str = "DEF is a file, - (stdin) or inline JSON. A missing PLUGIN is created; use `personal` for the person's own. Options: --project PATH --expected REVISION.";
+
+#[rustfmt::skip]
+fn component(name: &str) -> Option<(&'static str, Definition)> {
+    match name {
+        "skill" => Some(("Use skill list [PLUGIN]|save PLUGIN DEF|verify DEF|delete PLUGIN ID.", Definition::Skill)),
+        "mcp" => Some(("Use mcp list [PLUGIN]|add PLUGIN NAME DEF|update PLUGIN NAME DEF|test PLUGIN NAME|delete PLUGIN NAME; mcp add PLUGIN DEF adds every server of a .mcp.json ({\"mcpServers\": ...}): themis mcp add personal fetch '{\"command\":\"uvx\",\"args\":[\"mcp-server-fetch\"]}'.", Definition::Mcp)),
+        "hook" => Some(("Use hook list [PLUGIN]|add PLUGIN NAME DEF|update PLUGIN NAME DEF|test PLUGIN NAME|delete PLUGIN NAME.", Definition::Hook)),
         _ => None,
     }
 }

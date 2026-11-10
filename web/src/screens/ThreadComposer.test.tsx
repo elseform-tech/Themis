@@ -5,6 +5,8 @@ import { cleanup } from "@testing-library/react";
 import samples from "../lib/secretSamples.json";
 import type { ThreadInfo } from "../lib/types";
 import { ThreadComposer } from "./ThreadComposer";
+import { usePopoverDismissal } from "../lib/dismiss";
+import type { ComponentProps } from "react";
 
 const thread: ThreadInfo = {
   id: "thread-1",
@@ -347,5 +349,64 @@ describe("composer focus and shortcuts", () => {
     expect(document.activeElement).not.toBe(editor);
     fireEvent.click(screen.getByRole("button", { name: "Send" }));
     expect(document.activeElement).not.toBe(editor);
+  });
+});
+
+describe("approval mode menu closes", () => {
+  // Seen live: the menu stayed open after a pick and on Esc, and the next click meant for the
+  // text box landed on it and switched the chat to YOLO.
+  // The app closes `details[data-popover]` menus on a press outside or an Esc elsewhere.
+  function InApp(props: ComponentProps<typeof ThreadComposer>) {
+    usePopoverDismissal();
+    return <ThreadComposer {...props} />;
+  }
+  function openShield() {
+    const onApprovalModeChange = vi.fn();
+    const view = composer(false);
+    view.rerender(<InApp {...view.props} onApprovalModeChange={onApprovalModeChange} />);
+    const summary = screen.getByText("Custom", { selector: "summary span" }).closest("summary")!;
+    fireEvent.click(summary);
+    const details = summary.closest("details")!;
+    expect(details.open).toBe(true);
+    return { onApprovalModeChange, summary, details };
+  }
+  it("closes when a mode is picked", () => {
+    const { onApprovalModeChange, summary, details } = openShield();
+    const auto = screen.getByRole("radio", { name: /^Auto/, hidden: true });
+    auto.focus();
+    fireEvent.click(auto);
+    expect(onApprovalModeChange).toHaveBeenCalledWith("auto");
+    expect(details.open).toBe(false);
+    // Focus does not fall to the page once the list hides.
+    expect(document.activeElement).toBe(summary);
+    // Picking the current mode closes it too.
+    fireEvent.click(summary);
+    fireEvent.click(screen.getByRole("radio", { name: /^Custom/, hidden: true }));
+    expect(details.open).toBe(false);
+    expect(onApprovalModeChange).toHaveBeenCalledTimes(1);
+  });
+  it("closes on Esc and puts focus back on the shield", () => {
+    const { onApprovalModeChange, summary, details } = openShield();
+    const custom = screen.getByRole("radio", { name: /^Custom/, hidden: true });
+    custom.focus();
+    fireEvent.keyDown(custom, { key: "Escape" });
+    expect(details.open).toBe(false);
+    expect(document.activeElement).toBe(summary);
+    fireEvent.click(summary);
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(details.open).toBe(false);
+    expect(onApprovalModeChange).not.toHaveBeenCalled();
+  });
+  it("closes on a click outside without changing the mode", () => {
+    const { onApprovalModeChange, summary, details } = openShield();
+    const editor = screen.getByRole("textbox", { name: "Message" });
+    fireEvent.pointerDown(editor);
+    fireEvent.click(editor);
+    expect(details.open).toBe(false);
+    expect(onApprovalModeChange).not.toHaveBeenCalled();
+    // A press inside the open list is not outside.
+    fireEvent.click(summary);
+    fireEvent.pointerDown(screen.getByRole("radiogroup", { name: "Approval mode", hidden: true }));
+    expect(details.open).toBe(true);
   });
 });

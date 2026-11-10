@@ -48,6 +48,7 @@ MEASURES = {
     "turns_after_reached": ("goal", "harness", "lower"),
     "goal_changed": ("goal", "harness", "lower"),
     "reached": ("goal", "model", "higher"),
+    "false_reached": ("goal", "model", "lower"),
     "goal_turns": ("goal", "reported", None),
     "checkpoints": ("compaction", "reported", None),
     "failed_checkpoints": ("compaction", "harness", "lower"),
@@ -448,6 +449,10 @@ def grade(trace, spec):
     tools, tool_details = tool_measures(trace)
     measures.update(tools)
     measures.update(health_measures(trace))
+    # The model declared the goal complete while the work says otherwise (seen 2026-11-10 on
+    # beam-free: complete after one turn with 78 items missing and check.py failing).
+    measures["false_reached"] = int(bool(measures.get("reached")) and (
+        measures.get("check_passes") == 0 or bool(measures.get("skipped_items"))))
     details = {"end_state": (trace.get("end") or {}).get("reason"), "end_detail": (trace.get("end") or {}).get("detail"),
                "retention": retention(trace), "checkpoint_sizes": checkpoint_sizes(trace),
                **memory_details, **tool_details}
