@@ -12,6 +12,15 @@ it("formats markdown, tables and code, and copies the source", async () => {
   fireEvent.click(screen.getByRole("button", { name: "Copy" }));
   await waitFor(() => expect(writeText).toHaveBeenCalledWith('print("hello")'));
 });
+it("keeps a reply's line breaks inside a paragraph, and leaves code and lists alone", () => {
+  // Seen 2026-11-10: a 12-line poem showed as one paragraph.
+  const { container } = render(<ResponseBody text={"Roses here,\nviolets there,\nend.\n\n- one\n- two\n\n```\na\nb\n```"} />);
+  const poem = container.querySelector("p");
+  expect(poem?.querySelectorAll("br")).toHaveLength(2);
+  expect(poem?.textContent).toBe("Roses here,\nviolets there,\nend.");
+  expect(container.querySelectorAll("li br")).toHaveLength(0);
+  expect(container.querySelector("pre br, code br")).toBeNull();
+});
 it("does not render raw HTML or fetch response images", () => {
   const { container } = render(<ResponseBody text={'<script>alert(1)</script>\n\n![Image](https://example.com/a.png)\n\n[bad](javascript:alert(1))'} />);
   expect(container.querySelector("script, img")).toBeNull();

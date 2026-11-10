@@ -1,6 +1,7 @@
 import { Children, createContext, isValidElement, useContext, useEffect, useId, useMemo, useRef, useState } from "react";
 import Markdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { remarkSoftBreaks } from "../lib/softBreaks";
 import { CodeBlock } from "./CodeBlock";
 import { DIAGRAM_DARK, DIAGRAM_LIGHT } from "../theme/diagram";
 import "./ResponseBody.css";
@@ -135,7 +136,8 @@ export function fileNamedIn(code: string): string | null {
   return FILE_EXTENSION.test(path) ? path : null;
 }
 
-const REMARK_PLUGINS = [remarkGfm];
+// A reply's single line breaks are kept (poems, addresses, short lines), as chats show them.
+const REMARK_PLUGINS = [remarkGfm, remarkSoftBreaks];
 
 export function ResponseBody({ text, streaming = false, artifacts }: { text: string; streaming?: boolean; /** Files this reply attached: naming one links to it. */ artifacts?: string[] }) {
   const artifactKey = artifacts?.join("\n");
