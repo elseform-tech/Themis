@@ -171,12 +171,9 @@ async fn without_starting_servers_the_text_report_still_names_each_problem() {
     let (success, stdout, _) = doctor(fx.data.path(), fx.project.path(), &["--no-start"]);
     assert!(!success);
     assert!(stdout.contains("(0 started)"), "{stdout}");
-    assert!(stdout.contains("FAIL hook kit/gone (global)"), "{stdout}");
+    assert!(stdout.contains("FAIL hook kit/gone:"), "{stdout}");
     assert!(stdout.contains("  fix: "), "{stdout}");
-    assert!(
-        !stdout.contains("kit/broken (global): did not start"),
-        "{stdout}"
-    );
+    assert!(!stdout.contains("kit/broken: did not start"), "{stdout}");
     assert!(stdout.contains("not started: mcp kit/good"), "{stdout}");
     fx.task.abort();
 }
