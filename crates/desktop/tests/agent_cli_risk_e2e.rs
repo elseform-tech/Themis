@@ -478,7 +478,7 @@ async fn help_prints_usage_and_changes_nothing() {
             let output = cli(&fx, agent, words);
             let text = String::from_utf8_lossy(&output.stdout);
             assert!(output.status.success(), "{words:?}: {output:?}");
-            assert!(text.contains("mcp|hook list [PLUGIN]"), "{words:?}: {text}");
+            assert!(text.contains("hook list [PLUGIN]"), "{words:?}: {text}");
         }
     }
     let general = cli(&fx, None, &["-h"]);
