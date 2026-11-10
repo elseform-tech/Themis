@@ -500,6 +500,8 @@ class GraderTests(unittest.TestCase):
                  # From a free-model soak: a second goal asked for while the first is unfinished.
                  ("create_goal", "tool 'create_goal' failed: create_goal: this chat already has an unfinished "
                                  "goal; use update_goal only for its status, and keep working on it", "model"),
+                 # From a free-model soak: read_file given the project folder.
+                 ("read_file", "tool 'read_file' failed: Path is not a file: /tmp/soak-x/proj", "model"),
                  ("web_search", "web_search: the moon is in the way", "unclassified")]
         for tool, text, cause in cases:
             self.assertEqual(tool_causes.classify(tool, text)[0], cause, text)
