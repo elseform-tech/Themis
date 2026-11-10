@@ -78,6 +78,17 @@ describe("FileTree", () => {
     expect(screen.getByTitle(".gitignore")).toBeInTheDocument();
   });
 
+  it("lists a project skill the backend leaves visible, beside a hidden file", () => {
+    const files: DiffFile[] = [
+      { path: ".agents/skills/release-checklist/SKILL.md", status: "added", preexisting: false, added: 4, removed: 0, hunks: [], hidden: false },
+      { path: ".gitignore", status: "modified", preexisting: false, added: 1, removed: 0, hunks: [], hidden: true },
+    ];
+    render(<FileTree files={files} selectedPath={null} onSelect={vi.fn()} />);
+    expect(screen.getByTitle(".agents/skills/release-checklist/SKILL.md")).toBeInTheDocument();
+    expect(screen.queryByTitle(".gitignore")).toBeNull();
+    expect(screen.getByRole("button", { name: "1 hidden file changed" })).toBeInTheDocument();
+  });
+
   it("shows nothing extra without hidden files, and opens the line for a selected hidden one", () => {
     setup();
     expect(screen.queryByRole("button", { name: /hidden file/ })).toBeNull();
