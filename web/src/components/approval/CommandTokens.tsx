@@ -66,16 +66,29 @@ export function TokenList({ argv, full = false }: { argv: string[]; full?: boole
   return <>{shown.map((token, index) => <TokenChip key={index} token={token} />)}{rest.length > 0 && <span title={rest.map(token => displayToken(token, Infinity)).join(" ")}> …(+{rest.length} more)</span>}</>;
 }
 
-/** Untrusted plain text (for example a path from program output) with hidden characters escaped like tokens, unquoted and capped. */
-export function SafeText({ text, max = 300 }: { text: string; max?: number }) {
+/** Which line feeds of `text` may show as real line breaks: only one between two lines that each show something
+ *  other than spaces, so a break never makes a blank-looking line that could push the rest of a command out of sight.
+ *  Every other line feed (doubled, leading, trailing, around a spaces-only line) stays an escape. */
+function realBreaks(text: string): boolean[] {
+  const lines = text.split("\n");
+  const shows = (line: string) => /[^ ]/u.test(line);
+  return lines.slice(1).map((line, index) => shows(lines[index]!) && shows(line));
+}
+
+/** Untrusted plain text (for example a path from program output) with hidden characters escaped like tokens, unquoted
+ *  and capped. With `lineBreaks`, a lone line feed between two non-blank lines shows as a line break instead of an escape. */
+export function SafeText({ text, max = 300, lineBreaks = false }: { text: string; max?: number; lineBreaks?: boolean }) {
   const chars = Array.from(text);
   const shown = chars.slice(0, max);
-  const parts: TokenPart[] = [];
+  const breaks = lineBreaks ? realBreaks(shown.join("")) : [];
+  let feed = 0;
+  const parts: (TokenPart | "break")[] = [];
   for (const ch of shown) {
+    if (ch === "\n" && breaks[feed++]) { parts.push("break"); continue; }
     const literal = isLiteral(ch);
     const piece = literal ? ch : escapeOf(ch);
     const last = parts[parts.length - 1];
-    if (last && last.escaped === !literal) last.text += piece; else parts.push({ text: piece, escaped: !literal });
+    if (last && last !== "break" && last.escaped === !literal) last.text += piece; else parts.push({ text: piece, escaped: !literal });
   }
-  return <>{parts.map((part, index) => part.escaped ? <span key={index} className="themis-approval-escape">{part.text}</span> : part.text)}{chars.length > max && `…(+${chars.length - max} chars)`}</>;
+  return <>{parts.map((part, index) => part === "break" ? <br key={index} /> : part.escaped ? <span key={index} className="themis-approval-escape">{part.text}</span> : part.text)}{chars.length > max && `…(+${chars.length - max} chars)`}</>;
 }
