@@ -356,7 +356,9 @@ Codex, the chat's own model judges its goal: there is no separate check.
   switcher at the top shows another branch's changes without switching to it, which
   only the composer does; binary, generated and secret-looking files are hidden;
   hidden files, those with a part of the path starting with a dot such as
-  `.gitignore`, `.github/workflows/ci.yml` or `.themis/config.jsonc`, are left out
+  `.gitignore`, `.github/workflows/ci.yml` or `.themis/config.jsonc` (a project
+  skill in `.agents/skills`, `.codex/skills` or `.claude/skills` is listed like
+  any other file, since it is shared with the team), are left out
   of the list and the counts and fold into one quiet "N hidden files changed" line
   at the bottom that lists their names, and clicking one shows its diff; the same
   line sits under a reply's "Edited N files" card; a

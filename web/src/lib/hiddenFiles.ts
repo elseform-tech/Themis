@@ -1,5 +1,6 @@
 /** Changed files whose path has a dotted part (`.github/…`, `.gitignore`) carry `hidden` from
- *  the backend. Lists and counts leave them out and fold them into one quiet line. */
+ *  the backend, except project skills (`.agents/skills/…`), which are shared with the team.
+ *  Lists and counts leave hidden files out and fold them into one quiet line. */
 export function visibleFiles<T extends { hidden?: boolean }>(files: T[]): T[] {
   return files.filter(file => !file.hidden);
 }

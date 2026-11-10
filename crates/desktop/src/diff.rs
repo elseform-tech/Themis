@@ -353,12 +353,22 @@ pub fn changed_between(
         .collect()
 }
 
+/// The project skill folders Themis discovers by default. A skill there is shared with the team
+/// through the repository, a deliverable rather than internal state, so it is not hidden.
+const PROJECT_SKILL_FOLDERS: [&str; 3] = [".agents/skills/", ".codex/skills/", ".claude/skills/"];
+
 /// True when a part of a project-relative Git path (`/`-separated) starts with a dot:
 /// `.gitignore`, `.github/workflows/ci.yml`, `src/.cache/x`. The change lists fold these into
 /// one line rather than leave them out, since a CI workflow or `.gitignore` edit can matter.
+/// A project skill (`.agents/skills/review/SKILL.md`) is listed like any other file; only a
+/// dotted part inside the skill folder still hides it.
 #[must_use]
 pub fn is_hidden_path(path: &str) -> bool {
-    path.split('/').any(|part| part.starts_with('.'))
+    let rest = PROJECT_SKILL_FOLDERS
+        .iter()
+        .find_map(|folder| path.strip_prefix(folder))
+        .unwrap_or(path);
+    rest.split('/').any(|part| part.starts_with('.'))
 }
 
 /// Moves hidden files after the rest, keeping each group's order, so a listing's cap drops
@@ -1282,6 +1292,11 @@ index 5555555..6666666 100644
             ".github/workflows/ci.yml",
             "src/.cache/x.txt",
             "web/.env.example",
+            ".agents/config.json",
+            ".agents/skills",
+            ".agents/skills/review/.cache/x",
+            "src/.agents/skills/review/SKILL.md",
+            ".themis/skills/review/SKILL.md",
         ] {
             assert!(is_hidden_path(path), "{path}");
         }
@@ -1291,6 +1306,9 @@ index 5555555..6666666 100644
             "docs/a.b/c.md",
             "",
             "notes..txt",
+            ".agents/skills/release-checklist/SKILL.md",
+            ".codex/skills/review/scripts/run.sh",
+            ".claude/skills/notes/SKILL.md",
         ] {
             assert!(!is_hidden_path(path), "{path}");
         }
@@ -1372,7 +1390,10 @@ index 5555555..6666666 100644
             parts in proptest::collection::vec("[a-z0-9_.-]{1,6}", 1..5),
         ) {
             let path = parts.join("/");
-            prop_assert_eq!(is_hidden_path(&path), parts.iter().any(|part| part.starts_with('.')));
+            let skill = matches!(parts.as_slice(), [first, second, ..]
+                if [".agents", ".codex", ".claude"].contains(&first.as_str()) && second == "skills");
+            let checked = if skill { &parts[2..] } else { &parts[..] };
+            prop_assert_eq!(is_hidden_path(&path), checked.iter().any(|part| part.starts_with('.')));
         }
 
         /// Arbitrary Git output never panics the check.
