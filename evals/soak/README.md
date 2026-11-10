@@ -129,6 +129,7 @@ flagged).
 | goal | `goal_changed` | harness | `get_goal` polls, while the goal ran, that found no goal or a different text. |
 | goal | `reached` | model | 1 when the goal was reached within the caps. |
 | goal | `false_reached` | model | 1 when the goal ended reached although `check.py` fails or active items have no file: a completion claim the work does not back. |
+| goal | `work_after_complete`, `unfinished_after_complete` | reported | Candidate signals of a premature end, seen by the harness at the time: tool calls the same turn still made after the goal was declared complete, and whether that turn's later words say work remains. Compared with `false_reached` across runs before any safeguard is built on them. |
 | goal | `goal_turns` | reported | Goal turns started. |
 | compaction | `checkpoints` | reported | `context_checkpoint` events. |
 | compaction | `failed_checkpoints` | harness | `context_suspended`, a budget-exceeded error, or a run that failed while compacting. |

@@ -49,6 +49,8 @@ MEASURES = {
     "goal_changed": ("goal", "harness", "lower"),
     "reached": ("goal", "model", "higher"),
     "false_reached": ("goal", "model", "lower"),
+    "work_after_complete": ("goal", "reported", None),
+    "unfinished_after_complete": ("goal", "reported", None),
     "goal_turns": ("goal", "reported", None),
     "checkpoints": ("compaction", "reported", None),
     "failed_checkpoints": ("compaction", "harness", "lower"),
@@ -146,6 +148,35 @@ def goal_measures(trace):
     return {"goal_continuation_breaks": breaks, "turns_after_reached": after_reached,
             "goal_changed": changed, "reached": int(reached_at is not None),
             "goal_turns": len(goal_runs)}
+
+
+# What a turn says when the work is not done (2026-11-10, beam-free, after declaring the goal
+# complete: "about 80 memos still need processing ... I have not committed anything yet").
+UNFINISHED = re.compile(r"\b(still (?:need|needs|to do|missing|fail|fails|reports?)|not (?:yet|done|finished|committed)|"
+                        r"remaining|remain to|left to (?:do|process)|have(?:n't| not) (?:yet|committed|finished)|"
+                        r"next,? I(?:'ll| will)|continu(?:e|ing) with)\b", re.IGNORECASE)
+
+
+def premature_signals(trace):
+    """What the harness could see when the agent declared the goal complete: the tool calls the
+    same turn still made after that call, and whether that turn's later words say work remains.
+    Candidate runtime signals for a premature end, compared with `false_reached` (2026-11-10)."""
+    items = _flat(trace)
+    # The goal change itself carries no run; the `update_goal` call right after it does.
+    reached = next((index for index, _run, event in items
+                    if event.get("kind") == "goal_changed" and (event.get("goal") or {}).get("status") == "reached"), None)
+    at = None if reached is None else next(((index, run) for index, run, event in items
+                                             if index > reached and run and event.get("kind") == "tool_started"
+                                             and event.get("tool") == "update_goal"), None)
+    if at is None:
+        return {"work_after_complete": None, "unfinished_after_complete": None}, {}
+    start, run_id = at
+    later = [event for index, run, event in items if index > start and run == run_id]
+    work = sum(event.get("kind") == "tool_started" and event.get("tool") != "update_goal" for event in later)
+    words = "".join(event.get("text", "") for event in later if event.get("kind") == "assistant_text")
+    said = UNFINISHED.search(words)
+    return ({"work_after_complete": work, "unfinished_after_complete": int(bool(said))},
+            {"after_complete_words": words[max(0, said.start() - 120):said.end() + 120] if said else ""})
 
 
 # --- compaction -------------------------------------------------------------------------------
@@ -453,7 +484,9 @@ def grade(trace, spec):
     # beam-free: complete after one turn with 78 items missing and check.py failing).
     measures["false_reached"] = int(bool(measures.get("reached")) and (
         measures.get("check_passes") == 0 or bool(measures.get("skipped_items"))))
-    details = {"end_state": (trace.get("end") or {}).get("reason"), "end_detail": (trace.get("end") or {}).get("detail"),
+    signals, signal_details = premature_signals(trace)
+    measures.update(signals)
+    details = {**signal_details, "end_state": (trace.get("end") or {}).get("reason"), "end_detail": (trace.get("end") or {}).get("detail"),
                "retention": retention(trace), "checkpoint_sizes": checkpoint_sizes(trace),
                **memory_details, **tool_details}
     return measures, details

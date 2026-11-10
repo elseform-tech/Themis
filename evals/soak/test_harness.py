@@ -335,6 +335,38 @@ class GraderTests(unittest.TestCase):
         trace["final"]["check_passed"] = False
         self.assertEqual(grade(trace, trace["spec"])[0]["false_reached"], 1)
 
+    @staticmethod
+    def with_complete_call(trace):
+        """The stand-in's reach as the app records it: the goal change, then the agent's
+        `update_goal` call in its turn. Returns the call's index and run."""
+        events = trace["events"]
+        reached = next(i for i, item in enumerate(events)
+                       if item["event"].get("kind") == "goal_changed"
+                       and (item["event"].get("goal") or {}).get("status") == "reached")
+        run = next(item["run_id"] for item in reversed(events[:reached]) if item.get("run_id"))
+        events.insert(reached + 1, {"t": 0, "run_id": run, "event": {"kind": "tool_started", "tool": "update_goal"}})
+        return reached + 1, run
+
+    def test_a_clean_run_shows_no_premature_end(self):
+        trace = clean()
+        self.with_complete_call(trace)
+        measures, _details = grade(trace, trace["spec"])
+        self.assertEqual((measures["work_after_complete"], measures["unfinished_after_complete"]), (0, 0))
+
+    def test_work_and_words_after_declaring_complete_are_counted(self):
+        # Seen 2026-11-10 on beam-free: complete after 5 of 120 items, then 108 more tool calls
+        # in the same turn and "Many source files remain, so I'll continue with the next batch."
+        trace = clean()
+        at, run = self.with_complete_call(trace)
+        events = trace["events"]
+        events[at + 1:at + 1] = [
+            {"t": 0, "run_id": run, "event": {"kind": "tool_started", "tool": "read_file", "summary": "src/x.txt"}},
+            {"t": 0, "run_id": run, "event": {"kind": "assistant_text",
+                                              "text": "Many source files remain, so I'll continue with the next batch."}}]
+        measures, details = grade(trace, trace["spec"])
+        self.assertEqual((measures["work_after_complete"], measures["unfinished_after_complete"]), (1, 1))
+        self.assertIn("remain", details["after_complete_words"])
+
     def test_goal_not_continuing(self):
         trace = clean()
         cut = next(i for i, item in enumerate(trace["events"]) if item["run_id"] == "g2")
