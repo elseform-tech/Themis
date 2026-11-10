@@ -86,14 +86,16 @@ fn plugin_revisions_preserve_saved_prompts_and_reject_stale_edits() {
         Some(project.path().to_path_buf()),
     );
     let spec: PluginSpec = serde_json::from_value(json!({"name":"review","skills":[{"id":"rust","name":"Rust review","description":"Review Rust","instructions":"Check ownership","allowedTools":[],"scripts":[]}]})).unwrap();
-    let first = store.save("local", spec.clone(), None).unwrap();
+    let first = store.save("global", spec.clone(), None).unwrap();
     let id = first.skill_id("rust");
     let mut changed = spec;
     changed.skills[0].instructions = "Check ownership and lifetimes".into();
     let second = store
-        .save("local", changed.clone(), Some(&first.revision))
+        .save("global", changed.clone(), Some(&first.revision))
         .unwrap();
-    assert!(store.save("local", changed, Some(&first.revision)).is_err());
+    assert!(store
+        .save("global", changed, Some(&first.revision))
+        .is_err());
     let (text, skills, _) = store
         .resolve_prompt(&format!("Use [[skill:{id}]] now"), &[])
         .unwrap();
@@ -101,7 +103,7 @@ fn plugin_revisions_preserve_saved_prompts_and_reject_stale_edits() {
     assert!(skills[0].instructions.contains("Check ownership"));
     assert!(!skills[0].instructions.contains("lifetimes"));
     assert_ne!(second.revision, first.revision);
-    store.set_enabled("local", "review", false).unwrap();
+    store.set_enabled("global", "review", false).unwrap();
     assert!(store
         .resolve_prompt(&format!("[[skill:{id}]]"), &[])
         .is_err());

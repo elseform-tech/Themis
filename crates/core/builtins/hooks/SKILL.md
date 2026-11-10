@@ -9,11 +9,11 @@ A hook is a command Themis runs at a set point of a run. The events, in run orde
 
 Hooks belong to plugins and are managed with `themis hook …` in your shell. When the request does not say what to do, list the hooks, say what each one does and whether it is on, and change nothing.
 
-Where they live: global plugins in `{{global_plugins}}`, this project's in `{{project_plugins}}`. Read them through `themis`; never edit those files by hand (Themis refuses it). Commands default to global scope; add `--scope local --project {{project_root}}` for the project's own.
+Where they live: in plugins in `{{global_plugins}}`, the person's own, in every chat and project. A project holds none: never write a `--scope` or a project file for them. Asked for one "only for this project", add it as the person's own and tell them plainly that it applies in every project. Read them through `themis`; never edit those files by hand (Themis refuses it).
 
 ## Find
 
-- `themis hook list` lists every hook, global and in this project, with its plugin; `themis plugin list` shows the plugins and whether each is on.
+- `themis hook list` lists every hook with its plugin; `themis plugin list` shows the plugins and whether each is on.
 - `themis hook list PLUGIN` prints that plugin's hook definitions in full: name, event, command, matcher, and `enabled`.
 
 ## Change
@@ -32,6 +32,6 @@ A new or changed hook is saved switched off. Switching a hook on is the person's
 
 ## How a hook runs
 
-A command receives JSON on stdin with `event`, `run_id`, `thread_id`, `project_root`, and `tool` and `arguments` on tool events (`prompt` on PromptSubmit). It may print JSON. To stop the action it prints `{"decision":"block","reason":"..."}`; BeforeTool, PromptSubmit, RunStart and BeforeCompaction hooks can block, and the reason is shown. After events cannot undo what already happened. A PromptSubmit hook's output is context for the model, labelled as coming from the hook. `matcher` is a `|`-separated list of exact tool names, such as `shell|background_task`, and only applies to tool events. Set `blocking` when a hook that fails (rather than one that asks to block) must also stop the action.
+A command receives JSON on stdin with `event`, `run_id`, `thread_id`, `project_root`, and `tool` and `arguments` on tool events (`prompt` on PromptSubmit). A `shell` call's `arguments` hold the program in `command` and its words in `args` (a list), so a guard looking for a word checks both, or the whole `arguments` as text; test it with a sample shaped that way. It may print JSON. To stop the action it prints `{"decision":"block","reason":"..."}`; BeforeTool, PromptSubmit, RunStart and BeforeCompaction hooks can block, and the reason is shown. After events cannot undo what already happened. A PromptSubmit hook's output is context for the model, labelled as coming from the hook. `matcher` is a `|`-separated list of exact tool names, such as `shell|background_task`, and only applies to tool events. Set `blocking` when a hook that fails (rather than one that asks to block) must also stop the action.
 
 Hooks run outside the sandbox with the person's permissions. Hooks never grant permissions, and enabling a hook does not approve it. Never approve a hook on the person's behalf. Keep commands short, avoid recursive invocation, and report any imported event that was skipped.

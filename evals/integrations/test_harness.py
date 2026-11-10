@@ -38,6 +38,17 @@ class Checks(unittest.TestCase):
         self.assertEqual(grade.hidden_check(scenario, store(("global", {"name": "p", "skills": [skill]})),
                                             self.project)["met"], 1)
 
+    def test_a_project_skill_is_a_shared_skill_folder_not_a_stored_skill(self):
+        scenario = scenarios.load("project-skill")
+        folder = os.path.join(self.project, ".agents", "skills", "release-checklist")
+        self.assertEqual(grade.hidden_check(scenario, store(), self.project)["met"], 0)
+        os.makedirs(folder)
+        with open(os.path.join(folder, "SKILL.md"), "w") as handle:
+            handle.write("---\nname: release-checklist\ndescription: Steps before a release\n---\n1. Run the tests.\n")
+        self.assertEqual(grade.hidden_check(scenario, store(), self.project)["met"], 1)
+        stored = store(("local", {"name": "personal", "skills": [{"id": "release-checklist"}]}))
+        self.assertEqual(grade.hidden_check(scenario, stored, self.project)["met"], 0)
+
     def test_deleting_one_hook_keeps_the_other(self):
         scenario = scenarios.load("delete-hook")
         both = store(("global", {"name": "guards", "hooks": [{"name": "noisy"}, {"name": "keep"}]}))

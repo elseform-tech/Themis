@@ -47,7 +47,7 @@ struct Chat {
     serving: tokio::task::JoinHandle<()>,
 }
 
-/// A chat whose project has a plugin with one reporting `Stop` hook. Hooks may run without asking
+/// A chat with a (global) plugin with one reporting `Stop` hook. Hooks may run without asking
 /// (an allow rule in `user_config`), so nothing waits on a person.
 async fn chat(command: &str, user_config: &str) -> Chat {
     let llm = MockServer::builder().start().await;
@@ -73,7 +73,7 @@ async fn chat(command: &str, user_config: &str) -> Chat {
         .unwrap();
     state.set_go_base_url_override(Some(llm.uri()));
     state
-        .plugin_action(json!({"action": "save", "scope": "local", "projectRoot": project.path(), "spec": {
+        .plugin_action(json!({"action": "save", "scope": "global", "spec": {
             "name": "review",
             "hooks": [{
                 "name": "reviewer", "event": "Stop", "command": command, "enabled": true,

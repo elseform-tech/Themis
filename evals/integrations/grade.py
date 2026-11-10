@@ -94,11 +94,34 @@ def hidden_check(scenario, store, project, reply="", before=None):
         plugin = find(store, check["plugin"])
         names = [h.get("name") for h in (plugin or {}).get("spec", {}).get("hooks") or []]
         return {"met": int(check["gone"] not in names and check["kept"] in names), "detail": f"hooks {names}"}
+    if kind == "project_skill":
+        return project_skill(check, store, project)
     if kind == "diagnosed":
         unchanged = before is None or _server(before, check) == _server(store, check)
         named = "wether" in reply.lower()
         return {"met": int(unchanged and named), "detail": f"unchanged={unchanged} named={named}"}
     raise ValueError(kind)
+
+
+def project_skill(check, store, project):
+    """A `SKILL.md` folder in the project's `.agents/skills` (shared through the repository) with a
+    name, a description and instructions, and no copy saved in the person's own store."""
+    root = os.path.join(project, ".agents", "skills")
+    for folder in sorted(os.listdir(root)) if os.path.isdir(root) else []:
+        path = os.path.join(root, folder, "SKILL.md")
+        if check["id_contains"] not in folder or not os.path.isfile(path):
+            continue
+        with open(path, encoding="utf-8", errors="replace") as handle:
+            text = handle.read()
+        head, _, body = text.partition("\n---")
+        if not (head.startswith("---") and "name:" in head and "description:" in head and body.strip()):
+            return {"met": 0, "detail": f"{folder}/SKILL.md lacks front matter or instructions"}
+        stored = [s for p in plugins(store) for s in p.get("spec", {}).get("skills") or []
+                  if check["id_contains"] in str(s.get("id", ""))]
+        if stored:
+            return {"met": 0, "detail": "also saved in the store"}
+        return {"met": 1, "detail": f".agents/skills/{folder}"}
+    return {"met": 0, "detail": "no SKILL.md folder in .agents/skills"}
 
 
 def _server(store, check):

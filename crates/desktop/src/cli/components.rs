@@ -74,18 +74,23 @@ fn removed(component: &str, action: &str) -> String {
     )
 }
 
-/// The project whose integrations a list shows besides the global ones: `--project`, or the
-/// current folder when it has a `.themis` folder.
+/// The project whose skill folders a list shows besides the person's own integrations:
+/// `--project`, or the current folder when it is a repository or holds a skill folder.
 fn here_project(project: Option<&str>) -> Option<PathBuf> {
     if let Some(project) = project {
         return Some(PathBuf::from(project));
     }
     let here = std::env::current_dir().ok()?;
-    here.join(".themis").is_dir().then_some(here)
+    let project = here.join(".git").exists()
+        || themis_core::configuration::SkillConfig::default()
+            .paths
+            .iter()
+            .any(|folder| here.join(folder).is_dir());
+    project.then_some(here)
 }
 
-/// `mcp|hook list` without a plugin: every server or hook, global and in this project, each with
-/// its plugin and scope.
+/// `mcp|hook list` without a plugin: every server or hook (all the person's own), each with its
+/// plugin and scope.
 async fn list_all(
     client: &Client,
     component: &str,

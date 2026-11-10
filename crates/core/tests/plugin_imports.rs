@@ -322,6 +322,8 @@ fn discovers_project_skills_read_only_and_persists_activation_override() {
             &[]
         )
         .is_err());
+    // The switch is kept in the person's own (global) store, never in the project.
+    assert!(!project.path().join(".themis").exists());
     store
         .set_enabled("local", &selected.spec.name, true)
         .unwrap();

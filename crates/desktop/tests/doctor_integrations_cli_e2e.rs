@@ -1,7 +1,7 @@
 //! `themis doctor --integrations` (agent CLI plan, step 4) through the real app server and the
 //! `themis` binary with an isolated data folder and no credentials: every installed and custom
-//! plugin, skill, hook and MCP server, global and in the project, with every problem named by
-//! item and scope with a one-line fix, as JSON or text.
+//! plugin, skill, hook and MCP server (a hook's relative command read from the project), with
+//! every problem named by item and scope with a one-line fix, as JSON or text.
 #![cfg(unix)]
 
 use serde_json::{json, Value};
@@ -50,8 +50,8 @@ struct Fixture {
 }
 
 /// A global plugin `kit` with a fine skill and hook, a hook whose program is missing, one whose
-/// script is missing, a server that starts, one that cannot, and one switched off; a project
-/// plugin `local-kit` whose hook runs a script that is not executable; and in `kit` a skill
+/// script is missing, a server that starts, one that cannot, and one switched off; a second
+/// plugin `local-kit` whose hook runs a project script that is not executable; and in `kit` a skill
 /// whose tool name the store no longer knows (written past the store, as an older version left
 /// it).
 async fn fixture() -> Fixture {
@@ -78,8 +78,7 @@ async fn fixture() -> Fixture {
         .unwrap();
     std::fs::write(project.path().join("check.sh"), "#!/bin/sh\nexit 0\n").unwrap();
     state
-        .plugin_action(json!({"action": "save", "scope": "local",
-            "projectRoot": project.path(), "spec": {
+        .plugin_action(json!({"action": "save", "scope": "global", "spec": {
             "name": "local-kit", "hooks": [hook("plain", "./check.sh")]
         }}))
         .await
@@ -132,7 +131,7 @@ async fn every_problem_has_its_item_scope_and_fix_and_working_parts_pass() {
         .contains("themis hook update kit gone"));
     assert!(find(&report, "hook", "kit/script").is_some(), "{report}");
     let plain = find(&report, "hook", "local-kit/plain").expect("not executable");
-    assert_eq!(plain["scope"], "local");
+    assert_eq!(plain["scope"], "global");
     assert!(plain["problem"]
         .as_str()
         .unwrap()

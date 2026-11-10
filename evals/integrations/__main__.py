@@ -26,6 +26,10 @@ def cmd_run(args):
     if not args.model.endswith("-free"):
         sys.exit("the integrations eval runs free models only (a name ending in -free)")
     binary = args.themis or app.themis_binary()
+    # The server puts its own binary on an agent's PATH only when it is named `themis`
+    # (server/agent_path.rs); renamed, every run would measure an agent without the CLI.
+    if os.path.splitext(os.path.basename(binary))[0] != "themis":
+        sys.exit(f"--themis must point at a binary named themis, not {os.path.basename(binary)}")
     names = args.scenarios.split(",") if args.scenarios else sorted(scenarios.ALL)
     seeds = [int(seed) for seed in args.seeds.split(",")]
     os.makedirs(args.out, exist_ok=True)

@@ -21,7 +21,7 @@ fn discover_scope(
     base: &Path,
     plugins: &mut Vec<Plugin>,
 ) -> anyhow::Result<()> {
-    let registry = store.registry(scope)?;
+    let registry = store.registry("global")?;
     let mut seen = BTreeSet::new();
     let defaults = crate::configuration::SkillConfig::default();
     let sources = if scope == "local" {

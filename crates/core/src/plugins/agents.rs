@@ -825,19 +825,10 @@ pub struct ProfileCatalog {
 }
 
 impl ProfileCatalog {
-    /// A project plugin wins over a global one of the same name.
     pub fn from_plugins(plugins: &[Plugin]) -> Self {
         let mut seen = BTreeSet::new();
         let mut profiles = Vec::new();
-        let local_first = plugins
-            .iter()
-            .filter(|plugin| plugin.enabled && plugin.scope == "local")
-            .chain(
-                plugins
-                    .iter()
-                    .filter(|plugin| plugin.enabled && plugin.scope != "local"),
-            );
-        for plugin in local_first {
+        for plugin in plugins.iter().filter(|plugin| plugin.enabled) {
             for profile in &plugin.spec.subagents {
                 if seen.insert((plugin.spec.name.clone(), profile.name.clone())) {
                     profiles.push(Arc::new(NamedProfile {
@@ -1383,15 +1374,6 @@ mod tests {
         );
         assert!(!catalog.listing().0.contains("hidden"));
         assert!(catalog.listing().0.contains("- two:review: c"));
-    }
-
-    #[test]
-    fn a_project_plugin_wins_over_a_global_one_of_the_same_name() {
-        let catalog = ProfileCatalog::from_plugins(&[
-            plugin("same", "global", true, &[("review", "g")]),
-            plugin("same", "local", true, &[("review", "l")]),
-        ]);
-        assert_eq!(catalog.find("review").unwrap().profile.description, "l");
     }
 
     #[test]

@@ -6,7 +6,7 @@ use themis_core::plugins::definitions::{self, Definition};
 
 /// The plugin, skill, MCP and hook commands, for `themis plugin --help` and malformed calls.
 #[rustfmt::skip]
-pub const USAGE: &str = "Use plugin list [--kind subagent]|updates|create NAME|show NAME|edit NAME|save DEF|inspect SOURCE [NAME]|import SOURCE [NAME]|export NAME|preview NAME@MARKET|install NAME@MARKET|update NAME|enable NAME|disable NAME|uninstall NAME (SOURCE: a folder, repository or .mcp.json file); plugin marketplace list|preview SOURCE|add SOURCE [NAME]|enable NAME|disable NAME|changes NAME|browse NAME|refresh NAME|check NAME|remove NAME; skill list [PLUGIN]|save PLUGIN DEF|verify DEF|delete PLUGIN ID; mcp|hook list [PLUGIN]|add PLUGIN NAME DEF|update PLUGIN NAME DEF|test PLUGIN NAME|delete PLUGIN NAME; mcp add PLUGIN DEF adds every server of a .mcp.json ({\"mcpServers\": ...}). A missing PLUGIN is created by add and save. DEF is a file, - (stdin) or inline JSON: themis mcp add docs fetch '{\"command\":\"uvx\",\"args\":[\"mcp-server-fetch\"]}'. Options: --scope local|global --project PATH --expected REVISION --ref REF --subdirectory PATH --allow-partial. For agent creation: skill create THREAD REQUEST. `themis skill|mcp|hook --help` shows each definition's exact JSON with every field.";
+pub const USAGE: &str = "Use plugin list [--kind subagent]|updates|create NAME|show NAME|edit NAME|save DEF|inspect SOURCE [NAME]|import SOURCE [NAME]|export NAME|preview NAME@MARKET|install NAME@MARKET|update NAME|enable NAME|disable NAME|uninstall NAME (SOURCE: a folder, repository or .mcp.json file); plugin marketplace list|preview SOURCE|add SOURCE [NAME]|enable NAME|disable NAME|changes NAME|browse NAME|refresh NAME|check NAME|remove NAME; skill list [PLUGIN]|save PLUGIN DEF|verify DEF|delete PLUGIN ID; mcp|hook list [PLUGIN]|add PLUGIN NAME DEF|update PLUGIN NAME DEF|test PLUGIN NAME|delete PLUGIN NAME; mcp add PLUGIN DEF adds every server of a .mcp.json ({\"mcpServers\": ...}). A missing PLUGIN is created by add and save. DEF is a file, - (stdin) or inline JSON: themis mcp add docs fetch '{\"command\":\"uvx\",\"args\":[\"mcp-server-fetch\"]}'. Options: --project PATH --expected REVISION --ref REF --subdirectory PATH --allow-partial. For agent creation: skill create THREAD REQUEST. `themis skill|mcp|hook --help` shows each definition's exact JSON with every field.";
 
 /// `--help` for `plugin`, `skill`, `mcp` or `hook`: the usage, and for a component its exact
 /// definition (every field, required or optional, and an example).
@@ -30,7 +30,6 @@ fn definition(component: &str) -> Option<Definition> {
 pub(super) struct Options<'a> {
     pub(super) positional: Vec<&'a str>,
     pub(super) project: Option<String>,
-    scope: String,
     expected: Option<String>,
     reference: Option<String>,
     subdirectory: Option<String>,
@@ -43,7 +42,6 @@ impl<'a> Options<'a> {
         let mut options = Self {
             positional: Vec::new(),
             project: None,
-            scope: "global".to_owned(),
             expected: None,
             reference: None,
             subdirectory: None,
@@ -54,13 +52,13 @@ impl<'a> Options<'a> {
         while index < words.len() {
             match words[index].as_str() {
                 "--allow-partial" => options.allow_partial = true,
-                key @ ("--project" | "--scope" | "--expected" | "--ref" | "--subdirectory"
-                | "--kind") => {
+                // Integrations are the person's own; a project shares skills as folders.
+                "--scope" => return Err(themis_core::plugins::PROJECT_SCOPE_GONE.to_owned()),
+                key @ ("--project" | "--expected" | "--ref" | "--subdirectory" | "--kind") => {
                     index += 1;
                     let value = words.get(index).ok_or("Missing option value")?.clone();
                     match key {
                         "--project" => options.project = Some(value),
-                        "--scope" => options.scope = value,
                         "--ref" => options.reference = Some(value),
                         "--subdirectory" => options.subdirectory = Some(value),
                         "--kind" => options.kind = Some(value),
@@ -140,7 +138,7 @@ pub(super) fn label(source: &str) -> String {
 pub async fn run(client: &Client, words: &[String], directory: &Path) -> Result<Value, String> {
     let options = Options::parse(words)?;
     let (positional, project, reference, subdirectory) = (&options.positional, &options.project, &options.reference, &options.subdirectory);
-    let mut request = json!({"scope":options.scope,"projectRoot":project,"expectedRevision":options.expected,"allowPartial":options.allow_partial});
+    let mut request = json!({"scope":"global","projectRoot":project,"expectedRevision":options.expected,"allowPartial":options.allow_partial});
     match positional.as_slice(){
         ["plugin","list"]=>return list(client,request,options.kind.as_deref(),project.as_deref()).await,
         ["plugin","create",name]=>{request["action"]=json!("save");request["spec"]=json!({"name":name});},
@@ -310,13 +308,12 @@ pub(super) async fn find(client: &Client, args: &Value, name: &str) -> Result<Va
     let plugin = find_or_new(client, args, name).await?;
     if plugin.get("scope").is_none() {
         return Err(format!(
-            "Unknown plugin '{name}' in {} scope (themis plugin list shows them)",
-            args["scope"].as_str().unwrap_or("global")
+            "Unknown plugin '{name}' (themis plugin list shows them)"
         ));
     }
     Ok(plugin)
 }
-/// The plugin by this name in the request's scope, or a new, empty one (no `scope`, no
+/// The plugin by this name (a found skill's name is unique to its file), or a new, empty one (no `scope`, no
 /// `revision`) to save into.
 pub(super) async fn find_or_new(
     client: &Client,
@@ -333,7 +330,7 @@ pub(super) async fn find_or_new(
         .as_array()
         .ok_or("Invalid plugin list")?
         .iter()
-        .find(|p| p["scope"] == args["scope"] && p["spec"]["name"] == name)
+        .find(|p| p["spec"]["name"] == name)
         .cloned();
     Ok(found
         .unwrap_or_else(|| json!({"spec": {"name": name, "skills": [], "mcp": {}, "hooks": []}})))

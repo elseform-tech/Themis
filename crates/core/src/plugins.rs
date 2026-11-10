@@ -15,7 +15,6 @@ pub mod package;
 mod scans;
 mod skill_prompts;
 mod validation;
-use materialize::safe_create_parent;
 pub use scans::{catalog_brands, catalog_groups, compatibility_summary, MarketplaceScan};
 use skill_prompts::edited_skill_source;
 use validation::validate;
@@ -162,6 +161,9 @@ struct Registry {
     discovery_disabled: std::collections::BTreeSet<String>,
 }
 
+/// What a write to the old project store answers.
+pub const PROJECT_SCOPE_GONE: &str = "Projects hold no plugins, MCP servers or hooks: add them globally (leave out --scope). A skill for this project is a SKILL.md folder in the project's .agents/skills, shared with the team through the repository.";
+
 #[derive(Clone)]
 pub struct PluginStore {
     skill_paths: Vec<String>,
@@ -205,15 +207,13 @@ impl PluginStore {
         self.skill_paths = paths;
         Ok(self)
     }
+    /// Only the global store is written: a project shares skills as `SKILL.md` folders in the
+    /// repository (discovered read-only), and plugins, MCP servers and hooks are personal.
     fn directory(&self, scope: &str) -> anyhow::Result<PathBuf> {
         match scope {
             "global" => Ok(self.global.join("plugins")),
-            "local" => Ok(self
-                .project
-                .as_ref()
-                .context("Select a project for local plugins")?
-                .join(".themis/plugins")),
-            _ => bail!("scope must be local or global"),
+            "local" => bail!("{PROJECT_SCOPE_GONE}"),
+            _ => bail!("scope must be global"),
         }
     }
     fn registry(&self, scope: &str) -> anyhow::Result<Registry> {
@@ -272,14 +272,7 @@ impl PluginStore {
         f: impl FnOnce(&mut Registry) -> anyhow::Result<T>,
     ) -> anyhow::Result<T> {
         let directory = self.directory(scope)?;
-        if scope == "local" {
-            safe_create_parent(
-                self.project.as_ref().context("Missing project")?,
-                &directory,
-            )?;
-        } else {
-            fs::create_dir_all(&directory)?;
-        }
+        fs::create_dir_all(&directory)?;
         for file in ["registry.json", "registry.lock"] {
             if directory
                 .join(file)
@@ -308,9 +301,6 @@ impl PluginStore {
     }
     pub fn list(&self) -> anyhow::Result<Vec<Plugin>> {
         let mut result: Vec<Plugin> = self.registry("global")?.current.into_values().collect();
-        if self.project.is_some() {
-            result.extend(self.registry("local")?.current.into_values());
-        }
         result.extend(
             self.discovered_plugins()?
                 .into_iter()
@@ -429,7 +419,7 @@ impl PluginStore {
         let discovered = self
             .discovered_plugins()?
             .into_iter()
-            .find(|p| p.scope == scope && p.spec.name == name);
+            .find(|p| p.spec.name == name);
         if enabled
             && discovered
                 .as_ref()
@@ -437,7 +427,14 @@ impl PluginStore {
         {
             bail!("Cannot enable an invalid discovered skill; fix the source file first");
         }
-        self.mutate(scope, |registry| {
+        // A discovered skill's on/off is the person's own, kept in the global store even for a
+        // project's skill: its name is unique to the skill file's path.
+        let store = if discovered.is_some() {
+            "global"
+        } else {
+            scope
+        };
+        self.mutate(store, |registry| {
             if let Some(plugin) = registry.current.get_mut(name) {
                 self.refuse_enabling_plugin(plugin, enabled)?;
                 plugin.enabled = enabled;
@@ -464,7 +461,7 @@ impl PluginStore {
         if let Some(plugin) = self
             .discovered_plugins()?
             .into_iter()
-            .find(|p| p.scope == scope && p.spec.name == name)
+            .find(|p| p.spec.name == name)
         {
             if kind != "skill" || !plugin.spec.skills.iter().any(|skill| skill.id == id) {
                 bail!("Unknown discovered component");
@@ -487,7 +484,7 @@ impl PluginStore {
         if self
             .discovered_plugins()?
             .iter()
-            .any(|p| p.scope == scope && p.spec.name == name)
+            .any(|p| p.spec.name == name)
         {
             bail!("Discovered skills are read-only; disable them or remove the source file");
         }
@@ -610,14 +607,15 @@ impl PluginStore {
         };
         let shown = |path: &Path| format!("`{}`", path.display());
         let none = "(none: this run has no project)";
-        let project_plugins = self.project.as_ref().map_or_else(
-            || none.to_owned(),
-            |root| shown(&native(root, ".themis/plugins")),
+        // Where a project skill is written: the first project skill folder (`.agents/skills`).
+        let first = self
+            .skill_paths
+            .first()
+            .map_or(".agents/skills", String::as_str);
+        let project_skill_dir = self.project.as_ref().map_or_else(
+            || format!("PROJECT/{first}"),
+            |root| native(root, first).display().to_string(),
         );
-        let project_root = self
-            .project
-            .as_ref()
-            .map_or_else(|| "PROJECT".to_owned(), |root| root.display().to_string());
         let folders = |base: Option<&PathBuf>, paths: &[String]| match base {
             Some(base) => paths
                 .iter()
@@ -627,12 +625,9 @@ impl PluginStore {
             None => none.to_owned(),
         };
         let defaults = crate::configuration::SkillConfig::default().paths;
-        let mut values = vec![
-            ("global_plugins", shown(&self.global.join("plugins"))),
-            ("project_plugins", project_plugins),
-            ("project_root", project_root),
-        ];
+        let mut values = vec![("global_plugins", shown(&self.global.join("plugins")))];
         if id == "skills" {
+            values.push(("project_skill_dir", project_skill_dir));
             values.push((
                 "personal_skill_folders",
                 folders(self.home.as_ref(), &defaults),

@@ -43,11 +43,8 @@ impl PluginStore {
                 }
             }
         }
-        for scope in ["global", "local"] {
-            if scope == "local" && self.project.is_none() {
-                continue;
-            }
-            let registry = self.registry(scope)?;
+        {
+            let registry = self.registry("global")?;
             for plugin in registry.revisions.values().filter(|p| {
                 registry
                     .current

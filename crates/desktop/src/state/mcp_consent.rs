@@ -7,7 +7,7 @@
 //! `node server.js`-style commands run) that a person approved: directly in the
 //! UI or CLI, or by answering the approval dialog for an agent's change. A
 //! definition that is new, changed by anything else (an unapproved agent edit, a
-//! catalog update, a repository's `.themis/plugins/`), applied without a person's
+//! catalog update), applied without a person's
 //! answer (YOLO or an allow rule), or missing from the file does not start until
 //! a person enables it again. The file has no integrity protection, like the
 //! plugin registry beside it.
@@ -143,8 +143,7 @@ pub(super) struct SecretUse {
     binding: String,
 }
 
-/// Whether the person wrote this connection themselves: not from a plugin package, a catalog or a
-/// repository's `.themis/plugins/`.
+/// Whether the person wrote this connection themselves: not from a plugin package or a catalog.
 fn personal(plugin: &Plugin) -> bool {
     plugin.scope == "global"
         && plugin.source.is_none()
@@ -155,18 +154,9 @@ fn personal(plugin: &Plugin) -> bool {
             .is_none_or(|origin| origin.kind == "mcp-json")
 }
 
-fn consent_key(root: &Path, scope: &str, plugin: &str, server: &str) -> String {
-    // A project's definitions are consented per canonical project root (a
-    // worktree run of the same project sees the same consent); global ones everywhere.
-    let place = if scope == "local" {
-        root.canonicalize()
-            .unwrap_or_else(|_| root.to_owned())
-            .to_string_lossy()
-            .into_owned()
-    } else {
-        String::new()
-    };
-    format!("{scope}\0{place}\0{plugin}\0{server}")
+/// Servers are the person's own (global), so a consent holds in every project.
+fn consent_key(scope: &str, plugin: &str, server: &str) -> String {
+    format!("{scope}\0\0{plugin}\0{server}")
 }
 
 fn root_option(root: &Path) -> Option<PathBuf> {
@@ -184,7 +174,7 @@ impl AppState {
 
     /// Reads the consent file. A missing file is seeded once with the global
     /// definitions already enabled (they live in app data, not in a repository);
-    /// project definitions are never seeded. A damaged file approves nothing and
+    /// a project holds none. A damaged file approves nothing and
     /// is noted in diagnostics; the next approval replaces it.
     fn load_consent(&self) -> ConsentFile {
         let path = self.consent_path();
@@ -199,10 +189,8 @@ impl AppState {
                     for plugin in plugins.iter().filter(|plugin| plugin.scope == "global") {
                         for (name, server) in plugin.spec.mcp.iter().filter(|(_, s)| s.enabled) {
                             if let Some(digest) = plugin_digest(plugin, server) {
-                                file.approved.insert(
-                                    consent_key(Path::new(""), "global", &plugin.spec.name, name),
-                                    digest,
-                                );
+                                file.approved
+                                    .insert(consent_key("global", &plugin.spec.name, name), digest);
                             }
                         }
                     }
@@ -231,13 +219,7 @@ impl AppState {
     }
 
     /// Whether a person approved exactly this definition for starting.
-    pub(super) fn mcp_consented(
-        &self,
-        root: &Path,
-        plugin: &Plugin,
-        name: &str,
-        server: &McpServer,
-    ) -> bool {
+    pub(super) fn mcp_consented(&self, plugin: &Plugin, name: &str, server: &McpServer) -> bool {
         let _guard = themis_core::chat_grants::WRITE_LOCK
             .lock()
             .unwrap_or_else(|e| e.into_inner());
@@ -246,7 +228,7 @@ impl AppState {
         };
         self.load_consent()
             .approved
-            .get(&consent_key(root, &plugin.scope, &plugin.spec.name, name))
+            .get(&consent_key(&plugin.scope, &plugin.spec.name, name))
             .is_some_and(|approved| *approved == digest)
     }
 
@@ -255,7 +237,6 @@ impl AppState {
     /// connection stops at that, before anything is sent.
     pub(super) fn secrets_awaiting_ok(
         &self,
-        root: &Path,
         plugin: &Plugin,
         name: &str,
         server: &McpServer,
@@ -282,9 +263,9 @@ impl AppState {
             .lock()
             .unwrap_or_else(|e| e.into_inner());
         let file = self.load_consent();
-        let allowed =
-            file.secret_ok
-                .get(&consent_key(root, &plugin.scope, &plugin.spec.name, name));
+        let allowed = file
+            .secret_ok
+            .get(&consent_key(&plugin.scope, &plugin.spec.name, name));
         Ok(names
             .into_iter()
             // Nothing of the person's goes out for one only a plugin's own default fills.
@@ -316,7 +297,7 @@ impl AppState {
             .find(|plugin| plugin.scope == scope && plugin.spec.name == plugin_name)
             .ok_or("No such plugin")?;
         let server = plugin.spec.mcp.get(name).ok_or("No such connection")?;
-        let waiting = self.secrets_awaiting_ok(root, &plugin, name, server)?;
+        let waiting = self.secrets_awaiting_ok(&plugin, name, server)?;
         let mut wanted: Vec<&str> = shown.iter().map(String::as_str).collect();
         let mut current: Vec<&str> = waiting.iter().map(|use_| use_.name.as_str()).collect();
         wanted.sort_unstable();
@@ -330,7 +311,7 @@ impl AppState {
         let mut file = self.load_consent();
         let allowed = file
             .secret_ok
-            .entry(consent_key(root, scope, plugin_name, name))
+            .entry(consent_key(scope, plugin_name, name))
             .or_default();
         for use_ in waiting {
             allowed.insert(use_.name, use_.binding);
@@ -389,7 +370,7 @@ impl AppState {
                 continue;
             }
             file.approved
-                .insert(consent_key(root, scope, plugin_name, name), current);
+                .insert(consent_key(scope, plugin_name, name), current);
         }
         if file.approved.len() <= MAX_ENTRIES {
             self.save_consent(&file);
@@ -446,6 +427,8 @@ mod tests {
         let state = AppState::new_for_test(dir.path().join("settings.json"));
         let root = dir.path().join("project");
         std::fs::create_dir(&root).unwrap();
+        // The first read seeds consent for servers already on; start after it, as a running app has.
+        state.load_consent();
         (state, dir, root.canonicalize().unwrap())
     }
 
@@ -467,31 +450,31 @@ mod tests {
         plugin_digest(&plugin, &plugin.spec.mcp["docs"])
     }
 
-    fn consented(state: &AppState, root: &Path, store: &PluginStore) -> bool {
+    fn consented(state: &AppState, store: &PluginStore) -> bool {
         let plugin = current(store);
-        state.mcp_consented(root, &plugin, "docs", &plugin.spec.mcp["docs"])
+        state.mcp_consented(&plugin, "docs", &plugin.spec.mcp["docs"])
     }
 
     #[test]
     fn a_change_made_after_the_dialog_is_not_approved_by_it() {
         let (state, dir, root) = fixture();
         let store = store(dir.path(), &root);
-        store.save("local", spec(&["c1.js"], &[]), None).unwrap();
+        store.save("global", spec(&["c1.js"], &[]), None).unwrap();
         let shown = digest_of(&store);
         // Another call changes the same server to C2 before the answer is recorded.
         let revision = current(&store).revision;
         store
-            .save("local", spec(&["c2.js"], &[]), Some(&revision))
+            .save("global", spec(&["c2.js"], &[]), Some(&revision))
             .unwrap();
-        state.record_mcp_consent(Some(&root), "local", "docs", &[("docs".into(), shown)]);
+        state.record_mcp_consent(Some(&root), "global", "docs", &[("docs".into(), shown)]);
         assert!(
-            !consented(&state, &root, &store),
+            !consented(&state, &store),
             "C2 must not inherit C1's approval"
         );
         // The matching definition is approved.
         let shown = digest_of(&store);
-        state.record_mcp_consent(Some(&root), "local", "docs", &[("docs".into(), shown)]);
-        assert!(consented(&state, &root, &store));
+        state.record_mcp_consent(Some(&root), "global", "docs", &[("docs".into(), shown)]);
+        assert!(consented(&state, &store));
     }
 
     #[test]
@@ -500,22 +483,22 @@ mod tests {
         let store = store(dir.path(), &root);
         store
             .save(
-                "local",
+                "global",
                 spec(&["server.js"], &[("server.js", "good")]),
                 None,
             )
             .unwrap();
-        state.record_user_mcp_consent(Some(&root), "local", "docs", None);
-        assert!(consented(&state, &root, &store));
+        state.record_user_mcp_consent(Some(&root), "global", "docs", None);
+        assert!(consented(&state, &store));
         let revision = current(&store).revision;
         store
             .save(
-                "local",
+                "global",
                 spec(&["server.js"], &[("server.js", "evil")]),
                 Some(&revision),
             )
             .unwrap();
-        assert!(!consented(&state, &root, &store));
+        assert!(!consented(&state, &store));
     }
 
     #[test]
@@ -569,7 +552,7 @@ mod tests {
     fn grants_and_namespaces_follow_the_definition() {
         let (_state, dir, root) = fixture();
         let store = store(dir.path(), &root);
-        store.save("local", spec(&["a.js"], &[]), None).unwrap();
+        store.save("global", spec(&["a.js"], &[]), None).unwrap();
         let plugin = current(&store);
         let first = mcp_namespace(&plugin, "docs", &plugin.spec.mcp["docs"]);
         let mut changed = plugin.clone();
@@ -593,14 +576,11 @@ mod tests {
     fn a_corrupt_consent_file_is_replaced_by_the_next_approval() {
         let (state, dir, root) = fixture();
         let store = store(dir.path(), &root);
-        store.save("local", spec(&["a.js"], &[]), None).unwrap();
+        store.save("global", spec(&["a.js"], &[]), None).unwrap();
         std::fs::write(state.consent_path(), "{ not json").unwrap();
-        assert!(!consented(&state, &root, &store));
-        state.record_user_mcp_consent(Some(&root), "local", "docs", None);
-        assert!(
-            consented(&state, &root, &store),
-            "version must be current, not 0"
-        );
+        assert!(!consented(&state, &store));
+        state.record_user_mcp_consent(Some(&root), "global", "docs", None);
+        assert!(consented(&state, &store), "version must be current, not 0");
         let text = std::fs::read_to_string(state.consent_path()).unwrap();
         assert!(text.contains(&format!("\"version\": {VERSION}")));
     }
@@ -614,14 +594,14 @@ mod tests {
             "mcp": (0..8).map(|i| (format!("s{i}"), json!({"command":"node","args":[i.to_string()],"enabled":true}))).collect::<serde_json::Map<_,_>>()
         }))
         .unwrap();
-        store.save("local", spec, None).unwrap();
+        store.save("global", spec, None).unwrap();
         std::thread::scope(|scope| {
             for i in 0..8 {
                 let (state, root) = (&state, &root);
                 scope.spawn(move || {
                     state.record_user_mcp_consent(
                         Some(root),
-                        "local",
+                        "global",
                         "docs",
                         Some(&format!("s{i}")),
                     );
@@ -631,7 +611,7 @@ mod tests {
         let plugin = current(&store);
         for name in plugin.spec.mcp.keys() {
             assert!(
-                state.mcp_consented(&root, &plugin, name, &plugin.spec.mcp[name]),
+                state.mcp_consented(&plugin, name, &plugin.spec.mcp[name]),
                 "{name}"
             );
         }

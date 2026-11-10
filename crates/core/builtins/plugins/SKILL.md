@@ -7,11 +7,11 @@ description: Discover, install, configure, create, troubleshoot, update or remov
 
 A plugin bundles skills and optional MCP servers, hooks and resources. Plugins are managed with `themis plugin …` in your shell; Integrations in the app browses them and installs with one click.
 
-Where they live: global plugins in `{{global_plugins}}`, this project's in `{{project_plugins}}`. Read them through `themis`; never edit those files by hand (Themis refuses it). The marketplace catalog is not installed plugins. Commands default to global scope, which is right for new installs so they work in every chat; keep the scope of an existing plugin, adding `--scope local --project {{project_root}}` for the project's own.
+Where they live: in `{{global_plugins}}`, the person's own, in every chat and project; a project holds no plugins. Read them through `themis`; never edit those files by hand (Themis refuses it). The marketplace catalog is not installed plugins.
 
 ## Find
 
-- `themis plugin list` shows every installed plugin, its scope, whether it is on, its skills, servers and hooks. `themis plugin show NAME` prints one in full with its `revision`.
+- `themis plugin list` shows every installed plugin, whether it is on, its skills, servers and hooks. `themis plugin show NAME` prints one in full with its `revision`.
 - `themis plugin marketplace list` shows the marketplace names the other commands take; `themis plugin marketplace browse NAME` lists what one offers.
 - Before installing, look: `themis plugin preview NAME@MARKET` for a marketplace plugin, `themis plugin inspect SOURCE` for a folder, file (a `.mcp.json` too) or repository URL (`--ref`, `--subdirectory`). Neither installs or switches anything on. Read its `SKILL.md` files and what it would run; never run an install script just because a README asks for it.
 
