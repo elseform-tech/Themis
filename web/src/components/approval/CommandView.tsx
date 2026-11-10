@@ -14,7 +14,8 @@ export function CommandPreview({ argv }: { argv: string[] }) {
 }
 
 /** The whole command in Details, exactly as written: one piece (pipes and `&&` kept, never split into lines),
- *  wrapping and scrolling top to bottom when long, a destructive hint, and Copy for the exact text. */
+ *  wrapping and scrolling top to bottom when long, a destructive hint, and Copy for the exact text. A line feed the
+ *  command itself holds (a heredoc, a multi-line script) shows as a line break; the two-line preview keeps it escaped. */
 export function CommandFull({ argv }: { argv: string[] }) {
   const view = commandView(argv);
   const [copied, setCopied] = useState<"" | "Copied" | "Select to copy">("");
@@ -24,7 +25,7 @@ export function CommandFull({ argv }: { argv: string[] }) {
   const destructive = (view.parts ?? [{ words: argv }]).some(part => looksDestructive(part.words));
   return (
     <div className="themis-approval-full">
-      <code className="themis-approval-command" tabIndex={0}><SafeText text={view.copy} max={Infinity} /></code>
+      <code className="themis-approval-command" tabIndex={0}><SafeText text={view.copy} max={Infinity} lineBreaks /></code>
       {destructive && <span className="themis-approval-destructive" title="Looks like it discards work (a hint)">destructive</span>}
       <button type="button" className="themis-approval-copy" onClick={() => void copy()}>{copied || "Copy"}</button>
     </div>

@@ -256,10 +256,36 @@ describe("command display", () => {
     setup(command(["echo", "a\nb", "x‮y"], "/tmp/pro‮ject"));
     for (const shown of [preview(), full()]) {
       expect(shown.textContent).toContain("⟨U+202E⟩");
-      expect(shown.textContent).toContain("⟨U+000A⟩");
       expect(shown.textContent).not.toMatch(/[‮\n]/);
     }
+    // The two-line preview keeps a line feed escaped; Details breaks the line there.
+    expect(preview().textContent).toContain("⟨U+000A⟩");
+    expect(full().textContent).not.toContain("⟨U+000A⟩");
+    expect(full().querySelectorAll("br")).toHaveLength(1);
     expect(folderChip()).toBe('"/tmp/pro⟨U+202E⟩ject"');
+  });
+
+  it("shows a heredoc's line feeds as line breaks in Details, and still flags CR, tab and zero-width", () => {
+    const script = "cat > x.json <<'JSON'\n{\n  \"id\": 1\r\n}\tz​\nJSON";
+    setup(command(["sh", "-c", script]));
+    expect(full().querySelectorAll("br")).toHaveLength(4);
+    expect(full().textContent).toBe("sh -c 'cat > x.json <<'\\''JSON'\\''{  \"id\": 1⟨U+000D⟩}⟨U+0009⟩z⟨U+200B⟩JSON'");
+    expect(Array.from(full().querySelectorAll(".themis-approval-escape"), node => node.textContent)).toEqual(["⟨U+000D⟩", "⟨U+0009⟩", "⟨U+200B⟩"]);
+  });
+
+  it("never makes a blank line: doubled and spaces-only line feeds stay escaped", () => {
+    // Inside the quoted copy the first and last line feeds sit between visible lines, so they break.
+    setup(command(["sh", "-c", "\necho ok\n\n\n   \nrm -rf ~\n"]));
+    expect(full().querySelectorAll("br")).toHaveLength(2);
+    expect(full().textContent).toBe("sh -c 'echo ok⟨U+000A⟩⟨U+000A⟩⟨U+000A⟩   ⟨U+000A⟩rm -rf ~'");
+    cleanup();
+    setup(command(["printf", "\n\nx\n"]));
+    expect(full().querySelectorAll("br")).toHaveLength(1);
+    expect(full().textContent).toBe("printf '⟨U+000A⟩⟨U+000A⟩x'");
+    cleanup();
+    setup(command(["sh", "-c", "echo ok\nrm -rf ~"]));
+    expect(full().querySelectorAll("br")).toHaveLength(1);
+    expect(full()).toHaveTextContent("echo okrm -rf ~");
   });
 
   it("escapes a literal escape-looking token so it cannot imitate a hidden character", () => {
