@@ -543,20 +543,37 @@ pub fn render(report: &Report) -> String {
     );
     for finding in &report.problems {
         text.push_str(&format!(
-            "FAIL {} {} ({}): {}\n  fix: {}\n",
-            finding.kind, finding.item, finding.scope, finding.problem, finding.fix
+            "FAIL {} {}: {}\n  fix: {}\n",
+            finding.kind,
+            place_name(finding),
+            finding.problem,
+            finding.fix
         ));
     }
     for finding in &report.not_started {
         text.push_str(&format!(
-            "not started: {} {} ({}): {}\n",
-            finding.kind, finding.item, finding.scope, finding.problem
+            "not started: {} {}: {}\n",
+            finding.kind,
+            place_name(finding),
+            finding.problem
         ));
     }
     if report.ok {
         text.push_str("No problems found.\n");
     }
     text
+}
+
+/// An item as the person knows it from Integrations: their own (the `personal` holder, which
+/// Integrations hides) as `name (yours)`, a project skill as `name (project)`, anything else as
+/// `plugin/name`. The JSON keeps `item` and `scope` as they are.
+fn place_name(finding: &Finding) -> String {
+    match finding.item.strip_prefix("personal/") {
+        Some(name) if finding.scope == "global" => format!("{name} (yours)"),
+        _ if finding.item == "personal" && finding.scope == "global" => "yours".to_owned(),
+        _ if finding.scope == "local" => format!("{} (project)", finding.item),
+        _ => finding.item.clone(),
+    }
 }
 
 /// `themis doctor …`: the app's own checks, or with `--integrations` every integration's.
@@ -615,6 +632,41 @@ pub(super) async fn doctor(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Seen in the 2026-11-10 A/B: agents quoted `mcp personal/notes (global)` to the person,
+    /// whose Integrations shows that server under Yours.
+    #[test]
+    fn the_text_names_items_as_integrations_does() {
+        let finding = |item: &str, scope: &str| Finding {
+            kind: "mcp",
+            item: item.into(),
+            scope: scope.into(),
+            problem: "switched off".into(),
+            fix: String::new(),
+        };
+        let report = Report {
+            not_started: vec![
+                finding("personal/notes", "global"),
+                finding("kit/broken", "global"),
+                finding("discovered-1/checklist", "local"),
+            ],
+            ..Default::default()
+        };
+        let text = render(&report);
+        assert!(
+            text.contains("not started: mcp notes (yours): switched off"),
+            "{text}"
+        );
+        assert!(
+            text.contains("not started: mcp kit/broken: switched off"),
+            "{text}"
+        );
+        assert!(text.contains("discovered-1/checklist (project)"), "{text}");
+        assert!(
+            !text.contains("personal/") && !text.contains("(global)"),
+            "{text}"
+        );
+    }
 
     fn words(text: &str) -> Vec<String> {
         text.split(' ').map(str::to_owned).collect()

@@ -40,7 +40,7 @@ SUCCESS = re.compile(r"\b(done|added|created|saved|fixed|removed|deleted|updated
 GUIDES = r"(plugins|skills|mcp|hooks)"
 GUIDE = re.compile(r"\\?\"(?:skill|name|id)\\?\"\s*:\s*\\?\"" + GUIDES + r"\\?\"|\b" + GUIDES + r"/SKILL\.md")
 DOCTOR = re.compile(r"doctor\W+(?:[^\s\"]+\W+)*?--integrations")
-HOLDER = re.compile(r"\bpersonal`?\s+plugin|\bplugin\s+`?personal\b", re.I)
+HOLDER = re.compile(r"\bpersonal`?\s+plugin|\bplugin\s+`?personal\b|\bpersonal\b\W{0,3}\s*(?:›|>|/)\s*\w", re.I)
 # The app's own folder, and where a project skill belongs.
 EXPECTED_CHANGES = re.compile(r"^(\.themis/|\.agents/skills/)")
 HEDGE = re.compile(r"\b(could ?n[o']t|cannot|can't|unable|failed|not able|did not|didn't|wasn't|isn't working|still (fails|broken))\b", re.I)
