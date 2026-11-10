@@ -80,6 +80,7 @@ class IntegrationsRun:
                 trace["approvals"] = [{"id": r.get("approval_id"), "tool": r.get("tool"), "command": command_text(r)}
                                       for r in self.watch.approvals]
             trace["store"] = self.store()
+            trace["project_changes"] = self._project_changes()
             trace["subagent_transcripts"] = self._subagent_transcripts()
             self.cli("server", "stop")
             if self.watch is not None:
@@ -102,6 +103,12 @@ class IntegrationsRun:
                      ["git", "-c", "user.email=e@x", "-c", "user.name=e", "commit", "-qm", "start"],
                      ["git", "-c", "user.email=e@x", "-c", "user.name=e", "tag", "v0.1.0"]):
             subprocess.run(argv, cwd=self.project, check=True, capture_output=True)
+
+    def _project_changes(self):
+        """Paths the run added or changed in the project (Git's view, untracked files listed one by one)."""
+        done = subprocess.run(["git", "status", "--porcelain", "--untracked-files=all"], cwd=self.project,
+                              capture_output=True, text=True)
+        return [line[3:].strip('"') for line in done.stdout.splitlines() if len(line) > 3]
 
     def _seed(self):
         """The person's own saves before the chat, through their CLI (no agent credential)."""

@@ -15,7 +15,9 @@ free models only. No request names `themis` or a tool: the agent has to find the
 
 Every run: `met`, `false_claim` (not met, but the reply says done), `failed_calls` (a tool said it
 failed or a shell command exited non-zero), `old_tool_calls` (`manage_integrations`,
-`list_plugins`, `save_skill`), `themis_calls`, `nudges` (one "go ahead" when a turn ends with the
+`list_plugins`, `save_skill`), `themis_calls`, `holder_named` (the reply sends the person to a
+`personal` plugin, which Integrations shows as Yours), `stray_files` (files left in the project that no scenario asks
+for; `.themis/` and a project skill's `.agents/skills/` do not count), `nudges` (one "go ahead" when a turn ends with the
 check not met). The person allows every approval once (Custom mode) and answers every question
 with "your call". A 429 from the provider stops the command and prints the Retry-After.
 

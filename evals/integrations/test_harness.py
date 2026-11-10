@@ -106,6 +106,19 @@ class Measures(unittest.TestCase):
         measures = grade.evaluate(quiet, scenarios.load("add-mcp"), "/nowhere")
         self.assertEqual((measures["guide_loaded"], measures["doctor_run"]), (1, 0))
 
+    def test_a_reply_naming_the_personal_plugin_is_counted(self):
+        for reply, named in (("Switch notes on in Integrations (under the `personal` plugin).", 1),
+                             ("Saved in your personal plugin.", 1),
+                             ("Switch notes on in Integrations; it is listed under Yours.", 0),
+                             ("I ran themis mcp add personal notes.", 0)):
+            self.assertEqual(int(bool(grade.HOLDER.search(reply))), named, reply)
+
+    def test_files_left_in_the_project_are_counted(self):
+        trace = {"events": [], "store": {}, "project_changes": [
+            "scratchpad/glob-greet.json", ".mcp.json", ".themis/context/x.jsonl",
+            ".agents/skills/release-checklist/SKILL.md"]}
+        self.assertEqual(grade.evaluate(trace, scenarios.load("delete-hook"), "/nowhere")["stray_files"], 2)
+
     def test_a_reply_saying_it_could_not_is_no_false_claim(self):
         trace = {"store": [], "actions": [], "approvals": [], "events": [
             item("started"), item("assistant_text", text="I could not remove it: the plugin was not found.")]}

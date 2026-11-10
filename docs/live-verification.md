@@ -269,7 +269,10 @@ and check the failing hidden test asks only for what the request and docs state.
 
 Report each step with its exact command and result: the smoke check, every row run (passed,
 failed or skipped and why), the soak's flags, end state, lost runs and their reasons, and the
-verification eval's trend. Scan the scratch folders for saved reasoning or the key. Last, stop
+verification eval's trend. Report what the agent did wrong in the chats (a false claim or
+completion, a wrong route, misleading words, wasted steps) apart from app bugs, and add each to
+[agent-weaknesses.md](agent-weaknesses.md) with the eval measure that tracks it; update the
+latest results there from this check's evals. Scan the scratch folders for saved reasoning or the key. Last, stop
 what the check started: a `themis` command run against the scratch data folder while the app was
 closed started a server that keeps running, so run `themis --data-dir <scratch data> server stop`
 after quitting the app, then `pgrep -fl <scratch folder>` must find nothing (no server, SearXNG,
