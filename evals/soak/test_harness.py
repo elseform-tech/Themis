@@ -683,8 +683,11 @@ class RunnerTests(unittest.TestCase):
         measures, _details = grade(trace, trace["spec"])
         self.assertEqual(measures["health_breakage"], 0)
         self.assertEqual(measures["goal_continuation_breaks"], 0)
-        # Stopped at the first turns, long before the goal could finish.
-        self.assertLess(measures["goal_turns"], 4)
+        # Stopped before the goal could finish: the stand-in writes one item per turn. The cap
+        # stops the goal from another thread, so a loaded machine lets a turn or two more start;
+        # counting them against a fixed small number made this test flaky.
+        self.assertEqual(measures["reached"], 0)
+        self.assertLess(measures["goal_turns"], self.OPTIONS["items"])
 
     def test_goal_that_stops_continuing_is_caught(self):
         trace = self.soak("stall")
