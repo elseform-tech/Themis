@@ -52,12 +52,13 @@ def cmd_run(args):
 
 
 KEYS = ("met", "false_claim", "failed_calls", "tool_calls", "old_tool_calls", "themis_calls",
-        "failed_themis_calls", "guide_loaded", "doctor_run", "holder_named", "stray_files", "nudges", "subagent_started", "subagent_themis")
+        "failed_themis_calls", "guide_loaded", "doctor_run", "holder_named", "stray_files", "retries_after_denial", "questions_after_denial", "nudges", "subagent_started", "subagent_themis")
 
 
 def ab_table(history, label_a, label_b):
     """One row per scenario: sums of the store being right and of false claims, means of the rest."""
     records = [json.loads(line) for line in open(history, encoding="utf-8") if line.strip()]
+    lines_denied = []
     rows = ["| Scenario | n | store right | false claims | failed calls (mean) | tool calls (mean) | old tools (mean) | `themis` calls (mean) | guide loaded | doctor run | `personal` named | stray files | wall s (mean) |",
             "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |"]
     for name in sorted({r["scenario"] for r in records if r["label"] in (label_a, label_b)}):
@@ -78,8 +79,14 @@ def ab_table(history, label_a, label_b):
                         f"{mean('themis_calls')} | {total('guide_loaded')}/{len(got)} | {total('doctor_run')}/{len(got)} | "
                         f"{total('holder_named')}/{len(got)} | {total('stray_files')} | "
                         f"{mean('wall_s')} |")
+    denied = [r for r in records if r["label"] in (label_a, label_b) and "retries_after_denial" in r["measures"]]
+    for label in (label_a, label_b):
+        got = [r for r in denied if r["label"] == label]
+        if got:
+            lines_denied.append(f"- {label}, after a denial: retries {sum(r['measures']['retries_after_denial'] for r in got)}, "
+                                f"questions {sum(r['measures']['questions_after_denial'] for r in got)} in {len(got)} runs")
     extra = [r for r in records if r["label"] in (label_a, label_b) and "subagent_started" in r["measures"]]
-    lines = [f"# A/B: `{label_a}` against `{label_b}` (benchmark audit)", "", *rows, ""]
+    lines = [f"# A/B: `{label_a}` against `{label_b}` (benchmark audit)", "", *rows, "", *lines_denied]
     for label in (label_a, label_b):
         got = [r for r in extra if r["label"] == label]
         if got:
