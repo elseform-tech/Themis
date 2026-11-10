@@ -109,6 +109,7 @@ class Measures(unittest.TestCase):
     def test_a_reply_naming_the_personal_plugin_is_counted(self):
         for reply, named in (("Switch notes on in Integrations (under the `personal` plugin).", 1),
                              ("Saved in your personal plugin.", 1),
+                             ("Turn on **personal › notes** in **Integrations**.", 1),
                              ("Switch notes on in Integrations; it is listed under Yours.", 0),
                              ("I ran themis mcp add personal notes.", 0)):
             self.assertEqual(int(bool(grade.HOLDER.search(reply))), named, reply)

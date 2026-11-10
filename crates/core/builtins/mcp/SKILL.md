@@ -19,7 +19,7 @@ Prefer an existing maintained server over building one. Accept what the person g
 
 ## Change
 
-- **One server:** give its definition as one JSON object, inline in quotes, from stdin with `-`, or as a file: `themis mcp add PLUGIN NAME '{"command": "node", "args": ["server.js"]}'` (or `'{"url": "https://…"}'`) for a new one, `themis mcp update PLUGIN NAME '<json>'` to replace one. Use `personal` as PLUGIN for the person's own; a missing plugin is created. To fix one, start from `themis mcp list PLUGIN`, change only what is wrong and keep the rest.
+- **One server:** give its definition as one JSON object, inline in quotes, from stdin with `-`, or as a file: `themis mcp add PLUGIN NAME '{"command": "node", "args": ["server.js"]}'` (or `'{"url": "https://…"}'`) for a new one, `themis mcp update PLUGIN NAME '<json>'` to replace one. Use `personal` as PLUGIN for the person's own; a missing plugin is created. In Integrations the person sees these as Yours, not inside a plugin, so never send them to a `personal` plugin. To fix one, start from `themis mcp list PLUGIN`, change only what is wrong and keep the rest.
 - **A standard `.mcp.json`** (`{"mcpServers": {…}}`, a file or pasted JSON): `themis mcp add PLUGIN FILE` (or `'<json>'`) adds every server in it, converted the way an import converts them, and says which it added and which it could not use (`--allow-partial` adds the rest). With a NAME, `themis mcp add PLUGIN NAME FILE` adds only that server. Never write a `.mcp.json` into the project for Themis: it does not read one there.
 - **Off or gone:** `themis mcp disable PLUGIN NAME`; `themis mcp delete PLUGIN NAME` only when asked.
 

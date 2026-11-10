@@ -19,7 +19,7 @@ Where they live: in plugins in `{{global_plugins}}`, the person's own, in every 
 ## Change
 
 1. Write the definition as one JSON object: `event` and `command` (or `prompt`), optionally `matcher`, `timeout_seconds` (1 to 600), `blocking`. Start from `themis hook list PLUGIN` when you change an existing hook, and keep the fields you do not mean to change.
-2. Apply it, inline in quotes, from stdin with `-`, or as a file: `themis hook add PLUGIN NAME '{"event": "BeforeTool", "command": "…"}'` for a new hook, `themis hook update PLUGIN NAME '<json>'` for an existing one. Use `personal` as PLUGIN for a new hook of the person's own; a missing plugin is created. The definition is checked first and every problem is reported at once with the exact shape; fix them all and run it again.
+2. Apply it, inline in quotes, from stdin with `-`, or as a file: `themis hook add PLUGIN NAME '{"event": "BeforeTool", "command": "…"}'` for a new hook, `themis hook update PLUGIN NAME '<json>'` for an existing one. Use `personal` as PLUGIN for a new hook of the person's own; a missing plugin is created. In Integrations the person sees these as Yours, not inside a plugin, so never send them to a `personal` plugin. The definition is checked first and every problem is reported at once with the exact shape; fix them all and run it again.
 3. Switch one off with `themis hook disable PLUGIN NAME`; remove one with `themis hook delete PLUGIN NAME` (only when asked).
 
 A new or changed hook is saved switched off. Switching a hook on is the person's alone: Themis refuses it from you in every mode. Tell the person which hook to switch on in Integrations.
