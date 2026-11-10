@@ -36,15 +36,26 @@ interface ComposerShieldProps {
   onChange?: (mode: ApprovalMode) => void;
 }
 
+/** Closes the shield's list; focus in it goes back to the shield, not to the page (the text box keeps its own). */
+function closeList(menu: HTMLDetailsElement | null) {
+  if (!menu?.open) return;
+  const focusInside = menu.contains(document.activeElement);
+  menu.open = false;
+  if (focusInside) menu.querySelector("summary")?.focus();
+}
+
 /**
  * The composer's permission shield: the chat's mode (icon, name, colour) and a list of the three modes.
  * Arrows, Space, Enter and click choose; typed letters never change the mode, and a mouse press on the
- * shield does not move focus to it.
+ * shield does not move focus to it. A pick (not an arrow step) and Esc close the list, so a later click
+ * meant for the text box cannot land on it; the app closes it on a press outside.
  */
 export function ComposerShield({ mode = "custom", saving, running, yoloKeeps, networkBlocked = false, onChange }: ComposerShieldProps) {
   const current = entry(mode);
+  const menu = useRef<HTMLDetailsElement>(null);
   const items = useRef<(HTMLButtonElement | null)[]>([]);
   const choose = (next: ApprovalMode) => { if (!saving && next !== mode) onChange?.(next); };
+  const pick = (next: ApprovalMode) => { closeList(menu.current); choose(next); };
   function onKeyDown(event: KeyboardEvent<HTMLDivElement>) {
     const step = STEP[event.key];
     if (step === undefined) return;
@@ -54,7 +65,7 @@ export function ComposerShield({ mode = "custom", saving, running, yoloKeeps, ne
     choose(MODES[index].mode);
   }
   return (
-    <details className="themis-composer-permissions" data-popover data-mode={mode}>
+    <details ref={menu} className="themis-composer-permissions" data-popover data-mode={mode} onKeyDown={event => { if (event.key === "Escape") closeList(menu.current); }}>
       <summary onMouseDown={event => event.preventDefault()} aria-label={`Permissions: ${current.label}`} title={current.summary}>
         <ModeIcon mode={mode} />
         <span className="themis-composer-label">{saving ? "Saving…" : current.label}</span>
@@ -67,7 +78,7 @@ export function ComposerShield({ mode = "custom", saving, running, yoloKeeps, ne
             if (item.mode === "yolo" && yoloKeeps?.length) extra = <small className="themis-permissions-keeps" title={`Still applies: ${yoloKeeps.join(", ")}`}>Still applies: {yoloKeeps.join(", ")}</small>;
             return (
               <button key={item.mode} ref={node => { items.current[index] = node; }} type="button" role="radio" aria-checked={checked}
-                tabIndex={checked ? 0 : -1} data-mode={item.mode} className="themis-permissions-mode" onClick={() => choose(item.mode)}>
+                tabIndex={checked ? 0 : -1} data-mode={item.mode} className="themis-permissions-mode" onClick={() => pick(item.mode)}>
                 <ModeIcon mode={item.mode} />
                 <span><strong>{item.label}</strong><small className="themis-permissions-hint">{item.summary}</small>{extra}</span>
               </button>
