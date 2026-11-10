@@ -21,7 +21,8 @@ it.each(["global","local"])("shows a readable %s discovery origin while retainin
   window.getSelection()!.removeAllRanges();window.getSelection()!.addRange(range);
   fireEvent.focus(input);
   const option=screen.getByRole("option");
-  expect(option).toHaveTextContent(`${scope==="global"?"User":"Project"} · Discovered skills`);
+  expect(option).toHaveTextContent(scope==="global"?"Discovered":"Project");
+  expect(option).not.toHaveTextContent("Discovered skills");
   expect(option).not.toHaveTextContent("discovered-0123456789abcdef");
   expect(option.querySelector("small")).toHaveAttribute("title",description);
   fireEvent.keyDown(input,{key:"Enter"});

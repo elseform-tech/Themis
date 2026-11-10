@@ -32,9 +32,9 @@ function referenceLabel(name:string) {
   return label;
 }
 function skillOrigin(skill:PromptSkill) {
-  const scope=skill.scope==="local"?"Project":skill.scope==="global"?"User":"";
-  const origin=skill.plugin.startsWith("discovered-")?"Discovered skills":skill.plugin;
-  return scope?`${scope} · ${origin}`:origin;
+  if (skill.plugin.startsWith("discovered-")) return skill.scope==="local"?"Project":"Discovered";
+  if (skill.scope==="local") return `Project · ${skill.plugin}`;
+  return skill.plugin==="personal"?"Yours":skill.plugin;
 }
 export function SkillIcon() { return <svg width="14" height="14" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.4" aria-hidden="true"><path d="m8 2 1.6 4.4L14 8l-4.4 1.6L8 14l-1.6-4.4L2 8l4.4-1.6L8 2Zm7 10 .8 2.2L18 15l-2.2.8L15 18l-.8-2.2L12 15l2.2-.8L15 12Z"/></svg>; }
 export function PluginIcon({plugin}:{plugin?:PromptPlugin}) {

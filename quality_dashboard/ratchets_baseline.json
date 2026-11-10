@@ -770,8 +770,8 @@
    "cyclomatic": 33
   },
   "web/src/screens/Plugins.tsx::Plugins": {
-   "cognitive": 425,
-   "cyclomatic": 385,
+   "cognitive": 421,
+   "cyclomatic": 384,
    "lines": 212
   },
   "web/src/screens/Plugins.tsx::Plugins::browse": {

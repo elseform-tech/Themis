@@ -375,8 +375,9 @@ pub fn plain_words(script: &str) -> Option<Vec<String>> {
         }
         words.push(plain_word(&mut chars)?);
     }
-    // `NAME=value program` runs the program with a variable set.
-    if words.first()?.contains('=') {
+    // `NAME=value program` runs the program with a variable set; a program with `$` in it is
+    // refused as the general reader does (`finish`), quoted or not.
+    if words.first()?.contains(['=', '$']) {
         return None;
     }
     Some(words)
@@ -685,6 +686,20 @@ mod tests {
         ] {
             assert_eq!(plain(command), None, "{command:?}");
         }
+    }
+
+    /// Found by `accepted_words_rejoin_to_the_same_words`: a quoted `'$'` program read as a
+    /// plain word while the general reader refused it (it can't tell `'$CMD'` from `$CMD`).
+    #[test]
+    fn a_program_named_with_a_dollar_is_never_plain() {
+        for script in ["'$'", "'$CMD' a", "\"$x\""] {
+            assert_eq!(plain_words(script), None, "{script}");
+            assert_eq!(split_script(script), None, "{script}");
+        }
+        assert_eq!(
+            plain_words("cat '$x'"),
+            Some(vec!["cat".into(), "$x".into()])
+        );
     }
 
     /// Characters that mean something to a shell outside quotes.
