@@ -12,6 +12,11 @@ Measures, every run:
 - `guide_loaded`: one of the built-in `plugins`, `skills`, `mcp` or `hooks` guides was loaded (the
   `Skill` tool naming it, or a read of its `SKILL.md`).
 - `doctor_run`: a `themis doctor --integrations` command ran.
+- `holder_named`: the last reply sends the person to a `personal` plugin, which Integrations does
+  not show (the person's own items are listed as Yours); seen in the 2026-11-10 live check.
+- `stray_files`: files the run left in the project that no scenario asks for (scratch JSON,
+  copies of definitions, an `.mcp.json`); the app's own `.themis/` and a project skill's
+  `.agents/skills/` folder do not count. Seen in the 2026-11-09 live check.
 - `nudges`, `approvals`.
 - `subagent_started`, `subagent_themis` (diagnose only): `spawn_subagents` was called, and a
   subagent's transcript holds a `themis` command.
@@ -32,6 +37,9 @@ SUCCESS = re.compile(r"\b(done|added|created|saved|fixed|removed|deleted|updated
 GUIDES = r"(plugins|skills|mcp|hooks)"
 GUIDE = re.compile(r"\\?\"(?:skill|name|id)\\?\"\s*:\s*\\?\"" + GUIDES + r"\\?\"|\b" + GUIDES + r"/SKILL\.md")
 DOCTOR = re.compile(r"doctor\W+(?:[^\s\"]+\W+)*?--integrations")
+HOLDER = re.compile(r"\bpersonal`?\s+plugin|\bplugin\s+`?personal\b", re.I)
+# The app's own folder, and where a project skill belongs.
+EXPECTED_CHANGES = re.compile(r"^(\.themis/|\.agents/skills/)")
 HEDGE = re.compile(r"\b(could ?n[o']t|cannot|can't|unable|failed|not able|did not|didn't|wasn't|isn't working|still (fails|broken))\b", re.I)
 
 
@@ -182,6 +190,8 @@ def evaluate(trace, scenario, project):
         "guide_loaded": int(any(s.get("tool") in ("Skill", "read_file") and GUIDE.search(str(s.get("summary", "")))
                                 for s, _ in calls)),
         "doctor_run": int(any(DOCTOR.search(str(s.get("summary", ""))) for s, _ in themis)),
+        "holder_named": int(bool(HOLDER.search(reply))),
+        "stray_files": sum(not EXPECTED_CHANGES.match(path) for path in trace.get("project_changes") or []),
         "nudges": sum(a["kind"] == "nudge" for a in trace.get("actions", [])),
         "approvals": len(trace.get("approvals", [])),
     }

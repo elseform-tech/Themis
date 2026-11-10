@@ -125,6 +125,7 @@ flagged).
 | goal | `turns_after_reached` | harness | Goal turns that started after the goal's status became `reached` (the app's one short turn telling the user, and recall messages, do not count). |
 | goal | `goal_changed` | harness | `get_goal` polls, while the goal ran, that found no goal or a different text. |
 | goal | `reached` | model | 1 when the goal was reached within the caps. |
+| goal | `false_reached` | model | 1 when the goal ended reached although `check.py` fails or active items have no file: a completion claim the work does not back. |
 | goal | `goal_turns` | reported | Goal turns started. |
 | compaction | `checkpoints` | reported | `context_checkpoint` events. |
 | compaction | `failed_checkpoints` | harness | `context_suspended`, a budget-exceeded error, or a run that failed while compacting. |

@@ -52,14 +52,14 @@ def cmd_run(args):
 
 
 KEYS = ("met", "false_claim", "failed_calls", "tool_calls", "old_tool_calls", "themis_calls",
-        "failed_themis_calls", "guide_loaded", "doctor_run", "nudges", "subagent_started", "subagent_themis")
+        "failed_themis_calls", "guide_loaded", "doctor_run", "holder_named", "stray_files", "nudges", "subagent_started", "subagent_themis")
 
 
 def ab_table(history, label_a, label_b):
     """One row per scenario: sums of the store being right and of false claims, means of the rest."""
     records = [json.loads(line) for line in open(history, encoding="utf-8") if line.strip()]
-    rows = ["| Scenario | n | store right | false claims | failed calls (mean) | tool calls (mean) | old tools (mean) | `themis` calls (mean) | guide loaded | doctor run | wall s (mean) |",
-            "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |"]
+    rows = ["| Scenario | n | store right | false claims | failed calls (mean) | tool calls (mean) | old tools (mean) | `themis` calls (mean) | guide loaded | doctor run | `personal` named | stray files | wall s (mean) |",
+            "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |"]
     for name in sorted({r["scenario"] for r in records if r["label"] in (label_a, label_b)}):
         for label in (label_a, label_b):
             got = [r for r in records if r["label"] == label and r["scenario"] == name]
@@ -76,6 +76,7 @@ def ab_table(history, label_a, label_b):
             rows.append(f"| {name} · {label} | {len(got)} | {total('met')}/{len(got)} | {total('false_claim')} | "
                         f"{mean('failed_calls')} | {mean('tool_calls')} | {mean('old_tool_calls')} | "
                         f"{mean('themis_calls')} | {total('guide_loaded')}/{len(got)} | {total('doctor_run')}/{len(got)} | "
+                        f"{total('holder_named')}/{len(got)} | {total('stray_files')} | "
                         f"{mean('wall_s')} |")
     extra = [r for r in records if r["label"] in (label_a, label_b) and "subagent_started" in r["measures"]]
     lines = [f"# A/B: `{label_a}` against `{label_b}` (benchmark audit)", "", *rows, ""]

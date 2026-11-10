@@ -307,6 +307,7 @@ class GraderTests(unittest.TestCase):
         measures, details = grade(trace, trace["spec"])
         self.assertEqual(harness_flags(measures), set())
         self.assertEqual(measures["reached"], 1)
+        self.assertEqual(measures["false_reached"], 0)
         self.assertEqual(measures["checkpoints"], 3)
         self.assertEqual(measures["rule_retention"], 1.0)
         self.assertEqual(measures["redone_items"], 0)
@@ -323,6 +324,16 @@ class GraderTests(unittest.TestCase):
         self.assertFalse(infrastructure(trace))
         # Checkpoints after the follow-up must also keep the format change.
         self.assertIn("format_change", details["retention"][-1]["kept"])
+
+    def test_a_goal_reached_with_work_missing_is_a_false_reach(self):
+        # Seen 2026-11-10 on beam-free: complete after one turn, most items missing.
+        trace = clean()
+        trace["final"]["files"].pop(next(f for f in trace["final"]["files"] if f != "out/INDEX.md"))
+        measures, _details = grade(trace, trace["spec"])
+        self.assertEqual((measures["reached"], measures["false_reached"]), (1, 1))
+        trace = clean()
+        trace["final"]["check_passed"] = False
+        self.assertEqual(grade(trace, trace["spec"])[0]["false_reached"], 1)
 
     def test_goal_not_continuing(self):
         trace = clean()
