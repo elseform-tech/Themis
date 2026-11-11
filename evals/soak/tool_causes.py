@@ -20,16 +20,21 @@ import re
 # one at a time, so scripts, searches and other commands are denied. Only `python3 check.py`
 # runs as a command, plus `grep` that prints only file names or counts (never contents), so a
 # goal check that asks for compact proof of a change to every file can get it (2026-10-27).
+# Listing, folders and git go through the shell since 2026-11-08 (no `list_dir`, `create_dir` or
+# `git` tool), so `ls`, `mkdir` and the git commands the commit needs are allowed as commands.
 # The default is deny, so nothing ever waits for an approval nobody answers.
-ALLOWED_TOOLS = ("read_file", "list_dir", "create_dir", "write_file", "apply_patch", "recall", "create_goal", "update_goal", "git")
+ALLOWED_TOOLS = ("read_file", "write_file", "apply_patch", "recall", "create_goal", "update_goal")
 CHECK_COMMAND = ["python3", "check.py"]
 COUNT_COMMANDS = (["grep", "-L"], ["grep", "-c"], ["grep", "-rL"], ["grep", "-rc"])
+PROJECT_COMMANDS = (["ls"], ["mkdir"], ["git", "status"], ["git", "add"], ["git", "commit"], ["git", "log"],
+                    ["git", "diff"])
+ALLOWED_COMMANDS = (CHECK_COMMAND, *COUNT_COMMANDS, *PROJECT_COMMANDS)
 APPROVAL = {
     "default": "deny",
     # Running outside the sandbox is refused outright, never left asking an absent person.
     "rules": [{"tool": "shell_unsandboxed", "action": "deny"},
               {"tool": "shell", "command": CHECK_COMMAND, "action": "allow"}]
-             + [{"tool": "shell", "command": prefix, "action": "allow"} for prefix in COUNT_COMMANDS]
+             + [{"tool": "shell", "command": prefix, "action": "allow"} for prefix in COUNT_COMMANDS + PROJECT_COMMANDS]
              + [{"tool": tool, "action": "allow"} for tool in ALLOWED_TOOLS],
 }
 
@@ -89,7 +94,7 @@ def classify(tool, output, mode="yolo", summary=""):
                 if _differs_from_check(summary):
                     return "model", "denied_by_rule"
                 return "unclassified", "unparsed_shell_call"
-            allowed = argv == CHECK_COMMAND or any(argv[:2] == prefix for prefix in COUNT_COMMANDS)
+            allowed = argv == CHECK_COMMAND or any(argv[:len(prefix)] == list(prefix) for prefix in ALLOWED_COMMANDS[1:])
         else:
             allowed = tool in ALLOWED_TOOLS
         return ("ours", "approval_refused") if allowed else ("model", "denied_by_rule")
@@ -145,10 +150,10 @@ def _differs_from_check(summary):
     if not match:
         return False
     command, first = (json.loads(f'"{part}"') if part is not None else None for part in match.groups())
-    allowed = [CHECK_COMMAND, *COUNT_COMMANDS]
-    if all(command != prefix[0] for prefix in allowed):
+    if all(command != prefix[0] for prefix in ALLOWED_COMMANDS):
         return True
-    return first is not None and all([command, first] != prefix for prefix in allowed)
+    return first is not None and all(prefix[0] != command or (len(prefix) > 1 and prefix[1] != first)
+                                     for prefix in ALLOWED_COMMANDS)
 
 
 # The files `run.protect` makes read-only.
