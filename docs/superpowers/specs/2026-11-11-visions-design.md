@@ -185,13 +185,14 @@ performance check of the blur.
 code uses `visions` (plural) everywhere: module `visions`, store `visions/`, config `visions`. The
 old module is left alone.
 
-## Open questions for the owner
+## Settled on 2026-11-11
 
-1. Should Settings › Visions be a `runtime.jsonc` block with in-app field writes (recommended), or
-   should it live in the app-data store?
-2. What should the default autonomy be? Small calls is suggested while people learn to trust
-   Visions.
-3. Should a Vision's chats use the channel's approval mode (recommended: one mode per channel, set
-   by the person), or the person's default mode?
-4. What phase 1 budget default do you want? "Not set" means no cap, which conflicts with the eval
-   spend policy. The suggestion is a small default cap that the person can raise.
+1. **Settings › Visions** is a `visions` block in `runtime.jsonc`, written field by field from the
+   app. AGENTS.md and `docs/configuration.md` add it to the blocks the app may edit in place.
+   Profiles, channels and ownership stay in the app-data `visions/` store.
+2. **Default autonomy** is Small calls.
+3. **Approval mode:** each channel has one approval mode, set by the person in channel details. A
+   Vision's chats use it and a Vision cannot change it. It starts as the person's default mode.
+4. **Budget:** there is a default daily cap for all Visions together, shown in Settings › Visions
+   and raisable there. It is never "no cap" by default. The starting value is set in the
+   implementation plan from measured phase 1 eval costs, so it is not guessed here.
