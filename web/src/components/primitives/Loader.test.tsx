@@ -1,5 +1,5 @@
-import { fireEvent, render, screen } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { render, screen } from "@testing-library/react";
+import { describe, expect, it } from "vitest";
 import { Loader } from "./Loader";
 
 describe("Loader", () => {
@@ -11,12 +11,12 @@ describe("Loader", () => {
     render(<Loader label="Checking" progress={52} />);
     expect(screen.getByRole("progressbar")).toHaveAttribute("aria-valuenow", "52");
   });
-  it("offers Wake only with onWake", () => {
-    const { rerender } = render(<Loader label="Checking" />);
+  it("shows an indeterminate bar without progress", () => {
+    render(<Loader label="Checking" />);
+    expect(screen.getByRole("progressbar")).not.toHaveAttribute("aria-valuenow");
+  });
+  it("has no buttons", () => {
+    render(<Loader label="Checking" />);
     expect(screen.queryByRole("button")).toBeNull();
-    const onWake = vi.fn();
-    rerender(<Loader label="Checking" onWake={onWake} />);
-    fireEvent.click(screen.getByRole("button", { name: "Wake" }));
-    expect(onWake).toHaveBeenCalledTimes(1);
   });
 });

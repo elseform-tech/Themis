@@ -207,7 +207,6 @@ describe("Integration browsing and lifecycle", () => {
       await act(async () => { render(<Plugins />); });
       await act(async () => fireEvent.click(screen.getByRole("button", { name: "Discover" })));
       expect(screen.getByRole("progressbar")).toHaveAttribute("aria-valuenow", "25");
-      fireEvent.click(screen.getByRole("button", { name: "Wake" }));
       fireEvent.click(screen.getByRole("button", { name: "Installed" }));
       await act(async () => { await vi.advanceTimersByTimeAsync(1000); });
       expect(screen.queryByRole("progressbar")).toBeNull();
