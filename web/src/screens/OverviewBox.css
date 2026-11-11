@@ -9,7 +9,7 @@
   width: var(--themis-overview-width); box-sizing: border-box;
   display: flex; flex-direction: column;
   padding: 4px 8px 4px; border: 1px solid var(--themis-border); border-radius: 14px;
-  background: var(--themis-surface); box-shadow: 0 8px 24px rgb(0 0 0 / .25);
+  background: var(--themis-surface); box-shadow: 0 8px 24px color-mix(in srgb, var(--themis-shadow) 25%, transparent);
 }
 .themis-overview.is-collapsed { --themis-overview-width: 48px; padding: 4px; }
 .themis-overview-head { display: flex; justify-content: flex-end; gap: 2px; }

@@ -72,9 +72,9 @@ This applies to every screen, not just Settings. Before adding an element, ask w
 
 ## Color system
 
-Dark mode is the product baseline. Palette values come from [`web/src/theme/appearance.ts`](web/src/theme/appearance.ts), with CSS defaults in [`web/src/theme/tokens.css`](web/src/theme/tokens.css). Use the tokens rather than copying hex values into new components. Appearance presets may change neutral surfaces and accents; semantic status meaning must stay consistent.
+Dark mode is the product baseline; the Morning and Noon skies are the light looks alongside it, and each preset carries its own `mode`. Palette values come from [`web/src/theme/appearance.ts`](web/src/theme/appearance.ts), with CSS defaults in [`web/src/theme/tokens.css`](web/src/theme/tokens.css). Use the tokens rather than copying hex values into new components. Appearance presets may change neutral surfaces and accents; semantic status meaning must stay consistent.
 
-| Role | Token | Themis preset / value | Rule |
+| Role | Token | Classic preset / value | Rule |
 | --- | --- | --- | --- |
 | Frame | `--themis-shell-bg` | `#232427` | Persistent app chrome |
 | Sidebar | `--themis-sidebar-bg` | `#1c1d20` | Project and chat navigation |
@@ -88,15 +88,20 @@ Dark mode is the product baseline. Palette values come from [`web/src/theme/appe
 | Warning | `--themis-warning` | `#e3b85a` | Limitation or decision requiring attention |
 | Danger | `--themis-danger` | `#f28b82` | Failure or destructive action |
 | Information | `--themis-info` | `#8ab4f8` | Neutral informational emphasis |
+| Sky | `--themis-sky` | frame colour (solid presets) | Sky presets only: frame tint, glows and gradient behind the frame |
+| Glass | `--themis-panel-bg`, `--themis-stage-bg`, `--themis-panel-blur` | sidebar, canvas, `none` | Sky presets: translucent panels with `blur(36px) saturate(190%)`; solid under `data-glass="off"` |
+| Shadow | `--themis-shadow` | `rgb(0 0 0)`; light `rgb(8 20 45 / .35)` | Mix with transparent at each shadow's strength |
 | Warm gradient | `--themis-gradient-1/2/3` | `#c08a2e` → `#e3b85a` → `#f6e7bd` | Approved Themis moments only (below) |
 
-Compatibility badges currently use the following dark color pairs in [`Plugins.css`](web/src/screens/Plugins.css). Keep this mapping consistent across tiles and filters; centralize these values if another screen needs them.
+Light skies (`data-theme="light"`) keep the same roles with darker status colours that reach 4.5:1 on the pale glass: success `#166534`, warning `#92400e`, danger `#9f1239`, information `#0550ae`. Shadows use the soft navy `--themis-shadow`.
+
+Compatibility badges use the `--themis-ok-*`, `--themis-warn-*` and `--themis-bad-*` tokens (ink, background, line) from [`tokens.css`](web/src/theme/tokens.css), dark / light. The recording pill uses the `bad` pair too. Keep this mapping consistent across tiles and filters.
 
 | Label | Text | Background | Border |
 | --- | --- | --- | --- |
-| Compatible | `#8cdbab` | `#193c29` | `#3b7350` |
-| Partially supported | `#f3cc7c` | `#41351c` | `#816833` |
-| Unsupported / Check failed | `#f3a1aa` | `#48252c` | `#884b55` |
+| Compatible | `#8cdbab` / `#21633d` | `#193c29` / `#e7f5ec` | `#3b7350` / `#a5cfb4` |
+| Partially supported | `#f3cc7c` / `#795009` | `#41351c` / `#fff4d9` | `#816833` / `#ddc18c` |
+| Unsupported / Check failed | `#f3a1aa` / `#a02e3a` | `#48252c` / `#fcecef` | `#884b55` / `#e4afb7` |
 | Unchecked / disabled | Secondary text token | Neutral surface | Border token |
 
 - Color reinforces a written status; it must never carry meaning alone.

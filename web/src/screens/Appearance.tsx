@@ -17,7 +17,7 @@ export function AppearanceSettings({ settings, save }: { settings: Settings; sav
   }
   return <SettingsGroup title="Theme">
     <div className="themis-theme-presets">{APPEARANCE_PRESETS.map(preset => <button type="button" key={preset.id} aria-pressed={appearancePreset(draft.theme_palette).id === preset.id} className="themis-theme-preset" onClick={() => setDraft(previous => ({ ...previous, theme_palette: preset.id, font_family: preset.font }))}>
-      <span className="themis-theme-swatches" aria-hidden="true">{[preset.colors[0], preset.sidebar, preset.colors[1]].map((color, i) => <span key={i} style={{ background: color }} />)}</span><span>{preset.name}</span>
+      <span className="themis-theme-swatches" aria-hidden="true">{[preset.sky ?? preset.colors[0], preset.sidebar, preset.colors[1]].map((color, i) => <span key={i} style={{ background: color }} />)}</span><span>{preset.name}</span>
     </button>)}</div>
     <label className="themis-settings-control">Font<select aria-label="Font" value={draft.font_family} onChange={event => setDraft(previous => ({ ...previous, font_family: event.target.value as Settings["font_family"] }))}>{FONT_OPTIONS.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
     <label className="themis-settings-control">Size<span className="themis-text-size"><input aria-label="Size" type="range" min="10" max="22" value={draft.text_size} onChange={event => setDraft(previous => ({ ...previous, text_size: Number(event.target.value) }))} /><output>{draft.text_size} px</output></span></label>

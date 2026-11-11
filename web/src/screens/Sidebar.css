@@ -4,7 +4,7 @@
 .themis-sidebar-slot { position: relative; display: flex; flex-shrink: 0; width: min(var(--themis-sidebar-width, 280px), calc(100vw - 120px)); overflow: visible; transition: width 240ms cubic-bezier(.2, .8, .2, 1); }
 .themis-sidebar-slot.is-collapsed { width: 64px; }
 .themis-sidebar-slot.is-resizing { transition: none; user-select: none; }
-.themis-sidebar { position: absolute; inset: var(--themis-panel-gap) 0 var(--themis-panel-gap) 64px; z-index: 20; display: flex; flex-direction: column; overflow: hidden; border-radius: var(--themis-panel-radius); background: var(--themis-panel-bg); backdrop-filter: var(--themis-panel-blur); visibility: hidden; opacity: 0; pointer-events: none; transition: opacity 180ms ease, visibility 240ms; }
+.themis-sidebar { position: absolute; inset: var(--themis-panel-gap) 0 var(--themis-panel-gap) 64px; z-index: 20; display: flex; flex-direction: column; overflow: hidden; border-radius: var(--themis-panel-radius); background: var(--themis-panel-bg); -webkit-backdrop-filter: var(--themis-panel-blur); backdrop-filter: var(--themis-panel-blur); visibility: hidden; opacity: 0; pointer-events: none; transition: opacity 180ms ease, visibility 240ms; }
 .themis-sidebar.is-visible { visibility: visible; opacity: 1; pointer-events: auto; }
 
 /* Rail. */
@@ -55,7 +55,7 @@
 .themis-project-actions { position: relative; }
 .themis-project-actions summary { padding: 4px 8px; color: var(--themis-text-2); cursor: pointer; list-style: none; }
 .themis-project-actions summary::-webkit-details-marker { display: none; }
-.themis-project-menu { position: absolute; right: 0; z-index: 24; width: 180px; padding: 6px; border-radius: 14px; background: var(--themis-raised); box-shadow: 0 12px 32px rgb(0 0 0 / .45); }
+.themis-project-menu { position: absolute; right: 0; z-index: 24; width: 180px; padding: 6px; border-radius: 14px; background: var(--themis-raised); box-shadow: 0 12px 32px color-mix(in srgb, var(--themis-shadow) 45%, transparent); }
 .themis-sidebar-list { display: grid; grid-template-columns: minmax(0, 1fr); gap: 2px; margin: 0; padding: 0; list-style: none; }
 .themis-sidebar-list > li { min-width: 56px; }
 .themis-project { margin-top: 8px; }
@@ -80,7 +80,7 @@
 .themis-thread-row-actions > summary { display: grid; place-items: center; width: 30px; height: 30px; border-radius: 50%; color: var(--themis-text-2); cursor: pointer; list-style: none; }
 .themis-thread-row-actions > summary::-webkit-details-marker { display: none; }
 .themis-thread-row-actions > summary:hover { color: var(--themis-text); }
-.themis-row-menu { position: absolute; right: 0; top: calc(100% + 4px); z-index: 26; display: grid; gap: 2px; width: 150px; padding: 6px; border-radius: 14px; background: var(--themis-raised); box-shadow: 0 12px 32px rgb(0 0 0 / .45); }
+.themis-row-menu { position: absolute; right: 0; top: calc(100% + 4px); z-index: 26; display: grid; gap: 2px; width: 150px; padding: 6px; border-radius: 14px; background: var(--themis-raised); box-shadow: 0 12px 32px color-mix(in srgb, var(--themis-shadow) 45%, transparent); }
 .themis-row-menu button { min-height: 36px; padding: 0 12px; border: 0; border-radius: 10px; background: transparent; color: var(--themis-text); font: inherit; font-size: .8125rem; text-align: left; cursor: pointer; }
 .themis-row-menu button:hover:not(:disabled) { color: var(--themis-accent-hover); }
 .themis-row-menu button.is-danger { color: var(--themis-danger); }

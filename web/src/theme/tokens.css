@@ -48,6 +48,51 @@
   --themis-panel-bg: var(--themis-sidebar-bg);
   --themis-stage-bg: var(--themis-canvas);
   --themis-panel-blur: none;
+  /* Sky presets paint this behind the frame; solid presets show the frame colour. */
+  --themis-sky: var(--themis-shell-bg);
+  /* Shadow colour, mixed with transparent at each shadow's strength. */
+  --themis-shadow: rgb(0 0 0);
+  /* Compatibility badges: ink on its own background, with a border. */
+  --themis-ok-ink: #8cdbab;
+  --themis-ok-bg: #193c29;
+  --themis-ok-line: #3b7350;
+  --themis-warn-ink: #f3cc7c;
+  --themis-warn-bg: #41351c;
+  --themis-warn-line: #816833;
+  --themis-bad-ink: #f3a1aa;
+  --themis-bad-bg: #48252c;
+  --themis-bad-line: #884b55;
+}
+
+/* Morning and Noon are light skies: darker status colours that read on pale glass. */
+[data-theme="light"] {
+  color-scheme: light;
+  --themis-success: #166534;
+  --themis-warning: #92400e;
+  --themis-danger: #9f1239;
+  --themis-info: #0550ae;
+  --themis-add-bg: rgba(22, 101, 52, 0.12);
+  --themis-del-bg: rgba(159, 18, 57, 0.1);
+  --themis-link-light: #0550ae;
+  --themis-code-string-light: #116329;
+  --themis-code-number-light: #92400e;
+  --themis-shadow: rgb(8 20 45 / .35);
+  --themis-ok-ink: #21633d;
+  --themis-ok-bg: #e7f5ec;
+  --themis-ok-line: #a5cfb4;
+  --themis-warn-ink: #795009;
+  --themis-warn-bg: #fff4d9;
+  --themis-warn-line: #ddc18c;
+  --themis-bad-ink: #a02e3a;
+  --themis-bad-bg: #fcecef;
+  --themis-bad-line: #e4afb7;
+}
+
+/* Glass off (no backdrop-filter, or Linux until measured): solid panels. Important, because a sky sets the glass inline on the root. */
+[data-glass="off"] {
+  --themis-panel-bg: var(--themis-sidebar-bg) !important;
+  --themis-stage-bg: var(--themis-canvas) !important;
+  --themis-panel-blur: none !important;
 }
 
 /* Signature gradient text: drifts slowly; the global reduced-motion rule stops it. */

@@ -193,7 +193,7 @@ full tour.
 | `feature:cli` | tour | `crates/desktop/src/cli.rs` | `themis status`, `themis thread list` and `themis doctor` work against the running app. |
 | `feature:server-lifetime` | tour | `crates/desktop/src/server.rs`, `crates/desktop/src/state/searxng.rs`, `crates/desktop/src/lib.rs` | Once web search has answered, force quit the app (`kill -9`): within 10 seconds `pgrep -fl <scratch folder>` finds no server, SearXNG or browser. Start a server with `themis --data-dir <scratch data> server start`, then delete that data folder: it is gone within 10 seconds. |
 | `settings:General` | tour | `web/src/screens/Settings.tsx` | Toggle the reply sound; it takes effect on the next reply. |
-| `settings:Appearance` | tour | `web/src/screens/Appearance.tsx` | Preview, revert and apply a theme. |
+| `settings:Appearance` | tour | `web/src/screens/Appearance.tsx`, `web/src/theme/appearance.ts` | Preview, revert and apply a theme. Apply Morning, Noon and Night in turn: the sky shows behind the frame, the sidebar and Workspace panels are frosted glass (solid on Linux), and chat, Workspace, Settings, Integrations, an approval box and a question box stay readable. Apply Classic again. |
 | `settings:Models` | tour | `web/src/screens/ModelsSettings.tsx` | Change the default model; a new chat uses it. |
 | `settings:Subagents` | tour | `web/src/screens/SubagentSettings.tsx` | Set Maximum subagents to 2; `runtime.jsonc` shows `max_parallel: 2` and the next spawn runs two at a time. |
 | `settings:Usage` | tour | `web/src/screens/UsageSettings.tsx` | Today's chats appear with their tokens. |

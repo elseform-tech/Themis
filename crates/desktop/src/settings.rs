@@ -5,7 +5,10 @@ use std::path::{Path, PathBuf};
 use crate::types::{Settings, SettingsPatch, ThemeMode};
 
 pub const THEME_PALETTES: &[&str] = &[
-    "system",
+    "classic",
+    "morning",
+    "noon",
+    "night",
     "warm",
     "violet",
     "github-dark",
@@ -127,6 +130,10 @@ impl SettingsStore {
             settings.context_token_cap = 0;
         }
         settings.theme = ThemeMode::Dark;
+        // A retired or unknown palette (the old "system" included) loads as Classic.
+        if !THEME_PALETTES.contains(&settings.theme_palette.as_str()) {
+            settings.theme_palette = crate::types::default_theme_palette();
+        }
         settings.projects_directory = projects_root.to_string_lossy().into_owned();
         if retired_provider {
             settings.default_model.clear();
@@ -568,6 +575,37 @@ mod preference_tests {
             );
         }
     }
+    #[tokio::test]
+    async fn sky_palettes_are_accepted_and_the_old_system_id_is_not() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings.json");
+        assert_eq!(Settings::default().theme_palette, "classic");
+        let store = SettingsStore::load(path.clone());
+        for palette in ["morning", "noon", "night", "classic"] {
+            let saved = store
+                .update(SettingsPatch {
+                    theme_palette: Some(palette.to_owned()),
+                    ..Default::default()
+                })
+                .await
+                .unwrap();
+            assert_eq!(saved.theme_palette, palette);
+        }
+        assert!(store
+            .update(SettingsPatch {
+                theme_palette: Some("system".to_owned()),
+                ..Default::default()
+            })
+            .await
+            .is_err());
+        assert_eq!(store.get().await.theme_palette, "classic");
+        std::fs::write(&path, r#"{"theme_palette": "system"}"#).unwrap();
+        assert_eq!(
+            SettingsStore::load(path).get().await.theme_palette,
+            "classic"
+        );
+    }
+
     #[tokio::test]
     async fn rejected_or_unwritable_updates_preserve_memory_and_disk() {
         let temp = tempfile::tempdir().unwrap();

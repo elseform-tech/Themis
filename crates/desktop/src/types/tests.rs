@@ -413,7 +413,7 @@ fn settings_defaults_and_shapes_match_ts() {
             "projects_directory": default_projects_directory(),
             "text_size": 12,
             "text_size_chosen": false,
-            "theme_palette": "system",
+            "theme_palette": "classic",
             "font_family": "system",
             "sidebar_hover": true,
             "check_sources_for_updates": true,

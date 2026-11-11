@@ -817,6 +817,24 @@ async fn appearance_preferences_roundtrip_through_server_and_cli() {
         cli(data_dir.path(), &["call", "get_settings", "{}"])["font_family"],
         "mono"
     );
+    for sky in ["morning", "noon", "night", "classic"] {
+        let args = json!({"patch": {"theme_palette": sky}}).to_string();
+        assert_eq!(
+            cli(data_dir.path(), &["call", "update_settings", &args])["theme_palette"],
+            sky
+        );
+    }
+    let retired = Client::new(data_dir.path().to_path_buf())
+        .call(
+            "update_settings",
+            json!({"patch": {"theme_palette": "system"}}),
+        )
+        .await;
+    assert!(retired.is_err());
+    assert_eq!(
+        cli(data_dir.path(), &["call", "get_settings", "{}"])["theme_palette"],
+        "classic"
+    );
     task.abort();
 }
 

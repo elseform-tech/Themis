@@ -789,12 +789,16 @@ describe("Workspace journey", () => {
     expect(document.documentElement.dataset.palette).toBe("ink");
     expect(document.documentElement.dataset.font).toBe("mono");
     fireEvent.click(screen.getByRole("button", { name: "Revert" }));
-    expect(document.documentElement.dataset.palette).toBe("system");
+    expect(document.documentElement.dataset.palette).toBe("classic");
+    fireEvent.click(screen.getByRole("button", { name: "Morning" }));
+    expect(document.documentElement.dataset.theme).toBe("light");
+    fireEvent.click(screen.getByRole("button", { name: "Revert" }));
+    expect(document.documentElement.dataset.theme).toBe("dark");
     fireEvent.click(screen.getByRole("button", { name: "Ocean" }));
     vi.mocked(bridge.updateSettings).mockRejectedValueOnce("Disk is full");
     await act(async () => fireEvent.click(screen.getByRole("button", { name: "Apply" })));
     expect(screen.getByRole("alert")).toHaveTextContent("Disk is full");
-    expect(document.documentElement.dataset.palette).toBe("system");
+    expect(document.documentElement.dataset.palette).toBe("classic");
     fireEvent.click(screen.getByRole("button", { name: "Ink" }));
     await act(async () => fireEvent.click(screen.getByRole("button", { name: "Apply" })));
     expect(bridge.updateSettings).toHaveBeenLastCalledWith({ theme: "dark", theme_palette: "ink", font_family: "serif", text_size: 12 });

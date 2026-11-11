@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { APPEARANCE_PRESETS } from "./appearance";
+import { APPEARANCE_PRESETS, compositeOver } from "./appearance";
 
 // Read the stylesheet from disk: `?raw` CSS imports return an empty string
 // when the @tailwindcss/vite plugin is active, so bypass the transform.
@@ -115,7 +115,8 @@ for (const preset of APPEARANCE_PRESETS) {
   });
 }
 
-for (const preset of APPEARANCE_PRESETS) {
+// The solid presets layer a lighter frame, a darker sidebar and the darkest canvas; skies take their layers from the glass instead.
+for (const preset of APPEARANCE_PRESETS.filter(solid => solid.sky === undefined)) {
   it(`${preset.name}: frame, sidebar and canvas have descending brightness`, () => {
     expect(luminance(preset.colors[0])).toBeGreaterThan(luminance(preset.sidebar));
     expect(luminance(preset.sidebar)).toBeGreaterThan(luminance(preset.colors[1]));
@@ -130,5 +131,62 @@ for (const preset of APPEARANCE_PRESETS) {
   it(`${preset.name}: text and text-2 are readable on the frame colour`, () => {
     expect(contrastRatio(preset.colors[5], preset.colors[0])).toBeGreaterThanOrEqual(4.5);
     expect(contrastRatio(preset.colors[6], preset.colors[0])).toBeGreaterThanOrEqual(4.5);
+  });
+}
+
+const SKIES = APPEARANCE_PRESETS.filter(preset => preset.sky !== undefined);
+
+it("ships the Morning, Noon and Night skies, Morning and Noon light", () => {
+  expect(SKIES.map(preset => [preset.id, preset.mode])).toEqual([["morning", "light"], ["noon", "light"], ["night", "dark"]]);
+});
+
+it("compositeOver blends an rgba colour over an opaque hex", () => {
+  expect(compositeOver("rgba(255,255,255,.5)", "#000000")).toBe("#808080");
+  expect(compositeOver("rgba(0, 0, 0, 0)", "#123456")).toBe("#123456");
+  expect(compositeOver("#abcdef", "#000000")).toBe("#abcdef");
+});
+
+for (const preset of SKIES) {
+  const sky = preset.sky ?? "";
+  const glass = preset.glass ?? { frame: "", panel: "", stage: "" };
+  const stops = sky.match(/#[0-9a-f]{6}/gi) ?? [];
+  const glows = sky.match(/rgba\([^)]+\)/g) ?? [];
+  const [text, text2, accent] = preset.colors.slice(5, 8);
+  const theme = parseThemeVars(tokensCss)[preset.mode];
+  const status = ["--themis-success", "--themis-warning", "--themis-danger", "--themis-info"].map(token => theme[token]);
+
+  it(`${preset.name}: text, text-2 and accent reach 4.5 on the glass panel over every sky stop`, () => {
+    expect(stops.length).toBeGreaterThanOrEqual(3);
+    for (const stop of stops) {
+      const panel = compositeOver(glass.panel, stop);
+      for (const colour of [text, text2, accent]) expect(contrastRatio(colour, panel)).toBeGreaterThanOrEqual(AA_NORMAL);
+    }
+  });
+
+  it(`${preset.name}: text, accent and status colours read on the frame, panels and stage, glows included`, () => {
+    expect(glows.length).toBe(2);
+    for (const stop of stops) {
+      for (const glow of [undefined, ...glows]) {
+        const frame = compositeOver(glass.frame, glow === undefined ? stop : compositeOver(glow, stop));
+        for (const surface of [frame, compositeOver(glass.panel, frame), compositeOver(glass.stage, frame)]) {
+          for (const colour of [text, text2, accent, ...status]) expect(contrastRatio(colour, surface)).toBeGreaterThanOrEqual(AA_NORMAL);
+        }
+      }
+    }
+  });
+
+  it(`${preset.name}: status colours read on its opaque surfaces`, () => {
+    for (const surface of preset.colors.slice(0, 4)) {
+      for (const colour of status) expect(contrastRatio(colour, surface)).toBeGreaterThanOrEqual(AA_NORMAL);
+    }
+  });
+}
+
+for (const mode of ["dark", "light"] as const) {
+  it(`${mode}: compatibility badge text reads on its badge`, () => {
+    const vars = parseThemeVars(tokensCss)[mode];
+    for (const kind of ["ok", "warn", "bad"]) {
+      expect(contrastRatio(vars[`--themis-${kind}-ink`], vars[`--themis-${kind}-bg`])).toBeGreaterThanOrEqual(AA_NORMAL);
+    }
   });
 }
