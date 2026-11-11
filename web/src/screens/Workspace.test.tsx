@@ -747,7 +747,7 @@ describe("Workspace journey", () => {
     expect(nav.id).toBe("themis-sidebar");
     expect(slot).not.toHaveClass("is-collapsed");
     expect(slot.style.getPropertyValue("--themis-sidebar-width")).toBe(width);
-    expect(screen.getAllByRole("button", { name: /^(Back to app|Home)$/ }).map(button => button.getAttribute("aria-label"))).toEqual(["Back to app"]);
+    expect(screen.getAllByRole("button", { name: /^(Back to app|Chats)$/ }).map(button => button.getAttribute("aria-label"))).toEqual(["Back to app"]);
     expect(within(nav).getByRole("button", { name: "General" })).toHaveFocus();
     // The header toggle folds the Settings list to icons, which keep their names.
     const toggle = screen.getByRole("button", { name: "Collapse sidebar" });
@@ -761,7 +761,7 @@ describe("Workspace journey", () => {
     expect(slot).not.toHaveClass("is-collapsed");
     fireEvent.click(within(nav).getByRole("button", { name: "Back to app" }));
     expect(screen.queryByRole("navigation", { name: "Settings sections" })).toBeNull();
-    expect(screen.getByRole("button", { name: "Home" })).toHaveFocus();
+    expect(screen.getByRole("button", { name: "Chats" })).toHaveFocus();
   });
   it("previews appearance without saving and reverts failed writes", async () => {
     await mount(); fireEvent.click(screen.getByRole("button", { name: "Settings" }));

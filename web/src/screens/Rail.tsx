@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { Badge, Tooltip } from "../components";
 import { pluginAction } from "../lib/tauri";
 import { unseenOff } from "../lib/integrations";
@@ -7,10 +7,10 @@ import type { Plugin } from "../lib/types";
 import { SidebarIcon, type SidebarIconName } from "./Sidebar";
 
 const views: Array<[MainView, string]> = [["skills", "Integrations"], ["automations", "Automations"], ["queue", "Review queue"]];
-const viewIcons: Record<MainView, SidebarIconName> = { thread: "home", skills: "skills", automations: "automations", queue: "queue", settings: "settings" };
+const viewIcons: Record<MainView, SidebarIconName> = { thread: "chat", skills: "skills", automations: "automations", queue: "queue", settings: "settings" };
 
-/** The utility rail: the main views, Settings, Help and Search. */
-export function Rail({ onHelp }: { onHelp: () => void }) {
+/** The utility rail: Chats, the optional `extra` slot, the main views, Settings, Help and Search. */
+export function Rail({ onHelp, extra }: { onHelp: () => void; extra?: ReactNode }) {
   const { state, dispatch } = useApp();
   const activeRoot = state.activeProjectRoot;
   const pending = state.reviews.filter(r => r.status === "pending").length;
@@ -30,7 +30,8 @@ export function Rail({ onHelp }: { onHelp: () => void }) {
     </button></Tooltip>;
   }
   return <nav className="themis-sidebar-rail" aria-label="Utilities">
-    {nav("thread", "Home")}
+    {nav("thread", "Chats")}
+    {extra}
     {views.map(([view, label]) => nav(view, label))}
     <div className="themis-rail-footer">{nav("settings", "Settings")}<Tooltip content="Help"><button type="button" className="themis-sidebar-row" aria-label="Help" onClick={onHelp}><SidebarIcon name="help" /></button></Tooltip><Tooltip content="Search"><button type="button" className="themis-sidebar-row" aria-label="Search commands" onClick={() => dispatch({ type: "ui/palette", open: true })}><SidebarIcon name="search" /></button></Tooltip></div>
   </nav>;

@@ -73,7 +73,7 @@ at each step and a summary at the end of every turn.
 ### B. Every screen and setting
 
 Walk the remaining rows in table order: every Settings section (change a value, confirm it takes
-effect, put it back), Integrations, Automations, Review queue, Search, Help, and
+effect, put it back), Integrations, Automations, Review queue, Search, Help (the rail lists Chats first), and
 project and chat management.
 
 ## Coverage table
@@ -185,7 +185,7 @@ full tour.
 | `feature:overview-box` | tour | `web/src/screens/OverviewBox.tsx` | Shows changes, tasks and the live browser; its icon opens Workspace and back returns to the box. |
 | `feature:usage` | tour | `crates/desktop/src/usage.rs` | Tokens and cost under the reply match Settings › Usage. |
 | `feature:sound-and-notifications` | tour | `web/src/lib/completionSound.ts`, `crates/desktop/src/notifications.rs` | Sound off by default; switched on, it plays when a reply finishes. |
-| `feature:projects-and-chats` | tour | `web/src/screens/Sidebar.tsx` | Create, switch and rename a project; rename and remove a chat. |
+| `feature:projects-and-chats` | tour | `web/src/screens/Sidebar.tsx` | Create, switch and rename a project; rename and remove a chat. In Integrations, Automations, Review queue and Settings, the rail's first button, Chats, returns to the plain chat view. |
 | `feature:sidebar-running` | tour | `web/src/screens/Sidebar.tsx`, `web/src/screens/Sidebar.css`, `crates/desktop/src/state/threads.rs` | With no run going there is no Running group. Start a run in one chat and open another: the first moves into Running (count 1) with gold dots walking round a square in place of its bubble. In Custom, let it ask for approval: it moves to **Waiting for you** with a breathing gold pause sign and the tag Approval. A chat with an unanswered question box shows a question-mark of dots and the tag Question; pause a goal and its chat shows Paused; restart the app and both still sit in Waiting for you before you open them. Approve; when it finishes it returns to its place in Chats with a bright, bold title and no tick, plain again once opened. A failed run shows a still red cross of dots in Chats. With reduced motion on, the dots don't move. |
 | `feature:search` | tour | `web/src/screens/Palette.tsx` | ⌘K finds a chat and a command. |
 | `feature:help` | tour | `web/src/screens/Sidebar.tsx` | Help opens the shortcuts. |
