@@ -49,8 +49,8 @@ MEASURES = {
     "goal_changed": ("goal", "harness", "lower"),
     "reached": ("goal", "model", "higher"),
     "false_reached": ("goal", "model", "lower"),
-    "work_after_complete": ("goal", "reported", None),
-    "unfinished_after_complete": ("goal", "reported", None),
+    "calls_after_complete": ("goal", "reported", None),
+    "writes_after_complete": ("goal", "reported", None),
     "goal_turns": ("goal", "reported", None),
     "checkpoints": ("compaction", "reported", None),
     "failed_checkpoints": ("compaction", "harness", "lower"),
@@ -150,17 +150,18 @@ def goal_measures(trace):
             "goal_turns": len(goal_runs)}
 
 
-# What a turn says when the work is not done (2026-11-10, beam-free, after declaring the goal
-# complete: "about 80 memos still need processing ... I have not committed anything yet").
-UNFINISHED = re.compile(r"\b(still (?:need|needs|to do|missing|fail|fails|reports?)|not (?:yet|done|finished|committed)|"
-                        r"remaining|remain to|left to (?:do|process)|have(?:n't| not) (?:yet|committed|finished)|"
-                        r"next,? I(?:'ll| will)|continu(?:e|ing) with)\b", re.IGNORECASE)
+# Tools that change files. A turn that keeps writing after declaring its goal complete was not
+# done (2026-11-10, beam-free: 22 writes and 77 reads after "complete", with 78 of 120 items
+# missing); turns that were done made at most a confirming read or check (2026-11-11, iceman).
+# Words were tried as a second signal and dropped: "check.py still reports OK" reads like
+# "still reports a failure".
+FILE_WRITES = ("write_file", "apply_patch")
 
 
 def premature_signals(trace):
     """What the harness could see when the agent declared the goal complete: the tool calls the
-    same turn still made after that call, and whether that turn's later words say work remains.
-    Candidate runtime signals for a premature end, compared with `false_reached` (2026-11-10)."""
+    same turn still made after that call, and how many of them wrote files. Candidate runtime
+    signals for a premature end, compared with `false_reached`."""
     items = _flat(trace)
     # The goal change itself carries no run; the `update_goal` call right after it does.
     reached = next((index for index, _run, event in items
@@ -169,14 +170,13 @@ def premature_signals(trace):
                                              if index > reached and run and event.get("kind") == "tool_started"
                                              and event.get("tool") == "update_goal"), None)
     if at is None:
-        return {"work_after_complete": None, "unfinished_after_complete": None}, {}
+        return {"calls_after_complete": None, "writes_after_complete": None}, {}
     start, run_id = at
-    later = [event for index, run, event in items if index > start and run == run_id]
-    work = sum(event.get("kind") == "tool_started" and event.get("tool") != "update_goal" for event in later)
-    words = "".join(event.get("text", "") for event in later if event.get("kind") == "assistant_text")
-    said = UNFINISHED.search(words)
-    return ({"work_after_complete": work, "unfinished_after_complete": int(bool(said))},
-            {"after_complete_words": words[max(0, said.start() - 120):said.end() + 120] if said else ""})
+    later = [event.get("tool") for index, run, event in items
+             if index > start and run == run_id and event.get("kind") == "tool_started"]
+    calls = [tool for tool in later if tool != "update_goal"]
+    return ({"calls_after_complete": len(calls), "writes_after_complete": sum(tool in FILE_WRITES for tool in calls)},
+            {"after_complete_tools": calls[:20]})
 
 
 # --- compaction -------------------------------------------------------------------------------

@@ -351,21 +351,29 @@ class GraderTests(unittest.TestCase):
         trace = clean()
         self.with_complete_call(trace)
         measures, _details = grade(trace, trace["spec"])
-        self.assertEqual((measures["work_after_complete"], measures["unfinished_after_complete"]), (0, 0))
+        self.assertEqual((measures["calls_after_complete"], measures["writes_after_complete"]), (0, 0))
 
-    def test_work_and_words_after_declaring_complete_are_counted(self):
-        # Seen 2026-11-10 on beam-free: complete after 5 of 120 items, then 108 more tool calls
-        # in the same turn and "Many source files remain, so I'll continue with the next batch."
+    def call(self, run, tool):
+        return {"t": 0, "run_id": run, "event": {"kind": "tool_started", "tool": tool}}
+
+    def test_a_confirming_read_after_complete_writes_nothing(self):
+        # Seen 2026-11-11 on iceman, goals truly done: a check, `git log` or one read afterwards.
         trace = clean()
         at, run = self.with_complete_call(trace)
-        events = trace["events"]
-        events[at + 1:at + 1] = [
-            {"t": 0, "run_id": run, "event": {"kind": "tool_started", "tool": "read_file", "summary": "src/x.txt"}},
-            {"t": 0, "run_id": run, "event": {"kind": "assistant_text",
-                                              "text": "Many source files remain, so I'll continue with the next batch."}}]
+        trace["events"][at + 1:at + 1] = [self.call(run, "shell"), self.call(run, "read_file")]
         measures, details = grade(trace, trace["spec"])
-        self.assertEqual((measures["work_after_complete"], measures["unfinished_after_complete"]), (1, 1))
-        self.assertIn("remain", details["after_complete_words"])
+        self.assertEqual((measures["calls_after_complete"], measures["writes_after_complete"]), (2, 0))
+        self.assertEqual(details["after_complete_tools"], ["shell", "read_file"])
+
+    def test_writes_after_declaring_complete_are_counted(self):
+        # Seen 2026-11-10 on beam-free: complete after a few of 120 items, then 22 writes and 77
+        # reads in the same turn. Calls in another run do not count.
+        trace = clean()
+        at, run = self.with_complete_call(trace)
+        trace["events"][at + 1:at + 1] = [self.call(run, "read_file"), self.call(run, "write_file"),
+                                          self.call(run, "apply_patch"), self.call("another-run", "write_file")]
+        measures, _details = grade(trace, trace["spec"])
+        self.assertEqual((measures["calls_after_complete"], measures["writes_after_complete"]), (3, 2))
 
     def test_goal_not_continuing(self):
         trace = clean()
