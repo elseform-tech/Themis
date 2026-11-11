@@ -15,6 +15,16 @@ pub fn schema() -> Value {
         "consolidate_every_hours":{"type":"integer","minimum":1,"maximum":MAX_CONSOLIDATE_HOURS,"default":24,"description":"At most one idle consolidation (merge duplicates, drop stale memories) this often. User file only."},
         "thinking":{"enum":["auto","least","model"],"default":"auto","description":"How much the memory models think before answering: auto (their own thinking for a pass that carries lessons, the least otherwise), least (always the least, fastest) or model (always their own). User file only."}
     }});
+    schema["properties"]["visions"] = serde_json::json!({"type":"object","additionalProperties":false,"properties":{
+        "enabled":{"type":"boolean","default":true,"description":"Allow Visions to wake and drive chats (Settings › Visions). A project or run layer may only set it to false."},
+        "autonomy":{"enum":["ask","small","most","nearly_all","custom"],"default":"small","description":"How much a Vision decides without asking. A project or run layer may only lower it."},
+        "custom":{"type":"object","additionalProperties":false,"properties":{
+            "wording":{"type":"boolean"},"tests":{"type":"boolean"},"undoable":{"type":"boolean"},"retry":{"type":"boolean"},
+            "scope":{"type":"boolean"},"delete":{"type":"boolean"},"dependency":{"type":"boolean"}
+        },"description":"With autonomy custom, the decisions a Vision makes itself. External and spend are always yours. A project or run layer may only set rows to false."},
+        "daily_budget_usd":{"type":"number","minimum":MIN_VISIONS_BUDGET_USD,"maximum":MAX_VISIONS_BUDGET_USD,"default":1.0,"description":"Estimated dollars all Visions together may spend in a day. A project or run layer may only lower it."},
+        "max_wakes":{"type":"integer","minimum":1,"maximum":MAX_VISION_WAKES,"default":6,"description":"Most wakes on one thing before a Vision hands back to you. A project or run layer may only lower it."}
+    }});
     schema
 }
 
