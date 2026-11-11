@@ -18,8 +18,11 @@ python3 -m unittest evals.kit.test_kit evals.soak.test_harness
 **Tools are limited (Custom approval rules in the run's `runtime.jsonc`, decided 2026-10-25).** In the
 `items-v2` pilots the agent learned the generator's sentence templates with Python scripts and
 finished 120 memos in 2–5 goal turns with 1–2 checkpoints, so the soak stressed nothing. The run
-now allows only `read_file`, `list_dir`, `create_dir`, `write_file`, `apply_patch`, `recall`, `create_goal`, `update_goal`, `git`
-the command `python3 check.py`, and `grep -L`/`-c`/`-rL`/`-rc`, which print only file names or counts
+now allows only `read_file`, `write_file`, `apply_patch`, `recall`, `create_goal`, `update_goal`,
+the command `python3 check.py`, `ls`, `mkdir`, the git commands a commit needs (`status`, `add`, `commit`, `log`, `diff`;
+listing, folders and git have gone through the shell since 2026-11-08, and until 2026-11-11 the soak still
+allowed the removed `list_dir`, `create_dir` and `git` tools instead, so runs from 2026-11-08 to 2026-11-11 could
+not list `src/` or commit), and `grep -L`/`-c`/`-rL`/`-rc`, which print only file names or counts
 (added 2026-10-27 so a goal check asking for compact proof of a change to every file can get it;
 no file contents, so items are still read one at a time); everything else (other commands, scripts,
 `search_file`) is denied by default, so no approval ever waits. `FORMAT.md` tells the agent so. A denial of an

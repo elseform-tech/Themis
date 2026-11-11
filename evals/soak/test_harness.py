@@ -565,6 +565,21 @@ class GraderTests(unittest.TestCase):
                              path)
         self.assertEqual(tool_causes.APPROVAL["rules"][0], {"tool": "shell_unsandboxed", "action": "deny"})
 
+    def test_listing_folders_and_the_commit_are_allowed_commands(self):
+        # Since 2026-11-08 these go through the shell; the soak allowed the removed tools and denied
+        # `git commit`, so no run could commit (2026-11-11). A denial of them is now ours.
+        rules = [rule.get("command") for rule in tool_causes.APPROVAL["rules"] if rule["tool"] == "shell"]
+        for command in (["ls"], ["mkdir"], ["git", "status"], ["git", "add"], ["git", "commit"]):
+            self.assertIn(command, rules)
+        allowed_tools = {rule["tool"] for rule in tool_causes.APPROVAL["rules"] if "command" not in rule}
+        self.assertFalse(allowed_tools & {"list_dir", "create_dir", "git"})
+        denied = "tool 'shell' failed: approval denied for 'shell': no rule allows it"
+        for summary, cause in (('call `shell` with {"command":"git","args":["commit","-m","out"],"cwd":""}', "ours"),
+                               ('call `shell` with {"command":"ls","args":["src"],"cwd":""}', "ours"),
+                               ('call `shell` with {"command":"git","args":["push"],"cwd":""}', "model"),
+                               ('call `shell` with {"command":"find","args":["src"],"cwd":""}', "model")):
+            self.assertEqual(tool_causes.classify("shell", denied, mode="custom", summary=summary)[0], cause, summary)
+
 
 # --- trend --------------------------------------------------------------------------------------
 
