@@ -124,3 +124,11 @@ for (const preset of APPEARANCE_PRESETS) {
     }
   });
 }
+
+// Text also sits on the frame colour (header, rail, around the panels), colors[0] = --themis-shell-bg.
+for (const preset of APPEARANCE_PRESETS) {
+  it(`${preset.name}: text and text-2 are readable on the frame colour`, () => {
+    expect(contrastRatio(preset.colors[5], preset.colors[0])).toBeGreaterThanOrEqual(4.5);
+    expect(contrastRatio(preset.colors[6], preset.colors[0])).toBeGreaterThanOrEqual(4.5);
+  });
+}

@@ -75,6 +75,7 @@ button:focus-visible, summary:focus-visible, input:focus-visible, textarea:focus
 .themis-shell-body { display: flex; flex: 1; min-height: 0; padding: 0; }
 /* Framed layout: the frame colour shows around inset rounded panels; the chat column is the stage. */
 .themis-main { margin: var(--themis-panel-gap); background: var(--themis-stage-bg); border: 0; border-radius: var(--themis-stage-radius); box-shadow: inset 0 0 0 1px var(--themis-border); overflow: hidden; }
+/* Where :has is unsupported this degrades to a plain stage background around both. */
 /* With the Workspace open, the chat column alone is the stage and the panel sits beside it. */
 .themis-main:has(> .themis-view > .themis-thread-layout.is-reviewing) { background: transparent; border-radius: 0; box-shadow: none; overflow: visible; }
 .themis-shell-body { background: var(--themis-shell-bg); }
