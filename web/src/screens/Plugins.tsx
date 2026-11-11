@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Button, Dialog, EmptyState } from "../components";
-import { KnightLoading, readCompanionPreferences } from "../components/KnightCompanion";
+import { Button, Dialog, EmptyState, Loader } from "../components";
 import { ResponseBody } from "../components/ResponseBody";
 import { pluginAction } from "../lib/tauri";
 import { isPluginPackage, itemSource, markOffSeen, offParts, offSummary } from "../lib/integrations";
@@ -376,7 +375,7 @@ export function Plugins() {
     {category === "Connections" && !publicView && <McpFileRow onApplied={reloadAfterMcpEdit} />}
     {(filtered || (publicView && catalogLoading)) && <div className="themis-filter-summary"><span>{publicView && catalogLoading ? scanProgress : `${resultCount} result${resultCount === 1 ? "" : "s"}`}</span>{filtered && <button onClick={() => { setSearch(""); setOriginFilter("all"); if (publicView) { setCatalogStatus("available"); pickGroup("All"); } else setInstalledStatus("all"); }}>Reset filters</button>}</div>}
     {publicView ? <>
-      {catalogLoading && !catalog.length ? <div className="themis-marketplace-loading"><KnightLoading variant={readCompanionPreferences().variant} status={scanProgress} progress={scanPercent} progressLabel="Marketplace compatibility" /></div> : !catalogRows.length && <EmptyState title={(search.trim() || originFilter !== "all" || (publicView ? catalogStatus !== "available" : installedStatus !== "all")) ? "No matching integrations" : "No plugins to show"} />}
+      {catalogLoading && !catalog.length ? <div className="themis-marketplace-loading"><Loader label={scanProgress} progress={scanPercent} onWake={() => undefined} /></div> : !catalogRows.length && <EmptyState title={(search.trim() || originFilter !== "all" || (publicView ? catalogStatus !== "available" : installedStatus !== "all")) ? "No matching integrations" : "No plugins to show"} />}
       {groupCounts.length > 1 && <nav className="themis-discover-groups" aria-label="Groups">{[["All", sourceRows.length] as const, ...groupCounts].map(([name, count]) => <button key={name} aria-pressed={shownGroup === name} onClick={() => pickGroup(name)}>{name}<span>{count}</span></button>)}</nav>}
       <ul className="themis-integrations-list themis-integration-cards">{catalogRows.map(entry => <li key={entry.key} data-check={entry.name}>
         <div className="themis-card-heading"><PluginLogo spec={checks[entry.key]?.spec} brand={entry.brand} name={entry.name} /><div><button className="themis-integration-name themis-integration-open" aria-label={`View ${entry.name}`} disabled={busy || mutating} onClick={() => void preview(entry)}>{entry.name}</button><span className="themis-integration-source">{[publisher(entry), sourceLabel(entry.market)].filter(Boolean).join(" · ")}</span></div></div>

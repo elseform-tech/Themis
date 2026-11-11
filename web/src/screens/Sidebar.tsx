@@ -20,7 +20,7 @@ const SIDEBAR_MIN = 280;
 const SIDEBAR_MAX = 560;
 const SIDEBAR_DEFAULT = 280;
 
-export function Sidebar({ collapsed: folded, companionControl }: { collapsed: boolean; companionControl?: import("react").ReactNode }) {
+export function Sidebar({ collapsed: folded }: { collapsed: boolean }) {
   const { state, dispatch } = useApp();
   // Settings takes over the whole sidebar with its section list; the toggle folds it the same way.
   const collapsed = folded;
@@ -132,7 +132,7 @@ export function Sidebar({ collapsed: folded, companionControl }: { collapsed: bo
       <nav className="themis-sidebar-rail" aria-label="Utilities">
         {nav("thread", "Home")}
         {views.map(([view, label]) => nav(view, label))}
-        <div className="themis-rail-footer">{companionControl}{nav("settings", "Settings")}<Tooltip content="Help"><button type="button" className="themis-sidebar-row" aria-label="Help" onClick={() => setHelp(true)}><SidebarIcon name="help" /></button></Tooltip><Tooltip content="Search"><button type="button" className="themis-sidebar-row" aria-label="Search commands" onClick={() => dispatch({ type: "ui/palette", open: true })}><SidebarIcon name="search" /></button></Tooltip></div>
+        <div className="themis-rail-footer">{nav("settings", "Settings")}<Tooltip content="Help"><button type="button" className="themis-sidebar-row" aria-label="Help" onClick={() => setHelp(true)}><SidebarIcon name="help" /></button></Tooltip><Tooltip content="Search"><button type="button" className="themis-sidebar-row" aria-label="Search commands" onClick={() => dispatch({ type: "ui/palette", open: true })}><SidebarIcon name="search" /></button></Tooltip></div>
       </nav>
       <aside id="themis-sidebar" className={`themis-sidebar ${collapsed ? "" : "is-visible"}`} inert={collapsed} aria-hidden={collapsed} aria-label="Workspace navigation">
         <div className="themis-brand"><span className="themis-wordmark">Themis</span></div>

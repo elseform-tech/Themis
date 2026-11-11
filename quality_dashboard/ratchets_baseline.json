@@ -659,21 +659,10 @@
    "lines": 138
   },
   "web/src/App.tsx::Shell": {
-   "cognitive": 27,
-   "cyclomatic": 42
+   "cyclomatic": 26
   },
   "web/src/App.tsx::Shell::onKeyDown": {
    "cognitive": 35
-  },
-  "web/src/components/DesktopCompanion.tsx::DesktopCompanion": {
-   "cyclomatic": 21
-  },
-  "web/src/components/DesktopCompanion.tsx::useDesktopCompanion": {
-   "cognitive": 31
-  },
-  "web/src/components/KnightCompanion.tsx::KnightCompanion": {
-   "cognitive": 33,
-   "cyclomatic": 33
   },
   "web/src/components/PromptInput.tsx::PromptInput": {
    "cognitive": 119,

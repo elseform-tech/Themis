@@ -199,16 +199,15 @@ describe("Integration browsing and lifecycle", () => {
     expect(row).toHaveTextContent("Unavailable");
     expect(within(row).queryByRole("switch")).toBeNull();
   });
-  it("shows actual scan percentage with an interactive companion", async () => {
+  it("shows actual scan percentage in the loader", async () => {
     vi.useFakeTimers();
     try {
       const previous = vi.mocked(pluginAction).getMockImplementation()!;
       vi.mocked(pluginAction).mockImplementation(async args => args.action === "scan_marketplace" ? { revision: "scan", status: "scanning", completed: 3, total: 12, catalog: { plugins: [] }, checks: {}, errors: {} } as never : previous(args) as never);
       await act(async () => { render(<Plugins />); });
       await act(async () => fireEvent.click(screen.getByRole("button", { name: "Discover" })));
-      expect(screen.getByRole("progressbar", { name: "Marketplace compatibility" })).toHaveAttribute("aria-valuenow", "25");
-      expect(screen.getByText("25%")).toBeVisible();
-      fireEvent.click(screen.getByRole("button", { name: /Wake/ }));
+      expect(screen.getByRole("progressbar")).toHaveAttribute("aria-valuenow", "25");
+      fireEvent.click(screen.getByRole("button", { name: "Wake" }));
       fireEvent.click(screen.getByRole("button", { name: "Installed" }));
       await act(async () => { await vi.advanceTimersByTimeAsync(1000); });
       expect(screen.queryByRole("progressbar")).toBeNull();

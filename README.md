@@ -14,7 +14,7 @@ Plan: [.agents/plans/2026-09-23-themis-coding-agent.md](.agents/plans/2026-09-23
 - Skills, scheduled automations, and a review queue
 - OpenCode Go model catalog and model-specific effort controls
 - Name-only project creation in a fixed projects folder (deleting moves the folder
-  to the Trash), a project-scoped sidebar, and the Bubbles desktop companion
+  to the Trash), and a project-scoped sidebar
 - Organized settings with autosave and manual update checks; diagnostics stay in
   the CLI (`themis doctor`) and bounded log files
 - Adaptive context management: bounded tool results, durable checkpoints and

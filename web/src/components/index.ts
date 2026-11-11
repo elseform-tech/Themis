@@ -29,6 +29,8 @@ export type {
   ToastsProps,
 } from "./primitives/Toasts";
 export { EmptyState } from "./primitives/EmptyState";
+export { Loader } from "./primitives/Loader";
+export type { LoaderProps } from "./primitives/Loader";
 export { Switch } from "./primitives/Switch";
 export type { EmptyStateProps } from "./primitives/EmptyState";
 export { BudgetMeter } from "./primitives/BudgetMeter";

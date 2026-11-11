@@ -1,11 +1,9 @@
 import { useEffect, useRef, useState } from "react";
 import { pluginAction } from "./lib/tauri";
 import { usePopoverDismissal } from "./lib/dismiss";
-import { Button, Toasts } from "./components";
+import { Button, Loader, Toasts } from "./components";
 import {
   AppProvider,
-  describeError,
-  toast,
   useApp,
 } from "./state/store";
 import { readSession, writeSession } from "./state/session";
@@ -23,14 +21,10 @@ import { isTauri } from "@tauri-apps/api/core";
 import { ResourceMeter } from "./screens/ResourceMeter";
 import "./screens/shell.css";
 import { applyAppearance } from "./theme/appearance";
-import { KnightCompanion, KnightControl, KnightLoading, readCompanionPreferences, type CompanionPreferences, type KnightMood } from "./components/KnightCompanion";
-import { useDesktopCompanion } from "./components/DesktopCompanion";
 
 function Shell() {
   const { state, startup, dispatch } = useApp();
   usePopoverDismissal();
-  const [companion, setCompanion] = useState(readCompanionPreferences);
-  function updateCompanion(next: CompanionPreferences) { setCompanion(next); writeSession("companion", next); }
   const [collapsed, setCollapsed] = useState(() => readSession("sidebar-collapsed", false));
   function toggleSidebar() { autoFolded.current = false; setCollapsed(value => { writeSession("sidebar-collapsed", !value); return !value; }); }
   // Opening the workspace on a narrower window folds the sidebar to its rail so the
@@ -73,15 +67,7 @@ function Shell() {
     };
   }, [dispatch, state.paletteOpen, state.projectDialogOpen, state.diffPanelOpen]);
 
-  const threadId = state.activeThreadId;
-  const messages = threadId ? state.messages[threadId] ?? [] : [];
-  const last = messages[messages.length - 1];
-  const selectedThread = state.activeProjectRoot ? state.threadsByProject[state.activeProjectRoot]?.find(thread => thread.id === threadId) : undefined;
-  const working = threadId ? state.running[threadId] ?? selectedThread?.running : false;
-  const mood: KnightMood = (threadId && (state.sendErrors[threadId] || state.approvals.some(approval => approval.thread_id === threadId))) || (last?.role === "system" && /^(Run failed:|Send failed:|Send rejected:)/.test(last.text)) ? "attention"
-    : working ? "working" : last?.role === "assistant" && !last.incomplete ? "complete" : "idle";
-  const desktopCompanion = useDesktopCompanion(companion, mood, startup === null, error => toast(dispatch, `Companion unavailable: ${describeError(error)}`, "warning"));
-  if (startup !== null) return <KnightLoading variant={companion.variant} status={startup} />;
+  if (startup !== null) return <Loader label={startup} />;
   return (
     <div className={`themis-shell ${isTauri() && /Mac/.test(navigator.platform) ? "themis-shell--mac" : ""}`}>
         <header className="themis-nav" data-tauri-drag-region>
@@ -92,7 +78,7 @@ function Shell() {
           {isTauri() && <ResourceMeter />}
         </header>
         <div className="themis-shell-body">
-          <Sidebar collapsed={collapsed} companionControl={<KnightControl preferences={companion} onChange={updateCompanion} />} />
+          <Sidebar collapsed={collapsed} />
           <main className="themis-main">
         <div className="themis-view">
           {state.mainView === "thread" && <ThreadView />}
@@ -101,7 +87,6 @@ function Shell() {
           {state.mainView === "settings" && <SettingsScreen />}
           {state.mainView === "queue" && <ReviewQueue />}
         </div>
-        {companion.enabled && !desktopCompanion && <KnightCompanion preferences={companion} onChange={updateCompanion} mood={mood} />}
       </main>
       </div>
       <Palette />

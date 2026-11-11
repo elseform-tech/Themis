@@ -573,13 +573,6 @@ pub fn run() {
         builder
     };
     builder
-        .on_window_event(|window, event| {
-            if window.label() == "main" && matches!(event, tauri::WindowEvent::Destroyed) {
-                if let Some(companion) = window.app_handle().get_webview_window("companion") {
-                    let _ = companion.close();
-                }
-            }
-        })
         .setup(|app| {
             #[cfg(target_os = "macos")]
             set_dock_icon()?;

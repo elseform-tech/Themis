@@ -119,7 +119,7 @@
 .themis-filter-summary { display: flex; align-items: center; gap: 12px; padding-bottom: 6px; font-size: .75rem; color: var(--themis-text-2); }
 .themis-integrations .themis-filter-summary button { min-height: 0; padding: 2px 0; color: var(--themis-text-2); font-size: .75rem; }
 .themis-marketplace-loading { flex: 1; min-height: 260px; display: grid; place-items: center; }
-.themis-marketplace-loading .themis-knight-loading { height: auto; background: transparent; }
+.themis-marketplace-loading .themis-loader { height: auto; background: transparent; }
 .themis-marketplace-loading + .themis-integrations-list:empty { flex: 0; }
 
 .themis-mcp-tools { border-top: 1px solid var(--themis-border-subtle); margin-top: 1rem; padding-top: .75rem; }

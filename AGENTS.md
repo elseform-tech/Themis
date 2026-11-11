@@ -38,7 +38,6 @@ Follow [docs/ui-rules.md](docs/ui-rules.md) and [DESIGN.md](DESIGN.md) for layou
 - Workspace is mainly a monitor of what agents write. Add a control that changes state there only when it is necessary or clearly reasonable for the person, say why in the PR, scope it to the current chat and never let it silently undo completed work. Changes shows uncommitted work or another branch's changes as a view only; only the composer really switches branches. Current writes: the Tasks tab's Stop (current run, or one subagent) and Pause (turn an automation off), and the Browser tab, where the person may drive the chat's built-in browser (address, navigation, input, take over and hand back, DevTools) without changing project files, and the Terminal tab, the person's own shell in the project (the chat's worktree when it has one): it runs as the person, not the agent, so no agent tool reaches it, and it inherits no secret the app holds. File and directory reads stay bounded and inside the project; the change list shows only readable text files.
 - Per-turn edited files come from the backend `files_changed` event (before/after fingerprints of readable changes), not from parsing tool summaries.
 - Deleting a project moves its folder to the Trash and never deletes in place; the built-in Themis project cannot be deleted. Projects live in the fixed projects folder, so there is no folder-picker flow.
-- The Bubbles companion is an assistant, not a persistent agent; keep its speech to the documented state notes.
 
 ## Build, Test, and Development
 
