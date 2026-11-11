@@ -73,7 +73,7 @@ at each step and a summary at the end of every turn.
 ### B. Every screen and setting
 
 Walk the remaining rows in table order: every Settings section (change a value, confirm it takes
-effect, put it back), Integrations, Automations, Review queue, Search, Help (the rail lists Chats first), and
+effect, put it back), Integrations, Automations, Review queue, Search, Help, and
 project and chat management.
 
 ## Coverage table
