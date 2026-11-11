@@ -190,3 +190,30 @@ for (const mode of ["dark", "light"] as const) {
     }
   });
 }
+
+// The gold gradient is text (the greeting, the wordmark glint, shimmer) and the warning colour, so every stop reads on each sky.
+for (const preset of SKIES) {
+  const glass = preset.glass ?? { frame: "", panel: "", stage: "" };
+  const vars = parseThemeVars(tokensCss)[preset.mode];
+  const surfaces: string[] = [];
+  for (const stop of (preset.sky ?? "").match(/#[0-9a-f]{6}/gi) ?? []) {
+    for (const glow of [undefined, ...((preset.sky ?? "").match(/rgba\([^)]+\)/g) ?? [])]) {
+      const frame = compositeOver(glass.frame, glow === undefined ? stop : compositeOver(glow, stop));
+      surfaces.push(frame, compositeOver(glass.panel, frame), compositeOver(glass.stage, frame), compositeOver(glass.panel, stop));
+    }
+  }
+  const accent = preset.colors[7].replace(/^#(..)(..)(..)$/, (_, r, g, b) => `rgba(${parseInt(r, 16)},${parseInt(g, 16)},${parseInt(b, 16)},.14)`);
+  const worst = (colour: string, extra: string[] = []) => Math.min(...[...surfaces, ...extra].map(surface => contrastRatio(colour, surface)));
+
+  it(`${preset.name}: every gradient stop and the warning text reach 4.5 on the sky's glass, worst stop`, () => {
+    for (const token of ["--themis-gradient-1", "--themis-gradient-2", "--themis-gradient-3"]) {
+      expect(worst(vars[token]), token).toBeGreaterThanOrEqual(AA_NORMAL);
+    }
+    // The context warning and compaction notice also sit on an accent tint over the surface.
+    expect(worst(vars["--themis-warn-text"], [compositeOver(accent, preset.colors[2])])).toBeGreaterThanOrEqual(AA_NORMAL);
+  });
+
+  it(`${preset.name}: the working spinner reaches 3 on the sky's glass`, () => {
+    expect(worst(vars["--themis-gradient-2"])).toBeGreaterThanOrEqual(SECONDARY_MIN);
+  });
+}

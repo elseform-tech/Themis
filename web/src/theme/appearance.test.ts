@@ -69,3 +69,13 @@ it("glass is off on Linux until its frame time is measured", () => {
     expect(document.documentElement.dataset.glass).toBe("off");
   });
 });
+
+it("glass is off when the system asks to reduce transparency", () => {
+  const asked: string[] = [];
+  withBrowser(true, "Macintosh", () => {
+    vi.stubGlobal("matchMedia", (query: string) => { asked.push(query); return { matches: query === "(prefers-reduced-transparency: reduce)" }; });
+    applyAppearance({ ...base, theme_palette: "morning" });
+    expect(document.documentElement.dataset.glass).toBe("off");
+  });
+  expect(asked).toContain("(prefers-reduced-transparency: reduce)");
+});

@@ -81,11 +81,13 @@ function rgba(colour: string): [number, number, number, number] {
   return [parts[0], parts[1], parts[2], parts[3] ?? 1];
 }
 
-/** Blur costs frame time: off where the engine lacks it, and on Linux (WebKitGTK) until its frame time is measured. */
+/** Blur costs frame time: off where the engine lacks it, on Linux (WebKitGTK) until its frame time is measured,
+ *  and when the person asked the system to reduce transparency. */
 function glassBlurAvailable(): boolean {
   const supports = typeof CSS !== "undefined" && typeof CSS.supports === "function"
     && (CSS.supports("backdrop-filter", "blur(1px)") || CSS.supports("-webkit-backdrop-filter", "blur(1px)"));
-  return supports && !navigator.userAgent.includes("Linux");
+  const reduced = typeof window.matchMedia === "function" && window.matchMedia("(prefers-reduced-transparency: reduce)").matches;
+  return supports && !reduced && !navigator.userAgent.includes("Linux");
 }
 
 function applyGlass(root: HTMLElement, preset: AppearancePreset) {

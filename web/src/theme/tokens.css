@@ -38,6 +38,8 @@
   --themis-gradient-1: #c08a2e;
   --themis-gradient-2: #e3b85a;
   --themis-gradient-3: #f6e7bd;
+  /* Context warning and compaction text: the light end of the gradient on dark. */
+  --themis-warn-text: #f6e7bd;
   --themis-radius-pill: 999px;
   --themis-radius-card: 20px;
   --themis-radius-composer: 28px;
@@ -77,6 +79,11 @@
   --themis-code-string-light: #116329;
   --themis-code-number-light: #92400e;
   --themis-shadow: rgb(8 20 45 / .35);
+  /* The gold gradient as a deep bronze-to-amber ramp, every stop readable as text on the pale glass. */
+  --themis-gradient-1: #5c3604;
+  --themis-gradient-2: #6b3f00;
+  --themis-gradient-3: #804c00;
+  --themis-warn-text: #6b3f00;
   --themis-ok-ink: #21633d;
   --themis-ok-bg: #e7f5ec;
   --themis-ok-line: #a5cfb4;

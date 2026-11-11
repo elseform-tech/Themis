@@ -210,7 +210,7 @@
 .themis-context { position: relative; }
 .themis-context-chip { display: flex; align-items: center; gap: 6px; height: 34px; padding: 0 4px; border: 0; background: transparent; color: var(--themis-text-2); font: inherit; font-size: .8125rem; font-variant-numeric: tabular-nums; cursor: pointer; }
 .themis-context-chip:hover { color: var(--themis-text); }
-.themis-context-chip--warn { color: var(--themis-gradient-3); }
+.themis-context-chip--warn { color: var(--themis-warn-text); }
 .themis-context-spin { transform-box: fill-box; transform-origin: center; animation: themis-context-spin 1.4s linear infinite; }
 @keyframes themis-context-spin { to { transform: rotate(1turn); } }
 .themis-context-panel { position: absolute; z-index: 30; right: 0; bottom: calc(100% + 10px); display: grid; gap: 12px; width: min(460px, 86vw); padding: 18px 20px; border-radius: 22px; background: var(--themis-raised); box-shadow: 0 18px 50px color-mix(in srgb, var(--themis-shadow) 50%, transparent); }
@@ -230,8 +230,8 @@
 .themis-context-legend li > span { width: 10px; height: 10px; border-radius: 3px; flex: none; }
 .themis-context-legend b { margin-left: auto; font-weight: 500; font-variant-numeric: tabular-nums; color: var(--themis-text-2); }
 .themis-context-note { margin: 0; color: var(--themis-text-3); font-size: .75rem; }
-.themis-context-warn { margin: 0; padding: 10px 12px; border-radius: 12px; background: color-mix(in srgb, var(--themis-accent) 14%, transparent); color: var(--themis-gradient-3); font-size: .8125rem; line-height: 1.45; }
-.themis-compaction-notice { display: flex; align-items: center; gap: 10px; width: min(calc(100% - 2 * var(--themis-thread-gutter)), var(--themis-thread-column)); margin: 0 auto 6px; padding: 10px 10px 10px 16px; border-radius: 16px; background: color-mix(in srgb, var(--themis-accent) 14%, var(--themis-surface)); color: var(--themis-gradient-3); font-size: .8125rem; }
+.themis-context-warn { margin: 0; padding: 10px 12px; border-radius: 12px; background: color-mix(in srgb, var(--themis-accent) 14%, transparent); color: var(--themis-warn-text); font-size: .8125rem; line-height: 1.45; }
+.themis-compaction-notice { display: flex; align-items: center; gap: 10px; width: min(calc(100% - 2 * var(--themis-thread-gutter)), var(--themis-thread-column)); margin: 0 auto 6px; padding: 10px 10px 10px 16px; border-radius: 16px; background: color-mix(in srgb, var(--themis-accent) 14%, var(--themis-surface)); color: var(--themis-warn-text); font-size: .8125rem; }
 .themis-compaction-notice > span { flex: 1; }
 .themis-compaction-notice button { width: 28px; height: 28px; border: 0; border-radius: 50%; background: transparent; color: inherit; font-size: 1.1rem; cursor: pointer; }
 

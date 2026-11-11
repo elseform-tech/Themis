@@ -93,7 +93,7 @@ Dark mode is the product baseline; the Morning and Noon skies are the light look
 | Shadow | `--themis-shadow` | `rgb(0 0 0)`; light `rgb(8 20 45 / .35)` | Mix with transparent at each shadow's strength |
 | Warm gradient | `--themis-gradient-1/2/3` | `#c08a2e` → `#e3b85a` → `#f6e7bd` | Approved Themis moments only (below) |
 
-Light skies (`data-theme="light"`) keep the same roles with darker status colours that reach 4.5:1 on the pale glass: success `#166534`, warning `#92400e`, danger `#9f1239`, information `#0550ae`. Shadows use the soft navy `--themis-shadow`.
+Light skies (`data-theme="light"`) keep the same roles with darker status colours that reach 4.5:1 on the pale glass: success `#166534`, warning `#92400e`, danger `#9f1239`, information `#0550ae`. Shadows use the soft navy `--themis-shadow`. The warm gradient becomes a deep bronze-to-amber ramp (`#5c3604` → `#6b3f00` → `#804c00`) so the greeting, the wordmark glint, shimmer and the working spinner stay readable; context-warning and compaction text use `--themis-warn-text` (`#f6e7bd` on dark, `#6b3f00` on light).
 
 Compatibility badges use the `--themis-ok-*`, `--themis-warn-*` and `--themis-bad-*` tokens (ink, background, line) from [`tokens.css`](web/src/theme/tokens.css), dark / light. The recording pill uses the `bad` pair too. Keep this mapping consistent across tiles and filters.
 
