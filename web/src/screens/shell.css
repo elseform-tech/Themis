@@ -73,9 +73,12 @@ button:focus-visible, summary:focus-visible, input:focus-visible, textarea:focus
 .themis-sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; border: 0; }
 
 .themis-shell-body { display: flex; flex: 1; min-height: 0; padding: 0; }
-.themis-main { background: var(--themis-canvas); border: 0; border-radius: 0; overflow: hidden; }
-.themis-shell-body { background: var(--themis-sidebar-bg); }
-.themis-nav { border: 0; background: var(--themis-sidebar-bg); min-height: 46px; padding: 6px 14px; color: var(--themis-text-2); }
+/* Framed layout: the frame colour shows around inset rounded panels; the chat column is the stage. */
+.themis-main { margin: var(--themis-panel-gap); background: var(--themis-stage-bg); border: 0; border-radius: var(--themis-stage-radius); box-shadow: inset 0 0 0 1px var(--themis-border); overflow: hidden; }
+/* With the Workspace open, the chat column alone is the stage and the panel sits beside it. */
+.themis-main:has(> .themis-view > .themis-thread-layout.is-reviewing) { background: transparent; border-radius: 0; box-shadow: none; overflow: visible; }
+.themis-shell-body { background: var(--themis-shell-bg); }
+.themis-nav { border: 0; background: var(--themis-shell-bg); min-height: 46px; padding: 6px 14px; color: var(--themis-text-2); }
 .themis-shell--mac .themis-nav { padding-left: 88px; }
 #sidebar-toggle svg { width: 17px; height: 17px; }
 

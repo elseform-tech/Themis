@@ -41,6 +41,13 @@
   --themis-radius-pill: 999px;
   --themis-radius-card: 20px;
   --themis-radius-composer: 28px;
+  /* Framed layout: the sidebar dock, the chat stage and the Workspace panel are rounded panels inset on the frame. */
+  --themis-panel-gap: 8px;
+  --themis-stage-radius: 18px;
+  --themis-panel-radius: 20px;
+  --themis-panel-bg: var(--themis-sidebar-bg);
+  --themis-stage-bg: var(--themis-canvas);
+  --themis-panel-blur: none;
 }
 
 /* Signature gradient text: drifts slowly; the global reduced-motion rule stops it. */

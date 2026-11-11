@@ -2,6 +2,8 @@
    One definition per selector; palette colors come from theme tokens. */
 
 .themis-thread-layout { display: flex; min-height: 0; height: 100%; }
+.themis-thread-layout.is-reviewing { gap: var(--themis-panel-gap); }
+.themis-thread-layout.is-reviewing > .themis-thread { border-radius: var(--themis-stage-radius); background: var(--themis-stage-bg); box-shadow: inset 0 0 0 1px var(--themis-border); overflow: hidden; }
 /* The chat column follows the room the sidebar and Workspace leave, with a readable cap. */
 .themis-thread { --themis-thread-gutter: clamp(20px, 5cqw, 64px); --themis-thread-column: 620px; position: relative; flex: 1; min-width: 0; display: flex; flex-direction: column; min-height: 0; height: 100%; }
 

@@ -128,6 +128,21 @@ describe("Workspace journey", () => {
     expect(chats()).toEqual(["Earlier chat", "Latest chat"]);
   });
 
+  it("framed layout keeps auto-fold below 1500px", async () => {
+    vi.stubGlobal("innerWidth", 1024);
+    const base = { provider: "go" as const, model: "muse-spark-1.3-contributor", worktree_path: null, branch: null, base_branch: null, recovered: false, skill_ids: [] };
+    vi.mocked(bridge.listThreads).mockResolvedValue([{ ...base, id: "fold", title: "Fold chat", running: false }]);
+    await mount();
+    expect(screen.getByRole("button", { name: "Collapse sidebar" })).toBeInTheDocument();
+    const receive = vi.mocked(bridge.onThreadEvent).mock.calls[0]![0];
+    await act(async () => receive({ thread_id: "fold", run_id: "r", event: { kind: "started", task: "fix", max_turns: 3 } }));
+    await act(async () => receive({ thread_id: "fold", run_id: "r", event: { kind: "files_changed", files: [{ path: "a.py", status: "modified", added: 1, removed: 0 }] } }));
+    await act(async () => receive({ thread_id: "fold", run_id: "r", event: { kind: "finished", result: "Done." } }));
+    await act(async () => fireEvent.click(within(screen.getByRole("region", { name: "Files edited in this turn" })).getAllByRole("button")[0]!));
+    expect(screen.getByRole("complementary", { name: "Workspace (read-only)" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Show sidebar" })).toBeInTheDocument();
+  });
+
   it("resizes the sidebar and restores its saved width after remount", async () => {
     let mounted!: ReturnType<typeof render>;
     await act(async () => { mounted = render(<App />); });
