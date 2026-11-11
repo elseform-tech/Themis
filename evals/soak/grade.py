@@ -49,6 +49,8 @@ MEASURES = {
     "goal_changed": ("goal", "harness", "lower"),
     "reached": ("goal", "model", "higher"),
     "false_reached": ("goal", "model", "lower"),
+    "calls_after_complete": ("goal", "reported", None),
+    "writes_after_complete": ("goal", "reported", None),
     "goal_turns": ("goal", "reported", None),
     "checkpoints": ("compaction", "reported", None),
     "failed_checkpoints": ("compaction", "harness", "lower"),
@@ -146,6 +148,36 @@ def goal_measures(trace):
     return {"goal_continuation_breaks": breaks, "turns_after_reached": after_reached,
             "goal_changed": changed, "reached": int(reached_at is not None),
             "goal_turns": len(goal_runs)}
+
+
+# Tools that change files. A turn that keeps writing after declaring its goal complete was not
+# done (2026-11-10, beam-free: 22 writes and 77 reads after "complete", with 78 of 120 items
+# missing); turns that were done made at most a confirming read or check (2026-11-11, iceman).
+# Words were tried as a second signal and dropped: "check.py still reports OK" reads like
+# "still reports a failure".
+FILE_WRITES = ("write_file", "apply_patch")
+
+
+def premature_signals(trace):
+    """What the harness could see when the agent declared the goal complete: the tool calls the
+    same turn still made after that call, and how many of them wrote files. Candidate runtime
+    signals for a premature end, compared with `false_reached`."""
+    items = _flat(trace)
+    # The goal change itself carries no run; the `update_goal` call nearest to it does (the call
+    # is recorded just before or just after the change).
+    reached = next((index for index, _run, event in items
+                    if event.get("kind") == "goal_changed" and (event.get("goal") or {}).get("status") == "reached"), None)
+    calls = [(index, run) for index, run, event in items
+             if run and event.get("kind") == "tool_started" and event.get("tool") == "update_goal"]
+    at = None if reached is None or not calls else min(calls, key=lambda call: abs(call[0] - reached))
+    if at is None:
+        return {"calls_after_complete": None, "writes_after_complete": None}, {}
+    start, run_id = at
+    later = [event.get("tool") for index, run, event in items
+             if index > start and run == run_id and event.get("kind") == "tool_started"]
+    calls = [tool for tool in later if tool != "update_goal"]
+    return ({"calls_after_complete": len(calls), "writes_after_complete": sum(tool in FILE_WRITES for tool in calls)},
+            {"after_complete_tools": calls[:20]})
 
 
 # --- compaction -------------------------------------------------------------------------------
@@ -453,7 +485,9 @@ def grade(trace, spec):
     # beam-free: complete after one turn with 78 items missing and check.py failing).
     measures["false_reached"] = int(bool(measures.get("reached")) and (
         measures.get("check_passes") == 0 or bool(measures.get("skipped_items"))))
-    details = {"end_state": (trace.get("end") or {}).get("reason"), "end_detail": (trace.get("end") or {}).get("detail"),
+    signals, signal_details = premature_signals(trace)
+    measures.update(signals)
+    details = {**signal_details, "end_state": (trace.get("end") or {}).get("reason"), "end_detail": (trace.get("end") or {}).get("detail"),
                "retention": retention(trace), "checkpoint_sizes": checkpoint_sizes(trace),
                **memory_details, **tool_details}
     return measures, details

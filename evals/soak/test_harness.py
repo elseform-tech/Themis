@@ -335,6 +335,56 @@ class GraderTests(unittest.TestCase):
         trace["final"]["check_passed"] = False
         self.assertEqual(grade(trace, trace["spec"])[0]["false_reached"], 1)
 
+    @staticmethod
+    def with_complete_call(trace):
+        """The stand-in's reach as the app records it: the goal change, then the agent's
+        `update_goal` call in its turn. Returns the call's index and run."""
+        events = trace["events"]
+        reached = next(i for i, item in enumerate(events)
+                       if item["event"].get("kind") == "goal_changed"
+                       and (item["event"].get("goal") or {}).get("status") == "reached")
+        run = next(item["run_id"] for item in reversed(events[:reached]) if item.get("run_id"))
+        events.insert(reached + 1, {"t": 0, "run_id": run, "event": {"kind": "tool_started", "tool": "update_goal"}})
+        return reached + 1, run
+
+    def test_a_clean_run_shows_no_premature_end(self):
+        trace = clean()
+        self.with_complete_call(trace)
+        measures, _details = grade(trace, trace["spec"])
+        self.assertEqual((measures["calls_after_complete"], measures["writes_after_complete"]), (0, 0))
+
+    def call(self, run, tool):
+        return {"t": 0, "run_id": run, "event": {"kind": "tool_started", "tool": tool}}
+
+    def test_a_confirming_read_after_complete_writes_nothing(self):
+        # Seen 2026-11-11 on iceman, goals truly done: a check, `git log` or one read afterwards.
+        trace = clean()
+        at, run = self.with_complete_call(trace)
+        trace["events"][at + 1:at + 1] = [self.call(run, "shell"), self.call(run, "read_file")]
+        measures, details = grade(trace, trace["spec"])
+        self.assertEqual((measures["calls_after_complete"], measures["writes_after_complete"]), (2, 0))
+        self.assertEqual(details["after_complete_tools"], ["shell", "read_file"])
+
+    def test_writes_after_declaring_complete_are_counted(self):
+        # Seen 2026-11-10 on beam-free: complete after a few of 120 items, then 22 writes and 77
+        # reads in the same turn. Calls in another run do not count.
+        trace = clean()
+        at, run = self.with_complete_call(trace)
+        trace["events"][at + 1:at + 1] = [self.call(run, "read_file"), self.call(run, "write_file"),
+                                          self.call(run, "apply_patch"), self.call("another-run", "write_file")]
+        measures, _details = grade(trace, trace["spec"])
+        self.assertEqual((measures["calls_after_complete"], measures["writes_after_complete"]), (3, 2))
+
+    def test_the_complete_call_may_be_recorded_before_the_goal_change(self):
+        # Seen 2026-11-11 on iceman: `update_goal` started, then the goal changed to reached.
+        trace = clean()
+        at, run = self.with_complete_call(trace)
+        events = trace["events"]
+        events[at - 1], events[at] = events[at], events[at - 1]
+        events[at + 1:at + 1] = [self.call(run, "write_file")]
+        measures, _details = grade(trace, trace["spec"])
+        self.assertEqual((measures["calls_after_complete"], measures["writes_after_complete"]), (1, 1))
+
     def test_goal_not_continuing(self):
         trace = clean()
         cut = next(i for i, item in enumerate(trace["events"]) if item["run_id"] == "g2")
