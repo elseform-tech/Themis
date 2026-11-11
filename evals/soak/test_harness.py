@@ -375,6 +375,16 @@ class GraderTests(unittest.TestCase):
         measures, _details = grade(trace, trace["spec"])
         self.assertEqual((measures["calls_after_complete"], measures["writes_after_complete"]), (3, 2))
 
+    def test_the_complete_call_may_be_recorded_before_the_goal_change(self):
+        # Seen 2026-11-11 on iceman: `update_goal` started, then the goal changed to reached.
+        trace = clean()
+        at, run = self.with_complete_call(trace)
+        events = trace["events"]
+        events[at - 1], events[at] = events[at], events[at - 1]
+        events[at + 1:at + 1] = [self.call(run, "write_file")]
+        measures, _details = grade(trace, trace["spec"])
+        self.assertEqual((measures["calls_after_complete"], measures["writes_after_complete"]), (1, 1))
+
     def test_goal_not_continuing(self):
         trace = clean()
         cut = next(i for i, item in enumerate(trace["events"]) if item["run_id"] == "g2")

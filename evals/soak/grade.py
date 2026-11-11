@@ -163,12 +163,13 @@ def premature_signals(trace):
     same turn still made after that call, and how many of them wrote files. Candidate runtime
     signals for a premature end, compared with `false_reached`."""
     items = _flat(trace)
-    # The goal change itself carries no run; the `update_goal` call right after it does.
+    # The goal change itself carries no run; the `update_goal` call nearest to it does (the call
+    # is recorded just before or just after the change).
     reached = next((index for index, _run, event in items
                     if event.get("kind") == "goal_changed" and (event.get("goal") or {}).get("status") == "reached"), None)
-    at = None if reached is None else next(((index, run) for index, run, event in items
-                                             if index > reached and run and event.get("kind") == "tool_started"
-                                             and event.get("tool") == "update_goal"), None)
+    calls = [(index, run) for index, run, event in items
+             if run and event.get("kind") == "tool_started" and event.get("tool") == "update_goal"]
+    at = None if reached is None or not calls else min(calls, key=lambda call: abs(call[0] - reached))
     if at is None:
         return {"calls_after_complete": None, "writes_after_complete": None}, {}
     start, run_id = at
