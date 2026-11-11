@@ -130,8 +130,8 @@ fn expected() -> BTreeSet<String> {
         "workspace",
         pair_ids(line_with(&workspace, "const TABS")),
     ));
-    let sidebar = read("web/src/screens/Sidebar.tsx");
-    ids.extend(tag("view", pair_ids(line_with(&sidebar, "const views"))));
+    let rail = read("web/src/screens/Rail.tsx");
+    ids.extend(tag("view", pair_ids(line_with(&rail, "const views"))));
     let reference = read("crates/core/src/configuration_reference.jsonc");
     let groups = reference
         .lines()

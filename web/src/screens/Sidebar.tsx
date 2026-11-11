@@ -1,19 +1,17 @@
 import { useEffect, useRef, useState } from "react";
-import { Badge, Button, Dialog, Input, Tooltip } from "../components";
-import { createProject, deleteProject, getSettings, pluginAction, renameProject, renameThread } from "../lib/tauri";
-import { unseenOff } from "../lib/integrations";
-import { describeError, toast, useApp, type MainView } from "../state/store";
+import { Button, Dialog, Input } from "../components";
+import { createProject, deleteProject, getSettings, renameProject, renameThread } from "../lib/tauri";
+import { describeError, toast, useApp } from "../state/store";
 import { useNewThread, useDiscardThread } from "./actions";
-import type { Plugin, ThreadInfo } from "../lib/types";
+import type { ThreadInfo } from "../lib/types";
 import { readSession, writeSession } from "../state/session";
 import { MovingText } from "../components/MovingText";
 import { DOT_GRID, DotSpinner } from "../components/DotSpinner";
 import { SettingsNav } from "./SettingsNav";
+import { Rail } from "./Rail";
 import "./Sidebar.css";
 
-const views: Array<[MainView, string]> = [["skills", "Integrations"], ["automations", "Automations"], ["queue", "Review queue"]];
-type SidebarIconName = "home" | "panel" | "chat" | "thread" | "skills" | "automations" | "queue" | "project" | "settings" | "help" | "search" | "rename" | "trash";
-const viewIcons: Record<MainView, SidebarIconName> = { thread: "home", skills: "skills", automations: "automations", queue: "queue", settings: "settings" };
+export type SidebarIconName = "home" | "panel" | "chat" | "thread" | "skills" | "automations" | "queue" | "project" | "settings" | "help" | "search" | "rename" | "trash";
 
 /** Below this the chat list is mostly cut-off titles. */
 const SIDEBAR_MIN = 280;
@@ -63,7 +61,6 @@ export function Sidebar({ collapsed: folded }: { collapsed: boolean }) {
   const [editError, setEditError] = useState("");
   const [editBusy, setEditBusy] = useState(false);
   const [help, setHelp] = useState(false);
-  const pending = state.reviews.filter(r => r.status === "pending").length;
   const activeRoot = state.activeProjectRoot;
   const activeProject = state.projects.find(project => project.root === activeRoot) ?? null;
   const projects = [...state.projects].sort((a, b) => Number(!!b.is_default) - Number(!!a.is_default));
@@ -111,29 +108,10 @@ export function Sidebar({ collapsed: folded }: { collapsed: boolean }) {
     const unseen = finished.has(thread.id) && !isLive(status);
     return <li key={thread.id} className="themis-sidebar-thread"><button type="button" className={`themis-sidebar-row themis-thread-row ${active ? "themis-sidebar-row--active" : ""} ${unseen ? "is-unseen" : ""}`} title={thread.title} aria-label={thread.title} aria-current={active ? "true" : undefined} onClick={() => activeRoot && dispatch({ type: "thread/selected", projectRoot: activeRoot, threadId: thread.id })}><ThreadStatus status={status} /><MovingText>{thread.title}</MovingText>{TAG[status] && <span className="themis-thread-tag">{TAG[status]}</span>}</button><details className="themis-thread-row-actions"><summary aria-label={`Options for ${thread.title}`} title="Thread options"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="12" cy="5" r="1.7" /><circle cx="12" cy="12" r="1.7" /><circle cx="12" cy="19" r="1.7" /></svg></summary><div className="themis-row-menu"><button type="button" aria-label={`Edit ${thread.title}`} disabled={locked} onClick={event => { event.currentTarget.closest("details")?.removeAttribute("open"); setEditError(""); setEditing({ ...thread, projectRoot: activeRoot! }); }}>Rename</button><button type="button" className="is-danger" aria-label={`Remove ${thread.title}`} disabled={locked} onClick={event => { event.currentTarget.closest("details")?.removeAttribute("open"); setRemoving({ ...thread, projectRoot: activeRoot! }); }}>Remove</button></div></details></li>;
   }
-  // Installed parts still off: the mark stays until they've been seen in the Installed list.
-  const [partsOff, setPartsOff] = useState(false);
-  useEffect(() => {
-    let live = true;
-    const check = () => void pluginAction<Plugin[]>({ action: "list", projectRoot: activeRoot }).then(list => { if (live && Array.isArray(list)) setPartsOff(unseenOff(list)); }).catch(() => undefined);
-    check();
-    window.addEventListener("themis-plugins-changed", check);
-    window.addEventListener("themis-off-seen", check);
-    return () => { live = false; window.removeEventListener("themis-plugins-changed", check); window.removeEventListener("themis-off-seen", check); };
-  }, [activeRoot]);
-  function nav(view: MainView, label: string) {
-    return <Tooltip key={view} content={label}><button type="button" className={`themis-sidebar-row ${state.mainView === view ? "themis-sidebar-row--active" : ""}`} aria-label={view === "queue" && pending > 0 ? `${label} ${pending}` : label} aria-current={state.mainView === view ? "page" : undefined} onClick={() => dispatch({ type: "ui/view", view })}>
-      <SidebarIcon name={viewIcons[view]} /><span className="themis-sidebar-name">{label}</span>{view === "queue" && pending > 0 && <Badge tone="warning">{pending}</Badge>}{view === "skills" && partsOff && <i className="themis-off-dot themis-sidebar-off" aria-hidden="true" data-testid="parts-off" />}
-    </button></Tooltip>;
-  }
   return <>
     <div ref={slot} className={`themis-sidebar-slot ${collapsed ? "is-collapsed" : ""} ${resizing ? "is-resizing" : ""}`} style={{ "--themis-sidebar-width": `${width}px` } as import("react").CSSProperties}>
       {settingsOpen ? <SettingsNav id="themis-sidebar" /> : <>
-      <nav className="themis-sidebar-rail" aria-label="Utilities">
-        {nav("thread", "Home")}
-        {views.map(([view, label]) => nav(view, label))}
-        <div className="themis-rail-footer">{nav("settings", "Settings")}<Tooltip content="Help"><button type="button" className="themis-sidebar-row" aria-label="Help" onClick={() => setHelp(true)}><SidebarIcon name="help" /></button></Tooltip><Tooltip content="Search"><button type="button" className="themis-sidebar-row" aria-label="Search commands" onClick={() => dispatch({ type: "ui/palette", open: true })}><SidebarIcon name="search" /></button></Tooltip></div>
-      </nav>
+      <Rail onHelp={() => setHelp(true)} />
       <aside id="themis-sidebar" className={`themis-sidebar ${collapsed ? "" : "is-visible"}`} inert={collapsed} aria-hidden={collapsed} aria-label="Workspace navigation">
         <div className="themis-brand"><span className="themis-wordmark">Themis</span></div>
         <div className="themis-sidebar-nav"><button type="button" className="themis-new-chat" disabled={!state.activeProjectRoot} onClick={() => void newThread()}><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14" /></svg><span>New chat</span></button></div>

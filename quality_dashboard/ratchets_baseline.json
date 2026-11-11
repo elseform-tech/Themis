@@ -786,9 +786,9 @@
    "cyclomatic": 41
   },
   "web/src/screens/Sidebar.tsx::Sidebar": {
-   "cognitive": 90,
-   "cyclomatic": 116,
-   "lines": 171
+   "cognitive": 85,
+   "cyclomatic": 106,
+   "lines": 156
   },
   "web/src/screens/Sidebar.tsx::threadStatus": {
    "cognitive": 45,
