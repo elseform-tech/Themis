@@ -919,3 +919,68 @@ fn a_project_cannot_raise_autonomy_or_budget() {
     )
     .is_ok());
 }
+
+fn custom_user(rows: &str) -> String {
+    format!(r#"{{"visions":{{"autonomy":"custom","custom":{rows}}}}}"#)
+}
+
+#[test]
+fn a_project_may_lower_custom_to_ask() {
+    let user = custom_user(r#"{"delete":true}"#);
+    let lowered = resolve(Some(&user), Some(r#"{"visions":{"autonomy":"ask"}}"#), None).unwrap();
+    assert_eq!(
+        lowered.config.visions.autonomy,
+        crate::visions::Autonomy::Ask
+    );
+}
+
+#[test]
+fn a_project_may_set_a_preset_within_the_users_custom_rows() {
+    let user = custom_user(r#"{"wording":true,"tests":true,"scope":true}"#);
+    let project = resolve(
+        Some(&user),
+        Some(r#"{"visions":{"autonomy":"small"}}"#),
+        None,
+    )
+    .unwrap();
+    assert_eq!(
+        project.config.visions.autonomy,
+        crate::visions::Autonomy::Small
+    );
+}
+
+#[test]
+fn a_project_may_not_set_a_preset_beyond_the_users_custom_rows() {
+    let user = custom_user(r#"{"wording":true}"#);
+    for preset in ["small", "most", "nearly_all"] {
+        let project = format!(r#"{{"visions":{{"autonomy":"{preset}"}}}}"#);
+        assert!(
+            resolve(Some(&user), Some(&project), None).is_err(),
+            "{preset}"
+        );
+    }
+}
+
+#[test]
+fn a_project_may_not_switch_to_custom() {
+    for user in [
+        r#"{"visions":{"autonomy":"most"}}"#,
+        r#"{"visions":{"autonomy":"ask"}}"#,
+    ] {
+        let project = r#"{"visions":{"autonomy":"custom"}}"#;
+        assert!(resolve(Some(user), Some(project), None).is_err(), "{user}");
+    }
+    let user = custom_user(r#"{"delete":true}"#);
+    assert!(resolve(
+        Some(&user),
+        Some(r#"{"visions":{"autonomy":"custom","custom":{"delete":true}}}"#),
+        None
+    )
+    .is_err());
+    assert!(resolve(
+        Some(&user),
+        Some(r#"{"visions":{"autonomy":"custom","custom":{"delete":false}}}"#),
+        None
+    )
+    .is_ok());
+}

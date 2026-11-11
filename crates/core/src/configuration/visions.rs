@@ -1,5 +1,5 @@
 use super::*;
-use crate::visions::{Autonomy, Decision};
+use crate::visions::{vision_decides, Autonomy, Decision};
 
 /// Visions (`visions`, Settings › Visions): agents that drive ordinary chats; see
 /// [`crate::visions`].
@@ -55,8 +55,13 @@ fn check_visions_restriction(current: &VisionsConfig, layer: &Value, origin: &st
             anyhow::anyhow!("visions.autonomy must be ask/small/most/nearly_all/custom")
         })?;
         let allowed = match (requested.rank(), current.autonomy.rank()) {
+            (Some(0), _) => true,
             (Some(new), Some(old)) => new <= old,
-            _ => requested == current.autonomy,
+            (Some(_), None) => Decision::ALL.into_iter().all(|d| {
+                !vision_decides(requested, &BTreeMap::new(), d)
+                    || vision_decides(Autonomy::Custom, &current.custom, d)
+            }),
+            (None, _) => current.autonomy == Autonomy::Custom,
         };
         ensure!(
             allowed,
