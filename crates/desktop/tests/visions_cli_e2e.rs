@@ -1391,9 +1391,9 @@ fn result_object(result: &str) -> Option<Value> {
 
 /// A scripted model for a Vision and the chat it starts. The Vision's run (its system message
 /// is the Vision head) starts a chat with `themis call create_thread`, gives it work with
-/// `themis call send_message` and says so; woken because that chat finished, it reports. Any
-/// other chat answers at once.
-async fn vision_provider(project: PathBuf) -> MockServer {
+/// `themis call send_message`, then runs each of `extra` (shell arguments) and says so; woken
+/// because that chat finished, it reports. Any other chat answers at once.
+async fn vision_provider(project: PathBuf, extra: Vec<Value>) -> MockServer {
     let provider = MockServer::builder().start().await;
     Mock::given(method("POST"))
         .respond_with(move |request: &Request| {
@@ -1420,13 +1420,16 @@ async fn vision_provider(project: PathBuf) -> MockServer {
                 .filter(|m| m["role"] == "tool")
                 .filter_map(|m| m["content"].as_str())
                 .collect();
-            let call = |args: Value| {
+            let shell = |arguments: Value| {
                 let call = json!({"id": format!("call_{}", results.len()), "type": "function",
-                    "function": {"name": "shell", "arguments": json!({"command": "themis",
-                        "args": ["call", args["method"], args["args"].to_string()]}).to_string()}});
+                    "function": {"name": "shell", "arguments": arguments.to_string()}});
                 ResponseTemplate::new(200).set_body_json(json!({"choices": [{"message":
                     {"role": "assistant", "content": null, "tool_calls": [call]},
                     "finish_reason": "tool_calls"}]}))
+            };
+            let call = |args: Value| {
+                shell(json!({"command": "themis",
+                    "args": ["call", args["method"], args["args"].to_string()]}))
             };
             match results.as_slice() {
                 [] => call(json!({"method": "create_thread",
@@ -1436,7 +1439,10 @@ async fn vision_provider(project: PathBuf) -> MockServer {
                     call(json!({"method": "send_message",
                         "args": {"threadId": id, "text": "write the greeting"}}))
                 }
-                _ => reply("Started a chat for the greeting."),
+                done => match extra.get(done.len() - 2) {
+                    Some(step) => shell(step.clone()),
+                    None => reply("Started a chat for the greeting."),
+                },
             }
         })
         .mount(&provider)
@@ -1451,16 +1457,11 @@ async fn vision_provider(project: PathBuf) -> MockServer {
 async fn a_vision_starts_a_chat_and_reports_when_it_finishes() {
     let _turn = ONE_SERVER.lock().await;
     let fx = fixture().await;
-    let provider = vision_provider(fx.project.clone()).await;
+    // A step that would need approval in Custom: refused for the Vision, never asked.
+    let write = json!({"command": "sh", "args": ["-c", "echo hi > note.txt"]});
+    let provider = vision_provider(fx.project.clone(), vec![write]).await;
     fx.use_provider(&provider).await;
-    // Custom mode: the person's rule lets the Vision's `themis` calls run without asking.
-    fx.state
-        .save_runtime_configuration(
-            "user",
-            Some(fx.project.to_string_lossy().into_owned()),
-            r#"{"approval":{"rules":[{"tool":"shell","command":["themis"],"action":"allow"}]}}"#,
-        )
-        .unwrap();
+    // Custom mode and no rule: the Vision's plain `themis` calls still run without asking.
     let (vision, channel) = fx.vision_and_channel("Wren", "hq");
 
     fx.call_ok(
@@ -1572,7 +1573,177 @@ async fn a_vision_starts_a_chat_and_reports_when_it_finishes() {
         "{tools:?}"
     );
     assert!(tools.iter().any(|tool| tool == "shell"));
+    // The step that would have needed approval was refused with the reason, and nothing ran.
+    let results = tool_results(&provider).await;
+    assert!(
+        results
+            .iter()
+            .any(|result| result.contains("approval denied for") && result.contains("Vision")),
+        "{results:?}"
+    );
+    assert!(!fx.project.join("note.txt").exists());
 
     wait_until(|| async { !fx.running(&own_chat).await && !fx.running(&work).await }).await;
     fx.shut_down().await;
+}
+
+/// Every tool result the provider was sent, once each.
+async fn tool_results(provider: &MockServer) -> Vec<String> {
+    let mut results: Vec<String> = provider
+        .received_requests()
+        .await
+        .unwrap()
+        .iter()
+        .filter_map(|request| request.body_json::<Value>().ok())
+        .flat_map(|body| body["messages"].as_array().cloned().unwrap_or_default())
+        .filter(|message| message["role"] == "tool")
+        .filter_map(|message| message["content"].as_str().map(str::to_owned))
+        .collect();
+    results.dedup();
+    results
+}
+
+/// Waits until the channel has a Vision message or a notice; true when the Vision's run was
+/// refused because nothing here can confine it (the test then has nothing more to check).
+async fn first_vision_turn(fx: &Fixture, channel: &str) -> bool {
+    let ended = |entries: &[Value]| {
+        entries
+            .iter()
+            .find(|entry| entry["type"] == "vision" || entry["type"] == "notice")
+            .cloned()
+    };
+    let entry = tokio::time::timeout(Duration::from_secs(60), async {
+        loop {
+            if let Some(entry) = ended(&fx.entries(channel)) {
+                break entry;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+    })
+    .await
+    .expect("the Vision's turn ended");
+    let refused = entry["kind"] == "sandbox_unavailable";
+    if refused {
+        eprintln!("skipping: no sandbox here can confine a Vision run");
+    }
+    refused
+}
+
+/// In a YOLO channel the Vision's own run still has its fixed envelope: it cannot read a
+/// secret, cannot reach the network (here a local server on another port), and its plain
+/// `themis` calls still reach the app server.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_vision_run_in_a_yolo_channel_cannot_read_a_secret_or_reach_the_network() {
+    let _turn = ONE_SERVER.lock().await;
+    let fx = fixture().await;
+    std::fs::write(fx.project.join(".env"), "SECRET_TOKEN=s3cr3t-value\n").unwrap();
+    let elsewhere = MockServer::builder().start().await;
+    let probe = format!("{}/probe", elsewhere.uri());
+    let steps = vec![
+        json!({"command": "cat", "args": [".env"]}),
+        json!({"command": "sh", "args": ["-c", "cat .env"]}),
+        json!({"command": "curl", "args": ["-s", "-m", "3", probe]}),
+    ];
+    let provider = vision_provider(fx.project.clone(), steps).await;
+    fx.use_provider(&provider).await;
+    // Even a rule letting `curl` run leaves the network to the sandbox, which blocks it.
+    fx.state
+        .save_runtime_configuration(
+            "user",
+            Some(fx.project.to_string_lossy().into_owned()),
+            r#"{"approval":{"rules":[{"tool":"shell","command":["curl"],"action":"allow"}]}}"#,
+        )
+        .unwrap();
+    let (_vision, channel) = fx.vision_and_channel_in("Wren", "hq", "yolo");
+    fx.call_ok(
+        "post_channel_message",
+        json!({"channelId": channel, "text": "@Wren go"}),
+    );
+    if first_vision_turn(&fx, &channel).await {
+        fx.shut_down().await;
+        return;
+    }
+    let results = tool_results(&provider).await;
+    assert!(results.len() >= 5, "{results:?}");
+    assert!(
+        results
+            .iter()
+            .all(|result| !result.contains("s3cr3t-value")),
+        "{results:?}"
+    );
+    // The secret was refused with the Vision's reason; `curl` ran, and failed, in the sandbox.
+    assert!(
+        results
+            .iter()
+            .any(|result| result.contains(".env") && result.contains("a Vision's run never asks")),
+        "{results:?}"
+    );
+    assert!(
+        results
+            .iter()
+            .any(|result| result.contains("\"exit_code\"") && !result.contains("\"exit_code\":0")),
+        "{results:?}"
+    );
+    assert!(
+        elsewhere.received_requests().await.unwrap().is_empty(),
+        "nothing reached the other server"
+    );
+    // The app server was reachable: the chat was started through `themis`.
+    let entries = fx.entries(&channel);
+    assert!(
+        entries.iter().any(|entry| entry["type"] == "chat_started"),
+        "{entries:?}"
+    );
+    wait_for_idle_channel(&fx, &channel).await;
+    fx.shut_down().await;
+}
+
+/// With the sandbox switched off nothing would confine the Vision's run: it does not run, and
+/// the channel says why.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_vision_run_is_refused_without_a_sandbox() {
+    let _turn = ONE_SERVER.lock().await;
+    let fx = fixture().await;
+    std::fs::write(
+        fx.data.join("runtime.jsonc"),
+        r#"{"sandbox": {"enabled": false}}"#,
+    )
+    .unwrap();
+    let provider = vision_provider(fx.project.clone(), Vec::new()).await;
+    fx.use_provider(&provider).await;
+    let (vision, channel) = fx.vision_and_channel("Wren", "hq");
+    fx.call_ok(
+        "post_channel_message",
+        json!({"channelId": channel, "text": "@Wren go"}),
+    );
+    let entries = tokio::time::timeout(Duration::from_secs(20), async {
+        loop {
+            let entries = fx.entries(&channel);
+            if entries.iter().any(|entry| entry["type"] == "notice") {
+                break entries;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+    })
+    .await
+    .expect("a notice");
+    let notice = entries
+        .iter()
+        .find(|entry| entry["type"] == "notice")
+        .unwrap();
+    assert_eq!(notice["kind"], "sandbox_unavailable", "{entries:?}");
+    assert_eq!(notice["vision_id"], vision.as_str());
+    assert!(
+        provider.received_requests().await.unwrap().is_empty(),
+        "no run"
+    );
+    fx.shut_down().await;
+}
+
+/// Waits until no chat the channel's Vision owns is running.
+async fn wait_for_idle_channel(fx: &Fixture, channel: &str) {
+    let owned = fx.state.owners_where(|owner| owner.channel_id == channel);
+    for owner in owned {
+        wait_until(|| async { !fx.running(&owner.thread_id).await }).await;
+    }
 }

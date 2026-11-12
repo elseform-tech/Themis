@@ -601,9 +601,9 @@
    "cyclomatic": 25
   },
   "crates/desktop/src/state/run.rs::AppState::spawn_run": {
-   "cognitive": 139,
-   "cyclomatic": 120,
-   "lines": 945
+   "cognitive": 135,
+   "cyclomatic": 114,
+   "lines": 924
   },
   "crates/desktop/src/state/subagent_tools.rs::SubagentTool#2::spawn": {
    "cyclomatic": 28

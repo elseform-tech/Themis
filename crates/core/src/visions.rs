@@ -116,6 +116,22 @@ pub fn vision_decides(
     }
 }
 
+/// Whether a Vision with a profile override (`level`, `rows`) decides `decision` itself. A
+/// profile is applied like a project layer: it may only take decisions away from the resolved
+/// `visions.autonomy`/`visions.custom`, never add one, and `false` rows take theirs away.
+pub fn profile_decides(
+    resolved: Autonomy,
+    resolved_custom: &BTreeMap<String, bool>,
+    level: Option<Autonomy>,
+    rows: Option<&BTreeMap<String, bool>>,
+    decision: Decision,
+) -> bool {
+    let profile_level =
+        level.is_none_or(|level| vision_decides(level, rows.unwrap_or(resolved_custom), decision));
+    let row_allows = rows.and_then(|rows| rows.get(decision.id())) != Some(&false);
+    vision_decides(resolved, resolved_custom, decision) && profile_level && row_allows
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -165,6 +181,52 @@ mod tests {
             &BTreeMap::new(),
             Decision::Delete
         ));
+    }
+
+    /// A profile's level and rows only take decisions away from the resolved ones, as a
+    /// project layer may: never more than the resolved level allows.
+    #[test]
+    fn a_profile_may_only_lower_the_resolved_autonomy() {
+        use Decision::*;
+        let none = BTreeMap::new();
+        let decided = |resolved, custom: &BTreeMap<String, bool>, level, rows| {
+            Decision::ALL
+                .into_iter()
+                .filter(|d| profile_decides(resolved, custom, level, rows, *d))
+                .collect::<Vec<_>>()
+        };
+        // Raising is ignored: a project's `ask` stays `ask`.
+        assert!(decided(Autonomy::Ask, &none, Some(Autonomy::NearlyAll), None).is_empty());
+        assert_eq!(
+            decided(Autonomy::Small, &none, Some(Autonomy::Most), None),
+            vec![Wording, Tests]
+        );
+        // Lowering holds.
+        assert!(decided(Autonomy::Most, &none, Some(Autonomy::Ask), None).is_empty());
+        assert_eq!(
+            decided(Autonomy::Most, &none, None, None),
+            vec![Wording, Tests, Undoable, Retry]
+        );
+        // Custom rows: `true` adds nothing, `false` takes away.
+        let rows = BTreeMap::from([("delete".to_owned(), true), ("tests".to_owned(), false)]);
+        assert_eq!(
+            decided(Autonomy::Small, &none, Some(Autonomy::Custom), Some(&rows)),
+            Vec::<Decision>::new()
+        );
+        assert_eq!(
+            decided(Autonomy::Small, &none, None, Some(&rows)),
+            vec![Wording]
+        );
+        let resolved = BTreeMap::from([("delete".to_owned(), true), ("wording".to_owned(), true)]);
+        assert_eq!(
+            decided(
+                Autonomy::Custom,
+                &resolved,
+                Some(Autonomy::Custom),
+                Some(&rows)
+            ),
+            vec![Delete]
+        );
     }
 
     #[test]

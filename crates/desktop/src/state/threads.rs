@@ -781,9 +781,6 @@ impl AppState {
     }
 }
 
-/// The default model `wanted`, unless the loaded catalog shows it gone or unusable (Go
-/// retired it): then Themis's default model, else the first usable one. With no catalog
-/// loaded, `wanted` stands.
 /// The person's own words that start a run: `None` for an automation, a goal turn or a hook's
 /// wake (the memory pass reads only what the person said).
 fn person_words(text: &str, automation_run: bool) -> Option<String> {
@@ -793,6 +790,9 @@ fn person_words(text: &str, automation_run: bool) -> Option<String> {
     .then(|| text.to_owned())
 }
 
+/// The default model `wanted`, unless the loaded catalog shows it gone or unusable (Go
+/// retired it): then Themis's default model, else the first usable one. With no catalog
+/// loaded, `wanted` stands.
 fn usable_model(catalog: &[themis_core::providers::GoModel], wanted: String) -> String {
     let usable = |id: &str| {
         catalog

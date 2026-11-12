@@ -309,6 +309,10 @@ impl themis_core::agent_cli::Issuer for AgentTokens {
         }
         issued.by_run.retain(|(thread, _), _| thread != thread_id);
     }
+
+    fn port(&self) -> Option<u16> {
+        Some(self.port)
+    }
 }
 
 /// Byte comparison that takes the same time wherever the first difference is.

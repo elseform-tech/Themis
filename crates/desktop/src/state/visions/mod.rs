@@ -13,6 +13,7 @@
 mod channel_log;
 mod control;
 mod drive;
+mod envelope;
 mod runs;
 mod store;
 mod wakes;
@@ -34,7 +35,7 @@ use themis_core::visions::Autonomy;
 
 use super::AppState;
 pub use channel_log::{ChannelLine, ChannelPage};
-pub(super) use runs::{boxed_run, confine, run_scope, run_tools, VisionRunSpec};
+pub(super) use runs::{boxed_run, confine, run_scope, run_tools, vision_approvals, VisionRunSpec};
 use store::StoreError;
 pub use wakes::WakeReason;
 
@@ -143,6 +144,8 @@ pub enum NoticeKind {
     BudgetReached,
     ChatFailed,
     HandedBack,
+    /// A Vision's run was refused: no sandbox here can hold it in its envelope.
+    SandboxUnavailable,
 }
 
 /// One entry in a channel's log.

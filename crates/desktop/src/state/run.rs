@@ -161,7 +161,8 @@ impl AppState {
             .with_read_approval(true)
             .with_unattended(snapshot.automation_run)
             .with_audit(diagnostic_context.clone())
-            .with_steer_waiting(self.steer_waiting_check(thread_id)),
+            .with_steer_waiting(self.steer_waiting_check(thread_id))
+            .with_asked(self.visions_approval_notifier(sink, thread_id)),
         );
         // "Allow in this chat" grants persist for the chat: loaded now, extended
         // by this run's answers, and inherited by later runs (including the
@@ -202,7 +203,12 @@ impl AppState {
             reviewer,
         );
         let approvals: Arc<dyn ApprovalHook> = Arc::new(AuditedApprovals {
-            inner: approvals,
+            inner: super::visions::vision_approvals(
+                vision.as_ref(),
+                approvals,
+                &run_configuration.approval,
+                &snapshot.work_root,
+            ),
             context: diagnostic_context.clone(),
         });
         // Materialize skill scripts into the run workroot BEFORE building
@@ -284,7 +290,8 @@ impl AppState {
                 ),
                 cancel: Some(Arc::clone(&stopped)),
                 sandbox: Some(Arc::clone(&sandbox)),
-                no_escalation: false,
+                // A Vision's run never asks to leave its sandbox.
+                no_escalation: vision.is_some(),
             },
         )
         .map_err(|err| format!("failed to build tools: {err:#}"))?;
@@ -502,35 +509,7 @@ impl AppState {
             Some(remember),
         );
         // fetch_url always; web_search through your SearXNG, or the one built into Themis.
-        let mut web = run_configuration.web.clone();
-        if web.search_url.is_none()
-            && self.inner.built_in_search
-            && super::searxng::runtime_dir().is_some()
-        {
-            let app_dir = self.app_data_dir();
-            match super::searxng::for_run(super::searxng::RUN_WAIT, super::searxng::url(&app_dir))
-                .await
-            {
-                super::searxng::ForRun::Ready(url) => web.search_url = Some(url),
-                super::searxng::ForRun::Unavailable(error) => {
-                    let _ = self.inner.diagnostics.append(
-                        "web",
-                        "built_in_search_unavailable",
-                        "warn",
-                        json!({"reason": error}),
-                    );
-                }
-                // Its start goes on in the background; the next run gets the server.
-                super::searxng::ForRun::Starting => {
-                    let _ = self.inner.diagnostics.append(
-                        "web",
-                        "built_in_search_starting",
-                        "info",
-                        json!({"waited_ms": super::searxng::RUN_WAIT.as_millis() as u64}),
-                    );
-                }
-            }
-        }
+        let web = self.run_web_config(&run_configuration).await;
         tools.extend(themis_core::skills::skill_tool(&snapshot.skill_catalog));
         tools.extend(themis_core::tools::web::web_tools(
             approvals.clone(),

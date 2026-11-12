@@ -58,10 +58,14 @@ pub struct DesktopApprovalHook {
     audit: Option<DiagnosticContext>,
     subagent: Option<crate::types::SubagentLabel>,
     steer_waiting: Option<SteerWaiting>,
+    asked: Option<Asked>,
 }
 
 /// Whether a message the person steered in is waiting for the run to read it.
 pub type SteerWaiting = Arc<dyn Fn() -> bool + Send + Sync>;
+
+/// Told the id of each approval box this hook shows (a Vision's chat wakes its Vision).
+pub type Asked = Arc<dyn Fn(&str) + Send + Sync>;
 
 impl DesktopApprovalHook {
     /// Requests from this hook name the subagent that asks.
@@ -91,7 +95,15 @@ impl DesktopApprovalHook {
             audit: None,
             subagent: None,
             steer_waiting: None,
+            asked: None,
         }
+    }
+
+    /// Calls `asked` with the id of each approval box shown.
+    #[must_use]
+    pub fn with_asked(mut self, asked: Asked) -> Self {
+        self.asked = Some(asked);
+        self
     }
 
     /// While a steered message waits to be read, actions are denied with no
@@ -260,6 +272,9 @@ impl DesktopApprovalHook {
         }
         let asked = Instant::now();
         self.sink.emit_approval_request(&request);
+        if let Some(asked) = &self.asked {
+            asked(&approval_id);
+        }
         let decision = wait_for_decision(&receiver, self.timeout);
         self.log_answer(action, decision, asked.elapsed());
         // `approve_action` removes its entry on success; this covers timeouts.

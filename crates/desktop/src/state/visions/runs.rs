@@ -1,24 +1,27 @@
 //! A Vision's run: a turn of its hidden Vision chat for one channel, started by a wake.
 //!
-//! The run is an ordinary chat run with three differences, captured when it starts: its system
+//! The run is an ordinary chat run with these differences, captured when it starts: its system
 //! head is the Vision's (`visions-system.md`: who it is, its channel, the `themis` calls that
 //! drive chats and its autonomy table) in place of the ordinary instructions; it has only the
-//! read-only tools (`READ_ONLY_TOOLS`, the shell among them) under a sandbox that writes
-//! nowhere in the project, and no plugins, skills, subagents, browser or memory; and its
-//! credential carries the Vision grant (`RunScope.vision`), so its `themis` calls may drive the
-//! chats the Vision owns. Its final reply is posted in the channel as the Vision's message.
+//! read-only tools (`READ_ONLY_TOOLS`, the shell among them), and no plugins, skills,
+//! subagents, browser or memory; it runs in a fixed envelope whatever the channel's mode
+//! (`envelope`: Custom's rules, plain `themis` without asking, never a box; the sandbox's
+//! `vision_envelope`: read-only, no network but the app server, no Keychain or secrets), and
+//! is refused, with a notice in the channel, where no sandbox can hold it; and its credential
+//! carries the Vision grant (`RunScope.vision`), so its `themis` calls may drive the chats the
+//! Vision owns. Its final reply is posted in the channel as the Vision's message.
 
 use std::path::Path;
 use std::sync::Arc;
 
 use serde_json::json;
 use themis_core::agent_cli::{RunScope, VisionScope};
-use themis_core::configuration::VisionsConfig;
+use themis_core::configuration::{ApprovalMode, ApprovalPolicy, VisionsConfig};
 use themis_core::plugins::agents::READ_ONLY_TOOLS;
 use themis_core::prompts::{fill, VISIONS_READ_ONLY_NOTE, VISIONS_SYSTEM, VISIONS_WAKE_TURN};
 use themis_core::sandbox::SandboxPlan;
-use themis_core::tools::ToolT;
-use themis_core::visions::{vision_decides, Decision};
+use themis_core::tools::{ApprovalHook, ToolT};
+use themis_core::visions::{profile_decides, Decision};
 
 use super::{Channel, ChannelEntry, Hold, NoticeKind, OwnedKind, Owner, Vision, WakeReason};
 use crate::sink::EventSink;
@@ -44,18 +47,47 @@ pub(in crate::state) struct VisionRun {
     head: String,
     /// Its grant: the Vision, the channel and the channel's project.
     scope: VisionScope,
+    /// The app server's port, the only network its commands reach.
+    port: u16,
 }
 
-/// A Vision run's sandbox: the run's plan made read-only, writable nowhere in the project (as a
-/// subagent's with no write paths). Other runs keep theirs.
+/// Why a wake's run did not start.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum NotStarted {
+    /// Refused before it ran (busy, no chat yet): its reasons wait and it is tried again.
+    Refused(&'static str),
+    /// Nothing here can confine it: it never runs, and the channel says so.
+    Unconfinable,
+}
+
+/// A Vision run's sandbox: its fixed envelope (see `SandboxPlan::vision_envelope`), or one
+/// refusing every command when it cannot be built after all. Other runs keep theirs.
 pub(in crate::state) fn confine(
     vision: Option<&VisionRun>,
     sandbox: Arc<SandboxPlan>,
     root: &Path,
 ) -> Arc<SandboxPlan> {
     match vision {
-        Some(_) => Arc::new(sandbox.confined_to(root, &[])),
+        Some(vision) => Arc::new(
+            sandbox
+                .vision_envelope(root, vision.port)
+                .unwrap_or_else(|reason| sandbox.fail_closed(reason)),
+        ),
         None => sandbox,
+    }
+}
+
+/// A Vision run's approvals: its fixed envelope (see `envelope`), audited like any run's.
+/// Other runs keep theirs.
+pub(in crate::state) fn vision_approvals(
+    vision: Option<&VisionRun>,
+    approvals: Arc<dyn ApprovalHook>,
+    policy: &ApprovalPolicy,
+    root: &Path,
+) -> Arc<dyn ApprovalHook> {
+    match vision {
+        Some(_) => super::envelope::envelope_approvals(policy, root),
+        None => approvals,
     }
 }
 
@@ -91,15 +123,20 @@ where
     }
 }
 
-/// The Vision's system head for a run in `channel`: the Vision's own autonomy and rows when
-/// its profile overrides them, else the configured ones.
+/// The Vision's system head for a run in `channel`. Its profile's autonomy and rows may only
+/// lower the configured ones (`profile_decides`).
 pub(super) fn vision_head(vision: &Vision, channel: &Channel, config: &VisionsConfig) -> String {
-    let level = vision.autonomy.unwrap_or(config.autonomy);
-    let custom = vision.custom.as_ref().unwrap_or(&config.custom);
     let table = Decision::ALL
         .into_iter()
         .map(|decision| {
-            let who = if vision_decides(level, custom, decision) {
+            let decides = profile_decides(
+                config.autonomy,
+                &config.custom,
+                vision.autonomy,
+                vision.custom.as_ref(),
+                decision,
+            );
+            let who = if decides {
                 "you decide"
             } else {
                 "ask the person"
@@ -135,6 +172,12 @@ pub(super) fn vision_head(vision: &Vision, channel: &Channel, config: &VisionsCo
     format!("{head}\n\n{VISIONS_READ_ONLY_NOTE}")
 }
 
+/// Whether a failed send never reaches the run's end step, which would end the wake: refused
+/// before it was saved, or saved but never started (its start could not be recorded).
+fn never_ran(progress: ServerSend) -> bool {
+    matches!(progress, ServerSend::Pending | ServerSend::Saved)
+}
+
 /// `text` cut to [`MAX_REPLY_CHARS`] characters.
 fn bounded(text: &str) -> String {
     match text.char_indices().nth(MAX_REPLY_CHARS) {
@@ -154,8 +197,9 @@ impl AppState {
             })
     }
 
-    /// Captures a Vision chat's run: its head and grant, and a configuration without plugins,
-    /// skills, subagents, browser or memory. Any other run passes through unchanged.
+    /// Captures a Vision chat's run: its head, grant and envelope (Custom's rules whatever the
+    /// channel's mode, refused where no sandbox can hold it), and a configuration without
+    /// plugins, skills, subagents, browser or memory. Any other run passes through unchanged.
     pub(in crate::state) fn visions_run_setup(
         &self,
         snapshot: &mut RunSnapshot,
@@ -172,6 +216,9 @@ impl AppState {
         let channel = self
             .channel_get(&spec.channel_id)
             .ok_or_else(|| "This channel no longer exists".to_owned())?;
+        let port =
+            self.visions_envelope_check(&snapshot.work_root, &snapshot.runtime_configuration)?;
+        snapshot.approval_mode = ApprovalMode::Custom;
         let config = &mut snapshot.runtime_configuration;
         let head = vision_head(&vision, &channel, &config.visions);
         config.subagents.enabled = false;
@@ -185,7 +232,21 @@ impl AppState {
             channel_id: spec.channel_id,
             project_root: channel.project_root,
         };
-        Ok(Some(VisionRun { head, scope }))
+        Ok(Some(VisionRun { head, scope, port }))
+    }
+
+    /// Whether a Vision run in `root` under `config` can be held in its envelope; the app
+    /// server's port when it can, why not when it cannot.
+    pub(in crate::state) fn visions_envelope_check(
+        &self,
+        root: &Path,
+        config: &themis_core::configuration::RuntimeConfig,
+    ) -> Result<u16, String> {
+        let port = themis_core::agent_cli::port()
+            .ok_or_else(|| "No Themis app server runs for a Vision's `themis` calls".to_owned())?;
+        self.sandbox_plan(root, &config.sandbox, None)
+            .vision_envelope(root, port)
+            .map(|_| port)
     }
 
     /// The model a Vision's chats run on: its profile's, else the app's default.
@@ -249,13 +310,29 @@ impl AppState {
                 "run_started",
                 json!({"vision_id": vision_id, "channel_id": channel_id, "thread_id": thread_id, "run_id": run_id, "reasons": reasons.len()}),
             ),
-            Err(why) => {
+            Err(NotStarted::Refused(why)) => {
                 self.visions_cache()
                     .wakes
                     .refused(&vision_id, &channel_id, reasons);
                 self.visions_note(
                     "run_refused",
                     json!({"vision_id": vision_id, "channel_id": channel_id, "reason": why}),
+                );
+            }
+            // Counted and dropped: tried again only when something wakes it anew.
+            Err(NotStarted::Unconfinable) => {
+                self.visions_cache().wakes.ended(&vision_id, &channel_id);
+                let _ = self.channel_append(
+                    &channel_id,
+                    ChannelEntry::Notice {
+                        kind: NoticeKind::SandboxUnavailable,
+                        vision_id: Some(vision_id.clone()),
+                        thread_id: None,
+                    },
+                );
+                self.visions_note(
+                    "run_refused",
+                    json!({"vision_id": vision_id, "channel_id": channel_id, "reason": "sandbox_unavailable"}),
                 );
             }
         }
@@ -267,24 +344,36 @@ impl AppState {
         channel_id: &str,
         vision_id: &str,
         reasons: &[WakeReason],
-    ) -> Result<(String, String), &'static str> {
-        let channel = self.channel_get(channel_id).ok_or("gone")?;
-        let vision = self.vision_get(vision_id).ok_or("gone")?;
+    ) -> Result<(String, String), NotStarted> {
+        let gone = NotStarted::Refused("gone");
+        let channel = self.channel_get(channel_id).ok_or(gone)?;
+        let vision = self.vision_get(vision_id).ok_or(gone)?;
+        let config = self
+            .runtime_configuration(Some(&channel.project_root), None)
+            .map_err(|_| NotStarted::Refused("configuration"))?
+            .config;
+        if self
+            .visions_envelope_check(&channel.project_root, &config)
+            .is_err()
+        {
+            return Err(NotStarted::Unconfinable);
+        }
         let chat = Box::pin(self.visions_chat(&vision, &channel))
             .await
-            .map_err(|_| "no_chat")?;
+            .map_err(|_| NotStarted::Refused("no_chat"))?;
         let text = self.visions_wake_text(channel_id, reasons);
         let run_id = uuid::Uuid::new_v4().to_string();
         let (sent, progress) =
             Box::pin(self.send_from_server(sink, &chat, text, &run_id, None, Vec::new())).await;
-        if sent.is_err() && progress == ServerSend::Pending {
-            return Err("busy");
+        if sent.is_err() && never_ran(progress) {
+            return Err(NotStarted::Refused("busy"));
         }
         Ok((chat, run_id))
     }
 
     /// The Vision's own chat for `channel`, made on its first wake: hidden from the plain
-    /// list, titled "{name} · #{channel}", on the Vision's model and the channel's mode.
+    /// list, titled "{name} · #{channel}", on the Vision's model, in Custom (its runs keep their
+    /// own envelope whatever the channel's mode).
     async fn visions_chat(&self, vision: &Vision, channel: &Channel) -> Result<String, String> {
         let existing = self.owners_where(|owner| {
             owner.vision_id == vision.id
@@ -326,7 +415,7 @@ impl AppState {
         // The title is only a label: a name too long for one keeps the chat untitled.
         let title = format!("{} · #{}", vision.name, channel.name);
         let _ = self.rename_thread(thread_id.to_owned(), title).await;
-        self.set_thread_approval_mode(thread_id.to_owned(), channel.approval_mode)
+        self.set_thread_approval_mode(thread_id.to_owned(), ApprovalMode::Custom)
             .await?;
         self.owner_set(Owner {
             thread_id: thread_id.to_owned(),
@@ -460,19 +549,44 @@ mod tests {
             let who = if mine { "you decide" } else { "ask the person" };
             assert_eq!(*row, format!("- `{}`: {who}", decision.id()));
         }
-        // A profile's custom rows replace the configured level; `spend` stays the person's.
+        // A profile may only lower the resolved level: `nearly_all` over the default `small`
+        // still decides only wording and tests, and its `ask` lowers it to nothing.
+        let raised = Vision {
+            autonomy: Some(Autonomy::NearlyAll),
+            ..wren()
+        };
+        let head = vision_head(&raised, &hq(), &VisionsConfig::default());
+        assert!(head.contains("- `wording`: you decide"));
+        assert!(head.contains("- `delete`: ask the person"));
+        let lowered = Vision {
+            autonomy: Some(Autonomy::Ask),
+            ..wren()
+        };
+        let head = vision_head(&lowered, &hq(), &VisionsConfig::default());
+        assert!(head.contains("- `wording`: ask the person"));
+        // Custom rows can only take away; `spend` stays the person's.
         let custom = Vision {
-            autonomy: Some(Autonomy::Custom),
             custom: Some(BTreeMap::from([
+                ("tests".into(), false),
                 ("delete".into(), true),
                 ("spend".into(), true),
             ])),
             ..wren()
         };
         let head = vision_head(&custom, &hq(), &VisionsConfig::default());
-        assert!(head.contains("- `delete`: you decide"));
-        assert!(head.contains("- `wording`: ask the person"));
+        assert!(head.contains("- `wording`: you decide"));
+        assert!(head.contains("- `tests`: ask the person"));
+        assert!(head.contains("- `delete`: ask the person"));
         assert!(head.contains("- `spend`: ask the person"));
+    }
+
+    /// A failed send whose run never started (refused before saving, or saved but its start
+    /// never recorded) ends the wake here; one that failed to spawn ends at the run's end step.
+    #[test]
+    fn a_save_without_a_run_releases_the_wake() {
+        assert!(never_ran(ServerSend::Pending));
+        assert!(never_ran(ServerSend::Saved));
+        assert!(!never_ran(ServerSend::SpawnFailed));
     }
 
     #[test]

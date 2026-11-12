@@ -506,6 +506,8 @@ pub const VISIONS_SYSTEM: &str = include_str!("../builtins/prompts/visions-syste
 /// Follows the Vision system head: a Vision run's tools only read.
 pub const VISIONS_READ_ONLY_NOTE: &str =
     include_str!("../builtins/prompts/visions-read-only-note.md");
+/// The note a Vision run's refused step carries back to it (a step that would need approval).
+pub const VISIONS_STEP_REFUSED: &str = include_str!("../builtins/prompts/visions-step-refused.md");
 /// The message that starts a Vision run (a wake); `{{reasons}}`, `{{recent}}`.
 pub const VISIONS_WAKE_TURN: &str = include_str!("../builtins/prompts/visions-wake-turn.md");
 /// `next` hint after starting a background task.

@@ -31,6 +31,9 @@ pub enum WakeReason {
     /// The chat and the question's id.
     QuestionAsked(String, String),
     HandedBack(String),
+    /// The chat waits on the person's approval or permission question (its id): the Vision tells
+    /// the person, never answers it.
+    ApprovalWaiting(String, String),
 }
 
 impl WakeReason {
@@ -43,6 +46,7 @@ impl WakeReason {
             WakeReason::ChatStopped(_) => "chat_stopped",
             WakeReason::QuestionAsked(..) => "question_asked",
             WakeReason::HandedBack(_) => "handed_back",
+            WakeReason::ApprovalWaiting(..) => "approval_waiting",
         }
     }
 
@@ -54,6 +58,7 @@ impl WakeReason {
             | WakeReason::ChatFailed(thread)
             | WakeReason::ChatStopped(thread)
             | WakeReason::QuestionAsked(thread, _)
+            | WakeReason::ApprovalWaiting(thread, _)
             | WakeReason::HandedBack(thread) => Some(thread),
         }
     }
@@ -62,8 +67,8 @@ impl WakeReason {
     pub(super) fn line(&self) -> String {
         match self {
             WakeReason::Mentioned => self.label().to_owned(),
-            WakeReason::QuestionAsked(thread, question) => {
-                format!("{} {thread} {question}", self.label())
+            WakeReason::QuestionAsked(thread, id) | WakeReason::ApprovalWaiting(thread, id) => {
+                format!("{} {thread} {id}", self.label())
             }
             other => format!("{} {}", other.label(), other.thread().unwrap_or_default()),
         }
@@ -79,6 +84,8 @@ struct WakeSlot {
     count: u32,
     /// Reasons waiting for its next run, oldest first.
     queued: Vec<WakeReason>,
+    /// A run was refused before it started (busy): try again when a run ends.
+    retry: bool,
 }
 
 /// What a wake may do now.
@@ -94,9 +101,16 @@ pub(super) enum Admit {
     Idle,
 }
 
+/// Most approval ids remembered as already told to a Vision.
+const MAX_APPROVALS_SEEN: usize = 256;
+
 /// Every Vision's wakes, by (Vision id, channel id). In memory: a restart starts afresh.
 #[derive(Debug, Default)]
-pub(crate) struct WakeSlots(HashMap<(String, String), WakeSlot>);
+pub(crate) struct WakeSlots {
+    slots: HashMap<(String, String), WakeSlot>,
+    /// Approvals and permission questions a Vision was already woken for, newest last.
+    approvals_seen: std::collections::VecDeque<String>,
+}
 
 impl WakeSlots {
     /// Queues `reason` (once) and decides, in the same step, whether a run starts now.
@@ -108,7 +122,7 @@ impl WakeSlots {
         limit: u32,
     ) -> Admit {
         let slot = self
-            .0
+            .slots
             .entry((vision_id.to_owned(), channel_id.to_owned()))
             .or_default();
         if let Some(reason) = reason {
@@ -129,6 +143,7 @@ impl WakeSlots {
         }
         slot.count += 1;
         slot.running = true;
+        slot.retry = false;
         Admit::Start(std::mem::take(&mut slot.queued))
     }
 
@@ -144,6 +159,7 @@ impl WakeSlots {
     pub(super) fn refused(&mut self, vision_id: &str, channel_id: &str, reasons: Vec<WakeReason>) {
         if let Some(slot) = self.slot(vision_id, channel_id) {
             slot.running = false;
+            slot.retry = true;
             slot.count = slot.count.saturating_sub(1);
             let later = std::mem::replace(&mut slot.queued, reasons);
             for reason in later {
@@ -154,9 +170,33 @@ impl WakeSlots {
         }
     }
 
+    /// The Visions whose refused run may be tried again now (a run ended), once each.
+    pub(super) fn due_retries(&mut self) -> Vec<(String, String)> {
+        let mut due = Vec::new();
+        for (key, slot) in &mut self.slots {
+            if slot.retry && !slot.running {
+                slot.retry = false;
+                due.push(key.clone());
+            }
+        }
+        due
+    }
+
+    /// Whether approval `id` is new to the Visions (it is then remembered).
+    pub(super) fn first_approval_notice(&mut self, id: &str) -> bool {
+        if self.approvals_seen.iter().any(|seen| seen == id) {
+            return false;
+        }
+        self.approvals_seen.push_back(id.to_owned());
+        if self.approvals_seen.len() > MAX_APPROVALS_SEEN {
+            self.approvals_seen.pop_front();
+        }
+        true
+    }
+
     /// The person wrote in the channel: its Visions may wake again.
     pub(super) fn person_wrote(&mut self, channel_id: &str) {
-        for ((_, channel), slot) in &mut self.0 {
+        for ((_, channel), slot) in &mut self.slots {
             if channel == channel_id {
                 slot.count = 0;
             }
@@ -164,7 +204,7 @@ impl WakeSlots {
     }
 
     fn slot(&mut self, vision_id: &str, channel_id: &str) -> Option<&mut WakeSlot> {
-        self.0
+        self.slots
             .get_mut(&(vision_id.to_owned(), channel_id.to_owned()))
     }
 }
@@ -259,7 +299,7 @@ impl AppState {
             if let Some(thread) = reason.thread() {
                 let owner = self
                     .owner_of(thread)
-                    .filter(|owner| owner.vision_id == vision_id)
+                    .filter(|owner| owner.vision_id == vision_id && owner.channel_id == channel_id)
                     .ok_or("not_owned")?;
                 if let Some(why) = held_back(&owner, reason) {
                     return Err(why);
@@ -279,8 +319,27 @@ impl AppState {
 
     /// What a chat's run end means for Visions: a Vision chat's reply goes to its channel and
     /// what waited starts its next run; a work chat's end wakes its Vision, unless the chat
-    /// goes on (a queued message or a running goal is next) or the person holds it.
+    /// goes on (a queued message or a running goal is next) or the person holds it. Any run's
+    /// end also retries the Visions whose run was refused as busy.
     pub(crate) fn visions_after_run(
+        &self,
+        sink: &Arc<dyn EventSink>,
+        thread_id: &str,
+        terminal: &ThreadEvent,
+    ) {
+        // Those refused before this run ended; one refused just now waits for the next end.
+        let due = self.visions_cache().wakes.due_retries();
+        self.visions_run_ended(sink, thread_id, terminal);
+        for (vision_id, channel_id) in due {
+            let outcome = self.visions_wake_or_queue(sink, &channel_id, &vision_id, None);
+            self.visions_note(
+                "wake",
+                json!({"vision_id": vision_id, "channel_id": channel_id, "reason": "retry", "outcome": outcome}),
+            );
+        }
+    }
+
+    fn visions_run_ended(
         &self,
         sink: &Arc<dyn EventSink>,
         thread_id: &str,
@@ -316,13 +375,16 @@ impl AppState {
         self.visions_wake(sink, &owner.channel_id, &owner.vision_id, reason);
     }
 
-    /// A Vision chat's run ended: its reply is the Vision's message in the channel, and when
-    /// it finished, what waited meanwhile starts the next run (still bounded).
+    /// A Vision chat's run ended: its reply is the Vision's message in the channel, and what
+    /// waited meanwhile starts the next run (still bounded), whether this one finished or failed.
+    /// A stopped one (the person's Stop, or a pause) starts nothing.
     fn visions_chat_ended(&self, sink: &Arc<dyn EventSink>, owner: &Owner, terminal: &ThreadEvent) {
         let (vision_id, channel_id) = (owner.vision_id.as_str(), owner.channel_id.as_str());
-        let finished = self.visions_post_reply(owner, terminal);
+        self.visions_post_reply(owner, terminal);
         self.visions_cache().wakes.ended(vision_id, channel_id);
-        if !finished {
+        let stopped = matches!(terminal, ThreadEvent::Failed { error }
+            if error.starts_with(themis_core::runtime::STOPPED_BY_YOU));
+        if stopped {
             return;
         }
         let outcome = self.visions_wake_or_queue(sink, channel_id, vision_id, None);
@@ -334,8 +396,8 @@ impl AppState {
         }
     }
 
-    /// The questions a work chat asked (not permissions, which are the person's) wake its
-    /// Vision.
+    /// The questions a work chat asked wake its Vision: a permission question (the person's
+    /// alone) once, as `ApprovalWaiting`, so it can tell the person.
     pub(crate) fn visions_question_asked(&self, thread_id: &str, question_ids: &[String]) {
         let Some(owner) = self
             .owner_of(thread_id)
@@ -345,6 +407,13 @@ impl AppState {
         };
         for id in question_ids {
             if self.visions_permission_question(thread_id, std::iter::once(id.as_str())) {
+                if self.visions_cache().wakes.first_approval_notice(id) {
+                    self.visions_wake_later(
+                        &owner.channel_id,
+                        &owner.vision_id,
+                        WakeReason::ApprovalWaiting(thread_id.to_owned(), id.clone()),
+                    );
+                }
                 continue;
             }
             self.visions_wake_later(
@@ -353,6 +422,43 @@ impl AppState {
                 WakeReason::QuestionAsked(thread_id.to_owned(), id.clone()),
             );
         }
+    }
+
+    /// An approval box opened in a chat (`approval_id`): its Vision, if it owns the chat, wakes
+    /// once to tell the person.
+    pub(crate) fn visions_approval_waiting(
+        &self,
+        sink: &Arc<dyn EventSink>,
+        thread_id: &str,
+        approval_id: &str,
+    ) {
+        let Some(owner) = self
+            .owner_of(thread_id)
+            .filter(|owner| owner.kind == OwnedKind::Work)
+        else {
+            return;
+        };
+        if !self
+            .visions_cache()
+            .wakes
+            .first_approval_notice(approval_id)
+        {
+            return;
+        }
+        let reason = WakeReason::ApprovalWaiting(thread_id.to_owned(), approval_id.to_owned());
+        self.visions_wake(sink, &owner.channel_id, &owner.vision_id, reason);
+    }
+
+    /// What a run's approval hook calls for each box it shows (see `visions_approval_waiting`).
+    pub(crate) fn visions_approval_notifier(
+        &self,
+        sink: &Arc<dyn EventSink>,
+        thread_id: &str,
+    ) -> crate::approvals::Asked {
+        let (state, sink, thread_id) = (self.clone(), Arc::clone(sink), thread_id.to_owned());
+        Arc::new(move |approval_id: &str| {
+            state.visions_approval_waiting(&sink, &thread_id, approval_id);
+        })
     }
 }
 
@@ -604,6 +710,9 @@ mod tests {
         assert_eq!(admit(finished("mine")), Err("taken_over"));
         own(&s.state, "theirs", &s.ada, &s.channel, Hold::None);
         assert_eq!(admit(finished("theirs")), Err("not_owned"));
+        // Its own chat, but in another channel: not this channel's to wake for.
+        own(&s.state, "elsewhere", &s.wren, "other-channel", Hold::None);
+        assert_eq!(admit(finished("elsewhere")), Err("not_owned"));
     }
 
     /// `@Name` wakes only that Vision; no mention wakes the only member, and nobody in a
@@ -630,5 +739,70 @@ mod tests {
             .visions_post(&sink(), &alone.channel, "anyone there?")
             .unwrap();
         assert_eq!(started(&alone.state), vec![alone.wren.clone()]);
+    }
+
+    /// A wake refused before its run started (busy, no runtime) is tried again when any run
+    /// ends, still counted against `visions.max_wakes`.
+    #[test]
+    fn a_busy_wake_is_retried_when_a_run_ends() {
+        let s = setup(false);
+        s.state
+            .visions_post(&sink(), &s.channel, "anyone there?")
+            .unwrap();
+        assert_eq!(started(&s.state), vec![s.wren.clone()]);
+        // Some other chat's run ends: the waiting reasons go again.
+        let done = ThreadEvent::Finished {
+            model: None,
+            result: "ok".into(),
+        };
+        s.state.visions_after_run(&sink(), "unrelated-chat", &done);
+        assert_eq!(started(&s.state), vec![s.wren.clone(), s.wren.clone()]);
+    }
+
+    /// Reasons that arrived while a Vision run failed are not stranded: the next run starts
+    /// with them (bounded like every other).
+    #[test]
+    fn reasons_queued_during_a_failed_run_start_the_next() {
+        let s = setup(false);
+        s.state
+            .owner_set(Owner {
+                thread_id: "vision-chat".into(),
+                vision_id: s.wren.clone(),
+                channel_id: s.channel.clone(),
+                kind: OwnedKind::VisionChat,
+                hold: Hold::None,
+            })
+            .unwrap();
+        own(&s.state, "work", &s.wren, &s.channel, Hold::None);
+        let first = s
+            .state
+            .visions_wake_admit(&s.channel, &s.wren, Some(WakeReason::Mentioned));
+        assert!(matches!(first, Ok(Admit::Start(_))));
+        let queued = s
+            .state
+            .visions_wake_admit(&s.channel, &s.wren, Some(finished("work")));
+        assert_eq!(queued, Ok(Admit::Queued));
+        let failed = ThreadEvent::Failed {
+            error: "provider error".into(),
+        };
+        s.state.visions_after_run(&sink(), "vision-chat", &failed);
+        assert_eq!(started(&s.state), vec![s.wren.clone()]);
+    }
+
+    /// An approval waiting in a work chat wakes its Vision once per approval (to tell the
+    /// person); not for a chat the person took over, nor for another Vision's chat.
+    #[test]
+    fn an_approval_waiting_wakes_the_vision_once() {
+        let s = setup(true);
+        own(&s.state, "work", &s.wren, &s.channel, Hold::None);
+        own(&s.state, "mine", &s.ada, &s.channel, Hold::TakenOver);
+        s.state.visions_approval_waiting(&sink(), "work", "a1");
+        s.state.visions_approval_waiting(&sink(), "work", "a1");
+        s.state.visions_approval_waiting(&sink(), "mine", "a2");
+        s.state
+            .visions_approval_waiting(&sink(), "plain-chat", "a3");
+        assert_eq!(started(&s.state), vec![s.wren.clone()]);
+        let line = WakeReason::ApprovalWaiting("work".into(), "a1".into()).line();
+        assert_eq!(line, "approval_waiting work a1");
     }
 }

@@ -42,6 +42,14 @@ pub fn profile(plan: &SandboxPlan) -> (String, Vec<(String, OsString)>) {
     if !plan.allow_keychain() {
         text.push_str(&keychain_rules());
     }
+    if let Some(port) = plan
+        .local_port()
+        .filter(|_| plan.network() == NetworkPolicy::Block)
+    {
+        text.push_str(&format!(
+            "(allow network-outbound (remote ip \"localhost:{port}\"))\n"
+        ));
+    }
     (text, params)
 }
 

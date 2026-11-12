@@ -173,6 +173,10 @@ pub trait Issuer: Send + Sync {
     fn issue(&self, thread_id: &str, run_id: &str, scope: &RunScope) -> Option<Access>;
     /// Ends every credential the chat's runs hold.
     fn revoke_thread(&self, thread_id: &str);
+    /// The local port the app server listens on, which run credentials reach.
+    fn port(&self) -> Option<u16> {
+        None
+    }
 }
 
 /// The issuer of this process. One app server per process installs it.
@@ -217,6 +221,11 @@ pub fn current() -> Option<Access> {
         .ok()?;
     let scope = RUN_SCOPE.try_with(Clone::clone).ok()?;
     issue(&thread_id, &run_id, &scope)
+}
+
+/// The port of the app server running in this process, if one does.
+pub fn port() -> Option<u16> {
+    installed()?.port()
 }
 
 /// Ends the credentials of a chat's runs (its run finished).
