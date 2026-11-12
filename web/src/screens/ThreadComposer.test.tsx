@@ -438,4 +438,18 @@ describe("ThreadComposer layout (canvas: input, then one row of controls)", () =
     expect(css).toMatch(/@container themis-composer \(max-width: 260px\)\s*\{\s*\.themis-thread-composer \.themis-composer-label\s*\{\s*display:\s*none;/);
     expect(css).not.toMatch(/themis-composer-location/);
   });
+
+  // A Workspace beside the chat leaves a composer about 280px wide (canvas Workspace board): the row overflows, and
+  // only the branch's name may give way, by an ellipsis; its icon, +, Auto, the meter and send never shrink away.
+  it("keeps every control in a narrow composer: only the branch's name truncates, down to its icon", async () => {
+    const { readFileSync } = await import("node:fs");
+    const css = readFileSync("src/screens/ThreadView.css", "utf8");
+    const rule = (selector: string) => { const at = css.indexOf(`\n${selector} {`); expect(at, selector).toBeGreaterThanOrEqual(0); return css.slice(at, css.indexOf("}", at)); };
+    expect(rule(".themis-thread-composer-actions > *")).toContain("flex: none");
+    expect(rule(".themis-thread-composer-actions > .themis-branch-picker, .themis-thread-composer-actions > .themis-composer-branch-static")).toMatch(/flex: 0 1 auto;[^}]*min-width: 24px/);
+    expect(rule(".themis-thread-composer-actions .themis-branch-picker svg, .themis-composer-branch-static svg")).toContain("flex: none");
+    expect(rule(".themis-composer-branch")).toMatch(/min-width: 0;[^}]*overflow: hidden;[^}]*text-overflow: ellipsis/);
+    expect(rule(".themis-composer-spacer")).toMatch(/flex: 1 1 0;[^}]*min-width: 0/);
+    expect(css).toMatch(/@container themis-composer \(max-width: 420px\)\s*\{\s*\.themis-thread-composer-actions\s*\{\s*gap: 10px;/);
+  });
 });
