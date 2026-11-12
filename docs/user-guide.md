@@ -347,7 +347,7 @@ Codex, the chat's own model judges its goal: there is no separate check.
   the chat's browser and its artifacts are in Workspace and in the chat itself.
 - **Workspace** in a thread's header opens a monitor of the project:
   **Changes** (readable changed files with line counts and their wrapped,
-  highlighted diff, Unified or Split, updating live while the agent works; a
+  highlighted diff below them (hover the diff for Unified or Split), updating live while the agent works; a
   switcher at the top shows another branch's changes without switching to it, which
   only the composer does; binary, generated and secret-looking files are hidden;
   hidden files, those with a part of the path starting with a dot such as

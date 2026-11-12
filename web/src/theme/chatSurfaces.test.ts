@@ -46,11 +46,12 @@ it("draws send and stop as one filled accent circle", () => {
   expect(disabled).toContain("opacity: 1");
 });
 
-it("keeps the diff's hunk header a quiet row inside the well, never an opaque band", () => {
-  const header = rule(read("components/diff/DiffView.css"), ".themis-diff-hunk-header");
-  expect(header).toContain("background: color-mix(in srgb, var(--themis-text) 4%, transparent)");
-  expect(header).toContain("color: var(--themis-text-2)");
-  expect(header).not.toMatch(/raised|sticky/);
+it("parts a diff's hunks by a hairline inside the well, with no header row", () => {
+  const diff = read("components/diff/DiffView.css");
+  expect(diff).not.toMatch(/themis-diff-hunk-header|themis-diff-head \{|themis-diff-path/);
+  expect(rule(diff, ".themis-diff-hunk + .themis-diff-hunk .themis-diff-hunk-gap")).toMatch(/height: 1px;[^}]*background: var\(--themis-border-subtle\)/);
+  // Unified and Split sit over the well's top right, shown on hover or focus like the chat's code toolbar.
+  expect(rule(diff, ".themis-diff-toggle")).toMatch(/position: absolute;[^}]*top: 6px;[^}]*right: 8px/);
 });
 
 it("rounds a chosen sidebar chat, Workspace tab and file row at the canvas's 10px", () => {

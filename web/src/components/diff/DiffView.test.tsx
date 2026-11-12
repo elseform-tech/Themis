@@ -31,12 +31,18 @@ const FILE: DiffFile = {
 const line = (text: string) => (_: string, element: Element | null) => element?.classList.contains("themis-diff-text") === true && element.textContent === text;
 
 describe("DiffView", () => {
-  it("renders hunk content and hunk header", () => {
-    render(<DiffView file={FILE} />);
+  it("renders hunk content in the well with no header bar: hunks part by a hairline, named for screen readers", () => {
+    const { container } = render(<DiffView file={FILE} />);
     expect(screen.getByText(line("line one"))).toBeInTheDocument();
     expect(screen.getByText(line("old line"))).toBeInTheDocument();
     expect(screen.getByText(line("new line"))).toBeInTheDocument();
-    expect(screen.getByText("Line 1")).toBeInTheDocument();
+    // The canvas well: no "Line 1" row, no path or counts bar (the file's row above shows those).
+    expect(screen.queryByText("Line 1")).toBeNull();
+    expect(screen.getByRole("separator", { name: "Line 1" })).toHaveTextContent("");
+    expect(container.querySelector(".themis-diff-head, .themis-diff-path, .themis-diff-hunk-header")).toBeNull();
+    expect(screen.getByRole("region", { name: `Changes in ${FILE.path}` })).toBeInTheDocument();
+    // Unified and Split stay, as a compact control over the well's top right.
+    expect(screen.getByRole("group", { name: "Diff layout" }).closest(".themis-diff")).not.toBeNull();
   });
 
   it("highlights code tokens and wraps instead of scrolling sideways", () => {
@@ -56,10 +62,10 @@ describe("DiffView", () => {
     expect(screen.getByText(line("new line"))).toBeInTheDocument();
   });
 
-  it("shows add/del counts", () => {
+  it("leaves the add/del counts to the file's row above the well", () => {
     render(<DiffView file={FILE} />);
-    expect(screen.getByText("+1")).toBeInTheDocument();
-    expect(screen.getByText("-1")).toBeInTheDocument();
+    expect(screen.queryByText("+1")).toBeNull();
+    expect(screen.queryByText("-1")).toBeNull();
   });
 
   it("starts unified, with no controls that change anything but the layout", () => {

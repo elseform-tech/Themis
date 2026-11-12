@@ -206,16 +206,17 @@ function ChangesView({ threadId, workspace, projectRoot, onWantDiffWidth }: { th
       {files.length === 0
         ? <EmptyState title="No changes" hint={branch !== null ? `${branch} adds nothing to ${current ?? "the current branch"}.` : "The checkout matches its last commit."} />
         : (
-          <DiffSplit>
+          // The canvas: the changed files stacked above the diff's well.
+          <div className="themis-changes-stack">
             <FileTree files={files} selectedPath={file?.path ?? null} onSelect={setSelected} />
             {file ? <DiffView file={file} onWantWidth={onWantDiffWidth} /> : <EmptyState title="No changes" hint="Only hidden files changed." />}
-          </DiffSplit>
+          </div>
         )}
     </div>
   );
 }
 
-/** File list | diff, with a draggable divider whose position is remembered. */
+/** File tree | file (the Files tab), with a draggable divider whose position is remembered. */
 export function DiffSplit({ children }: { children: [ReactNode, ReactNode] }) {
   const [width, setWidth] = useState(() => clampListWidth(Number(readSession("workspaceFileListWidth", LIST_DEFAULT_WIDTH)) || LIST_DEFAULT_WIDTH));
   const split = useRef<HTMLDivElement>(null);

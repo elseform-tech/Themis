@@ -148,15 +148,8 @@ export function DiffView({ file, onWantWidth }: DiffViewProps) {
   };
 
   return (
-    <div className="themis-diff" ref={root}>
-      <div className="themis-diff-head">
-        <span className="themis-diff-path" title={file.path}>
-          {file.path}
-        </span>
-        <span className="themis-diff-counts">
-          <span className="themis-diff-count-add">+{file.added}</span>
-          <span className="themis-diff-count-del">-{file.removed}</span>
-        </span>
+    // The canvas well: no header bar (the file's row above shows its path and counts); Unified and Split sit over its top right.
+    <div className="themis-diff" ref={root} role="region" aria-label={`Changes in ${file.path}`}>
         <span className="themis-diff-toggle" role="group" aria-label="Diff layout">
           {(["unified", "split"] as const).map(option => (
             <button key={option} type="button" aria-pressed={showing === option} disabled={option === "split" && splitOff}
@@ -166,7 +159,6 @@ export function DiffView({ file, onWantWidth }: DiffViewProps) {
             </button>
           ))}
         </span>
-      </div>
 
       {file.too_large && file.hunks.length === 0 ? (
         <EmptyState title="Too large to show" hint={`${file.path} changed too much to show line by line.`} />
@@ -178,9 +170,8 @@ export function DiffView({ file, onWantWidth }: DiffViewProps) {
             const lines = numberHunk(hunk.old_start, hunk.new_start, hunk.lines.map((l) => ({ ...l, oldNo: null, newNo: null })));
             return (
               <div key={hunkIndex} className="themis-diff-hunk">
-                <div className="themis-diff-hunk-header">
-                  {hunkHeader(hunk.old_start, hunk.old_lines, hunk.new_start, hunk.new_lines)}
-                </div>
+                {/* Hunks part by a hairline; where each starts is named for screen readers only. */}
+                <div className="themis-diff-hunk-gap" role="separator" aria-label={hunkHeader(hunk.old_start, hunk.old_lines, hunk.new_start, hunk.new_lines)} />
                 {showing === "split"
                   ? sideBySide(lines).map(([left, right], rowIndex) => {
                     const range = left && right && left.kind === "del" && right.kind === "add" ? changedRange(left.text, right.text) : null;

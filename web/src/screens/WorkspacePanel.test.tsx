@@ -68,6 +68,8 @@ describe("WorkspacePanel", () => {
     expect(head).not.toHaveTextContent("main");
     const close = screen.getByRole("button", { name: "Close workspace" });
     expect(head.contains(close)).toBe(true);
+    // Close sits at the far right of the tab row.
+    expect(head.lastElementChild?.contains(close)).toBe(true);
     expect(close).not.toHaveTextContent("✕");
     fireEvent.click(close);
     expect(dispatch).toHaveBeenCalledWith({ type: "ui/diff-panel", open: false });
@@ -79,6 +81,12 @@ describe("WorkspacePanel", () => {
     expect(panel).toHaveAttribute("aria-valuemax", "1600");
     for (let step = 0; step < 10; step += 1) fireEvent.keyDown(panel, { key: "ArrowRight" });
     expect(panel).toHaveAttribute("aria-valuenow", "300");
+    // Changes stacks its file list above the diff (canvas); the Files tab keeps its resizable tree beside the file.
+    const changes = document.querySelector(".themis-workspace-changes")!;
+    const list = changes.querySelector(".themis-filetree-wrap")!;
+    expect(list.compareDocumentPosition(changes.querySelector(".themis-diff")!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(screen.queryByRole("separator", { name: "Resize file list" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Files" }));
     const split = screen.getByRole("separator", { name: "Resize file list" });
     expect(split).toHaveAttribute("aria-valuenow", "180");
     fireEvent.keyDown(split, { key: "ArrowRight" });
@@ -160,23 +168,23 @@ describe("WorkspacePanel", () => {
   it("opens the file an edited-files row asks for", async () => {
     const second = { ...diff.files[0]!, path: "docs/guide.md" };
     appState = { ...appState, diffs: { t1: { ...diff, files: [...diff.files, second] } }, diffFocus: { path: "docs/guide.md", at: 1 } };
-    const { container } = render(<WorkspacePanel projectRoot="/repo" threadId="t1" workspace={workspace} />);
+    render(<WorkspacePanel projectRoot="/repo" threadId="t1" workspace={workspace} />);
     await act(async () => {});
-    expect(container.querySelector(".themis-diff-path")).toHaveTextContent("docs/guide.md");
+    expect(screen.getByRole("region", { name: "Changes in docs/guide.md" })).toBeInTheDocument();
   });
   it("keeps hidden changes out of the count and the opened diff, behind one line", async () => {
     const hidden = { ...diff.files[0]!, path: ".github/workflows/ci.yml", hidden: true };
     const files = [hidden, diff.files[0]!];
     vi.mocked(bridge.listDiff).mockImplementation(async () => ({ ...diff, files }) as never);
     appState = { ...appState, diffs: { t1: { ...diff, files } as never } };
-    const { container } = render(<WorkspacePanel projectRoot="/repo" threadId="t1" workspace={workspace} />);
+    render(<WorkspacePanel projectRoot="/repo" threadId="t1" workspace={workspace} />);
     await act(async () => {});
     expect(screen.getByRole("button", { name: "Changes 1" })).toBeInTheDocument();
-    expect(container.querySelector(".themis-diff-path")).toHaveTextContent("src/a.ts");
+    expect(screen.getByRole("region", { name: "Changes in src/a.ts" })).toBeInTheDocument();
     expect(screen.queryByTitle(".github/workflows/ci.yml")).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "1 hidden file changed" }));
     fireEvent.click(screen.getByTitle(".github/workflows/ci.yml"));
-    expect(container.querySelector(".themis-diff-path")).toHaveTextContent(".github/workflows/ci.yml");
+    expect(screen.getByRole("region", { name: "Changes in .github/workflows/ci.yml" })).toBeInTheDocument();
     vi.mocked(bridge.listDiff).mockImplementation(async () => diff);
   });
   it("says only hidden files changed instead of opening one", async () => {
@@ -186,7 +194,7 @@ describe("WorkspacePanel", () => {
     const { container } = render(<WorkspacePanel projectRoot="/repo" threadId="t1" workspace={workspace} />);
     await act(async () => {});
     expect(screen.getByRole("button", { name: "Changes" })).toBeInTheDocument();
-    expect(container.querySelector(".themis-diff-path")).toBeNull();
+    expect(container.querySelector(".themis-diff")).toBeNull();
     expect(screen.getByText("Only hidden files changed.")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "1 hidden file changed" })).toBeInTheDocument();
     vi.mocked(bridge.listDiff).mockImplementation(async () => diff);

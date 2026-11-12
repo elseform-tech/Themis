@@ -272,9 +272,6 @@ for (const preset of APPEARANCE_PRESETS) {
         for (const colour of [text, text2, ink.keyword, ink.function, ink.string, ink.type, ink.comment, ink.add, ink.del]) {
           expect(contrastRatio(colour, plain), `${colour} on well ${plain}`).toBeGreaterThanOrEqual(AA_NORMAL);
         }
-        // The diff's hunk header ("Line 1"): text-2 on a 4% tint of the text colour inside the well.
-        const hunk = compositeOver(withAlpha(text, .04), plain);
-        expect(contrastRatio(text2, hunk), `hunk header ${hunk}`).toBeGreaterThanOrEqual(AA_NORMAL);
         // A changed line, its number included, is all its own ink (changed characters are underlined, not re-tinted).
         for (const [lineInk, line] of [[ink.add, added], [ink.del, removed]] as const) {
           expect(contrastRatio(lineInk, line), `${lineInk} on ${line}`).toBeGreaterThanOrEqual(AA_NORMAL);

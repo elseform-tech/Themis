@@ -20,10 +20,9 @@ const SIDEBAR_MIN = 288;
 const SIDEBAR_MAX = 560;
 const SIDEBAR_DEFAULT = 288;
 
-export function Sidebar({ collapsed: folded }: { collapsed: boolean }) {
+// Settings takes over the whole sidebar with its section list; the toggle folds it the same way.
+export function Sidebar({ collapsed }: { collapsed: boolean }) {
   const { state, dispatch } = useApp();
-  // Settings takes over the whole sidebar with its section list; the toggle folds it the same way.
-  const collapsed = folded;
   const settingsOpen = state.mainView === "settings";
   const [width, setWidth] = useState(() => Math.max(SIDEBAR_MIN, Math.min(SIDEBAR_MAX, Number(readSession("sidebarWidth", SIDEBAR_DEFAULT)) || SIDEBAR_DEFAULT)));
   const resizeStart = useRef<{ x: number; width: number } | null>(null);
@@ -115,7 +114,6 @@ export function Sidebar({ collapsed: folded }: { collapsed: boolean }) {
       {settingsOpen ? <SettingsNav id="themis-sidebar" /> : <>
       <Rail onHelp={() => setHelp(true)} />
       <aside id="themis-sidebar" className={`themis-sidebar ${collapsed ? "" : "is-visible"}`} inert={collapsed} aria-hidden={collapsed} aria-label="Workspace navigation">
-        {/* The canvas's top row: the project (its menu switches, renames, deletes and creates projects) and a pencil for a new chat. */}
         <div className="themis-sidebar-top">
           <details className="themis-project-switcher" data-popover>
             <summary aria-label={`Project: ${activeProject?.name ?? "none"}`} title={activeProject?.root}>
@@ -143,11 +141,7 @@ export function Sidebar({ collapsed: folded }: { collapsed: boolean }) {
               <button type="button" className="themis-project-option" aria-label="New project" onClick={event => { event.currentTarget.closest("details")?.removeAttribute("open"); dispatch({ type: "ui/project-dialog", open: true }); }}>New project</button>
             </div>
           </details>
-          <Tooltip content="New chat (⌘/Ctrl+Shift+O)" below>
-            <button type="button" className="themis-new-chat" aria-label="New chat" disabled={!state.activeProjectRoot} onClick={() => void newThread()}>
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z" /></svg>
-            </button>
-          </Tooltip>
+          <NewChatButton disabled={!state.activeProjectRoot} onClick={() => void newThread()} />
         </div>
         <div className="themis-sidebar-projects">
           {activeProject && <>
@@ -327,4 +321,16 @@ function ThreadStatus({ status }: { status: ThreadState }) {
       ? <svg viewBox="0 0 24 24" aria-hidden="true">{DOT_GRID.map(([cx, cy], cell) => <circle key={cell} className={lit.includes(cell) ? "is-lit" : undefined} cx={cx} cy={cy} r="2.1" />)}</svg>
       : <DotSpinner />}
   </span>;
+}
+
+/** The canvas's top row ends in a pencil: a new chat in the open project (the project menu beside it switches, renames,
+ *  deletes and creates projects). Its name and shortcut are in the tooltip. */
+function NewChatButton({ disabled, onClick }: { disabled: boolean; onClick: () => void }) {
+  return (
+    <Tooltip content="New chat (⌘/Ctrl+Shift+O)" below>
+      <button type="button" className="themis-new-chat" aria-label="New chat" disabled={disabled} onClick={onClick}>
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z" /></svg>
+      </button>
+    </Tooltip>
+  );
 }
