@@ -4,31 +4,8 @@ use std::path::{Path, PathBuf};
 
 use crate::types::{Settings, SettingsPatch, ThemeMode};
 
-pub const THEME_PALETTES: &[&str] = &[
-    "auto",
-    "classic",
-    "morning",
-    "noon",
-    "night",
-    "warm",
-    "violet",
-    "github-dark",
-    "github-dimmed",
-    "midnight",
-    "nordic",
-    "graphite",
-    "ink",
-    "forest",
-    "copper",
-    "plum",
-    "ocean",
-    "rosewood",
-    "olive",
-    "amethyst",
-    "terminal",
-    "sandstone",
-    "carbon",
-];
+/// Auto, Classic and the three skies; anything else (the old "system" and the removed solid presets) loads as Classic.
+pub const THEME_PALETTES: &[&str] = &["auto", "classic", "morning", "noon", "night"];
 pub const FONT_FAMILIES: &[&str] = &[
     "system",
     "sans",
@@ -131,7 +108,7 @@ impl SettingsStore {
             settings.context_token_cap = 0;
         }
         settings.theme = ThemeMode::Dark;
-        // A retired or unknown palette (the old "system" included) loads as Classic.
+        // A retired or unknown palette (the old "system" and the removed solid presets included) loads as Classic.
         if !THEME_PALETTES.contains(&settings.theme_palette.as_str()) {
             settings.theme_palette = crate::types::default_theme_palette();
         }
@@ -592,19 +569,22 @@ mod preference_tests {
                 .unwrap();
             assert_eq!(saved.theme_palette, palette);
         }
-        assert!(store
-            .update(SettingsPatch {
-                theme_palette: Some("system".to_owned()),
-                ..Default::default()
-            })
-            .await
-            .is_err());
-        assert_eq!(store.get().await.theme_palette, "classic");
-        std::fs::write(&path, r#"{"theme_palette": "system"}"#).unwrap();
-        assert_eq!(
-            SettingsStore::load(path).get().await.theme_palette,
-            "classic"
-        );
+        // The old "system" id and the removed solid presets are refused, and load as Classic.
+        for removed in ["system", "ocean", "github-dark", "warm"] {
+            assert!(store
+                .update(SettingsPatch {
+                    theme_palette: Some(removed.to_owned()),
+                    ..Default::default()
+                })
+                .await
+                .is_err());
+            assert_eq!(store.get().await.theme_palette, "classic");
+            std::fs::write(&path, format!(r#"{{"theme_palette": "{removed}"}}"#)).unwrap();
+            assert_eq!(
+                SettingsStore::load(path.clone()).get().await.theme_palette,
+                "classic"
+            );
+        }
     }
 
     #[tokio::test]
