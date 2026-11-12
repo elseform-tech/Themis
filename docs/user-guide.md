@@ -840,12 +840,13 @@ display-name changes. Settings shows only the shared projects root. Every new
 project is created under `~/ThemisOS/Projects`, with no folder override. Renaming leaves
 folders and conversation history in place. Existing projects are not moved.
 
-**Appearance** offers 20 presets: Classic (the original dark Themis scheme,
-and the default), the Morning, Noon and Night skies, and 16 dark alternatives,
-including GitHub-inspired Dark and Dimmed. Morning and Noon are light; the
-others are dark. On Linux, and where the system web view cannot blur, the sky
-panels are solid instead of frosted glass. Old settings that asked for light or
-system mode, or for the retired `system` palette, open as Classic. There are 12 local font
+**Appearance** offers five cards with a preview of each: Auto (follows the
+time of day), the Morning, Noon and Night skies, and Classic (the dark Themis
+look, and the default). Morning and Noon are light; the others are dark. The
+panels are glass over the sky on every system; macOS adds a real blur, and if
+you ask your system to reduce transparency the panels turn solid. Old settings
+that asked for light or system mode, for the retired `system` palette or for a
+removed preset (GitHub Dark, Ocean and the other solid dark ones) open as Classic. There are 12 local font
 choices with fallback families. Theme, font, and size preview across the app;
 **Apply** saves them, **Revert** restores saved choices, and leaving Appearance
 cancels an unapplied preview. Code always uses monospace typography. Other

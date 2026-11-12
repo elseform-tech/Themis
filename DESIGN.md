@@ -76,24 +76,25 @@ Dark mode is the product baseline; the Morning and Noon skies are the light look
 
 | Role | Token | Classic preset / value | Rule |
 | --- | --- | --- | --- |
-| Frame | `--themis-shell-bg` | `#232427` | Persistent app chrome |
-| Sidebar | `--themis-sidebar-bg` | `#1c1d20` | Project and chat navigation |
-| Canvas | `--themis-canvas` | `#131314` | Main working surface |
-| Surface / raised | `--themis-surface`, `--themis-raised` | `#1f2023`, `#282a2d` | Inputs and meaningful elevation |
-| Border | `--themis-border` | `#34363b` | Necessary boundaries only |
+| Frame | `--themis-shell-bg` | `#0e0f10` | Persistent app chrome; sits furthest back, the panels stand off it |
+| Sidebar | `--themis-sidebar-bg` | `#262729` | Project and chat navigation |
+| Canvas | `--themis-canvas` | `#212225` | Main working surface (the stage) |
+| Surface / raised | `--themis-surface`, `--themis-raised` | `#2a2b2f`, `#323438` | Inputs and meaningful elevation |
+| Border | `--themis-border` | `#3a3c41` | Necessary boundaries only |
 | Primary text | `--themis-text` | `#e6e6e6` | Content and primary labels |
 | Secondary text | `--themis-text-2` | `#a8abb2` | Useful supporting information; never a reason to add filler |
 | Accent | `--themis-accent` | `#d9a73e` | Sparse emphasis, not decoration on every control |
 | Success | `--themis-success` | `#81c995` | Successful outcome |
 | Warning | `--themis-warning` | `#e3b85a` | Limitation or decision requiring attention |
-| Danger | `--themis-danger` | `#f28b82` | Failure or destructive action |
+| Danger | `--themis-danger` | `#f4968d` | Failure or destructive action |
 | Information | `--themis-info` | `#8ab4f8` | Neutral informational emphasis |
 | Sky | `--themis-sky` | frame colour (solid presets) | Sky presets only: frame tint, glows and gradient behind the frame |
-| Glass | `--themis-panel-bg`, `--themis-stage-bg`, `--themis-panel-blur` | sidebar, canvas, `none` | Sky presets: translucent panels with `blur(36px) saturate(190%)`; solid under `data-glass="off"` |
+| Glass | `--themis-panel-bg`, `--themis-stage-bg`, `--themis-panel-blur` | sidebar, canvas, `none` | Sky presets: translucent panels on every OS, `blur(36px) saturate(190%)` only on macOS; solid under `data-glass="off"` (reduced transparency) |
+| Panel edge | `--themis-panel-highlight`, `--themis-panel-ring`, `--themis-panel-shadow`, `--themis-stage-edge` | `rgba(255,255,255,.05)`, `transparent`, `rgba(0,0,0,.28)`, `#34363b` | Composed into `--themis-panel-sheen` and `--themis-panel-edge` (side panels) and `--themis-stage-edge-shadow` (stage); never replaced by an opaque border |
 | Shadow | `--themis-shadow` | `rgb(0 0 0)`; light `rgb(8 20 45 / .35)` | Mix with transparent at each shadow's strength |
-| Warm gradient | `--themis-gradient-1/2/3` | `#c08a2e` → `#e3b85a` → `#f6e7bd` | Approved Themis moments only (below) |
+| Warm gradient | `--themis-gradient-1/2/3` | `#d0a660` → `#e3b85a` → `#f6e7bd` | Approved Themis moments only (below) |
 
-Light skies (`data-theme="light"`) keep the same roles with darker status colours that reach 4.5:1 on the pale glass: success `#166534`, warning `#92400e`, danger `#9f1239`, information `#0550ae`. Shadows use the soft navy `--themis-shadow`. The warm gradient becomes a deep bronze-to-amber ramp (`#5c3604` → `#6b3f00` → `#804c00`) so the greeting, the wordmark glint, shimmer and the working spinner stay readable; context-warning and compaction text use `--themis-warn-text` (`#f6e7bd` on dark, `#6b3f00` on light).
+Light skies (`data-theme="light"`) keep the same roles with darker status colours that reach 4.5:1 on the sky-blue frame and the pale glass: success `#11522a`, warning `#78340b`, danger `#8d0f33`, information `#034394`. Shadows use the soft navy `--themis-shadow`. The warm gradient becomes a deep bronze-to-amber ramp (`#4d2c02` → `#5c3604` → `#693e00`) so the greeting, the wordmark glint, shimmer and the working spinner stay readable; context-warning and compaction text use `--themis-warn-text` (`#f6e7bd` on dark, `#5c3604` on light).
 
 Compatibility badges use the `--themis-ok-*`, `--themis-warn-*` and `--themis-bad-*` tokens (ink, background, line) from [`tokens.css`](web/src/theme/tokens.css), dark / light. The recording pill uses the `bad` pair too. Keep this mapping consistent across tiles and filters.
 
