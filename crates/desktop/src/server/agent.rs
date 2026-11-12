@@ -160,6 +160,8 @@ pub(crate) enum Reason {
     AnswerMarker,
     /// A Vision's call that would start or send something after it reached today's budget.
     OverBudget,
+    /// The same while its spend today cannot be checked (counted as reached).
+    BudgetUnknown,
 }
 
 impl Reason {
@@ -177,6 +179,7 @@ impl Reason {
             Self::AboveAutonomy => "above_autonomy",
             Self::AnswerMarker => "answer_marker",
             Self::OverBudget => "over_budget",
+            Self::BudgetUnknown => "budget_unknown",
         }
     }
 }

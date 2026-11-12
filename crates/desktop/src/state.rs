@@ -60,6 +60,7 @@ pub use browser::update_payload as browser_update_payload;
 pub(crate) use hook_sessions::IDLE_CHECK_EVERY as HOOK_IDLE_CHECK_EVERY;
 pub(crate) use questions::forges_answer;
 pub use terminal::TerminalSession;
+pub(crate) use visions::BudgetOver;
 pub use visions::{
     vision_decisions, Channel, ChannelEntry, ChannelLine, ChannelPage, Hold, NoticeKind, OwnedKind,
     Owner, Vision, WakeReason,
@@ -805,6 +806,13 @@ impl AppState {
     pub(super) async fn effort_offered(&self, model: &str, effort: &str) -> bool {
         let _ = self.ensure_go_catalog().await;
         offers_effort(&self.inner.go_catalog.read().await, model, effort)
+    }
+
+    /// Sets the model catalog (and so its prices), for tests: it otherwise comes from the
+    /// provider and models.dev.
+    #[doc(hidden)]
+    pub async fn set_model_catalog_for_test(&self, models: Vec<themis_core::providers::GoModel>) {
+        *self.inner.go_catalog.write().await = models;
     }
 
     async fn ensure_go_catalog(&self) -> Result<(), String> {

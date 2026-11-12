@@ -150,6 +150,7 @@ impl AppState {
                 vision_id: Some(owner.vision_id.clone()),
                 thread_id: Some(thread_id.to_owned()),
                 unpriced_requests: None,
+                reason: None,
             },
         );
         self.visions_note(
@@ -210,6 +211,7 @@ impl AppState {
                 vision_id: Some(owner.vision_id.clone()),
                 thread_id: Some(thread_id.to_owned()),
                 unpriced_requests: None,
+                reason: None,
             },
         )?;
         self.visions_wake(
@@ -251,7 +253,7 @@ impl AppState {
         } else {
             NoticeKind::Resumed
         };
-        self.visions_notice_in_its_channels(vision_id, kind, None);
+        self.visions_notice_in_its_channels(vision_id, kind, None, None);
         self.visions_note(
             "vision_paused",
             json!({"vision_id": vision_id, "paused": paused, "stopped": stopped}),
@@ -287,26 +289,29 @@ impl AppState {
         Ok(())
     }
 
-    /// Posts a notice about `vision_id` in every channel it is a member of.
+    /// Posts a notice about `vision_id` in every channel it is a member of; false when a
+    /// channel could not record it.
     pub(super) fn visions_notice_in_its_channels(
         &self,
         vision_id: &str,
         kind: NoticeKind,
         unpriced_requests: Option<u64>,
-    ) {
+        reason: Option<&str>,
+    ) -> bool {
+        let mut posted = true;
         for channel in self.channels_all() {
             if channel.members.iter().any(|member| member == vision_id) {
-                let _ = self.channel_append(
-                    &channel.id,
-                    ChannelEntry::Notice {
-                        kind,
-                        vision_id: Some(vision_id.to_owned()),
-                        thread_id: None,
-                        unpriced_requests,
-                    },
-                );
+                let entry = ChannelEntry::Notice {
+                    kind,
+                    vision_id: Some(vision_id.to_owned()),
+                    thread_id: None,
+                    unpriced_requests,
+                    reason: reason.map(str::to_owned),
+                };
+                posted &= self.channel_append(&channel.id, entry).is_ok();
             }
         }
+        posted
     }
 
     /// Asks the running chats `which` selects to stop; returns how many were running.

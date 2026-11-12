@@ -212,13 +212,21 @@ impl Fixture {
             .collect()
     }
 
-    /// Points the chats at `provider` with a synthetic key.
+    /// Points the chats at `provider` with a synthetic key, its `test-model` listed as free
+    /// (Visions' budgets need a loaded price catalog).
     pub async fn use_provider(&self, provider: &MockServer) {
         self.state
             .set_secret("go".into(), "test-key".into())
             .await
             .unwrap();
         self.state.set_go_base_url_override(Some(provider.uri()));
+        self.state
+            .set_model_catalog_for_test(vec![themis_core::providers::GoModel {
+                id: "test-model".into(),
+                price: Some(themis_core::providers::ModelPrice::default()),
+                ..Default::default()
+            }])
+            .await;
     }
 
     /// Starts a run in `thread` that waits on the stalled provider.

@@ -42,6 +42,8 @@ impl AppState {
                 Some(&thread_id),
                 Some(&run_id),
             ));
+            // A Vision's chat: its daily budget is checked after every request.
+            state.visions_budget_after_request(&thread_id);
         })
     }
 

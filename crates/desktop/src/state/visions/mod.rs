@@ -35,6 +35,7 @@ use themis_core::configuration::ApprovalMode;
 use themis_core::visions::Autonomy;
 
 use super::AppState;
+pub(crate) use budget::Over as BudgetOver;
 pub use channel_log::{ChannelLine, ChannelPage};
 pub use runs::vision_decisions;
 pub(super) use runs::{boxed_run, confine, run_scope, run_tools, vision_approvals, VisionRunSpec};
@@ -148,6 +149,10 @@ pub enum NoticeKind {
     HandedBack,
     /// A Vision's run was refused: no sandbox here can hold it in its envelope.
     SandboxUnavailable,
+    /// Today's spend cannot be checked (`reason` says why), so the Vision starts nothing.
+    BudgetUnknown,
+    /// Some of today's requests had no price (`unpriced_requests`); they count as $0.
+    Unpriced,
 }
 
 /// One entry in a channel's log.
@@ -195,6 +200,10 @@ pub enum ChannelEntry {
         /// count as $0).
         #[serde(default, skip_serializing_if = "Option::is_none")]
         unpriced_requests: Option<u64>,
+        /// With `budget_unknown`: why spend cannot be checked (`usage_unavailable`,
+        /// `usage_unreadable`, `owners_unreadable`, `catalog_not_loaded`, `config_unreadable`).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        reason: Option<String>,
     },
 }
 
@@ -211,6 +220,8 @@ pub(crate) struct VisionsCache {
     stamps: HashMap<&'static str, store::Stamp>,
     /// Each Vision's wakes per channel (in memory only).
     wakes: wakes::WakeSlots,
+    /// Today's spend and budget notices (see `budget`).
+    budget: budget::Ledger,
 }
 
 impl AppState {

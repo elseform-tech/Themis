@@ -142,6 +142,8 @@ impl Server {
         let (shutdown, _) = broadcast::channel(1);
         let sink: Arc<dyn EventSink> = Arc::new(BroadcastSink { tx: tx.clone() });
         state.set_scheduler_sink(Arc::clone(&sink));
+        // Visions' budgets need prices: a cold start loads them rather than waiting for a run.
+        state.visions_prices_at_start();
         Ok(Self {
             listener,
             state,

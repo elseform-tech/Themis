@@ -334,6 +334,11 @@ const ALL: &[(&str, &str, &[&str])] = &[
         &[],
     ),
     (
+        AGENT_CLI_VISION_BUDGET_UNKNOWN,
+        "agent-cli-vision-budget-unknown",
+        &[],
+    ),
+    (
         AGENT_CLI_PERMISSION_QUESTION,
         "agent-cli-permission-question",
         &[],

@@ -897,7 +897,7 @@ Each refusal is logged as `server`/`agent_call_refused` with the method name
 (`(other)` for anything that is not a plain method name), the `plugin_action`
 action, a `reason` (`method_not_allowed`, `action_not_allowed`, `runs_code`,
 `other_project`, `network_blocked`, `tool_unavailable`, `held_by_person`, `paused`,
-`permission_question`, `above_autonomy`, `answer_marker`, `over_budget`, or
+`permission_question`, `above_autonomy`, `answer_marker`, `over_budget`, `budget_unknown`, or
 `switch_on` from the store), and the chat and run ids (for a Vision's call also its
 `vision_id` and the `target_thread_id` it named), never the credential, paths or arguments.
 
@@ -919,8 +919,8 @@ Beyond everything above it may drive the chats its Vision owns, decided on the r
 A paused or deleted Vision's `create_thread`, sends, queueing, steering, answers and passed-on
 questions are refused (`paused`, `agent-cli-vision-paused.md`), and so are its `create_thread`,
 `send_message`, `enqueue_message`, `steer_queued_message` and `answer_question` once it reached
-today's budget (`over_budget`, `agent-cli-vision-over-budget.md`; `pass_question` still goes,
-since it only tells the person). A Vision's writes are never the person's:
+today's budget or while its spend cannot be checked (see [a Vision's budget](#the-themis-cli-in-the-agents-shell);
+`pass_question` still goes, since it only tells the person). A Vision's writes are never the person's:
 its sends go the server's way (like a queued message or a goal turn), and a message it queues
 carries its `vision_id`, so none of them takes the chat over, answers the chat's open
 questions or lets hooks wake the chat again; its steer answers no question, joins no goal
@@ -1000,31 +1000,57 @@ any run ends, still within that bound; any other refusal (no chat, a bad configu
 for the Vision's next wake. Nothing wakes while the Vision
 is paused or `visions.enabled` is `false` (those reasons are dropped). Each decision is logged
 as `visions`/`wake` with `vision_id`, `channel_id`, `reason` (`mentioned`, `chat_finished`,
-`chat_failed`, `chat_stopped`, `question_asked`, `approval_waiting`, `handed_back`, `queued`
+`chat_failed`, `chat_stopped`, `question_asked`, `approval_waiting`, `handed_back`, `budget_stopped`, `queued`
 for the next run of what waited, or `retry`) and `outcome` (`started`, `queued`, `limit`,
 `idle`, `paused`, `disabled`, `held`, `taken_over`, `not_owned`, `gone`, `configuration`,
-`over_budget`, `no_sink`); runs as `vision_chat_created`, `run_started`, `run_refused` (with a
+`over_budget`, `budget_unknown`, `no_sink`); runs as `vision_chat_created`, `run_started`, `run_refused` (with a
 fixed reason, `sandbox_unavailable` among them) and `reply_posted`, ids and counts only.
 
 **A Vision's budget.** A Vision's spend today is what usage recorded since local midnight for
 the chats it owns (`owners.json`): its hidden Vision chats and its work chats, priced at the
-catalog's list prices (a request without a price counts as $0). A chat the person took over
-still counts: usage rows do not say who started a run. It is over budget when its own spend
-reaches its cap (its profile's `daily_budget_usd`, never above `visions.daily_budget_usd`) or
-when all Visions together reach `visions.daily_budget_usd`; a configuration, profile or usage
-store that cannot be read counts as over. Over budget: it wakes for nothing (`over_budget`;
-what woke it waits, newest 64 kept, for its first wake after the cap is raised); its spending
-calls are refused as above; its queued messages wait unsent; a goal in a chat it drives pauses
-instead of starting its next turn (the person resumes it); and when any run of a chat it owns
-ends, every chat of it that runs for it (not one the person took over) is stopped the ordinary
-way, holding nothing back (no `stopped_by_person`, no `stopped` notice). A run already going
-spends until the next such end. The first time on a local day, each channel it is a member of
-gets one `budget_reached` notice (`{vision_id, unpriced_requests}`: the day's requests behind
-the reached cap that had no price), remembered in the Visions folder's `budget_notices.json`
-across restarts. Raising either cap (Settings › Visions, `update_visions_settings`, or the
-profile) lets its next wake run. Logged as `visions`/`budget_reached` (`vision_id`, whether
-the overall cap was the one, the unpriced count) and `budget_stopped` (`vision_id`, how many
-chats), metadata only.
+catalog's list prices. A model the loaded catalog does not price counts as $0 and is counted
+apart; a free model (priced at $0) is priced. A chat the person took over still counts: usage
+rows do not say who started a run. It is over budget when all Visions together reach the
+overall cap or its own spend reaches its own cap (its profile's `daily_budget_usd`, never above
+the overall cap). The overall cap is the lowest `visions.daily_budget_usd` that the projects of
+its channels resolve (your own `runtime.jsonc` when it is in none), the same for the server's
+checks and `visions_over_budget`. When spend cannot be known it counts as reached, never as $0:
+the usage store unavailable or unreadable, `owners.json` unreadable, the configuration
+unreadable, or the price catalog not loaded yet. The app loads the catalog at start when there
+are Visions, and again (at most once a minute) while a check finds none; until it loads, Visions
+start nothing.
+
+The cap is checked after every request recorded for a chat a Vision owns (on a task of its own,
+once the usage writer stored the row, at most one waiting per Vision), at the end of each such
+run, and before anything a Vision would start. A check reads only the usage rows recorded since
+the last one and keeps a running sum per chat, rebuilt from the usage store after a restart or
+at midnight. Over budget, a Vision wakes for nothing (`over_budget`, or `budget_unknown` when
+spend is not known; what woke it waits, newest 64 kept, for its first wake the budget allows);
+its spending calls are refused as above (`over_budget`, `agent-cli-vision-over-budget.md`, or
+`budget_unknown`, `agent-cli-vision-budget-unknown.md`); its queued messages wait unsent; a goal
+in a chat it drives pauses instead of starting its next turn (the goal bar says why; the person
+resumes it); and its running chats are stopped at once, every Vision's at the overall cap: only
+chats that run for a Vision (not one the person took over), the ordinary way, holding nothing
+back (no `stopped_by_person`, no `stopped` notice). A stop takes effect at the run's next safe
+boundary, so a Vision overshoots by about the request in flight in each running chat. Each work
+chat the budget stopped waits as a `budget_stopped` wake reason, so the Vision's next wake after
+a raise says the budget, not the person, stopped it. Hook-report wakes and automations in a
+Vision's chats are not gated; hook wakes are held after the stop's failed turn.
+
+Its channels get each of three notices at most once a local day: `budget_reached`
+(`{vision_id, unpriced_requests}`: requests behind the reached cap that had no price),
+`budget_unknown` (`{vision_id, reason}`: `usage_unavailable`, `usage_unreadable`,
+`owners_unreadable`, `catalog_not_loaded`, `config_unreadable`), and `unpriced`
+(`{vision_id, unpriced_requests}`, as soon as one of its requests today has no price). A notice
+counts as given once every channel recorded it; the day's notices are then saved in the Visions
+folder's `budget_notices.json`, so a restart does not post them again. A post that fails is
+tried again after a minute; a notice that was posted but could not be saved is not posted again
+before a restart. Raising either cap (Settings › Visions, `update_visions_settings`, or the
+profile) lets its next wake run. Deleting a Vision or channel forgets its owners, so their spend
+leaves the overall total for the day. Logged as `visions`/`budget_reached`, `budget_unknown`
+(`vision_id`, `reason`), `budget_unpriced`, `budget_stopped` (`vision_id`, how many chats,
+whether every Vision's), `budget_catalog` (whether loading failed and how), `budget_notice_failed`
+and `budget_notices_unsaved`, metadata only.
 
 **Threat model.** The guard relies on the agent never holding your credential.
 It is in `server.json` (owner-only, `0600`), which the sandbox stops every

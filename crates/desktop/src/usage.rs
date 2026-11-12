@@ -165,12 +165,39 @@ impl UsageStore {
         }
     }
 
-    /// Waits, at most `within`, for the rows queued so far to be written, so a read right after
-    /// a request completes sees it.
-    pub fn settle(&self, within: std::time::Duration) {
-        let started = std::time::Instant::now();
-        while self.pending.load(Ordering::SeqCst) > 0 && started.elapsed() < within {
-            std::thread::sleep(std::time::Duration::from_millis(1));
+    /// Rows queued and not yet written (a read right after a request completes may miss them).
+    pub fn pending(&self) -> u64 {
+        self.pending.load(Ordering::SeqCst)
+    }
+
+    /// Rows after row id `after_id` and at or after `since_ms`, each with its id, in id order.
+    pub fn rows_after(&self, after_id: i64, since_ms: i64) -> Result<Vec<(i64, UsageRow)>, String> {
+        let Some(connection) = &self.connection else {
+            return Err("usage store unavailable".to_owned());
+        };
+        let connection = connection.lock().unwrap_or_else(|e| e.into_inner());
+        let mut statement = connection
+            .prepare(&format!(
+                "SELECT id,{ROW_COLUMNS} FROM usage_requests WHERE id>?1 AND at_ms>=?2 ORDER BY id"
+            ))
+            .map_err(|e| format!("read usage: {e}"))?;
+        let rows = statement
+            .query_map([after_id, since_ms], |row| {
+                Ok((row.get(0)?, row_at(row, 1)?))
+            })
+            .and_then(|rows| rows.collect::<rusqlite::Result<Vec<_>>>())
+            .map_err(|e| format!("read usage: {e}"));
+        rows
+    }
+
+    /// Makes every later read fail, for tests of what happens then.
+    #[cfg(test)]
+    pub fn break_reads_for_test(&self) {
+        if let Some(connection) = &self.connection {
+            let connection = connection.lock().unwrap_or_else(|e| e.into_inner());
+            connection
+                .execute_batch("DROP TABLE usage_requests")
+                .unwrap();
         }
     }
 
@@ -332,24 +359,30 @@ fn select_rows(
     bound_ms: i64,
 ) -> rusqlite::Result<Vec<UsageRow>> {
     let mut statement = connection.prepare(&format!(
-        "SELECT at_ms,provider,model,kind,thread_id,run_id,input_tokens,cached_input_tokens,output_tokens,reasoning_tokens FROM usage_requests WHERE {condition}"
+        "SELECT {ROW_COLUMNS} FROM usage_requests WHERE {condition}"
     ))?;
-    let count = |value: Option<i64>| value.map(|value| value.max(0) as u64);
-    let rows = statement.query_map([bound_ms], |row| {
-        Ok(UsageRow {
-            at_ms: row.get(0)?,
-            provider: row.get(1)?,
-            model: row.get(2)?,
-            kind: kind_from(&row.get::<_, String>(3)?),
-            thread_id: row.get(4)?,
-            run_id: row.get(5)?,
-            input_tokens: count(row.get(6)?),
-            cached_input_tokens: count(row.get(7)?),
-            output_tokens: count(row.get(8)?),
-            reasoning_tokens: count(row.get(9)?),
-        })
-    })?;
+    let rows = statement.query_map([bound_ms], |row| row_at(row, 0))?;
     rows.collect()
+}
+
+/// The columns [`row_at`] reads, in order.
+const ROW_COLUMNS: &str = "at_ms,provider,model,kind,thread_id,run_id,input_tokens,cached_input_tokens,output_tokens,reasoning_tokens";
+
+/// A [`UsageRow`] from [`ROW_COLUMNS`] starting at column `at`.
+fn row_at(row: &rusqlite::Row<'_>, at: usize) -> rusqlite::Result<UsageRow> {
+    let count = |value: Option<i64>| value.map(|value| value.max(0) as u64);
+    Ok(UsageRow {
+        at_ms: row.get(at)?,
+        provider: row.get(at + 1)?,
+        model: row.get(at + 2)?,
+        kind: kind_from(&row.get::<_, String>(at + 3)?),
+        thread_id: row.get(at + 4)?,
+        run_id: row.get(at + 5)?,
+        input_tokens: count(row.get(at + 6)?),
+        cached_input_tokens: count(row.get(at + 7)?),
+        output_tokens: count(row.get(at + 8)?),
+        reasoning_tokens: count(row.get(at + 9)?),
+    })
 }
 
 /// Moves raw rows older than [`RAW_RETENTION_DAYS`] into daily totals (local days in

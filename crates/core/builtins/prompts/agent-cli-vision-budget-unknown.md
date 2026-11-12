@@ -1,0 +1,1 @@
+Themis refused this call: this Vision's spending today cannot be checked right now (the price list, the usage record or the configuration cannot be read), so it starts and sends nothing until it can. Nothing was sent or started. Tell the person in your channel message what is left to do.

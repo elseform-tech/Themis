@@ -177,11 +177,17 @@ pub(super) fn state_refusal(
             message: themis_core::prompts::AGENT_CLI_VISION_PAUSED.to_owned(),
         });
     }
-    let over = SPENDS.contains(&method)
-        && state.visions_budget_reached(&scope.vision_id, Some(&scope.project_root));
-    over.then(|| Refusal {
-        reason: Reason::OverBudget,
-        message: themis_core::prompts::AGENT_CLI_VISION_OVER_BUDGET.to_owned(),
+    if !SPENDS.contains(&method) {
+        return None;
+    }
+    let over = state.visions_budget_gate(&scope.vision_id)?;
+    let reason = match over {
+        crate::state::BudgetOver::Unknown(_) => Reason::BudgetUnknown,
+        _ => Reason::OverBudget,
+    };
+    Some(Refusal {
+        reason,
+        message: over.refusal_text().to_owned(),
     })
 }
 

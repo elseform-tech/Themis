@@ -138,9 +138,7 @@ impl AppState {
     /// person holds the chat, or its Vision is paused, gone, no longer owns it or is over its
     /// daily budget.
     fn visions_waits_reason(&self, thread_id: &str) -> Option<&'static str> {
-        use themis_core::prompts::{
-            AGENT_CLI_HELD_BY_PERSON, AGENT_CLI_VISION_OVER_BUDGET, AGENT_CLI_VISION_PAUSED,
-        };
+        use themis_core::prompts::{AGENT_CLI_HELD_BY_PERSON, AGENT_CLI_VISION_PAUSED};
         let Some(owner) = self.owner_of(thread_id) else {
             return Some(AGENT_CLI_HELD_BY_PERSON);
         };
@@ -154,7 +152,7 @@ impl AppState {
             return Some(AGENT_CLI_VISION_PAUSED);
         }
         self.visions_budget_holds(thread_id)
-            .then_some(AGENT_CLI_VISION_OVER_BUDGET)
+            .map(super::budget::Over::refusal_text)
     }
 
     /// Whether any of `question_ids` asks for a permission: an Auto block's question (its

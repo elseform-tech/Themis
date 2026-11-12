@@ -133,3 +133,81 @@ async fn the_budget_stops_a_visions_chats_and_refuses_its_sends() {
     wait_until(|| async { !fx.running(&slow).await }).await;
     fx.shut_down().await;
 }
+
+/// A model that, for a message with "loop", reads a file again and again (20 steps, each
+/// request billed $1) before it answers.
+async fn looping_provider() -> MockServer {
+    let provider = MockServer::builder().start().await;
+    Mock::given(method("POST"))
+        .respond_with(|request: &Request| {
+            let body: Value = request.body_json().unwrap_or(Value::Null);
+            let messages = body["messages"].as_array().cloned().unwrap_or_default();
+            let last = messages
+                .iter()
+                .rposition(|m| m["role"] == "user")
+                .unwrap_or(0);
+            let steps = messages[last..]
+                .iter()
+                .filter(|m| m["role"] == "tool")
+                .count();
+            let usage = json!({"prompt_tokens": 1_000_000, "completion_tokens": 1,
+                "total_tokens": 1_000_001});
+            let looping = messages[last]["content"].to_string().contains("loop");
+            if looping && steps < 20 {
+                let call = json!({"id": format!("read-{steps}"), "type": "function",
+                    "function": {"name": "read_file",
+                        "arguments": json!({"file_path": "README.md"}).to_string()}});
+                return ResponseTemplate::new(200)
+                    .set_delay(Duration::from_millis(100))
+                    .set_body_json(json!({"choices": [{"message": {"role": "assistant",
+                        "content": null, "tool_calls": [call]}, "finish_reason": "tool_calls"}],
+                        "usage": usage}));
+            }
+            ResponseTemplate::new(200).set_body_json(json!({"choices": [{"message":
+                {"role": "assistant", "content": "done"}, "finish_reason": "stop"}],
+                "usage": usage}))
+        })
+        .mount(&provider)
+        .await;
+    provider
+}
+
+/// One long turn of many requests is stopped mid-turn once a request passes the cap, not when
+/// the turn ends.
+#[tokio::test(flavor = "multi_thread")]
+async fn one_long_turn_is_stopped_once_a_request_passes_the_cap() {
+    let _turn = ONE_SERVER.lock().await;
+    let fx = fixture().await;
+    let provider = looping_provider().await;
+    fx.use_provider(&provider).await;
+    fx.state
+        .set_model_catalog_for_test(vec![GoModel {
+            id: "test-model".into(),
+            price: Some(ModelPrice {
+                input: 1.0,
+                output: 0.0,
+                ..ModelPrice::default()
+            }),
+            ..GoModel::default()
+        }])
+        .await;
+    let (vision, channel) = fx.vision_and_channel("Wren", "hq");
+    let (_own_chat, agent) = fx.vision_run(&vision, &channel).await;
+    fx.set_visions(json!({"enabled": false, "daily_budget_usd": 2.5}));
+    let work = fx.vision_starts_chat(&agent);
+    json_of(&fx.agent_call(
+        &agent,
+        "send_message",
+        json!({"threadId": work, "text": "loop over the readme"}),
+    ));
+    wait_until(|| async { !provider.received_requests().await.unwrap().is_empty() }).await;
+    wait_until(|| async { !fx.running(&work).await }).await;
+    let requests = provider.received_requests().await.unwrap().len();
+    assert!(
+        (3..=6).contains(&requests),
+        "stopped soon after the third $1 request, not after 21: {requests}"
+    );
+    assert_eq!(owner_hold(&fx.state, &work), Some(Hold::None));
+    assert_eq!(budget_notices(&fx, &channel).len(), 1);
+    fx.shut_down().await;
+}

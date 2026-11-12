@@ -86,11 +86,10 @@ impl AppState {
             return; // That run's end continues the goal.
         }
         // A chat its Vision drives spends from that Vision's budget: past it, the goal pauses.
-        if self.visions_budget_holds(&thread_id) {
+        if let Some(over) = self.visions_budget_holds(&thread_id) {
             self.update_goal(sink.as_ref(), &thread_id, |goal| {
                 if goal.status == GoalStatus::Running {
-                    let why = "Paused: its Vision reached today's budget.";
-                    set_status(goal, GoalStatus::Paused, Some(why.into()));
+                    set_status(goal, GoalStatus::Paused, Some(over.goal_reason().into()));
                 }
             });
             return;

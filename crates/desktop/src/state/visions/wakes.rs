@@ -36,6 +36,8 @@ pub enum WakeReason {
     /// The chat waits on the person's approval or permission question (its id): the Vision tells
     /// the person, never answers it.
     ApprovalWaiting(String, String),
+    /// The daily budget (not the person) stopped the chat; it waits for a wake after a raise.
+    BudgetStopped(String),
 }
 
 impl WakeReason {
@@ -49,6 +51,7 @@ impl WakeReason {
             WakeReason::QuestionAsked(..) => "question_asked",
             WakeReason::HandedBack(_) => "handed_back",
             WakeReason::ApprovalWaiting(..) => "approval_waiting",
+            WakeReason::BudgetStopped(_) => "budget_stopped",
         }
     }
 
@@ -61,6 +64,7 @@ impl WakeReason {
             | WakeReason::ChatStopped(thread)
             | WakeReason::QuestionAsked(thread, _)
             | WakeReason::ApprovalWaiting(thread, _)
+            | WakeReason::BudgetStopped(thread)
             | WakeReason::HandedBack(thread) => Some(thread),
         }
     }
@@ -297,7 +301,7 @@ impl AppState {
 
     /// Whether the Vision may wake now, checked and counted under one lock; `Err` names why
     /// not (the reason is then dropped: nothing waits on a paused or removed Vision), except
-    /// `over_budget`, where it waits for a wake once the budget is raised.
+    /// `over_budget` and `budget_unknown`, where it waits for a wake the budget allows.
     pub(super) fn visions_wake_admit(
         &self,
         channel_id: &str,
@@ -331,11 +335,11 @@ impl AppState {
                 }
             }
         }
-        if self.visions_budget_reached(vision_id, Some(&channel.project_root)) {
+        if let Some(over) = self.visions_budget_gate(vision_id) {
             self.visions_cache()
                 .wakes
                 .wait(vision_id, channel_id, reason);
-            return Err("over_budget");
+            return Err(over.outcome());
         }
         Ok(self
             .visions_cache()
@@ -402,6 +406,7 @@ impl AppState {
                     vision_id: Some(owner.vision_id.clone()),
                     thread_id: Some(thread_id.to_owned()),
                     unpriced_requests: None,
+                    reason: None,
                 },
             );
         }
@@ -633,6 +638,12 @@ mod tests {
         let project = dir.path().join("project");
         std::fs::create_dir_all(&project).unwrap();
         let state = AppState::new_for_test(dir.path().join("settings.json"));
+        // Budgets need a price catalog; a free model is enough here.
+        *state.inner.go_catalog.try_write().unwrap() = vec![themis_core::providers::GoModel {
+            id: "free".into(),
+            price: Some(themis_core::providers::ModelPrice::default()),
+            ..Default::default()
+        }];
         let wren = vision(&state, "Wren");
         let ada = vision(&state, "Ada");
         let members = if both {
