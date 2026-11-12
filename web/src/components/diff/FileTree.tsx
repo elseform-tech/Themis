@@ -121,6 +121,8 @@ type FileTreeRowProps = Omit<FileTreeProps, "files"> & { file: DiffFile; label: 
 /** One changed file: its row (status, path, line counts, and in an accordion a chevron), its actions, and when open
  *  its body under it. */
 function FileTreeRow({ file, label, selectedPath, onSelect, onAccept, onDiscard, disabled = false, isOpen, onToggle, renderBody }: FileTreeRowProps) {
+  // Pressed with a pointer: WebKit can still match :focus-visible after the press, so the ring stays off until a key.
+  const [pressed, setPressed] = useState(false);
   const open = renderBody ? isOpen?.(file.path) ?? false : undefined;
   const selected = open ?? file.path === selectedPath;
   const discardDisabled = disabled || file.preexisting;
@@ -133,6 +135,10 @@ function FileTreeRow({ file, label, selectedPath, onSelect, onAccept, onDiscard,
         className="themis-filetree-select"
         aria-current={open === undefined ? selected : undefined}
         aria-expanded={open}
+        data-pointer={pressed || undefined}
+        onPointerDown={() => setPressed(true)}
+        onKeyDown={() => setPressed(false)}
+        onBlur={() => setPressed(false)}
         onClick={() => (onToggle ? onToggle(file.path) : onSelect(file.path))}
       >
         <span

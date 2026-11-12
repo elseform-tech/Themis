@@ -12,3 +12,7 @@ it("lets a row shrink to the list so a long name ellipsizes and its line counts 
 it("rings a file row on keyboard focus only, never after a mouse click", () => {
   expect(styles).toMatch(/\.themis-filetree-select:focus:not\(:focus-visible\)\s*\{\s*outline:\s*none;/);
 });
+
+it("turns the global focus-visible ring off on a row pressed with a pointer", () => {
+  expect(styles).toMatch(/\.themis-filetree-select\[data-pointer\]:focus-visible\s*\{\s*outline:\s*none;/);
+});

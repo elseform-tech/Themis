@@ -19,6 +19,8 @@
 .themis-filetree-select { flex: 1; min-width: 0; display: flex; align-items: center; gap: 8px; padding: 0; border: 0; background: transparent; color: inherit; font: inherit; font-size: .8125rem; text-align: left; cursor: pointer; }
 /* The row's ring is for keyboard focus; a click (folding a file) leaves none. */
 .themis-filetree-select:focus:not(:focus-visible) { outline: none; }
+/* WebKit can treat a pressed row as focus-visible: a row pressed with a pointer keeps no ring until the next key. */
+.themis-filetree-select[data-pointer]:focus-visible { outline: none; }
 .themis-filetree-status { flex: none; width: 12px; font-size: .75rem; font-weight: 700; text-align: center; }
 .themis-filetree-status--modified { color: var(--themis-accent); }
 .themis-filetree-status--added { color: var(--themis-diff-add); }
