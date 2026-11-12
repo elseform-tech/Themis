@@ -4,7 +4,7 @@
 .themis-sidebar-slot { position: relative; display: flex; flex-shrink: 0; width: min(var(--themis-sidebar-width, 280px), calc(100vw - 120px)); overflow: visible; transition: width 240ms cubic-bezier(.2, .8, .2, 1); }
 .themis-sidebar-slot.is-collapsed { width: 64px; }
 .themis-sidebar-slot.is-resizing { transition: none; user-select: none; }
-.themis-sidebar { position: absolute; inset: var(--themis-panel-gap) 0 var(--themis-panel-gap) 64px; z-index: 20; display: flex; flex-direction: column; overflow: hidden; border-radius: var(--themis-panel-radius); background: var(--themis-panel-bg); -webkit-backdrop-filter: var(--themis-panel-blur); backdrop-filter: var(--themis-panel-blur); visibility: hidden; opacity: 0; pointer-events: none; transition: opacity 180ms ease, visibility 240ms; }
+.themis-sidebar { position: absolute; inset: var(--themis-panel-gap) 0 var(--themis-panel-gap) 64px; z-index: 20; display: flex; flex-direction: column; overflow: hidden; border-radius: var(--themis-panel-radius); background: var(--themis-panel-sheen), var(--themis-panel-bg); box-shadow: var(--themis-panel-edge); -webkit-backdrop-filter: var(--themis-panel-blur); backdrop-filter: var(--themis-panel-blur); visibility: hidden; opacity: 0; pointer-events: none; transition: opacity 180ms ease, visibility 240ms; }
 .themis-sidebar.is-visible { visibility: visible; opacity: 1; pointer-events: auto; }
 
 /* Rail. */
@@ -17,7 +17,8 @@
 .themis-rail-footer { display: flex; flex-direction: column; gap: 4px; margin-top: auto; }
 
 /* Settings: its section list replaces rail and dock as one column; folded, it is icon-only like the rail. */
-.themis-settings-nav { display: flex; flex: 1; flex-direction: column; gap: 2px; min-width: 0; height: 100%; padding: 14px 10px; overflow-x: hidden; overflow-y: auto; }
+/* It sits on a panel like the chat dock: the frame shows around it. */
+.themis-settings-nav { display: flex; flex: 1; flex-direction: column; gap: 2px; min-width: 0; margin: var(--themis-panel-gap) 0 var(--themis-panel-gap) var(--themis-panel-gap); padding: 14px 10px; overflow-x: hidden; overflow-y: auto; border-radius: var(--themis-panel-radius); background: var(--themis-panel-sheen), var(--themis-panel-bg); box-shadow: var(--themis-panel-edge); -webkit-backdrop-filter: var(--themis-panel-blur); backdrop-filter: var(--themis-panel-blur); }
 .themis-settings-nav .themis-tooltip { display: block; }
 .themis-settings-nav .themis-tooltip::after { top: 50%; bottom: auto; left: calc(100% + 8px); transform: translateY(-50%); }
 .themis-sidebar-slot:not(.is-collapsed) .themis-settings-nav .themis-tooltip::after { display: none; }
@@ -28,7 +29,7 @@
 .themis-sidebar-slot.is-collapsed .themis-settings-nav .themis-sidebar-row { justify-content: center; width: 44px; min-height: 44px; padding: 0; border-radius: 50%; }
 .themis-sidebar-slot.is-collapsed .themis-settings-nav .themis-sidebar-name { display: none; }
 /* Folded, the list is short like the rail and lets its tooltips show beside it. */
-.themis-sidebar-slot.is-collapsed .themis-settings-nav { overflow: visible; }
+.themis-sidebar-slot.is-collapsed .themis-settings-nav { overflow: visible; padding: 14px 6px; }
 
 /* Dock. */
 .themis-brand { display: flex; align-items: center; min-height: 60px; padding: 8px 20px; color: var(--themis-text); }

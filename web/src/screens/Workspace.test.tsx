@@ -782,11 +782,16 @@ describe("Workspace journey", () => {
     await mount(); fireEvent.click(screen.getByRole("button", { name: "Settings" }));
     fireEvent.click(screen.getByRole("button", { name: "Appearance" }));
     expect(screen.queryByRole("combobox", { name: "Theme" })).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Ink" }));
+    const skies = screen.getByRole("group", { name: "Sky" });
+    expect(within(skies).getAllByRole("button").map(button => button.textContent)).toEqual(["Auto", "Morning", "Noon", "Night", "Classic"]);
+    expect(within(skies).getByRole("button", { name: "Classic" })).toHaveAttribute("aria-pressed", "true");
+    fireEvent.click(within(skies).getByRole("button", { name: "Night" }));
+    expect(within(skies).getByRole("button", { name: "Night" })).toHaveAttribute("aria-pressed", "true");
+    expect(within(skies).getByRole("button", { name: "Classic" })).toHaveAttribute("aria-pressed", "false");
     fireEvent.change(screen.getByLabelText("Font"), { target: { value: "mono" } });
     fireEvent.change(screen.getByLabelText("Size"), { target: { value: "18" } });
     expect(bridge.updateSettings).not.toHaveBeenCalled();
-    expect(document.documentElement.dataset.palette).toBe("ink");
+    expect(document.documentElement.dataset.palette).toBe("night");
     expect(document.documentElement.dataset.font).toBe("mono");
     fireEvent.click(screen.getByRole("button", { name: "Revert" }));
     expect(document.documentElement.dataset.palette).toBe("classic");
@@ -794,17 +799,24 @@ describe("Workspace journey", () => {
     expect(document.documentElement.dataset.theme).toBe("light");
     fireEvent.click(screen.getByRole("button", { name: "Revert" }));
     expect(document.documentElement.dataset.theme).toBe("dark");
-    fireEvent.click(screen.getByRole("button", { name: "Ocean" }));
+    fireEvent.click(screen.getByRole("button", { name: "Noon" }));
     vi.mocked(bridge.updateSettings).mockRejectedValueOnce("Disk is full");
     await act(async () => fireEvent.click(screen.getByRole("button", { name: "Apply" })));
     expect(screen.getByRole("alert")).toHaveTextContent("Disk is full");
     expect(document.documentElement.dataset.palette).toBe("classic");
-    fireEvent.click(screen.getByRole("button", { name: "Ink" }));
+    fireEvent.click(screen.getByRole("button", { name: "Night" }));
     await act(async () => fireEvent.click(screen.getByRole("button", { name: "Apply" })));
-    expect(bridge.updateSettings).toHaveBeenLastCalledWith({ theme: "dark", theme_palette: "ink", font_family: "serif", text_size: 12 });
-    fireEvent.click(screen.getByRole("button", { name: "Forest" }));
+    expect(bridge.updateSettings).toHaveBeenLastCalledWith({ theme_palette: "night", font_family: "system", text_size: 12 });
+    fireEvent.click(screen.getByRole("button", { name: "Morning" }));
     fireEvent.click(screen.getByRole("button", { name: "Back to app" }));
-    expect(document.documentElement.dataset.palette).toBe("ink");
+    expect(document.documentElement.dataset.palette).toBe("night");
+  });
+  it("shows a removed preset as Classic", async () => {
+    vi.mocked(bridge.getSettings).mockResolvedValue({ ...settings, theme_palette: "ocean" });
+    await mount(); fireEvent.click(screen.getByRole("button", { name: "Settings" }));
+    fireEvent.click(screen.getByRole("button", { name: "Appearance" }));
+    expect(within(screen.getByRole("group", { name: "Sky" })).getByRole("button", { name: "Classic" })).toHaveAttribute("aria-pressed", "true");
+    expect(document.documentElement.dataset.palette).toBe("classic");
   });
   it("shows budget-driven compaction settings without the legacy checkpoint interval", async () => {
     await mount();

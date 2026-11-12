@@ -1,5 +1,5 @@
 /* Read-only workspace monitor: resizable side panel with unboxed tabs and actions. */
-.themis-workspace-panel { position: relative; flex: none; min-width: 300px; max-width: calc(100% - 340px - var(--themis-panel-gap)); display: flex; flex-direction: column; min-height: 0; border-radius: var(--themis-panel-radius); background: var(--themis-panel-bg); -webkit-backdrop-filter: var(--themis-panel-blur); backdrop-filter: var(--themis-panel-blur); }
+.themis-workspace-panel { position: relative; flex: none; min-width: 300px; max-width: calc(100% - 340px - var(--themis-panel-gap)); display: flex; flex-direction: column; min-height: 0; border-radius: var(--themis-panel-radius); background: var(--themis-panel-sheen), var(--themis-panel-bg); box-shadow: var(--themis-panel-edge); -webkit-backdrop-filter: var(--themis-panel-blur); backdrop-filter: var(--themis-panel-blur); }
 .themis-workspace-panel.is-resizing { user-select: none; }
 .themis-workspace-resize { position: absolute; top: 0; bottom: 0; left: -5px; z-index: 5; width: 10px; cursor: col-resize; touch-action: none; }
 .themis-workspace-resize::after { content: ""; position: absolute; top: 0; bottom: 0; left: 4px; width: 2px; border-radius: 1px; background: var(--themis-accent); opacity: 0; transition: opacity 120ms ease; }

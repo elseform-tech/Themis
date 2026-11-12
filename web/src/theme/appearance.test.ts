@@ -3,7 +3,7 @@ import { expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import { createElement, useEffect } from "react";
 import { act, render } from "@testing-library/react";
-import { appearancePreset, applyAppearance, skyFor, useApplyAppearance, useAutoSky } from "./appearance";
+import { APPEARANCE_PRESETS, appearancePreset, applyAppearance, skyFor, useApplyAppearance, useAutoSky } from "./appearance";
 
 it("sets body text to the chosen size, and no label below 9px even at the smallest size", () => {
   const shell = readFileSync("src/screens/shell.css", "utf8");
@@ -28,11 +28,17 @@ function withBrowser(supports: boolean, userAgent: string, run: () => void) {
   try { run(); } finally { vi.unstubAllGlobals(); agent.mockRestore(); }
 }
 
-it("appearancePreset falls back to classic for unknown ids", () => {
+it("appearancePreset falls back to classic for unknown and removed ids", () => {
   expect(appearancePreset("nonsense").id).toBe("classic");
   expect(appearancePreset("system").id).toBe("classic");
+  expect(appearancePreset("ocean").id).toBe("classic");
+  expect(appearancePreset("warm").id).toBe("classic");
   expect(appearancePreset("noon").id).toBe("noon");
   expect(appearancePreset("classic").name).toBe("Classic");
+});
+
+it("ships only Classic and the three skies", () => {
+  expect(APPEARANCE_PRESETS.map(preset => preset.id)).toEqual(["classic", "morning", "noon", "night"]);
 });
 
 it("sets light or dark from the preset and paints the sky behind the frame", () => {
@@ -42,7 +48,7 @@ it("sets light or dark from the preset and paints the sky behind the frame", () 
     expect(root.dataset.theme).toBe("light");
     expect(root.dataset.glass).toBe("on");
     const morning = appearancePreset("morning");
-    expect(root.style.getPropertyValue("--themis-sky")).toContain("#BFDDFB");
+    expect(root.style.getPropertyValue("--themis-sky")).toContain("#A9CFF7");
     expect(root.style.getPropertyValue("--themis-panel-bg")).toBe(morning.glass?.panel);
     expect(root.style.getPropertyValue("--themis-stage-bg")).toBe(morning.glass?.stage);
     expect(root.style.getPropertyValue("--themis-panel-blur")).toBe("blur(36px) saturate(190%)");
@@ -56,35 +62,76 @@ it("sets light or dark from the preset and paints the sky behind the frame", () 
   });
 });
 
-it("glass falls back to solid panels when backdrop-filter is unsupported", () => {
+it("every preset sets the panel ring, highlight, shadow and stage edge, and the panels draw them", () => {
+  const root = document.documentElement;
+  for (const preset of APPEARANCE_PRESETS) {
+    applyAppearance({ ...base, theme_palette: preset.id });
+    expect(root.style.getPropertyValue("--themis-panel-highlight")).toBe(preset.edge.highlight);
+    expect(root.style.getPropertyValue("--themis-panel-ring")).toBe(preset.edge.ring);
+    expect(root.style.getPropertyValue("--themis-panel-shadow")).toBe(preset.edge.shadow);
+    expect(root.style.getPropertyValue("--themis-stage-edge")).toBe(preset.edge.stage);
+  }
+  const tokens = readFileSync("src/theme/tokens.css", "utf8");
+  expect(tokens).toContain("--themis-panel-sheen: linear-gradient(140deg, var(--themis-panel-highlight) -45%, transparent 28%)");
+  expect(tokens).toContain("--themis-panel-edge: inset 0 1px 0 var(--themis-panel-highlight), inset 0 0 0 1px var(--themis-panel-ring), 0 10px 36px var(--themis-panel-shadow)");
+  expect(tokens).toContain("--themis-stage-edge-shadow: inset 0 0 0 1px var(--themis-stage-edge), inset 0 1px 0 var(--themis-panel-highlight)");
+  const panels: Array<[string, string]> = [
+    ["src/screens/Sidebar.css", ".themis-sidebar {"],
+    ["src/screens/WorkspacePanel.css", ".themis-workspace-panel {"],
+    ["src/screens/Sidebar.css", ".themis-settings-nav {"],
+  ];
+  for (const [file, selector] of panels) {
+    const rule = readFileSync(file, "utf8").split(selector)[1].split("}")[0];
+    expect(rule, file).toContain("background: var(--themis-panel-sheen), var(--themis-panel-bg)");
+    expect(rule, file).toContain("box-shadow: var(--themis-panel-edge)");
+  }
+  const stages: Array<[string, string]> = [
+    ["src/screens/shell.css", ".themis-main { margin"],
+    ["src/screens/ThreadView.css", ".themis-thread-layout.is-reviewing > .themis-thread {"],
+  ];
+  for (const [file, selector] of stages) {
+    const rule = readFileSync(file, "utf8").split(selector)[1].split("}")[0];
+    expect(rule, file).toContain("background: var(--themis-stage-bg)");
+    expect(rule, file).toContain("box-shadow: var(--themis-stage-edge-shadow)");
+  }
+});
+
+it("glass falls back to the same simulated glass without blur when backdrop-filter is unsupported", () => {
   withBrowser(false, "Macintosh", () => {
     applyAppearance({ ...base, theme_palette: "noon" });
-    expect(document.documentElement.dataset.glass).toBe("off");
+    expect(document.documentElement.dataset.glass).toBe("on");
+    expect(document.documentElement.style.getPropertyValue("--themis-panel-blur")).toBe("");
   });
   const tokens = readFileSync("src/theme/tokens.css", "utf8");
   expect(tokens).toMatch(/\[data-glass="off"\][^{]*\{[^}]*--themis-panel-bg: var\(--themis-sidebar-bg\) !important/);
 });
 
-it("glass is off on Linux until its frame time is measured", () => {
+it("glass is on without blur on Linux", () => {
   withBrowser(true, "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/605.1.15", () => {
     applyAppearance({ ...base, theme_palette: "night" });
-    expect(document.documentElement.dataset.glass).toBe("off");
+    expect(document.documentElement.dataset.glass).toBe("on");
+    expect(document.documentElement.style.getPropertyValue("--themis-panel-bg")).toBe(appearancePreset("night").glass?.panel);
+    expect(document.documentElement.style.getPropertyValue("--themis-panel-blur")).toBe("");
   });
 });
 
-it("glass is off on Windows until its frame time is measured", () => {
+it("glass is on without blur on Windows", () => {
   withBrowser(true, "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Edg/120.0", () => {
     applyAppearance({ ...base, theme_palette: "night" });
-    expect(document.documentElement.dataset.glass).toBe("off");
+    expect(document.documentElement.dataset.glass).toBe("on");
+    expect(document.documentElement.style.getPropertyValue("--themis-panel-blur")).toBe("");
   });
 });
 
-it("glass is off when the system asks to reduce transparency", () => {
+it("glass is off, with ring and shadow kept, when the system asks to reduce transparency", () => {
   const asked: string[] = [];
   withBrowser(true, "Macintosh", () => {
     vi.stubGlobal("matchMedia", (query: string) => { asked.push(query); return { matches: query === "(prefers-reduced-transparency: reduce)" }; });
     applyAppearance({ ...base, theme_palette: "morning" });
     expect(document.documentElement.dataset.glass).toBe("off");
+    expect(document.documentElement.style.getPropertyValue("--themis-panel-blur")).toBe("");
+    expect(document.documentElement.style.getPropertyValue("--themis-panel-ring")).toBe(appearancePreset("morning").edge.ring);
+    expect(document.documentElement.style.getPropertyValue("--themis-panel-shadow")).toBe(appearancePreset("morning").edge.shadow);
   });
   expect(asked).toContain("(prefers-reduced-transparency: reduce)");
 });

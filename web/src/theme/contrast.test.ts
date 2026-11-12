@@ -107,7 +107,7 @@ describe("themis theme token contrast", () => {
 
 for (const preset of APPEARANCE_PRESETS) {
   it(`${preset.name}: readable text and actions on every surface`, () => {
-    for (const surface of preset.colors.slice(0, 4)) {
+    for (const surface of [...preset.colors.slice(0, 4), preset.sidebar]) {
       expect(contrastRatio(preset.colors[5], surface)).toBeGreaterThanOrEqual(4.5);
       expect(contrastRatio(preset.colors[6], surface)).toBeGreaterThanOrEqual(4.5);
       expect(contrastRatio(preset.colors[7], surface)).toBeGreaterThanOrEqual(4.5);
@@ -115,13 +115,22 @@ for (const preset of APPEARANCE_PRESETS) {
   });
 }
 
-// The solid presets layer a lighter frame, a darker sidebar and the darkest canvas; skies take their layers from the glass instead.
-for (const preset of APPEARANCE_PRESETS.filter(solid => solid.sky === undefined)) {
-  it(`${preset.name}: frame, sidebar and canvas have descending brightness`, () => {
-    expect(luminance(preset.colors[0])).toBeGreaterThan(luminance(preset.sidebar));
-    expect(luminance(preset.sidebar)).toBeGreaterThan(luminance(preset.colors[1]));
-    for (const text of [preset.colors[5], preset.colors[6], preset.colors[7]]) {
-      expect(contrastRatio(text, preset.sidebar)).toBeGreaterThanOrEqual(4.5);
+// The frame sits behind; the sidebar and the stage must read as separate panels on it by their tint, not only by
+// their ring and shadow. Measured at the sky's middle stop, glass and solid (reduced transparency) alike. The bar is a
+// luminance contrast of 1.25 on light skies and 1.2 on dark ones, where WCAG's flare term squeezes every ratio
+// (#0e0f10 to #212225 is 1.2); before this, the panels sat 1.02 to 1.09 off the frame and read as one colour.
+for (const preset of APPEARANCE_PRESETS) {
+  it(`${preset.name}: the panel and the stage stand clearly off the frame`, () => {
+    const bar = preset.mode === "light" ? 1.25 : 1.2;
+    const layers: Array<[string, string, string]> = [[preset.colors[0], preset.sidebar, preset.colors[1]]];
+    if (preset.glass && preset.sky) {
+      const middle = (preset.sky.match(/#[0-9a-f]{6}/gi) ?? [])[1];
+      const frame = compositeOver(preset.glass.frame, middle);
+      layers.push([frame, compositeOver(preset.glass.panel, frame), compositeOver(preset.glass.stage, frame)]);
+    }
+    for (const [frame, panel, stage] of layers) {
+      expect(contrastRatio(panel, frame), `panel ${panel} on ${frame}`).toBeGreaterThanOrEqual(bar);
+      expect(contrastRatio(stage, frame), `stage ${stage} on ${frame}`).toBeGreaterThanOrEqual(bar);
     }
   });
 }
@@ -135,6 +144,12 @@ for (const preset of APPEARANCE_PRESETS) {
 }
 
 const SKIES = APPEARANCE_PRESETS.filter(preset => preset.sky !== undefined);
+
+// The side panels' sheen: the highlight fades from -45% to 28% of a 140deg gradient, so the corner gets 28/73 of it.
+function sheenOver(highlight: string, panel: string): string {
+  const [, rgb, alpha] = /^rgba\((.*),\s*([\d.]+)\)$/.exec(highlight) ?? [];
+  return rgb === undefined ? panel : compositeOver(`rgba(${rgb},${(Number(alpha) * 28 / 73).toFixed(3)})`, panel);
+}
 
 it("ships the Morning, Noon and Night skies, Morning and Noon light", () => {
   expect(SKIES.map(preset => [preset.id, preset.mode])).toEqual([["morning", "light"], ["noon", "light"], ["night", "dark"]]);
@@ -168,7 +183,8 @@ for (const preset of SKIES) {
     for (const stop of stops) {
       for (const glow of [undefined, ...glows]) {
         const frame = compositeOver(glass.frame, glow === undefined ? stop : compositeOver(glow, stop));
-        for (const surface of [frame, compositeOver(glass.panel, frame), compositeOver(glass.stage, frame)]) {
+        const panel = compositeOver(glass.panel, frame);
+        for (const surface of [frame, panel, sheenOver(preset.edge.highlight, panel), compositeOver(glass.stage, frame)]) {
           for (const colour of [text, text2, accent, ...status]) expect(contrastRatio(colour, surface)).toBeGreaterThanOrEqual(AA_NORMAL);
         }
       }
@@ -199,7 +215,8 @@ for (const preset of SKIES) {
   for (const stop of (preset.sky ?? "").match(/#[0-9a-f]{6}/gi) ?? []) {
     for (const glow of [undefined, ...((preset.sky ?? "").match(/rgba\([^)]+\)/g) ?? [])]) {
       const frame = compositeOver(glass.frame, glow === undefined ? stop : compositeOver(glow, stop));
-      surfaces.push(frame, compositeOver(glass.panel, frame), compositeOver(glass.stage, frame), compositeOver(glass.panel, stop));
+      const panel = compositeOver(glass.panel, frame);
+      surfaces.push(frame, panel, sheenOver(preset.edge.highlight, panel), compositeOver(glass.stage, frame), compositeOver(glass.panel, stop));
     }
   }
   const accent = preset.colors[7].replace(/^#(..)(..)(..)$/, (_, r, g, b) => `rgba(${parseInt(r, 16)},${parseInt(g, 16)},${parseInt(b, 16)},.14)`);
