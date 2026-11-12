@@ -9,11 +9,12 @@ use std::sync::Arc;
 
 use serde_json::json;
 use themis_core::agent_cli::VisionScope;
+use themis_core::visions::Decision;
 
 use super::{ChannelEntry, Hold, OwnedKind, Owner};
 use crate::sink::EventSink;
 use crate::state::AppState;
-use crate::types::{ProviderKind, RunHandle, ThreadInfo};
+use crate::types::{ProviderKind, Question, RunHandle, ThreadInfo};
 
 impl AppState {
     /// Starts a work chat for `vision` in its channel's project: the chat gets the channel's
@@ -172,16 +173,79 @@ impl AppState {
             .any(|id| flagged.contains(id) || blocks.contains_key(id) || pending.contains_key(id))
     }
 
-    /// A Vision answers questions in a chat it owns: never as the person, so no "Allow once"
-    /// it writes lets anything run.
+    /// A Vision answers questions in a chat it owns, on a `decision` its run's autonomy leaves
+    /// to it: as the Vision's answer, never the person's (no "Allow once" it writes lets
+    /// anything run), and each one goes in the channel with the decision and `reason`.
     pub(crate) async fn visions_answer(
         &self,
         sink: Arc<dyn EventSink>,
+        vision: &VisionScope,
         thread_id: String,
         answers: Vec<(String, String)>,
-    ) -> Result<Vec<crate::types::Question>, String> {
-        self.answer_questions_by(sink, thread_id, answers, false)
-            .await
+        (decision, reason): (Decision, String),
+    ) -> Result<Vec<Question>, String> {
+        // Checked again here: the person may have stopped or taken over the chat, or paused
+        // the Vision, since the server first looked.
+        if let Some(waits) = self.visions_waits_reason(&thread_id) {
+            return Err(waits.to_owned());
+        }
+        if !vision.decides.contains(&decision) {
+            return Err(themis_core::prompts::AGENT_CLI_ABOVE_AUTONOMY.to_owned());
+        }
+        let answered = self
+            .answer_questions_by(sink, thread_id.clone(), answers, Some(&vision.vision_id))
+            .await?;
+        for question in &answered {
+            let _ = self.channel_append(
+                &vision.channel_id,
+                ChannelEntry::Answered {
+                    vision_id: vision.vision_id.clone(),
+                    thread_id: thread_id.clone(),
+                    question_id: question.id.clone(),
+                    decision: decision.id().to_owned(),
+                    question: question.question.clone(),
+                    answer: question.answer.clone().unwrap_or_default(),
+                    reason: reason.clone(),
+                },
+            );
+        }
+        self.visions_note(
+            "vision_answered",
+            json!({"thread_id": thread_id, "vision_id": vision.vision_id, "decision": decision.id(), "questions": answered.len()}),
+        );
+        Ok(answered)
+    }
+
+    /// A Vision passes an open question of a chat it owns on to the person: it stays open, and
+    /// the channel shows it for the person to answer there (as the person, through the
+    /// ordinary `answer_question`).
+    pub(crate) fn visions_pass_question(
+        &self,
+        vision: &VisionScope,
+        thread_id: &str,
+        question_id: &str,
+        decision: Decision,
+    ) -> Result<Question, String> {
+        let question = self
+            .open_questions(thread_id)
+            .into_iter()
+            .find(|question| question.id == question_id)
+            .ok_or_else(|| "That question is no longer open in this chat".to_owned())?;
+        self.channel_append(
+            &vision.channel_id,
+            ChannelEntry::PassedOn {
+                vision_id: vision.vision_id.clone(),
+                thread_id: thread_id.to_owned(),
+                question_id: question.id.clone(),
+                decision: decision.id().to_owned(),
+                question: question.question.clone(),
+            },
+        )?;
+        self.visions_note(
+            "vision_passed_question",
+            json!({"thread_id": thread_id, "vision_id": vision.vision_id, "question_id": question.id, "decision": decision.id()}),
+        );
+        Ok(question)
     }
 
     /// A Vision stops the run of a chat it owns. Unlike the person's Stop, this holds nothing

@@ -6,19 +6,21 @@
 //! scripted provider.
 #![cfg(unix)]
 
-use std::path::{Path, PathBuf};
-use std::process::Output;
+use std::path::PathBuf;
 use std::time::Duration;
 
 use serde_json::{json, Value};
-use themis_desktop::server::{Client, Server};
-use themis_desktop::state::{AppState, Hold, OwnedKind, Owner};
-use themis_desktop::types::ProviderKind;
+use themis_desktop::server::Client;
+use themis_desktop::state::{Hold, OwnedKind};
 use wiremock::matchers::method;
 use wiremock::{Mock, MockServer, Request, ResponseTemplate};
 
 #[allow(dead_code)]
 mod common;
+#[allow(dead_code)]
+#[path = "visions_fixture/mod.rs"]
+mod fixture;
+use fixture::*;
 
 /// One app server per process installs the run-credential issuer, so these tests take turns.
 static ONE_SERVER: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
@@ -39,289 +41,6 @@ const METHODS: [&str; 13] = [
     "get_visions_settings",
     "update_visions_settings",
 ];
-
-struct Fixture {
-    _dir: tempfile::TempDir,
-    _repo: tempfile::TempDir,
-    data: PathBuf,
-    project: PathBuf,
-    state: AppState,
-    stop: Option<tokio::sync::oneshot::Sender<()>>,
-    served: Option<tokio::task::JoinHandle<Result<(), String>>>,
-}
-
-async fn fixture() -> Fixture {
-    let dir = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).unwrap();
-    let data = dir.path().canonicalize().unwrap().join("app-data");
-    std::fs::create_dir_all(&data).unwrap();
-    let (repo, project) = common::init_repo();
-    let state = AppState::new_for_test(data.join("settings.json"));
-    let server = Server::bind(state.clone(), &data)
-        .await
-        .unwrap()
-        .with_agent_cli(PathBuf::from(env!("CARGO_BIN_EXE_themis")));
-    let (stop, stopped) = tokio::sync::oneshot::channel::<()>();
-    let served = tokio::spawn(server.run_until(async {
-        let _ = stopped.await;
-    }));
-    Fixture {
-        _dir: dir,
-        _repo: repo,
-        data,
-        project: project.canonicalize().unwrap(),
-        state,
-        stop: Some(stop),
-        served: Some(served),
-    }
-}
-
-impl Fixture {
-    async fn shut_down(mut self) {
-        let _ = self.stop.take().unwrap().send(());
-        self.served.take().unwrap().await.unwrap().unwrap();
-    }
-
-    fn port(&self) -> u16 {
-        let text = std::fs::read_to_string(self.data.join("server.json")).unwrap();
-        serde_json::from_str::<Value>(&text).unwrap()["port"]
-            .as_u64()
-            .unwrap() as u16
-    }
-
-    /// `themis` as the person (discovery file) or with an agent's credential.
-    fn cli(&self, agent: Option<&str>, words: &[&str]) -> Output {
-        let mut command = std::process::Command::new(env!("CARGO_BIN_EXE_themis"));
-        command
-            .arg("--data-dir")
-            .arg(&self.data)
-            .args(words)
-            .env_remove("OPENCODE_KEY")
-            .env_remove(themis_core::agent_cli::TOKEN_ENV)
-            .env_remove(themis_core::agent_cli::PORT_ENV);
-        if let Some(token) = agent {
-            command
-                .env(themis_core::agent_cli::TOKEN_ENV, token)
-                .env(themis_core::agent_cli::PORT_ENV, self.port().to_string());
-        }
-        command.output().expect("run CLI")
-    }
-
-    /// `themis call METHOD ARGS` as the person.
-    fn call(&self, method: &str, args: Value) -> Output {
-        self.cli(None, &["call", method, &args.to_string()])
-    }
-
-    fn call_ok(&self, method: &str, args: Value) -> Value {
-        json_of(&self.call(method, args))
-    }
-
-    async fn thread(&self) -> String {
-        self.state
-            .create_thread(
-                self.project.to_string_lossy().into_owned(),
-                ProviderKind::Go,
-                Some("test-model".to_owned()),
-            )
-            .await
-            .unwrap()
-            .id
-    }
-
-    /// A Vision named `name` and a channel in the project with it as the only member.
-    fn vision_and_channel(&self, name: &str, channel: &str) -> (String, String) {
-        self.vision_and_channel_in(name, channel, "custom")
-    }
-
-    /// The same, with the channel's approval mode `mode`.
-    /// The Vision runs its chats on the scripted provider's `test-model`.
-    fn vision_and_channel_in(&self, name: &str, channel: &str, mode: &str) -> (String, String) {
-        let vision = self.call_ok(
-            "save_vision",
-            json!({"vision": {"name": name, "shape": "cloud", "color": "teal",
-                "model": "test-model"}, "revision": null}),
-        );
-        let vision_id = vision["id"].as_str().unwrap().to_owned();
-        let saved = self.call_ok(
-            "save_channel",
-            json!({"channel": {"name": channel, "project_root": self.project,
-                "approval_mode": mode, "members": [vision_id]}, "revision": null}),
-        );
-        (vision_id, saved["id"].as_str().unwrap().to_owned())
-    }
-
-    /// Visions switched off in the person's runtime.jsonc (kept with what it holds): no real
-    /// Vision run wakes, for a test that plays the Vision's run itself or checks only the store.
-    fn no_wakes(&self) {
-        let path = self.data.join("runtime.jsonc");
-        let mut config: Value = std::fs::read_to_string(&path)
-            .ok()
-            .and_then(|text| serde_json::from_str(&text).ok())
-            .unwrap_or_else(|| json!({}));
-        config["visions"] = json!({"enabled": false});
-        std::fs::write(path, config.to_string()).unwrap();
-    }
-
-    /// The Vision's own chat in the channel and a credential for its run there, as a Vision's
-    /// run gets one. The test plays that run: no real one wakes in the chat (it would end the
-    /// credential with it).
-    async fn vision_run(&self, vision: &str, channel: &str) -> (String, String) {
-        self.no_wakes();
-        let chat = self.thread().await;
-        self.own(&chat, vision, channel, OwnedKind::VisionChat);
-        let mut scope = themis_core::agent_cli::RunScope::new(&self.project, None);
-        scope.vision = Some(themis_core::agent_cli::VisionScope {
-            vision_id: vision.to_owned(),
-            channel_id: channel.to_owned(),
-            project_root: self.project.clone(),
-        });
-        let access = themis_core::agent_cli::issue(&chat, "vision-run", &scope).expect("issued");
-        (chat, access.env()[0].1.clone())
-    }
-
-    /// `themis call METHOD ARGS` with a run's credential.
-    fn agent_call(&self, token: &str, method: &str, args: Value) -> Output {
-        self.cli(Some(token), &["call", method, &args.to_string()])
-    }
-
-    /// A work chat the Vision starts through its credential.
-    fn vision_starts_chat(&self, token: &str) -> String {
-        let created = json_of(&self.agent_call(
-            token,
-            "create_thread",
-            json!({"projectRoot": self.project, "provider": "go", "model": "chosen-by-call"}),
-        ));
-        created["id"].as_str().unwrap().to_owned()
-    }
-
-    fn own(&self, thread: &str, vision: &str, channel: &str, kind: OwnedKind) {
-        self.state
-            .owner_set(Owner {
-                thread_id: thread.to_owned(),
-                vision_id: vision.to_owned(),
-                channel_id: channel.to_owned(),
-                kind,
-                hold: Hold::None,
-            })
-            .unwrap();
-    }
-
-    fn listed_ids(&self) -> Vec<String> {
-        let listed = self.call_ok("list_threads", json!({"projectRoot": self.project}));
-        listed
-            .as_array()
-            .unwrap()
-            .iter()
-            .map(|thread| thread["id"].as_str().unwrap().to_owned())
-            .collect()
-    }
-
-    fn entries(&self, channel: &str) -> Vec<Value> {
-        let page = self.call_ok("get_channel_page", json!({"channelId": channel}));
-        page["entries"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .map(|line| line["entry"].clone())
-            .collect()
-    }
-
-    /// Points the chats at `provider` with a synthetic key.
-    async fn use_provider(&self, provider: &MockServer) {
-        self.state
-            .set_secret("go".into(), "test-key".into())
-            .await
-            .unwrap();
-        self.state.set_go_base_url_override(Some(provider.uri()));
-    }
-
-    /// Starts a run in `thread` that waits on the stalled provider.
-    async fn start_stalled_run(&self, thread: &str, provider: &MockServer) {
-        let before = provider.received_requests().await.unwrap().len();
-        self.call_ok(
-            "send_message",
-            json!({"threadId": thread, "text": "work on it", "reasoningEffort": null}),
-        );
-        wait_until(|| async { provider.received_requests().await.unwrap().len() > before }).await;
-    }
-
-    async fn running(&self, thread: &str) -> bool {
-        self.state
-            .get_thread(thread)
-            .await
-            .is_ok_and(|info| info.running)
-    }
-}
-
-async fn wait_until<F, Fut>(mut check: F)
-where
-    F: FnMut() -> Fut,
-    Fut: std::future::Future<Output = bool>,
-{
-    tokio::time::timeout(Duration::from_secs(10), async {
-        while !check().await {
-            tokio::time::sleep(Duration::from_millis(20)).await;
-        }
-    })
-    .await
-    .expect("condition not reached in time");
-}
-
-/// A provider that answers only after a long wait, so a run stays running.
-async fn stalled_provider() -> MockServer {
-    let provider = MockServer::builder().start().await;
-    Mock::given(method("POST"))
-        .respond_with(
-            ResponseTemplate::new(200)
-                .set_delay(Duration::from_secs(30))
-                .set_body_json(json!({"choices":[{"message":{"role":"assistant","content":"late"},"finish_reason":"stop"}]})),
-        )
-        .mount(&provider)
-        .await;
-    provider
-}
-
-/// A provider that answers at once.
-async fn quick_provider() -> MockServer {
-    let provider = MockServer::builder().start().await;
-    Mock::given(method("POST"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(
-            json!({"choices":[{"message":{"role":"assistant","content":"on it"},"finish_reason":"stop"}]}),
-        ))
-        .mount(&provider)
-        .await;
-    provider
-}
-
-fn text(output: &Output) -> String {
-    format!(
-        "{}{}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    )
-}
-
-fn json_of(output: &Output) -> Value {
-    assert!(output.status.success(), "{}", text(output));
-    serde_json::from_slice(&output.stdout).unwrap_or_else(|_| panic!("{}", text(output)))
-}
-
-fn failed_with(output: &Output, words: &str) -> bool {
-    !output.status.success() && text(output).contains(words)
-}
-
-fn owner_hold(state: &AppState, thread: &str) -> Option<Hold> {
-    state.owner_of(thread).map(|owner| owner.hold)
-}
-
-/// Sets the hold the way a person's Stop leaves it, without a run to stop.
-fn hold(state: &AppState, thread: &str, hold: Hold) {
-    let owner = state.owner_of(thread).expect("owned");
-    state.owner_set(Owner { hold, ..owner }).unwrap();
-}
-
-fn runtime_file(data: &Path) -> String {
-    std::fs::read_to_string(data.join("runtime.jsonc")).unwrap_or_default()
-}
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_channel_and_a_vision_round_trip_with_revisions() {
@@ -1836,5 +1555,199 @@ async fn hooks_and_command_mcp_servers_do_not_start_for_a_vision_run() {
     );
     wait_until(|| async { hook_mark.exists() }).await;
     wait_until(|| async { !fx.running(&plain).await }).await;
+    fx.shut_down().await;
+}
+
+/// `answer_question` as a Vision: its answer, with the decision it falls under and why.
+fn vision_answer(work: &str, question: &str, decision: &str, reason: &str) -> Value {
+    json!({"threadId": work, "questionId": question, "answer": "MIT", "decision": decision,
+        "reason": reason})
+}
+
+/// A Vision answers only within its autonomy: at Small calls a `scope` answer is refused and
+/// the question stays open for the person; under Custom with every row on, sending work out and
+/// spending are still the person's.
+#[tokio::test(flavor = "multi_thread")]
+async fn answers_outside_the_level_are_refused_and_stay_open() {
+    let _turn = ONE_SERVER.lock().await;
+    let fx = fixture().await;
+    let provider = scripted_provider().await;
+    fx.use_provider(&provider).await;
+    let (vision, channel) = fx.vision_and_channel("Wren", "hq");
+    let (_own_chat, small) = fx.vision_run(&vision, &channel).await;
+    let (work, question) = fx.asked_question(&small).await;
+    let above = "Your autonomy level leaves this to the person; pass it on in the channel.";
+    let refused = fx.agent_call(
+        &small,
+        "answer_question",
+        vision_answer(&work, &question, "scope", "fine"),
+    );
+    assert!(failed_with(&refused, above), "{}", text(&refused));
+    let rows = [
+        "wording",
+        "tests",
+        "undoable",
+        "retry",
+        "scope",
+        "delete",
+        "dependency",
+    ];
+    let custom: serde_json::Map<String, Value> = rows
+        .iter()
+        .map(|row| ((*row).to_owned(), json!(true)))
+        .collect();
+    fx.set_visions(json!({"autonomy": "custom", "custom": custom}));
+    let (_own_chat, all_rows) = fx.vision_run(&vision, &channel).await;
+    for decision in ["external", "spend"] {
+        let args = vision_answer(&work, &question, decision, "fine");
+        let refused = fx.agent_call(&all_rows, "answer_question", args);
+        assert!(
+            failed_with(&refused, above),
+            "{decision}: {}",
+            text(&refused)
+        );
+    }
+    let questions = fx.call_ok("list_questions", json!({"threadId": work}));
+    assert!(questions[0]["answer"].is_null(), "still open: {questions}");
+    let types: Vec<Value> = fx
+        .entries(&channel)
+        .iter()
+        .map(|entry| entry["type"].clone())
+        .collect();
+    assert!(!types.contains(&json!("answered")), "{types:?}");
+    let refusals = std::fs::read_dir(fx.data.join("logs")).unwrap().flatten();
+    let logged = refusals
+        .map(|file| std::fs::read_to_string(file.path()).unwrap_or_default())
+        .collect::<String>();
+    assert!(
+        logged.contains("\"reason\":\"above_autonomy\""),
+        "logged as metadata"
+    );
+    assert!(!logged.contains("the usual choice") && !logged.contains("MIT"));
+    fx.shut_down().await;
+}
+
+/// An answer within the level is the Vision's: kept with its decision and reason in the
+/// channel, labelled with the Vision on the question and in the chat's history, and, sent to the
+/// chat, never the person's message (hook wakes held after a failed turn stay held).
+#[tokio::test(flavor = "multi_thread")]
+async fn an_allowed_answer_is_recorded_with_its_decision() {
+    let _turn = ONE_SERVER.lock().await;
+    let fx = fixture().await;
+    let provider = scripted_provider().await;
+    fx.use_provider(&provider).await;
+    let (vision, channel) = fx.vision_and_channel("Wren", "hq");
+    let (_own_chat, agent) = fx.vision_run(&vision, &channel).await;
+    let (work, question) = fx.asked_question(&agent).await;
+    let fail = json!({"threadId": work, "text": "fail now"});
+    json_of(&fx.agent_call(&agent, "send_message", fail));
+    wait_until(|| async { !fx.running(&work).await }).await;
+    wait_until(|| async { fx.state.hook_wakes_held(&work) }).await;
+    for (args, words) in [
+        (
+            json!({"threadId": work, "questionId": question, "answer": "MIT"}),
+            "decision",
+        ),
+        (
+            vision_answer(&work, &question, "colour", "fine"),
+            "decision",
+        ),
+        (vision_answer(&work, &question, "wording", " "), "reason"),
+        (
+            vision_answer(&work, &question, "wording", &"x".repeat(201)),
+            "reason",
+        ),
+    ] {
+        let refused = fx.agent_call(&agent, "answer_question", args);
+        assert!(failed_with(&refused, words), "{words}: {}", text(&refused));
+    }
+
+    let why = "MIT is the usual choice";
+    let answered = json_of(&fx.agent_call(
+        &agent,
+        "answer_question",
+        vision_answer(&work, &question, "wording", why),
+    ));
+    assert_eq!(answered["answered_by"], json!(vision), "{answered}");
+    wait_until(|| async { !fx.running(&work).await }).await;
+    assert!(fx.state.hook_wakes_held(&work), "not the person's message");
+    assert_eq!(owner_hold(&fx.state, &work), Some(Hold::None));
+    let questions = fx.call_ok("list_questions", json!({"threadId": work}));
+    assert_eq!(questions[0]["answer"], "MIT");
+    assert_eq!(questions[0]["answered_by"], json!(vision));
+    let entries = fx.entries(&channel);
+    let entry = entries
+        .iter()
+        .find(|entry| entry["type"] == "answered")
+        .expect("in the channel");
+    assert_eq!(
+        *entry,
+        json!({"type": "answered", "vision_id": vision, "thread_id": work,
+            "question_id": question, "decision": "wording", "question": "Which license?",
+            "answer": "MIT", "reason": why})
+    );
+    let history =
+        serde_json::to_string(&fx.state.get_thread_history(&work).await.unwrap()).unwrap();
+    let event = format!(
+        r#""kind":"question_answered","id":"{question}","answer":"MIT","vision_id":"{vision}""#
+    );
+    assert!(history.contains(&event), "{history}");
+    fx.shut_down().await;
+}
+
+/// A question the Vision passes on stays open in the chat and shows in the channel; the
+/// person's answer from the channel (their own `answer_question`) is the person's.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_passed_question_is_answered_by_the_person_from_the_channel() {
+    let _turn = ONE_SERVER.lock().await;
+    let fx = fixture().await;
+    let provider = scripted_provider().await;
+    fx.use_provider(&provider).await;
+    let (vision, channel) = fx.vision_and_channel("Wren", "hq");
+    let (own_chat, agent) = fx.vision_run(&vision, &channel).await;
+    let (work, question) = fx.asked_question(&agent).await;
+    for (args, words) in [
+        (
+            json!({"threadId": work, "questionId": "no-such", "decision": "scope"}),
+            "no longer",
+        ),
+        (
+            json!({"threadId": work, "questionId": question, "decision": "colour"}),
+            "decision",
+        ),
+    ] {
+        let refused = fx.agent_call(&agent, "pass_question", args);
+        assert!(failed_with(&refused, words), "{words}: {}", text(&refused));
+    }
+    let pass = json!({"threadId": work, "questionId": question, "decision": "scope"});
+    let passed = json_of(&fx.agent_call(&agent, "pass_question", pass));
+    assert!(passed["answer"].is_null(), "{passed}");
+    let entries = fx.entries(&channel);
+    let entry = entries
+        .iter()
+        .find(|entry| entry["type"] == "passed_on")
+        .expect("in the channel");
+    assert_eq!(
+        *entry,
+        json!({"type": "passed_on", "vision_id": vision, "thread_id": work,
+            "question_id": question, "decision": "scope", "question": "Which license?"})
+    );
+    // Only on a chat it owns.
+    let elsewhere = json!({"threadId": own_chat, "questionId": question, "decision": "scope"});
+    let refused = fx.agent_call(&agent, "pass_question", elsewhere);
+    assert!(
+        failed_with(&refused, "Themis refused `pass_question`"),
+        "{}",
+        text(&refused)
+    );
+
+    let answer = json!({"threadId": work, "questionId": question, "answer": "Apache-2.0"});
+    let answered = fx.call_ok("answer_question", answer);
+    assert_eq!(answered["answer"], "Apache-2.0");
+    assert!(
+        answered.get("answered_by").is_none(),
+        "the person's: {answered}"
+    );
+    wait_until(|| async { !fx.running(&work).await }).await;
     fx.shut_down().await;
 }

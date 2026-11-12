@@ -43,6 +43,9 @@ pub struct Question {
     pub asked_at: i64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub answer: Option<String>,
+    /// The Vision that answered it, by id; absent when the person did (or nobody yet).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub answered_by: Option<String>,
     /// A permission question (Auto mode's block box, whose "Allow once" lets an action run):
     /// only the person may answer it. Absent (false) in files from before it was kept.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]

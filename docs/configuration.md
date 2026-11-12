@@ -639,14 +639,16 @@ or steered into a run) while questions are open answers them: each closes with t
 its answer, the boxes go away, and the agent's copy of the message ends with which questions it
 answered (diagnostics: `questions`/`answered_in_chat`, a count). Answers from the question box
 itself and messages from goals, automations and hooks close nothing. The transcript records `question_asked` and `question_answered`
-events so the chat shows them. A non-blocking question needs a `recommended` answer and the run goes on (a question with
+events so the chat shows them; a Vision's answer carries its `vision_id` on the event and as
+`answered_by` on the question (absent for the person's). A non-blocking question needs a `recommended` answer and the run goes on (a question with
 a recommendation is never blocking, whatever the model asks for);
 a blocking one ends the run after that tool batch with a fixed sentence (it stays on the composer
 for the approval timeout, then moves into its turn; nothing starts until it is answered), and in goal mode the
 goal waits until that question is answered (answers to other questions run but leave it
 waiting). `answer_question` (`threadId`, `questionId`, `answer`) delivers the answer like a
 steer when a run is going (unread, it returns to the front of the queue), otherwise first in
-the queue as the next message, joining an answer already waiting there. With `answers`
+the queue as the next message, joining an answer of the same author (the person, or that
+Vision) already waiting there. With `answers`
 (`[{"questionId","answer"}]`) in place of `questionId` and `answer` it answers several at once,
 all or none, and delivers them as one message listing each question and its answer (the question
 box sends a set's pages this way); `list_questions`
@@ -884,7 +886,7 @@ Each refusal is logged as `server`/`agent_call_refused` with the method name
 (`(other)` for anything that is not a plain method name), the `plugin_action`
 action, a `reason` (`method_not_allowed`, `action_not_allowed`, `runs_code`,
 `other_project`, `network_blocked`, `tool_unavailable`, `held_by_person`, `paused`,
-`permission_question`, or
+`permission_question`, `above_autonomy`, or
 `switch_on` from the store), and the chat and run ids (for a Vision's call also its
 `vision_id` and the `target_thread_id` it named), never the credential, paths or arguments.
 
@@ -897,18 +899,22 @@ Beyond everything above it may drive the chats its Vision owns, decided on the r
 | --- | --- |
 | `create_thread {projectRoot}` | `projectRoot` is the channel's project (else `other_project`, `agent-cli-vision-other-project.md`). The call's `provider` and `model` are ignored: the chat runs on the Vision profile's `model`, or the app's default model when it names none. The new chat gets the channel's approval mode (set by the server, never through `set_thread_approval_mode`), the Vision's owner record (`work`) and a `chat_started` entry in the channel; one that cannot be recorded is discarded. |
 | `send_message`, `enqueue_message`, `steer_queued_message`, `answer_question` | the `threadId` is a work chat this Vision owns and the person holds nothing there (else `held_by_person`, `agent-cli-held-by-person.md`: "The person stopped or took over this chat; wait for them to hand it back."). `send_message` checks the hold and the pause again right before the message goes. `steer_queued_message` only for a message this Vision queued (`agent-cli-vision-steers-its-own.md`). `answer_question` never for a permission question: an Auto block's question or a step waiting on the person's approval, such as a destructive step's Run it once / Skip it box (`permission_question`, `agent-cli-permission-question.md`: "Permission questions are the person's; leave it for them."); and a Vision's answer never lets an Auto-blocked action run, whatever it says. An Auto block's question carries `permission: true`, saved with it in the chat's `questions/<chat>.json` (absent, false, in older files), so this holds after a restart too; the server refuses a non-person answer to it under the same lock that writes answers. |
+| `answer_question {…, decision, reason}` | as above, and also: `decision` names the kind of decision (an autonomy row id: `wording`, `tests`, `undoable`, `retry`, `scope`, `delete`, `dependency`, `external`, `spend`; else `agent-cli-vision-decision.md`) and `reason` says why in 1 to 200 characters (else `agent-cli-vision-reason.md`). It is refused, the question left open, when the run's autonomy leaves that decision to the person (`above_autonomy`, `agent-cli-above-autonomy.md`: "Your autonomy level leaves this to the person; pass it on in the channel."); `external` and `spend` always are, Custom included. The decisions are captured when the Vision's run starts, from the profile over the resolved `visions.autonomy`/`visions.custom` (the same list the head's table shows), so a change applies from its next run. Each answer goes in the channel as an `answered` entry `{vision_id, thread_id, question_id, decision, question, answer, reason}` and is logged as `visions`/`vision_answered` (ids, the decision and a count). |
+| `pass_question {threadId, questionId, decision}` | the `threadId` is a work chat this Vision owns (a hold does not stop it), the question is open there, and `decision` is a row id as above. The question stays open; the channel gets a `passed_on` entry `{vision_id, thread_id, question_id, decision, question}` for the person, who answers it from the channel through the ordinary `answer_question` with their own credential (their answer, not the Vision's). Logged as `visions`/`vision_passed_question` with ids and the decision. A Vision-only method: no other caller has it. |
 | `stop_thread` | the `threadId` is a work chat this Vision owns that the person did not take over (its run is then the person's) |
 | `list_questions` and the own-chat reads (`get_thread`, `get_thread_history_page`, …) | the `threadId` is a work chat this Vision owns, or its own Vision chat |
 | `list_channel_threads {channelId}` | `channelId` is the run's channel |
 
-A paused or deleted Vision's `create_thread`, sends, queueing, steering and answers are
-refused (`paused`, `agent-cli-vision-paused.md`). A Vision's writes are never the person's:
+A paused or deleted Vision's `create_thread`, sends, queueing, steering, answers and passed-on
+questions are refused (`paused`, `agent-cli-vision-paused.md`). A Vision's writes are never the person's:
 its sends go the server's way (like a queued message or a goal turn), and a message it queues
 carries its `vision_id`, so none of them takes the chat over, answers the chat's open
 questions or lets hooks wake the chat again; its steer answers no question, joins no goal
 and denies no approval (the approvals the run waits on, or asks for while the steer is unread,
 stay the person's to answer); a steer the run never read goes back to the queue still the
-Vision's. A message a Vision queued stays its words even when the person steers it in: it
+Vision's. A Vision's answer to a question is its own the same way: delivered (to the run, or
+queued) as the Vision's, so it never counts as the person's message, and it never lets an
+Auto-blocked action run. A message a Vision queued stays its words even when the person steers it in: it
 answers no open question and joins no goal. A Vision's queued messages wait, unsent, while the person holds the chat or the
 Vision is paused, and go once the person hands the chat back. Its `stop_thread` stops the run
 without holding the chat. The two hold rules are stricter than the sends alone: a Vision may

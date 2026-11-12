@@ -145,20 +145,32 @@ where
     }
 }
 
-/// The Vision's system head for a run in `channel`. Its profile's autonomy and rows may only
-/// lower the configured ones (`profile_decides`).
-pub(super) fn vision_head(vision: &Vision, channel: &Channel, config: &VisionsConfig) -> String {
-    let table = Decision::ALL
+/// The decisions `vision` makes itself under `config`: its profile's autonomy and rows may only
+/// lower the configured ones (`profile_decides`). The run's head shows them and its grant
+/// answers questions only on them, both from this one list.
+pub fn vision_decisions(vision: &Vision, config: &VisionsConfig) -> Vec<Decision> {
+    Decision::ALL
         .into_iter()
-        .map(|decision| {
-            let decides = profile_decides(
+        .filter(|decision| {
+            profile_decides(
                 config.autonomy,
                 &config.custom,
                 vision.autonomy,
                 vision.custom.as_ref(),
-                decision,
-            );
-            let who = if decides {
+                *decision,
+            )
+        })
+        .collect()
+}
+
+/// The Vision's system head for a run in `channel`, with one table row per decision as
+/// [`vision_decisions`] decides it.
+pub(super) fn vision_head(vision: &Vision, channel: &Channel, config: &VisionsConfig) -> String {
+    let decides = vision_decisions(vision, config);
+    let table = Decision::ALL
+        .into_iter()
+        .map(|decision| {
+            let who = if decides.contains(&decision) {
                 "you decide"
             } else {
                 "ask the person"
@@ -265,8 +277,27 @@ impl AppState {
             vision_id: spec.vision_id,
             channel_id: spec.channel_id,
             project_root: channel.project_root,
+            decides: vision_decisions(&vision, &config.visions),
         };
         Ok(Some(VisionRun { head, scope, port }))
+    }
+
+    /// The grant a run of `vision_id` in `channel_id` gets, its decisions resolved from the
+    /// configuration of the channel's project as a run there captures it.
+    pub fn visions_scope(&self, vision_id: &str, channel_id: &str) -> Result<VisionScope, String> {
+        let vision = self
+            .vision_get(vision_id)
+            .ok_or_else(|| "Unknown Vision".to_owned())?;
+        let channel = self
+            .channel_get(channel_id)
+            .ok_or_else(|| "Unknown channel".to_owned())?;
+        let config = self.runtime_configuration(Some(&channel.project_root), None)?;
+        Ok(VisionScope {
+            vision_id: vision.id.clone(),
+            channel_id: channel.id,
+            decides: vision_decisions(&vision, &config.config.visions),
+            project_root: channel.project_root,
+        })
     }
 
     /// Whether a Vision run in `root` under `config` can be held in its envelope; the app
@@ -641,6 +672,7 @@ mod tests {
                 vision_id: "v1".into(),
                 channel_id: "c1".into(),
                 project_root: dir.path().to_path_buf(),
+                decides: Vec::new(),
             },
             port: 47123,
         };
@@ -672,6 +704,7 @@ mod tests {
                 vision_id: "v1".into(),
                 channel_id: "c1".into(),
                 project_root: dir.path().to_path_buf(),
+                decides: Vec::new(),
             },
             port: 47123,
         };

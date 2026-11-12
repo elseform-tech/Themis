@@ -494,6 +494,18 @@ pub const AGENT_CLI_VISION_PAUSED: &str =
 /// block or a step waiting on the person's approval).
 pub const AGENT_CLI_PERMISSION_QUESTION: &str =
     include_str!("../builtins/prompts/agent-cli-permission-question.md");
+/// The app server's answer to a Vision's `answer_question` on a decision its autonomy level
+/// leaves to the person.
+pub const AGENT_CLI_ABOVE_AUTONOMY: &str =
+    include_str!("../builtins/prompts/agent-cli-above-autonomy.md");
+/// The app server's answer to a Vision's `answer_question` or `pass_question` without a known
+/// `decision`.
+pub const AGENT_CLI_VISION_DECISION: &str =
+    include_str!("../builtins/prompts/agent-cli-vision-decision.md");
+/// The app server's answer to a Vision's `answer_question` without a `reason` of at most 200
+/// characters.
+pub const AGENT_CLI_VISION_REASON: &str =
+    include_str!("../builtins/prompts/agent-cli-vision-reason.md");
 /// The app server's answer to a Vision's steer of a waiting message it did not queue.
 pub const AGENT_CLI_VISION_STEERS_ITS_OWN: &str =
     include_str!("../builtins/prompts/agent-cli-vision-steers-its-own.md");

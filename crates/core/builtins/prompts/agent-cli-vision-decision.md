@@ -1,0 +1,1 @@
+Name the kind of decision this is as `decision`: one of wording, tests, undoable, retry, scope, delete, dependency, external, spend.

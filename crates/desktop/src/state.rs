@@ -60,8 +60,8 @@ pub use browser::update_payload as browser_update_payload;
 pub(crate) use hook_sessions::IDLE_CHECK_EVERY as HOOK_IDLE_CHECK_EVERY;
 pub use terminal::TerminalSession;
 pub use visions::{
-    Channel, ChannelEntry, ChannelLine, ChannelPage, Hold, NoticeKind, OwnedKind, Owner, Vision,
-    WakeReason,
+    vision_decisions, Channel, ChannelEntry, ChannelLine, ChannelPage, Hold, NoticeKind, OwnedKind,
+    Owner, Vision, WakeReason,
 };
 /// Project path resolution, exposed for the `fuzz/` targets; not a stable API.
 #[cfg(feature = "fuzzing")]

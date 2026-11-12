@@ -174,8 +174,8 @@ fn call(method: &str, args: Option<&str>) -> ThemisCall {
     }
     // Anything else is an execution, including the methods a Vision's credential drives the
     // chats it owns with (`create_thread`, `send_message`, `stop_thread`, `answer_question`,
-    // and its reads of those chats, `list_questions` and `list_channel_threads`): each acts on,
-    // or reads, a chat other than the run's own.
+    // `pass_question`, and its reads of those chats, `list_questions` and
+    // `list_channel_threads`): each acts on, or reads, a chat other than the run's own.
     if AGENT_READ_METHODS.contains(&method) {
         ThemisCall::Read
     } else {

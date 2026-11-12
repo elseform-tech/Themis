@@ -328,6 +328,9 @@ const ALL: &[(&str, &str, &[&str])] = &[
         "agent-cli-permission-question",
         &[],
     ),
+    (AGENT_CLI_ABOVE_AUTONOMY, "agent-cli-above-autonomy", &[]),
+    (AGENT_CLI_VISION_DECISION, "agent-cli-vision-decision", &[]),
+    (AGENT_CLI_VISION_REASON, "agent-cli-vision-reason", &[]),
     (
         AGENT_CLI_VISION_STEERS_ITS_OWN,
         "agent-cli-vision-steers-its-own",

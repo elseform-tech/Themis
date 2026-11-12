@@ -122,6 +122,10 @@ pub struct VisionScope {
     pub channel_id: String,
     /// The channel's project root (canonical).
     pub project_root: PathBuf,
+    /// The decisions its autonomy leaves to it (the profile over the resolved
+    /// `visions.autonomy`, see [`crate::visions::profile_decides`]), captured when its run
+    /// starts: it may answer a chat's question itself only on one of these.
+    pub decides: Vec<crate::visions::Decision>,
 }
 
 /// Read-only built-in tools the agent's `themis` mirrors, by the app-server method of the same

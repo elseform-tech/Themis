@@ -209,6 +209,7 @@ fn store_question(
         subagent: asked.subagent,
         asked_at: now_ms(),
         answer: None,
+        answered_by: None,
         permission: asked.permission,
     };
     questions.push(question.clone());
@@ -408,21 +409,23 @@ impl AppState {
         thread_id: String,
         answers: Vec<(String, String)>,
     ) -> Result<Vec<Question>, String> {
-        self.answer_questions_by(sink, thread_id, answers, true)
+        self.answer_questions_by(sink, thread_id, answers, None)
             .await
     }
 
-    /// Answers questions as the person (`person`) or as a Vision. Only the person's "Allow once"
-    /// lets an action Auto blocked run; a Vision's answer never does.
+    /// Answers questions as the person (`by` `None`) or as the Vision `by` names. A Vision's
+    /// answer is its own throughout: kept with the question, labelled in the chat's history and
+    /// delivered as the Vision's (never the person's message), and it never lets an action Auto
+    /// blocked run; only the person's "Allow once" does.
     pub(super) async fn answer_questions_by(
         &self,
         sink: Arc<dyn EventSink>,
         thread_id: String,
         answers: Vec<(String, String)>,
-        person: bool,
+        by: Option<&str>,
     ) -> Result<Vec<Question>, String> {
         let running = self.require_thread(&thread_id).await?;
-        let answered = self.record_answers(&thread_id, answers, person)?;
+        let answered = self.record_answers(&thread_id, answers, by)?;
         for (question, answer) in &answered {
             self.question_event(
                 sink.as_ref(),
@@ -431,20 +434,21 @@ impl AppState {
                 ThreadEvent::QuestionAnswered {
                     id: question.id.clone(),
                     answer: answer.clone(),
+                    vision_id: by.map(str::to_owned),
                 },
             );
             // The person's "Allow once" to an Auto block lets that exact action run once.
-            if person {
+            if by.is_none() {
                 self.auto_question_answered(&question.id, answer);
             }
         }
-        let steered = self.deliver_answers(sink.as_ref(), &thread_id, &answered)?;
+        let steered = self.deliver_answers(sink.as_ref(), &thread_id, &answered, by)?;
         for (question, _) in &answered {
             let _ = self.inner.diagnostics.append(
                 "questions",
                 "answered",
                 "info",
-                json!({"thread_id": thread_id, "question_id": question.id, "delivery": if steered { "run" } else { "queue" }, "pages": answered.len()}),
+                json!({"thread_id": thread_id, "question_id": question.id, "delivery": if steered { "run" } else { "queue" }, "pages": answered.len(), "vision_id": by}),
             );
         }
         if !running || !steered {
@@ -453,12 +457,13 @@ impl AppState {
         Ok(answered.into_iter().map(|(question, _)| question).collect())
     }
 
-    /// Stores the answers, all or none, returning each answered question with its answer.
+    /// Stores the answers, all or none, as the person's (`by` `None`) or the Vision's, returning
+    /// each answered question with its answer.
     fn record_answers(
         &self,
         thread_id: &str,
         answers: Vec<(String, String)>,
-        person: bool,
+        by: Option<&str>,
     ) -> Result<Vec<(Question, String)>, String> {
         if answers.is_empty() {
             return Err("Write an answer".to_owned());
@@ -486,10 +491,11 @@ impl AppState {
                 return Err("That question is already answered".to_owned());
             }
             // Checked under the lock the write takes: a permission question is the person's.
-            if question.permission && !person {
+            if question.permission && by.is_some() {
                 return Err(themis_core::prompts::AGENT_CLI_PERMISSION_QUESTION.to_owned());
             }
             question.answer = Some(answer.clone());
+            question.answered_by = by.map(str::to_owned);
             answered.push((question.clone(), answer));
         }
         self.save_questions(thread_id, &questions);
@@ -497,13 +503,15 @@ impl AppState {
     }
 
     /// Hands the answers to the running run, or puts them first in the queue
-    /// (joining an answer already waiting there), as one message. A running subagent that
-    /// asked gets its own. Returns whether a run took the main agent's answers.
+    /// (joining an answer of the same author already waiting there), as one message, the
+    /// person's (`by` `None`) or the Vision's. A running subagent that asked gets its own.
+    /// Returns whether a run took the main agent's answers.
     fn deliver_answers(
         &self,
         sink: &dyn EventSink,
         thread_id: &str,
         answered: &[(Question, String)],
+        by: Option<&str>,
     ) -> Result<bool, String> {
         // The subagent that asked gets it while it is running; once it has ended, the main
         // agent does, like any answer.
@@ -539,18 +547,23 @@ impl AppState {
                 .steer_inboxes
                 .lock()
                 .unwrap_or_else(|e| e.into_inner());
+            let by = by.map(str::to_owned);
             if let Some(entry) = inboxes.get(thread_id) {
-                entry.push(format!("{ANSWER_MARKER}\n{body}"), None);
+                entry.push(format!("{ANSWER_MARKER}\n{body}"), by);
                 return Ok(true);
             }
             match queue.first_mut() {
-                Some(first) if !first.held && first.text.starts_with(ANSWER_MARKER) => {
+                Some(first)
+                    if !first.held
+                        && first.text.starts_with(ANSWER_MARKER)
+                        && first.vision_id == by =>
+                {
                     first.text.push_str("\n\n");
                     first.text.push_str(&body);
                 }
                 _ => queue.insert(
                     0,
-                    QueuedMessage::new(format!("{ANSWER_MARKER}\n{body}"), Vec::new(), None, None),
+                    QueuedMessage::new(format!("{ANSWER_MARKER}\n{body}"), Vec::new(), None, by),
                 ),
             }
             Ok(false)
@@ -646,6 +659,7 @@ impl AppState {
                 ThreadEvent::QuestionAnswered {
                     id: question.id.clone(),
                     answer: answer.clone(),
+                    vision_id: None,
                 },
             );
             self.auto_question_answered(&question.id, &answer);
@@ -863,7 +877,9 @@ mod tests {
             (plain.id.clone(), "Tabs".to_owned()),
             (blocked.id.clone(), "Allow once".to_owned()),
         ];
-        let refused = state.record_answers("chat-1", both, false).unwrap_err();
+        let refused = state
+            .record_answers("chat-1", both, Some("v1"))
+            .unwrap_err();
         assert_eq!(refused, themis_core::prompts::AGENT_CLI_PERMISSION_QUESTION);
         assert!(state
             .questions_for("chat-1")
@@ -871,11 +887,11 @@ mod tests {
             .all(|q| q.answer.is_none()));
         // A Vision may still answer an ordinary question.
         let answered = state
-            .record_answers("chat-1", vec![(plain.id, "Tabs".into())], false)
+            .record_answers("chat-1", vec![(plain.id, "Tabs".into())], Some("v1"))
             .unwrap();
         assert_eq!(answered.len(), 1);
         let answered = state
-            .record_answers("chat-1", vec![(blocked.id, "Allow once".into())], true)
+            .record_answers("chat-1", vec![(blocked.id, "Allow once".into())], None)
             .unwrap();
         assert_eq!(answered[0].1, "Allow once");
     }
@@ -922,5 +938,67 @@ mod tests {
         assert_eq!(kept.subagent, None);
         assert_eq!(kept.choices, asked.choices);
         assert_eq!(kept.reasons, asked.reasons);
+    }
+
+    /// A Vision's answer is the Vision's wherever it goes: kept with the question, in the run's
+    /// inbox and back in the queue when the run ends unread, and in the queue, where it never
+    /// joins the person's answer (sent, it is not the person's message).
+    #[test]
+    fn a_visions_answer_is_delivered_as_the_visions() {
+        let dir = tempfile::tempdir().unwrap();
+        let shared: Arc<dyn EventSink> = Arc::new(crate::sink::ChannelSink::channel().0);
+        let sink = shared.as_ref();
+        let state = AppState::new_for_test(dir.path().join("settings.json"));
+        let ask = |text: &str| {
+            let asked = NewQuestion {
+                question: text.into(),
+                ..NewQuestion::default()
+            };
+            state.ask_question(sink, "chat-1", "run", asked).unwrap()
+        };
+        let (tabs, license, name) = (ask("Tabs?"), ask("License?"), ask("Name?"));
+        let by_vision = state
+            .record_answers("chat-1", vec![(tabs.id, "Tabs".into())], Some("v1"))
+            .unwrap();
+        assert_eq!(by_vision[0].0.answered_by.as_deref(), Some("v1"));
+        state
+            .deliver_answers(sink, "chat-1", &by_vision, Some("v1"))
+            .unwrap();
+        let by_person = state
+            .record_answers("chat-1", vec![(license.id, "MIT".into())], None)
+            .unwrap();
+        assert_eq!(by_person[0].0.answered_by, None);
+        state
+            .deliver_answers(sink, "chat-1", &by_person, None)
+            .unwrap();
+        let authors = |state: &AppState| -> Vec<Option<String>> {
+            state
+                .queue_for("chat-1")
+                .into_iter()
+                .map(|message| message.vision_id)
+                .collect()
+        };
+        assert_eq!(authors(&state), vec![None, Some("v1".to_owned())]);
+        // Through a running run's inbox, and back when the run ends without reading it.
+        let _inbox = state.open_steer_inbox("chat-1", "run-2", Arc::clone(&shared));
+        let in_run = state
+            .record_answers("chat-1", vec![(name.id, "Pebble".into())], Some("v1"))
+            .unwrap();
+        assert!(state
+            .deliver_answers(sink, "chat-1", &in_run, Some("v1"))
+            .unwrap());
+        assert!(
+            !(state.steer_waiting_check("chat-1"))(),
+            "an answer is no steer"
+        );
+        state.close_steer_inbox("chat-1");
+        assert_eq!(
+            authors(&state),
+            vec![Some("v1".to_owned()), None, Some("v1".to_owned())]
+        );
+        let saved =
+            AppState::new_for_test(dir.path().join("settings.json")).questions_for("chat-1");
+        let by: Vec<Option<&str>> = saved.iter().map(|q| q.answered_by.as_deref()).collect();
+        assert_eq!(by, vec![Some("v1"), None, Some("v1")]);
     }
 }

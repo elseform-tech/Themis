@@ -6,11 +6,18 @@
 //! chat (stopped or took it over) the Vision may not write in it, and a paused Vision starts
 //! and sends nothing. Everything else stays as refused as for any run: approvals, modes,
 //! settings, secrets, other chats. A Vision's writes go the server's way, never as the
-//! person's message (`state/visions/drive.rs`).
+//! person's message (`state/visions/drive.rs`). It answers a question only on a decision its
+//! run's autonomy leaves to it (`decision`, with its `reason`), and passes the rest on to the
+//! person in its channel (`pass_question`).
+
+use themis_core::visions::Decision;
 
 use super::*;
 use crate::state::{Hold, OwnedKind};
 use crate::types::{QueuedMessage, VisionsChange};
+
+/// Most characters of the reason a Vision gives with its answer.
+const MAX_REASON_CHARS: usize = 200;
 
 /// The methods a Vision's grant may use to drive chats, each only as its rules below allow.
 pub(super) const VISION_DRIVE: &[&str] = &[
@@ -20,6 +27,7 @@ pub(super) const VISION_DRIVE: &[&str] = &[
     "steer_queued_message",
     "stop_thread",
     "answer_question",
+    "pass_question",
     "list_questions",
     "list_channel_threads",
 ];
@@ -39,6 +47,7 @@ const STARTS: &[&str] = &[
     "enqueue_message",
     "steer_queued_message",
     "answer_question",
+    "pass_question",
 ];
 
 /// The Vision grant's own decision on a call: `Some` when its rules decide (the inner value is
@@ -71,7 +80,42 @@ pub(super) fn refusal(
         // rules, which allow the Vision's own chat only.
         return drives.then(|| Some(refused(Reason::MethodNotAllowed, method_label(method))));
     };
-    Some(held(owner.hold, method).then(held_by_person))
+    if held(owner.hold, method) {
+        return Some(Some(held_by_person()));
+    }
+    Some(
+        (method == "answer_question" && above_autonomy(scope, args)).then(|| Refusal {
+            reason: Reason::AboveAutonomy,
+            message: themis_core::prompts::AGENT_CLI_ABOVE_AUTONOMY.to_owned(),
+        }),
+    )
+}
+
+/// Whether an answer names a decision its run's autonomy leaves to the person. One naming no
+/// known decision is refused when it runs ([`decision_arg`]).
+fn above_autonomy(scope: &VisionScope, args: &Value) -> bool {
+    args.get("decision")
+        .and_then(Value::as_str)
+        .and_then(Decision::from_id)
+        .is_some_and(|decision| !scope.decides.contains(&decision))
+}
+
+/// The call's `decision`: an autonomy row id.
+fn decision_arg(args: &Value) -> Result<Decision, String> {
+    args.get("decision")
+        .and_then(Value::as_str)
+        .and_then(Decision::from_id)
+        .ok_or_else(|| themis_core::prompts::AGENT_CLI_VISION_DECISION.to_owned())
+}
+
+/// The call's `reason`: some text, at most [`MAX_REASON_CHARS`] characters.
+fn reason_arg(args: &Value) -> Result<String, String> {
+    args.get("reason")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|reason| !reason.is_empty() && reason.chars().count() <= MAX_REASON_CHARS)
+        .map(str::to_owned)
+        .ok_or_else(|| themis_core::prompts::AGENT_CLI_VISION_REASON.to_owned())
 }
 
 /// Whether the person's hold keeps `method` from the Vision: writes while held in any way, and
@@ -156,13 +200,7 @@ pub(super) async fn dispatch(
     let result = match method {
         // The chat's provider and model are the Vision's, never the call's.
         "create_thread" => to_value(state.visions_start_work_chat(scope).await?),
-        "answer_question" => {
-            let (thread_id, answers, many) = crate::server::commands::answer_args(&args)?;
-            let answered = state
-                .visions_answer(Arc::clone(sink), thread_id, answers)
-                .await?;
-            crate::server::commands::answered_value(answered, many)
-        }
+        "answer_question" | "pass_question" => question(state, sink, scope, method, &args).await,
         "send_message" | "enqueue_message" => write(state, sink, scope, method, &args).await,
         "steer_queued_message" => state
             .visions_steer(
@@ -183,6 +221,29 @@ pub(super) async fn dispatch(
         vision_id: Some(scope.vision_id.clone()),
     });
     Ok(result)
+}
+
+/// A Vision's answer to a question (on a decision it may make, with its reason) or its
+/// question passed on to the person.
+async fn question(
+    state: &AppState,
+    sink: &Arc<dyn EventSink>,
+    scope: &VisionScope,
+    method: &str,
+    args: &Value,
+) -> Result<Value, String> {
+    if method == "pass_question" {
+        let thread_id: String = arg(args, "threadId")?;
+        let question_id: String = arg(args, "questionId")?;
+        let decision = decision_arg(args)?;
+        return to_value(state.visions_pass_question(scope, &thread_id, &question_id, decision)?);
+    }
+    let (thread_id, answers, many) = crate::server::commands::answer_args(args)?;
+    let terms = (decision_arg(args)?, reason_arg(args)?);
+    let answered = state
+        .visions_answer(Arc::clone(sink), scope, thread_id, answers, terms)
+        .await?;
+    crate::server::commands::answered_value(answered, many)
 }
 
 /// A Vision's `send_message` (sent the server's way) or `enqueue_message` (queued with its id).

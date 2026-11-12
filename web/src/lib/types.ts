@@ -350,7 +350,7 @@ export type ThreadEvent =
   | { kind: 'goal_note'; outcome: GoalNoteKind; reason: string }
   /** The agent asked the user a question, or updated one still open (same id). */
   | { kind: 'question_asked'; question: Question }
-  | { kind: 'question_answered'; id: string; answer: string }
+  | { kind: 'question_answered'; id: string; answer: string; vision_id?: string }
   /** The agent started a read-only subagent for one part of its task. */
   | { kind: 'subagent_started'; id: string; name: string; brief: string; model: string; confined: boolean; write_paths?: string[]; connections?: string[]; web?: boolean; shell_scopes?: string[]; /** The subagent that started it; none when the main agent did. */ started_by?: string; /** RFC 3339. */ at?: string }
   /** The main agent wrote to a subagent; `resumed` when that picked an ended one up again. */
@@ -475,6 +475,8 @@ export interface Question {
   topic?: string;
   asked_at: number;
   answer?: string;
+  /** The Vision that answered it, by id; absent when the person did. */
+  answered_by?: string;
   /** A permission question (Auto mode's block box): only the person may answer it. */
   permission?: boolean;
 }

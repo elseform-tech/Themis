@@ -35,6 +35,7 @@ use themis_core::visions::Autonomy;
 
 use super::AppState;
 pub use channel_log::{ChannelLine, ChannelPage};
+pub use runs::vision_decisions;
 pub(super) use runs::{boxed_run, confine, run_scope, run_tools, vision_approvals, VisionRunSpec};
 use store::StoreError;
 pub use wakes::WakeReason;
@@ -164,7 +165,8 @@ pub enum ChannelEntry {
         thread_id: String,
         title: String,
     },
-    /// A Vision answered a chat's question itself; `decision` is the autonomy row id.
+    /// A Vision answered a chat's question itself; `decision` is the autonomy row id and
+    /// `reason` the Vision's why (all the person needs to change the answer).
     Answered {
         vision_id: String,
         thread_id: String,
@@ -172,13 +174,15 @@ pub enum ChannelEntry {
         decision: String,
         question: String,
         answer: String,
+        reason: String,
     },
-    /// A Vision passed a chat's question on to the person.
+    /// A Vision passed a chat's question on to the person, who answers it in the channel.
     PassedOn {
         vision_id: String,
         thread_id: String,
         question_id: String,
         decision: String,
+        question: String,
     },
     Notice {
         kind: NoticeKind,

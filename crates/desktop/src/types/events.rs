@@ -139,10 +139,12 @@ pub enum ThreadEvent {
     QuestionAsked {
         question: Question,
     },
-    /// The user answered a question.
+    /// The user answered a question, or a Vision did (`vision_id`, absent for the person's).
     QuestionAnswered {
         id: String,
         answer: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        vision_id: Option<String>,
     },
     /// The agent started a subagent for one part of the task.
     SubagentStarted {

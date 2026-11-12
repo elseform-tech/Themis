@@ -154,6 +154,8 @@ pub(crate) enum Reason {
     Paused,
     /// A Vision's answer to a permission question (an Auto block, a step awaiting approval).
     PermissionQuestion,
+    /// A Vision's answer to a question its autonomy leaves to the person.
+    AboveAutonomy,
 }
 
 impl Reason {
@@ -168,6 +170,7 @@ impl Reason {
             Self::HeldByPerson => "held_by_person",
             Self::Paused => "paused",
             Self::PermissionQuestion => "permission_question",
+            Self::AboveAutonomy => "above_autonomy",
         }
     }
 }
@@ -918,6 +921,7 @@ mod tests {
                     vision_id: format!("v{index}"),
                     channel_id: "c".into(),
                     project_root: PathBuf::from("/no/such/project"),
+                    decides: Vec::new(),
                 });
                 let work = format!("work-{index}");
                 owners.insert(

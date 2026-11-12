@@ -58,6 +58,7 @@ fn setup(model: Option<&str>) -> Setup {
         vision_id: vision.id.clone(),
         channel_id: channel.id,
         project_root: project,
+        decides: Vec::new(),
     };
     Setup {
         _dir: dir,

@@ -1,9 +1,12 @@
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
 use proptest::strategy::Strategy;
+use themis_core::configuration::VisionsConfig;
+use themis_core::visions::{Autonomy, Decision};
 
 use super::*;
 use crate::server::agent::tests::{grant, REFUSED};
+use crate::state::{vision_decisions, Vision};
 
 fn project() -> PathBuf {
     std::env::temp_dir().canonicalize().unwrap()
@@ -14,6 +17,8 @@ fn scope() -> VisionScope {
         vision_id: "v1".into(),
         channel_id: "c1".into(),
         project_root: project(),
+        // Small calls, the default level.
+        decides: vec![Decision::Wording, Decision::Tests],
     }
 }
 
@@ -128,6 +133,89 @@ fn a_vision_grant_reaches_only_its_own_work_chats() {
 
 fn grant_without_vision() -> Grant {
     grant()
+}
+
+fn answer(decision: &str) -> Value {
+    json!({"threadId": "work", "questionId": "q", "answer": "MIT", "decision": decision,
+        "reason": "the usual choice"})
+}
+
+fn profile(autonomy: Autonomy, custom: Option<BTreeMap<String, bool>>) -> Vision {
+    Vision {
+        id: "v1".into(),
+        name: "Wren".into(),
+        role: String::new(),
+        shape: "cloud".into(),
+        color: "teal".into(),
+        model: None,
+        autonomy: Some(autonomy),
+        custom,
+        daily_budget_usd: None,
+        soul: String::new(),
+        paused: false,
+        revision: String::new(),
+    }
+}
+
+/// A Vision answers a question itself only on a decision its autonomy leaves to it; above that
+/// its answer is refused (the question stays the person's), but it may always pass one on. Sending
+/// work out and spending are never its own, Custom with every row on included.
+#[test]
+fn a_vision_answers_only_within_its_autonomy() {
+    let owners = owners(Hold::None);
+    let small = vision_grant();
+    assert_eq!(
+        check(&small, "answer_question", &answer("wording"), &owners),
+        None
+    );
+    for above in ["undoable", "scope", "delete", "external", "spend"] {
+        let refused = check(&small, "answer_question", &answer(above), &owners).expect(above);
+        assert_eq!(refused.reason, Reason::AboveAutonomy);
+        assert_eq!(refused.reason.label(), "above_autonomy");
+        assert_eq!(
+            refused.message,
+            "Your autonomy level leaves this to the person; pass it on in the channel."
+        );
+        let pass = json!({"threadId": "work", "questionId": "q", "decision": above});
+        assert_eq!(
+            check(&small, "pass_question", &pass, &owners),
+            None,
+            "{above}"
+        );
+    }
+    // Every row on, as a hand-edited file might say: still never `external` or `spend`.
+    let rows: BTreeMap<String, bool> = Decision::ALL
+        .iter()
+        .map(|decision| (decision.id().to_owned(), true))
+        .collect();
+    let config = VisionsConfig {
+        autonomy: Autonomy::Custom,
+        custom: rows.clone(),
+        ..VisionsConfig::default()
+    };
+    let decides = vision_decisions(&profile(Autonomy::Custom, Some(rows)), &config);
+    let custom = Grant {
+        vision: Some(VisionScope { decides, ..scope() }),
+        ..grant()
+    };
+    for decision in Decision::ALL {
+        let refused = check(&custom, "answer_question", &answer(decision.id()), &owners);
+        let theirs = matches!(decision, Decision::External | Decision::Spend);
+        assert_eq!(
+            reason(refused),
+            theirs.then_some(Reason::AboveAutonomy),
+            "{}",
+            decision.id()
+        );
+    }
+    // Another Vision's chat: refused for ownership first, whatever the decision.
+    let theirs = json!({"threadId": "theirs", "questionId": "q", "decision": "wording"});
+    for method in ["answer_question", "pass_question"] {
+        assert_eq!(
+            reason(check(&small, method, &theirs, &owners)),
+            Some(Reason::MethodNotAllowed)
+        );
+    }
 }
 
 /// Stopped by the person: the Vision may not write there, but may still read and stop it. Taken
@@ -329,6 +417,7 @@ const KNOWN: &[&str] = &[
     "steer_queued_message",
     "stop_thread",
     "answer_question",
+    "pass_question",
     "list_questions",
     "list_channel_threads",
     "get_thread",
