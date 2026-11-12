@@ -4,6 +4,7 @@ import { authorOf, authorOptions } from "../lib/changeAuthors";
 import { visibleFiles } from "../lib/hiddenFiles";
 import { CodeBlock } from "../components/CodeBlock";
 import type { DiffFile, DiffState, DirEntry, FileView, WorkspaceInfo } from "../lib/types";
+import { useFitSelect } from "../lib/fitSelect";
 import { foldsKey, isOpen, readFolds, setAll, writeFolds, type Folds } from "../lib/changeFolds";
 import { branchDiff, getWorkspace, listDiff, listProjectDir, readBranchFile, readProjectFile } from "../lib/tauri";
 import { describeError, useApp } from "../state/store";
@@ -155,6 +156,11 @@ function ChangesView({ threadId, workspace, projectRoot, onWantDiffWidth }: { th
   // An edited-files row asks for its file, which is among the uncommitted changes.
   const focus = state.diffFocus;
   const { folds, fold } = useFolds(threadId, branch);
+  // Each select is as wide as its chosen option, so its chevron follows the label.
+  const sourceRef = useRef<HTMLSelectElement>(null);
+  const authorRef = useRef<HTMLSelectElement>(null);
+  useFitSelect(sourceRef);
+  useFitSelect(authorRef);
   useEffect(() => { if (focus) { setSelected(focus.path); setPicked(null); fold({ [focus.path]: true }); } }, [focus]); // eslint-disable-line react-hooks/exhaustive-deps
   const refresh = useCallback(async () => {
     // A failed refresh keeps the last diff on screen.
@@ -174,7 +180,7 @@ function ChangesView({ threadId, workspace, projectRoot, onWantDiffWidth }: { th
     <label className="themis-workspace-source">
       <BranchIcon />
       <span className="themis-sr-only">Show changes from</span>
-      <select aria-label="Show changes from" value={branch ?? ""} onChange={event => { setPicked(event.target.value || null); setSelected(null); }}>
+      <select ref={sourceRef} aria-label="Show changes from" value={branch ?? ""} onChange={event => { setPicked(event.target.value || null); setSelected(null); }}>
         <option value="">Uncommitted changes{current ? ` on ${current}` : ""}</option>
         {others.map(other => <option key={other.name} value={other.name}>{other.name}</option>)}
       </select>
@@ -195,7 +201,7 @@ function ChangesView({ threadId, workspace, projectRoot, onWantDiffWidth }: { th
       {bar((options.length > 0 || diff.reason) && <>
         {options.length > 0 && (
           <label className="themis-workspace-source">Author
-            <select value={shownAuthor} onChange={event => setAuthor(event.target.value)}>
+            <select ref={authorRef} value={shownAuthor} onChange={event => setAuthor(event.target.value)}>
               <option value="">All</option>
               {options.map(option => <option key={option} value={option}>{option}</option>)}
             </select>
