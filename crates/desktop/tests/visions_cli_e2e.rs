@@ -901,6 +901,9 @@ async fn scripted_provider() -> MockServer {
             if text.contains("fail now") {
                 return ResponseTemplate::new(400).set_body_string("bad request");
             }
+            if text.contains("slow work") {
+                return reply("working").set_delay(Duration::from_secs(2));
+            }
             if text.contains("ask me") && results == 0 {
                 let call = json!({"id": "q1", "type": "function", "function": {"name": "ask_user",
                     "arguments": json!({"question": "Which license?", "recommended": "MIT",
@@ -1173,7 +1176,11 @@ async fn a_vision_cannot_allow_an_auto_hard_block() {
             .starts_with("Auto mode blocked an action"),
         "{questions}"
     );
+    assert_eq!(question["permission"], true, "{question}");
     let id = question["id"].clone();
+    // The question itself says so: forgetting Auto's in-memory record (as a restart does)
+    // changes nothing.
+    fx.state.forget_auto_questions();
     for args in [
         json!({"threadId": work, "questionId": id, "answer": "Allow once"}),
         json!({"threadId": work, "answers": [{"questionId": id, "answer": "Allow once"}]}),
@@ -1311,5 +1318,51 @@ async fn a_vision_steers_only_its_own_queued_messages() {
     );
     fx.call_ok("pause_vision", json!({"visionId": vision, "paused": true}));
     wait_until(|| async { !fx.running(&work).await }).await;
+    fx.shut_down().await;
+}
+
+/// The person steering in a message a Vision queued does not turn the Vision's words into the
+/// person's answer: an open question stays open.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_persons_steer_of_a_visions_message_answers_nothing() {
+    let _turn = ONE_SERVER.lock().await;
+    let fx = fixture().await;
+    let provider = scripted_provider().await;
+    fx.use_provider(&provider).await;
+    let (vision, channel) = fx.vision_and_channel_in("Wren", "hq", "auto");
+    let (_own_chat, agent) = fx.vision_run(&vision, &channel).await;
+    let work = fx.vision_starts_chat(&agent);
+    let open = || {
+        let questions = fx.call_ok("list_questions", json!({"threadId": work}));
+        questions
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|question| question["answer"].is_null())
+            .count()
+    };
+    let send = |text: &str| {
+        json_of(&fx.agent_call(
+            &agent,
+            "send_message",
+            json!({"threadId": work, "text": text}),
+        ))
+    };
+    send("please ask me first");
+    wait_until(|| async { !fx.running(&work).await }).await;
+    assert_eq!(open(), 1);
+    send("slow work");
+    assert!(fx.running(&work).await);
+    let queued = json_of(&fx.agent_call(
+        &agent,
+        "enqueue_message",
+        json!({"threadId": work, "text": "MIT"}),
+    ));
+    fx.call_ok(
+        "steer_queued_message",
+        json!({"threadId": work, "messageId": queued["id"]}),
+    );
+    wait_until(|| async { !fx.running(&work).await }).await;
+    assert_eq!(open(), 1, "the Vision's words answered nothing");
     fx.shut_down().await;
 }

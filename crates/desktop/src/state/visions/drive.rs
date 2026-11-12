@@ -154,15 +154,25 @@ impl AppState {
     /// destructive step's "Run it once" box is one). Those are the person's alone.
     pub(crate) fn visions_permission_question<'a>(
         &self,
+        thread_id: &str,
         mut question_ids: impl Iterator<Item = &'a str>,
     ) -> bool {
+        // Kept on the question itself (and saved with it); the in-memory list of Auto's
+        // blocks and the waiting approvals cover what is being asked right now.
+        let flagged: std::collections::HashSet<String> = self
+            .questions_for(thread_id)
+            .into_iter()
+            .filter(|question| question.permission)
+            .map(|question| question.id)
+            .collect();
         let blocks = self
             .inner
             .auto_questions
             .lock()
             .unwrap_or_else(|e| e.into_inner());
         let pending = self.inner.pending.lock().unwrap_or_else(|e| e.into_inner());
-        question_ids.any(|id| blocks.contains_key(id) || pending.contains_key(id))
+        question_ids
+            .any(|id| flagged.contains(id) || blocks.contains_key(id) || pending.contains_key(id))
     }
 
     /// A Vision answers questions in a chat it owns: never as the person, so no "Allow once"

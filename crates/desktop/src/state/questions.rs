@@ -59,6 +59,8 @@ pub(super) struct NewQuestion {
     pub topic: Option<String>,
     /// The subagent asking, by id: its answer goes to that subagent.
     pub subagent: Option<String>,
+    /// Asks for a permission (Auto mode's block box): only the person may answer it.
+    pub permission: bool,
 }
 
 /// Why a question was not asked.
@@ -106,6 +108,7 @@ struct Shaped {
     reasons: BTreeMap<String, String>,
     blocking: bool,
     subagent: Option<String>,
+    permission: bool,
 }
 
 fn shape(asked: NewQuestion) -> Result<Shaped, AskRefused> {
@@ -154,6 +157,7 @@ fn shape(asked: NewQuestion) -> Result<Shaped, AskRefused> {
         reasons,
         blocking: asked.blocking,
         subagent: asked.subagent,
+        permission: asked.permission,
     })
 }
 
@@ -184,6 +188,8 @@ fn store_question(
         question.blocking = asked.blocking;
         question.topic = asked.topic.or(question.topic.take());
         question.subagent = asked.subagent;
+        // Once a permission question, always one: a repeat cannot take the flag away.
+        question.permission |= asked.permission;
         question.run_id = run_id.to_owned();
         return (question.clone(), true);
     }
@@ -200,6 +206,7 @@ fn store_question(
         subagent: asked.subagent,
         asked_at: now_ms(),
         answer: None,
+        permission: asked.permission,
     };
     questions.push(question.clone());
     (question, false)
@@ -403,7 +410,7 @@ impl AppState {
         person: bool,
     ) -> Result<Vec<Question>, String> {
         let running = self.require_thread(&thread_id).await?;
-        let answered = self.record_answers(&thread_id, answers)?;
+        let answered = self.record_answers(&thread_id, answers, person)?;
         for (question, answer) in &answered {
             self.question_event(
                 sink.as_ref(),
@@ -439,6 +446,7 @@ impl AppState {
         &self,
         thread_id: &str,
         answers: Vec<(String, String)>,
+        person: bool,
     ) -> Result<Vec<(Question, String)>, String> {
         if answers.is_empty() {
             return Err("Write an answer".to_owned());
@@ -464,6 +472,10 @@ impl AppState {
                 .ok_or_else(|| "That question is no longer in this chat".to_owned())?;
             if question.answer.is_some() {
                 return Err("That question is already answered".to_owned());
+            }
+            // Checked under the lock the write takes: a permission question is the person's.
+            if question.permission && !person {
+                return Err(themis_core::prompts::AGENT_CLI_PERMISSION_QUESTION.to_owned());
             }
             question.answer = Some(answer.clone());
             answered.push((question.clone(), answer));
@@ -766,5 +778,107 @@ mod tests {
         .ok()
         .unwrap();
         assert_eq!(suggestion.reasons["Pebble"], "short");
+    }
+
+    fn permission_question(text: &str) -> NewQuestion {
+        NewQuestion {
+            question: text.into(),
+            choices: strings(&["Allow once", "Skip it"]),
+            permission: true,
+            ..NewQuestion::default()
+        }
+    }
+
+    /// The flag is saved with the question and read back by a fresh state on the same data
+    /// (an Auto block's in-memory record does not survive a restart); a file from before the
+    /// flag reads as an ordinary question; an agent's repeat cannot take the flag away.
+    #[test]
+    fn the_permission_flag_is_saved_and_kept() {
+        let dir = tempfile::tempdir().unwrap();
+        let sink = crate::sink::ChannelSink::channel().0;
+        let state = AppState::new_for_test(dir.path().join("settings.json"));
+        let asked = state
+            .ask_question(&sink, "chat-1", "run", permission_question("Allow it?"))
+            .unwrap();
+        assert!(asked.permission);
+        let ordinary = state
+            .ask_question(
+                &sink,
+                "chat-1",
+                "run",
+                NewQuestion {
+                    question: "Tabs?".into(),
+                    ..NewQuestion::default()
+                },
+            )
+            .unwrap();
+        assert!(!ordinary.permission);
+        let repeat = state
+            .ask_question(
+                &sink,
+                "chat-1",
+                "run",
+                NewQuestion {
+                    question: "Allow it?".into(),
+                    ..NewQuestion::default()
+                },
+            )
+            .unwrap();
+        assert_eq!(repeat.id, asked.id);
+        assert!(repeat.permission, "a repeat keeps the flag");
+
+        let restarted = AppState::new_for_test(dir.path().join("settings.json"));
+        let read = restarted.questions_for("chat-1");
+        let flags: Vec<bool> = read.iter().map(|question| question.permission).collect();
+        assert_eq!(flags, vec![true, false]);
+        let old: Question =
+            serde_json::from_str(r#"{"id":"q","run_id":"r","question":"Old?","asked_at":1}"#)
+                .unwrap();
+        assert!(!old.permission);
+        assert!(!serde_json::to_string(&ordinary)
+            .unwrap()
+            .contains("permission"));
+    }
+
+    /// Only the person answers a permission question; the check runs under the lock the
+    /// answer is written with, and a refused set changes nothing (all or none).
+    #[test]
+    fn only_the_person_answers_a_permission_question() {
+        let dir = tempfile::tempdir().unwrap();
+        let sink = crate::sink::ChannelSink::channel().0;
+        let state = AppState::new_for_test(dir.path().join("settings.json"));
+        let blocked = state
+            .ask_question(&sink, "chat-1", "run", permission_question("Allow it?"))
+            .unwrap();
+        let plain = state
+            .ask_question(
+                &sink,
+                "chat-1",
+                "run",
+                NewQuestion {
+                    question: "Tabs?".into(),
+                    ..NewQuestion::default()
+                },
+            )
+            .unwrap();
+        let both = vec![
+            (plain.id.clone(), "Tabs".to_owned()),
+            (blocked.id.clone(), "Allow once".to_owned()),
+        ];
+        let refused = state.record_answers("chat-1", both, false).unwrap_err();
+        assert_eq!(refused, themis_core::prompts::AGENT_CLI_PERMISSION_QUESTION);
+        assert!(state
+            .questions_for("chat-1")
+            .iter()
+            .all(|q| q.answer.is_none()));
+        // A Vision may still answer an ordinary question.
+        let answered = state
+            .record_answers("chat-1", vec![(plain.id, "Tabs".into())], false)
+            .unwrap();
+        assert_eq!(answered.len(), 1);
+        let answered = state
+            .record_answers("chat-1", vec![(blocked.id, "Allow once".into())], true)
+            .unwrap();
+        assert_eq!(answered[0].1, "Allow once");
     }
 }

@@ -299,7 +299,8 @@ impl AppState {
             let entry = inboxes
                 .get(&thread_id)
                 .ok_or_else(|| "No run is going; send the message instead".to_owned())?;
-            let text = queue.remove(index).text;
+            let message = queue.remove(index);
+            let (text, queued_by_vision) = (message.text, message.vision_id.is_some());
             // Before the inbox: the run may read it at once, and the chat must
             // hear of it in this order.
             self.record_steer_event(
@@ -309,14 +310,18 @@ impl AppState {
                 ThreadEvent::SteerShown { text: text.clone() },
             );
             entry.push(text.clone(), vision_id.clone());
-            Ok((text, entry.run_id.clone()))
+            Ok((text, queued_by_vision))
         })?;
-        let (steered, _run_id) = steered;
+        let (steered, queued_by_vision) = steered;
         let person = vision_id.is_none();
         // A Vision's steer leaves the approvals the run waits on to the person.
         let mut denied = 0;
         if person {
-            self.person_steered(&sink, &thread_id, &steered);
+            // Words a Vision queued stay the Vision's even when the person steers them in:
+            // they answer no question and join no goal.
+            if !queued_by_vision {
+                self.person_steered(&sink, &thread_id, &steered);
+            }
             // After the inbox: an approval asked from here on sees the message there
             // and is denied without a box (see `DesktopApprovalHook`).
             denied = self.deny_approvals_for_new_message(&thread_id);

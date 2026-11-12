@@ -114,8 +114,8 @@ pub(super) fn state_refusal(
 /// as one (the call would fail anyway).
 fn asks_permission(state: &AppState, args: &Value) -> bool {
     match crate::server::commands::answer_args(args) {
-        Ok((_, answers, _)) => {
-            state.visions_permission_question(answers.iter().map(|(id, _)| id.as_str()))
+        Ok((thread_id, answers, _)) => {
+            state.visions_permission_question(&thread_id, answers.iter().map(|(id, _)| id.as_str()))
         }
         Err(_) => true,
     }

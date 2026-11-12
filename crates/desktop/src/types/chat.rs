@@ -43,6 +43,10 @@ pub struct Question {
     pub asked_at: i64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub answer: Option<String>,
+    /// A permission question (Auto mode's block box, whose "Allow once" lets an action run):
+    /// only the person may answer it. Absent (false) in files from before it was kept.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub permission: bool,
 }
 
 /// A message waiting in a chat's queue for the current run to end.

@@ -264,6 +264,7 @@ impl AutoReviewer for DesktopReviewer {
                 choices: vec![ALLOW_ONCE.to_owned(), SAFER.to_owned(), SKIP.to_owned()],
                 assumption: Some(SAFER.to_owned()),
                 reasons,
+                permission: true,
                 ..NewQuestion::default()
             },
         );
@@ -381,6 +382,16 @@ impl AppState {
                 asked.remove(&oldest);
             }
         }
+    }
+
+    /// Forgets which questions Auto's blocks asked, as a restart does (tests).
+    #[doc(hidden)]
+    pub fn forget_auto_questions(&self) {
+        self.inner
+            .auto_questions
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clear();
     }
 
     /// The person answered a question: an "Allow once" to a hard block lets that action run

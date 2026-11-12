@@ -475,6 +475,8 @@ export interface Question {
   topic?: string;
   asked_at: number;
   answer?: string;
+  /** A permission question (Auto mode's block box): only the person may answer it. */
+  permission?: boolean;
 }
 
 /** Starts the message that delivers an answer to the agent. */
