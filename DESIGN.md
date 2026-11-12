@@ -97,6 +97,7 @@ Dark mode is the product baseline; the Morning and Noon skies are the light look
 | Code ink | `--themis-code-keyword`, `-function`, `-string`, `-type`, `-comment` | `#8ab4f8`, `#d7aefb`, `#81c995`, `#e3b85a`, `#9da1a8` | Syntax on the well; comment also colours line numbers |
 | Diff ink | `--themis-diff-add`, `--themis-add-bg`, `--themis-diff-del`, `--themis-del-bg` | `#81c995` on `rgba(129,201,149,.12)`, `#f4968d` on `rgba(242,139,130,.13)` | A changed line is tinted whole in its ink, calmly (1.08 to 1.3 off the well, never a bright slab); changed characters get the tint twice; line counts use the ink |
 | Accent ink | `--themis-accent-ink` | `#1a1405` (white on Morning and Noon, `#06101E` on Night) | Icons and text on the accent: the send circle (not ready: the accent at 65% under the same arrow, 3:1), badges, switches |
+| Mark | `--themis-mark-from`, `--themis-mark-to`, `--themis-mark-v`, `--themis-mark-track` | `#c08a2e` → `#f6e7bd`, `#e6e6e6`, `#2a2c30` | The Themis Visions mark on the startup screen (canvas `--ga`, `--gb`, `--lv`) and its bar's track (`--div`) |
 | Shadow | `--themis-shadow` | `rgb(0 0 0)`; light `rgb(8 20 45 / .35)` | Mix with transparent at each shadow's strength |
 | Warm gradient | `--themis-gradient-1/2/3` | `#d0a660` → `#e3b85a` → `#f6e7bd` | Approved Themis moments only (below) |
 

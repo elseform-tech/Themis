@@ -3,6 +3,7 @@ import { act, fireEvent, render, screen, within, waitFor } from "@testing-librar
 import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_SETTINGS } from "../state/reducer";
 import App from "../App";
+import { loaderTiming } from "./StartupScreen";
 import { open } from "@tauri-apps/plugin-dialog";
 import * as bridge from "../lib/tauri";
 
@@ -354,11 +355,44 @@ describe("Workspace journey", () => {
     expect(screen.queryByText("Opening workspace")).toBeNull();
     expect(screen.getByRole("navigation", { name: "Utilities" })).toBeInTheDocument();
   });
-  it("exits startup on failure", async () => {
+  it("exits startup on failure and keeps the error readable once the app shows", async () => {
     vi.mocked(bridge.getSettings).mockRejectedValueOnce(new Error("offline"));
     await mount();
     expect(screen.queryByText("Opening workspace")).toBeNull();
     expect(screen.getByRole("navigation", { name: "Utilities" })).toBeInTheDocument();
+    expect(screen.getByText(/Failed to load settings: offline/)).toBeInTheDocument();
+  });
+  it("paints the loader in the last sky the person used, before settings arrive, and remembers the chosen one", async () => {
+    localStorage.setItem("themis:sky", JSON.stringify("night"));
+    let finish!: (value: typeof settings) => void;
+    vi.mocked(bridge.getSettings).mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+    await mount();
+    expect(screen.getByRole("progressbar", { name: "Starting" })).toHaveAttribute("aria-valuenow", "18");
+    expect(document.documentElement.dataset.palette).toBe("night");
+    await act(async () => finish({ ...settings, theme_palette: "noon" }));
+    expect(document.documentElement.dataset.palette).toBe("noon");
+    expect(localStorage.getItem("themis:sky")).toBe(JSON.stringify("noon"));
+  });
+  it("falls back to Auto's sky for the time of day when nothing is remembered", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date(2026, 10, 12, 8, 0));
+    vi.mocked(bridge.getSettings).mockImplementationOnce(() => new Promise(() => {}));
+    await mount();
+    expect(document.documentElement.dataset.palette).toBe("morning");
+  });
+  it("holds the loader for its minimum time and lets the bar fill before revealing the app", async () => {
+    vi.useFakeTimers();
+    Object.assign(loaderTiming, { minimumMs: 900, settleMs: 600 });
+    try {
+      await mount();
+      await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+      expect(screen.getByRole("progressbar", { name: "Starting" })).toHaveAttribute("aria-valuenow", "100");
+      expect(screen.queryByRole("navigation", { name: "Utilities" })).toBeNull();
+      await act(async () => { await vi.advanceTimersByTimeAsync(899); });
+      expect(screen.queryByRole("navigation", { name: "Utilities" })).toBeNull();
+      await act(async () => { await vi.advanceTimersByTimeAsync(10); });
+      expect(screen.getByRole("navigation", { name: "Utilities" })).toBeInTheDocument();
+    } finally { Object.assign(loaderTiming, { minimumMs: 0, settleMs: 0 }); }
   });
   it("shows a fixed root without location controls", async () => {
     await mount();

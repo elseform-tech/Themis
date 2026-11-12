@@ -14,6 +14,15 @@ import type {
 import { failureMessage } from "../lib/errors";
 import { newId, type AppAction } from "./reducer";
 
+/** The startup steps the store reports, in order, and where each puts the startup bar (the canvas's 18, 52, 84, 100). */
+export const STARTUP_STEPS = ["Loading preferences…", "Opening workspace…", "Restoring conversations…"] as const;
+const STEP_PROGRESS = [18, 52, 84];
+
+export function startupProgress(step: string | null): number {
+  const index = STARTUP_STEPS.indexOf(step as (typeof STARTUP_STEPS)[number]);
+  return step === null ? 100 : STEP_PROGRESS[index] ?? 18;
+}
+
 export interface Phase4ListsApi {
   listSkills(): Promise<Skill[]>;
   listAutomations(): Promise<Automation[]>;

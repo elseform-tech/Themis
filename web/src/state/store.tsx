@@ -45,7 +45,7 @@ import { getBrowserSettings,
 import { failureMessage as describeError } from "../lib/errors";
 import { reviewToast } from "../screens/reviewFlow";
 import { readSession, writeSession } from "./session";
-import { loadPhase4Lists, openProjectOfNewChat, restoreRecentProjects } from "./boot";
+import { loadPhase4Lists, openProjectOfNewChat, restoreRecentProjects, STARTUP_STEPS } from "./boot";
 import { settingsSync } from "./settingsSync";
 import {
   initialState,
@@ -142,7 +142,7 @@ async function listenOutsideChanges(dispatch: Dispatch<AppAction>, isCancelled: 
 
 export function AppProvider({ children }: { children: ReactNode }) {
   const [state, dispatch] = useReducer(reducer, initialState);
-  const [startup, setStartup] = useState<string | null>("Loading preferences…");
+  const [startup, setStartup] = useState<string | null>(STARTUP_STEPS[0]);
   const legacyMessages = useRef(readSession<Record<string, PersistedMessage[]>>("messages", {}));
   const restoredSession = useRef(false);
   const savedSelection = useRef(readSession<{ root: string; threadId: string } | null>("selection", null));
@@ -395,14 +395,14 @@ export function AppProvider({ children }: { children: ReactNode }) {
       .then(async (settings) => {
         if (cancelled) return;
         dispatch({ type: "settings/loaded", settings });
-        setStartup("Opening workspace…");
+        setStartup(STARTUP_STEPS[1]);
         const defaultProject = await getDefaultProject().catch(error => {
           if (!cancelled) toast(dispatch, `Default workspace unavailable: ${describeError(error)}`, "danger");
           return null;
         });
         const roots = [...settings.recent_roots];
         if (defaultProject && !roots.includes(defaultProject.root)) roots.push(defaultProject.root);
-        setStartup("Restoring conversations…");
+        setStartup(STARTUP_STEPS[2]);
         const completed = await restoreRecentProjects(roots, {
           api: { openProject: root => defaultProject?.root === root ? Promise.resolve(defaultProject) : openProject(root), listThreads, getThreadHistory, importLegacyHistory },
           dispatch,

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { pluginAction } from "./lib/tauri";
 import { usePopoverDismissal } from "./lib/dismiss";
-import { Button, Loader, Toasts } from "./components";
+import { Button, Toasts } from "./components";
 import {
   AppProvider,
   useApp,
@@ -20,7 +20,18 @@ import { SidebarIcon } from "./screens/Sidebar";
 import { isTauri } from "@tauri-apps/api/core";
 import { ResourceMeter } from "./screens/ResourceMeter";
 import "./screens/shell.css";
-import { useApplyAppearance, useAutoSky } from "./theme/appearance";
+import { rememberedPalette, rememberPalette, useApplyAppearance, useAutoSky } from "./theme/appearance";
+import { StartupScreen, startupProgress, useStartupReveal } from "./screens/StartupScreen";
+import { DEFAULT_SETTINGS } from "./state/reducer";
+
+/** Until the settings arrive, the startup screen wears the look chosen last time; a failed load (the defaults)
+ *  never overwrites it. */
+function useShellAppearance(loaded: boolean, settings: typeof DEFAULT_SETTINGS) {
+  const [remembered] = useState(rememberedPalette);
+  const palette = useAutoSky(loaded ? settings.theme_palette : remembered);
+  useApplyAppearance({ ...settings, theme_palette: palette });
+  useEffect(() => { if (loaded && settings !== DEFAULT_SETTINGS) rememberPalette(settings.theme_palette); }, [loaded, settings]);
+}
 
 function Shell() {
   const { state, startup, dispatch } = useApp();
@@ -35,8 +46,8 @@ function Shell() {
     else if (!state.diffPanelOpen && autoFolded.current) { autoFolded.current = false; setCollapsed(readSession("sidebar-collapsed", false)); }
     // eslint-disable-next-line react-hooks/exhaustive-deps -- react only to the panel opening or closing
   }, [state.diffPanelOpen]);
-  const palette = useAutoSky(state.settings.theme_palette);
-  useApplyAppearance({ ...state.settings, theme_palette: palette });
+  useShellAppearance(state.settingsLoaded, state.settings);
+  const revealed = useStartupReveal(startup);
   // Looks for plugin updates when the app opens; the backend honours the setting and skips
   // sources checked in the last day.
   useEffect(() => { void pluginAction({ action: "check_sources" }).catch(() => {}); }, []);
@@ -68,7 +79,7 @@ function Shell() {
     };
   }, [dispatch, state.paletteOpen, state.projectDialogOpen, state.diffPanelOpen]);
 
-  if (startup !== null) return <Loader label={startup} />;
+  if (!revealed) return <StartupScreen label={startup ?? "Ready"} progress={startupProgress(startup)} />;
   return (
     <div className={`themis-shell ${isTauri() && /Mac/.test(navigator.platform) ? "themis-shell--mac" : ""}`}>
         <header className="themis-nav" data-tauri-drag-region>

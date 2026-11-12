@@ -37,6 +37,11 @@
   --themis-diff-add: #81c995;
   --themis-diff-del: #f4968d;
   --themis-add-bg: rgba(129, 201, 149, 0.12);
+  /* The Themis Visions mark and the startup bar's track (canvas --ga, --gb, --lv, --div). */
+  --themis-mark-from: #c08a2e;
+  --themis-mark-to: #f6e7bd;
+  --themis-mark-v: #e6e6e6;
+  --themis-mark-track: #2a2c30;
   --themis-del-bg: rgba(242, 139, 130, 0.13);
   /* A soft lift for cards on the stage (the bubble). */
   --themis-card-lift: 0 1px 2px var(--themis-panel-shadow), inset 0 1px 0 var(--themis-panel-highlight);
