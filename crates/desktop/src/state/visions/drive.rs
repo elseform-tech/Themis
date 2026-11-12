@@ -19,13 +19,20 @@ impl AppState {
     /// Starts a work chat for `vision` in its channel's project: the chat gets the channel's
     /// approval mode (set here, never through the refused method), the Vision's owner record
     /// and a `chat_started` entry in the channel. A chat that cannot be recorded as the
-    /// Vision's is discarded rather than left as a stray plain chat.
+    /// Vision's is discarded rather than left as a stray plain chat. The chat runs on the
+    /// Vision's model when its profile names one, else on the app's default model: a Vision does
+    /// not choose either.
     pub(crate) async fn visions_start_work_chat(
         &self,
         vision: &VisionScope,
-        provider: ProviderKind,
-        model: Option<String>,
     ) -> Result<ThreadInfo, String> {
+        let profile = self
+            .vision_get(&vision.vision_id)
+            .ok_or_else(|| "Unknown Vision".to_owned())?;
+        let model = match profile.model.filter(|model| !model.trim().is_empty()) {
+            Some(model) => model,
+            None => self.inner.settings.get().await.default_model,
+        };
         let channel = self
             .channel_get(&vision.channel_id)
             .filter(|channel| channel.members.contains(&vision.vision_id))
@@ -33,8 +40,8 @@ impl AppState {
         let info = self
             .create_thread(
                 vision.project_root.to_string_lossy().into_owned(),
-                provider,
-                model,
+                ProviderKind::Go,
+                Some(model),
             )
             .await?;
         let recorded = self
@@ -84,6 +91,11 @@ impl AppState {
         reasoning_effort: Option<String>,
         attachments: Vec<String>,
     ) -> Result<RunHandle, String> {
+        // Checked again here: the person may have stopped or taken over the chat, or paused
+        // the Vision, since the server first looked.
+        if let Some(reason) = self.visions_waits_reason(thread_id) {
+            return Err(reason.to_owned());
+        }
         let run_id = uuid::Uuid::new_v4().to_string();
         let (sent, _) = self
             .send_from_server(
@@ -118,12 +130,51 @@ impl AppState {
     /// Whether the messages a Vision queued in `thread_id` must wait: the person holds the chat,
     /// or its Vision is paused or gone.
     pub(crate) fn visions_queue_waits(&self, thread_id: &str) -> bool {
-        self.owner_of(thread_id).is_none_or(|owner| {
-            owner.hold != Hold::None
-                || self
-                    .vision_get(&owner.vision_id)
-                    .is_none_or(|vision| vision.paused)
-        })
+        self.visions_waits_reason(thread_id).is_some()
+    }
+
+    /// Why a Vision may not write in `thread_id` now (the answer it gets), if it may not: the
+    /// person holds the chat, or its Vision is paused, gone or no longer owns it.
+    fn visions_waits_reason(&self, thread_id: &str) -> Option<&'static str> {
+        use themis_core::prompts::{AGENT_CLI_HELD_BY_PERSON, AGENT_CLI_VISION_PAUSED};
+        let Some(owner) = self.owner_of(thread_id) else {
+            return Some(AGENT_CLI_HELD_BY_PERSON);
+        };
+        if owner.hold != Hold::None {
+            return Some(AGENT_CLI_HELD_BY_PERSON);
+        }
+        let paused = self
+            .vision_get(&owner.vision_id)
+            .is_none_or(|vision| vision.paused);
+        paused.then_some(AGENT_CLI_VISION_PAUSED)
+    }
+
+    /// Whether any of `question_ids` asks for a permission: an Auto block's question (its
+    /// "Allow once" lets the action run) or a step waiting on the person's approval (a
+    /// destructive step's "Run it once" box is one). Those are the person's alone.
+    pub(crate) fn visions_permission_question<'a>(
+        &self,
+        mut question_ids: impl Iterator<Item = &'a str>,
+    ) -> bool {
+        let blocks = self
+            .inner
+            .auto_questions
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let pending = self.inner.pending.lock().unwrap_or_else(|e| e.into_inner());
+        question_ids.any(|id| blocks.contains_key(id) || pending.contains_key(id))
+    }
+
+    /// A Vision answers questions in a chat it owns: never as the person, so no "Allow once"
+    /// it writes lets anything run.
+    pub(crate) async fn visions_answer(
+        &self,
+        sink: Arc<dyn EventSink>,
+        thread_id: String,
+        answers: Vec<(String, String)>,
+    ) -> Result<Vec<crate::types::Question>, String> {
+        self.answer_questions_by(sink, thread_id, answers, false)
+            .await
     }
 
     /// A Vision stops the run of a chat it owns. Unlike the person's Stop, this holds nothing

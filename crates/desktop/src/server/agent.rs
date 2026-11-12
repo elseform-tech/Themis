@@ -152,6 +152,8 @@ pub(crate) enum Reason {
     HeldByPerson,
     /// A paused Vision's call that would start or send something.
     Paused,
+    /// A Vision's answer to a permission question (an Auto block, a step awaiting approval).
+    PermissionQuestion,
 }
 
 impl Reason {
@@ -165,6 +167,7 @@ impl Reason {
             Self::ToolUnavailable => "tool_unavailable",
             Self::HeldByPerson => "held_by_person",
             Self::Paused => "paused",
+            Self::PermissionQuestion => "permission_question",
         }
     }
 }
@@ -459,7 +462,7 @@ pub(super) async fn screen(
     let owned = |thread: &str| state.owner_of(thread);
     let refused = refusal(&grant, &request.method, &request.args, &owned).or_else(|| {
         let scope = grant.vision.as_ref()?;
-        vision::paused_refusal(state, scope, &request.method)
+        vision::state_refusal(state, scope, &request.method, &request.args)
     });
     let drives = grant
         .vision

@@ -324,6 +324,16 @@ const ALL: &[(&str, &str, &[&str])] = &[
     (AGENT_CLI_HELD_BY_PERSON, "agent-cli-held-by-person", &[]),
     (AGENT_CLI_VISION_PAUSED, "agent-cli-vision-paused", &[]),
     (
+        AGENT_CLI_PERMISSION_QUESTION,
+        "agent-cli-permission-question",
+        &[],
+    ),
+    (
+        AGENT_CLI_VISION_STEERS_ITS_OWN,
+        "agent-cli-vision-steers-its-own",
+        &[],
+    ),
+    (
         AGENT_CLI_VISION_OTHER_PROJECT,
         "agent-cli-vision-other-project",
         &[],

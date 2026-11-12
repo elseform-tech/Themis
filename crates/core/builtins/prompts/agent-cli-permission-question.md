@@ -1,0 +1,1 @@
+Permission questions are the person's; leave it for them.

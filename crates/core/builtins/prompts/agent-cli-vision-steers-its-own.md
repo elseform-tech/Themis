@@ -1,0 +1,1 @@
+That waiting message is the person's; a Vision steers only the messages it queued.

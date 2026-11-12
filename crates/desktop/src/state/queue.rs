@@ -287,6 +287,10 @@ impl AppState {
             if !queue[index].attachments.is_empty() {
                 return Err("Messages with attachments wait for the next turn".to_owned());
             }
+            // A Vision steers only what it queued itself, never the person's messages.
+            if vision_id.is_some() && queue[index].vision_id != vision_id {
+                return Err(themis_core::prompts::AGENT_CLI_VISION_STEERS_ITS_OWN.to_owned());
+            }
             let inboxes = self
                 .inner
                 .steer_inboxes

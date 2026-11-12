@@ -84,12 +84,20 @@ fn held(hold: Hold, method: &str) -> bool {
     }
 }
 
-/// A call starting or sending something from a paused (or deleted) Vision.
-pub(super) fn paused_refusal(
+/// What the server's state refuses a Vision beyond the pure rules: an answer to a permission
+/// question, and anything starting or sending from a paused (or deleted) Vision.
+pub(super) fn state_refusal(
     state: &AppState,
     scope: &VisionScope,
     method: &str,
+    args: &Value,
 ) -> Option<Refusal> {
+    if method == "answer_question" && asks_permission(state, args) {
+        return Some(Refusal {
+            reason: Reason::PermissionQuestion,
+            message: themis_core::prompts::AGENT_CLI_PERMISSION_QUESTION.to_owned(),
+        });
+    }
     if !STARTS.contains(&method) {
         return None;
     }
@@ -100,6 +108,17 @@ pub(super) fn paused_refusal(
         reason: Reason::Paused,
         message: themis_core::prompts::AGENT_CLI_VISION_PAUSED.to_owned(),
     })
+}
+
+/// Whether an `answer_question` names a permission question; arguments it cannot read count
+/// as one (the call would fail anyway).
+fn asks_permission(state: &AppState, args: &Value) -> bool {
+    match crate::server::commands::answer_args(args) {
+        Ok((_, answers, _)) => {
+            state.visions_permission_question(answers.iter().map(|(id, _)| id.as_str()))
+        }
+        Err(_) => true,
+    }
 }
 
 /// `projectRoot` names the channel's project, compared canonical; a call naming none is not.
@@ -135,11 +154,15 @@ pub(super) async fn dispatch(
     args: Value,
 ) -> Result<Value, String> {
     let result = match method {
-        "create_thread" => to_value(
-            state
-                .visions_start_work_chat(scope, arg(&args, "provider")?, arg(&args, "model")?)
-                .await?,
-        ),
+        // The chat's provider and model are the Vision's, never the call's.
+        "create_thread" => to_value(state.visions_start_work_chat(scope).await?),
+        "answer_question" => {
+            let (thread_id, answers, many) = crate::server::commands::answer_args(&args)?;
+            let answered = state
+                .visions_answer(Arc::clone(sink), thread_id, answers)
+                .await?;
+            crate::server::commands::answered_value(answered, many)
+        }
         "send_message" | "enqueue_message" => write(state, sink, scope, method, &args).await,
         "steer_queued_message" => state
             .visions_steer(

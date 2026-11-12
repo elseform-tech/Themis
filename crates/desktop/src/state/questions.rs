@@ -389,6 +389,19 @@ impl AppState {
         thread_id: String,
         answers: Vec<(String, String)>,
     ) -> Result<Vec<Question>, String> {
+        self.answer_questions_by(sink, thread_id, answers, true)
+            .await
+    }
+
+    /// Answers questions as the person (`person`) or as a Vision. Only the person's "Allow once"
+    /// lets an action Auto blocked run; a Vision's answer never does.
+    pub(super) async fn answer_questions_by(
+        &self,
+        sink: Arc<dyn EventSink>,
+        thread_id: String,
+        answers: Vec<(String, String)>,
+        person: bool,
+    ) -> Result<Vec<Question>, String> {
         let running = self.require_thread(&thread_id).await?;
         let answered = self.record_answers(&thread_id, answers)?;
         for (question, answer) in &answered {
@@ -401,8 +414,10 @@ impl AppState {
                     answer: answer.clone(),
                 },
             );
-            // An "Allow once" to an Auto block lets that exact action run once.
-            self.auto_question_answered(&question.id, answer);
+            // The person's "Allow once" to an Auto block lets that exact action run once.
+            if person {
+                self.auto_question_answered(&question.id, answer);
+            }
         }
         let steered = self.deliver_answers(sink.as_ref(), &thread_id, &answered)?;
         for (question, _) in &answered {

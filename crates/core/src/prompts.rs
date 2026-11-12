@@ -490,6 +490,13 @@ pub const AGENT_CLI_HELD_BY_PERSON: &str =
 /// The app server's answer to a paused Vision's call that would start or send something.
 pub const AGENT_CLI_VISION_PAUSED: &str =
     include_str!("../builtins/prompts/agent-cli-vision-paused.md");
+/// The app server's answer to a Vision's `answer_question` on a permission question (an Auto
+/// block or a step waiting on the person's approval).
+pub const AGENT_CLI_PERMISSION_QUESTION: &str =
+    include_str!("../builtins/prompts/agent-cli-permission-question.md");
+/// The app server's answer to a Vision's steer of a waiting message it did not queue.
+pub const AGENT_CLI_VISION_STEERS_ITS_OWN: &str =
+    include_str!("../builtins/prompts/agent-cli-vision-steers-its-own.md");
 /// The app server's answer to a Vision's `create_thread` outside its channel's project.
 pub const AGENT_CLI_VISION_OTHER_PROJECT: &str =
     include_str!("../builtins/prompts/agent-cli-vision-other-project.md");

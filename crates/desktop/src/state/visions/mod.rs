@@ -19,6 +19,8 @@ mod wakes;
 #[cfg(test)]
 mod channel_log_tests;
 #[cfg(test)]
+mod drive_tests;
+#[cfg(test)]
 mod store_tests;
 
 use std::collections::{BTreeMap, HashMap};

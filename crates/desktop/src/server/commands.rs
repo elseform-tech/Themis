@@ -711,6 +711,17 @@ async fn answer_question(
     sink: Arc<dyn EventSink>,
     args: &Value,
 ) -> Result<Value, String> {
+    let (thread_id, answers, many) = answer_args(args)?;
+    let answered = state.answer_questions(sink, thread_id, answers).await?;
+    answered_value(answered, many)
+}
+
+/// `answer_question`'s arguments: the chat, `(questionId, answer)` pairs (`answers`, or one
+/// `questionId` and `answer`), and whether they came as a list.
+pub(super) type AnswerArgs = (String, Vec<(String, String)>, bool);
+
+/// Reads [`AnswerArgs`] from a call's arguments.
+pub(super) fn answer_args(args: &Value) -> Result<AnswerArgs, String> {
     #[derive(serde::Deserialize)]
     #[serde(rename_all = "camelCase")]
     struct Answer {
@@ -718,29 +729,31 @@ async fn answer_question(
         answer: String,
     }
     let thread_id = arg(args, "threadId")?;
-    let answered = match arg::<Option<Vec<Answer>>>(args, "answers")? {
-        Some(answers) => serde_json::to_value(
-            state
-                .answer_questions(
-                    sink,
-                    thread_id,
-                    answers
-                        .into_iter()
-                        .map(|answer| (answer.question_id, answer.answer))
-                        .collect(),
-                )
-                .await?,
-        ),
-        None => serde_json::to_value(
-            state
-                .answer_question(
-                    sink,
-                    thread_id,
-                    arg(args, "questionId")?,
-                    arg(args, "answer")?,
-                )
-                .await?,
-        ),
+    Ok(match arg::<Option<Vec<Answer>>>(args, "answers")? {
+        Some(answers) => {
+            let pairs = answers
+                .into_iter()
+                .map(|answer| (answer.question_id, answer.answer))
+                .collect();
+            (thread_id, pairs, true)
+        }
+        None => {
+            let pair = (arg(args, "questionId")?, arg(args, "answer")?);
+            (thread_id, vec![pair], false)
+        }
+    })
+}
+
+/// The answered questions as `answer_question` returns them: the list, or the one.
+pub(super) fn answered_value(
+    mut answered: Vec<crate::types::Question>,
+    many: bool,
+) -> Result<Value, String> {
+    let value = if many {
+        serde_json::to_value(answered)
+    } else {
+        let one = answered.pop().ok_or_else(|| "Write an answer".to_owned())?;
+        serde_json::to_value(one)
     };
-    answered.map_err(|err| err.to_string())
+    value.map_err(|err| err.to_string())
 }

@@ -180,6 +180,23 @@ fn a_vision_grant_never_approves_or_changes_modes() {
             );
         }
     }
+    // Spelled out: approving and changing the mode stay refused on its own work chat.
+    for (method, args) in [
+        (
+            "approve_action",
+            json!({"threadId": "work", "approvalId": "a", "decision": "once"}),
+        ),
+        (
+            "set_thread_approval_mode",
+            json!({"threadId": "work", "mode": "yolo"}),
+        ),
+    ] {
+        assert_eq!(
+            reason(check(&grant, method, &args, &owners)),
+            Some(Reason::MethodNotAllowed),
+            "{method}"
+        );
+    }
     let channel = json!({"threadId": "work", "channelId": "c1", "visionId": "v1"});
     for method in crate::server::visions_commands::METHODS {
         if *method != "list_channel_threads" {

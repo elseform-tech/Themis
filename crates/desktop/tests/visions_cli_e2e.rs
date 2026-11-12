@@ -133,10 +133,12 @@ impl Fixture {
     }
 
     /// The same, with the channel's approval mode `mode`.
+    /// The Vision runs its chats on the scripted provider's `test-model`.
     fn vision_and_channel_in(&self, name: &str, channel: &str, mode: &str) -> (String, String) {
         let vision = self.call_ok(
             "save_vision",
-            json!({"vision": {"name": name, "shape": "cloud", "color": "teal"}, "revision": null}),
+            json!({"vision": {"name": name, "shape": "cloud", "color": "teal",
+                "model": "test-model"}, "revision": null}),
         );
         let vision_id = vision["id"].as_str().unwrap().to_owned();
         let saved = self.call_ok(
@@ -172,7 +174,7 @@ impl Fixture {
         let created = json_of(&self.agent_call(
             token,
             "create_thread",
-            json!({"projectRoot": self.project, "provider": "go", "model": "test-model"}),
+            json!({"projectRoot": self.project, "provider": "go", "model": "chosen-by-call"}),
         ));
         created["id"].as_str().unwrap().to_owned()
     }
@@ -751,6 +753,10 @@ async fn a_person_stop_blocks_the_visions_sends_until_handed_back() {
         info.approval_mode,
         themis_core::configuration::ApprovalMode::Custom
     );
+    assert_eq!(
+        info.model, "test-model",
+        "the Vision's model, never the call's"
+    );
     let started = fx.entries(&channel).last().unwrap().clone();
     assert_eq!(started["type"], "chat_started");
     assert_eq!(started["vision_id"], vision.as_str());
@@ -1066,5 +1072,244 @@ async fn a_visions_steer_leaves_pending_approvals_for_the_person() {
     assert_eq!(queue.len(), 1, "{queue:?}");
     assert_eq!(queue[0]["text"], "also add a title");
     assert_eq!(queue[0]["vision_id"], vision.as_str());
+    fx.shut_down().await;
+}
+
+/// A model run by the scripted provider: Auto's reviewer (the first memory model) hard-blocks
+/// `touch hard.txt`; the agent runs `touch NAME` for "auto-step NAME" and `rm -rf build` for
+/// "clean up"; the memory model answers nothing useful.
+async fn reviewed_provider() -> MockServer {
+    let provider = MockServer::builder().start().await;
+    Mock::given(method("POST"))
+        .respond_with(|request: &Request| {
+            let body: Value = request.body_json().unwrap_or(Value::Null);
+            let messages = body["messages"].as_array().cloned().unwrap_or_default();
+            let system = messages
+                .first()
+                .and_then(|m| m["content"].as_str())
+                .unwrap_or_default();
+            let reply = |text: &str| {
+                ResponseTemplate::new(200).set_body_json(json!({"choices": [{"message":
+                    {"role": "assistant", "content": text}, "finish_reason": "stop"}]}))
+            };
+            if system.starts_with("You review one action") {
+                let asked = messages
+                    .get(1)
+                    .and_then(|m| m["content"].as_str())
+                    .unwrap_or_default();
+                let verdict = if asked.contains("hard.txt") {
+                    json!({"verdict": "hard", "reason": "it was not asked for", "safer": "leave it out"})
+                } else {
+                    json!({"verdict": "allow", "reason": "", "safer": ""})
+                };
+                return reply(&verdict.to_string());
+            }
+            if body["model"].as_str().unwrap_or_default().starts_with("mem-") {
+                return reply("{}");
+            }
+            let last = messages
+                .iter()
+                .rposition(|m| m["role"] == "user")
+                .unwrap_or(0);
+            let text = messages[last]["content"].as_str().unwrap_or_default();
+            if messages.last().is_some_and(|m| m["role"] == "user") {
+                let command = if let Some(name) = text.strip_prefix("auto-step ") {
+                    Some(json!({"command": "touch", "args": [name.trim()]}))
+                } else if text.contains("clean up") {
+                    Some(json!({"command": "rm", "args": ["-rf", "build"]}))
+                } else {
+                    None
+                };
+                if let Some(command) = command {
+                    let call = json!({"id": "s", "type": "function", "function": {"name": "shell",
+                        "arguments": command.to_string()}});
+                    return ResponseTemplate::new(200).set_body_json(json!({"choices": [{"message":
+                        {"role": "assistant", "content": null, "tool_calls": [call]},
+                        "finish_reason": "tool_calls"}]}));
+                }
+            }
+            reply("Done.")
+        })
+        .mount(&provider)
+        .await;
+    provider
+}
+
+/// An Auto work chat's reviewer hard-blocks an action and asks the person; the Vision's
+/// "Allow once" is refused (one answer or a list), the question stays open and the action
+/// stays blocked. The person's "Allow once" still works.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_vision_cannot_allow_an_auto_hard_block() {
+    let _turn = ONE_SERVER.lock().await;
+    let fx = fixture().await;
+    std::fs::write(
+        fx.data.join("runtime.jsonc"),
+        r#"{"memory":{"models":["mem-one","mem-two","mem-three"]}}"#,
+    )
+    .unwrap();
+    let provider = reviewed_provider().await;
+    fx.use_provider(&provider).await;
+    let (vision, channel) = fx.vision_and_channel_in("Wren", "hq", "auto");
+    let (_own_chat, agent) = fx.vision_run(&vision, &channel).await;
+    let work = fx.vision_starts_chat(&agent);
+    let hard = fx.project.join("hard.txt");
+    let step = || {
+        json_of(&fx.agent_call(
+            &agent,
+            "send_message",
+            json!({"threadId": work, "text": "auto-step hard.txt"}),
+        ))
+    };
+
+    step();
+    wait_until(|| async { !fx.running(&work).await }).await;
+    assert!(!hard.exists());
+    let questions = fx.call_ok("list_questions", json!({"threadId": work}));
+    let question = questions[0].clone();
+    assert!(
+        question["question"]
+            .as_str()
+            .unwrap_or_default()
+            .starts_with("Auto mode blocked an action"),
+        "{questions}"
+    );
+    let id = question["id"].clone();
+    for args in [
+        json!({"threadId": work, "questionId": id, "answer": "Allow once"}),
+        json!({"threadId": work, "answers": [{"questionId": id, "answer": "Allow once"}]}),
+    ] {
+        let refused = fx.agent_call(&agent, "answer_question", args);
+        assert!(
+            failed_with(&refused, "Permission questions are the person's"),
+            "{}",
+            text(&refused)
+        );
+    }
+    let questions = fx.call_ok("list_questions", json!({"threadId": work}));
+    assert!(questions[0]["answer"].is_null(), "still open: {questions}");
+    step();
+    wait_until(|| async { !fx.running(&work).await }).await;
+    assert!(!hard.exists(), "still blocked");
+
+    // The person's answer still lets it run once.
+    fx.call_ok(
+        "answer_question",
+        json!({"threadId": work, "questionId": id, "answer": "Allow once"}),
+    );
+    wait_until(|| async { !fx.running(&work).await }).await;
+    step();
+    wait_until(|| async { !fx.running(&work).await }).await;
+    assert!(hard.exists(), "the person allowed it once");
+    fx.shut_down().await;
+}
+
+/// In YOLO a destructive step waits on the person's question box (Run it once / Skip it): a
+/// Vision can neither answer it as a question nor approve it, and its steer leaves it waiting.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_vision_cannot_answer_a_destructive_steps_question() {
+    let _turn = ONE_SERVER.lock().await;
+    let fx = fixture().await;
+    let provider = reviewed_provider().await;
+    fx.use_provider(&provider).await;
+    let build = fx.project.join("build");
+    std::fs::create_dir_all(build.join("out")).unwrap();
+    let (vision, channel) = fx.vision_and_channel_in("Wren", "hq", "yolo");
+    let (_own_chat, agent) = fx.vision_run(&vision, &channel).await;
+    let work = fx.vision_starts_chat(&agent);
+    json_of(&fx.agent_call(
+        &agent,
+        "send_message",
+        json!({"threadId": work, "text": "clean up"}),
+    ));
+    wait_until(|| async { !waiting_approvals(&fx, &work).is_empty() }).await;
+    let asked = waiting_approvals(&fx, &work).remove(0);
+    assert_eq!(asked["ask_first"], true, "{asked}");
+    let id = asked["approval_id"].clone();
+    for (method, args, refusal) in [
+        (
+            "answer_question",
+            json!({"threadId": work, "questionId": id, "answer": "Run it once"}),
+            "Permission questions are the person's",
+        ),
+        (
+            "approve_action",
+            json!({"threadId": work, "approvalId": id, "decision": "once"}),
+            "Themis refused `approve_action`",
+        ),
+    ] {
+        let refused = fx.agent_call(&agent, method, args);
+        assert!(
+            failed_with(&refused, refusal),
+            "{method}: {}",
+            text(&refused)
+        );
+    }
+    let still = waiting_approvals(&fx, &work);
+    assert_eq!(still.len(), 1, "{still:?}");
+    assert!(build.exists());
+    fx.call_ok(
+        "approve_action",
+        json!({"threadId": work, "approvalId": id, "decision": "deny"}),
+    );
+    wait_until(|| async { !fx.running(&work).await }).await;
+    assert!(build.exists(), "the person's Skip kept it");
+    fx.shut_down().await;
+}
+
+/// A Vision steers only what it queued itself: a message the person left waiting is theirs.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_vision_steers_only_its_own_queued_messages() {
+    let _turn = ONE_SERVER.lock().await;
+    let fx = fixture().await;
+    let provider = stalled_provider().await;
+    fx.use_provider(&provider).await;
+    let (vision, channel) = fx.vision_and_channel_in("Wren", "hq", "custom");
+    let (_own_chat, agent) = fx.vision_run(&vision, &channel).await;
+    let work = fx.vision_starts_chat(&agent);
+    let before = provider.received_requests().await.unwrap().len();
+    json_of(&fx.agent_call(
+        &agent,
+        "send_message",
+        json!({"threadId": work, "text": "start"}),
+    ));
+    wait_until(|| async { provider.received_requests().await.unwrap().len() > before }).await;
+    // The person queues a message (a take over), then hands the chat back mid-run.
+    let persons = fx.call_ok(
+        "enqueue_message",
+        json!({"threadId": work, "text": "mine, wait for it", "reasoningEffort": null}),
+    );
+    fx.call_ok("hand_back_thread", json!({"threadId": work}));
+    assert_eq!(owner_hold(&fx.state, &work), Some(Hold::None));
+    let refused = fx.agent_call(
+        &agent,
+        "steer_queued_message",
+        json!({"threadId": work, "messageId": persons["id"]}),
+    );
+    assert!(
+        failed_with(&refused, "steers only the messages it queued"),
+        "{}",
+        text(&refused)
+    );
+    let own = json_of(&fx.agent_call(
+        &agent,
+        "enqueue_message",
+        json!({"threadId": work, "text": "and mine"}),
+    ));
+    json_of(&fx.agent_call(
+        &agent,
+        "steer_queued_message",
+        json!({"threadId": work, "messageId": own["id"]}),
+    ));
+    let queue = fx.call_ok("list_queue", json!({"threadId": work}));
+    assert_eq!(queue.as_array().unwrap().len(), 1, "{queue}");
+    assert_eq!(queue[0]["id"], persons["id"]);
+    // Wind down: the person drops their message and pauses the Vision, which stops its run
+    // and keeps the Vision's unread steer from going out.
+    fx.call_ok(
+        "remove_queued_message",
+        json!({"threadId": work, "messageId": persons["id"]}),
+    );
+    fx.call_ok("pause_vision", json!({"visionId": vision, "paused": true}));
+    wait_until(|| async { !fx.running(&work).await }).await;
     fx.shut_down().await;
 }

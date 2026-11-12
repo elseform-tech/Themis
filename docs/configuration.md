@@ -883,7 +883,8 @@ Calls without a run credential (your own CLI, the desktop app) are unchanged.
 Each refusal is logged as `server`/`agent_call_refused` with the method name
 (`(other)` for anything that is not a plain method name), the `plugin_action`
 action, a `reason` (`method_not_allowed`, `action_not_allowed`, `runs_code`,
-`other_project`, `network_blocked`, `tool_unavailable`, `held_by_person`, `paused`, or
+`other_project`, `network_blocked`, `tool_unavailable`, `held_by_person`, `paused`,
+`permission_question`, or
 `switch_on` from the store), and the chat and run ids (for a Vision's call also its
 `vision_id` and the `target_thread_id` it named), never the credential, paths or arguments.
 
@@ -894,8 +895,8 @@ Beyond everything above it may drive the chats its Vision owns, decided on the r
 
 | A Vision's call | Allowed when |
 | --- | --- |
-| `create_thread {projectRoot, provider, model}` | `projectRoot` is the channel's project (else `other_project`, `agent-cli-vision-other-project.md`). The new chat gets the channel's approval mode (set by the server, never through `set_thread_approval_mode`), the Vision's owner record (`work`) and a `chat_started` entry in the channel; one that cannot be recorded is discarded. |
-| `send_message`, `enqueue_message`, `steer_queued_message`, `answer_question` | the `threadId` is a work chat this Vision owns and the person holds nothing there (else `held_by_person`, `agent-cli-held-by-person.md`: "The person stopped or took over this chat; wait for them to hand it back.") |
+| `create_thread {projectRoot}` | `projectRoot` is the channel's project (else `other_project`, `agent-cli-vision-other-project.md`). The call's `provider` and `model` are ignored: the chat runs on the Vision profile's `model`, or the app's default model when it names none. The new chat gets the channel's approval mode (set by the server, never through `set_thread_approval_mode`), the Vision's owner record (`work`) and a `chat_started` entry in the channel; one that cannot be recorded is discarded. |
+| `send_message`, `enqueue_message`, `steer_queued_message`, `answer_question` | the `threadId` is a work chat this Vision owns and the person holds nothing there (else `held_by_person`, `agent-cli-held-by-person.md`: "The person stopped or took over this chat; wait for them to hand it back."). `send_message` checks the hold and the pause again right before the message goes. `steer_queued_message` only for a message this Vision queued (`agent-cli-vision-steers-its-own.md`). `answer_question` never for a permission question: an Auto block's question or a step waiting on the person's approval, such as a destructive step's Run it once / Skip it box (`permission_question`, `agent-cli-permission-question.md`: "Permission questions are the person's; leave it for them."); and a Vision's answer never lets an Auto-blocked action run, whatever it says. |
 | `stop_thread` | the `threadId` is a work chat this Vision owns that the person did not take over (its run is then the person's) |
 | `list_questions` and the own-chat reads (`get_thread`, `get_thread_history_page`, …) | the `threadId` is a work chat this Vision owns, or its own Vision chat |
 | `list_channel_threads {channelId}` | `channelId` is the run's channel |
