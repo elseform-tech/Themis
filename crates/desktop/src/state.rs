@@ -242,8 +242,28 @@ impl RegistryEntry {
 /// A running run's steer inbox, the sink its events go to, and its id.
 struct SteerEntry {
     inbox: themis_core::runtime::SteerInbox,
+    /// Who put each text in the inbox, in order: a Vision's id, or `None` for the person (and
+    /// the answers and notes the server adds for them). The run takes the whole inbox at once,
+    /// so the texts still unread are always the last `inbox.len()` of these.
+    authors: SteerAuthors,
     sink: Arc<dyn EventSink>,
     run_id: String,
+}
+
+type SteerAuthors = Arc<std::sync::Mutex<Vec<Option<String>>>>;
+
+impl SteerEntry {
+    /// Puts `text` in the inbox as `vision_id`'s (`None`: the person's).
+    fn push(&self, text: String, vision_id: Option<String>) {
+        let mut inbox = self.inbox.lock().unwrap_or_else(|e| e.into_inner());
+        let mut authors = self.authors.lock().unwrap_or_else(|e| e.into_inner());
+        // The run took everything earlier: only the unread texts' authors matter.
+        let unread = inbox.len();
+        let read = authors.len().saturating_sub(unread);
+        authors.drain(..read);
+        inbox.push_back(text);
+        authors.push(vision_id);
+    }
 }
 
 struct AppStateInner {

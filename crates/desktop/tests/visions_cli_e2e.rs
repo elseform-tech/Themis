@@ -977,3 +977,94 @@ async fn a_visions_send_is_not_the_persons_message() {
     assert_eq!(owner_hold(&fx.state, &work), Some(Hold::TakenOver));
     fx.shut_down().await;
 }
+
+/// A model that asks to write a file first (an approval in Custom), then answers.
+async fn writing_provider() -> MockServer {
+    let provider = MockServer::builder().start().await;
+    Mock::given(method("POST"))
+        .respond_with(|request: &Request| {
+            let body: Value = request.body_json().unwrap_or(Value::Null);
+            let messages = body["messages"].as_array().cloned().unwrap_or_default();
+            let last = messages
+                .iter()
+                .rposition(|m| m["role"] == "user")
+                .unwrap_or(0);
+            if messages[last..].iter().any(|m| m["role"] == "tool") {
+                return ResponseTemplate::new(200).set_body_json(json!({"choices": [{"message":
+                    {"role": "assistant", "content": "done"}, "finish_reason": "stop"}]}));
+            }
+            let call = json!({"id": "w", "type": "function", "function": {"name": "write_file",
+                "arguments": json!({"file_path": "notes.txt", "content": "notes\n"}).to_string()}});
+            ResponseTemplate::new(200).set_body_json(json!({"choices": [{"message":
+                {"role": "assistant", "content": null, "tool_calls": [call]},
+                "finish_reason": "tool_calls"}]}))
+        })
+        .mount(&provider)
+        .await;
+    provider
+}
+
+/// The approvals a chat waits on.
+fn waiting_approvals(fx: &Fixture, thread: &str) -> Vec<Value> {
+    let pending = fx.call_ok("get_pending_approvals", json!({}));
+    pending
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|approval| approval["thread_id"] == thread)
+        .cloned()
+        .collect()
+}
+
+/// A Vision's steer reaches the run but leaves the approval it waits on to the person; the
+/// person's Allow still answers it. Unread when the person stops the run, the steer goes back
+/// to the queue as the Vision's and is not sent while the person holds the chat.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_visions_steer_leaves_pending_approvals_for_the_person() {
+    let _turn = ONE_SERVER.lock().await;
+    let fx = fixture().await;
+    let provider = writing_provider().await;
+    fx.use_provider(&provider).await;
+    let (vision, channel) = fx.vision_and_channel_in("Wren", "hq", "custom");
+    let (_own_chat, agent) = fx.vision_run(&vision, &channel).await;
+    let work = fx.vision_starts_chat(&agent);
+
+    json_of(&fx.agent_call(
+        &agent,
+        "send_message",
+        json!({"threadId": work, "text": "write the notes"}),
+    ));
+    wait_until(|| async { !waiting_approvals(&fx, &work).is_empty() }).await;
+    let approval = waiting_approvals(&fx, &work).remove(0);
+    let queued = json_of(&fx.agent_call(
+        &agent,
+        "enqueue_message",
+        json!({"threadId": work, "text": "also add a title"}),
+    ));
+    assert_eq!(queued["vision_id"], vision.as_str());
+    json_of(&fx.agent_call(
+        &agent,
+        "steer_queued_message",
+        json!({"threadId": work, "messageId": queued["id"]}),
+    ));
+    // Still the person's to answer, and still the same box.
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    let still = waiting_approvals(&fx, &work);
+    assert_eq!(still.len(), 1, "{still:?}");
+    assert_eq!(still[0]["approval_id"], approval["approval_id"]);
+    assert!(fx.running(&work).await);
+
+    // The person stops the run before it reads the steer.
+    let stopped = fx.cli(None, &["thread", "stop", &work]);
+    assert!(stopped.status.success(), "{}", text(&stopped));
+    wait_until(|| async { !fx.running(&work).await }).await;
+    assert_eq!(owner_hold(&fx.state, &work), Some(Hold::StoppedByPerson));
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert!(!fx.running(&work).await, "nothing was sent after the Stop");
+    let queue = fx.call_ok("list_queue", json!({"threadId": work}));
+    let queue = queue.as_array().unwrap();
+    assert_eq!(queue.len(), 1, "{queue:?}");
+    assert_eq!(queue[0]["text"], "also add a title");
+    assert_eq!(queue[0]["vision_id"], vision.as_str());
+    fx.shut_down().await;
+}

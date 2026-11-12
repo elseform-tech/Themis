@@ -144,6 +144,7 @@ pub(super) async fn dispatch(
         "steer_queued_message" => state
             .visions_steer(
                 Arc::clone(sink),
+                &scope.vision_id,
                 arg(&args, "threadId")?,
                 arg(&args, "messageId")?,
             )

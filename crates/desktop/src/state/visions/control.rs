@@ -206,6 +206,8 @@ impl AppState {
             &owner.vision_id,
             WakeReason::HandedBack(thread_id.to_owned()),
         );
+        // What the Vision queued while the person held the chat may go now.
+        self.spawn_dispatch_queue(Arc::clone(sink), thread_id.to_owned());
         self.visions_note(
             "chat_handed_back",
             json!({"thread_id": thread_id, "channel_id": owner.channel_id}),

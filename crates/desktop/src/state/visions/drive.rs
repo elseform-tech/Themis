@@ -107,10 +107,23 @@ impl AppState {
     pub(crate) async fn visions_steer(
         &self,
         sink: Arc<dyn EventSink>,
+        vision_id: &str,
         thread_id: String,
         message_id: String,
     ) -> Result<(), String> {
-        self.steer_queued(sink, thread_id, message_id, false).await
+        self.steer_queued(sink, thread_id, message_id, Some(vision_id.to_owned()))
+            .await
+    }
+
+    /// Whether the messages a Vision queued in `thread_id` must wait: the person holds the chat,
+    /// or its Vision is paused or gone.
+    pub(crate) fn visions_queue_waits(&self, thread_id: &str) -> bool {
+        self.owner_of(thread_id).is_none_or(|owner| {
+            owner.hold != Hold::None
+                || self
+                    .vision_get(&owner.vision_id)
+                    .is_none_or(|vision| vision.paused)
+        })
     }
 
     /// A Vision stops the run of a chat it owns. Unlike the person's Stop, this holds nothing

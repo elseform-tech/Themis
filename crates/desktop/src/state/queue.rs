@@ -262,17 +262,18 @@ impl AppState {
         thread_id: String,
         message_id: String,
     ) -> Result<(), String> {
-        self.steer_queued(sink, thread_id, message_id, true).await
+        self.steer_queued(sink, thread_id, message_id, None).await
     }
 
-    /// Steers a waiting message in; `person` says whether the person steered it. A Vision's
-    /// steer is not the person's message: it answers no open question and joins no goal.
+    /// Steers a waiting message in, as the person's (`vision_id` `None`) or a Vision's. A
+    /// Vision's steer is not the person's message: it answers no open question, joins no goal
+    /// and denies no approval (now or later); unread, it goes back to the queue as the Vision's.
     pub(super) async fn steer_queued(
         &self,
         sink: Arc<dyn EventSink>,
         thread_id: String,
         message_id: String,
-        person: bool,
+        vision_id: Option<String>,
     ) -> Result<(), String> {
         self.require_thread(&thread_id).await?;
         // Under the queue lock: closing the inbox takes the same lock, so the
@@ -303,20 +304,19 @@ impl AppState {
                 &entry.run_id,
                 ThreadEvent::SteerShown { text: text.clone() },
             );
-            entry
-                .inbox
-                .lock()
-                .unwrap_or_else(|e| e.into_inner())
-                .push_back(text.clone());
+            entry.push(text.clone(), vision_id.clone());
             Ok((text, entry.run_id.clone()))
         })?;
         let (steered, _run_id) = steered;
+        let person = vision_id.is_none();
+        // A Vision's steer leaves the approvals the run waits on to the person.
+        let mut denied = 0;
         if person {
             self.person_steered(&sink, &thread_id, &steered);
+            // After the inbox: an approval asked from here on sees the message there
+            // and is denied without a box (see `DesktopApprovalHook`).
+            denied = self.deny_approvals_for_new_message(&thread_id);
         }
-        // After the inbox: an approval asked from here on sees the message there
-        // and is denied without a box (see `DesktopApprovalHook`).
-        let denied = self.deny_approvals_for_new_message(&thread_id);
         let _ = self.inner.diagnostics.append(
             "queue",
             "steered",
@@ -338,11 +338,7 @@ impl AppState {
                 .unwrap_or_else(|e| e.into_inner())
                 .get(thread_id)
             {
-                entry
-                    .inbox
-                    .lock()
-                    .unwrap_or_else(|e| e.into_inner())
-                    .push_back(note);
+                entry.push(note, None);
             }
         }
         self.add_also_asked(sink, thread_id, steered);
@@ -352,20 +348,22 @@ impl AppState {
     /// Answers to questions share the inbox but are not steers: they leave
     /// approvals alone.
     pub(super) fn steer_waiting_check(&self, thread_id: &str) -> SteerWaiting {
-        let inbox = self
+        let (inbox, authors) = self
             .inner
             .steer_inboxes
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .get(thread_id)
-            .map(|entry| Arc::clone(&entry.inbox))
+            .map(|entry| (Arc::clone(&entry.inbox), Arc::clone(&entry.authors)))
             .unwrap_or_default();
+        // A Vision's steer never denies the person's approvals.
         Arc::new(move || {
-            inbox
-                .lock()
-                .unwrap_or_else(|e| e.into_inner())
-                .iter()
-                .any(|text| !text.starts_with(super::questions::ANSWER_MARKER))
+            let inbox = inbox.lock().unwrap_or_else(|e| e.into_inner());
+            let authors = authors.lock().unwrap_or_else(|e| e.into_inner());
+            let unread = unread_authors(&authors, inbox.len());
+            inbox.iter().zip(unread.iter()).any(|(text, author)| {
+                author.is_none() && !text.starts_with(super::questions::ANSWER_MARKER)
+            })
         })
     }
 
@@ -423,6 +421,7 @@ impl AppState {
                 thread_id.to_owned(),
                 SteerEntry {
                     inbox: Arc::clone(&inbox),
+                    authors: Arc::default(),
                     sink,
                     run_id: run_id.to_owned(),
                 },
@@ -446,6 +445,7 @@ impl AppState {
             .unwrap_or_else(|e| e.into_inner());
         let Some(SteerEntry {
             inbox,
+            authors,
             sink,
             run_id,
         }) = self
@@ -457,17 +457,18 @@ impl AppState {
         else {
             return;
         };
-        let unread: Vec<String> = inbox
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .drain(..)
-            .collect();
+        let (unread, by): (Vec<String>, Vec<Option<String>>) = {
+            let mut inbox = inbox.lock().unwrap_or_else(|e| e.into_inner());
+            let authors = authors.lock().unwrap_or_else(|e| e.into_inner());
+            let by = unread_authors(&authors, inbox.len()).to_vec();
+            (inbox.drain(..).collect(), by)
+        };
         if unread.is_empty() {
             return;
         }
         let mut queue = self.queue_for(thread_id);
         let unread_count = unread.len();
-        for text in unread.into_iter().rev() {
+        for (text, vision_id) in unread.into_iter().zip(by).rev() {
             // Answers were never shown as steers; a steer leaves the chat for now.
             if !text.starts_with(super::questions::ANSWER_MARKER) {
                 self.record_steer_event(
@@ -477,7 +478,8 @@ impl AppState {
                     ThreadEvent::SteerReturned { text: text.clone() },
                 );
             }
-            queue.insert(0, QueuedMessage::new(text, Vec::new(), None, None));
+            // A Vision's steer stays the Vision's.
+            queue.insert(0, QueuedMessage::new(text, Vec::new(), None, vision_id));
         }
         self.save_queue(thread_id, &queue);
         let _ = self.inner.diagnostics.append(
@@ -601,6 +603,8 @@ impl AppState {
             if self.require_thread(thread_id).await.unwrap_or(true) {
                 return false;
             }
+            // A Vision's messages wait while the person holds the chat or the Vision is paused.
+            let vision_waits = self.visions_queue_waits(thread_id);
             let (index, next) = {
                 let _guard = self
                     .inner
@@ -608,7 +612,9 @@ impl AppState {
                     .lock()
                     .unwrap_or_else(|e| e.into_inner());
                 let mut queue = self.queue_for(thread_id);
-                let Some(index) = queue.iter().position(|message| !message.held) else {
+                let Some(index) = queue.iter().position(|message| {
+                    !message.held && !(vision_waits && message.vision_id.is_some())
+                }) else {
                     return false;
                 };
                 let next = queue.remove(index);
@@ -748,6 +754,21 @@ impl AppState {
     }
 }
 
+/// The authors of the last `unread` texts of an inbox (see `SteerEntry::authors`); `None` for
+/// any the record does not cover.
+fn unread_authors(
+    authors: &[Option<String>],
+    unread: usize,
+) -> std::borrow::Cow<'_, [Option<String>]> {
+    if authors.len() >= unread {
+        std::borrow::Cow::Borrowed(&authors[authors.len() - unread..])
+    } else {
+        let mut padded = vec![None; unread - authors.len()];
+        padded.extend_from_slice(authors);
+        std::borrow::Cow::Owned(padded)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -811,5 +832,46 @@ mod tests {
         assert!(waiting());
         inbox.lock().unwrap().clear();
         assert!(!waiting());
+    }
+
+    /// A Vision's steer never counts as one waiting (it denies no approval asked later), and
+    /// one the run never read goes back to the queue still the Vision's, after the run took
+    /// earlier ones.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_visions_steer_is_never_the_persons() {
+        let data = tempfile::tempdir().unwrap();
+        let state = AppState::new_for_test(data.path().join("settings.json"));
+        let inbox = state.open_steer_inbox("chat", "run", Arc::new(ChannelSink::channel().0));
+        let waiting = state.steer_waiting_check("chat");
+        let push = |text: &str, vision: Option<&str>| {
+            let inboxes = state.inner.steer_inboxes.lock().unwrap();
+            inboxes["chat"].push(text.to_owned(), vision.map(str::to_owned));
+        };
+        push("vision one", Some("v1"));
+        assert!(!waiting(), "a Vision's steer waits for nobody's approval");
+        push("person one", None);
+        assert!(waiting());
+        // The run reads both; what comes next is judged on its own.
+        inbox.lock().unwrap().clear();
+        assert!(!waiting());
+        push("vision two", Some("v1"));
+        push("person two", None);
+        assert!(waiting());
+        state.close_steer_inbox("chat");
+        let queue = state.queue_for("chat");
+        let by: Vec<(&str, Option<&str>)> = queue
+            .iter()
+            .map(|message| (message.text.as_str(), message.vision_id.as_deref()))
+            .collect();
+        assert_eq!(by, vec![("vision two", Some("v1")), ("person two", None)]);
+    }
+
+    #[test]
+    fn unread_authors_are_the_last_ones_padded_with_the_persons() {
+        let authors = vec![Some("v".to_owned()), None, Some("w".to_owned())];
+        assert_eq!(unread_authors(&authors, 2).to_vec(), authors[1..].to_vec());
+        assert_eq!(unread_authors(&authors, 0).len(), 0);
+        let padded = unread_authors(&authors[2..], 2).to_vec();
+        assert_eq!(padded, vec![None, Some("w".to_owned())]);
     }
 }

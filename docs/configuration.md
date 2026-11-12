@@ -904,9 +904,13 @@ A paused or deleted Vision's `create_thread`, sends, queueing, steering and answ
 refused (`paused`, `agent-cli-vision-paused.md`). A Vision's writes are never the person's:
 its sends go the server's way (like a queued message or a goal turn), and a message it queues
 carries its `vision_id`, so none of them takes the chat over, answers the chat's open
-questions or lets hooks wake the chat again; its steer answers no question and joins no goal
-(it still denies the approval the run waits on, as every steer does, so the run reads it); its
-`stop_thread` stops the run without holding the chat. A chat another Vision owns, a plain
+questions or lets hooks wake the chat again; its steer answers no question, joins no goal
+and denies no approval (the approvals the run waits on, or asks for while the steer is unread,
+stay the person's to answer); a steer the run never read goes back to the queue still the
+Vision's. A Vision's queued messages wait, unsent, while the person holds the chat or the
+Vision is paused, and go once the person hands the chat back. Its `stop_thread` stops the run
+without holding the chat. The two hold rules are stricter than the sends alone: a Vision may
+not answer a held chat's questions, and may not stop a chat the person took over. A chat another Vision owns, a plain
 chat, a `threadId` naming none, `approve_action`, `set_thread_approval_mode`, settings,
 secrets, the Visions methods other than `list_channel_threads`, and everything else refused
 above stay refused. The shell's approval step treats every driving method as `execute`, never

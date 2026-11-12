@@ -501,11 +501,7 @@ impl AppState {
                 .lock()
                 .unwrap_or_else(|e| e.into_inner());
             if let Some(entry) = inboxes.get(thread_id) {
-                entry
-                    .inbox
-                    .lock()
-                    .unwrap_or_else(|e| e.into_inner())
-                    .push_back(format!("{ANSWER_MARKER}\n{body}"));
+                entry.push(format!("{ANSWER_MARKER}\n{body}"), None);
                 return Ok(true);
             }
             match queue.first_mut() {
