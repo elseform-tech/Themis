@@ -344,7 +344,7 @@ slot after Chats.
 ### Task 9: Visions view (rail cloud, channels bar, channel)
 
 **Files:**
-- Create: `web/src/screens/visions/VisionsButton.tsx`, `CloudIcon.tsx`, `ChannelsBar.tsx`, `ChannelView.tsx`, `ChannelEntry.tsx`, `ChatLink.tsx`, `ThinkingRow.tsx`, `Visions.css`, `VisionsView.test.tsx`, `VisionsButton.test.tsx` (amended 2026-11-12: no creation sheets; creating is Task 9C)
+- Create: `web/src/screens/visions/VisionsButton.tsx`, `CloudIcon.tsx`, `ChannelsBar.tsx`, `ChannelView.tsx`, `ChannelEntry.tsx`, `ChatLink.tsx`, `NewChannelSheet.tsx`, `NewVisionSheet.tsx`, `ThinkingRow.tsx`, `Visions.css`, `VisionsView.test.tsx`, `VisionsButton.test.tsx`
 - Modify: `web/src/screens/Rail.tsx` (`extra={<VisionsButton/>}` from `App.tsx`), `web/src/App.tsx:90,98-102`, `web/src/screens/Sidebar.tsx:131` (render `ChannelsBar` instead of the dock when `mainView === "visions"`)
 - Test: as listed
 
@@ -353,7 +353,7 @@ slot after Chats.
 - Produces:
   - `CloudIcon({ shape, color, mood, size, live })`, using the canvas paths (Cast board, `VisionsEntry.dc.html`). It animates only when `live`, and reduced motion turns animation off.
   - `VisionsButton`: the rail cloud. Its `aria-label` comes from `railMood`, for example "Visions, 2 need you". The badge is shown when `needsCount > 0`. The hop plays once per new needs-item.
-  - `ChannelsBar`: project switcher, `# hq` (an ordinary channel view; its admin arrives in Task 9C), channels, and Visions with live clouds and mood tags. The + buttons arrive in Task 9C.
+  - `ChannelsBar`: project switcher, `# hq` (an ordinary channel view; its admin arrives in Task 9C), channels, and Visions with live clouds and mood tags. The + buttons next to Channels and Visions open `NewChannelSheet` and `NewVisionSheet`, the manual builders (owner, 2026-11-12: + is the custom build, `# hq` is talking to the admin).
   - `ThinkingRow`: while a Vision's run is active and it has not posted, "<Name> is thinking…" with its cloud in the Thinking mood and the canvas shimmer; new Vision posts fade in; reduced motion turns both off.
   - No explanatory sub-lines or captions anywhere (owner, 2026-11-12); an empty state has one short line at most.
   - `ChannelView`: paged entries (`get_channel_page`), chat links with live status and Stop, Answered / PassedOn cards (the person answers inline), pending approvals of owned chats rendered with the existing approval box, and a composer with `@` mentions. "Mention a Vision" shows when the channel has more than one member and no mention.
@@ -370,7 +370,7 @@ slot after Chats.
 - [ ] **Step 2:** Run `npm --prefix web test -- visions`. Expected: FAIL.
 - [ ] **Step 3:** Implement against the canvas boards. Keep each component ≤ 100 lines per function, and keep `Sidebar` from growing by putting the switch in a wrapper.
 - [ ] **Step 4:** Run `npm --prefix web test && npm --prefix web run lint && npm --prefix web run build`. Expected: PASS.
-- [ ] **Step 5:** Verify in the real app (`npx tauri dev`, isolated HOME): create a channel and a Vision (through `themis call` until Task 9C), mention it, watch it think and start a chat, then Stop, take over and hand back. Take screenshots against the canvas boards.
+- [ ] **Step 5:** Verify in the real app (`npx tauri dev`, isolated HOME): create a channel and a Vision with the + builders, mention it, watch it think and start a chat, then Stop, take over and hand back. Take screenshots against the canvas boards.
 - [ ] **Step 6:** Commit with `feat: visions view`.
 
 ### Task 9A: Vision chats in plain chat, and the cloud hand-back (owner, 2026-11-12)
@@ -407,7 +407,7 @@ slot after Chats.
 
 **Files:**
 - Create: `crates/desktop/src/state/visions/admin.rs` (the built-in admin, proposals and the proposal check), `crates/core/builtins/prompts/visions-admin.md`, `web/src/screens/visions/ProposalCard.tsx` and its test
-- Modify: the Visions store (Task 2) for a built-in `admin` Vision (crowned, undeletable, the only member of every project's `# hq`) and a `proposal` channel entry kind; the Vision grant (Task 4) for an admin method list; `crates/desktop/src/state/visions/runs.rs` (admin runs use `visions-admin.md` and no chat-driving calls); `CloudIcon` (a `crown` prop, using the canvas crown); `ChannelsBar` (+ buttons); `crates/desktop/tests/visions_cli_e2e.rs`; `crates/core/src/prompts.rs` and its inventory test; `docs/prompts.md`
+- Modify: the Visions store (Task 2) for a built-in `admin` Vision (crowned, undeletable, the only member of every project's `# hq`) and a `proposal` channel entry kind; the Vision grant (Task 4) for an admin method list; `crates/desktop/src/state/visions/runs.rs` (admin runs use `visions-admin.md` and no chat-driving calls); `CloudIcon` (a `crown` prop, using the canvas crown); `crates/desktop/tests/visions_cli_e2e.rs`; `crates/core/src/prompts.rs` and its inventory test; `docs/prompts.md`
 - Test: as below
 
 **Interfaces:**
@@ -415,18 +415,16 @@ slot after Chats.
   - `themis call propose_visions_setup '{"channelId", "proposal": {channels: [...], visions: [...], changes: [...]}}'` posts a `proposal` entry (id, the structured proposal, plain-words summary) in `# hq`.
   - `themis call apply_proposal '{"proposalId"}'` creates or changes what the proposal says. The server refuses it unless the caller is the admin, the proposal is unexecuted, and the person posted in that `# hq` after the proposal. It marks the proposal applied and the card shows what was created, with links.
   - The admin's grant allows `propose_visions_setup`, `apply_proposal`, channel and Vision reads, and nothing that drives chats. A proposal can never set autonomy above Settings › Visions, raise a budget, or delete anything; the server checks each field.
-  - Sidebar + next to Channels or Visions opens `# hq` and posts the admin's fixed greeting for that kind ("What should the new channel handle?" / "What should the new Vision do?"), a constant, not a model call; the person's reply wakes the admin.
 - [ ] **Step 1:** Write the tests:
   - CLI e2e `the_admin_proposes_and_creates_only_after_the_person_replies`
   - CLI e2e `apply_is_refused_without_a_person_message_after_the_proposal`
   - CLI e2e `a_proposal_cannot_raise_autonomy_or_budget_or_delete`
   - CLI e2e `the_admin_cannot_drive_chats`
   - CLI e2e `the_admin_cannot_be_deleted`
-  - web `plus_opens_hq_with_the_admins_question`
   - web `a_proposal_card_shows_what_was_created`
 - [ ] **Step 2:** Run them. Expected: FAIL.
 - [ ] **Step 3:** Implement. The admin prompt uses Task 9B's plain voice: describe the setup in everyday words, one proposal per message, ask, and act only on a clear yes; on anything unclear, ask again.
-- [ ] **Step 4:** Run `cargo test -p themis-desktop`, the web suite, lint, build and ratchets. Expected: PASS. In the real app on a free model: open `# hq`, ask for "a channel that ships releases", read the proposal, say yes, see the channel and Vision appear in the sidebar; press + next to Visions and create one by replying.
+- [ ] **Step 4:** Run `cargo test -p themis-desktop`, the web suite, lint, build and ratchets. Expected: PASS. In the real app on a free model: open `# hq`, ask for "a channel that ships releases", read the proposal, say yes, see the channel and Vision appear in the sidebar.
 - [ ] **Step 5:** Commit with `feat: the admin vision creates channels and visions`.
 
 ### Task 10: Vision profile, channel details and Settings › Visions
