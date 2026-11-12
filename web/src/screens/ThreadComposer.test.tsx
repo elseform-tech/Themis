@@ -410,3 +410,32 @@ describe("approval mode menu closes", () => {
     expect(details.open).toBe(true);
   });
 });
+
+describe("ThreadComposer layout (canvas: input, then one row of controls)", () => {
+  it("puts + · Auto · branch · context · send in one row under the input, with no project line", () => {
+    const onSwitchBranch = vi.fn();
+    const props = { thread, draft: "", composerDisabled: false, running: false, stopping: false, sendError: undefined, secretConfigured: true, onDraftChange: vi.fn(), onSend: vi.fn(), onStop: vi.fn(), onNewThread: vi.fn(), onOpenSettings: vi.fn(), skills: [], plugins: [],
+      location: { name: "ledger-api", root: "/p/ledger-api", branch: "codex/date-rollover", branches: ["main", "codex/date-rollover"], onSwitchBranch } };
+    const { container } = render(<ThreadComposer {...props} />);
+    const box = container.querySelector(".themis-thread-composer")!;
+    expect(box.querySelector(".themis-composer-location")).toBeNull();
+    expect(screen.queryByText("ledger-api")).toBeNull();
+    const row = box.querySelector(".themis-thread-composer-actions")!;
+    const picker = screen.getByLabelText("Branch codex/date-rollover. Switch branch");
+    expect(row).toContainElement(picker);
+    // In order: +, the shield, the branch, then (after the flexible gap) send.
+    const order = [box.querySelector(".themis-composer-add"), box.querySelector(".themis-composer-permissions"), picker.closest(".themis-branch-picker"), screen.getByRole("button", { name: "Send" })];
+    for (let i = 1; i < order.length; i++) expect(order[i - 1]!.compareDocumentPosition(order[i]!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    // The project and its path stay on the branch's tooltip; switching works as before.
+    expect(picker.closest("summary")).toHaveAttribute("title", "Switch branch · ledger-api\n/p/ledger-api");
+    fireEvent.click(screen.getByRole("menuitem", { name: "main", hidden: true }));
+    expect(onSwitchBranch).toHaveBeenCalledWith("main");
+  });
+
+  it("names the shield Auto in the row and hides labels only in an extremely narrow composer", async () => {
+    const { readFileSync } = await import("node:fs");
+    const css = readFileSync("src/screens/ThreadView.css", "utf8");
+    expect(css).toMatch(/@container themis-composer \(max-width: 260px\)\s*\{\s*\.themis-thread-composer \.themis-composer-label\s*\{\s*display:\s*none;/);
+    expect(css).not.toMatch(/themis-composer-location/);
+  });
+});

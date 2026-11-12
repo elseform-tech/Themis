@@ -378,7 +378,7 @@ Codex, the chat's own model judges its goal: there is no separate check.
   background instead. A small
   stack of icons beside the Workspace button shows the same tasks at a glance and
   opens that tab. Drag its edge to resize. It never changes files or
-  runs Git actions. The composer shows the project folder and current branch.
+  runs Git actions. The composer's controls row shows the current branch; click it to switch.
 
 Recent projects are remembered (max 10) and reopened automatically on launch;
 threads that were still running at shutdown are marked **recovered**. The last

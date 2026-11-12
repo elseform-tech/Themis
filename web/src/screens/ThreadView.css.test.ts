@@ -18,7 +18,7 @@ it("keeps inline code readable inside shimmering status text", () => {
 
 it("compacts the composer's labels to icons when the chat is narrow", () => {
   expect(styles).toMatch(/\.themis-thread-composer\s*\{\s*container:\s*themis-composer \/ inline-size;\s*\}/);
-  expect(styles).toMatch(/@container themis-composer \(max-width: 380px\)\s*\{\s*\.themis-thread-composer \.themis-composer-label\s*\{\s*display:\s*none;/);
+  expect(styles).toMatch(/@container themis-composer \(max-width: 260px\)\s*\{\s*\.themis-thread-composer \.themis-composer-label\s*\{\s*display:\s*none;/);
 });
 
 it("keeps the model readable when the chat is narrow: the pill's padding goes first", () => {
