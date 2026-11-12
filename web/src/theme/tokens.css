@@ -44,6 +44,14 @@
   --themis-mark-v: #e6e6e6;
   --themis-mark-track: #2a2c30;
   --themis-del-bg: rgba(242, 139, 130, 0.13);
+  /* The Visions cast: a Vision's own colour (its identity, the same in every look) and the ink of its eyes. */
+  --themis-cast-blue: #38a9f0;
+  --themis-cast-teal: #14b8a6;
+  --themis-cast-violet: #8b7cf6;
+  --themis-cast-amber: #f59e0b;
+  --themis-cast-rose: #f0668a;
+  --themis-cast-indigo: #6c7bf2;
+  --themis-cast-ink: #0b1220;
   /* A soft lift for cards on the stage (the bubble). */
   --themis-card-lift: 0 1px 2px var(--themis-panel-shadow), inset 0 1px 0 var(--themis-panel-highlight);
   --themis-well-shadow: inset 0 1px 3px var(--themis-panel-shadow);

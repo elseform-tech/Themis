@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Button, Dialog, Input } from "../components";
 import { createProject, deleteProject, getSettings, renameProject, renameThread } from "../lib/tauri";
 import { describeError, toast, useApp } from "../state/store";
@@ -21,7 +21,8 @@ const SIDEBAR_MAX = 560;
 const SIDEBAR_DEFAULT = 288;
 
 // Settings takes over the whole sidebar with its section list; the toggle folds it the same way.
-export function Sidebar({ collapsed }: { collapsed: boolean }) {
+// `railExtra` goes in the rail after Chats; `panel` replaces the chat list (Visions' channels bar).
+export function Sidebar({ collapsed, railExtra, panel }: { collapsed: boolean; railExtra?: ReactNode; panel?: ReactNode }) {
   const { state, dispatch } = useApp();
   const settingsOpen = state.mainView === "settings";
   const [width, setWidth] = useState(() => Math.max(SIDEBAR_MIN, Math.min(SIDEBAR_MAX, Number(readSession("sidebarWidth", SIDEBAR_DEFAULT)) || SIDEBAR_DEFAULT)));
@@ -109,8 +110,8 @@ export function Sidebar({ collapsed }: { collapsed: boolean }) {
   return <>
     <div ref={slot} className={`themis-sidebar-slot ${collapsed ? "is-collapsed" : ""} ${resizing ? "is-resizing" : ""}`} style={{ "--themis-sidebar-width": `${width}px` } as import("react").CSSProperties}>
       {settingsOpen ? <SettingsNav id="themis-sidebar" /> : <>
-      <Rail onHelp={() => setHelp(true)} />
-      <aside id="themis-sidebar" className={`themis-sidebar ${collapsed ? "" : "is-visible"}`} inert={collapsed} aria-hidden={collapsed} aria-label="Workspace navigation">
+      <Rail onHelp={() => setHelp(true)} extra={railExtra} />
+      {panel ?? <aside id="themis-sidebar" className={`themis-sidebar ${collapsed ? "" : "is-visible"}`} inert={collapsed} aria-hidden={collapsed} aria-label="Workspace navigation">
         <div className="themis-sidebar-top">
           <ProjectSwitcher onSelect={root => { setShowAll(false); dispatch({ type: "project/selected", root }); }} onRename={project => { setError(""); setRenaming(project); }} onDelete={project => { setError(""); setDeleting(project); }} />
           <NewChatButton disabled={!state.activeProjectRoot} onClick={() => void newThread()} />
@@ -132,7 +133,7 @@ export function Sidebar({ collapsed }: { collapsed: boolean }) {
             {rest.length > shown.length && <button type="button" className="themis-show-more" onClick={() => setShowAll(true)}>Show {rest.length - shown.length} more</button>}
           </>}
         </div>
-      </aside>
+      </aside>}
       </>}
       {!collapsed && <div className="themis-sidebar-resize" role="separator" aria-label="Resize sidebar" aria-controls="themis-sidebar" aria-orientation="vertical" aria-valuemin={SIDEBAR_MIN} aria-valuemax={SIDEBAR_MAX} aria-valuenow={width} tabIndex={0}
         onPointerDown={event => { if (event.button !== 0) return; event.preventDefault(); event.currentTarget.focus(); resizeStart.current = { x: event.clientX, width: event.currentTarget.parentElement!.getBoundingClientRect().width }; event.currentTarget.setPointerCapture(event.pointerId); setResizing(true); }}

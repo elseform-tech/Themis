@@ -12,13 +12,14 @@ import {
   Palette,
   ReviewQueue,
   SettingsScreen,
-  Sidebar,
   Skills,
   ThreadView,
 } from "./screens";
 import { SidebarIcon } from "./screens/Sidebar";
 import { isTauri } from "@tauri-apps/api/core";
 import { ResourceMeter } from "./screens/ResourceMeter";
+import { SidebarWithVisions } from "./screens/visions/SidebarWithVisions";
+import { VisionsView } from "./screens/visions/VisionsView";
 import "./screens/shell.css";
 import { rememberedPalette, rememberPalette, useApplyAppearance, useAutoSky } from "./theme/appearance";
 import { StartupScreen, startupProgress, useStartupReveal } from "./screens/StartupScreen";
@@ -90,7 +91,7 @@ function Shell() {
           {isTauri() && <ResourceMeter />}
         </header>
         <div className="themis-shell-body">
-          <Sidebar collapsed={collapsed} />
+          <SidebarWithVisions collapsed={collapsed} />
           <main className="themis-main">
         <div className="themis-view">
           {state.mainView === "thread" && <ThreadView />}
@@ -98,6 +99,7 @@ function Shell() {
           {state.mainView === "automations" && <Automations />}
           {state.mainView === "settings" && <SettingsScreen />}
           {state.mainView === "queue" && <ReviewQueue />}
+          <VisionsView />
         </div>
       </main>
       </div>

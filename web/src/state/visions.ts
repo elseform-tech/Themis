@@ -38,14 +38,24 @@ export interface VisionsState {
   chats: Record<string, OwnedChat[]>;
   /** The open questions of the chats a window passed questions on from, by chat, as last read. */
   questions: Record<string, string[]>;
+  /** What the Visions view shows: a channel (null is `# hq`), and a chat opened from it. */
+  open: VisionsOpen;
 }
 
-export const initialVisions: VisionsState = { list: [], channels: {}, lines: {}, nextBefore: {}, keep: {}, chats: {}, questions: {} };
+export interface VisionsOpen {
+  channelId: string | null;
+  chatId: string | null;
+  /** The plain chat that was open before a Vision's chat, for Chats to return to. */
+  plainThreadId: string | null;
+}
+
+export const initialVisions: VisionsState = { list: [], channels: {}, lines: {}, nextBefore: {}, keep: {}, chats: {}, questions: {}, open: { channelId: null, chatId: null, plainThreadId: null } };
 
 export type VisionsAction =
   | { type: "visions/loaded"; visions?: VisionInfo[]; projectRoot?: string; channels?: ChannelInfo[] }
   | { type: "visions/changed"; channelId: string; page: ChannelPage; chats: OwnedChat[]; questions: Record<string, string[]> }
-  | { type: "visions/older"; channelId: string; page: ChannelPage };
+  | { type: "visions/older"; channelId: string; page: ChannelPage }
+  | { type: "visions/open"; channelId: string | null; chatId?: string | null };
 
 /** A Vision's mood: asleep while paused or over budget; otherwise needs > sorry > work > think >
  *  calm. Sorry is the server's: its latest run failed (a work chat's or its own chat's; the
@@ -146,10 +156,42 @@ function older(state: AppState, action: Extract<VisionsAction, { type: "visions/
   };
 }
 
+/** Whether `threadId` is a chat a Vision runs (a work chat listed in a channel). */
+export function isOwnedChat(state: AppState, threadId: string | null): boolean {
+  return threadId !== null && allChats(state).some(chat => chat.id === threadId);
+}
+
+/** Shows a channel (or `# hq`), and with `chatId` one of its chats, which becomes the active chat;
+ *  the plain chat open before it is kept for Chats to return to. */
+function open(state: AppState, action: Extract<VisionsAction, { type: "visions/open" }>): AppState {
+  const chatId = action.chatId ?? null;
+  const plainThreadId = isOwnedChat(state, state.activeThreadId) ? state.visions.open.plainThreadId : state.activeThreadId;
+  const visions = { ...state.visions, open: { channelId: action.channelId, chatId, plainThreadId } };
+  if (chatId === null) return { ...state, visions };
+  const root = Object.keys(visions.channels).find(each => visions.channels[each]!.some(channel => channel.id === action.channelId));
+  return { ...state, visions, activeThreadId: chatId, activeProjectRoot: root ?? state.activeProjectRoot };
+}
+
+/** Leaving for plain chat: a Vision's chat that was open gives way to the plain chat before it. */
+export function leaveOwnedChat(state: AppState): AppState {
+  if (!isOwnedChat(state, state.activeThreadId)) return state;
+  return { ...state, activeThreadId: state.visions.open.plainThreadId };
+}
+
+/** What waits on the person in one channel: approvals and open passed-on questions of its chats. */
+export function channelNeeds(state: AppState, channelId: string): number {
+  const chats = new Set((state.visions.chats[channelId] ?? []).map(chat => chat.id));
+  const approvals = state.approvals.filter(approval => chats.has(approval.thread_id)).length;
+  let questions = 0;
+  for (const id of chats) questions += state.visions.questions[id]?.length ?? 0;
+  return approvals + questions;
+}
+
 /** The visions/* actions; null for any other. */
 export function reduceVisionsActions(state: AppState, action: AppAction): AppState | null {
   if (action.type === "visions/loaded") return loaded(state, action);
   if (action.type === "visions/older") return older(state, action);
+  if (action.type === "visions/open") return open(state, action);
   if (action.type !== "visions/changed") return null;
   const { channelId, page } = action;
   const v = state.visions;

@@ -69,6 +69,8 @@ interface AppContextValue {
   dispatch: Dispatch<import("./reducer").AppAction>;
   armManualRun: (threadId: string) => void;
   cancelManualRun: (threadId: string) => void;
+  /** Reads the page before a channel's window, for scrolling back. */
+  loadOlderLines: (channelId: string) => Promise<void>;
 }
 
 const AppContext = createContext<AppContextValue | null>(null);
@@ -111,11 +113,11 @@ export function useActiveThread(): ThreadInfo | null {
   if (state.activeProjectRoot === null || state.activeThreadId === null) {
     return null;
   }
-  return (
-    (state.threadsByProject[state.activeProjectRoot] ?? []).find(
-      (t) => t.id === state.activeThreadId,
-    ) ?? null
-  );
+  const id = state.activeThreadId;
+  // A Vision's chat is not in the plain list: it is opened from its channel.
+  return (state.threadsByProject[state.activeProjectRoot] ?? []).find(t => t.id === id)
+    ?? Object.values(state.visions.chats).flat().find(t => t.id === id)
+    ?? null;
 }
 
 export function useThreadRunning(threadId: string | null): boolean {
@@ -497,6 +499,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
     return () => { cancelled = true; clearTimeout(timer); window.removeEventListener("themis-plugins-changed", changed); window.removeEventListener("themis-mcp-reconnect", reconnect); };
   }, [state.activeProjectRoot, startup]);
 
-  const value = useMemo(() => ({ state, startup, dispatch, armManualRun, cancelManualRun }), [state, startup]);
+  const value = useMemo(() => ({ state, startup, dispatch, armManualRun, cancelManualRun, loadOlderLines: visions.loadOlder }), [state, startup, visions]);
   return <AppContext.Provider value={value}>{children}</AppContext.Provider>;
 }
