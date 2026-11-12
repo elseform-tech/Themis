@@ -478,6 +478,7 @@ const ALL: &[(&str, &str, &[&str])] = &[
     ),
     (VISIONS_READ_ONLY_NOTE, "visions-read-only-note", &[]),
     (VISIONS_STEP_REFUSED, "visions-step-refused", &[]),
+    (VISIONS_SANDBOX_REFUSED, "visions-sandbox-refused", &[]),
     (
         VISIONS_WAKE_TURN,
         "visions-wake-turn",

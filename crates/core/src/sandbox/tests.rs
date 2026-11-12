@@ -1381,3 +1381,26 @@ fn a_vision_envelope_reaches_only_the_app_server() {
         assert!(plan.vision_envelope(&fx.root, 47123).is_err());
     }
 }
+
+/// A plan that fails closed for a Vision run says the reason it was given, not the advice for
+/// a configured backend.
+#[test]
+fn a_fail_closed_plan_refuses_with_the_reason_it_was_given() {
+    let fx = fixture();
+    let plan = plan_with(
+        Enforcement::Disabled,
+        &config("{}"),
+        &fx.root,
+        &fx.app_data,
+        &fx.home,
+    );
+    let closed = plan.fail_closed("no sandbox here can hold this".into());
+    assert_eq!(
+        closed.refusal().as_deref(),
+        Some("no sandbox here can hold this")
+    );
+    let refused = closed.prepare("ls", &[], None).err().expect("refused");
+    assert!(refused
+        .to_string()
+        .contains("no sandbox here can hold this"));
+}

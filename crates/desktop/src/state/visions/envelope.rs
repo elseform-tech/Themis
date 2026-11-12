@@ -1,24 +1,51 @@
 //! A Vision run's fixed envelope, whatever its channel's approval mode: it never asks the person
-//! anything in its hidden chat. Plain `themis` calls (the bundled program itself, run with its
-//! arguments and no shell, the only network it has) run without asking, because the server's
-//! Vision grant is the real gate; the rest follows Custom's rules, and anything those would put
-//! to the person is refused, with `visions-step-refused.md` going back to the Vision as the
-//! tool result. Deny rules still refuse. The sandbox side is
-//! `SandboxPlan::vision_envelope`.
+//! anything in its hidden chat, and nothing runs but the bundled `themis`. Plain `themis` calls
+//! (the program itself, run with its arguments and no shell, the only network it has) run
+//! without asking, because the server's Vision grant is the real gate. Of the person's rules
+//! only the deny rules apply (they still refuse `themis`); their allow rules and chat grants do
+//! not, so every other command, and anything else that would be put to the person, is refused
+//! with `visions-step-refused.md` going back to the Vision as the tool result. The in-process
+//! read tools (`read_file`, `list_dir`, `search_file`) read the project as in any run. The
+//! sandbox side is `SandboxPlan::vision_envelope`.
 
 use std::path::Path;
 use std::sync::Arc;
 
 use themis_core::chat_grants::ChatGrants;
-use themis_core::configuration::{ApprovalMode, ApprovalPolicy};
+use themis_core::configuration::{ApprovalMode, ApprovalPolicy, ApprovalRule, PolicyAction};
 use themis_core::tools::{Approval, ApprovalHook, ToolAction};
 
-/// A Vision run's approvals: plain `themis` first, then Custom's rules with every question
-/// refused.
+/// The in-process read tools a Vision run keeps; no program runs but `themis`.
+const READ_TOOLS: [&str; 3] = ["read_file", "list_dir", "search_file"];
+
+/// A Vision run's policy: the person's deny rules, then reads by the in-process read tools;
+/// everything else asks, which here means refused.
+fn envelope_policy(policy: &ApprovalPolicy) -> ApprovalPolicy {
+    let denies = policy
+        .rules
+        .iter()
+        .filter(|rule| rule.action == PolicyAction::Deny)
+        .cloned();
+    let reads = READ_TOOLS.map(|tool| ApprovalRule {
+        tool: tool.to_owned(),
+        action: PolicyAction::Allow,
+        risk: Some("read".to_owned()),
+        command: None,
+    });
+    ApprovalPolicy {
+        default: PolicyAction::Ask,
+        rules: denies.chain(reads).collect(),
+        sensitive_files: policy.sensitive_files.clone(),
+        auto_model: None,
+    }
+}
+
+/// A Vision run's approvals: plain `themis` first (unless a deny rule refuses it), then the
+/// envelope's policy with every question refused.
 pub(super) fn envelope_approvals(policy: &ApprovalPolicy, root: &Path) -> Arc<dyn ApprovalHook> {
     let custom = themis_core::configuration::configured_hook_with_reviewer(
         ApprovalMode::Custom,
-        policy.clone(),
+        envelope_policy(policy),
         Arc::new(Refuse),
         ChatGrants::in_memory(),
         Some(root),
@@ -178,5 +205,44 @@ mod tests {
         );
         let hook = envelope_approvals(&denying, dir.path());
         assert!(hook.approve(&call).is_denied());
+    }
+
+    /// Inside a Vision run only deny rules count: the person's allow rules let nothing else run,
+    /// not `curl`, not a read-only `ls`; the in-process read tools still read the project.
+    #[test]
+    fn allow_rules_do_not_apply_inside_a_vision_run() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut policy = RuntimeConfig::default().approval;
+        for rule in [
+            serde_json::json!({"tool": "shell", "command": ["curl"], "action": "allow"}),
+            serde_json::json!({"tool": "shell", "action": "allow"}),
+            serde_json::json!({"tool": "*", "action": "allow"}),
+        ] {
+            policy
+                .rules
+                .insert(0, serde_json::from_value(rule).unwrap());
+        }
+        let hook = envelope_approvals(&policy, dir.path());
+        for refused in [
+            shell(&["curl", "https://example.com"], RiskLevel::Network),
+            shell(&["ls", "-la"], RiskLevel::Read),
+            shell(&["python3", "-c", "print(1)"], RiskLevel::Execute),
+        ] {
+            assert_eq!(
+                hook.approve(&refused),
+                Approval::DenyReviewed,
+                "{refused:?}"
+            );
+        }
+        for tool in ["read_file", "list_dir", "search_file"] {
+            let read = ToolAction {
+                display: None,
+                tool: tool.into(),
+                summary: "README.md".into(),
+                risk: RiskLevel::Read,
+                command: Vec::new(),
+            };
+            assert_eq!(hook.approve(&read), Approval::AllowOnce, "{tool}");
+        }
     }
 }

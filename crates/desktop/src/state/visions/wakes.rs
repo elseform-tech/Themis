@@ -84,7 +84,7 @@ struct WakeSlot {
     count: u32,
     /// Reasons waiting for its next run, oldest first.
     queued: Vec<WakeReason>,
-    /// A run was refused before it started (busy): try again when a run ends.
+    /// A run was refused as busy before it started: try again when a run ends.
     retry: bool,
 }
 
@@ -154,13 +154,19 @@ impl WakeSlots {
         }
     }
 
-    /// The run was refused before it started: its reasons wait again, first, and it did not
-    /// count.
-    pub(super) fn refused(&mut self, vision_id: &str, channel_id: &str, reasons: Vec<WakeReason>) {
+    /// The run was refused before it started: its reasons wait again, first. It still counts
+    /// against `visions.max_wakes`, so retries stay bounded. Only a busy refusal (`retry`) is
+    /// tried again when a run ends; any other waits for the next wake.
+    pub(super) fn refused(
+        &mut self,
+        vision_id: &str,
+        channel_id: &str,
+        reasons: Vec<WakeReason>,
+        retry: bool,
+    ) {
         if let Some(slot) = self.slot(vision_id, channel_id) {
             slot.running = false;
-            slot.retry = true;
-            slot.count = slot.count.saturating_sub(1);
+            slot.retry = retry;
             let later = std::mem::replace(&mut slot.queued, reasons);
             for reason in later {
                 if !slot.queued.contains(&reason) {
@@ -512,11 +518,11 @@ mod tests {
             Admit::Start(vec![finished("t"), WakeReason::Mentioned]),
             "what waited goes with the person's message"
         );
-        // A run refused before it started does not count, and its reasons wait first.
-        slots.refused("v", "c", vec![finished("t")]);
-        slots.ended("v", "c");
+        // A run refused before it started still counts; its reasons wait first.
+        slots.refused("v", "c", vec![finished("t")], false);
+        assert_eq!(slots.admit("v", "c", None, 1), Admit::Limit);
         assert_eq!(
-            slots.admit("v", "c", None, 1),
+            slots.admit("v", "c", None, 2),
             Admit::Start(vec![finished("t")])
         );
     }
@@ -741,22 +747,40 @@ mod tests {
         assert_eq!(started(&alone.state), vec![alone.wren.clone()]);
     }
 
-    /// A wake refused before its run started (busy, no runtime) is tried again when any run
-    /// ends, still counted against `visions.max_wakes`.
+    /// A wake refused as busy is tried again when a run ends, each try counted, so the tries
+    /// stop at `visions.max_wakes` until the person writes.
     #[test]
-    fn a_busy_wake_is_retried_when_a_run_ends() {
+    fn busy_retries_stay_bounded_by_max_wakes() {
+        let mut slots = WakeSlots::default();
+        assert!(matches!(
+            slots.admit("v", "c", Some(WakeReason::Mentioned), 2),
+            Admit::Start(_)
+        ));
+        slots.refused("v", "c", vec![WakeReason::Mentioned], true);
+        assert_eq!(slots.due_retries(), vec![("v".to_owned(), "c".to_owned())]);
+        assert!(slots.due_retries().is_empty(), "once per refusal");
+        assert!(matches!(slots.admit("v", "c", None, 2), Admit::Start(_)));
+        slots.refused("v", "c", vec![WakeReason::Mentioned], true);
+        assert_eq!(slots.due_retries().len(), 1);
+        assert_eq!(slots.admit("v", "c", None, 2), Admit::Limit);
+        slots.person_wrote("c");
+        assert!(matches!(slots.admit("v", "c", None, 2), Admit::Start(_)));
+    }
+
+    /// A run that could not even be spawned (no runtime) is not tried again on every run end.
+    #[test]
+    fn a_refused_spawn_is_not_retried_on_every_run_end() {
         let s = setup(false);
         s.state
             .visions_post(&sink(), &s.channel, "anyone there?")
             .unwrap();
         assert_eq!(started(&s.state), vec![s.wren.clone()]);
-        // Some other chat's run ends: the waiting reasons go again.
         let done = ThreadEvent::Finished {
             model: None,
             result: "ok".into(),
         };
         s.state.visions_after_run(&sink(), "unrelated-chat", &done);
-        assert_eq!(started(&s.state), vec![s.wren.clone(), s.wren.clone()]);
+        assert_eq!(started(&s.state), vec![s.wren.clone()]);
     }
 
     /// Reasons that arrived while a Vision run failed are not stranded: the next run starts
@@ -804,5 +828,23 @@ mod tests {
         assert_eq!(started(&s.state), vec![s.wren.clone()]);
         let line = WakeReason::ApprovalWaiting("work".into(), "a1".into()).line();
         assert_eq!(line, "approval_waiting work a1");
+    }
+
+    /// A refusal that is not "busy" (no chat, a bad configuration, no runtime) is not tried
+    /// again on every run end; its reasons wait for the next wake.
+    #[test]
+    fn a_permanent_refusal_is_not_retried() {
+        let mut slots = WakeSlots::default();
+        assert!(matches!(
+            slots.admit("v", "c", Some(WakeReason::Mentioned), 6),
+            Admit::Start(_)
+        ));
+        slots.refused("v", "c", vec![WakeReason::Mentioned], false);
+        assert!(slots.due_retries().is_empty());
+        assert_eq!(
+            slots.admit("v", "c", None, 6),
+            Admit::Start(vec![WakeReason::Mentioned]),
+            "its reasons still wait"
+        );
     }
 }

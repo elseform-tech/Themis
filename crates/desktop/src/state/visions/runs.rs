@@ -54,7 +54,7 @@ pub(in crate::state) struct VisionRun {
 /// Why a wake's run did not start.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum NotStarted {
-    /// Refused before it ran (busy, no chat yet): its reasons wait and it is tried again.
+    /// Refused before it ran: its reasons wait; tried again on a run's end only when `busy`.
     Refused(&'static str),
     /// Nothing here can confine it: it never runs, and the channel says so.
     Unconfinable,
@@ -71,7 +71,9 @@ pub(in crate::state) fn confine(
         Some(vision) => Arc::new(
             sandbox
                 .vision_envelope(root, vision.port)
-                .unwrap_or_else(|reason| sandbox.fail_closed(reason)),
+                .unwrap_or_else(|_| {
+                    sandbox.fail_closed(themis_core::prompts::VISIONS_SANDBOX_REFUSED.to_owned())
+                }),
         ),
         None => sandbox,
     }
@@ -273,7 +275,7 @@ impl AppState {
             // Nothing runs outside the app's runtime: the reasons wait for the next wake.
             self.visions_cache()
                 .wakes
-                .refused(vision_id, channel_id, reasons);
+                .refused(vision_id, channel_id, reasons, false);
             self.visions_note(
                 "run_refused",
                 json!({"vision_id": vision_id, "channel_id": channel_id, "reason": "no_runtime"}),
@@ -311,9 +313,12 @@ impl AppState {
                 json!({"vision_id": vision_id, "channel_id": channel_id, "thread_id": thread_id, "run_id": run_id, "reasons": reasons.len()}),
             ),
             Err(NotStarted::Refused(why)) => {
+                // Only a busy chat or run limit clears by itself; anything else waits for the
+                // next wake rather than being tried on every run end.
+                let retry = why == "busy";
                 self.visions_cache()
                     .wakes
-                    .refused(&vision_id, &channel_id, reasons);
+                    .refused(&vision_id, &channel_id, reasons, retry);
                 self.visions_note(
                     "run_refused",
                     json!({"vision_id": vision_id, "channel_id": channel_id, "reason": why}),
@@ -587,6 +592,29 @@ mod tests {
         assert!(never_ran(ServerSend::Pending));
         assert!(never_ran(ServerSend::Saved));
         assert!(!never_ran(ServerSend::SpawnFailed));
+    }
+
+    /// When the envelope cannot be built after all (a race past the start check), every command
+    /// is refused with the Vision's own reason.
+    #[test]
+    fn the_race_fallback_refuses_with_the_visions_text() {
+        let dir = tempfile::tempdir().unwrap();
+        let vision = VisionRun {
+            head: String::new(),
+            scope: VisionScope {
+                vision_id: "v1".into(),
+                channel_id: "c1".into(),
+                project_root: dir.path().to_path_buf(),
+            },
+            port: 47123,
+        };
+        let plan = Arc::new(SandboxPlan::disabled(dir.path()));
+        let confined = confine(Some(&vision), plan, dir.path());
+        let refusal = confined.refusal().unwrap_or_default();
+        assert!(
+            refusal.contains("no sandbox here can hold a Vision's run"),
+            "{refusal}"
+        );
     }
 
     #[test]

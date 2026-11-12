@@ -100,6 +100,7 @@ impl SandboxPlan {
             secrets,
             read_only: false,
             local_port: None,
+            refused_with: None,
             #[cfg(target_os = "linux")]
             landlock: OnceLock::new(),
         }
@@ -129,6 +130,7 @@ impl SandboxPlan {
             secrets: self.secrets.clone(),
             read_only: true,
             local_port: None,
+            refused_with: None,
             #[cfg(target_os = "linux")]
             landlock: OnceLock::new(),
         }
@@ -191,7 +193,8 @@ impl SandboxPlan {
             _ if cfg!(target_os = "macos") => Backend::Seatbelt,
             _ => Backend::Landlock,
         };
-        plan.enforcement = Enforcement::FailClosed(backend, reason);
+        plan.enforcement = Enforcement::FailClosed(backend, reason.clone());
+        plan.refused_with = Some(reason);
         plan
     }
 
@@ -237,6 +240,9 @@ impl SandboxPlan {
 
     /// The error every command gets when the configured backend is unusable.
     pub fn refusal(&self) -> Option<String> {
+        if let Some(reason) = &self.refused_with {
+            return Some(reason.clone());
+        }
         match &self.enforcement {
             Enforcement::FailClosed(backend, detail) => Some(format!(
                 "the sandbox backend \"{}\" set in runtime.jsonc cannot be used on this machine ({detail}), so commands do not run. Install or enable {}, or set sandbox.backend to \"auto\" in your user runtime.jsonc",

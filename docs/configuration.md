@@ -943,19 +943,26 @@ nothing; a custom row may only take a decision away). The run has only the read-
 or memory, and its credential carries the Vision grant above.
 
 Whatever the channel's approval mode, a Vision's own run has one fixed envelope (the chats it
-starts keep the channel's mode): Custom's rules with no chat grants and no YOLO bypass; the
-bundled `themis` program run directly (`shell` with command `themis` and its arguments, no
-`sh -c` or other wrapper, so no operators, chaining, subshells, redirects or substitution) runs
-without asking, since the server's Vision grant is the gate; a deny rule still refuses it;
-anything else Custom would ask about (a write, a network command, a sensitive file, leaving the
-sandbox) is refused at once, never put in a box, with `visions-step-refused.md` as the tool
-result. Its commands run in a sandbox plan built from the non-YOLO plan: the project
-read-only, secret folders walled, no Keychain, and the network blocked except TCP to the app
-server's port on this machine (Seatbelt allows `localhost:<port>`; on Linux, Landlock ABI 4
-allows connecting to that port, and stands in for bubblewrap, whose private network cannot
-reach the app). Where no backend can hold that (the sandbox off or unavailable, Windows, Linux
-without Landlock ABI 4), the run is refused before it starts and the channel shows a
-`sandbox_unavailable` notice; it never runs unconfined.
+starts keep the channel's mode), with no YOLO bypass. No program runs in it but the bundled
+`themis`, run directly (`shell` with command `themis` and its arguments, no `sh -c` or other
+wrapper, so no operators, chaining, subshells, redirects or substitution), which runs without
+asking since the server's Vision grant is the gate. Of the person's approval rules only the
+deny rules apply (a deny rule still refuses `themis`); their allow rules and chat grants do not,
+so any other command (even a read-only one like `ls`, even one an allow rule names), a
+sensitive file or leaving the sandbox is refused at once, never put in a box, with
+`visions-step-refused.md` as the tool result. The in-process read tools (`read_file`,
+`list_dir`, `search_file`) read the project as in any run. The person's hooks and command-based
+MCP servers do not start for a Vision run (it has no plugins). Its commands run in a sandbox
+plan built from the non-YOLO plan: the project read-only (temporary folders stay writable, as
+for subagents), secret folders walled, no Keychain, and the network blocked except TCP to the
+app server's port. On macOS, Seatbelt allows only `localhost:<port>`. On Linux, Landlock ABI 4
+stands in for bubblewrap (whose private network cannot reach the app) and its rule allows TCP
+connections to that port number on any host, since Landlock names ports, not hosts; it does not
+restrict UDP or Unix sockets. With nothing but `themis` able to run, neither gap can be reached.
+Where no backend can hold the envelope (the sandbox off or unavailable, Windows, Linux without
+Landlock ABI 4), the run is refused before it starts and the channel shows a
+`sandbox_unavailable` notice; if that changes between the check and the run, every command is
+refused with `visions-sandbox-refused.md`. It never runs unconfined.
 
 Its final reply is posted in the channel as the Vision's message (at most 4000 characters); a
 failed turn posts a `chat_failed` notice instead, as does a failed turn of one of its work
@@ -965,8 +972,10 @@ finished or failed (a stopped one, by the person or a pause, starts nothing); at
 `visions.max_wakes` runs in a row until the person writes in the channel again. What arrives
 after the limit is kept, never dropped, and goes with the Vision's next run once the person has
 written: the next mention of it, or (when nobody was mentioned) its next event. A run refused
-before it started (the chat busy or the run limit reached, or its start not recorded) does not
-count; its reasons wait and are tried again when any run ends. Nothing wakes while the Vision
+before it started still counts against `visions.max_wakes`, and its reasons wait: when it was
+busy (the chat busy or the run limit reached, or its start not recorded) it is tried again when
+any run ends, still within that bound; any other refusal (no chat, a bad configuration) waits
+for the Vision's next wake. Nothing wakes while the Vision
 is paused or `visions.enabled` is `false` (those reasons are dropped). Each decision is logged
 as `visions`/`wake` with `vision_id`, `channel_id`, `reason` (`mentioned`, `chat_finished`,
 `chat_failed`, `chat_stopped`, `question_asked`, `approval_waiting`, `handed_back`, `queued`
