@@ -24,11 +24,23 @@
   --themis-warning: #e3b85a;
   --themis-danger: #f4968d;
   --themis-info: #8ab4f8;
+  /* Chat and Workspace surfaces (canvas --cardh, --well, --insp) and the ink on them; appearance.ts sets them per preset.
+     Card: the user bubble, the composer and a selected row or tab. Well: code and diffs. Inspector: the Workspace panel. */
+  --themis-card: #35373b;
+  --themis-well: #1f2023;
+  --themis-inspector-bg: var(--themis-sidebar-bg);
+  --themis-code-keyword: #8ab4f8;
+  --themis-code-function: #d7aefb;
+  --themis-code-string: #81c995;
+  --themis-code-type: #e3b85a;
+  --themis-code-comment: #9da1a8;
+  --themis-diff-add: #81c995;
+  --themis-diff-del: #f4968d;
   --themis-add-bg: rgba(129, 201, 149, 0.13);
   --themis-del-bg: rgba(242, 139, 130, 0.13);
-  --themis-composer-bg: var(--themis-surface);
-  --themis-user-message-bg: var(--themis-raised);
-  --themis-user-message-border: transparent;
+  /* A soft lift for cards on the stage (the bubble). */
+  --themis-card-lift: 0 1px 2px var(--themis-panel-shadow), inset 0 1px 0 var(--themis-panel-highlight);
+  --themis-well-shadow: inset 0 1px 3px var(--themis-panel-shadow);
   --themis-nav-hover-bg: color-mix(in srgb, var(--themis-text) 6%, transparent);
   --themis-nav-active-bg: color-mix(in srgb, var(--themis-text) 10%, transparent);
   --themis-nav-text: var(--themis-text);
@@ -42,7 +54,7 @@
   --themis-warn-text: #f6e7bd;
   --themis-radius-pill: 999px;
   --themis-radius-card: 20px;
-  --themis-radius-composer: 28px;
+  --themis-radius-composer: 26px;
   /* Framed layout: the sidebar dock, the chat stage and the Workspace panel are rounded panels inset on the frame. */
   --themis-panel-gap: 8px;
   --themis-stage-radius: 18px;
@@ -82,11 +94,7 @@
   --themis-warning: #78340b;
   --themis-danger: #8d0f33;
   --themis-info: #034394;
-  --themis-add-bg: rgba(22, 101, 52, 0.12);
-  --themis-del-bg: rgba(159, 18, 57, 0.1);
   --themis-link-light: #034394;
-  --themis-code-string-light: #116329;
-  --themis-code-number-light: #78340b;
   --themis-shadow: rgb(8 20 45 / .35);
   /* The gold gradient as a deep bronze-to-amber ramp, every stop readable as text on the pale glass. */
   --themis-gradient-1: #4d2c02;
@@ -109,6 +117,7 @@
   --themis-panel-bg: var(--themis-sidebar-bg) !important;
   --themis-stage-bg: var(--themis-canvas) !important;
   --themis-panel-blur: none !important;
+  --themis-inspector-bg: var(--themis-sidebar-bg) !important;
 }
 
 /* Signature gradient text: drifts slowly; the global reduced-motion rule stops it. */

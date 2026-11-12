@@ -1,5 +1,5 @@
 .themis-prompt-input { position: relative; width: 100%; }
-.themis-prompt-editor { min-height: 5rem; padding: .625rem; white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; color: var(--themis-text); border: 1px solid var(--themis-border-subtle); border-radius: .5rem; background: var(--themis-composer-bg, var(--themis-surface)); }
+.themis-prompt-editor { min-height: 5rem; padding: .625rem; white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; color: var(--themis-text); border: 1px solid var(--themis-border-subtle); border-radius: .5rem; background: var(--themis-surface); }
 .themis-prompt-editor:empty::before { content: attr(data-placeholder); color: var(--themis-text-2); pointer-events: none; }
 .themis-prompt-editor[aria-disabled="true"] { opacity: .6; }
 .themis-skill-chip { display: inline-flex; align-items: baseline; gap: .2em; padding: 0; background: none; color: inherit; font: inherit; line-height: inherit; vertical-align: baseline; white-space: nowrap; }

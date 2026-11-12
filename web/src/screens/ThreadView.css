@@ -5,7 +5,7 @@
 .themis-thread-layout.is-reviewing { gap: var(--themis-panel-gap); }
 .themis-thread-layout.is-reviewing > .themis-thread { border-radius: var(--themis-stage-radius); background: var(--themis-stage-bg); box-shadow: var(--themis-stage-edge-shadow); overflow: hidden; }
 /* The chat column follows the room the sidebar and Workspace leave, with a readable cap. */
-.themis-thread { --themis-thread-gutter: clamp(20px, 5cqw, 64px); --themis-thread-column: 620px; position: relative; flex: 1; min-width: 0; display: flex; flex-direction: column; min-height: 0; height: 100%; }
+.themis-thread { --themis-thread-gutter: 28px; --themis-thread-column: 700px; position: relative; flex: 1; min-width: 0; display: flex; flex-direction: column; min-height: 0; height: 100%; }
 
 /* Empty states without a thread. */
 .themis-welcome { margin: auto; text-align: center; padding: 32px; max-width: 540px; }
@@ -60,7 +60,7 @@
 
 /* Conversation stream. */
 .themis-thread-stream { flex: 1; overflow-y: auto; overflow-x: hidden; padding: 16px max(var(--themis-thread-gutter), calc((100% - var(--themis-thread-column)) / 2)) 24px; }
-.themis-thread-stream-content { display: flex; flex-direction: column; gap: 20px; min-width: 0; }
+.themis-thread-stream-content { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
 /* Room the content gave back while the end was being read; sized by followLatest. */
 .themis-thread-room { height: 0; }
 /* Back to the latest message, shown only while scrolled up; it rides the bottom of the view. */
@@ -68,7 +68,8 @@
 .themis-jump-latest:hover { color: var(--themis-accent); }
 .themis-thread-start { margin: auto; color: var(--themis-text-2); font-size: .875rem; }
 .themis-thread-msg { max-width: 100%; }
-.themis-thread-msg--user { align-self: flex-end; max-width: 80%; padding: 12px 18px; border-radius: 22px 22px 6px 22px; background: var(--themis-user-message-bg); }
+/* The person's message: a card that lifts off the stage (canvas --cardh, a soft shadow and the top highlight). */
+.themis-thread-msg--user { align-self: flex-end; max-width: 80%; padding: 9px 15px; border-radius: 18px; background: var(--themis-card); box-shadow: var(--themis-card-lift); }
 /* Notices in the chat ("Run interrupted…", "Stopped by you.", a failed request) are one small
    muted line, like a hint: they report what happened without shouting. */
 .themis-thread-msg--system { color: var(--themis-text-3); }
@@ -83,7 +84,7 @@
 /* Run activity: the agent's progress sentences read like its answers; tool calls fold into quiet rows. */
 .themis-run-activity { display: flex; flex-direction: column; gap: 8px; }
 .themis-milestone, .themis-tool-group { font-size: .8125rem; }
-.themis-tool-group > summary { display: inline-flex; align-items: center; gap: 8px; min-height: 28px; color: var(--themis-text-3); cursor: pointer; list-style: none; }
+.themis-tool-group > summary { display: inline-flex; align-items: center; gap: 8px; min-height: 28px; color: var(--themis-text-2); cursor: pointer; list-style: none; }
 .themis-tool-group > summary:hover { color: var(--themis-text); }
 .themis-tool-group > summary::-webkit-details-marker, .themis-milestone > summary::-webkit-details-marker, .themis-tool-message summary::-webkit-details-marker { display: none; }
 .themis-run-meta { color: var(--themis-text-3); font-size: .75rem; }
@@ -117,21 +118,21 @@
   .themis-tool-chevron { transition: none; }
 }
 
-/* Composer: a rounded pill. A sweeping ring marks an active run. */
+/* Composer: a glass card like the panels (canvas .lg on --cardh). A sweeping ring marks an active run. */
 .themis-thread-senderror { width: min(calc(100% - 2 * var(--themis-thread-gutter)), var(--themis-thread-column)); margin: 0 auto 6px; color: var(--themis-text-3); font-size: .75rem; }
 /* z-index 2: the composer's pop-ups (context, menus) open over the sticky run-progress row (z-index 1). */
-.themis-thread-composer { position: relative; display: flex; flex-direction: column; gap: 6px; width: min(calc(100% - 2 * var(--themis-thread-gutter)), var(--themis-thread-column)); margin: 4px auto 20px; padding: 12px 12px 10px 20px; border-radius: var(--themis-radius-composer); background: var(--themis-composer-bg); isolation: isolate; z-index: 2; }
+.themis-thread-composer { position: relative; display: flex; flex-direction: column; gap: 10px; width: min(calc(100% - 2 * var(--themis-thread-gutter)), var(--themis-thread-column)); margin: 4px auto 18px; padding: 14px 14px 10px 18px; border-radius: var(--themis-radius-composer); background: var(--themis-panel-sheen), var(--themis-card); box-shadow: var(--themis-panel-edge); -webkit-backdrop-filter: var(--themis-panel-blur); backdrop-filter: var(--themis-panel-blur); isolation: isolate; z-index: 2; }
 /* A narrow chat keeps the composer's controls as icons; names stay in tooltips and accessible labels. */
 .themis-thread-composer { container: themis-composer / inline-size; }
 @container themis-composer (max-width: 380px) {
   .themis-thread-composer .themis-composer-label { display: none; }
   .themis-composer-location > svg:not(:first-child) { margin-left: 2px; }
 }
-.themis-thread-composer:focus-within { box-shadow: 0 0 0 1px var(--themis-border); }
+.themis-thread-composer:focus-within { box-shadow: var(--themis-panel-edge), 0 0 0 1px var(--themis-border); }
 .themis-thread-composer--hero { margin: 0; width: min(100%, 760px); padding: 16px 14px 12px 22px; }
-.themis-composer-ring { position: absolute; inset: -1.5px; z-index: -1; border-radius: inherit; overflow: hidden; pointer-events: none; }
+/* Masked to its 1.5px edge, so the translucent composer never shows the sweep through its middle. */
+.themis-composer-ring { position: absolute; inset: -1.5px; z-index: -1; padding: 1.5px; border-radius: inherit; overflow: hidden; pointer-events: none; -webkit-mask: linear-gradient(black 0 0) content-box, linear-gradient(black 0 0); -webkit-mask-composite: xor; mask: linear-gradient(black 0 0) content-box exclude, linear-gradient(black 0 0); mask-composite: exclude; }
 .themis-composer-ring::before { content: ""; position: absolute; left: 50%; top: 50%; width: 200%; aspect-ratio: 1; transform: translate(-50%, -50%); background: conic-gradient(from 0deg, transparent 0deg, var(--themis-text-3) 60deg, var(--themis-text-2) 110deg, transparent 170deg); animation: themis-ring 4s linear infinite; }
-.themis-composer-ring::after { content: ""; position: absolute; inset: 1.5px; border-radius: inherit; background: var(--themis-composer-bg); }
 @keyframes themis-ring { to { transform: translate(-50%, -50%) rotate(1turn); } }
 .themis-thread-hint { margin: 0; font-size: .75rem; color: var(--themis-text-3); }
 .themis-composer-secret { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; color: var(--themis-text-2); }
@@ -139,7 +140,7 @@
 .themis-thread-composer .themis-prompt-editor { min-height: 28px; max-height: 240px; overflow-y: auto; padding: 4px 0; border: 0; border-radius: 0; background: transparent; line-height: 1.5; font-size: .9375rem; }
 .themis-thread-composer--hero .themis-prompt-editor { min-height: 52px; font-size: 1rem; }
 .themis-thread-composer .themis-prompt-editor:focus-visible { outline: none; }
-.themis-thread-composer-actions { display: flex; align-items: center; gap: 6px; }
+.themis-thread-composer-actions { display: flex; align-items: center; gap: 16px; }
 .themis-composer-spacer { flex: 1; }
 .themis-composer-add { position: relative; }
 .themis-composer-add > summary { display: grid; place-items: center; width: 40px; height: 40px; border-radius: 50%; color: var(--themis-text); cursor: pointer; list-style: none; }
@@ -177,11 +178,11 @@
 .themis-permissions-mode[aria-checked="true"] strong { font-weight: 700; }
 [role="radiogroup"][aria-disabled="true"] .themis-permissions-mode { cursor: progress; opacity: .6; }
 .themis-permissions-panel p { margin: 4px 10px 6px; color: var(--themis-text-3); font-size: .75rem; }
-.themis-send { display: grid; place-items: center; width: 36px; height: 36px; min-height: 36px; padding: 0; flex-shrink: 0; color: var(--themis-accent); }
+/* Send, steer and stop: one filled accent circle (canvas); stopping or nothing to send dims it. */
+.themis-button.themis-send { display: grid; place-items: center; width: 32px; height: 32px; min-height: 32px; padding: 0; flex-shrink: 0; border-radius: 50%; background: var(--themis-accent); color: var(--themis-accent-ink); }
 .themis-esc-hint { flex-shrink: 0; padding: 4px 10px; border-radius: 999px; background: color-mix(in srgb, var(--themis-accent) 14%, transparent); color: var(--themis-text-1); font-size: .75rem; white-space: nowrap; }
-.themis-send:hover:not(:disabled) { color: var(--themis-accent-hover); }
-.themis-send:disabled { color: var(--themis-text-3); opacity: 1; }
-.themis-send.themis-button--ghost { color: var(--themis-text); }
+.themis-button.themis-send:hover:not(:disabled) { background: var(--themis-accent-hover); color: var(--themis-accent-ink); }
+.themis-button.themis-send:disabled { opacity: .4; }
 .themis-composer-attachments, .themis-message-attachments { display: flex; gap: 8px; overflow-x: auto; padding: 4px 0 8px; margin: 0; list-style: none; align-items: flex-start; }
 .themis-composer-attachments li { position: relative; flex-shrink: 0; }
 .themis-composer-attachments > li > button { position: absolute; top: -6px; right: -6px; z-index: 1; display: grid; place-items: center; width: 20px; height: 20px; padding: 0; border: 0; border-radius: 50%; background: var(--themis-text-2); color: var(--themis-canvas); font-size: 11px; cursor: pointer; opacity: 0; transition: opacity 120ms; }

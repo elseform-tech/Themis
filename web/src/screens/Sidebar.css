@@ -23,7 +23,7 @@
 .themis-settings-nav .themis-tooltip::after { top: 50%; bottom: auto; left: calc(100% + 8px); transform: translateY(-50%); }
 .themis-sidebar-slot:not(.is-collapsed) .themis-settings-nav .themis-tooltip::after { display: none; }
 .themis-settings-nav .themis-sidebar-row > svg { flex: 0 0 18px; width: 18px; height: 18px; color: var(--themis-nav-icon); }
-.themis-settings-nav .themis-sidebar-row--active { background: var(--themis-raised); }
+.themis-settings-nav .themis-sidebar-row--active { background: var(--themis-card); }
 .themis-settings-nav .themis-sidebar-row--active > svg { color: var(--themis-accent); }
 .themis-settings-nav .themis-settings-back { margin-bottom: 10px; }
 .themis-sidebar-slot.is-collapsed .themis-settings-nav .themis-sidebar-row { justify-content: center; width: 44px; min-height: 44px; padding: 0; border-radius: 50%; }
@@ -41,10 +41,10 @@
 .themis-new-chat:disabled { opacity: .5; cursor: not-allowed; }
 .themis-sidebar-projects { flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden; padding: 0 10px 16px; }
 
-.themis-sidebar-row { display: flex; align-items: center; gap: 8px; width: 100%; min-height: 36px; padding: 0 10px; border: 0; border-radius: var(--themis-radius-pill); background: transparent; color: var(--themis-nav-text); font: inherit; font-size: .8125rem; text-align: left; cursor: pointer; }
+.themis-sidebar-row { display: flex; align-items: center; gap: 10px; width: 100%; min-height: 34px; padding: 0 10px; border: 0; border-radius: 10px; background: transparent; color: var(--themis-nav-text); font: inherit; font-size: .8125rem; text-align: left; cursor: pointer; }
 .themis-sidebar-row { color: var(--themis-text-2); }
 .themis-sidebar-row:hover { color: var(--themis-text); }
-.themis-sidebar-row--active { color: var(--themis-text); font-weight: 600; }
+.themis-sidebar-row--active { color: var(--themis-text); }
 .themis-sidebar-icon { flex: 0 0 18px; width: 18px; height: 18px; color: var(--themis-nav-icon); }
 .themis-sidebar-row--active .themis-sidebar-icon { color: var(--themis-accent); }
 .themis-sidebar-name { flex: 1; min-width: 56px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -145,18 +145,17 @@
 .themis-project-menu hr { margin: 4px 0; border: 0; border-top: 1px solid var(--themis-border-subtle); }
 .themis-project-busy { flex: none; width: 7px; height: 7px; border-radius: 50%; background: var(--themis-accent); }
 .themis-thread-group { margin-top: 4px; }
-/* Section label: smaller, dimmer and spaced, so it never reads as a chat row. */
-.themis-sidebar-section { display: flex; align-items: center; justify-content: space-between; margin: 8px 0 6px; padding: 10px 12px 0; border-top: 1px solid var(--themis-border-subtle); color: var(--themis-text-3); font-size: .75rem; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; }
-.themis-sidebar-section > span { font-weight: 500; letter-spacing: 0; font-variant-numeric: tabular-nums; }
+/* Section label: smaller, spaced capitals, so it never reads as a chat row (canvas .sec). */
+.themis-sidebar-section { display: flex; align-items: center; justify-content: space-between; margin: 0; padding: 12px 10px 4px; color: var(--themis-text-2); font-size: .75rem; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; }
+.themis-sidebar-section > span { font-weight: 400; letter-spacing: 0; font-variant-numeric: tabular-nums; }
 .themis-show-more { margin: 6px 0 0; padding: 4px 10px; border: 0; background: transparent; color: var(--themis-text-3); font: inherit; font-size: .75rem; cursor: pointer; }
 .themis-show-more:hover { color: var(--themis-text); }
 
-/* Chat rows: a speech-bubble icon in the same column as the project folder, so titles line up with the project name; the active chat sits in a soft pill. */
+/* Chat rows: a speech-bubble icon in the same column as the project folder, so titles line up with the project name; the active chat sits on a card. */
 .themis-thread-row > .themis-sidebar-icon { flex-basis: 18px; width: 18px; height: 15px; opacity: 1; color: var(--themis-text-3); }
 .themis-thread-row:hover { background: color-mix(in srgb, var(--themis-text) 4%, transparent); }
-.themis-thread-row.themis-sidebar-row--active { background: var(--themis-raised); }
+.themis-thread-row.themis-sidebar-row--active { background: var(--themis-card); }
 .themis-thread-row.themis-sidebar-row--active > .themis-sidebar-icon { color: var(--themis-accent); }
-.themis-sidebar-section { padding-left: 10px; }
 
 /* The project menu never grows past the dock; long names reveal on hover like chat titles. */
 .themis-project-switcher .themis-project-menu { grid-template-columns: minmax(0, 1fr); box-sizing: border-box; max-width: 100%; }

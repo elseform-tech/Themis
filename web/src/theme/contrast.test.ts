@@ -120,17 +120,19 @@ for (const preset of APPEARANCE_PRESETS) {
 // luminance contrast of 1.25 on light skies and 1.2 on dark ones, where WCAG's flare term squeezes every ratio
 // (#0e0f10 to #212225 is 1.2); before this, the panels sat 1.02 to 1.09 off the frame and read as one colour.
 for (const preset of APPEARANCE_PRESETS) {
-  it(`${preset.name}: the panel and the stage stand clearly off the frame`, () => {
+  it(`${preset.name}: the panel, the stage and the Workspace panel stand clearly off the frame`, () => {
     const bar = preset.mode === "light" ? 1.25 : 1.2;
-    const layers: Array<[string, string, string]> = [[preset.colors[0], preset.sidebar, preset.colors[1]]];
+    // The Workspace panel (inspector) is a side panel too; solid, it is the sidebar colour.
+    const layers: Array<[string, string, string, string]> = [[preset.colors[0], preset.sidebar, preset.colors[1], preset.sidebar]];
     if (preset.glass && preset.sky) {
       const middle = (preset.sky.match(/#[0-9a-f]{6}/gi) ?? [])[1];
       const frame = compositeOver(preset.glass.frame, middle);
-      layers.push([frame, compositeOver(preset.glass.panel, frame), compositeOver(preset.glass.stage, frame)]);
+      layers.push([frame, compositeOver(preset.glass.panel, frame), compositeOver(preset.glass.stage, frame), compositeOver(preset.surfaces.inspector, frame)]);
     }
-    for (const [frame, panel, stage] of layers) {
+    for (const [frame, panel, stage, inspector] of layers) {
       expect(contrastRatio(panel, frame), `panel ${panel} on ${frame}`).toBeGreaterThanOrEqual(bar);
       expect(contrastRatio(stage, frame), `stage ${stage} on ${frame}`).toBeGreaterThanOrEqual(bar);
+      expect(contrastRatio(inspector, frame), `Workspace ${inspector} on ${frame}`).toBeGreaterThanOrEqual(bar);
     }
   });
 }
@@ -146,10 +148,15 @@ for (const preset of APPEARANCE_PRESETS) {
 const SKIES = APPEARANCE_PRESETS.filter(preset => preset.sky !== undefined);
 
 // The side panels' sheen: the highlight fades from -45% to 28% of a 140deg gradient, so the corner gets 28/73 of it.
-function sheenOver(highlight: string, panel: string): string {
+function sheenOver(highlight: string, panel: string, share = 28 / 73): string {
   const [, rgb, alpha] = /^rgba\((.*),\s*([\d.]+)\)$/.exec(highlight) ?? [];
-  return rgb === undefined ? panel : compositeOver(`rgba(${rgb},${(Number(alpha) * 28 / 73).toFixed(3)})`, panel);
+  return rgb === undefined ? panel : compositeOver(`rgba(${rgb},${(Number(alpha) * share).toFixed(3)})`, panel);
 }
+
+// The composer's controls row (the shield's Auto and YOLO colours, the context warning) sits below the message, about
+// 68px down and 18px in on a composer up to 760px wide: at 140deg that is 12% along the sheen, where 16/73 of the
+// highlight is left. The message text and placeholder sit in the corner and are measured at the full 28/73.
+const CONTROLS_SHEEN = 16 / 73;
 
 it("ships the Morning, Noon and Night skies, Morning and Noon light", () => {
   expect(SKIES.map(preset => [preset.id, preset.mode])).toEqual([["morning", "light"], ["noon", "light"], ["night", "dark"]]);
@@ -233,4 +240,87 @@ for (const preset of SKIES) {
   it(`${preset.name}: the working spinner reaches 3 on the sky's glass`, () => {
     expect(worst(vars["--themis-gradient-2"])).toBeGreaterThanOrEqual(SECONDARY_MIN);
   });
+}
+
+// Chat and Workspace surfaces (canvas boards Chat and Workspace). Every layer is composited as it renders: the bubble
+// and composer (card) on the stage, the Workspace panel (inspector) on the frame, a selected tab or file (card) on the
+// panel, code (well) on the stage and on the panel, and the diff's tinted lines on the well. Skies are measured over
+// every sky stop and glow, and solid (reduced transparency: the stand-ins, the panel as the sidebar colour).
+type ChatLayers = { stage: string; inspector: string };
+
+function chatLayers(preset: (typeof APPEARANCE_PRESETS)[number]): ChatLayers[] {
+  const layers: ChatLayers[] = [{ stage: preset.colors[1], inspector: preset.sidebar }];
+  const sky = preset.sky ?? "";
+  for (const stop of sky.match(/#[0-9a-f]{6}/gi) ?? []) {
+    for (const glow of [undefined, ...(sky.match(/rgba\([^)]+\)/g) ?? [])]) {
+      if (!preset.glass) continue;
+      const frame = compositeOver(preset.glass.frame, glow === undefined ? stop : compositeOver(glow, stop));
+      layers.push({ stage: compositeOver(preset.glass.stage, frame), inspector: compositeOver(preset.surfaces.inspector, frame) });
+    }
+  }
+  return layers;
+}
+
+for (const preset of APPEARANCE_PRESETS) {
+  const { card, well } = preset.surfaces;
+  const ink = preset.ink;
+  const [text, text2, accent] = preset.colors.slice(5, 8);
+  const status = ["--themis-success", "--themis-warning", "--themis-danger", "--themis-info"].map(token => parseThemeVars(tokensCss)[preset.mode][token]);
+
+  it(`${preset.name}: text, accent, status and line counts reach 4.5 on the bubble, the composer and the Workspace panel`, () => {
+    for (const { stage, inspector } of chatLayers(preset)) {
+      const bubble = compositeOver(card, stage);
+      const selected = compositeOver(card, inspector);
+      for (const surface of [bubble, sheenOver(preset.edge.highlight, bubble, CONTROLS_SHEEN), inspector, sheenOver(preset.edge.highlight, inspector), selected]) {
+        for (const colour of [text, text2, accent, ...status, ink.add, ink.del]) {
+          expect(contrastRatio(colour, surface), `${colour} on ${surface}`).toBeGreaterThanOrEqual(AA_NORMAL);
+        }
+      }
+      for (const colour of [text, text2]) {
+        const corner = sheenOver(preset.edge.highlight, bubble);
+        expect(contrastRatio(colour, corner), `${colour} on the composer's corner ${corner}`).toBeGreaterThanOrEqual(AA_NORMAL);
+      }
+    }
+  });
+
+  it(`${preset.name}: code, line numbers and diff ink reach 4.5 on the well, in the chat and in Workspace`, () => {
+    for (const { stage, inspector } of chatLayers(preset)) {
+      for (const under of [stage, inspector]) {
+        const plain = compositeOver(well, under);
+        const added = compositeOver(ink.addBg, plain);
+        const removed = compositeOver(ink.delBg, plain);
+        for (const colour of [text, text2, ink.keyword, ink.function, ink.string, ink.type, ink.comment, ink.add, ink.del]) {
+          expect(contrastRatio(colour, plain), `${colour} on well ${plain}`).toBeGreaterThanOrEqual(AA_NORMAL);
+        }
+        // A changed line is all its own ink; the characters that changed get the line's tint twice; numbers stay --com.
+        for (const [lineInk, lineBg, line] of [[ink.add, ink.addBg, added], [ink.del, ink.delBg, removed]] as const) {
+          expect(contrastRatio(lineInk, line), `${lineInk} on ${line}`).toBeGreaterThanOrEqual(AA_NORMAL);
+          expect(contrastRatio(lineInk, compositeOver(lineBg, line)), `${lineInk} on its word tint`).toBeGreaterThanOrEqual(AA_NORMAL);
+          expect(contrastRatio(ink.comment, line), `line number on ${line}`).toBeGreaterThanOrEqual(AA_NORMAL);
+        }
+      }
+    }
+  });
+
+  it(`${preset.name}: the send button's arrow reads on the accent`, () => {
+    expect(contrastRatio(ink.onAccent, accent)).toBeGreaterThanOrEqual(AA_NORMAL);
+  });
+
+  // The owner wants the bubble and composer to lift off the stage, and a selected tab or file to read as chosen. On
+  // light skies the card is near white and the stage must stay 1.25 off the frame, so white caps the step at about
+  // 1.15: the bar is 1.1 there, with the shadow and top highlight doing the rest. Dark skies use the frame bar, 1.2.
+  it(`${preset.name}: the bubble and composer stand off the stage, a selected row off the Workspace panel`, () => {
+    const bar = preset.mode === "light" ? 1.1 : 1.2;
+    for (const { stage, inspector } of [chatLayers(preset)[0], ...middleLayers(preset)]) {
+      expect(contrastRatio(compositeOver(card, stage), stage), `card on stage ${stage}`).toBeGreaterThanOrEqual(bar);
+      expect(contrastRatio(compositeOver(card, inspector), inspector), `card on panel ${inspector}`).toBeGreaterThanOrEqual(bar);
+    }
+  });
+}
+
+/** The glass layers at the sky's middle stop, as the frame distinction test measures. */
+function middleLayers(preset: (typeof APPEARANCE_PRESETS)[number]): ChatLayers[] {
+  if (!preset.glass || !preset.sky) return [];
+  const frame = compositeOver(preset.glass.frame, (preset.sky.match(/#[0-9a-f]{6}/gi) ?? [])[1]);
+  return [{ stage: compositeOver(preset.glass.stage, frame), inspector: compositeOver(preset.surfaces.inspector, frame) }];
 }

@@ -211,7 +211,7 @@ export function ThreadComposer({
               disabled={stopping}
               onClick={onStop}
             >
-              <svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true">
+              <svg width="12" height="12" viewBox="0 0 16 16" aria-hidden="true">
                 <rect x="3" y="3" width="10" height="10" rx="2" fill="currentColor" />
               </svg>
             </Button>
@@ -225,7 +225,7 @@ export function ThreadComposer({
               disabled={composerDisabled || sendBlocked || (draft.trim() === "" && attachments.length === 0)}
               onClick={onSend}
             >
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true">
                 <path d="M12 19V5M5 12l7-7 7 7" />
               </svg>
             </Button>

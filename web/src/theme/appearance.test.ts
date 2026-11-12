@@ -82,7 +82,8 @@ it("every preset sets the panel ring, highlight, shadow and stage edge, and the 
   ];
   for (const [file, selector] of panels) {
     const rule = readFileSync(file, "utf8").split(selector)[1].split("}")[0];
-    expect(rule, file).toContain("background: var(--themis-panel-sheen), var(--themis-panel-bg)");
+    // The Workspace panel is the canvas's inspector: its own tint, the same sheen and edge.
+    expect(rule, file).toContain(`background: var(--themis-panel-sheen), var(--themis-${file.includes("Workspace") ? "inspector-bg" : "panel-bg"})`);
     expect(rule, file).toContain("box-shadow: var(--themis-panel-edge)");
   }
   const stages: Array<[string, string]> = [
@@ -178,4 +179,21 @@ it("re-applies the appearance when the reduced-transparency setting changes", ()
     view.unmount();
     expect(listeners).toHaveLength(0);
   } finally { vi.unstubAllGlobals(); agent.mockRestore(); }
+});
+
+it("every preset sets the chat and Workspace surfaces and the code ink from the canvas tokens", () => {
+  const root = document.documentElement;
+  for (const preset of APPEARANCE_PRESETS) {
+    applyAppearance({ ...base, theme_palette: preset.id });
+    const expected: Array<[string, string]> = [
+      ["--themis-card", preset.surfaces.card], ["--themis-well", preset.surfaces.well], ["--themis-inspector-bg", preset.surfaces.inspector],
+      ["--themis-code-keyword", preset.ink.keyword], ["--themis-code-function", preset.ink.function], ["--themis-code-string", preset.ink.string],
+      ["--themis-code-type", preset.ink.type], ["--themis-code-comment", preset.ink.comment], ["--themis-diff-add", preset.ink.add],
+      ["--themis-add-bg", preset.ink.addBg], ["--themis-diff-del", preset.ink.del], ["--themis-del-bg", preset.ink.delBg], ["--themis-accent-ink", preset.ink.onAccent],
+    ];
+    for (const [token, value] of expected) expect(root.style.getPropertyValue(token), `${preset.id} ${token}`).toBe(value);
+  }
+  // Under reduced transparency the Workspace panel is solid like the sidebar.
+  const tokens = readFileSync("src/theme/tokens.css", "utf8");
+  expect(tokens).toMatch(/\[data-glass="off"\][^{]*\{[^}]*--themis-inspector-bg: var\(--themis-sidebar-bg\) !important/);
 });
