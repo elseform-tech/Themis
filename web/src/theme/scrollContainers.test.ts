@@ -68,5 +68,9 @@ it("keeps every element inside the Changes stack from being a scroll container, 
 // control), so unless the stack is its own stacking context they paint over its bar and leave slivers beside the rows.
 it("paints the Changes stack's overlay scrollbar above its positioned wells", () => {
   const workspace = readFileSync("src/screens/WorkspacePanel.css", "utf8");
-  expect(workspace).toMatch(/\.themis-changes-stack \{[^}]*overflow-y: auto;[^}]*isolation: isolate/);
+  const stack = workspace.slice(workspace.indexOf(".themis-changes-stack {"), workspace.indexOf("}", workspace.indexOf(".themis-changes-stack {")));
+  // Its own stacking context and compositing layer, so WebKit paints its overlay bar over the opaque Classic wells…
+  for (const part of ["overflow-y: auto", "isolation: isolate", "transform: translateZ(0)"]) expect(stack).toContain(part);
+  // …and a gutter the width of an overlay bar, so no well or row ever sits under it.
+  expect(stack).toContain("padding-right: 12px");
 });

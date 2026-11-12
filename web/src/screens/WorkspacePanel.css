@@ -34,9 +34,10 @@
 .themis-workspace-source select:focus:not(:focus-visible) { outline: none; }
 .themis-workspace-note { margin: 0; color: var(--themis-text-2); font-size: .75rem; }
 /* Changes: one scrolling column of file rows, each open one with its diff well under it (canvas). */
-/* Its own stacking context, so its overlay scrollbar paints above the positioned wells inside it (otherwise only
-   slivers of the bar show, beside the file rows between wells). */
-.themis-changes-stack { flex: 1; min-height: 0; overflow-y: auto; isolation: isolate; }
+/* The one scroll in Changes. With overlay scrollbars WebKit drew its bar under the positioned wells, so in Classic
+   (opaque wells) only slivers showed beside the file rows. Its own stacking context and compositing layer put the bar
+   on top, and a 12px gutter keeps every well and row out from under it. */
+.themis-changes-stack { flex: 1; min-height: 0; overflow-y: auto; padding-right: 12px; isolation: isolate; transform: translateZ(0); }
 /* Collapse all and Expand all: two quiet icons at the end of the Changes bar. */
 .themis-changes-foldall { display: inline-flex; gap: 2px; margin-left: auto; }
 .themis-changes-foldall button { display: grid; place-items: center; width: 28px; height: 28px; border: 0; border-radius: 8px; background: transparent; color: var(--themis-text-2); cursor: pointer; }
