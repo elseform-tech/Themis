@@ -344,7 +344,7 @@ slot after Chats.
 ### Task 9: Visions view (rail cloud, channels bar, channel)
 
 **Files:**
-- Create: `web/src/screens/visions/VisionsButton.tsx`, `CloudIcon.tsx`, `ChannelsBar.tsx`, `ChannelView.tsx`, `ChannelEntry.tsx`, `ChatLink.tsx`, `NewChannelSheet.tsx`, `NewVisionSheet.tsx`, `Visions.css`, `VisionsView.test.tsx`, `VisionsButton.test.tsx`
+- Create: `web/src/screens/visions/VisionsButton.tsx`, `CloudIcon.tsx`, `ChannelsBar.tsx`, `ChannelView.tsx`, `ChannelEntry.tsx`, `ChatLink.tsx`, `ThinkingRow.tsx`, `Visions.css`, `VisionsView.test.tsx`, `VisionsButton.test.tsx` (amended 2026-11-12: no creation sheets; creating is Task 9C)
 - Modify: `web/src/screens/Rail.tsx` (`extra={<VisionsButton/>}` from `App.tsx`), `web/src/App.tsx:90,98-102`, `web/src/screens/Sidebar.tsx:131` (render `ChannelsBar` instead of the dock when `mainView === "visions"`)
 - Test: as listed
 
@@ -353,7 +353,9 @@ slot after Chats.
 - Produces:
   - `CloudIcon({ shape, color, mood, size, live })`, using the canvas paths (Cast board, `VisionsEntry.dc.html`). It animates only when `live`, and reduced motion turns animation off.
   - `VisionsButton`: the rail cloud. Its `aria-label` comes from `railMood`, for example "Visions, 2 need you". The badge is shown when `needsCount > 0`. The hop plays once per new needs-item.
-  - `ChannelsBar`: project switcher, `# hq` (phase 1: an empty-state page with New channel / New Vision, no agent), channels, and Visions with live clouds and mood tags.
+  - `ChannelsBar`: project switcher, `# hq` (an ordinary channel view; its admin arrives in Task 9C), channels, and Visions with live clouds and mood tags. The + buttons arrive in Task 9C.
+  - `ThinkingRow`: while a Vision's run is active and it has not posted, "<Name> is thinking…" with its cloud in the Thinking mood and the canvas shimmer; new Vision posts fade in; reduced motion turns both off.
+  - No explanatory sub-lines or captions anywhere (owner, 2026-11-12); an empty state has one short line at most.
   - `ChannelView`: paged entries (`get_channel_page`), chat links with live status and Stop, Answered / PassedOn cards (the person answers inline), pending approvals of owned chats rendered with the existing approval box, and a composer with `@` mentions. "Mention a Vision" shows when the channel has more than one member and no mention.
 
 - [ ] **Step 1:** Write the tests:
@@ -364,11 +366,68 @@ slot after Chats.
   - `a_passed_question_is_answered_in_the_channel`
   - `an_approval_from_an_owned_chat_shows_allow_and_deny`
   - `message_avatars_do_not_animate`
+  - `a_running_vision_shows_it_is_thinking`
 - [ ] **Step 2:** Run `npm --prefix web test -- visions`. Expected: FAIL.
 - [ ] **Step 3:** Implement against the canvas boards. Keep each component ≤ 100 lines per function, and keep `Sidebar` from growing by putting the switch in a wrapper.
 - [ ] **Step 4:** Run `npm --prefix web test && npm --prefix web run lint && npm --prefix web run build`. Expected: PASS.
-- [ ] **Step 5:** Verify in the real app (`npx tauri dev`, isolated HOME): create a channel and a Vision, mention it, watch it start a chat, then Stop, take over and hand back. Take screenshots against the canvas boards.
+- [ ] **Step 5:** Verify in the real app (`npx tauri dev`, isolated HOME): create a channel and a Vision (through `themis call` until Task 9C), mention it, watch it think and start a chat, then Stop, take over and hand back. Take screenshots against the canvas boards.
 - [ ] **Step 6:** Commit with `feat: visions view`.
+
+### Task 9A: Vision chats in plain chat, and the cloud hand-back (owner, 2026-11-12)
+
+**Files:**
+- Modify: `crates/desktop/src/state/threads.rs:182` (stop filtering owned chats out of the listing; each listed chat carries `vision: { id, name, shape, color } | null`), `crates/desktop/src/types/*.rs` (the thread summary type), `web/src/screens/Sidebar*.tsx` and the thread row (a small still cloud in the Vision's colour before the title, with `aria-label` "Run by <Name>"), the take-over/hand-back control in the chat view and the channel (the cloud icon; label "Hand back to <Name>"), `crates/desktop/tests/visions_cli_e2e.rs`
+- Test: as below
+
+**Interfaces:**
+- Consumes: the owners store (Task 2) and take-over/hand-back (Task 3).
+- Produces: `list_threads` includes owned chats with their `vision` field; typing in an owned chat from plain chat takes it over exactly as from the channel; every control that hands a chat back to a Vision uses `CloudIcon`.
+
+- [ ] **Step 1:** Write the tests:
+  - CLI e2e `owned_chats_are_listed_with_their_vision` (and an unowned chat has `vision: null`)
+  - CLI e2e `typing_in_plain_chat_takes_an_owned_chat_over`
+  - web `an_owned_chat_shows_its_vision_cloud_in_the_sidebar`
+  - web `hand_back_uses_the_cloud_icon`
+- [ ] **Step 2:** Run them. Expected: FAIL.
+- [ ] **Step 3:** Implement. Keep the listing's cost linear: one owners lookup per listing, not one per chat.
+- [ ] **Step 4:** Run `cargo test -p themis-desktop`, the web suite, lint, build and ratchets. Expected: PASS. Check in the real app: a Vision's chat in plain chat, type in it, see the channel say you took over, hand back with the cloud.
+- [ ] **Step 5:** Commit with `feat: vision chats show in plain chat`.
+
+### Task 9B: Plain voice for Visions (owner, 2026-11-12)
+
+**Files:**
+- Modify: `crates/core/builtins/prompts/visions-system.md`, `visions-wake-turn.md`, `agent-cli-vision-reason.md`, `question-answer-by-vision.md` and any other Vision prompt the person reads the result of; byte-identity tests in `crates/core/src/prompts/tests.rs`; `docs/prompts.md`
+- Test: the prompt inventory and byte-identity tests; Task 12 measures it
+
+- [ ] **Step 1:** Add to the Vision system prompt a short voice section: write for someone who doesn't code; say what happened and what you need in everyday words; no command names, file paths, function names, error codes or jargon unless the person used them or asked; one short message per turn. Keep the `themis` call list (the model needs it) but tell it never to repeat those calls to the person.
+- [ ] **Step 2:** Update the byte-identity tests deliberately and check the constructed system message of a Vision run (`cargo test -p themis-desktop visions`).
+- [ ] **Step 3:** Commit with `feat: visions speak plainly`. Task 12 adds the `jargon_lines` measure and A/B tests this prompt against the one before it.
+
+### Task 9C: The admin Vision in `# hq` (owner, 2026-11-12)
+
+**Files:**
+- Create: `crates/desktop/src/state/visions/admin.rs` (the built-in admin, proposals and the proposal check), `crates/core/builtins/prompts/visions-admin.md`, `web/src/screens/visions/ProposalCard.tsx` and its test
+- Modify: the Visions store (Task 2) for a built-in `admin` Vision (crowned, undeletable, the only member of every project's `# hq`) and a `proposal` channel entry kind; the Vision grant (Task 4) for an admin method list; `crates/desktop/src/state/visions/runs.rs` (admin runs use `visions-admin.md` and no chat-driving calls); `CloudIcon` (a `crown` prop, using the canvas crown); `ChannelsBar` (+ buttons); `crates/desktop/tests/visions_cli_e2e.rs`; `crates/core/src/prompts.rs` and its inventory test; `docs/prompts.md`
+- Test: as below
+
+**Interfaces:**
+- Produces:
+  - `themis call propose_visions_setup '{"channelId", "proposal": {channels: [...], visions: [...], changes: [...]}}'` posts a `proposal` entry (id, the structured proposal, plain-words summary) in `# hq`.
+  - `themis call apply_proposal '{"proposalId"}'` creates or changes what the proposal says. The server refuses it unless the caller is the admin, the proposal is unexecuted, and the person posted in that `# hq` after the proposal. It marks the proposal applied and the card shows what was created, with links.
+  - The admin's grant allows `propose_visions_setup`, `apply_proposal`, channel and Vision reads, and nothing that drives chats. A proposal can never set autonomy above Settings › Visions, raise a budget, or delete anything; the server checks each field.
+  - Sidebar + next to Channels or Visions opens `# hq` and posts the admin's fixed greeting for that kind ("What should the new channel handle?" / "What should the new Vision do?"), a constant, not a model call; the person's reply wakes the admin.
+- [ ] **Step 1:** Write the tests:
+  - CLI e2e `the_admin_proposes_and_creates_only_after_the_person_replies`
+  - CLI e2e `apply_is_refused_without_a_person_message_after_the_proposal`
+  - CLI e2e `a_proposal_cannot_raise_autonomy_or_budget_or_delete`
+  - CLI e2e `the_admin_cannot_drive_chats`
+  - CLI e2e `the_admin_cannot_be_deleted`
+  - web `plus_opens_hq_with_the_admins_question`
+  - web `a_proposal_card_shows_what_was_created`
+- [ ] **Step 2:** Run them. Expected: FAIL.
+- [ ] **Step 3:** Implement. The admin prompt uses Task 9B's plain voice: describe the setup in everyday words, one proposal per message, ask, and act only on a clear yes; on anything unclear, ask again.
+- [ ] **Step 4:** Run `cargo test -p themis-desktop`, the web suite, lint, build and ratchets. Expected: PASS. In the real app on a free model: open `# hq`, ask for "a channel that ships releases", read the proposal, say yes, see the channel and Vision appear in the sidebar; press + next to Visions and create one by replying.
+- [ ] **Step 5:** Commit with `feat: the admin vision creates channels and visions`.
 
 ### Task 10: Vision profile, channel details and Settings › Visions
 
@@ -398,7 +457,7 @@ slot after Chats.
 ### Task 11: Live coverage, guides and diagnostics
 
 **Files:**
-- Modify: `docs/live-verification.md` (rows `view:visions`, `settings:visions`, `config:visions`, `feature:visions-take-over`, `feature:visions-budget`), `crates/desktop/tests/live_coverage.rs` (read `Rail.tsx` views if Task 3 of the reskin moved them), `docs/user-guide.md` (a Visions section), `docs/configuration.md` (shared-server methods and the `visions-changed` event near L1366)
+- Modify: `docs/live-verification.md` (rows `view:visions`, `settings:visions`, `config:visions`, `feature:visions-take-over`, `feature:visions-budget`, `feature:visions-admin`, `feature:visions-plain-chat`), `crates/desktop/tests/live_coverage.rs` (read `Rail.tsx` views if Task 3 of the reskin moved them), `docs/user-guide.md` (a Visions section), `docs/configuration.md` (shared-server methods and the `visions-changed` event near L1366)
 - Test: `cargo test -p themis-desktop --test live_coverage`
 
 - [ ] **Step 1:** Run `cargo test -p themis-desktop --test live_coverage`. Expected: FAIL, listing the missing rows.
@@ -420,6 +479,8 @@ slot after Chats.
   - `false_done` (a channel claim of success while the hidden tests fail)
   - `above_level_attempts` (refused `answer_question` calls)
   - `restarts_after_stop`
+  - `jargon_lines` (channel posts naming commands, paths, functions or error codes the person did not use; Task 9B's A/B measure)
+  - `admin_acted_without_yes` (an applied proposal with no yes in the person's reply, graded by the hidden check)
   - `cost_usd`
 - Scenarios: three Ledgerly tasks from `evals/verify/generate.py`, each run (a) through a Vision and (b) by the person in goal mode, with the same model.
 - The impact set measures how often the Vision's chosen row matches the label.

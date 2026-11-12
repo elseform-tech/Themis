@@ -28,7 +28,11 @@ servers. Visions is meant to become the main way Themis is used, and plain chat 
 | People | One person plus Visions. No other humans (Mara on early boards was decoration). |
 | Entry | The left rail is Chats, Visions (cloud), Integrations, Automations, then Settings, Help, Search. Chats is the default and always returns to plain chat. The sidebar toggle lives in the window's top bar, not the rail. |
 | Sidebar | In Visions mode the channels bar replaces the chat list: project switcher, `# hq`, the project's channels, the Visions. |
-| Vision chats | Chats a Vision runs never appear in the plain chat sidebar. You reach them from their channel. |
+| Vision chats | (Changed 2026-11-12.) Chats a Vision runs also appear in the plain chat sidebar, marked with the Vision's cloud. Typing in one, from either place, takes it over. Every control that hands a chat back to a Vision uses the cloud icon. |
+| Creating | (2026-11-12.) The person creates channels and Visions by talking to the admin Vision in `# hq`, drawn with a crown. It proposes a setup and creates it only after the person says yes. The sidebar's + buttons open `# hq` with the admin asking what to make; there are no creation forms. |
+| Voice | (2026-11-12.) Visions speak plainly, for people who don't code: no jargon, no command names, no file paths unless asked. |
+| Transitions | (2026-11-12.) Before a Vision's post appears, the channel shows "<Name> is thinking…" with its cloud in the Thinking mood; posts fade in. Reduced motion turns both off. |
+| Hint text | (2026-11-12.) No explanatory sub-lines or captions in Visions, and the rest of the app is swept for hint text that adds nothing, in its own PR. |
 | Characters | Visions are the cloud cast. Bubbles is retired. |
 | Questions | A Vision may answer its chats' questions, as far as its autonomy level allows (below). |
 | Autonomy | A five-stop slider in Settings › Visions: Ask me first, Small calls, Most calls, Nearly all, Custom. The presets show what they allow, read-only; Custom makes each row editable. "Anything that leaves this computer" and "Spending past the budget" are always the person's, Custom included. Each Vision's profile can override the overall level. |
@@ -60,8 +64,9 @@ already have.
     switching on a hook or a command MCP server, or anything on chats it does not own. These stay
     on the existing refusal list, with tests.
 - **Owned chats.** A chat gains an owner record (Vision id, channel id) in the Visions store.
-  Because of that record, the chat stays out of the plain sidebar and the Vision's grant can reach
-  it. The person can always open, type in, stop or delete it.
+  Because of that record the Vision's grant can reach it, and the plain sidebar marks it with the
+  Vision's cloud. The person can always open, type in, stop or delete it, from the channel or from
+  plain chat.
 
 ### Waking up
 
@@ -87,8 +92,9 @@ run, never dropped.
   chats, heartbeat and routines, and it starts nothing new. A Vision's next run is told what the
   person stopped and must not restart it until asked. A test covers this. It is the same failure
   as the stopped-turn context gap.
-- **Taking over.** When the person types in a Vision's chat, the Vision stands by. It reads what
-  happened when the person presses "Hand back".
+- **Taking over.** When the person types in a Vision's chat, from the channel or from plain chat,
+  the Vision stands by. It reads what happened when the person presses "Hand back", a button with
+  the cloud icon.
 - **Autonomy.** When an owned chat asks a question, the Vision decides how much the choice
   matters. If its level allows that kind of decision, it answers with `answer_question` and posts
   the question, its answer and the reason in the channel, with "Change the answer". Otherwise it
@@ -102,6 +108,25 @@ run, never dropped.
   its own runs plus its owned chats. At the cap, the server stops the runs (not the model), and
   the channel shows "reached today's budget" with Raise and Leave buttons. There is also an overall
   daily cap for all Visions.
+
+### The admin Vision (`# hq`)
+
+Each install has one built-in admin Vision, Atlas, drawn with a crown. It is the only member of
+every project's `# hq`, can't be deleted, and builds nothing itself.
+
+- **What it does.** The person tells it what they want handled. It proposes channels and Visions
+  (name, what each Vision does, members, model) as a proposal card in `# hq`, and asks. When the
+  person says yes in their own words, it creates them. It can also rename, change a Vision's
+  role, add or remove members, and pause or resume, the same way: propose, then act on a yes.
+- **Its grant.** The admin's runs get the Vision grant without chat-driving methods, plus
+  `create_channel`, `create_vision`, `update_vision` and `update_channel` for its proposals. It can
+  never raise autonomy above Settings › Visions, raise a budget, approve anything, delete a channel
+  or a Vision, or touch settings, secrets, hooks or MCP servers.
+- **The yes is checked by the server, as far as it can be.** Each create or change names a
+  proposal the admin posted; the server refuses it unless that proposal is unexecuted, matches the
+  request, and the person has posted in `# hq` after it. Whether the reply means yes is the model's
+  judgement, measured by the eval, not enforced.
+- **Voice.** It says what it will set up in plain words and keeps to one short message per turn.
 
 ### Checking work, not trusting it
 
@@ -141,12 +166,16 @@ false "done" claims.
 - Questions with the autonomy slider and Custom, and approvals relayed into the channel.
 - Daily budgets enforced by the server.
 - UI: the rail cloud with its six states, the channels bar, the channel view, thread links with
-  Stop, Vision profile, Settings › Visions, first run in `# hq`, and problem states.
+  Stop, the thinking row, Vision chats marked in plain chat with the cloud hand-back, Vision
+  profile, Settings › Visions, first run in `# hq` with the admin creating channels and Visions,
+  and problem states.
+- Plain, non-technical voice in every Vision prompt.
 - Bubbles is retired, in a small separate PR first.
 
 **Phase 2: running on its own.** Heartbeat and routines with quiet hours (a Visions-only timer,
 separate from Automations), the chief of staff routing work between Visions, with a cap on
-handoffs so Visions cannot ping each other forever, `# hq` with Atlas's proposals, and roles.
+handoffs so Visions cannot ping each other forever, the admin's own suggestions (proposing work
+unasked), and roles.
 
 **Phase 3: polish.** Notifications on every OS (today `notifications.rs` delivers on macOS only,
 and the "ship on every OS" rule applies), plus search across Vision chats.
