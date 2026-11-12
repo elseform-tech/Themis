@@ -21,12 +21,15 @@ import re
 # runs as a command, plus `grep` that prints only file names or counts (never contents), so a
 # goal check that asks for compact proof of a change to every file can get it (2026-10-27).
 # Listing, folders and git go through the shell since 2026-11-08 (no `list_dir`, `create_dir` or
-# `git` tool), so `ls`, `mkdir` and the git commands the commit needs are allowed as commands.
+# `git` tool), so `ls`, `mkdir` and the git commands the commit needs are allowed as commands,
+# and `rm` and `mv`, so a file written by mistake can be removed or renamed (2026-11-12: two
+# beam-free runs were left with a retired item's file they could not delete). The harness grades
+# with its own copy of the checker, so removing `check.py` only fails the run.
 # The default is deny, so nothing ever waits for an approval nobody answers.
 ALLOWED_TOOLS = ("read_file", "write_file", "apply_patch", "recall", "create_goal", "update_goal")
 CHECK_COMMAND = ["python3", "check.py"]
 COUNT_COMMANDS = (["grep", "-L"], ["grep", "-c"], ["grep", "-rL"], ["grep", "-rc"])
-PROJECT_COMMANDS = (["ls"], ["mkdir"], ["git", "status"], ["git", "add"], ["git", "commit"], ["git", "log"],
+PROJECT_COMMANDS = (["ls"], ["mkdir"], ["rm"], ["mv"], ["git", "status"], ["git", "add"], ["git", "commit"], ["git", "log"],
                     ["git", "diff"])
 ALLOWED_COMMANDS = (CHECK_COMMAND, *COUNT_COMMANDS, *PROJECT_COMMANDS)
 APPROVAL = {
