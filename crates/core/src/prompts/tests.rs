@@ -321,6 +321,13 @@ const ALL: &[(&str, &str, &[&str])] = &[
         "agent-cli-read-unavailable",
         &["method"],
     ),
+    (AGENT_CLI_HELD_BY_PERSON, "agent-cli-held-by-person", &[]),
+    (AGENT_CLI_VISION_PAUSED, "agent-cli-vision-paused", &[]),
+    (
+        AGENT_CLI_VISION_OTHER_PROJECT,
+        "agent-cli-vision-other-project",
+        &[],
+    ),
     (AGENT_SWITCH_ON_REFUSED, "agent-switch-on-refused", &[]),
     (TOOL_SANDBOX_NOTE, "tool-sandbox-note", &[]),
     (

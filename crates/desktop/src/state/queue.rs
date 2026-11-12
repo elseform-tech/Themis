@@ -148,22 +148,28 @@ impl AppState {
         reasoning_effort: Option<String>,
         attachments: Vec<String>,
     ) -> Result<QueuedMessage, String> {
+        let message = QueuedMessage::new(text, attachments, reasoning_effort, None);
+        self.enqueue(sink, thread_id, message).await
+    }
+
+    /// Queues `message`. A Vision's (marked with its `vision_id`) is not the person's, so it
+    /// takes nothing over and, sent, goes out as the server's.
+    pub(crate) async fn enqueue(
+        &self,
+        sink: Arc<dyn EventSink>,
+        thread_id: String,
+        message: QueuedMessage,
+    ) -> Result<QueuedMessage, String> {
+        let person = message.vision_id.is_none();
         let running = self.require_thread(&thread_id).await?;
-        let text = text.trim().to_owned();
-        if text.is_empty() && attachments.is_empty() {
+        let text = message.text.trim().to_owned();
+        if text.is_empty() && message.attachments.is_empty() {
             return Err("Write a message to queue".to_owned());
         }
         if text.chars().count() > MAX_QUEUED_CHARS {
             return Err("This message is too long to queue".to_owned());
         }
-        let message = QueuedMessage {
-            id: uuid::Uuid::new_v4().to_string(),
-            text,
-            attachments,
-            reasoning_effort,
-            held: false,
-            note: None,
-        };
+        let message = QueuedMessage { text, ..message };
         self.edit_queue(sink.as_ref(), &thread_id, |queue| {
             if queue.len() >= MAX_QUEUED {
                 return Err(format!("At most {MAX_QUEUED} messages can wait in a chat"));
@@ -177,8 +183,10 @@ impl AppState {
             "info",
             json!({"thread_id": thread_id, "queued": self.queue_for(&thread_id).len()}),
         );
-        // Only the person queues messages: a Vision's work chat is now theirs.
-        self.visions_person_took_over(&thread_id);
+        // The person queued it: a Vision's work chat is now theirs.
+        if person {
+            self.visions_person_took_over(&thread_id);
+        }
         if !running {
             self.dispatch_queue(sink, &thread_id).await;
         }
@@ -254,6 +262,18 @@ impl AppState {
         thread_id: String,
         message_id: String,
     ) -> Result<(), String> {
+        self.steer_queued(sink, thread_id, message_id, true).await
+    }
+
+    /// Steers a waiting message in; `person` says whether the person steered it. A Vision's
+    /// steer is not the person's message: it answers no open question and joins no goal.
+    pub(super) async fn steer_queued(
+        &self,
+        sink: Arc<dyn EventSink>,
+        thread_id: String,
+        message_id: String,
+        person: bool,
+    ) -> Result<(), String> {
         self.require_thread(&thread_id).await?;
         // Under the queue lock: closing the inbox takes the same lock, so the
         // message lands either in a live inbox or back in the queue, never in
@@ -291,14 +311,32 @@ impl AppState {
             Ok((text, entry.run_id.clone()))
         })?;
         let (steered, _run_id) = steered;
-        // It answers questions still open; the run reads which ones next, unseen in the chat.
-        if let Some(note) = self.answer_open_in_chat(sink.as_ref(), &thread_id, &steered) {
+        if person {
+            self.person_steered(&sink, &thread_id, &steered);
+        }
+        // After the inbox: an approval asked from here on sees the message there
+        // and is denied without a box (see `DesktopApprovalHook`).
+        let denied = self.deny_approvals_for_new_message(&thread_id);
+        let _ = self.inner.diagnostics.append(
+            "queue",
+            "steered",
+            "info",
+            json!({"thread_id": thread_id, "approvals_denied": denied, "person": person}),
+        );
+        Ok(())
+    }
+
+    /// What the person's steered message does beyond the run's inbox: it answers questions
+    /// still open (the run reads which ones next, unseen in the chat) and joins a running goal
+    /// word for word.
+    fn person_steered(&self, sink: &Arc<dyn EventSink>, thread_id: &str, steered: &str) {
+        if let Some(note) = self.answer_open_in_chat(sink.as_ref(), thread_id, steered) {
             if let Some(entry) = self
                 .inner
                 .steer_inboxes
                 .lock()
                 .unwrap_or_else(|e| e.into_inner())
-                .get(&thread_id)
+                .get(thread_id)
             {
                 entry
                     .inbox
@@ -307,18 +345,7 @@ impl AppState {
                     .push_back(note);
             }
         }
-        // Steered into a goal, it joins the goal word for word.
-        self.add_also_asked(&sink, &thread_id, &steered);
-        // After the inbox: an approval asked from here on sees the message there
-        // and is denied without a box (see `DesktopApprovalHook`).
-        let denied = self.deny_approvals_for_new_message(&thread_id);
-        let _ = self.inner.diagnostics.append(
-            "queue",
-            "steered",
-            "info",
-            json!({"thread_id": thread_id, "approvals_denied": denied}),
-        );
-        Ok(())
+        self.add_also_asked(sink, thread_id, steered);
     }
 
     /// Asks whether the chat's current run has a steered message still unread.
@@ -450,17 +477,7 @@ impl AppState {
                     ThreadEvent::SteerReturned { text: text.clone() },
                 );
             }
-            queue.insert(
-                0,
-                QueuedMessage {
-                    id: uuid::Uuid::new_v4().to_string(),
-                    text,
-                    attachments: Vec::new(),
-                    reasoning_effort: None,
-                    held: false,
-                    note: None,
-                },
-            );
+            queue.insert(0, QueuedMessage::new(text, Vec::new(), None, None));
         }
         self.save_queue(thread_id, &queue);
         let _ = self.inner.diagnostics.append(
@@ -603,8 +620,10 @@ impl AppState {
             let effort = self
                 .current_effort(thread_id, next.reasoning_effort.clone())
                 .await;
-            // The person wrote this one.
-            self.reset_hook_wakes(thread_id);
+            // The person wrote this one, unless a Vision queued it.
+            if next.vision_id.is_none() {
+                self.reset_hook_wakes(thread_id);
+            }
             let (sent, progress) = self
                 .send_from_server(
                     Arc::clone(&sink),

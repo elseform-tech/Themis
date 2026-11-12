@@ -12,6 +12,7 @@
 
 mod channel_log;
 mod control;
+mod drive;
 mod store;
 mod wakes;
 

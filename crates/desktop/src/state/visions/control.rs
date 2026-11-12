@@ -26,7 +26,7 @@ fn mentions(text: &str, name: &str) -> bool {
 }
 
 impl AppState {
-    fn visions_note(&self, event: &str, fields: Value) {
+    pub(super) fn visions_note(&self, event: &str, fields: Value) {
         let _ = self
             .inner
             .diagnostics

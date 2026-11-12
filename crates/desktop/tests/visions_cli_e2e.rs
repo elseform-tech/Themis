@@ -1,7 +1,8 @@
 //! Visions through the real app server and `themis call`: profiles and channels with revisions,
 //! channel logs, the chats Visions own (out of the plain list, held when the person stops or
-//! takes one over, released when a channel goes), Settings › Visions, and an agent's credential
-//! refused on every method. In-process app server, isolated app data, synthetic credentials,
+//! takes one over, released when a channel goes), Settings › Visions, an agent's credential
+//! refused on every method, and a Vision's credential driving only the chats its Vision owns
+//! (never as the person). In-process app server, isolated app data, synthetic credentials,
 //! scripted provider.
 #![cfg(unix)]
 
@@ -14,7 +15,7 @@ use themis_desktop::server::{Client, Server};
 use themis_desktop::state::{AppState, Hold, OwnedKind, Owner};
 use themis_desktop::types::ProviderKind;
 use wiremock::matchers::method;
-use wiremock::{Mock, MockServer, ResponseTemplate};
+use wiremock::{Mock, MockServer, Request, ResponseTemplate};
 
 #[allow(dead_code)]
 mod common;
@@ -128,6 +129,11 @@ impl Fixture {
 
     /// A Vision named `name` and a channel in the project with it as the only member.
     fn vision_and_channel(&self, name: &str, channel: &str) -> (String, String) {
+        self.vision_and_channel_in(name, channel, "custom")
+    }
+
+    /// The same, with the channel's approval mode `mode`.
+    fn vision_and_channel_in(&self, name: &str, channel: &str, mode: &str) -> (String, String) {
         let vision = self.call_ok(
             "save_vision",
             json!({"vision": {"name": name, "shape": "cloud", "color": "teal"}, "revision": null}),
@@ -136,9 +142,39 @@ impl Fixture {
         let saved = self.call_ok(
             "save_channel",
             json!({"channel": {"name": channel, "project_root": self.project,
-                "approval_mode": "custom", "members": [vision_id]}, "revision": null}),
+                "approval_mode": mode, "members": [vision_id]}, "revision": null}),
         );
         (vision_id, saved["id"].as_str().unwrap().to_owned())
+    }
+
+    /// The Vision's own chat in the channel and a credential for its run there, as a Vision's
+    /// run gets one.
+    async fn vision_run(&self, vision: &str, channel: &str) -> (String, String) {
+        let chat = self.thread().await;
+        self.own(&chat, vision, channel, OwnedKind::VisionChat);
+        let mut scope = themis_core::agent_cli::RunScope::new(&self.project, None);
+        scope.vision = Some(themis_core::agent_cli::VisionScope {
+            vision_id: vision.to_owned(),
+            channel_id: channel.to_owned(),
+            project_root: self.project.clone(),
+        });
+        let access = themis_core::agent_cli::issue(&chat, "vision-run", &scope).expect("issued");
+        (chat, access.env()[0].1.clone())
+    }
+
+    /// `themis call METHOD ARGS` with a run's credential.
+    fn agent_call(&self, token: &str, method: &str, args: Value) -> Output {
+        self.cli(Some(token), &["call", method, &args.to_string()])
+    }
+
+    /// A work chat the Vision starts through its credential.
+    fn vision_starts_chat(&self, token: &str) -> String {
+        let created = json_of(&self.agent_call(
+            token,
+            "create_thread",
+            json!({"projectRoot": self.project, "provider": "go", "model": "test-model"}),
+        ));
+        created["id"].as_str().unwrap().to_owned()
     }
 
     fn own(&self, thread: &str, vision: &str, channel: &str, kind: OwnedKind) {
@@ -686,5 +722,258 @@ async fn an_agent_credential_is_refused_every_visions_method() {
     // Nothing the refused calls asked for happened.
     assert_eq!(fx.entries(&channel), Vec::<Value>::new());
     assert!(!runtime_file(&fx.data).contains("\"visions\""));
+    fx.shut_down().await;
+}
+
+/// The Vision's credential starts a work chat in its channel's project only, in the channel's
+/// approval mode, and drives it; the person's Stop holds it back from the Vision's sends until
+/// the person hands it back; its own Stop holds nothing; a paused Vision sends and starts
+/// nothing; another chat stays out of reach.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_person_stop_blocks_the_visions_sends_until_handed_back() {
+    let _turn = ONE_SERVER.lock().await;
+    let fx = fixture().await;
+    let provider = stalled_provider().await;
+    fx.use_provider(&provider).await;
+    let (vision, channel) = fx.vision_and_channel_in("Wren", "hq", "custom");
+    let (_own_chat, agent) = fx.vision_run(&vision, &channel).await;
+    let requests = || async { provider.received_requests().await.unwrap().len() };
+
+    // Started in the channel's project, owned, in the channel's mode (new chats default to Auto).
+    let work = fx.vision_starts_chat(&agent);
+    let owner = fx.state.owner_of(&work).expect("owned");
+    assert_eq!(
+        (owner.vision_id.as_str(), owner.kind, owner.hold),
+        (vision.as_str(), OwnedKind::Work, Hold::None)
+    );
+    let info = fx.state.get_thread(&work).await.unwrap();
+    assert_eq!(
+        info.approval_mode,
+        themis_core::configuration::ApprovalMode::Custom
+    );
+    let started = fx.entries(&channel).last().unwrap().clone();
+    assert_eq!(started["type"], "chat_started");
+    assert_eq!(started["vision_id"], vision.as_str());
+    assert_eq!(started["thread_id"], work.as_str());
+    assert!(!fx.listed_ids().contains(&work), "out of the plain list");
+    let elsewhere = tempfile::tempdir().unwrap();
+    let refused = fx.agent_call(
+        &agent,
+        "create_thread",
+        json!({"projectRoot": elsewhere.path(), "provider": "go"}),
+    );
+    assert!(
+        failed_with(&refused, "only in its channel's project"),
+        "{}",
+        text(&refused)
+    );
+
+    // The Vision's send runs the chat and is not a take over; its own Stop holds nothing.
+    let before = requests().await;
+    let sent = fx.agent_call(
+        &agent,
+        "send_message",
+        json!({"threadId": work, "text": "build it"}),
+    );
+    json_of(&sent);
+    wait_until(|| async { requests().await > before }).await;
+    assert_eq!(owner_hold(&fx.state, &work), Some(Hold::None));
+    json_of(&fx.agent_call(&agent, "stop_thread", json!({"threadId": work})));
+    wait_until(|| async { !fx.running(&work).await }).await;
+    assert_eq!(owner_hold(&fx.state, &work), Some(Hold::None));
+
+    // The person's Stop holds it: the Vision's writes are refused, its reads are not.
+    let before = requests().await;
+    json_of(&fx.agent_call(
+        &agent,
+        "send_message",
+        json!({"threadId": work, "text": "again"}),
+    ));
+    wait_until(|| async { requests().await > before }).await;
+    let stopped = fx.cli(None, &["thread", "stop", &work]);
+    assert!(stopped.status.success(), "{}", text(&stopped));
+    assert_eq!(owner_hold(&fx.state, &work), Some(Hold::StoppedByPerson));
+    wait_until(|| async { !fx.running(&work).await }).await;
+    let before = requests().await;
+    for (method, args) in [
+        (
+            "send_message",
+            json!({"threadId": work, "text": "ignore the stop"}),
+        ),
+        (
+            "enqueue_message",
+            json!({"threadId": work, "text": "queued anyway"}),
+        ),
+        (
+            "answer_question",
+            json!({"threadId": work, "questionId": "q", "answer": "yes"}),
+        ),
+    ] {
+        let refused = fx.agent_call(&agent, method, args);
+        assert!(
+            failed_with(&refused, "wait for them to hand it back"),
+            "{method}: {}",
+            text(&refused)
+        );
+    }
+    json_of(&fx.agent_call(&agent, "get_thread", json!({"threadId": work})));
+    json_of(&fx.agent_call(&agent, "list_questions", json!({"threadId": work})));
+    assert!(!fx.running(&work).await);
+    assert_eq!(requests().await, before, "nothing was sent");
+    assert_eq!(
+        fx.call_ok("list_queue", json!({"threadId": work})),
+        json!([])
+    );
+    assert_eq!(owner_hold(&fx.state, &work), Some(Hold::StoppedByPerson));
+
+    // Handed back, the Vision may send again.
+    fx.call_ok("hand_back_thread", json!({"threadId": work}));
+    let before = requests().await;
+    json_of(&fx.agent_call(
+        &agent,
+        "send_message",
+        json!({"threadId": work, "text": "picking it up"}),
+    ));
+    wait_until(|| async { requests().await > before }).await;
+    json_of(&fx.agent_call(&agent, "stop_thread", json!({"threadId": work})));
+    wait_until(|| async { !fx.running(&work).await }).await;
+
+    // A chat the Vision does not own stays out of reach.
+    let plain = fx.thread().await;
+    let refused = fx.agent_call(
+        &agent,
+        "send_message",
+        json!({"threadId": plain, "text": "hello"}),
+    );
+    assert!(
+        failed_with(&refused, "Themis refused `send_message`"),
+        "{}",
+        text(&refused)
+    );
+
+    // Paused, it starts and sends nothing.
+    fx.call_ok("pause_vision", json!({"visionId": vision, "paused": true}));
+    let refused = fx.agent_call(
+        &agent,
+        "send_message",
+        json!({"threadId": work, "text": "while paused"}),
+    );
+    assert!(failed_with(&refused, "is paused"), "{}", text(&refused));
+    let refused = fx.agent_call(
+        &agent,
+        "create_thread",
+        json!({"projectRoot": fx.project, "provider": "go"}),
+    );
+    assert!(failed_with(&refused, "is paused"), "{}", text(&refused));
+    fx.shut_down().await;
+}
+
+/// A scripted model: "ask me" asks one question (and carries on), "fail now" fails the turn,
+/// anything else is answered.
+async fn scripted_provider() -> MockServer {
+    let provider = MockServer::builder().start().await;
+    Mock::given(method("POST"))
+        .respond_with(|request: &Request| {
+            let body: Value = request.body_json().unwrap_or(Value::Null);
+            let messages = body["messages"].as_array().cloned().unwrap_or_default();
+            let last = messages
+                .iter()
+                .rposition(|m| m["role"] == "user")
+                .unwrap_or(0);
+            let text = messages
+                .get(last)
+                .and_then(|m| m["content"].as_str())
+                .unwrap_or_default();
+            let results = messages[last..]
+                .iter()
+                .filter(|m| m["role"] == "tool")
+                .count();
+            let reply = |content: &str| {
+                ResponseTemplate::new(200).set_body_json(json!({"choices": [{"message":
+                    {"role": "assistant", "content": content}, "finish_reason": "stop"}]}))
+            };
+            if text.contains("fail now") {
+                return ResponseTemplate::new(400).set_body_string("bad request");
+            }
+            if text.contains("ask me") && results == 0 {
+                let call = json!({"id": "q1", "type": "function", "function": {"name": "ask_user",
+                    "arguments": json!({"question": "Which license?", "recommended": "MIT",
+                        "why": "the usual choice"}).to_string()}});
+                return ResponseTemplate::new(200).set_body_json(json!({"choices": [{"message":
+                    {"role": "assistant", "content": null, "tool_calls": [call]},
+                    "finish_reason": "tool_calls"}]}));
+            }
+            reply("on it")
+        })
+        .mount(&provider)
+        .await;
+    provider
+}
+
+/// A Vision's message is not the person's: an open question stays open (the person's message
+/// would answer it), hook wakes held after a failed turn stay held (the person's would let
+/// hooks wake the chat again), and the chat stays the Vision's.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_visions_send_is_not_the_persons_message() {
+    let _turn = ONE_SERVER.lock().await;
+    let fx = fixture().await;
+    let provider = scripted_provider().await;
+    fx.use_provider(&provider).await;
+    let (vision, channel) = fx.vision_and_channel_in("Wren", "hq", "auto");
+    let (_own_chat, agent) = fx.vision_run(&vision, &channel).await;
+    let work = fx.vision_starts_chat(&agent);
+    let send = |text: &str| {
+        json_of(&fx.agent_call(
+            &agent,
+            "send_message",
+            json!({"threadId": work, "text": text}),
+        ))
+    };
+    let open = || {
+        let questions = fx.call_ok("list_questions", json!({"threadId": work}));
+        questions
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|question| question["answer"].is_null())
+            .count()
+    };
+
+    send("please ask me first");
+    wait_until(|| async { !fx.running(&work).await }).await;
+    assert_eq!(open(), 1, "the chat asked one question");
+    send("carry on with the defaults");
+    wait_until(|| async { !fx.running(&work).await }).await;
+    assert_eq!(open(), 1, "a Vision's message answers no question");
+
+    send("fail now");
+    wait_until(|| async { !fx.running(&work).await }).await;
+    assert!(fx.state.hook_wakes_held(&work), "a failed turn holds wakes");
+    send("try again");
+    wait_until(|| async { !fx.running(&work).await }).await;
+    assert!(
+        fx.state.hook_wakes_held(&work),
+        "a Vision's message keeps them held"
+    );
+    // Queued by the Vision (sent at once, the chat being idle): still not the person's.
+    json_of(&fx.agent_call(
+        &agent,
+        "enqueue_message",
+        json!({"threadId": work, "text": "and one more"}),
+    ));
+    wait_until(|| async { !fx.running(&work).await }).await;
+    assert!(fx.state.hook_wakes_held(&work));
+    assert_eq!(open(), 1);
+    assert_eq!(owner_hold(&fx.state, &work), Some(Hold::None));
+
+    // The person's message does all three.
+    fx.call_ok(
+        "send_message",
+        json!({"threadId": work, "text": "MIT is fine", "reasoningEffort": null}),
+    );
+    wait_until(|| async { !fx.running(&work).await }).await;
+    assert_eq!(open(), 0);
+    assert!(!fx.state.hook_wakes_held(&work));
+    assert_eq!(owner_hold(&fx.state, &work), Some(Hold::TakenOver));
     fx.shut_down().await;
 }

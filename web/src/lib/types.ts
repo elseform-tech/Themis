@@ -490,6 +490,8 @@ export interface QueuedMessage {
   held: boolean;
   /** Why the server held it (it could not be sent); an edit clears it. */
   note?: string;
+  /** The Vision that queued it; absent for the person's. */
+  vision_id?: string;
 }
 
 export type GoalStatus = 'running' | 'paused' | 'waiting' | 'blocked' | 'quota' | 'reached';

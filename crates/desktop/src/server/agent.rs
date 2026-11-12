@@ -8,13 +8,19 @@
 //! the store, and nothing else. The allowed lists, of methods and of `plugin_action` actions, are
 //! explicit, so a method or action added later stays refused until someone decides otherwise. A
 //! script holding the credential reaches the same checks as `themis` does: they look at the
-//! request, never at command text. See
+//! request, never at command text. A Vision's run credential may also drive the chats that
+//! Vision owns (see [`vision`]). See
 //! `docs/configuration.md` ("The `themis` CLI in the agent's shell").
 
 use std::collections::HashMap;
 use std::sync::Mutex;
 
+use themis_core::agent_cli::VisionScope;
+
 use super::*;
+use crate::state::Owner;
+
+mod vision;
 
 /// Methods an agent's call may use; `threadId`, when given, must be its own chat.
 const ALLOWED: &[&str] = &[
@@ -123,6 +129,8 @@ pub(crate) struct Grant {
     pub network_blocked: bool,
     /// The [`CHAT_READS`] tools its run has.
     pub reads: Vec<String>,
+    /// A Vision's run: the Vision, its channel and that channel's project (canonical).
+    pub vision: Option<VisionScope>,
 }
 
 /// Why an agent's call was refused, as the log keeps it.
@@ -140,6 +148,10 @@ pub(crate) enum Reason {
     NetworkBlocked,
     /// A chat read (`recall`, `search_memory`) whose tool the run does not have.
     ToolUnavailable,
+    /// A Vision's write to a chat the person stopped or took over.
+    HeldByPerson,
+    /// A paused Vision's call that would start or send something.
+    Paused,
 }
 
 impl Reason {
@@ -151,6 +163,8 @@ impl Reason {
             Self::OtherProject => "other_project",
             Self::NetworkBlocked => "network_blocked",
             Self::ToolUnavailable => "tool_unavailable",
+            Self::HeldByPerson => "held_by_person",
+            Self::Paused => "paused",
         }
     }
 }
@@ -251,10 +265,13 @@ impl themis_core::agent_cli::Issuer for AgentTokens {
             None => {
                 let token = format!("{}{}", uuid::Uuid::new_v4(), uuid::Uuid::new_v4());
                 // Canonical, as the call's `projectRoot` is compared canonical.
-                let project_root = scope
-                    .project_root
-                    .as_deref()
-                    .map(|root| root.canonicalize().unwrap_or_else(|_| root.to_path_buf()));
+                let canonical =
+                    |root: &Path| root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
+                let project_root = scope.project_root.as_deref().map(canonical);
+                let vision = scope.vision.clone().map(|vision| VisionScope {
+                    project_root: canonical(&vision.project_root),
+                    ..vision
+                });
                 issued.by_token.insert(
                     Key(token.clone()),
                     Grant {
@@ -263,6 +280,7 @@ impl themis_core::agent_cli::Issuer for AgentTokens {
                         project_root,
                         network_blocked: scope.network_blocked,
                         reads: scope.reads.clone(),
+                        vision,
                     },
                 );
                 issued
@@ -300,8 +318,19 @@ fn same(left: &[u8], right: &[u8]) -> bool {
             == 0
 }
 
-/// Why an agent's call is refused, or `None` when it may go ahead.
-pub(crate) fn refusal(grant: &Grant, method: &str, args: &Value) -> Option<Refusal> {
+/// Why an agent's call is refused, or `None` when it may go ahead. `owned` looks up the owner
+/// record of a chat (`threadId`), which only a Vision's grant consults.
+pub(crate) fn refusal(
+    grant: &Grant,
+    method: &str,
+    args: &Value,
+    owned: &dyn Fn(&str) -> Option<Owner>,
+) -> Option<Refusal> {
+    if let Some(scope) = &grant.vision {
+        if let Some(decided) = vision::refusal(scope, method, args, owned) {
+            return decided;
+        }
+    }
     let own_chat = OWN_CHAT.contains(&method);
     let chat_read = CHAT_READS.contains(&method);
     let thread = args.get("threadId").and_then(Value::as_str);
@@ -427,33 +456,68 @@ pub(super) async fn screen(
         Ok(Some(grant)) => grant,
         Err(error) => return Some(reply(stream, state, &request.method, Err(error)).await),
     };
-    let result = match refusal(&grant, &request.method, &request.args) {
-        Some(refused) => {
-            let action = request.args.get("action").and_then(Value::as_str);
-            state.log_server_details(
-                "agent_call_refused",
-                "warn",
-                json!({
-                    "method": method_label(&request.method),
-                    "action": action.map(method_label),
-                    "reason": refused.reason.label(),
-                    "thread_id": grant.thread_id,
-                    "run_id": grant.run_id,
-                }),
-            );
+    let owned = |thread: &str| state.owner_of(thread);
+    let refused = refusal(&grant, &request.method, &request.args, &owned).or_else(|| {
+        let scope = grant.vision.as_ref()?;
+        vision::paused_refusal(state, scope, &request.method)
+    });
+    let drives = grant
+        .vision
+        .as_ref()
+        .filter(|_| vision::VISION_DRIVE.contains(&request.method.as_str()));
+    let result = match (refused, drives) {
+        (Some(refused), _) => {
+            log_refused(state, &grant, request, refused.reason);
             Err(refused.message)
         }
-        None if request.method == "plugin_action" => {
+        (None, Some(scope)) => {
+            vision::dispatch(state, sink, scope, &request.method, request.args.clone()).await
+        }
+        (None, None) if request.method == "plugin_action" => {
             // As the agent's: no consent to start a connection, and never a hook or a
             // command-based MCP server left switched on.
             state.plugin_action_for_agent(request.args.clone()).await
         }
-        None => {
+        (None, None) => {
             let args = bound(&grant, &request.method, request.args.clone());
             dispatch(state, Arc::clone(sink), &request.method, args).await
         }
     };
     Some(reply(stream, state, &request.method, result).await)
+}
+
+/// Notes a refused call: method and action names, the reason and the ids, never other text.
+fn log_refused(state: &AppState, grant: &Grant, request: &Request, reason: Reason) {
+    let action = request.args.get("action").and_then(Value::as_str);
+    let thread = request.args.get("threadId").and_then(Value::as_str);
+    state.log_server_details(
+        "agent_call_refused",
+        "warn",
+        json!({
+            "method": method_label(&request.method),
+            "action": action.map(method_label),
+            "reason": reason.label(),
+            "thread_id": grant.thread_id,
+            "run_id": grant.run_id,
+            "vision_id": grant.vision.as_ref().map(|vision| &vision.vision_id),
+            // Another chat's id, only when it is an id-shaped name.
+            "target_thread_id": thread.filter(|_| grant.vision.is_some()).map(id_label),
+        }),
+    );
+}
+
+/// A chat id as the log may keep it: letters, digits and `-` only.
+fn id_label(id: &str) -> &str {
+    let plain = !id.is_empty()
+        && id.len() <= 64
+        && id
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-');
+    if plain {
+        id
+    } else {
+        "(other)"
+    }
 }
 
 #[cfg(test)]
@@ -465,15 +529,42 @@ mod tests {
         AgentTokens::new("person-token".into(), 4711, None)
     }
 
-    fn grant() -> Grant {
+    /// The guard as an ordinary run's calls reach it: no chat has an owner.
+    fn refusal(grant: &Grant, method: &str, args: &Value) -> Option<Refusal> {
+        super::refusal(grant, method, args, &|_| None)
+    }
+
+    pub(super) fn grant() -> Grant {
         Grant {
             thread_id: "chat-a".into(),
             run_id: "run-1".into(),
             project_root: None,
             network_blocked: false,
             reads: Vec::new(),
+            vision: None,
         }
     }
+
+    /// The person's methods no agent's call reaches (a Vision's only on the chats it owns,
+    /// and only those of them it drives).
+    pub(super) const REFUSED: &[&str] = &[
+        "approve_action",
+        "answer_question",
+        "set_thread_approval_mode",
+        "save_runtime_configuration",
+        "update_settings",
+        "set_secret",
+        "terminal_input",
+        "create_project",
+        "send_message",
+        "stop_thread",
+        "accept_file",
+        "browser_navigate",
+        "shutdown",
+        "subscribe",
+        "delete_memory",
+        "no_such_method",
+    ];
 
     #[test]
     fn every_visions_method_is_refused_to_an_agent() {
@@ -526,6 +617,7 @@ mod tests {
             project_root: Some(project.path().join(".").join("")),
             network_blocked: true,
             reads: vec!["recall".into()],
+            vision: None,
         };
         let access = tokens.issue("chat-a", "run-1", &scope).unwrap();
         let _ = tokens.issue("chat-a", "run-1", &unbound()).unwrap();
@@ -550,24 +642,10 @@ mod tests {
         ] {
             assert_eq!(refusal(&grant, method, &list), None, "{method}");
         }
-        for method in [
-            "approve_action",
-            "answer_question",
-            "set_thread_approval_mode",
-            "save_runtime_configuration",
-            "update_settings",
-            "set_secret",
-            "terminal_input",
-            "create_project",
-            "send_message",
-            "stop_thread",
-            "accept_file",
-            "browser_navigate",
-            "shutdown",
-            "subscribe",
-            "delete_memory",
-            "no_such_method",
-        ] {
+        for method in REFUSED
+            .iter()
+            .chain(&["create_thread", "list_channel_threads"])
+        {
             let refused = refusal(&grant, method, &Value::Null).expect(method);
             assert_eq!(refused.reason, Reason::MethodNotAllowed);
             assert!(refused.message.contains(method), "{refused:?}");
@@ -778,6 +856,9 @@ mod tests {
         assert_eq!(method_label("secret value"), "(other)");
         assert_eq!(method_label(&"a".repeat(65)), "(other)");
         assert_eq!(method_label(""), "(other)");
+        assert_eq!(id_label("3f2a-b9"), "3f2a-b9");
+        assert_eq!(id_label("chat id with words"), "(other)");
+        assert_eq!(id_label(""), "(other)");
     }
 
     proptest::proptest! {
@@ -816,28 +897,60 @@ mod tests {
         }
     }
 
-    /// The check per call looks at one credential however many runs were issued one.
+    /// The check per call looks at one credential and at most one owner record however many
+    /// runs were issued one and however many chats Visions own.
     #[test]
     fn the_guard_check_stays_flat_with_many_issued_credentials() {
         let samples = crate::scale::measure(&[100, 8000], |size| {
             let tokens = tokens();
             let mut issued = Vec::new();
+            let mut owners = HashMap::new();
             for index in 0..size {
+                // Every other run is a Vision's, each owning one work chat.
+                let vision = (index % 2 == 0).then(|| VisionScope {
+                    vision_id: format!("v{index}"),
+                    channel_id: "c".into(),
+                    project_root: PathBuf::from("/no/such/project"),
+                });
+                let work = format!("work-{index}");
+                owners.insert(
+                    work.clone(),
+                    Owner {
+                        thread_id: work,
+                        vision_id: format!("v{index}"),
+                        channel_id: "c".into(),
+                        kind: crate::state::OwnedKind::Work,
+                        hold: crate::state::Hold::None,
+                    },
+                );
+                let scope = RunScope {
+                    vision,
+                    ..unbound()
+                };
                 let access = tokens
-                    .issue(&format!("chat-{index}"), "run", &unbound())
+                    .issue(&format!("chat-{index}"), "run", &scope)
                     .unwrap();
                 issued.push(access.env()[0].1.clone());
             }
             assert_eq!(tokens.len(), size);
+            assert_eq!(owners.len(), size);
             COMPARED.with(|count| count.set(0));
+            let looked = std::cell::Cell::new(0u64);
+            let owned = |thread: &str| {
+                looked.set(looked.get() + 1);
+                owners.get(thread).cloned()
+            };
             let list = json!({"action": "list"});
-            for token in issued.iter().take(100) {
+            for (index, token) in issued.iter().enumerate().take(100) {
                 let grant = tokens.caller(token).unwrap().unwrap();
-                assert!(refusal(&grant, "plugin_action", &list).is_none());
-                assert!(refusal(&grant, "approve_action", &Value::Null).is_some());
+                let send = json!({"threadId": format!("work-{index}"), "text": "go"});
+                let sent = super::refusal(&grant, "send_message", &send, &owned).is_none();
+                assert_eq!(sent, grant.vision.is_some(), "{index}");
+                assert!(super::refusal(&grant, "plugin_action", &list, &owned).is_none());
+                assert!(super::refusal(&grant, "approve_action", &send, &owned).is_some());
             }
             assert!(tokens.caller("forged").is_err());
-            COMPARED.with(std::cell::Cell::get)
+            COMPARED.with(std::cell::Cell::get) + looked.get()
         });
         let rate = crate::scale::growth_rate(&samples);
         assert!(rate.abs() < 0.1, "guard work grew: {samples:?}");

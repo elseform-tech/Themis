@@ -1,0 +1,1 @@
+The person stopped or took over this chat; wait for them to hand it back.

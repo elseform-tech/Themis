@@ -883,8 +883,35 @@ Calls without a run credential (your own CLI, the desktop app) are unchanged.
 Each refusal is logged as `server`/`agent_call_refused` with the method name
 (`(other)` for anything that is not a plain method name), the `plugin_action`
 action, a `reason` (`method_not_allowed`, `action_not_allowed`, `runs_code`,
-`other_project`, `network_blocked`, `tool_unavailable`, or `switch_on` from the store), and the
-chat and run ids, never the credential, paths or arguments.
+`other_project`, `network_blocked`, `tool_unavailable`, `held_by_person`, `paused`, or
+`switch_on` from the store), and the chat and run ids (for a Vision's call also its
+`vision_id` and the `target_thread_id` it named), never the credential, paths or arguments.
+
+**A Vision's grant.** A Vision's run credential carries the Vision, the channel the run
+works for and that channel's project (canonical), bound when it is issued like the rest.
+Beyond everything above it may drive the chats its Vision owns, decided on the request's
+`threadId` and the chat's owner record (Visions store `owners.json`), never on command text:
+
+| A Vision's call | Allowed when |
+| --- | --- |
+| `create_thread {projectRoot, provider, model}` | `projectRoot` is the channel's project (else `other_project`, `agent-cli-vision-other-project.md`). The new chat gets the channel's approval mode (set by the server, never through `set_thread_approval_mode`), the Vision's owner record (`work`) and a `chat_started` entry in the channel; one that cannot be recorded is discarded. |
+| `send_message`, `enqueue_message`, `steer_queued_message`, `answer_question` | the `threadId` is a work chat this Vision owns and the person holds nothing there (else `held_by_person`, `agent-cli-held-by-person.md`: "The person stopped or took over this chat; wait for them to hand it back.") |
+| `stop_thread` | the `threadId` is a work chat this Vision owns that the person did not take over (its run is then the person's) |
+| `list_questions` and the own-chat reads (`get_thread`, `get_thread_history_page`, …) | the `threadId` is a work chat this Vision owns, or its own Vision chat |
+| `list_channel_threads {channelId}` | `channelId` is the run's channel |
+
+A paused or deleted Vision's `create_thread`, sends, queueing, steering and answers are
+refused (`paused`, `agent-cli-vision-paused.md`). A Vision's writes are never the person's:
+its sends go the server's way (like a queued message or a goal turn), and a message it queues
+carries its `vision_id`, so none of them takes the chat over, answers the chat's open
+questions or lets hooks wake the chat again; its steer answers no question and joins no goal
+(it still denies the approval the run waits on, as every steer does, so the run reads it); its
+`stop_thread` stops the run without holding the chat. A chat another Vision owns, a plain
+chat, a `threadId` naming none, `approve_action`, `set_thread_approval_mode`, settings,
+secrets, the Visions methods other than `list_channel_threads`, and everything else refused
+above stay refused. The shell's approval step treats every driving method as `execute`, never
+a read. Writes are logged as `visions`/`chat_started`, `vision_sent` and
+`vision_stopped_chat` with ids only.
 
 **Threat model.** The guard relies on the agent never holding your credential.
 It is in `server.json` (owner-only, `0600`), which the sandbox stops every
@@ -1374,7 +1401,7 @@ Besides thread, approval and review events, the server broadcasts `thread-change
 
 ### Visions methods
 
-The person's Visions methods (none is open to an agent's run credential; arguments are camelCase, results are the store's snake_case records):
+The person's Visions methods (none is open to an agent's run credential, except `list_channel_threads` for a Vision's own channel, see [a Vision's grant](#the-themis-cli-in-the-agents-shell); arguments are camelCase, results are the store's snake_case records):
 
 - `list_visions`, `save_vision {vision, revision}` (an empty `id` and `revision: null` creates one; otherwise `revision` must be the one it was opened at), `pause_vision {visionId, paused}` (pausing stops the runs of the chats it owns, except those the person took over, and posts a `paused`/`resumed` notice in its channels), `delete_vision {visionId}` (stops its chats, except those the person took over, returns them to the plain list and takes it out of its channels; logs stay).
 - `list_channels {projectRoot}`, `save_channel {channel, revision}` (project folders resolve like `list_threads` resolves them), `delete_channel {channelId}` (stops the channel's chats, except those the person took over, and returns them to the plain list; its log stays on disk).

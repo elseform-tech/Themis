@@ -1,0 +1,1 @@
+Themis refused `create_thread`: a Vision starts chats only in its channel's project. Nothing was created. Ask the person in the channel if work is needed in another project.

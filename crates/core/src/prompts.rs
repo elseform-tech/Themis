@@ -483,6 +483,16 @@ pub const AGENT_CLI_NETWORK_BLOCKED: &str =
 /// `{{method}}`.
 pub const AGENT_CLI_READ_UNAVAILABLE: &str =
     include_str!("../builtins/prompts/agent-cli-read-unavailable.md");
+/// The app server's answer to a Vision's send, queue, steer or answer in a chat the person
+/// stopped or took over.
+pub const AGENT_CLI_HELD_BY_PERSON: &str =
+    include_str!("../builtins/prompts/agent-cli-held-by-person.md");
+/// The app server's answer to a paused Vision's call that would start or send something.
+pub const AGENT_CLI_VISION_PAUSED: &str =
+    include_str!("../builtins/prompts/agent-cli-vision-paused.md");
+/// The app server's answer to a Vision's `create_thread` outside its channel's project.
+pub const AGENT_CLI_VISION_OTHER_PROJECT: &str =
+    include_str!("../builtins/prompts/agent-cli-vision-other-project.md");
 /// `next` hint after starting a background task.
 pub const TOOL_BACKGROUND_NEXT: &str = include_str!("../builtins/prompts/tool-background-next.md");
 

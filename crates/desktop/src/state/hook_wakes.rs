@@ -40,6 +40,12 @@ impl AppState {
             .unwrap_or(0)
     }
 
+    /// Whether hooks start no more turns in this chat until the person writes (tests).
+    #[doc(hidden)]
+    pub fn hook_wakes_held(&self, thread_id: &str) -> bool {
+        self.hook_wake_count(thread_id) == HELD
+    }
+
     fn set_hook_wake_count(&self, thread_id: &str, count: u32) {
         self.inner
             .hook_wakes

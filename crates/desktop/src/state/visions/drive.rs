@@ -1,0 +1,123 @@
+//! What a Vision does to the chats it owns through its run credential: start a work chat in its
+//! channel's project, send, steer and stop. Queueing is `enqueue` with a message carrying the
+//! Vision's id. None of it is the person's message: the sends go the server's way
+//! (`send_from_server`), so a Vision never takes a chat over, answers no open question by
+//! writing and resets no hook wakes. The app server checks ownership, holds and pauses before
+//! any of these run (`server/agent/vision.rs`). Logged as metadata only.
+
+use std::sync::Arc;
+
+use serde_json::json;
+use themis_core::agent_cli::VisionScope;
+
+use super::{ChannelEntry, Hold, OwnedKind, Owner};
+use crate::sink::EventSink;
+use crate::state::AppState;
+use crate::types::{ProviderKind, RunHandle, ThreadInfo};
+
+impl AppState {
+    /// Starts a work chat for `vision` in its channel's project: the chat gets the channel's
+    /// approval mode (set here, never through the refused method), the Vision's owner record
+    /// and a `chat_started` entry in the channel. A chat that cannot be recorded as the
+    /// Vision's is discarded rather than left as a stray plain chat.
+    pub(crate) async fn visions_start_work_chat(
+        &self,
+        vision: &VisionScope,
+        provider: ProviderKind,
+        model: Option<String>,
+    ) -> Result<ThreadInfo, String> {
+        let channel = self
+            .channel_get(&vision.channel_id)
+            .filter(|channel| channel.members.contains(&vision.vision_id))
+            .ok_or_else(|| "This Vision is no longer in that channel".to_owned())?;
+        let info = self
+            .create_thread(
+                vision.project_root.to_string_lossy().into_owned(),
+                provider,
+                model,
+            )
+            .await?;
+        let recorded = self
+            .visions_adopt(vision, &info, channel.approval_mode)
+            .await;
+        if let Err(error) = recorded {
+            let _ = self.discard_thread(info.id.clone()).await;
+            return Err(error);
+        }
+        let _ = self.channel_append(
+            &vision.channel_id,
+            ChannelEntry::ChatStarted {
+                vision_id: vision.vision_id.clone(),
+                thread_id: info.id.clone(),
+                title: info.title.clone(),
+            },
+        );
+        self.visions_note(
+            "chat_started",
+            json!({"thread_id": info.id, "vision_id": vision.vision_id, "channel_id": vision.channel_id, "mode": channel.approval_mode}),
+        );
+        self.get_thread(&info.id).await
+    }
+
+    async fn visions_adopt(
+        &self,
+        vision: &VisionScope,
+        info: &ThreadInfo,
+        mode: themis_core::configuration::ApprovalMode,
+    ) -> Result<(), String> {
+        self.set_thread_approval_mode(info.id.clone(), mode).await?;
+        self.owner_set(Owner {
+            thread_id: info.id.clone(),
+            vision_id: vision.vision_id.clone(),
+            channel_id: vision.channel_id.clone(),
+            kind: OwnedKind::Work,
+            hold: Hold::None,
+        })
+    }
+
+    /// A Vision's message in a chat it owns, sent the server's way.
+    pub(crate) async fn visions_send(
+        &self,
+        sink: Arc<dyn EventSink>,
+        thread_id: &str,
+        text: String,
+        reasoning_effort: Option<String>,
+        attachments: Vec<String>,
+    ) -> Result<RunHandle, String> {
+        let run_id = uuid::Uuid::new_v4().to_string();
+        let (sent, _) = self
+            .send_from_server(
+                sink,
+                thread_id,
+                text,
+                &run_id,
+                reasoning_effort,
+                attachments,
+            )
+            .await;
+        sent?;
+        self.visions_note(
+            "vision_sent",
+            json!({"thread_id": thread_id, "run_id": run_id}),
+        );
+        Ok(RunHandle { run_id })
+    }
+
+    /// A Vision steers a waiting message into the running run of a chat it owns.
+    pub(crate) async fn visions_steer(
+        &self,
+        sink: Arc<dyn EventSink>,
+        thread_id: String,
+        message_id: String,
+    ) -> Result<(), String> {
+        self.steer_queued(sink, thread_id, message_id, false).await
+    }
+
+    /// A Vision stops the run of a chat it owns. Unlike the person's Stop, this holds nothing
+    /// back from the Vision.
+    pub(crate) fn visions_stop(&self, thread_id: &str) -> Result<(), String> {
+        self.stop_run(thread_id)?;
+        self.visions_note("vision_stopped_chat", json!({"thread_id": thread_id}));
+        Ok(())
+    }
+}

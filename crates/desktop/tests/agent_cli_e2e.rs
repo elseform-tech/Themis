@@ -184,6 +184,7 @@ async fn an_agent_credential_is_refused_the_persons_methods_which_still_work_wit
         project_root: Some(fx.project.clone()),
         network_blocked: false,
         reads: Vec::new(),
+        vision: None,
     };
     let access = themis_core::agent_cli::issue(&thread, "run-under-test", &scope).expect("issued");
     let token = access.env()[0].1.clone();

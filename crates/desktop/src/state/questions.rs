@@ -515,14 +515,7 @@ impl AppState {
                 }
                 _ => queue.insert(
                     0,
-                    QueuedMessage {
-                        id: uuid::Uuid::new_v4().to_string(),
-                        text: format!("{ANSWER_MARKER}\n{body}"),
-                        attachments: Vec::new(),
-                        reasoning_effort: None,
-                        held: false,
-                        note: None,
-                    },
+                    QueuedMessage::new(format!("{ANSWER_MARKER}\n{body}"), Vec::new(), None, None),
                 ),
             }
             Ok(false)
