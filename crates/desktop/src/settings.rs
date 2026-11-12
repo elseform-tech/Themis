@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 use crate::types::{Settings, SettingsPatch, ThemeMode};
 
 pub const THEME_PALETTES: &[&str] = &[
+    "auto",
     "classic",
     "morning",
     "noon",

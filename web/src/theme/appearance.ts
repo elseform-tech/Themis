@@ -1,3 +1,4 @@
+import { useEffect, useState } from "react";
 import type { Settings } from "../lib/types";
 
 export type Appearance = Pick<Settings, "theme_palette" | "font_family" | "text_size">;
@@ -53,6 +54,33 @@ export const APPEARANCE_PRESETS: readonly AppearancePreset[] = [
   { id: "sandstone", name: "Sandstone", mode: "dark", font: "serif", sidebar: "#2c261f", colors: ["#3f362c", "#201c17", "#2c261f", "#3f362c", "#594c3d", "#f1eadd", "#c4b59e", "#e1c18b"] },
   { id: "carbon", name: "Carbon", mode: "dark", font: "system", sidebar: "#1a2228", colors: ["#28343d", "#111518", "#1a2228", "#28343d", "#3c4f5c", "#e0eaf0", "#a5bac6", "#9dc5df"] },
 ];
+
+export type Sky = "morning" | "noon" | "night";
+
+/** The sky for a local time: morning 05:00-10:59, noon 11:00-18:59, night 19:00-04:59. */
+export function skyFor(date: Date): Sky {
+  const hour = date.getHours();
+  if (hour >= 5 && hour < 11) return "morning";
+  return hour >= 11 && hour < 19 ? "noon" : "night";
+}
+
+/** Resolves the `auto` palette to the sky for now; any other id is returned as is. */
+export function resolveSky(palette: string, now: Date = new Date()): string {
+  return palette === "auto" ? skyFor(now) : palette;
+}
+
+/** The palette to show: `auto` follows the clock, re-checked once a minute. The state only changes at a
+ *  boundary, so the app repaints once there. */
+export function useAutoSky(palette: string): string {
+  const [resolved, setResolved] = useState(() => resolveSky(palette));
+  useEffect(() => {
+    setResolved(resolveSky(palette));
+    if (palette !== "auto") return;
+    const timer = window.setInterval(() => setResolved(resolveSky(palette)), 60_000);
+    return () => window.clearInterval(timer);
+  }, [palette]);
+  return palette === "auto" ? resolved : palette;
+}
 
 const GLASS_BLUR = "blur(36px) saturate(190%)";
 

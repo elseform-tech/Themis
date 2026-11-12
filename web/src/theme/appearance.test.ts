@@ -1,7 +1,9 @@
 // @vitest-environment jsdom
 import { expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
-import { appearancePreset, applyAppearance } from "./appearance";
+import { createElement, useEffect } from "react";
+import { act, render } from "@testing-library/react";
+import { appearancePreset, applyAppearance, skyFor, useAutoSky } from "./appearance";
 
 it("sets body text to the chosen size, and no label below 9px even at the smallest size", () => {
   const shell = readFileSync("src/screens/shell.css", "utf8");
@@ -78,4 +80,26 @@ it("glass is off when the system asks to reduce transparency", () => {
     expect(document.documentElement.dataset.glass).toBe("off");
   });
   expect(asked).toContain("(prefers-reduced-transparency: reduce)");
+});
+
+it("skyFor maps the boundaries", () => {
+  const at = (h: number, m: number) => skyFor(new Date(2026, 10, 12, h, m));
+  expect([at(4, 59), at(5, 0), at(10, 59), at(11, 0), at(18, 59), at(19, 0)]).toEqual(["night", "morning", "morning", "noon", "noon", "night"]);
+});
+
+it("auto switches once at the boundary", () => {
+  vi.useFakeTimers();
+  vi.setSystemTime(new Date(2026, 10, 12, 18, 58));
+  const apply = vi.fn();
+  function Harness() {
+    const palette = useAutoSky("auto");
+    useEffect(() => { apply(palette); }, [palette]);
+    return null;
+  }
+  try {
+    render(createElement(Harness));
+    act(() => { vi.advanceTimersByTime(3 * 60_000); });
+    expect(apply.mock.calls.filter(([id]) => id === "night")).toHaveLength(1);
+    expect(apply.mock.calls.map(([id]) => id)).toEqual(["noon", "night"]);
+  } finally { vi.useRealTimers(); }
 });

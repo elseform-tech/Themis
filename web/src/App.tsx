@@ -20,7 +20,7 @@ import { SidebarIcon } from "./screens/Sidebar";
 import { isTauri } from "@tauri-apps/api/core";
 import { ResourceMeter } from "./screens/ResourceMeter";
 import "./screens/shell.css";
-import { applyAppearance } from "./theme/appearance";
+import { applyAppearance, useAutoSky } from "./theme/appearance";
 
 function Shell() {
   const { state, startup, dispatch } = useApp();
@@ -35,7 +35,8 @@ function Shell() {
     else if (!state.diffPanelOpen && autoFolded.current) { autoFolded.current = false; setCollapsed(readSession("sidebar-collapsed", false)); }
     // eslint-disable-next-line react-hooks/exhaustive-deps -- react only to the panel opening or closing
   }, [state.diffPanelOpen]);
-  useEffect(() => { applyAppearance(state.settings); }, [state.settings]);
+  const palette = useAutoSky(state.settings.theme_palette);
+  useEffect(() => { applyAppearance({ ...state.settings, theme_palette: palette }); }, [state.settings, palette]);
   // Looks for plugin updates when the app opens; the backend honours the setting and skips
   // sources checked in the last day.
   useEffect(() => { void pluginAction({ action: "check_sources" }).catch(() => {}); }, []);
