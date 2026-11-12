@@ -1,20 +1,22 @@
 /* Workspace sidebar: a permanent utility rail plus a resizable dock with
    pill-shaped rows. One definition per selector. */
 
-.themis-sidebar-slot { position: relative; display: flex; flex-shrink: 0; width: min(var(--themis-sidebar-width, 280px), calc(100vw - 120px)); overflow: visible; transition: width 240ms cubic-bezier(.2, .8, .2, 1); }
-.themis-sidebar-slot.is-collapsed { width: 64px; }
+.themis-sidebar-slot { position: relative; display: flex; flex-shrink: 0; width: min(var(--themis-sidebar-width, 288px), calc(100vw - 120px)); overflow: visible; transition: width 240ms cubic-bezier(.2, .8, .2, 1); }
+.themis-sidebar-slot.is-collapsed { width: 52px; }
 .themis-sidebar-slot.is-resizing { transition: none; user-select: none; }
-.themis-sidebar { position: absolute; inset: var(--themis-panel-gap) 0 var(--themis-panel-gap) 64px; z-index: 20; display: flex; flex-direction: column; overflow: hidden; border-radius: var(--themis-panel-radius); background: var(--themis-panel-sheen), var(--themis-panel-bg); box-shadow: var(--themis-panel-edge); -webkit-backdrop-filter: var(--themis-panel-blur); backdrop-filter: var(--themis-panel-blur); visibility: hidden; opacity: 0; pointer-events: none; transition: opacity 180ms ease, visibility 240ms; }
+/* The canvas's 236px panel beside the 52px rail (at the default width), 8px inside. */
+.themis-sidebar { position: absolute; inset: var(--themis-panel-gap) 0 var(--themis-panel-gap) 52px; z-index: 20; display: flex; flex-direction: column; overflow: hidden; padding: 8px; border-radius: var(--themis-panel-radius); background: var(--themis-panel-sheen), var(--themis-panel-bg); box-shadow: var(--themis-panel-edge); -webkit-backdrop-filter: var(--themis-panel-blur); backdrop-filter: var(--themis-panel-blur); visibility: hidden; opacity: 0; pointer-events: none; transition: opacity 180ms ease, visibility 240ms; }
 .themis-sidebar.is-visible { visibility: visible; opacity: 1; pointer-events: auto; }
 
 /* Rail. */
-.themis-sidebar-rail { display: flex; flex: 0 0 64px; flex-direction: column; gap: 4px; width: 64px; height: 100%; padding: 14px 10px; }
-.themis-sidebar-rail .themis-sidebar-row { position: relative; justify-content: center; width: 44px; min-height: 44px; padding: 0; border-radius: 50%; }
+/* The canvas rail: 52px, 36px buttons 6px apart, 18px icons. */
+.themis-sidebar-rail { display: flex; flex: 0 0 52px; flex-direction: column; align-items: center; gap: 6px; width: 52px; height: 100%; padding: 14px 0; }
+.themis-sidebar-rail .themis-sidebar-row { position: relative; justify-content: center; width: 36px; min-height: 36px; padding: 0; border-radius: 50%; }
 .themis-sidebar-rail .themis-sidebar-name { display: none; }
-.themis-sidebar-rail .themis-badge { position: absolute; top: 2px; right: 0; display: grid; place-items: center; min-width: 16px; height: 16px; padding: 0 4px; border-radius: 8px; background: var(--themis-accent); color: var(--themis-accent-ink); font-size: 10px; font-weight: 600; }
+.themis-sidebar-rail .themis-badge { position: absolute; top: 1px; right: -2px; display: grid; place-items: center; min-width: 16px; height: 16px; padding: 0 4px; border-radius: 8px; background: var(--themis-accent); color: var(--themis-accent-ink); font-size: 10px; font-weight: 600; }
 .themis-sidebar-rail .themis-tooltip { display: block; }
 .themis-sidebar-rail .themis-tooltip::after { top: 50%; bottom: auto; left: calc(100% + 8px); transform: translateY(-50%); }
-.themis-rail-footer { display: flex; flex-direction: column; gap: 4px; margin-top: auto; }
+.themis-rail-footer { display: flex; flex-direction: column; align-items: center; gap: 6px; margin-top: auto; }
 
 /* Settings: its section list replaces rail and dock as one column; folded, it is icon-only like the rail. */
 /* It sits on a panel like the chat dock: the frame shows around it. */
@@ -26,20 +28,20 @@
 .themis-settings-nav .themis-sidebar-row--active { background: var(--themis-card); }
 .themis-settings-nav .themis-sidebar-row--active > svg { color: var(--themis-accent); }
 .themis-settings-nav .themis-settings-back { margin-bottom: 10px; }
-.themis-sidebar-slot.is-collapsed .themis-settings-nav .themis-sidebar-row { justify-content: center; width: 44px; min-height: 44px; padding: 0; border-radius: 50%; }
+.themis-sidebar-slot.is-collapsed .themis-settings-nav .themis-sidebar-row { justify-content: center; width: 36px; min-height: 36px; padding: 0; border-radius: 50%; }
 .themis-sidebar-slot.is-collapsed .themis-settings-nav .themis-sidebar-name { display: none; }
 /* Folded, the list is short like the rail and lets its tooltips show beside it. */
-.themis-sidebar-slot.is-collapsed .themis-settings-nav { overflow: visible; padding: 14px 6px; }
+.themis-sidebar-slot.is-collapsed .themis-settings-nav { overflow: visible; padding: 14px 4px; }
 
 /* Dock. */
-.themis-brand { display: flex; align-items: center; min-height: 60px; padding: 8px 20px; color: var(--themis-text); }
+.themis-brand { display: flex; align-items: center; min-height: 52px; padding: 0 10px; color: var(--themis-text); }
 .themis-wordmark { display: inline-flex; align-items: center; font-size: 1.35rem; font-weight: 600; letter-spacing: -.4px; white-space: nowrap; background: linear-gradient(110deg, var(--themis-text) 25%, var(--themis-gradient-2) 50%, var(--themis-text) 75%); background-size: 240% 100%; background-clip: text; -webkit-background-clip: text; color: transparent; animation: themis-wordmark-glint 3s ease 1; }
 @keyframes themis-wordmark-glint { from { background-position: 100% 0; } to { background-position: -100% 0; } }
-.themis-sidebar-nav { padding: 4px 14px 16px; }
+.themis-sidebar-nav { padding: 4px 0 8px; }
 .themis-new-chat { display: inline-flex; align-items: center; gap: 10px; height: 36px; padding: 0 10px; border: 0; background: transparent; color: var(--themis-text); font: inherit; font-weight: 500; cursor: pointer; }
 .themis-new-chat:hover:not(:disabled) { color: var(--themis-accent-hover); }
 .themis-new-chat:disabled { opacity: .5; cursor: not-allowed; }
-.themis-sidebar-projects { flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden; padding: 0 10px 16px; }
+.themis-sidebar-projects { flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden; padding: 0 0 8px; }
 
 .themis-sidebar-row { display: flex; align-items: center; gap: 10px; width: 100%; min-height: 34px; padding: 0 10px; border: 0; border-radius: 10px; background: transparent; color: var(--themis-nav-text); font: inherit; font-size: .8125rem; text-align: left; cursor: pointer; }
 .themis-sidebar-row { color: var(--themis-text-2); }
@@ -171,4 +173,4 @@ button.themis-project-action:hover, button.themis-project-action:focus-visible {
 .themis-project-action .themis-sidebar-icon { flex-basis: 15px; width: 15px; height: 15px; color: inherit; }
 .themis-project-entry .themis-project-count { flex: none; min-width: 22px; margin-left: 2px; text-align: right; }
 .themis-off-dot { display: inline-block; width: 6px; height: 6px; margin-left: 5px; border-radius: 50%; background: var(--themis-warning); vertical-align: middle; }
-.themis-sidebar-rail .themis-sidebar-off { position: absolute; top: 9px; right: 10px; margin: 0; box-shadow: 0 0 0 2px var(--themis-shell-bg); }
+.themis-sidebar-rail .themis-sidebar-off { position: absolute; top: 5px; right: 5px; margin: 0; box-shadow: 0 0 0 2px var(--themis-shell-bg); }

@@ -148,10 +148,11 @@ describe("Workspace journey", () => {
     let mounted!: ReturnType<typeof render>;
     await act(async () => { mounted = render(<App />); });
     const handle = screen.getByRole("separator", { name: "Resize sidebar" });
-    expect(handle).toHaveAttribute("aria-valuenow", "280");
+    // The canvas's 52px rail beside its 236px panel.
+    expect(handle).toHaveAttribute("aria-valuenow", "288");
     fireEvent.keyDown(handle, { key: "ArrowRight" });
-    expect(handle).toHaveAttribute("aria-valuenow", "300");
-    expect(localStorage.getItem("themis:sidebarWidth")).toBe("300");
+    expect(handle).toHaveAttribute("aria-valuenow", "308");
+    expect(localStorage.getItem("themis:sidebarWidth")).toBe("308");
     vi.stubGlobal("PointerEvent", MouseEvent);
     handle.setPointerCapture = vi.fn();
     handle.hasPointerCapture = vi.fn(() => true);
@@ -174,7 +175,7 @@ describe("Workspace journey", () => {
     fireEvent.keyDown(restored, { key: "ArrowRight" });
     expect(restored).toHaveAttribute("aria-valuenow", "560");
     fireEvent.keyDown(restored, { key: "Home" });
-    expect(restored).toHaveAttribute("aria-valuenow", "280");
+    expect(restored).toHaveAttribute("aria-valuenow", "288");
   });
 
   it("restores an active approval when the app is refreshed", async () => {

@@ -14,9 +14,10 @@ import "./Sidebar.css";
 export type SidebarIconName = "panel" | "chat" | "thread" | "skills" | "automations" | "queue" | "project" | "settings" | "help" | "search" | "rename" | "trash";
 
 /** Below this the chat list is mostly cut-off titles. */
-const SIDEBAR_MIN = 280;
+/** The canvas's 52px rail plus its 236px panel. */
+const SIDEBAR_MIN = 288;
 const SIDEBAR_MAX = 560;
-const SIDEBAR_DEFAULT = 280;
+const SIDEBAR_DEFAULT = 288;
 
 export function Sidebar({ collapsed: folded }: { collapsed: boolean }) {
   const { state, dispatch } = useApp();

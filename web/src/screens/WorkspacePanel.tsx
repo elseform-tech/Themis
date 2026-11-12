@@ -45,7 +45,7 @@ export function WorkspacePanel({ projectRoot, threadId, workspace }: { projectRo
   // Named anew when the default grew, so an older, narrower width doesn't stick.
   const widthKey = tab === "browser" ? "workspaceBrowserWidth" : "workspaceViewWidth";
   const smallest = tab === "browser" ? BROWSER_DEFAULT_WIDTH : DEFAULT_WIDTH;
-  const defaultWidth = Math.max(smallest, Math.round(window.innerWidth * DEFAULT_SHARE) - 64);
+  const defaultWidth = Math.max(smallest, Math.round(window.innerWidth * DEFAULT_SHARE) - 52);
   const [widths, setWidths] = useState<Record<string, number>>({});
   const width = widths[widthKey] ?? (clampWidth(Number(readSession(widthKey, defaultWidth)) || defaultWidth));
   const setWidth = (value: number) => setWidths(previous => ({ ...previous, [widthKey]: value }));
