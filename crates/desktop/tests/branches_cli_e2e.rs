@@ -268,9 +268,12 @@ async fn a_file_is_read_as_a_branch_has_it_without_touching_the_checkout() {
         assert_eq!(file["content"], "two\n");
         assert_eq!(file["truncated"], false);
         assert_eq!(file["binary"], false);
-        // The checkout is untouched: still main, with main's text.
+        // The checkout is untouched: still main, with main's text. Git on Windows checks
+        // files out with CRLF (core.autocrlf), so compare without line endings.
         assert_eq!(
-            std::fs::read_to_string(root.join("shared.txt")).unwrap(),
+            std::fs::read_to_string(root.join("shared.txt"))
+                .unwrap()
+                .replace("\r\n", "\n"),
             "one\n"
         );
         assert!(!root.join("big.txt").exists());
