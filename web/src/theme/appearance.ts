@@ -24,54 +24,70 @@ export type AppearancePreset = {
   surfaces: { card: string; well: string; inspector: string };
   /** Ink on the well (canvas --kw, --fn, --str, --ty, --com), a diff's lines (--add/--addh, --del/--delh) and the accent (--ona). */
   ink: { keyword: string; function: string; string: string; type: string; comment: string; add: string; addBg: string; del: string; delBg: string; onAccent: string };
+  /** Hairlines (canvas --div; --themis-border-subtle) and the soft accent chip (--pill). */
+  div: string;
+  pill: string;
   /** The Themis Visions mark on the startup screen (canvas --ga → --gb, the lower V in --lv) and the bar's track (--div). */
   mark: { from: string; to: string; v: string; track: string };
   /** The card in Settings › Appearance. */
   preview: string;
   /** Skies: the background layers behind the frame (glows, then the sky gradient). */
   sky?: string;
+  /** Skies: the startup screen's sky (canvas Main board: the same glows, placed at 18% 100% and 86% 6%). */
+  loaderSky?: string;
   /** Skies: translucent frame tint, panel and stage, drawn over the sky. */
   glass?: { frame: string; panel: string; stage: string };
 };
 
-// Frame, canvas, surface, raised, border, text, secondary text, accent.
-// The frame sits furthest back; the sidebar and the stage (canvas) stand off it as lit panels.
-// Skies: the colours are opaque stand-ins for the glass over the sky's middle stop (the solid panels under reduced transparency).
+// The canvas boards' tokens (Chat, Workspace and Main .aura blocks), verbatim: frame tint (--win) over the sky and its
+// glows, --side (panel), --stage, --cardh (card), --well, --insp (inspector), --hi/--lo/--sh/--edge, --div, --pill,
+// --t1, --t2, --acc, --ona and the code and diff colours. The panels stand off the frame by their edge and shadow.
+// colors: frame, canvas (stage), surface, raised, border, text, secondary text, accent. Skies: the opaque colours are
+// the glass composited at the sky's middle stop (the solid panels under reduced transparency): frame = --win over the
+// stop, canvas = --stage over that, sidebar = --side over it, surface = --cardh over the stage, raised = --cardh over the
+// surface, border = --edge over the stage. Classic is the canvas's solid set (--card and --cardh are surface and raised).
 export const APPEARANCE_PRESETS: readonly AppearancePreset[] = [
-  { id: "classic", name: "Classic", mode: "dark", sidebar: "#262729", colors: ["#0e0f10", "#212225", "#2a2b2f", "#323438", "#3a3c41", "#e6e6e6", "#a8abb2", "#d9a73e"],
+  { id: "classic", name: "Classic", mode: "dark", sidebar: "#1c1d20", colors: ["#232427", "#131314", "#1f2023", "#282a2d", "#34363b", "#e6e6e6", "#a8abb2", "#d9a73e"],
     edge: { highlight: "rgba(255,255,255,.05)", ring: "transparent", shadow: "rgba(0,0,0,.28)", stage: "#34363b" },
-    surfaces: { card: "#35373b", well: "#161719", inspector: "#262729" },
-    ink: { keyword: "#8ab4f8", function: "#d7aefb", string: "#81c995", type: "#e3b85a", comment: "#9da1a8", add: "#81c995", addBg: "rgba(129,201,149,.12)", del: "#f4968d", delBg: "rgba(242,139,130,.13)", onAccent: "#1a1405" },
+    surfaces: { card: "#282a2d", well: "#1f2023", inspector: "#1c1d20" },
+    ink: { keyword: "#8ab4f8", function: "#d7aefb", string: "#81c995", type: "#e3b85a", comment: "#8d9199", add: "#81c995", addBg: "rgba(129,201,149,.13)", del: "#f28b82", delBg: "rgba(242,139,130,.13)", onAccent: "#1a1405" },
+    div: "#2a2c30", pill: "rgba(217,167,62,.14)",
     mark: { from: "#c08a2e", to: "#f6e7bd", v: "#e6e6e6", track: "#2a2c30" },
-    preview: "linear-gradient(180deg, #262729 0 34%, #212225 34% 67%, #0e0f10 67%)" },
-  { id: "morning", name: "Morning", mode: "light", sidebar: "#ebf3fc", colors: ["#c3dbf6", "#eaf2fc", "#fbfdff", "#ffffff", "#d3dbe4", "#0f1d33", "#33496b", "#0052ab"],
+    preview: "linear-gradient(180deg, #1c1d20 0 34%, #131314 34% 67%, #232427 67%)" },
+  { id: "morning", name: "Morning", mode: "light", sidebar: "#e2f0fe", colors: ["#e6f2fd", "#f0f7fe", "#fcfeff", "#feffff", "#d3dbe4", "#0F1D33", "#3B5273", "#0066d6"],
     edge: { highlight: "rgba(255,255,255,.85)", ring: "rgba(255,255,255,.22)", shadow: "rgba(8,20,45,.14)", stage: "rgba(15,29,51,.13)" },
-    surfaces: { card: "rgba(255,255,255,.88)", well: "rgba(200,220,242,.6)", inspector: "rgba(255,255,255,.65)" },
-    ink: { keyword: "#005CC5", function: "#6F42C1", string: "#086b4a", type: "#b03a0a", comment: "#4a5568", add: "#0f6530", addBg: "rgba(52,199,89,.15)", del: "#991b1b", delBg: "rgba(255,59,48,.12)", onAccent: "#ffffff" },
+    surfaces: { card: "rgba(255,255,255,.82)", well: "rgba(215,232,248,.55)", inspector: "rgba(230,242,255,.52)" },
+    ink: { keyword: "#005CC5", function: "#6F42C1", string: "#0a7753", type: "#ba3e0c", comment: "#5b6a7e", add: "#116a33", addBg: "rgba(52,199,89,.18)", del: "#b51b1b", delBg: "rgba(255,59,48,.15)", onAccent: "#ffffff" },
+    div: "rgba(15,29,51,.08)", pill: "rgba(0,122,255,.1)",
     mark: { from: "#007AFF", to: "#6366F1", v: "#0F1D33", track: "rgba(15,29,51,.1)" },
-    preview: "linear-gradient(180deg, #A9CFF7, #BED8F5 50%, #FFD6B8)",
-    sky: "radial-gradient(60% 55% at 10% 100%, rgba(255,190,150,.5), transparent 70%), radial-gradient(55% 50% at 90% 0%, rgba(166,216,255,.3), transparent 70%), linear-gradient(180deg, #A9CFF7 0%, #BED8F5 48%, #FFD6B8 100%)",
-    glass: { frame: "rgba(235,246,255,.1)", panel: "rgba(255,255,255,.66)", stage: "rgba(255,255,255,.65)" } },
-  { id: "noon", name: "Noon", mode: "light", sidebar: "#e2f1fd", colors: ["#b2dafb", "#dfeffd", "#f8fcff", "#feffff", "#d1dbe4", "#0b1830", "#24406a", "#004494"],
+    preview: "linear-gradient(180deg, #BFDDFB, #DCEBFA 48%, #FFE2CC)",
+    sky: "radial-gradient(60% 55% at 10% 100%, rgba(255,209,179,.45), transparent 70%), radial-gradient(55% 50% at 90% 0%, rgba(166,216,255,.25), transparent 70%), linear-gradient(180deg, #BFDDFB 0%, #DCEBFA 48%, #FFE2CC 100%)",
+    loaderSky: "radial-gradient(60% 55% at 18% 100%, rgba(255,209,179,.45), transparent 70%), radial-gradient(55% 50% at 86% 6%, rgba(166,216,255,.25), transparent 70%), linear-gradient(180deg, #BFDDFB 0%, #DCEBFA 48%, #FFE2CC 100%)",
+    glass: { frame: "rgba(235,246,255,.65)", panel: "rgba(220,238,255,.45)", stage: "rgba(255,255,255,.4)" } },
+  { id: "noon", name: "Noon", mode: "light", sidebar: "#dceffe", colors: ["#d6ecfd", "#eef7fe", "#feffff", "#ffffff", "#d1dbe4", "#0B1830", "#33496B", "#005bc7"],
     edge: { highlight: "rgba(255,255,255,.92)", ring: "rgba(255,255,255,.3)", shadow: "rgba(8,20,45,.14)", stage: "rgba(15,29,51,.13)" },
-    surfaces: { card: "rgba(255,255,255,.94)", well: "rgba(204,224,246,.6)", inspector: "rgba(255,255,255,.6)" },
-    ink: { keyword: "#005CC5", function: "#6F42C1", string: "#086b4a", type: "#b03a0a", comment: "#4a5568", add: "#0f6530", addBg: "rgba(52,199,89,.15)", del: "#991b1b", delBg: "rgba(255,59,48,.12)", onAccent: "#ffffff" },
+    surfaces: { card: "rgba(255,255,255,.94)", well: "rgba(222,236,250,.66)", inspector: "rgba(236,246,255,.6)" },
+    ink: { keyword: "#005CC5", function: "#6F42C1", string: "#0a7954", type: "#bc3f0c", comment: "#5c6b80", add: "#116a33", addBg: "rgba(52,199,89,.18)", del: "#b71c1c", delBg: "rgba(255,59,48,.15)", onAccent: "#ffffff" },
+    div: "rgba(15,29,51,.08)", pill: "rgba(0,102,224,.11)",
     mark: { from: "#0066E0", to: "#6366F1", v: "#0B1830", track: "rgba(15,29,51,.1)" },
-    preview: "linear-gradient(180deg, #6DB6F7, #A9D6FB 55%, #E4F3FF)",
+    preview: "linear-gradient(180deg, #6DB6F7, #A9D6FB 52%, #E4F3FF)",
     sky: "radial-gradient(60% 55% at 10% 100%, rgba(255,244,214,.5), transparent 70%), radial-gradient(55% 50% at 90% 0%, rgba(120,196,255,.34), transparent 70%), linear-gradient(180deg, #6DB6F7 0%, #A9D6FB 52%, #E4F3FF 100%)",
-    glass: { frame: "rgba(244,250,255,.12)", panel: "rgba(255,255,255,.62)", stage: "rgba(255,255,255,.58)" } },
-  { id: "night", name: "Night", mode: "dark", sidebar: "#18223e", colors: ["#080d1c", "#192340", "#202b4d", "#283459", "#34405e", "#ebf3ff", "#a3b6d4", "#38bdf8"],
+    loaderSky: "radial-gradient(60% 55% at 18% 100%, rgba(255,244,214,.5), transparent 70%), radial-gradient(55% 50% at 86% 6%, rgba(120,196,255,.34), transparent 70%), linear-gradient(180deg, #6DB6F7 0%, #A9D6FB 52%, #E4F3FF 100%)",
+    glass: { frame: "rgba(244,250,255,.6)", panel: "rgba(226,241,255,.5)", stage: "rgba(255,255,255,.58)" } },
+  { id: "night", name: "Night", mode: "dark", sidebar: "#0e1325", colors: ["#0b0f1f", "#090c18", "#1a233d", "#1f2a49", "#222d42", "#EBF3FF", "#94A9C9", "#38BDF8"],
     edge: { highlight: "rgba(165,216,255,.32)", ring: "rgba(165,216,255,.05)", shadow: "rgba(0,0,0,.4)", stage: "rgba(148,197,255,.18)" },
-    surfaces: { card: "rgba(44,58,98,.6)", well: "rgba(5,8,16,.78)", inspector: "rgba(40,54,96,.5)" },
-    ink: { keyword: "#7DD3FC", function: "#C4B5FD", string: "#6EE7B7", type: "#FCD34D", comment: "#8c9ab1", add: "#4ADE80", addBg: "rgba(48,209,88,.13)", del: "#fc9191", delBg: "rgba(255,69,58,.16)", onAccent: "#06101E" },
+    surfaces: { card: "rgba(34,46,78,.68)", well: "rgba(5,8,16,.78)", inspector: "rgba(14,20,38,.64)" },
+    ink: { keyword: "#7DD3FC", function: "#C4B5FD", string: "#6EE7B7", type: "#FCD34D", comment: "#6c7b91", add: "#4ADE80", addBg: "rgba(48,209,88,.2)", del: "#F87171", delBg: "rgba(255,69,58,.2)", onAccent: "#06101E" },
+    div: "rgba(148,197,255,.1)", pill: "rgba(56,189,248,.14)",
     mark: { from: "#38BDF8", to: "#818CF8", v: "#EBF3FF", track: "rgba(148,197,255,.14)" },
-    preview: "linear-gradient(180deg, #04060E, #0A1024 55%, #1B2558)",
+    preview: "linear-gradient(180deg, #04060E, #0A1024 55%, #141C44)",
     sky: "radial-gradient(60% 55% at 10% 100%, rgba(30,41,91,.55), transparent 70%), radial-gradient(55% 50% at 90% 0%, rgba(13,76,115,.3), transparent 70%), linear-gradient(180deg, #04060E 0%, #0A1024 55%, #141C44 100%)",
-    glass: { frame: "rgba(4,6,14,.35)", panel: "rgba(40,54,96,.5)", stage: "rgba(32,43,78,.72)" } },
+    loaderSky: "radial-gradient(60% 55% at 18% 100%, rgba(30,41,91,.55), transparent 70%), radial-gradient(55% 50% at 86% 6%, rgba(13,76,115,.3), transparent 70%), linear-gradient(180deg, #04060E 0%, #0A1024 55%, #141C44 100%)",
+    glass: { frame: "rgba(11,15,29,.72)", panel: "rgba(16,22,42,.55)", stage: "rgba(7,10,20,.6)" } },
 ];
 
 /** The Auto card: the day from morning to night. */
-export const AUTO_PREVIEW = "linear-gradient(90deg, #FFD6B8, #A9CFF7 30%, #6DB6F7 55%, #141C44 80%, #04060E)";
+export const AUTO_PREVIEW = "linear-gradient(90deg, #FFE2CC, #BFDDFB 30%, #6DB6F7 55%, #141C44 80%, #04060E)";
 
 export type Sky = "morning" | "noon" | "night";
 
@@ -144,10 +160,11 @@ function applyGlass(root: HTMLElement, preset: AppearancePreset) {
   const on = glass !== undefined && !reducedTransparency();
   root.dataset.glass = on ? "on" : "off";
   if (!glass || !preset.sky) {
-    ["--themis-sky", "--themis-panel-bg", "--themis-stage-bg", "--themis-panel-blur"].forEach(token => root.style.removeProperty(token));
+    ["--themis-sky", "--themis-loader-sky", "--themis-panel-bg", "--themis-stage-bg", "--themis-panel-blur"].forEach(token => root.style.removeProperty(token));
     return;
   }
   root.style.setProperty("--themis-sky", `linear-gradient(${glass.frame}, ${glass.frame}), ${preset.sky}`);
+  root.style.setProperty("--themis-loader-sky", `linear-gradient(${glass.frame}, ${glass.frame}), ${preset.loaderSky ?? preset.sky}`);
   root.style.setProperty("--themis-panel-bg", glass.panel);
   root.style.setProperty("--themis-stage-bg", glass.stage);
   if (on && backdropBlurAvailable()) root.style.setProperty("--themis-panel-blur", GLASS_BLUR);
@@ -203,7 +220,8 @@ export function applyAppearance(settings: Appearance) {
   });
   root.style.setProperty("--themis-sidebar-bg", preset.sidebar);
   root.style.setProperty("--themis-text-3", preset.colors[6]);
-  root.style.setProperty("--themis-border-subtle", preset.colors[4]);
+  root.style.setProperty("--themis-border-subtle", preset.div);
+  root.style.setProperty("--themis-pill", preset.pill);
   root.style.setProperty("--themis-accent-hover", preset.colors[7]);
   applyEdge(root, preset);
   applySurfaces(root, preset);

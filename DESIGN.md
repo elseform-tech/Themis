@@ -76,11 +76,11 @@ Dark mode is the product baseline; the Morning and Noon skies are the light look
 
 | Role | Token | Classic preset / value | Rule |
 | --- | --- | --- | --- |
-| Frame | `--themis-shell-bg` | `#0e0f10` | Persistent app chrome; sits furthest back, the panels stand off it |
-| Sidebar | `--themis-sidebar-bg` | `#262729` | Project and chat navigation |
-| Canvas | `--themis-canvas` | `#212225` | Main working surface (the stage) |
-| Surface / raised | `--themis-surface`, `--themis-raised` | `#2a2b2f`, `#323438` | Inputs and meaningful elevation |
-| Border | `--themis-border` | `#3a3c41` | Necessary boundaries only |
+| Frame | `--themis-shell-bg` | `#232427` | Persistent app chrome (canvas `--win`); the panels stand off it by their edge and shadow, not by tint |
+| Sidebar | `--themis-sidebar-bg` | `#1c1d20` | Project and chat navigation (canvas `--side`) |
+| Canvas | `--themis-canvas` | `#131314` | Main working surface, the stage (canvas `--stage`); on dark looks darker than the side panel, on light skies brighter |
+| Surface / raised | `--themis-surface`, `--themis-raised` | `#1f2023`, `#282a2d` | Inputs and meaningful elevation (canvas Classic `--card`, `--cardh`; skies: `--cardh` composited on the stage) |
+| Border / hairline | `--themis-border`, `--themis-border-subtle` | `#34363b`, `#2a2c30` | Necessary boundaries only (canvas `--edge`, `--div`); `--themis-pill` is the canvas's soft accent chip |
 | Primary text | `--themis-text` | `#e6e6e6` | Content and primary labels |
 | Secondary text | `--themis-text-2` | `#a8abb2` | Useful supporting information; never a reason to add filler |
 | Accent | `--themis-accent` | `#d9a73e` | Sparse emphasis, not decoration on every control |
@@ -91,17 +91,19 @@ Dark mode is the product baseline; the Morning and Noon skies are the light look
 | Sky | `--themis-sky` | frame colour (solid presets) | Sky presets only: frame tint, glows and gradient behind the frame |
 | Glass | `--themis-panel-bg`, `--themis-stage-bg`, `--themis-panel-blur` | sidebar, canvas, `none` | Sky presets: translucent panels on every OS, `blur(36px) saturate(190%)` only on macOS; solid under `data-glass="off"` (reduced transparency) |
 | Panel edge | `--themis-panel-highlight`, `--themis-panel-ring`, `--themis-panel-shadow`, `--themis-stage-edge` | `rgba(255,255,255,.05)`, `transparent`, `rgba(0,0,0,.28)`, `#34363b` | Composed into `--themis-panel-sheen` and `--themis-panel-edge` (side panels) and `--themis-stage-edge-shadow` (stage); never replaced by an opaque border |
-| Card | `--themis-card`, `--themis-card-lift` | `#35373b`; `0 1px 2px` shadow + top highlight | The person's message, the composer (with the panel sheen and edge) and a chosen sidebar chat, Workspace tab or file; it must stand off the stage and the Workspace panel (1.1 on light skies, 1.2 on dark) |
-| Well | `--themis-well`, `--themis-well-shadow` | `#161719`; `inset 0 1px 3px` shadow | Code blocks, inline code (slim), diffs and the Workspace file view; visibly set into the stage and the Workspace panel (1.06 on light skies, 1.1 on dark); lines padded 14 px, line height 1.7 in the chat and 1.8 in Workspace; a diff's hunk header is a quiet text-2 row on a 4% text tint, never an opaque band |
-| Workspace panel | `--themis-inspector-bg` | sidebar | The Workspace panel's glass (canvas `--insp`); the sidebar colour under `data-glass="off"` |
-| Code ink | `--themis-code-keyword`, `-function`, `-string`, `-type`, `-comment` | `#8ab4f8`, `#d7aefb`, `#81c995`, `#e3b85a`, `#9da1a8` | Syntax on the well; comment also colours line numbers |
-| Diff ink | `--themis-diff-add`, `--themis-add-bg`, `--themis-diff-del`, `--themis-del-bg` | `#81c995` on `rgba(129,201,149,.12)`, `#f4968d` on `rgba(242,139,130,.13)` | A changed line is tinted whole in its ink, calmly (1.08 to 1.3 off the well, never a bright slab); changed characters get the tint twice; line counts use the ink |
-| Accent ink | `--themis-accent-ink` | `#1a1405` (white on Morning and Noon, `#06101E` on Night) | Icons and text on the accent: the send circle (not ready: the accent at 65% under the same arrow, 3:1), badges, switches |
+| Card | `--themis-card`, `--themis-card-lift` | `#282a2d`; `0 1px 2px` shadow + top highlight | The person's message, the composer (with the panel sheen and edge) and a chosen sidebar chat, Workspace tab or file (canvas `--cardh`) |
+| Well | `--themis-well`, `--themis-well-shadow` | `#1f2023`; `inset 0 1px 3px` shadow | Code blocks, inline code (slim), diffs and the Workspace file view (canvas `--well`); lines padded 14 px, line height 1.7 in the chat and 1.8 in Workspace; a diff's hunk header is a quiet text-2 row on a 4% text tint, never an opaque band |
+| Workspace panel | `--themis-inspector-bg` | `#1c1d20` | The Workspace panel's glass (canvas `--insp`); the sidebar colour under `data-glass="off"` |
+| Code ink | `--themis-code-keyword`, `-function`, `-string`, `-type`, `-comment` | `#8ab4f8`, `#d7aefb`, `#81c995`, `#e3b85a`, `#8d9199` | Syntax on the well (canvas `--kw`, `--fn`, `--str`, `--ty`, `--com`); comment also colours line numbers on unchanged lines |
+| Diff ink | `--themis-diff-add`, `--themis-add-bg`, `--themis-diff-del`, `--themis-del-bg` | `#81c995` on `rgba(129,201,149,.13)`, `#f28b82` on `rgba(242,139,130,.13)` | A changed line, its number included, is tinted whole in its ink (canvas `--add`/`--addh`, `--del`/`--delh`); changed characters are underlined; line counts use the ink |
+| Accent ink | `--themis-accent-ink` | `#1a1405` (white on Morning and Noon, `#06101E` on Night) | Icons and text on the accent (canvas `--ona`): the send circle (not ready: the accent at 70% under the same arrow, 3:1), badges, switches |
 | Mark | `--themis-mark-from`, `--themis-mark-to`, `--themis-mark-v`, `--themis-mark-track` | `#c08a2e` → `#f6e7bd`, `#e6e6e6`, `#2a2c30` | The Themis Visions mark on the startup screen (canvas `--ga`, `--gb`, `--lv`) and its bar's track (`--div`) |
 | Shadow | `--themis-shadow` | `rgb(0 0 0)`; light `rgb(8 20 45 / .35)` | Mix with transparent at each shadow's strength |
 | Warm gradient | `--themis-gradient-1/2/3` | `#d0a660` → `#e3b85a` → `#f6e7bd` | Approved Themis moments only (below) |
 
 Light skies (`data-theme="light"`) keep the same roles with darker status colours that reach 4.5:1 on the sky-blue frame and the pale glass: success `#11522a`, warning `#78340b`, danger `#8d0f33`, information `#034394`. Shadows use the soft navy `--themis-shadow`. The warm gradient becomes a deep bronze-to-amber ramp (`#4d2c02` → `#5c3604` → `#693e00`) so the greeting, the wordmark glint, shimmer and the working spinner stay readable; context-warning and compaction text use `--themis-warn-text` (`#f6e7bd` on dark, `#5c3604` on light).
+
+Every look uses the canvas boards' tokens verbatim (`appearance.ts`, checked by `contrast.test.ts`), except where a text, accent or ink colour missed 4.5:1 (3:1 for icons) on its real composited surface; those moved by the smallest step that passes and are listed in `CONTRAST_DEPARTURES` with the canvas value (Morning and Noon accents and code and diff ink, Night's comment).
 
 Compatibility badges use the `--themis-ok-*`, `--themis-warn-*` and `--themis-bad-*` tokens (ink, background, line) from [`tokens.css`](web/src/theme/tokens.css), dark / light. The recording pill uses the `bad` pair too. Keep this mapping consistent across tiles and filters.
 

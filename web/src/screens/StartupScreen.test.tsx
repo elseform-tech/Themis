@@ -28,7 +28,7 @@ it("keeps the step for screen readers only: the canvas shows no status line", ()
 
 it("draws on the sky's frame with the canvas's sizes, and calms its motion when asked", () => {
   const css = readFileSync("src/screens/StartupScreen.css", "utf8");
-  expect(css).toMatch(/\.themis-startup \{[^}]*gap: 20px[^}]*background: var\(--themis-sky\)/);
+  expect(css).toMatch(/\.themis-startup \{[^}]*gap: 20px[^}]*background: var\(--themis-loader-sky, var\(--themis-sky\)\)/);
   expect(css).toMatch(/\.themis-startup-word \{[^}]*font-size: 19px[^}]*letter-spacing: \.04em[^}]*gap: 7px/);
   expect(css).toMatch(/\.themis-startup-bar \{[^}]*width: 140px; height: 2px; border-radius: 3px; background: var\(--themis-mark-track\)/);
   expect(css).toMatch(/\.themis-startup-fill \{[^}]*background: var\(--themis-accent\); transition: width \.9s cubic-bezier\(\.3, \.7, \.2, 1\)/);

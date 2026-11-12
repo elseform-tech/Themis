@@ -107,32 +107,11 @@ describe("themis theme token contrast", () => {
 
 for (const preset of APPEARANCE_PRESETS) {
   it(`${preset.name}: readable text and actions on every surface`, () => {
+    // Frame, stage, surface, raised and the side panel; the border colour is a line, never under text.
     for (const surface of [...preset.colors.slice(0, 4), preset.sidebar]) {
       expect(contrastRatio(preset.colors[5], surface)).toBeGreaterThanOrEqual(4.5);
       expect(contrastRatio(preset.colors[6], surface)).toBeGreaterThanOrEqual(4.5);
       expect(contrastRatio(preset.colors[7], surface)).toBeGreaterThanOrEqual(4.5);
-    }
-  });
-}
-
-// The frame sits behind; the sidebar and the stage must read as separate panels on it by their tint, not only by
-// their ring and shadow. Measured at the sky's middle stop, glass and solid (reduced transparency) alike. The bar is a
-// luminance contrast of 1.25 on light skies and 1.2 on dark ones, where WCAG's flare term squeezes every ratio
-// (#0e0f10 to #212225 is 1.2); before this, the panels sat 1.02 to 1.09 off the frame and read as one colour.
-for (const preset of APPEARANCE_PRESETS) {
-  it(`${preset.name}: the panel, the stage and the Workspace panel stand clearly off the frame`, () => {
-    const bar = preset.mode === "light" ? 1.25 : 1.2;
-    // The Workspace panel (inspector) is a side panel too; solid, it is the sidebar colour.
-    const layers: Array<[string, string, string, string]> = [[preset.colors[0], preset.sidebar, preset.colors[1], preset.sidebar]];
-    if (preset.glass && preset.sky) {
-      const middle = (preset.sky.match(/#[0-9a-f]{6}/gi) ?? [])[1];
-      const frame = compositeOver(preset.glass.frame, middle);
-      layers.push([frame, compositeOver(preset.glass.panel, frame), compositeOver(preset.glass.stage, frame), compositeOver(preset.surfaces.inspector, frame)]);
-    }
-    for (const [frame, panel, stage, inspector] of layers) {
-      expect(contrastRatio(panel, frame), `panel ${panel} on ${frame}`).toBeGreaterThanOrEqual(bar);
-      expect(contrastRatio(stage, frame), `stage ${stage} on ${frame}`).toBeGreaterThanOrEqual(bar);
-      expect(contrastRatio(inspector, frame), `Workspace ${inspector} on ${frame}`).toBeGreaterThanOrEqual(bar);
     }
   });
 }
@@ -180,7 +159,8 @@ for (const preset of SKIES) {
   it(`${preset.name}: text, text-2 and accent reach 4.5 on the glass panel over every sky stop`, () => {
     expect(stops.length).toBeGreaterThanOrEqual(3);
     for (const stop of stops) {
-      const panel = compositeOver(glass.panel, stop);
+      // The panel always sits on the frame tint, which covers the whole sky.
+      const panel = compositeOver(glass.panel, compositeOver(glass.frame, stop));
       for (const colour of [text, text2, accent]) expect(contrastRatio(colour, panel)).toBeGreaterThanOrEqual(AA_NORMAL);
     }
   });
@@ -223,7 +203,7 @@ for (const preset of SKIES) {
     for (const glow of [undefined, ...((preset.sky ?? "").match(/rgba\([^)]+\)/g) ?? [])]) {
       const frame = compositeOver(glass.frame, glow === undefined ? stop : compositeOver(glow, stop));
       const panel = compositeOver(glass.panel, frame);
-      surfaces.push(frame, panel, sheenOver(preset.edge.highlight, panel), compositeOver(glass.stage, frame), compositeOver(glass.panel, stop));
+      surfaces.push(frame, panel, sheenOver(preset.edge.highlight, panel), compositeOver(glass.stage, frame));
     }
   }
   const accent = preset.colors[7].replace(/^#(..)(..)(..)$/, (_, r, g, b) => `rgba(${parseInt(r, 16)},${parseInt(g, 16)},${parseInt(b, 16)},.14)`);
@@ -295,45 +275,23 @@ for (const preset of APPEARANCE_PRESETS) {
         // The diff's hunk header ("Line 1"): text-2 on a 4% tint of the text colour inside the well.
         const hunk = compositeOver(withAlpha(text, .04), plain);
         expect(contrastRatio(text2, hunk), `hunk header ${hunk}`).toBeGreaterThanOrEqual(AA_NORMAL);
-        // Changed lines read as tinted, calmly: visible on the well, never a bright slab (the canvas's --addh/--delh).
-        for (const line of [added, removed]) {
-          expect(contrastRatio(line, plain), `changed line ${line} on ${plain}`).toBeGreaterThanOrEqual(1.08);
-          expect(contrastRatio(line, plain), `changed line ${line} on ${plain}`).toBeLessThanOrEqual(1.3);
-        }
-        // A changed line is all its own ink; the characters that changed get the line's tint twice; numbers stay --com.
-        for (const [lineInk, lineBg, line] of [[ink.add, ink.addBg, added], [ink.del, ink.delBg, removed]] as const) {
+        // A changed line, its number included, is all its own ink (changed characters are underlined, not re-tinted).
+        for (const [lineInk, line] of [[ink.add, added], [ink.del, removed]] as const) {
           expect(contrastRatio(lineInk, line), `${lineInk} on ${line}`).toBeGreaterThanOrEqual(AA_NORMAL);
-          expect(contrastRatio(lineInk, compositeOver(lineBg, line)), `${lineInk} on its word tint`).toBeGreaterThanOrEqual(AA_NORMAL);
-          expect(contrastRatio(ink.comment, line), `line number on ${line}`).toBeGreaterThanOrEqual(AA_NORMAL);
         }
       }
     }
   });
 
+  // The arrow is an icon: 3:1 on the circle, ready and dimmed (the accent at 70% on the composer when not ready).
   it(`${preset.name}: the send button's arrow reads on the accent, and on the dimmed circle when not ready`, () => {
-    expect(contrastRatio(ink.onAccent, accent)).toBeGreaterThanOrEqual(AA_NORMAL);
-    // Not ready: the accent at 65% on the composer, the same arrow; a 3:1 control, still plainly the accent's circle.
+    expect(contrastRatio(ink.onAccent, accent)).toBeGreaterThanOrEqual(SECONDARY_MIN);
     for (const { stage } of chatLayers(preset)) {
-      const dimmed = compositeOver(withAlpha(accent, .65), compositeOver(card, stage));
+      const dimmed = compositeOver(withAlpha(accent, .7), compositeOver(card, stage));
       expect(contrastRatio(ink.onAccent, dimmed), `arrow on dimmed send ${dimmed}`).toBeGreaterThanOrEqual(SECONDARY_MIN);
-      expect(contrastRatio(dimmed, accent), `dimmed ${dimmed} vs ready ${accent}`).toBeGreaterThanOrEqual(1.2);
     }
   });
 
-  // The owner wants the bubble and composer to lift off the stage, and a selected tab or file to read as chosen. On
-  // light skies the card is near white and the stage must stay 1.25 off the frame, so white caps the step at about
-  // 1.15: the bar is 1.1 there, with the shadow and top highlight doing the rest. Dark skies use the frame bar, 1.2.
-  it(`${preset.name}: the bubble and composer stand off the stage, a selected row off the Workspace panel, the well off both`, () => {
-    const bar = preset.mode === "light" ? 1.1 : 1.2;
-    for (const { stage, inspector } of [chatLayers(preset)[0], ...middleLayers(preset)]) {
-      expect(contrastRatio(compositeOver(card, stage), stage), `card on stage ${stage}`).toBeGreaterThanOrEqual(bar);
-      expect(contrastRatio(compositeOver(card, inspector), inspector), `card on panel ${inspector}`).toBeGreaterThanOrEqual(bar);
-      // Code sits in a visible well, on the stage and on the Workspace panel; the inset shadow adds the edge.
-      const wellBar = preset.mode === "light" ? 1.06 : 1.1;
-      expect(contrastRatio(compositeOver(well, stage), stage), `well on stage ${stage}`).toBeGreaterThanOrEqual(wellBar);
-      expect(contrastRatio(compositeOver(well, inspector), inspector), `well on panel ${inspector}`).toBeGreaterThanOrEqual(wellBar);
-    }
-  });
 }
 
 function withAlpha(colour: string, alpha: number): string {
@@ -341,9 +299,102 @@ function withAlpha(colour: string, alpha: number): string {
   return `rgba(${r},${g},${b},${alpha})`;
 }
 
-/** The glass layers at the sky's middle stop, as the frame distinction test measures. */
-function middleLayers(preset: (typeof APPEARANCE_PRESETS)[number]): ChatLayers[] {
-  if (!preset.glass || !preset.sky) return [];
-  const frame = compositeOver(preset.glass.frame, (preset.sky.match(/#[0-9a-f]{6}/gi) ?? [])[1]);
-  return [{ stage: compositeOver(preset.glass.stage, frame), inspector: compositeOver(preset.surfaces.inspector, frame) }];
+// The canvas boards' tokens (Chat, Workspace, Main .aura blocks), verbatim per theme. The panels stand off the frame by
+// their edge and shadow (chatSurfaces.test.ts), not by tints tuned for luminance. Only a text, accent, status or ink
+// colour that misses 4.5 on its real composited surface may move, by the smallest step that passes, and each such
+// move is listed in CONTRAST_DEPARTURES with the canvas value.
+type CanvasTheme = Record<string, string>;
+const CANVAS_MORNING: CanvasTheme = {
+  win: "rgba(235,246,255,.65)", side: "rgba(220,238,255,.45)", stage: "rgba(255,255,255,.4)", cardh: "rgba(255,255,255,.82)",
+  well: "rgba(215,232,248,.55)", insp: "rgba(230,242,255,.52)", hi: "rgba(255,255,255,.85)", lo: "rgba(255,255,255,.22)",
+  sh: "rgba(8,20,45,.14)", edge: "rgba(15,29,51,.13)", div: "rgba(15,29,51,.08)", pill: "rgba(0,122,255,.1)",
+  t1: "#0F1D33", t2: "#3B5273", acc: "#007AFF", ona: "#ffffff",
+  kw: "#005CC5", fn: "#6F42C1", str: "#0A7B56", ty: "#C2410C", com: "#64748B", add: "#15803D", addh: "rgba(52,199,89,.18)", del: "#B91C1C", delh: "rgba(255,59,48,.15)",
+  g1: "rgba(255,209,179,.45)", g2: "rgba(166,216,255,.25)", sky: "#BFDDFB 0%, #DCEBFA 48%, #FFE2CC 100%",
+};
+const CANVAS: Record<string, CanvasTheme> = {
+  morning: CANVAS_MORNING,
+  noon: {
+    ...CANVAS_MORNING, win: "rgba(244,250,255,.6)", side: "rgba(226,241,255,.5)", stage: "rgba(255,255,255,.58)", cardh: "rgba(255,255,255,.94)",
+    well: "rgba(222,236,250,.66)", insp: "rgba(236,246,255,.6)", hi: "rgba(255,255,255,.92)", lo: "rgba(255,255,255,.3)", pill: "rgba(0,102,224,.11)",
+    t1: "#0B1830", t2: "#33496B", acc: "#0066E0", g1: "rgba(255,244,214,.5)", g2: "rgba(120,196,255,.34)", sky: "#6DB6F7 0%, #A9D6FB 52%, #E4F3FF 100%",
+  },
+  night: {
+    win: "rgba(11,15,29,.72)", side: "rgba(16,22,42,.55)", stage: "rgba(7,10,20,.6)", cardh: "rgba(34,46,78,.68)",
+    well: "rgba(5,8,16,.78)", insp: "rgba(14,20,38,.64)", hi: "rgba(165,216,255,.32)", lo: "rgba(165,216,255,.05)",
+    sh: "rgba(0,0,0,.4)", edge: "rgba(148,197,255,.18)", div: "rgba(148,197,255,.1)", pill: "rgba(56,189,248,.14)",
+    t1: "#EBF3FF", t2: "#94A9C9", acc: "#38BDF8", ona: "#06101E",
+    kw: "#7DD3FC", fn: "#C4B5FD", str: "#6EE7B7", ty: "#FCD34D", com: "#64748B", add: "#4ADE80", addh: "rgba(48,209,88,.2)", del: "#F87171", delh: "rgba(255,69,58,.2)",
+    g1: "rgba(30,41,91,.55)", g2: "rgba(13,76,115,.3)", sky: "#04060E 0%, #0A1024 55%, #141C44 100%",
+  },
+  classic: {
+    win: "#232427", side: "#1c1d20", stage: "#131314", card: "#1f2023", cardh: "#282a2d", well: "#1f2023", insp: "#1c1d20",
+    hi: "rgba(255,255,255,.05)", lo: "transparent", sh: "rgba(0,0,0,.28)", edge: "#34363b", div: "#2a2c30", pill: "rgba(217,167,62,.14)",
+    t1: "#e6e6e6", t2: "#a8abb2", acc: "#d9a73e", ona: "#1a1405",
+    kw: "#8ab4f8", fn: "#d7aefb", str: "#81c995", ty: "#e3b85a", com: "#8d9199", add: "#81c995", addh: "rgba(129,201,149,.13)", del: "#f28b82", delh: "rgba(242,139,130,.13)",
+  },
+};
+
+/** Colours moved off the canvas because they miss 4.5 (text) or 3 (icons) on their real composited surface. */
+export const CONTRAST_DEPARTURES: Record<string, { canvas: string; value: string }> = {
+  // Accent text (links, the Auto shield, primary actions) on the pale glass: 3.35 → 4.53 (Morning), 3.81 → 4.56 (Noon).
+  "morning.acc": { canvas: "#007AFF", value: "#0066d6" },
+  "noon.acc": { canvas: "#0066E0", value: "#005bc7" },
+  // Code ink on the light wells (worst well over the stage or the Workspace panel, every sky stop and glow).
+  "morning.str": { canvas: "#0A7B56", value: "#0a7753" },
+  "morning.ty": { canvas: "#C2410C", value: "#ba3e0c" },
+  "morning.com": { canvas: "#64748B", value: "#5b6a7e" },
+  "noon.str": { canvas: "#0A7B56", value: "#0a7954" },
+  "noon.ty": { canvas: "#C2410C", value: "#bc3f0c" },
+  "noon.com": { canvas: "#64748B", value: "#5c6b80" },
+  "night.com": { canvas: "#64748B", value: "#6c7b91" },
+  // Diff ink on its own tinted line and as line counts on the panels.
+  "morning.add": { canvas: "#15803D", value: "#116a33" },
+  "morning.del": { canvas: "#B91C1C", value: "#b51b1b" },
+  "noon.add": { canvas: "#15803D", value: "#116a33" },
+  "noon.del": { canvas: "#B91C1C", value: "#b71c1c" },
+};
+
+function presetTokens(preset: (typeof APPEARANCE_PRESETS)[number]): CanvasTheme {
+  const { colors, edge, surfaces, ink, glass } = preset;
+  const tokens: CanvasTheme = {
+    cardh: surfaces.card, well: surfaces.well, insp: surfaces.inspector, hi: edge.highlight, lo: edge.ring, sh: edge.shadow, edge: edge.stage,
+    div: preset.div, pill: preset.pill, t1: colors[5], t2: colors[6], acc: colors[7], ona: ink.onAccent,
+    kw: ink.keyword, fn: ink.function, str: ink.string, ty: ink.type, com: ink.comment, add: ink.add, addh: ink.addBg, del: ink.del, delh: ink.delBg,
+  };
+  if (glass && preset.sky) {
+    const glows = preset.sky.match(/rgba\([^)]+\)/g) ?? [];
+    Object.assign(tokens, { win: glass.frame, side: glass.panel, stage: glass.stage, g1: glows[0], g2: glows[1], sky: /linear-gradient\(180deg, ([^)]*)\)$/.exec(preset.sky)?.[1] ?? "" });
+  } else {
+    Object.assign(tokens, { win: colors[0], side: preset.sidebar, stage: colors[1], card: colors[2] });
+  }
+  return tokens;
+}
+
+for (const preset of APPEARANCE_PRESETS) {
+  it(`${preset.name}: uses the canvas's tokens verbatim, but for the listed contrast departures`, () => {
+    const canvas = CANVAS[preset.id];
+    const ours = presetTokens(preset);
+    for (const [token, value] of Object.entries(canvas)) {
+      const departure = CONTRAST_DEPARTURES[`${preset.id}.${token}`];
+      if (departure) expect(departure.canvas.toLowerCase(), `${token} departure records the canvas value`).toBe(value.toLowerCase());
+      expect(ours[token]?.toLowerCase(), `${preset.id} --${token}`).toBe((departure?.value ?? value).toLowerCase());
+    }
+    // Classic's raised surface is the canvas's --cardh; the skies' frame tint covers the canvas sky and glows.
+    if (preset.id === "classic") expect(preset.colors[3]).toBe(canvas.cardh);
+  });
+}
+
+// The canvas sets the side panel and the stage in an order: on dark looks the chat (stage) is darker than the side
+// panel (Night: lighter navy glass beside an ink chat area); on light skies the stage is the brighter white.
+for (const preset of APPEARANCE_PRESETS) {
+  it(`${preset.name}: the side panel and the stage keep the canvas's order`, () => {
+    const middle = preset.glass && preset.sky ? compositeOver(preset.glass.frame, (preset.sky.match(/#[0-9a-f]{6}/gi) ?? [])[1]) : preset.colors[0];
+    const side = preset.glass ? compositeOver(preset.glass.panel, middle) : preset.sidebar;
+    const stage = preset.glass ? compositeOver(preset.glass.stage, middle) : preset.colors[1];
+    if (preset.mode === "dark") expect(luminance(stage), `stage ${stage} darker than side ${side}`).toBeLessThan(luminance(side));
+    else expect(luminance(stage), `stage ${stage} brighter than side ${side}`).toBeGreaterThan(luminance(side));
+    // The opaque stand-ins are those composites.
+    expect([preset.sidebar, preset.colors[1]]).toEqual([side, stage]);
+  });
 }

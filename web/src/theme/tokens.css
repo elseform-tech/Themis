@@ -7,13 +7,14 @@
 :root,
 [data-theme="dark"] {
   color-scheme: dark;
-  --themis-shell-bg: #0e0f10;
-  --themis-sidebar-bg: #262729;
-  --themis-canvas: #212225;
-  --themis-surface: #2a2b2f;
-  --themis-raised: #323438;
-  --themis-border: #3a3c41;
-  --themis-border-subtle: #3a3c41;
+  --themis-shell-bg: #232427;
+  --themis-sidebar-bg: #1c1d20;
+  --themis-canvas: #131314;
+  --themis-surface: #1f2023;
+  --themis-raised: #282a2d;
+  --themis-border: #34363b;
+  --themis-border-subtle: #2a2c30;
+  --themis-pill: rgba(217, 167, 62, .14);
   --themis-text: #e6e6e6;
   --themis-text-2: #a8abb2;
   --themis-text-3: #8d9199;
@@ -26,17 +27,17 @@
   --themis-info: #8ab4f8;
   /* Chat and Workspace surfaces (canvas --cardh, --well, --insp) and the ink on them; appearance.ts sets them per preset.
      Card: the user bubble, the composer and a selected row or tab. Well: code and diffs. Inspector: the Workspace panel. */
-  --themis-card: #35373b;
-  --themis-well: #161719;
+  --themis-card: #282a2d;
+  --themis-well: #1f2023;
   --themis-inspector-bg: var(--themis-sidebar-bg);
   --themis-code-keyword: #8ab4f8;
   --themis-code-function: #d7aefb;
   --themis-code-string: #81c995;
   --themis-code-type: #e3b85a;
-  --themis-code-comment: #9da1a8;
+  --themis-code-comment: #8d9199;
   --themis-diff-add: #81c995;
-  --themis-diff-del: #f4968d;
-  --themis-add-bg: rgba(129, 201, 149, 0.12);
+  --themis-diff-del: #f28b82;
+  --themis-add-bg: rgba(129, 201, 149, 0.13);
   /* The Themis Visions mark and the startup bar's track (canvas --ga, --gb, --lv, --div). */
   --themis-mark-from: #c08a2e;
   --themis-mark-to: #f6e7bd;

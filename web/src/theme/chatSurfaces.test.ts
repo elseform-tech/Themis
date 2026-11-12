@@ -42,7 +42,7 @@ it("draws send and stop as one filled accent circle", () => {
   for (const part of ["width: 32px", "height: 32px", "border-radius: 50%", "background: var(--themis-accent)", "color: var(--themis-accent-ink)"]) expect(send).toContain(part);
   // Not ready: the accent dimmed under a full-strength arrow, never a faded whole button (muddy on Classic, grey on light skies).
   const disabled = rule(read("screens/ThreadView.css"), ".themis-button.themis-send:disabled");
-  expect(disabled).toContain("background: color-mix(in srgb, var(--themis-accent) 65%, transparent)");
+  expect(disabled).toContain("background: color-mix(in srgb, var(--themis-accent) 70%, transparent)");
   expect(disabled).toContain("opacity: 1");
 });
 
@@ -80,6 +80,11 @@ it("puts code in a well: chat blocks, the Workspace file view and diffs", () => 
   const diff = read("components/diff/DiffView.css");
   for (const part of ["background: var(--themis-well)", "box-shadow: var(--themis-well-shadow)", "border-radius: 12px", "line-height: 1.8"]) expect(rule(diff, ".themis-diff")).toContain(part);
   expect(rule(diff, ".themis-diff-no")).toMatch(/min-width: 30px;[^}]*color: var\(--themis-code-comment\)/);
+  // On a changed line the number takes the line's ink, and the changed characters are underlined, not re-tinted.
+  expect(diff).toMatch(/\.themis-diff-line--add \.themis-diff-no \{ color: var\(--themis-diff-add\); \}/);
+  expect(diff).toMatch(/\.themis-diff-line--del \.themis-diff-no \{ color: var\(--themis-diff-del\); \}/);
+  expect(rule(diff, ".themis-diff-word")).toMatch(/text-decoration: underline/);
+  expect(diff).not.toMatch(/\.themis-diff-word \{[^}]*background/);
 });
 
 it("lists sidebar chats in 34px rounded rows, the chosen one on a card, under quiet section titles", () => {
@@ -102,4 +107,27 @@ it("draws the Workspace panel on its own glass with card tabs and file rows", ()
   const tree = read("components/diff/FileTree.css");
   expect(rule(tree, ".themis-filetree-row--selected")).toMatch(/background: var\(--themis-card\)/);
   expect(rule(read("components/diff/DiffView.css"), ".themis-diff-count-add")).toContain("color: var(--themis-diff-add)");
+});
+
+// With the canvas's own tints, the frame and the panels part by edge and shadow: every panel and card keeps them.
+it("gives every panel, the stage, the composer, the bubble and the wells the canvas's edge and shadow", () => {
+  const carries: Array<[string, string, string]> = [
+    ["screens/Sidebar.css", ".themis-sidebar", "box-shadow: var(--themis-panel-edge)"],
+    ["screens/Sidebar.css", ".themis-settings-nav", "box-shadow: var(--themis-panel-edge)"],
+    ["screens/WorkspacePanel.css", ".themis-workspace-panel", "box-shadow: var(--themis-panel-edge)"],
+    ["screens/ThreadView.css", ".themis-thread-composer", "box-shadow: var(--themis-panel-edge)"],
+    ["screens/shell.css", ".themis-main", "box-shadow: var(--themis-stage-edge-shadow)"],
+    ["screens/ThreadView.css", ".themis-thread-layout.is-reviewing > .themis-thread", "box-shadow: var(--themis-stage-edge-shadow)"],
+    ["screens/ThreadView.css", ".themis-thread-msg--user", "box-shadow: var(--themis-card-lift)"],
+    ["components/CodeBlock.css", ".themis-codeblock", "box-shadow: var(--themis-well-shadow)"],
+    ["components/diff/DiffView.css", ".themis-diff", "box-shadow: var(--themis-well-shadow)"],
+  ];
+  for (const [file, selector, shadow] of carries) {
+    const css = `\n${read(file)}`;
+    const rules = [...css.matchAll(new RegExp(`\\n${selector.replace(/[.>()]/g, "\\$&")} \\{([^}]*)\\}`, "g"))].map(found => found[1]).join(" ");
+    expect(rules, selector).toContain(shadow);
+  }
+  const tokens = read("theme/tokens.css");
+  expect(tokens).toContain("--themis-panel-edge: inset 0 1px 0 var(--themis-panel-highlight), inset 0 0 0 1px var(--themis-panel-ring), 0 10px 36px var(--themis-panel-shadow);");
+  expect(tokens).toContain("--themis-stage-edge-shadow: inset 0 0 0 1px var(--themis-stage-edge), inset 0 1px 0 var(--themis-panel-highlight);");
 });

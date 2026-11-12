@@ -48,7 +48,8 @@ it("sets light or dark from the preset and paints the sky behind the frame", () 
     expect(root.dataset.theme).toBe("light");
     expect(root.dataset.glass).toBe("on");
     const morning = appearancePreset("morning");
-    expect(root.style.getPropertyValue("--themis-sky")).toContain("#A9CFF7");
+    expect(root.style.getPropertyValue("--themis-sky")).toContain("#BFDDFB 0%, #DCEBFA 48%, #FFE2CC 100%");
+    expect(root.style.getPropertyValue("--themis-loader-sky")).toContain("at 18% 100%");
     expect(root.style.getPropertyValue("--themis-panel-bg")).toBe(morning.glass?.panel);
     expect(root.style.getPropertyValue("--themis-stage-bg")).toBe(morning.glass?.stage);
     expect(root.style.getPropertyValue("--themis-panel-blur")).toBe("blur(36px) saturate(190%)");
