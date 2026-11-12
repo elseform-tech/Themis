@@ -9,8 +9,7 @@
 
 /* Empty states without a thread. */
 .themis-welcome { margin: auto; text-align: center; padding: 32px; max-width: 540px; }
-.themis-welcome h1 { font-size: 1.7rem; font-weight: 500; letter-spacing: -.6px; margin: 0 0 10px; }
-.themis-welcome p { color: var(--themis-text-2); margin: 0 0 24px; }
+.themis-welcome h1 { font-size: 1.7rem; font-weight: 500; letter-spacing: -.6px; margin: 0 0 24px; }
 
 /* Header: one pill for model and effort; review toggle on the right. */
 /* 52px tall; the model's name (inside its pill's 14px) and Workspace (inside its 4px) sit on the 28px gutter. */
@@ -40,7 +39,6 @@
 .themis-composer-effort-panel label, .themis-composer-effort-ends { display: flex; justify-content: space-between; gap: 8px; color: var(--themis-text-2); font-size: .75rem; }
 .themis-composer-effort-panel strong { color: var(--themis-text); font-weight: 500; text-transform: capitalize; }
 .themis-composer-effort-panel input { width: 100%; accent-color: var(--themis-accent); }
-.themis-model-note { margin: 0; color: var(--themis-text-3); font-size: .75rem; }
 .themis-workspace-toggle { flex: none; display: flex; align-items: center; gap: 8px; height: 36px; padding: 0 4px; border: 0; background: transparent; color: var(--themis-text-2); font: inherit; white-space: nowrap; cursor: pointer; }
 .themis-workspace-toggle:hover, .themis-workspace-toggle.is-open { color: var(--themis-text); }
 .themis-workspace-toggle.is-open { font-weight: 600; }
@@ -65,7 +63,6 @@
 /* Back to the latest message, shown only while scrolled up; it rides the bottom of the view. */
 .themis-jump-latest { position: sticky; bottom: 12px; display: flex; align-items: center; gap: 6px; width: fit-content; margin: 8px auto 0; padding: 6px 12px; border: 1px solid var(--themis-border); border-radius: 999px; background: var(--themis-raised); color: var(--themis-text); font: inherit; font-size: .8125rem; box-shadow: 0 8px 24px color-mix(in srgb, var(--themis-shadow) 25%, transparent); cursor: pointer; }
 .themis-jump-latest:hover { color: var(--themis-accent); }
-.themis-thread-start { margin: auto; color: var(--themis-text-2); font-size: .875rem; }
 .themis-thread-msg { max-width: 100%; }
 /* The person's message: a card that lifts off the stage (canvas --cardh, a soft shadow and the top highlight). */
 .themis-thread-msg--user { align-self: flex-end; max-width: 80%; padding: 9px 15px; border-radius: 18px; background: var(--themis-card); box-shadow: var(--themis-card-lift); }

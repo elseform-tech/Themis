@@ -130,7 +130,7 @@ describe("ThreadComposer", () => {
     const icons=screen.getAllByRole("radio",{hidden:true}).map(radio=>radio.querySelector("svg")!.innerHTML);
     expect(new Set(icons).size).toBe(3);
   });
-  it("shows only Auto, Custom and YOLO and permits next-run changes while running",()=>{
+  it("shows only Auto, Custom and YOLO and permits changes while running",()=>{
     const view=composer(true),onApprovalModeChange=vi.fn();
     view.rerender(<ThreadComposer {...view.props} onApprovalModeChange={onApprovalModeChange} />);
     expect(screen.getByText("Custom",{selector:"summary span"})).toBeInTheDocument();
@@ -147,9 +147,6 @@ describe("ThreadComposer", () => {
     fireEvent.click(screen.getByRole("radio",{name:/^Custom/,hidden:true}));
     expect(onApprovalModeChange).toHaveBeenCalledTimes(2);
     expect(screen.queryByRole("button", {name:"Edit configuration"})).toBeNull();
-    expect(screen.getByText("Changes apply to the next run.")).toBeInTheDocument();
-    view.rerender(<ThreadComposer {...view.props} running={false} />);
-    expect(screen.queryByText("Changes apply to the next run.")).toBeNull();
   });
   it("chooses with the arrow keys and ignores input while a change is saving",()=>{
     const view=composer(false),onApprovalModeChange=vi.fn();

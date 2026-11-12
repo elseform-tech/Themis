@@ -72,7 +72,6 @@ export function ResourceMeter() {
             </tbody>
           </table>
           {growing.map(group => <p key={group.group} className="themis-resources-note">{GROUP_LABEL[group.group]} memory grew {formatBytes(group.growing_bytes ?? 0)} over the last 30 minutes and has not come back down.</p>)}
-          <p className="themis-resources-hint">CPU is the share of all {usage.cores} cores. The window itself is drawn by macOS and is not included.</p>
         </div>
       )}
     </div>

@@ -11,4 +11,3 @@
 .themis-resources-popover th:first-child { text-align: left; }
 .themis-resources-popover thead th { color: var(--themis-text-3); }
 .themis-resources-note { margin: 8px 0 0; color: var(--themis-warning); }
-.themis-resources-hint { margin: 8px 0 0; color: var(--themis-text-3); }

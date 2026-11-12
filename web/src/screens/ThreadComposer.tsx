@@ -197,7 +197,7 @@ export function ThreadComposer({
               </button>
             </div>
           </details>
-          <ComposerShield mode={thread.approval_mode} saving={permissionSaving} running={running} yoloKeeps={yoloKeeps} networkBlocked={networkBlocked} onChange={onApprovalModeChange} />
+          <ComposerShield mode={thread.approval_mode} saving={permissionSaving} yoloKeeps={yoloKeeps} networkBlocked={networkBlocked} onChange={onApprovalModeChange} />
           {/* The canvas row: the branch beside Auto; the project and its folder are in the sidebar and on this tooltip. */}
           {location?.branch && <BranchPicker branch={location.branch} branches={location.branches ?? []} busy={running} onSwitch={location.onSwitchBranch} where={`${location.name}\n${location.root}`} />}
 

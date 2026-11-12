@@ -18,7 +18,7 @@ Make the work, its state, and the next useful action obvious. Keep the interface
 - Do not repeat the heading, selected tab, control label, status, or action in nearby helper text.
 - Omit introductory paragraphs, promotional language, redundant subtitles, implementation jargon, and permanent success explanations.
 - Add helper text only when it prevents a likely mistake. Place it beside the decision it explains.
-- Empty states need one short explanation and an action only when an action can resolve them.
+- An empty state is one short title. Add a second line only when it gives a reason or the fix (an error, a missing program), never to explain what would appear there, and an action only when an action can resolve it.
 - Errors say what failed and how to recover. Put raw fields, import diagnostics, logs, and stack traces in advanced workflows.
 - Do not show `lspServers`, “Not included,” or “No supported capabilities to install in Themis” as routine plugin detail content. Use a concise compatibility label on the tile; explain limitations at an installation decision when needed.
 - Keep skill instructions complete and readable. Reducing interface copy must never truncate the requested content.

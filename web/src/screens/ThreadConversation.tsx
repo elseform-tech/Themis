@@ -121,9 +121,7 @@ export function ThreadConversation({
       onScroll={onScroll}
     >
       <div ref={contentRef} className="themis-thread-stream-content">
-      {messages.length === 0 && stream === "" ? (
-        <p className="themis-thread-start">Describe what you’d like to build or change.</p>
-      ) : (
+      {(messages.length > 0 || stream !== "") && (
         groupConversation(messages, running, runDurations, activeRunId).map(row => (
           <ConversationRow
             key={row.kind === "message" ? row.message.id : row.id}

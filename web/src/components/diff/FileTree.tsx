@@ -53,7 +53,7 @@ export function FileTree({
     if (selectedHidden) setHiddenOpen(true);
   }
   if (files.length === 0) {
-    return <EmptyState title="No changed files" hint="There is nothing to review yet." />;
+    return <EmptyState title="No changed files" />;
   }
   const shown = files.filter(file => !file.hidden);
   const needle = query.trim().toLowerCase();

@@ -130,7 +130,7 @@ export function TasksView({ threadId }: { threadId: string }) {
   return (
     <div className="themis-tasks">
       {error && <p className="themis-workspace-note" role="alert">{error}</p>}
-      {current + doneTotal === 0 && <EmptyState title="No tasks in this chat" hint="Runs, subagents, automations and background programs of this chat appear here." />}
+      {current + doneTotal === 0 && <EmptyState title="No tasks in this chat" />}
       {needsYou > 0 && (
         <section aria-label="Needs you">
           <h3 className="themis-tasks-heading is-attention">Needs you</h3>
@@ -186,7 +186,6 @@ export function TasksView({ threadId }: { threadId: string }) {
           })}
         </section>
       )}
-      <p className="themis-workspace-note themis-tasks-footer">Shows this chat only. Stopping never undoes work already done.</p>
     </div>
   );
 }

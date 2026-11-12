@@ -260,10 +260,7 @@ export function Automations() {
 
       {state.automations.length > 4 && <input className="themis-automations-search" type="search" aria-label="Search automations" placeholder="Search automations" value={query} onChange={event => setQuery(event.target.value)} />}
       {state.automations.length === 0 ? (
-        <EmptyState
-          title="No automations"
-          hint="Create an automation to run a scheduled agent in a project."
-        />
+        <EmptyState title="No automations" />
       ) : visibleAutomations.length === 0 ? (
         <EmptyState title="No matching automations" />
       ) : (
@@ -368,7 +365,6 @@ export function Automations() {
               </div>
               {newProjectName !== null && <div className="themis-automations-project-create">
                 <Input id="themis-automation-project-name" label="New project name" value={newProjectName} disabled={creatingProject} onChange={event => setNewProjectName(event.target.value)} />
-                <span className="themis-automations-hint">Create in {state.settings.projects_directory}</span>
                 <div className="themis-automations-project-actions"><Button variant="ghost" size="small" disabled={creatingProject} onClick={() => { setNewProjectName(null); setProjectError(""); }}>Cancel</Button><Button variant="primary" size="small" disabled={creatingProject || !newProjectName.trim()} onClick={() => void makeProject()}>{creatingProject ? "Creating…" : "Create project"}</Button></div>
                 {projectError && <p className="themis-automations-error" role="alert">{projectError}</p>}
               </div>}

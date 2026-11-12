@@ -211,7 +211,7 @@ function ChangesView({ threadId, workspace, projectRoot, onWantDiffWidth }: { th
         {diff.reason && <p className="themis-workspace-note">{diff.reason}</p>}
       </>, files.length > 1 && <FoldAll onSet={open => fold(setAll(files, open))} />)}
       {files.length === 0
-        ? <EmptyState title="No changes" hint={branch !== null ? `${branch} adds nothing to ${current ?? "the current branch"}.` : "The checkout matches its last commit."} />
+        ? <EmptyState title="No changes" hint={branch !== null ? `${branch} adds nothing to ${current ?? "the current branch"}.` : undefined} />
         : (
           <ChangesList key={foldsKey(threadId, branch)} files={files} folds={folds} fold={fold} selected={selected} onSelect={setSelected} projectRoot={projectRoot} branch={branch} onWantDiffWidth={onWantDiffWidth} />
         )}
@@ -343,7 +343,7 @@ function FilesView({ projectRoot }: { projectRoot: string }) {
       <ul className="themis-files-tree" aria-label="Project files">{renderDir("", 0)}</ul>
       <div className="themis-files-view">
         {error && <p className="themis-workspace-note">{error}</p>}
-        {file === null ? <EmptyState title="Pick a file" hint="Files open read-only." />
+        {file === null ? <EmptyState title="Pick a file" />
           : file.binary ? <EmptyState title={file.path} hint="Binary file; not shown." />
           : <>
               <div className="themis-files-path">{file.path}{file.truncated ? " · first 256 KB" : ""}</div>

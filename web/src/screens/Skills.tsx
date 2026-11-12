@@ -93,10 +93,7 @@ export function Skills() {
       </div>
 
       {state.skills.length === 0 ? (
-        <EmptyState
-          title="No skills"
-          hint="Create a skill to give threads reusable instructions and scripts."
-        />
+        <EmptyState title="No skills" />
       ) : (
         <table className="themis-skills-table">
           <thead>
@@ -207,10 +204,6 @@ export function Skills() {
                 patchForm({ allowedToolsRaw: event.target.value })
               }
             />
-            <p className="themis-skills-hint">
-              Tool names are validated by the backend on save — unknown names
-              are rejected with an error.
-            </p>
 
             <div className="themis-skills-scripts">
               <div className="themis-skills-scripts-head">

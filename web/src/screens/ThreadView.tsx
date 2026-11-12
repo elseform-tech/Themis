@@ -245,7 +245,7 @@ export function ThreadView() {
   if (project === null) {
     return (
       <div className="themis-thread">
-        <div className="themis-welcome"><h1>What would you like to build?</h1><p>Create a project to start working with Themis.</p><Button variant="primary" onClick={() => dispatch({ type: "ui/project-dialog", open: true })}>Create project</Button></div>
+        <div className="themis-welcome"><h1>What would you like to build?</h1><Button variant="primary" onClick={() => dispatch({ type: "ui/project-dialog", open: true })}>Create project</Button></div>
       </div>
     );
   }
@@ -253,7 +253,7 @@ export function ThreadView() {
   if (thread === null) {
     return (
       <div className="themis-thread">
-        <div className="themis-welcome"><h1>{project.name}</h1><p>Start a thread to describe your next change.</p><Button variant="primary" onClick={() => void newThread()}>New thread</Button></div>
+        <div className="themis-welcome"><h1>{project.name}</h1><Button variant="primary" onClick={() => void newThread()}>New thread</Button></div>
       </div>
     );
   }

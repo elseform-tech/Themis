@@ -264,9 +264,9 @@ export function DiffView({ file, onWantWidth, loadText, remember }: DiffViewProp
         </span>
 
       {file.too_large && file.hunks.length === 0 ? (
-        <EmptyState title="Too large to show" hint={`${file.path} changed too much to show line by line.`} />
+        <EmptyState title="Too large to show" />
       ) : file.hunks.length === 0 ? (
-        <EmptyState title="No changes" hint={`${file.path} has no hunks to display.`} />
+        <EmptyState title="No changes" />
       ) : (
         <div className={showing === "split" ? "themis-diff-side" : "themis-diff-unified"}>
           {file.hunks.map((hunk, hunkIndex) => {

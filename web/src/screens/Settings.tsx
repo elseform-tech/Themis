@@ -168,15 +168,15 @@ export function SettingsScreen() {
   if (!state.settingsLoaded) {
     return (
       <div className="themis-settings">
-        <EmptyState title="Loading settings…" hint="Fetching stored preferences." />
+        <EmptyState title="Loading settings…" />
       </div>
     );
   }
 
   const numberInput = (key: NumberSetting, label: string, min: number, max: number) =>
     <input className="themis-settings-number" aria-label={label} type="number" min={min} max={max} value={form[key]} onChange={event => setForm(f => ({ ...f, [key]: Number(event.target.value) }))} onBlur={() => { if (form[key] !== state.settings[key]) void save({ [key]: form[key] }); }} />;
-  const number = (key: NumberSetting, label: string, min: number, max: number, hint?: string) => <label className="themis-settings-control">
-    {hint ? <SettingName name={label} hint={hint} /> : label}
+  const number = (key: NumberSetting, label: string, min: number, max: number) => <label className="themis-settings-control">
+    {label}
     {numberInput(key, label, min, max)}
   </label>;
   // Auto (0) follows the model's context window; Custom caps it.
@@ -219,9 +219,9 @@ export function SettingsScreen() {
       {section === "Web" && <WebSettingsSection onSaved={flashSaved} />}
       {section === "Subagents" && <SubagentSettingsSection onSaved={flashSaved} />}
       {section === "Advanced" && <SettingsGroup title="Run limits" action={<SettingsIconButton label="Reset limits" onClick={() => void save({ max_total_turns: 200, context_token_cap: 0, concurrency_limit: 3 })}><ResetIcon /></SettingsIconButton>}>
-        {number("max_total_turns", "Steps per reply", 1, 2000, "Tool calls and answers per reply")}
+        {number("max_total_turns", "Steps per reply", 1, 2000)}
         {contextTokens}
-        {number("concurrency_limit", "Chats at once", 1, 16, "Others wait their turn")}
+        {number("concurrency_limit", "Chats at once", 1, 16)}
       </SettingsGroup>}
       </fieldset>
       </div>

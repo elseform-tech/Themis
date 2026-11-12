@@ -69,10 +69,7 @@ export function ReviewQueue() {
 
       {tab === "pending" ? (
         pending.length === 0 ? (
-          <EmptyState
-            title="No pending reviews"
-            hint="Finished automation runs appear here for review."
-          />
+          <EmptyState title="No pending reviews" />
         ) : (
           <ul className="themis-review-list">
             {pending.map((item) => (
@@ -107,10 +104,7 @@ export function ReviewQueue() {
           </ul>
         )
       ) : done.length === 0 ? (
-        <EmptyState
-          title="Nothing reviewed yet"
-          hint="Continued and dismissed items are listed here."
-        />
+        <EmptyState title="Nothing reviewed yet" />
       ) : (
         <ul className="themis-review-list">
           {done.map((item) => (

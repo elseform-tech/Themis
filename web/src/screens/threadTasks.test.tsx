@@ -150,7 +150,6 @@ describe("TasksView", () => {
     render(<TasksView threadId="t1" />);
     for (const name of ["Running", "Scheduled", "Done"]) expect(screen.getByRole("region", { name })).toBeInTheDocument();
     expect(screen.queryByRole("region", { name: "Needs you" })).toBeNull();
-    expect(screen.getByText("Shows this chat only. Stopping never undoes work already done.")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Stop Morning review" }));
     await waitFor(() => expect(bridge.stopThread).toHaveBeenCalledWith("t1"));
     fireEvent.click(screen.getByRole("button", { name: "Pause Evening" }));

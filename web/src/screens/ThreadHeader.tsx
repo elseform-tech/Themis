@@ -73,7 +73,6 @@ export function ThreadHeader({ thread, models, effortLevels, effort, busy, runni
               onChange={event => onEffortChange(choices[Number(event.target.value)] ?? "")} />
             <div className="themis-composer-effort-ends"><span>Default</span><span>{effortLevels[effortLevels.length - 1] || "No catalog levels"}</span></div>
           </div>
-          <p className="themis-model-note">Changes apply to the next run.</p>
         </div>
       </details>
       <span className="themis-thread-head-spacer" />

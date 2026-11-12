@@ -124,7 +124,6 @@
 .themis-sidebar-dialog-actions { display: flex; justify-content: flex-end; gap: 8px; }
 .themis-sidebar-dialog select { display: block; width: 100%; padding: 7px; border: 1px solid var(--themis-border); border-radius: 10px; background: var(--themis-surface); color: var(--themis-text); }
 .themis-help { display: grid; gap: 18px; min-width: min(380px, 80vw); font-size: .875rem; line-height: 1.5; }
-.themis-help p { margin: 0; color: var(--themis-text-2); }
 .themis-help dl { display: grid; gap: 4px; margin: 0; }
 .themis-help dl > div { display: flex; align-items: center; justify-content: space-between; gap: 16px; min-height: 34px; }
 .themis-help dt { color: var(--themis-text); }
