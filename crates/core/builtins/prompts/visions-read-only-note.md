@@ -1,0 +1,1 @@
+Your tools only read. The project's files are read-only to you, and your shell cannot change them: commands that write fail. Read the project to plan the work and to check it; the chats you start do the building.

@@ -20,8 +20,8 @@ mod finish;
 mod setup;
 
 pub(super) use audit::AuditedApprovals;
-use setup::mcp_remote_name;
 pub(super) use setup::permission_mode;
+use setup::{mcp_failure_reason, mcp_remote_name};
 
 /// Channel capacity for the run-event pump (runs emit a handful of events).
 const EVENT_CHANNEL_CAPACITY: usize = 1024;
@@ -33,10 +33,11 @@ impl AppState {
         sink: &Arc<dyn EventSink>,
         thread_id: &str,
         run_id: &str,
-        snapshot: RunSnapshot,
+        mut snapshot: RunSnapshot,
         task: String,
         policy: RunPolicy,
     ) -> Result<(), String> {
+        let vision = self.visions_run_setup(&mut snapshot)?;
         // Idle memory work waits for the app to be quiet again.
         self.note_memory_activity();
         // What already differs from HEAD before this run, so the end of the run
@@ -260,6 +261,7 @@ impl AppState {
             &run_configuration.sandbox,
             yolo.then_some(snapshot.yolo_sandbox),
         );
+        let sandbox = super::visions::confine(vision.as_ref(), sandbox, &snapshot.work_root);
         let _ = self.inner.diagnostics.append_with_level(
             "sandbox",
             "run_plan",
@@ -364,31 +366,7 @@ impl AppState {
                         }
                     }
                     Err(error) => {
-                        // Transport errors may contain remote URLs, arguments or server
-                        // responses. Only expose fixed, actionable failure categories.
-                        let text = error.to_string();
-                        let missing = format!("{error:#}").contains("MCP program not found")
-                            || text.starts_with("MCP process could not start: ");
-                        let reason = match text.as_str() {
-                            _ if missing => {
-                                "server process could not start: its program was not found"
-                            }
-                            "Could not start MCP server"
-                            | "MCP process could not start. Check the saved command." => {
-                                "server process could not start"
-                            }
-                            "Required MCP environment variable is unset"
-                            | "MCP authentication variable is unset"
-                            | "Required MCP environment variable is unavailable." => {
-                                "required authentication or environment variable is unavailable"
-                            }
-                            "MCP startup denied" => "startup approval was denied",
-                            "MCP startup needs your approval" => {
-                                "it has not been enabled by you since its definition last changed"
-                            }
-                            "Unsupported MCP protocol version" => "server protocol is unsupported",
-                            _ => "connection or tool discovery failed",
-                        };
+                        let reason = mcp_failure_reason(&error);
                         let warning = themis_core::prompts::fill(
                             themis_core::prompts::DESKTOP_MCP_UNAVAILABLE,
                             &[
@@ -937,12 +915,12 @@ impl AppState {
                                                         return Err(error);
                                                     }
                                                 }
-                                                let tools = if yolo { tools } else { themis_core::skills::filter_tools(tools, &skills) };
+                                                let tools = super::visions::run_tools(vision.as_ref(), if yolo { tools } else { themis_core::skills::filter_tools(tools, &skills) });
                                                 // Its `themis recall`/`themis memory` reach only the read tools it has.
-                                                let run_scope = super::chat_reads::run_scope(&snapshot.work_root, &sandbox, &tools, memory_denied);
+                                                let run_scope = super::visions::run_scope(super::chat_reads::run_scope(&snapshot.work_root, &sandbox, &tools, memory_denied), vision.as_ref());
                                                 // Boxed: the run's future is large, and the
                                                 // steer scope must not copy it on the stack.
-                                                themis_core::agent_cli::with_run_scope(run_scope, themis_core::runtime::with_memory_block(memory_block, themis_core::runtime::with_checkpoint_note(checkpoint_note, themis_core::runtime::with_first_request(first_request, themis_core::runtime::with_end_request(end_request, themis_core::runtime::with_steer_inbox(steer_inbox, themis_core::runtime::with_run_notes(run_notes, Box::pin(run_task_with_evidence(
+                                                themis_core::agent_cli::with_run_scope(run_scope, themis_core::runtime::with_memory_block(memory_block, themis_core::runtime::with_checkpoint_note(checkpoint_note, themis_core::runtime::with_first_request(first_request, themis_core::runtime::with_end_request(end_request, themis_core::runtime::with_steer_inbox(steer_inbox, themis_core::runtime::with_run_notes(run_notes, super::visions::boxed_run(vision, run_task_with_evidence(
                                                 llm,
                                                 tools,
                                                 themis_core::skills::compose_task(&task, &skills),

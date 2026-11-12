@@ -149,9 +149,23 @@ impl Fixture {
         (vision_id, saved["id"].as_str().unwrap().to_owned())
     }
 
+    /// Visions switched off in the person's runtime.jsonc (kept with what it holds): no real
+    /// Vision run wakes, for a test that plays the Vision's run itself or checks only the store.
+    fn no_wakes(&self) {
+        let path = self.data.join("runtime.jsonc");
+        let mut config: Value = std::fs::read_to_string(&path)
+            .ok()
+            .and_then(|text| serde_json::from_str(&text).ok())
+            .unwrap_or_else(|| json!({}));
+        config["visions"] = json!({"enabled": false});
+        std::fs::write(path, config.to_string()).unwrap();
+    }
+
     /// The Vision's own chat in the channel and a credential for its run there, as a Vision's
-    /// run gets one.
+    /// run gets one. The test plays that run: no real one wakes in the chat (it would end the
+    /// credential with it).
     async fn vision_run(&self, vision: &str, channel: &str) -> (String, String) {
+        self.no_wakes();
         let chat = self.thread().await;
         self.own(&chat, vision, channel, OwnedKind::VisionChat);
         let mut scope = themis_core::agent_cli::RunScope::new(&self.project, None);
@@ -313,6 +327,7 @@ fn runtime_file(data: &Path) -> String {
 async fn a_channel_and_a_vision_round_trip_with_revisions() {
     let _turn = ONE_SERVER.lock().await;
     let fx = fixture().await;
+    fx.no_wakes();
     let mut events = Client::new(fx.data.clone()).subscribe().await.unwrap();
 
     let vision = fx.call_ok(
@@ -447,6 +462,7 @@ async fn owned_chats_leave_the_plain_list_and_show_in_the_channel() {
 async fn deleting_a_channel_stops_and_releases_its_chats() {
     let _turn = ONE_SERVER.lock().await;
     let fx = fixture().await;
+    fx.no_wakes();
     let provider = stalled_provider().await;
     fx.use_provider(&provider).await;
     let (vision, channel) = fx.vision_and_channel("Wren", "hq");
@@ -1364,5 +1380,199 @@ async fn a_persons_steer_of_a_visions_message_answers_nothing() {
     );
     wait_until(|| async { !fx.running(&work).await }).await;
     assert_eq!(open(), 1, "the Vision's words answered nothing");
+    fx.shut_down().await;
+}
+
+/// The JSON object a shell result's output carries (what `themis call` printed), if any.
+fn result_object(result: &str) -> Option<Value> {
+    let result: Value = serde_json::from_str(result).ok()?;
+    serde_json::from_str(result["output"].as_str()?.trim()).ok()
+}
+
+/// A scripted model for a Vision and the chat it starts. The Vision's run (its system message
+/// is the Vision head) starts a chat with `themis call create_thread`, gives it work with
+/// `themis call send_message` and says so; woken because that chat finished, it reports. Any
+/// other chat answers at once.
+async fn vision_provider(project: PathBuf) -> MockServer {
+    let provider = MockServer::builder().start().await;
+    Mock::given(method("POST"))
+        .respond_with(move |request: &Request| {
+            let body: Value = request.body_json().unwrap_or(Value::Null);
+            let messages = body["messages"].as_array().cloned().unwrap_or_default();
+            let reply = |content: &str| {
+                ResponseTemplate::new(200).set_body_json(json!({"choices": [{"message":
+                    {"role": "assistant", "content": content}, "finish_reason": "stop"}]}))
+            };
+            let system = messages.first().and_then(|m| m["content"].as_str());
+            if !system.is_some_and(|text| text.starts_with("You are Wren, a Vision")) {
+                return reply("done: wrote the greeting");
+            }
+            let last = messages
+                .iter()
+                .rposition(|m| m["role"] == "user")
+                .unwrap_or(0);
+            let woke_for = messages[last]["content"].as_str().unwrap_or_default();
+            if woke_for.contains("\nchat_finished ") {
+                return reply("The greeting chat finished; its history shows it ran.");
+            }
+            let results: Vec<&str> = messages[last..]
+                .iter()
+                .filter(|m| m["role"] == "tool")
+                .filter_map(|m| m["content"].as_str())
+                .collect();
+            let call = |args: Value| {
+                let call = json!({"id": format!("call_{}", results.len()), "type": "function",
+                    "function": {"name": "shell", "arguments": json!({"command": "themis",
+                        "args": ["call", args["method"], args["args"].to_string()]}).to_string()}});
+                ResponseTemplate::new(200).set_body_json(json!({"choices": [{"message":
+                    {"role": "assistant", "content": null, "tool_calls": [call]},
+                    "finish_reason": "tool_calls"}]}))
+            };
+            match results.as_slice() {
+                [] => call(json!({"method": "create_thread",
+                    "args": {"projectRoot": project, "provider": "go"}})),
+                [created] => {
+                    let id = result_object(created).map(|chat| chat["id"].clone());
+                    call(json!({"method": "send_message",
+                        "args": {"threadId": id, "text": "write the greeting"}}))
+                }
+                _ => reply("Started a chat for the greeting."),
+            }
+        })
+        .mount(&provider)
+        .await;
+    provider
+}
+
+/// The person mentions a Vision: its run starts a chat and gives it work through `themis`
+/// (the Vision grant), the chat finishes, and the Vision wakes for that (`chat_finished`) and
+/// posts its report in the channel. Its own chat stays out of the plain list.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_vision_starts_a_chat_and_reports_when_it_finishes() {
+    let _turn = ONE_SERVER.lock().await;
+    let fx = fixture().await;
+    let provider = vision_provider(fx.project.clone()).await;
+    fx.use_provider(&provider).await;
+    // Custom mode: the person's rule lets the Vision's `themis` calls run without asking.
+    fx.state
+        .save_runtime_configuration(
+            "user",
+            Some(fx.project.to_string_lossy().into_owned()),
+            r#"{"approval":{"rules":[{"tool":"shell","command":["themis"],"action":"allow"}]}}"#,
+        )
+        .unwrap();
+    let (vision, channel) = fx.vision_and_channel("Wren", "hq");
+
+    fx.call_ok(
+        "post_channel_message",
+        json!({"channelId": channel, "text": "@Wren please add a greeting"}),
+    );
+    let said = |entries: &[Value]| -> Vec<String> {
+        entries
+            .iter()
+            .filter(|entry| entry["type"] == "vision" && entry["vision_id"] == vision.as_str())
+            .map(|entry| entry["text"].as_str().unwrap().to_owned())
+            .collect()
+    };
+    let reported = tokio::time::timeout(Duration::from_secs(60), async {
+        while said(&fx.entries(&channel)).len() < 2 {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+    })
+    .await;
+    if reported.is_err() {
+        let log = fx.call("query_diagnostic_logs", json!({"service": "visions"}));
+        let results: Vec<Value> = provider
+            .received_requests()
+            .await
+            .unwrap()
+            .iter()
+            .filter_map(|request| request.body_json::<Value>().ok())
+            .flat_map(|body| body["messages"].as_array().cloned().unwrap_or_default())
+            .filter(|message| message["role"] == "tool")
+            .collect();
+        panic!(
+            "no report: {:?}\n{}\n{results:?}",
+            fx.entries(&channel),
+            text(&log)
+        );
+    }
+
+    let entries = fx.entries(&channel);
+    assert_eq!(
+        said(&entries),
+        vec![
+            "Started a chat for the greeting.",
+            "The greeting chat finished; its history shows it ran."
+        ],
+        "one message per run: {entries:?}"
+    );
+    let started: Vec<&Value> = entries
+        .iter()
+        .filter(|entry| entry["type"] == "chat_started")
+        .collect();
+    assert_eq!(started.len(), 1, "{entries:?}");
+    let work = started[0]["thread_id"].as_str().unwrap().to_owned();
+
+    // The work chat got the Vision's message and answered; it is the Vision's.
+    let owner = fx.state.owner_of(&work).expect("owned");
+    assert_eq!((owner.kind, owner.hold), (OwnedKind::Work, Hold::None));
+    let tasks = fx.state.get_thread_history(&work).await.unwrap();
+    let text = serde_json::to_string(&tasks).unwrap();
+    assert!(text.contains("write the greeting"), "{text}");
+    assert!(text.contains("done: wrote the greeting"), "{text}");
+
+    // The Vision's own chat: hidden, titled for the channel, and woken a second time for the
+    // finished chat by name.
+    let mine = fx
+        .state
+        .owners_where(|owner| owner.vision_id == vision && owner.kind == OwnedKind::VisionChat);
+    assert_eq!(mine.len(), 1);
+    let own_chat = mine[0].thread_id.clone();
+    assert_eq!(
+        fx.state.get_thread(&own_chat).await.unwrap().title,
+        "Wren · #hq"
+    );
+    let listed = fx.listed_ids();
+    assert!(!listed.contains(&own_chat) && !listed.contains(&work));
+    let requests = provider.received_requests().await.unwrap();
+    let woke_for_finish = requests.iter().any(|request| {
+        let body: Value = request.body_json().unwrap_or(Value::Null);
+        let messages = body["messages"].as_array().cloned().unwrap_or_default();
+        messages.iter().any(|m| {
+            m["role"] == "user"
+                && m["content"]
+                    .as_str()
+                    .is_some_and(|text| text.contains(&format!("\nchat_finished {work}\n")))
+        })
+    });
+    assert!(woke_for_finish, "the second wake names the finished chat");
+    // Only read tools in the Vision's run.
+    let tools: Vec<String> = requests
+        .iter()
+        .filter_map(|request| request.body_json::<Value>().ok())
+        .filter(|body| {
+            body["messages"][0]["content"]
+                .as_str()
+                .is_some_and(|text| text.starts_with("You are Wren"))
+        })
+        .flat_map(|body| {
+            body["tools"]
+                .as_array()
+                .cloned()
+                .unwrap_or_default()
+                .into_iter()
+                .filter_map(|tool| tool["function"]["name"].as_str().map(str::to_owned))
+        })
+        .collect();
+    assert!(
+        tools
+            .iter()
+            .all(|tool| ["read_file", "list_dir", "search_file", "shell"].contains(&tool.as_str())),
+        "{tools:?}"
+    );
+    assert!(tools.iter().any(|tool| tool == "shell"));
+
+    wait_until(|| async { !fx.running(&own_chat).await && !fx.running(&work).await }).await;
     fx.shut_down().await;
 }

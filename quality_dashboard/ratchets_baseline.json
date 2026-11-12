@@ -601,9 +601,9 @@
    "cyclomatic": 25
   },
   "crates/desktop/src/state/run.rs::AppState::spawn_run": {
-   "cognitive": 144,
-   "cyclomatic": 128,
-   "lines": 967
+   "cognitive": 139,
+   "cyclomatic": 120,
+   "lines": 945
   },
   "crates/desktop/src/state/subagent_tools.rs::SubagentTool#2::spawn": {
    "cyclomatic": 28
@@ -623,9 +623,9 @@
    "lines": 104
   },
   "crates/desktop/src/state/threads.rs::AppState::send_message_with_options": {
-   "cognitive": 45,
-   "cyclomatic": 100,
-   "lines": 384
+   "cognitive": 43,
+   "cyclomatic": 97,
+   "lines": 382
   },
   "crates/desktop/src/transcript.rs::TranscriptStore::append": {
    "cyclomatic": 21

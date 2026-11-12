@@ -500,6 +500,14 @@ pub const AGENT_CLI_VISION_STEERS_ITS_OWN: &str =
 /// The app server's answer to a Vision's `create_thread` outside its channel's project.
 pub const AGENT_CLI_VISION_OTHER_PROJECT: &str =
     include_str!("../builtins/prompts/agent-cli-vision-other-project.md");
+/// A Vision run's system head, in place of the ordinary instructions; `{{name}}`, `{{role}}`,
+/// `{{soul}}`, `{{channel}}`, `{{channel_id}}`, `{{project}}`, `{{autonomy_table}}`.
+pub const VISIONS_SYSTEM: &str = include_str!("../builtins/prompts/visions-system.md");
+/// Follows the Vision system head: a Vision run's tools only read.
+pub const VISIONS_READ_ONLY_NOTE: &str =
+    include_str!("../builtins/prompts/visions-read-only-note.md");
+/// The message that starts a Vision run (a wake); `{{reasons}}`, `{{recent}}`.
+pub const VISIONS_WAKE_TURN: &str = include_str!("../builtins/prompts/visions-wake-turn.md");
 /// `next` hint after starting a background task.
 pub const TOOL_BACKGROUND_NEXT: &str = include_str!("../builtins/prompts/tool-background-next.md");
 

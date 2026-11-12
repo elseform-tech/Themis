@@ -29,10 +29,7 @@ impl AppState {
         let profile = self
             .vision_get(&vision.vision_id)
             .ok_or_else(|| "Unknown Vision".to_owned())?;
-        let model = match profile.model.filter(|model| !model.trim().is_empty()) {
-            Some(model) => model,
-            None => self.inner.settings.get().await.default_model,
-        };
+        let model = self.visions_model(&profile).await;
         let channel = self
             .channel_get(&vision.channel_id)
             .filter(|channel| channel.members.contains(&vision.vision_id))

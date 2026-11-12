@@ -104,6 +104,8 @@ impl AppState {
         for owner in &stopped {
             self.owner_hold(&owner.thread_id, |_| Hold::None)?;
         }
+        // The person wrote: the channel's Visions may wake `visions.max_wakes` times again.
+        self.visions_reset_wakes(channel_id);
         let members: Vec<Vision> = channel
             .members
             .iter()
@@ -127,7 +129,8 @@ impl AppState {
     }
 
     /// The person stopped a chat: a Vision's work chat is held until the person writes in its
-    /// channel or hands it back (a taken-over chat stays taken over), and the channel says so.
+    /// channel or hands it back (a taken-over chat stays taken over), the channel says so, and
+    /// the Vision wakes once to be told.
     pub(crate) fn visions_person_stopped(&self, thread_id: &str) {
         let Some(owner) = self.owner_of(thread_id) else {
             return;
@@ -152,9 +155,16 @@ impl AppState {
             "chat_held",
             json!({"thread_id": thread_id, "channel_id": owner.channel_id, "hold": "stopped_by_person", "saved": held.is_ok()}),
         );
+        // Once, so its next run knows not to restart the chat.
+        self.visions_wake_later(
+            &owner.channel_id,
+            &owner.vision_id,
+            WakeReason::ChatStopped(thread_id.to_owned()),
+        );
     }
 
-    /// The person wrote in a Vision's work chat: the chat is theirs until they hand it back.
+    /// The person wrote in a Vision's work chat: the chat is theirs until they hand it back, and
+    /// the Vision stands by (no wake).
     pub(crate) fn visions_person_took_over(&self, thread_id: &str) {
         let Some(owner) = self.owner_of(thread_id) else {
             return;

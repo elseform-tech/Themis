@@ -347,7 +347,12 @@ impl AppState {
         }
         self.save_questions(thread_id, &questions);
         let pages = stored.len();
-        Ok(stored
+        let new_ids: Vec<String> = stored
+            .iter()
+            .filter(|(_, updated)| !updated)
+            .map(|(question, _)| question.id.clone())
+            .collect();
+        let asked = stored
             .into_iter()
             .map(|(question, updated)| {
                 let _ = self.inner.diagnostics.append(
@@ -366,7 +371,11 @@ impl AppState {
                 );
                 question
             })
-            .collect())
+            .collect();
+        drop(_guard);
+        // A Vision's work chat asked: its Vision wakes to decide or pass the questions on.
+        self.visions_question_asked(thread_id, &new_ids);
+        Ok(asked)
     }
 
     /// The chat's questions, oldest first.

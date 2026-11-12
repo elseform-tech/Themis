@@ -86,3 +86,28 @@ pub(super) fn mcp_remote_name(wire: &str) -> Option<&str> {
         .strip_prefix('_')
         .filter(|remote| !remote.is_empty())
 }
+
+/// Why an MCP connection of a run failed to start, as a fixed category: transport errors may
+/// contain remote URLs, arguments or server responses, so only actionable categories show.
+pub(super) fn mcp_failure_reason(error: &anyhow::Error) -> &'static str {
+    let text = error.to_string();
+    let missing = format!("{error:#}").contains("MCP program not found")
+        || text.starts_with("MCP process could not start: ");
+    match text.as_str() {
+        _ if missing => "server process could not start: its program was not found",
+        "Could not start MCP server" | "MCP process could not start. Check the saved command." => {
+            "server process could not start"
+        }
+        "Required MCP environment variable is unset"
+        | "MCP authentication variable is unset"
+        | "Required MCP environment variable is unavailable." => {
+            "required authentication or environment variable is unavailable"
+        }
+        "MCP startup denied" => "startup approval was denied",
+        "MCP startup needs your approval" => {
+            "it has not been enabled by you since its definition last changed"
+        }
+        "Unsupported MCP protocol version" => "server protocol is unsupported",
+        _ => "connection or tool discovery failed",
+    }
+}

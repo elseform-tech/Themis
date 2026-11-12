@@ -533,10 +533,8 @@ impl AppState {
                 skill_catalog,
                 short_reply: themis_core::runtime::is_short_reply(&text, !attachments.is_empty()),
                 automation_run,
-                person_text: (!automation_run
-                    && themis_core::goal::turn_number(&text).is_none()
-                    && !text.starts_with(themis_core::plugins::hooks::HOOK_WAKE_MARKER))
-                .then(|| text.clone()),
+                person_text: person_words(&text, automation_run),
+                vision: self.visions_run_spec(&thread_id),
             }
         };
         // `/goal` sets the goal, a reply resumes a goal waiting for the user;
@@ -786,6 +784,15 @@ impl AppState {
 /// The default model `wanted`, unless the loaded catalog shows it gone or unusable (Go
 /// retired it): then Themis's default model, else the first usable one. With no catalog
 /// loaded, `wanted` stands.
+/// The person's own words that start a run: `None` for an automation, a goal turn or a hook's
+/// wake (the memory pass reads only what the person said).
+fn person_words(text: &str, automation_run: bool) -> Option<String> {
+    (!automation_run
+        && themis_core::goal::turn_number(text).is_none()
+        && !text.starts_with(themis_core::plugins::hooks::HOOK_WAKE_MARKER))
+    .then(|| text.to_owned())
+}
+
 fn usable_model(catalog: &[themis_core::providers::GoModel], wanted: String) -> String {
     let usable = |id: &str| {
         catalog

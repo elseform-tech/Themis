@@ -260,7 +260,7 @@ project content, so a cloned repository's guidance reaches the agent, but it nev
 | `visions.autonomy` | `ask`, `small`, `most`, `nearly_all` or `custom`, default `small`: how much a Vision decides without asking you. `small` hands it wording and tests, `most` adds undoable steps and retries, `nearly_all` adds scope, deletes and dependencies; external actions and spending are always yours, at every level. Your own `runtime.jsonc`; a project or run layer may only lower it (and may not choose `custom`). |
 | `visions.custom` | Object, default `{}`: with `autonomy: "custom"`, `true` lets the Vision decide that row (`wording`, `tests`, `undoable`, `retry`, `scope`, `delete`, `dependency`). Unknown rows, including `external` and `spend`, are refused. A project or run layer may only set rows to `false`. |
 | `visions.daily_budget_usd` | Number 0.1–100, default `1.0`: estimated dollars all Visions together may spend in a day. Your own `runtime.jsonc`; a project or run layer may only lower it. |
-| `visions.max_wakes` | Integer 1–20, default `6`: most wakes on one thing before a Vision hands back to you. Your own `runtime.jsonc`; a project or run layer may only lower it. |
+| `visions.max_wakes` | Integer 1–20, default `6`: most runs a Vision starts in a row before you write in its channel again (see "A Vision's runs and wakes" under [the `themis` CLI in the agent's shell](#the-themis-cli-in-the-agents-shell)). Your own `runtime.jsonc`; a project or run layer may only lower it. |
 | `subagents.enabled` | Boolean, default `true`: offer the subagent tools (`spawn_subagents`, `wait_subagents`, `message_subagent`, `stop_subagent`) to the agent. A project or run layer may only set it to `false`. |
 | `subagents.max_parallel` | Integer 1–6, default `3`: subagents running at once per chat; more wait their turn. A project or run layer may only lower it. |
 | `subagents.max_turns` | Integer 1–1000, default `40`: model requests per subagent; reaching it ends the subagent with its partial result. A project or run layer may only lower it. |
@@ -918,6 +918,39 @@ secrets, the Visions methods other than `list_channel_threads`, and everything e
 above stay refused. The shell's approval step treats every driving method as `execute`, never
 a read. Writes are logged as `visions`/`chat_started`, `vision_sent` and
 `vision_stopped_chat` with ids only.
+
+**A Vision's runs and wakes.** A Vision never polls. It wakes, meaning a turn starts in its
+hidden Vision chat for the channel (created on its first wake, titled `{name} · #{channel}`,
+on the Vision's model and the channel's approval mode, kept out of the plain chat list), when:
+the person writes in the channel and mentions it as `@Name` (with no mention, the only member
+of a one-Vision channel wakes, and nobody in a channel of several); a work chat it owns
+finishes or fails a turn and nothing else follows (no queued message, no running goal); one
+of those chats asks a question that is not a permission (permissions stay the person's); the
+person hands a chat back; or the person stops one of its chats (once, so it is told not to
+restart it). A chat the person took over wakes it for nothing until it is handed back, and a
+chat the person stopped only for that one stop. The run's system message opens with the
+Vision's head (`visions-system.md`: its name, role and soul, the channel, the exact `themis
+call` shapes that drive chats, the rules on reporting only what it read itself and never
+restarting a stopped chat, and one row per autonomy decision saying "you decide" or "ask the
+person", from the profile's override or `visions.autonomy`/`visions.custom`) and the
+read-only note; the wake message (`visions-wake-turn.md`) lists what woke it and the channel's
+newest entries (8 KiB). The run has only the read-only tools (`read_file`, `list_dir`,
+`search_file`, `shell`) under a sandbox that writes nowhere in the project, no plugins, skills,
+subagents, browser, web or memory, and its credential carries the Vision grant above. Its final
+reply is posted in the channel as the Vision's message (at most 4000 characters); a failed
+turn posts a `chat_failed` notice instead, as does a failed turn of one of its work chats.
+Wakes are bounded: one Vision run at a time per Vision chat, with what arrives meanwhile
+queued (once each, newest 64 kept) and passed together into its next wake when the run
+finishes; at most `visions.max_wakes` runs in a row until the person writes in the channel
+again (what arrives after that waits, never dropped, for the person's next message); none
+while the Vision is paused or `visions.enabled` is `false` (those reasons are dropped). In
+Custom mode a Vision chat's `themis` calls ask for approval like any shell command unless a
+rule allows them. Each decision is logged as `visions`/`wake` with `vision_id`, `channel_id`,
+`reason` (`mentioned`, `chat_finished`, `chat_failed`, `chat_stopped`, `question_asked`,
+`handed_back`, or `queued` for the next run of what waited) and `outcome` (`started`,
+`queued`, `limit`, `idle`, `paused`, `disabled`, `held`, `taken_over`, `not_owned`, `gone`,
+`configuration`, `no_sink`); runs as `vision_chat_created`, `run_started`, `run_refused` and
+`reply_posted`, ids and counts only.
 
 **Threat model.** The guard relies on the agent never holding your credential.
 It is in `server.json` (owner-only, `0600`), which the sandbox stops every

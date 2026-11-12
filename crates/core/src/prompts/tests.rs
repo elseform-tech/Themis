@@ -463,6 +463,25 @@ const ALL: &[(&str, &str, &[&str])] = &[
     ),
     (SKILL_COMMAND_NOTE, "skill-command-note", &[]),
     (SKILL_OUTPUT_STYLE_NOTE, "skill-output-style-note", &[]),
+    (
+        VISIONS_SYSTEM,
+        "visions-system",
+        &[
+            "name",
+            "role",
+            "soul",
+            "channel",
+            "channel_id",
+            "project",
+            "autonomy_table",
+        ],
+    ),
+    (VISIONS_READ_ONLY_NOTE, "visions-read-only-note", &[]),
+    (
+        VISIONS_WAKE_TURN,
+        "visions-wake-turn",
+        &["reasons", "recent"],
+    ),
     (EVAL_ANSWER_PROBE, "eval-answer-probe", &["question"]),
     (
         EVAL_RECALL_TASK,

@@ -13,6 +13,7 @@
 mod channel_log;
 mod control;
 mod drive;
+mod runs;
 mod store;
 mod wakes;
 
@@ -33,6 +34,7 @@ use themis_core::visions::Autonomy;
 
 use super::AppState;
 pub use channel_log::{ChannelLine, ChannelPage};
+pub(super) use runs::{boxed_run, confine, run_scope, run_tools, VisionRunSpec};
 use store::StoreError;
 pub use wakes::WakeReason;
 
@@ -195,6 +197,8 @@ pub(crate) struct VisionsCache {
     /// Each loaded file's size and modified time when read or last written, to notice edits
     /// made on disk since.
     stamps: HashMap<&'static str, store::Stamp>,
+    /// Each Vision's wakes per channel (in memory only).
+    wakes: wakes::WakeSlots,
 }
 
 impl AppState {

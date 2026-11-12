@@ -180,6 +180,8 @@ struct RunSnapshot {
     /// The person's own words that started this run; `None` for a goal turn, a hook's wake or
     /// an automation (the memory pass reads only what the person said).
     person_text: Option<String>,
+    /// Set for a run of a Vision chat: whose and for which channel.
+    vision: Option<visions::VisionRunSpec>,
 }
 
 /// One automation run in flight: the completion registry entry that lets the
