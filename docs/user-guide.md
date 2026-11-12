@@ -346,8 +346,10 @@ Codex, the chat's own model judges its goal: there is no separate check.
   on the right, the Workspace icon with how many files changed. Tasks, subagents,
   the chat's browser and its artifacts are in Workspace and in the chat itself.
 - **Workspace** in a thread's header opens a monitor of the project:
-  **Changes** (readable changed files with line counts and their wrapped,
-  highlighted diff below them (hover the diff for Unified or Split), updating live while the agent works; a
+  **Changes** (readable changed files with line counts, each with its own wrapped,
+  highlighted diff under its row: click a row to fold or unfold it, or use Collapse
+  all and Expand all; click "⋯ N unchanged lines" for 20 more lines, Shift-click for
+  all; hover a diff for Unified or Split), updating live while the agent works; a
   switcher at the top shows another branch's changes without switching to it, which
   only the composer does; binary, generated and secret-looking files are hidden;
   hidden files, those with a part of the path starting with a dot such as
