@@ -3,8 +3,9 @@ import { DiffView, EmptyState, FileTree, Tooltip } from "../components";
 import { authorOf, authorOptions } from "../lib/changeAuthors";
 import { visibleFiles } from "../lib/hiddenFiles";
 import { CodeBlock } from "../components/CodeBlock";
-import type { DiffState, DirEntry, FileView, WorkspaceInfo } from "../lib/types";
-import { branchDiff, getWorkspace, listDiff, listProjectDir, readProjectFile } from "../lib/tauri";
+import type { DiffFile, DiffState, DirEntry, FileView, WorkspaceInfo } from "../lib/types";
+import { foldsKey, isOpen, readFolds, setAll, writeFolds, type Folds } from "../lib/changeFolds";
+import { branchDiff, getWorkspace, listDiff, listProjectDir, readBranchFile, readProjectFile } from "../lib/tauri";
 import { describeError, useApp } from "../state/store";
 import { readSession, writeSession } from "../state/session";
 import type { WorkspaceTab } from "../state/reducer";
@@ -153,7 +154,8 @@ function ChangesView({ threadId, workspace, projectRoot, onWantDiffWidth }: { th
   const branch = picked !== null && others.some(other => other.name === picked) ? picked : null;
   // An edited-files row asks for its file, which is among the uncommitted changes.
   const focus = state.diffFocus;
-  useEffect(() => { if (focus) { setSelected(focus.path); setPicked(null); } }, [focus]);
+  const { folds, fold } = useFolds(threadId, branch);
+  useEffect(() => { if (focus) { setSelected(focus.path); setPicked(null); fold({ [focus.path]: true }); } }, [focus]); // eslint-disable-line react-hooks/exhaustive-deps
   const refresh = useCallback(async () => {
     // A failed refresh keeps the last diff on screen.
     try { dispatch({ type: "diff/set", threadId, diff: await listDiff(threadId) }); } catch { /* keep last */ }
@@ -181,15 +183,13 @@ function ChangesView({ threadId, workspace, projectRoot, onWantDiffWidth }: { th
   const diff = branch !== null ? branchChanges : liveDiff;
   if (branch === null && diff === undefined) return <EmptyState title="Loading changes…" />;
   // The bar stays one element whatever the state, so the selector keeps its focus while a branch loads.
-  const bar = (extra?: ReactNode) => (switcher || extra) && <div className="themis-workspace-changes-bar">{switcher}{extra}</div>;
+  const bar = (extra?: ReactNode, end?: ReactNode) => (switcher || extra || end) && <div className="themis-workspace-changes-bar">{switcher}{extra}{end}</div>;
   if (branch !== null && diff === null) return <div className="themis-workspace-changes">{bar()}<EmptyState title="Loading changes…" /></div>;
   if (typeof diff === "string") return <div className="themis-workspace-changes">{bar()}<EmptyState title="Changes unavailable" hint={diff} /></div>;
   if (!diff || !diff.available) return <div className="themis-workspace-changes">{bar()}<EmptyState title="Changes unavailable" hint={diff?.reason ?? "This folder has no Git diff."} /></div>;
   const options = branch === null ? authorOptions(authors, diff.files.map(entry => entry.path)) : [];
   const shownAuthor = options.includes(author) ? author : "";
   const files = shownAuthor ? diff.files.filter(entry => authorOf(entry.path, authors) === shownAuthor) : diff.files;
-  // A hidden file (`.github/…`) opens only when picked from its folded line.
-  const file = files.find(entry => entry.path === selected) ?? files.find(entry => !entry.hidden) ?? null;
   return (
     <div className="themis-workspace-changes">
       {bar((options.length > 0 || diff.reason) && <>
@@ -202,18 +202,64 @@ function ChangesView({ threadId, workspace, projectRoot, onWantDiffWidth }: { th
           </label>
         )}
         {diff.reason && <p className="themis-workspace-note">{diff.reason}</p>}
-      </>)}
+      </>, files.length > 1 && <FoldAll onSet={open => fold(setAll(files, open))} />)}
       {files.length === 0
         ? <EmptyState title="No changes" hint={branch !== null ? `${branch} adds nothing to ${current ?? "the current branch"}.` : "The checkout matches its last commit."} />
         : (
-          // The canvas: the changed files stacked above the diff's well.
-          <div className="themis-changes-stack">
-            <FileTree files={files} selectedPath={file?.path ?? null} onSelect={setSelected} />
-            {file ? <DiffView file={file} onWantWidth={onWantDiffWidth} /> : <EmptyState title="No changes" hint="Only hidden files changed." />}
-          </div>
+          <ChangesList files={files} folds={folds} fold={fold} selected={selected} onSelect={setSelected} projectRoot={projectRoot} branch={branch} onWantDiffWidth={onWantDiffWidth} />
         )}
     </div>
   );
+}
+
+/** Which changed files are open, per chat and view (session storage). */
+function useFolds(threadId: string, branch: string | null) {
+  const key = foldsKey(threadId, branch);
+  const [folds, setFolds] = useState(() => readFolds(key));
+  const [foldsFor, setFoldsFor] = useState(key);
+  if (foldsFor !== key) { setFoldsFor(key); setFolds(readFolds(key)); }
+  const fold = (change: Folds) => setFolds(previous => { const next = { ...previous, ...change }; writeFolds(key, next); return next; });
+  return { folds, fold };
+}
+
+interface ChangesListProps {
+  files: DiffFile[];
+  folds: Folds;
+  fold: (change: Folds) => void;
+  selected: string | null;
+  onSelect: (path: string) => void;
+  projectRoot: string;
+  branch: string | null;
+  onWantDiffWidth: (width: number) => void;
+}
+
+/** The canvas: each changed file's row heads its own diff well; several can be open and scroll together. */
+function ChangesList({ files, folds, fold, selected, onSelect, projectRoot, branch, onWantDiffWidth }: ChangesListProps) {
+  return (
+    <div className="themis-changes-stack">
+      <FileTree files={files} selectedPath={selected} onSelect={onSelect} isOpen={path => isOpen(folds, files, path)}
+        onToggle={path => fold({ [path]: !isOpen(folds, files, path) })}
+        renderBody={entry => <DiffView file={entry} onWantWidth={onWantDiffWidth} loadText={() => readNewSide(projectRoot, branch, entry)} />} />
+      {files.every(entry => entry.hidden) && <EmptyState title="No changes" hint="Only hidden files changed." />}
+    </div>
+  );
+}
+
+/** Collapse all and Expand all, at the end of the Changes bar when there is more than one file. */
+function FoldAll({ onSet }: { onSet: (open: boolean) => void }) {
+  const icon = (d: string) => <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d={d} /></svg>;
+  return (
+    <span className="themis-changes-foldall">
+      <Tooltip content="Collapse all" below><button type="button" aria-label="Collapse all files" onClick={() => onSet(false)}>{icon("m7 15 5-5 5 5M7 20h10M7 4h10")}</button></Tooltip>
+      <Tooltip content="Expand all" below><button type="button" aria-label="Expand all files" onClick={() => onSet(true)}>{icon("m7 9 5 5 5-5M7 20h10M7 4h10")}</button></Tooltip>
+    </span>
+  );
+}
+
+/** The file as the diff's new side has it, for its unchanged lines: the working tree, or the branch's tip. */
+async function readNewSide(projectRoot: string, branch: string | null, file: DiffFile): Promise<string | null> {
+  const view = branch === null ? await readProjectFile(projectRoot, file.path) : await readBranchFile(projectRoot, branch, file.path);
+  return view.binary ? null : view.content ?? null;
 }
 
 /** File tree | file (the Files tab), with a draggable divider whose position is remembered. */

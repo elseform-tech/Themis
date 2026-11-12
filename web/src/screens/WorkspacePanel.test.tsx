@@ -18,10 +18,11 @@ vi.mock("../lib/tauri", () => ({
   branchDiff: vi.fn(),
   listProjectDir: vi.fn(async () => ({ path: "", truncated: false, entries: [{ name: "README.md", path: "README.md", is_dir: false, size: 5 }] })),
   readProjectFile: vi.fn(async () => ({ path: "README.md", content: "hello", size: 5, truncated: false, binary: false })),
+  readBranchFile: vi.fn(),
   getWorkspace: vi.fn(async () => ({ ...workspace, pull_requests_unavailable: "GitHub CLI (gh) is not installed" })),
 }));
 const workspace: WorkspaceInfo = { root: "/repo", name: "repo", is_git: true, branch: "main", branches: [{ name: "main", current: true, upstream: null, track: null, updated: "now" }], pull_requests: [], pull_requests_unavailable: null };
-beforeEach(() => { appState = { ...initialState, diffs: { t1: diff } }; vi.mocked(bridge.listDiff).mockClear(); const store = new Map<string, string>(); vi.stubGlobal("localStorage", { getItem: (k: string) => store.get(k) ?? null, setItem: (k: string, v: string) => store.set(k, v) }); });
+beforeEach(() => { appState = { ...initialState, diffs: { t1: diff } }; vi.mocked(bridge.listDiff).mockClear(); const store = new Map<string, string>(); vi.stubGlobal("localStorage", { getItem: (k: string) => store.get(k) ?? null, setItem: (k: string, v: string) => store.set(k, v) }); const session = new Map<string, string>(); vi.stubGlobal("sessionStorage", { getItem: (k: string) => session.get(k) ?? null, setItem: (k: string, v: string) => session.set(k, v) }); });
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 
 describe("WorkspacePanel", () => {
@@ -213,5 +214,71 @@ describe("WorkspacePanel", () => {
     expect(screen.queryByTitle("src/a.ts")).toBeNull();
     expect(screen.getAllByTitle("notes/b.md").length).toBeGreaterThan(0);
     vi.mocked(bridge.listDiff).mockImplementation(async () => diff);
+  });
+});
+
+describe("Workspace › Changes accordion", () => {
+  const changed = (count: number) => ({ available: true, files: Array.from({ length: count }, (_, i) => ({ ...diff.files[0]!, path: `src/f${i}.ts`, added: i + 1, removed: 1 })) });
+  const open = () => screen.queryAllByRole("region").map(region => region.getAttribute("aria-label"));
+  const row = (path: string) => screen.getByRole("button", { name: new RegExp(`^${path.replace(".", "\\.")}`) });
+  async function show(count: number) {
+    const state = changed(count);
+    vi.mocked(bridge.listDiff).mockImplementation(async () => state as never);
+    appState = { ...appState, diffs: { t1: state as never } };
+    const view = render(<WorkspacePanel projectRoot="/repo" threadId="t1" workspace={workspace} />);
+    await act(async () => {});
+    return view;
+  }
+  afterEach(() => vi.mocked(bridge.listDiff).mockImplementation(async () => diff));
+
+  it("gives each changed file its own foldable diff: all open for five or fewer, the first for more", async () => {
+    await show(5);
+    expect(open()).toEqual([0, 1, 2, 3, 4].map(i => `Changes in src/f${i}.ts`));
+    cleanup();
+    await show(6);
+    expect(open()).toEqual(["Changes in src/f0.ts"]);
+    expect(row("src/f1.ts")).toHaveAttribute("aria-expanded", "false");
+  });
+
+  it("folds and unfolds from the file's row, several at once, and remembers it for the chat", async () => {
+    const view = await show(3);
+    fireEvent.click(row("src/f1.ts"));
+    expect(row("src/f1.ts")).toHaveAttribute("aria-expanded", "false");
+    expect(open()).toEqual(["Changes in src/f0.ts", "Changes in src/f2.ts"]);
+    view.unmount();
+    await show(3);
+    expect(open()).toEqual(["Changes in src/f0.ts", "Changes in src/f2.ts"]);
+  });
+
+  it("collapses and expands every file from the bar, shown only when there is more than one", async () => {
+    await show(3);
+    fireEvent.click(screen.getByRole("button", { name: "Collapse all files" }));
+    expect(open()).toEqual([]);
+    fireEvent.click(screen.getByRole("button", { name: "Expand all files" }));
+    expect(open()).toHaveLength(3);
+    cleanup();
+    await show(1);
+    expect(screen.queryByRole("button", { name: "Collapse all files" })).toBeNull();
+  });
+
+  it("opens the file an edited-files row asks for, even when it was folded", async () => {
+    const state = changed(6);
+    appState = { ...appState, diffs: { t1: state as never }, diffFocus: { path: "src/f4.ts", at: 1 } };
+    vi.mocked(bridge.listDiff).mockImplementation(async () => state as never);
+    render(<WorkspacePanel projectRoot="/repo" threadId="t1" workspace={workspace} />);
+    await act(async () => {});
+    expect(open()).toContain("Changes in src/f4.ts");
+  });
+
+  it("reads the working tree's file for the unchanged lines of uncommitted changes", async () => {
+    const long = { available: true, files: [{ ...diff.files[0]!, path: "src/long.ts", hunks: [{ old_start: 30, old_lines: 1, new_start: 30, new_lines: 1, lines: [{ kind: "del" as const, text: "old" }, { kind: "add" as const, text: "new" }] }] }] };
+    vi.mocked(bridge.listDiff).mockImplementation(async () => long as never);
+    vi.mocked(bridge.readProjectFile).mockResolvedValueOnce({ path: "src/long.ts", content: Array.from({ length: 40 }, (_, i) => `n${i + 1}`).join("\n"), size: 1, truncated: false, binary: false });
+    appState = { ...appState, diffs: { t1: long as never } };
+    render(<WorkspacePanel projectRoot="/repo" threadId="t1" workspace={workspace} />);
+    await act(async () => {});
+    await act(async () => fireEvent.click(screen.getByRole("button", { name: "⋯ 29 unchanged lines" })));
+    expect(bridge.readProjectFile).toHaveBeenCalledWith("/repo", "src/long.ts");
+    expect(screen.getByRole("button", { name: "⋯ 9 unchanged lines" })).toBeInTheDocument();
   });
 });

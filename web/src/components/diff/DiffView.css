@@ -13,7 +13,10 @@
 .themis-diff-toggle-btn:disabled { color: var(--themis-text-3); opacity: .5; cursor: default; }
 .themis-diff-unified, .themis-diff-side { overflow-x: hidden; overflow-y: auto; padding: 12px 0; }
 .themis-diff-hunk-gap { height: 0; }
-.themis-diff-hunk + .themis-diff-hunk .themis-diff-hunk-gap { height: 1px; margin: 8px 14px; background: var(--themis-border-subtle); }
+/* The unchanged lines before a hunk: "⋯ N unchanged lines", a quiet row in the well; a click shows more. */
+.themis-diff-gap { display: block; width: 100%; padding: 2px 14px 2px 72px; border: 0; background: transparent; color: var(--themis-code-comment); font: inherit; font-size: .75rem; text-align: left; cursor: pointer; }
+.themis-diff-gap:hover:not(:disabled) { color: var(--themis-text); }
+.themis-diff-gap:disabled { cursor: default; }
 /* Long lines wrap under their own text column, so nothing scrolls sideways. */
 .themis-diff-line { display: flex; align-items: baseline; }
 .themis-diff-line--add { background-color: var(--themis-add-bg); }

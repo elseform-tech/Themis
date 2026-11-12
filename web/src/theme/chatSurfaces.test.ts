@@ -46,10 +46,12 @@ it("draws send and stop as one filled accent circle", () => {
   expect(disabled).toContain("opacity: 1");
 });
 
-it("parts a diff's hunks by a hairline inside the well, with no header row", () => {
+it("parts a diff's hunks by a quiet row of their unchanged lines, with no header row", () => {
   const diff = read("components/diff/DiffView.css");
   expect(diff).not.toMatch(/themis-diff-hunk-header|themis-diff-head \{|themis-diff-path/);
-  expect(rule(diff, ".themis-diff-hunk + .themis-diff-hunk .themis-diff-hunk-gap")).toMatch(/height: 1px;[^}]*background: var\(--themis-border-subtle\)/);
+  // The unchanged lines between hunks fold into one quiet row: comment ink, no box, the text colour on hover.
+  expect(rule(diff, ".themis-diff-gap")).toMatch(/border: 0;[^}]*background: transparent;[^}]*color: var\(--themis-code-comment\)/);
+  expect(rule(diff, ".themis-diff-gap:hover:not(:disabled)")).toContain("color: var(--themis-text)");
   // Unified and Split sit over the well's top right, shown on hover or focus like the chat's code toolbar.
   expect(rule(diff, ".themis-diff-toggle")).toMatch(/position: absolute;[^}]*top: 6px;[^}]*right: 8px/);
 });

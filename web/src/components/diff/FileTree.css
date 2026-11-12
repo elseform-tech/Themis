@@ -11,6 +11,11 @@
 .themis-filetree-row { display: flex; align-items: center; gap: 6px; min-height: 32px; padding: 0 4px 0 10px; border-radius: 10px; color: var(--themis-text-2); }
 /* The chosen file sits on a card (canvas). */
 .themis-filetree-row--selected { background: var(--themis-card); color: var(--themis-text); }
+/* Workspace › Changes: a file's row heads its own diff well, open under it (the row on the card while open). */
+.themis-filetree-entry { display: grid; gap: 6px; min-width: 0; }
+.themis-filetree-entry.is-open { margin-bottom: 8px; }
+.themis-filetree-chevron { flex: none; color: var(--themis-text-2); transition: transform 150ms ease; }
+.themis-filetree-chevron.is-open { transform: rotate(90deg); }
 .themis-filetree-select { flex: 1; min-width: 0; display: flex; align-items: center; gap: 8px; padding: 0; border: 0; background: transparent; color: inherit; font: inherit; font-size: .8125rem; text-align: left; cursor: pointer; }
 .themis-filetree-status { flex: none; width: 12px; font-size: .75rem; font-weight: 700; text-align: center; }
 .themis-filetree-status--modified { color: var(--themis-accent); }
