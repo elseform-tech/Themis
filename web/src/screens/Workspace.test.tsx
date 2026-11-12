@@ -872,7 +872,8 @@ describe("Workspace journey", () => {
     expect(within(sidebar).getByRole("button", { name: "New chat" })).toBeEnabled();
     expect(within(sidebar).queryByRole("button", { name: "Settings" })).not.toBeInTheDocument();
     expect(within(sidebar).queryByRole("button", { name: "Integrations" })).not.toBeInTheDocument();
-    expect(within(sidebar).getByText("Themis", { selector: ".themis-wordmark" })).toBeInTheDocument();
+    // No wordmark over the dock (canvas): the project row leads it.
+    expect(sidebar.querySelector(".themis-wordmark")).toBeNull();
     expect(within(sidebar).getByLabelText("Project: Themis")).toHaveAttribute("title", "/tmp/fixed-themis");
     fireEvent.focus(within(rail).getByRole("button", { name: "Integrations" }));
     expect(within(rail).getByRole("button", { name: "Integrations" }).parentElement).toHaveAttribute("data-tooltip", "Integrations");

@@ -6,6 +6,7 @@ import { useNewThread, useDiscardThread } from "./actions";
 import type { ThreadInfo } from "../lib/types";
 import { readSession, writeSession } from "../state/session";
 import { MovingText } from "../components/MovingText";
+import { Tooltip } from "../components/primitives/Tooltip";
 import { DOT_GRID, DotSpinner } from "../components/DotSpinner";
 import { SettingsNav } from "./SettingsNav";
 import { Rail } from "./Rail";
@@ -114,9 +115,8 @@ export function Sidebar({ collapsed: folded }: { collapsed: boolean }) {
       {settingsOpen ? <SettingsNav id="themis-sidebar" /> : <>
       <Rail onHelp={() => setHelp(true)} />
       <aside id="themis-sidebar" className={`themis-sidebar ${collapsed ? "" : "is-visible"}`} inert={collapsed} aria-hidden={collapsed} aria-label="Workspace navigation">
-        <div className="themis-brand"><span className="themis-wordmark">Themis</span></div>
-        <div className="themis-sidebar-nav"><button type="button" className="themis-new-chat" disabled={!state.activeProjectRoot} onClick={() => void newThread()}><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14" /></svg><span>New chat</span></button></div>
-        <div className="themis-sidebar-projects">
+        {/* The canvas's top row: the project (its menu switches, renames, deletes and creates projects) and a pencil for a new chat. */}
+        <div className="themis-sidebar-top">
           <details className="themis-project-switcher" data-popover>
             <summary aria-label={`Project: ${activeProject?.name ?? "none"}`} title={activeProject?.root}>
               <SidebarIcon name="project" /><MovingText>{activeProject?.name ?? "Choose a project"}</MovingText>
@@ -143,6 +143,13 @@ export function Sidebar({ collapsed: folded }: { collapsed: boolean }) {
               <button type="button" className="themis-project-option" aria-label="New project" onClick={event => { event.currentTarget.closest("details")?.removeAttribute("open"); dispatch({ type: "ui/project-dialog", open: true }); }}>New project</button>
             </div>
           </details>
+          <Tooltip content="New chat (⌘/Ctrl+Shift+O)" below>
+            <button type="button" className="themis-new-chat" aria-label="New chat" disabled={!state.activeProjectRoot} onClick={() => void newThread()}>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z" /></svg>
+            </button>
+          </Tooltip>
+        </div>
+        <div className="themis-sidebar-projects">
           {activeProject && <>
             {waiting.length > 0 && <section className="themis-thread-group" aria-label="Waiting for you">
               <h2 className="themis-sidebar-section">Waiting for you<span aria-hidden="true">{waiting.length}</span></h2>

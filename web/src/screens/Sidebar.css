@@ -34,12 +34,13 @@
 .themis-sidebar-slot.is-collapsed .themis-settings-nav { overflow: visible; padding: 14px 4px; }
 
 /* Dock. */
-.themis-brand { display: flex; align-items: center; min-height: 52px; padding: 0 10px; color: var(--themis-text); }
 .themis-wordmark { display: inline-flex; align-items: center; font-size: 1.35rem; font-weight: 600; letter-spacing: -.4px; white-space: nowrap; background: linear-gradient(110deg, var(--themis-text) 25%, var(--themis-gradient-2) 50%, var(--themis-text) 75%); background-size: 240% 100%; background-clip: text; -webkit-background-clip: text; color: transparent; animation: themis-wordmark-glint 3s ease 1; }
 @keyframes themis-wordmark-glint { from { background-position: 100% 0; } to { background-position: -100% 0; } }
-.themis-sidebar-nav { padding: 4px 0 8px; }
-.themis-new-chat { display: inline-flex; align-items: center; gap: 10px; height: 36px; padding: 0 10px; border: 0; background: transparent; color: var(--themis-text); font: inherit; font-weight: 500; cursor: pointer; }
-.themis-new-chat:hover:not(:disabled) { color: var(--themis-accent-hover); }
+/* The top row (canvas): the project switcher fills it, the pencil starts a new chat. */
+.themis-sidebar-top { display: flex; align-items: center; gap: 2px; margin-bottom: 2px; }
+.themis-sidebar-top .themis-project-switcher { flex: 1; min-width: 0; margin: 0; }
+.themis-new-chat { display: grid; place-items: center; flex: none; width: 34px; height: 34px; padding: 0; border: 0; border-radius: 10px; background: transparent; color: var(--themis-text-2); cursor: pointer; }
+.themis-new-chat:hover:not(:disabled) { color: var(--themis-text); }
 .themis-new-chat:disabled { opacity: .5; cursor: not-allowed; }
 .themis-sidebar-projects { flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden; padding: 0 0 8px; }
 
@@ -135,7 +136,7 @@
 
 /* Project switcher: the dock shows only the chosen project's chats. */
 .themis-project-switcher { position: relative; margin: 0 0 10px; }
-.themis-project-switcher > summary { display: flex; align-items: center; gap: 8px; min-height: 40px; padding: 0 10px; color: var(--themis-text); font-weight: 600; cursor: pointer; list-style: none; }
+.themis-project-switcher > summary { display: flex; align-items: center; gap: 10px; min-height: 34px; padding: 0 10px; border-radius: 10px; color: var(--themis-text); font-weight: 600; cursor: pointer; list-style: none; }
 .themis-project-switcher > summary::-webkit-details-marker { display: none; }
 .themis-project-switcher > summary:hover { color: var(--themis-accent-hover); }
 .themis-project-switcher > summary > svg:last-child { flex: none; color: var(--themis-text-3); }

@@ -49,6 +49,24 @@ const titles = (group: HTMLElement) => [...group.querySelectorAll(".themis-threa
 const row = (sidebar: HTMLElement, title: string) => within(sidebar).getByRole("button", { name: title });
 
 describe("Sidebar", () => {
+  it("opens on one canvas row: folder, project name, chevron for the projects, and a pencil New chat", async () => {
+    const { sidebar } = await mountWith([chat("a", "Alpha", 2)]);
+    expect(sidebar.querySelector(".themis-wordmark, .themis-brand")).toBeNull();
+    const top = sidebar.querySelector(".themis-sidebar-top")!;
+    const switcher = within(top as HTMLElement).getByLabelText("Project: One");
+    expect(switcher).toHaveTextContent("One");
+    const newChat = within(top as HTMLElement).getByRole("button", { name: "New chat" });
+    expect(newChat).toHaveTextContent(/^$/);
+    expect(newChat.closest(".themis-tooltip")).toHaveAttribute("data-tooltip", "New chat (⌘/Ctrl+Shift+O)");
+    // The project menu still switches and creates projects.
+    fireEvent.click(switcher);
+    expect(within(sidebar).getByRole("button", { name: "New project" })).toBeInTheDocument();
+    // New chat still starts a chat in the open project.
+    vi.mocked(bridge.createThread).mockResolvedValue(chat("n", "New thread", 3));
+    await act(async () => fireEvent.click(newChat));
+    expect(vi.mocked(bridge.createThread)).toHaveBeenCalled();
+  });
+
   it("keeps a chat that started after the app opened running when it is opened mid-run", async () => {
     const { sidebar, receive } = await mountWith([chat("a", "Alpha", 2), chat("l", "Later", 1)]);
     // "Later" starts running (an automation, the CLI) while its history isn't loaded.

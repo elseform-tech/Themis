@@ -817,13 +817,14 @@ are displayed without execution. Mermaid fences render diagrams with expandable
 source; invalid diagrams show their source instead. Diagram configuration
 directives and image resources fall back to source for safety.
 
-The expandable sidebar shows a glinting Themis wordmark and respects reduced motion.
+The expandable sidebar opens on the project row: click the project's name to switch,
+rename, delete or create a project, or the pencil beside it for a new chat.
 
 
 ### Workspace and appearance
 
 The icon rail stays visible when the project dock is collapsed. Utilities open
-in the main view; New chat, projects, and threads stay in the project dock.
+in the main view; the project, New chat (the pencil) and threads stay in the project dock.
 Hover or focus a utility icon for its label. Long thread titles reveal their
 full text in one leftward pass on hover or keyboard focus. With reduced motion,
 titles wrap instead.
