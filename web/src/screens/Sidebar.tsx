@@ -175,7 +175,6 @@ export function Sidebar({ collapsed }: { collapsed: boolean }) {
     <Dialog open={state.projectDialogOpen} title="Create project" onClose={() => { if (!busy) dispatch({ type: "ui/project-dialog", open: false }); }}>
       <form className="themis-sidebar-dialog" onSubmit={event => { event.preventDefault(); void create(); }}>
         <Input id="project-name" label="Project name" placeholder="My project" value={name} maxLength={80} disabled={busy} onChange={e => { setName(e.target.value); setError(""); }} />
-        <p className="themis-sidebar-dialog-hint">A new folder and Git repository will be created for your project.</p>
         <p className="themis-project-location">{state.settings.projects_directory}/{name.trim() || "project-name"}</p>
         {error && <p role="alert" className="themis-form-error">{error}</p>}
         <div className="themis-sidebar-dialog-actions"><Button variant="ghost" disabled={busy} onClick={() => dispatch({ type: "ui/project-dialog", open: false })}>Cancel</Button><Button type="submit" variant="primary" disabled={busy || !name.trim()}>{busy ? "Creating…" : "Create project"}</Button></div>
