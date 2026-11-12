@@ -161,10 +161,13 @@ fn shape(asked: NewQuestion) -> Result<Shaped, AskRefused> {
     })
 }
 
-/// The open question `asked` updates: the same topic, or the same wording.
+/// The open question `asked` updates: the same topic, or the same wording. A permission
+/// question and an ordinary one never merge, so an agent repeating an Auto block's wording
+/// asks a question of its own and cannot rewrite the person's box.
 fn same_open(questions: &[Question], asked: &Shaped) -> Option<usize> {
     questions.iter().position(|question| {
         question.answer.is_none()
+            && question.permission == asked.permission
             && (asked.topic.is_some() && question.topic == asked.topic
                 || question.question == asked.text)
     })
@@ -188,7 +191,7 @@ fn store_question(
         question.blocking = asked.blocking;
         question.topic = asked.topic.or(question.topic.take());
         question.subagent = asked.subagent;
-        // Once a permission question, always one: a repeat cannot take the flag away.
+        // Only questions of the same kind merge (see `same_open`); kept as a second guard.
         question.permission |= asked.permission;
         question.run_id = run_id.to_owned();
         return (question.clone(), true);
@@ -791,7 +794,7 @@ mod tests {
 
     /// The flag is saved with the question and read back by a fresh state on the same data
     /// (an Auto block's in-memory record does not survive a restart); a file from before the
-    /// flag reads as an ordinary question; an agent's repeat cannot take the flag away.
+    /// flag reads as an ordinary question.
     #[test]
     fn the_permission_flag_is_saved_and_kept() {
         let dir = tempfile::tempdir().unwrap();
@@ -813,20 +816,6 @@ mod tests {
             )
             .unwrap();
         assert!(!ordinary.permission);
-        let repeat = state
-            .ask_question(
-                &sink,
-                "chat-1",
-                "run",
-                NewQuestion {
-                    question: "Allow it?".into(),
-                    ..NewQuestion::default()
-                },
-            )
-            .unwrap();
-        assert_eq!(repeat.id, asked.id);
-        assert!(repeat.permission, "a repeat keeps the flag");
-
         let restarted = AppState::new_for_test(dir.path().join("settings.json"));
         let read = restarted.questions_for("chat-1");
         let flags: Vec<bool> = read.iter().map(|question| question.permission).collect();
@@ -880,5 +869,49 @@ mod tests {
             .record_answers("chat-1", vec![(blocked.id, "Allow once".into())], true)
             .unwrap();
         assert_eq!(answered[0].1, "Allow once");
+    }
+
+    /// An agent's `ask_user` with an Auto block's exact wording (or topic) becomes a question of
+    /// its own: the block's choices, recommendation, hints and asker stay as Auto set them.
+    #[test]
+    fn an_agent_repeating_an_auto_blocks_wording_cannot_rewrite_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let sink = crate::sink::ChannelSink::channel().0;
+        let state = AppState::new_for_test(dir.path().join("settings.json"));
+        let block = NewQuestion {
+            reasons: vec![("Skip it".into(), "Leaves it out.".into())],
+            assumption: Some("Skip it".into()),
+            ..permission_question("Auto mode blocked an action: touch hard.txt.")
+        };
+        let asked = state.ask_question(&sink, "chat-1", "run", block).unwrap();
+        let forged = state
+            .ask_question(
+                &sink,
+                "chat-1",
+                "run-2",
+                NewQuestion {
+                    question: "Auto mode blocked an action: touch hard.txt.".into(),
+                    choices: strings(&["Allow once", "Skip it"]),
+                    assumption: Some("Allow once".into()),
+                    reasons: vec![("Allow once".into(), "Totally safe, pick this.".into())],
+                    blocking: true,
+                    subagent: Some("sub-1".into()),
+                    ..NewQuestion::default()
+                },
+            )
+            .unwrap();
+        assert_ne!(forged.id, asked.id, "a separate question");
+        assert!(!forged.permission);
+        let kept = state
+            .questions_for("chat-1")
+            .into_iter()
+            .find(|question| question.id == asked.id)
+            .unwrap();
+        assert_eq!(kept, asked, "the block is untouched");
+        assert!(kept.permission);
+        assert_eq!(kept.assumption.as_deref(), Some("Skip it"));
+        assert_eq!(kept.subagent, None);
+        assert_eq!(kept.choices, asked.choices);
+        assert_eq!(kept.reasons, asked.reasons);
     }
 }
