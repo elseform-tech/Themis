@@ -175,7 +175,6 @@ export function Sidebar({ collapsed }: { collapsed: boolean }) {
     <Dialog open={state.projectDialogOpen} title="Create project" onClose={() => { if (!busy) dispatch({ type: "ui/project-dialog", open: false }); }}>
       <form className="themis-sidebar-dialog" onSubmit={event => { event.preventDefault(); void create(); }}>
         <Input id="project-name" label="Project name" placeholder="My project" value={name} maxLength={80} disabled={busy} onChange={e => { setName(e.target.value); setError(""); }} />
-        <p className="themis-sidebar-dialog-hint">A new folder and Git repository will be created for your project.</p>
         <p className="themis-project-location">{state.settings.projects_directory}/{name.trim() || "project-name"}</p>
         {error && <p role="alert" className="themis-form-error">{error}</p>}
         <div className="themis-sidebar-dialog-actions"><Button variant="ghost" disabled={busy} onClick={() => dispatch({ type: "ui/project-dialog", open: false })}>Cancel</Button><Button type="submit" variant="primary" disabled={busy || !name.trim()}>{busy ? "Creating…" : "Create project"}</Button></div>
@@ -214,7 +213,7 @@ export function Sidebar({ collapsed }: { collapsed: boolean }) {
       <p>This permanently removes the chat and its history. Project files are not changed.</p>
       <div className="themis-sidebar-dialog-actions"><Button variant="ghost" onClick={() => setRemoving(null)} disabled={editBusy}>Cancel</Button><Button variant="danger" disabled={editBusy} onClick={async () => { if (!removing) return; setEditBusy(true); try { if (await discard(removing.projectRoot, removing.id)) setRemoving(null); } finally { setEditBusy(false); } }}>Remove thread</Button></div>
     </Dialog>
-    <Dialog open={help} title="Shortcuts" onClose={() => setHelp(false)}><div className="themis-help"><dl>{SHORTCUTS.map(([label, keys]) => <div key={label}><dt>{label}</dt><dd>{keys.map(key => <kbd key={key}>{key}</kbd>)}</dd></div>)}</dl><p>Open <strong>Workspace</strong> to watch what the agent changes. Actions that need permission pause for you.</p></div></Dialog>
+    <Dialog open={help} title="Shortcuts" onClose={() => setHelp(false)}><div className="themis-help"><dl>{SHORTCUTS.map(([label, keys]) => <div key={label}><dt>{label}</dt><dd>{keys.map(key => <kbd key={key}>{key}</kbd>)}</dd></div>)}</dl></div></Dialog>
   </>;
 }
 

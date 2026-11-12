@@ -288,7 +288,7 @@ export function BrowserView({ threadId, running = false }: { threadId: string; r
           {agentCursor && <svg className="themis-browser-cursor" data-testid="agent-cursor" style={{ transform: `translate(${shown.left + agentCursor[0] * shown.scale}px, ${shown.top + agentCursor[1] * shown.scale}px)` }} width="18" height="18" viewBox="0 0 18 18" aria-hidden="true"><path d="M2 1.5v13l3.6-3.2 2.4 5.2 2.6-1.2-2.4-5.1h4.8Z" /></svg>}
         </div>
       ) : (
-        <EmptyState title="No page open" hint="Pages the agent opens show here too." />
+        <EmptyState title="No page open" />
       )}
       {devtools && <iframe className="themis-browser-devtools" title="DevTools" src={devtools} />}
     </div>

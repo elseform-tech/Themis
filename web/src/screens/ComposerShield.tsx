@@ -27,8 +27,6 @@ const STEP: Record<string, number> = { ArrowDown: 1, ArrowRight: 1, ArrowUp: -1,
 interface ComposerShieldProps {
   mode?: ApprovalMode;
   saving: boolean;
-  /** A run is going: a change applies to the next one. */
-  running: boolean;
   /** Blocks the configuration wrote that YOLO keeps (network, Keychain, deny rules). */
   yoloKeeps?: string[];
   /** The configuration blocks the network, in every mode. */
@@ -50,7 +48,7 @@ function closeList(menu: HTMLDetailsElement | null) {
  * shield does not move focus to it. A pick (not an arrow step) and Esc close the list, so a later click
  * meant for the text box cannot land on it; the app closes it on a press outside.
  */
-export function ComposerShield({ mode = "custom", saving, running, yoloKeeps, networkBlocked = false, onChange }: ComposerShieldProps) {
+export function ComposerShield({ mode = "custom", saving, yoloKeeps, networkBlocked = false, onChange }: ComposerShieldProps) {
   const current = entry(mode);
   const menu = useRef<HTMLDetailsElement>(null);
   const items = useRef<(HTMLButtonElement | null)[]>([]);
@@ -86,7 +84,6 @@ export function ComposerShield({ mode = "custom", saving, running, yoloKeeps, ne
           })}
         </div>
         {networkBlocked && <p>Network blocked by your configuration</p>}
-        {running && <p>Changes apply to the next run.</p>}
       </div>
     </details>
   );

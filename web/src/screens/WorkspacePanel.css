@@ -84,7 +84,6 @@
 .themis-task-row-actions button { padding: 4px 2px; border: 0; background: transparent; color: var(--themis-text-2); font: inherit; font-size: .8125rem; cursor: pointer; }
 .themis-task-row-actions button:hover:not(:disabled) { color: var(--themis-text); }
 .themis-task-row-actions button:disabled { opacity: .5; cursor: not-allowed; }
-.themis-tasks-footer { margin-top: auto; }
 .themis-background-command { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: ui-monospace, SFMono-Regular, monospace; font-size: .8125rem; }
 .themis-background-tail, .themis-background-log { margin: 4px 0 0; padding: 6px 8px; border-radius: 6px; background: var(--themis-surface); color: var(--themis-text-2); font-family: ui-monospace, SFMono-Regular, monospace; font-size: .75rem; line-height: 1.45; white-space: pre-wrap; overflow-wrap: anywhere; }
 .themis-background-tail { max-height: 4.6em; overflow: hidden; }
