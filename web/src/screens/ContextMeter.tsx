@@ -50,14 +50,15 @@ export function ContextMeter({ budget, compacting = false, running = false, thre
   return (
     <div className="themis-context" ref={root}>
       <button type="button" className={`themis-context-chip themis-context-chip--${tone}`} aria-expanded={open}
-        aria-label={`Context ${percent}% full${soon ? ", close to auto-compact" : ""}`} onClick={() => setOpen(value => !value)}>
+        aria-label={`Context ${percent}% full${soon ? ", close to auto-compact" : ""}`} title={`Context ${percent}% full`} onClick={() => setOpen(value => !value)}>
         <svg width="20" height="20" viewBox="0 0 36 36" aria-hidden="true">
           <circle cx="18" cy="18" r="14" fill="none" stroke="var(--themis-border)" strokeWidth="5" />
           <circle className={compacting ? "themis-context-spin" : undefined} cx="18" cy="18" r="14" fill="none" strokeWidth="5" strokeLinecap="round"
             stroke={tone === "warn" ? "var(--themis-gradient-2)" : "var(--themis-text-2)"} pathLength="100"
             strokeDasharray={`${compacting ? 30 : percent} 100`} transform="rotate(-90 18 18)" />
         </svg>
-        <span>{label}</span>
+        {/* In a narrow composer the number gives way first; the ring and this tooltip keep it. */}
+        <span className="themis-context-value">{label}</span>
       </button>
       {open && (
         <div role="dialog" aria-label="Context" className="themis-context-panel">

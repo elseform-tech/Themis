@@ -243,9 +243,9 @@ const branchIcon = <svg width="16" height="16" viewBox="0 0 24 24" fill="none" s
  *  would move files underneath it. */
 export function BranchPicker({ branch, branches, busy, onSwitch, where }: { branch: string; branches: string[]; busy: boolean; onSwitch?: (branch: string) => void; where?: string }) {
   const others = branches.filter(name => name !== branch);
-  if (busy || !onSwitch || others.length === 0) return <span className="themis-composer-branch-static" title={where ? `Branch ${branch} · ${where}` : `Branch ${branch}`}>{branchIcon}<span className="themis-composer-branch themis-composer-label">{branch}</span></span>;
+  if (busy || !onSwitch || others.length === 0) return <span className="themis-composer-branch-static" title={where ? `Branch ${branch} · ${where}` : `Branch ${branch}`}>{branchIcon}<span className={`themis-composer-branch themis-composer-label${branch.length <= 10 ? " is-short" : ""}`}>{branch}</span></span>;
   return <details data-popover className="themis-branch-picker">
-    <summary aria-label={`Branch ${branch}. Switch branch`} title={where ? `Switch branch · ${where}` : "Switch branch"}>{branchIcon}<span className="themis-composer-branch themis-composer-label">{branch}</span><svg className="themis-branch-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true"><path d="m6 9 6 6 6-6" /></svg></summary>
+    <summary aria-label={`Branch ${branch}. Switch branch`} title={where ? `Switch branch · ${where}` : "Switch branch"}>{branchIcon}<span className={`themis-composer-branch themis-composer-label${branch.length <= 10 ? " is-short" : ""}`}>{branch}</span><svg className="themis-branch-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true"><path d="m6 9 6 6 6-6" /></svg></summary>
     <div className="themis-branch-menu" role="menu" aria-label="Switch branch">
       {others.map(name => <button key={name} type="button" role="menuitem" onClick={event => { event.currentTarget.closest("details")?.removeAttribute("open"); onSwitch(name); }}>{name}</button>)}
     </div>

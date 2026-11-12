@@ -439,17 +439,29 @@ describe("ThreadComposer layout (canvas: input, then one row of controls)", () =
     expect(css).not.toMatch(/themis-composer-location/);
   });
 
-  // A Workspace beside the chat leaves a composer about 280px wide (canvas Workspace board): the row overflows, and
-  // only the branch's name may give way, by an ellipsis; its icon, +, Auto, the meter and send never shrink away.
-  it("keeps every control in a narrow composer: only the branch's name truncates, down to its icon", async () => {
+  // A Workspace beside the chat leaves a composer about 280px wide (canvas Workspace board). What gives way, in order:
+  // the meter's percent text (its ring and tooltip stay), then the gaps, then a branch name past ten characters
+  // (shorter names such as main or feature-x show whole); the branch's icon alone is the last resort.
+  it("gives way in a narrow composer in order: meter text, then gaps, then a long branch name", async () => {
     const { readFileSync } = await import("node:fs");
     const css = readFileSync("src/screens/ThreadView.css", "utf8");
     const rule = (selector: string) => { const at = css.indexOf(`\n${selector} {`); expect(at, selector).toBeGreaterThanOrEqual(0); return css.slice(at, css.indexOf("}", at)); };
+    const step = (width: number, body: RegExp) => expect(css, `step at ${width}px`).toMatch(new RegExp(`@container themis-composer \\(max-width: ${width}px\\)\\s*\\{\\s*${body.source}`));
+    step(420, /\.themis-thread-composer \.themis-context-value\s*\{\s*display:\s*none;/);
+    step(380, /\.themis-thread-composer-actions\s*\{\s*gap:\s*8px;/);
+    step(260, /\.themis-thread-composer \.themis-composer-label\s*\{\s*display:\s*none;/);
+    // +, Auto, the meter and send never shrink; the branch shrinks only to its content's floor.
     expect(rule(".themis-thread-composer-actions > *")).toContain("flex: none");
-    expect(rule(".themis-thread-composer-actions > .themis-branch-picker, .themis-thread-composer-actions > .themis-composer-branch-static")).toMatch(/flex: 0 1 auto;[^}]*min-width: 24px/);
-    expect(rule(".themis-thread-composer-actions .themis-branch-picker svg, .themis-composer-branch-static svg")).toContain("flex: none");
-    expect(rule(".themis-composer-branch")).toMatch(/min-width: 0;[^}]*overflow: hidden;[^}]*text-overflow: ellipsis/);
-    expect(rule(".themis-composer-spacer")).toMatch(/flex: 1 1 0;[^}]*min-width: 0/);
-    expect(css).toMatch(/@container themis-composer \(max-width: 420px\)\s*\{\s*\.themis-thread-composer-actions\s*\{\s*gap: 10px;/);
+    expect(rule(".themis-thread-composer-actions > .themis-branch-picker, .themis-thread-composer-actions > .themis-composer-branch-static")).toMatch(/flex: 0 1 auto;[^}]*min-width: auto/);
+    expect(rule(".themis-composer-branch")).toMatch(/min-width: 10ch;[^}]*overflow: hidden;[^}]*text-overflow: ellipsis/);
+    expect(rule(".themis-composer-branch.is-short")).toContain("min-width: auto");
+  });
+
+  it("keeps a short branch name whole and lets only a long one truncate", () => {
+    const props = { thread, draft: "", composerDisabled: false, running: false, stopping: false, sendError: undefined, secretConfigured: true, onDraftChange: vi.fn(), onSend: vi.fn(), onStop: vi.fn(), onNewThread: vi.fn(), onOpenSettings: vi.fn(), skills: [], plugins: [] };
+    const view = render(<ThreadComposer {...props} location={{ name: "p", root: "/p", branch: "main", branches: ["main", "dev"], onSwitchBranch: vi.fn() }} />);
+    expect(screen.getByText("main")).toHaveClass("is-short");
+    view.rerender(<ThreadComposer {...props} location={{ name: "p", root: "/p", branch: "codex/date-rollover", branches: ["main", "codex/date-rollover"], onSwitchBranch: vi.fn() }} />);
+    expect(screen.getByText("codex/date-rollover")).not.toHaveClass("is-short");
   });
 });
