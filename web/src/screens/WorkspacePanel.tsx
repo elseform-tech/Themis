@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type CSSProperties, type ReactNode, useMemo } from "react";
 import { DiffView, EmptyState, FileTree, Tooltip } from "../components";
+import type { HiddenLinesMemory } from "../components/diff/DiffView";
 import { authorOf, authorOptions } from "../lib/changeAuthors";
 import { visibleFiles } from "../lib/hiddenFiles";
 import { CodeBlock } from "../components/CodeBlock";
@@ -212,7 +213,7 @@ function ChangesView({ threadId, workspace, projectRoot, onWantDiffWidth }: { th
       {files.length === 0
         ? <EmptyState title="No changes" hint={branch !== null ? `${branch} adds nothing to ${current ?? "the current branch"}.` : "The checkout matches its last commit."} />
         : (
-          <ChangesList files={files} folds={folds} fold={fold} selected={selected} onSelect={setSelected} projectRoot={projectRoot} branch={branch} onWantDiffWidth={onWantDiffWidth} />
+          <ChangesList key={foldsKey(threadId, branch)} files={files} folds={folds} fold={fold} selected={selected} onSelect={setSelected} projectRoot={projectRoot} branch={branch} onWantDiffWidth={onWantDiffWidth} />
         )}
     </div>
   );
@@ -241,11 +242,14 @@ interface ChangesListProps {
 
 /** The canvas: each changed file's row heads its own diff well; several can be open and scroll together. */
 function ChangesList({ files, folds, fold, selected, onSelect, projectRoot, branch, onWantDiffWidth }: ChangesListProps) {
+  // Each file's revealed unchanged lines, kept while this view stays open (a new chat or branch starts afresh).
+  const [revealed] = useState(() => new Map<string, HiddenLinesMemory>());
   return (
     <div className="themis-changes-stack">
       <FileTree files={files} selectedPath={selected} onSelect={onSelect} isOpen={path => isOpen(folds, files, path)}
         onToggle={path => fold({ [path]: !isOpen(folds, files, path) })}
-        renderBody={entry => <DiffView file={entry} onWantWidth={onWantDiffWidth} loadText={() => readNewSide(projectRoot, branch, entry)} />} />
+        renderBody={entry => <DiffView file={entry} onWantWidth={onWantDiffWidth} loadText={() => readNewSide(projectRoot, branch, entry)}
+          remember={{ initial: revealed.get(entry.path), save: memory => revealed.set(entry.path, memory) }} />} />
       {files.every(entry => entry.hidden) && <EmptyState title="No changes" hint="Only hidden files changed." />}
     </div>
   );

@@ -8,3 +8,7 @@ it("lets a row shrink to the list so a long name ellipsizes and its line counts 
   expect(styles).toMatch(/\.themis-filetree > \*, \.themis-filetree-files > \*\s*\{\s*min-width:\s*0;/);
   expect(styles).toMatch(/\.themis-filetree-counts\s*\{\s*flex:\s*none;/);
 });
+
+it("rings a file row on keyboard focus only, never after a mouse click", () => {
+  expect(styles).toMatch(/\.themis-filetree-select:focus:not\(:focus-visible\)\s*\{\s*outline:\s*none;/);
+});

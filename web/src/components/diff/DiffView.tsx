@@ -13,7 +13,13 @@ export interface DiffViewProps {
   /** The file as the diff's new side has it (the working tree, or a branch's tip), for its unchanged lines;
    *  null when it can't be read. Called once, on the first reveal. */
   loadText?: () => Promise<string | null>;
+  /** Where the revealed unchanged lines (and the text read for them) live while the view stays open, so folding the
+   *  file and unfolding it keeps them. */
+  remember?: { initial?: HiddenLinesMemory; save: (memory: HiddenLinesMemory) => void };
 }
+
+/** What a diff has revealed of its unchanged lines: lines shown per gap, and the file's text once read. */
+export interface HiddenLinesMemory { shown: Record<number, number>; lines: string[] | false | null }
 
 /** Unchanged lines before a hunk, in the new file's numbering (`from`..`to`); `offset` is new minus old there. */
 export interface HunkGap { before: number; from: number; to: number; offset: number }
@@ -36,10 +42,12 @@ export function hunkGaps(hunks: DiffFile["hunks"]): HunkGap[] {
 const REVEAL_STEP = 20;
 
 /** How many lines of each gap show, and the file's lines once read (`false` when they can't be). */
-function useHiddenLines(file: DiffFile, loadText: DiffViewProps["loadText"]) {
+function useHiddenLines(file: DiffFile, loadText: DiffViewProps["loadText"], remember: DiffViewProps["remember"]) {
   const gaps = useMemo(() => hunkGaps(file.hunks), [file.hunks]);
-  const [shown, setShown] = useState<Record<number, number>>({});
-  const [lines, setLines] = useState<string[] | false | null>(null);
+  const [shown, setShown] = useState<Record<number, number>>(() => remember?.initial?.shown ?? {});
+  const [lines, setLines] = useState<string[] | false | null>(() => remember?.initial?.lines ?? null);
+  const save = remember?.save;
+  useEffect(() => { save?.({ shown, lines }); }, [save, shown, lines]);
   const reveal = async (gap: HunkGap, all: boolean) => {
     let text = lines;
     if (text === null) {
@@ -212,9 +220,9 @@ function HunkRows({ lines, split, extension }: { lines: NumberedLine[]; split: b
 
 /** Read-only diff of one file, unified or side by side; the choice is remembered. A file with
  *  only one side, or too little room for two, reads better in one column. */
-export function DiffView({ file, onWantWidth, loadText }: DiffViewProps) {
+export function DiffView({ file, onWantWidth, loadText, remember }: DiffViewProps) {
   const extension = file.path.split(".").pop();
-  const hiddenLines = useHiddenLines(file, loadText);
+  const hiddenLines = useHiddenLines(file, loadText, remember);
   const [layout, setLayoutState] = useState<DiffLayout>(() => readSession<DiffLayout>(LAYOUT_KEY, "unified"));
   const root = useRef<HTMLDivElement>(null);
   const [cramped, setCramped] = useState(false);

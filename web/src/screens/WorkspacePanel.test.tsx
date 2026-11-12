@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { initialState } from "../state/reducer";
 import type { WorkspaceInfo } from "../lib/types";
@@ -280,5 +280,26 @@ describe("Workspace › Changes accordion", () => {
     await act(async () => fireEvent.click(screen.getByRole("button", { name: "⋯ 29 unchanged lines" })));
     expect(bridge.readProjectFile).toHaveBeenCalledWith("/repo", "src/long.ts");
     expect(screen.getByRole("button", { name: "⋯ 9 unchanged lines" })).toBeInTheDocument();
+  });
+
+  it("keeps the unchanged lines a file has revealed when it is folded and unfolded, or all are collapsed and expanded", async () => {
+    const lines = Array.from({ length: 60 }, (_, i) => `n${i + 1}`).join("\n");
+    const long = { available: true, files: ["src/one.ts", "src/two.ts"].map(path => ({ ...diff.files[0]!, path, hunks: [{ old_start: 50, old_lines: 1, new_start: 50, new_lines: 1, lines: [{ kind: "del" as const, text: "old" }, { kind: "add" as const, text: "new" }] }] })) };
+    vi.mocked(bridge.listDiff).mockImplementation(async () => long as never);
+    vi.mocked(bridge.readProjectFile).mockClear().mockResolvedValue({ path: "src/one.ts", content: lines, size: 1, truncated: false, binary: false });
+    appState = { ...appState, diffs: { t1: long as never } };
+    render(<WorkspacePanel projectRoot="/repo" threadId="t1" workspace={workspace} />);
+    await act(async () => {});
+    const well = () => screen.getByRole("region", { name: "Changes in src/one.ts" });
+    await act(async () => fireEvent.click(within(well()).getByRole("button", { name: "⋯ 49 unchanged lines" })));
+    expect(within(well()).getByRole("button", { name: "⋯ 29 unchanged lines" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /^src\/one\.ts/ }));
+    fireEvent.click(screen.getByRole("button", { name: /^src\/one\.ts/ }));
+    expect(within(well()).getByRole("button", { name: "⋯ 29 unchanged lines" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Collapse all files" }));
+    fireEvent.click(screen.getByRole("button", { name: "Expand all files" }));
+    expect(within(well()).getByRole("button", { name: "⋯ 29 unchanged lines" })).toBeInTheDocument();
+    // Read once: the text is kept with the revealed lines.
+    expect(bridge.readProjectFile).toHaveBeenCalledTimes(1);
   });
 });
