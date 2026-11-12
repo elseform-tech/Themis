@@ -56,7 +56,7 @@ function Thinking({ visions }: { visions: VisionInfo[] }) {
 /** Keeps the log at its newest line while the person is there; reading back stays put. `tail`
  *  changes with anything added at the bottom (a line, an approval, a thinking row or the post that
  *  replaces it); `first` with lines loaded above, which keep what was on screen where it was
- *  (`holdPlace` before the load, `releasePlace` when it added nothing). */
+ *  (`holdPlace` before the load, `releasePlace` when it failed or added nothing). */
 function useStickToEnd(tail: string, first: number | undefined) {
   const log = useRef<HTMLDivElement>(null);
   const atEnd = useRef(true);
@@ -82,7 +82,7 @@ function useStickToEnd(tail: string, first: number | undefined) {
     const element = log.current;
     if (element) place.current = { height: element.scrollHeight, top: element.scrollTop, first };
   };
-  const releasePlace = () => { if (place.current?.first === first) place.current = null; };
+  const releasePlace = () => { place.current = null; };
   return { log, onScroll, holdPlace, releasePlace };
 }
 
@@ -112,7 +112,9 @@ export function ChannelView({ channel }: { channel: ChannelInfo }) {
   async function older() {
     setLoading(true);
     holdPlace();
-    try { await loadOlderLines(channel.id); } finally { setLoading(false); releasePlace(); }
+    let added = false;
+    // On success the held place is used (and dropped) when the added lines render.
+    try { added = await loadOlderLines(channel.id); } finally { setLoading(false); if (!added) releasePlace(); }
   }
   return (
     <section className="themis-channel" aria-label={`# ${channel.name}`}>

@@ -267,16 +267,21 @@ interface Wanted {
   list: boolean;
   roots: Set<string>;
   channels: Set<string>;
+  /** The Visions named: their projects' channel lists are read again (their counts changed). */
+  visions: Set<string>;
 }
 
 function wanted(): Wanted {
-  return { all: false, list: false, roots: new Set(), channels: new Set() };
+  return { all: false, list: false, roots: new Set(), channels: new Set(), visions: new Set() };
 }
 
 function want(into: Wanted, change: VisionsChange, roots: string[] = []): Wanted {
   for (const root of roots) into.roots.add(root);
   if (change.channel_id === undefined && change.vision_id === undefined) into.all = true;
-  if (change.vision_id !== undefined) into.list = true;
+  if (change.vision_id !== undefined) {
+    into.list = true;
+    into.visions.add(change.vision_id);
+  }
   if (change.channel_id !== undefined) into.channels.add(change.channel_id);
   return into;
 }
@@ -305,8 +310,15 @@ async function readChannel(bridge: VisionsBridge, channelId: string, shown: Reco
 /** The projects whose channel lists are read again for `want`. */
 function rootsToList(want: Wanted, known: Record<string, ChannelInfo[]>): Set<string> {
   const roots = Object.keys(known);
-  // A Vision's change (what waits on the person) also changes its channels' counts.
-  const listRoots = new Set<string>(want.all ? [...roots, ...want.roots] : want.list ? roots : []);
+  const listRoots = new Set<string>(want.all ? [...roots, ...want.roots] : []);
+  // A Vision's change (what waits on the person) also changes its channels' counts: only the
+  // projects where it is a member are listed again. One pass over the known channels, and at
+  // most one listing per project the Vision works in.
+  if (want.visions.size > 0) {
+    for (const root of roots) {
+      if (known[root]!.some(channel => channel.members.some(member => want.visions.has(member)))) listRoots.add(root);
+    }
+  }
   for (const id of want.channels) {
     const root = roots.find(each => known[each]!.some(channel => channel.id === id));
     // A channel not read yet is new: its project is one of those read.
@@ -386,12 +398,14 @@ export function followVisions(bridge: VisionsBridge, getState: () => AppState, d
     const visionId = visionOf(getState(), threadId);
     return visionId === undefined ? Promise.resolve() : changed({ vision_id: visionId });
   };
-  /** Reads the page before the channel's window, for scrolling back. */
-  const loadOlder = async (channelId: string): Promise<void> => {
+  /** Reads the page before the channel's window, for scrolling back; whether it added lines. */
+  const loadOlder = async (channelId: string): Promise<boolean> => {
     const before = getState().visions.nextBefore[channelId];
-    if (before === null || before === undefined || isCancelled()) return;
+    if (before === null || before === undefined || isCancelled()) return false;
     const page = await bridge.getChannelPage(channelId, before);
+    const first = getState().visions.lines[channelId]?.[0]?.seq ?? Infinity;
     guarded({ type: "visions/older", channelId, page });
+    return !isCancelled() && page.entries.some(line => line.seq < first);
   };
   return { changed, approvalChanged, loadOlder };
 }

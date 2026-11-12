@@ -208,6 +208,26 @@ describe("reloadVisions", () => {
     expect(all.getChannelPage).toHaveBeenCalledTimes(2);
   });
 
+  it("a Vision alone re-lists only the projects it has channels in", async () => {
+    const api = bridge();
+    let state = withChannel([], []);
+    state = reducer(state, { type: "visions/loaded", projectRoot: "/other", channels: [{ ...channel("c9", "/other"), members: ["v2"] }] });
+    await reloadVisions(api, { vision_id: "v1" }, state, vi.fn());
+    expect(api.listChannels).toHaveBeenCalledTimes(1);
+    expect(api.listChannels).toHaveBeenCalledWith("/repo");
+  });
+
+  it("loading older lines says whether it added any", async () => {
+    const api = bridge();
+    let state = withChannel([line(5), line(6)], []);
+    const dispatch = (action: Parameters<typeof reducer>[1]) => { state = reducer(state, action); };
+    const follower = followVisions(api, () => state, dispatch, () => false);
+    api.getChannelPage = vi.fn(async () => page(3, 4));
+    expect(await follower.loadOlder("c1")).toBe(true);
+    api.getChannelPage = vi.fn(async () => ({ entries: [line(3)], next_before: 2 }));
+    expect(await follower.loadOlder("c1")).toBe(false);
+  });
+
   it("one channel failing to read keeps the others", async () => {
     const api = bridge();
     api.getChannelPage = vi.fn(async (id: string) => {

@@ -11,7 +11,7 @@ import { SidebarWithVisions } from "./SidebarWithVisions";
 import { VisionsView } from "./VisionsView";
 
 const live = vi.hoisted(() => ({ value: null as unknown }));
-const loadOlder = vi.hoisted(() => vi.fn(async (_channelId: string) => undefined));
+const loadOlder = vi.hoisted(() => vi.fn(async (_channelId: string) => false));
 vi.mock("../../state/store", async importOriginal => ({
   ...await importOriginal<typeof import("../../state/store")>(),
   useApp: () => live.value,
@@ -391,6 +391,59 @@ describe("Visions view", () => {
     const page = { entries: [{ seq: 0, at_ms: 0, entry: { type: "vision" as const, vision_id: "rook", text: "Hello." } }], next_before: null };
     dispatchLive({ type: "visions/changed", channelId: "c1", page, chats: fixture().visions.chats.c1!, questions: {} });
     expect(within(screen.getByRole("region", { name: "# release" })).getByText("Hello.").closest("li")).toHaveClass("is-fresh");
+  });
+
+  it("lines loaded above keep the person's place in the log", async () => {
+    mount({ mainView: "visions", visions: { ...fixture().visions, nextBefore: { c1: 0 }, open: { channelId: "c1", chatId: null, plainThreadId: null } } });
+    const log = screen.getByRole("region", { name: "# release" }).querySelector(".themis-channel-log") as HTMLElement;
+    let height = 1000;
+    let top = 600;
+    Object.defineProperty(log, "scrollHeight", { configurable: true, get: () => height });
+    Object.defineProperty(log, "clientHeight", { configurable: true, get: () => 400 });
+    Object.defineProperty(log, "scrollTop", { configurable: true, get: () => top, set: (value: number) => { top = value; } });
+    // The person reads back to the top of the window.
+    top = 0;
+    fireEvent.scroll(log);
+    loadOlder.mockImplementationOnce(async () => {
+      // The page arrives later, outside the click, as from the server.
+      await new Promise(resolve => setTimeout(resolve, 0));
+      height = 1600;
+      const entries = [-3, -2, -1].map(seq => ({ seq, at_ms: 0, entry: { type: "person" as const, text: `older ${seq}` } }));
+      (live.value as { dispatch: (action: AppAction) => void }).dispatch({ type: "visions/older", channelId: "c1", page: { entries, next_before: null } });
+      return true;
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Show earlier messages" }));
+    await screen.findByText("older -3");
+    // The 600px added above are scrolled past: what was on screen stays where it was.
+    await waitFor(() => expect(top).toBe(600));
+  });
+
+  it("a load that adds nothing lets the log stick to the end again", async () => {
+    mount({ mainView: "visions", visions: { ...fixture().visions, nextBefore: { c1: 0 }, open: { channelId: "c1", chatId: null, plainThreadId: null } } });
+    const log = screen.getByRole("region", { name: "# release" }).querySelector(".themis-channel-log") as HTMLElement;
+    let height = 1000;
+    let top = 600;
+    Object.defineProperty(log, "scrollHeight", { configurable: true, get: () => height });
+    Object.defineProperty(log, "clientHeight", { configurable: true, get: () => 400 });
+    Object.defineProperty(log, "scrollTop", { configurable: true, get: () => top, set: (value: number) => { top = value; } });
+    loadOlder.mockImplementationOnce(async () => false);
+    fireEvent.click(screen.getByRole("button", { name: "Show earlier messages" }));
+    await waitFor(() => expect(loadOlder).toHaveBeenCalled());
+    await act(async () => { await Promise.resolve(); });
+    // A new post at the bottom while the person is at the end: the log follows it.
+    height = 1100;
+    const page = { entries: [...fixture().visions.lines.c1!, { seq: 9, at_ms: 0, entry: { type: "vision" as const, vision_id: "rook", text: "New." } }], next_before: 0 };
+    dispatchLive({ type: "visions/changed", channelId: "c1", page, chats: fixture().visions.chats.c1!, questions: { w2: ["q1"] } });
+    expect(top).toBe(1100);
+  });
+
+  it("each channel keeps its own fade baseline", () => {
+    const c2: ChannelInfo = { ...channel, id: "c2", name: "watch", needs: 0 };
+    mount({ mainView: "visions", visions: { ...fixture().visions, channels: { "/p": [channel, c2] }, lines: { c1: [], c2: fixture().visions.lines.c1! }, chats: { ...fixture().visions.chats, c2: [] }, open: { channelId: "c1", chatId: null, plainThreadId: null } } });
+    fireEvent.click(within(screen.getByRole("complementary", { name: "Visions navigation" })).getByRole("button", { name: /watch/ }));
+    const view = screen.getByRole("region", { name: "# watch" });
+    expect(view.querySelectorAll(".themis-channel-entry").length).toBeGreaterThan(0);
+    expect(view.querySelector(".is-fresh")).toBeNull();
   });
 
   it("asks to mention a Vision when several are here, and posts the message", async () => {

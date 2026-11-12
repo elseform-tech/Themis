@@ -69,8 +69,8 @@ interface AppContextValue {
   dispatch: Dispatch<import("./reducer").AppAction>;
   armManualRun: (threadId: string) => void;
   cancelManualRun: (threadId: string) => void;
-  /** Reads the page before a channel's window, for scrolling back. */
-  loadOlderLines: (channelId: string) => Promise<void>;
+  /** Reads the page before a channel's window, for scrolling back; whether it added lines. */
+  loadOlderLines: (channelId: string) => Promise<boolean>;
 }
 
 const AppContext = createContext<AppContextValue | null>(null);

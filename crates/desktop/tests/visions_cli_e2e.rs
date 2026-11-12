@@ -817,6 +817,41 @@ async fn a_visions_steer_leaves_pending_approvals_for_the_person() {
     fx.shut_down().await;
 }
 
+/// An approval waiting in a Vision's chat waits on the person, for the Vision and for its
+/// channel; once the person takes the chat over, it is the person's own chat and counts for
+/// neither.
+#[tokio::test(flavor = "multi_thread")]
+async fn an_approval_in_a_taken_over_chat_counts_for_no_vision_or_channel() {
+    let _turn = ONE_SERVER.lock().await;
+    let fx = fixture().await;
+    let provider = writing_provider().await;
+    fx.use_provider(&provider).await;
+    let (vision, channel) = fx.vision_and_channel_in("Wren", "hq", "custom");
+    let (_own_chat, agent) = fx.vision_run(&vision, &channel).await;
+    let work = fx.vision_starts_chat(&agent);
+    json_of(&fx.agent_call(
+        &agent,
+        "send_message",
+        json!({"threadId": work, "text": "write the notes"}),
+    ));
+    wait_until(|| async { !waiting_approvals(&fx, &work).is_empty() }).await;
+    let needs = |fx: &Fixture| {
+        let vision = fx.call_ok("list_visions", json!({}))[0]["needs"].clone();
+        let channels = fx.call_ok("list_channels", json!({"projectRoot": fx.project}));
+        (vision, channels[0]["needs"].clone())
+    };
+    assert_eq!(needs(&fx), (json!(1), json!(1)));
+
+    fx.call_ok(
+        "enqueue_message",
+        json!({"threadId": work, "text": "I will take it from here", "reasoningEffort": null}),
+    );
+    assert_eq!(owner_hold(&fx.state, &work), Some(Hold::TakenOver));
+    assert_eq!(waiting_approvals(&fx, &work).len(), 1, "still waiting");
+    assert_eq!(needs(&fx), (json!(0), json!(0)));
+    fx.shut_down().await;
+}
+
 /// A model run by the scripted provider: Auto's reviewer (the first memory model) hard-blocks
 /// `touch hard.txt`; the agent runs `touch NAME` for "auto-step NAME" and `rm -rf build` for
 /// "clean up"; the memory model answers nothing useful.
