@@ -292,6 +292,14 @@ for (const preset of APPEARANCE_PRESETS) {
         for (const colour of [text, text2, ink.keyword, ink.function, ink.string, ink.type, ink.comment, ink.add, ink.del]) {
           expect(contrastRatio(colour, plain), `${colour} on well ${plain}`).toBeGreaterThanOrEqual(AA_NORMAL);
         }
+        // The diff's hunk header ("Line 1"): text-2 on a 4% tint of the text colour inside the well.
+        const hunk = compositeOver(withAlpha(text, .04), plain);
+        expect(contrastRatio(text2, hunk), `hunk header ${hunk}`).toBeGreaterThanOrEqual(AA_NORMAL);
+        // Changed lines read as tinted, calmly: visible on the well, never a bright slab (the canvas's --addh/--delh).
+        for (const line of [added, removed]) {
+          expect(contrastRatio(line, plain), `changed line ${line} on ${plain}`).toBeGreaterThanOrEqual(1.08);
+          expect(contrastRatio(line, plain), `changed line ${line} on ${plain}`).toBeLessThanOrEqual(1.3);
+        }
         // A changed line is all its own ink; the characters that changed get the line's tint twice; numbers stay --com.
         for (const [lineInk, lineBg, line] of [[ink.add, ink.addBg, added], [ink.del, ink.delBg, removed]] as const) {
           expect(contrastRatio(lineInk, line), `${lineInk} on ${line}`).toBeGreaterThanOrEqual(AA_NORMAL);
@@ -302,20 +310,35 @@ for (const preset of APPEARANCE_PRESETS) {
     }
   });
 
-  it(`${preset.name}: the send button's arrow reads on the accent`, () => {
+  it(`${preset.name}: the send button's arrow reads on the accent, and on the dimmed circle when not ready`, () => {
     expect(contrastRatio(ink.onAccent, accent)).toBeGreaterThanOrEqual(AA_NORMAL);
+    // Not ready: the accent at 65% on the composer, the same arrow; a 3:1 control, still plainly the accent's circle.
+    for (const { stage } of chatLayers(preset)) {
+      const dimmed = compositeOver(withAlpha(accent, .65), compositeOver(card, stage));
+      expect(contrastRatio(ink.onAccent, dimmed), `arrow on dimmed send ${dimmed}`).toBeGreaterThanOrEqual(SECONDARY_MIN);
+      expect(contrastRatio(dimmed, accent), `dimmed ${dimmed} vs ready ${accent}`).toBeGreaterThanOrEqual(1.2);
+    }
   });
 
   // The owner wants the bubble and composer to lift off the stage, and a selected tab or file to read as chosen. On
   // light skies the card is near white and the stage must stay 1.25 off the frame, so white caps the step at about
   // 1.15: the bar is 1.1 there, with the shadow and top highlight doing the rest. Dark skies use the frame bar, 1.2.
-  it(`${preset.name}: the bubble and composer stand off the stage, a selected row off the Workspace panel`, () => {
+  it(`${preset.name}: the bubble and composer stand off the stage, a selected row off the Workspace panel, the well off both`, () => {
     const bar = preset.mode === "light" ? 1.1 : 1.2;
     for (const { stage, inspector } of [chatLayers(preset)[0], ...middleLayers(preset)]) {
       expect(contrastRatio(compositeOver(card, stage), stage), `card on stage ${stage}`).toBeGreaterThanOrEqual(bar);
       expect(contrastRatio(compositeOver(card, inspector), inspector), `card on panel ${inspector}`).toBeGreaterThanOrEqual(bar);
+      // Code sits in a visible well, on the stage and on the Workspace panel; the inset shadow adds the edge.
+      const wellBar = preset.mode === "light" ? 1.06 : 1.1;
+      expect(contrastRatio(compositeOver(well, stage), stage), `well on stage ${stage}`).toBeGreaterThanOrEqual(wellBar);
+      expect(contrastRatio(compositeOver(well, inspector), inspector), `well on panel ${inspector}`).toBeGreaterThanOrEqual(wellBar);
     }
   });
+}
+
+function withAlpha(colour: string, alpha: number): string {
+  const [r, g, b] = hexToRgb(colour);
+  return `rgba(${r},${g},${b},${alpha})`;
 }
 
 /** The glass layers at the sky's middle stop, as the frame distinction test measures. */

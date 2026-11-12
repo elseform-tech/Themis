@@ -40,6 +40,30 @@ it("makes the composer (and the greeting's) a glass card with the panel edge", (
 it("draws send and stop as one filled accent circle", () => {
   const send = rule(read("screens/ThreadView.css"), ".themis-button.themis-send");
   for (const part of ["width: 32px", "height: 32px", "border-radius: 50%", "background: var(--themis-accent)", "color: var(--themis-accent-ink)"]) expect(send).toContain(part);
+  // Not ready: the accent dimmed under a full-strength arrow, never a faded whole button (muddy on Classic, grey on light skies).
+  const disabled = rule(read("screens/ThreadView.css"), ".themis-button.themis-send:disabled");
+  expect(disabled).toContain("background: color-mix(in srgb, var(--themis-accent) 65%, transparent)");
+  expect(disabled).toContain("opacity: 1");
+});
+
+it("keeps the diff's hunk header a quiet row inside the well, never an opaque band", () => {
+  const header = rule(read("components/diff/DiffView.css"), ".themis-diff-hunk-header");
+  expect(header).toContain("background: color-mix(in srgb, var(--themis-text) 4%, transparent)");
+  expect(header).toContain("color: var(--themis-text-2)");
+  expect(header).not.toMatch(/raised|sticky/);
+});
+
+it("rounds a chosen sidebar chat, Workspace tab and file row at the canvas's 10px", () => {
+  expect(rule(read("screens/Sidebar.css"), ".themis-sidebar-row")).toContain("border-radius: 10px");
+  expect(rule(read("screens/WorkspacePanel.css"), ".themis-workspace-tabs button")).toContain("border-radius: 10px");
+  expect(rule(read("screens/WorkspacePanel.css"), ".themis-files-row")).toContain("border-radius: 10px");
+  expect(rule(read("components/diff/FileTree.css"), ".themis-filetree-row")).toContain("border-radius: 10px");
+  // Nothing else rounds those rows differently (the rail's, folded Settings' and the ⋮ menu's round icons aside).
+  for (const file of ["screens/Sidebar.css", "screens/WorkspacePanel.css", "components/diff/FileTree.css"]) {
+    for (const found of read(file).matchAll(/^([^{\n]*(?:thread-row|sidebar-row--active|filetree-row|files-row|workspace-tabs button)[^{]*)\{[^}]*border-radius:\s*([^;]+);/gm)) {
+      if (!/sidebar-rail|is-collapsed|row-actions/.test(found[1])) expect(found[2], found[1]).toBe("10px");
+    }
+  }
 });
 
 it("puts code in a well: chat blocks, the Workspace file view and diffs", () => {

@@ -27,7 +27,7 @@
   /* Chat and Workspace surfaces (canvas --cardh, --well, --insp) and the ink on them; appearance.ts sets them per preset.
      Card: the user bubble, the composer and a selected row or tab. Well: code and diffs. Inspector: the Workspace panel. */
   --themis-card: #35373b;
-  --themis-well: #1f2023;
+  --themis-well: #161719;
   --themis-inspector-bg: var(--themis-sidebar-bg);
   --themis-code-keyword: #8ab4f8;
   --themis-code-function: #d7aefb;
@@ -36,7 +36,7 @@
   --themis-code-comment: #9da1a8;
   --themis-diff-add: #81c995;
   --themis-diff-del: #f4968d;
-  --themis-add-bg: rgba(129, 201, 149, 0.13);
+  --themis-add-bg: rgba(129, 201, 149, 0.12);
   --themis-del-bg: rgba(242, 139, 130, 0.13);
   /* A soft lift for cards on the stage (the bubble). */
   --themis-card-lift: 0 1px 2px var(--themis-panel-shadow), inset 0 1px 0 var(--themis-panel-highlight);

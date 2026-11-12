@@ -178,11 +178,11 @@
 .themis-permissions-mode[aria-checked="true"] strong { font-weight: 700; }
 [role="radiogroup"][aria-disabled="true"] .themis-permissions-mode { cursor: progress; opacity: .6; }
 .themis-permissions-panel p { margin: 4px 10px 6px; color: var(--themis-text-3); font-size: .75rem; }
-/* Send, steer and stop: one filled accent circle (canvas); stopping or nothing to send dims it. */
+/* Send, steer and stop: one filled accent circle (canvas); stopping or nothing to send dims the circle, not the arrow. */
 .themis-button.themis-send { display: grid; place-items: center; width: 32px; height: 32px; min-height: 32px; padding: 0; flex-shrink: 0; border-radius: 50%; background: var(--themis-accent); color: var(--themis-accent-ink); }
 .themis-esc-hint { flex-shrink: 0; padding: 4px 10px; border-radius: 999px; background: color-mix(in srgb, var(--themis-accent) 14%, transparent); color: var(--themis-text-1); font-size: .75rem; white-space: nowrap; }
 .themis-button.themis-send:hover:not(:disabled) { background: var(--themis-accent-hover); color: var(--themis-accent-ink); }
-.themis-button.themis-send:disabled { opacity: .4; }
+.themis-button.themis-send:disabled { background: color-mix(in srgb, var(--themis-accent) 65%, transparent); opacity: 1; }
 .themis-composer-attachments, .themis-message-attachments { display: flex; gap: 8px; overflow-x: auto; padding: 4px 0 8px; margin: 0; list-style: none; align-items: flex-start; }
 .themis-composer-attachments li { position: relative; flex-shrink: 0; }
 .themis-composer-attachments > li > button { position: absolute; top: -6px; right: -6px; z-index: 1; display: grid; place-items: center; width: 20px; height: 20px; padding: 0; border: 0; border-radius: 50%; background: var(--themis-text-2); color: var(--themis-canvas); font-size: 11px; cursor: pointer; opacity: 0; transition: opacity 120ms; }
