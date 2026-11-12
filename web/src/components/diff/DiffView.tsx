@@ -42,6 +42,27 @@ export function hunkGaps(hunks: DiffFile["hunks"]): HunkGap[] {
 const REVEAL_STEP = 20;
 
 /** How many lines of each gap show, and the file's lines once read (`false` when they can't be). */
+/** The file's lines from `loadText`, or `false` when it can't be read. */
+async function readLines(loadText: DiffViewProps["loadText"]): Promise<string[] | false> {
+  const loaded = loadText ? await loadText().catch(() => null) : null;
+  return loaded === null ? false : loaded.split("\n");
+}
+
+/** A gap can't be shown when the file can't be read, or was cut (256 KiB) before its last line. */
+function isUnreadable(lines: string[] | false | null, gap: HunkGap): boolean {
+  return lines === false || (Array.isArray(lines) && lines.length < gap.to);
+}
+
+/** The gap before a hunk, how many of its lines stay hidden, and the revealed ones (nearest the hunk) as context. */
+function gapAround(gaps: HunkGap[], shown: Record<number, number>, lines: string[] | false | null, hunkIndex: number) {
+  const gap = gaps.find(entry => entry.before === hunkIndex);
+  if (!gap) return { gap: undefined, hidden: 0, revealed: [] as NumberedLine[] };
+  const count = shown[hunkIndex] ?? 0;
+  const revealed: NumberedLine[] = [];
+  for (let no = gap.to - count + 1; no <= gap.to; no += 1) revealed.push({ kind: "context", text: lines ? lines[no - 1] ?? "" : "", oldNo: no - gap.offset, newNo: no });
+  return { gap, hidden: gap.to - gap.from + 1 - count, revealed };
+}
+
 function useHiddenLines(file: DiffFile, loadText: DiffViewProps["loadText"], remember: DiffViewProps["remember"]) {
   const gaps = useMemo(() => hunkGaps(file.hunks), [file.hunks]);
   const [shown, setShown] = useState<Record<number, number>>(() => remember?.initial?.shown ?? {});
@@ -50,26 +71,13 @@ function useHiddenLines(file: DiffFile, loadText: DiffViewProps["loadText"], rem
   useEffect(() => { save?.({ shown, lines }); }, [save, shown, lines]);
   const reveal = async (gap: HunkGap, all: boolean) => {
     let text = lines;
-    if (text === null) {
-      const loaded = loadText ? await loadText().catch(() => null) : null;
-      text = loaded === null ? false : loaded.split("\n");
-      setLines(text);
-    }
-    if (text === false || text.length < gap.to) return;
+    if (text === null) { text = await readLines(loadText); setLines(text); }
+    if (isUnreadable(text, gap)) return;
     const size = gap.to - gap.from + 1;
     setShown(previous => ({ ...previous, [gap.before]: all ? size : Math.min(size, (previous[gap.before] ?? 0) + REVEAL_STEP) }));
   };
-  /** The gap before a hunk, how many of its lines stay hidden, and the revealed ones as context lines. */
-  const around = (hunkIndex: number) => {
-    const gap = gaps.find(entry => entry.before === hunkIndex);
-    if (!gap) return { gap: undefined, hidden: 0, revealed: [] as NumberedLine[] };
-    const count = shown[hunkIndex] ?? 0;
-    const revealed: NumberedLine[] = [];
-    for (let no = gap.to - count + 1; no <= gap.to; no += 1) revealed.push({ kind: "context", text: lines ? lines[no - 1] ?? "" : "", oldNo: no - gap.offset, newNo: no });
-    return { gap, hidden: gap.to - gap.from + 1 - count, revealed };
-  };
-  // A gap can't be shown when the file can't be read, or was cut (256 KiB) before its last line.
-  const unreadable = (gap: HunkGap) => lines === false || (Array.isArray(lines) && lines.length < gap.to);
+  const around = (hunkIndex: number) => gapAround(gaps, shown, lines, hunkIndex);
+  const unreadable = (gap: HunkGap) => isUnreadable(lines, gap);
   return { around, reveal, unreadable };
 }
 

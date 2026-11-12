@@ -125,7 +125,6 @@ function FileTreeRow({ file, label, selectedPath, onSelect, onAccept, onDiscard,
   const [pressed, setPressed] = useState(false);
   const open = renderBody ? isOpen?.(file.path) ?? false : undefined;
   const selected = open ?? file.path === selectedPath;
-  const discardDisabled = disabled || file.preexisting;
   const item = (
     <div
       className={`themis-filetree-row${selected ? " themis-filetree-row--selected" : ""}`}
@@ -150,41 +149,10 @@ function FileTreeRow({ file, label, selectedPath, onSelect, onAccept, onDiscard,
         <span className="themis-filetree-path" title={file.path}>
           {label}
         </span>
-        {(file.added > 0 || file.removed > 0) && (
-          <span className="themis-filetree-counts" aria-label={`${file.added} added, ${file.removed} removed`}>
-            {file.added > 0 && <span className="themis-diff-count-add">+{file.added}</span>}
-            {file.removed > 0 && <span className="themis-diff-count-del">-{file.removed}</span>}
-          </span>
-        )}
-        {open !== undefined && <svg className={`themis-filetree-chevron${open ? " is-open" : ""}`} width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true"><path d="m9 6 6 6-6 6" /></svg>}
+        <FileCounts file={file} />
+        {open !== undefined && <Chevron open={open} />}
       </button>
-      {onAccept && (
-      <span className="themis-filetree-actions">
-        <button
-          type="button"
-          aria-label={`Accept ${file.path}`}
-          className="themis-filetree-btn themis-filetree-btn--accept"
-          disabled={disabled}
-          onClick={() => onAccept(file.path)}
-        >
-          ✓
-        </button>
-        <button
-          type="button"
-          aria-label={`Discard ${file.path}`}
-          title={
-            file.preexisting
-              ? "Changed before this chat started, so it can't be discarded here"
-              : `Discard ${file.path}`
-          }
-          className="themis-filetree-btn themis-filetree-btn--discard"
-          disabled={discardDisabled}
-          onClick={() => onDiscard?.(file.path)}
-        >
-          ✕
-        </button>
-      </span>
-      )}
+      {onAccept && <FileActions file={file} disabled={disabled} onAccept={onAccept} onDiscard={onDiscard} />}
     </div>
   );
   return (
@@ -192,5 +160,52 @@ function FileTreeRow({ file, label, selectedPath, onSelect, onAccept, onDiscard,
       {item}
       {open && renderBody?.(file)}
     </li>
+  );
+}
+
+/** The file's added and removed line counts, when it has any. */
+function FileCounts({ file }: { file: DiffFile }) {
+  if (file.added === 0 && file.removed === 0) return null;
+  return (
+    <span className="themis-filetree-counts" aria-label={`${file.added} added, ${file.removed} removed`}>
+      {file.added > 0 && <span className="themis-diff-count-add">+{file.added}</span>}
+      {file.removed > 0 && <span className="themis-diff-count-del">-{file.removed}</span>}
+    </span>
+  );
+}
+
+/** An accordion row's fold chevron, turned down while open. */
+function Chevron({ open }: { open: boolean }) {
+  return <svg className={`themis-filetree-chevron${open ? " is-open" : ""}`} width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true"><path d="m9 6 6 6-6 6" /></svg>;
+}
+
+/** Accept and Discard for a changed file; a file changed before the chat started can't be discarded here. */
+function FileActions({ file, disabled, onAccept, onDiscard }: { file: DiffFile; disabled: boolean; onAccept: (path: string) => void; onDiscard?: (path: string) => void }) {
+  return (
+    <span className="themis-filetree-actions">
+      <button
+        type="button"
+        aria-label={`Accept ${file.path}`}
+        className="themis-filetree-btn themis-filetree-btn--accept"
+        disabled={disabled}
+        onClick={() => onAccept(file.path)}
+      >
+        ✓
+      </button>
+      <button
+        type="button"
+        aria-label={`Discard ${file.path}`}
+        title={
+          file.preexisting
+            ? "Changed before this chat started, so it can't be discarded here"
+            : `Discard ${file.path}`
+        }
+        className="themis-filetree-btn themis-filetree-btn--discard"
+        disabled={disabled || file.preexisting}
+        onClick={() => onDiscard?.(file.path)}
+      >
+        ✕
+      </button>
+    </span>
   );
 }

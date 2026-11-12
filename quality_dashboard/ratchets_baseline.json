@@ -677,13 +677,11 @@
    "cyclomatic": 39
   },
   "web/src/components/diff/DiffView.tsx::DiffView": {
-   "cognitive": 64,
-   "cyclomatic": 40
+   "cognitive": 29,
+   "cyclomatic": 32
   },
   "web/src/components/diff/FileTree.tsx::FileTree": {
-   "cognitive": 29,
-   "cyclomatic": 44,
-   "lines": 141
+   "cyclomatic": 32
   },
   "web/src/lib/plainText.ts::stripInline": {
    "cognitive": 44,
@@ -851,7 +849,7 @@
    "cyclomatic": 40
   },
   "web/src/screens/WorkspacePanel.tsx::ChangesView": {
-   "cognitive": 37,
+   "cognitive": 36,
    "cyclomatic": 52
   },
   "web/src/screens/WorkspacePanel.tsx::WorkspacePanel": {
