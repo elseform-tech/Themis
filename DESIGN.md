@@ -91,6 +91,12 @@ Dark mode is the product baseline; the Morning and Noon skies are the light look
 | Sky | `--themis-sky` | frame colour (solid presets) | Sky presets only: frame tint, glows and gradient behind the frame |
 | Glass | `--themis-panel-bg`, `--themis-stage-bg`, `--themis-panel-blur` | sidebar, canvas, `none` | Sky presets: translucent panels on every OS, `blur(36px) saturate(190%)` only on macOS; solid under `data-glass="off"` (reduced transparency) |
 | Panel edge | `--themis-panel-highlight`, `--themis-panel-ring`, `--themis-panel-shadow`, `--themis-stage-edge` | `rgba(255,255,255,.05)`, `transparent`, `rgba(0,0,0,.28)`, `#34363b` | Composed into `--themis-panel-sheen` and `--themis-panel-edge` (side panels) and `--themis-stage-edge-shadow` (stage); never replaced by an opaque border |
+| Card | `--themis-card`, `--themis-card-lift` | `#35373b`; `0 1px 2px` shadow + top highlight | The person's message, the composer (with the panel sheen and edge) and a chosen sidebar chat, Workspace tab or file; it must stand off the stage and the Workspace panel (1.1 on light skies, 1.2 on dark) |
+| Well | `--themis-well`, `--themis-well-shadow` | `#1f2023`; `inset 0 1px 3px` shadow | Code blocks, inline code (slim), diffs and the Workspace file view; lines padded 14 px, line height 1.7 in the chat and 1.8 in Workspace |
+| Workspace panel | `--themis-inspector-bg` | sidebar | The Workspace panel's glass (canvas `--insp`); the sidebar colour under `data-glass="off"` |
+| Code ink | `--themis-code-keyword`, `-function`, `-string`, `-type`, `-comment` | `#8ab4f8`, `#d7aefb`, `#81c995`, `#e3b85a`, `#9da1a8` | Syntax on the well; comment also colours line numbers |
+| Diff ink | `--themis-diff-add`, `--themis-add-bg`, `--themis-diff-del`, `--themis-del-bg` | `#81c995` on `rgba(129,201,149,.13)`, `#f4968d` on `rgba(242,139,130,.13)` | A changed line is tinted whole in its ink; changed characters get the tint twice; line counts use the ink |
+| Accent ink | `--themis-accent-ink` | `#1a1405` (white on Morning and Noon, `#06101E` on Night) | Icons and text on the accent: the send circle, badges, switches |
 | Shadow | `--themis-shadow` | `rgb(0 0 0)`; light `rgb(8 20 45 / .35)` | Mix with transparent at each shadow's strength |
 | Warm gradient | `--themis-gradient-1/2/3` | `#d0a660` → `#e3b85a` → `#f6e7bd` | Approved Themis moments only (below) |
 
