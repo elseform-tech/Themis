@@ -37,7 +37,7 @@ fn tracked_diff_files(root: &Path) -> Result<Vec<crate::types::DiffFile>, String
 }
 
 /// Rejects absolute paths and `..` escapes (diff paths must stay in-root).
-fn ensure_root_relative(path: &str) -> Result<(), String> {
+pub(super) fn ensure_root_relative(path: &str) -> Result<(), String> {
     let candidate = Path::new(path);
     if candidate.has_root()
         || candidate

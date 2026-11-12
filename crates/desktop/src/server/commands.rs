@@ -24,6 +24,8 @@ pub async fn dispatch(
         // A chat's read-only lookups, the work of the tools of the same names.
         "recall" => state.chat_read(method, args).await,
         "search_memory" => state.chat_read(method, args).await,
+        // A file as a branch has it, for Workspace › Changes' unchanged lines (read-only, bounded).
+        "read_branch_file" => read_branch_file(state, &args).await,
         _ => dispatch_command(state, Arc::clone(&sink), method, args).await,
     };
     if let Ok(value) = &result {
@@ -81,6 +83,17 @@ async fn announce_thread_change(
 }
 
 /// The command names and camelCase arguments match the existing Tauri bridge.
+async fn read_branch_file(state: &AppState, args: &Value) -> Result<Value, String> {
+    let file = state
+        .read_branch_file(
+            arg(args, "projectRoot")?,
+            arg(args, "branch")?,
+            arg(args, "path")?,
+        )
+        .await?;
+    serde_json::to_value(file).map_err(|err| err.to_string())
+}
+
 async fn dispatch_command(
     state: &AppState,
     sink: Arc<dyn EventSink>,

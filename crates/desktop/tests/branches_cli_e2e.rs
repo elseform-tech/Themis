@@ -232,3 +232,68 @@ async fn switching_starts_none_of_the_repositorys_hooks() {
     assert_eq!(done.unwrap()["branch"], "feature");
     assert!(!marker.exists(), "the repository's hook ran");
 }
+
+/// Workspace › Changes shows a branch diff's unchanged lines from the file as that branch has it: read-only (the
+/// checkout and its files stay as they are), inside the project, never a secret-looking file, at most 256 KiB.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_file_is_read_as_a_branch_has_it_without_touching_the_checkout() {
+    let data = tempfile::tempdir().unwrap();
+    let project = tempfile::tempdir().unwrap();
+    let root = project.path();
+    repository(root);
+    git(root, &["switch", "-q", "feature"]);
+    std::fs::write(root.join(".env"), "TOKEN=x\n").unwrap();
+    std::fs::write(root.join("big.txt"), "x".repeat(300 * 1024)).unwrap();
+    std::fs::create_dir(root.join("dir")).unwrap();
+    std::fs::write(root.join("dir/inner.txt"), "inner\n").unwrap();
+    git(root, &["add", "-f", "."]);
+    git(root, &["commit", "-qm", "third"]);
+    git(root, &["switch", "-q", "main"]);
+    let state = AppState::new_for_test(data.path().join("settings.json"));
+    let server = Server::bind(state, data.path()).await.unwrap();
+    let serving = tokio::spawn(async move {
+        let _ = server.run().await;
+    });
+    let (dir, root) = (data.path().to_owned(), root.to_owned());
+    tokio::task::spawn_blocking(move || {
+        let root_arg = root.to_string_lossy().to_string();
+        let read = |branch: &str, path: &str| {
+            call(
+                &dir,
+                "read_branch_file",
+                json!({"projectRoot": root_arg, "branch": branch, "path": path}),
+            )
+        };
+        let file = read("feature", "shared.txt").unwrap();
+        assert_eq!(file["content"], "two\n");
+        assert_eq!(file["truncated"], false);
+        assert_eq!(file["binary"], false);
+        // The checkout is untouched: still main, with main's text.
+        assert_eq!(
+            std::fs::read_to_string(root.join("shared.txt")).unwrap(),
+            "one\n"
+        );
+        assert!(!root.join("big.txt").exists());
+        // Bounded: a large file comes back cut at 256 KiB and says so.
+        let big = read("feature", "big.txt").unwrap();
+        assert_eq!(big["truncated"], true);
+        assert_eq!(big["size"], 300 * 1024);
+        assert_eq!(big["content"].as_str().unwrap().len(), 256 * 1024);
+        // Only a file, inside the project, of a local branch, never a secret-looking one.
+        for (branch, path, says) in [
+            ("feature", ".env", "isn't shown"),
+            ("feature", "../outside.txt", "inside the project"),
+            ("feature", "/etc/hosts", "inside the project"),
+            ("feature", "dir", "not a file"),
+            ("feature", "missing.txt", "not a file"),
+            ("missing", "shared.txt", "Unknown branch"),
+            ("--output=/tmp/x", "shared.txt", "Unknown branch"),
+        ] {
+            let error = read(branch, path).unwrap_err();
+            assert!(error.contains(says), "{branch} {path}: {error}");
+        }
+    })
+    .await
+    .unwrap();
+    serving.abort();
+}

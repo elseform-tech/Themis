@@ -452,23 +452,101 @@ impl AppState {
         let mut bytes = std::fs::read(&file).map_err(|err| err.to_string())?;
         let truncated = bytes.len() > MAX_FILE_BYTES;
         bytes.truncate(MAX_FILE_BYTES);
-        let text = match String::from_utf8(bytes) {
-            Ok(text) => Some(text),
-            // A cut can split a multi-byte character; keep the valid prefix.
-            Err(error) if truncated && error.utf8_error().error_len().is_none() => {
-                let valid = error.utf8_error().valid_up_to();
-                String::from_utf8(error.into_bytes()[..valid].to_vec()).ok()
-            }
-            Err(_) => None,
-        };
-        Ok(FileView {
-            path: relative_display(&root, &file),
-            binary: text.is_none(),
-            content: text,
-            size: metadata.len(),
+        Ok(file_view(
+            relative_display(&root, &file),
+            bytes,
+            metadata.len(),
             truncated,
-        })
+        ))
     }
+
+    /// Reads a file as a local branch has it, for the unchanged lines between a branch diff's
+    /// hunks. Read-only like [`Self::read_project_file`]: the checkout is not touched, the path
+    /// stays inside the project, a secret-looking file is refused, and at most 256 KiB comes back.
+    pub async fn read_branch_file(
+        &self,
+        project_root: String,
+        branch: String,
+        path: String,
+    ) -> Result<FileView, String> {
+        let root = canonical_project_dir(&project_root)?;
+        let matcher = self.project_secret_matcher(&root);
+        tokio::task::spawn_blocking(move || {
+            known_branch(&root, &branch)?;
+            super::changes::ensure_root_relative(&path)
+                .map_err(|_| format!("invalid path '{path}': must stay inside the project"))?;
+            if super::changes::looks_secret(&matcher, &path) {
+                return Err(format!(
+                    "'{path}' isn't shown: Workspace leaves out secret-looking files"
+                ));
+            }
+            let object = format!("refs/heads/{branch}:{path}");
+            let (bytes, size) = read_blob(&root, &object)
+                .ok_or_else(|| format!("'{path}' is not a file on {branch}"))?;
+            let truncated = size > bytes.len() as u64;
+            Ok(file_view(path, bytes, size, truncated))
+        })
+        .await
+        .map_err(|err| err.to_string())?
+    }
+}
+
+/// UTF-8 text for viewing; a cut can split a multi-byte character, so a cut file keeps its
+/// valid prefix. Not UTF-8: binary, with no content.
+fn file_view(path: String, bytes: Vec<u8>, size: u64, truncated: bool) -> FileView {
+    let text = match String::from_utf8(bytes) {
+        Ok(text) => Some(text),
+        Err(error) if truncated && error.utf8_error().error_len().is_none() => {
+            let valid = error.utf8_error().valid_up_to();
+            String::from_utf8(error.into_bytes()[..valid].to_vec()).ok()
+        }
+        Err(_) => None,
+    };
+    FileView {
+        path,
+        binary: text.is_none(),
+        content: text,
+        size,
+        truncated,
+    }
+}
+
+/// A blob's first [`MAX_FILE_BYTES`] and its full size, through the app's guarded Git (no hooks,
+/// no filters, nothing written). `None` when the object isn't a blob (a folder, a missing path).
+fn read_blob(root: &Path, object: &str) -> Option<(Vec<u8>, u64)> {
+    use std::io::Read;
+    let ask = |flag: &str| {
+        let output = crate::diff::guarded_git(root)
+            .ok()?
+            .args(["cat-file", flag, object])
+            .output()
+            .ok()?;
+        output
+            .status
+            .success()
+            .then(|| String::from_utf8_lossy(&output.stdout).trim().to_owned())
+    };
+    if ask("-t")? != "blob" {
+        return None;
+    }
+    let size: u64 = ask("-s")?.parse().ok()?;
+    let mut child = crate::diff::guarded_git(root)
+        .ok()?
+        .args(["cat-file", "blob", object])
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .ok()?;
+    let mut bytes = Vec::new();
+    let read = child
+        .stdout
+        .take()?
+        .take(MAX_FILE_BYTES as u64)
+        .read_to_end(&mut bytes);
+    // Stop Git once the bound is read; a larger blob is simply cut.
+    let _ = child.kill();
+    let _ = child.wait();
+    read.ok().map(|_| (bytes, size))
 }
 
 #[cfg(test)]
