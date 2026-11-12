@@ -484,6 +484,14 @@ export interface Question {
 /** Starts the message that delivers an answer to the agent. */
 export const ANSWER_MARKER = "[Answer to your question — from the user]";
 
+/** Starts a Vision's answer message, followed by its name and "]". */
+export const VISION_ANSWER_PREFIX = "[Answer to your question — from the Vision ";
+
+/** Whether a message delivers answers to the agent's questions, the person's or a Vision's. */
+export function isAnswerText(text: string): boolean {
+  return text.startsWith(ANSWER_MARKER) || text.startsWith(VISION_ANSWER_PREFIX);
+}
+
 /** A message waiting for the chat's current run to end. */
 export interface QueuedMessage {
   id: string;

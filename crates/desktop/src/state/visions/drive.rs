@@ -175,7 +175,9 @@ impl AppState {
 
     /// A Vision answers questions in a chat it owns, on a `decision` its run's autonomy leaves
     /// to it: as the Vision's answer, never the person's (no "Allow once" it writes lets
-    /// anything run), and each one goes in the channel with the decision and `reason`.
+    /// anything run), and each one goes in the channel with the decision and `reason`. Returns
+    /// the answered questions and whether the channel failed to record any of them (the
+    /// answers stand: they were delivered).
     pub(crate) async fn visions_answer(
         &self,
         sink: Arc<dyn EventSink>,
@@ -183,9 +185,12 @@ impl AppState {
         thread_id: String,
         answers: Vec<(String, String)>,
         (decision, reason): (Decision, String),
-    ) -> Result<Vec<Question>, String> {
+    ) -> Result<(Vec<Question>, bool), String> {
         // Checked again here: the person may have stopped or taken over the chat, or paused
-        // the Vision, since the server first looked.
+        // the Vision, since the server first looked. A known bound, as for `visions_send`: this
+        // check and the answer below are not one step with the owner's hold, so a take over
+        // landing in between still records the Vision's answer (it then waits in the queue, or
+        // reaches a run the person already started).
         if let Some(waits) = self.visions_waits_reason(&thread_id) {
             return Err(waits.to_owned());
         }
@@ -195,25 +200,30 @@ impl AppState {
         let answered = self
             .answer_questions_by(sink, thread_id.clone(), answers, Some(&vision.vision_id))
             .await?;
+        let mut unrecorded = false;
         for question in &answered {
-            let _ = self.channel_append(
-                &vision.channel_id,
-                ChannelEntry::Answered {
-                    vision_id: vision.vision_id.clone(),
-                    thread_id: thread_id.clone(),
-                    question_id: question.id.clone(),
-                    decision: decision.id().to_owned(),
-                    question: question.question.clone(),
-                    answer: question.answer.clone().unwrap_or_default(),
-                    reason: reason.clone(),
-                },
-            );
+            let entry = ChannelEntry::Answered {
+                vision_id: vision.vision_id.clone(),
+                thread_id: thread_id.clone(),
+                question_id: question.id.clone(),
+                decision: decision.id().to_owned(),
+                question: question.question.clone(),
+                answer: question.answer.clone().unwrap_or_default(),
+                reason: reason.clone(),
+            };
+            if self.channel_append(&vision.channel_id, entry).is_err() {
+                unrecorded = true;
+                self.visions_note(
+                    "vision_answer_unrecorded",
+                    json!({"thread_id": thread_id, "vision_id": vision.vision_id, "channel_id": vision.channel_id, "question_id": question.id}),
+                );
+            }
         }
         self.visions_note(
             "vision_answered",
             json!({"thread_id": thread_id, "vision_id": vision.vision_id, "decision": decision.id(), "questions": answered.len()}),
         );
-        Ok(answered)
+        Ok((answered, unrecorded))
     }
 
     /// A Vision passes an open question of a chat it owns on to the person: it stays open, and

@@ -149,7 +149,7 @@ impl AppState {
             )
         });
         if !active
-            || text.starts_with(super::questions::ANSWER_MARKER)
+            || super::questions::is_answer(text)
             || core_goal::turn_number(text).is_some()
             || core_goal::parse_goal_command(text).is_some()
         {

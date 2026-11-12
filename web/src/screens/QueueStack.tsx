@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { ANSWER_MARKER, type QueuedMessage } from "../lib/types";
+import { ANSWER_MARKER, isAnswerText, type QueuedMessage } from "../lib/types";
 import "./GoalBar.css";
 
 interface QueueStackProps {
@@ -14,6 +14,13 @@ interface QueueStackProps {
 }
 
 /** Messages waiting for the current run, oldest first, each with Steer, Edit and Remove. */
+/** What a waiting message shows: an answer as whose answer it is, else its text. */
+function queuedLabel(text: string): string {
+  if (text.startsWith(ANSWER_MARKER)) return "Your answer to the agent's question";
+  if (isAnswerText(text)) return "A Vision's answer to the agent's question";
+  return text || "Attached files";
+}
+
 export function QueueStack({ queue, running, onSteer, onHold, onSave, onRemove }: QueueStackProps) {
   const [editing, setEditing] = useState<{ id: string; text: string } | null>(null);
   if (queue.length === 0) return null;
@@ -56,7 +63,7 @@ export function QueueStack({ queue, running, onSteer, onHold, onSave, onRemove }
             ) : (
               <>
                 <span className="themis-queue-text" title={message.text}>
-                  {message.text.startsWith(ANSWER_MARKER) ? "Your answer to the agent's question" : message.text || "Attached files"}
+                  {queuedLabel(message.text)}
                   {message.attachments.length > 0 && <small> · {message.attachments.length} file{message.attachments.length === 1 ? "" : "s"}</small>}
                 </span>
                 {message.note && (

@@ -917,9 +917,12 @@ async fn a_vision_cannot_allow_an_auto_hard_block() {
     // The question itself says so: forgetting Auto's in-memory record (as a restart does)
     // changes nothing.
     fx.state.forget_auto_questions();
+    // Even claiming a decision within its level (`wording`, Small calls) changes nothing.
     for args in [
-        json!({"threadId": work, "questionId": id, "answer": "Allow once"}),
-        json!({"threadId": work, "answers": [{"questionId": id, "answer": "Allow once"}]}),
+        json!({"threadId": work, "questionId": id, "answer": "Allow once",
+            "decision": "wording", "reason": "harmless"}),
+        json!({"threadId": work, "answers": [{"questionId": id, "answer": "Allow once"}],
+            "decision": "wording", "reason": "harmless"}),
     ] {
         let refused = fx.agent_call(&agent, "answer_question", args);
         assert!(
@@ -971,7 +974,8 @@ async fn a_vision_cannot_answer_a_destructive_steps_question() {
     for (method, args, refusal) in [
         (
             "answer_question",
-            json!({"threadId": work, "questionId": id, "answer": "Run it once"}),
+            json!({"threadId": work, "questionId": id, "answer": "Run it once",
+                "decision": "wording", "reason": "harmless"}),
             "Permission questions are the person's",
         ),
         (
@@ -1558,10 +1562,42 @@ async fn hooks_and_command_mcp_servers_do_not_start_for_a_vision_run() {
     fx.shut_down().await;
 }
 
+/// The answer a Vision gives in these tests: words no log may hold.
+const ANSWERED: &str = "Quokka Public License";
+
 /// `answer_question` as a Vision: its answer, with the decision it falls under and why.
 fn vision_answer(work: &str, question: &str, decision: &str, reason: &str) -> Value {
-    json!({"threadId": work, "questionId": question, "answer": "MIT", "decision": decision,
+    json!({"threadId": work, "questionId": question, "answer": ANSWERED, "decision": decision,
         "reason": reason})
+}
+
+/// The text of every user message the provider was sent.
+async fn user_texts(provider: &MockServer) -> Vec<String> {
+    let mut texts = Vec::new();
+    for request in provider.received_requests().await.unwrap() {
+        let body: Value = request.body_json().unwrap_or(Value::Null);
+        for message in body["messages"].as_array().into_iter().flatten() {
+            if let (Some("user"), Some(text)) =
+                (message["role"].as_str(), message["content"].as_str())
+            {
+                texts.push(text.to_owned());
+            }
+        }
+    }
+    texts
+}
+
+/// Everything in the app's diagnostics logs, asserting it holds none of `texts`.
+fn assert_logs_hold_none(fx: &Fixture, texts: &[&str]) {
+    let logged: String = std::fs::read_dir(fx.data.join("logs"))
+        .unwrap()
+        .flatten()
+        .map(|file| std::fs::read_to_string(file.path()).unwrap_or_default())
+        .collect();
+    assert!(!logged.is_empty(), "diagnostics were written");
+    for text in texts {
+        assert!(!logged.contains(text), "the logs hold {text:?}");
+    }
 }
 
 /// A Vision answers only within its autonomy: at Small calls a `scope` answer is refused and
@@ -1577,10 +1613,11 @@ async fn answers_outside_the_level_are_refused_and_stay_open() {
     let (_own_chat, small) = fx.vision_run(&vision, &channel).await;
     let (work, question) = fx.asked_question(&small).await;
     let above = "Your autonomy level leaves this to the person; pass it on in the channel.";
+    let why = "quokka refused reason 5521";
     let refused = fx.agent_call(
         &small,
         "answer_question",
-        vision_answer(&work, &question, "scope", "fine"),
+        vision_answer(&work, &question, "scope", why),
     );
     assert!(failed_with(&refused, above), "{}", text(&refused));
     let rows = [
@@ -1599,7 +1636,7 @@ async fn answers_outside_the_level_are_refused_and_stay_open() {
     fx.set_visions(json!({"autonomy": "custom", "custom": custom}));
     let (_own_chat, all_rows) = fx.vision_run(&vision, &channel).await;
     for decision in ["external", "spend"] {
-        let args = vision_answer(&work, &question, decision, "fine");
+        let args = vision_answer(&work, &question, decision, why);
         let refused = fx.agent_call(&all_rows, "answer_question", args);
         assert!(
             failed_with(&refused, above),
@@ -1623,7 +1660,7 @@ async fn answers_outside_the_level_are_refused_and_stay_open() {
         logged.contains("\"reason\":\"above_autonomy\""),
         "logged as metadata"
     );
-    assert!(!logged.contains("the usual choice") && !logged.contains("MIT"));
+    assert_logs_hold_none(&fx, &[ANSWERED, why]);
     fx.shut_down().await;
 }
 
@@ -1662,7 +1699,7 @@ async fn an_allowed_answer_is_recorded_with_its_decision() {
         assert!(failed_with(&refused, words), "{words}: {}", text(&refused));
     }
 
-    let why = "MIT is the usual choice";
+    let why = "quokka allowed reason 8812";
     let answered = json_of(&fx.agent_call(
         &agent,
         "answer_question",
@@ -1673,7 +1710,7 @@ async fn an_allowed_answer_is_recorded_with_its_decision() {
     assert!(fx.state.hook_wakes_held(&work), "not the person's message");
     assert_eq!(owner_hold(&fx.state, &work), Some(Hold::None));
     let questions = fx.call_ok("list_questions", json!({"threadId": work}));
-    assert_eq!(questions[0]["answer"], "MIT");
+    assert_eq!(questions[0]["answer"], ANSWERED);
     assert_eq!(questions[0]["answered_by"], json!(vision));
     let entries = fx.entries(&channel);
     let entry = entries
@@ -1684,14 +1721,29 @@ async fn an_allowed_answer_is_recorded_with_its_decision() {
         *entry,
         json!({"type": "answered", "vision_id": vision, "thread_id": work,
             "question_id": question, "decision": "wording", "question": "Which license?",
-            "answer": "MIT", "reason": why})
+            "answer": ANSWERED, "reason": why})
     );
     let history =
         serde_json::to_string(&fx.state.get_thread_history(&work).await.unwrap()).unwrap();
     let event = format!(
-        r#""kind":"question_answered","id":"{question}","answer":"MIT","vision_id":"{vision}""#
+        r#""kind":"question_answered","id":"{question}","answer":"{ANSWERED}","vision_id":"{vision}""#
     );
     assert!(history.contains(&event), "{history}");
+    // The chat's agent reads it as the Vision's answer, never as the person's.
+    let delivered = user_texts(&provider).await;
+    let answer = delivered
+        .iter()
+        .find(|text| text.contains(ANSWERED))
+        .expect("the answer reached the chat");
+    assert!(
+        answer.starts_with("[Answer to your question — from the Vision Wren]\n"),
+        "{answer}"
+    );
+    assert!(answer.contains("not the person's own words"), "{answer}");
+    assert!(!delivered
+        .iter()
+        .any(|text| text.starts_with("[Answer to your question — from the user]")));
+    assert_logs_hold_none(&fx, &[ANSWERED, why]);
     fx.shut_down().await;
 }
 
@@ -1749,5 +1801,55 @@ async fn a_passed_question_is_answered_by_the_person_from_the_channel() {
         "the person's: {answered}"
     );
     wait_until(|| async { !fx.running(&work).await }).await;
+    fx.shut_down().await;
+}
+
+/// An answer the channel cannot record still stands (it was delivered), and the Vision is told
+/// so it can say what it answered in its own message; the log has ids only.
+#[tokio::test(flavor = "multi_thread")]
+async fn an_answer_the_channel_cannot_record_comes_back_with_a_warning() {
+    use std::os::unix::fs::PermissionsExt;
+    let _turn = ONE_SERVER.lock().await;
+    let fx = fixture().await;
+    let provider = scripted_provider().await;
+    fx.use_provider(&provider).await;
+    let (vision, channel) = fx.vision_and_channel("Wren", "hq");
+    let (_own_chat, agent) = fx.vision_run(&vision, &channel).await;
+    let (work, question) = fx.asked_question(&agent).await;
+    let log = fx
+        .data
+        .join("visions")
+        .join("channels")
+        .join(format!("{channel}.jsonl"));
+    std::fs::set_permissions(&log, std::fs::Permissions::from_mode(0o400)).unwrap();
+    let why = "quokka unrecorded reason 3390";
+    let answered = json_of(&fx.agent_call(
+        &agent,
+        "answer_question",
+        vision_answer(&work, &question, "wording", why),
+    ));
+    std::fs::set_permissions(&log, std::fs::Permissions::from_mode(0o600)).unwrap();
+    assert_eq!(
+        answered["answered"]["answered_by"],
+        json!(vision),
+        "{answered}"
+    );
+    assert!(
+        answered["warning"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("could not record"),
+        "{answered}"
+    );
+    let questions = fx.call_ok("list_questions", json!({"threadId": work}));
+    assert_eq!(questions[0]["answer"], ANSWERED);
+    wait_until(|| async { !fx.running(&work).await }).await;
+    let logged: String = std::fs::read_dir(fx.data.join("logs"))
+        .unwrap()
+        .flatten()
+        .map(|file| std::fs::read_to_string(file.path()).unwrap_or_default())
+        .collect();
+    assert!(logged.contains("vision_answer_unrecorded"), "logged");
+    assert_logs_hold_none(&fx, &[ANSWERED, why]);
     fx.shut_down().await;
 }

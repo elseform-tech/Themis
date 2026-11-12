@@ -605,6 +605,14 @@ mod tests {
         assert!(head.contains(r#"list_channel_threads '{"channelId": "c1"}'"#));
         assert!(head.contains("Never repeat a chat's own summary as proof"));
         assert!(head.contains("Never restart, resend or replace a chat the person stopped"));
+        // Answers name their kind of decision and why; the rest are passed on.
+        assert!(head.contains(
+            r#"themis call answer_question '{"threadId": "ID", "questionId": "QID", "answer": "your answer", "decision": "KIND", "reason": "why, in one sentence"}'"#
+        ));
+        assert!(head.contains(
+            r#"themis call pass_question '{"threadId": "ID", "questionId": "QID", "decision": "KIND"}'"#
+        ));
+        assert!(head.contains("pass it on with `pass_question`"));
         assert!(head.ends_with(VISIONS_READ_ONLY_NOTE));
         // The note says what it really has: the read tools, and a shell for `themis` only.
         for words in ["list_dir", "search_file", "read_file", "runs only `themis`"] {

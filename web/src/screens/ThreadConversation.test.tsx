@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { cleanup, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { ANSWER_MARKER, type Question } from "../lib/types";
+import { ANSWER_MARKER, VISION_ANSWER_PREFIX, type Question } from "../lib/types";
 import { initialState, reducer } from "../state/reducer";
 import { ThreadConversation } from "./ThreadConversation";
 
@@ -41,6 +41,16 @@ describe("answered questions in the chat", () => {
     expect(text.indexOf("Working on my recommendations.")).toBeLessThan(text.indexOf("Tabs or spaces? → Tabs"));
     expect(container.querySelector(".themis-thread-msg--user")).toBeNull();
     expect(text).not.toContain(ANSWER_MARKER);
+  });
+
+  it("hide a Vision's answer message the same way", () => {
+    const { container } = conversation([
+      event({ kind: "question_asked", question: asked("q1", "Tabs or spaces?") }),
+      event({ kind: "question_answered", id: "q1", answer: "Tabs", vision_id: "v1" }, ""),
+      { kind: "user", run_id: "r2", text: `${VISION_ANSWER_PREFIX}Wren]\nWren is a Vision.\nQuestion: Tabs or spaces?\nAnswer: Tabs` },
+    ]);
+    expect(container.querySelector(".themis-thread-msg--user")).toBeNull();
+    expect(container.textContent ?? "").not.toContain(VISION_ANSWER_PREFIX);
   });
 
   it("keep an unanswered question as its open line where it was asked once its wait is over", () => {

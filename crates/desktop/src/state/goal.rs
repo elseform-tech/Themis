@@ -496,6 +496,8 @@ impl AppState {
                     crate::transcript::HistoryItem::User { text, .. } => {
                         !text.starts_with(themis_core::goal::GOAL_TURN_MARKER)
                             && !text.starts_with("/goal")
+                            // A Vision's answer is not the person speaking.
+                            && !super::questions::is_vision_answer(&text)
                     }
                     crate::transcript::HistoryItem::Event { envelope } => {
                         matches!(envelope.event, ThreadEvent::Steered { .. })
@@ -632,7 +634,7 @@ impl AppState {
                 // An answer to another question leaves the goal waiting on
                 // the blocking one; any other reply resumes it.
                 Some(GoalStatus::Waiting)
-                    if !(text.starts_with(super::questions::ANSWER_MARKER)
+                    if !(super::questions::is_answer(text)
                         && self
                             .open_questions(thread_id)
                             .iter()
@@ -684,7 +686,7 @@ impl AppState {
                 goal.status,
                 GoalStatus::Running | GoalStatus::Waiting | GoalStatus::Quota
             )
-        }) && !text.starts_with(super::questions::ANSWER_MARKER)
+        }) && !super::questions::is_answer(text)
             && core_goal::turn_number(text).is_none()
     }
 

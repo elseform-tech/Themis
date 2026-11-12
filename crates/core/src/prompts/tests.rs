@@ -168,6 +168,11 @@ const ALL: &[(&str, &str, &[&str])] = &[
         "question-answer",
         &["question", "options", "assumption", "answer"],
     ),
+    (
+        QUESTION_ANSWER_BY_VISION,
+        "question-answer-by-vision",
+        &["name"],
+    ),
     (COMPACTION_CHECKPOINT, "compaction-checkpoint", &[]),
     (
         SUMMARY_CHECKPOINT_REQUEST,
@@ -331,6 +336,11 @@ const ALL: &[(&str, &str, &[&str])] = &[
     (AGENT_CLI_ABOVE_AUTONOMY, "agent-cli-above-autonomy", &[]),
     (AGENT_CLI_VISION_DECISION, "agent-cli-vision-decision", &[]),
     (AGENT_CLI_VISION_REASON, "agent-cli-vision-reason", &[]),
+    (
+        AGENT_CLI_VISION_UNRECORDED,
+        "agent-cli-vision-unrecorded",
+        &[],
+    ),
     (
         AGENT_CLI_VISION_STEERS_ITS_OWN,
         "agent-cli-vision-steers-its-own",

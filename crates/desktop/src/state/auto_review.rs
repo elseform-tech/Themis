@@ -72,6 +72,13 @@ pub(super) fn parse_verdict(text: &str) -> AutoVerdict {
     }
 }
 
+/// Whether a user message in the chat is the person's own words: not a goal turn, and not a
+/// Vision's answer to a question (the Vision is not the requester).
+fn persons_own(text: &str) -> bool {
+    !text.starts_with(themis_core::goal::GOAL_TURN_MARKER)
+        && !super::questions::is_vision_answer(text)
+}
+
 /// The reviewer's system and user messages for `action`.
 pub(super) fn review_request(
     person: &str,
@@ -129,9 +136,7 @@ impl DesktopReviewer {
         let words: Vec<String> = page
             .into_iter()
             .filter_map(|(_, item)| match item {
-                crate::transcript::HistoryItem::User { text, .. }
-                    if !text.starts_with(themis_core::goal::GOAL_TURN_MARKER) =>
-                {
+                crate::transcript::HistoryItem::User { text, .. } if persons_own(&text) => {
                     Some(text)
                 }
                 _ => None,
@@ -463,5 +468,25 @@ mod tests {
         ] {
             assert_eq!(parse_verdict(text), AutoVerdict::Unavailable, "{text}");
         }
+    }
+
+    /// The reviewer reads only the person's own words: a Vision's answer (or a goal turn) in
+    /// the chat is not the requester speaking. The person's answer still is.
+    #[test]
+    fn a_visions_answer_is_not_the_requesters_words() {
+        use super::super::questions::{vision_answer_marker, ANSWER_MARKER};
+        assert!(persons_own("please clean the build folder"));
+        assert!(persons_own(&format!(
+            "{ANSWER_MARKER}\nQuestion: Delete it?\nAnswer: yes"
+        )));
+        let vision = format!(
+            "{}\nQuestion: Delete it?\nAnswer: yes",
+            vision_answer_marker("Wren")
+        );
+        assert!(!persons_own(&vision));
+        assert!(!persons_own(&format!(
+            "{} 3",
+            themis_core::goal::GOAL_TURN_MARKER
+        )));
     }
 }

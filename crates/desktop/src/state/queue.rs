@@ -370,9 +370,10 @@ impl AppState {
             let inbox = inbox.lock().unwrap_or_else(|e| e.into_inner());
             let authors = authors.lock().unwrap_or_else(|e| e.into_inner());
             let unread = unread_authors(&authors, inbox.len());
-            inbox.iter().zip(unread.iter()).any(|(text, author)| {
-                author.is_none() && !text.starts_with(super::questions::ANSWER_MARKER)
-            })
+            inbox
+                .iter()
+                .zip(unread.iter())
+                .any(|(text, author)| author.is_none() && !super::questions::is_answer(text))
         })
     }
 
@@ -479,7 +480,7 @@ impl AppState {
         let unread_count = unread.len();
         for (text, vision_id) in unread.into_iter().zip(by).rev() {
             // Answers were never shown as steers; a steer leaves the chat for now.
-            if !text.starts_with(super::questions::ANSWER_MARKER) {
+            if !super::questions::is_answer(&text) {
                 self.record_steer_event(
                     sink.as_ref(),
                     thread_id,

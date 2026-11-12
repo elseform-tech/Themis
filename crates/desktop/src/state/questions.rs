@@ -42,6 +42,44 @@ const MAX_ANSWER_CHARS: usize = 10_000;
 /// to tell an answer from an ordinary reply. Never change it.
 pub(crate) const ANSWER_MARKER: &str = "[Answer to your question — from the user]";
 
+/// Starts the message that delivers a Vision's answers, followed by the Vision's name and `]`:
+/// `[Answer to your question — from the Vision Wren]`. Read back like [`ANSWER_MARKER`] (see
+/// [`is_answer`]), so never change it either.
+pub(crate) const VISION_ANSWER_PREFIX: &str = "[Answer to your question — from the Vision ";
+
+/// Most characters of a Vision's name in its answer marker.
+const MAX_MARKER_NAME_CHARS: usize = 60;
+
+/// A Vision's name as its answer marker carries it: one line, no brackets, bounded.
+fn marker_name(name: &str) -> String {
+    let kept: String = name
+        .chars()
+        .filter(|c| !c.is_control() && *c != '[' && *c != ']')
+        .take(MAX_MARKER_NAME_CHARS)
+        .collect();
+    let kept = kept.trim();
+    if kept.is_empty() {
+        "a Vision".to_owned()
+    } else {
+        kept.to_owned()
+    }
+}
+
+/// The first line of a Vision's answer message, naming it.
+pub(crate) fn vision_answer_marker(name: &str) -> String {
+    format!("{VISION_ANSWER_PREFIX}{}]", marker_name(name))
+}
+
+/// Whether `text` is an answer message, the person's or a Vision's.
+pub(crate) fn is_answer(text: &str) -> bool {
+    text.starts_with(ANSWER_MARKER) || is_vision_answer(text)
+}
+
+/// Whether `text` is a Vision's answer message.
+pub(crate) fn is_vision_answer(text: &str) -> bool {
+    text.starts_with(VISION_ANSWER_PREFIX)
+}
+
 /// What the agent asked, before it is stored.
 #[derive(Debug, Clone, Default)]
 pub(super) struct NewQuestion {
@@ -502,6 +540,23 @@ impl AppState {
         Ok(answered)
     }
 
+    /// What an answer message starts with: the person's marker, or the Vision's naming it and
+    /// a line saying these are not the person's words.
+    fn answer_header(&self, by: Option<&str>) -> String {
+        let Some(vision_id) = by else {
+            return ANSWER_MARKER.to_owned();
+        };
+        let name = self
+            .vision_get(vision_id)
+            .map(|vision| vision.name)
+            .unwrap_or_default();
+        let note = themis_core::prompts::fill(
+            themis_core::prompts::QUESTION_ANSWER_BY_VISION,
+            &[("name", &marker_name(&name))],
+        );
+        format!("{}\n{note}", vision_answer_marker(&name))
+    }
+
     /// Hands the answers to the running run, or puts them first in the queue
     /// (joining an answer of the same author already waiting there), as one message, the
     /// person's (`by` `None`) or the Vision's. A running subagent that asked gets its own.
@@ -515,6 +570,7 @@ impl AppState {
     ) -> Result<bool, String> {
         // The subagent that asked gets it while it is running; once it has ended, the main
         // agent does, like any answer.
+        let header = self.answer_header(by);
         let mut main = Vec::new();
         let mut subagents: BTreeMap<String, Vec<String>> = BTreeMap::new();
         for (question, answer) in answered {
@@ -532,7 +588,7 @@ impl AppState {
                     .inbox
                     .lock()
                     .unwrap_or_else(|e| e.into_inner())
-                    .push_back(format!("{ANSWER_MARKER}\n{}", bodies.join("\n\n")));
+                    .push_back(format!("{header}\n{}", bodies.join("\n\n")));
             }
         }
         if main.is_empty() {
@@ -549,21 +605,17 @@ impl AppState {
                 .unwrap_or_else(|e| e.into_inner());
             let by = by.map(str::to_owned);
             if let Some(entry) = inboxes.get(thread_id) {
-                entry.push(format!("{ANSWER_MARKER}\n{body}"), by);
+                entry.push(format!("{header}\n{body}"), by);
                 return Ok(true);
             }
             match queue.first_mut() {
-                Some(first)
-                    if !first.held
-                        && first.text.starts_with(ANSWER_MARKER)
-                        && first.vision_id == by =>
-                {
+                Some(first) if !first.held && is_answer(&first.text) && first.vision_id == by => {
                     first.text.push_str("\n\n");
                     first.text.push_str(&body);
                 }
                 _ => queue.insert(
                     0,
-                    QueuedMessage::new(format!("{ANSWER_MARKER}\n{body}"), Vec::new(), None, by),
+                    QueuedMessage::new(format!("{header}\n{body}"), Vec::new(), None, by),
                 ),
             }
             Ok(false)
@@ -628,7 +680,7 @@ impl AppState {
         message: &str,
     ) -> Option<String> {
         let answer = bounded(message, MAX_ANSWER_CHARS);
-        if answer.is_empty() || message.starts_with(ANSWER_MARKER) {
+        if answer.is_empty() || is_answer(message) {
             return None;
         }
         let closed: Vec<Question> = {
@@ -1000,5 +1052,49 @@ mod tests {
             AppState::new_for_test(dir.path().join("settings.json")).questions_for("chat-1");
         let by: Vec<Option<&str>> = saved.iter().map(|q| q.answered_by.as_deref()).collect();
         assert_eq!(by, vec![Some("v1"), None, Some("v1")]);
+    }
+
+    /// Who an answer message is from, read back the way the parsers see it: `None` when `text`
+    /// is no answer, `Some(None)` for the person's, `Some(Some(name))` for a Vision's.
+    fn answer_author(text: &str) -> Option<Option<String>> {
+        if !is_answer(text) {
+            return None;
+        }
+        if !is_vision_answer(text) {
+            return Some(None);
+        }
+        let first = text.strip_prefix(VISION_ANSWER_PREFIX)?.lines().next()?;
+        Some(Some(first.strip_suffix(']')?.to_owned()))
+    }
+
+    /// The person's marker stays byte for byte what saved transcripts hold; a Vision's names it
+    /// and reads back to the same name, and every reader takes both as an answer.
+    #[test]
+    fn both_answer_markers_read_back() {
+        assert_eq!(ANSWER_MARKER, "[Answer to your question — from the user]");
+        let person = format!("{ANSWER_MARKER}\nQuestion: Tabs?\nAnswer: Tabs");
+        assert!(is_answer(&person));
+        assert!(!is_vision_answer(&person));
+        assert_eq!(answer_author(&person), Some(None));
+        for (name, read) in [
+            ("Wren", "Wren"),
+            ("  Old Owl ", "Old Owl"),
+            ("W[r]en\n]", "Wren"),
+            ("[]", "a Vision"),
+        ] {
+            let marker = vision_answer_marker(name);
+            assert_eq!(marker.lines().count(), 1, "{marker}");
+            let text = format!("{marker}\nQuestion: Tabs?\nAnswer: Tabs");
+            assert!(is_answer(&text) && is_vision_answer(&text), "{text}");
+            assert_eq!(answer_author(&text), Some(Some(read.to_owned())), "{text}");
+        }
+        assert_eq!(
+            vision_answer_marker("Wren"),
+            "[Answer to your question — from the Vision Wren]"
+        );
+        for other in ["Use tabs", "[Answer to your question", ""] {
+            assert!(!is_answer(other));
+            assert_eq!(answer_author(other), None);
+        }
     }
 }

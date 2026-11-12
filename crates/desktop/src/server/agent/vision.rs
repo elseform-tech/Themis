@@ -240,10 +240,16 @@ async fn question(
     }
     let (thread_id, answers, many) = crate::server::commands::answer_args(args)?;
     let terms = (decision_arg(args)?, reason_arg(args)?);
-    let answered = state
+    let (answered, unrecorded) = state
         .visions_answer(Arc::clone(sink), scope, thread_id, answers, terms)
         .await?;
-    crate::server::commands::answered_value(answered, many)
+    let answered = crate::server::commands::answered_value(answered, many)?;
+    // Delivered but not in the channel: the Vision is told, so it can say so itself.
+    Ok(if unrecorded {
+        json!({"answered": answered, "warning": themis_core::prompts::AGENT_CLI_VISION_UNRECORDED})
+    } else {
+        answered
+    })
 }
 
 /// A Vision's `send_message` (sent the server's way) or `enqueue_message` (queued with its id).

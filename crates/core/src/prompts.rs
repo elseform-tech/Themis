@@ -217,6 +217,10 @@ pub const MEMORY_CONSOLIDATE_USER: &str =
     include_str!("../builtins/prompts/memory-consolidate-user.md");
 /// The message that delivers the user's answer; `{{question}}`, `{{assumption}}`, `{{answer}}`.
 pub const QUESTION_ANSWER: &str = include_str!("../builtins/prompts/question-answer.md");
+/// Follows a Vision's answer marker: who answered, and that it is not the person's words;
+/// `{{name}}`.
+pub const QUESTION_ANSWER_BY_VISION: &str =
+    include_str!("../builtins/prompts/question-answer-by-vision.md");
 /// Description of the `update_goal` tool.
 pub const UPDATE_GOAL_TOOL: &str = include_str!("../builtins/prompts/tool-update-goal.md");
 /// System message of Auto mode's reviewer.
@@ -506,6 +510,9 @@ pub const AGENT_CLI_VISION_DECISION: &str =
 /// characters.
 pub const AGENT_CLI_VISION_REASON: &str =
     include_str!("../builtins/prompts/agent-cli-vision-reason.md");
+/// The warning with a Vision's answer that was delivered but the channel could not record.
+pub const AGENT_CLI_VISION_UNRECORDED: &str =
+    include_str!("../builtins/prompts/agent-cli-vision-unrecorded.md");
 /// The app server's answer to a Vision's steer of a waiting message it did not queue.
 pub const AGENT_CLI_VISION_STEERS_ITS_OWN: &str =
     include_str!("../builtins/prompts/agent-cli-vision-steers-its-own.md");

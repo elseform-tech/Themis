@@ -758,9 +758,6 @@
    "cognitive": 35,
    "cyclomatic": 27
   },
-  "web/src/screens/QueueStack.tsx::QueueStack": {
-   "cyclomatic": 22
-  },
   "web/src/screens/ResourceMeter.tsx::ResourceMeter": {
    "cyclomatic": 25
   },
