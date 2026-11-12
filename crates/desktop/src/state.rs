@@ -58,6 +58,7 @@ mod visions;
 mod workspace;
 pub use browser::update_payload as browser_update_payload;
 pub(crate) use hook_sessions::IDLE_CHECK_EVERY as HOOK_IDLE_CHECK_EVERY;
+pub(crate) use questions::forges_answer;
 pub use terminal::TerminalSession;
 pub use visions::{
     vision_decisions, Channel, ChannelEntry, ChannelLine, ChannelPage, Hold, NoticeKind, OwnedKind,

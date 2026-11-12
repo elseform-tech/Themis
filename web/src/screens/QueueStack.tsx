@@ -13,7 +13,6 @@ interface QueueStackProps {
   onRemove: (id: string) => void;
 }
 
-/** Messages waiting for the current run, oldest first, each with Steer, Edit and Remove. */
 /** What a waiting message shows: an answer as whose answer it is, else its text. */
 function queuedLabel(text: string): string {
   if (text.startsWith(ANSWER_MARKER)) return "Your answer to the agent's question";
@@ -21,6 +20,7 @@ function queuedLabel(text: string): string {
   return text || "Attached files";
 }
 
+/** Messages waiting for the current run, oldest first, each with Steer, Edit and Remove. */
 export function QueueStack({ queue, running, onSteer, onHold, onSave, onRemove }: QueueStackProps) {
   const [editing, setEditing] = useState<{ id: string; text: string } | null>(null);
   if (queue.length === 0) return null;

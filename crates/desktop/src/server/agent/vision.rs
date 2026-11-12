@@ -83,12 +83,25 @@ pub(super) fn refusal(
     if held(owner.hold, method) {
         return Some(Some(held_by_person()));
     }
+    if matches!(method, "send_message" | "enqueue_message") && dressed_as_answer(args) {
+        return Some(Some(Refusal {
+            reason: Reason::AnswerMarker,
+            message: themis_core::prompts::AGENT_CLI_VISION_ANSWER_MARKER.to_owned(),
+        }));
+    }
     Some(
         (method == "answer_question" && above_autonomy(scope, args)).then(|| Refusal {
             reason: Reason::AboveAutonomy,
             message: themis_core::prompts::AGENT_CLI_ABOVE_AUTONOMY.to_owned(),
         }),
     )
+}
+
+/// Whether a message's text starts with an answer marker, which only the server's answers carry.
+fn dressed_as_answer(args: &Value) -> bool {
+    args.get("text")
+        .and_then(Value::as_str)
+        .is_some_and(crate::state::forges_answer)
 }
 
 /// Whether an answer names a decision its run's autonomy leaves to the person. One naming no

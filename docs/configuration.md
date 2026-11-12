@@ -653,7 +653,13 @@ Vision) already waiting there. The person's answer message starts with the fixed
 `[Answer to your question — from the Vision <name>]` and a line saying it is not the person's
 own words (`question-answer-by-vision.md`). Every reader of the marker takes both as answers.
 The Auto reviewer does not read a Vision's answer as the requester's words, and it does not
-count as the person speaking to a goal. With `answers`
+count as the person speaking to a goal, whether it was queued as a message or steered into a
+running turn. Only answers the server builds carry a marker: a `send_message`,
+`enqueue_message` or queued-message edit whose text starts with either marker (after spaces)
+is refused, for the person ("This message starts with the marker only Themis writes on answers
+to questions; …") and for a Vision (`answer_marker`, `agent-cli-vision-answer-marker.md`); an
+edit may change a queued answer's words but not its marker line. Saved transcripts and queues
+read as before. With `answers`
 (`[{"questionId","answer"}]`) in place of `questionId` and `answer` it answers several at once,
 all or none, and delivers them as one message listing each question and its answer (the question
 box sends a set's pages this way); `list_questions`
@@ -891,7 +897,7 @@ Each refusal is logged as `server`/`agent_call_refused` with the method name
 (`(other)` for anything that is not a plain method name), the `plugin_action`
 action, a `reason` (`method_not_allowed`, `action_not_allowed`, `runs_code`,
 `other_project`, `network_blocked`, `tool_unavailable`, `held_by_person`, `paused`,
-`permission_question`, `above_autonomy`, or
+`permission_question`, `above_autonomy`, `answer_marker`, or
 `switch_on` from the store), and the chat and run ids (for a Vision's call also its
 `vision_id` and the `target_thread_id` it named), never the credential, paths or arguments.
 

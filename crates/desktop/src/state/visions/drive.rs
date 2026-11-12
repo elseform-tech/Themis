@@ -94,6 +94,9 @@ impl AppState {
         if let Some(reason) = self.visions_waits_reason(thread_id) {
             return Err(reason.to_owned());
         }
+        if super::super::questions::forges_answer(&text) {
+            return Err(themis_core::prompts::AGENT_CLI_VISION_ANSWER_MARKER.to_owned());
+        }
         let run_id = uuid::Uuid::new_v4().to_string();
         let (sent, _) = self
             .send_from_server(

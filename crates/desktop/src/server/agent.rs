@@ -156,6 +156,8 @@ pub(crate) enum Reason {
     PermissionQuestion,
     /// A Vision's answer to a question its autonomy leaves to the person.
     AboveAutonomy,
+    /// A Vision's message dressed as an answer (it starts with an answer marker).
+    AnswerMarker,
 }
 
 impl Reason {
@@ -171,6 +173,7 @@ impl Reason {
             Self::Paused => "paused",
             Self::PermissionQuestion => "permission_question",
             Self::AboveAutonomy => "above_autonomy",
+            Self::AnswerMarker => "answer_marker",
         }
     }
 }

@@ -238,6 +238,9 @@ impl AppState {
         effort: Option<String>,
         attachments: Vec<String>,
     ) -> Result<RunHandle, String> {
+        if super::questions::forges_answer(&text) {
+            return Err(super::questions::FORGED_ANSWER.to_owned());
+        }
         let handle = self
             .send_message_with_options(
                 sink,

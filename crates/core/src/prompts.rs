@@ -510,6 +510,10 @@ pub const AGENT_CLI_VISION_DECISION: &str =
 /// characters.
 pub const AGENT_CLI_VISION_REASON: &str =
     include_str!("../builtins/prompts/agent-cli-vision-reason.md");
+/// The app server's answer to a Vision's `send_message` or `enqueue_message` whose text starts
+/// with an answer marker (only the server's answers carry one).
+pub const AGENT_CLI_VISION_ANSWER_MARKER: &str =
+    include_str!("../builtins/prompts/agent-cli-vision-answer-marker.md");
 /// The warning with a Vision's answer that was delivered but the channel could not record.
 pub const AGENT_CLI_VISION_UNRECORDED: &str =
     include_str!("../builtins/prompts/agent-cli-vision-unrecorded.md");

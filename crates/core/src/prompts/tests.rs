@@ -337,6 +337,11 @@ const ALL: &[(&str, &str, &[&str])] = &[
     (AGENT_CLI_VISION_DECISION, "agent-cli-vision-decision", &[]),
     (AGENT_CLI_VISION_REASON, "agent-cli-vision-reason", &[]),
     (
+        AGENT_CLI_VISION_ANSWER_MARKER,
+        "agent-cli-vision-answer-marker",
+        &[],
+    ),
+    (
         AGENT_CLI_VISION_UNRECORDED,
         "agent-cli-vision-unrecorded",
         &[],

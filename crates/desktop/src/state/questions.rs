@@ -75,6 +75,16 @@ pub(crate) fn is_answer(text: &str) -> bool {
     text.starts_with(ANSWER_MARKER) || is_vision_answer(text)
 }
 
+/// Whether text someone sends (the person, or a Vision) starts with an answer marker, after
+/// any leading spaces: only the answers the server builds may carry one, so the person cannot
+/// pose as a Vision and a Vision cannot pose as the person.
+pub(crate) fn forges_answer(text: &str) -> bool {
+    is_answer(text.trim_start())
+}
+
+/// What the person is told when a message of theirs starts with an answer marker.
+pub(crate) const FORGED_ANSWER: &str = "This message starts with the marker only Themis writes on answers to questions; answer from the question box, or reword the start.";
+
 /// Whether `text` is a Vision's answer message.
 pub(crate) fn is_vision_answer(text: &str) -> bool {
     text.starts_with(VISION_ANSWER_PREFIX)
@@ -1096,5 +1106,76 @@ mod tests {
             assert!(!is_answer(other));
             assert_eq!(answer_author(other), None);
         }
+    }
+
+    /// Only answers the server builds carry a marker: text that starts with either one (after
+    /// spaces) is a forgery, anything else is not. Saved answers keep reading as answers.
+    #[test]
+    fn text_starting_with_an_answer_marker_is_a_forgery() {
+        let vision = vision_answer_marker("Wren");
+        for forged in [
+            format!("{ANSWER_MARKER}\nAnswer: yes"),
+            format!("  {vision}\nAnswer: yes"),
+            format!("\n{VISION_ANSWER_PREFIX}Someone]"),
+        ] {
+            assert!(forges_answer(&forged), "{forged}");
+        }
+        for plain in [
+            "Use tabs",
+            "Re: [Answer to your question — from the user]",
+            "",
+        ] {
+            assert!(!forges_answer(plain), "{plain}");
+        }
+        // A queue file saved before the guard still holds answers the queue sends as before.
+        let saved: crate::types::QueuedMessage = serde_json::from_str(&format!(
+            r#"{{"id":"m","text":{}}}"#,
+            serde_json::to_string(&format!("{ANSWER_MARKER}\nAnswer: Tabs")).unwrap()
+        ))
+        .unwrap();
+        assert!(is_answer(&saved.text) && saved.vision_id.is_none());
+    }
+
+    /// The person may edit a queued answer's words but not give a plain message a marker, nor
+    /// change whose answer it is.
+    #[tokio::test]
+    async fn an_edit_cannot_add_or_change_an_answer_marker() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = AppState::new_for_test(dir.path().join("settings.json"));
+        let info = state
+            .create_thread(
+                dir.path().to_string_lossy().into_owned(),
+                crate::types::ProviderKind::Go,
+                Some("m".into()),
+            )
+            .await
+            .unwrap();
+        let sink: Arc<dyn EventSink> = Arc::new(crate::sink::ChannelSink::channel().0);
+        let answer = format!("{ANSWER_MARKER}\nAnswer: Tabs");
+        let (plain, queued_answer) = (
+            crate::types::QueuedMessage::new("tabs please".into(), Vec::new(), None, None),
+            crate::types::QueuedMessage::new(answer.clone(), Vec::new(), None, None),
+        );
+        let ids = (plain.id.clone(), queued_answer.id.clone());
+        state
+            .edit_queue(sink.as_ref(), &info.id, |queue| {
+                queue.extend([plain, queued_answer]);
+                Ok(())
+            })
+            .unwrap();
+        let edit = |id: &str, text: String| {
+            state.update_queued_message(
+                Arc::clone(&sink),
+                info.id.clone(),
+                id.to_owned(),
+                Some(text),
+                None,
+            )
+        };
+        let forged = format!("{}\nAnswer: yes", vision_answer_marker("Wren"));
+        assert!(edit(&ids.0, forged.clone()).await.is_err());
+        assert!(edit(&ids.1, forged).await.is_err());
+        let kept = edit(&ids.1, format!("{ANSWER_MARKER}\nAnswer: Spaces")).await;
+        assert!(kept.is_ok(), "{kept:?}");
     }
 }

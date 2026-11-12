@@ -161,6 +161,14 @@ impl AppState {
         message: QueuedMessage,
     ) -> Result<QueuedMessage, String> {
         let person = message.vision_id.is_none();
+        if super::questions::forges_answer(&message.text) {
+            return Err(if person {
+                super::questions::FORGED_ANSWER
+            } else {
+                themis_core::prompts::AGENT_CLI_VISION_ANSWER_MARKER
+            }
+            .to_owned());
+        }
         let running = self.require_thread(&thread_id).await?;
         let text = message.text.trim().to_owned();
         if text.is_empty() && message.attachments.is_empty() {
@@ -215,6 +223,13 @@ impl AppState {
                 }
                 if text.chars().count() > MAX_QUEUED_CHARS {
                     return Err("This message is too long to queue".to_owned());
+                }
+                // A queued answer's words may change, but no edit adds a marker or changes
+                // whose answer it is.
+                if super::questions::forges_answer(&text)
+                    && text.lines().next() != message.text.lines().next()
+                {
+                    return Err(super::questions::FORGED_ANSWER.to_owned());
                 }
                 message.text = text;
                 message.note = None;
