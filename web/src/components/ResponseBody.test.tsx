@@ -228,3 +228,12 @@ it("wraps a long code line in the well without changing what Copy gives back", a
   fireEvent.click(screen.getByRole("button", { name: "Copy" }));
   await waitFor(() => expect(writeText).toHaveBeenCalledWith(code));
 });
+
+it("lets a chart shrink with a narrow column down to readable labels, then scroll in its own frame", async () => {
+  // The mocked chart is drawn 120 wide: below 60% of that (72px) its labels would be unreadable.
+  const { container } = render(<ResponseBody text={'```mermaid\nflowchart LR\n A-->B\n```'} />);
+  const frame = await waitFor(() => { const found = container.querySelector<HTMLIFrameElement>(".themis-diagram-scroll > iframe"); expect(found).not.toBeNull(); return found!; });
+  expect(frame.style.width).toBe("100%");
+  expect(frame.style.minWidth).toBe("72px");
+  expect(frame.closest(".themis-diagram-preview")?.querySelector(".themis-diagram-expand")).not.toBeNull();
+});

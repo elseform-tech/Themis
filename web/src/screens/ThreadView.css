@@ -196,14 +196,16 @@
 .themis-composer-attachments > li:hover > button, .themis-composer-attachments > li:focus-within > button { opacity: 1; }
 .themis-composer-attachments { padding: 8px 6px 4px; overflow: visible; flex-wrap: wrap; }
 .themis-message-attachments { align-self: flex-end; align-items: flex-end; justify-content: flex-end; flex-wrap: wrap; max-width: 100%; padding: 0; margin-bottom: -6px; overflow: visible; }
+/* A narrow column: attachments and the bubble shrink with it instead of pushing it wider. */
+.themis-message-attachments, .themis-thread-msg--user { min-width: 0; }
 .themis-attachment-preview { flex-shrink: 0; position: relative; box-sizing: border-box; margin: 0; font-size: .75rem; }
 .themis-attachment-preview figcaption { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--themis-text); }
-.themis-attachment-preview--media { width: 176px; }
+.themis-attachment-preview--media { width: 176px; max-width: 100%; }
 .themis-attachment-media { display: grid; place-items: center; height: 112px; overflow: hidden; border-radius: 14px; background: var(--themis-raised); }
 .themis-attachment-media img, .themis-attachment-media video { display: block; width: 100%; height: 100%; object-fit: cover; }
 .themis-attachment-media iframe { display: block; width: 100%; height: 100%; border: 0; background: white; pointer-events: none; }
 .themis-attachment-preview--media figcaption { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
-.themis-attachment-preview--file { display: flex; align-items: center; gap: 10px; width: 200px; height: 56px; padding: 8px 12px 8px 8px; border-radius: 14px; background: var(--themis-raised); }
+.themis-attachment-preview--file { display: flex; align-items: center; gap: 10px; width: 200px; max-width: 100%; height: 56px; padding: 8px 12px 8px 8px; border-radius: 14px; background: var(--themis-raised); }
 .themis-attachment-ext { display: grid; place-items: center; flex: none; width: 40px; height: 40px; border-radius: 10px; background: color-mix(in srgb, var(--themis-accent) 16%, transparent); color: var(--themis-accent); font-size: .75rem; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; }
 .themis-attachment-text { display: grid; gap: 2px; min-width: 0; flex: 1; }
 .themis-attachment-text small { color: var(--themis-text-3); font-size: .75rem; }
