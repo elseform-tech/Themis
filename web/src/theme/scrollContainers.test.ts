@@ -47,3 +47,26 @@ it("clips the code and diff wells (and their panes) instead of making them scrol
   expect(workspace).toMatch(/\.themis-files-view \.themis-codeblock \{ overflow: clip; \}/);
   expect(workspace).not.toMatch(/overflow-y: visible/);
 });
+
+// Inside Workspace › Changes nothing but the stack is a scroll container, `hidden` included (WebKit can flash an
+// overlay bar on a hidden-overflow block that overflows by a pixel). The one exception is an ellipsis text span.
+it("keeps every element inside the Changes stack from being a scroll container, but ellipsis text spans", () => {
+  const offenders: string[] = [];
+  for (const file of ["components/diff/FileTree.css", "components/diff/DiffView.css", "components/CodeBlock.css", "components/primitives/EmptyState.css"]) {
+    const css = readFileSync(`src/${file}`, "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
+    for (const rule of css.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
+      const body = rule[2]!;
+      if (!/overflow(-x|-y)?\s*:\s*(auto|scroll|hidden)/.test(body)) continue;
+      if (/overflow\s*:\s*hidden/.test(body) && /text-overflow:\s*ellipsis/.test(body) && /white-space:\s*nowrap/.test(body)) continue;
+      offenders.push(`${file}: ${rule[1]!.trim()}`);
+    }
+  }
+  expect(offenders).toEqual([]);
+});
+
+// With overlay scrollbars the stack's bar sits over its content; the wells are positioned (their Unified/Split
+// control), so unless the stack is its own stacking context they paint over its bar and leave slivers beside the rows.
+it("paints the Changes stack's overlay scrollbar above its positioned wells", () => {
+  const workspace = readFileSync("src/screens/WorkspacePanel.css", "utf8");
+  expect(workspace).toMatch(/\.themis-changes-stack \{[^}]*overflow-y: auto;[^}]*isolation: isolate/);
+});
