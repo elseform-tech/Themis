@@ -81,18 +81,6 @@ function allChats(state: AppState): OwnedChat[] {
   return Object.values(state.visions.chats).flat();
 }
 
-/** The ids of every chat a Vision runs, built once per listing of the chats (thread events leave
- *  `visions.chats` as it is, so they cost one set lookup). */
-const ownedIds = new WeakMap<VisionsState["chats"], Set<string>>();
-function ownedChatIds(state: AppState): Set<string> {
-  let ids = ownedIds.get(state.visions.chats);
-  if (!ids) {
-    ids = new Set(allChats(state).map(chat => chat.id));
-    ownedIds.set(state.visions.chats, ids);
-  }
-  return ids;
-}
-
 /** What waits on the person from every Vision, as the server counts it. */
 export function needsCount(state: AppState): number {
   return state.visions.list.reduce((total, vision) => total + vision.needs, 0);
@@ -170,9 +158,15 @@ function older(state: AppState, action: Extract<VisionsAction, { type: "visions/
   };
 }
 
-/** Whether `threadId` is a chat a Vision runs (a work chat listed in a channel). */
-export function isOwnedChat(state: AppState, threadId: string | null): boolean {
-  return threadId !== null && ownedChatIds(state).has(threadId);
+/** The work chat `threadId` as its channel last listed it, with who holds it. */
+export function ownedChat(state: AppState, threadId: string): OwnedChat | undefined {
+  return allChats(state).find(chat => chat.id === threadId);
+}
+
+/** Whether the active chat is the Vision's chat open in Visions (not a chat chosen in plain chat,
+ *  where a Vision's chats are listed too). No chats are read. */
+export function visionsHoldsActive(state: AppState): boolean {
+  return state.mainView === "visions" && state.activeThreadId !== null && state.activeThreadId === state.visions.open.chatId;
 }
 
 /** After any action: when the project changed and the open channel is not one of the new
@@ -195,16 +189,16 @@ function reshow(state: AppState): AppState {
  *  the plain chat open before it is kept for Chats to return to. */
 function open(state: AppState, action: Extract<VisionsAction, { type: "visions/open" }>): AppState {
   const chatId = action.chatId ?? null;
-  const plainThreadId = isOwnedChat(state, state.activeThreadId) ? state.visions.open.plainThreadId : state.activeThreadId;
+  const plainThreadId = visionsHoldsActive(state) ? state.visions.open.plainThreadId : state.activeThreadId;
   const visions = { ...state.visions, open: { channelId: action.channelId, chatId, plainThreadId } };
   if (chatId === null) return { ...state, visions };
   const root = Object.keys(visions.channels).find(each => visions.channels[each]!.some(channel => channel.id === action.channelId));
   return { ...state, visions, activeThreadId: chatId, activeProjectRoot: root ?? state.activeProjectRoot };
 }
 
-/** Leaving for plain chat: a Vision's chat that was open gives way to the plain chat before it. */
+/** Leaving for plain chat: a Vision's chat open in Visions gives way to the plain chat before it. */
 export function leaveOwnedChat(state: AppState): AppState {
-  if (!isOwnedChat(state, state.activeThreadId)) return state;
+  if (!visionsHoldsActive(state)) return state;
   return { ...state, activeThreadId: state.visions.open.plainThreadId };
 }
 

@@ -18,6 +18,8 @@ import {
 import { SidebarIcon } from "./screens/Sidebar";
 import { isTauri } from "@tauri-apps/api/core";
 import { ResourceMeter } from "./screens/ResourceMeter";
+import { ThreadHeadExtra } from "./screens/ThreadHeader";
+import { PlainVisionBar } from "./screens/visions/HandBack";
 import { SidebarWithVisions } from "./screens/visions/SidebarWithVisions";
 import { VisionsView } from "./screens/visions/VisionsView";
 import "./screens/shell.css";
@@ -94,7 +96,7 @@ function Shell() {
           <SidebarWithVisions collapsed={collapsed} />
           <main className="themis-main">
         <div className="themis-view">
-          {state.mainView === "thread" && <ThreadView />}
+          {state.mainView === "thread" && <ThreadHeadExtra.Provider value={<PlainVisionBar />}><ThreadView /></ThreadHeadExtra.Provider>}
           {state.mainView === "skills" && <Skills />}
           {state.mainView === "automations" && <Automations />}
           {state.mainView === "settings" && <SettingsScreen />}

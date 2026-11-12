@@ -3,7 +3,7 @@
 //! `visions-changed` with the channel and Vision it touched.
 
 use super::*;
-use crate::state::{Channel, Vision};
+use crate::state::{Channel, OwnedKind, Vision};
 use crate::types::VisionsChange;
 
 /// A channel page holds this many bytes of log lines unless the caller asks for fewer.
@@ -46,11 +46,34 @@ pub(super) async fn dispatch(
     method: &str,
     args: &Value,
 ) -> Result<Value, String> {
+    let released = released_by(state, method, args);
     let (value, changed) = run(state, sink, method, args).await?;
     if let Some(changed) = changed {
         sink.emit_visions_changed(&changed);
     }
+    // Plain chat drops their Vision's mark.
+    for id in released {
+        super::commands::announce_thread(state, sink.as_ref(), ThreadChangeKind::Updated, id).await;
+    }
     Ok(value)
+}
+
+/// The work chats deleting a Vision or a channel makes ordinary again, read before the call.
+fn released_by(state: &AppState, method: &str, args: &Value) -> Vec<String> {
+    let (vision, channel) = match method {
+        "delete_vision" => (arg::<String>(args, "visionId").ok(), None),
+        "delete_channel" => (None, arg::<String>(args, "channelId").ok()),
+        _ => return Vec::new(),
+    };
+    state
+        .owners_where(|owner| {
+            owner.kind == OwnedKind::Work
+                && (vision.as_deref() == Some(owner.vision_id.as_str())
+                    || channel.as_deref() == Some(owner.channel_id.as_str()))
+        })
+        .into_iter()
+        .map(|owner| owner.thread_id)
+        .collect()
 }
 
 async fn run(
@@ -178,7 +201,7 @@ async fn chat_method(
     }
 }
 
-/// For the person's chat methods that can change a Vision's chat (stop, send, discard) or what
+/// For the person's chat methods that can change a Vision's chat (stop, send, queue, discard) or what
 /// waits on the person there (an answer, an approval): the chat's channel and Vision, read
 /// before the call, to announce after it succeeds.
 pub(super) fn owned_chat(
@@ -188,7 +211,12 @@ pub(super) fn owned_chat(
 ) -> Option<VisionsChange> {
     let touches = matches!(
         method,
-        "stop_thread" | "send_message" | "discard_thread" | "answer_question" | "approve_action"
+        "stop_thread"
+            | "send_message"
+            | "enqueue_message"
+            | "discard_thread"
+            | "answer_question"
+            | "approve_action"
     );
     if !touches {
         return None;

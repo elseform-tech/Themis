@@ -1,7 +1,6 @@
 //! What the person does to Visions, channels and the chats Visions own: write in a channel,
 //! stop, take over and hand back a chat, pause and delete. Logged as metadata only.
 
-use std::collections::HashSet;
 use std::sync::Arc;
 
 use serde_json::{json, Value};
@@ -33,25 +32,21 @@ impl AppState {
             .append("visions", event, "info", fields);
     }
 
-    /// The chats some Vision owns, to keep them out of the plain list.
-    pub(crate) fn visions_owned_ids(&self) -> HashSet<String> {
-        self.owners_where(|_| true)
-            .into_iter()
-            .map(|owner| owner.thread_id)
-            .collect()
-    }
-
     /// The work chats Visions started in `channel_id`, each with its owner record.
     pub async fn visions_channel_threads(&self, channel_id: &str) -> Result<Vec<Value>, String> {
         let owners = self
             .owners_where(|owner| owner.channel_id == channel_id && owner.kind == OwnedKind::Work);
+        let marks = self.visions_marks();
         let threads = self.inner.threads.read().await;
         let mut listed = Vec::with_capacity(owners.len());
         for owner in owners {
             let Some(record) = threads.get(&owner.thread_id) else {
                 continue;
             };
-            let info: ThreadInfo = self.info_of(record)?;
+            let info = ThreadInfo {
+                vision: marks.of(&owner.thread_id),
+                ..self.info_of(record)?
+            };
             let mut value = serde_json::to_value(info).map_err(|e| e.to_string())?;
             value["owner"] = serde_json::to_value(&owner).map_err(|e| e.to_string())?;
             listed.push(value);

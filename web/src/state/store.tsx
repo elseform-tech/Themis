@@ -44,7 +44,7 @@ import { getBrowserSettings,
   openProject,
 } from "../lib/tauri";
 import { getChannelPage, listChannels, listChannelThreads, listQuestions, listVisions } from "../lib/visions";
-import { followVisions, isOwnedChat, type VisionsBridge } from "./visions";
+import { followVisions, visionsHoldsActive, type VisionsBridge } from "./visions";
 import { failureMessage as describeError } from "../lib/errors";
 import { reviewToast } from "../screens/reviewFlow";
 import { readSession, writeSession } from "./session";
@@ -101,10 +101,10 @@ export function toast(
   dispatch({ type: "toast/push", toast: { id: newId("toast"), message, tone } });
 }
 
-/** The plain chat to restore at the next launch; never a Vision's chat, which only opens from its channel. */
+/** The plain chat to restore at the next launch; never the Vision's chat open in Visions. */
 export function selectionToSave(state: AppState): { root: string; threadId: string } | null {
   const { activeProjectRoot: root, activeThreadId: threadId } = state;
-  return root && threadId && !isOwnedChat(state, threadId) ? { root, threadId } : null;
+  return root && threadId && !visionsHoldsActive(state) ? { root, threadId } : null;
 }
 
 /** Saves the plain chat to restore once the session was restored. */

@@ -75,7 +75,18 @@ async fn announce_thread_change(
         }
         _ => return,
     };
-    let Some(id) = id else { return };
+    if let Some(id) = id {
+        announce_thread(state, sink, kind, id).await;
+    }
+}
+
+/// Tells every subscribed window that the chat `id` was created or changed, with its info now.
+pub(super) async fn announce_thread(
+    state: &AppState,
+    sink: &dyn EventSink,
+    kind: ThreadChangeKind,
+    id: String,
+) {
     let (Some(project_root), Ok(thread)) = (
         state.thread_project_root(&id).await,
         state.get_thread(&id).await,

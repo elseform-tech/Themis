@@ -910,6 +910,7 @@ fn thread_info(record: &ThreadRecord, transcript: &TranscriptStore) -> Result<Th
         base_branch: None,
         recovered: record.recovered,
         skill_ids: record.skill_ids.clone(),
+        vision: None,
     })
 }
 

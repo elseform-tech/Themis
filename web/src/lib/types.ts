@@ -59,6 +59,16 @@ export interface ThreadInfo {
   /** True when the thread was marked running at shutdown and reconciled on boot. */
   recovered: boolean;
   skill_ids: string[];
+  /** The Vision running this chat (a work chat it started); null for the person's own. */
+  vision?: ThreadVision | null;
+}
+
+/** The Vision running a chat, as plain chat marks it (Rust `ThreadVision`). */
+export interface ThreadVision {
+  id: string;
+  name: string;
+  shape: string;
+  color: string;
 }
 
 export interface MergeResult {

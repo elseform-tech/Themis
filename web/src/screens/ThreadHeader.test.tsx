@@ -3,7 +3,7 @@ import { fireEvent, render, screen } from "@testing-library/react";
 import { existsSync, readFileSync } from "node:fs";
 import { expect, it, vi } from "vitest";
 import type { ThreadInfo } from "../lib/types";
-import { ThreadHeader } from "./ThreadHeader";
+import { ThreadHeadExtra, ThreadHeader } from "./ThreadHeader";
 
 const thread = { id: "t", title: "Fix", provider: "go", model: "beam-free", running: false, worktree_path: null, branch: null, base_branch: null, recovered: false, skill_ids: [] } as unknown as ThreadInfo;
 
@@ -40,4 +40,12 @@ it("names a single change and no change plainly", () => {
 it("has no overview card floating over the chat: the header count and the Workspace replace it", () => {
   expect(existsSync("src/screens/OverviewBox.tsx")).toBe(false);
   expect(readFileSync("src/screens/ThreadConversation.tsx", "utf8")).not.toMatch(/Overview/);
+});
+
+it("shows what plain chat puts in the header (a Vision's chat bar) after the model pill, and nothing otherwise", () => {
+  header();
+  expect(screen.queryByTestId("head-extra")).toBeNull();
+  render(<ThreadHeadExtra.Provider value={<span data-testid="head-extra" />}><ThreadHeader thread={thread} models={[]} effortLevels={[]} effort="" busy={false} switching={false}
+    onProviderChange={vi.fn()} onEffortChange={vi.fn()} reviewOpen={false} onToggleReview={vi.fn()} /></ThreadHeadExtra.Provider>);
+  expect(screen.getByTestId("head-extra").previousElementSibling).toHaveClass("themis-model-pill");
 });

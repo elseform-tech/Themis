@@ -122,6 +122,10 @@ impl AppState {
             .get(thread_id)
             .ok_or_else(|| format!("unknown thread '{thread_id}'"))
             .and_then(|record| self.info_of(record))
+            .map(|info| ThreadInfo {
+                vision: self.visions_mark_of(thread_id),
+                ..info
+            })
     }
 
     pub async fn get_thread_history(&self, thread_id: &str) -> Result<Vec<HistoryItem>, String> {
@@ -175,17 +179,24 @@ impl AppState {
         Ok(info)
     }
 
-    /// Lists the threads on `project_root` (empty when the project has none), except those a
-    /// Vision owns: they show in their channel instead.
+    /// Lists the threads on `project_root` (empty when the project has none), each work chat a
+    /// Vision started marked with its Vision; a Vision's own chats stay hidden. Who runs which
+    /// chat is read once per listing.
     pub async fn list_threads(&self, project_root: String) -> Result<Vec<ThreadInfo>, String> {
         let root = canonical_project_dir(&project_root)?;
-        let owned = self.visions_owned_ids();
+        let marks = self.visions_marks();
         let threads = self.inner.threads.read().await;
         let mut infos: Vec<ThreadInfo> = threads
             .values()
-            .filter(|record| record.project_root == root && !owned.contains(&record.id))
-            .map(|record| self.info_of(record))
-            .collect::<Result<_, _>>()?;
+            .filter(|record| record.project_root == root && !marks.hidden(&record.id))
+            .map(|record| {
+                let info = self.info_of(record)?;
+                Ok(ThreadInfo {
+                    vision: marks.of(&record.id),
+                    ..info
+                })
+            })
+            .collect::<Result<_, String>>()?;
         infos.sort_by(|left, right| left.id.cmp(&right.id));
         Ok(infos)
     }

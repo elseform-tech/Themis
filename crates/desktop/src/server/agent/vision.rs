@@ -14,7 +14,7 @@ use themis_core::visions::Decision;
 
 use super::*;
 use crate::state::{Hold, OwnedKind};
-use crate::types::{QueuedMessage, VisionsChange};
+use crate::types::{QueuedMessage, ThreadChangeKind, VisionsChange};
 
 /// Most characters of the reason a Vision gives with its answer.
 const MAX_REASON_CHARS: usize = 200;
@@ -236,7 +236,13 @@ pub(super) async fn dispatch(
 ) -> Result<Value, String> {
     let result = match method {
         // The chat's provider and model are the Vision's, never the call's.
-        "create_thread" => to_value(state.visions_start_work_chat(scope).await?),
+        "create_thread" => {
+            let info = state.visions_start_work_chat(scope).await?;
+            // Plain chat lists it too, marked with its Vision.
+            let (kind, id) = (ThreadChangeKind::Created, info.id.clone());
+            crate::server::commands::announce_thread(state, sink.as_ref(), kind, id).await;
+            to_value(info)
+        }
         "answer_question" | "pass_question" => question(state, sink, scope, method, &args).await,
         "send_message" | "enqueue_message" => write(state, sink, scope, method, &args).await,
         "steer_queued_message" => state

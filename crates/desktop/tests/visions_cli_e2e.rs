@@ -1,6 +1,6 @@
 //! Visions through the real app server and `themis call`: profiles and channels with revisions,
-//! channel logs, the chats Visions own (out of the plain list, held when the person stops or
-//! takes one over, released when a channel goes), Settings › Visions, an agent's credential
+//! channel logs, the chats Visions own (work chats listed in plain chat with their Vision, held
+//! when the person stops or takes one over, released when a channel goes), Settings › Visions, an agent's credential
 //! refused on every method, and a Vision's credential driving only the chats its Vision owns
 //! (never as the person). In-process app server, isolated app data, synthetic credentials,
 //! scripted provider.
@@ -24,6 +24,8 @@ use fixture::*;
 
 #[path = "visions_e2e/budget.rs"]
 mod budget;
+#[path = "visions_e2e/plain_chat.rs"]
+mod plain_chat;
 
 /// One app server per process installs the run-credential issuer, so these tests take turns.
 static ONE_SERVER: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
@@ -154,33 +156,6 @@ async fn a_channel_and_a_vision_round_trip_with_revisions() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn owned_chats_leave_the_plain_list_and_show_in_the_channel() {
-    let _turn = ONE_SERVER.lock().await;
-    let fx = fixture().await;
-    let (vision, channel) = fx.vision_and_channel("Wren", "hq");
-    let plain = fx.thread().await;
-    let work = fx.thread().await;
-    let own_chat = fx.thread().await;
-    fx.own(&work, &vision, &channel, OwnedKind::Work);
-    fx.own(&own_chat, &vision, &channel, OwnedKind::VisionChat);
-
-    assert_eq!(fx.listed_ids(), vec![plain.clone()]);
-    let in_channel = fx.call_ok("list_channel_threads", json!({"channelId": channel}));
-    let in_channel = in_channel.as_array().unwrap();
-    assert_eq!(in_channel.len(), 1, "{in_channel:?}");
-    assert_eq!(in_channel[0]["id"], work.as_str());
-    assert_eq!(in_channel[0]["owner"]["vision_id"], vision.as_str());
-    assert_eq!(in_channel[0]["owner"]["hold"], "none");
-
-    // Discarding an owned chat forgets its owner.
-    fx.call_ok("discard_thread", json!({"threadId": work}));
-    assert!(fx.state.owner_of(&work).is_none());
-    let in_channel = fx.call_ok("list_channel_threads", json!({"channelId": channel}));
-    assert_eq!(in_channel, json!([]));
-    fx.shut_down().await;
-}
-
-#[tokio::test(flavor = "multi_thread")]
 async fn deleting_a_channel_stops_and_releases_its_chats() {
     let _turn = ONE_SERVER.lock().await;
     let fx = fixture().await;
@@ -201,7 +176,6 @@ async fn deleting_a_channel_stops_and_releases_its_chats() {
     fx.own(&idle, &vision, &channel, OwnedKind::Work);
     fx.own(&taken, &vision, &channel, OwnedKind::Work);
     hold(&fx.state, &taken, Hold::TakenOver);
-    assert!(fx.listed_ids().is_empty());
 
     fx.call_ok("delete_channel", json!({"channelId": channel}));
     wait_until(|| async { !fx.running(&running).await }).await;
@@ -218,6 +192,12 @@ async fn deleting_a_channel_stops_and_releases_its_chats() {
     let mut expected = vec![running.clone(), idle.clone(), taken.clone()];
     expected.sort();
     assert_eq!(listed, expected, "the chats are ordinary chats again");
+    let listed = fx.call_ok("list_threads", json!({"projectRoot": fx.project}));
+    assert!(listed
+        .as_array()
+        .unwrap()
+        .iter()
+        .all(|t| t["vision"].is_null()));
     assert_eq!(
         fx.call_ok("list_channels", json!({"projectRoot": fx.project})),
         json!([])
@@ -499,7 +479,7 @@ async fn a_person_stop_blocks_the_visions_sends_until_handed_back() {
     assert_eq!(started["type"], "chat_started");
     assert_eq!(started["vision_id"], vision.as_str());
     assert_eq!(started["thread_id"], work.as_str());
-    assert!(!fx.listed_ids().contains(&work), "out of the plain list");
+    assert!(fx.listed_ids().contains(&work), "in the plain list too");
     let elsewhere = tempfile::tempdir().unwrap();
     let refused = fx.agent_call(
         &agent,
@@ -1314,7 +1294,7 @@ async fn a_vision_starts_a_chat_and_reports_when_it_finishes() {
         "Wren · #hq"
     );
     let listed = fx.listed_ids();
-    assert!(!listed.contains(&own_chat) && !listed.contains(&work));
+    assert!(!listed.contains(&own_chat) && listed.contains(&work));
     let requests = provider.received_requests().await.unwrap();
     let woke_for_finish = requests.iter().any(|request| {
         let body: Value = request.body_json().unwrap_or(Value::Null);

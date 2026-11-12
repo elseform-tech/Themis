@@ -16,6 +16,7 @@ mod control;
 mod drive;
 mod envelope;
 mod listing;
+mod marks;
 mod owned_index;
 mod runs;
 mod store;
@@ -27,6 +28,8 @@ mod channel_log_tests;
 mod drive_tests;
 #[cfg(test)]
 mod listing_tests;
+#[cfg(test)]
+mod marks_tests;
 #[cfg(test)]
 mod store_tests;
 #[cfg(test)]
@@ -242,6 +245,8 @@ pub(crate) struct VisionsCache {
     budget: budget::Ledger,
     /// What the app was last told of each Vision (see `listing`).
     shown: listing::Shown,
+    /// Snapshots plain chat's listings took of who runs which chat (for the scale test).
+    marks_built: usize,
 }
 
 impl AppState {

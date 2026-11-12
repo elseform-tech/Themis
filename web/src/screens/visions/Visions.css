@@ -138,6 +138,10 @@
 .themis-vision-chat > .themis-thread-layout { flex: 1; min-height: 0; }
 .themis-vision-chat-bar { flex: none; display: flex; align-items: center; gap: 10px; padding: 10px 16px 0; }
 .themis-vision-chat-note { flex: 1; min-width: 0; color: var(--themis-text-2); font-size: 12px; }
+/* A Vision's chat in plain chat: its still cloud before the title, and who holds it in the header. */
+.themis-vision-mark { display: inline-flex; flex: none; align-items: center; }
+.themis-plain-vision-bar { display: flex; flex: none; align-items: center; gap: 10px; min-width: 0; margin-left: 10px; }
+.themis-plain-vision-bar > .themis-vision-chat-note { flex: none; }
 /* New channel and New Vision. */
 .themis-visions-sheet-name { display: flex; align-items: flex-end; gap: 14px; }
 .themis-visions-sheet-name > .themis-input-wrap { flex: 1; }
