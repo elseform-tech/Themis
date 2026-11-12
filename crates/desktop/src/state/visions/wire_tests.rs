@@ -155,6 +155,8 @@ fn listed_visions_channels_and_owners_match_the_apps_fixture() {
             channel_id: "c1".into(),
             running: true,
         }],
+        needs: 2,
+        sorry: true,
     };
     same(&listed, "vision");
     let channel = Channel {
@@ -175,4 +177,77 @@ fn listed_visions_channels_and_owners_match_the_apps_fixture() {
         hold: Hold::TakenOver,
     };
     same(&owner, "owner");
+}
+
+/// The value unions the app names, every variant in the fixture's order.
+#[test]
+fn holds_kinds_and_modes_match_the_apps_fixture() {
+    let holds = [Hold::None, Hold::StoppedByPerson, Hold::TakenOver];
+    for (at, hold) in holds.iter().enumerate() {
+        let place = match hold {
+            Hold::None => 0,
+            Hold::StoppedByPerson => 1,
+            Hold::TakenOver => 2,
+        };
+        assert_eq!(place, at);
+    }
+    same(&holds.to_vec(), "holds");
+    let kinds = [OwnedKind::VisionChat, OwnedKind::Work];
+    for (at, kind) in kinds.iter().enumerate() {
+        let place = match kind {
+            OwnedKind::VisionChat => 0,
+            OwnedKind::Work => 1,
+        };
+        assert_eq!(place, at);
+    }
+    same(&kinds.to_vec(), "owned_kinds");
+    let modes = [ApprovalMode::Yolo, ApprovalMode::Auto, ApprovalMode::Custom];
+    for (at, mode) in modes.iter().enumerate() {
+        let place = match mode {
+            ApprovalMode::Yolo => 0,
+            ApprovalMode::Auto => 1,
+            ApprovalMode::Custom => 2,
+        };
+        assert_eq!(place, at);
+    }
+    same(&modes.to_vec(), "approval_modes");
+}
+
+/// A channel page, a `visions-changed` payload and a chat's question (`list_questions`), with
+/// every field set.
+#[test]
+fn pages_changes_and_questions_match_the_apps_fixture() {
+    let page = ChannelPage {
+        entries: vec![line(
+            7,
+            ChannelEntry::Person {
+                text: "Thanks".into(),
+            },
+        )],
+        next_before: Some(7),
+    };
+    same(&page, "page");
+    let change = crate::types::VisionsChange {
+        channel_id: Some("c1".into()),
+        vision_id: Some("v1".into()),
+    };
+    same(&change, "change");
+    let question = crate::types::Question {
+        id: "q2".into(),
+        run_id: "run1".into(),
+        question: "Drop Windows?".into(),
+        choices: vec!["Yes".into(), "No".into()],
+        assumption: Some("No".into()),
+        reasons: BTreeMap::from([("No".into(), "Keeps users".into())]),
+        group: Some("g1".into()),
+        blocking: true,
+        topic: Some("platforms".into()),
+        subagent: Some("s1".into()),
+        asked_at: 5000,
+        answer: Some("No".into()),
+        answered_by: Some("v1".into()),
+        permission: true,
+        passed_on: true,
+    };
+    same(&question, "question");
 }

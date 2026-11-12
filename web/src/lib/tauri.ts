@@ -57,8 +57,7 @@ import {
 } from './types';
 import type { VisionsChange } from './visions';
 
-/** Calls the local server through the app (the bridge modules use it, nothing else). */
-export function invoke<T>(command: string, args: Record<string, unknown> = {}): Promise<T> {
+function invoke<T>(command: string, args: Record<string, unknown> = {}): Promise<T> {
   if (command === 'check_for_updates') return tauriInvoke<T>(command, args);
   return tauriInvoke<T>('backend_command', { command, args });
 }

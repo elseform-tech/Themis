@@ -65,19 +65,54 @@ fn server_exposes_all_frontend_backend_commands() {
             "search_memory",
         ])
         .collect();
-    // Match arms: every `"name"` before `=>`, one or several joined by `|`.
-    let handled: BTreeSet<_> = server
-        .lines()
-        .filter_map(|line| {
-            let (pattern, _) = line.trim().split_once("=>")?;
-            pattern.starts_with('"').then_some(pattern)
-        })
-        .flat_map(|pattern| pattern.split('|'))
-        .filter_map(|name| name.trim().strip_prefix('"')?.split('"').next())
-        .collect();
+    let handled = arm_names(server);
     assert_eq!(
         called, handled,
         "server and desktop command contracts drifted"
     );
     assert!(server.contains("state.record_error(&request.method, error.clone())"));
+}
+
+/// Every `"name"` a match arm names before `=>`, one or several joined by `|`, also when the
+/// arm runs over several lines.
+fn arm_names(source: &str) -> BTreeSet<&str> {
+    let mut names = BTreeSet::new();
+    for (at, _) in source.match_indices("=>") {
+        let mut before = source[..at].trim_end();
+        while let Some(rest) = before.strip_suffix('"') {
+            let Some(open) = rest.rfind('"') else { break };
+            names.insert(&rest[open + 1..]);
+            before = rest[..open].trim_end();
+            match before.strip_suffix('|') {
+                Some(rest) => before = rest.trim_end(),
+                None => break,
+            }
+        }
+    }
+    names
+}
+
+/// The Visions methods the server routes (`visions_commands::METHODS`) are exactly those its
+/// match arms answer, so a name in one but not the other cannot pass unnoticed.
+#[test]
+fn visions_methods_are_the_ones_their_arms_answer() {
+    let source = include_str!("../src/server/visions_commands.rs");
+    let list = source
+        .split("const METHODS: &[&str] = &[")
+        .nth(1)
+        .and_then(|tail| tail.split("];").next())
+        .expect("METHODS");
+    let methods: BTreeSet<&str> = list
+        .split(',')
+        .filter_map(|item| item.trim().strip_prefix('"')?.strip_suffix('"'))
+        .collect();
+    assert_eq!(methods.len(), 13);
+    assert_eq!(arm_names(source), methods);
+}
+
+#[test]
+fn arm_names_read_arms_over_several_lines() {
+    let source =
+        "match m {\n    \"a\" | \"b\" => 1,\n    \"c\"\n    | \"d\" => 2,\n    x if y => 3,\n}";
+    assert_eq!(arm_names(source), BTreeSet::from(["a", "b", "c", "d"]));
 }

@@ -479,6 +479,10 @@ export interface Question {
   answered_by?: string;
   /** A permission question (Auto mode's block box): only the person may answer it. */
   permission?: boolean;
+  /** The subagent that asked, by id. */
+  subagent?: string;
+  /** A Vision passed it on to the person: open, it waits on them. */
+  passed_on?: boolean;
 }
 
 /** Starts the message that delivers an answer to the agent. */

@@ -60,7 +60,7 @@ import {
 
 export * from "./reducer";
 
-const visionsBridge: VisionsBridge = { listVisions, listChannels, getChannelPage: channelId => getChannelPage(channelId), listChannelThreads, listQuestions };
+const visionsBridge: VisionsBridge = { listVisions, listChannels, getChannelPage: (channelId, before) => getChannelPage(channelId, before ?? null), listChannelThreads, listQuestions };
 type VisionsFollower = ReturnType<typeof followVisions>;
 
 interface AppContextValue {
@@ -153,7 +153,9 @@ async function listenOutsideChanges(dispatch: Dispatch<AppAction>, isCancelled: 
 function useLiveState(state: AppState, dispatch: Dispatch<AppAction>) {
   const current = useRef(state);
   current.current = state;
-  const [visions] = useState(() => followVisions(visionsBridge, () => current.current, dispatch, () => false));
+  const alive = useRef(true);
+  const [visions] = useState(() => followVisions(visionsBridge, () => current.current, dispatch, () => !alive.current));
+  useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
   const projectRoots = state.projects.map(project => project.root).join("\n");
   useEffect(() => {
     if (projectRoots) void visions.changed({}, projectRoots.split("\n"));
@@ -289,7 +291,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         const offThread = await onThreadEvent((envelope) => {
           if (cancelled) return;
           eventVersion++;
-          dispatch({ type: "thread/event", envelope }); visions.threadEvent(envelope);
+          dispatch({ type: "thread/event", envelope }); void visions.threadEvent(envelope);
           const { kind } = envelope.event;
           // A background task started, exited or was stopped: refresh this chat's task feed.
           if (kind === "background_tasks_changed") {
@@ -322,12 +324,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
         const offApproval = await onApprovalRequest((request) => {
           if (cancelled) return;
           eventVersion++;
-          dispatch({ type: "approval/enqueued", request });
+          dispatch({ type: "approval/enqueued", request }); void visions.approvalChanged(request.thread_id);
         });
         const offExpired = await onApprovalExpired((expired) => {
           if (cancelled) return;
           eventVersion++;
-          dispatch({ type: "approval/expired", approvalId: expired.approval_id, steered: expired.steered });
+          dispatch({ type: "approval/expired", approvalId: expired.approval_id, steered: expired.steered }); void visions.approvalChanged(expired.thread_id);
         });
         const offReview = await onReviewItemAdded((item) => {
           if (cancelled) return;

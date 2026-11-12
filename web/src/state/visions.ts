@@ -1,7 +1,9 @@
-// Visions in the app's state: the Visions, each open project's channels, the newest page of each
-// channel's log and the work chats Visions own, kept up to date from `visions-changed` (reading
-// again only what the change names), plus the cloud's moods and what needs the person.
-import type { ThreadEventEnvelope, ThreadInfo } from "../lib/types";
+// Visions in the app's state: the Visions as the server lists them, each open project's channels,
+// a window of each channel's newest lines and the work chats Visions own, kept up to date from
+// `visions-changed` (reading again only what the change names), plus the cloud's moods. What
+// waits on the person, whether a Vision is sorry and whether its budget lets it run are the
+// server's own values (`list_visions`); the app adds only which runs are going now.
+import type { ThreadEventEnvelope } from "../lib/types";
 import type { ChannelInfo, ChannelLine, ChannelPage, OwnedChat, VisionInfo, VisionsChange } from "../lib/visions";
 import type { AppAction, AppState } from "./reducer/model";
 
@@ -19,35 +21,42 @@ export const MOOD_LABEL: Record<Mood, string> = {
 /** Most urgent first; `sleep` is apart (the rail sleeps only when every Vision does). */
 const URGENCY: Mood[] = ["needs", "sorry", "work", "think", "calm"];
 
+/** How many of a channel's newest lines are kept, unless the person read further back. */
+export const WINDOW_LINES = 200;
+
 export interface VisionsState {
   list: VisionInfo[];
   /** Each open project's channels, by project root. */
   channels: Record<string, ChannelInfo[]>;
-  /** Each channel's log as read: the newest page and any older pages read since. */
+  /** Each channel's window: its newest lines, and older ones the person asked for. */
   lines: Record<string, ChannelLine[]>;
-  /** Where each channel's log continues back (null at its start). */
+  /** Where each channel's log continues back from its window (null at its start). */
   nextBefore: Record<string, number | null>;
+  /** How many lines each channel's window keeps, when the person read past `WINDOW_LINES`. */
+  keep: Record<string, number>;
   /** Each channel's work chats, with their owners. */
   chats: Record<string, OwnedChat[]>;
-  /** The open questions of the chats a channel passed questions on from, by chat, as last read. */
+  /** The open questions of the chats a window passed questions on from, by chat, as last read. */
   questions: Record<string, string[]>;
 }
 
-export const initialVisions: VisionsState = { list: [], channels: {}, lines: {}, nextBefore: {}, chats: {}, questions: {} };
+export const initialVisions: VisionsState = { list: [], channels: {}, lines: {}, nextBefore: {}, keep: {}, chats: {}, questions: {} };
 
 export type VisionsAction =
   | { type: "visions/loaded"; visions?: VisionInfo[]; projectRoot?: string; channels?: ChannelInfo[] }
-  | { type: "visions/changed"; channelId: string; page: ChannelPage; chats: OwnedChat[]; questions: Record<string, string[]> };
+  | { type: "visions/changed"; channelId: string; page: ChannelPage; chats: OwnedChat[]; questions: Record<string, string[]> }
+  | { type: "visions/older"; channelId: string; page: ChannelPage };
 
-/** A Vision's mood: asleep while paused or over budget; otherwise needs > sorry > work > think > calm.
- *  `chats` are its work chats, `waiting` what waits on the person from them, `runningSelf` whether
- *  its own run is going. */
-export function visionMood(v: VisionInfo, chats: ThreadInfo[], waiting: number, runningSelf: boolean): Mood {
+/** A Vision's mood: asleep while paused or over budget; otherwise needs > sorry > work > think >
+ *  calm. Sorry is the server's: its latest run failed (a work chat's or its own chat's; the
+ *  person's Stop is none) and none of its runs has succeeded since. `working` is whether a work
+ *  chat it drives runs, `thinking` whether its own chat does. */
+export function visionMood(v: VisionInfo, working: boolean, thinking: boolean): Mood {
   if (v.paused || v.over_budget) return "sleep";
-  if (waiting > 0) return "needs";
-  if (chats.some(chat => !chat.running && chat.last_outcome === "failed")) return "sorry";
-  if (chats.some(chat => chat.running)) return "work";
-  return runningSelf ? "think" : "calm";
+  if (v.needs > 0) return "needs";
+  if (v.sorry) return "sorry";
+  if (working) return "work";
+  return thinking ? "think" : "calm";
 }
 
 /** The rail cloud's mood: the most urgent one, asleep only when every Vision is. */
@@ -60,69 +69,41 @@ function allChats(state: AppState): OwnedChat[] {
   return Object.values(state.visions.chats).flat();
 }
 
-/** Whether a passed-on question is still open: its chat's loaded history says, else the chat's
- *  questions as last read (an answer arriving live drops it there too). */
-function questionOpen(state: AppState, threadId: string, questionId: string): boolean {
-  if (state.historyLoaded[threadId]) {
-    const row = (state.messages[threadId] ?? []).find(r => r.question?.id === questionId && !r.answeredHere);
-    if (row?.question) return row.question.answer === undefined;
-  }
-  return state.visions.questions[threadId]?.includes(questionId) ?? false;
-}
-
-/** What waits on the person, by Vision id: approvals on its chats and its open passed-on questions. */
-function waitingByVision(state: AppState): Map<string, number> {
-  const owners = new Map<string, string>();
-  for (const chat of allChats(state)) owners.set(chat.id, chat.owner.vision_id);
-  for (const vision of state.visions.list) for (const own of vision.vision_chats) owners.set(own.thread_id, vision.id);
-  const waiting = new Map<string, number>();
-  const add = (visionId: string) => waiting.set(visionId, (waiting.get(visionId) ?? 0) + 1);
-  for (const request of state.approvals) {
-    const visionId = owners.get(request.thread_id);
-    if (visionId !== undefined) add(visionId);
-  }
-  const counted = new Set<string>();
-  for (const lines of Object.values(state.visions.lines)) {
-    for (const { entry } of lines) {
-      if (entry.type !== "passed_on") continue;
-      const key = `${entry.thread_id}\n${entry.question_id}`;
-      if (counted.has(key) || !questionOpen(state, entry.thread_id, entry.question_id)) continue;
-      counted.add(key);
-      add(entry.vision_id);
-    }
-  }
-  return waiting;
-}
-
-/** Pending approvals on chats Visions own plus passed-on questions still open. */
+/** What waits on the person from every Vision, as the server counts it. */
 export function needsCount(state: AppState): number {
-  let total = 0;
-  for (const count of waitingByVision(state).values()) total += count;
-  return total;
+  return state.visions.list.reduce((total, vision) => total + vision.needs, 0);
 }
 
-/** Every Vision's mood now, by id, from live run state. */
+/** Every Vision's mood now, by id: the server's values plus which runs are going now. One pass
+ *  over the work chats; no channel lines are read. */
 export function visionMoods(state: AppState): Record<string, Mood> {
-  const waiting = waitingByVision(state);
   const running = (id: string, listed: boolean) => state.running[id] ?? listed;
+  const working = new Set<string>();
+  for (const chat of allChats(state)) {
+    if (chat.owner.hold !== "taken_over" && running(chat.id, chat.running)) working.add(chat.owner.vision_id);
+  }
   const moods: Record<string, Mood> = {};
   for (const vision of state.visions.list) {
-    const chats = allChats(state)
-      .filter(chat => chat.owner.vision_id === vision.id)
-      .map(chat => ({ ...chat, running: running(chat.id, chat.running) }));
-    const self = vision.vision_chats.some(own => running(own.thread_id, own.running));
-    moods[vision.id] = visionMood(vision, chats, waiting.get(vision.id) ?? 0, self);
+    const thinking = vision.vision_chats.some(own => running(own.thread_id, own.running));
+    moods[vision.id] = visionMood(vision, working.has(vision.id), thinking);
   }
   return moods;
 }
 
-/** The newest page joined to the older entries already read, when nothing lies between them. */
-function joinPage(old: ChannelLine[], oldNext: number | null, page: ChannelPage): { lines: ChannelLine[]; next: number | null } {
+/** The newest page joined to the window when nothing lies between them, cut to `keep` lines.
+ *  Reads at most the window and the page. */
+function joinNewest(old: ChannelLine[], oldNext: number | null, keep: number, page: ChannelPage): { lines: ChannelLine[]; next: number | null } {
   const first = page.entries[0]?.seq;
-  const older = first === undefined ? [] : old.filter(line => line.seq < first);
+  if (first === undefined) return { lines: [], next: page.next_before };
+  const older = old.filter(line => line.seq < first);
   const last = older[older.length - 1];
-  if (last !== undefined && last.seq + 1 >= (page.next_before ?? 0)) return { lines: [...older, ...page.entries], next: oldNext };
-  return { lines: page.entries, next: page.next_before };
+  const joined = last !== undefined && last.seq + 1 >= (page.next_before ?? 0)
+    ? { lines: [...older, ...page.entries], next: oldNext }
+    : { lines: page.entries, next: page.next_before };
+  const limit = Math.max(keep, page.entries.length);
+  if (joined.lines.length <= limit) return joined;
+  const lines = joined.lines.slice(joined.lines.length - limit);
+  return { lines, next: lines[0]!.seq };
 }
 
 function without<T>(record: Record<string, T>, keys: string[]): Record<string, T> {
@@ -141,26 +122,46 @@ function loaded(state: AppState, action: Extract<VisionsAction, { type: "visions
       channels: { ...visions.channels, [action.projectRoot]: action.channels },
       lines: without(visions.lines, gone),
       nextBefore: without(visions.nextBefore, gone),
+      keep: without(visions.keep, gone),
       chats: without(visions.chats, gone),
     };
   }
   return { ...state, visions };
 }
 
-/** The visions/* actions; null for any other. */
-export function reduceVisionsActions(state: AppState, action: AppAction): AppState | null {
-  if (action.type === "visions/loaded") return loaded(state, action);
-  if (action.type !== "visions/changed") return null;
+/** Older lines the person asked for go before the window, which keeps them from now on. */
+function older(state: AppState, action: Extract<VisionsAction, { type: "visions/older" }>): AppState {
   const { channelId, page } = action;
-  const joined = joinPage(state.visions.lines[channelId] ?? [], state.visions.nextBefore[channelId] ?? null, page);
+  const window = state.visions.lines[channelId] ?? [];
+  const first = window[0]?.seq ?? Infinity;
+  const lines = [...page.entries.filter(line => line.seq < first), ...window];
   return {
     ...state,
     visions: {
       ...state.visions,
-      lines: { ...state.visions.lines, [channelId]: joined.lines },
-      nextBefore: { ...state.visions.nextBefore, [channelId]: joined.next },
-      chats: { ...state.visions.chats, [channelId]: action.chats },
-      questions: { ...state.visions.questions, ...action.questions },
+      lines: { ...state.visions.lines, [channelId]: lines },
+      nextBefore: { ...state.visions.nextBefore, [channelId]: page.next_before },
+      keep: { ...state.visions.keep, [channelId]: Math.max(lines.length, WINDOW_LINES) },
+    },
+  };
+}
+
+/** The visions/* actions; null for any other. */
+export function reduceVisionsActions(state: AppState, action: AppAction): AppState | null {
+  if (action.type === "visions/loaded") return loaded(state, action);
+  if (action.type === "visions/older") return older(state, action);
+  if (action.type !== "visions/changed") return null;
+  const { channelId, page } = action;
+  const v = state.visions;
+  const joined = joinNewest(v.lines[channelId] ?? [], v.nextBefore[channelId] ?? null, v.keep[channelId] ?? WINDOW_LINES, page);
+  return {
+    ...state,
+    visions: {
+      ...v,
+      lines: { ...v.lines, [channelId]: joined.lines },
+      nextBefore: { ...v.nextBefore, [channelId]: joined.next },
+      chats: { ...v.chats, [channelId]: action.chats },
+      questions: { ...v.questions, ...action.questions },
     },
   };
 }
@@ -177,68 +178,150 @@ export function visionsAnswered(state: AppState, envelope: ThreadEventEnvelope):
 export interface VisionsBridge {
   listVisions(): Promise<VisionInfo[]>;
   listChannels(projectRoot: string): Promise<ChannelInfo[]>;
-  getChannelPage(channelId: string): Promise<ChannelPage>;
+  getChannelPage(channelId: string, beforeSeq?: number | null): Promise<ChannelPage>;
   listChannelThreads(channelId: string): Promise<OwnedChat[]>;
   listQuestions(threadId: string): Promise<Array<{ id: string; answer?: string }>>;
 }
 
+/** What to read again, merged from the changes that arrived: everything, the Visions list,
+ *  channels by id, and Visions whose channels are all read again. */
+interface Wanted {
+  all: boolean;
+  list: boolean;
+  roots: Set<string>;
+  channels: Set<string>;
+  visionChannels: Set<string>;
+}
+
+function wanted(): Wanted {
+  return { all: false, list: false, roots: new Set(), channels: new Set(), visionChannels: new Set() };
+}
+
+function want(into: Wanted, change: VisionsChange, roots: string[] = []): Wanted {
+  for (const root of roots) into.roots.add(root);
+  if (change.channel_id === undefined && change.vision_id === undefined) into.all = true;
+  if (change.vision_id !== undefined) into.list = true;
+  if (change.channel_id !== undefined) into.channels.add(change.channel_id);
+  else if (change.vision_id !== undefined) into.visionChannels.add(change.vision_id);
+  return into;
+}
+
+function fulfilled<T>(results: PromiseSettledResult<T>[]): T[] {
+  return results.flatMap(result => result.status === "fulfilled" ? [result.value] : []);
+}
+
 /** One channel read again: its newest page, its chats and the open questions of the chats its
- *  page passed questions on from (a chat gone has none). */
-async function readChannel(bridge: VisionsBridge, channelId: string): Promise<VisionsAction> {
+ *  page passed questions on from. A question read that fails keeps what was read before. */
+async function readChannel(bridge: VisionsBridge, channelId: string, shown: Record<string, string[]>): Promise<VisionsAction> {
   const [page, chats] = await Promise.all([bridge.getChannelPage(channelId), bridge.listChannelThreads(channelId)]);
   const passedFrom = new Set(page.entries.flatMap(({ entry }) => entry.type === "passed_on" ? [entry.thread_id] : []));
   const questions: Record<string, string[]> = {};
   await Promise.all([...passedFrom].map(async threadId => {
-    const listed = await bridge.listQuestions(threadId).catch(() => []);
-    questions[threadId] = listed.filter(question => question.answer === undefined || question.answer === null).map(question => question.id);
+    try {
+      const listed = await bridge.listQuestions(threadId);
+      questions[threadId] = listed.filter(question => question.answer === undefined || question.answer === null).map(question => question.id);
+    } catch {
+      if (shown[threadId] !== undefined) questions[threadId] = shown[threadId];
+    }
   }));
   return { type: "visions/changed", channelId, page, chats, questions };
 }
 
-/** Reads again what `change` names: a channel (its project's channel list, then its log and
- *  chats), a Vision (the Visions, then the channels it is in), or with neither everything for the
- *  projects in `roots` and those already read. */
-export async function reloadVisions(bridge: VisionsBridge, change: VisionsChange, state: AppState, dispatch: (action: VisionsAction) => void, roots: string[] = []): Promise<void> {
-  const known = state.visions.channels;
-  const rootOf = (id: string) => Object.keys(known).find(root => known[root]!.some(channel => channel.id === id));
-  let listRoots: string[];
-  if (change.channel_id !== undefined) {
-    const root = rootOf(change.channel_id);
+/** The projects whose channel lists are read again for `want`. */
+function rootsToList(want: Wanted, known: Record<string, ChannelInfo[]>): Set<string> {
+  const roots = Object.keys(known);
+  const listRoots = new Set<string>(want.all ? [...roots, ...want.roots] : []);
+  for (const id of want.channels) {
+    const root = roots.find(each => known[each]!.some(channel => channel.id === id));
     // A channel not read yet is new: its project is one of those read.
-    listRoots = root !== undefined ? [root] : Object.keys(known);
-  } else if (change.vision_id !== undefined) {
-    const id = change.vision_id;
-    listRoots = Object.keys(known).filter(root => known[root]!.some(channel => channel.members.includes(id)));
-  } else {
-    listRoots = [...new Set([...Object.keys(known), ...roots])];
+    for (const each of root !== undefined ? [root] : roots) listRoots.add(each);
   }
-  if (change.channel_id === undefined) dispatch({ type: "visions/loaded", visions: await bridge.listVisions() });
-  const listed = await Promise.all(listRoots.map(async projectRoot => ({ projectRoot, channels: await bridge.listChannels(projectRoot) })));
-  for (const { projectRoot, channels } of listed) dispatch({ type: "visions/loaded", projectRoot, channels });
-  const present = listed.flatMap(entry => entry.channels);
-  const toRead = change.channel_id !== undefined
-    ? present.filter(channel => channel.id === change.channel_id)
-    : change.vision_id !== undefined ? present.filter(channel => channel.members.includes(change.vision_id!)) : present;
-  for (const action of await Promise.all(toRead.map(channel => readChannel(bridge, channel.id)))) dispatch(action);
+  for (const id of want.visionChannels) {
+    for (const root of roots.filter(each => known[each]!.some(channel => channel.members.includes(id)))) listRoots.add(root);
+  }
+  return listRoots;
+}
+
+function wantsChannel(want: Wanted, channel: ChannelInfo): boolean {
+  return want.all || want.channels.has(channel.id) || channel.members.some(id => want.visionChannels.has(id));
+}
+
+/** Reads again what `want` names. Each project's channel list and each channel is read on its
+ *  own: one that fails leaves what was shown for it, and the rest still land. */
+async function reload(bridge: VisionsBridge, want: Wanted, state: AppState, dispatch: (action: VisionsAction) => void): Promise<void> {
+  const known = state.visions.channels;
+  const listRoots = rootsToList(want, known);
+  if (want.all || want.list) {
+    try { dispatch({ type: "visions/loaded", visions: await bridge.listVisions() }); } catch { /* the list shown stays */ }
+  }
+  const listed = await Promise.allSettled([...listRoots].map(async projectRoot => ({ projectRoot, channels: await bridge.listChannels(projectRoot) })));
+  const read = new Map<string, ChannelInfo[]>();
+  for (const { projectRoot, channels } of fulfilled(listed)) {
+    dispatch({ type: "visions/loaded", projectRoot, channels });
+    read.set(projectRoot, channels);
+  }
+  const toRead = [...listRoots].flatMap(root => read.get(root) ?? known[root] ?? []).filter(channel => wantsChannel(want, channel));
+  const results = await Promise.allSettled(toRead.map(channel => readChannel(bridge, channel.id, state.visions.questions)));
+  for (const action of fulfilled(results)) dispatch(action);
+}
+
+/** Reads again what `change` names: a channel (its project's channel list, then its log and
+ *  chats), a Vision (the Visions list, and its channels when no channel is named), or with
+ *  neither everything for the projects in `roots` and those already read. */
+export function reloadVisions(bridge: VisionsBridge, change: VisionsChange, state: AppState, dispatch: (action: VisionsAction) => void, roots: string[] = []): Promise<void> {
+  return reload(bridge, want(wanted(), change, roots), state, dispatch);
 }
 
 const TERMINAL = new Set(["finished", "incomplete", "failed"]);
 
-/** Follows Visions for the app: changes read one after another (a later read never lands under
- *  an earlier one), and a work chat's run ending reads its Vision again (its chats' outcomes and
- *  its budget). Failed reads leave what was shown; the next change reads again. */
+/** The Vision that drives `threadId`: a work chat's owner, or the Vision whose own chat it is. */
+function visionOf(state: AppState, threadId: string): string | undefined {
+  const chat = allChats(state).find(owned => owned.id === threadId);
+  if (chat) return chat.owner.vision_id;
+  return state.visions.list.find(vision => vision.vision_chats.some(own => own.thread_id === threadId))?.id;
+}
+
+/** Follows Visions for the app. Changes are read one batch at a time: those arriving while a
+ *  read runs are merged into the next one (a later read never lands under an earlier one). A run
+ *  of a chat a Vision drives ending, and an approval asked or gone in one, read its Vision again.
+ *  Nothing is read or dispatched once `isCancelled`. */
 export function followVisions(bridge: VisionsBridge, getState: () => AppState, dispatch: (action: VisionsAction) => void, isCancelled: () => boolean) {
-  let queue: Promise<void> = Promise.resolve();
-  const changed = (change: VisionsChange, roots: string[] = []) => {
-    queue = queue
-      .then(() => isCancelled() ? undefined : reloadVisions(bridge, change, getState(), action => { if (!isCancelled()) dispatch(action); }, roots))
-      .catch(() => undefined);
-    return queue;
+  let pending: Wanted | null = null;
+  let busy = false;
+  let done: Promise<void> = Promise.resolve();
+  const guarded = (action: VisionsAction) => { if (!isCancelled()) dispatch(action); };
+  const drain = async () => {
+    try {
+      while (pending !== null && !isCancelled()) {
+        const next = pending;
+        pending = null;
+        await reload(bridge, next, getState(), guarded).catch(() => undefined);
+      }
+    } finally {
+      busy = false;
+      pending = null;
+    }
   };
-  const threadEvent = (envelope: ThreadEventEnvelope) => {
-    if (!TERMINAL.has(envelope.event.kind)) return;
-    const chat = allChats(getState()).find(owned => owned.id === envelope.thread_id);
-    if (chat) void changed({ vision_id: chat.owner.vision_id });
+  const changed = (change: VisionsChange, roots: string[] = []): Promise<void> => {
+    pending = want(pending ?? wanted(), change, roots);
+    if (!busy) {
+      busy = true;
+      done = drain();
+    }
+    return done;
   };
-  return { changed, threadEvent };
+  const visionChanged = (threadId: string): Promise<void> => {
+    const visionId = visionOf(getState(), threadId);
+    return visionId === undefined ? Promise.resolve() : changed({ vision_id: visionId });
+  };
+  const threadEvent = (envelope: ThreadEventEnvelope): Promise<void> =>
+    TERMINAL.has(envelope.event.kind) ? visionChanged(envelope.thread_id) : Promise.resolve();
+  /** Reads the page before the channel's window, for scrolling back. */
+  const loadOlder = async (channelId: string): Promise<void> => {
+    const before = getState().visions.nextBefore[channelId];
+    if (before === null || before === undefined || isCancelled()) return;
+    const page = await bridge.getChannelPage(channelId, before);
+    guarded({ type: "visions/older", channelId, page });
+  };
+  return { changed, threadEvent, approvalChanged: visionChanged, loadOlder };
 }

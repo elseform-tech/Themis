@@ -1796,8 +1796,12 @@ async fn a_passed_question_is_answered_by_the_person_from_the_channel() {
         text(&refused)
     );
 
+    // It waits on the person: the app's list says so, read from the chat's own questions.
+    assert_eq!(fx.call_ok("list_visions", json!({}))[0]["needs"], 1);
+
     let answer = json!({"threadId": work, "questionId": question, "answer": "Apache-2.0"});
     let answered = fx.call_ok("answer_question", answer);
+    assert_eq!(fx.call_ok("list_visions", json!({}))[0]["needs"], 0);
     assert_eq!(answered["answer"], "Apache-2.0");
     assert!(
         answered.get("answered_by").is_none(),

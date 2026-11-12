@@ -26,6 +26,8 @@ mod channel_log_tests;
 #[cfg(test)]
 mod drive_tests;
 #[cfg(test)]
+mod listing_tests;
+#[cfg(test)]
 mod store_tests;
 #[cfg(test)]
 mod wire_tests;
@@ -236,6 +238,8 @@ pub(crate) struct VisionsCache {
     wakes: wakes::WakeSlots,
     /// Today's spend and budget notices (see `budget`).
     budget: budget::Ledger,
+    /// What the app was last told of each Vision (see `listing`).
+    shown: listing::Shown,
 }
 
 impl AppState {

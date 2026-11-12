@@ -295,6 +295,7 @@ impl AppState {
     /// cap, of spend that cannot be known, and of requests without a price.
     pub(crate) fn visions_budget_gate(&self, vision_id: &str) -> Option<Over> {
         let judged = self.visions_judge(vision_id);
+        self.visions_budget_shown(vision_id, judged.over.is_some());
         if judged.unpriced > 0 {
             self.visions_notice_unpriced(vision_id, judged.unpriced);
         }

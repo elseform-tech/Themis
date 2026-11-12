@@ -1,8 +1,13 @@
 // Visions: the person's bridge to Visions, channels and the chats Visions own, with their wire
 // types. Each type mirrors its Rust struct's serde form (snake_case) field for field; the shared
 // fixture `visions.fixture.json` holds one of each, checked against Rust and these types.
-import { invoke } from "./tauri";
+import { invoke as tauriInvoke } from "@tauri-apps/api/core";
 import type { Question, ThreadInfo } from "./types";
+
+/** The Visions methods of the local server, through the app. */
+function invoke<T>(command: string, args: Record<string, unknown> = {}): Promise<T> {
+  return tauriInvoke<T>("backend_command", { command, args });
+}
 
 export type Autonomy = "ask" | "small" | "most" | "nearly_all" | "custom";
 export type ApprovalModeName = "custom" | "auto" | "yolo";
@@ -32,10 +37,14 @@ export interface VisionProfile {
 }
 
 /** A Vision as `list_visions` gives it: its profile, whether its budget stops it spending now
- *  (also when spend cannot be checked) and its own chats. */
+ *  (also when spend cannot be checked), its own chats, what waits on the person from the chats
+ *  it drives (approvals and the questions it passed on, still open) and whether its latest run
+ *  failed with no success since. */
 export interface VisionInfo extends VisionProfile {
   over_budget: boolean;
   vision_chats: VisionChatInfo[];
+  needs: number;
+  sorry: boolean;
 }
 
 /** A channel (Rust `Channel`). */
@@ -49,13 +58,16 @@ export interface ChannelInfo {
   revision: string;
 }
 
+export type OwnedKind = "vision_chat" | "work";
+export type Hold = "none" | "stopped_by_person" | "taken_over";
+
 /** Which Vision and channel a chat belongs to (Rust `Owner`). */
 export interface OwnerInfo {
   thread_id: string;
   vision_id: string;
   channel_id: string;
-  kind: "vision_chat" | "work";
-  hold: "none" | "stopped_by_person" | "taken_over";
+  kind: OwnedKind;
+  hold: Hold;
 }
 
 /** A work chat a Vision started, as `list_channel_threads` gives it. */
@@ -142,6 +154,11 @@ export const ENTRY_FIELDS: { [K in ChannelEntry["type"]]: Array<Exclude<keyof Ex
   passed_on: ["vision_id", "thread_id", "question_id", "decision", "question"],
   notice: ["kind", "vision_id", "thread_id", "unpriced_requests", "reason"],
 };
+
+/** Every value of the unions the app reads, for the same check. */
+export const HOLDS: Record<Hold, true> = { none: true, stopped_by_person: true, taken_over: true };
+export const OWNED_KINDS: Record<OwnedKind, true> = { vision_chat: true, work: true };
+export const APPROVAL_MODES: Record<ApprovalModeName, true> = { custom: true, auto: true, yolo: true };
 
 /** Every notice kind, for the same check. */
 export const NOTICE_KINDS: Record<NoticeKind, true> = {

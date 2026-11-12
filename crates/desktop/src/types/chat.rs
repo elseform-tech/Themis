@@ -50,6 +50,9 @@ pub struct Question {
     /// only the person may answer it. Absent (false) in files from before it was kept.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub permission: bool,
+    /// A Vision passed it on to the person: open, it waits on them, not on the Vision.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub passed_on: bool,
 }
 
 /// A message waiting in a chat's queue for the current run to end.

@@ -363,6 +363,7 @@ impl AppState {
     /// Prices became known: every Vision whose reasons wait tries its wake again (each still
     /// checked like any other).
     pub(super) fn visions_wake_waiting(&self) {
+        self.visions_budget_recheck();
         let Some(sink) = self.scheduler_sink() else {
             return;
         };
@@ -393,6 +394,7 @@ impl AppState {
     ) {
         // Those refused before this run ended; one refused just now waits for the next end.
         let due = self.visions_cache().wakes.due_retries();
+        self.visions_mark_outcome(thread_id, terminal);
         self.visions_budget_after_run(thread_id);
         self.visions_run_ended(sink, thread_id, terminal);
         for (vision_id, channel_id) in due {

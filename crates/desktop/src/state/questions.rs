@@ -265,6 +265,7 @@ fn store_question(
         answer: None,
         answered_by: None,
         permission: asked.permission,
+        passed_on: false,
     };
     questions.push(question.clone());
     (question, false)
@@ -337,6 +338,16 @@ impl AppState {
             self.record_error("save_thread_event", error);
         }
         sink.emit_thread_event(&envelope);
+    }
+
+    /// Marks the chat's open question `question_id` as passed on to the person by a Vision.
+    pub(super) fn mark_passed_on(&self, thread_id: &str, question_id: &str) {
+        let mut questions = self.questions_for(thread_id);
+        let Some(question) = questions.iter_mut().find(|q| q.id == question_id) else {
+            return;
+        };
+        question.passed_on = true;
+        self.save_questions(thread_id, &questions);
     }
 
     /// The chat's unanswered questions, oldest first.
@@ -513,7 +524,7 @@ impl AppState {
 
     /// Stores the answers, all or none, as the person's (`by` `None`) or the Vision's, returning
     /// each answered question with its answer.
-    fn record_answers(
+    pub(super) fn record_answers(
         &self,
         thread_id: &str,
         answers: Vec<(String, String)>,

@@ -177,14 +177,19 @@ async fn chat_method(
     }
 }
 
-/// For the person's chat methods that can change a Vision's chat (stop, send, discard): the
-/// chat's channel and Vision, read before the call, to announce after it succeeds.
+/// For the person's chat methods that can change a Vision's chat (stop, send, discard) or what
+/// waits on the person there (an answer, an approval): the chat's channel and Vision, read
+/// before the call, to announce after it succeeds.
 pub(super) fn owned_chat(
     state: &AppState,
     method: &str,
     thread_id: Option<&str>,
 ) -> Option<VisionsChange> {
-    if !matches!(method, "stop_thread" | "send_message" | "discard_thread") {
+    let touches = matches!(
+        method,
+        "stop_thread" | "send_message" | "discard_thread" | "answer_question" | "approve_action"
+    );
+    if !touches {
         return None;
     }
     let owner = state.owner_of(thread_id?)?;

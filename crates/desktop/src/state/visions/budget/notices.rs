@@ -231,6 +231,7 @@ impl AppState {
                 for vision in state.visions_list() {
                     state.visions_notice_over(&vision.id, Over::Unknown(Unknown::CatalogNotLoaded));
                 }
+                state.visions_budget_recheck();
             }
         });
     }

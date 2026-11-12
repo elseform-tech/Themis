@@ -7,13 +7,24 @@
     "color": "teal",
     "model": "go/test-model",
     "autonomy": "custom",
-    "custom": { "tests": true, "wording": false },
+    "custom": {
+      "tests": true,
+      "wording": false
+    },
     "daily_budget_usd": 0.5,
     "soul": "Careful.",
     "paused": false,
     "revision": "r1",
     "over_budget": true,
-    "vision_chats": [{ "thread_id": "own1", "channel_id": "c1", "running": true }]
+    "vision_chats": [
+      {
+        "thread_id": "own1",
+        "channel_id": "c1",
+        "running": true
+      }
+    ],
+    "needs": 2,
+    "sorry": true
   },
   "channel": {
     "id": "c1",
@@ -21,7 +32,9 @@
     "topic": "Ship 2.0",
     "project_root": "/repo",
     "approval_mode": "auto",
-    "members": ["v1"],
+    "members": [
+      "v1"
+    ],
     "revision": "r2"
   },
   "owner": {
@@ -31,6 +44,20 @@
     "kind": "work",
     "hold": "taken_over"
   },
+  "holds": [
+    "none",
+    "stopped_by_person",
+    "taken_over"
+  ],
+  "owned_kinds": [
+    "vision_chat",
+    "work"
+  ],
+  "approval_modes": [
+    "yolo",
+    "auto",
+    "custom"
+  ],
   "notice_kinds": [
     "stopped",
     "paused",
@@ -43,11 +70,109 @@
     "unpriced"
   ],
   "lines": [
-    { "seq": 1, "at_ms": 1000, "entry": { "type": "person", "text": "@wren ship it" } },
-    { "seq": 2, "at_ms": 2000, "entry": { "type": "vision", "vision_id": "v1", "text": "On it." } },
-    { "seq": 3, "at_ms": 3000, "entry": { "type": "chat_started", "vision_id": "v1", "thread_id": "w1", "title": "Release" } },
-    { "seq": 4, "at_ms": 4000, "entry": { "type": "answered", "vision_id": "v1", "thread_id": "w1", "question_id": "q1", "decision": "tests", "question": "Add a test?", "answer": "Yes", "reason": "Cheap to undo" } },
-    { "seq": 5, "at_ms": 5000, "entry": { "type": "passed_on", "vision_id": "v1", "thread_id": "w1", "question_id": "q2", "decision": "scope", "question": "Drop Windows?" } },
-    { "seq": 6, "at_ms": 6000, "entry": { "type": "notice", "kind": "budget_unknown", "vision_id": "v1", "thread_id": "w1", "unpriced_requests": 3, "reason": "usage_unreadable" } }
-  ]
+    {
+      "seq": 1,
+      "at_ms": 1000,
+      "entry": {
+        "type": "person",
+        "text": "@wren ship it"
+      }
+    },
+    {
+      "seq": 2,
+      "at_ms": 2000,
+      "entry": {
+        "type": "vision",
+        "vision_id": "v1",
+        "text": "On it."
+      }
+    },
+    {
+      "seq": 3,
+      "at_ms": 3000,
+      "entry": {
+        "type": "chat_started",
+        "vision_id": "v1",
+        "thread_id": "w1",
+        "title": "Release"
+      }
+    },
+    {
+      "seq": 4,
+      "at_ms": 4000,
+      "entry": {
+        "type": "answered",
+        "vision_id": "v1",
+        "thread_id": "w1",
+        "question_id": "q1",
+        "decision": "tests",
+        "question": "Add a test?",
+        "answer": "Yes",
+        "reason": "Cheap to undo"
+      }
+    },
+    {
+      "seq": 5,
+      "at_ms": 5000,
+      "entry": {
+        "type": "passed_on",
+        "vision_id": "v1",
+        "thread_id": "w1",
+        "question_id": "q2",
+        "decision": "scope",
+        "question": "Drop Windows?"
+      }
+    },
+    {
+      "seq": 6,
+      "at_ms": 6000,
+      "entry": {
+        "type": "notice",
+        "kind": "budget_unknown",
+        "vision_id": "v1",
+        "thread_id": "w1",
+        "unpriced_requests": 3,
+        "reason": "usage_unreadable"
+      }
+    }
+  ],
+  "page": {
+    "entries": [
+      {
+        "seq": 7,
+        "at_ms": 7000,
+        "entry": {
+          "type": "person",
+          "text": "Thanks"
+        }
+      }
+    ],
+    "next_before": 7
+  },
+  "change": {
+    "channel_id": "c1",
+    "vision_id": "v1"
+  },
+  "question": {
+    "id": "q2",
+    "run_id": "run1",
+    "question": "Drop Windows?",
+    "choices": [
+      "Yes",
+      "No"
+    ],
+    "assumption": "No",
+    "reasons": {
+      "No": "Keeps users"
+    },
+    "group": "g1",
+    "blocking": true,
+    "topic": "platforms",
+    "subagent": "s1",
+    "asked_at": 5000,
+    "answer": "No",
+    "answered_by": "v1",
+    "permission": true,
+    "passed_on": true
+  }
 }

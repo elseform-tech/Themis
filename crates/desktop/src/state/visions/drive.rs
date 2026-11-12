@@ -259,6 +259,7 @@ impl AppState {
                 question: question.question.clone(),
             },
         )?;
+        self.mark_passed_on(thread_id, &question.id);
         self.visions_note(
             "vision_passed_question",
             json!({"thread_id": thread_id, "vision_id": vision.vision_id, "question_id": question.id, "decision": decision.id()}),

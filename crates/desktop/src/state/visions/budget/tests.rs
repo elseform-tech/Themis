@@ -888,6 +888,18 @@ async fn concurrent_owner_writes_keep_the_index_whole() {
 #[derive(Default)]
 struct Announced(std::sync::Mutex<Vec<crate::types::VisionsChange>>);
 
+impl Announced {
+    /// Those naming a channel (a write in it), or none (a Vision's budget state).
+    fn taken(&self, in_channel: bool) -> Vec<crate::types::VisionsChange> {
+        let mut all = self.0.lock().unwrap();
+        let (taken, kept) = all
+            .drain(..)
+            .partition(|change| change.channel_id.is_some() == in_channel);
+        *all = kept;
+        taken
+    }
+}
+
 impl EventSink for Announced {
     fn emit_thread_event(&self, _: &crate::types::ThreadEventEnvelope) {}
     fn emit_approval_request(&self, _: &crate::types::ApprovalRequest) {}
@@ -916,14 +928,54 @@ async fn server_written_entries_announce_their_channel() {
         vision_id: Some(s.wren.clone()),
     };
     // Today's unpriced notice, then the reply.
-    assert_eq!(*announced.0.lock().unwrap(), vec![wren.clone(); 2]);
+    assert_eq!(announced.taken(true), vec![wren.clone(); 2]);
 
     set_cap(&s, &s.wren, Some(0.5));
     s.state.visions_after_run(&sink(), "wren-work", &finished());
     assert_eq!(budget_notices(&s).len(), 1);
+    assert_eq!(announced.taken(true), vec![wren], "the budget notice");
+}
+
+/// A Vision's budget state flipping is announced without a channel, whatever flipped it: the
+/// cap reached on a check, a raise or the day's start seen by the periodic re-check, prices
+/// becoming known. Nothing is announced while it stays the same.
+#[tokio::test]
+async fn a_budget_flip_announces_the_vision() {
+    let s = setup().await;
+    spent_today(&s);
+    write_runtime(&s, r#"{"visions": {"daily_budget_usd": 5}}"#);
+    let announced = Arc::new(Announced::default());
+    *s.state.inner.scheduler_sink.lock().unwrap() = Some(announced.clone());
+    let flipped = |id: &str| crate::types::VisionsChange {
+        channel_id: None,
+        vision_id: Some(id.to_owned()),
+    };
+    // What the app was shown: neither is over.
+    let listed = s.state.visions_listed().await;
+    assert!(listed.iter().all(|vision| !vision.over_budget));
+    s.state.visions_budget_recheck();
+    assert!(announced.taken(false).is_empty(), "nothing flipped");
+
+    set_cap(&s, &s.wren, Some(0.5));
+    let _ = s.state.visions_budget_gate(&s.wren);
     assert_eq!(
-        *announced.0.lock().unwrap(),
-        vec![wren; 3],
-        "the budget notice"
+        announced.taken(false),
+        vec![flipped(&s.wren)],
+        "the cap reached"
     );
+    let _ = s.state.visions_budget_gate(&s.wren);
+    assert!(announced.taken(false).is_empty(), "still over: once");
+
+    set_cap(&s, &s.wren, None);
+    s.state.visions_budget_recheck();
+    assert_eq!(announced.taken(false), vec![flipped(&s.wren)], "raised");
+
+    // A lower overall cap puts both over; the re-check sees both.
+    write_runtime(&s, r#"{"visions": {"daily_budget_usd": 0.1}}"#);
+    s.state.visions_budget_recheck();
+    let mut both = announced.taken(false);
+    both.sort_by(|a, b| a.vision_id.cmp(&b.vision_id));
+    let mut expected = vec![flipped(&s.wren), flipped(&s.ada)];
+    expected.sort_by(|a, b| a.vision_id.cmp(&b.vision_id));
+    assert_eq!(both, expected);
 }
