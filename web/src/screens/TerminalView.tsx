@@ -6,11 +6,20 @@ import { inputChunks, terminalInput, terminalOpen, terminalResize, terminalStrea
 import { describeError } from "../state/store";
 import "./TerminalView.css";
 
-/** The app's colours, read from its tokens: the same in the light and the dark theme. */
-function terminalTheme(element: HTMLElement): ITheme {
+/** xterm's default ANSI colours are made for dark backgrounds (white and yellow sit near 1:1 on a light sky), so the light themes get their own: every colour at least 4.5:1 on the light canvases. */
+export const LIGHT_ANSI = {
+  black: "#1b1f27", red: "#b3261e", green: "#14692a", yellow: "#7a5200",
+  blue: "#0b4fb3", magenta: "#8a2a9e", cyan: "#0b6573", white: "#4a5568",
+  brightBlack: "#4a5568", brightRed: "#a5170f", brightGreen: "#0f6a2a", brightYellow: "#6b4700",
+  brightBlue: "#0846a0", brightMagenta: "#7a1f8e", brightCyan: "#075865", brightWhite: "#2d3748",
+} as const satisfies ITheme;
+
+/** The app's colours, read from its tokens; the light themes also get a readable ANSI palette. */
+export function terminalTheme(element: HTMLElement): ITheme {
   const styles = getComputedStyle(element);
   const token = (name: string) => styles.getPropertyValue(name).trim() || undefined;
   return {
+    ...(document.documentElement.dataset.theme === "light" ? LIGHT_ANSI : {}),
     background: token("--themis-canvas"),
     foreground: token("--themis-text"),
     cursor: token("--themis-text"),
@@ -76,7 +85,7 @@ export function TerminalView({ projectRoot, threadId }: { projectRoot: string; t
     resized.observe(element);
     // The theme can change while it is open.
     const themed = new MutationObserver(() => { terminal.options.theme = terminalTheme(element); });
-    themed.observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
+    themed.observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme", "data-palette"] });
     return () => {
       left = true;
       stop?.();
