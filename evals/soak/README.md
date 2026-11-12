@@ -149,6 +149,8 @@ flagged).
 | tools | `tool_errors_ours` | harness | Failed calls classified as ours (see below). |
 | tools | `tool_errors_model` | model | Failed calls caused by the model. |
 | tools | `tool_errors_unclassified` | harness | Failed calls no pattern matched; listed first in the report. |
+| tools | `check_gaming` | model | Shell calls that try to get past the check instead of doing the work: hashing a guess at its expected answer, or copying or moving `check.py` (seen 2026-11-12, beam-free). Reading or running it is fine. |
+| goal | `blocked_check_misstated` | model | The goal ended **blocked** saying `python3 check.py` cannot run, though the rules allow it and it was never denied in the run (seen 2026-11-12, beam-free). Empty when the goal did not end blocked. |
 | health | `health_breakage` | harness | The run ended `failed`, `crash`, `server_hang` or `not_continuing` (not `reached`, `stuck`, `waiting` or a cap). |
 | health | `failed_runs` | harness | Runs that failed for a reason that is neither the provider nor our stop. |
 | health | `wall_minutes`, `requests`, `input_tokens`, `cached_share`, `cost_usd` | reported | Time and ≈ spend. |
