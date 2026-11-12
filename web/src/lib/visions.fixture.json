@@ -1,0 +1,53 @@
+{
+  "vision": {
+    "id": "v1",
+    "name": "Wren",
+    "role": "Release captain",
+    "shape": "cloud",
+    "color": "teal",
+    "model": "go/test-model",
+    "autonomy": "custom",
+    "custom": { "tests": true, "wording": false },
+    "daily_budget_usd": 0.5,
+    "soul": "Careful.",
+    "paused": false,
+    "revision": "r1",
+    "over_budget": true,
+    "vision_chats": [{ "thread_id": "own1", "channel_id": "c1", "running": true }]
+  },
+  "channel": {
+    "id": "c1",
+    "name": "hq",
+    "topic": "Ship 2.0",
+    "project_root": "/repo",
+    "approval_mode": "auto",
+    "members": ["v1"],
+    "revision": "r2"
+  },
+  "owner": {
+    "thread_id": "w1",
+    "vision_id": "v1",
+    "channel_id": "c1",
+    "kind": "work",
+    "hold": "taken_over"
+  },
+  "notice_kinds": [
+    "stopped",
+    "paused",
+    "resumed",
+    "budget_reached",
+    "chat_failed",
+    "handed_back",
+    "sandbox_unavailable",
+    "budget_unknown",
+    "unpriced"
+  ],
+  "lines": [
+    { "seq": 1, "at_ms": 1000, "entry": { "type": "person", "text": "@wren ship it" } },
+    { "seq": 2, "at_ms": 2000, "entry": { "type": "vision", "vision_id": "v1", "text": "On it." } },
+    { "seq": 3, "at_ms": 3000, "entry": { "type": "chat_started", "vision_id": "v1", "thread_id": "w1", "title": "Release" } },
+    { "seq": 4, "at_ms": 4000, "entry": { "type": "answered", "vision_id": "v1", "thread_id": "w1", "question_id": "q1", "decision": "tests", "question": "Add a test?", "answer": "Yes", "reason": "Cheap to undo" } },
+    { "seq": 5, "at_ms": 5000, "entry": { "type": "passed_on", "vision_id": "v1", "thread_id": "w1", "question_id": "q2", "decision": "scope", "question": "Drop Windows?" } },
+    { "seq": 6, "at_ms": 6000, "entry": { "type": "notice", "kind": "budget_unknown", "vision_id": "v1", "thread_id": "w1", "unpriced_requests": 3, "reason": "usage_unreadable" } }
+  ]
+}

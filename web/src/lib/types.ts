@@ -907,6 +907,8 @@ export interface ThreadChange {
 }
 
 export const SETTINGS_CHANGED_NAME = 'settings-changed';
+/** Visions, channels, a channel's log or owned chats changed (`VisionsChange` in lib/visions). */
+export const VISIONS_CHANGED_NAME = 'visions-changed';
 
 /** Settings were written through the shared server (this window, the CLI or another client):
  *  `app` is settings.json, `runtime` a runtime.jsonc, `secrets` which keys are stored. */

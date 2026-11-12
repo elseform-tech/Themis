@@ -6,6 +6,7 @@ import { APPROVAL_EXPIRED_NOTE, concurrencyToast, isConcurrencyLimitError, newId
 import { appendTrace, markTurnRejected, memoryChanges, setThreadRunning, updateSubagent, usedPercent, userMessage } from "./reducer/rowHelpers";
 import { reduceCollectionActions } from "./reducer/collections";
 import { reduceUiActions } from "./reducer/ui";
+import { visionsAnswered } from "./visions";
 // A failed run's pop-up is quiet, like the chat's own line: the short "code · reason" (full text in that line's tooltip).
 import { runErrorSummary } from "../lib/runError";
 
@@ -565,7 +566,7 @@ export function reducer(state: AppState, action: AppAction): AppState {
       return { ...state, browserOpensWorkspace: action.value };
     case "thread/event": {
       const { thread_id: threadId, event } = action.envelope;
-      const next = applyThreadEvent(state, action.envelope);
+      const next = visionsAnswered(applyThreadEvent(state, action.envelope), action.envelope);
       // The agent's first browser step in a run shows the Browser tab of the
       // chat on screen; later steps leave whatever the person chose.
       const firstBrowserStep = state.browserOpensWorkspace && event.kind === "tool_started" && event.tool === "browser"

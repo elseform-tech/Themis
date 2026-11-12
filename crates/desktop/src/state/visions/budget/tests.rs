@@ -883,3 +883,47 @@ async fn concurrent_owner_writes_keep_the_index_whole() {
         }
     }
 }
+
+/// Records the `visions-changed` payloads the server announces by itself.
+#[derive(Default)]
+struct Announced(std::sync::Mutex<Vec<crate::types::VisionsChange>>);
+
+impl EventSink for Announced {
+    fn emit_thread_event(&self, _: &crate::types::ThreadEventEnvelope) {}
+    fn emit_approval_request(&self, _: &crate::types::ApprovalRequest) {}
+    fn emit_approval_expired(&self, _: &crate::types::ApprovalExpired) {}
+    fn emit_review_item(&self, _: &crate::types::ReviewItem) {}
+    fn emit_thread_changed(&self, _: &crate::types::ThreadChange) {}
+    fn emit_settings_changed(&self, _: &crate::types::SettingsChange) {}
+    fn emit_visions_changed(&self, change: &crate::types::VisionsChange) {
+        self.0.lock().unwrap().push(change.clone());
+    }
+}
+
+/// The server's own channel writes, which no command announces (a Vision chat's reply, the
+/// unpriced and budget notices), each announce `visions-changed` with their channel and Vision, so a window
+/// shows them and the Vision's mood without waiting for anything else.
+#[tokio::test]
+async fn server_written_entries_announce_their_channel() {
+    let s = setup().await;
+    spent_today(&s);
+    write_runtime(&s, r#"{"visions": {"daily_budget_usd": 5}}"#);
+    let announced = Arc::new(Announced::default());
+    *s.state.inner.scheduler_sink.lock().unwrap() = Some(announced.clone());
+    s.state.visions_after_run(&sink(), "wren-chat", &finished());
+    let wren = crate::types::VisionsChange {
+        channel_id: Some(s.channel.clone()),
+        vision_id: Some(s.wren.clone()),
+    };
+    // Today's unpriced notice, then the reply.
+    assert_eq!(*announced.0.lock().unwrap(), vec![wren.clone(); 2]);
+
+    set_cap(&s, &s.wren, Some(0.5));
+    s.state.visions_after_run(&sink(), "wren-work", &finished());
+    assert_eq!(budget_notices(&s).len(), 1);
+    assert_eq!(
+        *announced.0.lock().unwrap(),
+        vec![wren; 3],
+        "the budget notice"
+    );
+}

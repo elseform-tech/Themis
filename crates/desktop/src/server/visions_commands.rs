@@ -60,9 +60,8 @@ async fn run(
     args: &Value,
 ) -> Result<(Value, Option<VisionsChange>), String> {
     match method {
-        "list_visions" | "save_vision" | "pause_vision" | "delete_vision" => {
-            vision_method(state, method, args)
-        }
+        "list_visions" => Ok((to_value(state.visions_listed().await)?, None)),
+        "save_vision" | "pause_vision" | "delete_vision" => vision_method(state, method, args),
         "list_channels" | "save_channel" | "delete_channel" | "get_channel_page" => {
             channel_method(state, method, args)
         }
@@ -93,7 +92,7 @@ fn vision_method(
             state.visions_delete(&vision_id)?;
             Ok((Value::Null, change(None, Some(vision_id))))
         }
-        _ => Ok((to_value(state.visions_list())?, None)),
+        _ => Err(format!("unknown server method '{method}'")),
     }
 }
 

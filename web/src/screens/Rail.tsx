@@ -6,8 +6,10 @@ import { useApp, type MainView } from "../state/store";
 import type { Plugin } from "../lib/types";
 import { SidebarIcon, type SidebarIconName } from "./Sidebar";
 
-const views: Array<[MainView, string]> = [["skills", "Integrations"], ["automations", "Automations"], ["queue", "Review queue"]];
-const viewIcons: Record<MainView, SidebarIconName> = { thread: "chat", skills: "skills", automations: "automations", queue: "queue", settings: "settings" };
+/** The views this rail opens itself (Visions comes through its `extra` slot). */
+type RailView = Exclude<MainView, "visions">;
+const views: Array<[RailView, string]> = [["skills", "Integrations"], ["automations", "Automations"], ["queue", "Review queue"]];
+const viewIcons: Record<RailView, SidebarIconName> = { thread: "chat", skills: "skills", automations: "automations", queue: "queue", settings: "settings" };
 
 /** The utility rail: Chats, the optional `extra` slot, the main views, Settings, Help and Search. */
 export function Rail({ onHelp, extra }: { onHelp: () => void; extra?: ReactNode }) {
@@ -24,7 +26,7 @@ export function Rail({ onHelp, extra }: { onHelp: () => void; extra?: ReactNode 
     window.addEventListener("themis-off-seen", check);
     return () => { live = false; window.removeEventListener("themis-plugins-changed", check); window.removeEventListener("themis-off-seen", check); };
   }, [activeRoot]);
-  function nav(view: MainView, label: string) {
+  function nav(view: RailView, label: string) {
     return <Tooltip key={view} content={label}><button type="button" className={`themis-sidebar-row ${state.mainView === view ? "themis-sidebar-row--active" : ""}`} aria-label={view === "queue" && pending > 0 ? `${label} ${pending}` : label} aria-current={state.mainView === view ? "page" : undefined} onClick={() => dispatch({ type: "ui/view", view })}>
       <SidebarIcon name={viewIcons[view]} /><span className="themis-sidebar-name">{label}</span>{view === "queue" && pending > 0 && <Badge tone="warning">{pending}</Badge>}{view === "skills" && partsOff && <i className="themis-off-dot themis-sidebar-off" aria-hidden="true" data-testid="parts-off" />}
     </button></Tooltip>;

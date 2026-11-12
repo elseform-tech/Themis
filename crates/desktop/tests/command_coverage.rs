@@ -7,11 +7,13 @@ fn server_exposes_all_frontend_backend_commands() {
     let frontend = concat!(
         include_str!("../../../web/src/lib/tauri.ts"),
         include_str!("../../../web/src/lib/browser.ts"),
-        include_str!("../../../web/src/lib/terminal.ts")
+        include_str!("../../../web/src/lib/terminal.ts"),
+        include_str!("../../../web/src/lib/visions.ts")
     );
     let server = concat!(
         include_str!("../src/server.rs"),
-        include_str!("../src/server/commands.rs")
+        include_str!("../src/server/commands.rs"),
+        include_str!("../src/server/visions_commands.rs")
     );
     let native = concat!(
         include_str!("../src/lib.rs"),
@@ -52,8 +54,6 @@ fn server_exposes_all_frontend_backend_commands() {
             "create_goal",
             // The desktop watches the mcp.json copy and applies saves itself; the CLI applies.
             "apply_mcp_config",
-            // The desktop rebuilds questions from the chat's history; the CLI lists them.
-            "list_questions",
             // Subagent state for the CLI; the desktop builds its card from chat events.
             "list_subagents",
             // The desktop's terminal lives until the project or the app goes; the CLI asks and closes.
@@ -65,15 +65,15 @@ fn server_exposes_all_frontend_backend_commands() {
             "search_memory",
         ])
         .collect();
+    // Match arms: every `"name"` before `=>`, one or several joined by `|`.
     let handled: BTreeSet<_> = server
         .lines()
         .filter_map(|line| {
-            let line = line.trim();
-            line.strip_prefix('"')?
-                .split('"')
-                .next()
-                .filter(|_| line.contains("=>"))
+            let (pattern, _) = line.trim().split_once("=>")?;
+            pattern.starts_with('"').then_some(pattern)
         })
+        .flat_map(|pattern| pattern.split('|'))
+        .filter_map(|name| name.trim().strip_prefix('"')?.split('"').next())
         .collect();
     assert_eq!(
         called, handled,

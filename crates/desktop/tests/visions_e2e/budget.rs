@@ -65,8 +65,15 @@ async fn the_budget_stops_a_visions_chats_and_refuses_its_sends() {
         }])
         .await;
     let (vision, channel) = fx.vision_and_channel("Wren", "hq");
-    let (_own_chat, agent) = fx.vision_run(&vision, &channel).await;
+    let (own_chat, agent) = fx.vision_run(&vision, &channel).await;
     fx.set_visions(json!({"enabled": false, "daily_budget_usd": 0.5}));
+    // The app reads each Vision's budget state and its own chats from the list.
+    let listed = fx.call_ok("list_visions", json!({}));
+    assert_eq!(listed[0]["over_budget"], false, "{listed}");
+    assert_eq!(
+        listed[0]["vision_chats"],
+        json!([{"thread_id": own_chat, "channel_id": channel, "running": false}])
+    );
     let send = |thread: &str, text: &str| {
         fx.agent_call(
             &agent,
@@ -87,6 +94,10 @@ async fn the_budget_stops_a_visions_chats_and_refuses_its_sends() {
     wait_until(|| async { !fx.running(&slow).await && !fx.running(&quick).await }).await;
     assert_eq!(owner_hold(&fx.state, &slow), Some(Hold::None));
     assert!(fx.state.visions_over_budget(&vision));
+    assert_eq!(
+        fx.call_ok("list_visions", json!({}))[0]["over_budget"],
+        true
+    );
     assert!(fx.state.visions_spent_today(Some(&vision)) >= 1.0);
     assert_eq!(
         budget_notices(&fx, &channel),
@@ -129,6 +140,10 @@ async fn the_budget_stops_a_visions_chats_and_refuses_its_sends() {
 
     // Raising the cap lets the Vision drive again.
     fx.set_visions(json!({"enabled": false, "daily_budget_usd": 50}));
+    assert_eq!(
+        fx.call_ok("list_visions", json!({}))[0]["over_budget"],
+        false
+    );
     json_of(&send(&slow, "finish it"));
     wait_until(|| async { !fx.running(&slow).await }).await;
     fx.shut_down().await;

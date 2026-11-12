@@ -15,6 +15,7 @@ mod channel_log;
 mod control;
 mod drive;
 mod envelope;
+mod listing;
 mod owned_index;
 mod runs;
 mod store;
@@ -26,6 +27,8 @@ mod channel_log_tests;
 mod drive_tests;
 #[cfg(test)]
 mod store_tests;
+#[cfg(test)]
+mod wire_tests;
 
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
@@ -410,6 +413,25 @@ impl AppState {
             .visions_cache()
             .append_entry(&self.inner.visions_dir, channel_id, entry);
         result.map_err(|error| self.visions_failed(error))
+    }
+
+    /// [`Self::channel_append`] for the server's own writes (a reply, a notice), which no
+    /// command announces: a recorded entry announces `visions-changed` with its channel and
+    /// Vision on the scheduler's sink.
+    pub(super) fn channel_post(
+        &self,
+        channel_id: &str,
+        vision_id: &str,
+        entry: ChannelEntry,
+    ) -> Result<u64, String> {
+        let seq = self.channel_append(channel_id, entry)?;
+        if let Some(sink) = self.scheduler_sink() {
+            sink.emit_visions_changed(&crate::types::VisionsChange {
+                channel_id: Some(channel_id.to_owned()),
+                vision_id: Some(vision_id.to_owned()),
+            });
+        }
+        Ok(seq)
     }
 
     /// The newest entries of the channel's log older than `before_seq` (all when absent),

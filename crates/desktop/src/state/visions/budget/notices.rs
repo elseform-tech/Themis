@@ -114,7 +114,7 @@ impl AppState {
                 unpriced_requests: notice.unpriced,
                 reason: notice.reason.map(str::to_owned),
             };
-            let recorded = self.channel_append(&channel.id, entry).is_ok();
+            let recorded = self.channel_post(&channel.id, vision_id, entry).is_ok();
             let mut cache = self.visions_cache();
             let budget = &mut cache.budget;
             if recorded {

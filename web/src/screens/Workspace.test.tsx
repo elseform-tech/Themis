@@ -14,7 +14,7 @@ vi.mock("../lib/tauri", async importOriginal => ({
   pluginAction: vi.fn(async () => []), listPromptSkills: vi.fn(async () => []),
   getDefaultProject: vi.fn(async () => ({ name: "Themis", root: "/tmp/fixed-themis", is_git: true, is_default: true })), getSettings: vi.fn(), getSecretStatus: vi.fn(), updateSettings: vi.fn(),
   onBackendResync: vi.fn(async () => () => {}), getPendingApprovals: vi.fn(async () => []),
-  onThreadEvent: vi.fn(async () => () => {}), onApprovalRequest: vi.fn(async () => () => {}), onApprovalExpired: vi.fn(async () => () => {}), onReviewItemAdded: vi.fn(async () => () => {}), onThreadChanged: vi.fn(async () => () => {}), onSettingsChanged: vi.fn(async () => () => {}),
+  onThreadEvent: vi.fn(async () => () => {}), onApprovalRequest: vi.fn(async () => () => {}), onApprovalExpired: vi.fn(async () => () => {}), onReviewItemAdded: vi.fn(async () => () => {}), onThreadChanged: vi.fn(async () => () => {}), onSettingsChanged: vi.fn(async () => () => {}), onVisionsChanged: vi.fn(async () => () => {}),
   getEffectivePermissions: vi.fn(async () => null), listEditors: vi.fn(async () => ({ editors: [] })), getBrowserSettings: vi.fn(async () => ({ settings: { open_workspace: false } })),
   listSkills: vi.fn(async () => []), listAutomations: vi.fn(async () => []), listReviewItems: vi.fn(async () => []),
   renameThread: vi.fn(), setThreadApprovalMode: vi.fn(), setProvider: vi.fn(), setThreadEffort: vi.fn(), getThread: vi.fn(), getThreadHistory: vi.fn(async () => []), sendMessage: vi.fn(async () => ({ run_id: "test-run" })),

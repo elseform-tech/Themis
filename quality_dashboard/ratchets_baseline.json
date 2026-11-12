@@ -890,7 +890,7 @@
   "web/src/state/store.tsx::AppProvider": {
    "cognitive": 184,
    "cyclomatic": 128,
-   "lines": 245
+   "lines": 244
   },
   "web/src/state/store.tsx::AppProvider::recover": {
    "cognitive": 61,

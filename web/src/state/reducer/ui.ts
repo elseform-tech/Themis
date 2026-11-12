@@ -1,4 +1,5 @@
 import type { AppAction, AppState } from "../reducer";
+import { reduceVisionsActions } from "../visions";
 
 export function reduceUiActions(
   state: AppState,
@@ -41,6 +42,6 @@ export function reduceUiActions(
     case "ui/project-dialog":
       return { ...state, projectDialogOpen: action.open };
     default:
-      return null;
+      return reduceVisionsActions(state, action);
   }
 }

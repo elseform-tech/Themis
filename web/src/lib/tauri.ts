@@ -53,9 +53,12 @@ import {
   SETTINGS_CHANGED_NAME,
   THREAD_CHANGED_NAME,
   THREAD_EVENT_NAME,
+  VISIONS_CHANGED_NAME,
 } from './types';
+import type { VisionsChange } from './visions';
 
-function invoke<T>(command: string, args: Record<string, unknown> = {}): Promise<T> {
+/** Calls the local server through the app (the bridge modules use it, nothing else). */
+export function invoke<T>(command: string, args: Record<string, unknown> = {}): Promise<T> {
   if (command === 'check_for_updates') return tauriInvoke<T>(command, args);
   return tauriInvoke<T>('backend_command', { command, args });
 }
@@ -472,6 +475,12 @@ export function onSettingsChanged(
   cb: (change: SettingsChange) => void,
 ): Promise<UnlistenFn> {
   return listen<SettingsChange>(SETTINGS_CHANGED_NAME, (event) => cb(event.payload));
+}
+
+export function onVisionsChanged(
+  cb: (change: VisionsChange) => void,
+): Promise<UnlistenFn> {
+  return listen<VisionsChange>(VISIONS_CHANGED_NAME, (event) => cb(event.payload));
 }
 
 export async function attachmentFile(threadId: string, path: string): Promise<string> {

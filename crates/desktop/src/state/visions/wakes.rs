@@ -428,8 +428,9 @@ impl AppState {
             return;
         }
         if matches!(reason, WakeReason::ChatFailed(_)) {
-            let _ = self.channel_append(
+            let _ = self.channel_post(
                 &owner.channel_id,
+                &owner.vision_id,
                 ChannelEntry::Notice {
                     kind: NoticeKind::ChatFailed,
                     vision_id: Some(owner.vision_id.clone()),

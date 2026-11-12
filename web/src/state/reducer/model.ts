@@ -24,6 +24,7 @@ import type {
   Goal,
 } from "../../lib/types";
 import type { ToastItem, ToastTone } from "../../components";
+import { initialVisions, type VisionsAction, type VisionsState } from "../visions";
 import { DEFAULT_MODEL } from "../../lib/models";
 
 export type MessageRole = PersistedMessage["role"];
@@ -38,7 +39,7 @@ export interface ToolTraceEntry {
   ok?: boolean;
 }
 
-export type MainView = "thread" | "settings" | "queue" | "skills" | "automations";
+export type MainView = "thread" | "settings" | "queue" | "skills" | "automations" | "visions";
 
 /** Last merge attempt per thread, kept for display (esp. conflicts). */
 export interface LastMerge {
@@ -152,6 +153,8 @@ export interface AppState {
   queues: Record<string, QueuedMessage[]>;
   /** Each chat's goal (`null` when it has none). */
   goals: Record<string, Goal | null>;
+  /** Visions, the open projects' channels and what was read of them. */
+  visions: VisionsState;
   /** Each chat's to-do list, kept by its main agent. */
   paletteOpen: boolean;
   projectDialogOpen: boolean;
@@ -219,7 +222,8 @@ export type AppAction =
   | { type: "ui/tab-request-consumed" }
   | { type: "tasks/loaded"; threadId: string; tasks: ThreadTasks }
   | { type: "ui/palette"; open: boolean }
-  | { type: "ui/project-dialog"; open: boolean };
+  | { type: "ui/project-dialog"; open: boolean }
+  | VisionsAction;
 
 export const DEFAULT_SETTINGS: Settings = {
   projects_directory: "",
@@ -295,6 +299,7 @@ export const initialState: AppState = {
   tasks: {},
   queues: {},
   goals: {},
+  visions: initialVisions,
   paletteOpen: false,
   projectDialogOpen: false,
 };

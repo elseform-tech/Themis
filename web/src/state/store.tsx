@@ -40,8 +40,11 @@ import { getBrowserSettings,
   onSettingsChanged,
   onThreadChanged,
   onThreadEvent,
+  onVisionsChanged,
   openProject,
 } from "../lib/tauri";
+import { getChannelPage, listChannels, listChannelThreads, listQuestions, listVisions } from "../lib/visions";
+import { followVisions, type VisionsBridge } from "./visions";
 import { failureMessage as describeError } from "../lib/errors";
 import { reviewToast } from "../screens/reviewFlow";
 import { readSession, writeSession } from "./session";
@@ -56,6 +59,9 @@ import {
 } from "./reducer";
 
 export * from "./reducer";
+
+const visionsBridge: VisionsBridge = { listVisions, listChannels, getChannelPage: channelId => getChannelPage(channelId), listChannelThreads, listQuestions };
+type VisionsFollower = ReturnType<typeof followVisions>;
 
 interface AppContextValue {
   state: AppState;
@@ -123,7 +129,7 @@ export { describeError };
 /** Chats and settings changed through the shared server (the `themis` CLI, another client)
  *  follow into this window without a reload; settings written while the connection was down
  *  are read again when it comes back. */
-async function listenOutsideChanges(dispatch: Dispatch<AppAction>, isCancelled: () => boolean, isOpen: (root: string) => boolean, refreshSecrets: () => void): Promise<() => void> {
+async function listenOutsideChanges(dispatch: Dispatch<AppAction>, isCancelled: () => boolean, isOpen: (root: string) => boolean, refreshSecrets: () => void, visions: VisionsFollower): Promise<() => void> {
   const opening = new Set<string>();
   const offThreads = await onThreadChanged((change) => {
     if (isCancelled()) return;
@@ -136,8 +142,23 @@ async function listenOutsideChanges(dispatch: Dispatch<AppAction>, isCancelled: 
   });
   const follow = settingsSync({ getSettings, getBrowserSettings, refreshSecrets }, dispatch, isCancelled);
   const offSettings = await onSettingsChanged(follow);
-  const offResync = await onBackendResync(() => { follow({ scope: "app" }); follow({ scope: "runtime" }); });
-  return () => { offThreads(); offSettings(); offResync(); };
+  const offResync = await onBackendResync(() => { follow({ scope: "app" }); follow({ scope: "runtime" }); void visions.changed({}); });
+  // Visions follow `visions-changed`, reading again only what it names.
+  const offVisions = await onVisionsChanged(change => { if (!isCancelled()) void visions.changed(change); });
+  return () => { offThreads(); offSettings(); offResync(); offVisions(); };
+}
+
+/** The latest state for callbacks, and the Visions follower that reads it: the open projects'
+ *  channels are read when a project opens (and everything with the first). */
+function useLiveState(state: AppState, dispatch: Dispatch<AppAction>) {
+  const current = useRef(state);
+  current.current = state;
+  const [visions] = useState(() => followVisions(visionsBridge, () => current.current, dispatch, () => false));
+  const projectRoots = state.projects.map(project => project.root).join("\n");
+  useEffect(() => {
+    if (projectRoots) void visions.changed({}, projectRoots.split("\n"));
+  }, [projectRoots, visions]);
+  return { current, visions };
 }
 
 export function AppProvider({ children }: { children: ReactNode }) {
@@ -146,8 +167,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const legacyMessages = useRef(readSession<Record<string, PersistedMessage[]>>("messages", {}));
   const restoredSession = useRef(false);
   const savedSelection = useRef(readSession<{ root: string; threadId: string } | null>("selection", null));
-  const currentState = useRef(state);
-  currentState.current = state;
+  const { current: currentState, visions } = useLiveState(state, dispatch);
 
   /** The activity position each chat's history was loaded at, shared by the loader on opening
    *  and the recovery loop, so a chat is reloaded only when it changed since. */
@@ -171,7 +191,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       })
       .catch((error: unknown) => { if (live) toast(dispatch, `Could not load this chat: ${describeError(error)}`, "warning"); });
     return () => { live = false; };
-  }, [openedThread, openedLoaded]);
+  }, [openedThread, openedLoaded, currentState]);
   const recoverState = useRef<() => void>(() => {});
   const refreshSecretStatus = useRef<() => void>(() => {});
   useEffect(() => { if (startup === null) recoverState.current(); }, [startup]);
@@ -200,7 +220,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       .then(unlisten => { if (cancelled) unlisten(); else off = unlisten; })
       .catch(() => {});
     return () => { cancelled = true; off?.(); };
-  }, []);
+  }, [currentState]);
 
   // Subscribe to backend events once on mount.
   useEffect(() => {
@@ -269,7 +289,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         const offThread = await onThreadEvent((envelope) => {
           if (cancelled) return;
           eventVersion++;
-          dispatch({ type: "thread/event", envelope });
+          dispatch({ type: "thread/event", envelope }); visions.threadEvent(envelope);
           const { kind } = envelope.event;
           // A background task started, exited or was stopped: refresh this chat's task feed.
           if (kind === "background_tasks_changed") {
@@ -323,7 +343,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
           }).catch(() => {});
         });
         const offRecovery = await onBackendResync(() => { clearTimeout(retry); refreshSecretStatus.current(); window.dispatchEvent(new Event("themis-mcp-reconnect")); void recover(); });
-        const offThreadChanged = await listenOutsideChanges(dispatch, () => cancelled, root => currentState.current.threadsByProject[root] !== undefined, () => refreshSecretStatus.current());
+        const offThreadChanged = await listenOutsideChanges(dispatch, () => cancelled, root => currentState.current.threadsByProject[root] !== undefined, () => refreshSecretStatus.current(), visions);
         if (cancelled) {
           offRecovery();
           offThread();
@@ -352,7 +372,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       clearTimeout(retry);
       for (const off of unlistens) off();
     };
-  }, []);
+  }, [visions, currentState]);
 
   // Restore recent projects and refresh credential presence after external changes.
   useEffect(() => {

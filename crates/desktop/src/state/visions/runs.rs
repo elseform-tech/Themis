@@ -390,8 +390,9 @@ impl AppState {
             // Counted and dropped: tried again only when something wakes it anew.
             Err(NotStarted::Unconfinable) => {
                 self.visions_cache().wakes.ended(&vision_id, &channel_id);
-                let _ = self.channel_append(
+                let _ = self.channel_post(
                     &channel_id,
+                    &vision_id,
                     ChannelEntry::Notice {
                         kind: NoticeKind::SandboxUnavailable,
                         vision_id: Some(vision_id.clone()),
@@ -543,7 +544,10 @@ impl AppState {
             }
             _ => None,
         };
-        let posted = entry.map(|entry| self.channel_append(&owner.channel_id, entry).is_ok());
+        let posted = entry.map(|entry| {
+            self.channel_post(&owner.channel_id, &owner.vision_id, entry)
+                .is_ok()
+        });
         self.visions_note(
             "reply_posted",
             json!({"vision_id": owner.vision_id, "channel_id": owner.channel_id, "thread_id": owner.thread_id, "posted": posted}),
