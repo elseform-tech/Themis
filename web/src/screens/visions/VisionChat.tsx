@@ -8,9 +8,9 @@ import { visionById } from "./ChannelEntry";
 import { chatRunning } from "./ChatLink";
 
 function holdNote(chat: OwnedChat, vision: string, running: boolean): string {
-  if (chat.owner.hold === "taken_over") return `You took over. ${vision} waits and reads what you did when you hand it back.`;
-  if (chat.owner.hold === "stopped_by_person") return `You stopped this chat. ${vision} leaves it until you hand it back or write in the channel.`;
-  return running ? `${vision} is running this chat. Typing here takes over.` : `${vision} runs this chat. Typing here takes over.`;
+  if (chat.owner.hold === "taken_over") return "You took over.";
+  if (chat.owner.hold === "stopped_by_person") return "You stopped this chat.";
+  return running ? `${vision} is running this chat.` : `${vision}'s chat`;
 }
 
 export function VisionChat({ channel, chat }: { channel: ChannelInfo; chat: OwnedChat }) {

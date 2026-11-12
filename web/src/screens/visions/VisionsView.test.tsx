@@ -23,6 +23,7 @@ vi.mock("../../lib/tauri", async importOriginal => ({
 }));
 vi.mock("../../lib/visions", async importOriginal => ({
   ...await importOriginal<typeof import("../../lib/visions")>(),
+  saveChannel: vi.fn(), saveVision: vi.fn(),
   listQuestions: vi.fn(async () => []), postChannelMessage: vi.fn(async () => ({ seq: 9 })), handBackThread: vi.fn(),
 }));
 
@@ -105,10 +106,11 @@ describe("Visions view", () => {
     expect(within(bar).getByText("Rook").closest("li")).toHaveTextContent("Working");
     expect(within(bar).getByRole("button", { name: "New channel" })).toBeTruthy();
     expect(within(bar).getByRole("button", { name: "New Vision" })).toBeTruthy();
-    // # hq opens first: phase 1 has no agent there, only the two ways to start.
+    // # hq is a channel like any other; with no hq channel yet it is empty and cannot be written to.
     const hq = screen.getByRole("region", { name: "# hq" });
-    expect(within(hq).getByRole("button", { name: "New channel" })).toBeTruthy();
-    expect(within(hq).getByRole("button", { name: "New Vision" })).toBeTruthy();
+    expect(hq).toHaveTextContent("No messages yet.");
+    expect(within(hq).getByLabelText("Message #hq")).toBeDisabled();
+    expect(within(hq).queryByRole("button", { name: /^New / })).toBeNull();
   });
 
   it("chats_returns_to_plain_chat_from_visions", async () => {
@@ -180,6 +182,61 @@ describe("Visions view", () => {
     // The same Vision's cloud in the bar is live.
     const bar = screen.getByRole("complementary", { name: "Visions navigation" });
     expect(within(bar).getByText("Rook").closest("li")!.querySelector(".themis-cloud")).toHaveClass("is-live");
+  });
+
+  it("a_running_vision_shows_it_is_thinking", () => {
+    const thinking = (lines: ChannelEntry[]) => fixture({ mainView: "visions", visions: {
+      ...fixture().visions,
+      list: [vision("rook", "Rook", { vision_chats: [{ thread_id: "own", channel_id: "c1", running: true }] }), vision("wren", "Wren")],
+      lines: { c1: lines.map((entry, seq) => ({ seq, at_ms: 0, entry })) },
+      open: { channelId: "c1", chatId: null, plainThreadId: null },
+    } });
+    const { unmount } = render(<Harness initial={thinking([{ type: "person", text: "@Rook check the build" }])} />);
+    const row = screen.getByRole("status");
+    expect(row).toHaveTextContent("Rook is thinking…");
+    expect(row.querySelector(".themis-cloud")).toHaveClass("themis-cloud--think");
+    expect(row.querySelector(".themis-shim")).toBeTruthy();
+    unmount();
+    // Once it has posted, the row goes.
+    render(<Harness initial={thinking([{ type: "person", text: "@Rook check the build" }, { type: "vision", vision_id: "rook", text: "It is green." }])} />);
+    expect(screen.queryByText("Rook is thinking…")).toBeNull();
+  });
+
+  it("a Vision's new post fades in, lines already there do not", () => {
+    mount({ mainView: "visions", visions: { ...fixture().visions, open: { channelId: "c1", chatId: null, plainThreadId: null } } });
+    const view = screen.getByRole("region", { name: "# release" });
+    expect(view.querySelector(".is-fresh")).toBeNull();
+    const page = { entries: [...fixture().visions.lines.c1!, { seq: 9, at_ms: 0, entry: { type: "vision" as const, vision_id: "rook", text: "Done." } }], next_before: null };
+    act(() => { (live.value as { dispatch: (action: AppAction) => void }).dispatch({ type: "visions/changed", channelId: "c1", page, chats: fixture().visions.chats.c1!, questions: { w2: ["q1"] } }); });
+    expect(within(view).getByText("Done.").closest("li")).toHaveClass("is-fresh");
+  });
+
+  it("new channel saves its name, topic and members, then opens it", async () => {
+    vi.mocked(visionsBridge.saveChannel).mockImplementation(async draft => ({ ...draft, id: "c2", topic: draft.topic ?? "", revision: "r" }));
+    mount({ mainView: "visions" });
+    fireEvent.click(screen.getByRole("button", { name: "New channel" }));
+    const sheet = screen.getByRole("dialog", { name: "New channel" });
+    fireEvent.change(within(sheet).getByLabelText("Channel name"), { target: { value: "Watch CI" } });
+    fireEvent.change(within(sheet).getByLabelText("Topic"), { target: { value: "Keep main green" } });
+    fireEvent.click(within(sheet).getByRole("button", { name: "Wren" }));
+    fireEvent.click(within(sheet).getByRole("button", { name: "Create" }));
+    await waitFor(() => expect(visionsBridge.saveChannel).toHaveBeenCalledWith({ name: "watch-ci", topic: "Keep main green", project_root: "/p", approval_mode: "custom", members: ["wren"] }, null));
+    expect(await screen.findByRole("region", { name: "# watch-ci" })).toBeTruthy();
+  });
+
+  it("new vision saves its name, cloud and role", async () => {
+    vi.mocked(visionsBridge.saveVision).mockImplementation(async draft => ({ ...draft, id: "v3", role: draft.role ?? "", soul: "", paused: false, revision: "r" }));
+    mount({ mainView: "visions" });
+    fireEvent.click(screen.getByRole("button", { name: "New Vision" }));
+    const sheet = screen.getByRole("dialog", { name: "New Vision" });
+    fireEvent.change(within(sheet).getByLabelText("Name"), { target: { value: "Echo" } });
+    fireEvent.click(within(sheet).getByRole("button", { name: "Wide cloud" }));
+    fireEvent.click(within(sheet).getByRole("button", { name: "Rose" }));
+    fireEvent.change(within(sheet).getByLabelText("Role"), { target: { value: "Scribe" } });
+    fireEvent.click(within(sheet).getByRole("button", { name: "Create" }));
+    await waitFor(() => expect(visionsBridge.saveVision).toHaveBeenCalledWith({ name: "Echo", role: "Scribe", shape: "wide", color: "rose" }, null));
+    const bar = screen.getByRole("complementary", { name: "Visions navigation" });
+    expect(await within(bar).findByText("Echo")).toBeTruthy();
   });
 
   it("asks to mention a Vision when several are here, and posts the message", async () => {

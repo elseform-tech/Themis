@@ -29,6 +29,7 @@
 .themis-rail-cloud--calm .themis-cloud-eyes { animation: themis-cloud-blink 4s infinite; }
 .themis-rail-cloud--sleep { opacity: .55; }
 .themis-visions-button.themis-sidebar-row--active { color: var(--themis-accent); }
+.themis-visions-badge { display: contents; }
 
 @keyframes themis-cloud-breathe { 50% { transform: scale(1.05); } }
 @keyframes themis-cloud-blink { 0%, 92%, 100% { transform: none; } 95% { transform: scaleY(.15); } }
@@ -74,9 +75,16 @@
 .themis-channel-text { margin: 0; overflow-wrap: anywhere; white-space: pre-wrap; }
 .themis-mention { padding: 1px 7px; border-radius: var(--themis-radius-pill); background: var(--themis-pill); color: var(--themis-accent); font-weight: 500; }
 .themis-channel-notice { display: flex; align-items: baseline; gap: 8px; margin-left: 42px; padding: 8px 12px; border-radius: 12px; background: var(--themis-well); color: var(--themis-text-2); font-size: 12px; }
-.themis-visions-start { display: flex; flex-direction: column; gap: 16px; max-width: 520px; padding-top: 10px; color: var(--themis-text-2); }
-.themis-visions-start p { margin: 0; }
-.themis-visions-start-actions { display: flex; gap: 8px; }
+/* A Vision whose run is going and has not posted yet; its posts fade in (VisionChannel's .shim). */
+.themis-channel-thinking { display: flex; align-items: center; gap: 12px; }
+.themis-shim { background: linear-gradient(90deg, var(--themis-text-2) 35%, var(--themis-text) 50%, var(--themis-text-2) 65%); background-size: 250% 100%; -webkit-background-clip: text; background-clip: text; color: transparent; animation: themis-shim 1.8s linear infinite; }
+@keyframes themis-shim { from { background-position: 100% 0; } to { background-position: 0 0; } }
+.themis-channel-entry.is-fresh { animation: themis-channel-fade .32s ease-out; }
+@keyframes themis-channel-fade { from { opacity: 0; transform: translateY(4px); } }
+@media (prefers-reduced-motion: reduce) {
+  .themis-shim { background: none; color: var(--themis-text-2); animation: none; }
+  .themis-channel-entry.is-fresh { animation: none; }
+}
 
 /* Chat links. */
 .themis-chat-link { display: flex; align-items: center; gap: 8px; margin-top: 4px; max-width: 560px; }
@@ -108,7 +116,8 @@
 
 /* The composer. */
 .themis-channel-composer { position: relative; display: flex; flex: none; align-items: flex-end; gap: 10px; margin: 0 0 18px; padding: 10px 10px 10px 18px; border-radius: var(--themis-radius-composer); background: var(--themis-panel-sheen), var(--themis-card); box-shadow: var(--themis-panel-edge); }
-.themis-channel-composer textarea { flex: 1; min-height: 32px; max-height: 160px; padding: 6px 0; border: 0; outline: none; background: transparent; color: var(--themis-text); font: inherit; resize: none; field-sizing: content; }
+.themis-channel-composer textarea { flex: 1; min-height: 32px; max-height: 160px; padding: 6px 0; border: 0; outline: none; background: transparent; box-shadow: none; color: var(--themis-text); font: inherit; resize: none; field-sizing: content; }
+.themis-channel-composer textarea:focus, .themis-channel-composer textarea:focus-visible { outline: none; box-shadow: none; }
 .themis-channel-composer textarea::placeholder { color: var(--themis-text-3); }
 .themis-channel-mention { display: grid; place-items: center; width: 32px; height: 32px; padding: 0; border: 0; border-radius: 50%; background: transparent; color: var(--themis-text-2); cursor: pointer; }
 .themis-channel-mention:hover { color: var(--themis-text); }
@@ -123,7 +132,6 @@
 .themis-vision-chat > .themis-thread-layout { flex: 1; min-height: 0; }
 .themis-vision-chat-bar { flex: none; display: flex; align-items: center; gap: 10px; padding: 10px 16px 0; }
 .themis-vision-chat-note { flex: 1; min-width: 0; color: var(--themis-text-2); font-size: 12px; }
-
 /* New channel and New Vision. */
 .themis-visions-sheet-name { display: flex; align-items: flex-end; gap: 14px; }
 .themis-visions-sheet-name > .themis-input-wrap { flex: 1; }

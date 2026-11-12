@@ -46,7 +46,7 @@ export function NewChannelSheet({ onClose }: { onClose: () => void }) {
     <Dialog open title="New channel" onClose={() => { if (!busy) onClose(); }}>
       <form className="themis-sidebar-dialog themis-visions-sheet" onSubmit={event => void create(event)}>
         <Input id="visions-channel-name" label="Channel name" placeholder="release" value={name} maxLength={40} disabled={busy} onChange={event => { setName(channelName(event.target.value)); setError(""); }} />
-        <Input id="visions-channel-topic" label="Topic" placeholder="What this channel is for" value={topic} maxLength={200} disabled={busy} onChange={event => setTopic(event.target.value)} />
+        <Input id="visions-channel-topic" label="Topic" value={topic} maxLength={200} disabled={busy} onChange={event => setTopic(event.target.value)} />
         {state.visions.list.length > 0 && <fieldset className="themis-visions-picks">
           <legend className="themis-input-label">Members</legend>
           <div>{state.visions.list.map(vision => (

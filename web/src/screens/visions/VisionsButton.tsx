@@ -34,7 +34,7 @@ export function VisionsButton() {
     <Tooltip content="Visions">
       <button type="button" className={`themis-sidebar-row themis-visions-button ${active ? "themis-sidebar-row--active" : ""}`} aria-label={railLabel(mood, needs)} aria-current={active ? "page" : undefined} onClick={() => dispatch({ type: "ui/view", view: "visions" })}>
         <RailCloud key={hop.key} mood={mood} hop={hop.hop} />
-        {needs > 0 && <span aria-hidden="true"><Badge tone="warning">{needs}</Badge></span>}
+        {needs > 0 && <span className="themis-visions-badge" aria-hidden="true"><Badge tone="warning">{needs}</Badge></span>}
       </button>
     </Tooltip>
   );

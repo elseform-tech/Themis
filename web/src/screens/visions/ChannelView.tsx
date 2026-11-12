@@ -4,7 +4,7 @@ import { useLayoutEffect, useRef, useState } from "react";
 import { ApprovalBox } from "../../components/approval/ApprovalBox";
 import { approveAction } from "../../lib/tauri";
 import type { ApprovalDecision, ApprovalRequest } from "../../lib/types";
-import type { ChannelInfo } from "../../lib/visions";
+import type { ChannelInfo, VisionInfo } from "../../lib/visions";
 import { describeError, toast, useApp } from "../../state/store";
 import { visionMoods } from "../../state/visions";
 import { AskFirstBox } from "../AskFirstBox";
@@ -33,6 +33,25 @@ function ChannelApproval({ request, channelId }: { request: ApprovalRequest; cha
   );
 }
 
+/** Visions whose run in this channel is going and that have not posted since the newest line:
+ *  a run that answered the newest message has spoken. */
+function thinkingHere(state: ReturnType<typeof useApp>["state"], channel: ChannelInfo): VisionInfo[] {
+  const lines = state.visions.lines[channel.id] ?? [];
+  const last = lines[lines.length - 1]?.entry;
+  const spoke = last && last.type !== "person" && last.type !== "notice" ? last.vision_id : undefined;
+  return state.visions.list.filter(vision => vision.id !== spoke
+    && vision.vision_chats.some(own => own.channel_id === channel.id && (state.running[own.thread_id] ?? own.running)));
+}
+
+function Thinking({ visions }: { visions: VisionInfo[] }) {
+  return <>{visions.map(vision => (
+    <li key={vision.id} className="themis-channel-thinking" role="status">
+      <span className="themis-channel-avatar"><CloudIcon shape={vision.shape} color={vision.color} mood="think" size={30} live /></span>
+      <span className="themis-shim">{vision.name} is thinking…</span>
+    </li>
+  ))}</>;
+}
+
 /** Keeps the log at its newest line while the person is there; reading back stays put. */
 function useStickToEnd(count: number) {
   const log = useRef<HTMLDivElement>(null);
@@ -57,7 +76,10 @@ export function ChannelView({ channel }: { channel: ChannelInfo }) {
   const approvals = state.approvals.filter(request => chats.has(request.thread_id));
   const members = channel.members.flatMap(id => visionById(state, id) ?? []);
   const moods = visionMoods(state);
-  const { log, onScroll } = useStickToEnd(lines.length + approvals.length);
+  const thinking = channel.id ? thinkingHere(state, channel) : [];
+  const { log, onScroll } = useStickToEnd(lines.length + approvals.length + thinking.length);
+  // Lines that arrive while the channel is open fade in.
+  const [shownUpTo] = useState(() => lines[lines.length - 1]?.seq ?? -1);
   async function older() {
     setLoading(true);
     try { await loadOlderLines(channel.id); } finally { setLoading(false); }
@@ -73,10 +95,11 @@ export function ChannelView({ channel }: { channel: ChannelInfo }) {
       </header>
       <div className="themis-channel-log" ref={log} onScroll={onScroll}>
         {state.visions.nextBefore[channel.id] != null && <button type="button" className="themis-show-more" disabled={loading} onClick={() => void older()}>{loading ? "Loading…" : "Show earlier messages"}</button>}
-        {lines.length === 0 && <p className="themis-channel-empty">{members.length === 0 ? "No Visions here yet." : `Write to ${members.length === 1 ? members[0]!.name : "a Vision with @"} to start.`}</p>}
+        {lines.length === 0 && thinking.length === 0 && <p className="themis-channel-empty">No messages yet.</p>}
         <ol className="themis-channel-lines">
-          {lines.map(line => <ChannelEntryView key={line.seq} line={line} channelId={channel.id} onReply={setDraft} />)}
+          {lines.map(line => <ChannelEntryView key={line.seq} line={line} channelId={channel.id} fresh={line.seq > shownUpTo} onReply={setDraft} />)}
           {approvals.map(request => <ChannelApproval key={request.approval_id} request={request} channelId={channel.id} />)}
+          <Thinking visions={thinking} />
         </ol>
       </div>
       <ChannelComposer channel={channel} members={members} draft={draft} setDraft={setDraft} />

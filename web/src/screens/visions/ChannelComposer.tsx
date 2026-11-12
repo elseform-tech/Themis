@@ -44,12 +44,12 @@ export function ChannelComposer({ channel, members, draft, setDraft }: { channel
           </button>
         ))}
       </div>}
-      <textarea ref={box} rows={1} aria-label={`Message #${channel.name}`} placeholder={`Message #${channel.name}`} value={draft} onChange={event => setDraft(event.target.value)} onKeyDown={onKeyDown} />
-      {members.length > 1 && !draft.includes("@") && <button type="button" className="themis-channel-mention" aria-label="Mention a Vision" title="Mention a Vision"
+      <textarea ref={box} rows={1} aria-label={`Message #${channel.name}`} placeholder={`Message #${channel.name}`} value={draft} disabled={!channel.id} onChange={event => setDraft(event.target.value)} onKeyDown={onKeyDown} />
+      {channel.id && members.length > 1 && !draft.includes("@") && <button type="button" className="themis-channel-mention" aria-label="Mention a Vision" title="Mention a Vision"
         onClick={() => { setDraft(`${draft}${draft && !draft.endsWith(" ") ? " " : ""}@`); box.current?.focus(); }}>
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden="true"><circle cx="12" cy="12" r="4" /><path d="M16 8v5a3 3 0 0 0 5 0v-1a9 9 0 1 0-3.5 7" /></svg>
       </button>}
-      <button type="button" className="themis-channel-send" aria-label="Send" disabled={busy || !draft.trim()} onClick={() => void send()}>
+      <button type="button" className="themis-channel-send" aria-label="Send" disabled={busy || !draft.trim() || !channel.id} onClick={() => void send()}>
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M12 19V5M6 11l6-6 6 6" /></svg>
       </button>
     </div>

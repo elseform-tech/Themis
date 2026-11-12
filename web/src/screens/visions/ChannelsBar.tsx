@@ -7,10 +7,17 @@ import { useApp } from "../../state/store";
 import { channelNeeds, MOOD_LABEL, visionMoods } from "../../state/visions";
 import { SidebarIcon } from "../Sidebar";
 import { CloudIcon } from "./CloudIcon";
+import { projectChannels } from "./channels";
 import { VisionsSheets, type Sheet } from "./NewChannelSheet";
 
-function Plus() {
-  return <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14" /></svg>;
+function SectionHead({ title, add, onAdd }: { title: string; add: string; onAdd: () => void }) {
+  return (
+    <h2 className="themis-sidebar-section">{title}
+      <button type="button" className="themis-visions-add" aria-label={add} onClick={onAdd}>
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14" /></svg>
+      </button>
+    </h2>
+  );
 }
 
 /** Projects to switch between; Visions stays open on the new project's `# hq`. */
@@ -41,10 +48,6 @@ function ProjectSwitcher() {
   );
 }
 
-function SectionHead({ title, add, onAdd }: { title: string; add: string; onAdd: () => void }) {
-  return <h2 className="themis-sidebar-section">{title}<button type="button" className="themis-visions-add" aria-label={add} onClick={onAdd}><Plus /></button></h2>;
-}
-
 function ChannelRow({ id, name, needs, active, onOpen }: { id: string | null; name: string; needs: number; active: boolean; onOpen: (id: string | null) => void }) {
   const label = needs > 0 ? `# ${name}, ${needs} ${needs === 1 ? "needs" : "need"} you` : `# ${name}`;
   return (
@@ -58,20 +61,17 @@ function ChannelRow({ id, name, needs, active, onOpen }: { id: string | null; na
 export function ChannelsBar({ collapsed }: { collapsed: boolean }) {
   const { state, dispatch } = useApp();
   const [sheet, setSheet] = useState<Sheet>(null);
-  const root = state.activeProjectRoot;
-  const channels = root ? state.visions.channels[root] ?? [] : [];
-  const shown = state.visions.open.channelId;
-  const current = channels.some(channel => channel.id === shown) ? shown : null;
+  const { hq, channels, current } = projectChannels(state);
   const moods = visionMoods(state);
   const openChannel = (channelId: string | null) => dispatch({ type: "visions/open", channelId });
   return <>
     <aside id="themis-sidebar" className={`themis-sidebar themis-channels-bar ${collapsed ? "" : "is-visible"}`} inert={collapsed} aria-hidden={collapsed} aria-label="Visions navigation">
       <div className="themis-sidebar-top"><ProjectSwitcher /></div>
       <div className="themis-sidebar-projects">
-        <ChannelRow id={null} name="hq" needs={0} active={current === null} onOpen={openChannel} />
+        <ChannelRow id={hq.id || null} name="hq" needs={hq.id ? channelNeeds(state, hq.id) : 0} active={current === hq} onOpen={openChannel} />
         <SectionHead title="Channels" add="New channel" onAdd={() => setSheet("channel")} />
         <ul className="themis-sidebar-list">
-          {channels.map(channel => <li key={channel.id}><ChannelRow id={channel.id} name={channel.name} needs={channelNeeds(state, channel.id)} active={current === channel.id} onOpen={openChannel} /></li>)}
+          {channels.map(channel => <li key={channel.id}><ChannelRow id={channel.id} name={channel.name} needs={channelNeeds(state, channel.id)} active={current === channel} onOpen={openChannel} /></li>)}
         </ul>
         <SectionHead title="Visions" add="New Vision" onAdd={() => setSheet("vision")} />
         <ul className="themis-sidebar-list">
