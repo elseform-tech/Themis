@@ -109,13 +109,13 @@ function rgba(colour: string): [number, number, number, number] {
   return [parts[0], parts[1], parts[2], parts[3] ?? 1];
 }
 
-/** Blur costs frame time: off where the engine lacks it, on Linux (WebKitGTK) until its frame time is measured,
- *  and when the person asked the system to reduce transparency. */
+/** Blur costs frame time: on only on macOS, the one platform where it is measured (60 fps); Windows and Linux
+ *  use solid panels. Also off where the engine lacks it and when the person asked the system to reduce transparency. */
 function glassBlurAvailable(): boolean {
   const supports = typeof CSS !== "undefined" && typeof CSS.supports === "function"
     && (CSS.supports("backdrop-filter", "blur(1px)") || CSS.supports("-webkit-backdrop-filter", "blur(1px)"));
   const reduced = typeof window.matchMedia === "function" && window.matchMedia("(prefers-reduced-transparency: reduce)").matches;
-  return supports && !reduced && !navigator.userAgent.includes("Linux");
+  return supports && !reduced && /Macintosh|Mac OS X/.test(navigator.userAgent);
 }
 
 function applyGlass(root: HTMLElement, preset: AppearancePreset) {
@@ -148,4 +148,16 @@ export function applyAppearance(settings: Appearance) {
   root.style.setProperty("--themis-accent-ink", preset.colors[0]);
   root.style.setProperty("--themis-accent-hover", preset.colors[7]);
   applyGlass(root, preset);
+}
+
+/** Applies the appearance, and again when the system's reduced-transparency choice changes. */
+export function useApplyAppearance(settings: Appearance) {
+  const { theme_palette, font_family, text_size } = settings;
+  useEffect(() => {
+    const apply = () => applyAppearance({ theme_palette, font_family, text_size });
+    apply();
+    const query = typeof window.matchMedia === "function" ? window.matchMedia("(prefers-reduced-transparency: reduce)") : null;
+    query?.addEventListener?.("change", apply);
+    return () => query?.removeEventListener?.("change", apply);
+  }, [theme_palette, font_family, text_size]);
 }

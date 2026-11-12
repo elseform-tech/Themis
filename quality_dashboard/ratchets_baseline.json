@@ -659,7 +659,7 @@
    "lines": 138
   },
   "web/src/App.tsx::Shell": {
-   "cyclomatic": 26
+   "cyclomatic": 25
   },
   "web/src/App.tsx::Shell::onKeyDown": {
    "cognitive": 35

@@ -3,7 +3,7 @@ import { expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import { createElement, useEffect } from "react";
 import { act, render } from "@testing-library/react";
-import { appearancePreset, applyAppearance, skyFor, useAutoSky } from "./appearance";
+import { appearancePreset, applyAppearance, skyFor, useApplyAppearance, useAutoSky } from "./appearance";
 
 it("sets body text to the chosen size, and no label below 9px even at the smallest size", () => {
   const shell = readFileSync("src/screens/shell.css", "utf8");
@@ -72,6 +72,13 @@ it("glass is off on Linux until its frame time is measured", () => {
   });
 });
 
+it("glass is off on Windows until its frame time is measured", () => {
+  withBrowser(true, "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Edg/120.0", () => {
+    applyAppearance({ ...base, theme_palette: "night" });
+    expect(document.documentElement.dataset.glass).toBe("off");
+  });
+});
+
 it("glass is off when the system asks to reduce transparency", () => {
   const asked: string[] = [];
   withBrowser(true, "Macintosh", () => {
@@ -102,4 +109,26 @@ it("auto switches once at the boundary", () => {
     expect(apply.mock.calls.filter(([id]) => id === "night")).toHaveLength(1);
     expect(apply.mock.calls.map(([id]) => id)).toEqual(["noon", "night"]);
   } finally { vi.useRealTimers(); }
+});
+
+it("re-applies the appearance when the reduced-transparency setting changes", () => {
+  let reduced = false;
+  const listeners: Array<() => void> = [];
+  const agent = vi.spyOn(navigator, "userAgent", "get").mockReturnValue("Macintosh");
+  vi.stubGlobal("CSS", { supports: () => true });
+  vi.stubGlobal("matchMedia", () => ({
+    get matches() { return reduced; },
+    addEventListener: (_: string, fn: () => void) => { listeners.push(fn); },
+    removeEventListener: (_: string, fn: () => void) => { listeners.splice(listeners.indexOf(fn), 1); },
+  }));
+  function Harness() { useApplyAppearance({ ...base, theme_palette: "morning" }); return null; }
+  try {
+    const view = render(createElement(Harness));
+    expect(document.documentElement.dataset.glass).toBe("on");
+    reduced = true;
+    act(() => listeners.forEach(fn => fn()));
+    expect(document.documentElement.dataset.glass).toBe("off");
+    view.unmount();
+    expect(listeners).toHaveLength(0);
+  } finally { vi.unstubAllGlobals(); agent.mockRestore(); }
 });
