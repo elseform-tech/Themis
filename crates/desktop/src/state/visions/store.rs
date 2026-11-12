@@ -102,7 +102,7 @@ pub(super) fn refuse_symlink(path: &Path, file: &'static str) -> Result<(), Stor
 }
 
 /// Reads `dir/file`; a missing file is empty.
-fn read_store<T: DeserializeOwned + Default>(
+pub(super) fn read_store<T: DeserializeOwned + Default>(
     dir: &Path,
     file: &'static str,
 ) -> Result<T, StoreError> {
@@ -133,7 +133,11 @@ fn read_store<T: DeserializeOwned + Default>(
 }
 
 /// Replaces `dir/file` with `value`: a fresh 0600 temporary file, fsync, then rename.
-fn write_store(dir: &Path, file: &'static str, value: &impl Serialize) -> Result<(), StoreError> {
+pub(super) fn write_store(
+    dir: &Path,
+    file: &'static str,
+    value: &impl Serialize,
+) -> Result<(), StoreError> {
     let bytes = serde_json::to_vec_pretty(value)
         .map_err(|_| StoreError::refused(file, "The store could not be encoded"))?;
     if bytes.len() as u64 > MAX_STORE_BYTES {

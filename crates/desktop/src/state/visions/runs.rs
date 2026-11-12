@@ -396,6 +396,7 @@ impl AppState {
                         kind: NoticeKind::SandboxUnavailable,
                         vision_id: Some(vision_id.clone()),
                         thread_id: None,
+                        unpriced_requests: None,
                     },
                 );
                 self.visions_note(
@@ -535,6 +536,7 @@ impl AppState {
                     kind: NoticeKind::ChatFailed,
                     vision_id: Some(owner.vision_id.clone()),
                     thread_id: Some(owner.thread_id.clone()),
+                    unpriced_requests: None,
                 })
             }
             _ => None,

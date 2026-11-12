@@ -22,6 +22,9 @@ mod common;
 mod fixture;
 use fixture::*;
 
+#[path = "visions_e2e/budget.rs"]
+mod budget;
+
 /// One app server per process installs the run-credential issuer, so these tests take turns.
 static ONE_SERVER: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 

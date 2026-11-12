@@ -494,6 +494,9 @@ pub const AGENT_CLI_HELD_BY_PERSON: &str =
 /// The app server's answer to a paused Vision's call that would start or send something.
 pub const AGENT_CLI_VISION_PAUSED: &str =
     include_str!("../builtins/prompts/agent-cli-vision-paused.md");
+/// The app server's answer to a driving call of a Vision that reached today's budget.
+pub const AGENT_CLI_VISION_OVER_BUDGET: &str =
+    include_str!("../builtins/prompts/agent-cli-vision-over-budget.md");
 /// The app server's answer to a Vision's `answer_question` on a permission question (an Auto
 /// block or a step waiting on the person's approval).
 pub const AGENT_CLI_PERMISSION_QUESTION: &str =

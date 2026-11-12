@@ -158,6 +158,8 @@ pub(crate) enum Reason {
     AboveAutonomy,
     /// A Vision's message dressed as an answer (it starts with an answer marker).
     AnswerMarker,
+    /// A Vision's call that would start or send something after it reached today's budget.
+    OverBudget,
 }
 
 impl Reason {
@@ -174,6 +176,7 @@ impl Reason {
             Self::PermissionQuestion => "permission_question",
             Self::AboveAutonomy => "above_autonomy",
             Self::AnswerMarker => "answer_marker",
+            Self::OverBudget => "over_budget",
         }
     }
 }

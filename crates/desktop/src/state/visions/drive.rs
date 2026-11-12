@@ -129,15 +129,18 @@ impl AppState {
     }
 
     /// Whether the messages a Vision queued in `thread_id` must wait: the person holds the chat,
-    /// or its Vision is paused or gone.
+    /// or its Vision is paused, gone or over its daily budget.
     pub(crate) fn visions_queue_waits(&self, thread_id: &str) -> bool {
         self.visions_waits_reason(thread_id).is_some()
     }
 
     /// Why a Vision may not write in `thread_id` now (the answer it gets), if it may not: the
-    /// person holds the chat, or its Vision is paused, gone or no longer owns it.
+    /// person holds the chat, or its Vision is paused, gone, no longer owns it or is over its
+    /// daily budget.
     fn visions_waits_reason(&self, thread_id: &str) -> Option<&'static str> {
-        use themis_core::prompts::{AGENT_CLI_HELD_BY_PERSON, AGENT_CLI_VISION_PAUSED};
+        use themis_core::prompts::{
+            AGENT_CLI_HELD_BY_PERSON, AGENT_CLI_VISION_OVER_BUDGET, AGENT_CLI_VISION_PAUSED,
+        };
         let Some(owner) = self.owner_of(thread_id) else {
             return Some(AGENT_CLI_HELD_BY_PERSON);
         };
@@ -147,7 +150,11 @@ impl AppState {
         let paused = self
             .vision_get(&owner.vision_id)
             .is_none_or(|vision| vision.paused);
-        paused.then_some(AGENT_CLI_VISION_PAUSED)
+        if paused {
+            return Some(AGENT_CLI_VISION_PAUSED);
+        }
+        self.visions_budget_holds(thread_id)
+            .then_some(AGENT_CLI_VISION_OVER_BUDGET)
     }
 
     /// Whether any of `question_ids` asks for a permission: an Auto block's question (its

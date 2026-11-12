@@ -9,7 +9,7 @@
 //! the answers' parsing and the plans live in `themis_core::memory`. Diagnostics carry the job
 //! kind, model index, outcome, counts, sizes and tokens only, never what was said or saved.
 
-use std::collections::{BTreeSet, HashMap};
+use std::collections::BTreeSet;
 use std::path::PathBuf;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
@@ -212,20 +212,7 @@ impl AppState {
 
     /// Estimated dollars the memory models spent today (list prices; unpriced models count 0).
     async fn memory_spent_today(&self) -> f64 {
-        let prices: HashMap<(String, String), themis_core::providers::ModelPrice> = self
-            .inner
-            .go_catalog
-            .read()
-            .await
-            .iter()
-            .filter_map(|model| {
-                let provider = model
-                    .provider
-                    .clone()
-                    .unwrap_or_else(|| themis_core::providers::GO_PROVIDER_ID.to_owned());
-                Some(((provider, model.id.clone()), model.price.clone()?))
-            })
-            .collect();
+        let prices = super::usage::catalog_prices(&self.inner.go_catalog.read().await);
         let today = chrono::Local::now().date_naive();
         let since = crate::usage::local_start(&chrono::Local, today).timestamp_millis();
         let usage = Arc::clone(&self.inner.usage);

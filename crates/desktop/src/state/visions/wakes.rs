@@ -3,9 +3,11 @@
 //! Wakes are bounded like hook wakes (`state/hook_wakes.rs`): one Vision run at a time per
 //! Vision chat, reasons that arrive meanwhile wait in a per-Vision queue and go together into
 //! its next wake, at most `visions.max_wakes` runs in a row until the person writes in the
-//! channel, none while the Vision is paused or Visions are off, and none for a chat the person
-//! stopped (except the one `ChatStopped` that tells the Vision so) or took over. Each decision
-//! is logged as `visions/wake {vision_id, channel_id, reason, outcome}`, metadata only.
+//! channel, none while the Vision is paused or Visions are off, none while it is over its daily
+//! budget (the reason waits for a wake after the budget is raised; see `budget`), and none for a
+//! chat the person stopped (except the one `ChatStopped` that tells the Vision so) or took over.
+//! Each decision is logged as `visions/wake {vision_id, channel_id, reason, outcome}`, metadata
+//! only.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -121,17 +123,7 @@ impl WakeSlots {
         reason: Option<WakeReason>,
         limit: u32,
     ) -> Admit {
-        let slot = self
-            .slots
-            .entry((vision_id.to_owned(), channel_id.to_owned()))
-            .or_default();
-        if let Some(reason) = reason {
-            if !slot.queued.contains(&reason) {
-                slot.queued.push(reason);
-            }
-            let over = slot.queued.len().saturating_sub(MAX_QUEUED);
-            slot.queued.drain(..over);
-        }
+        let slot = self.queue_reason(vision_id, channel_id, reason);
         if slot.running {
             return Admit::Queued;
         }
@@ -145,6 +137,32 @@ impl WakeSlots {
         slot.running = true;
         slot.retry = false;
         Admit::Start(std::mem::take(&mut slot.queued))
+    }
+
+    /// Queues `reason` for the Vision's next run without starting anything.
+    pub(super) fn wait(&mut self, vision_id: &str, channel_id: &str, reason: Option<WakeReason>) {
+        self.queue_reason(vision_id, channel_id, reason);
+    }
+
+    /// Queues `reason` (once, the newest [`MAX_QUEUED`] kept) and returns the slot.
+    fn queue_reason(
+        &mut self,
+        vision_id: &str,
+        channel_id: &str,
+        reason: Option<WakeReason>,
+    ) -> &mut WakeSlot {
+        let slot = self
+            .slots
+            .entry((vision_id.to_owned(), channel_id.to_owned()))
+            .or_default();
+        if let Some(reason) = reason {
+            if !slot.queued.contains(&reason) {
+                slot.queued.push(reason);
+            }
+            let over = slot.queued.len().saturating_sub(MAX_QUEUED);
+            slot.queued.drain(..over);
+        }
+        slot
     }
 
     /// The run ended.
@@ -278,7 +296,8 @@ impl AppState {
     }
 
     /// Whether the Vision may wake now, checked and counted under one lock; `Err` names why
-    /// not (the reason is then dropped: nothing waits on a paused or removed Vision).
+    /// not (the reason is then dropped: nothing waits on a paused or removed Vision), except
+    /// `over_budget`, where it waits for a wake once the budget is raised.
     pub(super) fn visions_wake_admit(
         &self,
         channel_id: &str,
@@ -312,6 +331,12 @@ impl AppState {
                 }
             }
         }
+        if self.visions_budget_reached(vision_id, Some(&channel.project_root)) {
+            self.visions_cache()
+                .wakes
+                .wait(vision_id, channel_id, reason);
+            return Err("over_budget");
+        }
         Ok(self
             .visions_cache()
             .wakes
@@ -335,6 +360,7 @@ impl AppState {
     ) {
         // Those refused before this run ended; one refused just now waits for the next end.
         let due = self.visions_cache().wakes.due_retries();
+        self.visions_budget_after_run(thread_id);
         self.visions_run_ended(sink, thread_id, terminal);
         for (vision_id, channel_id) in due {
             let outcome = self.visions_wake_or_queue(sink, &channel_id, &vision_id, None);
@@ -375,6 +401,7 @@ impl AppState {
                     kind: NoticeKind::ChatFailed,
                     vision_id: Some(owner.vision_id.clone()),
                     thread_id: Some(thread_id.to_owned()),
+                    unpriced_requests: None,
                 },
             );
         }

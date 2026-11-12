@@ -141,8 +141,18 @@ fn held(hold: Hold, method: &str) -> bool {
     }
 }
 
+/// Methods that would make a model spend: refused once the Vision reached today's budget.
+const SPENDS: &[&str] = &[
+    "create_thread",
+    "send_message",
+    "enqueue_message",
+    "steer_queued_message",
+    "answer_question",
+];
+
 /// What the server's state refuses a Vision beyond the pure rules: an answer to a permission
-/// question, and anything starting or sending from a paused (or deleted) Vision.
+/// question, anything starting or sending from a paused (or deleted) Vision, and anything that
+/// would spend from one over its daily budget.
 pub(super) fn state_refusal(
     state: &AppState,
     scope: &VisionScope,
@@ -161,9 +171,17 @@ pub(super) fn state_refusal(
     let paused = state
         .vision_get(&scope.vision_id)
         .is_none_or(|vision| vision.paused);
-    paused.then(|| Refusal {
-        reason: Reason::Paused,
-        message: themis_core::prompts::AGENT_CLI_VISION_PAUSED.to_owned(),
+    if paused {
+        return Some(Refusal {
+            reason: Reason::Paused,
+            message: themis_core::prompts::AGENT_CLI_VISION_PAUSED.to_owned(),
+        });
+    }
+    let over = SPENDS.contains(&method)
+        && state.visions_budget_reached(&scope.vision_id, Some(&scope.project_root));
+    over.then(|| Refusal {
+        reason: Reason::OverBudget,
+        message: themis_core::prompts::AGENT_CLI_VISION_OVER_BUDGET.to_owned(),
     })
 }
 

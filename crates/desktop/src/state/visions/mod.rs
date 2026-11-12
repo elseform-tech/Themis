@@ -10,6 +10,7 @@
 //! Each channel's log is `channels/<channel id>.jsonl`, one `{seq, at_ms, entry}` per line,
 //! appended and paged from the end (see `channel_log`).
 
+mod budget;
 mod channel_log;
 mod control;
 mod drive;
@@ -190,6 +191,10 @@ pub enum ChannelEntry {
         vision_id: Option<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         thread_id: Option<String>,
+        /// With `budget_reached`: how many of the day's counted requests had no price (they
+        /// count as $0).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        unpriced_requests: Option<u64>,
     },
 }
 

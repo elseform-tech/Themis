@@ -97,6 +97,8 @@ pub struct UsageStore {
     connection: Option<Arc<Mutex<Connection>>>,
     sender: Mutex<Option<SyncSender<UsageRow>>>,
     dropped: Arc<AtomicU64>,
+    /// Rows queued and not yet written.
+    pending: Arc<AtomicU64>,
     diagnostics: Arc<DiagnosticLog>,
 }
 
@@ -117,13 +119,15 @@ impl UsageStore {
             }
         };
         let dropped = Arc::new(AtomicU64::new(0));
+        let pending = Arc::new(AtomicU64::new(0));
         let sender = connection.as_ref().and_then(|connection| {
             let (sender, receiver) = sync_channel(QUEUE_BOUND);
             let connection = Arc::clone(connection);
             let log = Arc::clone(&diagnostics);
+            let written = Arc::clone(&pending);
             std::thread::Builder::new()
                 .name("themis-usage".into())
-                .spawn(move || write_rows(receiver, connection, log))
+                .spawn(move || write_rows(receiver, connection, log, written))
                 .ok()
                 .map(|_| sender)
         });
@@ -131,6 +135,7 @@ impl UsageStore {
             connection,
             sender: Mutex::new(sender),
             dropped,
+            pending,
             diagnostics,
         }
     }
@@ -145,7 +150,9 @@ impl UsageStore {
         let Some(sender) = sender.as_ref() else {
             return;
         };
+        self.pending.fetch_add(1, Ordering::SeqCst);
         if let Err(TrySendError::Full(_) | TrySendError::Disconnected(_)) = sender.try_send(row) {
+            self.pending.fetch_sub(1, Ordering::SeqCst);
             let dropped = self.dropped.fetch_add(1, Ordering::Relaxed) + 1;
             if dropped == 1 || dropped.is_multiple_of(100) {
                 let _ = self.diagnostics.append(
@@ -155,6 +162,15 @@ impl UsageStore {
                     json!({"dropped_total": dropped}),
                 );
             }
+        }
+    }
+
+    /// Waits, at most `within`, for the rows queued so far to be written, so a read right after
+    /// a request completes sees it.
+    pub fn settle(&self, within: std::time::Duration) {
+        let started = std::time::Instant::now();
+        while self.pending.load(Ordering::SeqCst) > 0 && started.elapsed() < within {
+            std::thread::sleep(std::time::Duration::from_millis(1));
         }
     }
 
@@ -255,6 +271,7 @@ fn write_rows(
     receiver: Receiver<UsageRow>,
     connection: Arc<Mutex<Connection>>,
     log: Arc<DiagnosticLog>,
+    pending: Arc<AtomicU64>,
 ) {
     let report = |stage: &str, error: &rusqlite::Error| {
         let _ = log.append(
@@ -280,6 +297,7 @@ fn write_rows(
         if inserted > 0 && inserted.is_multiple_of(ROLLUP_EVERY) {
             rollup_now(&connection);
         }
+        pending.fetch_sub(1, Ordering::SeqCst);
     }
 }
 
@@ -901,6 +919,7 @@ mod tests {
             connection: Some(Arc::new(Mutex::new(connection))),
             sender: Mutex::new(None),
             dropped: Arc::default(),
+            pending: Arc::default(),
             diagnostics: Arc::new(DiagnosticLog::new(directory.path().join("logs"))),
         };
         let chat = store.chat_totals("chat").unwrap();
