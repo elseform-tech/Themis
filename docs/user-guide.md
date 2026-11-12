@@ -186,7 +186,7 @@ reported back.
   more wait their turn. Each has 40 model requests (`subagents.max_turns`).
   `subagents.model` picks a different model for them, and `subagents.enabled:
   false` turns them off; see [configuration](configuration.md).
-- **Watching them.** A reply's subagents show in the chat as one small stack of lettered circles, each ringed while it works. Hover one for its name, or click it to open its steps in Workspace › Tasks, where **Stop** ends just that subagent; the chat overview shows how many run and whether one waits for your approval. Settings › Subagents turns them off, sets how many run at once, and sets their Default and Allowed models.
+- **Watching them.** A reply's subagents show in the chat as one small stack of lettered circles, each ringed while it works. Hover one for its name, or click it to open its steps in Workspace › Tasks, where **Stop** ends just that subagent; Workspace › Tasks shows how many run, and an approval one waits for shows in the composer. Settings › Subagents turns them off, sets how many run at once, and sets their Default and Allowed models.
 - Each subagent's steps are saved beside the chat and removed with it. From the
   CLI, `themis call list_subagents '{"threadId": "…"}'` lists a chat's subagents.
 
@@ -342,14 +342,9 @@ Codex, the chat's own model judges its goal: there is no separate check.
   tidy-up and auto-compact thresholds. Near auto-compact during a run it turns
   warm and a one-time heads-up appears; afterwards a **Context compacted** divider
   shows the before → after usage. Nothing is deleted: originals stay on disk.
-- **The overview box** sits over the top right of a chat while Workspace is closed:
-  a live preview of the chat's browser (the page keeps its size; only the preview is
-  small), one row each for changed files (+/− lines), tasks and
-  queued messages, and the latest artifact, as icons with short
-  values (hover a row for its name). Click a row to open Workspace on that tab,
-  or the Workspace icon to open it as you left it; closing Workspace brings the
-  box back. The chevron folds it to icons only, as does a narrow chat. Rows with
-  nothing to show are left out, and a chat with nothing to show has no box.
+- **The header** shows the model and reasoning effort (click to change them) and,
+  on the right, the Workspace icon with how many files changed. Tasks, subagents,
+  the chat's browser and its artifacts are in Workspace and in the chat itself.
 - **Workspace** in a thread's header opens a monitor of the project:
   **Changes** (readable changed files with line counts and their wrapped,
   highlighted diff, Unified or Split, updating live while the agent works; a
@@ -473,9 +468,8 @@ Page text and results are treated as untrusted. See [web tools](web-tools.md).
 
 Agents can also drive a built-in browser (its own headless Chromium engine, downloaded
 the first time it is used, or a Chrome, Chromium or Edge you choose in Settings › Browser,
-with its own profile per project). While the agent browses, the chat's overview box
-shows a live preview of the page with what the agent is doing; click it to open
-**Workspace → Browser**, where the line above the page says the same. (To have
+with its own profile per project). While the agent browses, **Workspace → Browser**
+shows the page live, with a line above it saying what the agent is doing. (To have
 Workspace open by itself instead, turn on **Open Workspace when the agent starts
 browsing** in Settings › Browser.) You can click, type or enter an
 address at the same time; the agent keeps working. The agent's pointer glides to where it

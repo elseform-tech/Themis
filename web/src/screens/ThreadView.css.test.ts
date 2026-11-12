@@ -21,10 +21,11 @@ it("compacts the composer's labels to icons when the chat is narrow", () => {
   expect(styles).toMatch(/@container themis-composer \(max-width: 380px\)\s*\{\s*\.themis-thread-composer \.themis-composer-label\s*\{\s*display:\s*none;/);
 });
 
-it("shrinks the header's Workspace button before the model name when the chat is narrow", () => {
+it("keeps the model readable when the chat is narrow: the pill's padding goes first", () => {
   expect(styles).toMatch(/\.themis-thread-head\s*\{\s*container:\s*themis-head \/ inline-size;\s*\}/);
-  expect(styles).toMatch(/@container themis-head \(max-width: 460px\)\s*\{\s*\.themis-thread-head \.themis-head-label\s*\{\s*display:\s*none;/);
+  expect(styles).toMatch(/@container themis-head \(max-width: 460px\)\s*\{\s*\.themis-thread-head \.themis-model-pill > summary\s*\{\s*padding:\s*0 8px;/);
   expect(styles).toMatch(/\.themis-model-pill-meta\s*\{\s*min-width:\s*6ch;/);
+  expect(styles).not.toMatch(/themis-head-label|themis-model-pill-brand/);
 });
 
 it("puts the goal sentence on its own line when the chat is too narrow to show it beside the controls", () => {
