@@ -179,6 +179,14 @@ fn next_revision(previous: Option<&str>) -> String {
     format!("{:x}", now.max(after))
 }
 
+/// A store file's size and modified time; None when it does not exist.
+pub(super) type Stamp = Option<(u64, Option<std::time::SystemTime>)>;
+
+fn stamp_of(dir: &Path, file: &str) -> Stamp {
+    let meta = fs::symlink_metadata(dir.join(file)).ok()?;
+    Some((meta.len(), meta.modified().ok()))
+}
+
 /// The id a new record gets.
 fn new_id() -> String {
     uuid::Uuid::new_v4().to_string()
@@ -312,12 +320,39 @@ fn by_key<'a, T: 'a>(records: impl Iterator<Item = (&'a String, &'a T)>) -> Vec<
 }
 
 impl VisionsCache {
+    /// Fails, and drops the loaded copy so the next call reads the file again, when `file`
+    /// changed on disk since it was read or last written here.
+    fn ensure_unchanged(&mut self, dir: &Path, file: &'static str) -> Result<(), StoreError> {
+        let Some(stamp) = self.stamps.get(file) else {
+            return Ok(());
+        };
+        if *stamp == stamp_of(dir, file) {
+            return Ok(());
+        }
+        self.stamps.remove(file);
+        match file {
+            VISIONS_FILE => self.visions = None,
+            CHANNELS_FILE => self.channels = None,
+            _ => self.owners = None,
+        }
+        let message = format!(
+            "visions/{file} changed on disk since it was read; it was left as it is, so reload and save again"
+        );
+        Err(StoreError::refused(file, &message))
+    }
+
+    fn restamp(&mut self, dir: &Path, file: &'static str) {
+        self.stamps.insert(file, stamp_of(dir, file));
+    }
+
     pub(super) fn visions(
         &mut self,
         dir: &Path,
     ) -> Result<&mut BTreeMap<String, Vision>, StoreError> {
         if self.visions.is_none() {
+            let stamp = stamp_of(dir, VISIONS_FILE);
             let list: Vec<Vision> = read_store(dir, VISIONS_FILE)?;
+            self.stamps.insert(VISIONS_FILE, stamp);
             self.visions = Some(list.into_iter().map(|v| (v.id.clone(), v)).collect());
         }
         Ok(self.visions.get_or_insert_with(BTreeMap::new))
@@ -328,7 +363,9 @@ impl VisionsCache {
         dir: &Path,
     ) -> Result<&mut BTreeMap<String, Channel>, StoreError> {
         if self.channels.is_none() {
+            let stamp = stamp_of(dir, CHANNELS_FILE);
             let list: Vec<Channel> = read_store(dir, CHANNELS_FILE)?;
+            self.stamps.insert(CHANNELS_FILE, stamp);
             self.channels = Some(list.into_iter().map(|c| (c.id.clone(), c)).collect());
         }
         Ok(self.channels.get_or_insert_with(BTreeMap::new))
@@ -336,7 +373,9 @@ impl VisionsCache {
 
     pub(super) fn owners(&mut self, dir: &Path) -> Result<&mut HashMap<String, Owner>, StoreError> {
         if self.owners.is_none() {
+            let stamp = stamp_of(dir, OWNERS_FILE);
             let list: Vec<Owner> = read_store(dir, OWNERS_FILE)?;
+            self.stamps.insert(OWNERS_FILE, stamp);
             self.owners = Some(list.into_iter().map(|o| (o.thread_id.clone(), o)).collect());
         }
         Ok(self.owners.get_or_insert_with(HashMap::new))
@@ -349,6 +388,7 @@ impl VisionsCache {
         expected: Option<&str>,
     ) -> Result<Vision, StoreError> {
         validate_vision(&mut spec).map_err(|message| StoreError::refused(VISIONS_FILE, message))?;
+        self.ensure_unchanged(dir, VISIONS_FILE)?;
         let visions = self.visions(dir)?;
         let current = if spec.id.is_empty() {
             spec.id = new_id();
@@ -366,6 +406,7 @@ impl VisionsCache {
         all.push(&spec);
         write_store(dir, VISIONS_FILE, &all)?;
         visions.insert(spec.id.clone(), spec.clone());
+        self.restamp(dir, VISIONS_FILE);
         Ok(spec)
     }
 
@@ -387,6 +428,7 @@ impl VisionsCache {
                 return Err(refused("Channel members must be saved Visions"));
             }
         }
+        self.ensure_unchanged(dir, CHANNELS_FILE)?;
         let channels = self.channels(dir)?;
         let current = if spec.id.is_empty() {
             spec.id = new_id();
@@ -412,6 +454,7 @@ impl VisionsCache {
         all.push(&spec);
         write_store(dir, CHANNELS_FILE, &all)?;
         channels.insert(spec.id.clone(), spec.clone());
+        self.restamp(dir, CHANNELS_FILE);
         Ok(spec)
     }
 
@@ -423,6 +466,7 @@ impl VisionsCache {
                 "Unknown chat, Vision or channel",
             ));
         }
+        self.ensure_unchanged(dir, OWNERS_FILE)?;
         let owners = self.owners(dir)?;
         if owners.get(&owner.thread_id) == Some(&owner) {
             return Ok(());
@@ -431,10 +475,12 @@ impl VisionsCache {
         all.push(&owner);
         write_store(dir, OWNERS_FILE, &all)?;
         owners.insert(owner.thread_id.clone(), owner);
+        self.restamp(dir, OWNERS_FILE);
         Ok(())
     }
 
     pub(super) fn release_owner(&mut self, dir: &Path, thread_id: &str) -> Result<(), StoreError> {
+        self.ensure_unchanged(dir, OWNERS_FILE)?;
         let owners = self.owners(dir)?;
         if !owners.contains_key(thread_id) {
             return Ok(());
@@ -442,6 +488,7 @@ impl VisionsCache {
         let all = by_key(owners.iter().filter(|(id, _)| id.as_str() != thread_id));
         write_store(dir, OWNERS_FILE, &all)?;
         owners.remove(thread_id);
+        self.restamp(dir, OWNERS_FILE);
         Ok(())
     }
 }

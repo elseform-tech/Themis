@@ -234,3 +234,28 @@ fn a_symlinked_store_file_is_refused() {
     assert!(state.vision_save(vision("Wren"), None).is_err());
     assert_eq!(std::fs::read(&elsewhere).unwrap(), b"[]");
 }
+
+#[test]
+fn a_store_file_edited_on_disk_is_not_overwritten() {
+    let dir = tempfile::tempdir().unwrap();
+    let state = state_in(dir.path());
+    let saved = state.vision_save(vision("Wren"), None).unwrap();
+    let path = dir.path().join(VISIONS_DIR).join(VISIONS_FILE);
+    // A hand edit: still valid, different bytes.
+    let mut edited = std::fs::read(&path).unwrap();
+    edited.extend_from_slice(b"\n\n");
+    std::fs::write(&path, &edited).unwrap();
+
+    let error = state
+        .vision_save(saved.clone(), Some(&saved.revision))
+        .unwrap_err();
+    assert!(error.contains("changed on disk"), "{error}");
+    assert_eq!(std::fs::read(&path).unwrap(), edited);
+
+    // The next call reads the edited file, and saving from it works.
+    let reloaded = state.visions_list();
+    assert_eq!(reloaded, vec![saved.clone()]);
+    state
+        .vision_save(reloaded[0].clone(), Some(&reloaded[0].revision))
+        .unwrap();
+}

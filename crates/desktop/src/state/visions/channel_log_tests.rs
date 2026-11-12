@@ -168,3 +168,53 @@ fn channel_page_reads_stay_bounded_by_page_not_log_size() {
     let rate = crate::scale::growth_rate(&samples);
     assert!(rate < 0.2, "page reads grew with the log: {samples:?}");
 }
+
+/// A failed append forgets the cached seq, so the next append reads the tail again: a line
+/// that did reach the file is not given the same seq twice, and a torn tail is not glued to.
+#[cfg(unix)]
+#[test]
+fn a_failed_append_rereads_the_tail_before_the_next_one() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = tempfile::tempdir().unwrap();
+    let (state, channel) = state_with_channel(dir.path());
+    assert_eq!(state.channel_append(&channel, person("one")).unwrap(), 1);
+    let path = dir
+        .path()
+        .join(VISIONS_DIR)
+        .join(CHANNEL_LOGS_DIR)
+        .join(format!("{channel}.jsonl"));
+    // What a write that landed but then failed leaves behind: line 2, then a torn line.
+    let mut file = std::fs::OpenOptions::new()
+        .append(true)
+        .open(&path)
+        .unwrap();
+    let landed = ChannelLine {
+        seq: 2,
+        at_ms: 1_700_000_000_000,
+        entry: person("two"),
+    };
+    serde_json::to_writer(&mut file, &landed).unwrap();
+    file.write_all(b"\n{\"seq\":3,\"at").unwrap();
+    drop(file);
+    // The next append fails.
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o400)).unwrap();
+    assert!(state.channel_append(&channel, person("refused")).is_err());
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
+
+    assert_eq!(state.channel_append(&channel, person("three")).unwrap(), 3);
+    let page = state.channel_page(&channel, None, usize::MAX).unwrap();
+    assert_eq!(seqs(&page), vec![1, 2, 3]);
+    assert!(matches!(&page.entries[2].entry, ChannelEntry::Person { text } if text == "three"));
+}
+
+#[cfg(unix)]
+#[test]
+fn a_symlinked_visions_folder_is_refused_when_reading_a_log() {
+    let dir = tempfile::tempdir().unwrap();
+    let elsewhere = dir.path().join("elsewhere");
+    std::fs::create_dir_all(elsewhere.join(CHANNEL_LOGS_DIR)).unwrap();
+    write_log(&elsewhere.join(CHANNEL_LOGS_DIR).join("abc.jsonl"), 3);
+    std::os::unix::fs::symlink(&elsewhere, dir.path().join(VISIONS_DIR)).unwrap();
+    let state = AppState::new_for_test(dir.path().join("settings.json"));
+    assert!(state.channel_page("abc", None, 4096).is_err());
+}

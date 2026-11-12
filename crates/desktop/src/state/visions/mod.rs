@@ -186,6 +186,9 @@ pub(crate) struct VisionsCache {
     channels: Option<BTreeMap<String, Channel>>,
     owners: Option<HashMap<String, Owner>>,
     last_seq: HashMap<String, u64>,
+    /// Each loaded file's size and modified time when read or last written, to notice edits
+    /// made on disk since.
+    stamps: HashMap<&'static str, store::Stamp>,
 }
 
 impl AppState {

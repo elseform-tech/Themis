@@ -150,11 +150,22 @@ fn lines_back(
     }
 }
 
+/// Fails when the `channels/` folder holding `path`, or the `visions/` folder above it, is a
+/// symlink.
+fn refuse_linked_folders(path: &Path) -> Result<(), StoreError> {
+    let channels = path.parent();
+    for folder in [channels, channels.and_then(Path::parent)]
+        .into_iter()
+        .flatten()
+    {
+        refuse_symlink(folder, LOG_FILE)?;
+    }
+    Ok(())
+}
+
 /// The log at `path` and its length, or None when there is no log yet.
 fn open_log(path: &Path) -> Result<Option<(File, u64)>, StoreError> {
-    if let Some(dir) = path.parent() {
-        refuse_symlink(dir, LOG_FILE)?;
-    }
+    refuse_linked_folders(path)?;
     refuse_symlink(path, LOG_FILE)?;
     match File::open(path) {
         Ok(file) => {
@@ -242,10 +253,7 @@ fn tail(path: &Path) -> Result<(u64, bool), StoreError> {
 fn append_bytes(path: &Path, bytes: &[u8]) -> Result<(), StoreError> {
     let write_failed = |error: std::io::Error| StoreError::write_failed(LOG_FILE, &error);
     let dir = path.parent().unwrap_or(path);
-    if let Some(store) = dir.parent() {
-        refuse_symlink(store, LOG_FILE)?;
-    }
-    refuse_symlink(dir, LOG_FILE)?;
+    refuse_linked_folders(path)?;
     std::fs::create_dir_all(dir).map_err(write_failed)?;
     refuse_symlink(path, LOG_FILE)?;
     let mut options = std::fs::OpenOptions::new();
@@ -301,7 +309,11 @@ impl VisionsCache {
             ));
         }
         bytes.push(b'\n');
-        append_bytes(&path, &bytes)?;
+        if let Err(error) = append_bytes(&path, &bytes) {
+            // Some of the line may have landed: the next append reads the tail again.
+            self.last_seq.remove(channel_id);
+            return Err(error);
+        }
         self.last_seq.insert(channel_id.to_owned(), line.seq);
         Ok(line.seq)
     }
