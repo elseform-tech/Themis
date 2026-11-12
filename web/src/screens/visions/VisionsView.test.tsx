@@ -11,6 +11,7 @@ import { SidebarWithVisions } from "./SidebarWithVisions";
 import { VisionsView } from "./VisionsView";
 
 const live = vi.hoisted(() => ({ value: null as unknown }));
+const loadOlder = vi.hoisted(() => vi.fn(async (_channelId: string) => undefined));
 vi.mock("../../state/store", async importOriginal => ({
   ...await importOriginal<typeof import("../../state/store")>(),
   useApp: () => live.value,
@@ -70,8 +71,20 @@ function fixture(extra: Partial<AppState> = {}): AppState {
 
 function Harness({ initial }: { initial: AppState }) {
   const [state, dispatch] = useReducer(reducer, initial);
-  live.value = { state, dispatch: dispatch as (action: AppAction) => void, loadOlderLines: vi.fn(async () => undefined) };
+  live.value = { state, dispatch: dispatch as (action: AppAction) => void, loadOlderLines: loadOlder };
   return <><SidebarWithVisions collapsed={false} /><main><div data-testid="main-view">{state.mainView}:{state.activeThreadId}</div><VisionsView /></main></>;
+}
+
+const dispatchLive = (action: AppAction) => act(() => { (live.value as { dispatch: (action: AppAction) => void }).dispatch(action); });
+const stateLive = () => (live.value as { state: AppState }).state;
+const hold = (chat: OwnedChat, value: OwnedChat["owner"]["hold"], running = chat.running): OwnedChat => ({ ...chat, running, owner: { ...chat.owner, hold: value } });
+
+/** Opens # release and then its chat w1 (Rook's, running). */
+async function openChat(extra: Partial<AppState> = {}) {
+  mount({ mainView: "visions", ...extra });
+  fireEvent.click(within(screen.getByRole("complementary", { name: "Visions navigation" })).getByRole("button", { name: /release/ }));
+  fireEvent.click(within(screen.getByRole("region", { name: "# release" })).getByRole("button", { name: /^Open Fix the date test/ }));
+  return screen.getByRole("region", { name: "Rook's chat" });
 }
 
 function mount(extra: Partial<AppState> = {}) {
@@ -99,8 +112,8 @@ describe("Visions view", () => {
     const bar = screen.getByRole("complementary", { name: "Visions navigation" });
     expect(within(bar).getByLabelText("Project: Ledger")).toBeTruthy();
     expect(within(bar).getByRole("button", { name: "# hq" })).toBeTruthy();
-    // The channel tag counts what waits on you there: the approval and the passed-on question.
-    expect(within(bar).getByRole("button", { name: "# release, 2 need you" })).toBeTruthy();
+    // The channel tag adds up its members' needs as the server counts them, like the rail badge.
+    expect(within(bar).getByRole("button", { name: "# release, 1 needs you" })).toBeTruthy();
     const wren = within(bar).getByText("Wren").closest("li")!;
     expect(wren).toHaveTextContent("Needs you");
     expect(within(bar).getByText("Rook").closest("li")).toHaveTextContent("Working");
@@ -211,6 +224,16 @@ describe("Visions view", () => {
     expect(within(view).getByText("Done.").closest("li")).toHaveClass("is-fresh");
   });
 
+  it("lines read after the channel opened empty do not fade in, later ones do", () => {
+    mount({ mainView: "visions", visions: { ...fixture().visions, lines: {}, open: { channelId: "c1", chatId: null, plainThreadId: null } } });
+    const page = (extra: number) => ({ entries: [...fixture().visions.lines.c1!, ...Array.from({ length: extra }, (_, i) => ({ seq: 10 + i, at_ms: 0, entry: { type: "vision" as const, vision_id: "rook", text: `Line ${i}` } }))], next_before: null });
+    dispatchLive({ type: "visions/changed", channelId: "c1", page: page(0), chats: fixture().visions.chats.c1!, questions: { w2: ["q1"] } });
+    const view = screen.getByRole("region", { name: "# release" });
+    expect(view.querySelector(".is-fresh")).toBeNull();
+    dispatchLive({ type: "visions/changed", channelId: "c1", page: page(1), chats: fixture().visions.chats.c1!, questions: { w2: ["q1"] } });
+    expect(within(view).getByText("Line 0").closest("li")).toHaveClass("is-fresh");
+  });
+
   it("new channel saves its name, topic and members, then opens it", async () => {
     vi.mocked(visionsBridge.saveChannel).mockImplementation(async draft => ({ ...draft, id: "c2", topic: draft.topic ?? "", revision: "r" }));
     mount({ mainView: "visions" });
@@ -237,6 +260,98 @@ describe("Visions view", () => {
     await waitFor(() => expect(visionsBridge.saveVision).toHaveBeenCalledWith({ name: "Echo", role: "Scribe", shape: "wide", color: "rose" }, null));
     const bar = screen.getByRole("complementary", { name: "Visions navigation" });
     expect(await within(bar).findByText("Echo")).toBeTruthy();
+  });
+
+  it("an open chat stays open through visions reloads and a hand back", async () => {
+    vi.mocked(visionsBridge.handBackThread).mockResolvedValue({ ...owned("w1", "", "rook", false).owner });
+    const chats = fixture().visions.chats.c1!;
+    await openChat({ visions: { ...fixture().visions, chats: { c1: [hold(chats[0]!, "taken_over"), chats[1]!] } } });
+    expect(screen.getByRole("status")).toHaveTextContent("You took over.");
+    fireEvent.click(screen.getByRole("button", { name: "Hand back to Rook" }));
+    await waitFor(() => expect(visionsBridge.handBackThread).toHaveBeenCalledWith("w1"));
+    // The server's reload after the hand back: the channel list and the channel read again.
+    dispatchLive({ type: "visions/loaded", projectRoot: "/p", channels: [channel] });
+    dispatchLive({ type: "visions/loaded", visions: stateLive().visions.list });
+    dispatchLive({ type: "visions/changed", channelId: "c1", page: { entries: stateLive().visions.lines.c1!, next_before: null }, chats: [hold(chats[0]!, "none"), chats[1]!], questions: {} });
+    expect(screen.getByRole("region", { name: "Rook's chat" })).toBeTruthy();
+    expect(screen.getByRole("status")).toHaveTextContent("Rook is running this chat.");
+    expect(screen.getByTestId("main-view")).toHaveTextContent("visions:w1");
+    expect(screen.getByTestId("thread-view")).toBeTruthy();
+  });
+
+  it("a Vision's chat shows who holds it and stops from its bar", async () => {
+    const view = await openChat();
+    expect(within(view).getByRole("status")).toHaveTextContent("Rook is running this chat.");
+    expect(within(view).queryByRole("button", { name: /Hand back/ })).toBeNull();
+    fireEvent.click(within(view).getByRole("button", { name: "Stop this chat" }));
+    await waitFor(() => expect(tauri.stopThread).toHaveBeenCalledWith("w1"));
+    const chats = stateLive().visions.chats.c1!;
+    dispatchLive({ type: "visions/changed", channelId: "c1", page: { entries: stateLive().visions.lines.c1!, next_before: null }, chats: [hold(chats[0]!, "stopped_by_person", false), chats[1]!], questions: {} });
+    expect(within(view).getByRole("status")).toHaveTextContent("You stopped this chat.");
+    expect(within(view).queryByRole("button", { name: "Stop this chat" })).toBeNull();
+    expect(within(view).getByRole("button", { name: "Hand back to Rook" })).toBeTruthy();
+    // Idle and with the Vision: no note at all.
+    dispatchLive({ type: "visions/changed", channelId: "c1", page: { entries: stateLive().visions.lines.c1!, next_before: null }, chats: [hold(chats[0]!, "none", false), chats[1]!], questions: {} });
+    expect(within(view).queryByRole("status")).toBeNull();
+  });
+
+  it("a deleted chat says so in place instead of leaving", async () => {
+    await openChat();
+    dispatchLive({ type: "visions/changed", channelId: "c1", page: { entries: stateLive().visions.lines.c1!, next_before: null }, chats: [], questions: {} });
+    expect(screen.getByText("This chat was deleted.")).toBeTruthy();
+    expect(screen.queryByTestId("thread-view")).toBeNull();
+    expect(stateLive().visions.open.chatId).toBe("w1");
+    fireEvent.click(screen.getByRole("button", { name: "Back to # release" }));
+    expect(screen.getByRole("region", { name: "# release" })).toBeTruthy();
+  });
+
+  it("a deleted channel says so in place", async () => {
+    await openRelease();
+    dispatchLive({ type: "visions/loaded", projectRoot: "/p", channels: [] });
+    expect(screen.getByText("This channel was deleted.")).toBeTruthy();
+    expect(stateLive().visions.open.channelId).toBe("c1");
+  });
+
+  it("show earlier messages reads the page before the window", async () => {
+    mount({ mainView: "visions", visions: { ...fixture().visions, nextBefore: { c1: 40 }, open: { channelId: "c1", chatId: null, plainThreadId: null } } });
+    fireEvent.click(screen.getByRole("button", { name: "Show earlier messages" }));
+    await waitFor(() => expect(loadOlder).toHaveBeenCalledWith("c1"));
+  });
+
+  it("switching projects in Visions stays in Visions on the new project's # hq", () => {
+    mount({ mainView: "visions", projects: [{ root: "/p", name: "Ledger", is_git: true }, { root: "/q", name: "Other", is_git: true }], threadsByProject: { "/p": [plain], "/q": [] }, visions: { ...fixture().visions, open: { channelId: "c1", chatId: null, plainThreadId: null } } });
+    const bar = screen.getByRole("complementary", { name: "Visions navigation" });
+    // The same switcher as the chat list's: its project actions are here too.
+    expect(within(bar).getByRole("button", { name: "New project" })).toBeTruthy();
+    expect(within(bar).getByRole("button", { name: "Rename Other" })).toBeTruthy();
+    fireEvent.click(within(bar).getByRole("button", { name: "Other" }));
+    expect(stateLive().mainView).toBe("visions");
+    expect(stateLive().activeProjectRoot).toBe("/q");
+    expect(screen.getByRole("region", { name: "# hq" })).toBeTruthy();
+  });
+
+  it("an open Vision's chat is never saved as the plain chat to restore", async () => {
+    await openChat();
+    expect(stateLive().activeThreadId).toBe("w1");
+    const { selectionToSave } = await import("../../state/store");
+    expect(selectionToSave(stateLive())).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Chats" }));
+    expect(selectionToSave(stateLive())).toEqual({ root: "/p", threadId: "plain" });
+  });
+
+  it("the mention list follows the arrow keys", async () => {
+    const view = await openRelease();
+    const box = within(view).getByLabelText("Message #release");
+    fireEvent.change(box, { target: { value: "@" } });
+    const list = within(view).getByRole("listbox", { name: "Mention" });
+    expect(box).toHaveAttribute("aria-controls", list.id);
+    const [rook, wren] = within(list).getAllByRole("option");
+    expect(box).toHaveAttribute("aria-activedescendant", rook!.id);
+    fireEvent.keyDown(box, { key: "ArrowDown" });
+    expect(box).toHaveAttribute("aria-activedescendant", wren!.id);
+    expect(wren).toHaveAttribute("aria-selected", "true");
+    fireEvent.keyDown(box, { key: "Enter" });
+    expect(box).toHaveValue("@Wren ");
   });
 
   it("asks to mention a Vision when several are here, and posts the message", async () => {

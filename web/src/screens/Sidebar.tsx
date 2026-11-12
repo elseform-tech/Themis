@@ -21,8 +21,12 @@ const SIDEBAR_MAX = 560;
 const SIDEBAR_DEFAULT = 288;
 
 // Settings takes over the whole sidebar with its section list; the toggle folds it the same way.
-// `railExtra` goes in the rail after Chats; `panel` replaces the chat list (Visions' channels bar).
-export function Sidebar({ collapsed, railExtra, panel }: { collapsed: boolean; railExtra?: ReactNode; panel?: ReactNode }) {
+/** Another mode's list in place of the chats (Visions' channels): the project switcher stays, the
+ *  new-chat pencil goes, and choosing a project calls `onProject`. */
+export interface SidebarPanel { label: string; content: ReactNode; onProject: (root: string) => void }
+
+// `railExtra` goes in the rail after Chats; `panel` replaces the chat list.
+export function Sidebar({ collapsed, railExtra, panel }: { collapsed: boolean; railExtra?: ReactNode; panel?: SidebarPanel }) {
   const { state, dispatch } = useApp();
   const settingsOpen = state.mainView === "settings";
   const [width, setWidth] = useState(() => Math.max(SIDEBAR_MIN, Math.min(SIDEBAR_MAX, Number(readSession("sidebarWidth", SIDEBAR_DEFAULT)) || SIDEBAR_DEFAULT)));
@@ -52,6 +56,7 @@ export function Sidebar({ collapsed, railExtra, panel }: { collapsed: boolean; r
     resizeStart.current = null; lastWidth.current = null; setResizing(false);
   }
   const newThread = useNewThread();
+  const selectProject = (root: string) => dispatch({ type: "project/selected", root });
   const [name, setName] = useState("");
   const [renaming, setRenaming] = useState<{ root: string; name: string } | null>(null);
   const [deleting, setDeleting] = useState<{ root: string; name: string } | null>(null);
@@ -111,12 +116,12 @@ export function Sidebar({ collapsed, railExtra, panel }: { collapsed: boolean; r
     <div ref={slot} className={`themis-sidebar-slot ${collapsed ? "is-collapsed" : ""} ${resizing ? "is-resizing" : ""}`} style={{ "--themis-sidebar-width": `${width}px` } as import("react").CSSProperties}>
       {settingsOpen ? <SettingsNav id="themis-sidebar" /> : <>
       <Rail onHelp={() => setHelp(true)} extra={railExtra} />
-      {panel ?? <aside id="themis-sidebar" className={`themis-sidebar ${collapsed ? "" : "is-visible"}`} inert={collapsed} aria-hidden={collapsed} aria-label="Workspace navigation">
+      <aside id="themis-sidebar" className={`themis-sidebar ${collapsed ? "" : "is-visible"}`} inert={collapsed} aria-hidden={collapsed} aria-label={panel?.label ?? "Workspace navigation"}>
         <div className="themis-sidebar-top">
-          <ProjectSwitcher onSelect={root => { setShowAll(false); dispatch({ type: "project/selected", root }); }} onRename={project => { setError(""); setRenaming(project); }} onDelete={project => { setError(""); setDeleting(project); }} />
-          <NewChatButton disabled={!state.activeProjectRoot} onClick={() => void newThread()} />
+          <ProjectSwitcher onSelect={root => { setShowAll(false); (panel?.onProject ?? selectProject)(root); }} onRename={project => { setError(""); setRenaming(project); }} onDelete={project => { setError(""); setDeleting(project); }} />
+          {panel ? null : <NewChatButton disabled={!state.activeProjectRoot} onClick={() => void newThread()} />}
         </div>
-        <div className="themis-sidebar-projects">
+        {panel?.content ?? <div className="themis-sidebar-projects">
           {activeProject && <>
             {waiting.length > 0 && <section className="themis-thread-group" aria-label="Waiting for you">
               <h2 className="themis-sidebar-section">Waiting for you<span aria-hidden="true">{waiting.length}</span></h2>
@@ -132,8 +137,8 @@ export function Sidebar({ collapsed, railExtra, panel }: { collapsed: boolean; r
             </section>}
             {rest.length > shown.length && <button type="button" className="themis-show-more" onClick={() => setShowAll(true)}>Show {rest.length - shown.length} more</button>}
           </>}
-        </div>
-      </aside>}
+        </div>}
+      </aside>
       </>}
       {!collapsed && <div className="themis-sidebar-resize" role="separator" aria-label="Resize sidebar" aria-controls="themis-sidebar" aria-orientation="vertical" aria-valuemin={SIDEBAR_MIN} aria-valuemax={SIDEBAR_MAX} aria-valuenow={width} tabIndex={0}
         onPointerDown={event => { if (event.button !== 0) return; event.preventDefault(); event.currentTarget.focus(); resizeStart.current = { x: event.clientX, width: event.currentTarget.parentElement!.getBoundingClientRect().width }; event.currentTarget.setPointerCapture(event.pointerId); setResizing(true); }}
@@ -190,7 +195,7 @@ export function Sidebar({ collapsed, railExtra, panel }: { collapsed: boolean; r
   </>;
 }
 
-/** The project menu at the top of the sidebar. */
+/** The project menu at the top of the sidebar, shared by the chat list and Visions' channels. */
 function ProjectSwitcher({ onSelect, onRename, onDelete }: { onSelect: (root: string) => void; onRename: (project: { root: string; name: string }) => void; onDelete: (project: { root: string; name: string }) => void }) {
   const { state, dispatch } = useApp();
   const activeRoot = state.activeProjectRoot;

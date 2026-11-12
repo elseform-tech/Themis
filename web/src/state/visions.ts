@@ -55,7 +55,8 @@ export type VisionsAction =
   | { type: "visions/loaded"; visions?: VisionInfo[]; projectRoot?: string; channels?: ChannelInfo[] }
   | { type: "visions/changed"; channelId: string; page: ChannelPage; chats: OwnedChat[]; questions: Record<string, string[]> }
   | { type: "visions/older"; channelId: string; page: ChannelPage }
-  | { type: "visions/open"; channelId: string | null; chatId?: string | null };
+  | { type: "visions/open"; channelId: string | null; chatId?: string | null }
+  | { type: "visions/project"; root: string };
 
 /** A Vision's mood: asleep while paused or over budget; otherwise needs > sorry > work > think >
  *  calm. Sorry is the server's: its latest run failed (a work chat's or its own chat's; the
@@ -178,13 +179,17 @@ export function leaveOwnedChat(state: AppState): AppState {
   return { ...state, activeThreadId: state.visions.open.plainThreadId };
 }
 
-/** What waits on the person in one channel: approvals and open passed-on questions of its chats. */
-export function channelNeeds(state: AppState, channelId: string): number {
-  const chats = new Set((state.visions.chats[channelId] ?? []).map(chat => chat.id));
-  const approvals = state.approvals.filter(approval => chats.has(approval.thread_id)).length;
-  let questions = 0;
-  for (const id of chats) questions += state.visions.questions[id]?.length ?? 0;
-  return approvals + questions;
+/** What waits on the person in one channel: its members' needs as the server counts them (the
+ *  same numbers as the rail badge; a Vision in several channels counts in each). */
+export function channelNeeds(state: AppState, channel: ChannelInfo): number {
+  const members = new Set(channel.members);
+  return state.visions.list.reduce((total, vision) => total + (members.has(vision.id) ? vision.needs : 0), 0);
+}
+
+/** Another project while in Visions: its `# hq`, and its newest plain chat for Chats to return to. */
+function project(state: AppState, root: string): AppState {
+  const newest = [...(state.threadsByProject[root] ?? [])].sort((a, b) => (b.last_activity_seq ?? 0) - (a.last_activity_seq ?? 0))[0]?.id ?? null;
+  return { ...state, activeProjectRoot: root, activeThreadId: newest, visions: { ...state.visions, open: { channelId: null, chatId: null, plainThreadId: newest } } };
 }
 
 /** The visions/* actions; null for any other. */
@@ -192,6 +197,7 @@ export function reduceVisionsActions(state: AppState, action: AppAction): AppSta
   if (action.type === "visions/loaded") return loaded(state, action);
   if (action.type === "visions/older") return older(state, action);
   if (action.type === "visions/open") return open(state, action);
+  if (action.type === "visions/project") return project(state, action.root);
   if (action.type !== "visions/changed") return null;
   const { channelId, page } = action;
   const v = state.visions;

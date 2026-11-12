@@ -52,3 +52,15 @@ export function ChatLink({ channelId, threadId, title, visionName }: { channelId
     </div>
   );
 }
+
+/** A chat named after a sentence: its title, opening it. */
+export function ChatChip({ channelId, threadId }: { channelId: string; threadId: string }) {
+  const { state, dispatch } = useApp();
+  const chat = channelChat(state, channelId, threadId);
+  if (!chat) return null;
+  return (
+    <button type="button" className="themis-chat-chip" title={chat.title} aria-label={`Open ${chat.title}`} onClick={() => dispatch({ type: "visions/open", channelId, chatId: threadId })}>
+      <ChatIcon /><span>{chat.title}</span>
+    </button>
+  );
+}

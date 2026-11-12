@@ -4,7 +4,7 @@ import { useLayoutEffect, useRef, useState } from "react";
 import { ApprovalBox } from "../../components/approval/ApprovalBox";
 import { approveAction } from "../../lib/tauri";
 import type { ApprovalDecision, ApprovalRequest } from "../../lib/types";
-import type { ChannelInfo, VisionInfo } from "../../lib/visions";
+import type { ChannelInfo, ChannelLine, VisionInfo } from "../../lib/visions";
 import { describeError, toast, useApp } from "../../state/store";
 import { visionMoods } from "../../state/visions";
 import { AskFirstBox } from "../AskFirstBox";
@@ -52,19 +52,36 @@ function Thinking({ visions }: { visions: VisionInfo[] }) {
   ))}</>;
 }
 
-/** Keeps the log at its newest line while the person is there; reading back stays put. */
+/** Keeps the log at its newest line while the person is there; reading back stays put, and lines
+ *  loaded above (`holdPlace` first) keep what was on screen where it was. */
 function useStickToEnd(count: number) {
   const log = useRef<HTMLDivElement>(null);
   const atEnd = useRef(true);
+  const place = useRef<{ height: number; top: number } | null>(null);
   useLayoutEffect(() => {
     const element = log.current;
-    if (element && atEnd.current) element.scrollTop = element.scrollHeight;
+    if (!element) return;
+    if (place.current) element.scrollTop = place.current.top + element.scrollHeight - place.current.height;
+    else if (atEnd.current) element.scrollTop = element.scrollHeight;
+    place.current = null;
   }, [count]);
   const onScroll = () => {
     const element = log.current;
     if (element) atEnd.current = element.scrollHeight - element.scrollTop - element.clientHeight < 48;
   };
-  return { log, onScroll };
+  const holdPlace = () => {
+    const element = log.current;
+    if (element) place.current = { height: element.scrollHeight, top: element.scrollTop };
+  };
+  return { log, onScroll, holdPlace };
+}
+
+/** The newest line already there when the channel was first shown with its lines: later ones fade in. */
+function useShownUpTo(lines: ChannelLine[]): number | null {
+  const last = lines[lines.length - 1]?.seq;
+  const [shownUpTo, setShownUpTo] = useState<number | null>(last ?? null);
+  if (shownUpTo === null && last !== undefined) setShownUpTo(last);
+  return shownUpTo ?? last ?? null;
 }
 
 export function ChannelView({ channel }: { channel: ChannelInfo }) {
@@ -77,11 +94,11 @@ export function ChannelView({ channel }: { channel: ChannelInfo }) {
   const members = channel.members.flatMap(id => visionById(state, id) ?? []);
   const moods = visionMoods(state);
   const thinking = channel.id ? thinkingHere(state, channel) : [];
-  const { log, onScroll } = useStickToEnd(lines.length + approvals.length + thinking.length);
-  // Lines that arrive while the channel is open fade in.
-  const [shownUpTo] = useState(() => lines[lines.length - 1]?.seq ?? -1);
+  const { log, onScroll, holdPlace } = useStickToEnd(lines.length + approvals.length + thinking.length);
+  const shownUpTo = useShownUpTo(lines);
   async function older() {
     setLoading(true);
+    holdPlace();
     try { await loadOlderLines(channel.id); } finally { setLoading(false); }
   }
   return (
@@ -97,7 +114,7 @@ export function ChannelView({ channel }: { channel: ChannelInfo }) {
         {state.visions.nextBefore[channel.id] != null && <button type="button" className="themis-show-more" disabled={loading} onClick={() => void older()}>{loading ? "Loading…" : "Show earlier messages"}</button>}
         {lines.length === 0 && thinking.length === 0 && <p className="themis-channel-empty">No messages yet.</p>}
         <ol className="themis-channel-lines">
-          {lines.map(line => <ChannelEntryView key={line.seq} line={line} channelId={channel.id} fresh={line.seq > shownUpTo} onReply={setDraft} />)}
+          {lines.map(line => <ChannelEntryView key={line.seq} line={line} channelId={channel.id} fresh={shownUpTo !== null && line.seq > shownUpTo} onReply={setDraft} />)}
           {approvals.map(request => <ChannelApproval key={request.approval_id} request={request} channelId={channel.id} />)}
           <Thinking visions={thinking} />
         </ol>

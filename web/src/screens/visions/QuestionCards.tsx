@@ -1,4 +1,4 @@
-// A chat's question in its channel: one its Vision answered (with why, and a way to change it),
+// A chat's question in its channel: one its Vision answered (with why, and a way to reply about it),
 // or one it passed on, which the person answers right here.
 import { useEffect, useState, type FormEvent } from "react";
 import { answerQuestion } from "../../lib/tauri";
@@ -12,14 +12,14 @@ const DECISIONS: Record<string, string> = {
   delete: "Deleting", dependency: "A dependency", external: "Leaves this computer", spend: "Spending",
 };
 
-export function AnsweredCard({ entry, vision, title, onChange }: { entry: Extract<ChannelEntry, { type: "answered" }>; vision: string; title: string; onChange: () => void }) {
+export function AnsweredCard({ entry, vision, title, onReply }: { entry: Extract<ChannelEntry, { type: "answered" }>; vision: string; title: string; onReply: () => void }) {
   return (
     <div className="themis-question-card" role="group" aria-label={`${vision}'s chat ${title} asked`}>
       <p className="themis-question-from">Its chat <b>{title}</b> asked</p>
       <dl className="themis-question-qa"><dt>Q</dt><dd>{entry.question}</dd><dt>A</dt><dd>{entry.answer}</dd></dl>
       <div className="themis-question-foot">
         <span className="themis-question-why">{DECISIONS[entry.decision] ?? entry.decision}: {entry.reason}</span>
-        <button type="button" className="themis-visions-quiet-button" onClick={onChange}>Change the answer</button>
+        <button type="button" className="themis-visions-quiet-button" onClick={onReply}>Reply about this</button>
       </div>
     </div>
   );

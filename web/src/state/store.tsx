@@ -44,7 +44,7 @@ import { getBrowserSettings,
   openProject,
 } from "../lib/tauri";
 import { getChannelPage, listChannels, listChannelThreads, listQuestions, listVisions } from "../lib/visions";
-import { followVisions, type VisionsBridge } from "./visions";
+import { followVisions, isOwnedChat, type VisionsBridge } from "./visions";
 import { failureMessage as describeError } from "../lib/errors";
 import { reviewToast } from "../screens/reviewFlow";
 import { readSession, writeSession } from "./session";
@@ -99,6 +99,22 @@ export function toast(
   tone: ToastTone,
 ): void {
   dispatch({ type: "toast/push", toast: { id: newId("toast"), message, tone } });
+}
+
+/** The plain chat to restore at the next launch; never a Vision's chat, which only opens from its channel. */
+export function selectionToSave(state: AppState): { root: string; threadId: string } | null {
+  const { activeProjectRoot: root, activeThreadId: threadId } = state;
+  return root && threadId && !isOwnedChat(state, threadId) ? { root, threadId } : null;
+}
+
+/** Saves the plain chat to restore once the session was restored. */
+function useSaveSelection(state: AppState, restored: { current: boolean }) {
+  const selection = selectionToSave(state);
+  const root = selection?.root;
+  const threadId = selection?.threadId;
+  useEffect(() => {
+    if (restored.current && root && threadId) writeSession("selection", { root, threadId });
+  }, [restored, root, threadId]);
 }
 
 export function useActiveProject(): ProjectInfo | null {
@@ -207,9 +223,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     if (settings.current.completion_sound) prepareCompletionSound();
   };
   const cancelManualRun = (threadId: string) => { manualRuns.current.delete(threadId); };
-  useEffect(() => {
-    if (restoredSession.current && state.activeProjectRoot && state.activeThreadId) writeSession("selection", { root: state.activeProjectRoot, threadId: state.activeThreadId });
-  }, [state.activeProjectRoot, state.activeThreadId]);
+  useSaveSelection(state, restoredSession);
 
   // A clicked goal notification opens its chat (the app already came forward).
   useEffect(() => {

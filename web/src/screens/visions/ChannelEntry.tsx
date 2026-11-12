@@ -3,7 +3,7 @@
 import { Fragment, type ReactNode } from "react";
 import type { ChannelEntry as Entry, ChannelLine, VisionInfo } from "../../lib/visions";
 import { useApp } from "../../state/store";
-import { ChatLink, channelChat } from "./ChatLink";
+import { ChatChip, ChatLink, channelChat } from "./ChatLink";
 import { CloudIcon } from "./CloudIcon";
 import { AnsweredCard, PassedOnCard } from "./QuestionCards";
 
@@ -26,20 +26,46 @@ function clock(atMs: number): string {
   return new Date(atMs).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 }
 
-/** What a notice says, about the Vision and chat it names. */
-export function noticeText(entry: Extract<Entry, { type: "notice" }>, vision: string, title: string | undefined): string {
-  const chat = title ? ` ${title}` : "";
+export type NoticeChat = "work" | "own" | "none";
+
+/** What a notice says about the Vision, in plain words. A work chat it names follows the sentence
+ *  as a chip (`chip`), never inside it; `own` is the Vision's own reply run. */
+export function noticeText(entry: Extract<Entry, { type: "notice" }>, vision: string, chat: NoticeChat): { text: string; chip: boolean } {
+  const work = chat === "work";
+  const say = (text: string, chip = false) => ({ text: chip ? text : `${text}.`, chip });
   switch (entry.kind) {
-    case "stopped": return `You stopped ${vision}'s chat${chat}.`;
-    case "paused": return `You paused ${vision}.`;
-    case "resumed": return `${vision} is back.`;
-    case "budget_reached": return `${vision} reached today's budget and stopped.`;
-    case "chat_failed": return `${vision}'s chat${chat} failed.`;
-    case "handed_back": return `You handed${chat || " a chat"} back to ${vision}.`;
-    case "sandbox_unavailable": return `${vision} could not run: no sandbox available.`;
-    case "budget_unknown": return `${vision} stopped: today's spend is unknown.`;
-    case "unpriced": return `${entry.unpriced_requests ?? "Some"} of today's requests had no price.`;
+    case "stopped": return chat === "own" ? say(`You stopped ${vision}'s reply`) : say(`You stopped a chat ${vision} started`, work);
+    case "paused": return say(`You paused ${vision}`);
+    case "resumed": return say(`${vision} is back`);
+    case "budget_reached": return say(`${vision} reached today's budget`, work);
+    case "chat_failed": return chat === "own" ? say(`${vision} couldn't finish its reply`) : say(`A chat ${vision} started failed`, work);
+    case "handed_back": return work ? say(`You handed this chat back to ${vision}`, true) : say(`You handed a chat back to ${vision}`);
+    case "sandbox_unavailable": return say(`${vision} couldn't run: no sandbox is available`);
+    case "budget_unknown": return say(`${vision} stopped: today's spend is unknown`);
+    case "unpriced": return say(`${entry.unpriced_requests ?? "Some"} of today's requests had no price`);
   }
+}
+
+/** Whether a notice's chat is one of the channel's work chats, the Vision's own chat, or neither. */
+function noticeChat(state: AppState, channelId: string, entry: Extract<Entry, { type: "notice" }>): NoticeChat {
+  const id = entry.thread_id;
+  if (!id) return "none";
+  if (channelChat(state, channelId, id)) return "work";
+  return state.visions.list.some(vision => vision.vision_chats.some(own => own.thread_id === id)) ? "own" : "none";
+}
+
+function Notice({ line, channelId }: { line: ChannelLine; channelId: string }) {
+  const { state } = useApp();
+  const entry = line.entry as Extract<Entry, { type: "notice" }>;
+  const vision = visionById(state, entry.vision_id)?.name ?? "A Vision";
+  const kind = noticeChat(state, channelId, entry);
+  const { text, chip } = noticeText(entry, vision, kind);
+  return (
+    <li className="themis-channel-notice" role="note">
+      <span className="themis-channel-notice-text">{text}{chip && entry.thread_id && <ChatChip channelId={channelId} threadId={entry.thread_id} />}</span>
+      <time className="themis-channel-time">{clock(line.at_ms)}</time>
+    </li>
+  );
 }
 
 function Avatar({ vision }: { vision: VisionInfo | undefined }) {
@@ -56,18 +82,14 @@ function Body({ line, channelId, onReply }: { line: ChannelLine; channelId: stri
   const vision = visionById(state, entry.vision_id)?.name ?? "A Vision";
   const title = entry.type === "chat_started" ? entry.title : channelChat(state, channelId, entry.thread_id)?.title ?? "a chat";
   if (entry.type === "chat_started") return <><p className="themis-channel-text">Started a chat.</p><ChatLink channelId={channelId} threadId={entry.thread_id} title={title} visionName={vision} /></>;
-  if (entry.type === "answered") return <AnsweredCard entry={entry} vision={vision} title={title} onChange={() => onReply(`@${vision} about “${entry.question}”: `)} />;
+  if (entry.type === "answered") return <AnsweredCard entry={entry} vision={vision} title={title} onReply={() => onReply(`@${vision} about “${entry.question}”: `)} />;
   return <PassedOnCard entry={entry} vision={vision} title={title} />;
 }
 
 export function ChannelEntryView({ line, channelId, fresh, onReply }: { line: ChannelLine; channelId: string; fresh: boolean; onReply: (text: string) => void }) {
   const { state } = useApp();
   const { entry } = line;
-  if (entry.type === "notice") {
-    const vision = visionById(state, entry.vision_id)?.name ?? "A Vision";
-    const chat = entry.thread_id ? channelChat(state, channelId, entry.thread_id)?.title : undefined;
-    return <li className="themis-channel-notice" role="note">{noticeText(entry, vision, chat)}<time className="themis-channel-time">{clock(line.at_ms)}</time></li>;
-  }
+  if (entry.type === "notice") return <Notice line={line} channelId={channelId} />;
   const vision = entry.type === "person" ? undefined : visionById(state, entry.vision_id);
   const who = entry.type === "person" ? "You" : vision?.name ?? "A Vision";
   return (
