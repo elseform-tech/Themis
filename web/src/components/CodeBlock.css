@@ -18,17 +18,18 @@
   margin: 0;
 }
 
-/* Lines as wide as the longest, so a tinted diff line spans the whole scroll. */
+/* Long lines wrap inside the well (a narrow chat beside Workspace never clips one); indentation is kept, and a
+   continued line hangs 2ch in so it reads as one. Copy takes the source, so wrapping inserts nothing. */
 .themis-codeblock > code {
   display: block;
-  width: max-content;
-  min-width: 100%;
 }
 
 .themis-codeblock-line {
   display: block;
-  padding: 0 14px;
-  white-space: pre;
+  padding: 0 14px 0 calc(14px + 2ch);
+  text-indent: -2ch;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 .themis-codeblock-lineno {

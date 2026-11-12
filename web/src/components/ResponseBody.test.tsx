@@ -216,3 +216,15 @@ describe("fitting a flowchart to the frame", () => {
     expect(options.flowchart.rankSpacing).toBeLessThan(50);
   });
 });
+
+it("wraps a long code line in the well without changing what Copy gives back", async () => {
+  const writeText = vi.fn().mockResolvedValue(undefined);
+  Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText } });
+  const code = "def is_leap(year: int) -> bool:\n        return year % 4 == 0 and (year % 100 != 0 or year % 400 == 0)  # a very long line that has to wrap";
+  const { container } = render(<ResponseBody text={"```python\n" + code + "\n```"} />);
+  // The lines are the source's lines: wrapping is the browser's, nothing is inserted, indentation is kept.
+  const lines = [...container.querySelectorAll(".themis-codeblock-line")].map(line => line.textContent?.replace(/\n$/, ""));
+  expect(lines).toEqual(code.split("\n"));
+  fireEvent.click(screen.getByRole("button", { name: "Copy" }));
+  await waitFor(() => expect(writeText).toHaveBeenCalledWith(code));
+});

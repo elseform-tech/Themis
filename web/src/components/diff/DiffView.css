@@ -26,6 +26,8 @@
 /* The side a row doesn't have reads as absent, as on GitHub. */
 .themis-diff-line--empty { background-color: color-mix(in srgb, var(--themis-text) 4%, transparent); }
 .themis-diff-line, .themis-diff-cell { align-items: stretch; }
+/* A wrapped line keeps its number and + or − beside its first visual line. */
+.themis-diff-no, .themis-diff-sign { align-self: flex-start; }
 /* Just the characters that changed in a replaced line: underlined in the line's ink, so the canvas tints stay readable. */
 .themis-diff-word { text-decoration: underline; text-decoration-thickness: 1.5px; text-underline-offset: 3px; }
 /* On a changed line the number takes the line's ink too (the canvas's --com misses 4.5 on the tint). */
