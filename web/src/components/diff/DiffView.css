@@ -28,8 +28,11 @@
 /* On a changed line the number takes the line's ink too (the canvas's --com misses 4.5 on the tint). */
 .themis-diff-line--add .themis-diff-no { color: var(--themis-diff-add); }
 .themis-diff-line--del .themis-diff-no { color: var(--themis-diff-del); }
+/* Green + and red −, in the line's ink; an unchanged line's marker stays quiet. */
+.themis-diff-line--add .themis-diff-sign { color: var(--themis-diff-add); }
+.themis-diff-line--del .themis-diff-sign { color: var(--themis-diff-del); }
 .themis-diff-no { display: inline-block; flex-shrink: 0; min-width: 30px; padding: 0 4px; text-align: right; color: var(--themis-code-comment); user-select: none; }
-.themis-diff-sign { display: inline-block; flex-shrink: 0; width: 1.25rem; text-align: center; color: inherit; user-select: none; }
+.themis-diff-sign { display: inline-block; flex-shrink: 0; width: 1.25rem; text-align: center; color: var(--themis-code-comment); user-select: none; }
 .themis-diff-text { flex: 1; min-width: 0; padding: 0 16px 0 2px; white-space: pre-wrap; overflow-wrap: anywhere; tab-size: 4; }
 .themis-diff-side-grid { display: flex; flex-direction: column; }
 .themis-diff-side-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }

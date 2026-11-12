@@ -117,7 +117,7 @@ function SideCell({ line, side, extension, mark }: { line: NumberedLine | null; 
     <div className={`themis-diff-cell themis-diff-line--${line ? line.kind : "empty"}`}>
       {line && <>
         <span className="themis-diff-no">{side === 0 ? line.oldNo : line.newNo}</span>
-        <span className="themis-diff-sign">{line.kind === "add" ? "+" : line.kind === "del" ? "-" : " "}</span>
+        <span className="themis-diff-sign">{line.kind === "add" ? "+" : line.kind === "del" ? "−" : " "}</span>
         <LineText text={line.text} extension={extension} mark={mark} />
       </>}
     </div>
@@ -186,7 +186,7 @@ export function DiffView({ file, onWantWidth }: DiffViewProps) {
                     <div key={lineIndex} className={`themis-diff-line themis-diff-line--${line.kind}`}>
                       <span className="themis-diff-no">{line.oldNo ?? ""}</span>
                       <span className="themis-diff-no">{line.newNo ?? ""}</span>
-                      <span className="themis-diff-sign">{line.kind === "add" ? "+" : line.kind === "del" ? "-" : " "}</span>
+                      <span className="themis-diff-sign">{line.kind === "add" ? "+" : line.kind === "del" ? "−" : " "}</span>
                       <LineText text={line.text} extension={extension} />
                     </div>
                   ))}

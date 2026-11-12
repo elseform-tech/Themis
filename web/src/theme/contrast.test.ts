@@ -272,10 +272,13 @@ for (const preset of APPEARANCE_PRESETS) {
         for (const colour of [text, text2, ink.keyword, ink.function, ink.string, ink.type, ink.comment, ink.add, ink.del]) {
           expect(contrastRatio(colour, plain), `${colour} on well ${plain}`).toBeGreaterThanOrEqual(AA_NORMAL);
         }
-        // A changed line, its number included, is all its own ink (changed characters are underlined, not re-tinted).
-        for (const [lineInk, line] of [[ink.add, added], [ink.del, removed]] as const) {
-          expect(contrastRatio(lineInk, line), `${lineInk} on ${line}`).toBeGreaterThanOrEqual(AA_NORMAL);
+        // A changed line, its + or − marker and its number included, is all its own ink (changed characters are
+        // underlined, not re-tinted): green + on the added row, red − on the removed one, in Workspace and the chat.
+        for (const [marker, lineInk, line] of [["+", ink.add, added], ["−", ink.del, removed]] as const) {
+          expect(contrastRatio(lineInk, line), `${marker} marker ${lineInk} on ${line}`).toBeGreaterThanOrEqual(AA_NORMAL);
         }
+        // An unchanged line's marker and number are quiet: the comment ink on the plain well.
+        expect(contrastRatio(ink.comment, plain), `quiet marker on ${plain}`).toBeGreaterThanOrEqual(AA_NORMAL);
       }
     }
   });

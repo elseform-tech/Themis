@@ -132,3 +132,15 @@ it("gives every panel, the stage, the composer, the bubble and the wells the can
   expect(tokens).toContain("--themis-panel-edge: inset 0 1px 0 var(--themis-panel-highlight), inset 0 0 0 1px var(--themis-panel-ring), 0 10px 36px var(--themis-panel-shadow);");
   expect(tokens).toContain("--themis-stage-edge-shadow: inset 0 0 0 1px var(--themis-stage-edge), inset 0 1px 0 var(--themis-panel-highlight);");
 });
+
+it("colours a changed line's + or − marker and its number in the line's ink, an unchanged line's quietly", () => {
+  const diff = read("components/diff/DiffView.css");
+  expect(diff).toMatch(/\.themis-diff-line--add \.themis-diff-sign \{ color: var\(--themis-diff-add\); \}/);
+  expect(diff).toMatch(/\.themis-diff-line--del \.themis-diff-sign \{ color: var\(--themis-diff-del\); \}/);
+  expect(diff).toMatch(/\.themis-diff-line--add \.themis-diff-no \{ color: var\(--themis-diff-add\); \}/);
+  expect(diff).toMatch(/\.themis-diff-line--del \.themis-diff-no \{ color: var\(--themis-diff-del\); \}/);
+  expect(rule(diff, ".themis-diff-sign")).toContain("color: var(--themis-code-comment)");
+  // The chat's diff wells tint the whole line, its + or − included, in the same inks.
+  expect(rule(read("components/CodeBlock.css"), ".themis-codeblock-line--add")).toContain("color: var(--themis-diff-add)");
+  expect(rule(read("components/CodeBlock.css"), ".themis-codeblock-line--del")).toContain("color: var(--themis-diff-del)");
+});
