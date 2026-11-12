@@ -20,4 +20,4 @@ total: <sum of all counts>
 
 `python3 check.py` checks the structure of these files and the total; it does not check the other values.
 
-In this project, read each memo with `read_file` and write each file with `write_file` (or edit it with `apply_patch`). The commands that run are `python3 check.py`; `grep -L`, `grep -c`, `grep -rL` or `grep -rc` (file names or counts only, for example `grep -rL "^- since:" out` lists the files without that line); `ls` and `mkdir`; and `git status`, `git add`, `git commit`, `git log` and `git diff`. Other commands, scripts and searches are blocked.
+In this project, read each memo with `read_file` and write each file with `write_file` (or edit it with `apply_patch`). The commands that run are `python3 check.py`; `grep -L`, `grep -c`, `grep -rL` or `grep -rc` (file names or counts only, for example `grep -rL "^- since:" out` lists the files without that line); `ls`, `mkdir`, `rm` and `mv`; and `git status`, `git add`, `git commit`, `git log` and `git diff`. Other commands, scripts and searches are blocked.

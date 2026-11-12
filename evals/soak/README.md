@@ -19,7 +19,7 @@ python3 -m unittest evals.kit.test_kit evals.soak.test_harness
 `items-v2` pilots the agent learned the generator's sentence templates with Python scripts and
 finished 120 memos in 2–5 goal turns with 1–2 checkpoints, so the soak stressed nothing. The run
 now allows only `read_file`, `write_file`, `apply_patch`, `recall`, `create_goal`, `update_goal`,
-the command `python3 check.py`, `ls`, `mkdir`, the git commands a commit needs (`status`, `add`, `commit`, `log`, `diff`;
+the command `python3 check.py`, `ls`, `mkdir`, `rm`, `mv` (allowed since 2026-11-12, so a file written by mistake can be removed), the git commands a commit needs (`status`, `add`, `commit`, `log`, `diff`;
 listing, folders and git have gone through the shell since 2026-11-08, and until 2026-11-11 the soak still
 allowed the removed `list_dir`, `create_dir` and `git` tools instead, so runs from 2026-11-08 to 2026-11-11 could
 not list `src/` or commit), and `grep -L`/`-c`/`-rL`/`-rc`, which print only file names or counts
