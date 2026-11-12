@@ -130,7 +130,7 @@ Before calling a UI change complete:
 
 These rules guide implementation and review. They do not replace actual runtime verification or authorize changing unrelated workflows.
 
-Compatibility scans belong to the backend. Save and reuse results across visits. Show the Loader (logo, wordmark, a thin progress bar with the actual completed/total) centered in the content area while a marketplace is checked (no bar before the total is known), keep navigation usable, and expose its tiles only after the entire scan completes. Manual previews and installs reuse that snapshot. A refresh must invalidate older pending views and installation approvals, and duplicate clicks must never create duplicate operations.
+Compatibility scans belong to the backend. Save and reuse results across visits. Show the Loader (the Themis wordmark and a thin progress bar with the actual completed/total; a sweeping indeterminate bar until the total is known) centered in the content area while a marketplace is checked, keep navigation usable, and expose its tiles only after the entire scan completes. Manual previews and installs reuse that snapshot. A refresh must invalidate older pending views and installation approvals, and duplicate clicks must never create duplicate operations.
 
 - Transient integration errors and confirmations use the shared timed side toast, never loose inline notices. Persistent compatibility limitations stay in collapsible item details. MCP uses compact installed rows with aligned status/actions and the complete saved command.
 
