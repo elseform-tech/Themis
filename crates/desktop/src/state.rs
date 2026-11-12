@@ -54,6 +54,7 @@ mod subagents;
 mod terminal;
 mod threads;
 mod usage;
+mod visions;
 mod workspace;
 pub use browser::update_payload as browser_update_payload;
 pub(crate) use hook_sessions::IDLE_CHECK_EVERY as HOOK_IDLE_CHECK_EVERY;
@@ -72,6 +73,7 @@ use chrono::{DateTime, SecondsFormat, Utc};
 use serde::{Deserialize, Serialize};
 use themis_core::providers::GO_DEFAULT_MODEL;
 use themis_core::runtime::{ConversationTurn, RunEvent, RunPolicy};
+use themis_core::tools::background::{storage_dir as background_dir, BackgroundRegistry};
 
 use crate::approvals::PendingMap;
 use crate::diff::{git_head, git_status_names, is_git_repo};
@@ -305,7 +307,7 @@ struct AppStateInner {
     /// the scheduler skips ticks until one is set).
     scheduler_sink: std::sync::Mutex<Option<Arc<dyn EventSink>>>,
     /// Background shell tasks of every chat (`background/` in the app data dir).
-    background: Arc<themis_core::tools::background::BackgroundRegistry>,
+    background: Arc<BackgroundRegistry>,
     /// Built-in browsers (`browser/` in the app data dir: profiles, a downloaded Chromium).
     browsers: Arc<themis_core::browser::BrowserHub>,
     /// The server's own CPU and memory use (see `resources`).
@@ -329,6 +331,9 @@ struct AppStateInner {
     /// Per-chat questions to the user (`questions/<chat id>.json`), loaded on first use.
     questions: std::sync::Mutex<HashMap<String, Vec<crate::types::Question>>>,
     questions_dir: PathBuf,
+    /// The Visions store (`visions/` in the app data dir), loaded on first use.
+    visions: std::sync::Mutex<visions::VisionsCache>,
+    visions_dir: PathBuf,
     /// Each chat's subagents, live and recently ended.
     subagents: subagents::SubagentMap,
     /// The person's shells in the Workspace terminal.
@@ -608,9 +613,7 @@ impl AppState {
                 watch_inflight: std::sync::Mutex::new(HashSet::new()),
                 automation_runs: std::sync::Mutex::new(HashMap::new()),
                 scheduler_sink: std::sync::Mutex::new(None),
-                background: themis_core::tools::background::BackgroundRegistry::open(Some(
-                    themis_core::tools::background::storage_dir(&app_dir),
-                )),
+                background: BackgroundRegistry::open(Some(background_dir(&app_dir))),
                 browsers: themis_core::browser::BrowserHub::new(
                     themis_core::browser::BrowserConfig {
                         root: app_dir.join("browser"),
@@ -628,6 +631,8 @@ impl AppState {
                 memory_job_lock: tokio::sync::Mutex::new(()),
                 questions: std::sync::Mutex::new(HashMap::new()),
                 questions_dir: app_dir.join(questions::QUESTIONS_DIR),
+                visions: std::sync::Mutex::default(),
+                visions_dir: app_dir.join(visions::VISIONS_DIR),
                 subagents: std::sync::Mutex::new(HashMap::new()),
                 terminals: Arc::default(),
                 question_lock: std::sync::Mutex::new(()),
