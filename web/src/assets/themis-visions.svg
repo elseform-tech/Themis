@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="200" height="200" viewBox="0 0 200 200" role="img" aria-label="Themis Visions">
+  <defs>
+    <linearGradient id="tg-dark" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#38BDF8"/>
+      <stop offset="1" stop-color="#818CF8"/>
+    </linearGradient>
+  </defs>
+  <rect width="200" height="200" rx="36" fill="#0B0F1D"/>
+  <path d="M32 44H168L154 68H112V124L100 144L88 124V68H46Z" fill="url(#tg-dark)"/>
+  <path d="M39 58L63 58L100 122L137 58L161 58L100 164Z" fill="#EBF3FF" fill-opacity=".9"/>
+</svg>
