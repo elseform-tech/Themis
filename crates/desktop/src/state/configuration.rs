@@ -421,6 +421,57 @@ impl AppState {
         Ok((saved.subagents, revision))
     }
 
+    /// The person's Visions settings with the revision a later edit must name (Settings ›
+    /// Visions).
+    pub fn user_visions_view(&self) -> Result<(configuration::VisionsConfig, String), String> {
+        let user_path = settings_app_dir(self.inner.settings.path()).join("runtime.jsonc");
+        let user = read_optional(&user_path)?;
+        let visions = configuration::resolve(user.as_deref(), None, None)
+            .map(|resolved| resolved.config.visions)
+            .map_err(|e| format!("runtime configuration: {e:#}"))?;
+        let revision = revision_of(&visions);
+        Ok((visions, revision))
+    }
+
+    /// Saves only the `changes` (Settings › Visions fields) on top of the file's `visions`
+    /// block, refusing a stale `revision` like Settings › Subagents. A `null` field goes back
+    /// to its default; the resolver validates the result.
+    pub fn patch_user_visions_config(
+        &self,
+        changes: serde_json::Map<String, Value>,
+        revision: Option<&str>,
+    ) -> Result<(configuration::VisionsConfig, String), String> {
+        const EDITABLE: [&str; 5] = [
+            "enabled",
+            "autonomy",
+            "custom",
+            "daily_budget_usd",
+            "max_wakes",
+        ];
+        if let Some(key) = changes.keys().find(|key| !EDITABLE.contains(&key.as_str())) {
+            return Err(format!("Settings › Visions cannot change `{key}`"));
+        }
+        let saved = self.update_user_block("visions", |config| {
+            if revision.is_some_and(|expected| expected != revision_of(&config.visions)) {
+                return Err(STALE_VISIONS_SETTINGS.to_owned());
+            }
+            let mut value = serde_json::to_value(&config.visions).map_err(|e| e.to_string())?;
+            let object = value
+                .as_object_mut()
+                .ok_or("Visions settings are not an object")?;
+            for (key, field) in changes {
+                if field.is_null() {
+                    object.remove(&key);
+                } else {
+                    object.insert(key, field);
+                }
+            }
+            Ok(value)
+        })?;
+        let revision = revision_of(&saved.visions);
+        Ok((saved.visions, revision))
+    }
+
     /// The person's memory settings with the revision a later edit must name (Settings ›
     /// Memory).
     pub fn user_memory_view(&self) -> Result<(configuration::MemoryConfig, String), String> {
@@ -629,6 +680,8 @@ pub(crate) const STALE_SUBAGENT_SETTINGS: &str =
     "Subagent settings changed in runtime.jsonc since this page loaded; showing the latest";
 pub(crate) const STALE_MEMORY_SETTINGS: &str =
     "Memory settings changed in runtime.jsonc since this page loaded; showing the latest";
+pub(crate) const STALE_VISIONS_SETTINGS: &str =
+    "Visions settings changed in runtime.jsonc since this page loaded; showing the latest";
 
 fn browser_revision(browser: &configuration::BrowserConfig) -> String {
     revision_of(browser)

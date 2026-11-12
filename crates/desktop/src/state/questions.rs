@@ -541,7 +541,8 @@ impl AppState {
     }
 
     /// A message the person sent (`person`; not a goal, automation or hook): hooks may start
-    /// turns again, and it answers the questions still open. Returns what the agent's copy of
+    /// turns again, a Vision's work chat becomes the person's (taken over), and it answers the
+    /// questions still open. Returns what the agent's copy of
     /// the message ends with ("" for nothing).
     pub(super) fn person_message_arrived(
         &self,
@@ -554,6 +555,7 @@ impl AppState {
             return String::new();
         }
         self.reset_hook_wakes(thread_id);
+        self.visions_person_took_over(thread_id);
         self.answer_open_in_chat(sink, thread_id, text)
             .map(|note| format!("\n\n{note}"))
             .unwrap_or_default()

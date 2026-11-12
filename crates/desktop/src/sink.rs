@@ -8,8 +8,9 @@ use tauri::{AppHandle, Emitter};
 
 use crate::types::{
     ApprovalExpired, ApprovalRequest, ReviewItem, SettingsChange, ThreadChange,
-    ThreadEventEnvelope, APPROVAL_EXPIRED_NAME, APPROVAL_REQUEST_NAME, REVIEW_ITEM_NAME,
-    SETTINGS_CHANGED_NAME, THREAD_CHANGED_NAME, THREAD_EVENT_NAME,
+    ThreadEventEnvelope, VisionsChange, APPROVAL_EXPIRED_NAME, APPROVAL_REQUEST_NAME,
+    REVIEW_ITEM_NAME, SETTINGS_CHANGED_NAME, THREAD_CHANGED_NAME, THREAD_EVENT_NAME,
+    VISIONS_CHANGED_NAME,
 };
 
 /// Delivers thread, approval, and review events to whoever is listening.
@@ -26,6 +27,8 @@ pub trait EventSink: Send + Sync {
     fn emit_thread_changed(&self, change: &ThreadChange);
     /// Emits a `settings-changed` payload.
     fn emit_settings_changed(&self, change: &SettingsChange);
+    /// Emits a `visions-changed` payload.
+    fn emit_visions_changed(&self, change: &VisionsChange);
 }
 
 /// [`EventSink`] backed by the running Tauri app.
@@ -66,6 +69,10 @@ impl EventSink for TauriSink {
 
     fn emit_settings_changed(&self, change: &SettingsChange) {
         let _ = self.app.emit(SETTINGS_CHANGED_NAME, change);
+    }
+
+    fn emit_visions_changed(&self, change: &VisionsChange) {
+        let _ = self.app.emit(VISIONS_CHANGED_NAME, change);
     }
 }
 
@@ -121,6 +128,9 @@ impl EventSink for ChannelSink {
 
     /// Settings changes are covered through the server stream tests.
     fn emit_settings_changed(&self, _change: &SettingsChange) {}
+
+    /// Visions changes are covered through the server stream tests.
+    fn emit_visions_changed(&self, _change: &VisionsChange) {}
 }
 
 #[cfg(test)]

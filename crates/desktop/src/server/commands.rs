@@ -1,5 +1,6 @@
 //! The shared command dispatcher: one method name and its arguments in, one JSON value out.
 
+use super::visions_commands;
 use super::*;
 
 /// Runs one command, then tells every subscribed window about thread
@@ -20,17 +21,24 @@ pub async fn dispatch(
         ("discard_thread", Some(id)) => state.thread_project_root(id).await,
         _ => None,
     };
+    let owned = visions_commands::owned_chat(state, method, thread_id.as_deref());
     let result = match method {
         // A chat's read-only lookups, the work of the tools of the same names.
         "recall" => state.chat_read(method, args).await,
         "search_memory" => state.chat_read(method, args).await,
         // A file as a branch has it, for Workspace › Changes' unchanged lines (read-only, bounded).
         "read_branch_file" => read_branch_file(state, &args).await,
+        _ if visions_commands::METHODS.contains(&method) => {
+            visions_commands::dispatch(state, &sink, method, &args).await
+        }
         _ => dispatch_command(state, Arc::clone(&sink), method, args).await,
     };
     if let Ok(value) = &result {
         if let Some(scope) = SettingsScope::written_by(method) {
             sink.emit_settings_changed(&SettingsChange { scope });
+        }
+        if let Some(owned) = &owned {
+            sink.emit_visions_changed(owned);
         }
         announce_thread_change(state, sink.as_ref(), method, value, thread_id, removed_root).await;
     }

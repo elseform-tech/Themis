@@ -294,7 +294,7 @@ pub enum SettingsScope {
     /// The app's `settings.json`: defaults for new chats, approvals, limits, appearance.
     App,
     /// The user (or a project) `runtime.jsonc`, including the Settings sections that write
-    /// its `browser`, `web`, `subagents` and `memory` blocks.
+    /// its `browser`, `web`, `subagents`, `memory` and `visions` blocks.
     Runtime,
     /// Stored keys: which ones exist, never their values.
     Secrets,
@@ -311,7 +311,8 @@ impl SettingsScope {
             | "update_browser_settings"
             | "update_web_settings"
             | "update_subagent_settings"
-            | "update_memory_settings" => Some(Self::Runtime),
+            | "update_memory_settings"
+            | "update_visions_settings" => Some(Self::Runtime),
             "set_key" | "remove_key" | "set_secret" | "clear_secret" => Some(Self::Secrets),
             _ => None,
         }
@@ -323,4 +324,18 @@ impl SettingsScope {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SettingsChange {
     pub scope: SettingsScope,
+}
+
+/// Tauri event name carrying [`VisionsChange`] payloads.
+pub const VISIONS_CHANGED_NAME: &str = "visions-changed";
+
+/// `visions-changed` payload (`VisionsChange` in types.ts): Visions, channels, a channel's log
+/// or which chats Visions own changed. Ids only; a window reads what it shows again. Both
+/// absent means read everything again.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct VisionsChange {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub channel_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub vision_id: Option<String>,
 }

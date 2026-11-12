@@ -175,13 +175,15 @@ impl AppState {
         Ok(info)
     }
 
-    /// Lists the threads on `project_root` (empty when the project has none).
+    /// Lists the threads on `project_root` (empty when the project has none), except those a
+    /// Vision owns: they show in their channel instead.
     pub async fn list_threads(&self, project_root: String) -> Result<Vec<ThreadInfo>, String> {
         let root = canonical_project_dir(&project_root)?;
+        let owned = self.visions_owned_ids();
         let threads = self.inner.threads.read().await;
         let mut infos: Vec<ThreadInfo> = threads
             .values()
-            .filter(|record| record.project_root == root)
+            .filter(|record| record.project_root == root && !owned.contains(&record.id))
             .map(|record| self.info_of(record))
             .collect::<Result<_, _>>()?;
         infos.sort_by(|left, right| left.id.cmp(&right.id));
@@ -655,15 +657,24 @@ impl AppState {
         Ok(info)
     }
 
-    /// Requests a stop at the next safe boundary; existing actions finish first.
+    /// The person's Stop: requests a stop at the next safe boundary (existing actions finish
+    /// first), and holds a Vision's work chat back from its Vision.
     pub async fn stop_thread(&self, thread_id: String) -> Result<(), String> {
+        self.stop_run(&thread_id)?;
+        self.visions_person_stopped(&thread_id);
+        Ok(())
+    }
+
+    /// Requests a stop of the chat's run at the next safe boundary and denies its waiting
+    /// approvals.
+    pub(crate) fn stop_run(&self, thread_id: &str) -> Result<(), String> {
         let flags = self
             .inner
             .stop_flags
             .lock()
             .unwrap_or_else(|e| e.into_inner());
         let flag = flags
-            .get(&thread_id)
+            .get(thread_id)
             .ok_or_else(|| "This thread has no active run".to_owned())?;
         flag.store(true, Ordering::SeqCst);
         let mut pending = self.inner.pending.lock().unwrap_or_else(|e| e.into_inner());
@@ -704,6 +715,7 @@ impl AppState {
         self.forget_subagents(std::slice::from_ref(&thread_id));
         self.end_deleted_chat_session(&thread_id);
         self.forget_browsers(std::slice::from_ref(&thread_id)).await;
+        self.visions_chat_discarded(&thread_id);
         self.forget_background_tasks(&[thread_id]).await;
         self.persist_registry().await;
         Ok(())

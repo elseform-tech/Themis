@@ -479,6 +479,70 @@ impl VisionsCache {
         Ok(())
     }
 
+    /// Removes a Vision and takes it out of every channel it was a member of.
+    pub(super) fn delete_vision(&mut self, dir: &Path, vision_id: &str) -> Result<(), StoreError> {
+        self.ensure_unchanged(dir, VISIONS_FILE)?;
+        self.ensure_unchanged(dir, CHANNELS_FILE)?;
+        if !self.visions(dir)?.contains_key(vision_id) {
+            return Err(StoreError::refused(VISIONS_FILE, "Unknown Vision"));
+        }
+        let channels = self.channels(dir)?;
+        if channels
+            .values()
+            .any(|channel| channel.members.iter().any(|member| member == vision_id))
+        {
+            let mut updated = channels.clone();
+            for channel in updated.values_mut() {
+                if channel.members.iter().any(|member| member == vision_id) {
+                    channel.members.retain(|member| member != vision_id);
+                    channel.revision = next_revision(Some(&channel.revision));
+                }
+            }
+            write_store(dir, CHANNELS_FILE, &by_key(updated.iter()))?;
+            *channels = updated;
+            self.restamp(dir, CHANNELS_FILE);
+        }
+        let visions = self.visions(dir)?;
+        let all = by_key(visions.iter().filter(|(id, _)| id.as_str() != vision_id));
+        write_store(dir, VISIONS_FILE, &all)?;
+        visions.remove(vision_id);
+        self.restamp(dir, VISIONS_FILE);
+        Ok(())
+    }
+
+    /// Removes a channel; its log stays on disk.
+    pub(super) fn delete_channel(
+        &mut self,
+        dir: &Path,
+        channel_id: &str,
+    ) -> Result<(), StoreError> {
+        self.ensure_unchanged(dir, CHANNELS_FILE)?;
+        let channels = self.channels(dir)?;
+        if !channels.contains_key(channel_id) {
+            return Err(StoreError::refused(CHANNELS_FILE, "Unknown channel"));
+        }
+        let all = by_key(channels.iter().filter(|(id, _)| id.as_str() != channel_id));
+        write_store(dir, CHANNELS_FILE, &all)?;
+        channels.remove(channel_id);
+        self.restamp(dir, CHANNELS_FILE);
+        Ok(())
+    }
+
+    /// Sets the hold on `thread_id`'s owner, when it has one, and returns the owner as saved.
+    pub(super) fn set_hold(
+        &mut self,
+        dir: &Path,
+        thread_id: &str,
+        hold: impl FnOnce(&Owner) -> super::Hold,
+    ) -> Result<Option<Owner>, StoreError> {
+        let Some(mut owner) = self.owners(dir)?.get(thread_id).cloned() else {
+            return Ok(None);
+        };
+        owner.hold = hold(&owner);
+        self.set_owner(dir, owner.clone())?;
+        Ok(Some(owner))
+    }
+
     pub(super) fn release_owner(&mut self, dir: &Path, thread_id: &str) -> Result<(), StoreError> {
         self.ensure_unchanged(dir, OWNERS_FILE)?;
         let owners = self.owners(dir)?;

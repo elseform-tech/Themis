@@ -11,7 +11,9 @@
 //! appended and paged from the end (see `channel_log`).
 
 mod channel_log;
+mod control;
 mod store;
+mod wakes;
 
 #[cfg(test)]
 mod channel_log_tests;
@@ -27,8 +29,9 @@ use themis_core::configuration::ApprovalMode;
 use themis_core::visions::Autonomy;
 
 use super::AppState;
-pub use channel_log::ChannelPage;
+pub use channel_log::{ChannelLine, ChannelPage};
 use store::StoreError;
+pub use wakes::WakeReason;
 
 /// Directory name under the app data directory.
 pub(super) const VISIONS_DIR: &str = "visions";
@@ -270,6 +273,79 @@ impl AppState {
         let result = self
             .visions_cache()
             .set_owner(&self.inner.visions_dir, owner);
+        result.map_err(|error| self.visions_failed(error))
+    }
+
+    /// One Vision, when it exists (and `visions.json` can be read).
+    pub fn vision_get(&self, vision_id: &str) -> Option<Vision> {
+        self.visions_list()
+            .into_iter()
+            .find(|vision| vision.id == vision_id)
+    }
+
+    /// One channel, when it exists (and `channels.json` can be read).
+    pub fn channel_get(&self, channel_id: &str) -> Option<Channel> {
+        self.channels_all()
+            .into_iter()
+            .find(|channel| channel.id == channel_id)
+    }
+
+    /// Every channel of every project. Empty while `channels.json` cannot be read.
+    pub fn channels_all(&self) -> Vec<Channel> {
+        let mut cache = self.visions_cache();
+        match cache.channels(&self.inner.visions_dir) {
+            Ok(channels) => channels.values().cloned().collect(),
+            Err(error) => {
+                drop(cache);
+                self.visions_failed(error);
+                Vec::new()
+            }
+        }
+    }
+
+    /// The owner records `keep` selects. Empty while `owners.json` cannot be read.
+    pub fn owners_where(&self, keep: impl Fn(&Owner) -> bool) -> Vec<Owner> {
+        let mut cache = self.visions_cache();
+        match cache.owners(&self.inner.visions_dir) {
+            Ok(owners) => {
+                let mut list: Vec<Owner> = owners.values().filter(|o| keep(o)).cloned().collect();
+                list.sort_by(|a, b| a.thread_id.cmp(&b.thread_id));
+                list
+            }
+            Err(error) => {
+                drop(cache);
+                self.visions_failed(error);
+                Vec::new()
+            }
+        }
+    }
+
+    /// Sets the hold `hold` picks on `thread_id`'s owner, in one step; None when the chat has
+    /// no owner.
+    pub(crate) fn owner_hold(
+        &self,
+        thread_id: &str,
+        hold: impl FnOnce(&Owner) -> Hold,
+    ) -> Result<Option<Owner>, String> {
+        let result = self
+            .visions_cache()
+            .set_hold(&self.inner.visions_dir, thread_id, hold);
+        result.map_err(|error| self.visions_failed(error))
+    }
+
+    /// Removes a Vision from the store and from its channels' members.
+    pub(crate) fn vision_remove(&self, vision_id: &str) -> Result<(), String> {
+        let result = self
+            .visions_cache()
+            .delete_vision(&self.inner.visions_dir, vision_id);
+        result.map_err(|error| self.visions_failed(error))
+    }
+
+    /// Removes a channel from the store; its log stays.
+    pub(crate) fn channel_remove(&self, channel_id: &str) -> Result<(), String> {
+        let result = self
+            .visions_cache()
+            .delete_channel(&self.inner.visions_dir, channel_id);
         result.map_err(|error| self.visions_failed(error))
     }
 
