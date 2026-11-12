@@ -208,11 +208,13 @@ impl AppState {
         }
         let state = self.clone();
         runtime.spawn(async move {
-            // No key: the configured providers' prices are all there is (not a failure).
-            let no_key = matches!(state.go_key_present().await, Ok(false));
-            state.visions_cache().budget.no_go_key = no_key;
-            if no_key {
+            // No key: the configured providers' prices are all there is (not a failure). A key
+            // that cannot be read counts as there, so the catalog is tried.
+            let key = !matches!(state.go_key_present().await, Ok(false));
+            state.visions_cache().budget.go_key = Some(key);
+            if !key {
                 state.visions_note("budget_catalog", json!({"failure": "no_key"}));
+                state.visions_wake_waiting();
                 return;
             }
             let loaded = tokio::time::timeout(CATALOG_WAIT, state.ensure_go_catalog()).await;
@@ -223,7 +225,9 @@ impl AppState {
                 Err(_) => Some("timeout"),
             };
             state.visions_note("budget_catalog", json!({"failure": failure}));
-            if failure.is_some() {
+            if failure.is_none() {
+                state.visions_wake_waiting();
+            } else {
                 for vision in state.visions_list() {
                     state.visions_notice_over(&vision.id, Over::Unknown(Unknown::CatalogNotLoaded));
                 }

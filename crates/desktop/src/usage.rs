@@ -17,7 +17,7 @@ use std::sync::mpsc::{sync_channel, Receiver, SyncSender, TrySendError};
 use std::sync::{Arc, Mutex};
 
 use chrono::{DateTime, Datelike, Duration, NaiveDate, TimeZone, Utc};
-use rusqlite::{params, Connection};
+use rusqlite::{params, Connection, OptionalExtension};
 use serde::Serialize;
 use serde_json::json;
 use themis_core::context_metrics::{UsageKind, UsageRecord};
@@ -357,20 +357,20 @@ fn select_rows(
 }
 
 /// Rows after `after_id` and at or after `since_ms`, in id order, and the SQLite VM steps the
-/// reads took. The first row at or after `since_ms` is found on the `at_ms` index (forced: left
-/// to itself SQLite walks ids from the oldest), and the rows are then read by id from there, so
-/// the work follows the rows since `since_ms`, not the history.
+/// reads took. With `after_id` 0 (a day's first read) the start is found once on the `at_ms`
+/// index ([`day_start`]); otherwise the rows are read by id after `after_id`. Either way the
+/// work follows the rows returned, not the history or the day.
 fn read_after(
     connection: &Connection,
     after_id: i64,
     since_ms: i64,
 ) -> rusqlite::Result<(Vec<(i64, UsageRow)>, i32)> {
-    let mut first = connection.prepare_cached(
-        "SELECT min(id) FROM usage_requests INDEXED BY usage_requests_at WHERE at_ms>=?1",
-    )?;
-    let start: Option<i64> = first.query_row([since_ms], |row| row.get(0))?;
-    let mut steps = first.get_status(rusqlite::StatementStatus::VmStep);
-    first.reset_status(rusqlite::StatementStatus::VmStep);
+    // Only the first read of a day looks for where it starts; later ones go on by id.
+    let (start, mut steps) = if after_id > 0 {
+        (Some(after_id + 1), 0)
+    } else {
+        day_start(connection, since_ms)?
+    };
     let Some(start) = start else {
         return Ok((Vec::new(), steps));
     };
@@ -385,6 +385,29 @@ fn read_after(
     steps += statement.get_status(rusqlite::StatementStatus::VmStep);
     statement.reset_status(rusqlite::StatementStatus::VmStep);
     Ok((rows, steps))
+}
+
+/// Where to start reading the day's rows, and the VM steps finding it took: the row with the
+/// earliest `at_ms` from `since_ms`, one seek on the `at_ms` index (forced: left to itself
+/// SQLite walks ids from the oldest), less [`QUEUE_BOUND`] ids. Rows are recorded in id order
+/// with their own clock times, so a row can carry a later time than one after it, but never
+/// across more rows than the writer's queue holds; the rows read before the day started are
+/// left out by `at_ms`.
+fn day_start(connection: &Connection, since_ms: i64) -> rusqlite::Result<(Option<i64>, i32)> {
+    let mut first = connection.prepare_cached(
+        "SELECT id FROM usage_requests INDEXED BY usage_requests_at WHERE at_ms>=?1 ORDER BY at_ms LIMIT 1",
+    )?;
+    let start: Option<i64> = first.query_row([since_ms], |row| row.get(0)).optional()?;
+    let steps = first.get_status(rusqlite::StatementStatus::VmStep);
+    first.reset_status(rusqlite::StatementStatus::VmStep);
+    let margin = QUEUE_BOUND as i64;
+    Ok((start.map(|id| (id - margin).max(1)), steps))
+}
+
+/// The VM steps finding the day's start takes (for the scale test).
+#[cfg(test)]
+fn seek_steps(connection: &Connection, since_ms: i64) -> rusqlite::Result<i32> {
+    day_start(connection, since_ms).map(|(_, steps)| steps)
 }
 
 /// The columns [`row_at`] reads, in order.
@@ -1027,7 +1050,8 @@ mod tests {
     #[test]
     fn reading_todays_rows_does_not_walk_the_history() {
         let mut steps = Vec::new();
-        for older in [1_000i64, 20_000] {
+        // Both past the margin of rows read before the day's start (`QUEUE_BOUND`).
+        for older in [2_000i64, 20_000] {
             let directory = tempfile::tempdir().unwrap();
             let connection = open_connection(&directory.path().join("usage.sqlite3")).unwrap();
             connection.execute_batch("BEGIN").unwrap();
@@ -1053,11 +1077,51 @@ mod tests {
         let connection = open_connection(&directory.path().join("usage.sqlite3")).unwrap();
         let plan: String = connection
             .query_row(
-                "EXPLAIN QUERY PLAN SELECT min(id) FROM usage_requests INDEXED BY usage_requests_at WHERE at_ms>=1",
+                "EXPLAIN QUERY PLAN SELECT id FROM usage_requests INDEXED BY usage_requests_at WHERE at_ms>=1 ORDER BY at_ms LIMIT 1",
                 [],
                 |row| row.get(3),
             )
             .unwrap();
         assert!(plan.contains("usage_requests_at"), "{plan}");
+    }
+
+    /// Scale: a repeated read (nothing new since `after_id`) costs the same SQLite work with
+    /// 1,000 or 50,000 rows today, and so does finding where the day starts on a first read;
+    /// only decoding the day's rows on that first read grows with them.
+    #[test]
+    fn a_repeated_read_does_not_walk_todays_rows() {
+        let mut repeated = Vec::new();
+        let mut first = Vec::new();
+        for today in [1_000i64, 50_000] {
+            let directory = tempfile::tempdir().unwrap();
+            let connection = open_connection(&directory.path().join("usage.sqlite3")).unwrap();
+            connection.execute_batch("BEGIN").unwrap();
+            let at = |at_ms: i64| UsageRow {
+                at_ms,
+                ..row(Utc::now(), "m", Some("chat"), 1, 1)
+            };
+            for n in 0..100 {
+                insert(&connection, &at(1_000 + n)).unwrap();
+            }
+            for n in 0..today {
+                insert(&connection, &at(10_000_000 + n)).unwrap();
+            }
+            connection.execute_batch("COMMIT").unwrap();
+            let (rows, _) = read_after(&connection, 0, 10_000_000).unwrap();
+            assert_eq!(rows.len() as i64, today);
+            first.push(seek_steps(&connection, 10_000_000).unwrap());
+            let last = rows.last().unwrap().0;
+            let (again, steps) = read_after(&connection, last, 10_000_000).unwrap();
+            assert!(again.is_empty());
+            repeated.push(steps);
+        }
+        assert_eq!(
+            repeated[0], repeated[1],
+            "repeated read flat in today's rows: {repeated:?}"
+        );
+        assert_eq!(
+            first[0], first[1],
+            "finding the day's start flat: {first:?}"
+        );
     }
 }

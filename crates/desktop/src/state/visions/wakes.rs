@@ -214,6 +214,15 @@ impl WakeSlots {
         due
     }
 
+    /// The Visions with reasons waiting and no run going.
+    pub(super) fn waiting(&self) -> Vec<(String, String)> {
+        self.slots
+            .iter()
+            .filter(|(_, slot)| !slot.running && !slot.queued.is_empty())
+            .map(|(key, _)| key.clone())
+            .collect()
+    }
+
     /// Whether approval `id` is new to the Visions (it is then remembered).
     pub(super) fn first_approval_notice(&mut self, id: &str) -> bool {
         if self.approvals_seen.iter().any(|seen| seen == id) {
@@ -349,6 +358,22 @@ impl AppState {
             .visions_cache()
             .wakes
             .admit(vision_id, channel_id, reason, config.max_wakes))
+    }
+
+    /// Prices became known: every Vision whose reasons wait tries its wake again (each still
+    /// checked like any other).
+    pub(super) fn visions_wake_waiting(&self) {
+        let Some(sink) = self.scheduler_sink() else {
+            return;
+        };
+        let waiting = self.visions_cache().wakes.waiting();
+        for (vision_id, channel_id) in waiting {
+            let outcome = self.visions_wake_or_queue(&sink, &channel_id, &vision_id, None);
+            self.visions_note(
+                "wake",
+                json!({"vision_id": vision_id, "channel_id": channel_id, "reason": "prices_known", "outcome": outcome}),
+            );
+        }
     }
 
     /// The person wrote in `channel_id`: its Visions may wake `visions.max_wakes` times again.

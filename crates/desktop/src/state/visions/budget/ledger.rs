@@ -56,6 +56,8 @@ pub(crate) enum Unknown {
     UsageUnreadable,
     OwnersUnreadable,
     CatalogNotLoaded,
+    /// The first try to load prices has not finished yet (a cold start): wait and check again.
+    PricesPending,
     ConfigUnreadable,
     VisionGone,
 }
@@ -68,6 +70,7 @@ impl Unknown {
             Self::UsageUnreadable => "usage_unreadable",
             Self::OwnersUnreadable => "owners_unreadable",
             Self::CatalogNotLoaded => "catalog_not_loaded",
+            Self::PricesPending => "prices_pending",
             Self::ConfigUnreadable => "config_unreadable",
             Self::VisionGone => "vision_gone",
         }
@@ -90,8 +93,9 @@ pub(crate) struct Ledger {
     pub(super) scheduled: HashSet<String>,
     /// When loading the price catalog was last started.
     pub(super) catalog_tried: Option<Instant>,
-    /// The last try found no OpenCode Go key: the prices known are the configured providers'.
-    pub(super) no_go_key: bool,
+    /// Whether the last try to load the catalog found an OpenCode Go key; None before any try
+    /// finished. Without one, the prices known are the configured providers'.
+    pub(super) go_key: Option<bool>,
 }
 
 impl Ledger {

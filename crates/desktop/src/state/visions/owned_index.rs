@@ -58,15 +58,21 @@ impl AppState {
 
     /// Builds the index again from the owner records (left unbuilt when they cannot be read).
     pub(super) fn visions_rebuild_owned(&self) {
+        // Set while the cache's lock is held, so two owner writes cannot leave the older
+        // snapshot last (the lock order is cache, then index; nothing takes them the other way).
         let mut cache = self.visions_cache();
         let ids = cache
             .owners(&self.inner.visions_dir)
             .map(|owners| owners.keys().cloned().collect::<HashSet<String>>());
-        drop(cache);
+        let index = &self.inner.visions.owned;
         match ids {
-            Ok(ids) => self.inner.visions.owned.set(Some(ids)),
+            Ok(ids) => {
+                index.set(Some(ids));
+                drop(cache);
+            }
             Err(error) => {
-                self.inner.visions.owned.set(None);
+                index.set(None);
+                drop(cache);
                 self.visions_note(
                     "owned_index_unreadable",
                     json!({"file": error.file(), "reason": error.reason()}),

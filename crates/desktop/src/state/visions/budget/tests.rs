@@ -423,6 +423,8 @@ async fn the_budget_fails_closed_on_every_read_error() {
     let s = setup().await;
     unreachable_go(&s.state).await;
     s.state.set_model_catalog_for_test(Vec::new()).await;
+    assert_eq!(unknown(&s.state, &s.wren), Some("prices_pending"));
+    wait_for_notice(&s, "budget_unknown").await;
     assert_eq!(unknown(&s.state, &s.wren), Some("catalog_not_loaded"));
     assert!(s.state.visions_over_budget(&s.wren));
     assert!(s.state.visions_spent_today(Some(&s.wren)).is_infinite());
@@ -613,7 +615,7 @@ async fn wait_for_notice(s: &Setup, kind: &str) -> Value {
 /// Waits until a try to load the catalog found no OpenCode Go key.
 async fn wait_no_key(state: &AppState) {
     let started = Instant::now();
-    while !state.visions_cache().budget.no_go_key {
+    while state.visions_cache().budget.go_key != Some(false) {
         assert!(started.elapsed() < Duration::from_secs(10), "no key found");
         tokio::time::sleep(Duration::from_millis(20)).await;
     }
@@ -802,4 +804,82 @@ async fn a_notice_is_retried_only_where_it_failed() {
     );
     let page = s.state.channel_page(&second, None, 1 << 20).unwrap();
     assert_eq!(page.entries.len(), 1, "posted where it failed");
+}
+
+/// A cold start without an OpenCode Go key: a wake before the first try to load prices finished
+/// is not refused for good; it waits, and wakes once the prices are known.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_wake_before_prices_are_known_runs_once_they_are() {
+    let s = setup().await;
+    s.state.set_model_catalog_for_test(Vec::new()).await;
+    s.state.set_scheduler_sink(sink());
+    assert_eq!(
+        s.state
+            .visions_wake_admit(&s.channel, &s.wren, Some(WakeReason::Mentioned)),
+        Err("prices_pending")
+    );
+    let filter = themis_core::diagnostics::DiagnosticFilter {
+        service: Some("visions".into()),
+        ..Default::default()
+    };
+    let started = Instant::now();
+    loop {
+        let woke = s
+            .state
+            .inner
+            .diagnostics
+            .query(&filter)
+            .unwrap()
+            .into_iter()
+            .any(|record| {
+                record.event == "wake"
+                    && record.details["reason"] == "prices_known"
+                    && record.details["outcome"] == "started"
+            });
+        if woke {
+            break;
+        }
+        assert!(
+            started.elapsed() < Duration::from_secs(10),
+            "woke once prices were known"
+        );
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    assert!(
+        notices_of(&s, "budget_unknown").is_empty(),
+        "nothing failed"
+    );
+}
+
+/// Owner writes from several threads at once leave every owned chat in the index.
+#[tokio::test(flavor = "multi_thread")]
+async fn concurrent_owner_writes_keep_the_index_whole() {
+    let s = setup().await;
+    let writers: Vec<_> = (0..4)
+        .map(|writer| {
+            let state = s.state.clone();
+            let (channel, wren) = (s.channel.clone(), s.wren.clone());
+            std::thread::spawn(move || {
+                for n in 0..50 {
+                    state
+                        .owner_set(Owner {
+                            thread_id: format!("t-{writer}-{n}"),
+                            vision_id: wren.clone(),
+                            channel_id: channel.clone(),
+                            kind: OwnedKind::Work,
+                            hold: Hold::None,
+                        })
+                        .unwrap();
+                }
+            })
+        })
+        .collect();
+    for writer in writers {
+        writer.join().unwrap();
+    }
+    for writer in 0..4 {
+        for n in 0..50 {
+            assert!(s.state.visions_owns(&format!("t-{writer}-{n}")));
+        }
+    }
 }

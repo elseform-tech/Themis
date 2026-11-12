@@ -1021,16 +1021,19 @@ unreadable, the configuration unreadable, the Vision gone, or (with an OpenCode 
 catalog not loaded yet. Without an OpenCode Go key there is no catalog to wait for: the
 configured providers' prices are all there is, and everything else is unpriced. The app loads
 the catalog at start when there are Visions, and again (at most once a minute) while a check
-finds none; with a key but no catalog, Visions start nothing until it loads.
+finds none; with a key but no catalog, Visions start nothing until it loads. Until the first try
+has found out whether there is a key (a cold start), a wake waits (`prices_pending`) and is
+tried again as soon as the prices are known.
 
 The cap is checked after every request recorded for a chat a Vision owns (on a task of its own,
 once the usage writer stored the row; a chat no Vision owns costs a read lock and a set lookup,
 from an index of owned chats kept beside the Visions store and tried again at most once a minute
 while `owners.json` cannot be read), at the end of each such run, and before anything a Vision
-would start. A check reads only the usage rows recorded since the last one (the day's first
-read starts at the first row of the day, found on the `at_ms` index) and keeps a running sum per
-chat, rebuilt from the usage store after a restart or at midnight. Over budget, a Vision wakes
-for nothing (`over_budget`, or `budget_unknown` when spend is not known; what woke it waits,
+would start. A check reads only the usage rows recorded since the last one, by row id (only
+the day's first read, after a restart or at midnight, seeks the day's first row on the `at_ms`
+index, starting up to 1,024 rows before it since rows can be recorded slightly out of time
+order), and keeps a running sum per chat. Over budget, a Vision wakes
+for nothing (`over_budget`, `budget_unknown` when spend is not known, or `prices_pending`; what woke it waits,
 newest 64 kept, for its first wake the budget allows); its spending calls are refused as above
 (`over_budget`, `agent-cli-vision-over-budget.md`, or `budget_unknown`,
 `agent-cli-vision-budget-unknown.md`); its queued messages wait unsent; a goal in a chat it
@@ -1053,8 +1056,8 @@ Each of its channels gets each of three notices at most once a local day: `budge
 (`{vision_id, unpriced_requests}`, as soon as one of its requests today has no price). A notice
 counts as given in a channel once that channel recorded it; the day's notices are then saved in
 the Visions folder's `budget_notices.json`, so a restart does not post them again. A channel
-that could not record one is tried again after a minute, and only that channel; a notice that was posted but could not be saved is not posted again
-before a restart. Raising either cap (Settings › Visions, `update_visions_settings`, or the
+that could not record one is tried again after a minute, and only that channel; a notice
+that was posted but could not be saved is not posted again before a restart. Raising either cap (Settings › Visions, `update_visions_settings`, or the
 profile) lets its next wake run. Deleting a Vision or channel forgets its owners, so their spend
 leaves the overall total for the day. Logged as `visions`/`budget_reached`, `budget_unknown`
 (`vision_id`, `reason`), `budget_unpriced`, `budget_stopped` (`vision_id`, how many chats and

@@ -51,6 +51,7 @@ impl Over {
     /// The wake outcome it gives.
     pub(crate) fn outcome(self) -> &'static str {
         match self {
+            Self::Unknown(Unknown::PricesPending) => "prices_pending",
             Self::Unknown(_) => "budget_unknown",
             _ => "over_budget",
         }
@@ -167,7 +168,7 @@ impl AppState {
         if !self.inner.usage.available() {
             return Err(Unknown::UsageUnavailable);
         }
-        let prices = self.prices_now()?;
+        let (mut prices, catalog) = self.prices_now()?;
         let today = chrono::Local::now().date_naive();
         let after = self.visions_cache().budget.begin(today);
         let rows = self
@@ -175,6 +176,10 @@ impl AppState {
             .usage
             .rows_after(after, midnight_ms(today))
             .map_err(|_| Unknown::UsageUnreadable)?;
+        // The catalog's prices are looked up under its lock, and only when there is a new row.
+        if catalog && !rows.is_empty() {
+            prices.extend(self.with_catalog(catalog_prices).unwrap_or_default());
+        }
         let dir = self.inner.visions_dir.clone();
         let mut guard = self.visions_cache();
         guard.budget.begin(today);
@@ -189,31 +194,36 @@ impl AppState {
         Ok(cache.budget.tally(owners, vision_id))
     }
 
-    /// The prices known now: the configured providers' (`providers[].models[].price` in your
-    /// `runtime.jsonc`) and the catalog's. Without the catalog, spend is unknown, unless the
-    /// last try to load it found no OpenCode Go key: the configured prices are then all there is.
-    fn prices_now(&self) -> Result<Prices, Unknown> {
+    /// The configured providers' prices (`providers[].models[].price` in your `runtime.jsonc`),
+    /// and whether the catalog's are there too. Without the catalog, spend is unknown, unless
+    /// the last try to load it found no OpenCode Go key: the configured prices are then all there
+    /// is; before any try finished, prices are pending.
+    fn prices_now(&self) -> Result<(Prices, bool), Unknown> {
         let config = self
             .runtime_configuration(None, None)
             .map_err(|_| Unknown::ConfigUnreadable)?;
-        let mut prices = configured_prices(&config.config.providers);
-        match self.catalog_now() {
-            Some(models) if !models.is_empty() => prices.extend(catalog_prices(&models)),
+        let prices = configured_prices(&config.config.providers);
+        match self.with_catalog(|models| !models.is_empty()) {
+            Some(true) => Ok((prices, true)),
             _ => {
                 self.visions_load_prices_soon();
-                if !self.visions_cache().budget.no_go_key {
-                    return Err(Unknown::CatalogNotLoaded);
+                match self.visions_cache().budget.go_key {
+                    Some(false) => Ok((prices, false)),
+                    Some(true) => Err(Unknown::CatalogNotLoaded),
+                    None => Err(Unknown::PricesPending),
                 }
             }
         }
-        Ok(prices)
     }
 
-    /// The catalog, or None while it is being written.
-    fn catalog_now(&self) -> Option<Vec<themis_core::providers::GoModel>> {
+    /// `read` of the catalog under its lock, or None while it is being written.
+    fn with_catalog<T>(
+        &self,
+        read: impl FnOnce(&[themis_core::providers::GoModel]) -> T,
+    ) -> Option<T> {
         for _ in 0..1000 {
             if let Ok(models) = self.inner.go_catalog.try_read() {
-                return Some(models.clone());
+                return Some(read(&models));
             }
             std::thread::yield_now();
         }
@@ -289,8 +299,9 @@ impl AppState {
             self.visions_notice_unpriced(vision_id, judged.unpriced);
         }
         match judged.over {
-            // Loading the catalog says so itself when it fails; until then it may just be early.
-            Some(Over::Unknown(Unknown::CatalogNotLoaded)) | None => {}
+            // Loading the catalog says so itself when it fails; until then it may just be early,
+            // and what waits is woken again once the prices are known.
+            Some(Over::Unknown(Unknown::CatalogNotLoaded | Unknown::PricesPending)) | None => {}
             Some(over) => self.visions_notice_over(vision_id, over),
         }
         judged.over
