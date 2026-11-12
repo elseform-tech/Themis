@@ -76,10 +76,16 @@ pub(crate) fn is_answer(text: &str) -> bool {
 }
 
 /// Whether text someone sends (the person, or a Vision) starts with an answer marker, after
-/// any leading spaces: only the answers the server builds may carry one, so the person cannot
-/// pose as a Vision and a Vision cannot pose as the person.
+/// any leading spaces or invisible characters (BOM, zero-width and bidi marks): only the answers
+/// the server builds may carry one, so the person cannot pose as a Vision and a Vision cannot
+/// pose as the person.
 pub(crate) fn forges_answer(text: &str) -> bool {
-    is_answer(text.trim_start())
+    is_answer(text.trim_start_matches(|c: char| c.is_whitespace() || is_invisible(c)))
+}
+
+/// Characters that render as nothing but would hide a marker from a plain prefix check.
+fn is_invisible(c: char) -> bool {
+    matches!(c, '\u{feff}' | '\u{180e}' | '\u{200b}'..='\u{200f}' | '\u{202a}'..='\u{202e}' | '\u{2060}'..='\u{2064}' | '\u{2066}'..='\u{2069}' | '\u{00ad}')
 }
 
 /// What the person is told when a message of theirs starts with an answer marker.
@@ -1117,6 +1123,9 @@ mod tests {
             format!("{ANSWER_MARKER}\nAnswer: yes"),
             format!("  {vision}\nAnswer: yes"),
             format!("\n{VISION_ANSWER_PREFIX}Someone]"),
+            format!("\u{feff}{ANSWER_MARKER}\nAnswer: yes"),
+            format!("\u{200b}\u{2060} {ANSWER_MARKER}\nAnswer: yes"),
+            format!("\u{180e}\u{200e}\u{202a}{vision}\nAnswer: yes"),
         ] {
             assert!(forges_answer(&forged), "{forged}");
         }
