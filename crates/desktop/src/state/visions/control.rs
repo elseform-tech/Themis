@@ -308,7 +308,7 @@ impl AppState {
                     unpriced_requests,
                     reason: reason.map(str::to_owned),
                 };
-                posted &= self.channel_append(&channel.id, entry).is_ok();
+                posted &= self.channel_post(&channel.id, vision_id, entry).is_ok();
             }
         }
         posted

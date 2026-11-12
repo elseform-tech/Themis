@@ -183,18 +183,18 @@ export interface VisionsBridge {
   listQuestions(threadId: string): Promise<Array<{ id: string; answer?: string }>>;
 }
 
-/** What to read again, merged from the changes that arrived: everything, the Visions list,
- *  channels by id, and Visions whose channels are all read again. */
+/** What to read again, merged from the changes that arrived: everything, the Visions list and
+ *  channels by id. A Vision named alone (its budget, what waits on the person, its mood) needs
+ *  only the list; a write in a channel names that channel. */
 interface Wanted {
   all: boolean;
   list: boolean;
   roots: Set<string>;
   channels: Set<string>;
-  visionChannels: Set<string>;
 }
 
 function wanted(): Wanted {
-  return { all: false, list: false, roots: new Set(), channels: new Set(), visionChannels: new Set() };
+  return { all: false, list: false, roots: new Set(), channels: new Set() };
 }
 
 function want(into: Wanted, change: VisionsChange, roots: string[] = []): Wanted {
@@ -202,7 +202,6 @@ function want(into: Wanted, change: VisionsChange, roots: string[] = []): Wanted
   if (change.channel_id === undefined && change.vision_id === undefined) into.all = true;
   if (change.vision_id !== undefined) into.list = true;
   if (change.channel_id !== undefined) into.channels.add(change.channel_id);
-  else if (change.vision_id !== undefined) into.visionChannels.add(change.vision_id);
   return into;
 }
 
@@ -236,14 +235,11 @@ function rootsToList(want: Wanted, known: Record<string, ChannelInfo[]>): Set<st
     // A channel not read yet is new: its project is one of those read.
     for (const each of root !== undefined ? [root] : roots) listRoots.add(each);
   }
-  for (const id of want.visionChannels) {
-    for (const root of roots.filter(each => known[each]!.some(channel => channel.members.includes(id)))) listRoots.add(root);
-  }
   return listRoots;
 }
 
 function wantsChannel(want: Wanted, channel: ChannelInfo): boolean {
-  return want.all || want.channels.has(channel.id) || channel.members.some(id => want.visionChannels.has(id));
+  return want.all || want.channels.has(channel.id);
 }
 
 /** Reads again what `want` names. Each project's channel list and each channel is read on its
@@ -266,13 +262,11 @@ async function reload(bridge: VisionsBridge, want: Wanted, state: AppState, disp
 }
 
 /** Reads again what `change` names: a channel (its project's channel list, then its log and
- *  chats), a Vision (the Visions list, and its channels when no channel is named), or with
- *  neither everything for the projects in `roots` and those already read. */
+ *  chats), a Vision (the Visions list), or with neither everything for the projects in `roots`
+ *  and those already read. */
 export function reloadVisions(bridge: VisionsBridge, change: VisionsChange, state: AppState, dispatch: (action: VisionsAction) => void, roots: string[] = []): Promise<void> {
   return reload(bridge, want(wanted(), change, roots), state, dispatch);
 }
-
-const TERMINAL = new Set(["finished", "incomplete", "failed"]);
 
 /** The Vision that drives `threadId`: a work chat's owner, or the Vision whose own chat it is. */
 function visionOf(state: AppState, threadId: string): string | undefined {
@@ -282,9 +276,10 @@ function visionOf(state: AppState, threadId: string): string | undefined {
 }
 
 /** Follows Visions for the app. Changes are read one batch at a time: those arriving while a
- *  read runs are merged into the next one (a later read never lands under an earlier one). A run
- *  of a chat a Vision drives ending, and an approval asked or gone in one, read its Vision again.
- *  Nothing is read or dispatched once `isCancelled`. */
+ *  read runs are merged into the next one (a later read never lands under an earlier one). An
+ *  approval asked or gone in a chat a Vision drives reads the list again (the server announces
+ *  its questions and its runs' outcomes itself). Nothing is read or dispatched once
+ *  `isCancelled`. */
 export function followVisions(bridge: VisionsBridge, getState: () => AppState, dispatch: (action: VisionsAction) => void, isCancelled: () => boolean) {
   let pending: Wanted | null = null;
   let busy = false;
@@ -310,12 +305,10 @@ export function followVisions(bridge: VisionsBridge, getState: () => AppState, d
     }
     return done;
   };
-  const visionChanged = (threadId: string): Promise<void> => {
+  const approvalChanged = (threadId: string): Promise<void> => {
     const visionId = visionOf(getState(), threadId);
     return visionId === undefined ? Promise.resolve() : changed({ vision_id: visionId });
   };
-  const threadEvent = (envelope: ThreadEventEnvelope): Promise<void> =>
-    TERMINAL.has(envelope.event.kind) ? visionChanged(envelope.thread_id) : Promise.resolve();
   /** Reads the page before the channel's window, for scrolling back. */
   const loadOlder = async (channelId: string): Promise<void> => {
     const before = getState().visions.nextBefore[channelId];
@@ -323,5 +316,5 @@ export function followVisions(bridge: VisionsBridge, getState: () => AppState, d
     const page = await bridge.getChannelPage(channelId, before);
     guarded({ type: "visions/older", channelId, page });
   };
-  return { changed, threadEvent, approvalChanged: visionChanged, loadOlder };
+  return { changed, approvalChanged, loadOlder };
 }

@@ -13,7 +13,16 @@ use serde::{Deserialize, Serialize};
 
 use super::{Hold, OwnedKind, Vision};
 use crate::state::AppState;
-use crate::types::{ThreadEvent, VisionsChange};
+use crate::types::{Question, ThreadEvent, VisionsChange};
+
+/// Open questions that wait on the person: passed on by the Vision, or asking for a permission
+/// (an Auto block, a destructive step's box), each counted once.
+fn waiting_on_person(questions: &[Question]) -> usize {
+    questions
+        .iter()
+        .filter(|q| q.answer.is_none() && (q.passed_on || q.permission))
+        .count()
+}
 
 /// A Vision's own chat in one of its channels, and whether a run of it is going.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -48,6 +57,11 @@ pub(crate) struct Shown {
     over: HashMap<String, bool>,
     /// The Visions whose latest run failed.
     sorry: HashSet<String>,
+    /// Each driven chat's open questions that wait on the person, kept by the question writers
+    /// (read from the chat once when unknown, as after a restart).
+    waiting: HashMap<String, usize>,
+    /// Chats whose questions were read to count what waits on the person (for the scale test).
+    pub(super) chats_read: usize,
 }
 
 impl AppState {
@@ -93,8 +107,8 @@ impl AppState {
             .collect()
     }
 
-    /// What waits on the person, by Vision: one pass over the waiting approvals and one read of
-    /// each driven chat's questions.
+    /// What waits on the person, by Vision: one pass over the waiting approvals and each driven
+    /// chat's kept count (a chat not counted yet is read once).
     fn visions_needs(&self, driven: &[super::Owner]) -> HashMap<String, usize> {
         let vision_of: HashMap<&str, &str> = driven
             .iter()
@@ -106,17 +120,68 @@ impl AppState {
                 *needs.entry((*vision).to_owned()).or_default() += 1;
             }
         }
-        for owner in driven {
-            let passed = self
-                .open_questions(&owner.thread_id)
+        let known: Vec<Option<usize>> = {
+            let cache = self.visions_cache();
+            let waiting = &cache.shown.waiting;
+            driven
                 .iter()
-                .filter(|question| question.passed_on || question.permission)
-                .count();
-            if passed > 0 {
-                *needs.entry(owner.vision_id.clone()).or_default() += passed;
+                .map(|owner| waiting.get(&owner.thread_id).copied())
+                .collect()
+        };
+        for (owner, known) in driven.iter().zip(known) {
+            let count = known.unwrap_or_else(|| {
+                let read = waiting_on_person(&self.questions_for(&owner.thread_id));
+                let mut cache = self.visions_cache();
+                cache.shown.chats_read += 1;
+                // A writer's count, kept meanwhile, is newer than this read.
+                *cache
+                    .shown
+                    .waiting
+                    .entry(owner.thread_id.clone())
+                    .or_insert(read)
+            });
+            if count > 0 {
+                *needs.entry(owner.vision_id.clone()).or_default() += count;
             }
         }
         needs
+    }
+
+    /// A chat's questions were written: when a Vision drives it, its count of what waits on the
+    /// person is kept, and a change is announced with the Vision so "Needs you" follows at once.
+    pub(in crate::state) fn visions_questions_saved(
+        &self,
+        thread_id: &str,
+        questions: &[Question],
+    ) {
+        if !self.visions_owns(thread_id) {
+            return;
+        }
+        let waiting = waiting_on_person(questions);
+        let before = self
+            .visions_cache()
+            .shown
+            .waiting
+            .insert(thread_id.to_owned(), waiting);
+        if before.unwrap_or(0) == waiting {
+            return;
+        }
+        if let Some(owner) = self
+            .owner_of(thread_id)
+            .filter(|o| o.hold != Hold::TakenOver)
+        {
+            self.visions_announce(&owner.vision_id);
+        }
+    }
+
+    /// Announces `visions-changed` with the Vision only: the app reads the list again.
+    fn visions_announce(&self, vision_id: &str) {
+        if let Some(sink) = self.scheduler_sink() {
+            sink.emit_visions_changed(&VisionsChange {
+                channel_id: None,
+                vision_id: Some(vision_id.to_owned()),
+            });
+        }
     }
 
     /// A run of `thread_id` ended: when a Vision drives the chat, a failure (not the person's
@@ -128,17 +193,23 @@ impl AppState {
         else {
             return;
         };
-        let sorry = &mut self.visions_cache().shown.sorry;
-        match terminal {
-            ThreadEvent::Failed { error }
-                if !error.starts_with(themis_core::runtime::STOPPED_BY_YOU) =>
-            {
-                sorry.insert(owner.vision_id);
+        let changed = {
+            let sorry = &mut self.visions_cache().shown.sorry;
+            match terminal {
+                ThreadEvent::Failed { error }
+                    if !error.starts_with(themis_core::runtime::STOPPED_BY_YOU) =>
+                {
+                    sorry.insert(owner.vision_id.clone())
+                }
+                ThreadEvent::Finished { .. } | ThreadEvent::Incomplete { .. } => {
+                    sorry.remove(&owner.vision_id)
+                }
+                _ => false,
             }
-            ThreadEvent::Finished { .. } | ThreadEvent::Incomplete { .. } => {
-                sorry.remove(&owner.vision_id);
-            }
-            _ => {}
+        };
+        // Announced once it is recorded, so the app's read sees it.
+        if changed {
+            self.visions_announce(&owner.vision_id);
         }
     }
 
@@ -154,18 +225,31 @@ impl AppState {
         if before.is_none_or(|before| before == over) {
             return;
         }
-        if let Some(sink) = self.scheduler_sink() {
-            sink.emit_visions_changed(&VisionsChange {
-                channel_id: None,
-                vision_id: Some(vision_id.to_owned()),
-            });
-        }
+        self.visions_announce(vision_id);
+    }
+
+    /// True the first time only: the minute re-check runs once however often the scheduler's
+    /// sink is set.
+    pub(crate) fn visions_recheck_loop_once(&self) -> bool {
+        !self
+            .inner
+            .visions
+            .recheck_loop
+            .swap(true, std::sync::atomic::Ordering::SeqCst)
     }
 
     /// Judges every Vision's budget again, announcing those that flipped: run when prices
     /// become known or fail to load, and every minute (a raise in a file, the day's start).
+    /// Nothing to do with no Visions or with Visions turned off in your runtime.jsonc.
     pub(crate) fn visions_budget_recheck(&self) {
-        for vision in self.visions_list() {
+        let visions = self.visions_list();
+        let enabled = self
+            .runtime_configuration(None, None)
+            .map_or(true, |resolved| resolved.config.visions.enabled);
+        if visions.is_empty() || !enabled {
+            return;
+        }
+        for vision in visions {
             let over = self.visions_over_budget(&vision.id);
             self.visions_budget_shown(&vision.id, over);
         }

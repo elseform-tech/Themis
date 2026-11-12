@@ -194,12 +194,13 @@ describe("reloadVisions", () => {
     expect(visionMoods(apply(state, dispatch))).toEqual({ v1: "sleep" });
   });
 
-  it("a Vision alone reads the list and the channels it is in; no ids reads everything", async () => {
+  it("a Vision alone reads only the list; no ids reads everything", async () => {
     const api = bridge();
     const state = withChannel([], []);
     await reloadVisions(api, { vision_id: "v1" }, state, vi.fn());
     expect(api.listVisions).toHaveBeenCalledTimes(1);
-    expect(api.getChannelPage).toHaveBeenCalledWith("c1");
+    expect(api.listChannels).not.toHaveBeenCalled();
+    expect(api.getChannelPage).not.toHaveBeenCalled();
     const all = bridge();
     await reloadVisions(all, {}, state, vi.fn());
     expect(all.listVisions).toHaveBeenCalledTimes(1);
@@ -249,17 +250,21 @@ describe("followVisions", () => {
     expect(api.listVisions).toHaveBeenCalledTimes(2);
   });
 
-  it("a run of a Vision's own chat ending reads its Vision again, as does an approval in its chats", async () => {
+  it("an approval asked or gone in a chat a Vision drives reads only the list again", async () => {
     const api = bridge();
     const vision: VisionInfo = { ...VISION, vision_chats: [{ thread_id: "own", channel_id: "c1", running: true }] };
+    api.listVisions = vi.fn(async () => [vision]);
     let state = withChannel([], [owned("w1", "c1")], [vision]);
     const follower = followVisions(api, () => state, action => { state = reducer(state, action); }, () => false);
-    await follower.threadEvent({ thread_id: "own", run_id: "r", event: { kind: "failed", error: "boom" } } as never);
-    expect(api.listVisions).toHaveBeenCalledTimes(1);
     await follower.approvalChanged("w1");
+    expect(api.listVisions).toHaveBeenCalledTimes(1);
+    await follower.approvalChanged("own");
     expect(api.listVisions).toHaveBeenCalledTimes(2);
     await follower.approvalChanged("plain");
     expect(api.listVisions).toHaveBeenCalledTimes(2);
+    expect(api.getChannelPage).not.toHaveBeenCalled();
+    // A run's end reads nothing: the server announces the Vision once its outcome is recorded.
+    expect("threadEvent" in follower).toBe(false);
   });
 
   it("reads nothing once cancelled", async () => {

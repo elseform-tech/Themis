@@ -215,3 +215,164 @@ async fn sorry_lasts_from_a_failure_until_its_next_success() {
     s.state.visions_after_run(&sink(), "w1", &failed);
     assert!(listed(&s).await.sorry, "a work chat failed");
 }
+
+/// A pass-on racing the chat's agent asking a new question and the person answering another
+/// loses neither: all three write under the same lock. (The race is forced: the other writes
+/// start while the pass-on has read the questions and not yet written them.)
+#[test]
+fn a_pass_on_racing_a_question_and_an_answer_loses_nothing() {
+    let s = setup();
+    let passed = ask(&s, "w1", "Which license?");
+    let answered = ask(&s, "w1", "Tabs?");
+    let racer: Arc<std::sync::Mutex<Option<std::thread::JoinHandle<String>>>> = Arc::default();
+    let (state, slot, to_answer) = (s.state.clone(), Arc::clone(&racer), answered.clone());
+    crate::state::questions::PASS_ON_GAP.with(|gap| {
+        *gap.borrow_mut() = Some(Box::new(move || {
+            let (state, to_answer) = (state.clone(), to_answer.clone());
+            *slot.lock().unwrap() = Some(std::thread::spawn(move || {
+                let asked = NewQuestion {
+                    question: "Allow the push?".into(),
+                    permission: true,
+                    ..NewQuestion::default()
+                };
+                let sink = ChannelSink::channel().0;
+                let new = state.ask_question(&sink, "w1", "run", asked).unwrap().id;
+                state
+                    .record_answers("w1", vec![(to_answer, "Spaces".into())], None)
+                    .unwrap();
+                new
+            }));
+            // Long enough for the other writes to land, were they not held back.
+            std::thread::sleep(std::time::Duration::from_millis(200));
+        }));
+    });
+    s.state.mark_passed_on("w1", &passed);
+    crate::state::questions::PASS_ON_GAP.with(|gap| *gap.borrow_mut() = None);
+    let new = racer.lock().unwrap().take().unwrap().join().unwrap();
+    let questions = s.state.questions_for("w1");
+    let find = |id: &str| questions.iter().find(|q| q.id == id).cloned();
+    assert!(find(&passed).unwrap().passed_on, "passed on");
+    assert_eq!(
+        find(&answered).unwrap().answer.as_deref(),
+        Some("Spaces"),
+        "not reopened"
+    );
+    assert!(find(&new).is_some(), "the new question kept");
+}
+
+/// Records the `visions-changed` payloads that name a Vision only.
+#[derive(Default)]
+struct Announced(std::sync::Mutex<Vec<String>>);
+
+impl EventSink for Announced {
+    fn emit_thread_event(&self, _: &crate::types::ThreadEventEnvelope) {}
+    fn emit_approval_request(&self, _: &crate::types::ApprovalRequest) {}
+    fn emit_approval_expired(&self, _: &crate::types::ApprovalExpired) {}
+    fn emit_review_item(&self, _: &crate::types::ReviewItem) {}
+    fn emit_thread_changed(&self, _: &crate::types::ThreadChange) {}
+    fn emit_settings_changed(&self, _: &crate::types::SettingsChange) {}
+    fn emit_visions_changed(&self, change: &crate::types::VisionsChange) {
+        if change.channel_id.is_none() {
+            self.0
+                .lock()
+                .unwrap()
+                .push(change.vision_id.clone().unwrap_or_default());
+        }
+    }
+}
+
+fn announcing(s: &Setup) -> Arc<Announced> {
+    let announced = Arc::new(Announced::default());
+    *s.state.inner.scheduler_sink.lock().unwrap() = Some(announced.clone());
+    announced
+}
+
+fn taken(announced: &Announced) -> Vec<String> {
+    std::mem::take(&mut *announced.0.lock().unwrap())
+}
+
+/// What waits on the person changing in a chat a Vision drives is announced at once with the
+/// Vision (an Auto block or a destructive step's box asked, a question passed on, answered),
+/// so "Needs you" follows; a question the Vision itself may answer, or one in a chat no Vision
+/// drives, announces nothing.
+#[tokio::test]
+async fn questions_that_wait_on_the_person_announce_the_vision() {
+    let s = setup();
+    own(&s, "w1", OwnedKind::Work, Hold::None);
+    let announced = announcing(&s);
+    let vision = s.scope.vision_id.clone();
+    let block = ask_permission(&s, "w1", "Allow the push?");
+    assert_eq!(taken(&announced), vec![vision.clone()], "a block asked");
+    let plain = ask(&s, "w1", "Tabs?");
+    assert!(taken(&announced).is_empty(), "the Vision's own to answer");
+    pass(&s, "w1", &plain);
+    assert_eq!(taken(&announced), vec![vision.clone()], "passed on");
+    s.state
+        .record_answers("w1", vec![(block, "Allow once".into())], None)
+        .unwrap();
+    assert_eq!(taken(&announced), vec![vision.clone()], "answered");
+    ask_permission(&s, "plain", "Allow it?");
+    assert!(taken(&announced).is_empty(), "no Vision drives it");
+    assert_eq!(listed(&s).await.needs, 1);
+}
+
+/// The Vision is announced when its sorry state changes (after the run's outcome is recorded),
+/// not on every run end.
+#[tokio::test]
+async fn a_change_of_sorry_announces_the_vision() {
+    let s = setup();
+    own(&s, "w1", OwnedKind::Work, Hold::None);
+    let announced = announcing(&s);
+    let vision = s.scope.vision_id.clone();
+    let failed = ThreadEvent::Failed {
+        error: "provider error".into(),
+    };
+    let finished = ThreadEvent::Finished {
+        model: None,
+        result: "done".into(),
+    };
+    s.state.visions_mark_outcome("w1", &failed);
+    assert_eq!(taken(&announced), vec![vision.clone()]);
+    s.state.visions_mark_outcome("w1", &failed);
+    assert!(taken(&announced).is_empty(), "still sorry");
+    s.state.visions_mark_outcome("w1", &finished);
+    assert_eq!(taken(&announced), vec![vision]);
+    s.state.visions_mark_outcome("w1", &finished);
+    assert!(taken(&announced).is_empty());
+}
+
+/// Counting what waits on the person reads each driven chat's questions once; after that a
+/// listing reads none, however many chats the Visions ever drove (the writers keep the count).
+#[tokio::test]
+async fn listing_reads_no_questions_once_counted_however_many_chats() {
+    let mut first = Vec::new();
+    let mut again = Vec::new();
+    for size in [20, 400] {
+        let s = setup();
+        for at in 0..size {
+            let thread = format!("w{at}");
+            own(&s, &thread, OwnedKind::Work, Hold::None);
+            ask_permission(&s, &thread, "Allow it?");
+        }
+        // Forget the counts the writes kept, as after a restart.
+        s.state.visions_cache().shown = listing::Shown::default();
+        assert_eq!(listed(&s).await.needs, size);
+        first.push(std::mem::take(
+            &mut s.state.visions_cache().shown.chats_read,
+        ));
+        assert_eq!(listed(&s).await.needs, size);
+        ask_permission(&s, "w0", "Allow this too?");
+        assert_eq!(listed(&s).await.needs, size + 1, "kept by the writer");
+        again.push(s.state.visions_cache().shown.chats_read);
+    }
+    assert_eq!(first, vec![20, 400], "each chat read once");
+    assert_eq!(again, vec![0, 0], "none read again");
+}
+
+/// The minute re-check is started once, however often the sink is set.
+#[test]
+fn the_budget_recheck_loop_starts_once() {
+    let s = setup();
+    assert!(s.state.visions_recheck_loop_once());
+    assert!(!s.state.visions_recheck_loop_once());
+}

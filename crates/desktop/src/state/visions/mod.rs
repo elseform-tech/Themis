@@ -221,6 +221,8 @@ pub enum ChannelEntry {
 pub(crate) struct VisionsShared {
     cache: std::sync::Mutex<VisionsCache>,
     owned: owned_index::OwnedIndex,
+    /// The minute budget re-check was started (see `listing`).
+    recheck_loop: std::sync::atomic::AtomicBool,
 }
 
 /// The store files as loaded, each on first use, plus the newest seq of each channel log

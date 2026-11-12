@@ -32,8 +32,8 @@
   "crates/desktop/src/state/goal_tool.rs": 8,
   "crates/desktop/src/state/memory_auto/request.rs": 23,
   "crates/desktop/src/state/question_tool.rs": 8,
-  "crates/desktop/src/state/questions.rs": 19,
-  "crates/desktop/src/state/queue.rs": 19,
+  "crates/desktop/src/state/questions.rs": 16,
+  "crates/desktop/src/state/queue.rs": 16,
   "crates/desktop/src/transcript.rs": 9,
   "crates/desktop/src/transcript/diagnostics.rs": 9,
   "crates/desktop/src/transcript/request_context.rs": 7,
@@ -43,7 +43,7 @@
   "web/src/screens/GoalBar.tsx": 6,
   "web/src/state/reducer.ts": 36
  },
- "duplicate_lines_total": 777,
+ "duplicate_lines_total": 771,
  "files": {
   "crates/core/src/runtime.rs": {
    "code_lines": 1908

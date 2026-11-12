@@ -291,7 +291,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         const offThread = await onThreadEvent((envelope) => {
           if (cancelled) return;
           eventVersion++;
-          dispatch({ type: "thread/event", envelope }); void visions.threadEvent(envelope);
+          dispatch({ type: "thread/event", envelope });
           const { kind } = envelope.event;
           // A background task started, exited or was stopped: refresh this chat's task feed.
           if (kind === "background_tasks_changed") {

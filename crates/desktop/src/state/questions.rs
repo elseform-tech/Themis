@@ -313,6 +313,7 @@ impl AppState {
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .insert(thread_id.to_owned(), questions.to_vec());
+        self.visions_questions_saved(thread_id, questions);
         let Some(path) = self.questions_path(thread_id) else {
             return;
         };
@@ -340,9 +341,25 @@ impl AppState {
         sink.emit_thread_event(&envelope);
     }
 
-    /// Marks the chat's open question `question_id` as passed on to the person by a Vision.
+    /// The lock every writer of a chat's questions holds from its read to its write.
+    fn question_guard(&self) -> std::sync::MutexGuard<'_, ()> {
+        self.inner
+            .question_lock
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// Marks the chat's open question `question_id` as passed on to the person by a Vision,
+    /// under the lock every writer of a chat's questions takes.
     pub(super) fn mark_passed_on(&self, thread_id: &str, question_id: &str) {
+        let _guard = self.question_guard();
         let mut questions = self.questions_for(thread_id);
+        #[cfg(test)]
+        PASS_ON_GAP.with(|gap| {
+            if let Some(gap) = gap.borrow().as_ref() {
+                gap();
+            }
+        });
         let Some(question) = questions.iter_mut().find(|q| q.id == question_id) else {
             return;
         };
@@ -386,11 +403,7 @@ impl AppState {
             .map(shape)
             .collect::<Result<Vec<_>, _>>()?;
         let group = (shaped.len() > 1).then(|| uuid::Uuid::new_v4().to_string());
-        let _guard = self
-            .inner
-            .question_lock
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
+        let _guard = self.question_guard();
         let mut questions = self.questions_for(thread_id);
         let open = questions.iter().filter(|q| q.answer.is_none()).count();
         let new = shaped
@@ -533,11 +546,7 @@ impl AppState {
         if answers.is_empty() {
             return Err("Write an answer".to_owned());
         }
-        let _guard = self
-            .inner
-            .question_lock
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
+        let _guard = self.question_guard();
         let mut questions = self.questions_for(thread_id);
         let mut answered = Vec::new();
         for (question_id, answer) in answers {
@@ -711,11 +720,7 @@ impl AppState {
             return None;
         }
         let closed: Vec<Question> = {
-            let _guard = self
-                .inner
-                .question_lock
-                .lock()
-                .unwrap_or_else(|e| e.into_inner());
+            let _guard = self.question_guard();
             let mut questions = self.questions_for(thread_id);
             let mut closed = Vec::new();
             for question in questions.iter_mut().filter(|q| q.answer.is_none()) {
@@ -824,6 +829,13 @@ fn answer_body(question: &Question, answer: &str) -> String {
             ("answer", answer),
         ],
     )
+}
+
+#[cfg(test)]
+thread_local! {
+    /// Runs between `mark_passed_on`'s read and its write (a test's way to race it).
+    pub(super) static PASS_ON_GAP: std::cell::RefCell<Option<Box<dyn Fn()>>> =
+        const { std::cell::RefCell::new(None) };
 }
 
 #[cfg(test)]

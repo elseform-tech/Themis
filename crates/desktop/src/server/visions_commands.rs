@@ -90,7 +90,8 @@ fn vision_method(
         "delete_vision" => {
             let vision_id: String = arg(args, "visionId")?;
             state.visions_delete(&vision_id)?;
-            Ok((Value::Null, change(None, Some(vision_id))))
+            // Its chats become ordinary and leave every channel's list: everything is read.
+            Ok((Value::Null, change(None, None)))
         }
         _ => Err(format!("unknown server method '{method}'")),
     }
