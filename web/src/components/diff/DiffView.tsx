@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type MouseEvent, type ReactNode } from "react";
 import type { DiffFile } from "../../lib/types";
 import { readSession, writeSession } from "../../state/session";
 import { EmptyState } from "../primitives/EmptyState";
@@ -10,6 +10,85 @@ export interface DiffViewProps {
   file: DiffFile;
   /** Asks for this much room when Split is chosen and it hasn't got it. */
   onWantWidth?: (width: number) => void;
+  /** The file as the diff's new side has it (the working tree, or a branch's tip), for its unchanged lines;
+   *  null when it can't be read. Called once, on the first reveal. */
+  loadText?: () => Promise<string | null>;
+  /** Where the revealed unchanged lines (and the text read for them) live while the view stays open, so folding the
+   *  file and unfolding it keeps them. */
+  remember?: { initial?: HiddenLinesMemory; save: (memory: HiddenLinesMemory) => void };
+}
+
+/** What a diff has revealed of its unchanged lines: lines shown per gap, and the file's text once read. */
+export interface HiddenLinesMemory { shown: Record<number, number>; lines: string[] | false | null }
+
+/** Unchanged lines before a hunk, in the new file's numbering (`from`..`to`); `offset` is new minus old there. */
+export interface HunkGap { before: number; from: number; to: number; offset: number }
+
+/** The unchanged lines before the first hunk and between hunks. A hunk that only adds or only removes starts after
+ *  its `start` line on that side, as Git counts. */
+export function hunkGaps(hunks: DiffFile["hunks"]): HunkGap[] {
+  const gaps: HunkGap[] = [];
+  let next = 1;
+  hunks.forEach((hunk, before) => {
+    const start = hunk.new_lines > 0 ? hunk.new_start : hunk.new_start + 1;
+    const oldStart = hunk.old_lines > 0 ? hunk.old_start : hunk.old_start + 1;
+    if (start > next) gaps.push({ before, from: next, to: start - 1, offset: start - oldStart });
+    next = start + hunk.new_lines;
+  });
+  return gaps;
+}
+
+/** A click shows this many more unchanged lines, nearest the hunk below; Shift or Alt shows them all. */
+const REVEAL_STEP = 20;
+
+/** How many lines of each gap show, and the file's lines once read (`false` when they can't be). */
+/** The file's lines from `loadText`, or `false` when it can't be read. */
+async function readLines(loadText: DiffViewProps["loadText"]): Promise<string[] | false> {
+  const loaded = loadText ? await loadText().catch(() => null) : null;
+  return loaded === null ? false : loaded.split("\n");
+}
+
+/** A gap can't be shown when the file can't be read, or was cut (256 KiB) before its last line. */
+function isUnreadable(lines: string[] | false | null, gap: HunkGap): boolean {
+  return lines === false || (Array.isArray(lines) && lines.length < gap.to);
+}
+
+/** The gap before a hunk, how many of its lines stay hidden, and the revealed ones (nearest the hunk) as context. */
+function gapAround(gaps: HunkGap[], shown: Record<number, number>, lines: string[] | false | null, hunkIndex: number) {
+  const gap = gaps.find(entry => entry.before === hunkIndex);
+  if (!gap) return { gap: undefined, hidden: 0, revealed: [] as NumberedLine[] };
+  const count = shown[hunkIndex] ?? 0;
+  const revealed: NumberedLine[] = [];
+  for (let no = gap.to - count + 1; no <= gap.to; no += 1) revealed.push({ kind: "context", text: lines ? lines[no - 1] ?? "" : "", oldNo: no - gap.offset, newNo: no });
+  return { gap, hidden: gap.to - gap.from + 1 - count, revealed };
+}
+
+function useHiddenLines(file: DiffFile, loadText: DiffViewProps["loadText"], remember: DiffViewProps["remember"]) {
+  const gaps = useMemo(() => hunkGaps(file.hunks), [file.hunks]);
+  const [shown, setShown] = useState<Record<number, number>>(() => remember?.initial?.shown ?? {});
+  const [lines, setLines] = useState<string[] | false | null>(() => remember?.initial?.lines ?? null);
+  const save = remember?.save;
+  useEffect(() => { save?.({ shown, lines }); }, [save, shown, lines]);
+  const reveal = async (gap: HunkGap, all: boolean) => {
+    let text = lines;
+    if (text === null) { text = await readLines(loadText); setLines(text); }
+    if (isUnreadable(text, gap)) return;
+    const size = gap.to - gap.from + 1;
+    setShown(previous => ({ ...previous, [gap.before]: all ? size : Math.min(size, (previous[gap.before] ?? 0) + REVEAL_STEP) }));
+  };
+  const around = (hunkIndex: number) => gapAround(gaps, shown, lines, hunkIndex);
+  const unreadable = (gap: HunkGap) => isUnreadable(lines, gap);
+  return { around, reveal, unreadable };
+}
+
+/** "⋯ N unchanged lines": a quiet row in place of the lines between hunks. */
+function GapRow({ hidden, unreadable, onReveal }: { hidden: number; unreadable: boolean; onReveal: (all: boolean) => void }) {
+  return (
+    <button type="button" className="themis-diff-gap" disabled={unreadable} title={unreadable ? undefined : "Show 20 more · Shift- or Alt-click for all"}
+      onClick={(event: MouseEvent) => onReveal(event.shiftKey || event.altKey)}>
+      ⋯ {hidden} unchanged line{hidden === 1 ? "" : "s"}{unreadable ? ", can't be shown" : ""}
+    </button>
+  );
 }
 
 type DiffLayout = "unified" | "split";
@@ -117,17 +196,41 @@ function SideCell({ line, side, extension, mark }: { line: NumberedLine | null; 
     <div className={`themis-diff-cell themis-diff-line--${line ? line.kind : "empty"}`}>
       {line && <>
         <span className="themis-diff-no">{side === 0 ? line.oldNo : line.newNo}</span>
-        <span className="themis-diff-sign">{line.kind === "add" ? "+" : line.kind === "del" ? "-" : " "}</span>
+        <span className="themis-diff-sign">{line.kind === "add" ? "+" : line.kind === "del" ? "−" : " "}</span>
         <LineText text={line.text} extension={extension} mark={mark} />
       </>}
     </div>
   );
 }
 
+/** A hunk's lines (with any revealed unchanged lines before them), in one column or side by side. */
+function HunkRows({ lines, split, extension }: { lines: NumberedLine[]; split: boolean; extension: string | undefined }) {
+  if (split) {
+    return <>{sideBySide(lines).map(([left, right], rowIndex) => {
+      const range = left && right && left.kind === "del" && right.kind === "add" ? changedRange(left.text, right.text) : null;
+      return (
+        <div key={rowIndex} className="themis-diff-side-row">
+          <SideCell line={left} side={0} extension={extension} mark={range ? [range.oldStart, range.oldEnd] : undefined} />
+          <SideCell line={right} side={1} extension={extension} mark={range ? [range.newStart, range.newEnd] : undefined} />
+        </div>
+      );
+    })}</>;
+  }
+  return <>{lines.map((line, lineIndex) => (
+    <div key={lineIndex} className={`themis-diff-line themis-diff-line--${line.kind}`}>
+      <span className="themis-diff-no">{line.oldNo ?? ""}</span>
+      <span className="themis-diff-no">{line.newNo ?? ""}</span>
+      <span className="themis-diff-sign">{line.kind === "add" ? "+" : line.kind === "del" ? "−" : " "}</span>
+      <LineText text={line.text} extension={extension} />
+    </div>
+  ))}</>;
+}
+
 /** Read-only diff of one file, unified or side by side; the choice is remembered. A file with
  *  only one side, or too little room for two, reads better in one column. */
-export function DiffView({ file, onWantWidth }: DiffViewProps) {
+export function DiffView({ file, onWantWidth, loadText, remember }: DiffViewProps) {
   const extension = file.path.split(".").pop();
+  const hiddenLines = useHiddenLines(file, loadText, remember);
   const [layout, setLayoutState] = useState<DiffLayout>(() => readSession<DiffLayout>(LAYOUT_KEY, "unified"));
   const root = useRef<HTMLDivElement>(null);
   const [cramped, setCramped] = useState(false);
@@ -148,15 +251,8 @@ export function DiffView({ file, onWantWidth }: DiffViewProps) {
   };
 
   return (
-    <div className="themis-diff" ref={root}>
-      <div className="themis-diff-head">
-        <span className="themis-diff-path" title={file.path}>
-          {file.path}
-        </span>
-        <span className="themis-diff-counts">
-          <span className="themis-diff-count-add">+{file.added}</span>
-          <span className="themis-diff-count-del">-{file.removed}</span>
-        </span>
+    // The canvas well: no header bar (the file's row above shows its path and counts); Unified and Split sit over its top right.
+    <div className="themis-diff" ref={root} role="region" aria-label={`Changes in ${file.path}`}>
         <span className="themis-diff-toggle" role="group" aria-label="Diff layout">
           {(["unified", "split"] as const).map(option => (
             <button key={option} type="button" aria-pressed={showing === option} disabled={option === "split" && splitOff}
@@ -166,7 +262,6 @@ export function DiffView({ file, onWantWidth }: DiffViewProps) {
             </button>
           ))}
         </span>
-      </div>
 
       {file.too_large && file.hunks.length === 0 ? (
         <EmptyState title="Too large to show" hint={`${file.path} changed too much to show line by line.`} />
@@ -175,30 +270,14 @@ export function DiffView({ file, onWantWidth }: DiffViewProps) {
       ) : (
         <div className={showing === "split" ? "themis-diff-side" : "themis-diff-unified"}>
           {file.hunks.map((hunk, hunkIndex) => {
-            const lines = numberHunk(hunk.old_start, hunk.new_start, hunk.lines.map((l) => ({ ...l, oldNo: null, newNo: null })));
+            const { gap, hidden, revealed } = hiddenLines.around(hunkIndex);
+            const lines = [...revealed, ...numberHunk(hunk.old_start, hunk.new_start, hunk.lines.map((l) => ({ ...l, oldNo: null, newNo: null })))];
             return (
               <div key={hunkIndex} className="themis-diff-hunk">
-                <div className="themis-diff-hunk-header">
-                  {hunkHeader(hunk.old_start, hunk.old_lines, hunk.new_start, hunk.new_lines)}
-                </div>
-                {showing === "split"
-                  ? sideBySide(lines).map(([left, right], rowIndex) => {
-                    const range = left && right && left.kind === "del" && right.kind === "add" ? changedRange(left.text, right.text) : null;
-                    return (
-                      <div key={rowIndex} className="themis-diff-side-row">
-                        <SideCell line={left} side={0} extension={extension} mark={range ? [range.oldStart, range.oldEnd] : undefined} />
-                        <SideCell line={right} side={1} extension={extension} mark={range ? [range.newStart, range.newEnd] : undefined} />
-                      </div>
-                    );
-                  })
-                  : lines.map((line, lineIndex) => (
-                    <div key={lineIndex} className={`themis-diff-line themis-diff-line--${line.kind}`}>
-                      <span className="themis-diff-no">{line.oldNo ?? ""}</span>
-                      <span className="themis-diff-no">{line.newNo ?? ""}</span>
-                      <span className="themis-diff-sign">{line.kind === "add" ? "+" : line.kind === "del" ? "-" : " "}</span>
-                      <LineText text={line.text} extension={extension} />
-                    </div>
-                  ))}
+                {/* Where each hunk starts is named for screen readers; the lines before it fold into one quiet row. */}
+                <div className="themis-diff-hunk-gap" role="separator" aria-label={hunkHeader(hunk.old_start, hunk.old_lines, hunk.new_start, hunk.new_lines)} />
+                {gap && hidden > 0 && <GapRow hidden={hidden} unreadable={hiddenLines.unreadable(gap)} onReveal={all => void hiddenLines.reveal(gap, all)} />}
+                <HunkRows lines={lines} split={showing === "split"} extension={extension} />
               </div>
             );
           })}

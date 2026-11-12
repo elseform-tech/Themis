@@ -3,6 +3,7 @@ import { act, fireEvent, render, screen, within, waitFor } from "@testing-librar
 import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_SETTINGS } from "../state/reducer";
 import App from "../App";
+import { loaderTiming } from "./StartupScreen";
 import { open } from "@tauri-apps/plugin-dialog";
 import * as bridge from "../lib/tauri";
 
@@ -128,14 +129,30 @@ describe("Workspace journey", () => {
     expect(chats()).toEqual(["Earlier chat", "Latest chat"]);
   });
 
+  it("framed layout keeps auto-fold below 1500px", async () => {
+    vi.stubGlobal("innerWidth", 1024);
+    const base = { provider: "go" as const, model: "muse-spark-1.3-contributor", worktree_path: null, branch: null, base_branch: null, recovered: false, skill_ids: [] };
+    vi.mocked(bridge.listThreads).mockResolvedValue([{ ...base, id: "fold", title: "Fold chat", running: false }]);
+    await mount();
+    expect(screen.getByRole("button", { name: "Collapse sidebar" })).toBeInTheDocument();
+    const receive = vi.mocked(bridge.onThreadEvent).mock.calls[0]![0];
+    await act(async () => receive({ thread_id: "fold", run_id: "r", event: { kind: "started", task: "fix", max_turns: 3 } }));
+    await act(async () => receive({ thread_id: "fold", run_id: "r", event: { kind: "files_changed", files: [{ path: "a.py", status: "modified", added: 1, removed: 0 }] } }));
+    await act(async () => receive({ thread_id: "fold", run_id: "r", event: { kind: "finished", result: "Done." } }));
+    await act(async () => fireEvent.click(within(screen.getByRole("region", { name: "Files edited in this turn" })).getAllByRole("button")[0]!));
+    expect(screen.getByRole("complementary", { name: "Workspace (read-only)" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Show sidebar" })).toBeInTheDocument();
+  });
+
   it("resizes the sidebar and restores its saved width after remount", async () => {
     let mounted!: ReturnType<typeof render>;
     await act(async () => { mounted = render(<App />); });
     const handle = screen.getByRole("separator", { name: "Resize sidebar" });
-    expect(handle).toHaveAttribute("aria-valuenow", "280");
+    // The canvas's 52px rail beside its 236px panel.
+    expect(handle).toHaveAttribute("aria-valuenow", "288");
     fireEvent.keyDown(handle, { key: "ArrowRight" });
-    expect(handle).toHaveAttribute("aria-valuenow", "300");
-    expect(localStorage.getItem("themis:sidebarWidth")).toBe("300");
+    expect(handle).toHaveAttribute("aria-valuenow", "308");
+    expect(localStorage.getItem("themis:sidebarWidth")).toBe("308");
     vi.stubGlobal("PointerEvent", MouseEvent);
     handle.setPointerCapture = vi.fn();
     handle.hasPointerCapture = vi.fn(() => true);
@@ -158,7 +175,7 @@ describe("Workspace journey", () => {
     fireEvent.keyDown(restored, { key: "ArrowRight" });
     expect(restored).toHaveAttribute("aria-valuenow", "560");
     fireEvent.keyDown(restored, { key: "Home" });
-    expect(restored).toHaveAttribute("aria-valuenow", "280");
+    expect(restored).toHaveAttribute("aria-valuenow", "288");
   });
 
   it("restores an active approval when the app is refreshed", async () => {
@@ -327,28 +344,6 @@ describe("Workspace journey", () => {
     expect(screen.queryByText(/Attached files \(local paths/)).toBeNull();
   });
 
-  it("selects and hides the companion from the permanent rail and restores that choice", async () => {
-    const app = render(<App />);
-    await screen.findByRole("button", { name: "Bubbles companion" });
-    const utilities = screen.getByRole("navigation", { name: "Utilities" });
-    fireEvent.click(within(utilities).getByRole("button", { name: "Bubbles companion" }));
-    const options = screen.getByRole("dialog", { name: "Bubbles companion" });
-    fireEvent.click(within(options).getByRole("button", { name: "Ink" }));
-    expect(screen.getByRole("button", { name: "Move Ink companion" })).toBeInTheDocument();
-    fireEvent.click(within(options).getByRole("checkbox", { name: "Companion" }));
-    expect(screen.queryByRole("button", { name: "Move Ink companion" })).toBeNull();
-    fireEvent.keyDown(document, { key: "Escape" });
-    fireEvent.click(screen.getByRole("button", { name: "Collapse sidebar" }));
-    expect(within(utilities).getByRole("button", { name: "Bubbles companion" })).toBeInTheDocument();
-    app.unmount();
-    await mount();
-    fireEvent.click(screen.getByRole("button", { name: "Bubbles companion" }));
-    const restored = screen.getByRole("dialog", { name: "Bubbles companion" });
-    expect(within(restored).getByRole("button", { name: "Ink" })).toHaveAttribute("aria-pressed", "true");
-    expect(within(restored).getByRole("checkbox", { name: "Companion" })).not.toBeChecked();
-    fireEvent.click(within(restored).getByRole("checkbox", { name: "Companion" }));
-    expect(screen.getByRole("button", { name: "Move Ink companion" })).toBeInTheDocument();
-  });
   it("keeps the actual startup loader until workspace restoration finishes", async () => {
     let finish!: (value: Awaited<ReturnType<typeof bridge.getDefaultProject>>) => void;
     vi.mocked(bridge.getDefaultProject).mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
@@ -361,25 +356,44 @@ describe("Workspace journey", () => {
     expect(screen.queryByText("Opening workspace")).toBeNull();
     expect(screen.getByRole("navigation", { name: "Utilities" })).toBeInTheDocument();
   });
-  it("adjusts and restores companion size from the rail", async () => {
-    const app = render(<App />);
-    await screen.findByRole("button", { name: "Bubbles companion" });
-    fireEvent.click(screen.getByRole("button", { name: "Bubbles companion" }));
-    fireEvent.change(screen.getByRole("slider", { name: "Size" }), { target: { value: "144" } });
-    expect(screen.getByRole("button", { name: "Move Honey companion" }).style.width).toBe("144px");
-    app.unmount(); await mount();
-    expect(screen.getByRole("button", { name: "Move Honey companion" }).style.width).toBe("144px");
-  });
-  it("exits startup on failure and keeps companion position within bounds using the keyboard", async () => {
+  it("exits startup on failure and keeps the error readable once the app shows", async () => {
     vi.mocked(bridge.getSettings).mockRejectedValueOnce(new Error("offline"));
     await mount();
-    expect(screen.getByRole("button", { name: "Bubbles companion" })).toBeInTheDocument();
-    const pet = screen.getByRole("button", { name: "Move Honey companion" });
-    for (let i = 0; i < 20; i++) fireEvent.keyDown(pet, { key: "ArrowLeft" });
-    expect(pet.style.left).toBe("0%");
-    for (let i = 0; i < 20; i++) fireEvent.keyDown(pet, { key: "ArrowRight" });
-    expect(pet.style.left).toBe("100%");
-    expect(JSON.parse(localStorage.getItem("themis:companion")!).position.x).toBe(1);
+    expect(screen.queryByText("Opening workspace")).toBeNull();
+    expect(screen.getByRole("navigation", { name: "Utilities" })).toBeInTheDocument();
+    expect(screen.getByText(/Failed to load settings: offline/)).toBeInTheDocument();
+  });
+  it("paints the loader in the last sky the person used, before settings arrive, and remembers the chosen one", async () => {
+    localStorage.setItem("themis:sky", JSON.stringify("night"));
+    let finish!: (value: typeof settings) => void;
+    vi.mocked(bridge.getSettings).mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+    await mount();
+    expect(screen.getByRole("progressbar", { name: "Starting" })).toHaveAttribute("aria-valuenow", "18");
+    expect(document.documentElement.dataset.palette).toBe("night");
+    await act(async () => finish({ ...settings, theme_palette: "noon" }));
+    expect(document.documentElement.dataset.palette).toBe("noon");
+    expect(localStorage.getItem("themis:sky")).toBe(JSON.stringify("noon"));
+  });
+  it("falls back to Auto's sky for the time of day when nothing is remembered", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date(2026, 10, 12, 8, 0));
+    vi.mocked(bridge.getSettings).mockImplementationOnce(() => new Promise(() => {}));
+    await mount();
+    expect(document.documentElement.dataset.palette).toBe("morning");
+  });
+  it("holds the loader for its minimum time and lets the bar fill before revealing the app", async () => {
+    vi.useFakeTimers();
+    Object.assign(loaderTiming, { minimumMs: 900, settleMs: 600 });
+    try {
+      await mount();
+      await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+      expect(screen.getByRole("progressbar", { name: "Starting" })).toHaveAttribute("aria-valuenow", "100");
+      expect(screen.queryByRole("navigation", { name: "Utilities" })).toBeNull();
+      await act(async () => { await vi.advanceTimersByTimeAsync(899); });
+      expect(screen.queryByRole("navigation", { name: "Utilities" })).toBeNull();
+      await act(async () => { await vi.advanceTimersByTimeAsync(10); });
+      expect(screen.getByRole("navigation", { name: "Utilities" })).toBeInTheDocument();
+    } finally { Object.assign(loaderTiming, { minimumMs: 0, settleMs: 0 }); }
   });
   it("shows a fixed root without location controls", async () => {
     await mount();
@@ -783,7 +797,7 @@ describe("Workspace journey", () => {
     expect(nav.id).toBe("themis-sidebar");
     expect(slot).not.toHaveClass("is-collapsed");
     expect(slot.style.getPropertyValue("--themis-sidebar-width")).toBe(width);
-    expect(screen.getAllByRole("button", { name: /^(Back to app|Home)$/ }).map(button => button.getAttribute("aria-label"))).toEqual(["Back to app"]);
+    expect(screen.getAllByRole("button", { name: /^(Back to app|Chats)$/ }).map(button => button.getAttribute("aria-label"))).toEqual(["Back to app"]);
     expect(within(nav).getByRole("button", { name: "General" })).toHaveFocus();
     // The header toggle folds the Settings list to icons, which keep their names.
     const toggle = screen.getByRole("button", { name: "Collapse sidebar" });
@@ -797,31 +811,47 @@ describe("Workspace journey", () => {
     expect(slot).not.toHaveClass("is-collapsed");
     fireEvent.click(within(nav).getByRole("button", { name: "Back to app" }));
     expect(screen.queryByRole("navigation", { name: "Settings sections" })).toBeNull();
-    expect(screen.getByRole("button", { name: "Home" })).toHaveFocus();
+    expect(screen.getByRole("button", { name: "Chats" })).toHaveFocus();
   });
   it("previews appearance without saving and reverts failed writes", async () => {
     await mount(); fireEvent.click(screen.getByRole("button", { name: "Settings" }));
     fireEvent.click(screen.getByRole("button", { name: "Appearance" }));
     expect(screen.queryByRole("combobox", { name: "Theme" })).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Ink" }));
+    const skies = screen.getByRole("group", { name: "Sky" });
+    expect(within(skies).getAllByRole("button").map(button => button.textContent)).toEqual(["Auto", "Morning", "Noon", "Night", "Classic"]);
+    expect(within(skies).getByRole("button", { name: "Classic" })).toHaveAttribute("aria-pressed", "true");
+    fireEvent.click(within(skies).getByRole("button", { name: "Night" }));
+    expect(within(skies).getByRole("button", { name: "Night" })).toHaveAttribute("aria-pressed", "true");
+    expect(within(skies).getByRole("button", { name: "Classic" })).toHaveAttribute("aria-pressed", "false");
     fireEvent.change(screen.getByLabelText("Font"), { target: { value: "mono" } });
     fireEvent.change(screen.getByLabelText("Size"), { target: { value: "18" } });
     expect(bridge.updateSettings).not.toHaveBeenCalled();
-    expect(document.documentElement.dataset.palette).toBe("ink");
+    expect(document.documentElement.dataset.palette).toBe("night");
     expect(document.documentElement.dataset.font).toBe("mono");
     fireEvent.click(screen.getByRole("button", { name: "Revert" }));
-    expect(document.documentElement.dataset.palette).toBe("system");
-    fireEvent.click(screen.getByRole("button", { name: "Ocean" }));
+    expect(document.documentElement.dataset.palette).toBe("classic");
+    fireEvent.click(screen.getByRole("button", { name: "Morning" }));
+    expect(document.documentElement.dataset.theme).toBe("light");
+    fireEvent.click(screen.getByRole("button", { name: "Revert" }));
+    expect(document.documentElement.dataset.theme).toBe("dark");
+    fireEvent.click(screen.getByRole("button", { name: "Noon" }));
     vi.mocked(bridge.updateSettings).mockRejectedValueOnce("Disk is full");
     await act(async () => fireEvent.click(screen.getByRole("button", { name: "Apply" })));
     expect(screen.getByRole("alert")).toHaveTextContent("Disk is full");
-    expect(document.documentElement.dataset.palette).toBe("system");
-    fireEvent.click(screen.getByRole("button", { name: "Ink" }));
+    expect(document.documentElement.dataset.palette).toBe("classic");
+    fireEvent.click(screen.getByRole("button", { name: "Night" }));
     await act(async () => fireEvent.click(screen.getByRole("button", { name: "Apply" })));
-    expect(bridge.updateSettings).toHaveBeenLastCalledWith({ theme: "dark", theme_palette: "ink", font_family: "serif", text_size: 12 });
-    fireEvent.click(screen.getByRole("button", { name: "Forest" }));
+    expect(bridge.updateSettings).toHaveBeenLastCalledWith({ theme_palette: "night", font_family: "system", text_size: 12 });
+    fireEvent.click(screen.getByRole("button", { name: "Morning" }));
     fireEvent.click(screen.getByRole("button", { name: "Back to app" }));
-    expect(document.documentElement.dataset.palette).toBe("ink");
+    expect(document.documentElement.dataset.palette).toBe("night");
+  });
+  it("shows a removed preset as Classic", async () => {
+    vi.mocked(bridge.getSettings).mockResolvedValue({ ...settings, theme_palette: "ocean" });
+    await mount(); fireEvent.click(screen.getByRole("button", { name: "Settings" }));
+    fireEvent.click(screen.getByRole("button", { name: "Appearance" }));
+    expect(within(screen.getByRole("group", { name: "Sky" })).getByRole("button", { name: "Classic" })).toHaveAttribute("aria-pressed", "true");
+    expect(document.documentElement.dataset.palette).toBe("classic");
   });
   it("shows budget-driven compaction settings without the legacy checkpoint interval", async () => {
     await mount();
@@ -842,7 +872,8 @@ describe("Workspace journey", () => {
     expect(within(sidebar).getByRole("button", { name: "New chat" })).toBeEnabled();
     expect(within(sidebar).queryByRole("button", { name: "Settings" })).not.toBeInTheDocument();
     expect(within(sidebar).queryByRole("button", { name: "Integrations" })).not.toBeInTheDocument();
-    expect(within(sidebar).getByText("Themis", { selector: ".themis-wordmark" })).toBeInTheDocument();
+    // No wordmark over the dock (canvas): the project row leads it.
+    expect(sidebar.querySelector(".themis-wordmark")).toBeNull();
     expect(within(sidebar).getByLabelText("Project: Themis")).toHaveAttribute("title", "/tmp/fixed-themis");
     fireEvent.focus(within(rail).getByRole("button", { name: "Integrations" }));
     expect(within(rail).getByRole("button", { name: "Integrations" }).parentElement).toHaveAttribute("data-tooltip", "Integrations");

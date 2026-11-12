@@ -30,7 +30,7 @@ pub struct Settings {
     /// Someone picked `text_size`, so a change of default leaves it alone.
     #[serde(default)]
     pub text_size_chosen: bool,
-    #[serde(default = "default_appearance_choice")]
+    #[serde(default = "default_theme_palette")]
     pub theme_palette: String,
     #[serde(default = "default_appearance_choice")]
     pub font_family: String,
@@ -101,6 +101,10 @@ fn default_appearance_choice() -> String {
     "system".to_owned()
 }
 
+pub(crate) fn default_theme_palette() -> String {
+    "classic".to_owned()
+}
+
 pub(crate) const fn default_text_size() -> u32 {
     12
 }
@@ -137,7 +141,7 @@ impl Default for Settings {
             project_names: std::collections::HashMap::new(),
             text_size: default_text_size(),
             text_size_chosen: false,
-            theme_palette: default_appearance_choice(),
+            theme_palette: default_theme_palette(),
             font_family: default_appearance_choice(),
             sidebar_hover: true,
             check_sources_for_updates: true,

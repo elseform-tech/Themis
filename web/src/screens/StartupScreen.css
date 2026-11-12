@@ -1,0 +1,8 @@
+/* Startup screen (canvas Main board): centred on the sky's frame, its glows placed as the board places them; Classic shows the frame colour. */
+.themis-startup { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 20px; height: 100dvh; border-radius: 12px; overflow: hidden; color: var(--themis-text); background: var(--themis-loader-sky, var(--themis-sky)); }
+/* The wordmark in the system font: no web fonts ship, so it reads the same offline on every OS. */
+.themis-startup-word { display: flex; font-size: 19px; line-height: 1; letter-spacing: .04em; font-weight: 700; gap: 7px; }
+.themis-startup-word > span + span { font-weight: 400; color: var(--themis-text-2); }
+.themis-startup-bar { width: 140px; height: 2px; border-radius: 3px; background: var(--themis-mark-track); overflow: hidden; }
+.themis-startup-fill { height: 100%; border-radius: 3px; background: var(--themis-accent); transition: width .9s cubic-bezier(.3, .7, .2, 1); }
+@media (prefers-reduced-motion: reduce) { .themis-startup-fill { transition: none; } }

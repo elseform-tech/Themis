@@ -5,7 +5,7 @@
 .themis-resources-button:focus-visible { outline: 2px solid var(--themis-accent); outline-offset: 1px; }
 .themis-resources-item { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }
 .themis-resources-item.is-warning { color: var(--themis-warning); }
-.themis-resources-popover { position: absolute; top: calc(100% + 6px); right: 0; z-index: 60; width: 280px; padding: 10px 12px; border: 1px solid var(--themis-border); border-radius: 12px; background: var(--themis-raised); color: var(--themis-text); font-size: .75rem; box-shadow: 0 12px 32px rgb(0 0 0 / .35); }
+.themis-resources-popover { position: absolute; top: calc(100% + 6px); right: 0; z-index: 60; width: 280px; padding: 10px 12px; border: 1px solid var(--themis-border); border-radius: 12px; background: var(--themis-raised); color: var(--themis-text); font-size: .75rem; box-shadow: 0 12px 32px color-mix(in srgb, var(--themis-shadow) 35%, transparent); }
 .themis-resources-popover table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
 .themis-resources-popover th, .themis-resources-popover td { padding: 4px 0; text-align: right; font-weight: 400; }
 .themis-resources-popover th:first-child { text-align: left; }

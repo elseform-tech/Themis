@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { Dialog } from "../components";
-import { updateSettings } from "../lib/tauri";
-import { describeError, toast, useApp } from "../state/store";
+import { useApp } from "../state/store";
 import { useNewThread } from "./actions";
 import "./Palette.css";
 
@@ -75,21 +74,6 @@ export function Palette() {
         run: () => void newThread(),
       },
       {
-        id: "action:toggle-theme",
-        group: "Actions",
-        label: "Toggle theme",
-        run: () => {
-          const next = state.settings.theme === "light" ? "dark" : "light";
-          updateSettings({ theme: next })
-            .then((settings) =>
-              dispatch({ type: "settings/patched", settings }),
-            )
-            .catch((error: unknown) =>
-              toast(dispatch, `Theme switch failed: ${describeError(error)}`, "danger"),
-            );
-        },
-      },
-      {
         id: "action:settings",
         group: "Actions",
         label: "Open settings",
@@ -97,7 +81,7 @@ export function Palette() {
       },
     );
     return list;
-  }, [state.threadsByProject, state.projects, state.settings.theme, dispatch, newThread]);
+  }, [state.threadsByProject, state.projects, dispatch, newThread]);
 
 
   const filtered = useMemo(() => {

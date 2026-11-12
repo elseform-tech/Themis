@@ -1,67 +1,74 @@
+/* A code block is the canvas's well: a soft inset on the stage or the Workspace panel, lines padded 14px. */
 .themis-codeblock {
-  --cb-comment: var(--themis-text-3);
-  --cb-string: var(--themis-success);
-  --cb-keyword: var(--themis-info);
-  --cb-number: var(--themis-warning);
+  --cb-comment: var(--themis-code-comment);
+  --cb-string: var(--themis-code-string);
+  --cb-keyword: var(--themis-code-keyword);
+  --cb-function: var(--themis-code-function);
+  --cb-type: var(--themis-code-type);
 
-  background-color: var(--themis-canvas);
+  background: var(--themis-well);
   color: var(--themis-text);
-  border: 1px solid var(--themis-border);
-  border-radius: 0.5rem;
-  padding: 0.75rem 1rem;
+  border-radius: 12px;
+  padding: 12px 0;
+  box-shadow: var(--themis-well-shadow);
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: 0.8125rem;
-  line-height: 1.5;
-  overflow-x: auto;
+  font-size: .78rem;
+  line-height: 1.8;
+  /* Lines wrap, so the well clips rather than scrolls (no overlay bar flashing on it). */
+  overflow: clip;
   margin: 0;
+}
+
+/* Long lines wrap inside the well (a narrow chat beside Workspace never clips one); indentation is kept, and a
+   continued line hangs 2ch in so it reads as one. Copy takes the source, so wrapping inserts nothing. */
+.themis-codeblock > code {
+  display: block;
 }
 
 .themis-codeblock-line {
   display: block;
-  white-space: pre;
+  padding: 0 14px 0 calc(14px + 2ch);
+  text-indent: -2ch;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 .themis-codeblock-lineno {
   display: inline-block;
-  min-width: 2.5rem;
-  padding-right: 1rem;
-  text-align: right;
-  color: var(--themis-text-3);
+  min-width: 30px;
+  color: var(--cb-comment);
   user-select: none;
 }
 
 .themis-codeblock-token--comment {
   color: var(--cb-comment);
-  font-style: italic;
 }
 
 .themis-codeblock-token--string {
   color: var(--cb-string);
 }
 
-.themis-codeblock-token--keyword {
+.themis-codeblock-token--keyword, .themis-codeblock-token--meta {
   color: var(--cb-keyword);
-}
-
-.themis-codeblock-token--number {
-  color: var(--cb-number);
 }
 
 .themis-codeblock-token--title {
-  color: var(--themis-accent);
+  color: var(--cb-function);
 }
 
-.themis-codeblock-token--type {
-  color: var(--cb-keyword);
-  opacity: .85;
+.themis-codeblock-token--type, .themis-codeblock-token--number {
+  color: var(--cb-type);
 }
 
-.themis-codeblock-token--meta {
-  color: var(--cb-number);
+/* A diff's changed line is tinted whole in its own ink. */
+.themis-codeblock-line--add {
+  background: var(--themis-add-bg); color: var(--themis-diff-add);
 }
 
-[data-theme="light"] .themis-codeblock {
-  --cb-string: var(--themis-code-string-light);
-  --cb-keyword: var(--themis-link-light);
-  --cb-number: var(--themis-code-number-light);
+.themis-codeblock-line--del {
+  background: var(--themis-del-bg); color: var(--themis-diff-del);
+}
+
+.themis-codeblock-line--add *, .themis-codeblock-line--del * {
+  color: inherit;
 }

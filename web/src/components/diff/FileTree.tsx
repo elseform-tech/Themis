@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import { hiddenFilesLabel } from "../../lib/hiddenFiles";
 import type { DiffFile, DiffStatus } from "../../lib/types";
 import { EmptyState } from "../primitives/EmptyState";
@@ -12,6 +12,10 @@ export interface FileTreeProps {
   onAccept?: (path: string) => void;
   onDiscard?: (path: string) => void;
   disabled?: boolean;
+  /** An accordion (Workspace › Changes): each row folds or unfolds the file's own body, shown under it. */
+  isOpen?: (path: string) => boolean;
+  onToggle?: (path: string) => void;
+  renderBody?: (file: DiffFile) => ReactNode;
 }
 
 const STATUS_GLYPH: Record<DiffStatus, string> = {
@@ -33,6 +37,9 @@ export function FileTree({
   onAccept,
   onDiscard,
   disabled = false,
+  isOpen,
+  onToggle,
+  renderBody,
 }: FileTreeProps) {
   const [query, setQuery] = useState("");
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
@@ -59,67 +66,8 @@ export function FileTree({
     groups.set(directory, [...(groups.get(directory) ?? []), file]);
   }
 
-  const row = (file: DiffFile, label: string) => {
-    const selected = file.path === selectedPath;
-    const discardDisabled = disabled || file.preexisting;
-    return (
-      <li
-        key={file.path}
-        className={`themis-filetree-row${selected ? " themis-filetree-row--selected" : ""}`}
-      >
-        <button
-          type="button"
-          className="themis-filetree-select"
-          aria-current={selected}
-          onClick={() => onSelect(file.path)}
-        >
-          <span
-            aria-hidden="true"
-            className={`themis-filetree-status themis-filetree-status--${file.status}`}
-          >
-            {STATUS_GLYPH[file.status]}
-          </span>
-          <span className="themis-filetree-path" title={file.path}>
-            {label}
-          </span>
-          {(file.added > 0 || file.removed > 0) && (
-            <span className="themis-filetree-counts" aria-label={`${file.added} added, ${file.removed} removed`}>
-              {file.added > 0 && <span className="themis-diff-count-add">+{file.added}</span>}
-              {file.removed > 0 && <span className="themis-diff-count-del">-{file.removed}</span>}
-            </span>
-          )}
-        </button>
-        {onAccept && (
-        <span className="themis-filetree-actions">
-          <button
-            type="button"
-            aria-label={`Accept ${file.path}`}
-            className="themis-filetree-btn themis-filetree-btn--accept"
-            disabled={disabled}
-            onClick={() => onAccept(file.path)}
-          >
-            ✓
-          </button>
-          <button
-            type="button"
-            aria-label={`Discard ${file.path}`}
-            title={
-              file.preexisting
-                ? "Changed before this chat started, so it can't be discarded here"
-                : `Discard ${file.path}`
-            }
-            className="themis-filetree-btn themis-filetree-btn--discard"
-            disabled={discardDisabled}
-            onClick={() => onDiscard?.(file.path)}
-          >
-            ✕
-          </button>
-        </span>
-        )}
-      </li>
-    );
-  };
 
+  const rowProps = { selectedPath, onSelect, onAccept, onDiscard, disabled, isOpen, onToggle, renderBody };
   return (
     <div className="themis-filetree-wrap">
       {shown.length > 12 && (
@@ -147,7 +95,7 @@ export function FileTree({
             )}
             {!collapsed[directory] && (
               <ul className="themis-filetree-files">
-                {entries.map(file => row(file, groups.size > 1 ? file.path.slice(directory.length + (directory ? 1 : 0)) : file.path))}
+                {entries.map(file => <FileTreeRow key={file.path} file={file} label={groups.size > 1 ? file.path.slice(directory.length + (directory ? 1 : 0)) : file.path} {...rowProps} />)}
               </ul>
             )}
           </li>
@@ -159,11 +107,105 @@ export function FileTree({
               <span aria-hidden="true">{hiddenOpen ? "⌄" : "›"}</span>
               <span className="themis-filetree-hidden-label">{hiddenFilesLabel(hidden.length)}</span>
             </button>
-            {hiddenOpen && <ul className="themis-filetree-files">{hiddenVisible.map(file => row(file, file.path))}</ul>}
+            {hiddenOpen && <ul className="themis-filetree-files">{hiddenVisible.map(file => <FileTreeRow key={file.path} file={file} label={file.path} {...rowProps} />)}</ul>}
           </li>
         )}
         {needle !== "" && visible.length === 0 && hiddenVisible.length === 0 && <li className="themis-filetree-none">No files match.</li>}
       </ul>
     </div>
+  );
+}
+
+type FileTreeRowProps = Omit<FileTreeProps, "files"> & { file: DiffFile; label: string };
+
+/** One changed file: its row (status, path, line counts, and in an accordion a chevron), its actions, and when open
+ *  its body under it. */
+function FileTreeRow({ file, label, selectedPath, onSelect, onAccept, onDiscard, disabled = false, isOpen, onToggle, renderBody }: FileTreeRowProps) {
+  // Pressed with a pointer: WebKit can still match :focus-visible after the press, so the ring stays off until a key.
+  const [pressed, setPressed] = useState(false);
+  const open = renderBody ? isOpen?.(file.path) ?? false : undefined;
+  const selected = open ?? file.path === selectedPath;
+  const item = (
+    <div
+      className={`themis-filetree-row${selected ? " themis-filetree-row--selected" : ""}`}
+    >
+      <button
+        type="button"
+        className="themis-filetree-select"
+        aria-current={open === undefined ? selected : undefined}
+        aria-expanded={open}
+        data-pointer={pressed || undefined}
+        onPointerDown={() => setPressed(true)}
+        onKeyDown={() => setPressed(false)}
+        onBlur={() => setPressed(false)}
+        onClick={() => (onToggle ? onToggle(file.path) : onSelect(file.path))}
+      >
+        <span
+          aria-hidden="true"
+          className={`themis-filetree-status themis-filetree-status--${file.status}`}
+        >
+          {STATUS_GLYPH[file.status]}
+        </span>
+        <span className="themis-filetree-path" title={file.path}>
+          {label}
+        </span>
+        <FileCounts file={file} />
+        {open !== undefined && <Chevron open={open} />}
+      </button>
+      {onAccept && <FileActions file={file} disabled={disabled} onAccept={onAccept} onDiscard={onDiscard} />}
+    </div>
+  );
+  return (
+    <li key={file.path} className={`themis-filetree-entry${open ? " is-open" : ""}`}>
+      {item}
+      {open && renderBody?.(file)}
+    </li>
+  );
+}
+
+/** The file's added and removed line counts, when it has any. */
+function FileCounts({ file }: { file: DiffFile }) {
+  if (file.added === 0 && file.removed === 0) return null;
+  return (
+    <span className="themis-filetree-counts" aria-label={`${file.added} added, ${file.removed} removed`}>
+      {file.added > 0 && <span className="themis-diff-count-add">+{file.added}</span>}
+      {file.removed > 0 && <span className="themis-diff-count-del">-{file.removed}</span>}
+    </span>
+  );
+}
+
+/** An accordion row's fold chevron, turned down while open. */
+function Chevron({ open }: { open: boolean }) {
+  return <svg className={`themis-filetree-chevron${open ? " is-open" : ""}`} width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true"><path d="m9 6 6 6-6 6" /></svg>;
+}
+
+/** Accept and Discard for a changed file; a file changed before the chat started can't be discarded here. */
+function FileActions({ file, disabled, onAccept, onDiscard }: { file: DiffFile; disabled: boolean; onAccept: (path: string) => void; onDiscard?: (path: string) => void }) {
+  return (
+    <span className="themis-filetree-actions">
+      <button
+        type="button"
+        aria-label={`Accept ${file.path}`}
+        className="themis-filetree-btn themis-filetree-btn--accept"
+        disabled={disabled}
+        onClick={() => onAccept(file.path)}
+      >
+        ✓
+      </button>
+      <button
+        type="button"
+        aria-label={`Discard ${file.path}`}
+        title={
+          file.preexisting
+            ? "Changed before this chat started, so it can't be discarded here"
+            : `Discard ${file.path}`
+        }
+        className="themis-filetree-btn themis-filetree-btn--discard"
+        disabled={disabled || file.preexisting}
+        onClick={() => onDiscard?.(file.path)}
+      >
+        ✕
+      </button>
+    </span>
   );
 }

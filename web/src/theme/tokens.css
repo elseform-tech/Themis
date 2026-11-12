@@ -14,6 +14,7 @@
   --themis-raised: #282a2d;
   --themis-border: #34363b;
   --themis-border-subtle: #2a2c30;
+  --themis-pill: rgba(217, 167, 62, .14);
   --themis-text: #e6e6e6;
   --themis-text-2: #a8abb2;
   --themis-text-3: #8d9199;
@@ -22,25 +23,107 @@
   --themis-accent-ink: #1a1405;
   --themis-success: #81c995;
   --themis-warning: #e3b85a;
-  --themis-danger: #f28b82;
+  --themis-danger: #f4968d;
   --themis-info: #8ab4f8;
+  /* Chat and Workspace surfaces (canvas --cardh, --well, --insp) and the ink on them; appearance.ts sets them per preset.
+     Card: the user bubble, the composer and a selected row or tab. Well: code and diffs. Inspector: the Workspace panel. */
+  --themis-card: #282a2d;
+  --themis-well: #1f2023;
+  --themis-inspector-bg: var(--themis-sidebar-bg);
+  --themis-code-keyword: #8ab4f8;
+  --themis-code-function: #d7aefb;
+  --themis-code-string: #81c995;
+  --themis-code-type: #e3b85a;
+  --themis-code-comment: #8d9199;
+  --themis-diff-add: #81c995;
+  --themis-diff-del: #f28b82;
   --themis-add-bg: rgba(129, 201, 149, 0.13);
+  /* The Themis Visions mark and the startup bar's track (canvas --ga, --gb, --lv, --div). */
+  --themis-mark-from: #c08a2e;
+  --themis-mark-to: #f6e7bd;
+  --themis-mark-v: #e6e6e6;
+  --themis-mark-track: #2a2c30;
   --themis-del-bg: rgba(242, 139, 130, 0.13);
-  --themis-composer-bg: var(--themis-surface);
-  --themis-user-message-bg: var(--themis-raised);
-  --themis-user-message-border: transparent;
+  /* A soft lift for cards on the stage (the bubble). */
+  --themis-card-lift: 0 1px 2px var(--themis-panel-shadow), inset 0 1px 0 var(--themis-panel-highlight);
+  --themis-well-shadow: inset 0 1px 3px var(--themis-panel-shadow);
   --themis-nav-hover-bg: color-mix(in srgb, var(--themis-text) 6%, transparent);
   --themis-nav-active-bg: color-mix(in srgb, var(--themis-text) 10%, transparent);
   --themis-nav-text: var(--themis-text);
   --themis-nav-icon: var(--themis-text-2);
   --themis-shimmer-base: var(--themis-text-2);
   --themis-shimmer-highlight: var(--themis-gradient-3);
-  --themis-gradient-1: #c08a2e;
+  --themis-gradient-1: #d0a660;
   --themis-gradient-2: #e3b85a;
   --themis-gradient-3: #f6e7bd;
+  /* Context warning and compaction text: the light end of the gradient on dark. */
+  --themis-warn-text: #f6e7bd;
   --themis-radius-pill: 999px;
   --themis-radius-card: 20px;
-  --themis-radius-composer: 28px;
+  --themis-radius-composer: 26px;
+  /* Framed layout: the sidebar dock, the chat stage and the Workspace panel are rounded panels inset on the frame. */
+  --themis-panel-gap: 8px;
+  --themis-stage-radius: 18px;
+  --themis-panel-radius: 20px;
+  --themis-panel-bg: var(--themis-sidebar-bg);
+  --themis-stage-bg: var(--themis-canvas);
+  --themis-panel-blur: none;
+  /* How panels sit on the frame (appearance.ts sets them per preset): the side panels get a sheen, a top highlight,
+     an inset ring and a drop shadow; the stage an edge ring and the highlight. */
+  --themis-panel-highlight: rgba(255, 255, 255, .05);
+  --themis-panel-ring: transparent;
+  --themis-panel-shadow: rgba(0, 0, 0, .28);
+  --themis-stage-edge: #34363b;
+  --themis-panel-sheen: linear-gradient(140deg, var(--themis-panel-highlight) -45%, transparent 28%);
+  --themis-panel-edge: inset 0 1px 0 var(--themis-panel-highlight), inset 0 0 0 1px var(--themis-panel-ring), 0 10px 36px var(--themis-panel-shadow);
+  --themis-stage-edge-shadow: inset 0 0 0 1px var(--themis-stage-edge), inset 0 1px 0 var(--themis-panel-highlight);
+  /* Sky presets paint this behind the frame; solid presets show the frame colour. */
+  --themis-sky: var(--themis-shell-bg);
+  /* Shadow colour, mixed with transparent at each shadow's strength. */
+  --themis-shadow: rgb(0 0 0);
+  /* Compatibility badges: ink on its own background, with a border. */
+  --themis-ok-ink: #8cdbab;
+  --themis-ok-bg: #193c29;
+  --themis-ok-line: #3b7350;
+  --themis-warn-ink: #f3cc7c;
+  --themis-warn-bg: #41351c;
+  --themis-warn-line: #816833;
+  --themis-bad-ink: #f3a1aa;
+  --themis-bad-bg: #48252c;
+  --themis-bad-line: #884b55;
+}
+
+/* Morning and Noon are light skies: darker status colours that read on the sky-blue frame and pale glass. */
+[data-theme="light"] {
+  color-scheme: light;
+  --themis-success: #11522a;
+  --themis-warning: #78340b;
+  --themis-danger: #8d0f33;
+  --themis-info: #034394;
+  --themis-link-light: #034394;
+  --themis-shadow: rgb(8 20 45 / .35);
+  /* The gold gradient as a deep bronze-to-amber ramp, every stop readable as text on the pale glass. */
+  --themis-gradient-1: #4d2c02;
+  --themis-gradient-2: #5c3604;
+  --themis-gradient-3: #693e00;
+  --themis-warn-text: #5c3604;
+  --themis-ok-ink: #21633d;
+  --themis-ok-bg: #e7f5ec;
+  --themis-ok-line: #a5cfb4;
+  --themis-warn-ink: #795009;
+  --themis-warn-bg: #fff4d9;
+  --themis-warn-line: #ddc18c;
+  --themis-bad-ink: #a02e3a;
+  --themis-bad-bg: #fcecef;
+  --themis-bad-line: #e4afb7;
+}
+
+/* Glass off (the system asks to reduce transparency): solid panels that keep their ring and shadow. Important, because a sky sets the glass inline on the root. */
+[data-glass="off"] {
+  --themis-panel-bg: var(--themis-sidebar-bg) !important;
+  --themis-stage-bg: var(--themis-canvas) !important;
+  --themis-panel-blur: none !important;
+  --themis-inspector-bg: var(--themis-sidebar-bg) !important;
 }
 
 /* Signature gradient text: drifts slowly; the global reduced-motion rule stops it. */
@@ -55,8 +138,6 @@
 @keyframes themis-gradient-drift { from { background-position: 0% 50%; } to { background-position: 100% 50%; } }
 /* The shared spinner turn: running subagents' rings and the task arc. */
 @keyframes themis-thread-spin { to { transform: rotate(1turn); } }
-/* The selected name's slow glint (the companion picker). */
-@keyframes themis-selected-glint { from { background-position: 100% 0; } to { background-position: -100% 0; } }
 
 body {
   background-color: var(--themis-canvas);

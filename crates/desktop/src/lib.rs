@@ -260,7 +260,10 @@ fn set_dock_icon() -> Result<(), String> {
     use objc2_foundation::NSData;
 
     let mtm = MainThreadMarker::new().ok_or("Dock icon must be set on the main thread")?;
-    let icon = NSData::with_bytes(include_bytes!("../icons/128x128@2x.png"));
+    // The macOS template image (padded body, soft shadow), like the bundle's icon.icns.
+    let icon = NSData::with_bytes(include_bytes!(
+        "../icons/Themis.iconset/icon_128x128@2x.png"
+    ));
     let image = NSImage::initWithData(NSImage::alloc(), &icon)
         .ok_or("could not load the bundled Dock icon")?;
     // SAFETY: AppKit requires a valid image; `image` stays retained for the call.
@@ -573,13 +576,6 @@ pub fn run() {
         builder
     };
     builder
-        .on_window_event(|window, event| {
-            if window.label() == "main" && matches!(event, tauri::WindowEvent::Destroyed) {
-                if let Some(companion) = window.app_handle().get_webview_window("companion") {
-                    let _ = companion.close();
-                }
-            }
-        })
         .setup(|app| {
             #[cfg(target_os = "macos")]
             set_dock_icon()?;

@@ -19,7 +19,6 @@ import { ComposerStack, useComposerQuestions } from "./ComposerStack";
 import { QueueStack } from "./QueueStack";
 import { CompactionNotice } from "./ContextMeter";
 import { WorkspacePanel } from "./WorkspacePanel";
-import { useOverview } from "./OverviewBox";
 import { useProjectWorkspace } from "./useProjectWorkspace";
 import { useThreadTasksSync } from "./threadTasks";
 import { skillToken } from "../lib/prompt";
@@ -89,7 +88,6 @@ export function ThreadView() {
   const running = thread === null ? false : (state.running[thread.id] ?? false);
   const messages = thread === null ? EMPTY_MESSAGES : (state.messages[thread.id] ?? EMPTY_MESSAGES);
   const history = useMemo(() => composerHistory(messages), [messages]);
-  const overview = useOverview(thread?.id ?? "", messages);
   const stream = thread === null ? "" : (state.streams[thread.id] ?? "");
 
   const sendError = thread === null ? undefined : state.sendErrors[thread.id];
@@ -113,7 +111,7 @@ export function ThreadView() {
   const [workspaceVersion, setWorkspaceVersion] = useState(0);
   const workspace = useProjectWorkspace(project?.root, runningNow, getWorkspace, workspaceVersion);
   const gitProject = project?.is_git === true;
-  // The header, the overview box and Workspace › Changes all show this chat's live diff.
+  // The header count and Workspace › Changes both show this chat's live diff.
   useLiveDiff(threadId, gitProject, runningNow, listDiff, (id, diff) => dispatch({ type: "diff/set", threadId: id, diff }));
   // The chat's queue, goal and to-do list; events keep them current afterwards.
   useEffect(() => {
@@ -268,11 +266,6 @@ export function ThreadView() {
   const diff = state.diffs[thread.id];
   const changedFiles = diff?.available ? visibleFiles(diff.files).length : undefined;
   const empty = messages.length === 0 && stream === "" && !running && !sending;
-  // The overview box stands in for the Workspace while it is closed. The chat keeps its room
-  // from the first message, so a long reply doesn't jump narrower when the box has something
-  // to list; with nothing to list it stays hidden.
-  const keepOverviewRoom = !state.diffPanelOpen && !empty;
-  const showOverview = keepOverviewRoom && overview.visible;
   const showNotice = budget?.compaction_soon === true && !compacting && running && !noticeDismissed[thread.id];
   const starters = [
     ...promptSkills.filter(skill => !skill.retired).slice(0, 2).map(skill => ({ label: `/ ${skill.name}`, text: `${skillToken(skill.id)} ` })),
@@ -334,7 +327,7 @@ export function ThreadView() {
 
   return (
     <div className={`themis-thread-layout${state.diffPanelOpen ? " is-reviewing" : ""}`}>
-    <div className={`themis-thread${keepOverviewRoom ? ` has-overview${overview.collapsed ? " overview-collapsed" : ""}` : ""}`}>
+    <div className="themis-thread">
       <ThreadHeader
         thread={thread}
         models={models}
@@ -380,7 +373,6 @@ export function ThreadView() {
             runStartedAt={state.runStartedAt[thread.id]}
             compacting={compacting}
             traces={trace}
-            overview={showOverview ? overview : undefined}
           />
           {showNotice && <CompactionNotice onDismiss={() => setNoticeDismissed(previous => ({ ...previous, [thread.id]: true }))} />}
           {composer}

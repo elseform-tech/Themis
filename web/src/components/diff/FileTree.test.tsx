@@ -25,6 +25,24 @@ function setup(files: DiffFile[] = FILES) {
 }
 
 describe("FileTree", () => {
+  // WebKit can treat a pressed row as focus-visible (the global 2px accent ring), so the row remembers it was pressed
+  // with a pointer and the ring stays off until the next key; a keyboard user still gets it.
+  it("leaves no ring on a row pressed with the mouse, and gives it back on keyboard use", () => {
+    const onToggle = vi.fn();
+    render(<FileTree files={FILES} selectedPath={null} onSelect={vi.fn()} isOpen={() => false} onToggle={onToggle} renderBody={() => null} />);
+    const row = screen.getByRole("button", { name: /^src\/a\.ts/ });
+    fireEvent.pointerDown(row);
+    row.focus();
+    fireEvent.click(row);
+    expect(onToggle).toHaveBeenCalledWith("src/a.ts");
+    expect(row).toHaveAttribute("data-pointer");
+    fireEvent.keyDown(row, { key: "Enter" });
+    expect(row).not.toHaveAttribute("data-pointer");
+    fireEvent.pointerDown(row);
+    fireEvent.blur(row);
+    expect(row).not.toHaveAttribute("data-pointer");
+  });
+
   it("selects a file on click", () => {
     const { onSelect } = setup();
     fireEvent.click(screen.getByTitle("src/a.ts"));

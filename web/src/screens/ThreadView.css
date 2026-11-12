@@ -2,8 +2,10 @@
    One definition per selector; palette colors come from theme tokens. */
 
 .themis-thread-layout { display: flex; min-height: 0; height: 100%; }
+.themis-thread-layout.is-reviewing { gap: var(--themis-panel-gap); }
+.themis-thread-layout.is-reviewing > .themis-thread { border-radius: var(--themis-stage-radius); background: var(--themis-stage-bg); box-shadow: var(--themis-stage-edge-shadow); overflow: hidden; }
 /* The chat column follows the room the sidebar and Workspace leave, with a readable cap. */
-.themis-thread { --themis-thread-gutter: clamp(20px, 5cqw, 64px); --themis-thread-column: 620px; position: relative; flex: 1; min-width: 0; display: flex; flex-direction: column; min-height: 0; height: 100%; }
+.themis-thread { --themis-thread-gutter: 28px; --themis-thread-column: 700px; position: relative; flex: 1; min-width: 0; display: flex; flex-direction: column; min-height: 0; height: 100%; }
 
 /* Empty states without a thread. */
 .themis-welcome { margin: auto; text-align: center; padding: 32px; max-width: 540px; }
@@ -11,13 +13,13 @@
 .themis-welcome p { color: var(--themis-text-2); margin: 0 0 24px; }
 
 /* Header: one pill for model and effort; review toggle on the right. */
-.themis-thread-head { display: flex; align-items: center; gap: 8px; min-height: 52px; padding: 6px 16px; }
+/* 52px tall; the model's name (inside its pill's 14px) and Workspace (inside its 4px) sit on the 28px gutter. */
+.themis-thread-head { display: flex; align-items: center; gap: 8px; min-height: 52px; padding: 0 24px 0 14px; }
 .themis-thread-head-spacer { flex: 1; }
-/* A narrow chat keeps the model readable: Workspace shrinks to its icon and count first. */
+/* A narrow chat keeps the model readable: the pill's own padding goes first. */
 .themis-thread-head { container: themis-head / inline-size; }
 .themis-model-pill-meta { min-width: 6ch; }
 @container themis-head (max-width: 460px) {
-  .themis-thread-head .themis-head-label { display: none; }
   .themis-thread-head .themis-model-pill > summary { padding: 0 8px; }
 }
 .themis-model-pill { position: relative; min-width: 0; }
@@ -25,9 +27,8 @@
 .themis-model-pill > summary { display: flex; align-items: center; gap: 8px; height: 40px; padding: 0 14px; border-radius: var(--themis-radius-pill); cursor: pointer; list-style: none; color: var(--themis-text); }
 .themis-model-pill > summary::-webkit-details-marker { display: none; }
 .themis-model-pill > summary:hover .themis-model-pill-meta, .themis-model-pill[open] .themis-model-pill-meta { color: var(--themis-text); }
-.themis-model-pill-brand { font-size: 1rem; font-weight: 500; }
 .themis-model-pill-meta { max-width: 38ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--themis-text-2); }
-.themis-model-panel { position: absolute; z-index: 30; top: calc(100% + 6px); left: 0; display: grid; gap: 14px; width: min(340px, 80vw); padding: 16px; border-radius: var(--themis-radius-card); background: var(--themis-raised); box-shadow: 0 16px 40px rgb(0 0 0 / .45); }
+.themis-model-panel { position: absolute; z-index: 30; top: calc(100% + 6px); left: 0; display: grid; gap: 14px; width: min(340px, 80vw); padding: 16px; border-radius: var(--themis-radius-card); background: var(--themis-raised); box-shadow: 0 16px 40px color-mix(in srgb, var(--themis-shadow) 45%, transparent); }
 .themis-composer-model-picker { display: flex; align-items: center; gap: 6px; min-width: 0; }
 .themis-composer-model-provider { display: flex; align-items: center; gap: 4px; color: var(--themis-text-2); font-size: .75rem; white-space: nowrap; opacity: .8; }
 .themis-composer-model-provider img { max-width: 3.25rem; max-height: .85rem; object-fit: contain; }
@@ -58,15 +59,16 @@
 
 /* Conversation stream. */
 .themis-thread-stream { flex: 1; overflow-y: auto; overflow-x: hidden; padding: 16px max(var(--themis-thread-gutter), calc((100% - var(--themis-thread-column)) / 2)) 24px; }
-.themis-thread-stream-content { display: flex; flex-direction: column; gap: 20px; min-width: 0; }
+.themis-thread-stream-content { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
 /* Room the content gave back while the end was being read; sized by followLatest. */
 .themis-thread-room { height: 0; }
 /* Back to the latest message, shown only while scrolled up; it rides the bottom of the view. */
-.themis-jump-latest { position: sticky; bottom: 12px; display: flex; align-items: center; gap: 6px; width: fit-content; margin: 8px auto 0; padding: 6px 12px; border: 1px solid var(--themis-border); border-radius: 999px; background: var(--themis-raised); color: var(--themis-text); font: inherit; font-size: .8125rem; box-shadow: 0 8px 24px rgb(0 0 0 / .25); cursor: pointer; }
+.themis-jump-latest { position: sticky; bottom: 12px; display: flex; align-items: center; gap: 6px; width: fit-content; margin: 8px auto 0; padding: 6px 12px; border: 1px solid var(--themis-border); border-radius: 999px; background: var(--themis-raised); color: var(--themis-text); font: inherit; font-size: .8125rem; box-shadow: 0 8px 24px color-mix(in srgb, var(--themis-shadow) 25%, transparent); cursor: pointer; }
 .themis-jump-latest:hover { color: var(--themis-accent); }
 .themis-thread-start { margin: auto; color: var(--themis-text-2); font-size: .875rem; }
 .themis-thread-msg { max-width: 100%; }
-.themis-thread-msg--user { align-self: flex-end; max-width: 80%; padding: 12px 18px; border-radius: 22px 22px 6px 22px; background: var(--themis-user-message-bg); }
+/* The person's message: a card that lifts off the stage (canvas --cardh, a soft shadow and the top highlight). */
+.themis-thread-msg--user { align-self: flex-end; max-width: 80%; padding: 9px 15px; border-radius: 18px; background: var(--themis-card); box-shadow: var(--themis-card-lift); }
 /* Notices in the chat ("Run interrupted…", "Stopped by you.", a failed request) are one small
    muted line, like a hint: they report what happened without shouting. */
 .themis-thread-msg--system { color: var(--themis-text-3); }
@@ -81,7 +83,7 @@
 /* Run activity: the agent's progress sentences read like its answers; tool calls fold into quiet rows. */
 .themis-run-activity { display: flex; flex-direction: column; gap: 8px; }
 .themis-milestone, .themis-tool-group { font-size: .8125rem; }
-.themis-tool-group > summary { display: inline-flex; align-items: center; gap: 8px; min-height: 28px; color: var(--themis-text-3); cursor: pointer; list-style: none; }
+.themis-tool-group > summary { display: inline-flex; align-items: center; gap: 8px; min-height: 28px; color: var(--themis-text-2); cursor: pointer; list-style: none; }
 .themis-tool-group > summary:hover { color: var(--themis-text); }
 .themis-tool-group > summary::-webkit-details-marker, .themis-milestone > summary::-webkit-details-marker, .themis-tool-message summary::-webkit-details-marker { display: none; }
 .themis-run-meta { color: var(--themis-text-3); font-size: .75rem; }
@@ -115,21 +117,21 @@
   .themis-tool-chevron { transition: none; }
 }
 
-/* Composer: a rounded pill. A sweeping ring marks an active run. */
+/* Composer: a glass card like the panels (canvas .lg on --cardh). A sweeping ring marks an active run. */
 .themis-thread-senderror { width: min(calc(100% - 2 * var(--themis-thread-gutter)), var(--themis-thread-column)); margin: 0 auto 6px; color: var(--themis-text-3); font-size: .75rem; }
 /* z-index 2: the composer's pop-ups (context, menus) open over the sticky run-progress row (z-index 1). */
-.themis-thread-composer { position: relative; display: flex; flex-direction: column; gap: 6px; width: min(calc(100% - 2 * var(--themis-thread-gutter)), var(--themis-thread-column)); margin: 4px auto 20px; padding: 12px 12px 10px 20px; border-radius: var(--themis-radius-composer); background: var(--themis-composer-bg); isolation: isolate; z-index: 2; }
+.themis-thread-composer { position: relative; display: flex; flex-direction: column; gap: 10px; width: min(calc(100% - 2 * var(--themis-thread-gutter)), var(--themis-thread-column)); margin: 4px auto 18px; padding: 14px 14px 10px 18px; border-radius: var(--themis-radius-composer); background: var(--themis-panel-sheen), var(--themis-card); box-shadow: var(--themis-panel-edge); -webkit-backdrop-filter: var(--themis-panel-blur); backdrop-filter: var(--themis-panel-blur); isolation: isolate; z-index: 2; }
 /* A narrow chat keeps the composer's controls as icons; names stay in tooltips and accessible labels. */
 .themis-thread-composer { container: themis-composer / inline-size; }
-@container themis-composer (max-width: 380px) {
+/* Labels give way only in an extremely narrow composer: the canvas keeps Auto and the branch named. */
+@container themis-composer (max-width: 260px) {
   .themis-thread-composer .themis-composer-label { display: none; }
-  .themis-composer-location > svg:not(:first-child) { margin-left: 2px; }
 }
-.themis-thread-composer:focus-within { box-shadow: 0 0 0 1px var(--themis-border); }
+.themis-thread-composer:focus-within { box-shadow: var(--themis-panel-edge), 0 0 0 1px var(--themis-border); }
 .themis-thread-composer--hero { margin: 0; width: min(100%, 760px); padding: 16px 14px 12px 22px; }
-.themis-composer-ring { position: absolute; inset: -1.5px; z-index: -1; border-radius: inherit; overflow: hidden; pointer-events: none; }
+/* Masked to its 1.5px edge, so the translucent composer never shows the sweep through its middle. */
+.themis-composer-ring { position: absolute; inset: -1.5px; z-index: -1; padding: 1.5px; border-radius: inherit; overflow: hidden; pointer-events: none; -webkit-mask: linear-gradient(black 0 0) content-box, linear-gradient(black 0 0); -webkit-mask-composite: xor; mask: linear-gradient(black 0 0) content-box exclude, linear-gradient(black 0 0); mask-composite: exclude; }
 .themis-composer-ring::before { content: ""; position: absolute; left: 50%; top: 50%; width: 200%; aspect-ratio: 1; transform: translate(-50%, -50%); background: conic-gradient(from 0deg, transparent 0deg, var(--themis-text-3) 60deg, var(--themis-text-2) 110deg, transparent 170deg); animation: themis-ring 4s linear infinite; }
-.themis-composer-ring::after { content: ""; position: absolute; inset: 1.5px; border-radius: inherit; background: var(--themis-composer-bg); }
 @keyframes themis-ring { to { transform: translate(-50%, -50%) rotate(1turn); } }
 .themis-thread-hint { margin: 0; font-size: .75rem; color: var(--themis-text-3); }
 .themis-composer-secret { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; color: var(--themis-text-2); }
@@ -137,14 +139,26 @@
 .themis-thread-composer .themis-prompt-editor { min-height: 28px; max-height: 240px; overflow-y: auto; padding: 4px 0; border: 0; border-radius: 0; background: transparent; line-height: 1.5; font-size: .9375rem; }
 .themis-thread-composer--hero .themis-prompt-editor { min-height: 52px; font-size: 1rem; }
 .themis-thread-composer .themis-prompt-editor:focus-visible { outline: none; }
-.themis-thread-composer-actions { display: flex; align-items: center; gap: 6px; }
-.themis-composer-spacer { flex: 1; }
+.themis-thread-composer-actions { display: flex; align-items: center; gap: 16px; }
+/* Nothing in the row shrinks away (+, Auto, the meter, send). In a narrow composer (beside Workspace) things give way in
+   order: the meter's percent text (its ring and tooltip stay), then the gaps, then a branch name past ten characters
+   (main or feature-x stay whole); the branch's icon alone, below 260px, is the last resort. */
+.themis-thread-composer-actions > * { flex: none; }
+.themis-composer-spacer { flex: 1 1 0; min-width: 0; }
+.themis-thread-composer-actions > .themis-branch-picker, .themis-thread-composer-actions > .themis-composer-branch-static { flex: 0 1 auto; min-width: auto; }
+.themis-thread-composer-actions .themis-branch-picker svg, .themis-composer-branch-static svg { flex: none; }
+@container themis-composer (max-width: 420px) {
+  .themis-thread-composer .themis-context-value { display: none; }
+}
+@container themis-composer (max-width: 380px) {
+  .themis-thread-composer-actions { gap: 8px; }
+}
 .themis-composer-add { position: relative; }
-.themis-composer-add > summary { display: grid; place-items: center; width: 40px; height: 40px; border-radius: 50%; color: var(--themis-text); cursor: pointer; list-style: none; }
+.themis-composer-add > summary { display: grid; place-items: center; width: 28px; height: 32px; border-radius: 8px; color: var(--themis-text); cursor: pointer; list-style: none; }
 .themis-composer-add > summary::-webkit-details-marker { display: none; }
 .themis-composer-add > summary { color: var(--themis-text-2); }
 .themis-composer-add > summary:hover, .themis-composer-add[open] > summary { color: var(--themis-text); }
-.themis-composer-menu { position: absolute; z-index: 30; bottom: calc(100% + 8px); left: 0; display: grid; gap: 2px; min-width: 220px; padding: 6px; border-radius: 18px; background: var(--themis-raised); box-shadow: 0 16px 40px rgb(0 0 0 / .45); }
+.themis-composer-menu { position: absolute; z-index: 30; bottom: calc(100% + 8px); left: 0; display: grid; gap: 2px; min-width: 220px; padding: 6px; border-radius: 18px; background: var(--themis-raised); box-shadow: 0 16px 40px color-mix(in srgb, var(--themis-shadow) 45%, transparent); }
 .themis-composer-menu button { display: flex; align-items: center; gap: 10px; min-height: 40px; padding: 0 12px; border: 0; border-radius: 12px; background: transparent; color: var(--themis-text); font: inherit; text-align: left; cursor: pointer; }
 .themis-composer-menu button:hover:not(:disabled) { color: var(--themis-accent-hover); }
 .themis-composer-menu button:disabled { opacity: .5; cursor: not-allowed; }
@@ -152,12 +166,8 @@
 .themis-composer-permissions { position: relative; }
 .themis-composer-permissions summary { display: flex; align-items: center; gap: 6px; height: 34px; padding: 0 4px; color: var(--themis-text-2); font-size: .8125rem; cursor: pointer; list-style: none; }
 .themis-composer-permissions summary:hover { color: var(--themis-text); }
-.themis-composer-location { display: flex; align-items: center; gap: 5px; min-width: 0; padding: 2px 4px 0; color: var(--themis-text-3); font-size: .75rem; }
-.themis-composer-location > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.themis-composer-location > svg:not(:first-child) { margin-left: 6px; }
-.themis-composer-branch { font-family: ui-monospace, SFMono-Regular, monospace; }
 .themis-composer-permissions summary::-webkit-details-marker { display: none; }
-.themis-permissions-panel { position: absolute; z-index: 30; bottom: calc(100% + 8px); left: 0; width: 20rem; max-width: calc(100vw - 32px); padding: 6px; border-radius: 16px; background: var(--themis-raised); box-shadow: 0 16px 40px rgb(0 0 0 / .45); font-size: .8rem; }
+.themis-permissions-panel { position: absolute; z-index: 30; bottom: calc(100% + 8px); left: 0; width: 20rem; max-width: calc(100vw - 32px); padding: 6px; border-radius: 16px; background: var(--themis-raised); box-shadow: 0 16px 40px color-mix(in srgb, var(--themis-shadow) 45%, transparent); font-size: .8rem; }
 /* The mode colours the shield: Auto gold, Custom neutral, YOLO (no prompts, no sandbox) red. */
 .themis-composer-permissions[data-mode="auto"] summary, .themis-permissions-mode[data-mode="auto"] svg { color: var(--themis-accent); }
 .themis-composer-permissions[data-mode="yolo"] summary, .themis-permissions-mode[data-mode="yolo"] svg { color: var(--themis-danger); }
@@ -175,25 +185,27 @@
 .themis-permissions-mode[aria-checked="true"] strong { font-weight: 700; }
 [role="radiogroup"][aria-disabled="true"] .themis-permissions-mode { cursor: progress; opacity: .6; }
 .themis-permissions-panel p { margin: 4px 10px 6px; color: var(--themis-text-3); font-size: .75rem; }
-.themis-send { display: grid; place-items: center; width: 36px; height: 36px; min-height: 36px; padding: 0; flex-shrink: 0; color: var(--themis-accent); }
+/* Send, steer and stop: one filled accent circle (canvas); stopping or nothing to send dims the circle, not the arrow. */
+.themis-button.themis-send { display: grid; place-items: center; width: 32px; height: 32px; min-height: 32px; padding: 0; flex-shrink: 0; border-radius: 50%; background: var(--themis-accent); color: var(--themis-accent-ink); }
 .themis-esc-hint { flex-shrink: 0; padding: 4px 10px; border-radius: 999px; background: color-mix(in srgb, var(--themis-accent) 14%, transparent); color: var(--themis-text-1); font-size: .75rem; white-space: nowrap; }
-.themis-send:hover:not(:disabled) { color: var(--themis-accent-hover); }
-.themis-send:disabled { color: var(--themis-text-3); opacity: 1; }
-.themis-send.themis-button--ghost { color: var(--themis-text); }
+.themis-button.themis-send:hover:not(:disabled) { background: var(--themis-accent-hover); color: var(--themis-accent-ink); }
+.themis-button.themis-send:disabled { background: color-mix(in srgb, var(--themis-accent) 70%, transparent); opacity: 1; }
 .themis-composer-attachments, .themis-message-attachments { display: flex; gap: 8px; overflow-x: auto; padding: 4px 0 8px; margin: 0; list-style: none; align-items: flex-start; }
 .themis-composer-attachments li { position: relative; flex-shrink: 0; }
 .themis-composer-attachments > li > button { position: absolute; top: -6px; right: -6px; z-index: 1; display: grid; place-items: center; width: 20px; height: 20px; padding: 0; border: 0; border-radius: 50%; background: var(--themis-text-2); color: var(--themis-canvas); font-size: 11px; cursor: pointer; opacity: 0; transition: opacity 120ms; }
 .themis-composer-attachments > li:hover > button, .themis-composer-attachments > li:focus-within > button { opacity: 1; }
 .themis-composer-attachments { padding: 8px 6px 4px; overflow: visible; flex-wrap: wrap; }
 .themis-message-attachments { align-self: flex-end; align-items: flex-end; justify-content: flex-end; flex-wrap: wrap; max-width: 100%; padding: 0; margin-bottom: -6px; overflow: visible; }
+/* A narrow column: attachments and the bubble shrink with it instead of pushing it wider. */
+.themis-message-attachments, .themis-thread-msg--user { min-width: 0; }
 .themis-attachment-preview { flex-shrink: 0; position: relative; box-sizing: border-box; margin: 0; font-size: .75rem; }
 .themis-attachment-preview figcaption { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--themis-text); }
-.themis-attachment-preview--media { width: 176px; }
+.themis-attachment-preview--media { width: 176px; max-width: 100%; }
 .themis-attachment-media { display: grid; place-items: center; height: 112px; overflow: hidden; border-radius: 14px; background: var(--themis-raised); }
 .themis-attachment-media img, .themis-attachment-media video { display: block; width: 100%; height: 100%; object-fit: cover; }
 .themis-attachment-media iframe { display: block; width: 100%; height: 100%; border: 0; background: white; pointer-events: none; }
 .themis-attachment-preview--media figcaption { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
-.themis-attachment-preview--file { display: flex; align-items: center; gap: 10px; width: 200px; height: 56px; padding: 8px 12px 8px 8px; border-radius: 14px; background: var(--themis-raised); }
+.themis-attachment-preview--file { display: flex; align-items: center; gap: 10px; width: 200px; max-width: 100%; height: 56px; padding: 8px 12px 8px 8px; border-radius: 14px; background: var(--themis-raised); }
 .themis-attachment-ext { display: grid; place-items: center; flex: none; width: 40px; height: 40px; border-radius: 10px; background: color-mix(in srgb, var(--themis-accent) 16%, transparent); color: var(--themis-accent); font-size: .75rem; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; }
 .themis-attachment-text { display: grid; gap: 2px; min-width: 0; flex: 1; }
 .themis-attachment-text small { color: var(--themis-text-3); font-size: .75rem; }
@@ -208,10 +220,10 @@
 .themis-context { position: relative; }
 .themis-context-chip { display: flex; align-items: center; gap: 6px; height: 34px; padding: 0 4px; border: 0; background: transparent; color: var(--themis-text-2); font: inherit; font-size: .8125rem; font-variant-numeric: tabular-nums; cursor: pointer; }
 .themis-context-chip:hover { color: var(--themis-text); }
-.themis-context-chip--warn { color: var(--themis-gradient-3); }
+.themis-context-chip--warn { color: var(--themis-warn-text); }
 .themis-context-spin { transform-box: fill-box; transform-origin: center; animation: themis-context-spin 1.4s linear infinite; }
 @keyframes themis-context-spin { to { transform: rotate(1turn); } }
-.themis-context-panel { position: absolute; z-index: 30; right: 0; bottom: calc(100% + 10px); display: grid; gap: 12px; width: min(460px, 86vw); padding: 18px 20px; border-radius: 22px; background: var(--themis-raised); box-shadow: 0 18px 50px rgb(0 0 0 / .5); }
+.themis-context-panel { position: absolute; z-index: 30; right: 0; bottom: calc(100% + 10px); display: grid; gap: 12px; width: min(460px, 86vw); padding: 18px 20px; border-radius: 22px; background: var(--themis-raised); box-shadow: 0 18px 50px color-mix(in srgb, var(--themis-shadow) 50%, transparent); }
 .themis-context-head { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 6px; }
 .themis-context-head span { color: var(--themis-text-2); font-size: .75rem; }
 .themis-context-thresholds { display: flex; flex-wrap: wrap; gap: 16px; margin: -4px 0 0; color: var(--themis-text-2); font-size: .75rem; }
@@ -228,8 +240,8 @@
 .themis-context-legend li > span { width: 10px; height: 10px; border-radius: 3px; flex: none; }
 .themis-context-legend b { margin-left: auto; font-weight: 500; font-variant-numeric: tabular-nums; color: var(--themis-text-2); }
 .themis-context-note { margin: 0; color: var(--themis-text-3); font-size: .75rem; }
-.themis-context-warn { margin: 0; padding: 10px 12px; border-radius: 12px; background: color-mix(in srgb, var(--themis-accent) 14%, transparent); color: var(--themis-gradient-3); font-size: .8125rem; line-height: 1.45; }
-.themis-compaction-notice { display: flex; align-items: center; gap: 10px; width: min(calc(100% - 2 * var(--themis-thread-gutter)), var(--themis-thread-column)); margin: 0 auto 6px; padding: 10px 10px 10px 16px; border-radius: 16px; background: color-mix(in srgb, var(--themis-accent) 14%, var(--themis-surface)); color: var(--themis-gradient-3); font-size: .8125rem; }
+.themis-context-warn { margin: 0; padding: 10px 12px; border-radius: 12px; background: color-mix(in srgb, var(--themis-accent) 14%, transparent); color: var(--themis-warn-text); font-size: .8125rem; line-height: 1.45; }
+.themis-compaction-notice { display: flex; align-items: center; gap: 10px; width: min(calc(100% - 2 * var(--themis-thread-gutter)), var(--themis-thread-column)); margin: 0 auto 6px; padding: 10px 10px 10px 16px; border-radius: 16px; background: color-mix(in srgb, var(--themis-accent) 14%, var(--themis-surface)); color: var(--themis-warn-text); font-size: .8125rem; }
 .themis-compaction-notice > span { flex: 1; }
 .themis-compaction-notice button { width: 28px; height: 28px; border: 0; border-radius: 50%; background: transparent; color: inherit; font-size: 1.1rem; cursor: pointer; }
 
@@ -252,14 +264,18 @@
 .themis-edited-files > .themis-edited-more:first-child { margin-top: 0; }
 .themis-edited-hidden { margin-top: 2px; }
 /* Recording pill: the chat's built-in browser is being recorded. */
-.themis-recording-pill { flex: none; display: inline-flex; align-items: center; gap: 6px; height: 24px; padding: 0 10px 0 8px; border: 0; border-radius: var(--themis-radius-pill); background: #48252c; color: #f3a1aa; font: inherit; font-size: .75rem; font-weight: 600; font-variant-numeric: tabular-nums; cursor: pointer; }
+.themis-recording-pill { flex: none; display: inline-flex; align-items: center; gap: 6px; height: 24px; padding: 0 10px 0 8px; border: 0; border-radius: var(--themis-radius-pill); background: var(--themis-bad-bg); color: var(--themis-bad-ink); font: inherit; font-size: .75rem; font-weight: 600; font-variant-numeric: tabular-nums; cursor: pointer; }
 .themis-recording-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--themis-danger); animation: themis-recording-pulse 1.6s ease-in-out infinite; }
 @keyframes themis-recording-pulse { 0%, 100% { opacity: 1; } 50% { opacity: .35; } }
 @media (prefers-reduced-motion: reduce) { .themis-recording-dot { animation: none; } }
 
 /* Composer branch switcher. */
-.themis-composer-location > .themis-branch-picker { position: relative; min-width: 0; margin-left: 4px; }
-.themis-branch-picker > summary { display: flex; align-items: center; gap: 5px; min-width: 0; min-height: 24px; padding: 0 6px 0 8px; border-radius: var(--themis-radius-pill); background: color-mix(in srgb, var(--themis-text) 6%, transparent); color: var(--themis-text-2); cursor: pointer; list-style: none; transition: background .15s ease; }
+.themis-thread-composer-actions .themis-branch-picker { position: relative; }
+/* The branch in the controls row, like Auto: icon and name in text-2; a long name ellipsizes. */
+.themis-composer-branch-static { display: flex; align-items: center; gap: 6px; min-width: 0; color: var(--themis-text-2); font-size: .8125rem; }
+.themis-composer-branch { min-width: 10ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.themis-composer-branch.is-short { min-width: auto; }
+.themis-branch-picker > summary { display: flex; align-items: center; gap: 6px; min-width: 0; min-height: 34px; padding: 0 4px; border-radius: 8px; color: var(--themis-text-2); font-size: .8125rem; cursor: pointer; list-style: none; transition: color .15s ease; }
 .themis-branch-picker > summary::-webkit-details-marker { display: none; }
 .themis-branch-picker > summary:hover, .themis-branch-picker > summary:focus-visible, .themis-branch-picker[open] > summary { background: color-mix(in srgb, var(--themis-text) 12%, transparent); color: var(--themis-text); }
 .themis-branch-picker > summary:focus-visible { outline: 2px solid var(--themis-text-2); outline-offset: 1px; }
@@ -271,7 +287,7 @@
   .themis-branch-picker > summary:hover .themis-composer-branch, .themis-branch-picker > summary:focus-visible .themis-composer-branch { animation: none; background: none; color: var(--themis-text); }
   .themis-branch-chevron, .themis-branch-picker > summary { transition: none; }
 }
-.themis-branch-menu { position: absolute; bottom: calc(100% + 6px); left: 0; z-index: 30; display: flex; flex-direction: column; min-width: 180px; max-width: 320px; max-height: 260px; overflow-y: auto; padding: 4px; border-radius: 12px; background: var(--themis-raised); box-shadow: 0 8px 24px rgb(0 0 0 / .35); }
+.themis-branch-menu { position: absolute; bottom: calc(100% + 6px); left: 0; z-index: 30; display: flex; flex-direction: column; min-width: 180px; max-width: 320px; max-height: 260px; overflow-y: auto; padding: 4px; border-radius: 12px; background: var(--themis-raised); box-shadow: 0 8px 24px color-mix(in srgb, var(--themis-shadow) 35%, transparent); }
 .themis-branch-menu button { padding: 7px 10px; border: 0; border-radius: 8px; background: transparent; color: var(--themis-text); font: inherit; text-align: left; cursor: pointer; overflow-wrap: anywhere; }
 .themis-branch-menu button:hover, .themis-branch-menu button:focus-visible { background: color-mix(in srgb, var(--themis-text) 8%, transparent); }
 

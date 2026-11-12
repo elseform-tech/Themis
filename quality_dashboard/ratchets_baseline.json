@@ -659,21 +659,10 @@
    "lines": 138
   },
   "web/src/App.tsx::Shell": {
-   "cognitive": 27,
-   "cyclomatic": 42
+   "cyclomatic": 25
   },
   "web/src/App.tsx::Shell::onKeyDown": {
    "cognitive": 35
-  },
-  "web/src/components/DesktopCompanion.tsx::DesktopCompanion": {
-   "cyclomatic": 21
-  },
-  "web/src/components/DesktopCompanion.tsx::useDesktopCompanion": {
-   "cognitive": 31
-  },
-  "web/src/components/KnightCompanion.tsx::KnightCompanion": {
-   "cognitive": 33,
-   "cyclomatic": 33
   },
   "web/src/components/PromptInput.tsx::PromptInput": {
    "cognitive": 119,
@@ -688,13 +677,11 @@
    "cyclomatic": 39
   },
   "web/src/components/diff/DiffView.tsx::DiffView": {
-   "cognitive": 64,
-   "cyclomatic": 40
+   "cognitive": 29,
+   "cyclomatic": 32
   },
   "web/src/components/diff/FileTree.tsx::FileTree": {
-   "cognitive": 29,
-   "cyclomatic": 44,
-   "lines": 141
+   "cyclomatic": 32
   },
   "web/src/lib/plainText.ts::stripInline": {
    "cognitive": 44,
@@ -754,17 +741,10 @@
    "cyclomatic": 73,
    "lines": 117
   },
-  "web/src/screens/OverviewBox.tsx::OverviewBox": {
-   "cognitive": 28,
-   "cyclomatic": 36
-  },
-  "web/src/screens/OverviewBox.tsx::useOverview": {
-   "cyclomatic": 25
-  },
   "web/src/screens/Palette.tsx::Palette": {
-   "cognitive": 38,
-   "cyclomatic": 42,
-   "lines": 143
+   "cognitive": 35,
+   "cyclomatic": 38,
+   "lines": 128
   },
   "web/src/screens/PermissionsView.tsx::PermissionsSettings": {
    "cyclomatic": 33
@@ -797,9 +777,9 @@
    "cyclomatic": 41
   },
   "web/src/screens/Sidebar.tsx::Sidebar": {
-   "cognitive": 90,
-   "cyclomatic": 116,
-   "lines": 171
+   "cognitive": 84,
+   "cyclomatic": 106,
+   "lines": 155
   },
   "web/src/screens/Sidebar.tsx::threadStatus": {
    "cognitive": 45,
@@ -833,9 +813,9 @@
    "cyclomatic": 31
   },
   "web/src/screens/ThreadComposer.tsx::ThreadComposer": {
-   "cognitive": 34,
-   "cyclomatic": 47,
-   "lines": 141
+   "cognitive": 31,
+   "cyclomatic": 44,
+   "lines": 138
   },
   "web/src/screens/ThreadConversation.tsx::ConversationRow": {
    "cognitive": 41,
@@ -849,17 +829,14 @@
    "cyclomatic": 43
   },
   "web/src/screens/ThreadConversation.tsx::ThreadConversation": {
-   "cognitive": 57,
-   "cyclomatic": 61,
-   "lines": 134
-  },
-  "web/src/screens/ThreadHeader.tsx::ThreadHeader": {
-   "cyclomatic": 23
+   "cognitive": 56,
+   "cyclomatic": 60,
+   "lines": 132
   },
   "web/src/screens/ThreadView.tsx::ThreadView": {
-   "cognitive": 72,
-   "cyclomatic": 124,
-   "lines": 240
+   "cognitive": 66,
+   "cyclomatic": 119,
+   "lines": 233
   },
   "web/src/screens/ThreadView.tsx::ThreadView::send": {
    "cyclomatic": 22
@@ -872,7 +849,7 @@
    "cyclomatic": 40
   },
   "web/src/screens/WorkspacePanel.tsx::ChangesView": {
-   "cognitive": 37,
+   "cognitive": 36,
    "cyclomatic": 52
   },
   "web/src/screens/WorkspacePanel.tsx::WorkspacePanel": {

@@ -794,16 +794,16 @@ async fn appearance_preferences_roundtrip_through_server_and_cli() {
     let state = AppState::new_for_test(settings_path.clone());
     let server = Server::bind(state, data_dir.path()).await.expect("bind");
     let task = tokio::spawn(server.run());
-    let args = json!({"patch": {"theme_palette": "ocean", "font_family": "mono", "text_size": 22}})
+    let args = json!({"patch": {"theme_palette": "night", "font_family": "mono", "text_size": 22}})
         .to_string();
     let saved = cli(data_dir.path(), &["call", "update_settings", &args]);
-    assert_eq!(saved["theme_palette"], "ocean");
+    assert_eq!(saved["theme_palette"], "night");
     assert_eq!(saved["font_family"], "mono");
     assert_eq!(saved["text_size"], 22);
     let loaded = themis_desktop::settings::SettingsStore::load(settings_path)
         .get()
         .await;
-    assert_eq!(loaded.theme_palette, "ocean");
+    assert_eq!(loaded.theme_palette, "night");
     assert_eq!(loaded.font_family, "mono");
     assert_eq!(loaded.text_size, 22);
     let invalid = Client::new(data_dir.path().to_path_buf())
@@ -816,6 +816,31 @@ async fn appearance_preferences_roundtrip_through_server_and_cli() {
     assert_eq!(
         cli(data_dir.path(), &["call", "get_settings", "{}"])["font_family"],
         "mono"
+    );
+    for sky in ["morning", "noon", "night", "classic"] {
+        let args = json!({"patch": {"theme_palette": sky}}).to_string();
+        assert_eq!(
+            cli(data_dir.path(), &["call", "update_settings", &args])["theme_palette"],
+            sky
+        );
+    }
+    let retired = Client::new(data_dir.path().to_path_buf())
+        .call(
+            "update_settings",
+            json!({"patch": {"theme_palette": "system"}}),
+        )
+        .await;
+    assert!(retired.is_err());
+    let removed = Client::new(data_dir.path().to_path_buf())
+        .call(
+            "update_settings",
+            json!({"patch": {"theme_palette": "ocean"}}),
+        )
+        .await;
+    assert!(removed.is_err());
+    assert_eq!(
+        cli(data_dir.path(), &["call", "get_settings", "{}"])["theme_palette"],
+        "classic"
     );
     task.abort();
 }
@@ -845,13 +870,13 @@ async fn fixed_workspace_and_dark_presets_survive_settings_changes_and_restart()
     let root = project["root"].as_str().unwrap();
     std::fs::write(Path::new(root).join("keep.txt"), "keep my work").unwrap();
     let args = json!({"patch": {
-        "theme": "system", "theme_palette": "github-dimmed",
+        "theme": "system", "theme_palette": "noon",
         "font_family": "mono", "text_size": 18
     }})
     .to_string();
     let saved = cli(data.path(), &["call", "update_settings", &args]);
     assert_eq!(saved["theme"], "dark");
-    assert_eq!(saved["theme_palette"], "github-dimmed");
+    assert_eq!(saved["theme_palette"], "noon");
     assert_eq!(
         cli(data.path(), &["call", "get_default_project", "{}"]),
         project

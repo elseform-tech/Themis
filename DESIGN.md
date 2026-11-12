@@ -72,37 +72,52 @@ This applies to every screen, not just Settings. Before adding an element, ask w
 
 ## Color system
 
-Dark mode is the product baseline. Palette values come from [`web/src/theme/appearance.ts`](web/src/theme/appearance.ts), with CSS defaults in [`web/src/theme/tokens.css`](web/src/theme/tokens.css). Use the tokens rather than copying hex values into new components. Appearance presets may change neutral surfaces and accents; semantic status meaning must stay consistent.
+Dark mode is the product baseline; the Morning and Noon skies are the light looks alongside it, and each preset carries its own `mode`. Palette values come from [`web/src/theme/appearance.ts`](web/src/theme/appearance.ts), with CSS defaults in [`web/src/theme/tokens.css`](web/src/theme/tokens.css). Use the tokens rather than copying hex values into new components. Appearance presets may change neutral surfaces and accents; semantic status meaning must stay consistent.
 
-| Role | Token | Themis preset / value | Rule |
+| Role | Token | Classic preset / value | Rule |
 | --- | --- | --- | --- |
-| Frame | `--themis-shell-bg` | `#232427` | Persistent app chrome |
-| Sidebar | `--themis-sidebar-bg` | `#1c1d20` | Project and chat navigation |
-| Canvas | `--themis-canvas` | `#131314` | Main working surface |
-| Surface / raised | `--themis-surface`, `--themis-raised` | `#1f2023`, `#282a2d` | Inputs and meaningful elevation |
-| Border | `--themis-border` | `#34363b` | Necessary boundaries only |
+| Frame | `--themis-shell-bg` | `#232427` | Persistent app chrome (canvas `--win`); the panels stand off it by their edge and shadow, not by tint |
+| Sidebar | `--themis-sidebar-bg` | `#1c1d20` | Project and chat navigation (canvas `--side`) |
+| Canvas | `--themis-canvas` | `#131314` | Main working surface, the stage (canvas `--stage`); on dark looks darker than the side panel, on light skies brighter |
+| Surface / raised | `--themis-surface`, `--themis-raised` | `#1f2023`, `#282a2d` | Inputs and meaningful elevation (canvas Classic `--card`, `--cardh`; skies: `--cardh` composited on the stage) |
+| Border / hairline | `--themis-border`, `--themis-border-subtle` | `#34363b`, `#2a2c30` | Necessary boundaries only (canvas `--edge`, `--div`); `--themis-pill` is the canvas's soft accent chip |
 | Primary text | `--themis-text` | `#e6e6e6` | Content and primary labels |
 | Secondary text | `--themis-text-2` | `#a8abb2` | Useful supporting information; never a reason to add filler |
 | Accent | `--themis-accent` | `#d9a73e` | Sparse emphasis, not decoration on every control |
 | Success | `--themis-success` | `#81c995` | Successful outcome |
 | Warning | `--themis-warning` | `#e3b85a` | Limitation or decision requiring attention |
-| Danger | `--themis-danger` | `#f28b82` | Failure or destructive action |
+| Danger | `--themis-danger` | `#f4968d` | Failure or destructive action |
 | Information | `--themis-info` | `#8ab4f8` | Neutral informational emphasis |
-| Warm gradient | `--themis-gradient-1/2/3` | `#c08a2e` → `#e3b85a` → `#f6e7bd` | Approved Themis moments only (below) |
+| Sky | `--themis-sky` | frame colour (solid presets) | Sky presets only: frame tint, glows and gradient behind the frame |
+| Glass | `--themis-panel-bg`, `--themis-stage-bg`, `--themis-panel-blur` | sidebar, canvas, `none` | Sky presets: translucent panels on every OS, `blur(36px) saturate(190%)` only on macOS; solid under `data-glass="off"` (reduced transparency) |
+| Panel edge | `--themis-panel-highlight`, `--themis-panel-ring`, `--themis-panel-shadow`, `--themis-stage-edge` | `rgba(255,255,255,.05)`, `transparent`, `rgba(0,0,0,.28)`, `#34363b` | Composed into `--themis-panel-sheen` and `--themis-panel-edge` (side panels) and `--themis-stage-edge-shadow` (stage); never replaced by an opaque border |
+| Card | `--themis-card`, `--themis-card-lift` | `#282a2d`; `0 1px 2px` shadow + top highlight | The person's message, the composer (with the panel sheen and edge) and a chosen sidebar chat, Workspace tab or file (canvas `--cardh`) |
+| Well | `--themis-well`, `--themis-well-shadow` | `#1f2023`; `inset 0 1px 3px` shadow | Code blocks, inline code (slim), diffs and the Workspace file view (canvas `--well`); lines padded 14 px, line height 1.7 in the chat and 1.8 in Workspace; a diff's hunk header is a quiet text-2 row on a 4% text tint, never an opaque band |
+| Workspace panel | `--themis-inspector-bg` | `#1c1d20` | The Workspace panel's glass (canvas `--insp`); the sidebar colour under `data-glass="off"` |
+| Code ink | `--themis-code-keyword`, `-function`, `-string`, `-type`, `-comment` | `#8ab4f8`, `#d7aefb`, `#81c995`, `#e3b85a`, `#8d9199` | Syntax on the well (canvas `--kw`, `--fn`, `--str`, `--ty`, `--com`); comment also colours line numbers on unchanged lines |
+| Diff ink | `--themis-diff-add`, `--themis-add-bg`, `--themis-diff-del`, `--themis-del-bg` | `#81c995` on `rgba(129,201,149,.13)`, `#f28b82` on `rgba(242,139,130,.13)` | A changed line, its number included, is tinted whole in its ink (canvas `--add`/`--addh`, `--del`/`--delh`); changed characters are underlined; line counts use the ink |
+| Accent ink | `--themis-accent-ink` | `#1a1405` (white on Morning and Noon, `#06101E` on Night) | Icons and text on the accent (canvas `--ona`): the send circle (not ready: the accent at 70% under the same arrow, 3:1), badges, switches |
+| Mark | `--themis-mark-from`, `--themis-mark-to`, `--themis-mark-v`, `--themis-mark-track` | `#c08a2e` → `#f6e7bd`, `#e6e6e6`, `#2a2c30` | The Themis Visions mark on the startup screen (canvas `--ga`, `--gb`, `--lv`) and its bar's track (`--div`) |
+| Shadow | `--themis-shadow` | `rgb(0 0 0)`; light `rgb(8 20 45 / .35)` | Mix with transparent at each shadow's strength |
+| Warm gradient | `--themis-gradient-1/2/3` | `#d0a660` → `#e3b85a` → `#f6e7bd` | Approved Themis moments only (below) |
 
-Compatibility badges currently use the following dark color pairs in [`Plugins.css`](web/src/screens/Plugins.css). Keep this mapping consistent across tiles and filters; centralize these values if another screen needs them.
+Light skies (`data-theme="light"`) keep the same roles with darker status colours that reach 4.5:1 on the sky-blue frame and the pale glass: success `#11522a`, warning `#78340b`, danger `#8d0f33`, information `#034394`. Shadows use the soft navy `--themis-shadow`. The warm gradient becomes a deep bronze-to-amber ramp (`#4d2c02` → `#5c3604` → `#693e00`) so the greeting, the wordmark glint, shimmer and the working spinner stay readable; context-warning and compaction text use `--themis-warn-text` (`#f6e7bd` on dark, `#5c3604` on light).
+
+Every look uses the canvas boards' tokens verbatim (`appearance.ts`, checked by `contrast.test.ts`), except where a text, accent or ink colour missed 4.5:1 (3:1 for icons) on its real composited surface; those moved by the smallest step that passes and are listed in `CONTRAST_DEPARTURES` with the canvas value (Morning and Noon accents and code and diff ink, Night's comment).
+
+Compatibility badges use the `--themis-ok-*`, `--themis-warn-*` and `--themis-bad-*` tokens (ink, background, line) from [`tokens.css`](web/src/theme/tokens.css), dark / light. The recording pill uses the `bad` pair too. Keep this mapping consistent across tiles and filters.
 
 | Label | Text | Background | Border |
 | --- | --- | --- | --- |
-| Compatible | `#8cdbab` | `#193c29` | `#3b7350` |
-| Partially supported | `#f3cc7c` | `#41351c` | `#816833` |
-| Unsupported / Check failed | `#f3a1aa` | `#48252c` | `#884b55` |
+| Compatible | `#8cdbab` / `#21633d` | `#193c29` / `#e7f5ec` | `#3b7350` / `#a5cfb4` |
+| Partially supported | `#f3cc7c` / `#795009` | `#41351c` / `#fff4d9` | `#816833` / `#ddc18c` |
+| Unsupported / Check failed | `#f3a1aa` / `#a02e3a` | `#48252c` / `#fcecef` | `#884b55` / `#e4afb7` |
 | Unchecked / disabled | Secondary text token | Neutral surface | Border token |
 
 - Color reinforces a written status; it must never carry meaning alone.
 - Keep ordinary text contrast at least 4.5:1, large text at least 3:1, and essential control/focus boundaries at least 3:1 against adjacent colors. Verify actual rendered combinations across presets.
 - Do not reuse warning or danger colors for arbitrary category decoration. Personal/Public are provenance labels, not good/bad ratings.
-- Avoid gradients, glow, shimmer, or saturation as generic decoration. Approved treatments: the drifting warm-gradient greeting and faint glow on an empty chat, the shimmer on the composer branch chip while it is hovered or focused, the sweeping ring on the composer while a run is active, the warm context-meter warning near auto-compact, status shimmer for real pending work, and the wordmark glint. Honor reduced motion for all of them.
+- Avoid gradients, glow, shimmer, or saturation as generic decoration. Approved treatments: the drifting warm-gradient greeting and faint glow on an empty chat, the shimmer on the composer's branch while it is hovered or focused, the sweeping ring on the composer while a run is active, the warm context-meter warning near auto-compact, status shimmer for real pending work, and the wordmark glint. Honor reduced motion for all of them.
 
 ## Typography, motion, and accessibility
 
@@ -125,7 +140,7 @@ Before calling a UI change complete:
 
 These rules guide implementation and review. They do not replace actual runtime verification or authorize changing unrelated workflows.
 
-Compatibility scans belong to the backend. Save and reuse results across visits. Show the interactive companion centered in the content area with a surrounding progress ring and actual completed/total percentage while a marketplace is checked (indeterminate before the total is known), keep navigation usable, and expose its tiles only after the entire scan completes. Manual previews and installs reuse that snapshot. A refresh must invalidate older pending views and installation approvals, and duplicate clicks must never create duplicate operations.
+Compatibility scans belong to the backend. Save and reuse results across visits. Show the Loader (the Themis wordmark and a thin progress bar with the actual completed/total; a sweeping indeterminate bar until the total is known) centered in the content area while a marketplace is checked, keep navigation usable, and expose its tiles only after the entire scan completes. Manual previews and installs reuse that snapshot. A refresh must invalidate older pending views and installation approvals, and duplicate clicks must never create duplicate operations.
 
 - Transient integration errors and confirmations use the shared timed side toast, never loose inline notices. Persistent compatibility limitations stay in collapsible item details. MCP uses compact installed rows with aligned status/actions and the complete saved command.
 

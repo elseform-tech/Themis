@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="200" height="200" viewBox="0 0 200 200" role="img" aria-label="Themis Visions">
+  <defs>
+    <linearGradient id="tg-light" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#007AFF"/>
+      <stop offset="1" stop-color="#6366F1"/>
+    </linearGradient>
+  </defs>
+  <rect width="200" height="200" rx="36" fill="#F4F8FD"/>
+  <rect x="1" y="1" width="198" height="198" rx="35" fill="none" stroke="#0F1D33" stroke-opacity=".12" stroke-width="2"/>
+  <path d="M32 44H168L154 68H112V124L100 144L88 124V68H46Z" fill="url(#tg-light)"/>
+  <path d="M39 58L63 58L100 122L137 58L161 58L100 164Z" fill="#0F1D33" fill-opacity=".9"/>
+</svg>

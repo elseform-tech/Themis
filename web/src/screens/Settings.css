@@ -188,18 +188,22 @@
 
 .themis-settings-control select { border: 0; border-bottom: 1px solid var(--themis-border); border-radius: 0; background: transparent; }
 .themis-settings-control select option { background: var(--themis-surface); }
-.themis-theme-presets { display: grid; grid-template-columns: repeat(auto-fit, minmax(115px, 1fr)); gap: 12px 20px; }
-.themis-theme-preset { font: inherit; font-size: .75rem; text-align: left; color: var(--themis-text-2); background: transparent; border: 0; border-bottom: 1px solid transparent; padding: 6px 0; cursor: pointer; }
-.themis-theme-preset[aria-pressed="true"] { color: var(--themis-text); border-bottom-color: var(--themis-accent); }
-.themis-theme-swatches { display: flex; gap: 3px; height: 12px; width: 66px; margin-bottom: 6px; }
-.themis-theme-swatches span { flex: 1; border-radius: 2px; }
+/* Appearance: one card per sky, its preview above the name; the chosen one has an accent ring. */
+.themis-theme-presets { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 14px; }
+.themis-theme-preset { display: flex; flex-direction: column; align-items: stretch; gap: 8px; min-width: 0; font: inherit; text-align: center; color: var(--themis-text-2); background: transparent; border: 0; padding: 0; cursor: pointer; }
+.themis-theme-preview { height: 84px; border-radius: 16px; box-shadow: inset 0 1px 0 var(--themis-panel-highlight), 0 0 0 2px transparent; transition: box-shadow 160ms ease; }
+.themis-theme-preset:hover .themis-theme-preview { box-shadow: inset 0 1px 0 var(--themis-panel-highlight), 0 0 0 2px var(--themis-border); }
+.themis-theme-preset[aria-pressed="true"] { color: var(--themis-text); font-weight: 600; }
+.themis-theme-preset[aria-pressed="true"] .themis-theme-preview { box-shadow: inset 0 1px 0 var(--themis-panel-highlight), 0 0 0 2px var(--themis-accent); }
+.themis-theme-preset:focus-visible { outline: none; }
+.themis-theme-preset:focus-visible .themis-theme-preview { outline: 2px solid var(--themis-accent); outline-offset: 3px; }
+@media (max-width: 560px) { .themis-theme-presets { grid-template-columns: repeat(3, minmax(0, 1fr)); } .themis-theme-preview { height: 64px; } }
 .themis-text-size { display: flex; align-items: center; gap: 12px; }
 .themis-text-size input { accent-color: var(--themis-accent); max-width: 150px; }
 .themis-text-size output { min-width: 36px; font-size: .75rem; }
 .themis-appearance-actions { display: flex; gap: 12px; align-items: center; }
 .themis-settings-root { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: ui-monospace, SFMono-Regular, monospace; font-size: .75rem; color: var(--themis-text-2); margin: 0; }
 .themis-settings-key-form .themis-input-wrap { min-width: 0; }
-@media (pointer: coarse) { .themis-theme-preset { min-height: 44px; } }
 
 .themis-appearance-actions { justify-content: flex-end; }
 /* Text fields sit recessed inside the containers so they read as fields. */

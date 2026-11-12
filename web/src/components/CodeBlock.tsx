@@ -8,7 +8,7 @@ export interface CodeBlockProps {
   showLineNumbers?: boolean;
 }
 
-type TokenKind = "comment" | "string" | "keyword" | "number" | "title" | "type" | "meta" | "plain";
+type TokenKind = "comment" | "string" | "keyword" | "number" | "title" | "type" | "meta" | "addition" | "deletion" | "plain";
 
 export interface Token {
   kind: TokenKind;
@@ -16,6 +16,13 @@ export interface Token {
 }
 
 const lowlight = createLowlight(common);
+
+/** A diff's added or removed line is tinted whole, its ink the line's own (the canvas's code well). */
+function lineClass(tokens: Token[]): string {
+  const kind = tokens[0]?.kind;
+  if (kind === "addition") return "themis-codeblock-line themis-codeblock-line--add";
+  return kind === "deletion" ? "themis-codeblock-line themis-codeblock-line--del" : "themis-codeblock-line";
+}
 
 /** Past this much text a block isn't coloured, so a huge file stays quick to open. */
 const MAX_HIGHLIGHTED_CHARS = 200_000;
@@ -27,6 +34,7 @@ const KINDS: Record<string, TokenKind> = {
   number: "number",
   title: "title", section: "title", name: "title",
   type: "type", built_in: "type", class: "type",
+  addition: "addition", deletion: "deletion",
   meta: "meta", attr: "meta", attribute: "meta", variable: "meta", params: "plain", subst: "plain",
 };
 
@@ -84,7 +92,7 @@ export function CodeBlock({
     <pre className="themis-codeblock">
       <code>
         {tokenized.map((tokens, index) => (
-          <span key={index} className="themis-codeblock-line">
+          <span key={index} className={lineClass(tokens)}>
             {showLineNumbers && (
               <span
                 aria-hidden="true"

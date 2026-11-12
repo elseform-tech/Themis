@@ -80,6 +80,8 @@ export function switchBranch(projectRoot: string, branch: string): Promise<Works
 export function getWorkspace(projectRoot: string, pullRequests = false): Promise<WorkspaceInfo> { return invoke("get_workspace", { projectRoot, pullRequests }); }
 export function listProjectDir(projectRoot: string, path: string): Promise<DirListing> { return invoke("list_project_dir", { projectRoot, path }); }
 export function readProjectFile(projectRoot: string, path: string): Promise<FileView> { return invoke("read_project_file", { projectRoot, path }); }
+/** A file as a local branch has it (read-only, bounded), for a branch diff's unchanged lines. */
+export function readBranchFile(projectRoot: string, branch: string, path: string): Promise<FileView> { return invoke("read_branch_file", { projectRoot, branch, path }); }
 
 export function ping(): Promise<string> {
   return invoke('ping');

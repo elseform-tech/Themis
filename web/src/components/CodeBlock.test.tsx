@@ -18,6 +18,17 @@ describe("CodeBlock", () => {
     expect(numbers[2]?.textContent).toBe("3");
   });
 
+  it("tints a diff's added and removed lines whole, as the canvas's code well does", () => {
+    const { container } = render(<CodeBlock code={"@@ -1 +1 @@\n-   Date::new(d.year)\n+   d.checked_add_days(1)\n }"} language="diff" />);
+    const lines = [...container.querySelectorAll(".themis-codeblock-line")];
+    expect(lines.map(line => line.className)).toEqual([
+      "themis-codeblock-line",
+      "themis-codeblock-line themis-codeblock-line--del",
+      "themis-codeblock-line themis-codeblock-line--add",
+      "themis-codeblock-line",
+    ]);
+  });
+
   it("hides line numbers by default", () => {
     const { container } = render(<CodeBlock code={"a\nb"} />);
     expect(

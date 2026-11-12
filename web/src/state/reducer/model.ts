@@ -224,7 +224,7 @@ export type AppAction =
 export const DEFAULT_SETTINGS: Settings = {
   projects_directory: "",
   text_size: 12,
-  theme_palette: "system",
+  theme_palette: "classic",
   font_family: "system",
   sidebar_hover: true,
   check_sources_for_updates: true,

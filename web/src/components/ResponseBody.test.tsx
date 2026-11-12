@@ -216,3 +216,24 @@ describe("fitting a flowchart to the frame", () => {
     expect(options.flowchart.rankSpacing).toBeLessThan(50);
   });
 });
+
+it("wraps a long code line in the well without changing what Copy gives back", async () => {
+  const writeText = vi.fn().mockResolvedValue(undefined);
+  Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText } });
+  const code = "def is_leap(year: int) -> bool:\n        return year % 4 == 0 and (year % 100 != 0 or year % 400 == 0)  # a very long line that has to wrap";
+  const { container } = render(<ResponseBody text={"```python\n" + code + "\n```"} />);
+  // The lines are the source's lines: wrapping is the browser's, nothing is inserted, indentation is kept.
+  const lines = [...container.querySelectorAll(".themis-codeblock-line")].map(line => line.textContent?.replace(/\n$/, ""));
+  expect(lines).toEqual(code.split("\n"));
+  fireEvent.click(screen.getByRole("button", { name: "Copy" }));
+  await waitFor(() => expect(writeText).toHaveBeenCalledWith(code));
+});
+
+it("lets a chart shrink with a narrow column down to readable labels, then scroll in its own frame", async () => {
+  // The mocked chart is drawn 120 wide: below 60% of that (72px) its labels would be unreadable.
+  const { container } = render(<ResponseBody text={'```mermaid\nflowchart LR\n A-->B\n```'} />);
+  const frame = await waitFor(() => { const found = container.querySelector<HTMLIFrameElement>(".themis-diagram-scroll > iframe"); expect(found).not.toBeNull(); return found!; });
+  expect(frame.style.width).toBe("100%");
+  expect(frame.style.minWidth).toBe("72px");
+  expect(frame.closest(".themis-diagram-preview")?.querySelector(".themis-diagram-expand")).not.toBeNull();
+});

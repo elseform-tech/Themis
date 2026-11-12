@@ -1,10 +1,13 @@
 import { useCallback, useEffect, useRef, useState, type CSSProperties, type ReactNode, useMemo } from "react";
 import { DiffView, EmptyState, FileTree, Tooltip } from "../components";
+import type { HiddenLinesMemory } from "../components/diff/DiffView";
 import { authorOf, authorOptions } from "../lib/changeAuthors";
 import { visibleFiles } from "../lib/hiddenFiles";
 import { CodeBlock } from "../components/CodeBlock";
-import type { DiffState, DirEntry, FileView, WorkspaceInfo } from "../lib/types";
-import { branchDiff, getWorkspace, listDiff, listProjectDir, readProjectFile } from "../lib/tauri";
+import type { DiffFile, DiffState, DirEntry, FileView, WorkspaceInfo } from "../lib/types";
+import { useFitSelect } from "../lib/fitSelect";
+import { foldsKey, isOpen, readFolds, setAll, writeFolds, type Folds } from "../lib/changeFolds";
+import { branchDiff, getWorkspace, listDiff, listProjectDir, readBranchFile, readProjectFile } from "../lib/tauri";
 import { describeError, useApp } from "../state/store";
 import { readSession, writeSession } from "../state/session";
 import type { WorkspaceTab } from "../state/reducer";
@@ -45,7 +48,7 @@ export function WorkspacePanel({ projectRoot, threadId, workspace }: { projectRo
   // Named anew when the default grew, so an older, narrower width doesn't stick.
   const widthKey = tab === "browser" ? "workspaceBrowserWidth" : "workspaceViewWidth";
   const smallest = tab === "browser" ? BROWSER_DEFAULT_WIDTH : DEFAULT_WIDTH;
-  const defaultWidth = Math.max(smallest, Math.round(window.innerWidth * DEFAULT_SHARE) - 64);
+  const defaultWidth = Math.max(smallest, Math.round(window.innerWidth * DEFAULT_SHARE) - 52);
   const [widths, setWidths] = useState<Record<string, number>>({});
   const width = widths[widthKey] ?? (clampWidth(Number(readSession(widthKey, defaultWidth)) || defaultWidth));
   const setWidth = (value: number) => setWidths(previous => ({ ...previous, [widthKey]: value }));
@@ -153,7 +156,13 @@ function ChangesView({ threadId, workspace, projectRoot, onWantDiffWidth }: { th
   const branch = picked !== null && others.some(other => other.name === picked) ? picked : null;
   // An edited-files row asks for its file, which is among the uncommitted changes.
   const focus = state.diffFocus;
-  useEffect(() => { if (focus) { setSelected(focus.path); setPicked(null); } }, [focus]);
+  const { folds, fold } = useFolds(threadId, branch);
+  // Each select is as wide as its chosen option, so its chevron follows the label.
+  const sourceRef = useRef<HTMLSelectElement>(null);
+  const authorRef = useRef<HTMLSelectElement>(null);
+  useFitSelect(sourceRef);
+  useFitSelect(authorRef);
+  useEffect(() => { if (focus) { setSelected(focus.path); setPicked(null); fold({ [focus.path]: true }); } }, [focus]); // eslint-disable-line react-hooks/exhaustive-deps
   const refresh = useCallback(async () => {
     // A failed refresh keeps the last diff on screen.
     try { dispatch({ type: "diff/set", threadId, diff: await listDiff(threadId) }); } catch { /* keep last */ }
@@ -172,7 +181,7 @@ function ChangesView({ threadId, workspace, projectRoot, onWantDiffWidth }: { th
     <label className="themis-workspace-source">
       <BranchIcon />
       <span className="themis-sr-only">Show changes from</span>
-      <select aria-label="Show changes from" value={branch ?? ""} onChange={event => { setPicked(event.target.value || null); setSelected(null); }}>
+      <select ref={sourceRef} aria-label="Show changes from" value={branch ?? ""} onChange={event => { setPicked(event.target.value || null); setSelected(null); }}>
         <option value="">Uncommitted changes{current ? ` on ${current}` : ""}</option>
         {others.map(other => <option key={other.name} value={other.name}>{other.name}</option>)}
       </select>
@@ -181,41 +190,89 @@ function ChangesView({ threadId, workspace, projectRoot, onWantDiffWidth }: { th
   const diff = branch !== null ? branchChanges : liveDiff;
   if (branch === null && diff === undefined) return <EmptyState title="Loading changes…" />;
   // The bar stays one element whatever the state, so the selector keeps its focus while a branch loads.
-  const bar = (extra?: ReactNode) => (switcher || extra) && <div className="themis-workspace-changes-bar">{switcher}{extra}</div>;
+  const bar = (extra?: ReactNode, end?: ReactNode) => (switcher || extra || end) && <div className="themis-workspace-changes-bar">{switcher}{extra}{end}</div>;
   if (branch !== null && diff === null) return <div className="themis-workspace-changes">{bar()}<EmptyState title="Loading changes…" /></div>;
   if (typeof diff === "string") return <div className="themis-workspace-changes">{bar()}<EmptyState title="Changes unavailable" hint={diff} /></div>;
   if (!diff || !diff.available) return <div className="themis-workspace-changes">{bar()}<EmptyState title="Changes unavailable" hint={diff?.reason ?? "This folder has no Git diff."} /></div>;
   const options = branch === null ? authorOptions(authors, diff.files.map(entry => entry.path)) : [];
   const shownAuthor = options.includes(author) ? author : "";
   const files = shownAuthor ? diff.files.filter(entry => authorOf(entry.path, authors) === shownAuthor) : diff.files;
-  // A hidden file (`.github/…`) opens only when picked from its folded line.
-  const file = files.find(entry => entry.path === selected) ?? files.find(entry => !entry.hidden) ?? null;
   return (
     <div className="themis-workspace-changes">
       {bar((options.length > 0 || diff.reason) && <>
         {options.length > 0 && (
           <label className="themis-workspace-source">Author
-            <select value={shownAuthor} onChange={event => setAuthor(event.target.value)}>
+            <select ref={authorRef} value={shownAuthor} onChange={event => setAuthor(event.target.value)}>
               <option value="">All</option>
               {options.map(option => <option key={option} value={option}>{option}</option>)}
             </select>
           </label>
         )}
         {diff.reason && <p className="themis-workspace-note">{diff.reason}</p>}
-      </>)}
+      </>, files.length > 1 && <FoldAll onSet={open => fold(setAll(files, open))} />)}
       {files.length === 0
         ? <EmptyState title="No changes" hint={branch !== null ? `${branch} adds nothing to ${current ?? "the current branch"}.` : "The checkout matches its last commit."} />
         : (
-          <DiffSplit>
-            <FileTree files={files} selectedPath={file?.path ?? null} onSelect={setSelected} />
-            {file ? <DiffView file={file} onWantWidth={onWantDiffWidth} /> : <EmptyState title="No changes" hint="Only hidden files changed." />}
-          </DiffSplit>
+          <ChangesList key={foldsKey(threadId, branch)} files={files} folds={folds} fold={fold} selected={selected} onSelect={setSelected} projectRoot={projectRoot} branch={branch} onWantDiffWidth={onWantDiffWidth} />
         )}
     </div>
   );
 }
 
-/** File list | diff, with a draggable divider whose position is remembered. */
+/** Which changed files are open, per chat and view (session storage). */
+function useFolds(threadId: string, branch: string | null) {
+  const key = foldsKey(threadId, branch);
+  const [folds, setFolds] = useState(() => readFolds(key));
+  const [foldsFor, setFoldsFor] = useState(key);
+  if (foldsFor !== key) { setFoldsFor(key); setFolds(readFolds(key)); }
+  const fold = (change: Folds) => setFolds(previous => { const next = { ...previous, ...change }; writeFolds(key, next); return next; });
+  return { folds, fold };
+}
+
+interface ChangesListProps {
+  files: DiffFile[];
+  folds: Folds;
+  fold: (change: Folds) => void;
+  selected: string | null;
+  onSelect: (path: string) => void;
+  projectRoot: string;
+  branch: string | null;
+  onWantDiffWidth: (width: number) => void;
+}
+
+/** The canvas: each changed file's row heads its own diff well; several can be open and scroll together. */
+function ChangesList({ files, folds, fold, selected, onSelect, projectRoot, branch, onWantDiffWidth }: ChangesListProps) {
+  // Each file's revealed unchanged lines, kept while this view stays open (a new chat or branch starts afresh).
+  const [revealed] = useState(() => new Map<string, HiddenLinesMemory>());
+  return (
+    <div className="themis-changes-stack">
+      <FileTree files={files} selectedPath={selected} onSelect={onSelect} isOpen={path => isOpen(folds, files, path)}
+        onToggle={path => fold({ [path]: !isOpen(folds, files, path) })}
+        renderBody={entry => <DiffView file={entry} onWantWidth={onWantDiffWidth} loadText={() => readNewSide(projectRoot, branch, entry)}
+          remember={{ initial: revealed.get(entry.path), save: memory => revealed.set(entry.path, memory) }} />} />
+      {files.every(entry => entry.hidden) && <EmptyState title="No changes" hint="Only hidden files changed." />}
+    </div>
+  );
+}
+
+/** Collapse all and Expand all, at the end of the Changes bar when there is more than one file. */
+function FoldAll({ onSet }: { onSet: (open: boolean) => void }) {
+  const icon = (d: string) => <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d={d} /></svg>;
+  return (
+    <span className="themis-changes-foldall">
+      <Tooltip content="Collapse all" below><button type="button" aria-label="Collapse all files" onClick={() => onSet(false)}>{icon("m7 15 5-5 5 5M7 20h10M7 4h10")}</button></Tooltip>
+      <Tooltip content="Expand all" below><button type="button" aria-label="Expand all files" onClick={() => onSet(true)}>{icon("m7 9 5 5 5-5M7 20h10M7 4h10")}</button></Tooltip>
+    </span>
+  );
+}
+
+/** The file as the diff's new side has it, for its unchanged lines: the working tree, or the branch's tip. */
+async function readNewSide(projectRoot: string, branch: string | null, file: DiffFile): Promise<string | null> {
+  const view = branch === null ? await readProjectFile(projectRoot, file.path) : await readBranchFile(projectRoot, branch, file.path);
+  return view.binary ? null : view.content ?? null;
+}
+
+/** File tree | file (the Files tab), with a draggable divider whose position is remembered. */
 export function DiffSplit({ children }: { children: [ReactNode, ReactNode] }) {
   const [width, setWidth] = useState(() => clampListWidth(Number(readSession("workspaceFileListWidth", LIST_DEFAULT_WIDTH)) || LIST_DEFAULT_WIDTH));
   const split = useRef<HTMLDivElement>(null);

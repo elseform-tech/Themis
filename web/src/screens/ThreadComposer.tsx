@@ -198,6 +198,8 @@ export function ThreadComposer({
             </div>
           </details>
           <ComposerShield mode={thread.approval_mode} saving={permissionSaving} running={running} yoloKeeps={yoloKeeps} networkBlocked={networkBlocked} onChange={onApprovalModeChange} />
+          {/* The canvas row: the branch beside Auto; the project and its folder are in the sidebar and on this tooltip. */}
+          {location?.branch && <BranchPicker branch={location.branch} branches={location.branches ?? []} busy={running} onSwitch={location.onSwitchBranch} where={`${location.name}\n${location.root}`} />}
 
           <span className="themis-composer-spacer" />
           <ContextMeter budget={budget} compacting={compacting} running={running} threadId={thread.id} />
@@ -211,7 +213,7 @@ export function ThreadComposer({
               disabled={stopping}
               onClick={onStop}
             >
-              <svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true">
+              <svg width="12" height="12" viewBox="0 0 16 16" aria-hidden="true">
                 <rect x="3" y="3" width="10" height="10" rx="2" fill="currentColor" />
               </svg>
             </Button>
@@ -225,30 +227,25 @@ export function ThreadComposer({
               disabled={composerDisabled || sendBlocked || (draft.trim() === "" && attachments.length === 0)}
               onClick={onSend}
             >
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true">
                 <path d="M12 19V5M5 12l7-7 7 7" />
               </svg>
             </Button>
           )}
         </div>
-        {location && <div className="themis-composer-location" title={location.branch ? `${location.name} · ${location.branch}\n${location.root}` : `${location.name}\n${location.root}`} aria-label={location.branch ? `${location.name}, branch ${location.branch}` : location.name}>
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z" /></svg>
-            <span className="themis-composer-label">{location.name}</span>
-            {location.branch && <BranchPicker branch={location.branch} branches={location.branches ?? []} busy={running} onSwitch={location.onSwitchBranch} />}
-          </div>}
       </div>
     </>
   );
 }
 
-const branchIcon = <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden="true"><circle cx="6" cy="5" r="2" /><circle cx="6" cy="19" r="2" /><circle cx="18" cy="7" r="2" /><path d="M6 7v10M18 9c0 5-6 4-11 8" /></svg>;
+const branchIcon = <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden="true"><circle cx="6" cy="5" r="2" /><circle cx="6" cy="19" r="2" /><circle cx="18" cy="7" r="2" /><path d="M6 7v10M18 9c0 5-6 4-11 8" /></svg>;
 /** The checkout's branch, and the way to change it. Not while a chat is working: switching
  *  would move files underneath it. */
-export function BranchPicker({ branch, branches, busy, onSwitch }: { branch: string; branches: string[]; busy: boolean; onSwitch?: (branch: string) => void }) {
+export function BranchPicker({ branch, branches, busy, onSwitch, where }: { branch: string; branches: string[]; busy: boolean; onSwitch?: (branch: string) => void; where?: string }) {
   const others = branches.filter(name => name !== branch);
-  if (busy || !onSwitch || others.length === 0) return <>{branchIcon}<span className="themis-composer-branch themis-composer-label">{branch}</span></>;
+  if (busy || !onSwitch || others.length === 0) return <span className="themis-composer-branch-static" title={where ? `Branch ${branch} · ${where}` : `Branch ${branch}`}>{branchIcon}<span className={`themis-composer-branch themis-composer-label${branch.length <= 10 ? " is-short" : ""}`}>{branch}</span></span>;
   return <details data-popover className="themis-branch-picker">
-    <summary aria-label={`Branch ${branch}. Switch branch`} title="Switch branch">{branchIcon}<span className="themis-composer-branch themis-composer-label">{branch}</span><svg className="themis-branch-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true"><path d="m6 9 6 6 6-6" /></svg></summary>
+    <summary aria-label={`Branch ${branch}. Switch branch`} title={where ? `Switch branch · ${where}` : "Switch branch"}>{branchIcon}<span className={`themis-composer-branch themis-composer-label${branch.length <= 10 ? " is-short" : ""}`}>{branch}</span><svg className="themis-branch-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true"><path d="m6 9 6 6 6-6" /></svg></summary>
     <div className="themis-branch-menu" role="menu" aria-label="Switch branch">
       {others.map(name => <button key={name} type="button" role="menuitem" onClick={event => { event.currentTarget.closest("details")?.removeAttribute("open"); onSwitch(name); }}>{name}</button>)}
     </div>

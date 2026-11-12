@@ -1,0 +1,7 @@
+.themis-loader { height: 100dvh; background: var(--themis-canvas); color: var(--themis-text); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; font-family: inherit; }
+.themis-loader p { margin: 0; color: var(--themis-text-2); font-size: .875rem; }
+.themis-loader-bar { width: 140px; height: 2px; background: var(--themis-border); border-radius: 1px; overflow: hidden; position: relative; }
+.themis-loader-fill { height: 100%; background: var(--themis-accent); transition: width .3s; }
+.themis-loader-bar.is-indeterminate .themis-loader-fill { position: absolute; width: 40%; animation: themis-loader-sweep 1.4s ease-in-out infinite; }
+@keyframes themis-loader-sweep { from { left: -40%; } to { left: 100%; } }
+@media (prefers-reduced-motion: reduce) { .themis-loader-fill { transition: none; } .themis-loader-bar.is-indeterminate .themis-loader-fill { animation: none; left: 30%; } }

@@ -18,7 +18,6 @@ import type { ChatMessage, ToolTraceEntry } from "../state/reducer";
 import { useFollowLatest } from "./followLatest";
 import { groupConversation, toolDisplayName, type ConversationRow } from "./conversation";
 import { describeTools } from "./toolActivity";
-import { OverviewBox, type Overview } from "./OverviewBox";
 import { SubagentCard } from "./SubagentCard";
 import { MemoryLine, MemoryWorkingLine } from "./MemorySettings";
 
@@ -37,8 +36,6 @@ interface ThreadConversationProps {
   runStartedAt: number | undefined;
   compacting: boolean;
   traces: ToolTraceEntry[];
-  /** The chat overview box, when it shows. */
-  overview?: Overview;
 }
 
 export function ThreadConversation({
@@ -54,7 +51,6 @@ export function ThreadConversation({
   runStartedAt,
   compacting,
   traces,
-  overview,
 }: ThreadConversationProps) {
   const project = useActiveProject();
   const { skills, plugins } = usePromptSkills(project?.root, running);
@@ -167,7 +163,6 @@ export function ThreadConversation({
         </button>
       )}
     </div>
-    {overview && <OverviewBox threadId={threadId} overview={overview} onOpenMedia={openMedia} />}
     {viewing !== null && media[viewing] && <MediaViewer threadId={threadId} items={media} index={viewing} onIndex={setViewing} onClose={() => setViewing(null)} />}
     {single && <MediaViewer threadId={threadId} items={[single]} index={0} onIndex={() => {}} onClose={() => setSingle(null)} />}
     </ResponseFiles.Provider>

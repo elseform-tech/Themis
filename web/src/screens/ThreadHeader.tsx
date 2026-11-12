@@ -40,7 +40,7 @@ function RecordingPill({ recording, onOpen }: { recording: BrowserRecording & { 
   );
 }
 
-/** Model and effort live in one header pill; review opens as a side panel. */
+/** The canvas header: the model and effort pill on the left, Workspace (icon and changed-file count) on the right. */
 export function ThreadHeader({ thread, models, effortLevels, effort, busy, running = false, switching, onProviderChange, onEffortChange, changedFiles, reviewOpen, onToggleReview, recording, onOpenBrowser }: ThreadHeaderProps) {
   const choices = ["", ...effortLevels];
   const effortIndex = Math.max(0, choices.indexOf(effort));
@@ -48,7 +48,6 @@ export function ThreadHeader({ thread, models, effortLevels, effort, busy, runni
     <header className="themis-thread-head">
       <details className="themis-model-pill" data-popover>
         <summary aria-label={`Model ${thread.model || "not chosen"}, reasoning effort ${effort || "Default"}`}>
-          <span className="themis-model-pill-brand">Themis</span>
           <span className="themis-model-pill-meta">{thread.model || "Choose a model"} · {effort || "Default"}</span>
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true"><path d="m6 9 6 6 6-6" /></svg>
         </summary>
@@ -79,10 +78,18 @@ export function ThreadHeader({ thread, models, effortLevels, effort, busy, runni
       </details>
       <span className="themis-thread-head-spacer" />
       {recording && onOpenBrowser && <RecordingPill recording={recording} onOpen={onOpenBrowser} />}
-      <button type="button" className={`themis-workspace-toggle${reviewOpen ? " is-open" : ""}`} aria-pressed={reviewOpen} aria-label={changedFiles ? `Workspace, ${changedFiles} changed` : "Workspace"} title="Changes, files, branches, pull requests and this chat's tasks" onClick={onToggleReview}>
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="3" /><path d="M14 4v16" /></svg>
-        <span className="themis-head-label">Workspace</span>{changedFiles ? <span className="themis-review-count">{changedFiles}<span className="themis-head-label"> changed</span></span> : null}
-      </button>
+      <WorkspaceToggle changedFiles={changedFiles} open={reviewOpen} onToggle={onToggleReview} />
     </header>
+  );
+}
+
+/** The canvas: the panel icon and the changed-file count; the words are its name and tooltip. */
+function WorkspaceToggle({ changedFiles, open, onToggle }: { changedFiles?: number; open: boolean; onToggle: () => void }) {
+  const label = changedFiles ? `Workspace, ${changedFiles} file${changedFiles === 1 ? "" : "s"} changed` : "Workspace";
+  return (
+    <button type="button" className={`themis-workspace-toggle${open ? " is-open" : ""}`} aria-pressed={open} aria-label={label} title="Workspace" onClick={onToggle}>
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="3" /><path d="M15 4v16" /></svg>
+      {changedFiles ? <span className="themis-review-count">{changedFiles}</span> : null}
+    </button>
   );
 }

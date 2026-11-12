@@ -1,5 +1,5 @@
-/* Read-only workspace monitor: resizable side panel with unboxed tabs and actions. */
-.themis-workspace-panel { position: relative; flex: none; min-width: 300px; max-width: calc(100% - 340px); display: flex; flex-direction: column; min-height: 0; border-left: 1px solid var(--themis-border-subtle); background: var(--themis-sidebar-bg); }
+/* Read-only workspace monitor: the canvas's inspector, a glass side panel with card tabs and file rows. */
+.themis-workspace-panel { position: relative; flex: none; min-width: 300px; max-width: calc(100% - 340px - var(--themis-panel-gap)); display: flex; flex-direction: column; gap: 8px; min-height: 0; padding: 10px; border-radius: var(--themis-panel-radius); background: var(--themis-panel-sheen), var(--themis-inspector-bg); box-shadow: var(--themis-panel-edge); -webkit-backdrop-filter: var(--themis-panel-blur); backdrop-filter: var(--themis-panel-blur); }
 .themis-workspace-panel.is-resizing { user-select: none; }
 .themis-workspace-resize { position: absolute; top: 0; bottom: 0; left: -5px; z-index: 5; width: 10px; cursor: col-resize; touch-action: none; }
 .themis-workspace-resize::after { content: ""; position: absolute; top: 0; bottom: 0; left: 4px; width: 2px; border-radius: 1px; background: var(--themis-accent); opacity: 0; transition: opacity 120ms ease; }
@@ -7,32 +7,41 @@
 .themis-workspace-resize:focus-visible { outline: none; }
 .themis-workspace-panel { container: themis-workspace / inline-size; }
 /* A lean header: icon tabs (names in tooltips) and Close, so the page and the diff get the room. */
-.themis-workspace-head { display: flex; align-items: center; gap: 8px; padding: 3px 6px 3px 10px; border-bottom: 1px solid var(--themis-border-subtle); }
+.themis-workspace-head { display: flex; align-items: center; gap: 8px; }
 /* Close sits at the window edge: its tooltip opens leftward so it stays on screen. */
 .themis-workspace-head > .themis-tooltip:last-child::after { left: auto; right: 0; transform: none; }
-.themis-workspace-close { display: grid; place-items: center; flex: none; width: 30px; height: 30px; border: 0; border-radius: 8px; background: transparent; color: var(--themis-text-2); cursor: pointer; }
+.themis-workspace-close { display: grid; place-items: center; flex: none; width: 32px; height: 32px; border: 0; border-radius: 10px; background: transparent; color: var(--themis-text-2); cursor: pointer; }
 .themis-workspace-close:hover { color: var(--themis-text); background: var(--themis-nav-hover-bg); }
 .themis-link-button { padding: 4px 2px; border: 0; background: transparent; color: var(--themis-text-2); font: inherit; font-size: .8125rem; cursor: pointer; }
 .themis-link-button:hover:not(:disabled) { color: var(--themis-text); }
 .themis-link-button:disabled { opacity: .5; cursor: not-allowed; }
 .themis-workspace-tabs { flex: 1; min-width: 0; display: flex; align-items: center; gap: 2px; }
-.themis-workspace-tabs button { position: relative; display: grid; place-items: center; min-width: 32px; height: 30px; padding: 0 6px; border: 0; border-radius: 8px; background: transparent; color: var(--themis-text-3); cursor: pointer; }
-.themis-workspace-tabs button:hover { color: var(--themis-text); }
-.themis-workspace-tabs button:focus-visible, /* The selected view: brighter and bolder, unboxed. */
-.themis-workspace-tabs button[aria-pressed="true"] { color: var(--themis-text); }
-.themis-workspace-tabs button[aria-pressed="true"] svg { stroke-width: 2.3; }
-.themis-workspace-count { position: absolute; top: 1px; right: 0; min-width: 14px; padding: 0 3px; border-radius: 7px; background: var(--themis-sidebar-bg); color: var(--themis-accent); font-size: .75rem; font-weight: 700; line-height: 14px; font-variant-numeric: tabular-nums; }
-.themis-workspace-body { flex: 1; min-height: 0; display: flex; flex-direction: column; padding: 8px 10px 10px 14px; overflow: hidden; }
-/* The page gets the room: the Browser tab keeps only a thin edge. */
-.themis-workspace-body.is-browser { padding: 6px 8px 8px 12px; }
+/* Icon tabs with the count beside the icon; the chosen view sits on a card (canvas). */
+.themis-workspace-tabs button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-width: 32px; height: 32px; padding: 0 9px; border: 0; border-radius: 10px; background: transparent; color: var(--themis-text-2); cursor: pointer; }
+.themis-workspace-tabs button svg { width: 17px; height: 17px; }
+.themis-workspace-tabs button:hover, .themis-workspace-tabs button:focus-visible { color: var(--themis-text); }
+.themis-workspace-tabs button[aria-pressed="true"] { background: var(--themis-card); color: var(--themis-text); }
+.themis-workspace-count { font-size: .8125rem; font-variant-numeric: tabular-nums; }
+.themis-workspace-body { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
 .themis-workspace-changes { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 10px; }
 /* One line above the diff: what it shows, as text with a chevron rather than a box, and any note. */
 .themis-workspace-changes-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 14px; min-height: 24px; padding: 0 2px; }
 .themis-workspace-changes-bar .themis-workspace-note { margin-left: auto; }
 .themis-workspace-source { display: inline-flex; align-items: center; gap: 6px; min-width: 0; max-width: 100%; color: var(--themis-text-2); font-size: .8125rem; }
-.themis-workspace-source select { appearance: none; min-width: 0; max-width: 100%; padding: 2px 16px 2px 0; border: 0; background: transparent url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='10' viewBox='0 0 24 24' fill='none' stroke='%23888' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E") no-repeat right center; color: var(--themis-text); font: inherit; text-overflow: ellipsis; cursor: pointer; }
-.themis-workspace-source select:focus-visible { outline: 1px solid var(--themis-border); outline-offset: 2px; border-radius: 4px; }
+.themis-workspace-source select { appearance: none; -webkit-appearance: none; field-sizing: content; width: auto; min-width: 0; max-width: 100%; margin: 0; padding: 2px 16px 2px 0; border: 0; border-radius: 4px; box-shadow: none; background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='10' viewBox='0 0 24 24' fill='none' stroke='%23888' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E") no-repeat right center; background-color: transparent; color: var(--themis-text-2); font: inherit; text-overflow: ellipsis; cursor: pointer; }
+/* Text and a chevron, never a box: hover and press only brighten the text; keyboard focus gets the app's ring. */
+.themis-workspace-source select:hover, .themis-workspace-source select:active, .themis-workspace-source select:focus { color: var(--themis-text); background-color: transparent; box-shadow: none; }
+.themis-workspace-source select:focus:not(:focus-visible) { outline: none; }
 .themis-workspace-note { margin: 0; color: var(--themis-text-2); font-size: .75rem; }
+/* Changes: one scrolling column of file rows, each open one with its diff well under it (canvas). */
+/* The one scroll in Changes. With overlay scrollbars WebKit drew its bar under the positioned wells, so in Classic
+   (opaque wells) only slivers showed beside the file rows. Its own stacking context and compositing layer put the bar
+   on top, and a 12px gutter keeps every well and row out from under it. */
+.themis-changes-stack { flex: 1; min-height: 0; overflow-y: auto; padding-right: 12px; isolation: isolate; transform: translateZ(0); }
+/* Collapse all and Expand all: two quiet icons at the end of the Changes bar. */
+.themis-changes-foldall { display: inline-flex; gap: 2px; margin-left: auto; }
+.themis-changes-foldall button { display: grid; place-items: center; width: 28px; height: 28px; border: 0; border-radius: 8px; background: transparent; color: var(--themis-text-2); cursor: pointer; }
+.themis-changes-foldall button:hover { color: var(--themis-text); }
 .themis-workspace-split { position: relative; flex: 1; min-height: 0; display: grid; grid-template-columns: min(var(--themis-diff-list, 180px), 45%) 12px minmax(0, 1fr); }
 .themis-workspace-split.is-resizing { user-select: none; }
 .themis-workspace-split > :not(.themis-split-resize) { min-height: 0; min-width: 0; overflow: auto; }
@@ -41,9 +50,9 @@
 .themis-split-resize:hover::after, .themis-split-resize:focus-visible::after, .is-resizing > .themis-split-resize::after { opacity: .7; transition-delay: 80ms; }
 .themis-split-resize:focus-visible { outline: none; }
 .themis-files-tree, .themis-files-tree ul { margin: 0; padding: 0; list-style: none; }
-.themis-files-row { display: flex; align-items: center; gap: 6px; width: 100%; min-height: 28px; padding-right: 8px; border: 0; background: transparent; color: var(--themis-text-2); font: inherit; font-size: .8125rem; text-align: left; cursor: pointer; }
-.themis-files-row:hover, .themis-files-row.is-selected { color: var(--themis-text); }
-.themis-files-row.is-selected .themis-files-name { font-weight: 600; }
+.themis-files-row { display: flex; align-items: center; gap: 6px; width: 100%; min-height: 32px; padding-right: 10px; border: 0; border-radius: 10px; background: transparent; color: var(--themis-text-2); font: inherit; font-size: .8125rem; text-align: left; cursor: pointer; }
+.themis-files-row:hover { color: var(--themis-text); }
+.themis-files-row.is-selected { background: var(--themis-card); color: var(--themis-text); }
 .themis-files-glyph { width: 10px; flex: none; color: var(--themis-text-3); }
 .themis-files-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: ui-monospace, SFMono-Regular, monospace; font-size: .75rem; }
 .themis-files-note { padding: 4px 0; color: var(--themis-text-3); font-size: .75rem; }
@@ -57,9 +66,10 @@
 .themis-workspace-list-meta { display: inline-flex; align-items: center; gap: 6px; color: var(--themis-text-3); font-size: .75rem; }
 .themis-workspace-url { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; user-select: text; }
 @media (max-width: 900px) { .themis-workspace-panel { position: absolute; inset: 0 0 0 auto; z-index: 25; max-width: 100%; } }
-/* Read-only file view wraps long lines too. */
-.themis-files-view .themis-codeblock { overflow-x: hidden; border: 0; }
-.themis-files-view .themis-codeblock-line { padding-left: 3.5rem; text-indent: -3.5rem; white-space: pre-wrap; overflow-wrap: anywhere; }
+/* Read-only file view wraps long lines too, under their own text past the 30px number column. */
+.themis-files-view .themis-codeblock { overflow: clip; }
+.themis-files-view .themis-codeblock > code { width: auto; }
+.themis-files-view .themis-codeblock-line { padding-left: calc(14px + 30px); text-indent: -30px; white-space: pre-wrap; overflow-wrap: anywhere; }
 .themis-files-view .themis-codeblock-lineno { text-indent: 0; }
 /* Tasks tab: this chat's runs and automations. */
 .themis-tasks { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 14px; overflow: auto; }
@@ -79,7 +89,6 @@
 .themis-background-tail, .themis-background-log { margin: 4px 0 0; padding: 6px 8px; border-radius: 6px; background: var(--themis-surface); color: var(--themis-text-2); font-family: ui-monospace, SFMono-Regular, monospace; font-size: .75rem; line-height: 1.45; white-space: pre-wrap; overflow-wrap: anywhere; }
 .themis-background-tail { max-height: 4.6em; overflow: hidden; }
 .themis-background-log { max-height: 240px; overflow: auto; }
-.themis-workspace-count--tasks { color: var(--themis-text-2); }
 
 /* Workspace › Branches: another branch's changes. */
 .themis-workspace-branches > .themis-workspace-list { flex: 0 1 auto; max-height: 40%; overflow-y: auto; }

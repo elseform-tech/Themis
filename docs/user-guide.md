@@ -186,7 +186,7 @@ reported back.
   more wait their turn. Each has 40 model requests (`subagents.max_turns`).
   `subagents.model` picks a different model for them, and `subagents.enabled:
   false` turns them off; see [configuration](configuration.md).
-- **Watching them.** A reply's subagents show in the chat as one small stack of lettered circles, each ringed while it works. Hover one for its name, or click it to open its steps in Workspace › Tasks, where **Stop** ends just that subagent; the chat overview shows how many run and whether one waits for your approval. Settings › Subagents turns them off, sets how many run at once, and sets their Default and Allowed models.
+- **Watching them.** A reply's subagents show in the chat as one small stack of lettered circles, each ringed while it works. Hover one for its name, or click it to open its steps in Workspace › Tasks, where **Stop** ends just that subagent; Workspace › Tasks shows how many run, and an approval one waits for shows in the composer. Settings › Subagents turns them off, sets how many run at once, and sets their Default and Allowed models.
 - Each subagent's steps are saved beside the chat and removed with it. From the
   CLI, `themis call list_subagents '{"threadId": "…"}'` lists a chat's subagents.
 
@@ -342,17 +342,14 @@ Codex, the chat's own model judges its goal: there is no separate check.
   tidy-up and auto-compact thresholds. Near auto-compact during a run it turns
   warm and a one-time heads-up appears; afterwards a **Context compacted** divider
   shows the before → after usage. Nothing is deleted: originals stay on disk.
-- **The overview box** sits over the top right of a chat while Workspace is closed:
-  a live preview of the chat's browser (the page keeps its size; only the preview is
-  small), one row each for changed files (+/− lines), tasks and
-  queued messages, and the latest artifact, as icons with short
-  values (hover a row for its name). Click a row to open Workspace on that tab,
-  or the Workspace icon to open it as you left it; closing Workspace brings the
-  box back. The chevron folds it to icons only, as does a narrow chat. Rows with
-  nothing to show are left out, and a chat with nothing to show has no box.
+- **The header** shows the model and reasoning effort (click to change them) and,
+  on the right, the Workspace icon with how many files changed. Tasks, subagents,
+  the chat's browser and its artifacts are in Workspace and in the chat itself.
 - **Workspace** in a thread's header opens a monitor of the project:
-  **Changes** (readable changed files with line counts and their wrapped,
-  highlighted diff, Unified or Split, updating live while the agent works; a
+  **Changes** (readable changed files with line counts, each with its own wrapped,
+  highlighted diff under its row: click a row to fold or unfold it, or use Collapse
+  all and Expand all; click "⋯ N unchanged lines" for 20 more lines, Shift-click for
+  all; hover a diff for Unified or Split), updating live while the agent works; a
   switcher at the top shows another branch's changes without switching to it, which
   only the composer does; binary, generated and secret-looking files are hidden;
   hidden files, those with a part of the path starting with a dot such as
@@ -383,7 +380,7 @@ Codex, the chat's own model judges its goal: there is no separate check.
   background instead. A small
   stack of icons beside the Workspace button shows the same tasks at a glance and
   opens that tab. Drag its edge to resize. It never changes files or
-  runs Git actions. The composer shows the project folder and current branch.
+  runs Git actions. The composer's controls row shows the current branch; click it to switch.
 
 Recent projects are remembered (max 10) and reopened automatically on launch;
 threads that were still running at shutdown are marked **recovered**. The last
@@ -473,9 +470,8 @@ Page text and results are treated as untrusted. See [web tools](web-tools.md).
 
 Agents can also drive a built-in browser (its own headless Chromium engine, downloaded
 the first time it is used, or a Chrome, Chromium or Edge you choose in Settings › Browser,
-with its own profile per project). While the agent browses, the chat's overview box
-shows a live preview of the page with what the agent is doing; click it to open
-**Workspace → Browser**, where the line above the page says the same. (To have
+with its own profile per project). While the agent browses, **Workspace → Browser**
+shows the page live, with a line above it saying what the agent is doing. (To have
 Workspace open by itself instead, turn on **Open Workspace when the agent starts
 browsing** in Settings › Browser.) You can click, type or enter an
 address at the same time; the agent keeps working. The agent's pointer glides to where it
@@ -823,13 +819,14 @@ are displayed without execution. Mermaid fences render diagrams with expandable
 source; invalid diagrams show their source instead. Diagram configuration
 directives and image resources fall back to source for safety.
 
-The expandable sidebar shows a glinting Themis wordmark and respects reduced motion.
+The expandable sidebar opens on the project row: click the project's name to switch,
+rename, delete or create a project, or the pencil beside it for a new chat.
 
 
 ### Workspace and appearance
 
 The icon rail stays visible when the project dock is collapsed. Utilities open
-in the main view; New chat, projects, and threads stay in the project dock.
+in the main view; the project, New chat (the pencil) and threads stay in the project dock.
 Hover or focus a utility icon for its label. Long thread titles reveal their
 full text in one leftward pass on hover or keyboard focus. With reduced motion,
 titles wrap instead.
@@ -840,9 +837,13 @@ display-name changes. Settings shows only the shared projects root. Every new
 project is created under `~/ThemisOS/Projects`, with no folder override. Renaming leaves
 folders and conversation history in place. Existing projects are not moved.
 
-Appearance is dark only, including when old settings request light or system
-mode. **Appearance** offers 17 presets (the original Themis scheme plus 16
-alternatives), including GitHub-inspired Dark and Dimmed, and 12 local font
+**Appearance** offers five cards with a preview of each: Auto (follows the
+time of day), the Morning, Noon and Night skies, and Classic (the dark Themis
+look, and the default). Morning and Noon are light; the others are dark. The
+panels are glass over the sky on every system; macOS adds a real blur, and if
+you ask your system to reduce transparency the panels turn solid. Old settings
+that asked for light or system mode, for the retired `system` palette or for a
+removed preset (GitHub Dark, Ocean and the other solid dark ones) open as Classic. There are 12 local font
 choices with fallback families. Theme, font, and size preview across the app;
 **Apply** saves them, **Revert** restores saved choices, and leaving Appearance
 cancels an unapplied preview. Code always uses monospace typography. Other
@@ -862,7 +863,7 @@ Apply or Revert.
 
 Discover cards show purpose, origin and compatibility. Install directly from a tile; compatibility is checked automatically. Partial packages list omitted components and offer Install supported parts. Unsupported-only packages have a disabled Install action and are hidden from the checked catalog unless Unsupported or All statuses is selected. Not checked and Connection not checked are explicit unknowns, not errors or verification badges. New catalog installs are global, with a spinner during installation and ✓ Installed afterwards. Discover shows every marketplace together, grouped by purpose (Coding, Cloud & deploy, Data & databases, Monitoring, Security, Work apps, Design, Other) with a Source filter for one marketplace; search also matches the publisher. Fully working plugins carry no badge; partly working ones show "Some parts skipped". Existing project imports retain their scope. Colored labels retain readable text; installed items filter by Enabled or Disabled. MCP setup and testing remain available through chat or the CLI.
 
-Automation editors keep destination, timezone and enabled/paused status visible above Advanced. Custom permissions explain their next-run scope; approval dialogs label reusable grants Allow in this chat. The companion updates its mood without re-showing its native window. Keyboard focus includes editable instructions.
+Automation editors keep destination, timezone and enabled/paused status visible above Advanced. Custom permissions explain their next-run scope; approval dialogs label reusable grants Allow in this chat. Keyboard focus includes editable instructions.
 
 After a backend event gap or reconnect, Themis reloads completed histories and pending approvals. Active streams keep their current live text and reconcile durable history when the run finishes; missed streaming fragments can remain absent until then. Failed recovery displays a warning and retries. Recovery preserves the selected conversation and local drafts.
 
@@ -872,7 +873,7 @@ When a turn ends, its reply lists the files that turn edited; select one to open
 
 To delete a project, open the project switcher and click the trash icon on that project's row; you do not need to switch to it first. After you confirm, Themis moves the project folder to the macOS Trash (recover it from there if needed) and forgets its chats, its automations and its place in recent projects. The built-in **Themis** project, folders outside the projects folder, and projects with a running chat cannot be deleted.
 
-Integrations keeps separate search and filter selections for Installed and Discover. Reset filters affects only the current view. Marketplace checks show the companion and real completed-check percentage, then reveal the checked catalog. Collapsed warnings expand to show compatibility limitations; unavailable local skills remain visible with their validation error.
+Integrations keeps separate search and filter selections for Installed and Discover. Reset filters affects only the current view. Marketplace checks show the loader and real completed-check progress, then reveal the checked catalog. Collapsed warnings expand to show compatibility limitations; unavailable local skills remain visible with their validation error.
 
 MCP shows the full saved command and arguments, with status, toggle and uninstall aligned together. Integration errors and installation confirmations appear in the timed notification box at the side. Enabled MCP connections start automatically in the background on app entry and project selection. One failure does not block the app or other connections. Status updates to Connected or Failed; use Refresh to retry a failed connection. A server that needs a secret shows **Secret needed**: press **Add secret**, paste it in Settings › Secrets and save, and it connects. Servers read keys as `${NAME}` (the placeholder their documentation shows), so a configuration copied from a server's README works as is once a secret of that name is saved; an environment variable of that name also works. A remote server that signs in shows **Sign in needed** with **Sign in**. **Edit as mcp.json** starts with commented-out examples of each kind; remove the `//` in front of one to add it.
 
