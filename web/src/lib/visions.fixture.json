@@ -35,7 +35,8 @@
     "members": [
       "v1"
     ],
-    "revision": "r2"
+    "revision": "r2",
+    "needs": 1
   },
   "owner": {
     "thread_id": "w1",

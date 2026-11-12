@@ -51,9 +51,9 @@ import { readSession, writeSession } from "./session";
 import { loadPhase4Lists, openProjectOfNewChat, restoreRecentProjects, STARTUP_STEPS } from "./boot";
 import { settingsSync } from "./settingsSync";
 import {
+  appReducer,
   initialState,
   newId,
-  reducer,
   type AppAction,
   type AppState,
 } from "./reducer";
@@ -182,7 +182,7 @@ function useLiveState(state: AppState, dispatch: Dispatch<AppAction>) {
 }
 
 export function AppProvider({ children }: { children: ReactNode }) {
-  const [state, dispatch] = useReducer(reducer, initialState);
+  const [state, dispatch] = useReducer(appReducer, initialState);
   const [startup, setStartup] = useState<string | null>(STARTUP_STEPS[0]);
   const legacyMessages = useRef(readSession<Record<string, PersistedMessage[]>>("messages", {}));
   const restoredSession = useRef(false);

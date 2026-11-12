@@ -37,10 +37,10 @@ export function ChannelsBar() {
   const openChannel = (channelId: string | null) => dispatch({ type: "visions/open", channelId });
   return <>
     <div className="themis-sidebar-projects themis-channels-bar">
-        <ChannelRow id={hq.id || null} name="hq" needs={channelNeeds(state, hq)} active={current === hq} onOpen={openChannel} />
+        <ChannelRow id={hq.id || null} name="hq" needs={channelNeeds(hq)} active={current === hq} onOpen={openChannel} />
         <SectionHead title="Channels" add="New channel" onAdd={() => setSheet("channel")} />
         <ul className="themis-sidebar-list">
-          {channels.map(channel => <li key={channel.id}><ChannelRow id={channel.id} name={channel.name} needs={channelNeeds(state, channel)} active={current === channel} onOpen={openChannel} /></li>)}
+          {channels.map(channel => <li key={channel.id}><ChannelRow id={channel.id} name={channel.name} needs={channelNeeds(channel)} active={current === channel} onOpen={openChannel} /></li>)}
         </ul>
         <SectionHead title="Visions" add="New Vision" onAdd={() => setSheet("vision")} />
         <ul className="themis-sidebar-list">

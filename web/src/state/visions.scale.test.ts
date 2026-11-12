@@ -3,6 +3,8 @@ import type { ChannelLine, VisionInfo } from "../lib/visions";
 import { countedList, growthRate, SCALE_SIZES } from "../test/scale";
 import { initialState, reducer, type AppState } from "./reducer";
 import { needsCount, visionMoods } from "./visions";
+import { selectionToSave } from "./store";
+import type { OwnedChat } from "../lib/visions";
 
 const VISION: VisionInfo = {
   id: "v1", name: "Wren", role: "", shape: "cloud", color: "teal", soul: "", paused: false,
@@ -49,4 +51,29 @@ it("one more channel entry costs the same however long the channel has been foll
   // The window holds the newest lines only, so the work per event is flat.
   expect(work[0]).toBe(work[1]);
   expect(growthRate(SCALE_SIZES, linesReadOnOneEvent)).toBeLessThan(0.1);
+});
+
+const OWNED = (id: string): OwnedChat => ({
+  id, title: id, provider: "go", model: "m", running: false, worktree_path: null, branch: null, base_branch: null, recovered: false, skill_ids: [],
+  owner: { thread_id: id, vision_id: "v1", channel_id: "c1", kind: "work", hold: "none" },
+});
+
+/** Owned chats read while the selection to save is worked out on each of 50 thread events, with
+ *  `size` owned chats followed (the chats list is unchanged by thread events). */
+function ownedChatsReadPerEvents(size: number): number {
+  const counted = countedList(Array.from({ length: size }, (_, at) => OWNED(`w${at}`)));
+  let state: AppState = { ...initialState, activeProjectRoot: "/repo", activeThreadId: "plain", visions: { ...initialState.visions, chats: { c1: counted.list } } };
+  selectionToSave(state);
+  const before = counted.reads();
+  for (let event = 0; event < 50; event += 1) {
+    state = reducer(state, { type: "thread/running-loaded", threadId: "plain", running: event % 2 === 0 });
+    selectionToSave(state);
+  }
+  return counted.reads() - before + 1;
+}
+
+it("saving the plain selection reads no owned chats per thread event, however many there are", () => {
+  const work = SCALE_SIZES.map(ownedChatsReadPerEvents);
+  expect(work).toEqual([1, 1]);
+  expect(growthRate(SCALE_SIZES, ownedChatsReadPerEvents)).toBeLessThan(0.1);
 });

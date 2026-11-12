@@ -1798,10 +1798,44 @@ async fn a_passed_question_is_answered_by_the_person_from_the_channel() {
 
     // It waits on the person: the app's list says so, read from the chat's own questions.
     assert_eq!(fx.call_ok("list_visions", json!({}))[0]["needs"], 1);
+    // Each channel counts only what waits in its own chats: the same Vision in a second
+    // channel leaves that one at none.
+    let other = fx.call_ok(
+        "save_channel",
+        json!({"channel": {"name": "watch", "project_root": fx.project,
+            "approval_mode": "custom", "members": [vision]}, "revision": null}),
+    )["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let listed = fx.call_ok("list_channels", json!({"projectRoot": fx.project}));
+    let needs_of = |id: &str| {
+        listed
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|each| each["id"] == id)
+            .expect("listed")["needs"]
+            .clone()
+    };
+    assert_eq!(
+        (needs_of(&channel), needs_of(&other)),
+        (json!(1), json!(0)),
+        "{listed}"
+    );
 
     let answer = json!({"threadId": work, "questionId": question, "answer": "Apache-2.0"});
     let answered = fx.call_ok("answer_question", answer);
     assert_eq!(fx.call_ok("list_visions", json!({}))[0]["needs"], 0);
+    let listed = fx.call_ok("list_channels", json!({"projectRoot": fx.project}));
+    assert!(
+        listed
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|each| each["needs"] == 0),
+        "{listed}"
+    );
     assert_eq!(answered["answer"], "Apache-2.0");
     assert!(
         answered.get("answered_by").is_none(),

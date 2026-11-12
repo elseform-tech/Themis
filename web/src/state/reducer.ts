@@ -6,7 +6,7 @@ import { APPROVAL_EXPIRED_NOTE, concurrencyToast, isConcurrencyLimitError, newId
 import { appendTrace, markTurnRejected, memoryChanges, setThreadRunning, updateSubagent, usedPercent, userMessage } from "./reducer/rowHelpers";
 import { reduceCollectionActions } from "./reducer/collections";
 import { reduceUiActions } from "./reducer/ui";
-import { visionsAnswered } from "./visions";
+import { visionsAnswered, visionsFollowProject } from "./visions";
 // A failed run's pop-up is quiet, like the chat's own line: the short "code · reason" (full text in that line's tooltip).
 import { runErrorSummary } from "../lib/runError";
 
@@ -338,6 +338,11 @@ export function applyThreadEvent(
     default:
       return state;
   }
+}
+
+/** The app's reducer: `reducer`, then Visions follows a change of project. */
+export function appReducer(state: AppState, action: AppAction): AppState {
+  return visionsFollowProject(state, reducer(state, action));
 }
 
 export function reducer(state: AppState, action: AppAction): AppState {

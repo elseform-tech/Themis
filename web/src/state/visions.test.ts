@@ -5,7 +5,7 @@ import {
   type ChannelEntry, type ChannelInfo, type ChannelLine, type ChannelPage, type OwnedChat, type VisionInfo, type VisionsChange,
 } from "../lib/visions";
 import fixture from "../lib/visions.fixture.json";
-import { initialState, reducer, type AppState } from "./reducer";
+import { appReducer, initialState, reducer, type AppState } from "./reducer";
 import {
   followVisions,
   MOOD_LABEL,
@@ -194,12 +194,12 @@ describe("reloadVisions", () => {
     expect(visionMoods(apply(state, dispatch))).toEqual({ v1: "sleep" });
   });
 
-  it("a Vision alone reads only the list; no ids reads everything", async () => {
+  it("a Vision alone reads the lists (its needs and each channel's), no pages; no ids reads everything", async () => {
     const api = bridge();
     const state = withChannel([], []);
     await reloadVisions(api, { vision_id: "v1" }, state, vi.fn());
     expect(api.listVisions).toHaveBeenCalledTimes(1);
-    expect(api.listChannels).not.toHaveBeenCalled();
+    expect(api.listChannels).toHaveBeenCalledWith("/repo");
     expect(api.getChannelPage).not.toHaveBeenCalled();
     const all = bridge();
     await reloadVisions(all, {}, state, vi.fn());
@@ -303,7 +303,7 @@ describe("wire fixture", () => {
     expect(keys(fixture.vision)).toEqual([...visionKeys].sort());
     const chatKeys: Array<keyof VisionInfo["vision_chats"][number]> = ["thread_id", "channel_id", "running"];
     expect(keys(fixture.vision.vision_chats[0]!)).toEqual([...chatKeys].sort());
-    const channelKeys: Array<keyof ChannelInfo> = ["id", "name", "topic", "project_root", "approval_mode", "members", "revision"];
+    const channelKeys: Array<keyof ChannelInfo> = ["id", "name", "topic", "project_root", "approval_mode", "members", "revision", "needs"];
     expect(keys(fixture.channel)).toEqual([...channelKeys].sort());
     const ownerKeys: Array<keyof OwnedChat["owner"]> = ["thread_id", "vision_id", "channel_id", "kind", "hold"];
     expect(keys(fixture.owner)).toEqual([...ownerKeys].sort());
@@ -313,5 +313,28 @@ describe("wire fixture", () => {
     expect(keys(fixture.change)).toEqual([...changeKeys].sort());
     const questionKeys: Array<keyof Question> = ["id", "run_id", "question", "choices", "assumption", "reasons", "group", "blocking", "topic", "subagent", "asked_at", "answer", "answered_by", "permission", "passed_on"];
     expect(keys(fixture.question)).toEqual([...questionKeys].sort());
+  });
+});
+
+describe("visions follow the project", () => {
+  it("a project switched from plain chat lands Visions on that project's # hq", () => {
+    let state = reducer(initialState, { type: "visions/loaded", visions: [VISION], projectRoot: "/p", channels: [channel("c1", "/p")] });
+    state = reducer(state, { type: "visions/loaded", projectRoot: "/q", channels: [channel("c2", "/q")] });
+    state = appReducer({ ...state, activeProjectRoot: "/p", projects: [{ root: "/p", name: "P", is_git: true }, { root: "/q", name: "Q", is_git: true }] }, { type: "ui/view", view: "visions" });
+    state = appReducer(state, { type: "visions/open", channelId: "c1" });
+    state = appReducer(state, { type: "ui/view", view: "thread" });
+    state = appReducer(state, { type: "project/selected", root: "/q" });
+    state = appReducer(state, { type: "ui/view", view: "visions" });
+    expect(state.visions.open).toMatchObject({ channelId: null, chatId: null });
+    // Back to the first project: still its own # hq, nothing claims a channel elsewhere is gone.
+    state = appReducer(state, { type: "project/selected", root: "/p" });
+    expect(state.visions.open.channelId).toBeNull();
+  });
+
+  it("a project change keeps the open channel when it belongs there", () => {
+    let state = reducer(initialState, { type: "visions/loaded", visions: [VISION], projectRoot: "/p", channels: [channel("c1", "/p")] });
+    state = appReducer({ ...state, activeProjectRoot: "/q" }, { type: "visions/open", channelId: "c1" });
+    state = appReducer(state, { type: "project/selected", root: "/p" });
+    expect(state.visions.open.channelId).toBe("c1");
   });
 });

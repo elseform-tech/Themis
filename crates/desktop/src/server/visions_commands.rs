@@ -128,7 +128,7 @@ fn channel_method(
         }
         _ => {
             let root: String = arg(args, "projectRoot")?;
-            Ok((to_value(state.visions_project_channels(&root)?)?, None))
+            Ok((to_value(state.visions_channels_listed(&root)?)?, None))
         }
     }
 }

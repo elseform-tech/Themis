@@ -50,6 +50,15 @@ pub struct VisionListed {
     pub sorry: bool,
 }
 
+/// A channel as the person's list gives it (`ChannelInfo` in the app): what waits on the person
+/// from the chats driven in it, counted like a Vision's `needs`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ChannelListed {
+    #[serde(flatten)]
+    pub channel: super::Channel,
+    pub needs: usize,
+}
+
 /// What the app was last told of each Vision, in the Visions cache.
 #[derive(Debug, Default)]
 pub(crate) struct Shown {
@@ -78,7 +87,7 @@ impl AppState {
         for (vision, over) in visions.iter().zip(&over) {
             self.visions_budget_shown(&vision.id, *over);
         }
-        let needs = self.visions_needs(&driven);
+        let needs = self.visions_waiting(&driven, |owner| &owner.vision_id);
         let sorry = self.visions_cache().shown.sorry.clone();
         let threads = self.inner.threads.read().await;
         visions
@@ -107,17 +116,40 @@ impl AppState {
             .collect()
     }
 
-    /// What waits on the person, by Vision: one pass over the waiting approvals and each driven
-    /// chat's kept count (a chat not counted yet is read once).
-    fn visions_needs(&self, driven: &[super::Owner]) -> HashMap<String, usize> {
-        let vision_of: HashMap<&str, &str> = driven
+    /// Each project channel with what waits on the person from the chats driven in it (the same
+    /// counts as a Vision's `needs`, grouped by channel instead).
+    pub fn visions_channels_listed(
+        &self,
+        project_root: &str,
+    ) -> Result<Vec<ChannelListed>, String> {
+        let channels = self.visions_project_channels(project_root)?;
+        let driven = self.owners_where(|owner| owner.hold != Hold::TakenOver);
+        let needs = self.visions_waiting(&driven, |owner| &owner.channel_id);
+        Ok(channels
+            .into_iter()
+            .map(|channel| ChannelListed {
+                needs: needs.get(&channel.id).copied().unwrap_or(0),
+                channel,
+            })
+            .collect())
+    }
+
+    /// What waits on the person, grouped by `key` of each driven chat's owner (its Vision or its
+    /// channel): one pass over the waiting approvals and each driven chat's kept count (a chat not
+    /// counted yet is read once).
+    fn visions_waiting(
+        &self,
+        driven: &[super::Owner],
+        key: impl Fn(&super::Owner) -> &String,
+    ) -> HashMap<String, usize> {
+        let group_of: HashMap<&str, &String> = driven
             .iter()
-            .map(|owner| (owner.thread_id.as_str(), owner.vision_id.as_str()))
+            .map(|owner| (owner.thread_id.as_str(), key(owner)))
             .collect();
         let mut needs: HashMap<String, usize> = HashMap::new();
         for request in self.pending_approvals() {
-            if let Some(vision) = vision_of.get(request.thread_id.as_str()) {
-                *needs.entry((*vision).to_owned()).or_default() += 1;
+            if let Some(group) = group_of.get(request.thread_id.as_str()) {
+                *needs.entry((*group).clone()).or_default() += 1;
             }
         }
         let known: Vec<Option<usize>> = {
@@ -141,7 +173,7 @@ impl AppState {
                     .or_insert(read)
             });
             if count > 0 {
-                *needs.entry(owner.vision_id.clone()).or_default() += count;
+                *needs.entry(key(owner).clone()).or_default() += count;
             }
         }
         needs

@@ -36,7 +36,8 @@ function ChannelApproval({ request, channelId }: { request: ApprovalRequest; cha
 /** Visions whose run in this channel is going and that have not posted since the newest line:
  *  a run that answered the newest message has spoken. */
 function thinkingHere(state: ReturnType<typeof useApp>["state"], channel: ChannelInfo): VisionInfo[] {
-  const lines = state.visions.lines[channel.id] ?? [];
+  const read = state.visions.lines[channel.id];
+  const lines = read ?? [];
   const last = lines[lines.length - 1]?.entry;
   const spoke = last && last.type !== "person" && last.type !== "notice" ? last.vision_id : undefined;
   return state.visions.list.filter(vision => vision.id !== spoke
@@ -52,54 +53,66 @@ function Thinking({ visions }: { visions: VisionInfo[] }) {
   ))}</>;
 }
 
-/** Keeps the log at its newest line while the person is there; reading back stays put, and lines
- *  loaded above (`holdPlace` first) keep what was on screen where it was. */
-function useStickToEnd(count: number) {
+/** Keeps the log at its newest line while the person is there; reading back stays put. `tail`
+ *  changes with anything added at the bottom (a line, an approval, a thinking row or the post that
+ *  replaces it); `first` with lines loaded above, which keep what was on screen where it was
+ *  (`holdPlace` before the load, `releasePlace` when it added nothing). */
+function useStickToEnd(tail: string, first: number | undefined) {
   const log = useRef<HTMLDivElement>(null);
   const atEnd = useRef(true);
-  const place = useRef<{ height: number; top: number } | null>(null);
+  const place = useRef<{ height: number; top: number; first: number | undefined } | null>(null);
   useLayoutEffect(() => {
     const element = log.current;
     if (!element) return;
-    if (place.current) element.scrollTop = place.current.top + element.scrollHeight - place.current.height;
-    else if (atEnd.current) element.scrollTop = element.scrollHeight;
-    place.current = null;
-  }, [count]);
+    const held = place.current;
+    if (held && held.first !== first) {
+      element.scrollTop = held.top + element.scrollHeight - held.height;
+      place.current = null;
+      return;
+    }
+    if (atEnd.current) element.scrollTop = element.scrollHeight;
+    // Something arrived below while older lines load: measure again from here.
+    if (held) place.current = { height: element.scrollHeight, top: element.scrollTop, first };
+  }, [tail, first]);
   const onScroll = () => {
     const element = log.current;
     if (element) atEnd.current = element.scrollHeight - element.scrollTop - element.clientHeight < 48;
   };
   const holdPlace = () => {
     const element = log.current;
-    if (element) place.current = { height: element.scrollHeight, top: element.scrollTop };
+    if (element) place.current = { height: element.scrollHeight, top: element.scrollTop, first };
   };
-  return { log, onScroll, holdPlace };
+  const releasePlace = () => { if (place.current?.first === first) place.current = null; };
+  return { log, onScroll, holdPlace, releasePlace };
 }
 
-/** The newest line already there when the channel was first shown with its lines: later ones fade in. */
-function useShownUpTo(lines: ChannelLine[]): number | null {
-  const last = lines[lines.length - 1]?.seq;
-  const [shownUpTo, setShownUpTo] = useState<number | null>(last ?? null);
-  if (shownUpTo === null && last !== undefined) setShownUpTo(last);
-  return shownUpTo ?? last ?? null;
+/** The newest line already there when the channel's lines were first read (none in an empty
+ *  channel): later lines fade in. Null until the lines are read. */
+function useShownUpTo(lines: ChannelLine[] | undefined): number | null {
+  const now = lines === undefined ? null : lines[lines.length - 1]?.seq ?? -1;
+  const [shownUpTo, setShownUpTo] = useState<number | null>(now);
+  if (shownUpTo === null && now !== null) setShownUpTo(now);
+  return shownUpTo ?? now;
 }
 
 export function ChannelView({ channel }: { channel: ChannelInfo }) {
   const { state, loadOlderLines } = useApp();
   const [draft, setDraft] = useState("");
   const [loading, setLoading] = useState(false);
-  const lines = state.visions.lines[channel.id] ?? [];
+  const read = state.visions.lines[channel.id];
+  const lines = read ?? [];
   const chats = new Set((state.visions.chats[channel.id] ?? []).map(chat => chat.id));
   const approvals = state.approvals.filter(request => chats.has(request.thread_id));
   const members = channel.members.flatMap(id => visionById(state, id) ?? []);
   const moods = visionMoods(state);
   const thinking = channel.id ? thinkingHere(state, channel) : [];
-  const { log, onScroll, holdPlace } = useStickToEnd(lines.length + approvals.length + thinking.length);
-  const shownUpTo = useShownUpTo(lines);
+  const tail = `${lines[lines.length - 1]?.seq}:${approvals.length}:${thinking.map(vision => vision.id).join(",")}`;
+  const { log, onScroll, holdPlace, releasePlace } = useStickToEnd(tail, lines[0]?.seq);
+  const shownUpTo = useShownUpTo(read);
   async function older() {
     setLoading(true);
     holdPlace();
-    try { await loadOlderLines(channel.id); } finally { setLoading(false); }
+    try { await loadOlderLines(channel.id); } finally { setLoading(false); releasePlace(); }
   }
   return (
     <section className="themis-channel" aria-label={`# ${channel.name}`}>

@@ -56,6 +56,9 @@ export interface ChannelInfo {
   approval_mode: ApprovalModeName;
   members: string[];
   revision: string;
+  /** In the channel list: what waits on the person in this channel's own chats (approvals and
+   *  open questions passed on or asking a permission), counted by the server. */
+  needs?: number;
 }
 
 export type OwnedKind = "vision_chat" | "work";

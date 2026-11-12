@@ -159,14 +159,17 @@ fn listed_visions_channels_and_owners_match_the_apps_fixture() {
         sorry: true,
     };
     same(&listed, "vision");
-    let channel = Channel {
-        id: "c1".into(),
-        name: "hq".into(),
-        topic: "Ship 2.0".into(),
-        project_root: "/repo".into(),
-        approval_mode: ApprovalMode::Auto,
-        members: vec!["v1".into()],
-        revision: "r2".into(),
+    let channel = listing::ChannelListed {
+        channel: Channel {
+            id: "c1".into(),
+            name: "hq".into(),
+            topic: "Ship 2.0".into(),
+            project_root: "/repo".into(),
+            approval_mode: ApprovalMode::Auto,
+            members: vec!["v1".into()],
+            revision: "r2".into(),
+        },
+        needs: 1,
     };
     same(&channel, "channel");
     let owner = Owner {

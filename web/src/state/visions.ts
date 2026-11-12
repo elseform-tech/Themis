@@ -56,7 +56,8 @@ export type VisionsAction =
   | { type: "visions/changed"; channelId: string; page: ChannelPage; chats: OwnedChat[]; questions: Record<string, string[]> }
   | { type: "visions/older"; channelId: string; page: ChannelPage }
   | { type: "visions/open"; channelId: string | null; chatId?: string | null }
-  | { type: "visions/project"; root: string };
+  | { type: "visions/project"; root: string }
+  | { type: "visions/reshow" };
 
 /** A Vision's mood: asleep while paused or over budget; otherwise needs > sorry > work > think >
  *  calm. Sorry is the server's: its latest run failed (a work chat's or its own chat's; the
@@ -78,6 +79,18 @@ export function railMood(moods: Mood[]): Mood {
 
 function allChats(state: AppState): OwnedChat[] {
   return Object.values(state.visions.chats).flat();
+}
+
+/** The ids of every chat a Vision runs, built once per listing of the chats (thread events leave
+ *  `visions.chats` as it is, so they cost one set lookup). */
+const ownedIds = new WeakMap<VisionsState["chats"], Set<string>>();
+function ownedChatIds(state: AppState): Set<string> {
+  let ids = ownedIds.get(state.visions.chats);
+  if (!ids) {
+    ids = new Set(allChats(state).map(chat => chat.id));
+    ownedIds.set(state.visions.chats, ids);
+  }
+  return ids;
 }
 
 /** What waits on the person from every Vision, as the server counts it. */
@@ -159,7 +172,23 @@ function older(state: AppState, action: Extract<VisionsAction, { type: "visions/
 
 /** Whether `threadId` is a chat a Vision runs (a work chat listed in a channel). */
 export function isOwnedChat(state: AppState, threadId: string | null): boolean {
-  return threadId !== null && allChats(state).some(chat => chat.id === threadId);
+  return threadId !== null && ownedChatIds(state).has(threadId);
+}
+
+/** After any action: when the project changed and the open channel is not one of the new
+ *  project's, Visions shows that project's `# hq` (the channel was not deleted, it is elsewhere). */
+export function visionsFollowProject(before: AppState, after: AppState): AppState {
+  const { channelId } = after.visions.open;
+  if (after.activeProjectRoot === before.activeProjectRoot || channelId === null) return after;
+  const here = (after.visions.channels[after.activeProjectRoot ?? ""] ?? []).some(channel => channel.id === channelId);
+  return here ? after : { ...after, visions: { ...after.visions, open: { ...after.visions.open, channelId: null, chatId: null } } };
+}
+
+/** The open chat shown again after something else moved the active chat: only the active chat
+ *  changes, never where Chats returns to. */
+function reshow(state: AppState): AppState {
+  const chatId = state.visions.open.chatId;
+  return chatId === null ? state : { ...state, activeThreadId: chatId };
 }
 
 /** Shows a channel (or `# hq`), and with `chatId` one of its chats, which becomes the active chat;
@@ -179,11 +208,9 @@ export function leaveOwnedChat(state: AppState): AppState {
   return { ...state, activeThreadId: state.visions.open.plainThreadId };
 }
 
-/** What waits on the person in one channel: its members' needs as the server counts them (the
- *  same numbers as the rail badge; a Vision in several channels counts in each). */
-export function channelNeeds(state: AppState, channel: ChannelInfo): number {
-  const members = new Set(channel.members);
-  return state.visions.list.reduce((total, vision) => total + (members.has(vision.id) ? vision.needs : 0), 0);
+/** What waits on the person in one channel's own chats, as the server lists it with the channel. */
+export function channelNeeds(channel: ChannelInfo): number {
+  return channel.needs ?? 0;
 }
 
 /** Another project while in Visions: its `# hq`, and its newest plain chat for Chats to return to. */
@@ -198,6 +225,7 @@ export function reduceVisionsActions(state: AppState, action: AppAction): AppSta
   if (action.type === "visions/older") return older(state, action);
   if (action.type === "visions/open") return open(state, action);
   if (action.type === "visions/project") return project(state, action.root);
+  if (action.type === "visions/reshow") return reshow(state);
   if (action.type !== "visions/changed") return null;
   const { channelId, page } = action;
   const v = state.visions;
@@ -277,7 +305,8 @@ async function readChannel(bridge: VisionsBridge, channelId: string, shown: Reco
 /** The projects whose channel lists are read again for `want`. */
 function rootsToList(want: Wanted, known: Record<string, ChannelInfo[]>): Set<string> {
   const roots = Object.keys(known);
-  const listRoots = new Set<string>(want.all ? [...roots, ...want.roots] : []);
+  // A Vision's change (what waits on the person) also changes its channels' counts.
+  const listRoots = new Set<string>(want.all ? [...roots, ...want.roots] : want.list ? roots : []);
   for (const id of want.channels) {
     const root = roots.find(each => known[each]!.some(channel => channel.id === id));
     // A channel not read yet is new: its project is one of those read.

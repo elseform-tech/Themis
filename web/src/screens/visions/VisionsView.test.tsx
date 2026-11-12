@@ -2,7 +2,7 @@
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { useReducer } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { DEFAULT_SETTINGS, initialState, reducer, type AppAction, type AppState } from "../../state/reducer";
+import { appReducer, DEFAULT_SETTINGS, initialState, type AppAction, type AppState } from "../../state/reducer";
 import type { ApprovalRequest, ThreadInfo } from "../../lib/types";
 import type { ChannelEntry, ChannelInfo, OwnedChat, VisionInfo } from "../../lib/visions";
 import * as tauri from "../../lib/tauri";
@@ -37,7 +37,9 @@ const vision = (id: string, name: string, extra: Partial<VisionInfo> = {}): Visi
 const owned = (id: string, title: string, visionId: string, running: boolean): OwnedChat => ({
   ...base, id, title, running, owner: { thread_id: id, vision_id: visionId, channel_id: "c1", kind: "work", hold: "none" },
 });
-const channel: ChannelInfo = { id: "c1", name: "release", topic: "Ship 0.9", project_root: "/p", approval_mode: "custom", members: ["rook", "wren"], revision: "r" };
+// The approval on w1 and the passed-on question on w2 wait on the person: two in # release, one
+// for each Vision, as the server counts them.
+const channel: ChannelInfo = { id: "c1", name: "release", topic: "Ship 0.9", project_root: "/p", approval_mode: "custom", members: ["rook", "wren"], revision: "r", needs: 2 };
 const entries: ChannelEntry[] = [
   { type: "person", text: "@Rook fix the date test" },
   { type: "vision", vision_id: "rook", text: "On it." },
@@ -58,7 +60,7 @@ function fixture(extra: Partial<AppState> = {}): AppState {
     approvals: [approval],
     visions: {
       ...initialState.visions,
-      list: [vision("rook", "Rook"), vision("wren", "Wren", { needs: 1, color: "violet" })],
+      list: [vision("rook", "Rook", { needs: 1 }), vision("wren", "Wren", { needs: 1, color: "violet" })],
       channels: { "/p": [channel] },
       lines: { c1: entries.map((entry, seq) => ({ seq, at_ms: Date.UTC(2026, 10, 12, 9, seq), entry })) },
       nextBefore: { c1: null },
@@ -70,7 +72,7 @@ function fixture(extra: Partial<AppState> = {}): AppState {
 }
 
 function Harness({ initial }: { initial: AppState }) {
-  const [state, dispatch] = useReducer(reducer, initial);
+  const [state, dispatch] = useReducer(appReducer, initial);
   live.value = { state, dispatch: dispatch as (action: AppAction) => void, loadOlderLines: loadOlder };
   return <><SidebarWithVisions collapsed={false} /><main><div data-testid="main-view">{state.mainView}:{state.activeThreadId}</div><VisionsView /></main></>;
 }
@@ -112,11 +114,11 @@ describe("Visions view", () => {
     const bar = screen.getByRole("complementary", { name: "Visions navigation" });
     expect(within(bar).getByLabelText("Project: Ledger")).toBeTruthy();
     expect(within(bar).getByRole("button", { name: "# hq" })).toBeTruthy();
-    // The channel tag adds up its members' needs as the server counts them, like the rail badge.
-    expect(within(bar).getByRole("button", { name: "# release, 1 needs you" })).toBeTruthy();
+    // The channel tag is the server's count of what waits in that channel's own chats.
+    expect(within(bar).getByRole("button", { name: "# release, 2 need you" })).toBeTruthy();
     const wren = within(bar).getByText("Wren").closest("li")!;
     expect(wren).toHaveTextContent("Needs you");
-    expect(within(bar).getByText("Rook").closest("li")).toHaveTextContent("Working");
+    expect(within(bar).getByText("Rook").closest("li")).toHaveTextContent("Needs you");
     expect(within(bar).getByRole("button", { name: "New channel" })).toBeTruthy();
     expect(within(bar).getByRole("button", { name: "New Vision" })).toBeTruthy();
     // # hq is a channel like any other; with no hq channel yet it is empty and cannot be written to.
@@ -352,6 +354,43 @@ describe("Visions view", () => {
     expect(wren).toHaveAttribute("aria-selected", "true");
     fireEvent.keyDown(box, { key: "Enter" });
     expect(box).toHaveValue("@Wren ");
+  });
+
+  it("the mention list closes on Escape, starts over on a new prefix, and is a combobox", async () => {
+    const view = await openRelease();
+    const box = within(view).getByRole("combobox", { name: "Message #release" });
+    expect(box).toHaveAttribute("aria-expanded", "false");
+    fireEvent.change(box, { target: { value: "@" } });
+    expect(box).toHaveAttribute("aria-expanded", "true");
+    fireEvent.keyDown(box, { key: "ArrowDown" });
+    fireEvent.change(box, { target: { value: "@W" } });
+    const [wren] = within(view).getAllByRole("option");
+    expect(box).toHaveAttribute("aria-activedescendant", wren!.id);
+    fireEvent.change(box, { target: { value: "@" } });
+    expect(within(view).getAllByRole("option")[0]).toHaveAttribute("aria-selected", "true");
+    fireEvent.keyDown(box, { key: "Escape" });
+    expect(within(view).queryByRole("listbox")).toBeNull();
+    expect(box).toHaveAttribute("aria-expanded", "false");
+    // Typing on brings it back.
+    fireEvent.change(box, { target: { value: "@R" } });
+    expect(within(view).getByRole("listbox")).toBeTruthy();
+  });
+
+  it("re-showing the open chat never changes where Chats returns to", async () => {
+    const other: ThreadInfo = { ...plain, id: "other", title: "Other chat" };
+    await openChat({ threadsByProject: { "/p": [other, plain] } });
+    expect(stateLive().visions.open.plainThreadId).toBe("plain");
+    // Something else moves the active chat (here the plain list picks a neighbour).
+    dispatchLive({ type: "thread/removed", projectRoot: "/p", threadId: "w1" });
+    await waitFor(() => expect(stateLive().activeThreadId).toBe("w1"));
+    expect(stateLive().visions.open).toMatchObject({ channelId: "c1", chatId: "w1", plainThreadId: "plain" });
+  });
+
+  it("the first Vision post in a channel opened empty fades in", () => {
+    mount({ mainView: "visions", visions: { ...fixture().visions, lines: { c1: [] }, open: { channelId: "c1", chatId: null, plainThreadId: null } } });
+    const page = { entries: [{ seq: 0, at_ms: 0, entry: { type: "vision" as const, vision_id: "rook", text: "Hello." } }], next_before: null };
+    dispatchLive({ type: "visions/changed", channelId: "c1", page, chats: fixture().visions.chats.c1!, questions: {} });
+    expect(within(screen.getByRole("region", { name: "# release" })).getByText("Hello.").closest("li")).toHaveClass("is-fresh");
   });
 
   it("asks to mention a Vision when several are here, and posts the message", async () => {

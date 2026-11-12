@@ -24,8 +24,8 @@ export function VisionChat({ channel, chat }: { channel: ChannelInfo; chat: Owne
   // The thread view shows the active chat: keep it the one `visions.open` names.
   const shown = state.activeThreadId === chat.id;
   useEffect(() => {
-    if (!shown) dispatch({ type: "visions/open", channelId: channel.id, chatId: chat.id });
-  }, [shown, dispatch, channel.id, chat.id]);
+    if (!shown) dispatch({ type: "visions/reshow" });
+  }, [shown, dispatch]);
   async function act(what: () => Promise<unknown>, failed: string) {
     try { await what(); } catch (error) { toast(dispatch, `${failed}: ${describeError(error)}`, "danger"); }
   }
