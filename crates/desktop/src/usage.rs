@@ -176,18 +176,9 @@ impl UsageStore {
             return Err("usage store unavailable".to_owned());
         };
         let connection = connection.lock().unwrap_or_else(|e| e.into_inner());
-        let mut statement = connection
-            .prepare(&format!(
-                "SELECT id,{ROW_COLUMNS} FROM usage_requests WHERE id>?1 AND at_ms>=?2 ORDER BY id"
-            ))
-            .map_err(|e| format!("read usage: {e}"))?;
-        let rows = statement
-            .query_map([after_id, since_ms], |row| {
-                Ok((row.get(0)?, row_at(row, 1)?))
-            })
-            .and_then(|rows| rows.collect::<rusqlite::Result<Vec<_>>>())
-            .map_err(|e| format!("read usage: {e}"));
-        rows
+        read_after(&connection, after_id, since_ms)
+            .map(|(rows, _)| rows)
+            .map_err(|e| format!("read usage: {e}"))
     }
 
     /// Makes every later read fail, for tests of what happens then.
@@ -363,6 +354,37 @@ fn select_rows(
     ))?;
     let rows = statement.query_map([bound_ms], |row| row_at(row, 0))?;
     rows.collect()
+}
+
+/// Rows after `after_id` and at or after `since_ms`, in id order, and the SQLite VM steps the
+/// reads took. The first row at or after `since_ms` is found on the `at_ms` index (forced: left
+/// to itself SQLite walks ids from the oldest), and the rows are then read by id from there, so
+/// the work follows the rows since `since_ms`, not the history.
+fn read_after(
+    connection: &Connection,
+    after_id: i64,
+    since_ms: i64,
+) -> rusqlite::Result<(Vec<(i64, UsageRow)>, i32)> {
+    let mut first = connection.prepare_cached(
+        "SELECT min(id) FROM usage_requests INDEXED BY usage_requests_at WHERE at_ms>=?1",
+    )?;
+    let start: Option<i64> = first.query_row([since_ms], |row| row.get(0))?;
+    let mut steps = first.get_status(rusqlite::StatementStatus::VmStep);
+    first.reset_status(rusqlite::StatementStatus::VmStep);
+    let Some(start) = start else {
+        return Ok((Vec::new(), steps));
+    };
+    let mut statement = connection.prepare_cached(&format!(
+        "SELECT id,{ROW_COLUMNS} FROM usage_requests WHERE id>=?1 AND at_ms>=?2 ORDER BY id"
+    ))?;
+    let rows = statement
+        .query_map([start.max(after_id + 1), since_ms], |row| {
+            Ok((row.get(0)?, row_at(row, 1)?))
+        })?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    steps += statement.get_status(rusqlite::StatementStatus::VmStep);
+    statement.reset_status(rusqlite::StatementStatus::VmStep);
+    Ok((rows, steps))
 }
 
 /// The columns [`row_at`] reads, in order.
@@ -997,5 +1019,45 @@ mod tests {
         assert_eq!(rows[0].thread_id.as_ref().unwrap().len(), MAX_ID_CHARS);
         assert_eq!(rows[0].kind, UsageKind::Summary);
         assert_eq!(rows[0].output_tokens, Some(3));
+    }
+
+    /// Scale: reading the day's rows (`after_id` 0, as after a restart or at midnight) takes the
+    /// same SQLite work however many older rows the store keeps: the first row is found on the
+    /// `at_ms` index and the rest read by id from there.
+    #[test]
+    fn reading_todays_rows_does_not_walk_the_history() {
+        let mut steps = Vec::new();
+        for older in [1_000i64, 20_000] {
+            let directory = tempfile::tempdir().unwrap();
+            let connection = open_connection(&directory.path().join("usage.sqlite3")).unwrap();
+            connection.execute_batch("BEGIN").unwrap();
+            let at = |at_ms: i64| UsageRow {
+                at_ms,
+                ..row(Utc::now(), "m", Some("chat"), 1, 1)
+            };
+            for n in 0..older {
+                insert(&connection, &at(1_000 + n)).unwrap();
+            }
+            for n in 0..10 {
+                insert(&connection, &at(10_000_000 + n)).unwrap();
+            }
+            connection.execute_batch("COMMIT").unwrap();
+            let (rows, used) = read_after(&connection, 0, 10_000_000).unwrap();
+            assert_eq!(rows.len(), 10);
+            let (again, _) = read_after(&connection, rows[9].0, 10_000_000).unwrap();
+            assert!(again.is_empty());
+            steps.push(used);
+        }
+        assert_eq!(steps[0], steps[1], "VM steps flat in history: {steps:?}");
+        let directory = tempfile::tempdir().unwrap();
+        let connection = open_connection(&directory.path().join("usage.sqlite3")).unwrap();
+        let plan: String = connection
+            .query_row(
+                "EXPLAIN QUERY PLAN SELECT min(id) FROM usage_requests INDEXED BY usage_requests_at WHERE at_ms>=1",
+                [],
+                |row| row.get(3),
+            )
+            .unwrap();
+        assert!(plan.contains("usage_requests_at"), "{plan}");
     }
 }

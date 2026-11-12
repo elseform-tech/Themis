@@ -415,20 +415,20 @@ fn unknown(state: &AppState, vision: &str) -> Option<&'static str> {
     }
 }
 
-/// Spend that cannot be known counts as the budget reached, never as $0: no price catalog yet,
-/// the usage store unreadable, `owners.json` unreadable, the configuration unreadable. The
-/// channel's notice names the reason.
-#[tokio::test]
+/// Spend that cannot be known counts as the budget reached, never as $0: with an OpenCode Go
+/// key, no price catalog yet (loading it failed: the notice names that); the usage store
+/// unreadable, `owners.json` unreadable, the configuration unreadable.
+#[tokio::test(flavor = "multi_thread")]
 async fn the_budget_fails_closed_on_every_read_error() {
     let s = setup().await;
+    unreachable_go(&s.state).await;
     s.state.set_model_catalog_for_test(Vec::new()).await;
     assert_eq!(unknown(&s.state, &s.wren), Some("catalog_not_loaded"));
     assert!(s.state.visions_over_budget(&s.wren));
     assert!(s.state.visions_spent_today(Some(&s.wren)).is_infinite());
     assert!(s.state.visions_budget_gate(&s.wren).is_some());
-    let told = notices_of(&s, "budget_unknown");
-    assert_eq!(told.len(), 1);
-    assert_eq!(told[0]["reason"], "catalog_not_loaded");
+    let told = wait_for_notice(&s, "budget_unknown").await;
+    assert_eq!(told["reason"], "catalog_not_loaded");
     assert!(notices_of(&s, "budget_reached").is_empty());
     s.state.set_model_catalog_for_test(priced()).await;
     assert_eq!(s.state.visions_judge(&s.wren).over, None);
@@ -536,8 +536,10 @@ async fn a_request_past_the_cap_stops_the_running_chats_at_once() {
     let Ok(Admit::Start(reasons)) = next else {
         panic!("{next:?}");
     };
-    assert!(reasons.contains(&WakeReason::BudgetStopped("wren-work".into())));
-    assert!(reasons.contains(&WakeReason::BudgetStopped("wren-other".into())));
+    let stopped = |thread: &str| WakeReason::BudgetStopped(thread.into(), "reached");
+    assert!(reasons.contains(&stopped("wren-work")));
+    assert!(reasons.contains(&stopped("wren-other")));
+    assert_eq!(stopped("t").line(), "budget_stopped t reached");
 }
 
 /// A notice that was posted but cannot be saved is not posted again on every check.
@@ -571,25 +573,233 @@ async fn a_projects_lower_cap_is_the_one_both_checks_use() {
     assert!(s.state.visions_budget_gate(&s.ada).is_some());
 }
 
-/// With no price catalog and none to load (no key here), the Vision starts nothing and its
-/// channel is told why.
+/// A Go key whose catalog cannot load (offline here): the Vision starts nothing and its channel
+/// is told why.
 #[tokio::test(flavor = "multi_thread")]
 async fn a_catalog_that_cannot_load_is_told() {
     let s = setup().await;
+    unreachable_go(&s.state).await;
     s.state.set_model_catalog_for_test(Vec::new()).await;
     s.state.visions_prices_at_start();
-    let started = Instant::now();
-    while notices_of(&s, "budget_unknown").is_empty() {
-        assert!(started.elapsed() < Duration::from_secs(10), "told");
-        tokio::time::sleep(Duration::from_millis(20)).await;
-    }
-    assert_eq!(
-        notices_of(&s, "budget_unknown")[0]["reason"],
-        "catalog_not_loaded"
-    );
+    let told = wait_for_notice(&s, "budget_unknown").await;
+    assert_eq!(told["reason"], "catalog_not_loaded");
     assert_eq!(
         s.state
             .visions_wake_admit(&s.channel, &s.wren, Some(WakeReason::Mentioned)),
         Err("budget_unknown")
     );
+}
+
+/// An OpenCode Go key that points nowhere: loading the catalog fails at once.
+async fn unreachable_go(state: &AppState) {
+    state
+        .set_secret("go".into(), "test-key".into())
+        .await
+        .unwrap();
+    state.set_go_base_url_override(Some("http://127.0.0.1:9".into()));
+}
+
+async fn wait_for_notice(s: &Setup, kind: &str) -> Value {
+    let started = Instant::now();
+    loop {
+        if let Some(found) = notices_of(s, kind).into_iter().next() {
+            return found;
+        }
+        assert!(started.elapsed() < Duration::from_secs(10), "{kind} told");
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+}
+
+/// Waits until a try to load the catalog found no OpenCode Go key.
+async fn wait_no_key(state: &AppState) {
+    let started = Instant::now();
+    while !state.visions_cache().budget.no_go_key {
+        assert!(started.elapsed() < Duration::from_secs(10), "no key found");
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+}
+
+const ACME: &str = r#"{"visions": {"daily_budget_usd": 5},
+    "providers": [{"id": "acme", "name": "Acme", "base_url": "https://acme.example/v1",
+        "secret": "${ACME_KEY}", "models": [{"id": "m",
+            "price": {"input_per_mtok": 1, "output_per_mtok": 0}}]}]}"#;
+
+/// Without an OpenCode Go key the configured providers' prices are the price list: a Vision
+/// runs, a configured model's spend counts against its cap, and any other request counts as
+/// unpriced and is told.
+#[tokio::test(flavor = "multi_thread")]
+async fn without_a_go_key_configured_prices_count_and_visions_run() {
+    let s = setup().await;
+    s.state.set_model_catalog_for_test(Vec::new()).await;
+    write_runtime(&s, ACME);
+    set_cap(&s, &s.wren, Some(0.5));
+    own(&s, "wren-work", &s.wren, OwnedKind::Work, Hold::None);
+    let _ = s.state.visions_judge(&s.wren);
+    wait_no_key(&s.state).await;
+    assert_eq!(s.state.visions_judge(&s.wren).over, None);
+    assert!(matches!(
+        s.state
+            .visions_wake_admit(&s.channel, &s.wren, Some(WakeReason::Mentioned)),
+        Ok(Admit::Start(_))
+    ));
+    s.state.visions_cache().wakes.ended(&s.wren, &s.channel);
+    let mut priced = row("wren-work", "m", 400_000, now_ms());
+    priced.provider = "acme".into();
+    let mut qualified = row("wren-work", "acme/m", 200_000, now_ms());
+    qualified.provider = "acme".into();
+    record(&s.state, vec![priced, qualified]);
+    assert!(near(s.state.visions_spent_today(Some(&s.wren)), 0.6));
+    assert!(matches!(
+        s.state.visions_budget_gate(&s.wren),
+        Some(Over::Vision { unpriced: 0 })
+    ));
+    record(&s.state, vec![row("wren-work", PAID, 10, now_ms())]);
+    s.state.visions_budget_gate(&s.wren);
+    assert_eq!(notices_of(&s, "unpriced")[0]["unpriced_requests"], 1);
+    assert!(notices_of(&s, "budget_unknown").is_empty());
+}
+
+/// Without an OpenCode Go key and no configured prices, a Vision still runs; its requests count
+/// as unpriced, and its channel is told.
+#[tokio::test(flavor = "multi_thread")]
+async fn without_a_go_key_or_prices_visions_run_and_unpriced_requests_are_told() {
+    let s = setup().await;
+    s.state.set_model_catalog_for_test(Vec::new()).await;
+    own(&s, "wren-work", &s.wren, OwnedKind::Work, Hold::None);
+    let _ = s.state.visions_judge(&s.wren);
+    wait_no_key(&s.state).await;
+    record(&s.state, vec![row("wren-work", PAID, 9_000_000, now_ms())]);
+    assert!(matches!(
+        s.state
+            .visions_wake_admit(&s.channel, &s.wren, Some(WakeReason::Mentioned)),
+        Ok(Admit::Start(_))
+    ));
+    assert_eq!(notices_of(&s, "unpriced")[0]["unpriced_requests"], 1);
+    assert!(notices_of(&s, "budget_unknown").is_empty());
+}
+
+/// A request in a chat no Vision owns takes no Visions lock (and reads no usage); while
+/// `owners.json` cannot be read the index is tried again at most once a minute, logged once.
+#[tokio::test]
+async fn a_request_in_a_chat_no_vision_owns_takes_no_visions_lock() {
+    let s = setup().await;
+    own(&s, "wren-work", &s.wren, OwnedKind::Work, Hold::None);
+    let held = s.state.visions_cache();
+    let state = s.state.clone();
+    let (done, finished) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        state.visions_budget_after_request("plain");
+        let _ = done.send(());
+    });
+    assert!(
+        finished.recv_timeout(Duration::from_secs(2)).is_ok(),
+        "no lock taken"
+    );
+    drop(held);
+
+    let damaged = setup().await;
+    std::fs::create_dir_all(&damaged.state.inner.visions_dir).unwrap();
+    let owners = damaged.state.inner.visions_dir.join("owners.json");
+    std::fs::write(owners, "{ damaged").unwrap();
+    damaged.state.visions_cache().owners = None;
+    damaged.state.inner.visions.owned.reset_for_test();
+    for _ in 0..5 {
+        damaged.state.visions_budget_after_request("any");
+    }
+    let filter = themis_core::diagnostics::DiagnosticFilter {
+        service: Some("visions".into()),
+        ..Default::default()
+    };
+    let unreadable = damaged
+        .state
+        .inner
+        .diagnostics
+        .query(&filter)
+        .unwrap()
+        .into_iter()
+        .filter(|record| record.event == "owned_index_unreadable")
+        .count();
+    assert_eq!(unreadable, 1);
+}
+
+/// A channel in another project, for Ada alone.
+fn other_project(s: &Setup) -> String {
+    let project = s.dir.path().join("other");
+    std::fs::create_dir_all(&project).unwrap();
+    s.state
+        .channel_save(
+            Channel {
+                id: String::new(),
+                name: "elsewhere".into(),
+                topic: String::new(),
+                project_root: project.canonicalize().unwrap(),
+                approval_mode: ApprovalMode::Custom,
+                members: vec![s.ada.clone()],
+                revision: String::new(),
+            },
+            None,
+        )
+        .unwrap()
+        .id
+}
+
+/// A project's lower cap holds the Visions with a channel in that project, together; a Vision
+/// only in another project is not over and is not stopped.
+#[tokio::test]
+async fn a_projects_lower_cap_covers_only_its_own_visions() {
+    let s = setup().await;
+    other_project(&s);
+    // Ada leaves #hq: she is only in the other project.
+    let hq = s.state.channel_get(&s.channel).unwrap();
+    let revision = hq.revision.clone();
+    s.state
+        .channel_save(
+            Channel {
+                members: vec![s.wren.clone()],
+                ..hq
+            },
+            Some(&revision),
+        )
+        .unwrap();
+    spent_today(&s);
+    write_runtime(&s, r#"{"visions": {"daily_budget_usd": 5}}"#);
+    let themis = s.dir.path().join("project/.themis");
+    std::fs::create_dir_all(&themis).unwrap();
+    std::fs::write(
+        themis.join("config.jsonc"),
+        r#"{"visions": {"daily_budget_usd": 0.6}}"#,
+    )
+    .unwrap();
+    assert!(
+        s.state.visions_over_budget(&s.wren),
+        "0.70 of its project's 0.60"
+    );
+    assert!(!s.state.visions_over_budget(&s.ada), "1.00 of 5");
+    let work = running(&s.state, "wren-work");
+    let theirs = running(&s.state, "ada-work");
+    s.state.visions_budget_enforce(&s.wren);
+    assert!(work.load(Ordering::SeqCst));
+    assert!(!theirs.load(Ordering::SeqCst), "Ada is not over");
+}
+
+/// A notice one channel could not record is tried again in that channel only.
+#[tokio::test]
+async fn a_notice_is_retried_only_where_it_failed() {
+    let s = setup().await;
+    let second = other_project(&s);
+    let logs = s.state.inner.visions_dir.join("channels");
+    std::fs::create_dir_all(logs.join(format!("{second}.jsonl"))).unwrap();
+    set_cap(&s, &s.ada, Some(0.0));
+    s.state.visions_budget_gate(&s.ada);
+    assert_eq!(budget_notices(&s).len(), 1);
+    std::fs::remove_dir(logs.join(format!("{second}.jsonl"))).unwrap();
+    s.state.visions_cache().budget.retry_after.clear();
+    s.state.visions_budget_gate(&s.ada);
+    assert_eq!(
+        budget_notices(&s).len(),
+        1,
+        "not again where it was recorded"
+    );
+    let page = s.state.channel_page(&second, None, 1 << 20).unwrap();
+    assert_eq!(page.entries.len(), 1, "posted where it failed");
 }

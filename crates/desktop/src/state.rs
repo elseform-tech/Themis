@@ -360,7 +360,8 @@ struct AppStateInner {
     questions: std::sync::Mutex<HashMap<String, Vec<crate::types::Question>>>,
     questions_dir: PathBuf,
     /// The Visions store (`visions/` in the app data dir), loaded on first use.
-    visions: std::sync::Mutex<visions::VisionsCache>,
+    /// The Visions store's cache, and the index of owned chats kept apart from its lock.
+    visions: visions::VisionsShared,
     visions_dir: PathBuf,
     /// Each chat's subagents, live and recently ended.
     subagents: subagents::SubagentMap,
@@ -659,7 +660,7 @@ impl AppState {
                 memory_job_lock: tokio::sync::Mutex::new(()),
                 questions: std::sync::Mutex::new(HashMap::new()),
                 questions_dir: app_dir.join(questions::QUESTIONS_DIR),
-                visions: std::sync::Mutex::default(),
+                visions: visions::VisionsShared::default(),
                 visions_dir: app_dir.join(visions::VISIONS_DIR),
                 subagents: std::sync::Mutex::new(HashMap::new()),
                 terminals: Arc::default(),

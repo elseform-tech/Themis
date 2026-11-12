@@ -1008,48 +1008,58 @@ fixed reason, `sandbox_unavailable` among them) and `reply_posted`, ids and coun
 
 **A Vision's budget.** A Vision's spend today is what usage recorded since local midnight for
 the chats it owns (`owners.json`): its hidden Vision chats and its work chats, priced at the
-catalog's list prices. A model the loaded catalog does not price counts as $0 and is counted
-apart; a free model (priced at $0) is priced. A chat the person took over still counts: usage
-rows do not say who started a run. It is over budget when all Visions together reach the
-overall cap or its own spend reaches its own cap (its profile's `daily_budget_usd`, never above
-the overall cap). The overall cap is the lowest `visions.daily_budget_usd` that the projects of
-its channels resolve (your own `runtime.jsonc` when it is in none), the same for the server's
-checks and `visions_over_budget`. When spend cannot be known it counts as reached, never as $0:
-the usage store unavailable or unreadable, `owners.json` unreadable, the configuration
-unreadable, or the price catalog not loaded yet. The app loads the catalog at start when there
-are Visions, and again (at most once a minute) while a check finds none; until it loads, Visions
-start nothing.
+prices known: the configured providers' (`providers[].models[].price` in your `runtime.jsonc`)
+and the OpenCode Go catalog's list prices. A model none of them prices counts as $0 and is
+counted apart; a free model (priced at $0) is priced. A chat the person took over still counts:
+usage rows do not say who started a run. Three kinds of cap apply. Your own `runtime.jsonc`'s
+`visions.daily_budget_usd` holds all Visions together. A project whose `.themis/config.jsonc`
+sets it lower holds, together, only the Visions with a channel in that project. And a Vision
+profile's `daily_budget_usd` holds that Vision alone, never above your own file's cap. The
+server's checks and `visions_over_budget` judge the same way. When spend cannot be known it
+counts as reached, never as $0: the usage store unavailable or unreadable, `owners.json`
+unreadable, the configuration unreadable, the Vision gone, or (with an OpenCode Go key) the
+catalog not loaded yet. Without an OpenCode Go key there is no catalog to wait for: the
+configured providers' prices are all there is, and everything else is unpriced. The app loads
+the catalog at start when there are Visions, and again (at most once a minute) while a check
+finds none; with a key but no catalog, Visions start nothing until it loads.
 
 The cap is checked after every request recorded for a chat a Vision owns (on a task of its own,
-once the usage writer stored the row, at most one waiting per Vision), at the end of each such
-run, and before anything a Vision would start. A check reads only the usage rows recorded since
-the last one and keeps a running sum per chat, rebuilt from the usage store after a restart or
-at midnight. Over budget, a Vision wakes for nothing (`over_budget`, or `budget_unknown` when
-spend is not known; what woke it waits, newest 64 kept, for its first wake the budget allows);
-its spending calls are refused as above (`over_budget`, `agent-cli-vision-over-budget.md`, or
-`budget_unknown`, `agent-cli-vision-budget-unknown.md`); its queued messages wait unsent; a goal
-in a chat it drives pauses instead of starting its next turn (the goal bar says why; the person
-resumes it); and its running chats are stopped at once, every Vision's at the overall cap: only
-chats that run for a Vision (not one the person took over), the ordinary way, holding nothing
-back (no `stopped_by_person`, no `stopped` notice). A stop takes effect at the run's next safe
-boundary, so a Vision overshoots by about the request in flight in each running chat. Each work
-chat the budget stopped waits as a `budget_stopped` wake reason, so the Vision's next wake after
-a raise says the budget, not the person, stopped it. Hook-report wakes and automations in a
-Vision's chats are not gated; hook wakes are held after the stop's failed turn.
+once the usage writer stored the row; a chat no Vision owns costs a read lock and a set lookup,
+from an index of owned chats kept beside the Visions store and tried again at most once a minute
+while `owners.json` cannot be read), at the end of each such run, and before anything a Vision
+would start. A check reads only the usage rows recorded since the last one (the day's first
+read starts at the first row of the day, found on the `at_ms` index) and keeps a running sum per
+chat, rebuilt from the usage store after a restart or at midnight. Over budget, a Vision wakes
+for nothing (`over_budget`, or `budget_unknown` when spend is not known; what woke it waits,
+newest 64 kept, for its first wake the budget allows); its spending calls are refused as above
+(`over_budget`, `agent-cli-vision-over-budget.md`, or `budget_unknown`,
+`agent-cli-vision-budget-unknown.md`); its queued messages wait unsent; a goal in a chat it
+drives pauses instead of starting its next turn (the goal bar says why; the person resumes it);
+and its running chats are stopped at once, as are those of every other Vision over the same
+shared cap (no Vision that is not over): only chats that run for a Vision (not one the person
+took over), the ordinary way, holding nothing back (no `stopped_by_person`, no `stopped`
+notice). A stop takes effect at the run's next safe boundary, so a Vision overshoots by about
+the request in flight in each running chat. Each work chat the budget stopped waits as a
+`budget_stopped ID CAUSE` wake reason (`reached`, or `unknown` when spend could not be checked),
+so the Vision's next wake the budget allows says the budget check, not the person, stopped it.
+Hook-report wakes and automations in a Vision's chats are not gated; hook wakes are held after
+the stop's failed turn.
 
-Its channels get each of three notices at most once a local day: `budget_reached`
+Each of its channels gets each of three notices at most once a local day: `budget_reached`
 (`{vision_id, unpriced_requests}`: requests behind the reached cap that had no price),
 `budget_unknown` (`{vision_id, reason}`: `usage_unavailable`, `usage_unreadable`,
-`owners_unreadable`, `catalog_not_loaded`, `config_unreadable`), and `unpriced`
+`owners_unreadable`, `catalog_not_loaded` (posted when loading the catalog fails),
+`config_unreadable`, `vision_gone`), and `unpriced`
 (`{vision_id, unpriced_requests}`, as soon as one of its requests today has no price). A notice
-counts as given once every channel recorded it; the day's notices are then saved in the Visions
-folder's `budget_notices.json`, so a restart does not post them again. A post that fails is
-tried again after a minute; a notice that was posted but could not be saved is not posted again
+counts as given in a channel once that channel recorded it; the day's notices are then saved in
+the Visions folder's `budget_notices.json`, so a restart does not post them again. A channel
+that could not record one is tried again after a minute, and only that channel; a notice that was posted but could not be saved is not posted again
 before a restart. Raising either cap (Settings › Visions, `update_visions_settings`, or the
 profile) lets its next wake run. Deleting a Vision or channel forgets its owners, so their spend
 leaves the overall total for the day. Logged as `visions`/`budget_reached`, `budget_unknown`
-(`vision_id`, `reason`), `budget_unpriced`, `budget_stopped` (`vision_id`, how many chats,
-whether every Vision's), `budget_catalog` (whether loading failed and how), `budget_notice_failed`
+(`vision_id`, `reason`), `budget_unpriced`, `budget_stopped` (`vision_id`, how many chats and
+Visions, the cause), `budget_catalog` (whether loading failed and how, or `no_key`),
+`owned_index_unreadable`, `budget_notice_failed`
 and `budget_notices_unsaved`, metadata only.
 
 **Threat model.** The guard relies on the agent never holding your credential.

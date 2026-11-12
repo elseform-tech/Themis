@@ -35,17 +35,18 @@ impl Spend {
         }
     }
 
-    fn join(&mut self, other: Spend) {
+    pub(super) fn join(&mut self, other: Spend) {
         self.usd += other.usd;
         self.unpriced += other.unpriced;
     }
 }
 
-/// Today's spend of one Vision and of all Visions.
-#[derive(Debug, Default, Clone, Copy, PartialEq)]
+/// Today's spend of one Vision, of all Visions, and of each Vision.
+#[derive(Debug, Default, Clone, PartialEq)]
 pub(crate) struct Tally {
     pub vision: Spend,
     pub all: Spend,
+    pub by_vision: HashMap<String, Spend>,
 }
 
 /// Why today's spend is not known; the budget then counts as reached.
@@ -89,6 +90,8 @@ pub(crate) struct Ledger {
     pub(super) scheduled: HashSet<String>,
     /// When loading the price catalog was last started.
     pub(super) catalog_tried: Option<Instant>,
+    /// The last try found no OpenCode Go key: the prices known are the configured providers'.
+    pub(super) no_go_key: bool,
 }
 
 impl Ledger {
@@ -102,10 +105,14 @@ impl Ledger {
         self.last_id
     }
 
-    /// Adds rows read after [`Self::begin`]'s id.
+    /// Adds the rows newer than those already added (a check that read meanwhile may have
+    /// added some).
     pub(super) fn add(&mut self, rows: &[(i64, UsageRow)], prices: &Prices) {
         for (id, row) in rows {
-            self.last_id = self.last_id.max(*id);
+            if *id <= self.last_id {
+                continue;
+            }
+            self.last_id = *id;
             self.rows_read += 1;
             if let Some(thread) = &row.thread_id {
                 self.by_thread
@@ -124,6 +131,11 @@ impl Ledger {
                 continue;
             };
             tally.all.join(*spend);
+            tally
+                .by_vision
+                .entry(owner.vision_id.clone())
+                .or_default()
+                .join(*spend);
             if vision_id == Some(owner.vision_id.as_str()) {
                 tally.vision.join(*spend);
             }

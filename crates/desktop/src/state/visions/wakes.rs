@@ -36,8 +36,9 @@ pub enum WakeReason {
     /// The chat waits on the person's approval or permission question (its id): the Vision tells
     /// the person, never answers it.
     ApprovalWaiting(String, String),
-    /// The daily budget (not the person) stopped the chat; it waits for a wake after a raise.
-    BudgetStopped(String),
+    /// The budget check (not the person) stopped the chat: `reached` (today's budget ran out)
+    /// or `unknown` (spend could not be checked). It waits for a wake the budget allows.
+    BudgetStopped(String, &'static str),
 }
 
 impl WakeReason {
@@ -51,7 +52,7 @@ impl WakeReason {
             WakeReason::QuestionAsked(..) => "question_asked",
             WakeReason::HandedBack(_) => "handed_back",
             WakeReason::ApprovalWaiting(..) => "approval_waiting",
-            WakeReason::BudgetStopped(_) => "budget_stopped",
+            WakeReason::BudgetStopped(..) => "budget_stopped",
         }
     }
 
@@ -64,7 +65,7 @@ impl WakeReason {
             | WakeReason::ChatStopped(thread)
             | WakeReason::QuestionAsked(thread, _)
             | WakeReason::ApprovalWaiting(thread, _)
-            | WakeReason::BudgetStopped(thread)
+            | WakeReason::BudgetStopped(thread, _)
             | WakeReason::HandedBack(thread) => Some(thread),
         }
     }
@@ -75,6 +76,9 @@ impl WakeReason {
             WakeReason::Mentioned => self.label().to_owned(),
             WakeReason::QuestionAsked(thread, id) | WakeReason::ApprovalWaiting(thread, id) => {
                 format!("{} {thread} {id}", self.label())
+            }
+            WakeReason::BudgetStopped(thread, cause) => {
+                format!("{} {thread} {cause}", self.label())
             }
             other => format!("{} {}", other.label(), other.thread().unwrap_or_default()),
         }

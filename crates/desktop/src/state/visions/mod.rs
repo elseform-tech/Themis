@@ -15,6 +15,7 @@ mod channel_log;
 mod control;
 mod drive;
 mod envelope;
+mod owned_index;
 mod runs;
 mod store;
 mod wakes;
@@ -37,6 +38,7 @@ use themis_core::visions::Autonomy;
 use super::AppState;
 pub(crate) use budget::Over as BudgetOver;
 pub use channel_log::{ChannelLine, ChannelPage};
+
 pub use runs::vision_decisions;
 pub(super) use runs::{boxed_run, confine, run_scope, run_tools, vision_approvals, VisionRunSpec};
 use store::StoreError;
@@ -201,10 +203,19 @@ pub enum ChannelEntry {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         unpriced_requests: Option<u64>,
         /// With `budget_unknown`: why spend cannot be checked (`usage_unavailable`,
-        /// `usage_unreadable`, `owners_unreadable`, `catalog_not_loaded`, `config_unreadable`).
+        /// `usage_unreadable`, `owners_unreadable`, `catalog_not_loaded`, `config_unreadable`,
+        /// `vision_gone`).
         #[serde(default, skip_serializing_if = "Option::is_none")]
         reason: Option<String>,
     },
+}
+
+/// The Visions cache behind its lock, and the index of owned chats (`owned_index`) apart from
+/// it, so the check after every model request takes no Visions lock for a chat no Vision owns.
+#[derive(Default)]
+pub(crate) struct VisionsShared {
+    cache: std::sync::Mutex<VisionsCache>,
+    owned: owned_index::OwnedIndex,
 }
 
 /// The store files as loaded, each on first use, plus the newest seq of each channel log
@@ -226,7 +237,11 @@ pub(crate) struct VisionsCache {
 
 impl AppState {
     fn visions_cache(&self) -> std::sync::MutexGuard<'_, VisionsCache> {
-        self.inner.visions.lock().unwrap_or_else(|e| e.into_inner())
+        self.inner
+            .visions
+            .cache
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
     }
 
     /// Notes a store failure in diagnostics (file name and a fixed reason, never contents)
@@ -303,6 +318,7 @@ impl AppState {
         let result = self
             .visions_cache()
             .set_owner(&self.inner.visions_dir, owner);
+        self.visions_rebuild_owned();
         result.map_err(|error| self.visions_failed(error))
     }
 
@@ -384,6 +400,7 @@ impl AppState {
         let result = self
             .visions_cache()
             .release_owner(&self.inner.visions_dir, thread_id);
+        self.visions_rebuild_owned();
         result.map_err(|error| self.visions_failed(error))
     }
 

@@ -40,7 +40,8 @@ const SETTLE: Duration = Duration::from_millis(200);
 pub(crate) enum Over {
     /// Its own cap; with the requests behind it that had no price.
     Vision { unpriced: u64 },
-    /// The overall cap, reached by all Visions together.
+    /// A shared cap: your own `runtime.jsonc`'s, reached by all Visions together, or a lower
+    /// one a project sets, reached by the Visions with a channel there.
     Overall { unpriced: u64 },
     /// Spend cannot be known, so it counts as reached.
     Unknown(Unknown),
@@ -79,6 +80,65 @@ pub(crate) struct Judged {
     pub unpriced: u64,
 }
 
+/// The caps that apply to one Vision.
+struct Caps {
+    own: f64,
+    /// Your own `runtime.jsonc`'s, for all Visions together.
+    user: f64,
+    /// A lower cap a project of its channels sets, and the Visions with a channel there.
+    projects: Vec<(f64, Vec<String>)>,
+}
+
+impl Caps {
+    /// The cap `tally` reached, the shared ones first (reaching one stops every Vision under it).
+    fn reached(&self, tally: &Tally) -> Option<Over> {
+        if tally.all.usd >= self.user {
+            return Some(Over::Overall {
+                unpriced: tally.all.unpriced,
+            });
+        }
+        for (cap, members) in &self.projects {
+            let mut group = ledger::Spend::default();
+            for member in members {
+                if let Some(spend) = tally.by_vision.get(member) {
+                    group.join(*spend);
+                }
+            }
+            if group.usd >= *cap {
+                return Some(Over::Overall {
+                    unpriced: group.unpriced,
+                });
+            }
+        }
+        (tally.vision.usd >= self.own).then_some(Over::Vision {
+            unpriced: tally.vision.unpriced,
+        })
+    }
+}
+
+/// The prices of the configured providers' models, under the provider's id and both the
+/// model's own id and its qualified `<provider>/<model>` id.
+fn configured_prices(providers: &[themis_core::configuration::ProviderDefinition]) -> Prices {
+    let mut prices = Prices::default();
+    for provider in providers {
+        for model in provider.models.iter().flatten() {
+            let Some(price) = &model.price else {
+                continue;
+            };
+            let price = themis_core::providers::ModelPrice {
+                input: price.input_per_mtok,
+                output: price.output_per_mtok,
+                cache_read: price.cached_input_per_mtok,
+                tiers: Vec::new(),
+            };
+            for id in [model.id.clone(), provider.qualified(&model.id)] {
+                prices.insert((provider.id.clone(), id), price.clone());
+            }
+        }
+    }
+    prices
+}
+
 /// Local midnight, in milliseconds.
 fn midnight_ms(today: chrono::NaiveDate) -> i64 {
     crate::usage::local_start(&chrono::Local, today).timestamp_millis()
@@ -101,24 +161,23 @@ impl AppState {
         self.visions_judge(vision_id).over.is_some()
     }
 
-    /// Today's spend, reading only the usage rows recorded since the last check.
+    /// Today's spend, reading only the usage rows recorded since the last check. The usage
+    /// store is read without the Visions cache's lock held.
     pub(super) fn visions_tally(&self, vision_id: Option<&str>) -> Result<Tally, Unknown> {
         if !self.inner.usage.available() {
             return Err(Unknown::UsageUnavailable);
         }
-        let Some(prices) = self.prices_now() else {
-            self.visions_load_prices_soon();
-            return Err(Unknown::CatalogNotLoaded);
-        };
+        let prices = self.prices_now()?;
         let today = chrono::Local::now().date_naive();
-        let dir = self.inner.visions_dir.clone();
-        let mut guard = self.visions_cache();
-        let after = guard.budget.begin(today);
+        let after = self.visions_cache().budget.begin(today);
         let rows = self
             .inner
             .usage
             .rows_after(after, midnight_ms(today))
             .map_err(|_| Unknown::UsageUnreadable)?;
+        let dir = self.inner.visions_dir.clone();
+        let mut guard = self.visions_cache();
+        guard.budget.begin(today);
         guard.budget.add(&rows, &prices);
         if let Err(error) = guard.owners(&dir) {
             drop(guard);
@@ -130,42 +189,73 @@ impl AppState {
         Ok(cache.budget.tally(owners, vision_id))
     }
 
-    /// The catalog's prices, or None while it is not loaded (or briefly being written).
-    fn prices_now(&self) -> Option<Prices> {
+    /// The prices known now: the configured providers' (`providers[].models[].price` in your
+    /// `runtime.jsonc`) and the catalog's. Without the catalog, spend is unknown, unless the
+    /// last try to load it found no OpenCode Go key: the configured prices are then all there is.
+    fn prices_now(&self) -> Result<Prices, Unknown> {
+        let config = self
+            .runtime_configuration(None, None)
+            .map_err(|_| Unknown::ConfigUnreadable)?;
+        let mut prices = configured_prices(&config.config.providers);
+        match self.catalog_now() {
+            Some(models) if !models.is_empty() => prices.extend(catalog_prices(&models)),
+            _ => {
+                self.visions_load_prices_soon();
+                if !self.visions_cache().budget.no_go_key {
+                    return Err(Unknown::CatalogNotLoaded);
+                }
+            }
+        }
+        Ok(prices)
+    }
+
+    /// The catalog, or None while it is being written.
+    fn catalog_now(&self) -> Option<Vec<themis_core::providers::GoModel>> {
         for _ in 0..1000 {
             if let Ok(models) = self.inner.go_catalog.try_read() {
-                return (!models.is_empty()).then(|| catalog_prices(&models));
+                return Some(models.clone());
             }
             std::thread::yield_now();
         }
         None
     }
 
-    /// `vision`'s cap and the overall cap: the lowest `visions.daily_budget_usd` the projects of
-    /// its channels resolve (your own `runtime.jsonc` when it is in none).
-    fn visions_caps(&self, vision: &Vision) -> Result<(f64, f64), Unknown> {
-        let mut projects: Vec<Option<PathBuf>> = self
-            .channels_all()
-            .into_iter()
+    /// `vision`'s caps: its own (its profile's, never above your own `runtime.jsonc`'s
+    /// `visions.daily_budget_usd`), that one for all Visions together, and each lower cap a
+    /// project of its channels sets, for the Visions with a channel in that project.
+    fn visions_caps(&self, vision: &Vision) -> Result<Caps, Unknown> {
+        let resolve = |project: Option<&std::path::Path>| {
+            self.runtime_configuration(project, None)
+                .map(|config| config.config.visions.daily_budget_usd)
+                .map_err(|_| Unknown::ConfigUnreadable)
+        };
+        let user = resolve(None)?;
+        let channels = self.channels_all();
+        let mut roots: Vec<PathBuf> = channels
+            .iter()
             .filter(|channel| channel.members.contains(&vision.id))
-            .map(|channel| Some(channel.project_root))
+            .map(|channel| channel.project_root.clone())
             .collect();
-        projects.sort();
-        projects.dedup();
-        if projects.is_empty() {
-            projects.push(None);
+        roots.sort();
+        roots.dedup();
+        let mut projects = Vec::new();
+        for root in roots {
+            let cap = resolve(Some(&root))?;
+            if cap < user {
+                let members = channels
+                    .iter()
+                    .filter(|channel| channel.project_root == root)
+                    .flat_map(|channel| channel.members.iter().cloned())
+                    .collect();
+                projects.push((cap, members));
+            }
         }
-        let mut overall = f64::INFINITY;
-        for project in &projects {
-            let config = self
-                .runtime_configuration(project.as_deref(), None)
-                .map_err(|_| Unknown::ConfigUnreadable)?;
-            overall = overall.min(config.config.visions.daily_budget_usd);
-        }
-        let own = vision
-            .daily_budget_usd
-            .map_or(overall, |cap| cap.min(overall));
-        Ok((own, overall))
+        let own = vision.daily_budget_usd.map_or(user, |cap| cap.min(user));
+        Ok(Caps {
+            own,
+            user,
+            projects,
+        })
     }
 
     /// Whether `vision_id` may not spend now, posting nothing.
@@ -177,7 +267,7 @@ impl AppState {
         let Some(vision) = self.vision_get(vision_id) else {
             return unknown(Unknown::VisionGone);
         };
-        let (own, overall) = match self.visions_caps(&vision) {
+        let caps = match self.visions_caps(&vision) {
             Ok(caps) => caps,
             Err(why) => return unknown(why),
         };
@@ -185,20 +275,8 @@ impl AppState {
             Ok(tally) => tally,
             Err(why) => return unknown(why),
         };
-        // The overall cap first: reaching it stops every Vision's chats.
-        let over = if tally.all.usd >= overall {
-            Some(Over::Overall {
-                unpriced: tally.all.unpriced,
-            })
-        } else if tally.vision.usd >= own {
-            Some(Over::Vision {
-                unpriced: tally.vision.unpriced,
-            })
-        } else {
-            None
-        };
         Judged {
-            over,
+            over: caps.reached(&tally),
             unpriced: tally.vision.unpriced,
         }
     }
@@ -210,8 +288,10 @@ impl AppState {
         if judged.unpriced > 0 {
             self.visions_notice_unpriced(vision_id, judged.unpriced);
         }
-        if let Some(over) = judged.over {
-            self.visions_notice_over(vision_id, over);
+        match judged.over {
+            // Loading the catalog says so itself when it fails; until then it may just be early.
+            Some(Over::Unknown(Unknown::CatalogNotLoaded)) | None => {}
+            Some(over) => self.visions_notice_over(vision_id, over),
         }
         judged.over
     }
@@ -223,25 +303,38 @@ impl AppState {
         self.visions_budget_gate(&owner.vision_id)
     }
 
-    /// Stops the running chats the budget no longer allows: `vision_id`'s, or every Vision's at
-    /// the overall cap. Only chats that run for a Vision (not those the person took over), the
-    /// ordinary way, holding nothing back; each stopped work chat waits as `budget_stopped`.
+    /// Stops the running chats the budget no longer allows: `vision_id`'s, and at a shared cap
+    /// those of every Vision that is over too. Only chats that run for a Vision (not those the
+    /// person took over), the ordinary way, holding nothing back; each stopped work chat waits
+    /// as `budget_stopped` with its cause.
     pub(super) fn visions_budget_enforce(&self, vision_id: &str) {
         let Some(over) = self.visions_budget_gate(vision_id) else {
             return;
         };
-        let everyone = matches!(over, Over::Overall { .. });
+        let mut over_ids = vec![vision_id.to_owned()];
+        if matches!(over, Over::Overall { .. }) {
+            over_ids.extend(
+                self.visions_list()
+                    .into_iter()
+                    .map(|vision| vision.id)
+                    .filter(|id| id != vision_id && self.visions_judge(id).over.is_some()),
+            );
+        }
         let stopped: Vec<Owner> = self
-            .owners_where(|o| o.hold == Hold::None && (everyone || o.vision_id == vision_id))
+            .owners_where(|o| o.hold == Hold::None && over_ids.contains(&o.vision_id))
             .into_iter()
             .filter(|owner| self.stop_run(&owner.thread_id).is_ok())
             .collect();
         if stopped.is_empty() {
             return;
         }
+        let cause = match over {
+            Over::Unknown(_) => "unknown",
+            _ => "reached",
+        };
         let mut cache = self.visions_cache();
         for owner in stopped.iter().filter(|o| o.kind == OwnedKind::Work) {
-            let reason = WakeReason::BudgetStopped(owner.thread_id.clone());
+            let reason = WakeReason::BudgetStopped(owner.thread_id.clone(), cause);
             cache
                 .wakes
                 .wait(&owner.vision_id, &owner.channel_id, Some(reason));
@@ -249,7 +342,7 @@ impl AppState {
         drop(cache);
         self.visions_note(
             "budget_stopped",
-            json!({"vision_id": vision_id, "stopped": stopped.len(), "everyone": everyone}),
+            json!({"vision_id": vision_id, "stopped": stopped.len(), "visions": over_ids.len(), "cause": cause}),
         );
     }
 
@@ -264,6 +357,10 @@ impl AppState {
     /// A request of `thread_id` was recorded: when a Vision owns the chat, its cap is checked on
     /// a task of its own, at most one waiting per Vision.
     pub(in crate::state) fn visions_budget_after_request(&self, thread_id: &str) {
+        // Most chats: one read lock and a set lookup, no Visions lock and no SQLite.
+        if !self.visions_owns(thread_id) {
+            return;
+        }
         let Some(owner) = self.owner_of(thread_id) else {
             return;
         };

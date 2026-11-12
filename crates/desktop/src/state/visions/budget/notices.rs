@@ -1,9 +1,12 @@
-//! The budget's notices, each kind once a local day per Vision, and loading the price catalog.
+//! The budget's notices, each kind once a local day per Vision in each of its channels, and
+//! loading the price catalog.
 //!
-//! A notice counts as given only once every channel of the Vision recorded it; the day's
-//! keys are then saved in `budget_notices.json`, so a restart does not post them again. A
-//! notice that could not be posted is tried again after [`RETRY_AFTER`]; one that was posted
-//! but could not be saved is still kept in memory, so it is not posted again until a restart.
+//! A notice counts as given in a channel once that channel recorded it; the day's given notices
+//! are then saved in `budget_notices.json`, so a restart does not post them again. A channel
+//! that could not record one is tried again after [`RETRY_AFTER`] (only that channel); a notice
+//! that was posted but could not be saved is kept in memory, so it is not posted again until a
+//! restart. Without an OpenCode Go key, the catalog is not loaded and that is not a failure:
+//! the configured providers' prices are the ones known.
 
 use std::collections::HashSet;
 use std::time::{Duration, Instant};
@@ -12,7 +15,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 
 use super::super::store::{read_store, write_store};
-use super::super::NoticeKind;
+use super::super::{ChannelEntry, NoticeKind};
 use super::{Over, Unknown};
 use crate::state::AppState;
 
@@ -25,7 +28,7 @@ const CATALOG_RETRY: Duration = Duration::from_secs(60);
 /// Longest wait for the catalog to load.
 const CATALOG_WAIT: Duration = Duration::from_secs(30);
 
-/// The notices given on `day`, as `{kind}:{vision id}` keys.
+/// The notices given on `day`, as `{kind}:{vision id}:{channel id}` keys.
 #[derive(Debug, Default, Serialize, Deserialize)]
 struct Given {
     day: String,
@@ -90,34 +93,59 @@ impl AppState {
         }
     }
 
-    /// Posts `notice` in the Vision's channels unless it was given today; true when posted now.
+    /// Posts `notice` in each of the Vision's channels that has not recorded it today; true
+    /// when one recorded it now. A channel that could not record it is tried again after
+    /// [`RETRY_AFTER`], and only that channel.
     fn visions_notice_once(&self, vision_id: &str, notice: &Notice<'_>) -> bool {
-        let key = format!("{}:{vision_id}", notice.key);
-        if !self.visions_notice_claim(&key) {
-            return false;
+        let mut posted = false;
+        let mut failed = false;
+        for channel in self.channels_all() {
+            if !channel.members.iter().any(|member| member == vision_id) {
+                continue;
+            }
+            let key = format!("{}:{vision_id}:{}", notice.key, channel.id);
+            if !self.visions_notice_claim(&key) {
+                continue;
+            }
+            let entry = ChannelEntry::Notice {
+                kind: notice.kind,
+                vision_id: Some(vision_id.to_owned()),
+                thread_id: None,
+                unpriced_requests: notice.unpriced,
+                reason: notice.reason.map(str::to_owned),
+            };
+            let recorded = self.channel_append(&channel.id, entry).is_ok();
+            let mut cache = self.visions_cache();
+            let budget = &mut cache.budget;
+            if recorded {
+                budget.retry_after.remove(&key);
+                posted = true;
+            } else {
+                if let Some((_, keys)) = budget.notified.as_mut() {
+                    keys.remove(&key);
+                }
+                budget.retry_after.insert(key, Instant::now() + RETRY_AFTER);
+                failed = true;
+            }
         }
-        let posted = self.visions_notice_in_its_channels(
-            vision_id,
-            notice.kind,
-            notice.unpriced,
-            notice.reason,
-        );
-        let mut cache = self.visions_cache();
-        let budget = &mut cache.budget;
-        let Some((day, keys)) = budget.notified.as_mut() else {
-            return posted;
-        };
-        if !posted {
-            keys.remove(&key);
-            budget.retry_after.insert(key, Instant::now() + RETRY_AFTER);
-            drop(cache);
+        if failed {
             self.visions_note(
                 "budget_notice_failed",
                 json!({"vision_id": vision_id, "kind": notice.kind}),
             );
-            return false;
         }
-        budget.retry_after.remove(&key);
+        if posted {
+            self.visions_notices_save(vision_id, notice.kind);
+        }
+        posted
+    }
+
+    /// Saves today's given notices; one that cannot be saved stays given in memory.
+    fn visions_notices_save(&self, vision_id: &str, kind: NoticeKind) {
+        let cache = self.visions_cache();
+        let Some((day, keys)) = cache.budget.notified.as_ref() else {
+            return;
+        };
         let mut given: Vec<String> = keys.iter().cloned().collect();
         given.sort();
         let given = Given {
@@ -127,13 +155,11 @@ impl AppState {
         let saved = write_store(&self.inner.visions_dir, NOTICES_FILE, &given);
         drop(cache);
         if saved.is_err() {
-            // Kept in memory: not posted again before a restart.
             self.visions_note(
                 "budget_notices_unsaved",
-                json!({"vision_id": vision_id, "kind": notice.kind}),
+                json!({"vision_id": vision_id, "kind": kind}),
             );
         }
-        true
     }
 
     /// Takes `key` for today when no notice of it was given or is being given, and no failed
@@ -182,6 +208,13 @@ impl AppState {
         }
         let state = self.clone();
         runtime.spawn(async move {
+            // No key: the configured providers' prices are all there is (not a failure).
+            let no_key = matches!(state.go_key_present().await, Ok(false));
+            state.visions_cache().budget.no_go_key = no_key;
+            if no_key {
+                state.visions_note("budget_catalog", json!({"failure": "no_key"}));
+                return;
+            }
             let loaded = tokio::time::timeout(CATALOG_WAIT, state.ensure_go_catalog()).await;
             let failure = match loaded {
                 Ok(Ok(())) if state.prices_loaded() => None,
