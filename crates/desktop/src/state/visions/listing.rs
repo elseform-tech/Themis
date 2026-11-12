@@ -33,7 +33,8 @@ pub struct VisionListed {
     pub over_budget: bool,
     pub vision_chats: Vec<VisionChat>,
     /// What waits on the person from the chats it drives (not those the person took over):
-    /// approvals waiting there and the questions it passed on that are still open.
+    /// approvals waiting there, and open questions it passed on or that ask for a permission
+    /// (an Auto block, a destructive step's box: the person's alone), each counted once.
     pub needs: usize,
     /// Its latest run ended in a failure (its own chat's or a work chat's; the person's Stop is
     /// none), and no run of its has succeeded since. Kept in memory: a restart clears it.
@@ -109,7 +110,7 @@ impl AppState {
             let passed = self
                 .open_questions(&owner.thread_id)
                 .iter()
-                .filter(|question| question.passed_on)
+                .filter(|question| question.passed_on || question.permission)
                 .count();
             if passed > 0 {
                 *needs.entry(owner.vision_id.clone()).or_default() += passed;

@@ -38,7 +38,7 @@ export interface VisionProfile {
 
 /** A Vision as `list_visions` gives it: its profile, whether its budget stops it spending now
  *  (also when spend cannot be checked), its own chats, what waits on the person from the chats
- *  it drives (approvals and the questions it passed on, still open) and whether its latest run
+ *  it drives (approvals, and open questions it passed on or that ask for a permission) and whether its latest run
  *  failed with no success since. */
 export interface VisionInfo extends VisionProfile {
   over_budget: boolean;

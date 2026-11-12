@@ -121,6 +121,37 @@ async fn listed(s: &Setup) -> listing::VisionListed {
     s.state.visions_listed().await.remove(0)
 }
 
+fn ask_permission(s: &Setup, thread: &str, text: &str) -> String {
+    let asked = NewQuestion {
+        question: text.into(),
+        permission: true,
+        ..NewQuestion::default()
+    };
+    s.state
+        .ask_question(sink().as_ref(), thread, "run", asked)
+        .unwrap()
+        .id
+}
+
+/// A permission question (an Auto block, a destructive step's box) is the person's alone, so
+/// one open in a chat the Vision drives waits on the person whether or not it was passed on,
+/// and counts once; in a chat the person took over it is theirs anyway.
+#[tokio::test]
+async fn needs_counts_open_permission_questions_once() {
+    let s = setup();
+    own(&s, "w1", OwnedKind::Work, Hold::None);
+    own(&s, "mine", OwnedKind::Work, Hold::TakenOver);
+    let block = ask_permission(&s, "w1", "Allow the push?");
+    let passed_too = ask_permission(&s, "w1", "Allow the delete?");
+    pass(&s, "w1", &passed_too);
+    ask_permission(&s, "mine", "Allow it?");
+    assert_eq!(listed(&s).await.needs, 2);
+    s.state
+        .record_answers("w1", vec![(block, "Allow once".into())], None)
+        .unwrap();
+    assert_eq!(listed(&s).await.needs, 1);
+}
+
 /// What waits on the person for a Vision is read from the chats' own state, however far back
 /// the channel mentioned it: approvals waiting in its chats and the questions it passed on that
 /// are still open. A chat the person took over is theirs, so what waits there is not counted.
