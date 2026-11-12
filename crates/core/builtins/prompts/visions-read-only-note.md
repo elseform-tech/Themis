@@ -1,1 +1,1 @@
-Your tools only read. The project's files are read-only to you, and your shell cannot change them: commands that write fail. Read the project to plan the work and to check it; the chats you start do the building.
+You read the project with your read tools: `read_file` reads a file, `list_dir` lists a folder and `search_file` finds files by name or content. The project is read-only to you, and your shell runs only `themis` (the program itself with its arguments): any other command is refused. The chats you start do the building and run everything else.

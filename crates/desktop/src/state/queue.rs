@@ -535,12 +535,12 @@ impl AppState {
         run_id: String,
         terminal: ThreadEvent,
     ) {
-        // A Vision chat's reply goes to its channel; a work chat's end wakes its Vision.
-        self.visions_after_run(&sink, &thread_id, &terminal);
         // A failed or stopped turn starts no others until the person writes again.
         if matches!(terminal, ThreadEvent::Failed { .. }) {
             self.hold_hook_wakes(&thread_id);
         }
+        // A Vision chat's reply goes to its channel; a work chat's end wakes its Vision.
+        self.visions_after_run(&sink, &thread_id, &terminal);
         if self.dispatch_queue(Arc::clone(&sink), &thread_id).await {
             // The goal learns about the turn it was waiting on later.
             self.goal_turn_interrupted(&run_id);

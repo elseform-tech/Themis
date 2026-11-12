@@ -2,9 +2,9 @@
 //!
 //! The run is an ordinary chat run with these differences, captured when it starts: its system
 //! head is the Vision's (`visions-system.md`: who it is, its channel, the `themis` calls that
-//! drive chats and its autonomy table) in place of the ordinary instructions; it has only the
-//! read-only tools (`READ_ONLY_TOOLS`, the shell among them), and no plugins, skills,
-//! subagents, browser or memory; it runs in a fixed envelope whatever the channel's mode
+//! drive chats and its autonomy table) in place of the ordinary instructions; it has only
+//! `read_file`, `list_dir`, `search_file` and the shell (for `themis` only), on every OS, and no
+//! plugins, skills, subagents, browser or memory; it runs in a fixed envelope whatever the channel's mode
 //! (`envelope`: Custom's rules, plain `themis` without asking, never a box; the sandbox's
 //! `vision_envelope`: read-only, no network but the app server, no Keychain or secrets), and
 //! is refused, with a notice in the channel, where no sandbox can hold it; and its credential
@@ -17,7 +17,6 @@ use std::sync::Arc;
 use serde_json::json;
 use themis_core::agent_cli::{RunScope, VisionScope};
 use themis_core::configuration::{ApprovalMode, ApprovalPolicy, VisionsConfig};
-use themis_core::plugins::agents::READ_ONLY_TOOLS;
 use themis_core::prompts::{fill, VISIONS_READ_ONLY_NOTE, VISIONS_SYSTEM, VISIONS_WAKE_TURN};
 use themis_core::sandbox::SandboxPlan;
 use themis_core::tools::{ApprovalHook, ToolT};
@@ -93,13 +92,34 @@ pub(in crate::state) fn vision_approvals(
     }
 }
 
-/// A Vision run's tools: only the read-only ones, the shell among them. Other runs keep theirs.
+/// The tools of a Vision run, on every OS: the read tools, and the shell (for `themis` only).
+const VISION_TOOLS: [&str; 4] = ["read_file", "list_dir", "search_file", "shell"];
+
+/// A Vision run's tools: [`VISION_TOOLS`], with `list_dir` and `search_file` added where the
+/// run's own set lists and searches through the shell (Unix), gated by its `approvals` and
+/// `sandbox`. Other runs keep theirs.
 pub(in crate::state) fn run_tools(
     vision: Option<&VisionRun>,
     mut tools: Vec<Box<dyn ToolT>>,
+    root: &Path,
+    approvals: &Arc<dyn ApprovalHook>,
+    sandbox: &Arc<SandboxPlan>,
 ) -> Vec<Box<dyn ToolT>> {
-    if vision.is_some() {
-        tools.retain(|tool| READ_ONLY_TOOLS.contains(&tool.name()));
+    if vision.is_none() {
+        return tools;
+    }
+    tools.retain(|tool| VISION_TOOLS.contains(&tool.name()));
+    if !tools.iter().any(|tool| tool.name() == "list_dir") {
+        // Without them the run could read only paths it already knew.
+        match themis_core::tools::listing_tools(root, Arc::clone(approvals), Some(sandbox)) {
+            Ok(listing) => tools.extend(listing),
+            Err(_) => themis_core::diagnostics::emit(
+                "visions",
+                "read_tools_unavailable",
+                "warn",
+                json!({"vision_id": vision.map(|run| run.scope.vision_id.clone())}),
+            ),
+        }
     }
     tools
 }
@@ -178,6 +198,18 @@ pub(super) fn vision_head(vision: &Vision, channel: &Channel, config: &VisionsCo
 /// before it was saved, or saved but never started (its start could not be recorded).
 fn never_ran(progress: ServerSend) -> bool {
     matches!(progress, ServerSend::Pending | ServerSend::Saved)
+}
+
+/// Why a failed send (`error`) did not start the Vision's run, when it never ran: `busy` (the
+/// chat or the app's run limit, or a start not recorded), retried when a run ends, or
+/// `not_started` (the run's own setup refused it: the Vision paused or gone, Visions off, no
+/// sandbox), which waits for the next wake. `None` when the run's end step takes over.
+fn start_refusal(error: &str, progress: ServerSend) -> Option<&'static str> {
+    if !never_ran(progress) {
+        return None;
+    }
+    let busy = progress == ServerSend::Saved || crate::state::threads::send_must_wait(error);
+    Some(if busy { "busy" } else { "not_started" })
 }
 
 /// `text` cut to [`MAX_REPLY_CHARS`] characters.
@@ -370,8 +402,8 @@ impl AppState {
         let run_id = uuid::Uuid::new_v4().to_string();
         let (sent, progress) =
             Box::pin(self.send_from_server(sink, &chat, text, &run_id, None, Vec::new())).await;
-        if sent.is_err() && never_ran(progress) {
-            return Err(NotStarted::Refused("busy"));
+        if let Some(why) = sent.err().and_then(|error| start_refusal(&error, progress)) {
+            return Err(NotStarted::Refused(why));
         }
         Ok((chat, run_id))
     }
@@ -543,6 +575,10 @@ mod tests {
         assert!(head.contains("Never repeat a chat's own summary as proof"));
         assert!(head.contains("Never restart, resend or replace a chat the person stopped"));
         assert!(head.ends_with(VISIONS_READ_ONLY_NOTE));
+        // The note says what it really has: the read tools, and a shell for `themis` only.
+        for words in ["list_dir", "search_file", "read_file", "runs only `themis`"] {
+            assert!(VISIONS_READ_ONLY_NOTE.contains(words), "{words}");
+        }
         // Small calls by default: wording and tests are the Vision's, the rest the person's.
         let rows: Vec<&str> = head
             .lines()
@@ -615,6 +651,51 @@ mod tests {
             refusal.contains("no sandbox here can hold a Vision's run"),
             "{refusal}"
         );
+    }
+
+    /// A Vision run reads, lists and searches the project with the read tools on every OS, and
+    /// has the shell for `themis`; nothing else, whatever the run's tools were.
+    #[test]
+    fn a_vision_run_gets_its_own_read_tools_on_every_os() {
+        let dir = tempfile::tempdir().unwrap();
+        let approvals: Arc<dyn ApprovalHook> = Arc::new(themis_core::tools::AllowAllHook);
+        let sandbox = Arc::new(SandboxPlan::disabled(dir.path()));
+        let all = themis_core::tools::boxed_tools_for_run(
+            dir.path(),
+            Arc::clone(&approvals),
+            themis_core::tools::ToolOptions::default(),
+        )
+        .unwrap();
+        let vision = VisionRun {
+            head: String::new(),
+            scope: VisionScope {
+                vision_id: "v1".into(),
+                channel_id: "c1".into(),
+                project_root: dir.path().to_path_buf(),
+            },
+            port: 47123,
+        };
+        let tools = run_tools(Some(&vision), all, dir.path(), &approvals, &sandbox);
+        let mut names: Vec<&str> = tools.iter().map(|tool| tool.name()).collect();
+        names.sort_unstable();
+        assert_eq!(names, ["list_dir", "read_file", "search_file", "shell"]);
+    }
+
+    /// Only a send refused because the chat or the app is busy is retried; one the run's own
+    /// setup refused (the Vision paused or gone, Visions off) waits for the next wake.
+    #[test]
+    fn only_a_busy_send_is_retried() {
+        let busy = format!(
+            "thread 't' {}: a run is already in progress",
+            crate::state::threads::BUSY
+        );
+        assert_eq!(start_refusal(&busy, ServerSend::Pending), Some("busy"));
+        assert_eq!(
+            start_refusal("This Vision is paused", ServerSend::Pending),
+            Some("not_started")
+        );
+        assert_eq!(start_refusal("anything", ServerSend::Saved), Some("busy"));
+        assert_eq!(start_refusal("spawn failed", ServerSend::SpawnFailed), None);
     }
 
     #[test]

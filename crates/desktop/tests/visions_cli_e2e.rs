@@ -973,7 +973,8 @@ async fn a_visions_send_is_not_the_persons_message() {
 
     send("fail now");
     wait_until(|| async { !fx.running(&work).await }).await;
-    assert!(fx.state.hook_wakes_held(&work), "a failed turn holds wakes");
+    // Held by the run's end step, which runs after the chat is idle again.
+    wait_until(|| async { fx.state.hook_wakes_held(&work) }).await;
     send("try again");
     wait_until(|| async { !fx.running(&work).await }).await;
     assert!(
@@ -1440,6 +1441,15 @@ async fn vision_provider(project: PathBuf, extra: Vec<Value>) -> MockServer {
                         "args": {"threadId": id, "text": "write the greeting"}}))
                 }
                 done => match extra.get(done.len() - 2) {
+                    // A step naming a tool calls it; any other is the shell's arguments.
+                    Some(step) if step.get("tool").is_some() => {
+                        let call = json!({"id": format!("call_{}", results.len()),
+                            "type": "function", "function": {"name": step["tool"],
+                            "arguments": step["arguments"].to_string()}});
+                        ResponseTemplate::new(200).set_body_json(json!({"choices": [{"message":
+                            {"role": "assistant", "content": null, "tool_calls": [call]},
+                            "finish_reason": "tool_calls"}]}))
+                    }
                     Some(step) => shell(step.clone()),
                     None => reply("Started a chat for the greeting."),
                 },
@@ -1459,7 +1469,11 @@ async fn a_vision_starts_a_chat_and_reports_when_it_finishes() {
     let fx = fixture().await;
     // A step that would need approval in Custom: refused for the Vision, never asked.
     let write = json!({"command": "sh", "args": ["-c", "echo hi > note.txt"]});
-    let provider = vision_provider(fx.project.clone(), vec![write]).await;
+    // It lists and searches the project with its read tools.
+    let list = json!({"tool": "list_dir", "arguments": {"directory_path": "."}});
+    let search =
+        json!({"tool": "search_file", "arguments": {"directory": ".", "pattern": "README*"}});
+    let provider = vision_provider(fx.project.clone(), vec![write, list, search]).await;
     fx.use_provider(&provider).await;
     // Custom mode and no rule: the Vision's plain `themis` calls still run without asking.
     let (vision, channel) = fx.vision_and_channel("Wren", "hq");
@@ -1586,6 +1600,18 @@ async fn a_vision_starts_a_chat_and_reports_when_it_finishes() {
         "{results:?}"
     );
     assert!(!fx.project.join("note.txt").exists());
+    // Both reads found the project's README, and neither was refused.
+    let reads: Vec<&String> = results
+        .iter()
+        .filter(|result| result.contains("README.md"))
+        .collect();
+    assert!(reads.len() >= 2, "{results:?}");
+    assert!(
+        reads
+            .iter()
+            .all(|result| !result.contains("approval denied")),
+        "{reads:?}"
+    );
 
     wait_until(|| async { !fx.running(&own_chat).await && !fx.running(&work).await }).await;
     fx.shut_down().await;

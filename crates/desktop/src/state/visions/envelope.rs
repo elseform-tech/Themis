@@ -4,9 +4,10 @@
 //! without asking, because the server's Vision grant is the real gate. Of the person's rules
 //! only the deny rules apply (they still refuse `themis`); their allow rules and chat grants do
 //! not, so every other command, and anything else that would be put to the person, is refused
-//! with `visions-step-refused.md` going back to the Vision as the tool result. The in-process
-//! read tools (`read_file`, `list_dir`, `search_file`) read the project as in any run. The
-//! sandbox side is `SandboxPlan::vision_envelope`.
+//! with `visions-step-refused.md` going back to the Vision as the tool result. It reads, lists
+//! and searches the project with the in-process read tools (`read_file`, `list_dir`,
+//! `search_file`), which a Vision run has on every OS (`runs::run_tools`); its shell runs only
+//! `themis`. The sandbox side is `SandboxPlan::vision_envelope`.
 
 use std::path::Path;
 use std::sync::Arc;

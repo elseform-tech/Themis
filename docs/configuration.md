@@ -938,9 +938,10 @@ saying "you decide" or "ask the person") and the read-only note; the wake messag
 (`visions-wake-turn.md`) lists what woke it and the channel's newest entries (8 KiB). The
 autonomy rows come from `visions.autonomy`/`visions.custom`; a profile's own level and rows
 may only lower them, by the project layer's rules (a level above the resolved one adds
-nothing; a custom row may only take a decision away). The run has only the read-only tools
-(`read_file`, `list_dir`, `search_file`, `shell`), no plugins, skills, subagents, browser, web
-or memory, and its credential carries the Vision grant above.
+nothing; a custom row may only take a decision away). The run has, on every OS, only
+`read_file`, `list_dir` and `search_file` (to read, list and search the project) and `shell`
+(which runs only `themis`, below); no plugins, skills, subagents, browser, web or memory; and
+its credential carries the Vision grant above.
 
 Whatever the channel's approval mode, a Vision's own run has one fixed envelope (the chats it
 starts keep the channel's mode), with no YOLO bypass. No program runs in it but the bundled
@@ -950,8 +951,9 @@ asking since the server's Vision grant is the gate. Of the person's approval rul
 deny rules apply (a deny rule still refuses `themis`); their allow rules and chat grants do not,
 so any other command (even a read-only one like `ls`, even one an allow rule names), a
 sensitive file or leaving the sandbox is refused at once, never put in a box, with
-`visions-step-refused.md` as the tool result. The in-process read tools (`read_file`,
-`list_dir`, `search_file`) read the project as in any run. The person's hooks and command-based
+`visions-step-refused.md` as the tool result. It reads, lists and searches the project with
+its read tools instead (`read_file`, `list_dir`, `search_file`; on Unix other runs list and
+search through the shell, so a Vision run gets these two added). The person's hooks and command-based
 MCP servers do not start for a Vision run (it has no plugins). Its commands run in a sandbox
 plan built from the non-YOLO plan: the project read-only (temporary folders stay writable, as
 for subagents), secret folders walled, no Keychain, and the network blocked except TCP to the

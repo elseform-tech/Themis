@@ -894,7 +894,7 @@ impl AppState {
                                                         return Err(error);
                                                     }
                                                 }
-                                                let tools = super::visions::run_tools(vision.as_ref(), if yolo { tools } else { themis_core::skills::filter_tools(tools, &skills) });
+                                                let tools = super::visions::run_tools(vision.as_ref(), if yolo { tools } else { themis_core::skills::filter_tools(tools, &skills) }, &snapshot.work_root, &approvals, &sandbox);
                                                 // Its `themis recall`/`themis memory` reach only the read tools it has.
                                                 let run_scope = super::visions::run_scope(super::chat_reads::run_scope(&snapshot.work_root, &sandbox, &tools, memory_denied), vision.as_ref());
                                                 // Boxed: the run's future is large, and the
