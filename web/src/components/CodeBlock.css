@@ -14,7 +14,8 @@
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-size: .78rem;
   line-height: 1.8;
-  overflow-x: auto;
+  /* Lines wrap, so the well clips rather than scrolls (no overlay bar flashing on it). */
+  overflow: clip;
   margin: 0;
 }
 

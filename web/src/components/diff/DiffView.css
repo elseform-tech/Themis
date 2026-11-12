@@ -1,5 +1,5 @@
 /* Read-only diff: the canvas's well, a changed line tinted whole in its own ink, unboxed mode toggle. */
-.themis-diff { --cb-comment: var(--themis-code-comment); --cb-string: var(--themis-code-string); --cb-keyword: var(--themis-code-keyword); --cb-function: var(--themis-code-function); --cb-type: var(--themis-code-type); display: flex; flex-direction: column; min-height: 0; border-radius: 12px; overflow: hidden; background: var(--themis-well); box-shadow: var(--themis-well-shadow); font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: .78rem; line-height: 1.8; }
+.themis-diff { --cb-comment: var(--themis-code-comment); --cb-string: var(--themis-code-string); --cb-keyword: var(--themis-code-keyword); --cb-function: var(--themis-code-function); --cb-type: var(--themis-code-type); display: flex; flex-direction: column; min-height: 0; border-radius: 12px; overflow: clip; background: var(--themis-well); box-shadow: var(--themis-well-shadow); font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: .78rem; line-height: 1.8; }
 .themis-diff-count-add { color: var(--themis-diff-add); }
 .themis-diff-count-del { color: var(--themis-diff-del); }
 /* Unified and Split over the well's top right, shown on hover or focus like the chat's code toolbar. */
@@ -11,7 +11,8 @@
 .themis-diff-toggle-btn:hover { color: var(--themis-text); }
 .themis-diff-toggle-btn--active { color: var(--themis-text); font-weight: 600; }
 .themis-diff-toggle-btn:disabled { color: var(--themis-text-3); opacity: .5; cursor: default; }
-.themis-diff-unified, .themis-diff-side { overflow-x: hidden; overflow-y: auto; padding: 12px 0; }
+/* Lines wrap, so a well never scrolls: it clips (a scroll container would flash an overlay bar inside Changes' one scroll). */
+.themis-diff-unified, .themis-diff-side { overflow: clip; padding: 12px 0; }
 .themis-diff-hunk-gap { height: 0; }
 /* The unchanged lines before a hunk: "⋯ N unchanged lines", a quiet row in the well; a click shows more. */
 .themis-diff-gap { display: block; width: 100%; padding: 2px 14px 2px 72px; border: 0; background: transparent; color: var(--themis-code-comment); font: inherit; font-size: .75rem; text-align: left; cursor: pointer; }
