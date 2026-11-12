@@ -184,11 +184,12 @@ impl Fixture {
 
     /// Starts a run in `thread` that waits on the stalled provider.
     async fn start_stalled_run(&self, thread: &str, provider: &MockServer) {
+        let before = provider.received_requests().await.unwrap().len();
         self.call_ok(
             "send_message",
             json!({"threadId": thread, "text": "work on it", "reasoningEffort": null}),
         );
-        wait_until(|| async { !provider.received_requests().await.unwrap().is_empty() }).await;
+        wait_until(|| async { provider.received_requests().await.unwrap().len() > before }).await;
     }
 
     async fn running(&self, thread: &str) -> bool {
@@ -328,8 +329,15 @@ async fn a_channel_and_a_vision_round_trip_with_revisions() {
         "{}",
         text(&stale)
     );
-    let channels = fx.call_ok("list_channels", json!({"projectRoot": fx.project}));
+    // Project folders resolve like list_threads resolves them.
+    let roundabout = format!(
+        "{}/../{}/.",
+        fx.project.display(),
+        fx.project.file_name().unwrap().to_string_lossy()
+    );
+    let channels = fx.call_ok("list_channels", json!({"projectRoot": roundabout}));
     assert_eq!(channels.as_array().unwrap().len(), 1);
+    assert_eq!(channels[0]["project_root"], json!(fx.project));
     assert_eq!(channels[0]["topic"], "Ship 2.0");
 
     let posted = fx.call_ok(
@@ -410,20 +418,30 @@ async fn deleting_a_channel_stops_and_releases_its_chats() {
     );
     let running = fx.thread().await;
     let idle = fx.thread().await;
+    let taken = fx.thread().await;
     fx.start_stalled_run(&running, &provider).await;
+    fx.start_stalled_run(&taken, &provider).await;
     fx.own(&running, &vision, &channel, OwnedKind::Work);
     fx.own(&idle, &vision, &channel, OwnedKind::Work);
+    fx.own(&taken, &vision, &channel, OwnedKind::Work);
+    hold(&fx.state, &taken, Hold::TakenOver);
     assert!(fx.listed_ids().is_empty());
 
     fx.call_ok("delete_channel", json!({"channelId": channel}));
     wait_until(|| async { !fx.running(&running).await }).await;
     assert!(fx.state.owner_of(&running).is_none());
     assert!(fx.state.owner_of(&idle).is_none());
+    // The person's own run in a chat they took over keeps going; it is only released.
+    assert!(fx.state.owner_of(&taken).is_none());
+    assert!(fx.running(&taken).await, "a taken-over chat is not stopped");
+    let stopped = fx.cli(None, &["thread", "stop", &taken]);
+    assert!(stopped.status.success(), "{}", text(&stopped));
+    wait_until(|| async { !fx.running(&taken).await }).await;
     let mut listed = fx.listed_ids();
     listed.sort();
-    let mut expected = vec![running.clone(), idle.clone()];
+    let mut expected = vec![running.clone(), idle.clone(), taken.clone()];
     expected.sort();
-    assert_eq!(listed, expected, "both chats are ordinary chats again");
+    assert_eq!(listed, expected, "the chats are ordinary chats again");
     assert_eq!(
         fx.call_ok("list_channels", json!({"projectRoot": fx.project})),
         json!([])
@@ -477,12 +495,30 @@ async fn a_person_stop_marks_the_chat_held() {
     );
     assert_eq!(owner_hold(&fx.state, &work), Some(Hold::None));
 
-    // Stop again, then hand back: the hold clears and the channel says so.
+    // A second Stop while it is still held adds no second notice.
+    fx.start_stalled_run(&work, &provider).await;
     hold(&fx.state, &work, Hold::StoppedByPerson);
+    let notices = fx.entries(&channel).len();
+    let stopped = fx.cli(None, &["thread", "stop", &work]);
+    assert!(stopped.status.success(), "{}", text(&stopped));
+    assert_eq!(fx.entries(&channel).len(), notices);
+    assert_eq!(owner_hold(&fx.state, &work), Some(Hold::StoppedByPerson));
+    wait_until(|| async { !fx.running(&work).await }).await;
+
+    // Hand back: the hold clears and the channel says so.
     let handed = fx.call_ok("hand_back_thread", json!({"threadId": work}));
     assert_eq!(handed["hold"], "none");
     assert_eq!(owner_hold(&fx.state, &work), Some(Hold::None));
     assert_eq!(fx.entries(&channel).last().unwrap()["kind"], "handed_back");
+    // Nothing is held now, so there is nothing to hand back.
+    let notices = fx.entries(&channel).len();
+    let again = fx.call("hand_back_thread", json!({"threadId": work}));
+    assert!(
+        failed_with(&again, "nothing to hand back"),
+        "{}",
+        text(&again)
+    );
+    assert_eq!(fx.entries(&channel).len(), notices);
     let plain = fx.thread().await;
     let refused = fx.call("hand_back_thread", json!({"threadId": plain}));
     assert!(
@@ -519,6 +555,58 @@ async fn a_person_message_in_an_owned_chat_is_a_take_over() {
     assert_eq!(owner_hold(&fx.state, &work), Some(Hold::TakenOver));
     fx.call_ok("hand_back_thread", json!({"threadId": work}));
     assert_eq!(owner_hold(&fx.state, &work), Some(Hold::None));
+    fx.shut_down().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_person_message_queued_in_a_busy_owned_chat_is_a_take_over() {
+    let _turn = ONE_SERVER.lock().await;
+    let fx = fixture().await;
+    let provider = stalled_provider().await;
+    fx.use_provider(&provider).await;
+    let (vision, channel) = fx.vision_and_channel("Wren", "hq");
+    let work = fx.thread().await;
+    fx.start_stalled_run(&work, &provider).await;
+    fx.own(&work, &vision, &channel, OwnedKind::Work);
+
+    fx.call_ok(
+        "enqueue_message",
+        json!({"threadId": work, "text": "then rename the module", "reasoningEffort": null}),
+    );
+    assert_eq!(owner_hold(&fx.state, &work), Some(Hold::TakenOver));
+    let stopped = fx.cli(None, &["thread", "stop", &work]);
+    assert!(stopped.status.success(), "{}", text(&stopped));
+    assert_eq!(owner_hold(&fx.state, &work), Some(Hold::TakenOver));
+    fx.shut_down().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_refused_person_send_does_not_take_over() {
+    let _turn = ONE_SERVER.lock().await;
+    let fx = fixture().await;
+    let provider = stalled_provider().await;
+    fx.use_provider(&provider).await;
+    let (vision, channel) = fx.vision_and_channel("Wren", "hq");
+    let work = fx.thread().await;
+    fx.start_stalled_run(&work, &provider).await;
+    fx.own(&work, &vision, &channel, OwnedKind::Work);
+
+    // Busy: the send is refused, so the chat stays the Vision's.
+    let refused = fx.call(
+        "send_message",
+        json!({"threadId": work, "text": "me now", "reasoningEffort": null}),
+    );
+    assert!(!refused.status.success(), "{}", text(&refused));
+    assert_eq!(owner_hold(&fx.state, &work), Some(Hold::None));
+    // An empty goal is refused before anything starts, in any state.
+    hold(&fx.state, &work, Hold::StoppedByPerson);
+    let refused = fx.call(
+        "send_message",
+        json!({"threadId": work, "text": "/goal", "reasoningEffort": null}),
+    );
+    assert!(!refused.status.success(), "{}", text(&refused));
+    assert_eq!(owner_hold(&fx.state, &work), Some(Hold::StoppedByPerson));
+    fx.state.stop_thread(work.clone()).await.unwrap();
     fx.shut_down().await;
 }
 

@@ -177,6 +177,8 @@ impl AppState {
             "info",
             json!({"thread_id": thread_id, "queued": self.queue_for(&thread_id).len()}),
         );
+        // Only the person queues messages: a Vision's work chat is now theirs.
+        self.visions_person_took_over(&thread_id);
         if !running {
             self.dispatch_queue(sink, &thread_id).await;
         }

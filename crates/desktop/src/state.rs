@@ -897,7 +897,7 @@ fn offers_effort(catalog: &[themis_core::providers::GoModel], model: &str, effor
         .any(|entry| entry.id == model && entry.effort_levels.iter().any(|level| level == effort))
 }
 
-fn canonical_project_dir(path: &str) -> Result<PathBuf, String> {
+pub(crate) fn canonical_project_dir(path: &str) -> Result<PathBuf, String> {
     if path.trim().is_empty() {
         return Err("project path must not be empty".to_owned());
     }

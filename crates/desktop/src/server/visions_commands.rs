@@ -105,8 +105,8 @@ fn channel_method(
     match method {
         "save_channel" => {
             let revision: Option<String> = arg(args, "revision")?;
-            let saved =
-                state.channel_save(arg::<Channel>(args, "channel")?, revision.as_deref())?;
+            let saved = state
+                .visions_save_channel(arg::<Channel>(args, "channel")?, revision.as_deref())?;
             let changed = change(Some(saved.id.clone()), None);
             Ok((to_value(saved)?, changed))
         }
@@ -127,8 +127,8 @@ fn channel_method(
             Ok((to_value(page)?, None))
         }
         _ => {
-            let root: PathBuf = arg(args, "projectRoot")?;
-            Ok((to_value(state.channel_list(&root))?, None))
+            let root: String = arg(args, "projectRoot")?;
+            Ok((to_value(state.visions_project_channels(&root)?)?, None))
         }
     }
 }

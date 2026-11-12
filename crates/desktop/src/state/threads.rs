@@ -238,15 +238,20 @@ impl AppState {
         effort: Option<String>,
         attachments: Vec<String>,
     ) -> Result<RunHandle, String> {
-        self.send_message_with_options(
-            sink,
-            thread_id,
-            text,
-            uuid::Uuid::new_v4().to_string(),
-            effort,
-            attachments,
-        )
-        .await
+        let handle = self
+            .send_message_with_options(
+                sink,
+                thread_id.clone(),
+                text,
+                uuid::Uuid::new_v4().to_string(),
+                effort,
+                attachments,
+            )
+            .await?;
+        // Accepted from the person (the server's, goals' and automations' sends take other
+        // paths): a Vision's work chat is now theirs.
+        self.visions_person_took_over(&thread_id);
+        Ok(handle)
     }
 
     pub(super) async fn send_message_with_options(

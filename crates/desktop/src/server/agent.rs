@@ -475,6 +475,16 @@ mod tests {
         }
     }
 
+    #[test]
+    fn every_visions_method_is_refused_to_an_agent() {
+        let grant = grant();
+        let own = json!({"threadId": "chat-a"});
+        for method in crate::server::visions_commands::METHODS {
+            let refused = refusal(&grant, method, &own).expect(method);
+            assert_eq!(refused.reason, Reason::MethodNotAllowed, "{method}");
+        }
+    }
+
     fn unbound() -> RunScope {
         RunScope::default()
     }

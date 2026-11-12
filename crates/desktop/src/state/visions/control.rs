@@ -6,9 +6,9 @@ use std::sync::Arc;
 
 use serde_json::{json, Value};
 
-use super::{ChannelEntry, Hold, NoticeKind, OwnedKind, Owner, Vision, WakeReason};
+use super::{Channel, ChannelEntry, Hold, NoticeKind, OwnedKind, Owner, Vision, WakeReason};
 use crate::sink::EventSink;
-use crate::state::AppState;
+use crate::state::{canonical_project_dir, AppState};
 use crate::types::ThreadInfo;
 
 const NOT_OWNED: &str = "This chat does not belong to a Vision";
@@ -57,6 +57,23 @@ impl AppState {
             listed.push(value);
         }
         Ok(listed)
+    }
+
+    /// The channels of the project at `project_root`, which is resolved like `list_threads`
+    /// resolves it.
+    pub fn visions_project_channels(&self, project_root: &str) -> Result<Vec<Channel>, String> {
+        let root = canonical_project_dir(project_root)?;
+        Ok(self.channel_list(&root))
+    }
+
+    /// Saves a channel with its project folder resolved like `list_threads` resolves it.
+    pub fn visions_save_channel(
+        &self,
+        mut spec: Channel,
+        expected: Option<&str>,
+    ) -> Result<Channel, String> {
+        spec.project_root = canonical_project_dir(&spec.project_root.to_string_lossy())?;
+        self.channel_save(spec, expected)
     }
 
     /// The person wrote in a channel: the log gets it, chats the person stopped there may be
@@ -115,7 +132,8 @@ impl AppState {
         let Some(owner) = self.owner_of(thread_id) else {
             return;
         };
-        if owner.kind != OwnedKind::Work {
+        // Stopped again: the channel already says so.
+        if owner.kind != OwnedKind::Work || owner.hold == Hold::StoppedByPerson {
             return;
         }
         let held = self.owner_hold(thread_id, |owner| match owner.hold {
@@ -168,6 +186,11 @@ impl AppState {
             .owner_of(thread_id)
             .filter(|owner| owner.kind == OwnedKind::Work)
             .ok_or_else(|| NOT_OWNED.to_owned())?;
+        if owner.hold == Hold::None {
+            return Err(
+                "This chat is already its Vision's; there is nothing to hand back".to_owned(),
+            );
+        }
         let owner = self.owner_hold(thread_id, |_| Hold::None)?.unwrap_or(owner);
         self.channel_append(
             &owner.channel_id,
@@ -269,11 +292,14 @@ impl AppState {
             .count()
     }
 
-    /// Stops the chats `which` selects and forgets their owners; returns how many.
+    /// Stops the chats `which` selects (not those the person took over, which run for them)
+    /// and forgets their owners; returns how many.
     fn visions_release_owned(&self, which: impl Fn(&Owner) -> bool) -> Result<usize, String> {
         let owners = self.owners_where(which);
         for owner in &owners {
-            let _ = self.stop_run(&owner.thread_id);
+            if owner.hold != Hold::TakenOver {
+                let _ = self.stop_run(&owner.thread_id);
+            }
             self.owner_release(&owner.thread_id)?;
         }
         Ok(owners.len())
