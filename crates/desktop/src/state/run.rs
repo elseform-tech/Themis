@@ -909,7 +909,7 @@ impl AppState {
                                                 let run_scope = super::visions::run_scope(super::chat_reads::run_scope(&snapshot.work_root, &sandbox, &tools, memory_denied), vision.as_ref());
                                                 // Boxed: the run's future is large, and the
                                                 // steer scope must not copy it on the stack.
-                                                themis_core::agent_cli::with_run_scope(run_scope, themis_core::runtime::with_memory_block(memory_block, themis_core::runtime::with_checkpoint_note(checkpoint_note, themis_core::runtime::with_first_request(first_request, themis_core::runtime::with_end_request(end_request, themis_core::runtime::with_steer_inbox(steer_inbox, themis_core::runtime::with_run_notes(run_notes, super::visions::boxed_run(vision, run_task_with_evidence(
+                                                themis_core::agent_cli::with_run_scope(run_scope, themis_core::runtime::with_memory_block(memory_block, themis_core::runtime::with_checkpoint_note(checkpoint_note, themis_core::runtime::with_first_request(first_request, themis_core::runtime::with_end_request(end_request, themis_core::runtime::with_steer_inbox(steer_inbox, themis_core::runtime::with_run_notes(run_notes, super::visions::boxed_run(vision, Box::pin(run_task_with_evidence(
                                                 llm,
                                                 tools,
                                                 themis_core::skills::compose_task(&task, &skills),
@@ -920,7 +920,7 @@ impl AppState {
                                                 stopped,
                                                 skill_catalog,
                                                 Some(evidence_directory),
-                                            ))))))))).await
+                                            )))))))))).await
                                             }))
                                         },
                                     ),

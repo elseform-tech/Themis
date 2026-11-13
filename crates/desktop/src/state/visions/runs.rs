@@ -130,17 +130,14 @@ pub(in crate::state) fn run_scope(mut scope: RunScope, vision: Option<&VisionRun
     scope
 }
 
-/// The run's future, boxed; a Vision run's with its system head in place of the ordinary
-/// instructions.
-pub(in crate::state) fn boxed_run<'a, F>(
+/// The run's future (already boxed, so its large state is never copied on the stack again); a
+/// Vision run's with its system head in place of the ordinary instructions.
+pub(in crate::state) fn boxed_run<'a, T: 'a>(
     vision: Option<VisionRun>,
-    future: F,
-) -> std::pin::Pin<Box<dyn std::future::Future<Output = F::Output> + Send + 'a>>
-where
-    F: std::future::Future + Send + 'a,
-{
+    future: std::pin::Pin<Box<dyn std::future::Future<Output = T> + Send + 'a>>,
+) -> std::pin::Pin<Box<dyn std::future::Future<Output = T> + Send + 'a>> {
     match vision {
-        None => Box::pin(future),
+        None => future,
         Some(vision) => Box::pin(themis_core::runtime::with_system_head(vision.head, future)),
     }
 }
