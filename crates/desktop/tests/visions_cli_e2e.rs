@@ -1129,6 +1129,7 @@ async fn a_persons_steer_of_a_visions_message_answers_nothing() {
     );
     wait_until(|| async { !fx.running(&work).await }).await;
     assert_eq!(open(), 1, "the Vision's words answered nothing");
+    assert_eq!(fx.steered(&work), [("MIT".to_owned(), json!(vision))]);
     fx.shut_down().await;
 }
 

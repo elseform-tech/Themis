@@ -206,6 +206,22 @@ impl Fixture {
             .collect()
     }
 
+    /// The texts the chat's history shows steered in, each with the Vision that wrote it.
+    pub fn steered(&self, thread: &str) -> Vec<(String, Value)> {
+        let history = self.call_ok("get_thread_history", json!({"threadId": thread}));
+        history
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|item| &item["envelope"]["event"])
+            .filter(|event| event["kind"] == "steered")
+            .map(|event| {
+                let text = event["text"].as_str().unwrap().to_owned();
+                (text, event.get("vision_id").cloned().unwrap_or(Value::Null))
+            })
+            .collect()
+    }
+
     pub fn entries(&self, channel: &str) -> Vec<Value> {
         let page = self.call_ok("get_channel_page", json!({"channelId": channel}));
         page["entries"]

@@ -446,7 +446,8 @@ async fn steered_messages_reach_the_next_model_request() {
                         // The second is an agent's acting for the person (a Vision's).
                         for (index, text) in steers.iter().enumerate() {
                             let author = (index == 1).then(|| "v1".to_owned());
-                            queue.push_back(Steer { text: (*text).into(), author });
+                            let person_acted = author.is_none();
+                            queue.push_back(Steer { text: (*text).into(), author, person_acted });
                         }
                     }
                     let reply = if steered {

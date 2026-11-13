@@ -641,7 +641,11 @@ impl AppState {
                 .unwrap_or_else(|e| e.into_inner());
             let by = by.map(str::to_owned);
             if let Some(entry) = inboxes.get(thread_id) {
-                entry.push(format!("{header}\n{body}"), by);
+                entry.push(themis_core::runtime::Steer {
+                    text: format!("{header}\n{body}"),
+                    person_acted: by.is_none(),
+                    author: by,
+                });
                 return Ok(true);
             }
             match queue.first_mut() {

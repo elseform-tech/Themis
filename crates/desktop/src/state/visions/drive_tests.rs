@@ -501,3 +501,97 @@ async fn a_visions_message_is_announced_as_the_visions() {
         [("its".to_owned(), Some(vision)), ("mine".to_owned(), None)]
     );
 }
+
+/// The person steering in a message a Vision queued: the words stay the Vision's (shown and
+/// saved with its id, no person words for the memory pass, the Auto reviewer or the goal, and
+/// back in the queue as the Vision's when unread), while the person's act still denies the
+/// approvals the run asks for meanwhile.
+#[tokio::test]
+async fn a_persons_steer_of_a_visions_message_keeps_the_visions_words() {
+    use crate::types::{QueuedMessage, ThreadEvent, ThreadEventEnvelope};
+    let fx = setup(None);
+    let work = fx
+        .state
+        .visions_start_work_chat(&fx.scope)
+        .await
+        .unwrap()
+        .id;
+    let vision = fx.scope.vision_id.clone();
+    let sink = sink();
+    fx.state
+        .begin_goal(sink.as_ref(), &work, "ship the release");
+    let inbox = fx.state.open_steer_inbox(&work, "run-1", Arc::clone(&sink));
+    let queue_its = |text: &str| {
+        let message = QueuedMessage::new(text.into(), Vec::new(), None, Some(vision.clone()));
+        let id = message.id.clone();
+        fx.state
+            .edit_queue(sink.as_ref(), &work, |queue| {
+                queue.push(message);
+                Ok(())
+            })
+            .unwrap();
+        id
+    };
+    let first = queue_its("MIT");
+    fx.state
+        .steer_queued_message(Arc::clone(&sink), work.clone(), first)
+        .await
+        .unwrap();
+    assert!(
+        (fx.state.steer_waiting_check(&work))(),
+        "the person's act still denies approvals"
+    );
+    let steer = inbox.lock().unwrap().pop_front().unwrap();
+    assert_eq!(steer.author.as_deref(), Some(vision.as_str()));
+    assert!(!fx.state.steer_for_memory(&work, &steer));
+    // Saved as the run's pump saves it once the run reads it.
+    let read = ThreadEventEnvelope {
+        thread_id: work.clone(),
+        run_id: "run-1".into(),
+        event: ThreadEvent::from(themis_core::runtime::RunEvent::Steered(steer)),
+    };
+    fx.state.inner.transcript.append_event(&read).unwrap();
+    let saved: Vec<Option<String>> = fx
+        .state
+        .inner
+        .transcript
+        .history_after(&work, 0, 100)
+        .unwrap()
+        .into_iter()
+        .filter_map(|(_, item)| match item {
+            crate::transcript::HistoryItem::Event { envelope } => match envelope.event {
+                ThreadEvent::SteerShown { vision_id, .. }
+                | ThreadEvent::Steered { vision_id, .. } => Some(vision_id),
+                _ => None,
+            },
+            _ => None,
+        })
+        .collect();
+    assert_eq!(saved, [Some(vision.clone()), Some(vision.clone())]);
+    assert!(!fx.state.person_spoke_since_goal_turn(&work));
+    let reviewer = crate::state::auto_review::DesktopReviewer {
+        state: fx.state.clone(),
+        sink: Arc::clone(&sink),
+        thread_id: work.clone(),
+        run_id: "run-1".into(),
+        project_root: fx.scope.project_root.clone(),
+        config: themis_core::configuration::RuntimeConfig::default(),
+        is_git: false,
+    };
+    assert!(!reviewer.person_words().contains("MIT"));
+
+    // Unread when the run ends, it goes back to the queue as the Vision's.
+    let second = queue_its("Apache");
+    fx.state
+        .steer_queued_message(Arc::clone(&sink), work.clone(), second)
+        .await
+        .unwrap();
+    fx.state.close_steer_inbox(&work);
+    let queued: Vec<(String, Option<String>)> = fx
+        .state
+        .queue_for(&work)
+        .into_iter()
+        .map(|message| (message.text, message.vision_id))
+        .collect();
+    assert_eq!(queued, [("Apache".to_owned(), Some(vision))]);
+}

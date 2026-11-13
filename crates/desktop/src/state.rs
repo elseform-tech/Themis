@@ -251,13 +251,8 @@ struct SteerEntry {
 }
 
 impl SteerEntry {
-    /// Puts `text` in the inbox as `vision_id`'s (`None`: the person's, and the answers and
-    /// notes the server adds for them).
-    fn push(&self, text: String, vision_id: Option<String>) {
-        let steer = themis_core::runtime::Steer {
-            text,
-            author: vision_id,
-        };
+    /// Puts `steer` in the inbox.
+    fn push(&self, steer: themis_core::runtime::Steer) {
         self.inbox
             .lock()
             .unwrap_or_else(|e| e.into_inner())

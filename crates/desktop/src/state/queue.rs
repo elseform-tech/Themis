@@ -327,7 +327,9 @@ impl AppState {
                 .get(&thread_id)
                 .ok_or_else(|| "No run is going; send the message instead".to_owned())?;
             let message = queue.remove(index);
-            let (text, queued_by_vision) = (message.text, message.vision_id.is_some());
+            // The words stay whoever queued them; the act is the caller's.
+            let (text, author) = (message.text, message.vision_id);
+            let queued_by_vision = author.is_some();
             // Before the inbox: the run may read it at once, and the chat must
             // hear of it in this order.
             self.record_steer_event(
@@ -336,10 +338,14 @@ impl AppState {
                 &entry.run_id,
                 ThreadEvent::SteerShown {
                     text: text.clone(),
-                    vision_id: vision_id.clone(),
+                    vision_id: author.clone(),
                 },
             );
-            entry.push(text.clone(), vision_id.clone());
+            entry.push(themis_core::runtime::Steer {
+                text: text.clone(),
+                author,
+                person_acted: vision_id.is_none(),
+            });
             Ok((text, queued_by_vision))
         })?;
         let (steered, queued_by_vision) = steered;
@@ -377,7 +383,7 @@ impl AppState {
                 .unwrap_or_else(|e| e.into_inner())
                 .get(thread_id)
             {
-                entry.push(note, None);
+                entry.push(note.into());
             }
         }
         self.add_also_asked(sink, thread_id, steered);
@@ -400,7 +406,7 @@ impl AppState {
             let inbox = inbox.lock().unwrap_or_else(|e| e.into_inner());
             inbox
                 .iter()
-                .any(|steer| steer.author.is_none() && !super::questions::is_answer(&steer.text))
+                .any(|steer| steer.person_acted && !super::questions::is_answer(&steer.text))
         })
     }
 
@@ -505,6 +511,7 @@ impl AppState {
         for themis_core::runtime::Steer {
             text,
             author: vision_id,
+            ..
         } in unread.into_iter().rev()
         {
             // Answers were never shown as steers; a steer leaves the chat for now.
@@ -871,7 +878,11 @@ mod tests {
         let waiting = state.steer_waiting_check("chat");
         let push = |text: &str, vision: Option<&str>| {
             let inboxes = state.inner.steer_inboxes.lock().unwrap();
-            inboxes["chat"].push(text.to_owned(), vision.map(str::to_owned));
+            inboxes["chat"].push(themis_core::runtime::Steer {
+                text: text.to_owned(),
+                author: vision.map(str::to_owned),
+                person_acted: vision.is_none(),
+            });
         };
         push("vision one", Some("v1"));
         assert!(!waiting(), "a Vision's steer waits for nobody's approval");

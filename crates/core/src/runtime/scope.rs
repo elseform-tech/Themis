@@ -146,12 +146,21 @@ pub struct Steer {
     /// them that wrote it (a Vision's id), whose words are not the person's.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub author: Option<String>,
+    /// Whether the person put it into the run, their act even when the words are an agent's
+    /// (they steered in what a Vision queued): the app treats it as the person's new message
+    /// for the approvals the run waits on. Not part of the event's wire form.
+    #[serde(skip)]
+    pub person_acted: bool,
 }
 
 impl From<String> for Steer {
-    /// The person's message.
+    /// The person's message, put in by them.
     fn from(text: String) -> Self {
-        Self { text, author: None }
+        Self {
+            text,
+            author: None,
+            person_acted: true,
+        }
     }
 }
 

@@ -127,7 +127,7 @@ pub(super) fn review_request(
 impl DesktopReviewer {
     /// The person's own latest messages and steers in this chat (a Vision's, runtime goal
     /// notes and answers' framing left out), the latest kept within bounds.
-    fn person_words(&self) -> String {
+    pub(super) fn person_words(&self) -> String {
         let transcript = &self.state.inner.transcript;
         let last = transcript.last_activity_seq(&self.thread_id).unwrap_or(0);
         let page = transcript

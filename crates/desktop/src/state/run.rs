@@ -29,7 +29,11 @@ const EVENT_CHANNEL_CAPACITY: usize = 1024;
 impl AppState {
     /// Whether a steer read in `thread_id`'s run goes to the turn's memory pass as the
     /// person's words: theirs (a Vision's is not), and not already taken by a goal event.
-    fn steer_for_memory(&self, thread_id: &str, steer: &themis_core::runtime::Steer) -> bool {
+    pub(super) fn steer_for_memory(
+        &self,
+        thread_id: &str,
+        steer: &themis_core::runtime::Steer,
+    ) -> bool {
         steer.author.is_none() && !self.goal_takes_words(thread_id, &steer.text)
     }
 

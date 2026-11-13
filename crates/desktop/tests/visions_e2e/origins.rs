@@ -152,22 +152,6 @@ fn steer_in(fx: &Fixture, token: Option<&str>, thread: &str, text: &str) {
     json_of(&fx.cli(token, &["call", "steer_queued_message", &steer.to_string()]));
 }
 
-/// The texts the chat's history shows steered in, each with the Vision that wrote it.
-fn steered(fx: &Fixture, thread: &str) -> Vec<(String, Value)> {
-    let history = fx.call_ok("get_thread_history", json!({"threadId": thread}));
-    history
-        .as_array()
-        .unwrap()
-        .iter()
-        .map(|item| &item["envelope"]["event"])
-        .filter(|event| event["kind"] == "steered")
-        .map(|event| {
-            let text = event["text"].as_str().unwrap().to_owned();
-            (text, event.get("vision_id").cloned().unwrap_or(Value::Null))
-        })
-        .collect()
-}
-
 #[tokio::test(flavor = "multi_thread")]
 async fn a_visions_steer_is_not_the_persons_words_but_the_persons_steer_is() {
     let _turn = ONE_SERVER.lock().await;
@@ -190,8 +174,8 @@ async fn a_visions_steer_is_not_the_persons_words_but_the_persons_steer_is() {
         .to_owned();
     let its = "From now on we always install packages with pnpm, never npm.";
     steer_in(&fx, Some(&token), &work, its);
-    wait_until(|| async { !steered(&fx, &work).is_empty() && !fx.running(&work).await }).await;
-    assert_eq!(steered(&fx, &work), [(its.to_owned(), json!(vision))]);
+    wait_until(|| async { !fx.steered(&work).is_empty() && !fx.running(&work).await }).await;
+    assert_eq!(fx.steered(&work), [(its.to_owned(), json!(vision))]);
     // That turn's memory pass (it runs: the turn's first answer is a note it ran into) has no
     // person words: the Vision's steer is not among them.
     wait_until(|| async {
@@ -213,8 +197,8 @@ async fn a_visions_steer_is_not_the_persons_words_but_the_persons_steer_is() {
     );
     let mine = "Remember that the staging database is reset every Monday morning.";
     steer_in(&fx, None, &plain, mine);
-    wait_until(|| async { !steered(&fx, &plain).is_empty() }).await;
-    assert_eq!(steered(&fx, &plain), [(mine.to_owned(), Value::Null)]);
+    wait_until(|| async { !fx.steered(&plain).is_empty() }).await;
+    assert_eq!(fx.steered(&plain), [(mine.to_owned(), Value::Null)]);
     tokio::time::timeout(Duration::from_secs(20), async {
         loop {
             let requests = provider.received_requests().await.unwrap();
