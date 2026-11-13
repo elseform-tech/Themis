@@ -149,7 +149,7 @@ impl AppState {
         );
         let run_id = uuid::Uuid::new_v4().to_string();
         let (sent, progress) = self
-            .send_from_server(sink, &thread_id, text, &run_id, None, Vec::new())
+            .send_from_server(sink, &thread_id, text, &run_id, Default::default())
             .await;
         let woke = sent.is_ok();
         // Refused before it was saved (busy, the concurrency limit): the chat's next turn reads

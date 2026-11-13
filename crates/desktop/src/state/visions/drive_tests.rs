@@ -113,8 +113,14 @@ async fn a_send_rechecks_the_hold_and_the_pause() {
     let fx = setup(None);
     let info = fx.state.visions_start_work_chat(&fx.scope).await.unwrap();
     let send = || {
-        fx.state
-            .visions_send(sink(), &info.id, "go".into(), None, Vec::new())
+        fx.state.visions_send(
+            sink(),
+            &fx.scope.vision_id,
+            &info.id,
+            "go".into(),
+            None,
+            Vec::new(),
+        )
     };
     for hold in [Hold::StoppedByPerson, Hold::TakenOver] {
         fx.state.owner_hold(&info.id, |_| hold).unwrap();
@@ -139,6 +145,100 @@ async fn a_send_rechecks_the_hold_and_the_pause() {
     // A chat it does not own is never written in.
     fx.state.owner_release(&info.id).unwrap();
     assert!(send().await.is_err());
+}
+
+/// The chat's user messages, oldest first, each with the Vision that sent it.
+fn user_messages(fx: &Setup, thread_id: &str) -> Vec<(String, Option<String>)> {
+    let page = fx.state.inner.transcript.history_after(thread_id, 0, 100);
+    page.unwrap()
+        .into_iter()
+        .filter_map(|(_, item)| match item {
+            crate::transcript::HistoryItem::User {
+                text, vision_id, ..
+            } => Some((text, vision_id)),
+            _ => None,
+        })
+        .collect()
+}
+
+async fn until_idle(fx: &Setup, thread_id: &str) {
+    for _ in 0..500 {
+        if !fx.state.get_thread(thread_id).await.unwrap().running {
+            return;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+    panic!("the chat still runs");
+}
+
+/// A Vision's message in a goal's chat, sent or queued, is saved as the Vision's and joins the
+/// goal as no "Also asked" line: it is not the person asking (so the agent may not pause the
+/// goal for it either). The person's own message still joins it.
+#[tokio::test]
+async fn a_visions_message_is_not_the_persons_for_the_goal() {
+    let fx = setup(Some("vision-model"));
+    // Priced, so the Vision's budget can be checked.
+    fx.state
+        .set_model_catalog_for_test(vec![themis_core::providers::GoModel {
+            id: "vision-model".into(),
+            price: Some(themis_core::providers::ModelPrice::default()),
+            ..Default::default()
+        }])
+        .await;
+    let work = fx
+        .state
+        .visions_start_work_chat(&fx.scope)
+        .await
+        .unwrap()
+        .id;
+    let vision = fx.scope.vision_id.clone();
+    fx.state
+        .begin_goal(sink().as_ref(), &work, "ship the release");
+    // No provider key here: the run fails to start, after the message was saved and the goal
+    // heard it.
+    let sent = "also add a changelog".to_owned();
+    let _ = fx
+        .state
+        .visions_send(sink(), &vision, &work, sent.clone(), None, Vec::new())
+        .await;
+    until_idle(&fx, &work).await;
+    let queued = crate::types::QueuedMessage::new(
+        "and a release note".into(),
+        Vec::new(),
+        None,
+        Some(vision.clone()),
+    );
+    fx.state
+        .enqueue(sink(), work.clone(), queued)
+        .await
+        .unwrap();
+    for _ in 0..500 {
+        if user_messages(&fx, &work).len() == 2
+            && !fx.state.get_thread(&work).await.unwrap().running
+        {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+    let goal = fx.state.goal_for(&work).unwrap();
+    assert!(goal.also_asked.is_empty(), "{:?}", goal.also_asked);
+    assert!(!fx.state.person_spoke_since_goal_turn(&work));
+    assert_eq!(
+        user_messages(&fx, &work),
+        [
+            (sent, Some(vision.clone())),
+            ("and a release note".to_owned(), Some(vision.clone())),
+        ]
+    );
+
+    let _ = fx
+        .state
+        .send_message(sink(), work.clone(), "also bump the version".into())
+        .await;
+    let goal = fx.state.goal_for(&work).unwrap();
+    assert_eq!(goal.also_asked, ["also bump the version"]);
+    assert!(fx.state.person_spoke_since_goal_turn(&work));
+    assert_eq!(user_messages(&fx, &work)[2].1, None);
 }
 
 /// A chat recorded as the Vision's own chat in `scope`'s channel.

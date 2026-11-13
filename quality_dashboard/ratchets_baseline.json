@@ -521,7 +521,7 @@
    "cyclomatic": 23
   },
   "crates/desktop/src/state/automation.rs::AppState::fire_automation": {
-   "lines": 136
+   "lines": 135
   },
   "crates/desktop/src/state/automation/crud.rs::AppState::check_automation_input": {
    "cyclomatic": 35
@@ -624,8 +624,8 @@
   },
   "crates/desktop/src/state/threads.rs::AppState::send_message_with_options": {
    "cognitive": 43,
-   "cyclomatic": 97,
-   "lines": 382
+   "cyclomatic": 95,
+   "lines": 376
   },
   "crates/desktop/src/transcript.rs::TranscriptStore::append": {
    "cyclomatic": 21

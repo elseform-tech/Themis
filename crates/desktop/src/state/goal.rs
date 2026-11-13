@@ -746,12 +746,15 @@ impl AppState {
 }
 
 /// Whether a chat history item is the person speaking: a message or a steer, but not a goal
-/// turn, a goal command or a Vision's answer (queued, it is a message; given while a run was
-/// going, it is a steer, whose event keeps only the text).
+/// turn, a goal command, a Vision's message or a Vision's answer (queued, it is a message;
+/// given while a run was going, it is a steer, whose event keeps only the text).
 fn person_spoke(item: &crate::transcript::HistoryItem) -> bool {
     match item {
-        crate::transcript::HistoryItem::User { text, .. } => {
-            !text.starts_with(themis_core::goal::GOAL_TURN_MARKER)
+        crate::transcript::HistoryItem::User {
+            text, vision_id, ..
+        } => {
+            vision_id.is_none()
+                && !text.starts_with(themis_core::goal::GOAL_TURN_MARKER)
                 && !text.starts_with("/goal")
                 && !super::questions::is_vision_answer(text)
         }
@@ -784,6 +787,7 @@ mod tests {
             run_id: "r".into(),
             text: text.to_owned(),
             attachments: Vec::new(),
+            vision_id: None,
         };
         let steered = |text: &str| HistoryItem::Event {
             envelope: ThreadEventEnvelope {

@@ -548,8 +548,7 @@ impl AppState {
                         .collect::<String>()
                 ),
                 run_id.clone(),
-                effort,
-                Vec::new(),
+                super::threads::SendOptions::with_effort(effort),
             )
             .await
         {

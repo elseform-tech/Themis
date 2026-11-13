@@ -10,6 +10,25 @@ pub(super) fn send_must_wait(error: &str) -> bool {
     error.contains(BUSY) || error.contains(CONCURRENCY_LIMIT)
 }
 
+/// What a message carries beside its text: the reasoning effort, attachments, and the Vision
+/// that sent it (`None` when the person did, or the server for itself).
+#[derive(Debug, Default)]
+pub(super) struct SendOptions {
+    pub(super) reasoning_effort: Option<String>,
+    pub(super) attachments: Vec<String>,
+    pub(super) vision_id: Option<String>,
+}
+
+impl SendOptions {
+    /// Only a reasoning effort: no attachments, and not a Vision's.
+    pub(super) fn with_effort(reasoning_effort: Option<String>) -> Self {
+        Self {
+            reasoning_effort,
+            ..Self::default()
+        }
+    }
+}
+
 /// The context cap a run applies before clamping to the model's window: the
 /// resolved configuration's `context_token_budget` when a file sets it, else
 /// the app setting (`0` is Auto).
@@ -225,7 +244,7 @@ impl AppState {
         text: String,
         run_id: String,
     ) -> Result<RunHandle, String> {
-        self.send_message_with_options(sink, thread_id, text, run_id, None, Vec::new())
+        self.send_message_with_options(sink, thread_id, text, run_id, SendOptions::default())
             .await
     }
 
@@ -258,8 +277,11 @@ impl AppState {
                 thread_id.clone(),
                 text,
                 uuid::Uuid::new_v4().to_string(),
-                effort,
-                attachments,
+                SendOptions {
+                    reasoning_effort: effort,
+                    attachments,
+                    vision_id: None,
+                },
             )
             .await?;
         // Accepted from the person (the server's, goals' and automations' sends take other
@@ -274,26 +296,19 @@ impl AppState {
         thread_id: String,
         text: String,
         run_id: String,
-        reasoning_effort: Option<String>,
-        attachments: Vec<String>,
+        options: SendOptions,
     ) -> Result<RunHandle, String> {
         if themis_core::goal::parse_goal_command(&text).is_some_and(|goal| goal.is_empty()) {
             return Err("Add the goal after /goal, for example: /goal speed up p95".to_owned());
         }
-        let automation_run = self
-            .inner
-            .automation_runs
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .contains_key(&run_id);
+        let SendOptions {
+            reasoning_effort,
+            attachments,
+            vision_id,
+        } = options;
+        let (automation_run, from_server) = self.send_started_by(&run_id);
         // Sent by no one but the person: goal turns, automations and hook wakes count against
         // the turns hooks may start.
-        let from_server = self
-            .inner
-            .server_sends
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .contains_key(&run_id);
         let person = !from_server && !automation_run;
         let answered = self.person_message_arrived(sink.as_ref(), &thread_id, &text, person);
         let settings = self.inner.settings.get().await;
@@ -547,7 +562,7 @@ impl AppState {
                 skill_catalog,
                 short_reply: themis_core::runtime::is_short_reply(&text, !attachments.is_empty()),
                 automation_run,
-                person_text: person_words(&text, automation_run),
+                person_text: person_words(&text, automation_run, vision_id.as_deref()),
                 vision: self.visions_run_spec(&thread_id),
             }
         };
@@ -563,11 +578,12 @@ impl AppState {
                 }
             };
         let shown_attachments = attachments.clone();
-        if let Err(error) = self.inner.transcript.append_user_with_attachments(
+        if let Err(error) = self.inner.transcript.append_user_from(
             &thread_id,
             &run_id,
             &display_text,
             attachments,
+            vision_id,
         ) {
             self.finish_run(&thread_id).await;
             return Err(error);
@@ -649,6 +665,23 @@ impl AppState {
             return Err(error);
         }
         Ok(RunHandle { run_id })
+    }
+
+    /// Whether run `run_id` is an automation's, and whether the server sends it itself.
+    fn send_started_by(&self, run_id: &str) -> (bool, bool) {
+        let automation = self
+            .inner
+            .automation_runs
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .contains_key(run_id);
+        let server = self
+            .inner
+            .server_sends
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .contains_key(run_id);
+        (automation, server)
     }
 
     /// Renames a thread without changing its files or worktree.
@@ -795,10 +828,12 @@ impl AppState {
     }
 }
 
-/// The person's own words that start a run: `None` for an automation, a goal turn or a hook's
-/// wake (the memory pass reads only what the person said).
-fn person_words(text: &str, automation_run: bool) -> Option<String> {
+/// The person's own words that start a run: `None` for an automation's message, a Vision's
+/// (`vision_id`), a goal turn or a hook's wake (the memory pass reads only what the person
+/// said).
+fn person_words(text: &str, automation_run: bool, vision_id: Option<&str>) -> Option<String> {
     (!automation_run
+        && vision_id.is_none()
         && themis_core::goal::turn_number(text).is_none()
         && !text.starts_with(themis_core::plugins::hooks::HOOK_WAKE_MARKER))
     .then(|| text.to_owned())

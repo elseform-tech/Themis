@@ -13,6 +13,7 @@ use themis_core::visions::Decision;
 
 use super::{ChannelEntry, Hold, OwnedKind, Owner};
 use crate::sink::EventSink;
+use crate::state::threads::SendOptions;
 use crate::state::AppState;
 use crate::types::{ProviderKind, Question, RunHandle, ThreadInfo};
 
@@ -80,10 +81,12 @@ impl AppState {
         })
     }
 
-    /// A Vision's message in a chat it owns, sent the server's way.
+    /// Vision `vision_id`'s message in a chat it owns, sent the server's way and saved as the
+    /// Vision's, never the person's words.
     pub(crate) async fn visions_send(
         &self,
         sink: Arc<dyn EventSink>,
+        vision_id: &str,
         thread_id: &str,
         text: String,
         reasoning_effort: Option<String>,
@@ -104,8 +107,11 @@ impl AppState {
                 thread_id,
                 text,
                 &run_id,
-                reasoning_effort,
-                attachments,
+                SendOptions {
+                    reasoning_effort,
+                    attachments,
+                    vision_id: Some(vision_id.to_owned()),
+                },
             )
             .await;
         sent?;

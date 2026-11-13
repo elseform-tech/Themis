@@ -16,6 +16,7 @@ use themis_core::runtime::SteerInbox;
 use themis_core::tools::Approval;
 
 use super::chat_grants::safe_chat_id;
+use super::threads::SendOptions;
 use super::{AppState, SteerEntry};
 use crate::approvals::SteerWaiting;
 use crate::sink::EventSink;
@@ -568,9 +569,9 @@ impl AppState {
         self.wake_for_hook_report(sink, thread_id).await;
     }
 
-    /// Sends a message on the server's own behalf (a queued message or a
-    /// goal turn). Returns the send result and how far the message got: a
-    /// saved message is already in the chat, and a failed start is handled by
+    /// Sends a message on the server's own behalf (a queued message, a goal turn, or a
+    /// Vision's message, which `options` names). Returns the send result and how far the
+    /// message got: a saved message is already in the chat, and a failed start is handled by
     /// its run's end step.
     pub(super) async fn send_from_server(
         &self,
@@ -578,8 +579,7 @@ impl AppState {
         thread_id: &str,
         text: String,
         run_id: &str,
-        reasoning_effort: Option<String>,
-        attachments: Vec<String>,
+        options: SendOptions,
     ) -> (Result<(), String>, ServerSend) {
         self.inner
             .server_sends
@@ -591,8 +591,7 @@ impl AppState {
             thread_id.to_owned(),
             text,
             run_id.to_owned(),
-            reasoning_effort,
-            attachments,
+            options,
         ))
         .await;
         let state = self
@@ -663,8 +662,11 @@ impl AppState {
                     thread_id,
                     next.text.clone(),
                     &run_id,
-                    effort,
-                    next.attachments.clone(),
+                    SendOptions {
+                        reasoning_effort: effort,
+                        attachments: next.attachments.clone(),
+                        vision_id: next.vision_id.clone(),
+                    },
                 )
                 .await;
             let Err(error) = sent else {

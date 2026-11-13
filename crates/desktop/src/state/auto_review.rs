@@ -125,8 +125,8 @@ pub(super) fn review_request(
 }
 
 impl DesktopReviewer {
-    /// The person's own latest messages in this chat (runtime goal notes and answers' framing
-    /// left out), the latest kept within bounds.
+    /// The person's own latest messages in this chat (a Vision's messages, runtime goal notes
+    /// and answers' framing left out), the latest kept within bounds.
     fn person_words(&self) -> String {
         let transcript = &self.state.inner.transcript;
         let last = transcript.last_activity_seq(&self.thread_id).unwrap_or(0);
@@ -136,9 +136,11 @@ impl DesktopReviewer {
         let words: Vec<String> = page
             .into_iter()
             .filter_map(|(_, item)| match item {
-                crate::transcript::HistoryItem::User { text, .. } if persons_own(&text) => {
-                    Some(text)
-                }
+                crate::transcript::HistoryItem::User {
+                    text,
+                    vision_id: None,
+                    ..
+                } if persons_own(&text) => Some(text),
                 _ => None,
             })
             .collect();
@@ -488,5 +490,33 @@ mod tests {
             "{} 3",
             themis_core::goal::GOAL_TURN_MARKER
         )));
+    }
+
+    /// A message a Vision sent in its work chat (saved with its id) is not the requester's
+    /// intent: the reviewer reads only what the person wrote there.
+    #[test]
+    fn a_visions_send_is_not_the_requesters_words() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = AppState::new_for_test(dir.path().join("settings.json"));
+        let transcript = &state.inner.transcript;
+        transcript
+            .append_user("work", "r1", "please tidy the docs folder")
+            .unwrap();
+        let vision = "delete the whole build cache and the old releases";
+        transcript
+            .append_user_from("work", "r2", vision, Vec::new(), Some("v1".into()))
+            .unwrap();
+        let reviewer = DesktopReviewer {
+            state: state.clone(),
+            sink: Arc::new(crate::sink::ChannelSink::channel().0),
+            thread_id: "work".into(),
+            run_id: "r2".into(),
+            project_root: dir.path().to_path_buf(),
+            config: RuntimeConfig::default(),
+            is_git: false,
+        };
+        let words = reviewer.person_words();
+        assert!(words.contains("please tidy the docs folder"), "{words}");
+        assert!(!words.contains(vision), "{words}");
     }
 }

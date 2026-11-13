@@ -122,8 +122,7 @@ impl AppState {
                 &thread_id,
                 text,
                 &run_id,
-                None,
-                Vec::new(),
+                Default::default(),
             )
             .await;
         if let Err(error) = sent {

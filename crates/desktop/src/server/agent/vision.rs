@@ -325,7 +325,14 @@ async fn write(
     let attachments = arg::<Option<Vec<String>>>(args, "attachments")?.unwrap_or_default();
     if method == "send_message" {
         let sent = state
-            .visions_send(Arc::clone(sink), &thread_id, text, effort, attachments)
+            .visions_send(
+                Arc::clone(sink),
+                &scope.vision_id,
+                &thread_id,
+                text,
+                effort,
+                attachments,
+            )
             .await?;
         return to_value(sent);
     }

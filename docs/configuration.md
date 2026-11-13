@@ -923,7 +923,11 @@ today's budget or while its spend cannot be checked (see [a Vision's budget](#th
 `pass_question` still goes, since it only tells the person). A Vision's writes are never the person's:
 its sends go the server's way (like a queued message or a goal turn), and a message it queues
 carries its `vision_id`, so none of them takes the chat over, answers the chat's open
-questions or lets hooks wake the chat again; its steer answers no question, joins no goal
+questions or lets hooks wake the chat again. Sent or sent from the queue, it is saved with its
+`vision_id` (the `user` item of `get_thread_history`), and is not the person's words: no
+memory pass reads it, the Auto reviewer leaves it out of what the person asked, and it joins a
+running goal as no "Also asked" line nor counts as the person asking to pause one (a reply
+from it still resumes a goal waiting on an answer); its steer answers no question, joins no goal
 and denies no approval (the approvals the run waits on, or asks for while the steer is unread,
 stay the person's to answer); a steer the run never read goes back to the queue still the
 Vision's. A Vision's answer to a question is its own the same way: delivered (to the run, or

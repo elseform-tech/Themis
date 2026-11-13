@@ -436,7 +436,7 @@ impl AppState {
         let text = self.visions_wake_text(channel_id, reasons);
         let run_id = uuid::Uuid::new_v4().to_string();
         let (sent, progress) =
-            Box::pin(self.send_from_server(sink, &chat, text, &run_id, None, Vec::new())).await;
+            Box::pin(self.send_from_server(sink, &chat, text, &run_id, Default::default())).await;
         if let Some(why) = sent.err().and_then(|error| start_refusal(&error, progress)) {
             return Err(NotStarted::Refused(why));
         }

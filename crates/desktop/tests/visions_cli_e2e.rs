@@ -22,14 +22,8 @@ mod common;
 mod fixture;
 use fixture::*;
 
-#[path = "visions_e2e/admin.rs"]
-mod admin;
-#[path = "visions_e2e/budget.rs"]
-mod budget;
-#[path = "visions_e2e/model.rs"]
-mod model;
-#[path = "visions_e2e/plain_chat.rs"]
-mod plain_chat;
+#[path = "visions_e2e/mod.rs"]
+mod suites;
 
 /// One app server per process installs the run-credential issuer, so these tests take turns.
 static ONE_SERVER: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
