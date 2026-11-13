@@ -314,3 +314,48 @@ async fn a_vision_chat_follows_its_profile_model() {
         .unwrap();
     assert_eq!(model_of(&fx, &own).await, "picked-by-hand");
 }
+
+/// The person's Stop holds the chat even when the hold cannot be saved: it is kept while the
+/// app runs, so the Vision's writes there are still refused, and the failed save is logged.
+#[cfg(unix)]
+#[tokio::test]
+async fn a_stop_holds_the_chat_even_when_the_hold_cannot_be_saved() {
+    use std::os::unix::fs::PermissionsExt;
+    let fx = setup(None);
+    let work = fx
+        .state
+        .visions_start_work_chat(&fx.scope)
+        .await
+        .unwrap()
+        .id;
+    let dir = fx.state.inner.visions_dir.clone();
+    let mode = |bits| std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(bits));
+    mode(0o500).unwrap();
+    fx.state.visions_person_stopped(&work);
+    mode(0o700).unwrap();
+    assert_eq!(
+        fx.state.owner_of(&work).map(|owner| owner.hold),
+        Some(Hold::StoppedByPerson)
+    );
+    let refused = fx
+        .state
+        .visions_send(
+            sink(),
+            &fx.scope.vision_id,
+            &work,
+            "go on".into(),
+            None,
+            Vec::new(),
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(refused, themis_core::prompts::AGENT_CLI_HELD_BY_PERSON);
+    let mut logged = String::new();
+    for entry in std::fs::read_dir(fx._dir.path().join("logs"))
+        .unwrap()
+        .flatten()
+    {
+        logged.push_str(&std::fs::read_to_string(entry.path()).unwrap_or_default());
+    }
+    assert!(logged.contains("\"saved\":false"), "{logged}");
+}

@@ -134,7 +134,8 @@ impl AppState {
 
     /// The person stopped a chat: a Vision's work chat is held until the person writes in its
     /// channel or hands it back (a taken-over chat stays taken over), the channel says so, and
-    /// the Vision wakes once to be told.
+    /// the Vision wakes once to be told. A hold that cannot be saved still holds until the app
+    /// quits; the failed save is logged (`saved: false`, and the store's write failure).
     pub(crate) fn visions_person_stopped(&self, thread_id: &str) {
         let Some(owner) = self.owner_of(thread_id) else {
             return;

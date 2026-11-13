@@ -563,6 +563,9 @@ impl VisionsCache {
     }
 
     /// Sets the hold on `thread_id`'s owner, when it has one, and returns the owner as saved.
+    /// A hold that cannot be saved still holds while the app runs (the error says it was not
+    /// saved), so the Vision's writes there stay refused; a release that cannot be saved
+    /// leaves the chat held.
     pub(super) fn set_hold(
         &mut self,
         dir: &Path,
@@ -573,7 +576,14 @@ impl VisionsCache {
             return Ok(None);
         };
         owner.hold = hold(&owner);
-        self.set_owner(dir, owner.clone())?;
+        if let Err(error) = self.set_owner(dir, owner.clone()) {
+            if owner.hold != super::Hold::None {
+                if let Some(kept) = self.owners(dir).ok().and_then(|o| o.get_mut(thread_id)) {
+                    kept.hold = owner.hold;
+                }
+            }
+            return Err(error);
+        }
         Ok(Some(owner))
     }
 
