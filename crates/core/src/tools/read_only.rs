@@ -296,7 +296,8 @@ mod tests {
 
     proptest! {
         /// An in-place or script-file option anywhere among otherwise printing words never
-        /// leaves a read (GNU `sed` reads options after files too).
+        /// leaves a read (GNU `sed` reads options after files too), as long as it comes
+        /// before a `--`, after which it would be a file name.
         #[test]
         fn sed_with_a_writing_option_is_never_a_read(
             words in prop::collection::vec(sed_word(), 0..6),
@@ -304,13 +305,15 @@ mod tests {
             at in any::<prop::sample::Index>(),
         ) {
             let mut command = quiet_prints(words);
-            let at = 1 + at.index(command.len());
+            let end = command.iter().position(|word| word == "--").unwrap_or(command.len());
+            let at = 1 + at.index(end);
             command.insert(at, option);
             prop_assert!(!read_only_command(&command), "{command:?}");
         }
 
         /// A writing script never leaves a read, as an `-e` value next to printing ones or as
-        /// the script operand.
+        /// the script operand. The writing `-e` comes first: a generated `--` or value-taking
+        /// option before it would turn it into a file name.
         #[test]
         fn sed_with_a_writing_script_is_never_a_read(
             before in prop::collection::vec(sed_word(), 0..4),
@@ -319,8 +322,8 @@ mod tests {
             as_expression in any::<bool>(),
         ) {
             let command = if as_expression {
-                let mut words = before;
-                words.extend(["-e".to_owned(), script]);
+                let mut words = vec!["-e".to_owned(), script];
+                words.extend(before);
                 words.extend(after);
                 quiet_prints(words)
             } else {
