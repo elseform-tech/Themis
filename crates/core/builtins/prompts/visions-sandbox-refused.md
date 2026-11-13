@@ -1,1 +1,1 @@
-Themis refused this command: no sandbox here can hold a Vision's run, so its commands do not run. Tell the person in your channel message that the sandbox is unavailable.
+Themis refused this command: no sandbox here can hold a Vision's run, so its commands do not run. Tell the person in your channel message, in everyday words, that this computer cannot keep your work walled off right now, so you cannot act.

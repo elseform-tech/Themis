@@ -1307,6 +1307,15 @@ async fn a_vision_starts_a_chat_and_reports_when_it_finishes() {
         })
     });
     assert!(woke_for_finish, "the second wake names the finished chat");
+    // The request carries the Vision's head, plain voice included (printed for review).
+    let bodies: Vec<Value> = requests.iter().filter_map(|r| r.body_json().ok()).collect();
+    let system = bodies
+        .iter()
+        .filter_map(|body| body["messages"][0]["content"].as_str())
+        .find(|text| text.starts_with("You are Wren"))
+        .unwrap_or_default();
+    println!("{system}");
+    assert!(system.contains("the person may not code, so write in everyday words"));
     // Only read tools in the Vision's run.
     let tools: Vec<String> = requests
         .iter()

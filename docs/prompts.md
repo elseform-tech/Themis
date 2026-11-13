@@ -18,7 +18,7 @@ Files are grouped by prefix:
 | `runtime-` | Runtime notes and nudges sent during a run |
 | `tool-` | Notes added to tool results |
 | `desktop-` | Text the desktop app adds (run workspace, MCP status, attachments, watches) |
-| `visions-` | A Vision's run: its system head (who it is, its channel, the `themis` calls that drive chats, the autonomy table), the read-only note, the wake message listing what woke it, the note a refused step carries back, and what its commands say when no sandbox can hold the run |
+| `visions-` | A Vision's run: its system head (who it is, its channel, how it speaks to the person: everyday words with no ids, commands, paths or tool names, the `themis` calls that drive chats, which it never repeats to the person, the autonomy table), the read-only note, the wake message listing what woke it, the note a refused step carries back, and what its commands say when no sandbox can hold the run |
 | `eval-` | Evaluation harness probes |
 
 `crates/core/src/prompts.rs` exposes each file as a constant

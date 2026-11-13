@@ -6,4 +6,4 @@ What each line means: `mentioned`: the person wrote to you in the channel (their
 The channel's newest entries, oldest first, one JSON object per line (its `type` is `person` for the person's message, `vision` for a Vision's, `chat_started` for a chat a Vision started; any other type notes something that happened):
 {{recent}}
 
-Act on what woke you, then end your turn with your message for the channel.
+Act on what woke you, then end your turn with your message for the channel. The person sees only that message, not these lines: say it in everyday words, without the ids or these terms.

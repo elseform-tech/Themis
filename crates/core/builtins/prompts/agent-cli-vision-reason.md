@@ -1,1 +1,1 @@
-Say why you answered this way as `reason`, in at most 200 characters.
+Say why you answered this way as `reason`, in at most 200 characters of everyday words: the person reads it.

@@ -612,10 +612,16 @@ mod tests {
         assert!(head.contains(r#"'{"projectRoot": "/work/app", "provider": "go"}'"#));
         assert!(head.contains(r#"list_channel_threads '{"channelId": "c1"}'"#));
         assert!(head.contains("Never repeat a chat's own summary as proof"));
+        // It speaks plainly: no ids, calls or names the person did not use, and evidence told
+        // in everyday words.
+        assert!(head.contains("the person may not code, so write in everyday words"));
+        assert!(head.contains("never repeat a call or an id to the person"));
+        assert!(head.contains(r#"("the chat fixing the date test"), not by its id"#));
+        assert!(head.contains("\"I opened the file and it has the line you asked for\""));
         assert!(head.contains("Never restart, resend or replace a chat the person stopped"));
         // Answers name their kind of decision and why; the rest are passed on.
         assert!(head.contains(
-            r#"themis call answer_question '{"threadId": "ID", "questionId": "QID", "answer": "your answer", "decision": "KIND", "reason": "why, in one sentence"}'"#
+            r#"themis call answer_question '{"threadId": "ID", "questionId": "QID", "answer": "your answer", "decision": "KIND", "reason": "why, in one plain sentence"}'"#
         ));
         assert!(head.contains(
             r#"themis call pass_question '{"threadId": "ID", "questionId": "QID", "decision": "KIND"}'"#
