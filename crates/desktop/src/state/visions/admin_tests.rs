@@ -324,3 +324,31 @@ fn hq_is_made_once_per_project_with_the_admin_alone() {
     state.visions_ensure_hq(&root).unwrap();
     assert_eq!(state.channel_list(&root)[0].members, [ADMIN_VISION_ID]);
 }
+
+/// The models a proposal may name are the Go catalog's and the configured providers' (by the
+/// qualified `<provider>/<model>` id the app stores, and the bare id), also with no Go key.
+#[tokio::test]
+async fn configured_provider_models_are_usable_without_a_go_key() {
+    let dir = tempfile::tempdir().unwrap();
+    let state = AppState::new_for_test(dir.path().join("settings.json"));
+    let runtime = serde_json::json!({"providers": [{"id": "local", "name": "Local",
+        "base_url": "http://127.0.0.1:9/v1", "secret": "${LOCAL_KEY}",
+        "models": [{"id": "qwen"}]}]});
+    std::fs::write(dir.path().join("runtime.jsonc"), runtime.to_string()).unwrap();
+    let models = state.visions_usable_models().await;
+    let named = |model: &str| {
+        let json =
+            serde_json::json!({"summary": "x", "visions": [{"name": "Rook", "model": model}]});
+        check(
+            &proposal(json),
+            &Context {
+                models: models.clone(),
+                ..context()
+            },
+        )
+    };
+    assert_eq!(named("local/qwen"), Ok(()), "{models:?}");
+    assert_eq!(named("qwen"), Ok(()));
+    assert!(named("local/nope").unwrap_err().contains("model"));
+    assert!(named("no-such-model").unwrap_err().contains("model"));
+}

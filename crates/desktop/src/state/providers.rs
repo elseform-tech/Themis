@@ -184,6 +184,11 @@ impl AppState {
         themis_core::providers::apply_model_overrides(&models, &config.models)
     }
 
+    /// A configured provider's models as the app lists them (qualified ids), without a check.
+    pub(super) async fn provider_model_list(&self, provider: &ProviderDefinition) -> Vec<GoModel> {
+        self.provider_models(provider, false).await.1
+    }
+
     /// Whether `model` belongs to a provider `config` defines.
     pub(super) fn is_configured_model(config: &RuntimeConfig, model: &str) -> bool {
         provider_for(&config.providers, model).is_some()

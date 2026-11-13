@@ -38,16 +38,14 @@ pub(super) async fn dispatch(
 ) -> Result<Value, String> {
     if method == "apply_proposal" {
         let proposal_id: String = arg(args, "proposalId")?;
-        // Checked against the catalog as loaded (it was loaded when a model was proposed).
-        let models = state.visions_usable_models(false).await;
+        let models = state.visions_usable_models().await;
         let applied = state.visions_apply_proposal(&scope.channel_id, &proposal_id, models);
         // Even a setup that failed part way may have made something.
         sink.emit_visions_changed(&VisionsChange::default());
         return applied.map(|items| json!({"items": items}));
     }
     let proposal: Proposal = arg(args, "proposal")?;
-    let names_model = proposal.visions.iter().any(|vision| vision.model.is_some());
-    let models = state.visions_usable_models(names_model).await;
+    let models = state.visions_usable_models().await;
     let (id, seq) = state.visions_propose(&scope.channel_id, proposal, models)?;
     sink.emit_visions_changed(&VisionsChange {
         channel_id: Some(scope.channel_id.clone()),
