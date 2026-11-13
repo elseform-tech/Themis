@@ -8,13 +8,16 @@
 //! settings, secrets, other chats. A Vision's writes go the server's way, never as the
 //! person's message (`state/visions/drive.rs`). It answers a question only on a decision its
 //! run's autonomy leaves to it (`decision`, with its `reason`), and passes the rest on to the
-//! person in its channel (`pass_question`).
+//! person in its channel (`pass_question`). The admin Vision in `# hq` drives no chat; its
+//! grant proposes and sets up channels and Visions instead (`admin`).
 
 use themis_core::visions::Decision;
 
 use super::*;
 use crate::state::{Hold, OwnedKind};
 use crate::types::{QueuedMessage, ThreadChangeKind, VisionsChange};
+
+mod admin;
 
 /// Most characters of the reason a Vision gives with its answer.
 const MAX_REASON_CHARS: usize = 200;
@@ -58,6 +61,9 @@ pub(super) fn refusal(
     args: &Value,
     owned: &dyn Fn(&str) -> Option<Owner>,
 ) -> Option<Option<Refusal>> {
+    if crate::state::is_admin(&scope.vision_id) {
+        return admin::refusal(scope, method, args);
+    }
     match method {
         "create_thread" => return Some((!in_channel_project(scope, args)).then(other_project)),
         "list_channel_threads" => {
@@ -95,6 +101,13 @@ pub(super) fn refusal(
             message: themis_core::prompts::AGENT_CLI_ABOVE_AUTONOMY.to_owned(),
         }),
     )
+}
+
+/// Whether a call the guard let through runs on the Vision's own paths ([`dispatch`]): its
+/// driving methods, and the admin's writes for the admin.
+pub(super) fn handles(scope: &VisionScope, method: &str) -> bool {
+    VISION_DRIVE.contains(&method)
+        || (crate::state::is_admin(&scope.vision_id) && admin::ADMIN_WRITES.contains(&method))
 }
 
 /// Whether a message's text starts with an answer marker, which only the server's answers carry.
@@ -234,6 +247,9 @@ pub(super) async fn dispatch(
     method: &str,
     args: Value,
 ) -> Result<Value, String> {
+    if admin::ADMIN_WRITES.contains(&method) {
+        return admin::dispatch(state, sink, scope, method, &args);
+    }
     let result = match method {
         // The chat's provider and model are the Vision's, never the call's.
         "create_thread" => {

@@ -29,12 +29,17 @@ const EYES: Record<Mood, [string, number]> = {
   sleep: ["M15 32h6M27 32h6", 3],
 };
 
-export function CloudIcon({ shape, color, mood, size = 18, live = false }: { shape: string; color: string; mood: Mood; size?: number; live?: boolean }) {
+/** The admin's crown, drawn above the cloud in the room `crown` adds on top. */
+const CROWN = "M16.5 1 15.5-6.5l4.8 3.6L24-8l3.7 4.9 4.8-3.6-1 7.5Z";
+
+/** A Vision's cloud; `crown` marks the built-in admin, Atlas. */
+export function CloudIcon({ shape, color, mood, size = 18, live = false, crown = false }: { shape: string; color: string; mood: Mood; size?: number; live?: boolean; crown?: boolean }) {
   const body = (SHAPES[shape] ?? SHAPES.tall!).body;
   const tint = color in COLORS ? color : "blue";
   const [eyes, width] = EYES[mood];
   return (
-    <svg className={`themis-cloud themis-cloud--${tint} themis-cloud--${mood}${live ? " is-live" : ""}`} width={size} height={size} viewBox="0 0 48 48" aria-hidden="true" focusable="false">
+    <svg className={`themis-cloud themis-cloud--${tint} themis-cloud--${mood}${live ? " is-live" : ""}`} width={size} height={size} viewBox={crown ? "0 -9 48 57" : "0 0 48 48"} aria-hidden="true" focusable="false">
+      {crown && <path className="themis-cloud-crown" d={CROWN} />}
       <path d={body} fill="currentColor" />
       <path className="themis-cloud-eyes" d={eyes} strokeWidth={width} />
     </svg>

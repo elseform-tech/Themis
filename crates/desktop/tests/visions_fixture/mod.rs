@@ -153,6 +153,10 @@ impl Fixture {
         (chat, access.env()[0].1.clone())
     }
 
+    pub fn agent_call_ok(&self, token: &str, method: &str, args: Value) -> Value {
+        json_of(&self.agent_call(token, method, args))
+    }
+
     /// `themis call METHOD ARGS` with a run's credential.
     pub fn agent_call(&self, token: &str, method: &str, args: Value) -> Output {
         self.cli(Some(token), &["call", method, &args.to_string()])

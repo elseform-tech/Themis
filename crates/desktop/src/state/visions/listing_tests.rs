@@ -47,7 +47,7 @@ fn setup() -> Setup {
         .channel_save(
             Channel {
                 id: String::new(),
-                name: "hq".into(),
+                name: "work".into(),
                 topic: String::new(),
                 project_root: project.clone(),
                 approval_mode: ApprovalMode::Custom,

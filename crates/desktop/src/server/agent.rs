@@ -483,7 +483,7 @@ pub(super) async fn screen(
     let drives = grant
         .vision
         .as_ref()
-        .filter(|_| vision::VISION_DRIVE.contains(&request.method.as_str()));
+        .filter(|scope| vision::handles(scope, &request.method));
     let result = match (refused, drives) {
         (Some(refused), _) => {
             log_refused(state, &grant, request, refused.reason);

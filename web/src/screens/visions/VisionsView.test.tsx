@@ -128,6 +128,28 @@ describe("Visions view", () => {
     expect(within(hq).queryByRole("button", { name: /^New / })).toBeNull();
   });
 
+  it("the_admin_lives_in_hq_with_its_proposals", () => {
+    const hq: ChannelInfo = { id: "h1", name: "hq", topic: "", project_root: "/p", approval_mode: "custom", members: ["admin"], revision: "r" };
+    const proposal: ChannelEntry = { type: "proposal", vision_id: "admin", proposal_id: "p1", proposal: { summary: "A channel for releases.", channels: [{ name: "releases", topic: "", members: [] }], visions: [], changes: [] } };
+    const start = fixture();
+    mount({
+      mainView: "visions",
+      visions: {
+        ...start.visions,
+        list: [...start.visions.list, vision("admin", "Atlas", { color: "indigo" })],
+        channels: { "/p": [hq, channel] },
+        lines: { ...start.visions.lines, h1: [{ seq: 1, at_ms: Date.UTC(2026, 10, 12, 9), entry: proposal }] },
+      },
+    });
+    const bar = screen.getByRole("complementary", { name: "Visions navigation" });
+    expect(within(bar).queryByText("Atlas")).toBeNull();
+    const room = screen.getByRole("region", { name: "# hq" });
+    expect(within(room).getByRole("img", { name: "Here: Atlas" }).querySelector(".themis-cloud-crown")).toBeTruthy();
+    expect(within(room).getByText("Atlas").closest("li")!.querySelector(".themis-cloud-crown")).toBeTruthy();
+    expect(within(room).getByRole("group", { name: "Proposal" })).toHaveTextContent("A channel for releases.");
+    expect(within(room).getByLabelText("Message #hq")).not.toBeDisabled();
+  });
+
   it("chats_returns_to_plain_chat_from_visions", async () => {
     const view = await openRelease();
     fireEvent.click(within(view).getByRole("button", { name: /^Open Fix the date test/ }));

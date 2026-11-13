@@ -55,9 +55,11 @@ impl AppState {
     }
 
     /// The channels of the project at `project_root`, which is resolved like `list_threads`
-    /// resolves it.
+    /// resolves it; its built-in `# hq` (and the admin) is made first when not there. A store
+    /// that cannot be read leaves that out (it is logged) and lists what it can.
     pub fn visions_project_channels(&self, project_root: &str) -> Result<Vec<Channel>, String> {
         let root = canonical_project_dir(project_root)?;
+        let _ = self.visions_ensure_hq(&root);
         Ok(self.channel_list(&root))
     }
 
@@ -298,6 +300,10 @@ impl AppState {
         if self.vision_get(vision_id).is_none() {
             return Err("Unknown Vision".to_owned());
         }
+        // Refused before anything of it is released (the store refuses it too).
+        if super::is_admin(vision_id) {
+            return Err(super::admin::ADMIN_STAYS.to_owned());
+        }
         let released = self.visions_release_owned(|owner| owner.vision_id == vision_id)?;
         self.vision_remove(vision_id)?;
         self.visions_note(
@@ -309,8 +315,12 @@ impl AppState {
 
     /// Deletes a channel: its chats are stopped and become ordinary chats; its log stays.
     pub fn visions_delete_channel(&self, channel_id: &str) -> Result<(), String> {
-        if self.channel_get(channel_id).is_none() {
-            return Err("Unknown channel".to_owned());
+        match self.channel_get(channel_id) {
+            None => return Err("Unknown channel".to_owned()),
+            Some(channel) if channel.name == super::admin::HQ => {
+                return Err(super::admin::HQ_STAYS.to_owned());
+            }
+            Some(_) => {}
         }
         let released = self.visions_release_owned(|owner| owner.channel_id == channel_id)?;
         self.channel_remove(channel_id)?;

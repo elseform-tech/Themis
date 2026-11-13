@@ -23,7 +23,7 @@ async fn thread_changed(events: &mut tokio::net::TcpStream, thread: &str) -> Val
 async fn owned_chats_are_listed_with_their_vision() {
     let _turn = ONE_SERVER.lock().await;
     let fx = fixture().await;
-    let (vision, channel) = fx.vision_and_channel("Wren", "hq");
+    let (vision, channel) = fx.vision_and_channel("Wren", "work");
     let plain = fx.thread().await;
     let work = fx.thread().await;
     let own_chat = fx.thread().await;
@@ -69,7 +69,7 @@ async fn typing_in_plain_chat_takes_an_owned_chat_over() {
     let fx = fixture().await;
     let provider = quick_provider().await;
     fx.use_provider(&provider).await;
-    let (vision, channel) = fx.vision_and_channel("Wren", "hq");
+    let (vision, channel) = fx.vision_and_channel("Wren", "work");
     let work = fx.thread().await;
     fx.own(&work, &vision, &channel, OwnedKind::Work);
     assert!(fx.listed_ids().contains(&work));
@@ -101,7 +101,7 @@ async fn a_visions_new_chat_and_its_release_are_announced_to_plain_chat() {
     let fx = fixture().await;
     let provider = quick_provider().await;
     fx.use_provider(&provider).await;
-    let (vision, channel) = fx.vision_and_channel("Wren", "hq");
+    let (vision, channel) = fx.vision_and_channel("Wren", "work");
     let (_own_chat, token) = fx.vision_run(&vision, &channel).await;
     let mut events = Client::new(fx.data.clone()).subscribe().await.unwrap();
 
@@ -138,7 +138,7 @@ async fn queueing_in_an_owned_chat_announces_its_channel() {
     let fx = fixture().await;
     let provider = stalled_provider().await;
     fx.use_provider(&provider).await;
-    let (vision, channel) = fx.vision_and_channel("Wren", "hq");
+    let (vision, channel) = fx.vision_and_channel("Wren", "work");
     let work = fx.thread().await;
     fx.start_stalled_run(&work, &provider).await;
     fx.own(&work, &vision, &channel, OwnedKind::Work);
@@ -160,7 +160,7 @@ async fn deleting_a_channel_announces_its_released_chats_to_plain_chat() {
     let _turn = ONE_SERVER.lock().await;
     let fx = fixture().await;
     fx.no_wakes();
-    let (vision, channel) = fx.vision_and_channel("Wren", "hq");
+    let (vision, channel) = fx.vision_and_channel("Wren", "work");
     let work = fx.thread().await;
     fx.own(&work, &vision, &channel, OwnedKind::Work);
     let mut events = Client::new(fx.data.clone()).subscribe().await.unwrap();
@@ -179,7 +179,7 @@ async fn a_visions_own_chat_is_never_announced_to_plain_chat() {
     let _turn = ONE_SERVER.lock().await;
     let fx = fixture().await;
     fx.no_wakes();
-    let (vision, channel) = fx.vision_and_channel("Wren", "hq");
+    let (vision, channel) = fx.vision_and_channel("Wren", "work");
     let own_chat = fx.thread().await;
     let plain = fx.thread().await;
     fx.own(&own_chat, &vision, &channel, OwnedKind::VisionChat);

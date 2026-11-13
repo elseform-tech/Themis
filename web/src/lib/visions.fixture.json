@@ -135,6 +135,82 @@
         "unpriced_requests": 3,
         "reason": "usage_unreadable"
       }
+    },
+    {
+      "seq": 7,
+      "at_ms": 7000,
+      "entry": {
+        "type": "proposal",
+        "vision_id": "admin",
+        "proposal_id": "p1",
+        "proposal": {
+          "summary": "A channel for releases, with Rook.",
+          "channels": [
+            {
+              "name": "releases",
+              "topic": "Ship it",
+              "members": [
+                "Rook"
+              ]
+            }
+          ],
+          "visions": [
+            {
+              "name": "Rook",
+              "role": "Ships releases",
+              "shape": "wide",
+              "color": "rose",
+              "model": "go/test-model",
+              "autonomy": "ask",
+              "daily_budget_usd": 0.25
+            }
+          ],
+          "changes": [
+            {
+              "vision": "Wren",
+              "name": "Wren B",
+              "role": "Writes docs",
+              "paused": true,
+              "autonomy": "small",
+              "daily_budget_usd": 0.1
+            },
+            {
+              "channel": "docs",
+              "name": "guides",
+              "topic": "Guides",
+              "add_members": [
+                "Rook"
+              ],
+              "remove_members": [
+                "Wren B"
+              ]
+            }
+          ]
+        }
+      }
+    },
+    {
+      "seq": 8,
+      "at_ms": 8000,
+      "entry": {
+        "type": "proposal_applied",
+        "vision_id": "admin",
+        "proposal_id": "p1",
+        "items": [
+          {
+            "kind": "vision",
+            "id": "v2",
+            "name": "Rook",
+            "action": "created"
+          },
+          {
+            "kind": "channel",
+            "id": "c2",
+            "name": "releases",
+            "action": "changed"
+          }
+        ]
+      }
     }
   ],
   "page": {

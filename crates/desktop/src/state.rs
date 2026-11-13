@@ -62,8 +62,8 @@ pub(crate) use questions::forges_answer;
 pub use terminal::TerminalSession;
 pub(crate) use visions::BudgetOver;
 pub use visions::{
-    vision_decisions, Channel, ChannelEntry, ChannelLine, ChannelPage, Hold, NoticeKind, OwnedKind,
-    Owner, Vision, WakeReason,
+    is_admin, vision_decisions, Channel, ChannelEntry, ChannelLine, ChannelPage, Hold, NoticeKind,
+    OwnedKind, Owner, Proposal, SetUp, Vision, WakeReason, ADMIN_VISION_ID,
 };
 /// Project path resolution, exposed for the `fuzz/` targets; not a stable API.
 #[cfg(feature = "fuzzing")]

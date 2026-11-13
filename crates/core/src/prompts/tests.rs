@@ -508,6 +508,12 @@ const ALL: &[(&str, &str, &[&str])] = &[
     (VISIONS_STEP_REFUSED, "visions-step-refused", &[]),
     (VISIONS_SANDBOX_REFUSED, "visions-sandbox-refused", &[]),
     (
+        VISIONS_ADMIN,
+        "visions-admin",
+        &["name", "project", "channel_id"],
+    ),
+    (AGENT_CLI_ADMIN_NO_REPLY, "agent-cli-admin-no-reply", &[]),
+    (
         VISIONS_WAKE_TURN,
         "visions-wake-turn",
         &["reasons", "recent"],

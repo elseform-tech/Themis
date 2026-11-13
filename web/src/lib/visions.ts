@@ -10,6 +10,9 @@ function invoke<T>(command: string, args: Record<string, unknown> = {}): Promise
 }
 
 export type Autonomy = "ask" | "small" | "most" | "nearly_all" | "custom";
+
+/** The built-in admin Vision's id: Atlas, drawn with a crown, the only member of each `# hq`. */
+export const ADMIN_VISION_ID = "admin";
 export type ApprovalModeName = "custom" | "auto" | "yolo";
 
 /** A Vision's own hidden chat in one of its channels (`vision_chats` on a listed Vision). */
@@ -87,6 +90,34 @@ export type NoticeKind =
   | "budget_unknown"
   | "unpriced";
 
+/** What the admin would set up (Rust `Proposal`): new channels and Visions by name, and changes
+ *  to existing ones (a change names one `vision` or one `channel`). */
+export interface Proposal {
+  summary: string;
+  channels: Array<{ name: string; topic: string; members: string[] }>;
+  visions: Array<{ name: string; role: string; shape: string; color: string; model?: string; autonomy?: Autonomy; daily_budget_usd?: number }>;
+  changes: ProposalChange[];
+}
+export interface ProposalChange {
+  vision?: string;
+  channel?: string;
+  name?: string;
+  role?: string;
+  topic?: string;
+  paused?: boolean;
+  autonomy?: Autonomy;
+  daily_budget_usd?: number;
+  add_members?: string[];
+  remove_members?: string[];
+}
+/** One thing a proposal set up (Rust `SetUp`). */
+export interface SetUpItem {
+  kind: "vision" | "channel";
+  id: string;
+  name: string;
+  action: "created" | "changed";
+}
+
 /** One entry in a channel's log (Rust `ChannelEntry`). */
 export type ChannelEntry =
   | { type: "person"; text: string }
@@ -94,7 +125,9 @@ export type ChannelEntry =
   | { type: "chat_started"; vision_id: string; thread_id: string; title: string }
   | { type: "answered"; vision_id: string; thread_id: string; question_id: string; decision: string; question: string; answer: string; reason: string }
   | { type: "passed_on"; vision_id: string; thread_id: string; question_id: string; decision: string; question: string }
-  | { type: "notice"; kind: NoticeKind; vision_id?: string; thread_id?: string; unpriced_requests?: number; reason?: string };
+  | { type: "notice"; kind: NoticeKind; vision_id?: string; thread_id?: string; unpriced_requests?: number; reason?: string }
+  | { type: "proposal"; vision_id: string; proposal_id: string; proposal: Proposal }
+  | { type: "proposal_applied"; vision_id: string; proposal_id: string; items: SetUpItem[] };
 
 export interface ChannelLine {
   seq: number;
@@ -156,6 +189,8 @@ export const ENTRY_FIELDS: { [K in ChannelEntry["type"]]: Array<Exclude<keyof Ex
   answered: ["vision_id", "thread_id", "question_id", "decision", "question", "answer", "reason"],
   passed_on: ["vision_id", "thread_id", "question_id", "decision", "question"],
   notice: ["kind", "vision_id", "thread_id", "unpriced_requests", "reason"],
+  proposal: ["vision_id", "proposal_id", "proposal"],
+  proposal_applied: ["vision_id", "proposal_id", "items"],
 };
 
 /** Every value of the unions the app reads, for the same check. */

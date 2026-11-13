@@ -10,6 +10,7 @@
 //! Each channel's log is `channels/<channel id>.jsonl`, one `{seq, at_ms, entry}` per line,
 //! appended and paged from the end (see `channel_log`).
 
+mod admin;
 mod budget;
 mod channel_log;
 mod control;
@@ -44,6 +45,7 @@ use themis_core::configuration::ApprovalMode;
 use themis_core::visions::Autonomy;
 
 use super::AppState;
+pub use admin::{is_admin, Proposal, SetUp, ADMIN_VISION_ID};
 pub(crate) use budget::Over as BudgetOver;
 pub use channel_log::{ChannelLine, ChannelPage};
 
@@ -216,6 +218,19 @@ pub enum ChannelEntry {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         reason: Option<String>,
     },
+    /// The admin's proposal in `# hq`: what it would set up, which it sets up only after the
+    /// person writes in `# hq` after it (see `admin`).
+    Proposal {
+        vision_id: String,
+        proposal_id: String,
+        proposal: Proposal,
+    },
+    /// What a proposal set up, once.
+    ProposalApplied {
+        vision_id: String,
+        proposal_id: String,
+        items: Vec<SetUp>,
+    },
 }
 
 /// The Visions cache behind its lock, and the index of owned chats (`owned_index`) apart from
@@ -226,6 +241,8 @@ pub(crate) struct VisionsShared {
     owned: owned_index::OwnedIndex,
     /// The minute budget re-check was started (see `listing`).
     recheck_loop: std::sync::atomic::AtomicBool,
+    /// Held while a proposal is set up, so one is never set up twice (see `admin`).
+    applying: std::sync::Mutex<()>,
 }
 
 /// The store files as loaded, each on first use, plus the newest seq of each channel log

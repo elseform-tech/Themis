@@ -266,7 +266,8 @@ impl AppState {
             self.visions_envelope_check(&snapshot.work_root, &snapshot.runtime_configuration)?;
         snapshot.approval_mode = ApprovalMode::Custom;
         let config = &mut snapshot.runtime_configuration;
-        let head = vision_head(&vision, &channel, &config.visions);
+        // The admin in `# hq` has its own head; its grant knows it by its id.
+        let head = super::admin::run_head(&vision, &channel, &config.visions);
         config.subagents.enabled = false;
         config.browser.enabled = false;
         config.memory.enabled = false;

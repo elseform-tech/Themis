@@ -13,7 +13,7 @@ async fn a_new_vision_model_reaches_its_own_chats_only() {
     let _turn = ONE_SERVER.lock().await;
     let fx = fixture().await;
     fx.no_wakes();
-    let (vision, channel) = fx.vision_and_channel("Wren", "hq");
+    let (vision, channel) = fx.vision_and_channel("Wren", "work");
     let own_chat = fx.thread().await;
     let work = fx.thread().await;
     fx.own(&own_chat, &vision, &channel, OwnedKind::VisionChat);

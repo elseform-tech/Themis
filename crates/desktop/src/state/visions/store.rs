@@ -9,6 +9,7 @@ use serde::de::DeserializeOwned;
 use serde::Serialize;
 use themis_core::visions::Decision;
 
+use super::admin::{admin_profile, ADMIN_STAYS, ADMIN_VISION_ID, HQ, HQ_STAYS};
 use super::{
     Channel, Owner, Vision, VisionsCache, CHANNELS_FILE, CHANNEL_LOGS_DIR, OWNERS_FILE,
     SOUL_MAX_BYTES, VISIONS_FILE,
@@ -240,7 +241,7 @@ fn validate_custom(custom: Option<&BTreeMap<String, bool>>) -> Result<(), &'stat
     Ok(())
 }
 
-fn validate_vision(spec: &mut Vision) -> Result<(), &'static str> {
+pub(super) fn validate_vision(spec: &mut Vision) -> Result<(), &'static str> {
     if !spec.id.is_empty() && !safe_chat_id(&spec.id) {
         return Err("Unknown Vision");
     }
@@ -277,7 +278,7 @@ fn valid_channel_name(name: &str) -> bool {
             .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
 }
 
-fn validate_channel(spec: &mut Channel) -> Result<(), &'static str> {
+pub(super) fn validate_channel(spec: &mut Channel) -> Result<(), &'static str> {
     if !spec.id.is_empty() && !safe_chat_id(&spec.id) {
         return Err("Unknown channel");
     }
@@ -297,6 +298,11 @@ fn validate_channel(spec: &mut Channel) -> Result<(), &'static str> {
     }
     if members.len() > MAX_MEMBERS {
         return Err("A channel has at most 32 members");
+    }
+    let admin = members.iter().any(|member| member == ADMIN_VISION_ID);
+    let hq = spec.name == HQ;
+    if hq != admin || (hq && members.len() != 1) {
+        return Err("# hq is built in: Atlas is its only member, and works in no other channel");
     }
     spec.members = members;
     Ok(())
@@ -483,8 +489,28 @@ impl VisionsCache {
         Ok(())
     }
 
+    /// Saves the built-in admin Vision when it is not there yet.
+    pub(super) fn ensure_admin(&mut self, dir: &Path) -> Result<bool, StoreError> {
+        self.ensure_unchanged(dir, VISIONS_FILE)?;
+        let visions = self.visions(dir)?;
+        if visions.contains_key(ADMIN_VISION_ID) {
+            return Ok(false);
+        }
+        let mut admin = admin_profile();
+        admin.revision = next_revision(None);
+        let mut all = by_key(visions.iter());
+        all.push(&admin);
+        write_store(dir, VISIONS_FILE, &all)?;
+        visions.insert(admin.id.clone(), admin);
+        self.restamp(dir, VISIONS_FILE);
+        Ok(true)
+    }
+
     /// Removes a Vision and takes it out of every channel it was a member of.
     pub(super) fn delete_vision(&mut self, dir: &Path, vision_id: &str) -> Result<(), StoreError> {
+        if vision_id == ADMIN_VISION_ID {
+            return Err(StoreError::refused(VISIONS_FILE, ADMIN_STAYS));
+        }
         self.ensure_unchanged(dir, VISIONS_FILE)?;
         self.ensure_unchanged(dir, CHANNELS_FILE)?;
         if !self.visions(dir)?.contains_key(vision_id) {
@@ -522,8 +548,12 @@ impl VisionsCache {
     ) -> Result<(), StoreError> {
         self.ensure_unchanged(dir, CHANNELS_FILE)?;
         let channels = self.channels(dir)?;
-        if !channels.contains_key(channel_id) {
-            return Err(StoreError::refused(CHANNELS_FILE, "Unknown channel"));
+        match channels.get(channel_id) {
+            None => return Err(StoreError::refused(CHANNELS_FILE, "Unknown channel")),
+            Some(channel) if channel.name == HQ => {
+                return Err(StoreError::refused(CHANNELS_FILE, HQ_STAYS));
+            }
+            Some(_) => {}
         }
         let all = by_key(channels.iter().filter(|(id, _)| id.as_str() != channel_id));
         write_store(dir, CHANNELS_FILE, &all)?;

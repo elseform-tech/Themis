@@ -73,7 +73,7 @@ fn midnight() -> i64 {
     midnight_ms(chrono::Local::now().date_naive())
 }
 
-/// Wren and Ada in `#hq`, and the paid model priced in the catalog.
+/// Wren and Ada in `#work`, and the paid model priced in the catalog.
 async fn setup() -> Setup {
     let dir = tempfile::tempdir().unwrap();
     let project = dir.path().join("project");
@@ -85,7 +85,7 @@ async fn setup() -> Setup {
         .channel_save(
             Channel {
                 id: String::new(),
-                name: "hq".into(),
+                name: "work".into(),
                 topic: String::new(),
                 project_root: project.canonicalize().unwrap(),
                 approval_mode: ApprovalMode::Custom,
@@ -751,7 +751,7 @@ fn other_project(s: &Setup) -> String {
 async fn a_projects_lower_cap_covers_only_its_own_visions() {
     let s = setup().await;
     other_project(&s);
-    // Ada leaves #hq: she is only in the other project.
+    // Ada leaves #work: she is only in the other project.
     let hq = s.state.channel_get(&s.channel).unwrap();
     let revision = hq.revision.clone();
     s.state

@@ -540,6 +540,12 @@ pub const VISIONS_STEP_REFUSED: &str = include_str!("../builtins/prompts/visions
 /// What every command of a Vision run says when its sandbox envelope could not be built.
 pub const VISIONS_SANDBOX_REFUSED: &str =
     include_str!("../builtins/prompts/visions-sandbox-refused.md");
+/// The admin Vision's system head in `# hq`, in place of `visions-system.md`; `{{name}}`,
+/// `{{project}}`, `{{channel_id}}`.
+pub const VISIONS_ADMIN: &str = include_str!("../builtins/prompts/visions-admin.md");
+/// The app server's answer to the admin's `apply_proposal` before the person replied in `# hq`.
+pub const AGENT_CLI_ADMIN_NO_REPLY: &str =
+    include_str!("../builtins/prompts/agent-cli-admin-no-reply.md");
 /// The message that starts a Vision run (a wake); `{{reasons}}`, `{{recent}}`.
 pub const VISIONS_WAKE_TURN: &str = include_str!("../builtins/prompts/visions-wake-turn.md");
 /// `next` hint after starting a background task.

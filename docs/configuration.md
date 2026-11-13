@@ -939,6 +939,30 @@ above stay refused. The shell's approval step treats every driving method as `ex
 a read. Writes are logged as `visions`/`chat_started`, `vision_sent` and
 `vision_stopped_chat` with ids only.
 
+**The admin Vision in `# hq`.** Each install has one built-in admin Vision, Atlas (id
+`admin`), saved the first time a project's channels are listed, which also makes that project's
+`# hq` channel (Custom mode) with Atlas as its only member. Atlas and `# hq` cannot be deleted
+(`delete_vision`/`delete_channel` are refused: "built in"), `# hq` takes no other member and
+Atlas joins no other channel (`save_channel` is refused: "only member"), and an `# hq` found with
+other members is given back to Atlas alone on the next listing. Its runs use
+`visions-admin.md` in place of `visions-system.md` and have the same tools and envelope as any
+Vision run. Its grant drives no chat (`create_thread`, the sends, `stop_thread`, the question
+methods and `list_channel_threads` are refused, and so is `plugin_action`); it may read
+`list_visions` and `list_channels` for its own project, its own chat as any run may, and has two
+methods of its own:
+
+| The admin's call | Allowed when |
+| --- | --- |
+| `propose_visions_setup {channelId, proposal}` | `channelId` is its `# hq`. `proposal` is `{summary, channels?, visions?, changes?}`: `summary` 1 to 600 characters in its own words; `channels` `[{name, topic?, members?}]` (members are Vision names, new ones included); `visions` `[{name, role?, shape?, color?, model?, autonomy?, daily_budget_usd?}]` (a look the server picks in turn when none is named); `changes` `[{vision, name?, role?, paused?, autonomy?, daily_budget_usd?}` or `{channel, name?, topic?, add_members?, remove_members?}]`; 1 to 16 of each list in all. Any other field (a `delete` included) is refused. Checked against the Visions and `# hq`'s project as they are now: names resolve and do not clash, a new channel starts in Custom (a proposal cannot set a mode), autonomy never decides more than the project's resolved `visions.autonomy`/`visions.custom`, a budget is never above the Vision's own cap (or `visions.daily_budget_usd` for one without), and Atlas and `# hq` are not changed. It posts a `proposal` entry `{vision_id, proposal_id, proposal}` in `# hq` (looks filled in) and answers `{proposalId, seq}`. |
+| `apply_proposal {proposalId}` | the proposal is the admin's, in its `# hq`, within the last 512 KiB of the log (an older one is proposed again), never set up before (else "already set up"), the person posted in `# hq` after it (else `agent-cli-admin-no-reply.md`), and it still passes every check above. Whether the person's reply means yes is the model's judgement. It makes the new Visions, then the channels (in `# hq`'s project, Custom mode), then the changes (a pause or resume through `pause_vision`'s path), one at a time under one lock, posts a `proposal_applied` entry `{vision_id, proposal_id, items: [{kind, id, name, action}]}` (`kind` `vision`/`channel`, `action` `created`/`changed`) and answers `{items}`. A step that fails part way leaves what was made, records it in that entry (so it is never set up twice) and answers the error. |
+
+Other callers have neither method: a Vision's credential is refused them like any method off its
+list, and the person's `themis` does not know them. Logged as `visions`/`proposal_posted` (ids,
+seq and counts), `proposal_refused` (ids, `stage` and `reason`: `invalid`, `unknown`, `applied`
+or `no_reply`) and `proposal_applied` (ids, counts created and changed, `outcome` `applied` or
+`partial`), and `admin_created`, `hq_created` and `hq_members_reset` with ids only; never the
+summary, names or the person's words.
+
 **A Vision's runs and wakes.** A Vision never polls. It wakes, meaning a turn starts in its
 hidden Vision chat for the channel (created on its first wake, titled `{name} · #{channel}`,
 on the Vision's model, kept out of the plain chat list; its work chats show there, marked with its cloud), when: the person writes in the channel
@@ -1556,7 +1580,7 @@ Besides thread, approval and review events, the server broadcasts `thread-change
 The person's Visions methods (none is open to an agent's run credential, except `list_channel_threads` for a Vision's own channel, see [a Vision's grant](#the-themis-cli-in-the-agents-shell); arguments are camelCase, results are the store's snake_case records):
 
 - `list_visions`, `save_vision {vision, revision}` (an empty `id` and `revision: null` creates one; otherwise `revision` must be the one it was opened at), `pause_vision {visionId, paused}` (pausing stops the runs of the chats it owns, except those the person took over, and posts a `paused`/`resumed` notice in its channels), `delete_vision {visionId}` (stops its chats, except those the person took over, makes them ordinary chats (announced as `thread-changed` `updated` with `vision: null`) and takes it out of its channels; logs stay).
-- `list_channels {projectRoot}` (each channel with `needs`: what waits on the person in that channel's own chats, counted like a Vision's `needs`), `save_channel {channel, revision}` (project folders resolve like `list_threads` resolves them), `delete_channel {channelId}` (stops the channel's chats, except those the person took over, and makes them ordinary chats, announced like `delete_vision`'s; its log stays on disk).
+- `list_channels {projectRoot}` (makes the project's `# hq` and the admin Vision first when they are not there, see [the admin Vision](#the-themis-cli-in-the-agents-shell); each channel with `needs`: what waits on the person in that channel's own chats, counted like a Vision's `needs`), `save_channel {channel, revision}` (project folders resolve like `list_threads` resolves them), `delete_channel {channelId}` (stops the channel's chats, except those the person took over, and makes them ordinary chats, announced like `delete_vision`'s; its log stays on disk).
 - `get_channel_page {channelId, beforeSeq?, maxBytes?}` (`{entries: [{seq, at_ms, entry}], next_before}`, oldest first, 64 KiB by default and at most 1 MiB), `post_channel_message {channelId, text}` (`{seq}`; clears a person's Stop on that channel's chats but not a take over, and wakes the Visions it mentions as `@Name`, or the only member when it mentions none), `list_channel_threads {channelId}` (the work chats Visions started there: each `ThreadInfo` with an `owner` record `{thread_id, vision_id, channel_id, kind, hold}`), `hand_back_thread {threadId}` (refused when nothing is held; clears the hold, posts a `handed_back` notice and wakes the Vision; the owner back).
 - `get_visions_settings` and `update_visions_settings {changes, revision}` write only `enabled`, `autonomy`, `custom`, `daily_budget_usd` and `max_wakes` of the user file's `visions` block, in place, refusing a stale revision like Settings › Subagents.
 

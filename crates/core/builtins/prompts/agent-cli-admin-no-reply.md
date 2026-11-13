@@ -1,0 +1,1 @@
+Themis refused this call: the person has not replied in #hq since this proposal, so nothing was set up. End your turn asking them whether it is what they want, and set it up only after they say yes.

@@ -1,10 +1,11 @@
 // One line of a channel's log: the person's message, a Vision's message, a chat it started, a
 // question it answered or passed on, or a notice. Avatars never move.
 import { Fragment, type ReactNode } from "react";
-import type { ChannelEntry as Entry, ChannelLine, VisionInfo } from "../../lib/visions";
+import { ADMIN_VISION_ID, type ChannelEntry as Entry, type ChannelLine, type VisionInfo } from "../../lib/visions";
 import { useApp } from "../../state/store";
 import { ChatChip, ChatLink, channelChat } from "./ChatLink";
 import { CloudIcon } from "./CloudIcon";
+import { ProposalCard } from "./ProposalCard";
 import { AnsweredCard, PassedOnCard } from "./QuestionCards";
 
 type AppState = ReturnType<typeof useApp>["state"];
@@ -70,15 +71,27 @@ function Notice({ line, channelId }: { line: ChannelLine; channelId: string }) {
 
 function Avatar({ vision }: { vision: VisionInfo | undefined }) {
   if (!vision) return <span className="themis-channel-avatar themis-channel-person" aria-hidden="true">?</span>;
-  return <span className="themis-channel-avatar"><CloudIcon shape={vision.shape} color={vision.color} mood="calm" size={30} /></span>;
+  return <span className="themis-channel-avatar"><CloudIcon shape={vision.shape} color={vision.color} mood="calm" size={30} crown={vision.id === ADMIN_VISION_ID} /></span>;
+}
+
+/** The loaded line of the proposal or setup `proposalId` of type `type`, if any. */
+function proposalLine<T extends "proposal" | "proposal_applied">(state: AppState, channelId: string, type: T, proposalId: string): Extract<Entry, { type: T }> | undefined {
+  const line = (state.visions.lines[channelId] ?? []).find(each => each.entry.type === type && (each.entry as { proposal_id: string }).proposal_id === proposalId);
+  return line?.entry as Extract<Entry, { type: T }> | undefined;
 }
 
 function Body({ line, channelId, onReply }: { line: ChannelLine; channelId: string; onReply: (text: string) => void }): ReactNode {
-  const { state } = useApp();
+  const { state, dispatch } = useApp();
   const { entry } = line;
   const names = state.visions.list.map(vision => vision.name);
   if (entry.type === "person" || entry.type === "vision") return <p className="themis-channel-text">{withMentions(entry.text, names)}</p>;
   if (entry.type === "notice") return null;
+  if (entry.type === "proposal" || entry.type === "proposal_applied") {
+    const open = (id: string) => dispatch({ type: "visions/open", channelId: id });
+    return entry.type === "proposal"
+      ? <ProposalCard entry={entry} applied={proposalLine(state, channelId, "proposal_applied", entry.proposal_id)} onOpenChannel={open} />
+      : <ProposalCard applied={entry} onOpenChannel={open} />;
+  }
   const vision = visionById(state, entry.vision_id)?.name ?? "A Vision";
   const title = entry.type === "chat_started" ? entry.title : channelChat(state, channelId, entry.thread_id)?.title ?? "a chat";
   if (entry.type === "chat_started") return <><p className="themis-channel-text">Started a chat.</p><ChatLink channelId={channelId} threadId={entry.thread_id} title={title} visionName={vision} /></>;
@@ -90,6 +103,8 @@ export function ChannelEntryView({ line, channelId, fresh, onReply }: { line: Ch
   const { state } = useApp();
   const { entry } = line;
   if (entry.type === "notice") return <Notice line={line} channelId={channelId} />;
+  // A setup shows on its proposal's card while that is loaded.
+  if (entry.type === "proposal_applied" && proposalLine(state, channelId, "proposal", entry.proposal_id)) return null;
   const vision = entry.type === "person" ? undefined : visionById(state, entry.vision_id);
   const who = entry.type === "person" ? "You" : vision?.name ?? "A Vision";
   return (

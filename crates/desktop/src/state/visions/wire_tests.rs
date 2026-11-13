@@ -10,6 +10,7 @@ use serde_json::Value;
 use themis_core::configuration::ApprovalMode;
 use themis_core::visions::Autonomy;
 
+use super::admin::{Change, NewChannel, NewVision, SetUpAction, SetUpKind};
 use super::listing::{VisionChat, VisionListed};
 use super::*;
 
@@ -73,6 +74,29 @@ fn every_entry() -> Vec<ChannelEntry> {
             unpriced_requests: Some(3),
             reason: Some("usage_unreadable".into()),
         },
+        ChannelEntry::Proposal {
+            vision_id: ADMIN_VISION_ID.into(),
+            proposal_id: "p1".into(),
+            proposal: every_proposal_field(),
+        },
+        ChannelEntry::ProposalApplied {
+            vision_id: ADMIN_VISION_ID.into(),
+            proposal_id: "p1".into(),
+            items: vec![
+                SetUp {
+                    kind: SetUpKind::Vision,
+                    id: "v2".into(),
+                    name: "Rook".into(),
+                    action: SetUpAction::Created,
+                },
+                SetUp {
+                    kind: SetUpKind::Channel,
+                    id: "c2".into(),
+                    name: "releases".into(),
+                    action: SetUpAction::Changed,
+                },
+            ],
+        },
     ];
     for (at, entry) in entries.iter().enumerate() {
         let place = match entry {
@@ -82,10 +106,52 @@ fn every_entry() -> Vec<ChannelEntry> {
             ChannelEntry::Answered { .. } => 3,
             ChannelEntry::PassedOn { .. } => 4,
             ChannelEntry::Notice { .. } => 5,
+            ChannelEntry::Proposal { .. } => 6,
+            ChannelEntry::ProposalApplied { .. } => 7,
         };
         assert_eq!(place, at);
     }
     entries
+}
+
+/// A proposal with every field set: a channel, a Vision and one change of each kind.
+fn every_proposal_field() -> Proposal {
+    Proposal {
+        summary: "A channel for releases, with Rook.".into(),
+        channels: vec![NewChannel {
+            name: "releases".into(),
+            topic: "Ship it".into(),
+            members: vec!["Rook".into()],
+        }],
+        visions: vec![NewVision {
+            name: "Rook".into(),
+            role: "Ships releases".into(),
+            shape: "wide".into(),
+            color: "rose".into(),
+            model: Some("go/test-model".into()),
+            autonomy: Some(Autonomy::Ask),
+            daily_budget_usd: Some(0.25),
+        }],
+        changes: vec![
+            Change {
+                vision: Some("Wren".into()),
+                name: Some("Wren B".into()),
+                role: Some("Writes docs".into()),
+                paused: Some(true),
+                autonomy: Some(Autonomy::Small),
+                daily_budget_usd: Some(0.1),
+                ..Change::default()
+            },
+            Change {
+                channel: Some("docs".into()),
+                name: Some("guides".into()),
+                topic: Some("Guides".into()),
+                add_members: vec!["Rook".into()],
+                remove_members: vec!["Wren B".into()],
+                ..Change::default()
+            },
+        ],
+    }
 }
 
 /// Every notice kind, in the fixture's order.

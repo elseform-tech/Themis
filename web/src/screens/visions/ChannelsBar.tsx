@@ -1,7 +1,8 @@
 // The channels bar: in Visions mode it takes the chat list's place under the project switcher: `# hq`,
 // the project's channels (each with what waits on the person there) and the Visions with their
-// live clouds and moods.
+// live clouds and moods (the admin lives in # hq, not in that list).
 import { useState } from "react";
+import { ADMIN_VISION_ID } from "../../lib/visions";
 import { useApp } from "../../state/store";
 import { channelNeeds, MOOD_LABEL, visionMoods } from "../../state/visions";
 import { CloudIcon } from "./CloudIcon";
@@ -44,7 +45,7 @@ export function ChannelsBar() {
         </ul>
         <SectionHead title="Visions" add="New Vision" onAdd={() => setSheet("vision")} />
         <ul className="themis-sidebar-list">
-          {state.visions.list.map(vision => {
+          {state.visions.list.filter(vision => vision.id !== ADMIN_VISION_ID).map(vision => {
             const mood = moods[vision.id] ?? "calm";
             return <li key={vision.id} className="themis-sidebar-row themis-vision-row">
               <CloudIcon shape={vision.shape} color={vision.color} mood={mood} live />

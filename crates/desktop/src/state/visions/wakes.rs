@@ -664,7 +664,7 @@ mod tests {
             .id
     }
 
-    /// Wren and Ada in `#hq` (or only Wren).
+    /// Wren and Ada in `#work` (or only Wren).
     fn setup(both: bool) -> Setup {
         let dir = tempfile::tempdir().unwrap();
         let project = dir.path().join("project");
@@ -687,7 +687,7 @@ mod tests {
             .channel_save(
                 Channel {
                     id: String::new(),
-                    name: "hq".into(),
+                    name: "work".into(),
                     topic: String::new(),
                     project_root: project.canonicalize().unwrap(),
                     approval_mode: ApprovalMode::Custom,

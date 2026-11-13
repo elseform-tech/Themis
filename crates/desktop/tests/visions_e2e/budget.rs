@@ -64,7 +64,7 @@ async fn the_budget_stops_a_visions_chats_and_refuses_its_sends() {
             ..GoModel::default()
         }])
         .await;
-    let (vision, channel) = fx.vision_and_channel("Wren", "hq");
+    let (vision, channel) = fx.vision_and_channel("Wren", "work");
     let (own_chat, agent) = fx.vision_run(&vision, &channel).await;
     fx.set_visions(json!({"enabled": false, "daily_budget_usd": 0.5}));
     // The app reads each Vision's budget state and its own chats from the list.
@@ -206,7 +206,7 @@ async fn one_long_turn_is_stopped_once_a_request_passes_the_cap() {
             ..GoModel::default()
         }])
         .await;
-    let (vision, channel) = fx.vision_and_channel("Wren", "hq");
+    let (vision, channel) = fx.vision_and_channel("Wren", "work");
     let (_own_chat, agent) = fx.vision_run(&vision, &channel).await;
     fx.set_visions(json!({"enabled": false, "daily_budget_usd": 2.5}));
     let work = fx.vision_starts_chat(&agent);

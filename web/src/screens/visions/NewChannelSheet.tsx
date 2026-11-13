@@ -2,7 +2,7 @@
 // person's default approval mode (changed later in channel details, by the person only).
 import { useState, type FormEvent } from "react";
 import { Button, Dialog, Input } from "../../components";
-import { saveChannel } from "../../lib/visions";
+import { ADMIN_VISION_ID, saveChannel } from "../../lib/visions";
 import { describeError, useApp } from "../../state/store";
 import { CloudIcon } from "./CloudIcon";
 import { NewVisionSheet } from "./NewVisionSheet";
@@ -30,6 +30,8 @@ export function NewChannelSheet({ onClose }: { onClose: () => void }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const root = state.activeProjectRoot;
+  // The admin works only in # hq.
+  const choices = state.visions.list.filter(vision => vision.id !== ADMIN_VISION_ID);
   const toggle = (id: string) => setMembers(current => current.includes(id) ? current.filter(each => each !== id) : [...current, id]);
   async function create(event: FormEvent) {
     event.preventDefault();
@@ -47,9 +49,9 @@ export function NewChannelSheet({ onClose }: { onClose: () => void }) {
       <form className="themis-sidebar-dialog themis-visions-sheet" onSubmit={event => void create(event)}>
         <Input id="visions-channel-name" label="Channel name" placeholder="release" value={name} maxLength={40} disabled={busy} onChange={event => { setName(channelName(event.target.value)); setError(""); }} />
         <Input id="visions-channel-topic" label="Topic" value={topic} maxLength={200} disabled={busy} onChange={event => setTopic(event.target.value)} />
-        {state.visions.list.length > 0 && <fieldset className="themis-visions-picks">
+        {choices.length > 0 && <fieldset className="themis-visions-picks">
           <legend className="themis-input-label">Members</legend>
-          <div>{state.visions.list.map(vision => (
+          <div>{choices.map(vision => (
             <button key={vision.id} type="button" className="themis-visions-pick" aria-pressed={members.includes(vision.id)} onClick={() => toggle(vision.id)}>
               <CloudIcon shape={vision.shape} color={vision.color} mood="calm" size={22} /><span>{vision.name}</span>
             </button>

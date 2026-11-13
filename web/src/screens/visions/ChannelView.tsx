@@ -4,7 +4,7 @@ import { useLayoutEffect, useRef, useState } from "react";
 import { ApprovalBox } from "../../components/approval/ApprovalBox";
 import { approveAction } from "../../lib/tauri";
 import type { ApprovalDecision, ApprovalRequest } from "../../lib/types";
-import type { ChannelInfo, ChannelLine, VisionInfo } from "../../lib/visions";
+import { ADMIN_VISION_ID, type ChannelInfo, type ChannelLine, type VisionInfo } from "../../lib/visions";
 import { describeError, toast, useApp } from "../../state/store";
 import { visionMoods } from "../../state/visions";
 import { AskFirstBox } from "../AskFirstBox";
@@ -47,7 +47,7 @@ function thinkingHere(state: ReturnType<typeof useApp>["state"], channel: Channe
 function Thinking({ visions }: { visions: VisionInfo[] }) {
   return <>{visions.map(vision => (
     <li key={vision.id} className="themis-channel-thinking" role="status">
-      <span className="themis-channel-avatar"><CloudIcon shape={vision.shape} color={vision.color} mood="think" size={30} live /></span>
+      <span className="themis-channel-avatar"><CloudIcon shape={vision.shape} color={vision.color} mood="think" size={30} live crown={vision.id === ADMIN_VISION_ID} /></span>
       <span className="themis-shim">{vision.name} is thinking…</span>
     </li>
   ))}</>;
@@ -122,7 +122,7 @@ export function ChannelView({ channel }: { channel: ChannelInfo }) {
         <h1># {channel.name}</h1>
         {channel.topic && <span className="themis-channel-topic">{channel.topic}</span>}
         {members.length > 0 && <span className="themis-channel-members" role="img" aria-label={`Here: ${members.map(vision => vision.name).join(", ")}`}>
-          {members.map(vision => <CloudIcon key={vision.id} shape={vision.shape} color={vision.color} mood={moods[vision.id] ?? "calm"} size={20} />)}
+          {members.map(vision => <CloudIcon key={vision.id} shape={vision.shape} color={vision.color} mood={moods[vision.id] ?? "calm"} size={20} crown={vision.id === ADMIN_VISION_ID} />)}
         </span>}
       </header>
       <div className="themis-channel-log" ref={log} onScroll={onScroll}>

@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { Question, ThreadInfo } from "../lib/types";
 import {
   APPROVAL_MODES, ENTRY_FIELDS, HOLDS, NOTICE_KINDS, OWNED_KINDS,
-  type ChannelEntry, type ChannelInfo, type ChannelLine, type ChannelPage, type OwnedChat, type VisionInfo, type VisionsChange,
+  type ChannelEntry, type ChannelInfo, type ChannelLine, type ChannelPage, type OwnedChat, type Proposal, type ProposalChange, type SetUpItem, type VisionInfo, type VisionsChange,
 } from "../lib/visions";
 import fixture from "../lib/visions.fixture.json";
 import { appReducer, initialState, reducer, type AppState } from "./reducer";
@@ -333,6 +333,26 @@ describe("wire fixture", () => {
     expect(keys(fixture.change)).toEqual([...changeKeys].sort());
     const questionKeys: Array<keyof Question> = ["id", "run_id", "question", "choices", "assumption", "reasons", "group", "blocking", "topic", "subagent", "asked_at", "answer", "answered_by", "permission", "passed_on"];
     expect(keys(fixture.question)).toEqual([...questionKeys].sort());
+  });
+
+  it("holds a proposal and what it set up with exactly the fields the app's types name", () => {
+    const keys = (value: object) => Object.keys(value).sort();
+    const entries = (fixture.lines as ChannelLine[]).map(line => line.entry);
+    const proposed = entries.find(entry => entry.type === "proposal")!;
+    const applied = entries.find(entry => entry.type === "proposal_applied")!;
+    if (proposed.type !== "proposal" || applied.type !== "proposal_applied") throw new Error("missing");
+    const { proposal } = proposed;
+    const proposalKeys: Array<keyof Proposal> = ["summary", "channels", "visions", "changes"];
+    expect(keys(proposal)).toEqual([...proposalKeys].sort());
+    const channelKeys: Array<keyof Proposal["channels"][number]> = ["name", "topic", "members"];
+    expect(keys(proposal.channels[0]!)).toEqual([...channelKeys].sort());
+    const visionKeys: Array<keyof Proposal["visions"][number]> = ["name", "role", "shape", "color", "model", "autonomy", "daily_budget_usd"];
+    expect(keys(proposal.visions[0]!)).toEqual([...visionKeys].sort());
+    const changeKeys: Array<keyof ProposalChange> = ["vision", "channel", "name", "role", "topic", "paused", "autonomy", "daily_budget_usd", "add_members", "remove_members"];
+    expect([...new Set(proposal.changes.flatMap(keys))].sort()).toEqual([...changeKeys].sort());
+    const itemKeys: Array<keyof SetUpItem> = ["kind", "id", "name", "action"];
+    expect(keys(applied.items[0]!)).toEqual([...itemKeys].sort());
+    expect(applied.items.map(item => [item.kind, item.action])).toEqual([["vision", "created"], ["channel", "changed"]]);
   });
 });
 
