@@ -27,7 +27,7 @@ function useMentions(draft: string, members: VisionInfo[]) {
   return { typed, matches, active, move, dismiss: () => setDismissed(draft), restart: () => setPicked(0) };
 }
 
-export function ChannelComposer({ channel, members, draft, setDraft }: { channel: ChannelInfo; members: VisionInfo[]; draft: string; setDraft: (text: string) => void }) {
+export function ChannelComposer({ channel, members, draft, setDraft, onPosted }: { channel: ChannelInfo; members: VisionInfo[]; draft: string; setDraft: (text: string) => void; /** The post's seq and the Visions it woke. */ onPosted?: (seq: number, woken: string[]) => void }) {
   const { dispatch } = useApp();
   const box = useRef<HTMLTextAreaElement>(null);
   const listId = useId();
@@ -43,7 +43,7 @@ export function ChannelComposer({ channel, members, draft, setDraft }: { channel
     const text = draft.trim();
     if (!text || busy) return;
     setBusy(true);
-    try { await postChannelMessage(channel.id, text); setDraft(""); }
+    try { const posted = await postChannelMessage(channel.id, text); setDraft(""); onPosted?.(posted.seq, posted.woken ?? []); }
     catch (error) { toast(dispatch, `Could not post the message: ${describeError(error)}`, "danger"); }
     finally { setBusy(false); }
   }

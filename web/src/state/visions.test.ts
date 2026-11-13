@@ -208,6 +208,16 @@ describe("reloadVisions", () => {
     expect(all.getChannelPage).toHaveBeenCalledTimes(2);
   });
 
+  it("a first load lists the channels before the Visions, so the admin they make is listed", async () => {
+    // As the server does: listing a project's channels makes Atlas and # hq.
+    let made = false;
+    const atlas = { ...VISION, id: "admin", name: "Atlas" };
+    const api = { ...bridge(), listChannels: vi.fn(async (root: string) => { made = true; return [{ ...channel("h1", root), name: "hq", members: ["admin"] }]; }), listVisions: vi.fn(async () => made ? [atlas] : []) };
+    const dispatch = vi.fn();
+    await reloadVisions(api, {}, withChannel([], []), dispatch, ["/repo"]);
+    expect(dispatch).toHaveBeenCalledWith({ type: "visions/loaded", visions: [atlas] });
+  });
+
   it("a Vision alone re-lists only the projects it has channels in", async () => {
     const api = bridge();
     let state = withChannel([], []);

@@ -12,6 +12,7 @@ import { ChannelComposer } from "./ChannelComposer";
 import { ChannelEntryView, visionById } from "./ChannelEntry";
 import { channelChat } from "./ChatLink";
 import { CloudIcon } from "./CloudIcon";
+import { reducedMotion, useArrivals, useShownAMoment, useWakes } from "./thinking";
 
 /** An approval one of the channel's chats waits on, with whose chat asks. */
 function ChannelApproval({ request, channelId }: { request: ApprovalRequest; channelId: string }) {
@@ -33,22 +34,19 @@ function ChannelApproval({ request, channelId }: { request: ApprovalRequest; cha
   );
 }
 
-/** Visions whose run in this channel is going and that have not posted since the newest line:
- *  a run that answered the newest message has spoken. */
-function thinkingHere(state: ReturnType<typeof useApp>["state"], channel: ChannelInfo): VisionInfo[] {
-  const read = state.visions.lines[channel.id];
-  const lines = read ?? [];
-  const last = lines[lines.length - 1]?.entry;
-  const spoke = last && last.type !== "person" && last.type !== "notice" ? last.vision_id : undefined;
-  return state.visions.list.filter(vision => vision.id !== spoke
-    && vision.vision_chats.some(own => own.channel_id === channel.id && (state.running[own.thread_id] ?? own.running)));
+/** The Visions whose run in this channel is going (also after a post of their own). */
+function runningHere(state: ReturnType<typeof useApp>["state"], channel: ChannelInfo): string[] {
+  return state.visions.list
+    .filter(vision => vision.vision_chats.some(own => own.channel_id === channel.id && (state.running[own.thread_id] ?? own.running)))
+    .map(vision => vision.id);
 }
 
-function Thinking({ visions }: { visions: VisionInfo[] }) {
+/** "<Name> is thinking" with three dots rising and falling; plain text with reduced motion. */
+function Thinking({ visions, reduced }: { visions: VisionInfo[]; reduced: boolean }) {
   return <>{visions.map(vision => (
     <li key={vision.id} className="themis-channel-thinking" role="status">
       <span className="themis-channel-avatar"><CloudIcon shape={vision.shape} color={vision.color} mood="think" size={30} live crown={vision.id === ADMIN_VISION_ID} /></span>
-      <span className="themis-shim">{vision.name} is thinking…</span>
+      <span className="themis-channel-thinking-text">{vision.name} is thinking{reduced ? "…" : <span className="themis-thinking-dots" aria-hidden="true"><i /><i /><i /></span>}</span>
     </li>
   ))}</>;
 }
@@ -95,6 +93,20 @@ function useShownUpTo(lines: ChannelLine[] | undefined): number | null {
   return shownUpTo ?? now;
 }
 
+/** Who is thinking here (running, or woken by the person's post), each row kept a moment, and
+ *  the lines shown so far as new ones arrive one after another. */
+function useChannelMotion(state: ReturnType<typeof useApp>["state"], channel: ChannelInfo, read: ChannelLine[] | undefined) {
+  const lines = read ?? [];
+  const reduced = reducedMotion();
+  const running = channel.id ? runningHere(state, channel) : [];
+  const { waking, woke } = useWakes(lines, running);
+  const thinkingIds = useShownAMoment([...new Set([...running, ...waking])], reduced);
+  const thinking = thinkingIds.flatMap(id => visionById(state, id) ?? []);
+  const shownUpTo = useShownUpTo(read);
+  const arrived = useArrivals(lines, shownUpTo, reduced);
+  return { reduced, thinking, woke, shownUpTo, shown: lines.filter(line => line.seq <= arrived) };
+}
+
 export function ChannelView({ channel }: { channel: ChannelInfo }) {
   const { state, loadOlderLines } = useApp();
   const [draft, setDraft] = useState("");
@@ -105,10 +117,9 @@ export function ChannelView({ channel }: { channel: ChannelInfo }) {
   const approvals = state.approvals.filter(request => chats.has(request.thread_id));
   const members = channel.members.flatMap(id => visionById(state, id) ?? []);
   const moods = visionMoods(state);
-  const thinking = channel.id ? thinkingHere(state, channel) : [];
-  const tail = `${lines[lines.length - 1]?.seq}:${approvals.length}:${thinking.map(vision => vision.id).join(",")}`;
+  const { reduced, thinking, woke, shownUpTo, shown } = useChannelMotion(state, channel, read);
+  const tail = `${shown[shown.length - 1]?.seq}:${approvals.length}:${thinking.map(vision => vision.id).join(",")}`;
   const { log, onScroll, holdPlace, releasePlace } = useStickToEnd(tail, lines[0]?.seq);
-  const shownUpTo = useShownUpTo(read);
   async function older() {
     setLoading(true);
     holdPlace();
@@ -129,12 +140,12 @@ export function ChannelView({ channel }: { channel: ChannelInfo }) {
         {state.visions.nextBefore[channel.id] != null && <button type="button" className="themis-show-more" disabled={loading} onClick={() => void older()}>{loading ? "Loading…" : "Show earlier messages"}</button>}
         {lines.length === 0 && thinking.length === 0 && <p className="themis-channel-empty">No messages yet.</p>}
         <ol className="themis-channel-lines">
-          {lines.map(line => <ChannelEntryView key={line.seq} line={line} channelId={channel.id} fresh={shownUpTo !== null && line.seq > shownUpTo} onReply={setDraft} />)}
+          {shown.map(line => <ChannelEntryView key={line.seq} line={line} channelId={channel.id} fresh={!reduced && shownUpTo !== null && line.seq > shownUpTo} onReply={setDraft} />)}
           {approvals.map(request => <ChannelApproval key={request.approval_id} request={request} channelId={channel.id} />)}
-          <Thinking visions={thinking} />
+          <Thinking visions={thinking} reduced={reduced} />
         </ol>
       </div>
-      <ChannelComposer channel={channel} members={members} draft={draft} setDraft={setDraft} />
+      <ChannelComposer channel={channel} members={members} draft={draft} setDraft={setDraft} onPosted={woke} />
     </section>
   );
 }

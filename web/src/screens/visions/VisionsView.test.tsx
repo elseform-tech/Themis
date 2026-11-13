@@ -150,6 +150,18 @@ describe("Visions view", () => {
     expect(within(room).getByLabelText("Message #hq")).not.toBeDisabled();
   });
 
+  it("a_visions_message_shows_its_markdown_and_the_persons_stays_as_typed", () => {
+    const start = fixture();
+    const said: ChannelEntry[] = [{ type: "person", text: "keep **this** as typed" }, { type: "vision", vision_id: "rook", text: "Set up **releases** with `Rook`." }];
+    mount({ mainView: "visions", visions: { ...start.visions, lines: { c1: said.map((entry, seq) => ({ seq, at_ms: Date.UTC(2026, 10, 12, 9, seq), entry })) } } });
+    fireEvent.click(within(screen.getByRole("complementary", { name: "Visions navigation" })).getByRole("button", { name: /release/ }));
+    const room = screen.getByRole("region", { name: "# release" });
+    expect(within(room).getByText("releases").tagName).toBe("STRONG");
+    expect(within(room).getByText("Rook", { selector: "code" })).toBeTruthy();
+    expect(room.textContent).not.toContain("**releases**");
+    expect(room).toHaveTextContent("keep **this** as typed");
+  });
+
   it("chats_returns_to_plain_chat_from_visions", async () => {
     const view = await openRelease();
     fireEvent.click(within(view).getByRole("button", { name: /^Open Fix the date test/ }));
@@ -222,21 +234,26 @@ describe("Visions view", () => {
   });
 
   it("a_running_vision_shows_it_is_thinking", () => {
-    const thinking = (lines: ChannelEntry[]) => fixture({ mainView: "visions", visions: {
+    const thinking = (lines: ChannelEntry[], running = true) => fixture({ mainView: "visions", visions: {
       ...fixture().visions,
-      list: [vision("rook", "Rook", { vision_chats: [{ thread_id: "own", channel_id: "c1", running: true }] }), vision("wren", "Wren")],
+      list: [vision("rook", "Rook", { vision_chats: [{ thread_id: "own", channel_id: "c1", running }] }), vision("wren", "Wren")],
       lines: { c1: lines.map((entry, seq) => ({ seq, at_ms: 0, entry })) },
       open: { channelId: "c1", chatId: null, plainThreadId: null },
     } });
     const { unmount } = render(<Harness initial={thinking([{ type: "person", text: "@Rook check the build" }])} />);
     const row = screen.getByRole("status");
-    expect(row).toHaveTextContent("Rook is thinking…");
+    expect(row).toHaveTextContent("Rook is thinking");
     expect(row.querySelector(".themis-cloud")).toHaveClass("themis-cloud--think");
-    expect(row.querySelector(".themis-shim")).toBeTruthy();
+    expect(row.querySelectorAll(".themis-thinking-dots > i")).toHaveLength(3);
     unmount();
-    // Once it has posted, the row goes.
-    render(<Harness initial={thinking([{ type: "person", text: "@Rook check the build" }, { type: "vision", vision_id: "rook", text: "It is green." }])} />);
-    expect(screen.queryByText("Rook is thinking…")).toBeNull();
+    // Its run goes on after its own post: still thinking.
+    const posted: ChannelEntry[] = [{ type: "person", text: "@Rook check the build" }, { type: "vision", vision_id: "rook", text: "It is green." }];
+    const { unmount: again } = render(<Harness initial={thinking(posted)} />);
+    expect(screen.getByRole("status")).toHaveTextContent("Rook is thinking");
+    again();
+    // Once its run is over, no row.
+    render(<Harness initial={thinking(posted, false)} />);
+    expect(screen.queryByRole("status")).toBeNull();
   });
 
   it("a Vision's new post fades in, lines already there do not", () => {

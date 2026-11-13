@@ -199,8 +199,14 @@ async fn a_proposal_cannot_raise_autonomy_or_budget_or_delete() {
     fx.call_ok(
         "save_vision",
         json!({"vision": {"id": wren, "name": "Wren", "shape": "cloud", "color": "teal",
-            "daily_budget_usd": 0.5}, "revision": revision}),
+            "daily_budget_usd": 0.5, "autonomy": "ask"}, "revision": revision}),
     );
+    fx.state
+        .set_model_catalog_for_test(vec![themis_core::providers::GoModel {
+            id: "test-model".into(),
+            ..Default::default()
+        }])
+        .await;
     let (_, admin) = fx.vision_run(ADMIN, &hq).await;
     let with = |field: &str, value: Value| {
         let mut proposal = json!({"summary": "A change."});
@@ -211,6 +217,18 @@ async fn a_proposal_cannot_raise_autonomy_or_budget_or_delete() {
         (
             with("visions", json!([{"name": "Rook", "autonomy": "most"}])),
             "autonomy",
+        ),
+        // Settings allow Small, but Wren's own level is Ask me first: a change only lowers it.
+        (
+            with("changes", json!([{"vision": "Wren", "autonomy": "small"}])),
+            "autonomy",
+        ),
+        (
+            with(
+                "visions",
+                json!([{"name": "Rook", "model": "no-such-model"}]),
+            ),
+            "model",
         ),
         (
             with(
@@ -258,11 +276,14 @@ async fn a_proposal_cannot_raise_autonomy_or_budget_or_delete() {
     // Lowering is fine.
     let lower = with(
         "changes",
-        json!([{"vision": "Wren", "autonomy": "ask", "daily_budget_usd": 0.25}]),
+        json!([{"vision": "Wren", "daily_budget_usd": 0.25}]),
     );
     json_of(&propose(&fx, &admin, &hq, lower));
     // Each field is checked again when it is applied: Settings › Visions went down meanwhile.
-    let small = with("visions", json!([{"name": "Rook", "autonomy": "small"}]));
+    let small = with(
+        "visions",
+        json!([{"name": "Rook", "autonomy": "small", "model": "test-model"}]),
+    );
     let id = proposal_id(&propose(&fx, &admin, &hq, small));
     fx.set_visions(json!({"enabled": false, "autonomy": "ask", "daily_budget_usd": 1.0}));
     say(&fx, &hq, "yes");
@@ -393,5 +414,104 @@ async fn the_admin_cannot_be_deleted() {
     assert_eq!(theirs["members"], json!([ADMIN]));
     assert_ne!(theirs["id"], hq.as_str());
     assert_eq!(visions(&fx).as_array().unwrap().len(), 2);
+    fx.shut_down().await;
+}
+
+/// A setup's changes go through the server: a Vision's new role and pause (its channels say it
+/// was paused) and a channel's members, each listed as changed.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_admin_applies_changes_to_visions_and_channels() {
+    let _turn = ONE_SERVER.lock().await;
+    let fx = fixture().await;
+    let hq = hq(&fx);
+    let (wren, work) = fx.vision_and_channel("Wren", "work");
+    let (_, admin) = fx.vision_run(ADMIN, &hq).await;
+    let proposal = json!({
+        "summary": "Rook takes over the work channel; Wren rests.",
+        "visions": [{"name": "Rook", "role": "Does the work"}],
+        "changes": [
+            {"vision": "Wren", "role": "Writes notes", "paused": true},
+            {"channel": "work", "topic": "The work", "add_members": ["Rook"], "remove_members": ["Wren"]}
+        ]
+    });
+    let id = proposal_id(&propose(&fx, &admin, &hq, proposal));
+    say(&fx, &hq, "yes please");
+    let applied = json_of(&apply(&fx, &admin, &id));
+    let listed = visions(&fx);
+    let rook = named(&listed, "Rook").unwrap()["id"].clone();
+    let wren_now = named(&listed, "Wren").unwrap();
+    assert_eq!(wren_now["role"], "Writes notes");
+    assert_eq!(wren_now["paused"], true);
+    let work_now = named(&channels(&fx), "work").cloned().unwrap();
+    assert_eq!(work_now["members"], json!([rook]));
+    assert_eq!(work_now["topic"], "The work");
+    assert_eq!(
+        applied["items"],
+        json!([
+            {"kind": "vision", "id": rook, "name": "Rook", "action": "created"},
+            {"kind": "vision", "id": wren, "name": "Wren", "action": "changed"},
+            {"kind": "channel", "id": work, "name": "work", "action": "changed"}
+        ])
+    );
+    let paused = fx
+        .entries(&work)
+        .into_iter()
+        .any(|entry| entry["type"] == "notice" && entry["kind"] == "paused");
+    assert!(paused, "the pause went through pause_vision's path");
+    assert_eq!(fx.entries(&hq).last().unwrap()["items"], applied["items"]);
+    fx.shut_down().await;
+}
+
+/// The first listing of a project's channels makes Atlas and `# hq` and says so, so an app that
+/// read the Visions first reads them again and finds Atlas.
+#[tokio::test(flavor = "multi_thread")]
+async fn making_hq_announces_a_visions_change() {
+    let _turn = ONE_SERVER.lock().await;
+    let fx = fixture().await;
+    let mut events = Client::new(fx.data.clone()).subscribe().await.unwrap();
+    assert_eq!(visions(&fx), json!([]));
+    hq(&fx);
+    let changed = tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            let event = Client::next_event(&mut events).await.unwrap();
+            if event["name"] == "visions-changed" {
+                break event;
+            }
+        }
+    })
+    .await
+    .expect("making # hq announces visions-changed");
+    assert_eq!(changed["payload"], json!({}), "{changed}");
+    assert!(named(&visions(&fx), "Atlas").is_some());
+    fx.shut_down().await;
+}
+
+/// The person's post says which Visions it woke (a run started or queued), so the channel can
+/// show them thinking before their run starts; none while Visions are off.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_post_says_which_visions_it_woke() {
+    let _turn = ONE_SERVER.lock().await;
+    let fx = fixture().await;
+    let provider = quick_provider().await;
+    fx.use_provider(&provider).await;
+    let hq = hq(&fx);
+    let posted = fx.call_ok(
+        "post_channel_message",
+        json!({"channelId": hq, "text": "I need a channel for releases"}),
+    );
+    assert_eq!(posted["woken"], json!([ADMIN]), "{posted}");
+    // Atlas answers, so its run is over before the next post.
+    wait_until(|| async {
+        fx.entries(&hq)
+            .iter()
+            .any(|entry| entry["type"] == "vision")
+    })
+    .await;
+    fx.no_wakes();
+    let quiet = fx.call_ok(
+        "post_channel_message",
+        json!({"channelId": hq, "text": "never mind"}),
+    );
+    assert_eq!(quiet["woken"], json!([]), "{quiet}");
     fx.shut_down().await;
 }

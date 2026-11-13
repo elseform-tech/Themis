@@ -75,13 +75,14 @@ impl AppState {
 
     /// The person wrote in a channel: the log gets it, chats the person stopped there may be
     /// picked up again (taken-over ones stay the person's), and the Visions it is for wake:
-    /// those it mentions as `@Name`, or the only member when it mentions none.
+    /// those it mentions as `@Name`, or the only member when it mentions none. Returns its seq
+    /// and the Visions whose run will answer (started, or queued behind one going).
     pub fn visions_post(
         &self,
         sink: &Arc<dyn EventSink>,
         channel_id: &str,
         text: &str,
-    ) -> Result<u64, String> {
+    ) -> Result<(u64, Vec<String>), String> {
         let text = text.trim();
         if text.is_empty() {
             return Err("Write a message first".to_owned());
@@ -115,14 +116,20 @@ impl AppState {
         if woken.is_empty() && members.len() == 1 {
             woken.push(&members[0]);
         }
-        for vision in &woken {
-            self.visions_wake(sink, channel_id, &vision.id, WakeReason::Mentioned);
-        }
+        let answering: Vec<String> = woken
+            .iter()
+            .filter(|vision| {
+                let outcome =
+                    self.visions_wake(sink, channel_id, &vision.id, WakeReason::Mentioned);
+                matches!(outcome, "started" | "queued")
+            })
+            .map(|vision| vision.id.clone())
+            .collect();
         self.visions_note(
             "channel_posted",
-            json!({"channel_id": channel_id, "seq": seq, "released": stopped.len(), "woken": woken.len()}),
+            json!({"channel_id": channel_id, "seq": seq, "released": stopped.len(), "woken": answering.len()}),
         );
-        Ok(seq)
+        Ok((seq, answering))
     }
 
     /// The person stopped a chat: a Vision's work chat is held until the person writes in its

@@ -346,10 +346,11 @@ function wantsChannel(want: Wanted, channel: ChannelInfo): boolean {
 async function reload(bridge: VisionsBridge, want: Wanted, state: AppState, dispatch: (action: VisionsAction) => void): Promise<void> {
   const known = state.visions.channels;
   const listRoots = rootsToList(want, known);
+  // Channels first: listing a project's channels makes Atlas and its # hq when they are new.
+  const listed = await Promise.allSettled([...listRoots].map(async projectRoot => ({ projectRoot, channels: await bridge.listChannels(projectRoot) })));
   if (want.all || want.list) {
     try { dispatch({ type: "visions/loaded", visions: await bridge.listVisions() }); } catch { /* the list shown stays */ }
   }
-  const listed = await Promise.allSettled([...listRoots].map(async projectRoot => ({ projectRoot, channels: await bridge.listChannels(projectRoot) })));
   const read = new Map<string, ChannelInfo[]>();
   for (const { projectRoot, channels } of fulfilled(listed)) {
     dispatch({ type: "visions/loaded", projectRoot, channels });

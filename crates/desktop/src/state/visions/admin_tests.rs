@@ -32,6 +32,7 @@ fn context() -> Context {
             channel("d", "docs", &["w"]),
         ],
         config: VisionsConfig::default(),
+        models: vec!["test-model".into()],
     }
 }
 
@@ -135,6 +136,63 @@ fn a_proposal_is_checked_field_by_field() {
     assert!(delete.unwrap_err().to_string().contains("delete"));
 }
 
+/// A change may only lower a Vision's own level: one already at Ask First cannot go back to
+/// Small calls, even though Settings › Visions allows Small.
+#[test]
+fn a_change_never_raises_a_visions_own_autonomy() {
+    let change = |own: Option<Autonomy>, level: &str| {
+        let mut context = context();
+        context.visions[1].autonomy = own;
+        let json =
+            serde_json::json!({"summary": "x", "changes": [{"vision": "Wren", "autonomy": level}]});
+        check(&proposal(json), &context)
+    };
+    let ask = Some(Autonomy::Ask);
+    assert!(change(ask, "small").unwrap_err().contains("autonomy"));
+    assert!(
+        change(ask, "ask").unwrap_err().contains("changes nothing"),
+        "the same level lowers nothing"
+    );
+    // A Vision on the resolved level may go lower.
+    assert_eq!(change(None, "ask"), Ok(()));
+    assert!(change(None, "small").unwrap_err().contains("autonomy"));
+}
+
+/// A new Vision's model is a usable model of the loaded catalog; none is fine (the app's
+/// default), and with no catalog loaded a named model cannot be checked, so it is refused.
+#[test]
+fn a_new_visions_model_is_in_the_catalog() {
+    let with = |model: &str, models: Vec<String>| {
+        let json =
+            serde_json::json!({"summary": "x", "visions": [{"name": "Rook", "model": model}]});
+        check(
+            &proposal(json),
+            &Context {
+                models,
+                ..context()
+            },
+        )
+    };
+    assert_eq!(with("test-model", vec!["test-model".into()]), Ok(()));
+    assert!(with("no-such-model", vec!["test-model".into()])
+        .unwrap_err()
+        .contains("model"));
+    assert!(with("test-model", Vec::new())
+        .unwrap_err()
+        .contains("model"));
+    let none = serde_json::json!({"summary": "x", "visions": [{"name": "Rook"}]});
+    assert_eq!(
+        check(
+            &proposal(none),
+            &Context {
+                models: Vec::new(),
+                ..context()
+            }
+        ),
+        Ok(())
+    );
+}
+
 /// At Custom, a proposal's level may decide only what the custom rows already allow.
 #[test]
 fn a_proposals_autonomy_never_passes_the_resolved_level() {
@@ -188,6 +246,7 @@ fn the_admin_runs_on_its_own_head() {
     assert!(head.contains(r#"list_channels '{"projectRoot": "/work/app"}'"#));
     assert!(head.contains("one proposal per message"));
     assert!(head.contains("clear yes"));
+    assert!(head.contains("only when the person asks for one"));
     assert!(head.contains("Your shell runs only `themis`"));
     assert!(!head.contains("create_thread"), "it drives no chat");
     // Any other Vision keeps the ordinary head.

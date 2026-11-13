@@ -1,13 +1,26 @@
 // The admin's proposal in # hq: what it would set up, in its words and item by item, and whether it
 // waits for the person's answer or was set up (with links to the channels it made or changed). A
 // setup whose proposal is not loaded shows on its own.
-import type { ChannelEntry, Proposal, ProposalChange, SetUpItem } from "../../lib/visions";
+import type { Autonomy, ChannelEntry, Proposal, ProposalChange, SetUpItem } from "../../lib/visions";
 import { CloudIcon } from "./CloudIcon";
 
 type Proposed = Extract<ChannelEntry, { type: "proposal" }>;
 type Applied = Extract<ChannelEntry, { type: "proposal_applied" }>;
 
 const list = (names: string[]) => names.join(", ");
+
+/** The autonomy levels as Settings › Visions names them. */
+const LEVELS: Record<Autonomy, string> = { ask: "Ask me first", small: "Small calls", most: "Most calls", nearly_all: "Nearly all", custom: "Custom" };
+
+/** What a new Vision is set up with, besides its job: its model, level and budget when named. */
+function newVisionWords(vision: Proposal["visions"][number]): string {
+  return [
+    vision.role,
+    vision.model ? `runs on ${vision.model}` : "",
+    vision.autonomy ? LEVELS[vision.autonomy] : "",
+    vision.daily_budget_usd !== undefined ? `$${vision.daily_budget_usd} a day` : "",
+  ].filter(Boolean).join(" · ");
+}
 
 /** A change in plain words: what it is about, and what changes. */
 function changeWords(change: ProposalChange): [string, string] {
@@ -39,7 +52,7 @@ function Items({ proposal }: { proposal: Proposal }) {
       {proposal.visions.map(vision => (
         <li key={`v:${vision.name}`}>
           <b><CloudIcon shape={vision.shape} color={vision.color} mood="calm" size={16} />New Vision {vision.name}</b>
-          <span>{vision.role}</span>
+          <span>{newVisionWords(vision)}</span>
         </li>
       ))}
       {proposal.changes.map((change, index) => {
@@ -56,18 +69,17 @@ function ordered(items: SetUpItem[]): SetUpItem[] {
   return [...items].sort((a, b) => rank(a) - rank(b));
 }
 
+/** What was set up, as chips side by side: a channel's opens it. */
 function SetUp({ items, onOpenChannel }: { items: SetUpItem[]; onOpenChannel: (channelId: string) => void }) {
-  const shown = ordered(items);
   return (
-    <p className="themis-question-why themis-proposal-done" role="status">
-      Set up:{" "}
-      {shown.map((item, index) => <span key={`${item.kind}:${item.id}`}>
+    <div className="themis-question-why themis-proposal-done" role="status">
+      <span>Set up</span>
+      <ul>{ordered(items).map(item => <li key={`${item.kind}:${item.id}`}>
         {item.kind === "channel"
           ? <button type="button" className="themis-chat-chip" aria-label={`Open # ${item.name}`} onClick={() => onOpenChannel(item.id)}># {item.name}</button>
-          : <span>{item.name}</span>}
-        {index < shown.length - 1 ? ", " : ""}
-      </span>)}
-    </p>
+          : <span className="themis-chat-chip">{item.name}</span>}
+      </li>)}</ul>
+    </div>
   );
 }
 

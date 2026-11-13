@@ -183,8 +183,10 @@ async fn chat_method(
     match method {
         "post_channel_message" => {
             let channel_id: String = arg(args, "channelId")?;
-            let seq = state.visions_post(sink, &channel_id, &arg::<String>(args, "text")?)?;
-            Ok((json!({"seq": seq}), change(Some(channel_id), None)))
+            let (seq, woken) =
+                state.visions_post(sink, &channel_id, &arg::<String>(args, "text")?)?;
+            let posted = json!({"seq": seq, "woken": woken});
+            Ok((posted, change(Some(channel_id), None)))
         }
         "list_channel_threads" => {
             let channel_id: String = arg(args, "channelId")?;

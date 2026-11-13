@@ -248,7 +248,7 @@ pub(super) async fn dispatch(
     args: Value,
 ) -> Result<Value, String> {
     if admin::ADMIN_WRITES.contains(&method) {
-        return admin::dispatch(state, sink, scope, method, &args);
+        return admin::dispatch(state, sink, scope, method, &args).await;
     }
     let result = match method {
         // The chat's provider and model are the Vision's, never the call's.

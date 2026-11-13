@@ -12,7 +12,7 @@ const proposal: Proposed = {
   proposal: {
     summary: "A channel for shipping releases, with Rook to run it.",
     channels: [{ name: "releases", topic: "Ship releases", members: ["Rook"] }],
-    visions: [{ name: "Rook", role: "Ships releases", shape: "wide", color: "rose" }],
+    visions: [{ name: "Rook", role: "Ships releases", shape: "wide", color: "rose", model: "glm-5", autonomy: "ask", daily_budget_usd: 0.25 }],
     changes: [{ vision: "Wren", role: "Writes the notes" }, { channel: "docs", add_members: ["Rook"] }],
   },
 };
@@ -35,7 +35,7 @@ describe("ProposalCard", () => {
     const items = within(card).getAllByRole("listitem").map(item => item.textContent);
     expect(items).toEqual([
       "New channel # releasesShip releases · with Rook",
-      "New Vision RookShips releases",
+      "New Vision RookShips releases · runs on glm-5 · Ask me first · $0.25 a day",
       "WrenNew job: Writes the notes",
       "# docsAdds Rook",
     ]);
@@ -45,7 +45,10 @@ describe("ProposalCard", () => {
 
     rerender(<ProposalCard entry={proposal} applied={applied} onOpenChannel={open} />);
     const done = within(screen.getByRole("group", { name: "Proposal" })).getByRole("status");
-    expect(done).toHaveTextContent("Set up: # releases, Rook, # docs, Wren");
+    // What was set up shows as chips side by side: no commas to sit apart from them.
+    expect(done).toHaveTextContent(/^Set up/);
+    expect(within(done).getAllByRole("listitem").map(item => item.textContent)).toEqual(["# releases", "Rook", "# docs", "Wren"]);
+    expect(done.textContent).not.toContain(",");
     fireEvent.click(within(done).getByRole("button", { name: "Open # releases" }));
     expect(open).toHaveBeenCalledWith("c2");
     fireEvent.click(within(done).getByRole("button", { name: "Open # docs" }));
@@ -55,7 +58,8 @@ describe("ProposalCard", () => {
   it("set_up_on_its_own_lists_what_was_made_when_the_proposal_is_not_loaded", () => {
     render(<ProposalCard applied={applied} onOpenChannel={vi.fn()} />);
     const card = screen.getByRole("group", { name: "Proposal" });
-    expect(within(card).getByRole("status")).toHaveTextContent("Set up: # releases, Rook, # docs, Wren");
-    expect(within(card).queryByRole("list")).toBeNull();
+    const done = within(card).getByRole("status");
+    expect(within(done).getAllByRole("listitem").map(item => item.textContent)).toEqual(["# releases", "Rook", "# docs", "Wren"]);
+    expect(card.querySelector(".themis-proposal-items")).toBeNull();
   });
 });

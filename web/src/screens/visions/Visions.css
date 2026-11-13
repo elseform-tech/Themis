@@ -84,12 +84,16 @@
 .themis-channel-notice { display: flex; align-items: center; gap: 8px; margin-left: 42px; padding: 8px 12px; border-radius: 12px; background: var(--themis-well); color: var(--themis-text-2); font-size: 12px; }
 /* A Vision whose run is going and has not posted yet; its posts fade in (VisionChannel's .shim). */
 .themis-channel-thinking { display: flex; align-items: center; gap: 12px; }
-.themis-shim { background: linear-gradient(90deg, var(--themis-text-2) 35%, var(--themis-text) 50%, var(--themis-text-2) 65%); background-size: 250% 100%; -webkit-background-clip: text; background-clip: text; color: transparent; animation: themis-shim 1.8s linear infinite; }
-@keyframes themis-shim { from { background-position: 100% 0; } to { background-position: 0 0; } }
+.themis-channel-thinking-text { display: inline-flex; align-items: baseline; color: var(--themis-text-2); }
+.themis-thinking-dots { display: inline-flex; gap: 3px; margin-left: 3px; }
+.themis-thinking-dots i { width: 4px; height: 4px; border-radius: var(--themis-radius-pill); background: currentColor; animation: themis-thinking-wave 1.2s ease-in-out infinite; }
+.themis-thinking-dots i:nth-child(2) { animation-delay: .15s; }
+.themis-thinking-dots i:nth-child(3) { animation-delay: .3s; }
+@keyframes themis-thinking-wave { 0%, 60%, 100% { transform: none; opacity: .45; } 30% { transform: translateY(-3px); opacity: 1; } }
 .themis-channel-entry.is-fresh { animation: themis-channel-fade .32s ease-out; }
 @keyframes themis-channel-fade { from { opacity: 0; transform: translateY(4px); } }
 @media (prefers-reduced-motion: reduce) {
-  .themis-shim { background: none; color: var(--themis-text-2); animation: none; }
+  .themis-thinking-dots i { animation: none; }
   .themis-channel-entry.is-fresh { animation: none; }
 }
 
@@ -120,7 +124,12 @@
 .themis-proposal-items li { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 8px; }
 .themis-proposal-items b { display: inline-flex; align-items: center; gap: 6px; font-weight: 600; }
 .themis-proposal-items span { color: var(--themis-text-2); }
-.themis-proposal-done .themis-chat-chip { vertical-align: middle; }
+.themis-proposal-done { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.themis-proposal-done ul { display: contents; }
+.themis-proposal-done li { list-style: none; }
+.themis-proposal-done span.themis-chat-chip { cursor: default; }
+/* A Vision's message renders its Markdown like a chat reply; the person's stays as typed. */
+.themis-channel-markdown { white-space: normal; }
 .themis-question-choices { display: flex; flex-wrap: wrap; gap: 8px; }
 .themis-question-choices button { padding: 6px 12px; border: 0; border-radius: 10px; background: transparent; box-shadow: inset 0 0 0 1px var(--themis-border); color: var(--themis-text); font: inherit; cursor: pointer; }
 .themis-question-choices button.is-recommended { background: var(--themis-accent); box-shadow: none; color: var(--themis-accent-ink); font-weight: 600; }

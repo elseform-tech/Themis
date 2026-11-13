@@ -264,27 +264,31 @@ fn held_back(owner: &Owner, reason: &WakeReason) -> Option<&'static str> {
 
 impl AppState {
     /// Wakes `vision_id` in `channel_id` for `reason`: starts a run of its Vision chat, or
-    /// queues the reason for its next one (see the module notes for the bounds).
+    /// queues the reason for its next one (see the module notes for the bounds). Returns the
+    /// outcome's name (`started` and `queued` mean a run will answer).
     pub fn visions_wake(
         &self,
         sink: &Arc<dyn EventSink>,
         channel_id: &str,
         vision_id: &str,
         reason: WakeReason,
-    ) {
+    ) -> &'static str {
         let label = reason.label();
         let outcome = self.visions_wake_or_queue(sink, channel_id, vision_id, Some(reason));
         self.visions_note(
             "wake",
             json!({"vision_id": vision_id, "channel_id": channel_id, "reason": label, "outcome": outcome}),
         );
+        outcome
     }
 
     /// The same with the app's own sink, for callers that hold none (the person's Stop, a
     /// question asked). Without a server nothing can run, and it is logged so.
     pub(crate) fn visions_wake_later(&self, channel_id: &str, vision_id: &str, reason: WakeReason) {
         match self.scheduler_sink() {
-            Some(sink) => self.visions_wake(&sink, channel_id, vision_id, reason),
+            Some(sink) => {
+                self.visions_wake(&sink, channel_id, vision_id, reason);
+            }
             None => self.visions_note(
                 "wake",
                 json!({"vision_id": vision_id, "channel_id": channel_id, "reason": reason.label(), "outcome": "no_sink"}),

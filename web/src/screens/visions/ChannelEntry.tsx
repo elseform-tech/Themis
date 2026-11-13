@@ -2,6 +2,7 @@
 // question it answered or passed on, or a notice. Avatars never move.
 import { Fragment, type ReactNode } from "react";
 import { ADMIN_VISION_ID, type ChannelEntry as Entry, type ChannelLine, type VisionInfo } from "../../lib/visions";
+import { ResponseBody } from "../../components/ResponseBody";
 import { useApp } from "../../state/store";
 import { ChatChip, ChatLink, channelChat } from "./ChatLink";
 import { CloudIcon } from "./CloudIcon";
@@ -84,7 +85,9 @@ function Body({ line, channelId, onReply }: { line: ChannelLine; channelId: stri
   const { state, dispatch } = useApp();
   const { entry } = line;
   const names = state.visions.list.map(vision => vision.name);
-  if (entry.type === "person" || entry.type === "vision") return <p className="themis-channel-text">{withMentions(entry.text, names)}</p>;
+  if (entry.type === "person") return <p className="themis-channel-text">{withMentions(entry.text, names)}</p>;
+  // A Vision writes Markdown like any chat reply, and it shows the same way.
+  if (entry.type === "vision") return <div className="themis-channel-text themis-channel-markdown"><ResponseBody text={entry.text} /></div>;
   if (entry.type === "notice") return null;
   if (entry.type === "proposal" || entry.type === "proposal_applied") {
     const open = (id: string) => dispatch({ type: "visions/open", channelId: id });

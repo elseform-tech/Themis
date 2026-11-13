@@ -163,6 +163,8 @@ pub(super) struct Context {
     pub visions: Vec<Vision>,
     pub channels: Vec<Channel>,
     pub config: VisionsConfig,
+    /// The usable models of the loaded catalog (empty while none is loaded).
+    pub models: Vec<String>,
 }
 
 fn same_name(a: &str, b: &str) -> bool {
@@ -198,6 +200,40 @@ fn autonomy_fits(config: &VisionsConfig, level: Autonomy) -> Result<(), String> 
         return Err("A proposal cannot set autonomy above Settings › Visions".to_owned());
     }
     Ok(())
+}
+
+/// The decisions `level` makes itself under the resolved custom rows.
+fn decided(config: &VisionsConfig, level: Autonomy) -> Vec<Decision> {
+    Decision::ALL
+        .into_iter()
+        .filter(|decision| vision_decides(level, &config.custom, *decision))
+        .collect()
+}
+
+/// Whether `level` lets `vision` decide fewer things than it does now (its own level, or the
+/// resolved one when it has none): a change only ever lowers it, so the card's "decides less"
+/// is true.
+fn lowers_autonomy(config: &VisionsConfig, vision: &Vision, level: Autonomy) -> Result<(), String> {
+    let now = decided(config, vision.autonomy.unwrap_or(config.autonomy));
+    let then = decided(config, level);
+    if then.len() < now.len() && then.iter().all(|decision| now.contains(decision)) {
+        return Ok(());
+    }
+    Err(format!(
+        "A proposal may only lower how much {} decides on its own (its autonomy)",
+        vision.name
+    ))
+}
+
+/// Whether `model` is a usable model of the loaded catalog.
+fn model_fits(models: &[String], model: &str) -> Result<(), String> {
+    if models.iter().any(|known| known == model.trim()) {
+        return Ok(());
+    }
+    if models.is_empty() {
+        return Err("Themis cannot check models right now; leave the model out".to_owned());
+    }
+    Err(format!("No usable model is named {:?}", model.trim()))
 }
 
 /// Whether `budget` is a daily budget of at most `cap` dollars.
@@ -262,6 +298,13 @@ fn check_new_vision(
     }
     if let Some(budget) = new.daily_budget_usd {
         budget_fits(budget, context.config.daily_budget_usd)?;
+    }
+    if let Some(model) = new
+        .model
+        .as_deref()
+        .filter(|model| !model.trim().is_empty())
+    {
+        model_fits(&context.models, model)?;
     }
     Ok(())
 }
@@ -347,6 +390,7 @@ fn check_vision_change(change: &Change, vision: &Vision, context: &Context) -> R
     }
     if let Some(level) = change.autonomy {
         autonomy_fits(&context.config, level)?;
+        lowers_autonomy(&context.config, vision, level)?;
     }
     if let Some(budget) = change.daily_budget_usd {
         let cap = vision
@@ -506,6 +550,7 @@ impl AppState {
         let created = self.visions_cache().ensure_admin(&self.inner.visions_dir);
         if created.map_err(|error| self.visions_failed(error))? {
             self.visions_note("admin_created", json!({"vision_id": ADMIN_VISION_ID}));
+            self.visions_announce_all();
         }
         let existing = self
             .channel_list(root)
@@ -544,10 +589,40 @@ impl AppState {
         };
         let saved = self.channel_save(spec, expected.as_deref())?;
         self.visions_note(event, json!({"channel_id": saved.id}));
+        self.visions_announce_all();
         Ok(())
     }
 
-    fn visions_admin_context(&self, channel_id: &str) -> Result<(Channel, Context), String> {
+    /// Tells the app to read every Visions list again: Atlas or a `# hq` was made while it
+    /// read the channels, perhaps after it read the Visions.
+    fn visions_announce_all(&self) {
+        if let Some(sink) = self.scheduler_sink() {
+            sink.emit_visions_changed(&crate::types::VisionsChange::default());
+        }
+    }
+
+    /// The usable models of the catalog, loading it first when `load` (within a few seconds;
+    /// none when it cannot be loaded).
+    pub(crate) async fn visions_usable_models(&self, load: bool) -> Vec<String> {
+        if load {
+            let wait = std::time::Duration::from_secs(3);
+            let _ = tokio::time::timeout(wait, self.ensure_go_catalog()).await;
+        }
+        self.inner
+            .go_catalog
+            .read()
+            .await
+            .iter()
+            .filter(|model| model.unavailable_reason.is_none())
+            .map(|model| model.id.clone())
+            .collect()
+    }
+
+    fn visions_admin_context(
+        &self,
+        channel_id: &str,
+        models: Vec<String>,
+    ) -> Result<(Channel, Context), String> {
         let hq = self
             .channel_get(channel_id)
             .filter(|channel| channel.name == HQ)
@@ -560,17 +635,20 @@ impl AppState {
             visions: self.visions_list(),
             channels: self.channel_list(&hq.project_root),
             config,
+            models,
         };
         Ok((hq, context))
     }
 
-    /// The admin posts `proposal` in `# hq` (`channel_id`); its id and seq.
+    /// The admin posts `proposal` in `# hq` (`channel_id`), its models checked against
+    /// `models`; its id and seq.
     pub(crate) fn visions_propose(
         &self,
         channel_id: &str,
         mut proposal: Proposal,
+        models: Vec<String>,
     ) -> Result<(String, u64), String> {
-        let (_, context) = self.visions_admin_context(channel_id)?;
+        let (_, context) = self.visions_admin_context(channel_id, models)?;
         fill_looks(&mut proposal, context.visions.len());
         if let Err(error) = check(&proposal, &context) {
             self.visions_note(
@@ -600,6 +678,7 @@ impl AppState {
         &self,
         channel_id: &str,
         proposal_id: &str,
+        models: Vec<String>,
     ) -> Result<Vec<SetUp>, String> {
         let _one_at_a_time = self
             .inner
@@ -607,7 +686,7 @@ impl AppState {
             .applying
             .lock()
             .unwrap_or_else(|e| e.into_inner());
-        let ready = self.visions_ready_to_apply(channel_id, proposal_id);
+        let ready = self.visions_ready_to_apply(channel_id, proposal_id, models);
         let (hq, proposal) = match ready {
             Ok(ready) => ready,
             Err(Refused(reason, message)) => {
@@ -643,9 +722,12 @@ impl AppState {
         &self,
         channel_id: &str,
         proposal_id: &str,
+        models: Vec<String>,
     ) -> Result<(Channel, Proposal), Refused> {
         let invalid = |message: String| Refused("invalid", message);
-        let (hq, context) = self.visions_admin_context(channel_id).map_err(invalid)?;
+        let (hq, context) = self
+            .visions_admin_context(channel_id, models)
+            .map_err(invalid)?;
         let found = self
             .visions_find_proposal(channel_id, proposal_id)
             .map_err(|message| Refused("unknown", message))?;
@@ -721,6 +803,7 @@ impl AppState {
             visions: self.visions_list(),
             channels: self.channel_list(&hq.project_root),
             config: VisionsConfig::default(),
+            models: Vec::new(),
         };
         let none = HashSet::new();
         let ids = |names: &[String]| -> Result<Vec<String>, String> {

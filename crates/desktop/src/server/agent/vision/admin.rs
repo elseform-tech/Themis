@@ -29,7 +29,7 @@ pub(super) fn refusal(scope: &VisionScope, method: &str, args: &Value) -> Option
 /// Runs one of [`ADMIN_WRITES`] for the admin's `# hq`, then announces it: a proposal with the
 /// channel and the admin, a setup with no ids, since it may have made channels and Visions
 /// anywhere in the list.
-pub(super) fn dispatch(
+pub(super) async fn dispatch(
     state: &AppState,
     sink: &Arc<dyn EventSink>,
     scope: &VisionScope,
@@ -38,13 +38,17 @@ pub(super) fn dispatch(
 ) -> Result<Value, String> {
     if method == "apply_proposal" {
         let proposal_id: String = arg(args, "proposalId")?;
-        let applied = state.visions_apply_proposal(&scope.channel_id, &proposal_id);
+        // Checked against the catalog as loaded (it was loaded when a model was proposed).
+        let models = state.visions_usable_models(false).await;
+        let applied = state.visions_apply_proposal(&scope.channel_id, &proposal_id, models);
         // Even a setup that failed part way may have made something.
         sink.emit_visions_changed(&VisionsChange::default());
         return applied.map(|items| json!({"items": items}));
     }
     let proposal: Proposal = arg(args, "proposal")?;
-    let (id, seq) = state.visions_propose(&scope.channel_id, proposal)?;
+    let names_model = proposal.visions.iter().any(|vision| vision.model.is_some());
+    let models = state.visions_usable_models(names_model).await;
+    let (id, seq) = state.visions_propose(&scope.channel_id, proposal, models)?;
     sink.emit_visions_changed(&VisionsChange {
         channel_id: Some(scope.channel_id.clone()),
         vision_id: Some(scope.vision_id.clone()),

@@ -172,7 +172,8 @@ export function listChannels(projectRoot: string): Promise<ChannelInfo[]> { retu
 export function saveChannel(channel: ChannelDraft, revision: string | null): Promise<ChannelInfo> { return invoke("save_channel", { channel, revision }); }
 export function deleteChannel(channelId: string): Promise<void> { return invoke("delete_channel", { channelId }); }
 export function getChannelPage(channelId: string, beforeSeq: number | null = null, maxBytes: number | null = null): Promise<ChannelPage> { return invoke("get_channel_page", { channelId, beforeSeq, maxBytes }); }
-export function postChannelMessage(channelId: string, text: string): Promise<{ seq: number }> { return invoke("post_channel_message", { channelId, text }); }
+/** The post's seq and the Visions whose run will answer it (started, or queued behind one going). */
+export function postChannelMessage(channelId: string, text: string): Promise<{ seq: number; woken: string[] }> { return invoke("post_channel_message", { channelId, text }); }
 export function listChannelThreads(channelId: string): Promise<OwnedChat[]> { return invoke("list_channel_threads", { channelId }); }
 export function handBackThread(threadId: string): Promise<OwnerInfo> { return invoke("hand_back_thread", { threadId }); }
 export function getVisionsSettings(): Promise<VisionsSettingsView> { return invoke("get_visions_settings"); }
