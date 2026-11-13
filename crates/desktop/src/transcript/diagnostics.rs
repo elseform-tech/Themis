@@ -62,8 +62,8 @@ pub(super) fn session_checks(
         let version: i64 = transaction
             .query_row("PRAGMA user_version", [], |row| row.get(0))
             .map_err(|_| "Cannot read schema version")?;
-        // Version 1 is a store this version of the app hasn't opened yet.
-        if !(1..=2).contains(&version) {
+        // Versions 1 and 2 are stores this version of the app hasn't opened yet.
+        if !(1..=3).contains(&version) {
             return Err(format!(
                 "Unsupported schema version {version}; migration was not attempted"
             ));
@@ -157,8 +157,8 @@ pub(super) fn session_checks(
             {
                 checkpoints.insert(id.clone(), (seq, summary.clone()));
             }
-            let expected =
-                context_turn(&item).map(|turn| (role_name(&turn.role).to_owned(), turn.text));
+            let expected = expected_turn(&transaction, version, &id, seq, &item)
+                .map(|turn| (role_name(&turn.role).to_owned(), turn.text));
             if context != expected {
                 return Err("Persisted context differs from conversation history".to_owned());
             }

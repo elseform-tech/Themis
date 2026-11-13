@@ -273,3 +273,29 @@ fn one_history_page_costs_the_same_however_long_the_chat_is() {
     let rate = growth_rate(&samples);
     assert!(rate < 0.1, "growth {rate}: {samples:?}");
 }
+
+/// Saving a failed run looks back one turn through the index, however long the chat is.
+#[test]
+fn saving_a_failed_run_stays_flat_as_a_chat_grows() {
+    let samples = measure(&SIZES, |size| {
+        let (_dir, store) = chat(size);
+        store
+            .append_user(THREAD, "run", "one more request")
+            .unwrap();
+        let ((), steps) = sqlite_steps(&store, || {
+            store
+                .append_event(&ThreadEventEnvelope {
+                    thread_id: THREAD.into(),
+                    run_id: "run".into(),
+                    event: ThreadEvent::Failed {
+                        error: "network".into(),
+                    },
+                })
+                .unwrap()
+        });
+        steps
+    });
+    eprintln!("failed-run save steps: {samples:?}");
+    let rate = growth_rate(&samples);
+    assert!(rate < 0.1, "growth {rate}: {samples:?}");
+}

@@ -84,6 +84,8 @@ levels are listed.
   already executing finishes first; completed edits remain available to review.
   The agent's next turn knows you stopped that request, so it does not pick it
   up again unless you ask it to.
+  A reply that fails with an error is noted the same way: the next turn knows
+  that request is not done and checks what was already changed before redoing it.
   Pressing **Esc twice** does the same: after the first press, "Press Esc again to stop"
   shows beside the stop button for a second and a half. An Esc that closes a menu,
   panel or suggestion list only closes it.

@@ -14,7 +14,10 @@ pub mod history_pages;
 #[cfg(test)]
 mod scale_tests;
 mod source_exports;
-use context_turn::{context_turn, role_name};
+use context_turn::{
+    backfill_run_end_turns, context_turn, expected_turn, for_each_history_row, role_name,
+    save_stored_turn,
+};
 
 /// Most rows [`Transcript::last_reply_text`] reads.
 pub const REPLY_ROWS: usize = 64;
@@ -87,33 +90,15 @@ impl TranscriptStore {
             .query_row("PRAGMA user_version", [], |row| row.get(0))
             .map_err(|e| format!("read session version: {e}"))?;
         if version == 0 {
-            let mut statement = connection
-                .prepare("SELECT seq, thread_id, item FROM history ORDER BY seq")
-                .map_err(|e| format!("migrate context: {e}"))?;
-            let rows = statement
-                .query_map([], |row| {
-                    Ok((
-                        row.get::<_, i64>(0)?,
-                        row.get::<_, String>(1)?,
-                        row.get::<_, String>(2)?,
-                    ))
-                })
-                .map_err(|e| format!("migrate context: {e}"))?;
-            for row in rows {
-                let (seq, thread_id, json) = row.map_err(|e| format!("migrate context: {e}"))?;
-                let item: HistoryItem =
-                    serde_json::from_str(&json).map_err(|e| format!("decode session item: {e}"))?;
-                if let Some(turn) = context_turn(&item) {
-                    connection.execute("INSERT OR IGNORE INTO context_turns(seq,thread_id,role,text) VALUES (?1,?2,?3,?4)", params![seq, thread_id, role_name(&turn.role), turn.text]).map_err(|e| format!("migrate context: {e}"))?;
-                }
-            }
+            for_each_history_row(&connection, "%", |seq, thread_id, item| {
+                save_stored_turn(&connection, thread_id, seq, item, true)
+            })
+            .map_err(|e| format!("migrate context: {e}"))?;
             connection
                 .execute_batch("PRAGMA user_version=1")
                 .map_err(|e| format!("finish context migration: {e}"))?;
         }
-        if version < 2 {
-            migrate_attachment_paths(&connection)?;
-        }
+        migrate_from(&connection, version)?;
         Ok(Self {
             connection: Mutex::new(connection),
         })
@@ -281,14 +266,7 @@ impl TranscriptStore {
         let seq = transaction.last_insert_rowid();
         let decoded: HistoryItem =
             serde_json::from_str(&item).map_err(|e| format!("decode session item: {e}"))?;
-        if let Some(turn) = context_turn(&decoded) {
-            transaction
-                .execute(
-                    "INSERT INTO context_turns(seq,thread_id,role,text) VALUES (?1,?2,?3,?4)",
-                    params![seq, thread_id, role_name(&turn.role), turn.text],
-                )
-                .map_err(|e| format!("save context turn: {e}"))?;
-        }
+        save_stored_turn(&transaction, thread_id, seq, &decoded, false)?;
         if let HistoryItem::User { attachments, .. } = &decoded {
             remember_attachment_paths(&transaction, thread_id, attachments)
                 .map_err(|e| format!("save attachments: {e}"))?;
@@ -557,6 +535,31 @@ fn remember_attachment_paths(
         )?;
     }
     Ok(())
+}
+
+/// Brings a store at schema `version` up to date, one step at a time.
+fn migrate_from(connection: &Connection, version: i64) -> Result<(), String> {
+    if version < 2 {
+        migrate_attachment_paths(connection)?;
+    }
+    if version < 3 {
+        migrate_run_end_turns(connection)?;
+    }
+    Ok(())
+}
+
+/// Adds the notes failed and stopped runs now leave to older history, once, all or nothing.
+fn migrate_run_end_turns(connection: &Connection) -> Result<(), String> {
+    let transaction = connection
+        .unchecked_transaction()
+        .map_err(|e| format!("migrate run ends: {e}"))?;
+    backfill_run_end_turns(&transaction)?;
+    transaction
+        .execute_batch("PRAGMA user_version=3")
+        .map_err(|e| format!("finish run-end migration: {e}"))?;
+    transaction
+        .commit()
+        .map_err(|e| format!("finish run-end migration: {e}"))
 }
 
 /// Fills the attachment list from older history, once, all or nothing.

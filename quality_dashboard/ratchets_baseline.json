@@ -34,8 +34,6 @@
   "crates/desktop/src/state/question_tool.rs": 8,
   "crates/desktop/src/state/questions.rs": 19,
   "crates/desktop/src/state/queue.rs": 19,
-  "crates/desktop/src/transcript.rs": 9,
-  "crates/desktop/src/transcript/diagnostics.rs": 9,
   "crates/desktop/src/transcript/request_context.rs": 7,
   "crates/desktop/src/transcript/source_exports.rs": 7,
   "crates/desktop/src/types/automations.rs": 20,
@@ -43,7 +41,7 @@
   "web/src/screens/GoalBar.tsx": 6,
   "web/src/state/reducer.ts": 36
  },
- "duplicate_lines_total": 777,
+ "duplicate_lines_total": 759,
  "files": {
   "crates/core/src/runtime.rs": {
    "code_lines": 1908
@@ -627,14 +625,11 @@
    "cyclomatic": 100,
    "lines": 384
   },
-  "crates/desktop/src/transcript.rs::TranscriptStore::append": {
-   "cyclomatic": 21
-  },
   "crates/desktop/src/transcript.rs::TranscriptStore::import_legacy": {
    "cyclomatic": 23
   },
   "crates/desktop/src/transcript.rs::TranscriptStore::open": {
-   "cyclomatic": 38
+   "cyclomatic": 24
   },
   "crates/desktop/src/transcript/diagnostics.rs::session_checks": {
    "cognitive": 51,
