@@ -604,7 +604,7 @@ impl AppState {
     /// The models a proposal may name, as the app resolves them: the usable OpenCode Go
     /// models (the catalog loaded first when it is not yet, within a few seconds) and the
     /// models of the providers your `runtime.jsonc` defines, by their qualified
-    /// `<provider>/<model>` id and their own id. Without a Go key the Go part is empty.
+    /// `<provider>/<model>` id only. Without a Go key the Go part is empty.
     pub(crate) async fn visions_usable_models(&self) -> Vec<String> {
         let wait = std::time::Duration::from_secs(3);
         let _ = tokio::time::timeout(wait, self.ensure_go_catalog()).await;
@@ -617,12 +617,10 @@ impl AppState {
             .filter(|model| model.unavailable_reason.is_none())
             .map(|model| model.id.clone())
             .collect();
+        // Only the qualified id routes a chat to its provider; a bare one would run on Go.
         for provider in self.user_providers() {
-            for model in self.provider_model_list(&provider).await {
-                let own = model.id.strip_prefix(&format!("{}/", provider.id));
-                models.extend(own.map(str::to_owned));
-                models.push(model.id);
-            }
+            let listed = self.provider_model_list(&provider).await;
+            models.extend(listed.into_iter().map(|model| model.id));
         }
         models
     }

@@ -325,8 +325,8 @@ fn hq_is_made_once_per_project_with_the_admin_alone() {
     assert_eq!(state.channel_list(&root)[0].members, [ADMIN_VISION_ID]);
 }
 
-/// The models a proposal may name are the Go catalog's and the configured providers' (by the
-/// qualified `<provider>/<model>` id the app stores, and the bare id), also with no Go key.
+/// The models a proposal may name are the Go catalog's and the configured providers' (only by
+/// the qualified `<provider>/<model>` id, which routes a chat there), also with no Go key.
 #[tokio::test]
 async fn configured_provider_models_are_usable_without_a_go_key() {
     let dir = tempfile::tempdir().unwrap();
@@ -348,7 +348,8 @@ async fn configured_provider_models_are_usable_without_a_go_key() {
         )
     };
     assert_eq!(named("local/qwen"), Ok(()), "{models:?}");
-    assert_eq!(named("qwen"), Ok(()));
+    // A bare id would run as an OpenCode Go model: only the qualified one routes there.
+    assert!(named("qwen").unwrap_err().contains("model"));
     assert!(named("local/nope").unwrap_err().contains("model"));
     assert!(named("no-such-model").unwrap_err().contains("model"));
 }
