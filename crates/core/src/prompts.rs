@@ -546,6 +546,10 @@ pub const VISIONS_ADMIN: &str = include_str!("../builtins/prompts/visions-admin.
 /// The app server's answer to the admin's `apply_proposal` before the person replied in `# hq`.
 pub const AGENT_CLI_ADMIN_NO_REPLY: &str =
     include_str!("../builtins/prompts/agent-cli-admin-no-reply.md");
+/// The app server's answer to the admin's `apply_proposal` of a proposal it posted a newer one
+/// after.
+pub const AGENT_CLI_ADMIN_SUPERSEDED: &str =
+    include_str!("../builtins/prompts/agent-cli-admin-superseded.md");
 /// The message that starts a Vision run (a wake); `{{reasons}}`, `{{recent}}`.
 pub const VISIONS_WAKE_TURN: &str = include_str!("../builtins/prompts/visions-wake-turn.md");
 /// `next` hint after starting a background task.

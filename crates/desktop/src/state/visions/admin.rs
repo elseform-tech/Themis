@@ -538,6 +538,8 @@ struct Found {
     replied: bool,
     /// It was set up already.
     applied: bool,
+    /// The admin posted a newer proposal in `# hq` after it.
+    superseded: bool,
 }
 
 /// Why setting up a proposal was refused, as the log keeps it, and what the admin is told.
@@ -680,7 +682,8 @@ impl AppState {
     }
 
     /// Sets up the admin's proposal `proposal_id` in `# hq` (`channel_id`): refused unless it
-    /// was never set up, the person wrote in `# hq` after it, and it still checks out.
+    /// was never set up, is the admin's newest, the person wrote in `# hq` after it, and it
+    /// still checks out.
     pub(crate) fn visions_apply_proposal(
         &self,
         channel_id: &str,
@@ -744,6 +747,11 @@ impl AppState {
                 "This proposal was already set up".to_owned(),
             ));
         }
+        // The person's reply after a newer proposal is to that one, not this.
+        if found.superseded {
+            let message = themis_core::prompts::AGENT_CLI_ADMIN_SUPERSEDED.to_owned();
+            return Err(Refused("superseded", message));
+        }
         if !found.replied {
             let message = themis_core::prompts::AGENT_CLI_ADMIN_NO_REPLY.to_owned();
             return Err(Refused("no_reply", message));
@@ -756,7 +764,7 @@ impl AppState {
     fn visions_find_proposal(&self, channel_id: &str, proposal_id: &str) -> Result<Found, String> {
         let unknown = || format!("Unknown proposal {proposal_id:?}; propose it again");
         let (mut before, mut scanned) = (None, 0);
-        let (mut replied, mut applied) = (false, false);
+        let (mut replied, mut applied, mut superseded) = (false, false, false);
         loop {
             let page = self.channel_page(channel_id, before, PAGE_BYTES)?;
             for line in page.entries.into_iter().rev() {
@@ -776,7 +784,11 @@ impl AppState {
                             proposal,
                             replied,
                             applied,
+                            superseded,
                         });
+                    }
+                    ChannelEntry::Proposal { vision_id, .. } if is_admin(&vision_id) => {
+                        superseded = true;
                     }
                     _ => {}
                 }

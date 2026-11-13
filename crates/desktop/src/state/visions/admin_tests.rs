@@ -259,17 +259,23 @@ fn the_admin_runs_on_its_own_head() {
     assert!(other.starts_with("You are Wren, a Vision"));
 }
 
+/// An app with a project's `# hq` (and the admin), and that channel's id.
+fn with_hq() -> (tempfile::TempDir, AppState, String) {
+    let dir = tempfile::tempdir().unwrap();
+    let state = AppState::new_for_test(dir.path().join("settings.json"));
+    let root = dir.path().canonicalize().unwrap();
+    state.visions_ensure_hq(&root).unwrap();
+    let hq = state.channel_list(&root).remove(0).id;
+    (dir, state, hq)
+}
+
 /// Looking a proposal up reads `# hq` back from its end only so far ([`SCAN_BYTES`]),
 /// however long the log: the work stays flat as the log doubles, and an older proposal is
 /// unknown (proposed again).
 #[test]
 fn finding_a_proposal_reads_a_bounded_tail() {
     let samples = crate::scale::measure(&[150, 300], |size| {
-        let dir = tempfile::tempdir().unwrap();
-        let state = AppState::new_for_test(dir.path().join("settings.json"));
-        let root = dir.path().canonicalize().unwrap();
-        state.visions_ensure_hq(&root).unwrap();
-        let hq = state.channel_list(&root).remove(0).id;
+        let (_dir, state, hq) = with_hq();
         let proposal = proposal(serde_json::json!({"summary": "x", "visions": [{"name": "Rook"}]}));
         let entry = ChannelEntry::Proposal {
             vision_id: ADMIN_VISION_ID.into(),
@@ -292,6 +298,36 @@ fn finding_a_proposal_reads_a_bounded_tail() {
         rate.abs() < 0.1,
         "the look-up grew with the log: {samples:?}"
     );
+}
+
+/// Only the admin's newest proposal in `# hq` can be set up: the person turned A down, the
+/// admin posted B, and the person's "yes" is to B, so applying A is refused and B applies.
+#[test]
+fn only_the_newest_proposal_can_be_set_up() {
+    let (_dir, state, hq) = with_hq();
+    let propose = |name: &str| {
+        let spec = proposal(serde_json::json!({"summary": name, "visions": [{"name": name}]}));
+        state.visions_propose(&hq, spec, Vec::new()).unwrap().0
+    };
+    let person = |text: &str| {
+        let entry = ChannelEntry::Person { text: text.into() };
+        state.channel_append(&hq, entry).unwrap();
+    };
+    let first = propose("Rook");
+    person("no, not Rook");
+    let second = propose("Wren");
+    person("yes");
+    let refused = state
+        .visions_apply_proposal(&hq, &first, Vec::new())
+        .unwrap_err();
+    assert_eq!(refused, themis_core::prompts::AGENT_CLI_ADMIN_SUPERSEDED);
+    let names = || -> Vec<String> { state.visions_list().into_iter().map(|v| v.name).collect() };
+    assert!(!names().contains(&"Rook".to_owned()), "{:?}", names());
+    let items = state
+        .visions_apply_proposal(&hq, &second, Vec::new())
+        .unwrap();
+    assert_eq!(items.len(), 1);
+    assert_eq!(items[0].name, "Wren");
 }
 
 /// Listing makes the admin once and each project's `# hq` once, and gives an `# hq` saved with

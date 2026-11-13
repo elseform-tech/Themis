@@ -514,6 +514,11 @@ const ALL: &[(&str, &str, &[&str])] = &[
     ),
     (AGENT_CLI_ADMIN_NO_REPLY, "agent-cli-admin-no-reply", &[]),
     (
+        AGENT_CLI_ADMIN_SUPERSEDED,
+        "agent-cli-admin-superseded",
+        &[],
+    ),
+    (
         VISIONS_WAKE_TURN,
         "visions-wake-turn",
         &["reasons", "recent"],
