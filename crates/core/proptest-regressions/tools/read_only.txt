@@ -1,0 +1,8 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 2c438306358908fffa4908b7a1fb7cbab6f612ce3a3718f3ca1bda3c157a12be # shrinks to words = ["1,40p", "--"], option = "-i", at = Index(13835058055282163712)
+cc f00f53b110e0a9c679a248b1fed6eeff8aad061536e0192ed84b36213058e785 # shrinks to before = ["1,40p", "--"], script = "R", after = [], as_expression = true
