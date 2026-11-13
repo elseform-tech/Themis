@@ -60,7 +60,6 @@ export function Sidebar({ collapsed, railExtra, panel, rowMark }: { collapsed: b
     resizeStart.current = null; lastWidth.current = null; setResizing(false);
   }
   const newThread = useNewThread();
-  const selectProject = (root: string) => dispatch({ type: "project/selected", root });
   const [name, setName] = useState("");
   const [renaming, setRenaming] = useState<{ root: string; name: string } | null>(null);
   const [deleting, setDeleting] = useState<{ root: string; name: string } | null>(null);
@@ -112,21 +111,11 @@ export function Sidebar({ collapsed, railExtra, panel, rowMark }: { collapsed: b
   function threadRow(thread: ThreadInfo) {
     const active = thread.id === state.activeThreadId && state.mainView === "thread";
     const locked = state.running[thread.id] ?? thread.running;
-    const status = statusOf(thread);
+    const status = statusOf(thread), marked = rowMarkOf(rowMark, thread);
     const unseen = finished.has(thread.id) && !isLive(status);
-    const marked = rowMark?.(thread);
-    return <li key={thread.id} className="themis-sidebar-thread"><button type="button" className={`themis-sidebar-row themis-thread-row ${active ? "themis-sidebar-row--active" : ""} ${unseen ? "is-unseen" : ""}`} title={thread.title} aria-label={`${thread.title}${marked?.said ?? ""}`} aria-current={active ? "true" : undefined} onClick={() => activeRoot && dispatch({ type: "thread/selected", projectRoot: activeRoot, threadId: thread.id })}><ThreadStatus status={status} />{marked?.mark}<MovingText>{thread.title}</MovingText>{TAG[status] && <span className="themis-thread-tag">{TAG[status]}</span>}</button><details className="themis-thread-row-actions"><summary aria-label={`Options for ${thread.title}`} title="Thread options"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="12" cy="5" r="1.7" /><circle cx="12" cy="12" r="1.7" /><circle cx="12" cy="19" r="1.7" /></svg></summary><div className="themis-row-menu"><button type="button" aria-label={`Edit ${thread.title}`} disabled={locked} onClick={event => { event.currentTarget.closest("details")?.removeAttribute("open"); setEditError(""); setEditing({ ...thread, projectRoot: activeRoot! }); }}>Rename</button><button type="button" className="is-danger" aria-label={`Remove ${thread.title}`} disabled={locked} onClick={event => { event.currentTarget.closest("details")?.removeAttribute("open"); setRemoving({ ...thread, projectRoot: activeRoot! }); }}>Remove</button></div></details></li>;
+    return <li key={thread.id} className="themis-sidebar-thread"><button type="button" className={`themis-sidebar-row themis-thread-row ${active ? "themis-sidebar-row--active" : ""} ${unseen ? "is-unseen" : ""}`} title={thread.title} aria-label={`${thread.title}${marked.said}`} aria-current={active ? "true" : undefined} onClick={() => activeRoot && dispatch({ type: "thread/selected", projectRoot: activeRoot, threadId: thread.id })}><ThreadStatus status={status} />{marked.mark}<MovingText>{thread.title}</MovingText>{TAG[status] && <span className="themis-thread-tag">{TAG[status]}</span>}</button><details className="themis-thread-row-actions"><summary aria-label={`Options for ${thread.title}`} title="Thread options"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="12" cy="5" r="1.7" /><circle cx="12" cy="12" r="1.7" /><circle cx="12" cy="19" r="1.7" /></svg></summary><div className="themis-row-menu"><button type="button" aria-label={`Edit ${thread.title}`} disabled={locked} onClick={event => { event.currentTarget.closest("details")?.removeAttribute("open"); setEditError(""); setEditing({ ...thread, projectRoot: activeRoot! }); }}>Rename</button><button type="button" className="is-danger" aria-label={`Remove ${thread.title}`} disabled={locked} onClick={event => { event.currentTarget.closest("details")?.removeAttribute("open"); setRemoving({ ...thread, projectRoot: activeRoot! }); }}>Remove</button></div></details></li>;
   }
-  return <>
-    <div ref={slot} className={`themis-sidebar-slot ${collapsed ? "is-collapsed" : ""} ${resizing ? "is-resizing" : ""}`} style={{ "--themis-sidebar-width": `${width}px` } as import("react").CSSProperties}>
-      {settingsOpen ? <SettingsNav id="themis-sidebar" /> : <>
-      <Rail onHelp={() => setHelp(true)} extra={railExtra} />
-      <aside id="themis-sidebar" className={`themis-sidebar ${collapsed ? "" : "is-visible"}`} inert={collapsed} aria-hidden={collapsed} aria-label={panel?.label ?? "Workspace navigation"}>
-        <div className="themis-sidebar-top">
-          <ProjectSwitcher onSelect={root => { setShowAll(false); (panel?.onProject ?? selectProject)(root); }} onRename={project => { setError(""); setRenaming(project); }} onDelete={project => { setError(""); setDeleting(project); }} />
-          {panel ? null : <NewChatButton disabled={!state.activeProjectRoot} onClick={() => void newThread()} />}
-        </div>
-        {panel?.content ?? <div className="themis-sidebar-projects">
+  const view = panelView(panel, dispatch, <NewChatButton disabled={!state.activeProjectRoot} onClick={() => void newThread()} />, <div className="themis-sidebar-projects">
           {activeProject && <>
             {waiting.length > 0 && <section className="themis-thread-group" aria-label="Waiting for you">
               <h2 className="themis-sidebar-section">Waiting for you<span aria-hidden="true">{waiting.length}</span></h2>
@@ -142,7 +131,16 @@ export function Sidebar({ collapsed, railExtra, panel, rowMark }: { collapsed: b
             </section>}
             {rest.length > shown.length && <button type="button" className="themis-show-more" onClick={() => setShowAll(true)}>Show {rest.length - shown.length} more</button>}
           </>}
-        </div>}
+        </div>);
+  return <>
+    <div ref={slot} className={`themis-sidebar-slot ${collapsed ? "is-collapsed" : ""} ${resizing ? "is-resizing" : ""}`} style={{ "--themis-sidebar-width": `${width}px` } as import("react").CSSProperties}>
+      {settingsOpen ? <SettingsNav id="themis-sidebar" /> : <>
+      <Rail onHelp={() => setHelp(true)} extra={railExtra} />
+      <aside id="themis-sidebar" className={`themis-sidebar ${collapsed ? "" : "is-visible"}`} inert={collapsed} aria-hidden={collapsed} aria-label={view.label}>
+        <div className="themis-sidebar-top">
+          <ProjectSwitcher onSelect={root => { setShowAll(false); view.onProject(root); }} onRename={project => { setError(""); setRenaming(project); }} onDelete={project => { setError(""); setDeleting(project); }} />
+          {view.newChat}
+        </div>{view.content}
       </aside>
       </>}
       {!collapsed && <div className="themis-sidebar-resize" role="separator" aria-label="Resize sidebar" aria-controls="themis-sidebar" aria-orientation="vertical" aria-valuemin={SIDEBAR_MIN} aria-valuemax={SIDEBAR_MAX} aria-valuenow={width} tabIndex={0}
@@ -198,6 +196,17 @@ export function Sidebar({ collapsed, railExtra, panel, rowMark }: { collapsed: b
     </Dialog>
     <Dialog open={help} title="Shortcuts" onClose={() => setHelp(false)}><div className="themis-help"><dl>{SHORTCUTS.map(([label, keys]) => <div key={label}><dt>{label}</dt><dd>{keys.map(key => <kbd key={key}>{key}</kbd>)}</dd></div>)}</dl></div></Dialog>
   </>;
+}
+
+/** What the sidebar shows with another mode's panel in place of the chat list, or the chat list's own parts. */
+function panelView(panel: SidebarPanel | undefined, dispatch: ReturnType<typeof useApp>["dispatch"], newChat: ReactNode, chatList: ReactNode) {
+  if (!panel) return { label: "Workspace navigation", onProject: (root: string) => dispatch({ type: "project/selected", root }), newChat, content: chatList };
+  return { label: panel.label, onProject: panel.onProject, newChat: null, content: panel.content };
+}
+
+/** A row's mark, or none when the row has no mark or no marker is given. */
+function rowMarkOf(rowMark: ((thread: ThreadInfo) => RowMark | null) | undefined, thread: ThreadInfo): RowMark {
+  return rowMark?.(thread) ?? { mark: null, said: "" };
 }
 
 /** The project menu at the top of the sidebar, shared by the chat list and Visions' channels. */

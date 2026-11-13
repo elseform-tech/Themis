@@ -737,9 +737,9 @@
    "cyclomatic": 34
   },
   "web/src/screens/ModelsSettings.tsx::ModelsSettings": {
-   "cognitive": 49,
-   "cyclomatic": 73,
-   "lines": 117
+   "cognitive": 47,
+   "cyclomatic": 68,
+   "lines": 112
   },
   "web/src/screens/Palette.tsx::Palette": {
    "cognitive": 35,
@@ -771,7 +771,7 @@
    "cyclomatic": 22
   },
   "web/src/screens/Settings.tsx::SettingsScreen": {
-   "cyclomatic": 40
+   "cyclomatic": 36
   },
   "web/src/screens/Sidebar.tsx::Sidebar": {
    "cognitive": 75,
@@ -888,9 +888,9 @@
    "cyclomatic": 37
   },
   "web/src/state/store.tsx::AppProvider": {
-   "cognitive": 184,
-   "cyclomatic": 128,
-   "lines": 244
+   "cognitive": 181,
+   "cyclomatic": 124,
+   "lines": 242
   },
   "web/src/state/store.tsx::AppProvider::recover": {
    "cognitive": 61,
