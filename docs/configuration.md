@@ -462,7 +462,9 @@ always blocked with the question box, and only the person's **Allow once** for t
 lets them run. On a project that isn't a Git
 repository Auto stays read-only, as Custom does, without asking the model. Saving a new MCP
 connection command from a run is never switched on, in any mode (switch it on in Integrations).
-Subagents are reviewed the same way. Prompts: `auto-review-system.md`, `auto-review-user.md`.
+Subagents are reviewed the same way. The reviewer reads the person's latest messages and the
+messages they steered into a run (never a Vision's, a goal turn's or an answer's framing).
+Prompts: `auto-review-system.md`, `auto-review-user.md`.
 `logs/` gets `approval` / `auto_reviewed` (tool, risk, verdict, time) and `approval` /
 `auto_review` lines, never the command or the person's words. `auto_try_review` is a read-only
 dry run of one review for evals (`evals/auto_review`).
@@ -927,8 +929,10 @@ questions or lets hooks wake the chat again. Sent or sent from the queue, it is 
 `vision_id` (the `user` item of `get_thread_history`), and is not the person's words: no
 memory pass reads it, the Auto reviewer leaves it out of what the person asked, and it joins a
 running goal as no "Also asked" line nor counts as the person asking to pause one (a reply
-from it still resumes a goal waiting on an answer); its steer answers no question, joins no goal
-and denies no approval (the approvals the run waits on, or asks for while the steer is unread,
+from it still resumes a goal waiting on an answer); its steer carries its `vision_id` too (on the
+`steer_shown` and `steered` events), so it is no person's words for the memory pass, the Auto
+reviewer or the goal either, and it answers no question, joins no goal and denies no approval
+(the approvals the run waits on, or asks for while the steer is unread,
 stay the person's to answer); a steer the run never read goes back to the queue still the
 Vision's. A Vision's answer to a question is its own the same way: delivered (to the run, or
 queued) as the Vision's, so it never counts as the person's message, and it never lets an

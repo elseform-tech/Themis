@@ -25,7 +25,7 @@ pub(super) fn context_turn(item: &HistoryItem) -> Option<ConversationTurn> {
         HistoryItem::Event {
             envelope:
                 ThreadEventEnvelope {
-                    event: ThreadEvent::Steered { text },
+                    event: ThreadEvent::Steered { text, .. },
                     ..
                 },
         } => Some(ConversationTurn {

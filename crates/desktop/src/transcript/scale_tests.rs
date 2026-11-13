@@ -30,7 +30,10 @@ fn chat(size: usize) -> (tempfile::TempDir, TranscriptStore) {
                 .append_event(&ThreadEventEnvelope {
                     thread_id: THREAD.into(),
                     run_id: "run".into(),
-                    event: ThreadEvent::Steered { text },
+                    event: ThreadEvent::Steered {
+                        text,
+                        vision_id: None,
+                    },
                 })
                 .unwrap();
         }

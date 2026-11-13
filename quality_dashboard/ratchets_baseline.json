@@ -46,7 +46,7 @@
  "duplicate_lines_total": 771,
  "files": {
   "crates/core/src/runtime.rs": {
-   "code_lines": 1908
+   "code_lines": 1905
   }
  },
  "functions": {
@@ -623,9 +623,9 @@
    "lines": 104
   },
   "crates/desktop/src/state/threads.rs::AppState::send_message_with_options": {
-   "cognitive": 43,
-   "cyclomatic": 95,
-   "lines": 376
+   "cognitive": 40,
+   "cyclomatic": 91,
+   "lines": 361
   },
   "crates/desktop/src/transcript.rs::TranscriptStore::append": {
    "cyclomatic": 21

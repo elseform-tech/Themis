@@ -334,7 +334,10 @@ impl AppState {
                 sink.as_ref(),
                 &thread_id,
                 &entry.run_id,
-                ThreadEvent::SteerShown { text: text.clone() },
+                ThreadEvent::SteerShown {
+                    text: text.clone(),
+                    vision_id: vision_id.clone(),
+                },
             );
             entry.push(text.clone(), vision_id.clone());
             Ok((text, queued_by_vision))
@@ -384,23 +387,20 @@ impl AppState {
     /// Answers to questions share the inbox but are not steers: they leave
     /// approvals alone.
     pub(super) fn steer_waiting_check(&self, thread_id: &str) -> SteerWaiting {
-        let (inbox, authors) = self
+        let inbox: SteerInbox = self
             .inner
             .steer_inboxes
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .get(thread_id)
-            .map(|entry| (Arc::clone(&entry.inbox), Arc::clone(&entry.authors)))
+            .map(|entry| Arc::clone(&entry.inbox))
             .unwrap_or_default();
         // A Vision's steer never denies the person's approvals.
         Arc::new(move || {
             let inbox = inbox.lock().unwrap_or_else(|e| e.into_inner());
-            let authors = authors.lock().unwrap_or_else(|e| e.into_inner());
-            let unread = unread_authors(&authors, inbox.len());
             inbox
                 .iter()
-                .zip(unread.iter())
-                .any(|(text, author)| author.is_none() && !super::questions::is_answer(text))
+                .any(|steer| steer.author.is_none() && !super::questions::is_answer(&steer.text))
         })
     }
 
@@ -458,7 +458,6 @@ impl AppState {
                 thread_id.to_owned(),
                 SteerEntry {
                     inbox: Arc::clone(&inbox),
-                    authors: Arc::default(),
                     sink,
                     run_id: run_id.to_owned(),
                 },
@@ -482,7 +481,6 @@ impl AppState {
             .unwrap_or_else(|e| e.into_inner());
         let Some(SteerEntry {
             inbox,
-            authors,
             sink,
             run_id,
         }) = self
@@ -494,18 +492,21 @@ impl AppState {
         else {
             return;
         };
-        let (unread, by): (Vec<String>, Vec<Option<String>>) = {
-            let mut inbox = inbox.lock().unwrap_or_else(|e| e.into_inner());
-            let authors = authors.lock().unwrap_or_else(|e| e.into_inner());
-            let by = unread_authors(&authors, inbox.len()).to_vec();
-            (inbox.drain(..).collect(), by)
-        };
+        let unread: Vec<themis_core::runtime::Steer> = inbox
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .drain(..)
+            .collect();
         if unread.is_empty() {
             return;
         }
         let mut queue = self.queue_for(thread_id);
         let unread_count = unread.len();
-        for (text, vision_id) in unread.into_iter().zip(by).rev() {
+        for themis_core::runtime::Steer {
+            text,
+            author: vision_id,
+        } in unread.into_iter().rev()
+        {
             // Answers were never shown as steers; a steer leaves the chat for now.
             if !super::questions::is_answer(&text) {
                 self.record_steer_event(
@@ -794,21 +795,6 @@ impl AppState {
     }
 }
 
-/// The authors of the last `unread` texts of an inbox (see `SteerEntry::authors`); `None` for
-/// any the record does not cover.
-fn unread_authors(
-    authors: &[Option<String>],
-    unread: usize,
-) -> std::borrow::Cow<'_, [Option<String>]> {
-    if authors.len() >= unread {
-        std::borrow::Cow::Borrowed(&authors[authors.len() - unread..])
-    } else {
-        let mut padded = vec![None; unread - authors.len()];
-        padded.extend_from_slice(authors);
-        std::borrow::Cow::Owned(padded)
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -863,12 +849,12 @@ mod tests {
         let inbox = state.open_steer_inbox("chat", "run", Arc::new(ChannelSink::channel().0));
         let waiting = state.steer_waiting_check("chat");
         assert!(!waiting());
-        inbox.lock().unwrap().push_back(format!(
-            "{}\nAnswer",
-            super::super::questions::ANSWER_MARKER
-        ));
+        inbox
+            .lock()
+            .unwrap()
+            .push_back(format!("{}\nAnswer", super::super::questions::ANSWER_MARKER).into());
         assert!(!waiting());
-        inbox.lock().unwrap().push_back("Use tabs".to_owned());
+        inbox.lock().unwrap().push_back("Use tabs".into());
         assert!(waiting());
         inbox.lock().unwrap().clear();
         assert!(!waiting());
@@ -904,14 +890,5 @@ mod tests {
             .map(|message| (message.text.as_str(), message.vision_id.as_deref()))
             .collect();
         assert_eq!(by, vec![("vision two", Some("v1")), ("person two", None)]);
-    }
-
-    #[test]
-    fn unread_authors_are_the_last_ones_padded_with_the_persons() {
-        let authors = vec![Some("v".to_owned()), None, Some("w".to_owned())];
-        assert_eq!(unread_authors(&authors, 2).to_vec(), authors[1..].to_vec());
-        assert_eq!(unread_authors(&authors, 0).len(), 0);
-        let padded = unread_authors(&authors[2..], 2).to_vec();
-        assert_eq!(padded, vec![None, Some("w".to_owned())]);
     }
 }

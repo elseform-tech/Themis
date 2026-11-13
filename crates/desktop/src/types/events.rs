@@ -99,15 +99,20 @@ pub enum ThreadEvent {
     /// A background task of this chat started, finished or was stopped.
     /// Sent outside any run (`run_id` is empty); clients refresh the task feed.
     BackgroundTasksChanged,
-    /// A message the user steered into this run reached the model.
+    /// A message steered into this run reached the model; `vision_id` when a Vision wrote it
+    /// (not the person's words).
     Steered {
         text: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        vision_id: Option<String>,
     },
     /// The user steered this message in: it shows in the chat now, ahead of
     /// [`Self::Steered`] or [`Self::SteerReturned`]. Display only: the model's
     /// history follows `Steered`.
     SteerShown {
         text: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        vision_id: Option<String>,
     },
     /// The run ended without reading a steered message: it is back in the queue,
     /// to go out as the next message, so it leaves the chat until then.
@@ -120,6 +125,9 @@ pub enum ThreadEvent {
         text: String,
         #[serde(default)]
         attachments: Vec<String>,
+        /// The Vision that sent it; absent for the person's own message.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        vision_id: Option<String>,
     },
     /// The chat's queue changed. Live only; `run_id` is empty.
     QueueChanged {
@@ -238,7 +246,10 @@ impl From<RunEvent> for ThreadEvent {
                 model: None,
             },
             RunEvent::Failed { error } => Self::Failed { error },
-            RunEvent::Steered { text } => Self::Steered { text },
+            RunEvent::Steered(steer) => Self::Steered {
+                text: steer.text,
+                vision_id: steer.author,
+            },
         }
     }
 }

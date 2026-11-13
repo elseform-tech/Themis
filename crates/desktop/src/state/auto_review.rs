@@ -125,8 +125,8 @@ pub(super) fn review_request(
 }
 
 impl DesktopReviewer {
-    /// The person's own latest messages in this chat (a Vision's messages, runtime goal notes
-    /// and answers' framing left out), the latest kept within bounds.
+    /// The person's own latest messages and steers in this chat (a Vision's, runtime goal
+    /// notes and answers' framing left out), the latest kept within bounds.
     fn person_words(&self) -> String {
         let transcript = &self.state.inner.transcript;
         let last = transcript.last_activity_seq(&self.thread_id).unwrap_or(0);
@@ -141,6 +141,14 @@ impl DesktopReviewer {
                     vision_id: None,
                     ..
                 } if persons_own(&text) => Some(text),
+                // What the person steered into a run is their words too.
+                crate::transcript::HistoryItem::Event { envelope } => match envelope.event {
+                    crate::types::ThreadEvent::Steered {
+                        text,
+                        vision_id: None,
+                    } if persons_own(&text) => Some(text),
+                    _ => None,
+                },
                 _ => None,
             })
             .collect();
@@ -518,5 +526,38 @@ mod tests {
         let words = reviewer.person_words();
         assert!(words.contains("please tidy the docs folder"), "{words}");
         assert!(!words.contains(vision), "{words}");
+    }
+
+    /// What the person steered into the run is their words too; what a Vision steered in is
+    /// not.
+    #[test]
+    fn the_persons_steer_is_their_words_and_a_visions_is_not() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = AppState::new_for_test(dir.path().join("settings.json"));
+        let steered = |text: &str, vision_id: Option<&str>| {
+            let envelope = crate::types::ThreadEventEnvelope {
+                thread_id: "work".into(),
+                run_id: "r1".into(),
+                event: crate::types::ThreadEvent::Steered {
+                    text: text.into(),
+                    vision_id: vision_id.map(str::to_owned),
+                },
+            };
+            state.inner.transcript.append_event(&envelope).unwrap();
+        };
+        steered("also clear the old logs", None);
+        steered("and wipe the releases folder", Some("v1"));
+        let reviewer = DesktopReviewer {
+            state: state.clone(),
+            sink: Arc::new(crate::sink::ChannelSink::channel().0),
+            thread_id: "work".into(),
+            run_id: "r1".into(),
+            project_root: dir.path().to_path_buf(),
+            config: RuntimeConfig::default(),
+            is_git: false,
+        };
+        let words = reviewer.person_words();
+        assert!(words.contains("also clear the old logs"), "{words}");
+        assert!(!words.contains("wipe the releases"), "{words}");
     }
 }

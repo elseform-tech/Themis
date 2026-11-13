@@ -290,7 +290,7 @@ async fn queued_messages_wait_steers_reach_the_run_and_the_queue_drains() {
     let steered: Vec<_> = seen
         .iter()
         .filter_map(|event| match event {
-            ThreadEvent::Steered { text } => Some(text.as_str()),
+            ThreadEvent::Steered { text, .. } => Some(text.as_str()),
             _ => None,
         })
         .collect();

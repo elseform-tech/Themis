@@ -27,6 +27,12 @@ use setup::{mcp_failure_reason, mcp_remote_name};
 const EVENT_CHANNEL_CAPACITY: usize = 1024;
 
 impl AppState {
+    /// Whether a steer read in `thread_id`'s run goes to the turn's memory pass as the
+    /// person's words: theirs (a Vision's is not), and not already taken by a goal event.
+    fn steer_for_memory(&self, thread_id: &str, steer: &themis_core::runtime::Steer) -> bool {
+        steer.author.is_none() && !self.goal_takes_words(thread_id, &steer.text)
+    }
+
     /// Resolves the provider, builds tools, and spawns the run task.
     pub(super) async fn spawn_run(
         &self,
@@ -706,9 +712,9 @@ impl AppState {
                     if matches!(event, RunEvent::AssistantText(_)) {
                         continue;
                     }
-                    if let RunEvent::Steered { text } = &event {
-                        if !pump_state.goal_takes_words(&pump_thread, text) {
-                            memory_turn.person.push(text.clone());
+                    if let RunEvent::Steered(steer) = &event {
+                        if pump_state.steer_for_memory(&pump_thread, steer) {
+                            memory_turn.person.push(steer.text.clone());
                         }
                     }
                     // The memory pass, once the turn is over (finished, incomplete or failed:

@@ -125,11 +125,8 @@ pub enum RunEvent {
         /// Human-readable failure reason.
         error: String,
     },
-    /// A message the user steered into this run was handed to the model.
-    Steered {
-        /// The user's text, as written.
-        text: String,
-    },
+    /// A message steered into this run was handed to the model, with who wrote it.
+    Steered(Steer),
 }
 
 /// Byte-estimated context accounting for the composer meter. Counts are
@@ -635,17 +632,17 @@ async fn run_task_with_evidence_inner(
         check_stopped(&stopped, &events).await?;
         // Steered messages join the conversation at this boundary, after any
         // running tool finished and before the next model request.
-        for text in take_steers() {
+        for steer in take_steers() {
             messages.push(ChatMessage {
                 role: ChatRole::User,
                 message_type: MessageType::Text,
-                content: steered_message(&text),
+                content: steered_message(&steer.text),
             });
-            if crate::secret_look::looks_like_secret(&text) {
+            if crate::secret_look::looks_like_secret(&steer.text) {
                 messages.push(pasted_secret_note());
             }
-            steered.push(text.clone());
-            events.send(RunEvent::Steered { text }).await.ok();
+            steered.push(steer.text.clone());
+            events.send(RunEvent::Steered(steer)).await.ok();
         }
         // What a finished background hook reported joins here too, labelled as the plugin's.
         for note in crate::plugins::hooks::rewake_notes_for_run() {
@@ -1900,7 +1897,7 @@ use scope::*;
 pub use scope::{
     steered_message, with_checkpoint_note, with_configuration, with_end_request,
     with_first_request, with_memory_block, with_run_notes, with_short_reply_turn, with_steer_inbox,
-    with_system_head, CheckpointNote, EndRequest, RunNotes, SteerInbox, MEMORY_NOTE_MARKER,
+    with_system_head, CheckpointNote, EndRequest, RunNotes, Steer, SteerInbox, MEMORY_NOTE_MARKER,
 };
 use tool_calls::*;
 

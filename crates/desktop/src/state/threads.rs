@@ -588,15 +588,7 @@ impl AppState {
             self.finish_run(&thread_id).await;
             return Err(error);
         }
-        if let Some(state) = self
-            .inner
-            .server_sends
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .get_mut(&run_id)
-        {
-            *state = super::queue::ServerSend::Saved;
-        }
+        self.server_send_reached(&run_id, super::queue::ServerSend::Saved);
         // Every open window shows the message now, saved and before any of
         // its run's events: one the server sends itself (queue, goal turn) or
         // another client's (the CLI, a second window). The window that sent it
@@ -607,6 +599,7 @@ impl AppState {
             event: ThreadEvent::UserMessage {
                 text: text.clone(),
                 attachments: shown_attachments,
+                vision_id: None,
             },
         });
         let resolved_text = format!("{resolved_text}{goal_context}");
@@ -652,15 +645,7 @@ impl AppState {
             // A run that failed to start ended like any run: the queue moves on
             // and a goal continues (or retries). Callers see the marker and
             // leave that to this step.
-            if let Some(state) = self
-                .inner
-                .server_sends
-                .lock()
-                .unwrap_or_else(|e| e.into_inner())
-                .get_mut(&run_id)
-            {
-                *state = super::queue::ServerSend::SpawnFailed;
-            }
+            self.server_send_reached(&run_id, super::queue::ServerSend::SpawnFailed);
             self.spawn_after_run(sink, thread_id, run_id, failed.event);
             return Err(error);
         }
@@ -682,6 +667,19 @@ impl AppState {
             .unwrap_or_else(|e| e.into_inner())
             .contains_key(run_id);
         (automation, server)
+    }
+
+    /// Records how far the server's own send `run_id` got (nothing for any other send).
+    fn server_send_reached(&self, run_id: &str, reached: super::queue::ServerSend) {
+        if let Some(state) = self
+            .inner
+            .server_sends
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get_mut(run_id)
+        {
+            *state = reached;
+        }
     }
 
     /// Renames a thread without changing its files or worktree.

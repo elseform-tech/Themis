@@ -624,7 +624,7 @@ impl AppState {
                     .inbox
                     .lock()
                     .unwrap_or_else(|e| e.into_inner())
-                    .push_back(format!("{header}\n{}", bodies.join("\n\n")));
+                    .push_back(format!("{header}\n{}", bodies.join("\n\n")).into());
             }
         }
         if main.is_empty() {

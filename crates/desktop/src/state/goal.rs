@@ -746,8 +746,8 @@ impl AppState {
 }
 
 /// Whether a chat history item is the person speaking: a message or a steer, but not a goal
-/// turn, a goal command, a Vision's message or a Vision's answer (queued, it is a message;
-/// given while a run was going, it is a steer, whose event keeps only the text).
+/// turn, a goal command, a Vision's message or steer, or a Vision's answer (queued, it is a
+/// message; given while a run was going, it is a steer).
 fn person_spoke(item: &crate::transcript::HistoryItem) -> bool {
     match item {
         crate::transcript::HistoryItem::User {
@@ -759,7 +759,9 @@ fn person_spoke(item: &crate::transcript::HistoryItem) -> bool {
                 && !super::questions::is_vision_answer(text)
         }
         crate::transcript::HistoryItem::Event { envelope } => match &envelope.event {
-            ThreadEvent::Steered { text } => !super::questions::is_vision_answer(text),
+            ThreadEvent::Steered { text, vision_id } => {
+                vision_id.is_none() && !super::questions::is_vision_answer(text)
+            }
             _ => false,
         },
         crate::transcript::HistoryItem::Legacy { .. } => false,
@@ -795,6 +797,7 @@ mod tests {
                 run_id: "r".into(),
                 event: ThreadEvent::Steered {
                     text: text.to_owned(),
+                    vision_id: None,
                 },
             },
         };
@@ -809,6 +812,18 @@ mod tests {
         ] {
             assert!(person_spoke(&item));
         }
+        // A message a Vision steered in (it queued it) is its words, however plain.
+        let by_vision = HistoryItem::Event {
+            envelope: ThreadEventEnvelope {
+                thread_id: "t".into(),
+                run_id: "r".into(),
+                event: ThreadEvent::Steered {
+                    text: "stop".into(),
+                    vision_id: Some("v1".into()),
+                },
+            },
+        };
+        assert!(!person_spoke(&by_vision));
     }
 
     #[test]
