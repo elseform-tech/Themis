@@ -701,23 +701,25 @@ browsing, downloads and debugging, with per-site exceptions), Developer mode, th
 folder, and the browser's history and data; see [web tools](web-tools.md#permissions-settings--browser).
 It saves to the `browser` block of your `runtime.jsonc`.
 **Visions** sets how much Visions decide on their own when a chat they drive asks something:
-a slider from **Ask me first** through **Small calls** (the default), **Most calls** and
-**Nearly all** to **Custom**. The presets list what they hand to a Vision, read-only; Custom
-makes each kind of decision yours or the Vision's. "Anything that leaves this computer" and
-"Spending past the budget" are always yours, Custom included, and approvals stay yours at every
-level. Below are the **Daily budget, all Visions** (dollars a day for every Vision together)
-and **Pause all Visions**, which pauses every Vision at once (Atlas too). It saves to the
-`visions` block of your `runtime.jsonc`, one field at a time; a change made to the file since
-the page loaded is refused and the page shows the file again.
+a slider from **Always ask** through **Routine decisions** (the default), **Most decisions** and
+**Nearly all decisions** to **Custom**. Each kind of decision shows **Decides** or **Asks you**,
+read-only for the presets; Custom makes each one editable and starts from the level you moved
+from, so nothing changes until you edit a row. "Anything that leaves this computer" and
+"Spending past the budget" show a lock and **Always asks you**, Custom included, and approvals
+stay yours at every level. A drag saves once, where you let go. Below are the **Daily budget,
+all Visions** ($0.10 to $100 a day for every Vision together) and **Pause all Visions**, which
+pauses every Vision but Atlas, so you can still ask Atlas in `# hq`; it shows on when all of
+them are paused. It saves to the `visions` block of your `runtime.jsonc`, one field at a time;
+a change made to the file since the page loaded is refused and the page shows the file again.
 **A Vision's profile** opens when you click it in the Visions bar (Atlas: from `# hq`'s
-details): Pause or Resume, Delete (its work chats become ordinary chats), its **Model** (Same
-as chat unless you pick one), **Autonomy** (Same as Settings, or a lower level only), its own
-**Daily budget**, its **Soul** (how it works and talks, in your words; the pencil edits it) and
-the channels it works in. Atlas has no Delete, autonomy, soul or channel list. Click a
-channel's name in its header for its **details**: the topic, the **Approval mode** its Visions'
-chats run in (yours to set; a Vision never changes it), its members (Visions only) and Delete
-(its Visions' chats stop and become ordinary chats). `# hq` cannot be deleted and Atlas is its
-only member.
+details): Pause or Resume, Delete (its work chats become ordinary chats), its **Model**
+(**Default model**, the one Settings › Models sets, unless you pick one), **Autonomy** (Same as
+Settings, or a lower level only), its own **Daily budget** ($0 to $100; empty means none), its
+**Soul** (the pencil edits it) and the channels it works in. Atlas has no Delete, autonomy, soul
+or channel list. Click a channel's name in its header for its **details**: the topic, the
+**Approval mode** its Visions' chats run in (yours to set; a Vision never changes it), its
+members (Visions only) and Delete (its Visions' chats stop and become ordinary chats). `# hq`
+cannot be deleted, has no approval mode to set, and Atlas is its only member.
 **General › Notifications** holds **Sound when a reply finishes**, **Haptics** (macOS) and
 **Notify when a goal finishes or pauses** (macOS; see [Goals](#goals)).
 Ordinary preferences save on change; text inputs save when focus leaves the field.

@@ -15,6 +15,9 @@ import { DeleteButton, EditIcon, PanelBlock, PanelButton, PauseIcon, PlayIcon, S
 
 type Save = (change: Partial<Profile>) => Promise<void>;
 
+/** The most a Vision's own daily budget may be, as for all Visions together. */
+const MAX_BUDGET = 100;
+
 /** The levels a profile may choose: those below Settings' own (any preset under Custom, whose
  *  rows still bound it). */
 function lowerLevels(settings: Autonomy): Autonomy[] {
@@ -41,7 +44,7 @@ function ModelRow({ vision, save }: { vision: VisionInfo; save: Save }) {
   const known = model === "" || models.some(entry => entry.id === model);
   return <label className="themis-visions-kv">Model
     <select aria-label="Model" value={model} onChange={event => void save({ model: event.target.value || undefined })}>
-      <option value="">Same as chat</option>
+      <option value="">Default model</option>
       {!known && <option value={model}>{model} (unavailable)</option>}
       <ModelOptions models={models} providerName={providerName} />
     </select>
@@ -60,19 +63,23 @@ function AutonomyRow({ vision, settings, save }: { vision: VisionInfo; settings:
   </label>;
 }
 
-/** The Vision's own daily cap in dollars; empty is none (the cap for all Visions still holds). */
-function BudgetRow({ vision, save }: { vision: VisionInfo; save: Save }) {
+/** The Vision's own daily cap in dollars, $0 to $100 (0 stops it); empty is none (the cap for
+ *  all Visions still holds). */
+function BudgetRow({ vision, save, onError }: { vision: VisionInfo; save: Save; onError: (message: string) => void }) {
   const [budget, setBudget] = useState<string | null>(null);
   const saveBudget = () => {
     if (budget === null) return;
     setBudget(null);
     const dollars = budget.trim() === "" ? undefined : Number(budget);
-    if (dollars !== undefined && (!Number.isFinite(dollars) || dollars < 0)) return;
+    if (dollars !== undefined && (!Number.isFinite(dollars) || dollars < 0 || dollars > MAX_BUDGET)) {
+      onError("Enter an amount from $0 to $100");
+      return;
+    }
     if (dollars !== vision.daily_budget_usd) void save({ daily_budget_usd: dollars });
   };
   return <label className="themis-visions-kv">Daily budget
     <span className="themis-visions-dollars">$
-      <input type="number" min={0} step={0.5} aria-label="Daily budget" placeholder="Not set" value={budget ?? (vision.daily_budget_usd ?? "").toString()}
+      <input type="number" min={0} max={MAX_BUDGET} step={0.5} aria-label="Daily budget" placeholder="Not set" value={budget ?? (vision.daily_budget_usd ?? "").toString()}
         onChange={event => setBudget(event.target.value)} onBlur={saveBudget} onKeyDown={event => { if (event.key === "Enter") event.currentTarget.blur(); }} />
     </span>
   </label>;
@@ -84,7 +91,7 @@ function SoulBlock({ soul, save }: { soul: string; save: Save }) {
   const edit = <PanelButton label="Edit soul" onClick={() => setDraft(soul)}><EditIcon /></PanelButton>;
   return <PanelBlock title="Soul" action={draft === null ? edit : undefined}>
     {draft === null
-      ? <p className={soul ? "themis-visions-soul" : "themis-visions-soul is-empty"}>{soul || "How it works and talks, in your words."}</p>
+      ? soul && <p className="themis-visions-soul">{soul}</p>
       : <form className="themis-visions-soul-form" onSubmit={event => { event.preventDefault(); void save({ soul: draft }).then(() => setDraft(null), () => undefined); }}>
         <textarea aria-label="Soul" rows={6} maxLength={4096} value={draft} autoFocus onChange={event => setDraft(event.target.value)} />
         <span className="themis-visions-soul-actions">
@@ -99,9 +106,9 @@ function SoulBlock({ soul, save }: { soul: string; save: Save }) {
 function ChannelsBlock({ visionId }: { visionId: string }) {
   const { state, dispatch } = useApp();
   const channels = (state.visions.channels[state.activeProjectRoot ?? ""] ?? []).filter(channel => channel.members.includes(visionId));
+  if (channels.length === 0) return null;
   return <PanelBlock title="Channels">
     <div className="themis-visions-pills" role="group" aria-label="Channels">
-      {channels.length === 0 && <span className="themis-visions-soul is-empty">In no channel of this project.</span>}
       {channels.map(channel => <button key={channel.id} type="button" className="themis-mention" onClick={() => dispatch({ type: "visions/open", channelId: channel.id })}># {channel.name}</button>)}
     </div>
   </PanelBlock>;
@@ -165,7 +172,7 @@ export function VisionProfile({ visionId }: { visionId: string }) {
       <PanelBlock>
         <ModelRow vision={vision} save={guarded} />
         {!admin && settings && <AutonomyRow vision={vision} settings={settings} save={guarded} />}
-        <BudgetRow vision={vision} save={guarded} />
+        <BudgetRow vision={vision} save={guarded} onError={setError} />
       </PanelBlock>
       {!admin && <><SoulBlock soul={vision.soul} save={save} /><ChannelsBlock visionId={vision.id} /></>}
     </SidePanel>

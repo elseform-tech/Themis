@@ -35,7 +35,7 @@ describe("ProposalCard", () => {
     const items = within(card).getAllByRole("listitem").map(item => item.textContent);
     expect(items).toEqual([
       "New channel # releasesShip releases · with Rook",
-      "New Vision RookShips releases · runs on glm-5 · Ask me first · $0.25 a day",
+      "New Vision RookShips releases · runs on glm-5 · Always ask · $0.25 a day",
       "WrenNew job: Writes the notes",
       "# docsAdds Rook",
     ]);

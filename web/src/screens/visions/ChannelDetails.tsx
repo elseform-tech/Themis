@@ -67,14 +67,14 @@ export function ChannelDetails({ channel }: { channel: ChannelInfo }) {
       title={<span className="themis-visions-panel-title"># {channel.name}</span>}
       actions={!hq && <DeleteButton name={`# ${channel.name}`} consequence="Its Visions' chats stop and become ordinary chats." onDelete={remove} />}>
       <PanelBlock title="Topic">
-        <input type="text" className="themis-visions-field" aria-label="Topic" maxLength={500} placeholder="What this channel is for" value={topic ?? channel.topic}
+        <input type="text" className="themis-visions-field" aria-label="Topic" maxLength={500} value={topic ?? channel.topic}
           onChange={event => setTopic(event.target.value)} onBlur={saveTopic} onKeyDown={event => { if (event.key === "Enter") event.currentTarget.blur(); }} />
       </PanelBlock>
-      <PanelBlock title="Approval mode">
+      {!hq && <PanelBlock title="Approval mode">
         <select className="themis-visions-field" aria-label="Approval mode" value={channel.approval_mode} onChange={event => void save({ approval_mode: event.target.value as ApprovalModeName })}>
           {MODES.map(([mode, label]) => <option key={mode} value={mode}>{label}</option>)}
         </select>
-      </PanelBlock>
+      </PanelBlock>}
       <Members channel={channel} save={change => void save(change)} />
     </SidePanel>
   );

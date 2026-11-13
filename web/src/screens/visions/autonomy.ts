@@ -6,8 +6,8 @@ import type { Autonomy } from "../../lib/visions";
 /** The five stops, in slider order. */
 export const AUTONOMY_STOPS: Autonomy[] = ["ask", "small", "most", "nearly_all", "custom"];
 
-/** The autonomy levels as Settings › Visions names them. */
-export const LEVELS: Record<Autonomy, string> = { ask: "Ask me first", small: "Small calls", most: "Most calls", nearly_all: "Nearly all", custom: "Custom" };
+/** The autonomy levels as Settings › Visions names them (the stored ids stay as they are). */
+export const LEVELS: Record<Autonomy, string> = { ask: "Always ask", small: "Routine decisions", most: "Most decisions", nearly_all: "Nearly all decisions", custom: "Custom" };
 
 /** Each kind of decision (its `visions.custom` id), its words, and the preset rank that hands it
  *  to the Vision; `null` rows are always the person's. */
@@ -33,4 +33,9 @@ export function rankOf(level: Autonomy): number | null {
 export function presetDecides(level: Autonomy, decision: { rank: number | null }): boolean {
   const rank = rankOf(level);
   return rank !== null && decision.rank !== null && rank >= decision.rank;
+}
+
+/** Custom's rows as a preset sets them, for starting Custom where the person was. */
+export function presetRows(level: Autonomy): Record<string, boolean> {
+  return Object.fromEntries(DECISIONS.filter(decision => decision.rank !== null).map(decision => [decision.id, presetDecides(level, decision)]));
 }

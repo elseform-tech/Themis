@@ -77,17 +77,17 @@ describe("A Vision's profile", () => {
   it("profile_override_shows_the_inherited_level", async () => {
     await show(() => <VisionProfile visionId="rook" />);
     const autonomy = screen.getByRole("combobox", { name: "Autonomy" });
-    expect(autonomy).toHaveDisplayValue("Same as Settings (Most calls)");
+    expect(autonomy).toHaveDisplayValue("Same as Settings (Most decisions)");
     // A profile may only lower the level: nothing above Settings is offered.
     const offered = within(autonomy).getAllByRole("option").map(option => option.textContent);
-    expect(offered).toEqual(["Same as Settings (Most calls)", "Ask me first", "Small calls"]);
+    expect(offered).toEqual(["Same as Settings (Most decisions)", "Always ask", "Routine decisions"]);
     await act(async () => { fireEvent.change(autonomy, { target: { value: "ask" } }); });
     expect(visions.saveVision).toHaveBeenCalledWith(expect.objectContaining({ id: "rook", autonomy: "ask", soul: "Careful and brief." }), "r1");
   });
 
   it("saves the model, the budget and the soul, each against the profile's revision", async () => {
     await show(() => <VisionProfile visionId="rook" />);
-    expect(screen.getByRole("combobox", { name: "Model" })).toHaveDisplayValue("Same as chat");
+    expect(screen.getByRole("combobox", { name: "Model" })).toHaveDisplayValue("Default model");
     await act(async () => { fireEvent.change(screen.getByRole("combobox", { name: "Model" }), { target: { value: "glm-5" } }); });
     expect(visions.saveVision).toHaveBeenLastCalledWith(expect.objectContaining({ model: "glm-5" }), "r1");
     const budget = screen.getByRole("spinbutton", { name: "Daily budget" });
@@ -108,6 +108,21 @@ describe("A Vision's profile", () => {
     fireEvent.click(within(channels).getByRole("button", { name: "# release" }));
     expect(dispatch).toHaveBeenCalledWith({ type: "visions/open", channelId: "c1" });
     expect(screen.getByRole("button", { name: "Delete Rook" })).toBeInTheDocument();
+  });
+
+  it("shows an empty soul as its heading and edit button only, and keeps the budget plain", async () => {
+    const initial = state();
+    initial.visions.list = initial.visions.list.map(each => each.id === "rook" ? { ...each, soul: "" } : each);
+    await show(() => <VisionProfile visionId="rook" />, initial);
+    expect(screen.getByRole("button", { name: "Edit soul" })).toBeInTheDocument();
+    expect(document.querySelector(".themis-visions-soul")).toBeNull();
+    expect(screen.queryByText(/in your words/)).toBeNull();
+    const budget = screen.getByRole("spinbutton", { name: "Daily budget" });
+    expect(budget).toHaveAttribute("max", "100");
+    fireEvent.change(budget, { target: { value: "-1" } });
+    await act(async () => { fireEvent.blur(budget); });
+    expect(screen.getByRole("alert")).toHaveTextContent(/^Enter an amount from \$0 to \$100$/);
+    expect(visions.saveVision).not.toHaveBeenCalled();
   });
 
   it("shows Atlas only what applies to it: no Delete, autonomy, soul or channels", async () => {
@@ -145,5 +160,8 @@ describe("Channel details", () => {
     expect(screen.queryByRole("combobox", { name: "Add a member" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Remove Atlas" })).toBeNull();
     expect(screen.getByRole("button", { name: "Atlas" })).toBeInTheDocument();
+    // Atlas starts no chats in # hq, so its approval mode would do nothing.
+    expect(screen.queryByRole("combobox", { name: "Approval mode" })).toBeNull();
+    expect(screen.getByRole("textbox", { name: "Topic" })).not.toHaveAttribute("placeholder");
   });
 });
