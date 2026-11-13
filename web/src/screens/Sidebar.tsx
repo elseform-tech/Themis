@@ -64,7 +64,6 @@ export function Sidebar({ collapsed }: { collapsed: boolean }) {
   const [help, setHelp] = useState(false);
   const activeRoot = state.activeProjectRoot;
   const activeProject = state.projects.find(project => project.root === activeRoot) ?? null;
-  const projects = [...state.projects].sort((a, b) => Number(!!b.is_default) - Number(!!a.is_default));
   const statusOf = (thread: ThreadInfo) => threadStatus(state, thread);
   const threads = [...(activeRoot ? state.threadsByProject[activeRoot] ?? [] : [])]
     .sort((a, b) => (b.last_activity_seq ?? 0) - (a.last_activity_seq ?? 0));
@@ -75,8 +74,6 @@ export function Sidebar({ collapsed }: { collapsed: boolean }) {
   const [showAll, setShowAll] = useState(false);
   const shown = showAll ? rest : rest.slice(0, 12);
   const finished = useFreshlyFinished(state.running, state.mainView === "thread" ? state.activeThreadId : null);
-  const projectBusy = (root: string) => (state.threadsByProject[root] ?? []).some(thread => isLive(statusOf(thread)));
-  const busyElsewhere = projects.some(project => project.root !== activeRoot && projectBusy(project.root));
 
   async function create() {
     if (busy || !name.trim()) return;
@@ -115,32 +112,7 @@ export function Sidebar({ collapsed }: { collapsed: boolean }) {
       <Rail onHelp={() => setHelp(true)} />
       <aside id="themis-sidebar" className={`themis-sidebar ${collapsed ? "" : "is-visible"}`} inert={collapsed} aria-hidden={collapsed} aria-label="Workspace navigation">
         <div className="themis-sidebar-top">
-          <details className="themis-project-switcher" data-popover>
-            <summary aria-label={`Project: ${activeProject?.name ?? "none"}`} title={activeProject?.root}>
-              <SidebarIcon name="project" /><MovingText>{activeProject?.name ?? "Choose a project"}</MovingText>
-              {busyElsewhere && <span className="themis-project-busy" role="img" aria-label="Activity in another project" />}
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true"><path d="m6 9 6 6 6-6" /></svg>
-            </summary>
-            <div className="themis-project-menu" role="group" aria-label="Projects">
-              {projects.length === 0 && <p className="themis-sidebar-note">No projects</p>}
-              {projects.map(project => (
-                <div key={project.root} className="themis-project-entry">
-                  <button type="button" className="themis-project-option" title={project.root} aria-current={project.root === activeRoot ? "true" : undefined}
-                    onClick={event => { event.currentTarget.closest("details")?.removeAttribute("open"); setShowAll(false); dispatch({ type: "project/selected", root: project.root }); }}>
-                    <MovingText>{project.name}</MovingText>
-                    {projectBusy(project.root) && <span className="themis-project-busy" aria-hidden="true" />}
-                  </button>
-                  <button type="button" className="themis-project-action" aria-label={`Rename ${project.name}`} title="Rename" onClick={event => { event.currentTarget.closest("details")?.removeAttribute("open"); setError(""); setRenaming({ root: project.root, name: project.name }); }}><SidebarIcon name="rename" /></button>
-                  {project.is_default
-                    ? <span className="themis-project-action" aria-hidden="true" />
-                    : <button type="button" className="themis-project-action is-danger" aria-label={`Delete ${project.name}`} title="Delete" onClick={event => { event.currentTarget.closest("details")?.removeAttribute("open"); setError(""); setDeleting({ root: project.root, name: project.name }); }}><SidebarIcon name="trash" /></button>}
-                  <span className="themis-project-count" aria-label={`${(state.threadsByProject[project.root] ?? []).length} chats`}>{(state.threadsByProject[project.root] ?? []).length}</span>
-                </div>
-              ))}
-              <hr />
-              <button type="button" className="themis-project-option" aria-label="New project" onClick={event => { event.currentTarget.closest("details")?.removeAttribute("open"); dispatch({ type: "ui/project-dialog", open: true }); }}>New project</button>
-            </div>
-          </details>
+          <ProjectSwitcher onSelect={root => { setShowAll(false); dispatch({ type: "project/selected", root }); }} onRename={project => { setError(""); setRenaming(project); }} onDelete={project => { setError(""); setDeleting(project); }} />
           <NewChatButton disabled={!state.activeProjectRoot} onClick={() => void newThread()} />
         </div>
         <div className="themis-sidebar-projects">
@@ -215,6 +187,45 @@ export function Sidebar({ collapsed }: { collapsed: boolean }) {
     </Dialog>
     <Dialog open={help} title="Shortcuts" onClose={() => setHelp(false)}><div className="themis-help"><dl>{SHORTCUTS.map(([label, keys]) => <div key={label}><dt>{label}</dt><dd>{keys.map(key => <kbd key={key}>{key}</kbd>)}</dd></div>)}</dl></div></Dialog>
   </>;
+}
+
+/** The project menu at the top of the sidebar. */
+function ProjectSwitcher({ onSelect, onRename, onDelete }: { onSelect: (root: string) => void; onRename: (project: { root: string; name: string }) => void; onDelete: (project: { root: string; name: string }) => void }) {
+  const { state, dispatch } = useApp();
+  const activeRoot = state.activeProjectRoot;
+  const activeProject = state.projects.find(project => project.root === activeRoot) ?? null;
+  const projects = [...state.projects].sort((a, b) => Number(!!b.is_default) - Number(!!a.is_default));
+  const projectBusy = (root: string) => (state.threadsByProject[root] ?? []).some(thread => isLive(threadStatus(state, thread)));
+  const busyElsewhere = projects.some(project => project.root !== activeRoot && projectBusy(project.root));
+  const close = (event: { currentTarget: Element }) => event.currentTarget.closest("details")?.removeAttribute("open");
+  return (
+    <details className="themis-project-switcher" data-popover>
+      <summary aria-label={`Project: ${activeProject?.name ?? "none"}`} title={activeProject?.root}>
+        <SidebarIcon name="project" /><MovingText>{activeProject?.name ?? "Choose a project"}</MovingText>
+        {busyElsewhere && <span className="themis-project-busy" role="img" aria-label="Activity in another project" />}
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true"><path d="m6 9 6 6 6-6" /></svg>
+      </summary>
+      <div className="themis-project-menu" role="group" aria-label="Projects">
+        {projects.length === 0 && <p className="themis-sidebar-note">No projects</p>}
+        {projects.map(project => (
+          <div key={project.root} className="themis-project-entry">
+            <button type="button" className="themis-project-option" title={project.root} aria-current={project.root === activeRoot ? "true" : undefined}
+              onClick={event => { close(event); onSelect(project.root); }}>
+              <MovingText>{project.name}</MovingText>
+              {projectBusy(project.root) && <span className="themis-project-busy" aria-hidden="true" />}
+            </button>
+            <button type="button" className="themis-project-action" aria-label={`Rename ${project.name}`} title="Rename" onClick={event => { close(event); onRename(project); }}><SidebarIcon name="rename" /></button>
+            {project.is_default
+              ? <span className="themis-project-action" aria-hidden="true" />
+              : <button type="button" className="themis-project-action is-danger" aria-label={`Delete ${project.name}`} title="Delete" onClick={event => { close(event); onDelete(project); }}><SidebarIcon name="trash" /></button>}
+            <span className="themis-project-count" aria-label={`${(state.threadsByProject[project.root] ?? []).length} chats`}>{(state.threadsByProject[project.root] ?? []).length}</span>
+          </div>
+        ))}
+        <hr />
+        <button type="button" className="themis-project-option" aria-label="New project" onClick={event => { close(event); dispatch({ type: "ui/project-dialog", open: true }); }}>New project</button>
+      </div>
+    </details>
+  );
 }
 
 // Lucide SVG paths from the approved Framed rail visualization (ISC license).
