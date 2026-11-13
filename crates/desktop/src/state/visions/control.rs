@@ -224,6 +224,43 @@ impl AppState {
         Ok(owner)
     }
 
+    /// Saves a Vision the person edited. When its model changed, its own chats switch to the
+    /// new model from their next turn; the work chats it started keep theirs, like any chat.
+    /// A save that leaves the model as it was keeps a model the person picked in a chat.
+    pub async fn visions_save(
+        &self,
+        spec: Vision,
+        expected: Option<&str>,
+    ) -> Result<Vision, String> {
+        let before = self.vision_get(&spec.id).map(|vision| vision.model);
+        let saved = self.vision_save(spec, expected)?;
+        if before.is_some_and(|model| model != saved.model) {
+            self.visions_chats_follow_model(&saved).await;
+        }
+        Ok(saved)
+    }
+
+    async fn visions_chats_follow_model(&self, vision: &Vision) {
+        let model = self.visions_model(vision).await;
+        let chats = self.owners_where(|owner| {
+            owner.vision_id == vision.id && owner.kind == OwnedKind::VisionChat
+        });
+        for owner in chats {
+            let moved = self
+                .set_provider(
+                    owner.thread_id.clone(),
+                    crate::types::ProviderKind::Go,
+                    Some(model.clone()),
+                )
+                .await
+                .is_ok();
+            self.visions_note(
+                "chat_model_followed",
+                json!({"vision_id": vision.id, "thread_id": owner.thread_id, "moved": moved}),
+            );
+        }
+    }
+
     /// Pauses or resumes a Vision. Pausing stops the runs of the chats it owns (not those the
     /// person took over); its channels say so either way.
     pub fn visions_pause(&self, vision_id: &str, paused: bool) -> Result<Vision, String> {

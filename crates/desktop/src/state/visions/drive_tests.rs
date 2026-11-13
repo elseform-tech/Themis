@@ -140,3 +140,77 @@ async fn a_send_rechecks_the_hold_and_the_pause() {
     fx.state.owner_release(&info.id).unwrap();
     assert!(send().await.is_err());
 }
+
+/// A chat recorded as the Vision's own chat in `scope`'s channel.
+async fn own_chat(fx: &Setup) -> String {
+    let info = fx
+        .state
+        .create_thread(
+            fx.scope.project_root.to_string_lossy().into_owned(),
+            crate::types::ProviderKind::Go,
+            Some("vision-model".to_owned()),
+        )
+        .await
+        .unwrap();
+    fx.state
+        .owner_set(Owner {
+            thread_id: info.id.clone(),
+            vision_id: fx.vision.id.clone(),
+            channel_id: fx.scope.channel_id.clone(),
+            kind: OwnedKind::VisionChat,
+            hold: Hold::None,
+        })
+        .unwrap();
+    info.id
+}
+
+async fn model_of(fx: &Setup, thread_id: &str) -> String {
+    fx.state.get_thread(thread_id).await.unwrap().model
+}
+
+/// Changing a Vision's model moves its own chats to the new one from their next turn; the
+/// work chats it started keep theirs, and saving without a model change leaves a model the
+/// person picked by hand alone.
+#[tokio::test]
+async fn a_vision_chat_follows_its_profile_model() {
+    let fx = setup(Some("vision-model"));
+    let own = own_chat(&fx).await;
+    let work = fx
+        .state
+        .visions_start_work_chat(&fx.scope)
+        .await
+        .unwrap()
+        .id;
+
+    let current = fx.state.vision_get(&fx.vision.id).unwrap();
+    let revision = current.revision.clone();
+    let moved = Vision {
+        model: Some("other-model".into()),
+        ..current
+    };
+    let saved = fx.state.visions_save(moved, Some(&revision)).await.unwrap();
+    assert_eq!(model_of(&fx, &own).await, "other-model");
+    assert_eq!(
+        model_of(&fx, &work).await,
+        "vision-model",
+        "work chats keep theirs"
+    );
+
+    fx.state
+        .set_provider(
+            own.clone(),
+            crate::types::ProviderKind::Go,
+            Some("picked-by-hand".into()),
+        )
+        .await
+        .unwrap();
+    let renamed = Vision {
+        name: "Wren B".into(),
+        ..saved.clone()
+    };
+    fx.state
+        .visions_save(renamed, Some(&saved.revision))
+        .await
+        .unwrap();
+    assert_eq!(model_of(&fx, &own).await, "picked-by-hand");
+}

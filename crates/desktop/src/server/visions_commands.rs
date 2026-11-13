@@ -84,7 +84,15 @@ async fn run(
 ) -> Result<(Value, Option<VisionsChange>), String> {
     match method {
         "list_visions" => Ok((to_value(state.visions_listed().await)?, None)),
-        "save_vision" | "pause_vision" | "delete_vision" => vision_method(state, method, args),
+        "save_vision" => {
+            let revision: Option<String> = arg(args, "revision")?;
+            let saved = state
+                .visions_save(arg::<Vision>(args, "vision")?, revision.as_deref())
+                .await?;
+            let changed = change(None, Some(saved.id.clone()));
+            Ok((to_value(saved)?, changed))
+        }
+        "pause_vision" | "delete_vision" => vision_method(state, method, args),
         "list_channels" | "save_channel" | "delete_channel" | "get_channel_page" => {
             channel_method(state, method, args)
         }
@@ -99,12 +107,6 @@ fn vision_method(
     args: &Value,
 ) -> Result<(Value, Option<VisionsChange>), String> {
     match method {
-        "save_vision" => {
-            let revision: Option<String> = arg(args, "revision")?;
-            let saved = state.vision_save(arg::<Vision>(args, "vision")?, revision.as_deref())?;
-            let changed = change(None, Some(saved.id.clone()));
-            Ok((to_value(saved)?, changed))
-        }
         "pause_vision" => {
             let vision_id: String = arg(args, "visionId")?;
             let saved = state.visions_pause(&vision_id, arg(args, "paused")?)?;

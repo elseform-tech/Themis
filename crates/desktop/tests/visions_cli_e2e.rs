@@ -24,6 +24,8 @@ use fixture::*;
 
 #[path = "visions_e2e/budget.rs"]
 mod budget;
+#[path = "visions_e2e/model.rs"]
+mod model;
 #[path = "visions_e2e/plain_chat.rs"]
 mod plain_chat;
 
