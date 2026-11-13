@@ -436,12 +436,22 @@ function Message({ message, threadId, activeRunId, durationMs, skills, plugins, 
         </>
       ) : (
         <>
+          <VisionAuthor visionId={message.visionId} />
           <p className="themis-thread-text"><PromptText value={text} skills={skills} plugins={plugins} /></p>
         </>
       )}
     </div>
     </>
   );
+}
+
+/** Whose words a Vision's message in the chat are: the Vision's name ("Vision" once it is
+ *  gone); nothing on the person's own messages. */
+function VisionAuthor({ visionId }: { visionId: string | undefined }) {
+  const { state } = useApp();
+  if (!visionId) return null;
+  const name = state.visions.list.find(vision => vision.id === visionId)?.name ?? "Vision";
+  return <span className="themis-goal-check-label">{name}</span>;
 }
 
 /** A tool row's status word; a step whose box nobody answered says so rather than Failed. */

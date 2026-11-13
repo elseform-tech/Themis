@@ -2,7 +2,7 @@ import type { ContextBudget, MemoryChange, SubagentEntry, ThreadInfo } from "../
 import type { AppState, ChatMessage, ToolTraceEntry } from "./model";
 import { newId } from "./model";
 
-export { setThreadRunning, appendTrace, userMessage, updateSubagent, markTurnRejected, memoryChanges };
+export { setThreadRunning, appendTrace, userMessage, byVision, updateSubagent, markTurnRejected, memoryChanges };
 
 function setThreadRunning(state: AppState, threadId: string, running: boolean): AppState {
   const threadsByProject: Record<string, ThreadInfo[]> = {};
@@ -54,8 +54,13 @@ export function hookWakeSummary(text: string): string | undefined {
   return text.slice(HOOK_WAKE_MARKER.length).split("\n")[0]!.trim();
 }
 
-/** A user message row; a goal-turn message becomes a divider row. */
-function userMessage(text: string, runId: string | undefined, attachments?: string[]): ChatMessage {
+/** The field naming the Vision that wrote a user message row, when one did. */
+function byVision(visionId: string | undefined): Pick<ChatMessage, "visionId"> {
+  return visionId ? { visionId } : {};
+}
+
+/** A user message row (a Vision's when `visionId` is set); a goal-turn message becomes a divider row. */
+function userMessage(text: string, runId: string | undefined, attachments?: string[], visionId?: string): ChatMessage {
   const goalTurn = goalTurnNumber(text);
   const hookWake = hookWakeSummary(text);
   return {
@@ -63,6 +68,7 @@ function userMessage(text: string, runId: string | undefined, attachments?: stri
     ...(attachments?.length ? { attachments } : {}),
     ...(goalTurn === undefined ? {} : { goalTurn }),
     ...(hookWake === undefined ? {} : { hookWake }),
+    ...byVision(visionId),
   };
 }
 

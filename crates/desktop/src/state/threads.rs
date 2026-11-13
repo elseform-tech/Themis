@@ -583,15 +583,15 @@ impl AppState {
             &run_id,
             &display_text,
             attachments,
-            vision_id,
+            vision_id.clone(),
         ) {
             self.finish_run(&thread_id).await;
             return Err(error);
         }
         self.server_send_reached(&run_id, super::queue::ServerSend::Saved);
         // Every open window shows the message now, saved and before any of
-        // its run's events: one the server sends itself (queue, goal turn) or
-        // another client's (the CLI, a second window). The window that sent it
+        // its run's events: one the server sends itself (queue, goal turn, a Vision's,
+        // with its id) or another client's (the CLI, a second window). The window that sent it
         // already shows it and adopts this event instead of adding a copy.
         sink.emit_thread_event(&ThreadEventEnvelope {
             thread_id: thread_id.clone(),
@@ -599,7 +599,7 @@ impl AppState {
             event: ThreadEvent::UserMessage {
                 text: text.clone(),
                 attachments: shown_attachments,
-                vision_id: None,
+                vision_id,
             },
         });
         let resolved_text = format!("{resolved_text}{goal_context}");

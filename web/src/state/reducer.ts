@@ -3,7 +3,7 @@
 import type { ApprovalDecision, SubagentEntry, ThreadEventEnvelope, ThreadInfo } from "../lib/types";
 import type { AppAction, AppState, ChatMessage } from "./reducer/model";
 import { APPROVAL_EXPIRED_NOTE, concurrencyToast, isConcurrencyLimitError, newId, pushToast, toLastMerge } from "./reducer/model";
-import { appendTrace, markTurnRejected, memoryChanges, setThreadRunning, updateSubagent, usedPercent, userMessage } from "./reducer/rowHelpers";
+import { appendTrace, byVision, markTurnRejected, memoryChanges, setThreadRunning, updateSubagent, usedPercent, userMessage } from "./reducer/rowHelpers";
 import { reduceCollectionActions } from "./reducer/collections";
 import { reduceUiActions } from "./reducer/ui";
 import { rememberPlainChoice, visionsAnswered, visionsFollowProject } from "./visions";
@@ -158,13 +158,13 @@ export function applyThreadEvent(
       // Shown when it was steered: it only stops being unread now.
       const rows = next.messages[threadId] ?? [];
       const shown = rows.findIndex(row => row.steerUnread && row.text === event.text);
-      if (shown < 0) return appendMessage(next, threadId, { id: newId("msg"), role: "user", text: event.text, runId, steered: true });
+      if (shown < 0) return appendMessage(next, threadId, { id: newId("msg"), role: "user", text: event.text, runId, steered: true, ...byVision(event.vision_id) });
       const read = rows.map((row, index) => index === shown ? { ...row, steerUnread: false } : row);
       return { ...next, messages: { ...next.messages, [threadId]: read } };
     }
     case "steer_shown":
       // Text still streaming stays where it is: the final answer may repeat all of it.
-      return appendMessage(state, threadId, { id: newId("msg"), role: "user", text: event.text, runId, steered: true, steerUnread: true });
+      return appendMessage(state, threadId, { id: newId("msg"), role: "user", text: event.text, runId, steered: true, steerUnread: true, ...byVision(event.vision_id) });
     case "steer_returned": {
       const rows = state.messages[threadId] ?? [];
       const unread = rows.findIndex(row => row.steerUnread && row.text === event.text);
@@ -177,7 +177,7 @@ export function applyThreadEvent(
       if (runId && rows.some(row => row.role === "user" && row.runId === runId)) return state;
       let own = rows.length - 1;
       while (own >= 0 && !(rows[own].role === "user" && !rows[own].runId && !rows[own].steered && rows[own].text === event.text)) own -= 1;
-      if (own < 0) return appendMessage(state, threadId, userMessage(event.text, runId || undefined, event.attachments));
+      if (own < 0) return appendMessage(state, threadId, userMessage(event.text, runId || undefined, event.attachments, event.vision_id));
       const adopted = rows.map((row, index) => index === own ? { ...row, runId } : row);
       return { ...state, messages: { ...state.messages, [threadId]: adopted } };
     }
@@ -592,7 +592,7 @@ export function reducer(state: AppState, action: AppAction): AppState {
       replaying = true;
       try {
         for (const item of action.history) {
-          if (item.kind === "user") next = appendMessage(next, action.threadId, userMessage(item.text, item.run_id, item.attachments));
+          if (item.kind === "user") next = appendMessage(next, action.threadId, userMessage(item.text, item.run_id, item.attachments, item.vision_id));
           else if (item.kind === "legacy") next = appendMessage(next, action.threadId, item.message);
           else next = applyThreadEvent(next, item.envelope, false);
         }

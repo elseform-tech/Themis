@@ -590,7 +590,8 @@ again or changes the plan. Atlas never drives chats. `# hq` and Atlas cannot be 
 Atlas is `# hq`'s only member.
 
 **Your chats stay yours.** A chat a Vision started shows in the ordinary chat list with a small
-cloud in the Vision's colour. If you write in it, you **took over**: the Vision stops steering
+cloud in the Vision's colour. In the chat, what the Vision wrote (sent, queued or steered in)
+carries its name; your own messages look as always. If you write in it, you **took over**: the Vision stops steering
 it, and a **Hand back to <Name>** button (in the channel and above the chat) gives it back. If
 you stop it, it stays stopped until you write in it or hand it back. A Vision cannot answer
 a held chat's questions, and it never switches on a hook or a command-based MCP server.

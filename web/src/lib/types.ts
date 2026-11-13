@@ -346,14 +346,14 @@ export type ThreadEvent =
   | { kind: 'finished'; result: string; model?: string }
   | { kind: 'failed'; error: string }
   | { kind: 'background_tasks_changed' }
-  /** A queued message the user steered into this run reached the model. */
-  | { kind: 'steered'; text: string }
-  /** The user steered this message in: on screen now, before the run reads it. */
-  | { kind: 'steer_shown'; text: string }
+  /** A queued message steered into this run reached the model (`vision_id`: a Vision's). */
+  | { kind: 'steered'; text: string; vision_id?: string }
+  /** A message steered in: on screen now, before the run reads it (`vision_id`: a Vision's). */
+  | { kind: 'steer_shown'; text: string; vision_id?: string }
   /** The run ended without reading it: back in the queue, so it leaves the chat. */
   | { kind: 'steer_returned'; text: string }
   /** The server started this run with a queued message or a goal turn (live only). */
-  | { kind: 'user_message'; text: string; attachments?: string[] }
+  | { kind: 'user_message'; text: string; attachments?: string[]; vision_id?: string }
   | { kind: 'queue_changed'; queue: QueuedMessage[] }
   | { kind: 'goal_changed'; goal: Goal | null }
   /** The main agent's to-do list changed. */
@@ -673,6 +673,8 @@ export interface PersistedMessage {
   media?: AttachedMedia[];
   /** A message the user steered into a running run. */
   steered?: boolean;
+  /** The Vision that wrote this user message (sent, queued or steered); absent for the person. */
+  visionId?: string;
   /** Steered and on screen, but the run has not read it yet. */
   steerUnread?: boolean;
   /** A runtime message that started goal turn N; shown as a divider, not a bubble. */
@@ -699,7 +701,7 @@ export interface PersistedMessage {
 }
 
 export type HistoryItem =
-  | { kind: "user"; run_id: string; text: string; attachments?: string[] }
+  | { kind: "user"; run_id: string; text: string; attachments?: string[]; vision_id?: string }
   | { kind: "event"; envelope: ThreadEventEnvelope }
   | { kind: "legacy"; message: PersistedMessage };
 

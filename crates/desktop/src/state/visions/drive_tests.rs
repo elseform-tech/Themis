@@ -445,3 +445,59 @@ async fn releasing_a_chat_drops_the_visions_queued_messages() {
         assert_eq!(left, ["mine"], "by channel: {by_channel}");
     }
 }
+
+/// Every open window hears a Vision's message as the Vision's: the live `user_message` event
+/// carries its id (the person's own carries none), so the chat can name who wrote it.
+#[tokio::test]
+async fn a_visions_message_is_announced_as_the_visions() {
+    use crate::sink::TestEvent;
+    use crate::types::ThreadEvent;
+    let fx = setup(Some("vision-model"));
+    fx.state
+        .set_model_catalog_for_test(vec![themis_core::providers::GoModel {
+            id: "vision-model".into(),
+            price: Some(themis_core::providers::ModelPrice::default()),
+            ..Default::default()
+        }])
+        .await;
+    let work = fx
+        .state
+        .visions_start_work_chat(&fx.scope)
+        .await
+        .unwrap()
+        .id;
+    let (sink, mut events) = ChannelSink::channel();
+    let sink: Arc<dyn EventSink> = Arc::new(sink);
+    let vision = fx.scope.vision_id.clone();
+    let _ = fx
+        .state
+        .visions_send(
+            Arc::clone(&sink),
+            &vision,
+            &work,
+            "its".into(),
+            None,
+            Vec::new(),
+        )
+        .await;
+    until_idle(&fx, &work).await;
+    let _ = fx
+        .state
+        .send_message(Arc::clone(&sink), work.clone(), "mine".into())
+        .await;
+    let mut announced = Vec::new();
+    while let Ok(event) = events.try_recv() {
+        if let TestEvent::Thread(envelope) = event {
+            if let ThreadEvent::UserMessage {
+                text, vision_id, ..
+            } = envelope.event
+            {
+                announced.push((text, vision_id));
+            }
+        }
+    }
+    assert_eq!(
+        announced,
+        [("its".to_owned(), Some(vision)), ("mine".to_owned(), None)]
+    );
+}
