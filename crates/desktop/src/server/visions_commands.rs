@@ -92,9 +92,9 @@ async fn run(
             let changed = change(None, Some(saved.id.clone()));
             Ok((to_value(saved)?, changed))
         }
-        "pause_vision" | "delete_vision" => vision_method(state, method, args),
+        "pause_vision" | "delete_vision" => vision_method(state, sink, method, args),
         "list_channels" | "save_channel" | "delete_channel" | "get_channel_page" => {
-            channel_method(state, method, args)
+            channel_method(state, sink, method, args)
         }
         "get_visions_settings" | "update_visions_settings" => settings_method(state, method, args),
         _ => chat_method(state, sink, method, args).await,
@@ -103,6 +103,7 @@ async fn run(
 
 fn vision_method(
     state: &AppState,
+    sink: &Arc<dyn EventSink>,
     method: &str,
     args: &Value,
 ) -> Result<(Value, Option<VisionsChange>), String> {
@@ -114,7 +115,7 @@ fn vision_method(
         }
         "delete_vision" => {
             let vision_id: String = arg(args, "visionId")?;
-            state.visions_delete(&vision_id)?;
+            state.visions_delete(sink, &vision_id)?;
             // Its chats become ordinary and leave every channel's list: everything is read.
             Ok((Value::Null, change(None, None)))
         }
@@ -124,6 +125,7 @@ fn vision_method(
 
 fn channel_method(
     state: &AppState,
+    sink: &Arc<dyn EventSink>,
     method: &str,
     args: &Value,
 ) -> Result<(Value, Option<VisionsChange>), String> {
@@ -137,7 +139,7 @@ fn channel_method(
         }
         "delete_channel" => {
             let channel_id: String = arg(args, "channelId")?;
-            state.visions_delete_channel(&channel_id)?;
+            state.visions_delete_channel(sink, &channel_id)?;
             Ok((Value::Null, change(Some(channel_id), None)))
         }
         "get_channel_page" => {

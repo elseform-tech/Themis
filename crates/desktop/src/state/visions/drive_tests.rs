@@ -404,3 +404,44 @@ async fn a_post_wakes_even_when_a_hold_cannot_be_released() {
         .unwrap();
     assert_eq!(note["details"]["release_failed"], 1, "{note}");
 }
+
+/// When a Vision (or its channel) goes, its work chats become ordinary chats: the messages it
+/// queued there, which nothing would ever send, are dropped; the person's own stay.
+#[tokio::test]
+async fn releasing_a_chat_drops_the_visions_queued_messages() {
+    use crate::types::QueuedMessage;
+    for by_channel in [false, true] {
+        let fx = setup(None);
+        let work = fx
+            .state
+            .visions_start_work_chat(&fx.scope)
+            .await
+            .unwrap()
+            .id;
+        let vision = Some(fx.scope.vision_id.clone());
+        fx.state
+            .edit_queue(sink().as_ref(), &work, |queue| {
+                queue.push(QueuedMessage::new("mine".into(), Vec::new(), None, None));
+                queue.push(QueuedMessage::new("its".into(), Vec::new(), None, vision));
+                Ok(())
+            })
+            .unwrap();
+        if by_channel {
+            fx.state
+                .visions_delete_channel(&sink(), &fx.scope.channel_id)
+                .unwrap();
+        } else {
+            fx.state
+                .visions_delete(&sink(), &fx.scope.vision_id)
+                .unwrap();
+        }
+        assert!(fx.state.owner_of(&work).is_none());
+        let left: Vec<String> = fx
+            .state
+            .queue_for(&work)
+            .into_iter()
+            .map(|message| message.text)
+            .collect();
+        assert_eq!(left, ["mine"], "by channel: {by_channel}");
+    }
+}

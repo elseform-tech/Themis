@@ -308,7 +308,7 @@ impl AppState {
     }
 
     /// Deletes a Vision: its chats are stopped and become ordinary chats; channel logs stay.
-    pub fn visions_delete(&self, vision_id: &str) -> Result<(), String> {
+    pub fn visions_delete(&self, sink: &Arc<dyn EventSink>, vision_id: &str) -> Result<(), String> {
         if self.vision_get(vision_id).is_none() {
             return Err("Unknown Vision".to_owned());
         }
@@ -316,7 +316,7 @@ impl AppState {
         if super::is_admin(vision_id) {
             return Err(super::admin::ADMIN_STAYS.to_owned());
         }
-        let released = self.visions_release_owned(|owner| owner.vision_id == vision_id)?;
+        let released = self.visions_release_owned(sink, |owner| owner.vision_id == vision_id)?;
         self.vision_remove(vision_id)?;
         self.visions_note(
             "vision_deleted",
@@ -326,7 +326,11 @@ impl AppState {
     }
 
     /// Deletes a channel: its chats are stopped and become ordinary chats; its log stays.
-    pub fn visions_delete_channel(&self, channel_id: &str) -> Result<(), String> {
+    pub fn visions_delete_channel(
+        &self,
+        sink: &Arc<dyn EventSink>,
+        channel_id: &str,
+    ) -> Result<(), String> {
         match self.channel_get(channel_id) {
             None => return Err("Unknown channel".to_owned()),
             Some(channel) if channel.name == super::admin::HQ => {
@@ -334,7 +338,7 @@ impl AppState {
             }
             Some(_) => {}
         }
-        let released = self.visions_release_owned(|owner| owner.channel_id == channel_id)?;
+        let released = self.visions_release_owned(sink, |owner| owner.channel_id == channel_id)?;
         self.channel_remove(channel_id)?;
         self.visions_note(
             "channel_deleted",
@@ -377,14 +381,27 @@ impl AppState {
     }
 
     /// Stops the chats `which` selects (not those the person took over, which run for them)
-    /// and forgets their owners; returns how many.
-    fn visions_release_owned(&self, which: impl Fn(&Owner) -> bool) -> Result<usize, String> {
+    /// and forgets their owners, dropping what their Vision queued there (the person's own
+    /// messages stay); returns how many chats.
+    fn visions_release_owned(
+        &self,
+        sink: &Arc<dyn EventSink>,
+        which: impl Fn(&Owner) -> bool,
+    ) -> Result<usize, String> {
         let owners = self.owners_where(which);
+        let mut dropped = 0;
         for owner in &owners {
             if owner.hold != Hold::TakenOver {
                 let _ = self.stop_run(&owner.thread_id);
             }
             self.owner_release(&owner.thread_id)?;
+            dropped += self.drop_visions_queued(sink.as_ref(), &owner.thread_id);
+        }
+        if dropped > 0 {
+            self.visions_note(
+                "queued_dropped",
+                json!({"chats": owners.len(), "messages": dropped}),
+            );
         }
         Ok(owners.len())
     }

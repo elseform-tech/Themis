@@ -122,6 +122,17 @@ impl AppState {
         Ok(value)
     }
 
+    /// Drops the messages Visions queued in the chat (the person's stay), once no Vision owns it
+    /// and nothing would ever send them; returns how many.
+    pub(super) fn drop_visions_queued(&self, sink: &dyn EventSink, thread_id: &str) -> usize {
+        let dropped = self.edit_queue(sink, thread_id, |queue| {
+            let before = queue.len();
+            queue.retain(|message| message.vision_id.is_none());
+            Ok(before - queue.len())
+        });
+        dropped.unwrap_or(0)
+    }
+
     /// Whether the chat runs now; an error for an unknown chat.
     pub(super) async fn require_thread(&self, thread_id: &str) -> Result<bool, String> {
         self.inner

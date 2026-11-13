@@ -934,7 +934,9 @@ Vision's. A Vision's answer to a question is its own the same way: delivered (to
 queued) as the Vision's, so it never counts as the person's message, and it never lets an
 Auto-blocked action run. A message a Vision queued stays its words even when the person steers it in: it
 answers no open question and joins no goal. A Vision's queued messages wait, unsent, while the person holds the chat or the
-Vision is paused, and go once the person hands the chat back. Its `stop_thread` stops the run
+Vision is paused, and go once the person hands the chat back; when the chat stops being the
+Vision's (the Vision or its channel is deleted) they are dropped, the person's own queued
+messages staying (`visions`/`queued_dropped` logs the counts). Its `stop_thread` stops the run
 without holding the chat. The two hold rules are stricter than the sends alone: a Vision may
 not answer a held chat's questions, and may not stop a chat the person took over. A chat another Vision owns, a plain
 chat, a `threadId` naming none, `approve_action`, `set_thread_approval_mode`, settings,
