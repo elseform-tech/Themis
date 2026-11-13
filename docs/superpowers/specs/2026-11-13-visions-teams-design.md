@@ -3,6 +3,9 @@
 Date: 2026-11-13 · Branch: `codex/visions-design` · Design only. Builds on the Visions design
 (`2026-11-11-visions-design.md`) and its Phase 1 code; replaces parts of it where noted.
 
+Order (owner, 2026-11-13): Phase 1 is finished and merged first; this is built on top as Phase 2,
+with the one-time conversion of existing channels described below.
+
 Design canvas: https://claude.ai/artifact/JZgtvsAnv7iiDQUmE7zjqq (version 81 and later), boards
 "Visions redesign: a team channel", "the chief's expressions, then the whole cast in 3D",
 "# administration, Atlas builds a team and adds a worker" and "the chief of staff's profile".
