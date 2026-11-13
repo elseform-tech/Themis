@@ -937,7 +937,10 @@ stay the person's to answer); a steer the run never read goes back to the queue 
 Vision's. A Vision's answer to a question is its own the same way: delivered (to the run, or
 queued) as the Vision's, so it never counts as the person's message, and it never lets an
 Auto-blocked action run. A message a Vision queued stays its words even when the person steers it in: it
-answers no open question and joins no goal. A Vision's queued messages wait, unsent, while the person holds the chat or the
+is shown and saved with the Vision's `vision_id`, answers no open question, joins no goal, is
+no person's words for the memory pass or the Auto reviewer, and goes back to the queue as the
+Vision's when the run ends unread; the person's act of steering it still denies the approvals
+the run waits on or asks for while it is unread. A Vision's queued messages wait, unsent, while the person holds the chat or the
 Vision is paused, and go once the person hands the chat back; when the chat stops being the
 Vision's (the Vision or its channel is deleted) they are dropped, the person's own queued
 messages staying (`visions`/`queued_dropped` logs the counts). Its `stop_thread` stops the run
@@ -970,8 +973,8 @@ methods of its own:
 
 Other callers have neither method: a Vision's credential is refused them like any method off its
 list, and the person's `themis` does not know them. Logged as `visions`/`proposal_posted` (ids,
-seq and counts), `proposal_refused` (ids, `stage` and `reason`: `invalid`, `unknown`, `applied`
-or `no_reply`) and `proposal_applied` (ids, counts created and changed, `outcome` `applied` or
+seq and counts), `proposal_refused` (ids, `stage` and `reason`: `invalid`, `unknown`, `applied`,
+`superseded` or `no_reply`) and `proposal_applied` (ids, counts created and changed, `outcome` `applied` or
 `partial`), and `admin_created`, `hq_created` and `hq_members_reset` with ids only; never the
 summary, names or the person's words.
 
