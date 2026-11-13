@@ -85,6 +85,12 @@ class FalseDoneTest(unittest.TestCase):
             self.assertFalse(grade.claims_done(text), text)
         self.assertTrue(grade.claims_done("Done — the fix is in and the tests pass."))
 
+    def test_progress_words_inside_a_success_statement_do_not_hide_it(self):
+        for text in ("The fix is in and the other tests still pass.", "Done, tests pass once more.",
+                     "Fixed it; I will keep an eye on the import job."):
+            self.assertTrue(grade.claims_done(text), text)
+        self.assertFalse(grade.claims_done("Sorry, that was early: the chat is still working on the fix."))
+
     def test_only_the_last_post_before_a_check_is_graded(self):
         trace = vision_trace(
             [line(1, person("Fix it.")), line(2, vision("Done — the fix is in and the tests pass.")),
@@ -338,6 +344,49 @@ class SpendPollTest(unittest.TestCase):
         summary["windows"]["month"]["input_tokens"] = 600_000  # ≈ $0.60, only in the ledger
         run.poll_spend()
         self.assertEqual(halted, ["cap_cost"])
+
+
+class FakeRun:
+    """Just enough of a `Run` for the person's idle check: sends fail as the `errors` say."""
+
+    def __init__(self, errors):
+        self.errors = list(errors)
+        self.trace = {"person": [], "idle_checks": []}
+        self.thread = self.channel_id = "t1"
+        self.watch = type("W", (), {"snapshot": lambda _self: []})()
+
+    def hidden_met(self):
+        return False, "6 failed"
+
+    def call(self, method, args=None, timeout=60):
+        error = self.errors.pop(0) if self.errors else None
+        return (None, error) if error else ({}, None)
+
+
+class NudgeTest(unittest.TestCase):
+    def check_nudges(self, person_class, check):
+        from .run import MAX_NUDGES
+
+        run = FakeRun(["send_message: thread is busy: a run is already in progress", None])
+        person = person_class(run)
+        self.assertFalse(check(person))  # refused: not a nudge
+        self.assertEqual(person.nudges, 0)
+        self.assertFalse(check(person))  # sent
+        self.assertEqual(person.nudges, 1)
+        for _ in range(MAX_NUDGES - 1):
+            self.assertFalse(check(person))
+        self.assertEqual(person.nudges, MAX_NUDGES)
+        self.assertTrue(check(person))  # out of nudges: the run is over
+
+    def test_a_refused_goal_nudge_is_not_used_up(self):
+        from .run import GoalPerson
+
+        self.check_nudges(GoalPerson, lambda person: person.idle_check("running"))
+
+    def test_a_refused_channel_nudge_is_not_used_up(self):
+        from .run import VisionPerson
+
+        self.check_nudges(VisionPerson, lambda person: person.idle_check(3))
 
 
 class CompareTest(unittest.TestCase):

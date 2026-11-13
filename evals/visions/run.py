@@ -331,8 +331,9 @@ class VisionPerson:
         self.run.trace["idle_checks"].append({"seq": newest, "met": met, "detail": detail})
         if met or self.nudges >= MAX_NUDGES:
             return True
-        self.nudges += 1
-        self.post(self.run.channel_id, scenarios.NUDGE)
+        # Only a nudge the server took counts; a refused one is tried again at the next idle moment.
+        if not self.post(self.run.channel_id, scenarios.NUDGE):
+            self.nudges += 1
         return False
 
     def answer_passed_on(self, lines):
@@ -426,8 +427,10 @@ class GoalPerson:
                                               "goal_status": status, "detail": detail})
         if met or self.nudges >= MAX_NUDGES:
             return True
-        self.nudges += 1
-        self.send("nudge", scenarios.NUDGE)
+        # Only a nudge the server took counts ("busy" refuses one while a goal turn starts); a
+        # refused one is tried again at the next idle moment, within --timeout and the cost cap.
+        if not self.send("nudge", scenarios.NUDGE):
+            self.nudges += 1
         return False
 
     def answer_questions(self):
