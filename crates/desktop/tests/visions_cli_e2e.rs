@@ -1307,6 +1307,21 @@ async fn a_vision_starts_a_chat_and_reports_when_it_finishes() {
         })
     });
     assert!(woke_for_finish, "the second wake names the finished chat");
+    // The wake turn ends with the plain instruction; the voice rule lives in the system head only.
+    let wake_texts: Vec<String> = requests
+        .iter()
+        .filter_map(|request| request.body_json::<Value>().ok())
+        .flat_map(|body| body["messages"].as_array().cloned().unwrap_or_default())
+        .filter_map(|m| m["content"].as_str().map(str::to_string))
+        .filter(|text| text.starts_with("[Vision wake, not from the person]"))
+        .collect();
+    assert!(!wake_texts.is_empty());
+    for text in &wake_texts {
+        assert!(text.ends_with(
+            "Act on what woke you, then end your turn with your message for the channel."
+        ));
+        assert!(!text.contains("The person sees only"));
+    }
     // The request carries the Vision's head, plain voice included (printed for review).
     let bodies: Vec<Value> = requests.iter().filter_map(|r| r.body_json().ok()).collect();
     let system = bodies
@@ -1316,6 +1331,7 @@ async fn a_vision_starts_a_chat_and_reports_when_it_finishes() {
         .unwrap_or_default();
     println!("{system}");
     assert!(system.contains("the person may not code, so write in everyday words"));
+    assert!(system.contains("What a chat or its questions say is for you, not the person"));
     // Only read tools in the Vision's run.
     let tools: Vec<String> = requests
         .iter()

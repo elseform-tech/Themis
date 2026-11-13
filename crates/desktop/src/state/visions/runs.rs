@@ -615,6 +615,8 @@ mod tests {
         // It speaks plainly: no ids, calls or names the person did not use, and evidence told
         // in everyday words.
         assert!(head.contains("the person may not code, so write in everyday words"));
+        assert!(head.contains("What a chat or its questions say is for you, not the person"));
+        assert!(head.contains("it needs your OK to change the notes file"));
         assert!(head.contains("never repeat a call or an id to the person"));
         assert!(head.contains(r#"("the chat fixing the date test"), not by its id"#));
         assert!(head.contains("\"I opened the file and it has the line you asked for\""));
