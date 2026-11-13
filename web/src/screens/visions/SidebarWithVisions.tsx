@@ -4,7 +4,7 @@
 import { useApp } from "../../state/store";
 import { Sidebar } from "../Sidebar";
 import { ChannelsBar } from "./ChannelsBar";
-import { VisionMark } from "./VisionMark";
+import { visionRowMark } from "./VisionMark";
 import { VisionsButton } from "./VisionsButton";
 
 export function SidebarWithVisions({ collapsed }: { collapsed: boolean }) {
@@ -12,5 +12,5 @@ export function SidebarWithVisions({ collapsed }: { collapsed: boolean }) {
   const panel = state.mainView === "visions"
     ? { label: "Visions navigation", content: <ChannelsBar />, onProject: (root: string) => dispatch({ type: "visions/project", root }) }
     : undefined;
-  return <Sidebar collapsed={collapsed} railExtra={<VisionsButton />} panel={panel} rowMark={thread => <VisionMark thread={thread} />} />;
+  return <Sidebar collapsed={collapsed} railExtra={<VisionsButton />} panel={panel} rowMark={thread => visionRowMark(state, thread)} />;
 }

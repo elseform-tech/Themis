@@ -76,3 +76,47 @@ async fn a_listing_reads_the_owners_once_however_many_chats() {
     }
     assert_eq!(snapshots, vec![1, 1]);
 }
+
+/// Breaks `owners.json` on disk and makes the cache read it again, as after an edit there.
+fn break_owners(state: &AppState) {
+    std::fs::write(state.inner.visions_dir.join(OWNERS_FILE), "not json").unwrap();
+    state.visions_cache().owners = None;
+}
+
+fn diagnostics(dir: &tempfile::TempDir) -> String {
+    let logs = dir.path().join("logs");
+    std::fs::read_dir(logs)
+        .map(|entries| {
+            entries
+                .filter_map(Result::ok)
+                .map(|entry| std::fs::read_to_string(entry.path()).unwrap_or_default())
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// While `owners.json` cannot be read, the listing keeps the last owners it read: a Vision's
+/// own chats stay hidden and its work chats keep their mark, and diagnostics say so with a count.
+#[tokio::test]
+async fn an_unreadable_owner_store_keeps_the_last_good_marks() {
+    let (dir, state, project, work) = chats(8).await;
+    let before = state.list_threads(project.clone()).await.unwrap();
+    break_owners(&state);
+    let after = state.list_threads(project.clone()).await.unwrap();
+    assert_eq!(after.len(), before.len(), "own chats stay hidden");
+    let marked = after.iter().filter(|info| info.vision.is_some()).count();
+    assert_eq!(marked, work.len());
+    let logged = diagnostics(&dir);
+    assert!(logged.contains("marks_kept"), "{logged}");
+    assert!(logged.contains("\"kept\":6"), "{logged}");
+}
+
+/// With no owners read since start, an unreadable `owners.json` hides and marks nothing.
+#[tokio::test]
+async fn an_unreadable_owner_store_with_nothing_read_hides_nothing() {
+    let (_dir, state, project, _work) = chats(8).await;
+    break_owners(&state);
+    let listed = state.list_threads(project).await.unwrap();
+    assert_eq!(listed.len(), 8);
+    assert!(listed.iter().all(|info| info.vision.is_none()));
+}

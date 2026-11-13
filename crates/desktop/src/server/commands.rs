@@ -80,13 +80,17 @@ async fn announce_thread_change(
     }
 }
 
-/// Tells every subscribed window that the chat `id` was created or changed, with its info now.
+/// Tells every subscribed window that the chat `id` was created or changed, with its info now;
+/// never a Vision's own chat, which plain chat does not list.
 pub(super) async fn announce_thread(
     state: &AppState,
     sink: &dyn EventSink,
     kind: ThreadChangeKind,
     id: String,
 ) {
+    if state.visions_hides(&id) {
+        return;
+    }
     let (Some(project_root), Ok(thread)) = (
         state.thread_project_root(&id).await,
         state.get_thread(&id).await,

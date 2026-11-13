@@ -247,6 +247,9 @@ pub(crate) struct VisionsCache {
     shown: listing::Shown,
     /// Snapshots plain chat's listings took of who runs which chat (for the scale test).
     marks_built: usize,
+    /// Each owned chat's kind and Vision as last read from `owners.json`, which plain chat's
+    /// listing keeps using while the file cannot be read (see `marks`).
+    last_owned: Option<HashMap<String, (OwnedKind, String)>>,
 }
 
 impl AppState {

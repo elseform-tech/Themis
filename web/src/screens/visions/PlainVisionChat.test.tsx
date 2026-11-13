@@ -73,15 +73,16 @@ describe("Vision chats in plain chat", () => {
   it("an_owned_chat_shows_its_vision_cloud_in_the_sidebar", () => {
     render(<Harness initial={fixture()} />);
     const sidebar = screen.getByRole("complementary", { name: "Workspace navigation" });
-    const row = within(sidebar).getByRole("button", { name: "Fix the date test" });
-    const mark = row.querySelector('[aria-label="Run by Rook"]');
-    expect(mark).not.toBeNull();
+    // Assistive tech hears who runs it in the row's name; the cloud itself is decoration.
+    const row = within(sidebar).getByRole("button", { name: "Fix the date test, run by Rook" });
+    const mark = row.querySelector(".themis-vision-mark");
+    expect(mark).toHaveAttribute("aria-hidden", "true");
     expect(cloudOf(mark!)).toEqual({ amber: true, live: false });
     // The person's own chat has no mark.
     expect(within(sidebar).getByRole("button", { name: "Plain chat" }).querySelector("svg.themis-cloud")).toBeNull();
     // A renamed Vision is shown by its name now.
     dispatchLive({ type: "visions/loaded", visions: [{ ...rook, name: "Rooky" }] });
-    expect(row.querySelector('[aria-label="Run by Rooky"]')).not.toBeNull();
+    expect(within(sidebar).getByRole("button", { name: "Fix the date test, run by Rooky" })).toBe(row);
   });
 
   it("hand_back_uses_the_cloud_icon", async () => {
@@ -107,13 +108,40 @@ describe("Vision chats in plain chat", () => {
 
   it("a Vision's chat chosen in plain chat stays chosen through Visions and back", async () => {
     render(<Harness initial={fixture()} />);
-    fireEvent.click(within(screen.getByRole("complementary", { name: "Workspace navigation" })).getByRole("button", { name: "Fix the date test" }));
+    fireEvent.click(within(screen.getByRole("complementary", { name: "Workspace navigation" })).getByRole("button", { name: /^Fix the date test/ }));
     dispatchLive({ type: "ui/view", view: "visions" });
     dispatchLive({ type: "ui/view", view: "thread" });
     const state = (live.value as { state: AppState }).state;
     expect(state.activeThreadId).toBe("w1");
     const { selectionToSave } = await import("../../state/store");
     expect(selectionToSave(state)).toEqual({ root: "/p", threadId: "w1" });
+  });
+
+  it("a Vision's chat opened from its channel, then chosen and typed in from plain chat, stays open through Visions and back", () => {
+    render(<Harness initial={fixture({ mainView: "visions" })} />);
+    dispatchLive({ type: "visions/open", channelId: "c1", chatId: "w1" });
+    dispatchLive({ type: "ui/view", view: "thread" });
+    expect((live.value as { state: AppState }).state.activeThreadId).toBe("plain");
+    fireEvent.click(within(screen.getByRole("complementary", { name: "Workspace navigation" })).getByRole("button", { name: /^Fix the date test/ }));
+    // Typing takes it over (the server's change, read back through the channel).
+    dispatchLive({ type: "visions/changed", channelId: "c1", page: { entries: [], next_before: null }, chats: [owned("taken_over")], questions: {} });
+    dispatchLive({ type: "ui/view", view: "visions" });
+    dispatchLive({ type: "ui/view", view: "thread" });
+    expect((live.value as { state: AppState }).state.activeThreadId).toBe("w1");
+  });
+
+  it("an update for a chat plain chat does not list (a Vision's own chat) adds nothing", () => {
+    render(<Harness initial={fixture()} />);
+    const own: ThreadInfo = { ...base, id: "own", title: "Rook · #release", vision: null };
+    dispatchLive({ type: "thread/changed", change: { kind: "updated", project_root: "/p", thread_id: "own", thread: own } });
+    expect(screen.queryByRole("button", { name: /Rook · #release/ })).toBeNull();
+  });
+
+  it("a Vision's chat whose profile is not listed hands back with the chat's own cloud", () => {
+    render(<Harness initial={fixture({ mainView: "visions", visions: { ...fixture().visions, list: [], chats: { c1: [owned("taken_over")] } } })} />);
+    dispatchLive({ type: "visions/open", channelId: "c1", chatId: "w1" });
+    const handBack = screen.getByRole("button", { name: "Hand back to Rook" });
+    expect(cloudOf(handBack)).toEqual({ amber: true, live: false });
   });
 
   it("the plain bar shows nothing for the person's own chat", () => {

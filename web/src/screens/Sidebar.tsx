@@ -25,9 +25,12 @@ const SIDEBAR_DEFAULT = 288;
  *  new-chat pencil goes, and choosing a project calls `onProject`. */
 export interface SidebarPanel { label: string; content: ReactNode; onProject: (root: string) => void }
 
-// `railExtra` goes in the rail after Chats; `panel` replaces the chat list; `rowMark` goes before a
-// chat's title (a Vision's cloud).
-export function Sidebar({ collapsed, railExtra, panel, rowMark }: { collapsed: boolean; railExtra?: ReactNode; panel?: SidebarPanel; rowMark?: (thread: ThreadInfo) => ReactNode }) {
+/** What goes before a chat's title (a Vision's cloud, hidden from assistive tech) and what its
+ *  row's name adds after the title (", run by Rook"). */
+export interface RowMark { mark: ReactNode; said: string }
+
+// `railExtra` goes in the rail after Chats; `panel` replaces the chat list; `rowMark` marks a row.
+export function Sidebar({ collapsed, railExtra, panel, rowMark }: { collapsed: boolean; railExtra?: ReactNode; panel?: SidebarPanel; rowMark?: (thread: ThreadInfo) => RowMark | null }) {
   const { state, dispatch } = useApp();
   const settingsOpen = state.mainView === "settings";
   const [width, setWidth] = useState(() => Math.max(SIDEBAR_MIN, Math.min(SIDEBAR_MAX, Number(readSession("sidebarWidth", SIDEBAR_DEFAULT)) || SIDEBAR_DEFAULT)));
@@ -111,7 +114,8 @@ export function Sidebar({ collapsed, railExtra, panel, rowMark }: { collapsed: b
     const locked = state.running[thread.id] ?? thread.running;
     const status = statusOf(thread);
     const unseen = finished.has(thread.id) && !isLive(status);
-    return <li key={thread.id} className="themis-sidebar-thread"><button type="button" className={`themis-sidebar-row themis-thread-row ${active ? "themis-sidebar-row--active" : ""} ${unseen ? "is-unseen" : ""}`} title={thread.title} aria-label={thread.title} aria-current={active ? "true" : undefined} onClick={() => activeRoot && dispatch({ type: "thread/selected", projectRoot: activeRoot, threadId: thread.id })}><ThreadStatus status={status} />{rowMark?.(thread)}<MovingText>{thread.title}</MovingText>{TAG[status] && <span className="themis-thread-tag">{TAG[status]}</span>}</button><details className="themis-thread-row-actions"><summary aria-label={`Options for ${thread.title}`} title="Thread options"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="12" cy="5" r="1.7" /><circle cx="12" cy="12" r="1.7" /><circle cx="12" cy="19" r="1.7" /></svg></summary><div className="themis-row-menu"><button type="button" aria-label={`Edit ${thread.title}`} disabled={locked} onClick={event => { event.currentTarget.closest("details")?.removeAttribute("open"); setEditError(""); setEditing({ ...thread, projectRoot: activeRoot! }); }}>Rename</button><button type="button" className="is-danger" aria-label={`Remove ${thread.title}`} disabled={locked} onClick={event => { event.currentTarget.closest("details")?.removeAttribute("open"); setRemoving({ ...thread, projectRoot: activeRoot! }); }}>Remove</button></div></details></li>;
+    const marked = rowMark?.(thread);
+    return <li key={thread.id} className="themis-sidebar-thread"><button type="button" className={`themis-sidebar-row themis-thread-row ${active ? "themis-sidebar-row--active" : ""} ${unseen ? "is-unseen" : ""}`} title={thread.title} aria-label={`${thread.title}${marked?.said ?? ""}`} aria-current={active ? "true" : undefined} onClick={() => activeRoot && dispatch({ type: "thread/selected", projectRoot: activeRoot, threadId: thread.id })}><ThreadStatus status={status} />{marked?.mark}<MovingText>{thread.title}</MovingText>{TAG[status] && <span className="themis-thread-tag">{TAG[status]}</span>}</button><details className="themis-thread-row-actions"><summary aria-label={`Options for ${thread.title}`} title="Thread options"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="12" cy="5" r="1.7" /><circle cx="12" cy="12" r="1.7" /><circle cx="12" cy="19" r="1.7" /></svg></summary><div className="themis-row-menu"><button type="button" aria-label={`Edit ${thread.title}`} disabled={locked} onClick={event => { event.currentTarget.closest("details")?.removeAttribute("open"); setEditError(""); setEditing({ ...thread, projectRoot: activeRoot! }); }}>Rename</button><button type="button" className="is-danger" aria-label={`Remove ${thread.title}`} disabled={locked} onClick={event => { event.currentTarget.closest("details")?.removeAttribute("open"); setRemoving({ ...thread, projectRoot: activeRoot! }); }}>Remove</button></div></details></li>;
   }
   return <>
     <div ref={slot} className={`themis-sidebar-slot ${collapsed ? "is-collapsed" : ""} ${resizing ? "is-resizing" : ""}`} style={{ "--themis-sidebar-width": `${width}px` } as import("react").CSSProperties}>

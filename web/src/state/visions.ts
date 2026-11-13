@@ -158,15 +158,31 @@ function older(state: AppState, action: Extract<VisionsAction, { type: "visions/
   };
 }
 
+/** Every listed work chat by id, built once per listing of the chats (thread events leave
+ *  `visions.chats` as it is, so a lookup on each event is one map read). */
+const chatIndex = new WeakMap<VisionsState["chats"], Map<string, OwnedChat>>();
+
 /** The work chat `threadId` as its channel last listed it, with who holds it. */
 export function ownedChat(state: AppState, threadId: string): OwnedChat | undefined {
-  return allChats(state).find(chat => chat.id === threadId);
+  let index = chatIndex.get(state.visions.chats);
+  if (!index) {
+    index = new Map(allChats(state).map(chat => [chat.id, chat]));
+    chatIndex.set(state.visions.chats, index);
+  }
+  return index.get(threadId);
 }
 
 /** Whether the active chat is the Vision's chat open in Visions (not a chat chosen in plain chat,
  *  where a Vision's chats are listed too). No chats are read. */
 export function visionsHoldsActive(state: AppState): boolean {
   return state.mainView === "visions" && state.activeThreadId !== null && state.activeThreadId === state.visions.open.chatId;
+}
+
+/** After any action: a chat chosen in plain chat (a Vision's too) is where Chats returns after a
+ *  visit to Visions. */
+export function rememberPlainChoice(state: AppState, action: AppAction): AppState {
+  if (action.type !== "thread/selected") return state;
+  return { ...state, visions: { ...state.visions, open: { ...state.visions.open, plainThreadId: action.threadId } } };
 }
 
 /** After any action: when the project changed and the open channel is not one of the new

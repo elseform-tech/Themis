@@ -13,7 +13,9 @@ import { HandBackButton, holdNote } from "./HandBack";
 export function VisionChat({ channel, chat }: { channel: ChannelInfo; chat: OwnedChat }) {
   const { state, dispatch } = useApp();
   const profile = visionById(state, chat.owner.vision_id);
-  const vision = profile?.name ?? "Its Vision";
+  // The listed profile, else the look the chat was marked with.
+  const look = profile ?? chat.vision ?? undefined;
+  const vision = look?.name ?? "Its Vision";
   const running = chatRunning(state, chat);
   const held = chat.owner.hold !== "none";
   const note = holdNote(chat.owner.hold, vision, running);
@@ -31,7 +33,7 @@ export function VisionChat({ channel, chat }: { channel: ChannelInfo; chat: Owne
         <button type="button" className="themis-visions-quiet-button" aria-label={`Back to # ${channel.name}`} onClick={() => dispatch({ type: "visions/open", channelId: channel.id })}># {channel.name}</button>
         <span className="themis-vision-chat-note">{note && <span role="status">{note}</span>}</span>
         {running && <button type="button" className="themis-visions-quiet-button" aria-label="Stop this chat" onClick={() => void stop()}>Stop</button>}
-        {held && <HandBackButton threadId={chat.id} vision={profile ?? { name: vision, shape: "tall", color: "blue" }} />}
+        {held && look && <HandBackButton threadId={chat.id} vision={look} />}
       </div>
       {shown && <ThreadView />}
     </section>

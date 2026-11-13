@@ -2,7 +2,7 @@ import { expect, it } from "vitest";
 import type { ChannelLine, VisionInfo } from "../lib/visions";
 import { countedList, growthRate, SCALE_SIZES } from "../test/scale";
 import { initialState, reducer, type AppState } from "./reducer";
-import { needsCount, visionMoods } from "./visions";
+import { needsCount, ownedChat, visionMoods } from "./visions";
 import { selectionToSave } from "./store";
 import type { OwnedChat } from "../lib/visions";
 
@@ -76,4 +76,24 @@ it("saving the plain selection reads no owned chats per thread event, however ma
   const work = SCALE_SIZES.map(ownedChatsReadPerEvents);
   expect(work).toEqual([1, 1]);
   expect(growthRate(SCALE_SIZES, ownedChatsReadPerEvents)).toBeLessThan(0.1);
+});
+
+/** Owned chats read while the active Vision chat's header looks its chat up on each of 50 thread
+ *  events, with `size` owned chats followed (thread events leave the chats list as it is). */
+function ownedChatReadsPerEvents(size: number): number {
+  const counted = countedList(Array.from({ length: size }, (_, at) => OWNED(`w${at}`)));
+  let state: AppState = { ...initialState, activeProjectRoot: "/repo", activeThreadId: "w0", visions: { ...initialState.visions, chats: { c1: counted.list } } };
+  ownedChat(state, "w0");
+  const before = counted.reads();
+  for (let event = 0; event < 50; event += 1) {
+    state = reducer(state, { type: "thread/running-loaded", threadId: "w0", running: event % 2 === 0 });
+    ownedChat(state, `w${event % size}`);
+  }
+  return counted.reads() - before + 1;
+}
+
+it("looking up the open Vision chat reads no owned chats per thread event, however many there are", () => {
+  const work = SCALE_SIZES.map(ownedChatReadsPerEvents);
+  expect(work).toEqual([1, 1]);
+  expect(growthRate(SCALE_SIZES, ownedChatReadsPerEvents)).toBeLessThan(0.1);
 });

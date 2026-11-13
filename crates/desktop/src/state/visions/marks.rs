@@ -4,6 +4,8 @@
 
 use std::collections::HashMap;
 
+use serde_json::json;
+
 use super::{OwnedKind, Vision};
 use crate::state::AppState;
 use crate::types::ThreadVision;
@@ -40,38 +42,61 @@ fn mark(vision: &Vision) -> ThreadVision {
 }
 
 impl AppState {
-    /// The marks of every owned chat, read in one lock of the Visions cache. While the owner
-    /// records cannot be read nothing is marked or hidden; while the Visions cannot be read
+    /// The marks of every owned chat, read in one lock of the Visions cache.
+    ///
+    /// While `owners.json` cannot be read, the owners last read are used (a Vision's own chats
+    /// stay hidden, its work chats keep their mark) and diagnostics note how many were kept.
+    /// With none read since start, nothing is marked or hidden: hiding needs the owner records,
+    /// and listing every chat is better than listing none. While the Visions cannot be read,
     /// their own chats stay hidden and work chats show unmarked.
     pub(crate) fn visions_marks(&self) -> VisionMarks {
         let dir = &self.inner.visions_dir;
         let mut cache = self.visions_cache();
         cache.marks_built += 1;
-        let (visions, failed) = match cache.visions(dir) {
+        let (visions, mut failed) = match cache.visions(dir) {
             Ok(visions) => (
                 visions.values().map(|v| (v.id.clone(), mark(v))).collect(),
                 None,
             ),
-            Err(error) => (HashMap::new(), Some(error)),
+            Err(error) => (HashMap::<String, ThreadVision>::new(), Some(error)),
         };
-        let (owned, failed) = match cache.owners(dir) {
+        let mut kept = None;
+        match cache.owners(dir) {
             Ok(owners) => {
-                let owned = owners
+                let read = owners
                     .values()
-                    .map(|owner| {
-                        let vision = visions.get(&owner.vision_id).cloned();
-                        (owner.thread_id.clone(), (owner.kind, vision))
-                    })
+                    .map(|o| (o.thread_id.clone(), (o.kind, o.vision_id.clone())))
                     .collect();
-                (owned, failed)
+                cache.last_owned = Some(read);
             }
-            Err(error) => (HashMap::new(), Some(error)),
-        };
+            Err(error) => {
+                kept = Some(cache.last_owned.as_ref().map_or(0, HashMap::len));
+                failed = Some(error);
+            }
+        }
+        let owned = cache
+            .last_owned
+            .iter()
+            .flatten()
+            .map(|(thread, (kind, vision))| (thread.clone(), (*kind, visions.get(vision).cloned())))
+            .collect();
         drop(cache);
         if let Some(error) = failed {
             self.visions_failed(error);
         }
+        if let Some(kept) = kept {
+            self.visions_note("marks_kept", json!({"kept": kept}));
+        }
         VisionMarks { owned }
+    }
+
+    /// Whether plain chat leaves `thread_id` out (a Vision's own chat): one set lookup for a
+    /// chat no Vision owns.
+    pub(crate) fn visions_hides(&self, thread_id: &str) -> bool {
+        self.visions_owns(thread_id)
+            && self
+                .owner_of(thread_id)
+                .is_some_and(|owner| owner.kind == OwnedKind::VisionChat)
     }
 
     /// The Vision running the work chat `thread_id`, if any: one set lookup for a chat no
