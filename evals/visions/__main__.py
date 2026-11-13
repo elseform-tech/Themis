@@ -30,6 +30,8 @@ from . import scenarios
 HERE = os.path.dirname(os.path.abspath(__file__))
 HISTORY = os.path.join(HERE, "history.jsonl")
 RESULTS = os.path.join(HERE, "results")
+ROW_CLASSIFICATION = ("proxy: the share of labelled questions the Vision put in their decision row when asked "
+                      "in its channel; not the decision it records on a real answer_question")
 
 
 def commit():
@@ -48,7 +50,8 @@ def record_of(trace, measures, options):
             "wall_minutes": round((trace.get("wall_s") or 0) / 60, 1), "measures": measures,
             "details": {"end_detail": (end.get("detail") or "")[:200],
                         "hidden": (trace.get("hidden") or {}).get("line", ""),
-                        "chosen": trace.get("chosen")}}
+                        "chosen": trace.get("chosen"),
+                        **({"row_classification": ROW_CLASSIFICATION} if trace.get("kind") == "impact" else {})}}
 
 
 def above_caps(args):
@@ -149,7 +152,9 @@ def cmd_impact(args):
 
 
 def compare_table(records, label):
-    """Means per scenario and arm: the Vision against the person in goal mode."""
+    """Means per scenario and arm: the Vision against the person in goal mode. Runs stopped at a
+    cap stay out of the `person_messages` mean (they nudge less because they end early) and are
+    counted apart; `solved` is the share of runs whose hidden checks passed at the end."""
     rows = [r for r in records if r.get("label") == label and not r.get("infrastructure")]
     lines = [f"# Visions: `{label}` (benchmark audit)", ""]
     for name in sorted({r["scenario"] for r in rows}):
@@ -161,12 +166,15 @@ def compare_table(records, label):
         for measure in grading.MEASURES:
             cells = []
             for group in groups.values():
+                if measure == "person_messages":
+                    group = [r for r in group if r.get("end") not in grading.CAPPED]
                 values = [r["measures"].get(measure) for r in group]
                 values = [v for v in values if isinstance(v, (int, float))]
                 cells.append(f"{statistics.mean(values):.3g}" if values else "–")
             if any(cell != "–" for cell in cells):
                 lines.append(f"| {measure} | " + " | ".join(cells) + " |")
-        lines.append("")
+        capped = [str(sum(r.get("end") in grading.CAPPED for r in group)) for group in groups.values()]
+        lines += ["| capped runs | " + " | ".join(capped) + " |", ""]
     return "\n".join(lines)
 
 

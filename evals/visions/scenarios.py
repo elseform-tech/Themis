@@ -45,7 +45,7 @@ STOP_PROBE = {**_task("stop-probe", "trace-rounding"), "arms": ["vision"],
               "stop_after_tools": 3, "quiet_s": 90}
 
 HQ_PROPOSAL = {
-    "name": "hq-proposal", "arms": ["vision"], "verify": None, "quiet_s": 60,
+    "name": "hq-proposal", "arms": ["vision"], "verify": None,
     "message": ("Could you set up a channel called docs, with a Vision that keeps the project's docs "
                 "folder up to date?"),
     # Said in turn, each after the admin goes quiet; neither is a yes.

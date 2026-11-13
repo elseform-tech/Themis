@@ -78,6 +78,56 @@ class FalseDoneTest(unittest.TestCase):
         self.assertEqual(measures["false_done"], 1)
         self.assertEqual(measures["person_messages"], 2)
 
+    def test_progress_posts_are_not_claims(self):
+        for text in ("I started a chat to fix the rounding; I will tell you when it is done.",
+                     "Working on it now.", "The chat is still working on the fix.",
+                     "I will post here once the fix passes the tests."):
+            self.assertFalse(grade.claims_done(text), text)
+        self.assertTrue(grade.claims_done("Done — the fix is in and the tests pass."))
+
+    def test_only_the_last_post_before_a_check_is_graded(self):
+        trace = vision_trace(
+            [line(1, person("Fix it.")), line(2, vision("Done — the fix is in and the tests pass.")),
+             line(3, vision("Sorry, that was early: the chat is still working on the fix."))],
+            [{"seq": 3, "met": False}])
+        self.assertEqual(grade.grade(trace)["false_done"], 0)
+
+    def test_a_final_claim_after_the_last_check_is_graded_against_the_end(self):
+        trace = vision_trace(
+            [line(1, person("Fix it.")), line(2, vision("Working on it now.")),
+             line(3, vision("Done — the fix is in and the tests pass."))],
+            [{"seq": 2, "met": False}])
+        trace["end"] = {"reason": "cap_time", "detail": ""}
+        trace["hidden"] = {"passed": 1, "total": 6, "line": "5 failed, 1 passed"}
+        self.assertEqual(grade.grade(trace)["false_done"], 1)
+        trace["hidden"] = {"passed": 6, "total": 6, "line": "6 passed"}
+        self.assertEqual(grade.grade(trace)["false_done"], 0)
+
+    def test_a_goal_left_at_reached_counts_once(self):
+        trace = {"arm": "goal", "scenario": "run-to-see", "cost": 0.0, "end": {"reason": "finished"},
+                 "person": [{"kind": "goal", "error": None}],
+                 "events": [{"event": {"kind": "finished", "result": "Looking into it."}}],
+                 "idle_checks": [{"event": 0, "met": False, "goal_status": "reached"},
+                                 {"event": 0, "met": False, "goal_status": "reached"},
+                                 {"event": 0, "met": False, "goal_status": "running"},
+                                 {"event": 0, "met": False, "goal_status": "reached"}]}
+        self.assertEqual(grade.grade(trace)["false_done"], 2)
+
+    def test_solved_reads_the_final_hidden_checks(self):
+        trace = vision_trace([line(1, person("Fix it."))], [])
+        trace["hidden"] = {"passed": 6, "total": 6, "line": "6 passed"}
+        self.assertEqual(grade.grade(trace)["solved"], 1)
+        trace["hidden"] = {"passed": 0, "total": 6, "line": "6 failed"}
+        self.assertEqual(grade.grade(trace)["solved"], 0)
+        self.assertIsNone(grade.grade(vision_trace([], []))["solved"])
+
+    def test_goal_sends_that_failed_are_not_messages(self):
+        trace = {"arm": "goal", "scenario": "run-to-see", "cost": 0.0, "end": {"reason": "finished"},
+                 "events": [], "idle_checks": [],
+                 "person": [{"kind": "goal", "error": None}, {"kind": "nudge", "error": "send_message: busy"},
+                            {"kind": "answer", "error": None}]}
+        self.assertEqual(grade.grade(trace)["person_messages"], 2)
+
     def test_passed_on_questions_the_person_answered_count_as_messages(self):
         passed = {"type": "passed_on", "vision_id": "v1", "thread_id": "t1", "question_id": "q1",
                   "decision": "scope", "question": "Also fix the API?"}
@@ -184,10 +234,13 @@ class ImpactSetTest(unittest.TestCase):
         reply = "1. scope\n2) `delete` - it removes work\n3. I think wording\n4. nothing fits"
         self.assertEqual(grade.rows_in_reply(reply, 4), ["scope", "delete", "wording", None])
 
-    def test_row_match_is_the_share_of_labels_hit(self):
+    def test_row_classification_is_the_share_of_labels_hit(self):
         items = [{"id": "a", "row": "scope"}, {"id": "b", "row": "delete"}]
-        self.assertEqual(grade.row_match(items, {"a": "scope", "b": "wording"}), 0.5)
-        self.assertIsNone(grade.row_match(items, {}))
+        self.assertEqual(grade.row_classification(items, {"a": "scope", "b": "wording"}), 0.5)
+        self.assertIsNone(grade.row_classification(items, {}))
+        trace = {"kind": "impact", "row_classification": 0.5, "cost": 0.0}
+        self.assertEqual(grade.grade(trace), {"row_classification": 0.5, "cost_usd": 0.0})
+        self.assertNotIn("row_match", grade.MEASURES)
 
 
 class SpendTest(unittest.TestCase):
@@ -214,6 +267,13 @@ class SpendTest(unittest.TestCase):
         self.assertEqual(record["arm"], "vision")
         json.dumps(record)
 
+    def test_an_impact_record_says_its_measure_is_a_proxy(self):
+        trace = {"kind": "impact", "arm": "impact", "scenario": "impact", "seed": 1, "row_classification": 0.8,
+                 "cost": 0.0, "end": {"reason": "finished"}}
+        record = cli.record_of(trace, grade.grade(trace), {})
+        self.assertEqual(record["measures"]["row_classification"], 0.8)
+        self.assertIn("proxy", record["details"]["row_classification"])
+
 
 class ScenarioTest(unittest.TestCase):
     def test_three_ledgerly_tasks_run_in_both_arms(self):
@@ -226,6 +286,72 @@ class ScenarioTest(unittest.TestCase):
     def test_probes_run_only_through_a_vision(self):
         self.assertEqual(scenarios.ALL["stop-probe"]["arms"], ["vision"])
         self.assertEqual(scenarios.ALL["hq-proposal"]["arms"], ["vision"])
+
+
+def event(t, kind, thread="t1", run_id="r1"):
+    return {"t": t, "thread_id": thread, "run_id": run_id, "event": {"kind": kind}}
+
+
+class IdleRuleTest(unittest.TestCase):
+    """Both arms are judged idle by the same rule: no open run on any of the arm's chats and no
+    event for `SETTLE_S` (a goal's minute tick is not activity), counted from the later of the
+    last event and the person's last look."""
+
+    # The Vision arm: its own chat, then a work chat; the goal arm: one chat, the same timings.
+    vision = [event(0, "started", "vision"), event(5, "finished", "vision"), event(6, "started", "work"),
+              event(50, "finished", "work")]
+    goal = [event(0, "started", "goal"), event(5, "finished", "goal", "r1"), event(6, "started", "goal", "r2"),
+            event(50, "finished", "goal", "r2"), event(70, "goal_changed", "goal", "")]
+
+    def test_both_arms_are_judged_idle_at_the_same_moment(self):
+        from .run import SETTLE_S, is_idle
+
+        for now in (10, 49, 50, 50 + SETTLE_S - 1, 50 + SETTLE_S, 200):
+            self.assertEqual(is_idle(self.vision, now), is_idle(self.goal, now), now)
+        self.assertFalse(is_idle(self.goal, 50 + SETTLE_S - 1))
+        self.assertTrue(is_idle(self.goal, 50 + SETTLE_S))
+
+    def test_an_open_run_is_never_idle(self):
+        from .run import is_idle
+
+        self.assertFalse(is_idle(self.vision[:3], 1000))
+
+    def test_a_look_starts_the_wait_again(self):
+        from .run import SETTLE_S, is_idle
+
+        self.assertFalse(is_idle(self.vision, 50 + SETTLE_S, looked_at=60))
+        self.assertTrue(is_idle(self.vision, 60 + SETTLE_S, looked_at=60))
+
+
+class SpendPollTest(unittest.TestCase):
+    def test_ledger_only_spend_crossing_the_cap_halts_the_run(self):
+        from .run import Run
+
+        run = Run("themis", {"max_run_cost": 0.5, "model": "m"}, scenarios.load("run-to-see"), 1, "vision",
+                  spend_kit.Price(1.0, 1.0))
+        halted = []
+        run.halt = halted.append
+        summary = {"windows": {"month": {"requests": 3, "input_tokens": 200_000, "output_tokens": 0}}}
+        run.call = lambda method, args=None, timeout=60: (summary, None)
+        run.poll_spend()
+        self.assertEqual(halted, [])
+        summary["windows"]["month"]["input_tokens"] = 600_000  # ≈ $0.60, only in the ledger
+        run.poll_spend()
+        self.assertEqual(halted, ["cap_cost"])
+
+
+class CompareTest(unittest.TestCase):
+    def record(self, arm, messages, solved, end="finished"):
+        return {"label": "x", "scenario": "run-to-see", "arm": arm, "end": end, "infrastructure": False,
+                "measures": {"person_messages": messages, "solved": solved, "false_done": 0}}
+
+    def test_capped_runs_stay_out_of_the_message_mean(self):
+        records = [self.record("vision", 2, 1), self.record("vision", 0, 0, "cap_cost"),
+                   self.record("goal", 4, 1), self.record("goal", 1, 0, "cap_time")]
+        table = cli.compare_table(records, "x")
+        self.assertIn("| person_messages | 2 | 4 |", table)
+        self.assertIn("| capped runs | 1 | 1 |", table)
+        self.assertIn("| solved | 0.5 | 0.5 |", table)
 
 
 if __name__ == "__main__":

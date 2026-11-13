@@ -39,10 +39,12 @@ from evals.verify import scenarios as verify_scenarios
 from . import scenarios
 
 MAX_NUDGES = 2
-# Seconds with nothing running and no new channel line before the person looks.
+# Seconds with no open run and no event before the person looks (both arms).
 SETTLE_S = 30
 POLL_S = 3
 PAGE_BYTES = 1024 * 1024
+# The usage ledger is read every this many polls, so ledger-only spend counts during the run.
+SPEND_POLLS = 3
 VISION = {"name": "Wren", "role": "Fixes and builds things in Ledgerly", "shape": "cloud", "color": "teal"}
 
 
@@ -71,17 +73,27 @@ class AllWatch(Watch):
             if self.on_event:
                 self.on_event(item)
 
-    def active(self):
-        """Whether any chat has a run started and not ended."""
-        open_runs = set()
-        for item in self.snapshot():
-            key = (item["thread_id"], item["run_id"])
-            kind = item["event"].get("kind")
-            if kind == "started":
-                open_runs.add(key)
-            elif kind in TERMINAL:
-                open_runs.discard(key)
-        return bool(open_runs)
+    def idle(self, looked_at=None):
+        """`is_idle` on the events so far, now; `looked_at` in monotonic seconds."""
+        now = time.monotonic() - self.started
+        return is_idle(self.snapshot(), now, None if looked_at is None else looked_at - self.started)
+
+
+def is_idle(events, now, looked_at=None, settle=SETTLE_S):
+    """The one idle rule for both arms: no run started and not ended on any chat of the arm, and
+    no event (a goal's minute tick aside) for `settle` seconds, counted from the later of the last
+    event and the person's last look (`looked_at`, on the events' clock)."""
+    open_runs, last = set(), 0.0
+    for item in events:
+        key = (item.get("thread_id", ""), item.get("run_id", ""))
+        kind = item["event"].get("kind")
+        if kind == "started":
+            open_runs.add(key)
+        elif kind in TERMINAL:
+            open_runs.discard(key)
+        if kind != "goal_changed":
+            last = max(last, item.get("t", 0.0))
+    return not open_runs and now - max(last, looked_at or 0.0) >= settle
 
 
 def runtime_config(options):
@@ -128,6 +140,18 @@ class Run:
         for thread in list(self.threads):
             if thread:
                 self.call("stop_thread", {"threadId": thread}, timeout=30)
+
+    def poll_spend(self):
+        """Reads the app's usage ledger (goal checks, summaries, memory jobs and the Visions' own
+        runs, which no `context_usage` event of a watched chat may report) and halts past the cap."""
+        if self.meter is None:
+            return
+        summary, error = self.call("get_usage_summary", None, timeout=30)
+        if error:
+            return
+        self.meter.update_ledger(spend_kit.ledger_counts(summary))
+        if not self.meter.price.free and self.meter.cost() > self.options["max_run_cost"]:
+            self.halt("cap_cost")
 
     # -- one run -------------------------------------------------------------------------------
 
@@ -238,7 +262,6 @@ class VisionPerson:
     def __init__(self, run):
         self.run = run
         self.nudges, self.stopped, self.carried_on = 0, None, False
-        self.checked_seq = -1
 
     def setup(self):
         run = self.run
@@ -279,28 +302,24 @@ class VisionPerson:
         if self.post(target, run.scenario["message"]):
             return {"reason": "infrastructure", "detail": "first post failed"}
         replies = list(run.scenario.get("replies") or [])
-        quiet_since = None
+        looked, polls = time.monotonic(), 0
         while time.monotonic() < deadline:
+            polls += 1
+            if polls % SPEND_POLLS == 0:
+                run.poll_spend()
             if run.stop_reason:
                 return {"reason": run.stop_reason, "detail": ""}
             lines = run.channel_lines(target)
-            waiting = self.answer_passed_on(lines)
-            if self.stop_probe(lines):
-                quiet_since = None
-                continue
-            newest = lines[-1]["seq"] if lines else 0
-            if run.watch.active() or waiting or self.in_quiet_probe():
-                quiet_since = None
-            elif quiet_since is None or quiet_since[0] != newest:
-                quiet_since = (newest, time.monotonic())
-            elif time.monotonic() - quiet_since[1] >= SETTLE_S and newest != self.checked_seq:
-                self.checked_seq = newest
+            # The person acting (an answer, the Stop, the probe's quiet) starts the wait again.
+            if self.answer_passed_on(lines) or self.stop_probe(lines) or self.in_quiet_probe():
+                looked = time.monotonic()
+            elif run.watch.idle(looked):
+                looked = time.monotonic()
                 if run.hq_id:
                     if not replies:
                         return {"reason": "finished", "detail": ""}
                     self.post(run.hq_id, replies.pop(0))
-                    continue
-                if self.idle_check(newest):
+                elif self.idle_check(lines[-1]["seq"] if lines else 0):
                     return {"reason": "finished", "detail": ""}
             time.sleep(POLL_S)
         run.halt("cap_time")
@@ -317,7 +336,7 @@ class VisionPerson:
         return False
 
     def answer_passed_on(self, lines):
-        """Answers each question passed on to the person; true while one is still open."""
+        """Answers each question passed on to the person; true when it answered one."""
         run, waiting = self.run, False
         for line in lines:
             entry = line["entry"]
@@ -328,7 +347,7 @@ class VisionPerson:
                                                          "answer": scenarios.ANSWER})
             run.trace["answered"].append(entry["question_id"])
             run.trace["person"].append({"kind": "answer", "question_id": entry["question_id"], "error": error})
-            waiting = waiting or bool(error)
+            waiting = True
         return waiting
 
     def stop_probe(self, lines):
@@ -382,20 +401,19 @@ class GoalPerson:
         _value, error = run.call("set_thread_approval_mode", {"threadId": run.thread, "mode": "custom"})
         if error or self.send("goal", "/goal " + run.scenario["message"]):
             return {"reason": "infrastructure", "detail": f"goal start: {error}"}
-        quiet_since = None
+        looked, polls = time.monotonic(), 0
         while time.monotonic() < deadline:
+            polls += 1
+            if polls % SPEND_POLLS == 0:
+                run.poll_spend()
             if run.stop_reason:
                 return {"reason": run.stop_reason, "detail": ""}
-            self.answer_questions()
-            goal, _error = run.call("get_goal", {"threadId": run.thread}, timeout=30)
-            status = goal.get("status") if isinstance(goal, dict) else None
-            idle_for = time.monotonic() - run.watch.last
-            if run.watch.active() or (status == "running" and idle_for < 4 * SETTLE_S):
-                quiet_since = None
-            elif quiet_since is None:
-                quiet_since = time.monotonic()
-            elif time.monotonic() - quiet_since >= SETTLE_S:
-                quiet_since = None
+            if self.answer_questions():
+                looked = time.monotonic()
+            elif run.watch.idle(looked):
+                looked = time.monotonic()
+                goal, _error = run.call("get_goal", {"threadId": run.thread}, timeout=30)
+                status = goal.get("status") if isinstance(goal, dict) else None
                 if self.idle_check(status):
                     return {"reason": "finished", "detail": status or ""}
             time.sleep(POLL_S)
@@ -413,6 +431,8 @@ class GoalPerson:
         return False
 
     def answer_questions(self):
+        """Answers each open question box; true when it answered one."""
+        answered = False
         questions, _error = self.run.call("list_questions", {"threadId": self.run.thread}, timeout=30)
         for question in questions or []:
             if question.get("answer") is not None or question.get("id") in self.run.trace["answered"]:
@@ -422,6 +442,8 @@ class GoalPerson:
                                                               "answer": scenarios.ANSWER})
             self.run.trace["answered"].append(question["id"])
             self.run.trace["person"].append({"kind": "answer", "question_id": question["id"], "error": error})
+            answered = True
+        return answered
 
 
 IMPACT_BATCH = 5
@@ -435,7 +457,7 @@ class ImpactPerson(VisionPerson):
     batches, and the row it names for each read from its reply (`grade.rows_in_reply`)."""
 
     def drive(self, deadline):
-        from .grade import row_match, rows_in_reply
+        from .grade import row_classification, rows_in_reply
 
         run = self.run
         run.scenario = {**run.scenario, "verify": {}}  # a Vision and a channel, not # hq
@@ -451,27 +473,27 @@ class ImpactPerson(VisionPerson):
             posted, error = run.call("post_channel_message", {"channelId": run.channel_id, "text": text})
             if error or run.stop_reason:
                 break
-            reply = self.reply_after(posted.get("seq", 0), deadline)
+            reply = self.reply_after(posted.get("seq", 0), time.monotonic(), deadline)
             for item, row in zip(batch, rows_in_reply(reply, len(batch))):
                 chosen[item["id"]] = row
-        run.trace["row_match"] = row_match(items, chosen)
+        run.trace["row_classification"] = row_classification(items, chosen)
         if run.stop_reason:
             return {"reason": run.stop_reason, "detail": ""}
         return {"reason": "finished" if time.monotonic() < deadline else "cap_time", "detail": ""}
 
-    def reply_after(self, seq, deadline):
-        """The Vision's posts after `seq`, once nothing has run for `SETTLE_S`."""
-        quiet_since = None
+    def reply_after(self, seq, posted_at, deadline):
+        """The Vision's posts after `seq`, once the arm is idle (`is_idle`) after the post."""
+        polls = 0
         while time.monotonic() < deadline and not self.run.stop_reason:
-            lines = self.run.channel_lines(self.run.channel_id)
-            texts = [line["entry"].get("text") or "" for line in lines
-                     if line["seq"] > seq and line["entry"].get("type") == "vision"]
-            if self.run.watch.active() or not texts:
-                quiet_since = None
-            elif quiet_since is None:
-                quiet_since = time.monotonic()
-            elif time.monotonic() - quiet_since >= SETTLE_S:
-                return "\n".join(texts)
+            polls += 1
+            if polls % SPEND_POLLS == 0:
+                self.run.poll_spend()
+            if self.run.watch.idle(posted_at):
+                lines = self.run.channel_lines(self.run.channel_id)
+                texts = [line["entry"].get("text") or "" for line in lines
+                         if line["seq"] > seq and line["entry"].get("type") == "vision"]
+                if texts:
+                    return "\n".join(texts)
             time.sleep(POLL_S)
         return ""
 
