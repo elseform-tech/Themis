@@ -22,7 +22,7 @@ vi.mock("../../lib/tauri", async importOriginal => ({
 }));
 vi.mock("../../lib/visions", async importOriginal => ({
   ...await importOriginal<typeof import("../../lib/visions")>(),
-  getVisionsSettings: vi.fn(async () => ({ settings: { enabled: true, autonomy: "most", custom: {}, daily_budget_usd: 2, max_wakes: 8 }, revision: "s1" })),
+  getVisionsSettings: vi.fn(async () => ({ settings: { enabled: true, autonomy: "most", custom: {}, daily_budget_usd: 2, max_wakes: 8 }, revision: "s1", can_run: true })),
   saveVision: vi.fn(async (draft: object) => ({ ...draft, revision: "r2" })),
   pauseVision: vi.fn(async () => ({})),
   deleteVision: vi.fn(async () => undefined),

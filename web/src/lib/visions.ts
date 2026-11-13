@@ -152,6 +152,8 @@ export interface VisionsSettings {
 export interface VisionsSettingsView {
   settings: VisionsSettings;
   revision: string;
+  /** False when no sandbox on this computer can confine a Vision's run: every wake is refused. */
+  can_run: boolean;
 }
 
 /** `visions-changed`: ids only; both absent means read everything again. */

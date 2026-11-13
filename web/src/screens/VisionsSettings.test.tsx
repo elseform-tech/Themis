@@ -25,17 +25,17 @@ vi.mock("../lib/visions", async importOriginal => ({
 const base: VisionsSettings = { enabled: true, autonomy: "small", custom: {}, daily_budget_usd: 2, max_wakes: 8 };
 /** The file as the server holds it: each write must name its current revision (r1, r2, …). */
 let file: { settings: VisionsSettings; revision: number };
-function serve(settings: Partial<VisionsSettings>) {
+function serve(settings: Partial<VisionsSettings>, canRun = true) {
   file = { settings: { ...base, ...settings }, revision: 1 };
-  vi.mocked(visions.getVisionsSettings).mockImplementation(async () => ({ settings: file.settings, revision: `r${file.revision}` }));
+  vi.mocked(visions.getVisionsSettings).mockImplementation(async () => ({ settings: file.settings, revision: `r${file.revision}`, can_run: canRun }));
   vi.mocked(visions.updateVisionsSettings).mockImplementation(async (changes, revision) => {
     if (revision !== `r${file.revision}`) throw new Error("Visions settings changed since this page loaded; reload before saving");
     file = { settings: { ...file.settings, ...changes } as VisionsSettings, revision: file.revision + 1 };
-    return { settings: file.settings, revision: `r${file.revision}` };
+    return { settings: file.settings, revision: `r${file.revision}`, can_run: canRun };
   });
 }
-async function open(settings: Partial<VisionsSettings>) {
-  serve(settings);
+async function open(settings: Partial<VisionsSettings>, canRun = true) {
+  serve(settings, canRun);
   await act(async () => { render(<VisionsSettingsSection />); });
 }
 /** Drags the slider over `stops` (1–5) and lets go. */
@@ -85,6 +85,17 @@ describe("Settings › Visions", () => {
     expect(stops).toEqual(["Always ask", "Routine decisions", "Most decisions", "Nearly all decisions", "Custom"]);
     expect(document.querySelector(".themis-visions-meta")).toBeNull();
     expect(screen.queryByText(/shown for reference|Approvals stay yours|What a Vision decides/)).toBeNull();
+  });
+
+  it("says in one line when Visions can't run on this computer, and nothing when they can", async () => {
+    await open({});
+    expect(screen.queryByRole("status")).toBeNull();
+    cleanup();
+    await open({}, false);
+    expect(screen.getByRole("status").textContent).toBe("Visions can't run on this computer: it has no sandbox that can confine them.");
+    // A write keeps it shown.
+    await slide(4);
+    expect(screen.getByRole("status")).toBeTruthy();
   });
 
   it("locked_rows_stay_locked_in_custom", async () => {

@@ -5,6 +5,7 @@ use super::*;
 
 mod admin;
 mod budget;
+mod confinement;
 mod model;
 mod origins;
 mod plain_chat;

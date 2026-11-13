@@ -567,6 +567,10 @@ in the channel what it did. Visions are not on all the time: one wakes when you 
 (`@Name`, or just write in a channel with one Vision), when a chat it started finishes, stops
 or needs something, and then goes quiet again.
 
+Visions run only where the app can confine them: on macOS, and on Linux 6.7 or later (Landlock
+ABI 4). On Windows and older Linux they cannot run yet; each wake says so in the channel, and
+Settings › Visions shows "Visions can't run on this computer".
+
 **Where.** The cloud in the rail opens Visions. Its face shows the most urgent state of your
 Visions and a badge counts what waits on you. The sidebar lists **Channels** (`# hq` first) and
 **Visions**, each with a + to make a new one: a channel has a name, a project and members; a
@@ -755,7 +759,8 @@ totals for 400 days, in `usage.sqlite3` in the app data folder (numbers and ids 
 browsing, downloads and debugging, with per-site exceptions), Developer mode, the downloads
 folder, and the browser's history and data; see [web tools](web-tools.md#permissions-settings--browser).
 It saves to the `browser` block of your `runtime.jsonc`.
-**Visions** sets how much Visions decide on their own when a chat they drive asks something:
+**Visions** sets how much Visions decide on their own when a chat they drive asks something
+(on a computer that cannot confine Visions, one line at the top says they can't run there):
 a slider from **Always ask** through **Routine decisions** (the default), **Most decisions** and
 **Nearly all decisions** to **Custom**. Each kind of decision shows **Decides** or **Asks you**,
 read-only for the presets; Custom makes each one editable and starts from the level you moved

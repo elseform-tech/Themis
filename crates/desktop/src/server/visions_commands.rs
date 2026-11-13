@@ -165,14 +165,17 @@ fn settings_method(
     method: &str,
     args: &Value,
 ) -> Result<(Value, Option<VisionsChange>), String> {
+    // Whether Visions can run on this computer at all, beside the settings.
+    let can_run = state.visions_can_run_here();
     if method == "get_visions_settings" {
         let (settings, revision) = state.user_visions_view()?;
-        return Ok((json!({"settings": settings, "revision": revision}), None));
+        let value = json!({"settings": settings, "revision": revision, "can_run": can_run});
+        return Ok((value, None));
     }
     let changes: serde_json::Map<String, Value> = arg(args, "changes")?;
     let revision: Option<String> = arg(args, "revision")?;
     let (settings, revision) = state.patch_user_visions_config(changes, revision.as_deref())?;
-    let value = json!({"settings": settings, "revision": revision});
+    let value = json!({"settings": settings, "revision": revision, "can_run": can_run});
     Ok((value, Some(VisionsChange::default())))
 }
 

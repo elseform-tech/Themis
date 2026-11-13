@@ -131,6 +131,7 @@ export function VisionsSettingsSection({ onSaved }: { onSaved?: () => void } = {
   const patch = (next: Patch) => { queue.current = queue.current.then(() => write(next)); };
   return <>
     {error && <p role="alert" className="themis-form-error">{error}</p>}
+    {!view.can_run && <p role="status" className="themis-settings-hint">Visions can't run on this computer: it has no sandbox that can confine them.</p>}
     <AutonomyCard settings={view.settings} patch={patch} />
     <LimitsGroup settings={view.settings} patch={patch} onError={setError} />
   </>;

@@ -315,6 +315,20 @@ impl AppState {
             .map(|_| port)
     }
 
+    /// Whether this computer's sandbox can hold a Vision's run in its envelope, with the
+    /// person's own sandbox settings: when it cannot, every wake is refused. A configuration
+    /// that cannot be read says nothing here (Settings › Permissions lists its problems).
+    pub fn visions_can_run_here(&self) -> bool {
+        let Ok(resolved) = self.runtime_configuration(None, None) else {
+            return true;
+        };
+        let root = self.app_data_dir();
+        // Any port: whether the envelope can be built does not depend on it.
+        self.sandbox_plan(&root, &resolved.config.sandbox, None)
+            .vision_envelope(&root, 1)
+            .is_ok()
+    }
+
     /// The model a Vision's chats run on: its profile's, else the app's default.
     pub(super) async fn visions_model(&self, vision: &Vision) -> String {
         match vision
