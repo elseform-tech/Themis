@@ -295,13 +295,15 @@ fn a_vision_grant_never_approves_or_changes_modes() {
             );
         }
     }
-    // Switching a hook or a command-based server on stays the store's to refuse: the guard
-    // lets only listed `plugin_action` actions through, as for every run.
-    let runs = json!({"action": "test_hook"});
-    assert_eq!(
-        reason(check(&grant, "plugin_action", &runs, &owners)),
-        Some(Reason::RunsCode)
-    );
+    // A Vision manages no integration: `plugin_action` is refused, a read included.
+    for action in ["list", "test_hook", "save_skill"] {
+        let args = json!({"action": action});
+        assert_eq!(
+            reason(check(&grant, "plugin_action", &args, &owners)),
+            Some(Reason::MethodNotAllowed),
+            "{action}"
+        );
+    }
 }
 
 #[test]
@@ -394,8 +396,8 @@ fn expected(
         "list_channel_threads" => channel == Some("c1"),
         _ if VISION_DRIVE.contains(&method) => owned.is_some() && !held,
         _ if OWN_CHAT.contains(&method) => owned.is_some() || thread == Some("chat-a"),
-        // The grant names no project, so a `plugin_action` naming one is refused.
-        "plugin_action" => in_project.is_none() && thread.is_none_or(|thread| thread == "chat-a"),
+        // A Vision manages no integration.
+        "plugin_action" => false,
         _ if ALLOWED.contains(&method) => thread.is_none_or(|thread| thread == "chat-a"),
         _ => false,
     }

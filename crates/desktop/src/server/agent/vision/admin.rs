@@ -20,7 +20,6 @@ pub(super) fn refusal(scope: &VisionScope, method: &str, args: &Value) -> Option
         }
         "apply_proposal" | "list_visions" => Some(None),
         "list_channels" => Some((!in_channel_project(scope, args)).then(other_project)),
-        "plugin_action" => Some(refuse()),
         _ if VISION_DRIVE.contains(&method) => Some(refuse()),
         _ => None,
     }

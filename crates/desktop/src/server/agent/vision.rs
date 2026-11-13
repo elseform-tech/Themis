@@ -5,11 +5,12 @@
 //! the owner record of the request's `threadId`, never command text. While the person holds a
 //! chat (stopped or took it over) the Vision may not write in it, and a paused Vision starts
 //! and sends nothing. Everything else stays as refused as for any run: approvals, modes,
-//! settings, secrets, other chats. A Vision's writes go the server's way, never as the
-//! person's message (`state/visions/drive.rs`). It answers a question only on a decision its
-//! run's autonomy leaves to it (`decision`, with its `reason`), and passes the rest on to the
-//! person in its channel (`pass_question`). The admin Vision in `# hq` drives no chat; its
-//! grant proposes and sets up channels and Visions instead (`admin`).
+//! settings, secrets, other chats, and integrations (`plugin_action`). A Vision's writes go
+//! the server's way, never as the person's message (`state/visions/drive.rs`). It answers a
+//! question only on a decision its run's autonomy leaves to it (`decision`, with its
+//! `reason`), and passes the rest on to the person in its channel (`pass_question`). The admin
+//! Vision in `# hq` drives no chat; its grant proposes and sets up channels and Visions instead
+//! (`admin`).
 
 use themis_core::visions::Decision;
 
@@ -61,6 +62,10 @@ pub(super) fn refusal(
     args: &Value,
     owned: &dyn Fn(&str) -> Option<Owner>,
 ) -> Option<Option<Refusal>> {
+    // No Vision manages integrations, the admin included.
+    if method == "plugin_action" {
+        return Some(Some(refused(Reason::MethodNotAllowed, method)));
+    }
     if crate::state::is_admin(&scope.vision_id) {
         return admin::refusal(scope, method, args);
     }

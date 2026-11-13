@@ -952,7 +952,9 @@ mod tests {
                 let send = json!({"threadId": format!("work-{index}"), "text": "go"});
                 let sent = super::refusal(&grant, "send_message", &send, &owned).is_none();
                 assert_eq!(sent, grant.vision.is_some(), "{index}");
-                assert!(super::refusal(&grant, "plugin_action", &list, &owned).is_none());
+                // A plain run reads its integrations; a Vision manages none.
+                let listed = super::refusal(&grant, "plugin_action", &list, &owned).is_none();
+                assert_eq!(listed, grant.vision.is_none(), "{index}");
                 assert!(super::refusal(&grant, "approve_action", &send, &owned).is_some());
             }
             assert!(tokens.caller("forged").is_err());

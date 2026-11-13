@@ -938,7 +938,7 @@ Vision is paused, and go once the person hands the chat back. Its `stop_thread` 
 without holding the chat. The two hold rules are stricter than the sends alone: a Vision may
 not answer a held chat's questions, and may not stop a chat the person took over. A chat another Vision owns, a plain
 chat, a `threadId` naming none, `approve_action`, `set_thread_approval_mode`, settings,
-secrets, the Visions methods other than `list_channel_threads`, and everything else refused
+secrets, `plugin_action` (no Vision manages integrations, not even reads), the Visions methods other than `list_channel_threads`, and everything else refused
 above stay refused. The shell's approval step treats every driving method as `execute`, never
 a read. Writes are logged as `visions`/`chat_started`, `vision_sent` and
 `vision_stopped_chat` with ids only.
