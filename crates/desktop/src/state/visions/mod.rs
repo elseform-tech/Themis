@@ -54,6 +54,21 @@ pub(super) use runs::{boxed_run, confine, run_scope, run_tools, vision_approvals
 use store::StoreError;
 pub use wakes::WakeReason;
 
+/// An id a call named, as the log may keep it: letters, digits and `-` only, else `(other)`
+/// (a model chose it, so it may hold any text).
+pub(crate) fn id_label(id: &str) -> &str {
+    let plain = !id.is_empty()
+        && id.len() <= 64
+        && id
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-');
+    if plain {
+        id
+    } else {
+        "(other)"
+    }
+}
+
 /// Directory name under the app data directory.
 pub(super) const VISIONS_DIR: &str = "visions";
 const VISIONS_FILE: &str = "visions.json";

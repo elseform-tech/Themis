@@ -676,7 +676,7 @@ impl AppState {
         let seq = self.channel_post(channel_id, ADMIN_VISION_ID, entry)?;
         self.visions_note(
             "proposal_posted",
-            json!({"vision_id": ADMIN_VISION_ID, "channel_id": channel_id, "proposal_id": proposal_id, "seq": seq, "counts": counts}),
+            json!({"vision_id": ADMIN_VISION_ID, "channel_id": channel_id, "proposal_id": super::id_label(&proposal_id), "seq": seq, "counts": counts}),
         );
         Ok((proposal_id, seq))
     }
@@ -702,7 +702,7 @@ impl AppState {
             Err(Refused(reason, message)) => {
                 self.visions_note(
                     "proposal_refused",
-                    json!({"vision_id": ADMIN_VISION_ID, "channel_id": channel_id, "proposal_id": proposal_id, "reason": reason, "stage": "apply"}),
+                    json!({"vision_id": ADMIN_VISION_ID, "channel_id": channel_id, "proposal_id": super::id_label(proposal_id), "reason": reason, "stage": "apply"}),
                 );
                 return Err(message);
             }
@@ -720,7 +720,7 @@ impl AppState {
         let count = |action| items.iter().filter(|item| item.action == action).count();
         self.visions_note(
             "proposal_applied",
-            json!({"vision_id": ADMIN_VISION_ID, "channel_id": channel_id, "proposal_id": proposal_id,
+            json!({"vision_id": ADMIN_VISION_ID, "channel_id": channel_id, "proposal_id": super::id_label(proposal_id),
                 "created": count(SetUpAction::Created), "changed": count(SetUpAction::Changed),
                 "outcome": if outcome.is_ok() { "applied" } else { "partial" }}),
         );

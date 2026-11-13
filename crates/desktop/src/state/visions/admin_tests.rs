@@ -389,3 +389,28 @@ async fn configured_provider_models_are_usable_without_a_go_key() {
     assert!(named("local/nope").unwrap_err().contains("model"));
     assert!(named("no-such-model").unwrap_err().contains("model"));
 }
+
+/// The log keeps a proposal id only when it is id-shaped: the admin's call names it, so any
+/// other text (words, a secret pasted in) is logged as `(other)`.
+#[test]
+fn the_log_keeps_proposal_ids_only_when_id_shaped() {
+    let (dir, state, hq) = with_hq();
+    let named = "set up my plan with sk-secret-1234";
+    let refused = state.visions_apply_proposal(&hq, named, Vec::new());
+    assert!(refused.is_err());
+    let mut logged = String::new();
+    for entry in std::fs::read_dir(dir.path().join("logs"))
+        .unwrap()
+        .flatten()
+    {
+        logged.push_str(&std::fs::read_to_string(entry.path()).unwrap_or_default());
+    }
+    let refusals: Vec<serde_json::Value> = logged
+        .lines()
+        .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+        .filter(|line| line["event"] == "proposal_refused")
+        .collect();
+    assert_eq!(refusals.len(), 1, "{logged}");
+    assert_eq!(refusals[0]["details"]["proposal_id"], "(other)");
+    assert!(!logged.contains("sk-secret-1234"), "{logged}");
+}

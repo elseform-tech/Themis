@@ -18,7 +18,7 @@ use std::sync::Mutex;
 use themis_core::agent_cli::VisionScope;
 
 use super::*;
-use crate::state::Owner;
+use crate::state::{id_label, Owner};
 
 mod vision;
 
@@ -523,20 +523,6 @@ fn log_refused(state: &AppState, grant: &Grant, request: &Request, reason: Reaso
             "target_thread_id": thread.filter(|_| grant.vision.is_some()).map(id_label),
         }),
     );
-}
-
-/// A chat id as the log may keep it: letters, digits and `-` only.
-fn id_label(id: &str) -> &str {
-    let plain = !id.is_empty()
-        && id.len() <= 64
-        && id
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-');
-    if plain {
-        id
-    } else {
-        "(other)"
-    }
 }
 
 #[cfg(test)]
