@@ -498,4 +498,17 @@ describe("Visions view", () => {
     await waitFor(() => expect(visionsBridge.postChannelMessage).toHaveBeenCalledWith("c1", "@Wren draft the notes"));
     await waitFor(() => expect(box).toHaveValue(""));
   });
+
+  it("opens a Vision's profile from the bar and the channel's details from its name, one at a time", async () => {
+    const view = await openRelease();
+    const bar = within(screen.getByRole("complementary", { name: "Visions navigation" }));
+    fireEvent.click(bar.getByRole("button", { name: "Rook, Needs you" }));
+    expect(screen.getByRole("complementary", { name: "Rook, profile" })).toBeTruthy();
+    fireEvent.click(within(view).getByRole("button", { name: "# release" }));
+    expect(screen.queryByRole("complementary", { name: "Rook, profile" })).toBeNull();
+    const details = screen.getByRole("complementary", { name: "Channel details" });
+    expect(within(details).getByRole("textbox", { name: "Topic" })).toHaveValue("Ship 0.9");
+    fireEvent.click(within(details).getByRole("button", { name: "Close" }));
+    expect(screen.queryByRole("complementary", { name: "Channel details" })).toBeNull();
+  });
 });

@@ -107,6 +107,14 @@ function useChannelMotion(state: ReturnType<typeof useApp>["state"], channel: Ch
   return { reduced, thinking, woke, shownUpTo, shown: lines.filter(line => line.seq <= arrived) };
 }
 
+/** The channel's name; once saved, it opens and closes the channel's details. */
+function ChannelTitle({ channel }: { channel: ChannelInfo }) {
+  const { state, dispatch } = useApp();
+  if (!channel.id) return <h1># {channel.name}</h1>;
+  const open = state.visions.open.panel?.kind === "channel";
+  return <h1><button type="button" className="themis-channel-title" aria-expanded={open} title="Channel details" onClick={() => dispatch({ type: "visions/panel", panel: open ? null : { kind: "channel" } })}># {channel.name}</button></h1>;
+}
+
 export function ChannelView({ channel }: { channel: ChannelInfo }) {
   const { state, loadOlderLines } = useApp();
   const [draft, setDraft] = useState("");
@@ -130,7 +138,7 @@ export function ChannelView({ channel }: { channel: ChannelInfo }) {
   return (
     <section className="themis-channel" aria-label={`# ${channel.name}`}>
       <header className="themis-channel-head">
-        <h1># {channel.name}</h1>
+        <ChannelTitle channel={channel} />
         {channel.topic && <span className="themis-channel-topic">{channel.topic}</span>}
         {members.length > 0 && <span className="themis-channel-members" role="img" aria-label={`Here: ${members.map(vision => vision.name).join(", ")}`}>
           {members.map(vision => <CloudIcon key={vision.id} shape={vision.shape} color={vision.color} mood={moods[vision.id] ?? "calm"} size={20} crown={vision.id === ADMIN_VISION_ID} />)}

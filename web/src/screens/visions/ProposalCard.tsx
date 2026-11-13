@@ -1,16 +1,14 @@
 // The admin's proposal in # hq: what it would set up, in its words and item by item, and whether it
 // waits for the person's answer or was set up (with links to the channels it made or changed). A
 // setup whose proposal is not loaded shows on its own.
-import type { Autonomy, ChannelEntry, Proposal, ProposalChange, SetUpItem } from "../../lib/visions";
+import type { ChannelEntry, Proposal, ProposalChange, SetUpItem } from "../../lib/visions";
+import { LEVELS } from "./autonomy";
 import { CloudIcon } from "./CloudIcon";
 
 type Proposed = Extract<ChannelEntry, { type: "proposal" }>;
 type Applied = Extract<ChannelEntry, { type: "proposal_applied" }>;
 
 const list = (names: string[]) => names.join(", ");
-
-/** The autonomy levels as Settings › Visions names them. */
-const LEVELS: Record<Autonomy, string> = { ask: "Ask me first", small: "Small calls", most: "Most calls", nearly_all: "Nearly all", custom: "Custom" };
 
 /** What a new Vision is set up with, besides its job: its model, level and budget when named. */
 function newVisionWords(vision: Proposal["visions"][number]): string {

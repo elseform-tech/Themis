@@ -52,8 +52,10 @@
 .themis-channel-row:hover { background: var(--themis-nav-hover-bg); }
 .themis-channel-row.themis-sidebar-row--active { background: var(--themis-card); color: var(--themis-text); font-weight: 600; }
 .themis-channel-row.is-waiting { color: var(--themis-text); font-weight: 600; }
-.themis-vision-row { cursor: default; }
-.themis-vision-row:hover { color: var(--themis-text-2); }
+.themis-vision-row:hover { background: var(--themis-nav-hover-bg); }
+.themis-vision-row.themis-sidebar-row--active { background: var(--themis-card); color: var(--themis-text); }
+.themis-channel-title { padding: 0; border: 0; background: transparent; color: inherit; font: inherit; cursor: pointer; }
+.themis-channel-title:hover, .themis-channel-title[aria-expanded="true"] { color: var(--themis-accent); }
 .themis-mood-tag--needs { color: var(--themis-accent); }
 .themis-mood-tag--sorry { color: var(--themis-danger); }
 

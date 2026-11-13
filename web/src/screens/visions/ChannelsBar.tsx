@@ -1,6 +1,6 @@
 // The channels bar: in Visions mode it takes the chat list's place under the project switcher: `# hq`,
 // the project's channels (each with what waits on the person there) and the Visions with their
-// live clouds and moods (the admin lives in # hq, not in that list).
+// live clouds and moods, each opening its profile (the admin lives in # hq, not in that list).
 import { useState } from "react";
 import { ADMIN_VISION_ID } from "../../lib/visions";
 import { useApp } from "../../state/store";
@@ -35,6 +35,8 @@ export function ChannelsBar() {
   const [sheet, setSheet] = useState<Sheet>(null);
   const { hq, channels, current } = projectChannels(state);
   const moods = visionMoods(state);
+  const panel = state.visions.open.panel;
+  const profile = panel?.kind === "vision" ? panel.visionId : null;
   const openChannel = (channelId: string | null) => dispatch({ type: "visions/open", channelId });
   return <>
     <div className="themis-sidebar-projects themis-channels-bar">
@@ -47,11 +49,13 @@ export function ChannelsBar() {
         <ul className="themis-sidebar-list">
           {state.visions.list.filter(vision => vision.id !== ADMIN_VISION_ID).map(vision => {
             const mood = moods[vision.id] ?? "calm";
-            return <li key={vision.id} className="themis-sidebar-row themis-vision-row">
+            const shown = profile === vision.id;
+            return <li key={vision.id}><button type="button" className={`themis-sidebar-row themis-vision-row ${shown ? "themis-sidebar-row--active" : ""}`} aria-label={MOOD_LABEL[mood] ? `${vision.name}, ${MOOD_LABEL[mood]}` : vision.name} aria-pressed={shown}
+              onClick={() => dispatch({ type: "visions/panel", panel: shown ? null : { kind: "vision", visionId: vision.id } })}>
               <CloudIcon shape={vision.shape} color={vision.color} mood={mood} live />
               <span className="themis-sidebar-name">{vision.name}</span>
-              {MOOD_LABEL[mood] && <span className={`themis-thread-tag themis-mood-tag--${mood}`}>{MOOD_LABEL[mood]}</span>}
-            </li>;
+              {MOOD_LABEL[mood] && <span className={`themis-thread-tag themis-mood-tag--${mood}`} aria-hidden="true">{MOOD_LABEL[mood]}</span>}
+            </button></li>;
           })}
         </ul>
     </div>

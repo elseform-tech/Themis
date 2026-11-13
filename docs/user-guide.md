@@ -682,7 +682,7 @@ usable model when that one is gone too.
 ## Settings reference
 
 Settings has General, Appearance, Models, Usage, Secrets, Memory, Permissions, Browser,
-Web, Subagents and Advanced sections. While Settings is open they take over the whole left sidebar (the icon
+Web, Subagents, Visions and Advanced sections. While Settings is open they take over the whole left sidebar (the icon
 rail is hidden) and **Back to app** at the top returns to the chat. The sidebar toggle in
 the header (⌘B) folds the list to icons, as it does the rail.
 **Usage** shows the tokens Themis used for the last 5 hours, this week (from Monday) and
@@ -700,11 +700,29 @@ totals for 400 days, in `usage.sqlite3` in the app data folder (numbers and ids 
 browsing, downloads and debugging, with per-site exceptions), Developer mode, the downloads
 folder, and the browser's history and data; see [web tools](web-tools.md#permissions-settings--browser).
 It saves to the `browser` block of your `runtime.jsonc`.
+**Visions** sets how much Visions decide on their own when a chat they drive asks something:
+a slider from **Ask me first** through **Small calls** (the default), **Most calls** and
+**Nearly all** to **Custom**. The presets list what they hand to a Vision, read-only; Custom
+makes each kind of decision yours or the Vision's. "Anything that leaves this computer" and
+"Spending past the budget" are always yours, Custom included, and approvals stay yours at every
+level. Below are the **Daily budget, all Visions** (dollars a day for every Vision together)
+and **Pause all Visions**, which pauses every Vision at once (Atlas too). It saves to the
+`visions` block of your `runtime.jsonc`, one field at a time; a change made to the file since
+the page loaded is refused and the page shows the file again.
+**A Vision's profile** opens when you click it in the Visions bar (Atlas: from `# hq`'s
+details): Pause or Resume, Delete (its work chats become ordinary chats), its **Model** (Same
+as chat unless you pick one), **Autonomy** (Same as Settings, or a lower level only), its own
+**Daily budget**, its **Soul** (how it works and talks, in your words; the pencil edits it) and
+the channels it works in. Atlas has no Delete, autonomy, soul or channel list. Click a
+channel's name in its header for its **details**: the topic, the **Approval mode** its Visions'
+chats run in (yours to set; a Vision never changes it), its members (Visions only) and Delete
+(its Visions' chats stop and become ordinary chats). `# hq` cannot be deleted and Atlas is its
+only member.
 **General › Notifications** holds **Sound when a reply finishes**, **Haptics** (macOS) and
 **Notify when a goal finishes or pauses** (macOS; see [Goals](#goals)).
 Ordinary preferences save on change; text inputs save when focus leaves the field.
 After each save the pane heading shows **Saved** for a few seconds; in Models, Memory,
-Permissions, Browser, Web, Subagents and Advanced it adds *applies from each chat's next message*, because a reply
+Permissions, Browser, Web, Subagents, Visions and Advanced it adds *applies from each chat's next message*, because a reply
 already running keeps the settings it started with. Nothing needs a restart.
 Errors appear inline, and rejected changes leave the previous preferences intact.
 Permissions sets the mode new chats start in (Auto by default, or Custom or YOLO; each chat

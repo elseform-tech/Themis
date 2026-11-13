@@ -47,7 +47,11 @@ export interface VisionsOpen {
   chatId: string | null;
   /** The plain chat that was open before a Vision's chat, for Chats to return to. */
   plainThreadId: string | null;
+  /** The side panel beside it: a Vision's profile, or the open channel's details. */
+  panel?: VisionsPanel;
 }
+
+export type VisionsPanel = { kind: "vision"; visionId: string } | { kind: "channel" } | null;
 
 export const initialVisions: VisionsState = { list: [], channels: {}, lines: {}, nextBefore: {}, keep: {}, chats: {}, questions: {}, open: { channelId: null, chatId: null, plainThreadId: null } };
 
@@ -57,7 +61,8 @@ export type VisionsAction =
   | { type: "visions/older"; channelId: string; page: ChannelPage }
   | { type: "visions/open"; channelId: string | null; chatId?: string | null }
   | { type: "visions/project"; root: string }
-  | { type: "visions/reshow" };
+  | { type: "visions/reshow" }
+  | { type: "visions/panel"; panel: VisionsPanel };
 
 /** A Vision's mood: asleep while paused or over budget; otherwise needs > sorry > work > think >
  *  calm. Sorry is the server's: its latest run failed (a work chat's or its own chat's; the
@@ -206,7 +211,7 @@ function reshow(state: AppState): AppState {
 function open(state: AppState, action: Extract<VisionsAction, { type: "visions/open" }>): AppState {
   const chatId = action.chatId ?? null;
   const plainThreadId = visionsHoldsActive(state) ? state.visions.open.plainThreadId : state.activeThreadId;
-  const visions = { ...state.visions, open: { channelId: action.channelId, chatId, plainThreadId } };
+  const visions = { ...state.visions, open: { ...state.visions.open, channelId: action.channelId, chatId, plainThreadId } };
   if (chatId === null) return { ...state, visions };
   const root = Object.keys(visions.channels).find(each => visions.channels[each]!.some(channel => channel.id === action.channelId));
   return { ...state, visions, activeThreadId: chatId, activeProjectRoot: root ?? state.activeProjectRoot };
@@ -226,7 +231,7 @@ export function channelNeeds(channel: ChannelInfo): number {
 /** Another project while in Visions: its `# hq`, and its newest plain chat for Chats to return to. */
 function project(state: AppState, root: string): AppState {
   const newest = [...(state.threadsByProject[root] ?? [])].sort((a, b) => (b.last_activity_seq ?? 0) - (a.last_activity_seq ?? 0))[0]?.id ?? null;
-  return { ...state, activeProjectRoot: root, activeThreadId: newest, visions: { ...state.visions, open: { channelId: null, chatId: null, plainThreadId: newest } } };
+  return { ...state, activeProjectRoot: root, activeThreadId: newest, visions: { ...state.visions, open: { ...state.visions.open, channelId: null, chatId: null, plainThreadId: newest } } };
 }
 
 /** The visions/* actions; null for any other. */
@@ -236,6 +241,7 @@ export function reduceVisionsActions(state: AppState, action: AppAction): AppSta
   if (action.type === "visions/open") return open(state, action);
   if (action.type === "visions/project") return project(state, action.root);
   if (action.type === "visions/reshow") return reshow(state);
+  if (action.type === "visions/panel") return { ...state, visions: { ...state.visions, open: { ...state.visions.open, panel: action.panel } } };
   if (action.type !== "visions/changed") return null;
   const { channelId, page } = action;
   const v = state.visions;
