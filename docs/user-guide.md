@@ -559,6 +559,61 @@ Zed, Sublime Text, BBEdit or Xcode when installed), creating a commented-out
 starter the first time; `themis permissions`
 prints the full effective view. See [sandbox](sandbox.md) for details and limits.
 
+## Visions
+
+A Vision is an agent that runs Themis chats for you. You give it work in a channel; it starts
+chats in the channel's project, answers what they ask within the limits you set, and tells you
+in the channel what it did. Visions are not on all the time: one wakes when you mention it
+(`@Name`, or just write in a channel with one Vision), when a chat it started finishes, stops
+or needs something, and then goes quiet again.
+
+**Where.** The cloud in the rail opens Visions. Its face shows the most urgent state of your
+Visions and a badge counts what waits on you. The sidebar lists **Channels** (`# hq` first) and
+**Visions**, each with a + to make a new one: a channel has a name, a project and members; a
+Vision has a name, a shape and a colour. A channel is one project's conversation with its
+Visions: write in the box at the bottom (Enter sends, Shift+Enter starts a new line, `@` picks a
+member). A Vision's chats show in the channel as links with their state; open one to read it,
+and Stop ends a running one. Vision messages are formatted like any chat reply.
+
+**While a Vision is working** the channel shows "<Name> is thinking" with three moving dots from
+the moment your post wakes it until its run ends, for at least about a second. Its posts appear
+one after another.
+
+**# hq and Atlas.** Every project has `# hq`, where Atlas (the cloud with a crown) sets things
+up for you. Ask for "a channel that ships releases": Atlas replies with a card listing the new
+channel and Vision, then waits. Answer yes and it sets them up; answer anything else and it asks
+again or changes the plan. Atlas never drives chats. `# hq` and Atlas cannot be deleted, and
+Atlas is `# hq`'s only member.
+
+**Your chats stay yours.** A chat a Vision started shows in the ordinary chat list with a small
+cloud in the Vision's colour. If you write in it, you **took over**: the Vision stops steering
+it, and a **Hand back to <Name>** button (in the channel and above the chat) gives it back. If
+you stop it, it stays stopped until you write in it or hand it back. A Vision cannot answer
+a held chat's questions, and it never switches on a hook or a command-based MCP server.
+
+**What a Vision decides.** Settings › Visions sets, for all Visions, how much they decide
+without asking you when a chat they run asks something; see [Settings reference](#settings-reference).
+A Vision never gets more than the Settings level (its own override can only lower it). Approvals
+for actions stay yours: a Vision's chats use the channel's **Approval mode**, which only you set.
+
+**A Vision's profile** opens when you click it in the Visions list (Atlas: from `# hq`'s
+details): Pause or Resume, Delete (its work chats become ordinary chats), its **Model**
+(**Default model**, the one Settings › Models sets, unless you pick one), **Autonomy** ("Same as
+Settings (...)", or a lower level only), its own **Daily budget** ($0 to $100; empty means none),
+its **Soul** (the pencil edits it) and the channels it works in. Atlas has only Model, Daily
+budget and Pause. Click a channel's name in its header for its **details**: the topic, the
+**Approval mode** its Visions' chats run in, its members (Visions only) and Delete (its Visions'
+chats stop and become ordinary chats). `# hq` has no approval mode, member controls or Delete.
+
+**Budget.** Visions have a daily budget, all together (Settings › Visions) and one per Vision.
+When one is reached, the Vision starts nothing, its running chats stop and the channel says so
+once; raising the cap lets its next wake run. When the app cannot tell what has been spent (for
+example no price list is loaded yet) Visions start nothing and the channel says why. The cost
+is an estimate from the usage recorded for the chats a Vision owns.
+
+Visions follow `visions.*` in your `runtime.jsonc` ([configuration](configuration.md)), and
+`themis` can drive them ([Visions methods](configuration.md#visions-methods)).
+
 ## Skills
 
 The **Skills** tab holds reusable instruction bundles: a name, description,
@@ -711,15 +766,7 @@ all Visions** ($0.10 to $100 a day for every Vision together) and **Pause all Vi
 pauses every Vision but Atlas, so you can still ask Atlas in `# hq`; it shows on when all of
 them are paused. It saves to the `visions` block of your `runtime.jsonc`, one field at a time;
 a change made to the file since the page loaded is refused and the page shows the file again.
-**A Vision's profile** opens when you click it in the Visions bar (Atlas: from `# hq`'s
-details): Pause or Resume, Delete (its work chats become ordinary chats), its **Model**
-(**Default model**, the one Settings › Models sets, unless you pick one), **Autonomy** (Same as
-Settings, or a lower level only), its own **Daily budget** ($0 to $100; empty means none), its
-**Soul** (the pencil edits it) and the channels it works in. Atlas has no Delete, autonomy, soul
-or channel list. Click a channel's name in its header for its **details**: the topic, the
-**Approval mode** its Visions' chats run in (yours to set; a Vision never changes it), its
-members (Visions only) and Delete (its Visions' chats stop and become ordinary chats). `# hq`
-cannot be deleted, has no approval mode to set, and Atlas is its only member.
+A Vision's own settings are in its profile, see [Visions](#visions).
 **General › Notifications** holds **Sound when a reply finishes**, **Haptics** (macOS) and
 **Notify when a goal finishes or pauses** (macOS; see [Goals](#goals)).
 Ordinary preferences save on change; text inputs save when focus leaves the field.
