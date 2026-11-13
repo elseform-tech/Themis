@@ -99,9 +99,12 @@ impl AppState {
         let stopped = self.owners_where(|owner| {
             owner.channel_id == channel_id && owner.hold == Hold::StoppedByPerson
         });
-        for owner in &stopped {
-            self.owner_hold(&owner.thread_id, |_| Hold::None)?;
-        }
+        // A release that cannot be saved leaves that chat held (the store logs why); the post
+        // is recorded already, so the Visions still wake.
+        let release_failed = stopped
+            .iter()
+            .filter(|owner| self.owner_hold(&owner.thread_id, |_| Hold::None).is_err())
+            .count();
         // The person wrote: the channel's Visions may wake `visions.max_wakes` times again.
         self.visions_reset_wakes(channel_id);
         let members: Vec<Vision> = channel
@@ -127,7 +130,8 @@ impl AppState {
             .collect();
         self.visions_note(
             "channel_posted",
-            json!({"channel_id": channel_id, "seq": seq, "released": stopped.len(), "woken": answering.len()}),
+            json!({"channel_id": channel_id, "seq": seq, "released": stopped.len() - release_failed,
+                "release_failed": release_failed, "woken": answering.len()}),
         );
         Ok((seq, answering))
     }

@@ -359,3 +359,48 @@ async fn a_stop_holds_the_chat_even_when_the_hold_cannot_be_saved() {
     }
     assert!(logged.contains("\"saved\":false"), "{logged}");
 }
+
+/// The person's post is recorded and wakes the channel's Vision even when a stopped chat's
+/// hold cannot be released (the failure is logged): one outcome, never a post nobody hears.
+#[tokio::test]
+async fn a_post_wakes_even_when_a_hold_cannot_be_released() {
+    let fx = setup(None);
+    let work = fx
+        .state
+        .visions_start_work_chat(&fx.scope)
+        .await
+        .unwrap()
+        .id;
+    fx.state
+        .owner_hold(&work, |_| Hold::StoppedByPerson)
+        .unwrap();
+    // Edited on disk since the store read it: the release is refused.
+    let owners = fx.state.inner.visions_dir.join("owners.json");
+    let text = std::fs::read_to_string(&owners).unwrap();
+    std::fs::write(&owners, format!("{text}\n")).unwrap();
+    let posted = fx
+        .state
+        .visions_post(&sink(), &fx.scope.channel_id, "@Wren carry on");
+    assert!(posted.is_ok(), "{posted:?}");
+    let mut logged = String::new();
+    for entry in std::fs::read_dir(fx._dir.path().join("logs"))
+        .unwrap()
+        .flatten()
+    {
+        logged.push_str(&std::fs::read_to_string(entry.path()).unwrap_or_default());
+    }
+    let events: Vec<serde_json::Value> = logged
+        .lines()
+        .filter_map(|line| serde_json::from_str(line).ok())
+        .filter(|line: &serde_json::Value| line["service"] == "visions")
+        .collect();
+    let woke = events
+        .iter()
+        .any(|line| line["event"] == "wake" && line["details"]["reason"] == "mentioned");
+    assert!(woke, "{logged}");
+    let note = events
+        .iter()
+        .find(|line| line["event"] == "channel_posted")
+        .unwrap();
+    assert_eq!(note["details"]["release_failed"], 1, "{note}");
+}
