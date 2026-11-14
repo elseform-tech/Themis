@@ -22,6 +22,7 @@
 mod ledger;
 mod notices;
 
+use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
 use serde_json::json;
@@ -30,6 +31,17 @@ use super::super::usage::{catalog_prices, Prices};
 use super::{Hold, OwnedKind, Owner, WakeReason};
 use crate::state::AppState;
 pub(crate) use ledger::{Ledger, Tally, Unknown};
+
+#[cfg(test)]
+thread_local! {
+    static TALLIES: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
+/// Today's spend tallies taken on this thread so far, which starts the count again.
+#[cfg(test)]
+pub(super) fn take_tallies() -> u64 {
+    TALLIES.take()
+}
 
 /// Longest wait, after a request, for the usage writer to store its row before the check reads.
 const SETTLE: Duration = Duration::from_millis(200);
@@ -163,15 +175,17 @@ impl AppState {
 
     /// Whether `vision_id` may not spend now in any of its channels (its profile shows so).
     pub fn visions_over_budget(&self, vision_id: &str) -> bool {
-        self.channels_all()
-            .iter()
-            .filter(|channel| channel.members.iter().any(|member| member == vision_id))
-            .any(|channel| self.visions_judge(vision_id, &channel.id).over.is_some())
+        self.visions_over_map()
+            .get(vision_id)
+            .copied()
+            .unwrap_or(false)
     }
 
     /// Today's spend, reading only the usage rows recorded since the last check. The usage
     /// store is read without the Visions cache's lock held.
     pub(super) fn visions_tally(&self, vision_id: Option<&str>) -> Result<Tally, Unknown> {
+        #[cfg(test)]
+        TALLIES.set(TALLIES.get() + 1);
         if !self.inner.usage.available() {
             return Err(Unknown::UsageUnavailable);
         }
@@ -237,60 +251,86 @@ impl AppState {
         None
     }
 
-    /// `channel`'s caps: its own (never above your own `runtime.jsonc`'s
-    /// `visions.daily_budget_usd`), that one for all Visions together, and a lower cap its
-    /// project sets, for that project's channels.
-    fn visions_caps(&self, channel: &super::Channel) -> Result<Caps, Unknown> {
+    /// Every channel's budget now, in one pass: today's spend tallied once, each project's
+    /// configuration read once. A channel's caps: its own (never above your own
+    /// `runtime.jsonc`'s `visions.daily_budget_usd`), that one for all Visions together, and a
+    /// lower cap its project sets, for that project's channels.
+    pub(super) fn visions_channel_budgets(&self) -> Result<HashMap<String, Judged>, Unknown> {
         let resolve = |project: Option<&std::path::Path>| {
             self.runtime_configuration(project, None)
                 .map(|config| config.config.visions.daily_budget_usd)
                 .map_err(|_| Unknown::ConfigUnreadable)
         };
         let user = resolve(None)?;
-        let cap = resolve(Some(&channel.project_root))?;
-        let project = (cap < user).then(|| {
-            let channels = self
-                .channels_all()
-                .into_iter()
-                .filter(|other| other.project_root == channel.project_root)
-                .map(|other| other.id)
-                .collect();
-            (cap, channels)
-        });
-        Ok(Caps {
-            channel: channel.daily_budget_usd.map_or(user, |own| own.min(user)),
-            user,
-            project,
-        })
+        let channels = self.channels_all();
+        let mut project_caps: HashMap<std::path::PathBuf, f64> = HashMap::new();
+        for channel in &channels {
+            if !project_caps.contains_key(&channel.project_root) {
+                let cap = resolve(Some(&channel.project_root))?;
+                project_caps.insert(channel.project_root.clone(), cap);
+            }
+        }
+        let tally = self.visions_tally(None)?;
+        let mut budgets = HashMap::new();
+        for channel in &channels {
+            let cap = project_caps[&channel.project_root];
+            let project = (cap < user).then(|| {
+                let ids = channels
+                    .iter()
+                    .filter(|other| other.project_root == channel.project_root)
+                    .map(|other| other.id.clone())
+                    .collect();
+                (cap, ids)
+            });
+            let caps = Caps {
+                channel: channel.daily_budget_usd.map_or(user, |own| own.min(user)),
+                user,
+                project,
+            };
+            let judged = Judged {
+                over: caps.reached(&tally, &channel.id),
+                unpriced: tally
+                    .by_channel
+                    .get(&channel.id)
+                    .map_or(0, |spend| spend.unpriced),
+            };
+            budgets.insert(channel.id.clone(), judged);
+        }
+        Ok(budgets)
     }
 
-    /// Whether `vision_id` may not spend now in `channel_id`, posting nothing.
-    pub(super) fn visions_judge(&self, vision_id: &str, channel_id: &str) -> Judged {
+    /// Whether a Vision may not spend now in `channel_id` (the channel's budget), posting
+    /// nothing.
+    pub(super) fn visions_judge(&self, _vision_id: &str, channel_id: &str) -> Judged {
         let unknown = |why| Judged {
             over: Some(Over::Unknown(why)),
             unpriced: 0,
         };
-        if self.vision_get(vision_id).is_none() {
-            return unknown(Unknown::VisionGone);
-        }
-        let Some(channel) = self.channel_get(channel_id) else {
-            return unknown(Unknown::VisionGone);
-        };
-        let caps = match self.visions_caps(&channel) {
-            Ok(caps) => caps,
-            Err(why) => return unknown(why),
-        };
-        let tally = match self.visions_tally(Some(vision_id)) {
-            Ok(tally) => tally,
-            Err(why) => return unknown(why),
-        };
-        Judged {
-            over: caps.reached(&tally, channel_id),
-            unpriced: tally
-                .by_channel
+        match self.visions_channel_budgets() {
+            Ok(budgets) => budgets
                 .get(channel_id)
-                .map_or(0, |spend| spend.unpriced),
+                .copied()
+                .unwrap_or_else(|| unknown(Unknown::VisionGone)),
+            Err(why) => unknown(why),
         }
+    }
+
+    /// Whether each Vision may not spend now in at least one of its channels, from one pass.
+    pub(super) fn visions_over_map(&self) -> HashMap<String, bool> {
+        let budgets = self.visions_channel_budgets();
+        let mut over: HashMap<String, bool> = HashMap::new();
+        for channel in self.channels_all() {
+            let reached = match &budgets {
+                Ok(budgets) => budgets
+                    .get(&channel.id)
+                    .is_none_or(|judged| judged.over.is_some()),
+                Err(_) => true,
+            };
+            for member in channel.members {
+                *over.entry(member).or_default() |= reached;
+            }
+        }
+        over
     }
 
     /// Whether `vision_id` may not spend now in `channel_id`; the channel is told once a day,
@@ -298,6 +338,7 @@ impl AppState {
     /// without a price.
     pub(crate) fn visions_budget_gate(&self, vision_id: &str, channel_id: &str) -> Option<Over> {
         let judged = self.visions_judge(vision_id, channel_id);
+        let shown = judged.over.is_some() || self.visions_over_budget(vision_id);
         if judged.unpriced > 0 {
             self.visions_notice_unpriced(channel_id, judged.unpriced);
         }
@@ -307,7 +348,7 @@ impl AppState {
             Some(Over::Unknown(Unknown::CatalogNotLoaded | Unknown::PricesPending)) | None => {}
             Some(over) => self.visions_notice_over(channel_id, over),
         }
-        self.visions_budget_shown(vision_id, self.visions_over_budget(vision_id));
+        self.visions_budget_shown(vision_id, shown);
         judged.over
     }
 

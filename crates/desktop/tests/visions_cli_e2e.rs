@@ -1782,9 +1782,7 @@ async fn a_passed_question_is_answered_by_the_person_from_the_channel() {
     let pass = json!({"threadId": work, "questionId": question, "decision": "scope"});
     let passed = json_of(&fx.agent_call(&agent, "pass_question", pass));
     assert!(passed["answer"].is_null(), "{passed}");
-    // The test plays the worker's run (Visions off), so the server already passed the
-    // question on, with no decision named; the worker's pass adds no second entry. Either way
-    // it is under the channel's chief, who speaks for the team.
+    // The worker's pass, with its decision, under the channel's chief (who speaks for the team).
     let entries = fx.entries(&channel);
     let passed: Vec<&Value> = entries
         .iter()
@@ -1795,7 +1793,7 @@ async fn a_passed_question_is_answered_by_the_person_from_the_channel() {
     assert_eq!(
         *passed[0],
         json!({"type": "passed_on", "vision_id": chief, "thread_id": work,
-            "question_id": question, "decision": "", "question": "Which license?"})
+            "question_id": question, "decision": "scope", "question": "Which license?"})
     );
     let _ = &vision;
     // Only on a chat it owns.

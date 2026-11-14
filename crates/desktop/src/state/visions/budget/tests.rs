@@ -314,9 +314,24 @@ async fn the_channel_budget_stops_every_wake_with_one_notice() {
     let wren_work = running(&s.state, "wren-work");
     let ada_work = running(&s.state, "ada-work");
     let elsewhere = other_project(&s);
+    // Ada also works in the other channel, where a chat of hers runs.
+    s.state
+        .owner_set(Owner {
+            thread_id: "ada-elsewhere".into(),
+            vision_id: s.ada.clone(),
+            channel_id: elsewhere.clone(),
+            kind: OwnedKind::Work,
+            hold: Hold::None,
+        })
+        .unwrap();
+    let ada_elsewhere = running(&s.state, "ada-elsewhere");
     write_runtime(&s, r#"{"visions": {"daily_budget_usd": 5}}"#);
     set_cap(&s, &s.wren, Some(1.5));
     s.state.visions_after_run(&sink(), "wren-chat", &finished());
+    assert!(
+        !ada_elsewhere.load(Ordering::SeqCst),
+        "the other channel's chat runs on"
+    );
     assert!(wren_work.load(Ordering::SeqCst), "the chief's chat stops");
     assert!(ada_work.load(Ordering::SeqCst), "the worker's chat stops");
     let admit = |vision: &str, channel: &str| {
@@ -660,7 +675,10 @@ async fn wait_for_notice(s: &Setup, kind: &str) -> Value {
         if let Some(found) = notices_of(s, kind).into_iter().next() {
             return found;
         }
-        assert!(started.elapsed() < Duration::from_secs(10), "{kind} told");
+        // The product gives the catalog load CATALOG_WAIT before it counts as failed; a fetch
+        // that fails slowly (seconds on some machines) must not fail the test before that.
+        let bound = super::notices::CATALOG_WAIT + Duration::from_secs(5);
+        assert!(started.elapsed() < bound, "{kind} told");
         tokio::time::sleep(Duration::from_millis(20)).await;
     }
 }
@@ -1049,4 +1067,48 @@ async fn a_budget_flip_announces_the_vision() {
     let mut expected = vec![flipped(&s.wren), flipped(&s.ada)];
     expected.sort_by(|a, b| a.vision_id.cmp(&b.vision_id));
     assert_eq!(both, expected);
+}
+
+/// Judging every Vision's budget (the listing, the minute's re-check) tallies today's spend a
+/// fixed number of times however many channels there are: one pass, not one per channel or
+/// per Vision.
+#[tokio::test]
+async fn budget_judging_stays_flat_with_the_number_of_channels() {
+    let s = setup().await;
+    let root = s.state.channel_get(&s.channel).unwrap().project_root;
+    let mut counts = Vec::new();
+    for size in [5usize, 50] {
+        while s.state.channels_all().len() < size {
+            let n = s.state.channels_all().len();
+            let vision = s
+                .state
+                .vision_save(profile(&format!("V{n}")), None)
+                .unwrap()
+                .id;
+            s.state
+                .channel_save(
+                    Channel {
+                        id: String::new(),
+                        name: format!("c{n}"),
+                        topic: String::new(),
+                        project_root: root.clone(),
+                        approval_mode: ApprovalMode::Custom,
+                        members: vec![vision.clone()],
+                        chief: vision,
+                        autonomy: None,
+                        custom: None,
+                        daily_budget_usd: None,
+                        paused_workers: Vec::new(),
+                        revision: String::new(),
+                    },
+                    None,
+                )
+                .unwrap();
+        }
+        super::take_tallies();
+        s.state.visions_budget_recheck();
+        counts.push((size, super::take_tallies()));
+    }
+    let rate = crate::scale::growth_rate(&counts);
+    assert!(rate < 0.2, "tallies grew with the channels: {counts:?}");
 }

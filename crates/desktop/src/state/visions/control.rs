@@ -104,6 +104,9 @@ impl AppState {
             })
             .map(|chief| chief.id)
             .collect();
+        // The count was reset: work that waited at the limit (a worker's finished chat, say)
+        // may start again too.
+        self.visions_wake_waiting_in(sink, channel_id, &channel.chief);
         self.visions_note(
             "channel_posted",
             json!({"channel_id": channel_id, "seq": seq, "released": stopped.len() - release_failed,

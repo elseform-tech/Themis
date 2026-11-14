@@ -595,6 +595,11 @@ impl VisionsCache {
             for channel in updated.values_mut() {
                 if channel.members.iter().any(|member| member == vision_id) {
                     channel.members.retain(|member| member != vision_id);
+                    channel.paused_workers.retain(|worker| worker != vision_id);
+                    // A deleted chief hands the channel to its next member.
+                    if channel.chief == vision_id {
+                        channel.chief = channel.members.first().cloned().unwrap_or_default();
+                    }
                     channel.revision = next_revision(Some(&channel.revision));
                 }
             }

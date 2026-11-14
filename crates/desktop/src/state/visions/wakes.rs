@@ -20,13 +20,15 @@ use crate::state::AppState;
 use crate::types::{GoalStatus, ThreadEvent};
 
 /// Wake outcomes after which no run will take a question: it goes to the person instead.
+/// Not `disabled`: with Visions off nothing in their channels moves, and the question stays in
+/// its work chat, as with no Visions at all.
 const STRANDS: &[&str] = &[
     "paused",
-    "disabled",
     "limit",
     "over_budget",
     "budget_unknown",
     "gone",
+    "configuration",
 ];
 
 /// Most reasons one Vision keeps waiting; the oldest go first beyond it.
@@ -121,6 +123,8 @@ impl WakeReason {
 struct WakeSlot {
     /// A run of its Vision chat is starting or running.
     running: bool,
+    /// When the newest run started (Unix ms).
+    started_ms: Option<i64>,
     /// Reasons waiting for its next run, oldest first.
     queued: Vec<WakeReason>,
     /// A run was refused as busy before it started: try again when a run ends.
@@ -177,6 +181,7 @@ impl WakeSlots {
         count.0 += 1;
         let slot = self.queue_reason(vision_id, channel_id, None);
         slot.running = true;
+        slot.started_ms = Some(chrono::Utc::now().timestamp_millis());
         slot.retry = false;
         Admit::Start(std::mem::take(&mut slot.queued))
     }
@@ -207,11 +212,22 @@ impl WakeSlots {
         slot
     }
 
-    /// The run ended.
-    pub(super) fn ended(&mut self, vision_id: &str, channel_id: &str) {
-        if let Some(slot) = self.slot(vision_id, channel_id) {
-            slot.running = false;
-        }
+    /// The run ended; returns when it started.
+    pub(super) fn ended(&mut self, vision_id: &str, channel_id: &str) -> Option<i64> {
+        let slot = self.slot(vision_id, channel_id)?;
+        slot.running = false;
+        slot.started_ms.take()
+    }
+
+    /// The Visions with reasons waiting in `channel_id` and no run going.
+    pub(super) fn waiting_in(&self, channel_id: &str) -> Vec<String> {
+        self.slots
+            .iter()
+            .filter(|((_, channel), slot)| {
+                channel == channel_id && !slot.running && !slot.queued.is_empty()
+            })
+            .map(|((vision, _), _)| vision.clone())
+            .collect()
     }
 
     /// The run was refused before it started: its reasons wait again, first. It still counts
@@ -339,12 +355,42 @@ impl AppState {
         }
     }
 
-    /// The chief of the channel a chat belongs to, else (no chief) its owner.
+    /// A worker's turn ended: the questions of its work chats in this channel that were open
+    /// when the turn began and are still neither answered nor passed on reach the person, under
+    /// the chief (a permission question is the person's alone and is shown as one already).
+    fn visions_pass_on_left_open(&self, chat: &Owner, started_ms: i64) {
+        if self.leads(&chat.channel_id, &chat.vision_id) {
+            return;
+        }
+        let work = self.owners_where(|owner| {
+            owner.vision_id == chat.vision_id
+                && owner.channel_id == chat.channel_id
+                && owner.kind == OwnedKind::Work
+        });
+        for owner in work {
+            for question in self.open_questions(&owner.thread_id) {
+                let left =
+                    question.asked_at <= started_ms && !question.passed_on && !question.permission;
+                if left {
+                    self.visions_pass_on_stranded(&owner, &question.id);
+                }
+            }
+        }
+    }
+
+    /// The chief of the channel a chat belongs to while it can act (a member, not paused there),
+    /// else the chat's owner, so what the chief would hear still wakes someone.
     pub(super) fn chief_of(&self, owner: &Owner) -> String {
         self.channel_get(&owner.channel_id)
             .map(|channel| channel.chief)
-            .filter(|chief| !chief.is_empty())
+            .filter(|chief| !chief.is_empty() && !self.paused_in(&owner.channel_id, chief))
+            .filter(|chief| self.works_or_leads(&owner.channel_id, chief))
             .unwrap_or_else(|| owner.vision_id.clone())
+    }
+
+    fn works_or_leads(&self, channel_id: &str, vision_id: &str) -> bool {
+        self.channel_get(channel_id)
+            .is_some_and(|channel| channel.members.iter().any(|member| member == vision_id))
     }
 
     /// The channel's team reached `visions.max_wakes`: posted once, under its chief, until the
@@ -364,7 +410,27 @@ impl AppState {
             unpriced_requests: None,
             reason: None,
         };
-        let _ = self.channel_post(channel_id, &chief, entry);
+        if self.channel_post(channel_id, &chief, entry).is_err() {
+            self.visions_note("team_paused_unrecorded", json!({"channel_id": channel_id}));
+        }
+    }
+
+    /// Starts the runs of the channel's members (but `woken`, just woken) whose reasons wait,
+    /// still bounded and logged.
+    pub(super) fn visions_wake_waiting_in(
+        &self,
+        sink: &Arc<dyn EventSink>,
+        channel_id: &str,
+        woken: &str,
+    ) {
+        let waiting = self.visions_cache().wakes.waiting_in(channel_id);
+        for vision_id in waiting.into_iter().filter(|vision| vision != woken) {
+            let outcome = self.visions_wake_or_queue(sink, channel_id, &vision_id, None);
+            self.visions_note(
+                "wake",
+                json!({"vision_id": vision_id, "channel_id": channel_id, "reason": "waiting", "outcome": outcome}),
+            );
+        }
     }
 
     /// Admits the wake and starts the run when one may start; returns the outcome's name.
@@ -535,7 +601,10 @@ impl AppState {
     fn visions_chat_ended(&self, sink: &Arc<dyn EventSink>, owner: &Owner, terminal: &ThreadEvent) {
         let (vision_id, channel_id) = (owner.vision_id.as_str(), owner.channel_id.as_str());
         self.visions_post_reply(owner, terminal);
-        self.visions_cache().wakes.ended(vision_id, channel_id);
+        let started = self.visions_cache().wakes.ended(vision_id, channel_id);
+        if let Some(started) = started {
+            self.visions_pass_on_left_open(owner, started);
+        }
         let stopped = matches!(terminal, ThreadEvent::Failed { error }
             if error.starts_with(themis_core::runtime::STOPPED_BY_YOU));
         if stopped {
@@ -641,6 +710,14 @@ fn work_end_reason(thread_id: &str, terminal: &ThreadEvent) -> Option<WakeReason
 
 #[cfg(test)]
 mod tests {
+    // Team wakes, in a file of their own; they share this module's helpers.
+    mod team {
+        include!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/src/state/visions/team_wakes_tests.rs"
+        ));
+    }
+
     use themis_core::configuration::ApprovalMode;
     use themis_core::diagnostics::DiagnosticFilter;
 
@@ -942,7 +1019,12 @@ mod tests {
         s.state
             .visions_post(&sink(), &s.channel, "carry on")
             .unwrap();
-        assert_eq!(started(&s.state).last(), Some(&s.wren));
+        // The chief wakes, and Ada's task that waited at the limit starts too.
+        let after: Vec<String> = started(&s.state).into_iter().skip(2).collect();
+        assert!(
+            after.contains(&s.wren) && after.contains(&s.ada),
+            "{after:?}"
+        );
         assert_eq!(paused_notices(&s.state), 1);
     }
 

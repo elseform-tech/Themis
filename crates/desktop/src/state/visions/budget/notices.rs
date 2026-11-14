@@ -26,7 +26,7 @@ const RETRY_AFTER: Duration = Duration::from_secs(60);
 /// How long after a try loading the price catalog is tried again.
 const CATALOG_RETRY: Duration = Duration::from_secs(60);
 /// Longest wait for the catalog to load.
-const CATALOG_WAIT: Duration = Duration::from_secs(30);
+pub(super) const CATALOG_WAIT: Duration = Duration::from_secs(30);
 
 /// The notices given on `day`, as `{kind}:{channel id}` keys.
 #[derive(Debug, Default, Serialize, Deserialize)]

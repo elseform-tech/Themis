@@ -209,6 +209,14 @@ impl AppState {
         if !vision.decides.contains(&decision) {
             return Err(themis_core::prompts::AGENT_CLI_ABOVE_AUTONOMY.to_owned());
         }
+        // A question passed on to the person is theirs now (the server may have done it).
+        let passed = self
+            .questions_for(&thread_id)
+            .into_iter()
+            .any(|q| q.passed_on && answers.iter().any(|(id, _)| *id == q.id));
+        if passed {
+            return Err(themis_core::prompts::AGENT_CLI_QUESTION_PASSED_ON.to_owned());
+        }
         let answered = self
             .answer_questions_by(sink, thread_id.clone(), answers, Some(&vision.vision_id))
             .await?;

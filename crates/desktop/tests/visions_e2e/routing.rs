@@ -1,5 +1,5 @@
-//! Teams through the real app server: questions in a worker's chat reach the person under the
-//! channel's chief, even when no agent can take them.
+//! Teams through the real app server: questions a worker passes on reach the person under the
+//! channel's chief, once. (Questions no run may take are covered in `team_wakes_tests`.)
 
 use super::*;
 
@@ -23,25 +23,6 @@ fn passed_on(fx: &Fixture, channel: &str) -> Vec<Value> {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn a_question_no_agent_may_answer_reaches_the_person_anyway() {
-    let _turn = ONE_SERVER.lock().await;
-    let fx = fixture().await;
-    let provider = scripted_provider().await;
-    fx.use_provider(&provider).await;
-    let (worker, channel) = fx.vision_and_channel("Rook", "release");
-    // The test plays Rook's run, so no Vision run can wake to take the question.
-    let (_, token) = fx.vision_run(&worker, &channel).await;
-    let (work, question) = fx.asked_question(&token).await;
-    let chief = chief_of(&fx, &channel);
-    wait_until(|| async { !passed_on(&fx, &channel).is_empty() }).await;
-    let passed = passed_on(&fx, &channel);
-    assert_eq!(passed[0]["vision_id"], chief.as_str(), "{passed:?}");
-    assert_eq!(passed[0]["thread_id"], work.as_str());
-    assert_eq!(passed[0]["question_id"], question.as_str());
-    fx.shut_down().await;
-}
-
-#[tokio::test(flavor = "multi_thread")]
 async fn a_workers_passed_question_shows_once_under_its_chief() {
     let _turn = ONE_SERVER.lock().await;
     let fx = fixture().await;
@@ -50,13 +31,14 @@ async fn a_workers_passed_question_shows_once_under_its_chief() {
     let (worker, channel) = fx.vision_and_channel("Rook", "release");
     let (_, token) = fx.vision_run(&worker, &channel).await;
     let (work, question) = fx.asked_question(&token).await;
-    wait_until(|| async { !passed_on(&fx, &channel).is_empty() }).await;
-    // The worker passes it on too: the person still sees it once, under the chief.
-    fx.agent_call_ok(
-        &token,
-        "pass_question",
-        json!({"threadId": work, "questionId": question, "decision": "scope"}),
-    );
+    // The worker passes it on, twice: the person sees it once, under the chief.
+    for _ in 0..2 {
+        fx.agent_call_ok(
+            &token,
+            "pass_question",
+            json!({"threadId": work, "questionId": question, "decision": "scope"}),
+        );
+    }
     let all = passed_on(&fx, &channel);
     assert_eq!(all.len(), 1, "{all:?}");
     assert_eq!(all[0]["vision_id"], chief_of(&fx, &channel).as_str());
