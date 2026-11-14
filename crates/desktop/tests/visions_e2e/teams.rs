@@ -227,3 +227,25 @@ async fn a_team_pause_stays_in_its_channel_and_never_undoes_the_persons() {
     assert_eq!(rook_now["paused"], true, "{rook_now}");
     fx.shut_down().await;
 }
+
+/// The person reads a worker's thread with its chief, and the channel's spend today.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_person_reads_a_workers_thread_and_the_channels_spend() {
+    let _turn = ONE_SERVER.lock().await;
+    let fx = fixture().await;
+    let (channel, juno, rook) = release_team(&fx);
+    let (_, chief) = fx.vision_run(&juno, &channel).await;
+    fx.agent_call_ok(
+        &chief,
+        "assign_task",
+        json!({"workerId": rook, "task": "Fix the build"}),
+    );
+    let log = fx.call_ok(
+        "get_team_log",
+        json!({"channelId": channel, "workerId": rook}),
+    );
+    assert_eq!(log["entries"][0]["entry"]["text"], "Fix the build", "{log}");
+    let spend = fx.call_ok("get_channel_spend", json!({"channelId": channel}));
+    assert_eq!(spend["spent_usd"], 0.0, "{spend}");
+    fx.shut_down().await;
+}

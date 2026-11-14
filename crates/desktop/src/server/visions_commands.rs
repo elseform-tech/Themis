@@ -28,6 +28,8 @@ pub(super) const METHODS: &[&str] = &[
     "list_routines",
     "set_routine_enabled",
     "delete_routine",
+    "get_team_log",
+    "get_channel_spend",
     "get_visions_settings",
     "update_visions_settings",
 ];
@@ -233,6 +235,18 @@ async fn chat_method(
         }
         "list_routines" | "set_routine_enabled" | "delete_routine" | "answer_channel_request" => {
             team_method(state, sink, method, args)
+        }
+        "get_team_log" => {
+            let channel_id: String = arg(args, "channelId")?;
+            let worker: String = arg(args, "workerId")?;
+            let before: Option<u64> = arg(args, "beforeSeq")?;
+            let page = state.team_page(&channel_id, &worker, before, 64 * 1024)?;
+            Ok((to_value(page)?, None))
+        }
+        "get_channel_spend" => {
+            let channel_id: String = arg(args, "channelId")?;
+            let spent = state.visions_channel_spent_today(&channel_id);
+            Ok((json!({"spent_usd": spent}), None))
         }
         "hand_back_thread" => {
             let owner = state.visions_hand_back(sink, &arg::<String>(args, "threadId")?)?;

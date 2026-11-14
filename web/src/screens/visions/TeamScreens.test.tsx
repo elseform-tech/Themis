@@ -37,6 +37,9 @@ vi.mock("../../lib/visions", async importOriginal => ({
   pauseVision: vi.fn(async () => ({})),
   listQuestions: vi.fn(async () => []),
   postChannelMessage: vi.fn(async () => ({ seq: 9, woken: ["juno"] })),
+  getTeamLog: vi.fn(async () => ({ entries: [{ seq: 1, at_ms: 0, entry: { kind: "task", from_chief: "juno", text: "Fix the parser from the server." } }], next_before: null })),
+  getChannelSpend: vi.fn(async () => ({ spent_usd: 1.2 })),
+  listRoutines: vi.fn(async () => []),
 }));
 
 const base = { provider: "go" as const, model: "m", running: false, worktree_path: null, branch: null, base_branch: null, recovered: false, skill_ids: [] };
@@ -168,6 +171,13 @@ describe("Team screens", () => {
     expect(screen.queryByRole("complementary", { name: "Rook with Juno" })).toBeNull();
   });
 
+  it("a worker's chip shows its thread as the server keeps it", async () => {
+    await show();
+    fireEvent.click(within(screen.getByRole("group", { name: "Team" })).getByRole("button", { name: /^Rook/ }));
+    const thread = screen.getByRole("complementary", { name: "Rook with Juno" });
+    expect(await within(thread).findByText("Fix the parser from the server.")).toBeTruthy();
+  });
+
   it("a worker's thread lists the exchange with its chief, oldest first", async () => {
     const log: TeamLine[] = [
       { seq: 1, at_ms: Date.UTC(2026, 10, 14, 9, 4), entry: { kind: "task", text: "Fix the date rollover in the parser." } },
@@ -195,7 +205,9 @@ describe("Team screens", () => {
     expect(visions.saveVision).toHaveBeenCalledWith(expect.objectContaining({ id: "juno", soul: "Calm, direct and brief.", accessory: "clipboard" }), "r1");
     // Autonomy and budget are the channel's; the team lists each worker once.
     expect(within(profile).getByRole("combobox", { name: "Autonomy" })).toHaveDisplayValue("Most decisions");
-    expect(profile).toHaveTextContent("$3 a day");
+    // Today's spend from the server, of the channel's limit (the board's wording).
+    expect(await within(profile).findByText("$1.20 today")).toBeTruthy();
+    expect(profile).toHaveTextContent("of $3");
     const team = within(profile).getByRole("list", { name: "Team" });
     expect(within(team).getAllByRole("listitem").map(item => item.textContent)).toEqual([expect.stringMatching(/^RookBuilder/), expect.stringMatching(/^WrenReviewer/)]);
     // Back to the channel.

@@ -189,6 +189,15 @@ impl AppState {
         }
     }
 
+    /// What the agents of `channel_id` spent today, in US dollars (unknown spend reads as
+    /// nothing spent: the budget check itself fails closed).
+    pub fn visions_channel_spent_today(&self, channel_id: &str) -> f64 {
+        self.visions_tally(None)
+            .ok()
+            .and_then(|tally| tally.by_channel.get(channel_id).map(|spend| spend.usd))
+            .unwrap_or(0.0)
+    }
+
     /// Whether `vision_id` may not spend now in any of its channels (its profile shows so).
     pub fn visions_over_budget(&self, vision_id: &str) -> bool {
         self.visions_over_map()

@@ -3,6 +3,7 @@
 // beside it. What is open is `visions.open` alone; when it is gone the view says so in place and
 // never moves on its own.
 import type { ReactNode } from "react";
+import type { ChannelInfo } from "../../lib/visions";
 import { useApp } from "../../state/store";
 import { ChannelDetails } from "./ChannelDetails";
 import { ChannelView } from "./ChannelView";
@@ -11,6 +12,7 @@ import { projectChannels } from "./channels";
 import { leadsAChannel } from "./team";
 import { TeamThread } from "./TeamThread";
 import { VisionChat } from "./VisionChat";
+import { useChannelSpend, useRoutines, useTeamLog } from "./teamData";
 import { VisionProfile } from "./VisionProfile";
 
 function Gone({ text, back }: { text: string; back?: { name: string; onBack: () => void } }) {
@@ -30,12 +32,24 @@ export function VisionsView() {
   // Only a chief (Atlas too) has a profile; a worker opens its thread with its chief.
   const profile = panel?.kind === "vision" && leadsAChannel(state, panel.visionId) ? panel.visionId : null;
   const worker = panel?.kind === "worker" || (panel?.kind === "vision" && !profile) ? panel.visionId : null;
-  const view = profile ? <VisionProfile key={profile} visionId={profile} /> : <MainView />;
+  const view = profile ? <ChiefProfile key={profile} visionId={profile} channelId={current?.id || undefined} /> : <MainView />;
   let side: ReactNode = null;
-  // TODO(Task 9 wiring): the worker's log needs a person-facing read of its team log.
-  if (worker && current?.members.includes(worker)) side = <TeamThread key={worker} channel={current} workerId={worker} log={null} />;
+  if (worker && current?.members.includes(worker)) side = <WorkerThread key={worker} channel={current} workerId={worker} />;
   else if (panel?.kind === "channel" && current?.id) side = <ChannelDetails key={current.id} channel={current} />;
   return <div className="themis-visions-main">{view}{side}</div>;
+}
+
+/** A chief's profile with its channel's routines and today's spend. */
+function ChiefProfile({ visionId, channelId }: { visionId: string; channelId: string | undefined }) {
+  const routines = useRoutines(channelId);
+  const spentToday = useChannelSpend(channelId);
+  return <VisionProfile visionId={visionId} routines={routines} spentToday={spentToday} />;
+}
+
+/** A worker's read-only thread with its chief, read from the server. */
+function WorkerThread({ channel, workerId }: { channel: ChannelInfo; workerId: string }) {
+  const log = useTeamLog(channel.id, workerId);
+  return <TeamThread channel={channel} workerId={workerId} log={log} />;
 }
 
 function MainView() {
