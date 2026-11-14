@@ -9,10 +9,10 @@ import { ChiefScene, type SceneEnv } from "./ChiefScene";
 import { motionOffset } from "./faces";
 
 const handle = vi.hoisted(() => ({ setRunning: vi.fn(), setLook: vi.fn(), setExpression: vi.fn(), dispose: vi.fn() }));
-const started = vi.hoisted(() => ({ calls: 0, onLost: null as null | (() => void), fail: false }));
+const started = vi.hoisted(() => ({ calls: 0, onLost: null as null | (() => void), fail: false, options: null as null | { look: unknown; expression: string; size: number } }));
 vi.mock("./sceneRuntime", () => ({
-  startScene: vi.fn((_canvas: HTMLCanvasElement, options: { onLost: () => void }) => {
-    started.calls += 1; started.onLost = options.onLost;
+  startScene: vi.fn((_canvas: HTMLCanvasElement, options: { onLost: () => void; look: unknown; expression: string; size: number }) => {
+    started.calls += 1; started.onLost = options.onLost; started.options = options;
     if (started.fail) throw new Error("no context");
     return handle;
   }),
@@ -96,6 +96,16 @@ describe("the 3D chief", () => {
     view.unmount();
     expect(handle.dispose).toHaveBeenCalled();
     expect(observer.disconnect).toHaveBeenCalled();
+  });
+});
+
+describe("the scene while it loads", () => {
+  it("a_change_made_while_the_runtime_loads_reaches_the_scene", async () => {
+    const other = PRESETS[2]!.look;
+    const view = render(<ChiefScene look={look} expression="calm" size={90} env={capable} />);
+    view.rerender(<ChiefScene look={other} expression="done" size={90} env={capable} />);
+    await waitFor(() => expect(started.calls).toBe(1));
+    expect(started.options).toMatchObject({ look: other, expression: "done", size: 90 });
   });
 });
 

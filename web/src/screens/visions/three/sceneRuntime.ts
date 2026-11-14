@@ -14,7 +14,8 @@ export interface SceneHandle {
   dispose(): void;
 }
 
-export interface SceneOptions { look: Look; expression: Expression; onLost: () => void }
+/** `size` is the canvas edge in CSS pixels (a hidden canvas has no measurable size). */
+export interface SceneOptions { look: Look; expression: Expression; size: number; onLost: () => void }
 
 /** Frames per second the loop draws at; the motion is slow and a head is small. */
 const FPS = 30;
@@ -37,8 +38,18 @@ function groundShadow(): THREE.Mesh {
 
 export function startScene(canvas: HTMLCanvasElement, options: SceneOptions): SceneHandle {
   const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true });
+  try {
+    return assemble(renderer, canvas, options);
+  } catch (error) {
+    renderer.dispose();
+    renderer.forceContextLoss();
+    throw error;
+  }
+}
+
+function assemble(renderer: THREE.WebGLRenderer, canvas: HTMLCanvasElement, options: SceneOptions): SceneHandle {
   renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
-  renderer.setSize(canvas.clientWidth || 130, canvas.clientHeight || 130, false);
+  renderer.setSize(options.size, options.size, false);
   const scene = new THREE.Scene();
   // 57 units tall at the character's distance: the board's frame, accessories included.
   const camera = new THREE.PerspectiveCamera(18, 1, 1, 600);
@@ -98,7 +109,9 @@ export function startScene(canvas: HTMLCanvasElement, options: SceneOptions): Sc
       stop();
       canvas.removeEventListener("webglcontextlost", onLost);
       character.dispose();
-      shadow.geometry.dispose(); (shadow.material as THREE.Material).dispose();
+      shadow.geometry.dispose();
+      const shadowMaterial = shadow.material as THREE.MeshBasicMaterial;
+      shadowMaterial.map?.dispose(); shadowMaterial.dispose();
       renderer.dispose();
       renderer.forceContextLoss();
     },

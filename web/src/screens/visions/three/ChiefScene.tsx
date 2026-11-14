@@ -36,8 +36,8 @@ function useShouldRun(box: React.RefObject<HTMLElement | null>, enabled: boolean
   return enabled && onScreen && tabVisible;
 }
 
-/** Starts the scene on `canvas` while `enabled`; `failed` turns true when it cannot start or its context is lost. */
-function useScene(canvas: React.RefObject<HTMLCanvasElement | null>, enabled: boolean, first: { look: Look; expression: Expression }) {
+/** Starts the scene on `canvas` while `enabled` (with the look, expression and size current when it starts); `failed` turns true when it cannot start or its context is lost. */
+function useScene(canvas: React.RefObject<HTMLCanvasElement | null>, enabled: boolean, latest: React.RefObject<{ look: Look; expression: Expression; size: number }>) {
   const [failed, setFailed] = useState(false);
   const [ready, setReady] = useState(false);
   const handle = useRef<SceneHandle | null>(null);
@@ -48,21 +48,22 @@ function useScene(canvas: React.RefObject<HTMLCanvasElement | null>, enabled: bo
     const giveUp = () => { started?.dispose(); started = null; handle.current = null; setReady(false); setFailed(true); };
     import("./sceneRuntime").then(({ startScene }) => {
       if (cancelled || !canvas.current) return;
-      started = startScene(canvas.current, { ...first, onLost: giveUp });
+      started = startScene(canvas.current, { ...latest.current, onLost: giveUp });
       handle.current = started;
       setReady(true);
     }).catch(() => { if (!cancelled) giveUp(); });
     return () => { cancelled = true; started?.dispose(); handle.current = null; setReady(false); };
-  }, [canvas, enabled, first]);
+  }, [canvas, enabled, latest]);
   return { failed, ready, handle };
 }
 
 export function ChiefScene({ look, expression, name, size = 130, env = browserEnv }: { look: Look; expression: Expression; name?: string; size?: number; env?: SceneEnv }) {
   const box = useRef<HTMLDivElement>(null);
   const canvas = useRef<HTMLCanvasElement>(null);
-  const first = useRef({ look, expression }).current;
+  const latest = useRef({ look, expression, size });
+  latest.current = { look, expression, size };
   const eligible = !env.reducedMotion() && env.hasWebGL();
-  const { failed, ready, handle } = useScene(canvas, eligible, first);
+  const { failed, ready, handle } = useScene(canvas, eligible, latest);
   const enabled = eligible && !failed;
   const running = useShouldRun(box, enabled);
 
