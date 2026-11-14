@@ -19,6 +19,7 @@ fn scope() -> VisionScope {
         project_root: project(),
         // Small calls, the default level.
         decides: vec![Decision::Wording, Decision::Tests],
+        chief: false,
     }
 }
 

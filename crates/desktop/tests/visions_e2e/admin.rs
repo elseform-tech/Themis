@@ -282,7 +282,7 @@ async fn the_admin_cannot_drive_chats() {
     let _turn = ONE_SERVER.lock().await;
     let fx = fixture().await;
     let hq = hq(&fx);
-    let (wren, work) = fx.vision_and_channel("Wren", "work");
+    let (wren, work) = fx.chief_and_channel("Wren", "work");
     let chat = fx.thread().await;
     fx.own(&chat, &wren, &work, OwnedKind::Work);
     let (own, admin) = fx.vision_run(ADMIN, &hq).await;
@@ -369,7 +369,7 @@ async fn the_admin_cannot_be_deleted() {
         "a refused delete released nothing"
     );
     // `# administration` keeps the admin as its only member, and the admin works nowhere else.
-    let (wren, work) = fx.vision_and_channel("Wren", "work");
+    let (wren, work) = fx.chief_and_channel("Wren", "work");
     let listed = channels(&fx);
     let hq_now = named(&listed, "administration").unwrap();
     let crowded = json!({"id": hq, "name": "administration", "project_root": fx.project,
@@ -408,7 +408,7 @@ async fn the_admin_applies_changes_to_visions_and_channels() {
     let _turn = ONE_SERVER.lock().await;
     let fx = fixture().await;
     let hq = hq(&fx);
-    let (wren, work) = fx.vision_and_channel("Wren", "work");
+    let (wren, work) = fx.chief_and_channel("Wren", "work");
     let (_, admin) = fx.vision_run(ADMIN, &hq).await;
     let proposal = json!({
         "summary": "Rook takes over the work channel; Wren rests.",

@@ -162,6 +162,8 @@ pub(crate) enum Reason {
     OverBudget,
     /// The same while its spend today cannot be checked (counted as reached).
     BudgetUnknown,
+    /// A team call outside the caller's team (see `vision::chief`).
+    NotYourTeam,
 }
 
 impl Reason {
@@ -180,6 +182,7 @@ impl Reason {
             Self::AnswerMarker => "answer_marker",
             Self::OverBudget => "over_budget",
             Self::BudgetUnknown => "budget_unknown",
+            Self::NotYourTeam => "not_your_team",
         }
     }
 }
@@ -917,6 +920,7 @@ mod tests {
                     channel_id: "c".into(),
                     project_root: PathBuf::from("/no/such/project"),
                     decides: Vec::new(),
+                    chief: false,
                 });
                 let work = format!("work-{index}");
                 owners.insert(

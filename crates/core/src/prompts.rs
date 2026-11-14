@@ -491,6 +491,10 @@ pub const AGENT_CLI_READ_UNAVAILABLE: &str =
 /// stopped or took over.
 pub const AGENT_CLI_HELD_BY_PERSON: &str =
     include_str!("../builtins/prompts/agent-cli-held-by-person.md");
+/// The app server's answer to a team call outside the caller's team: a worker not in the chief's
+/// channel, a chief that no longer leads it, or a worker no longer on the team.
+pub const AGENT_CLI_NOT_YOUR_TEAM: &str =
+    include_str!("../builtins/prompts/agent-cli-not-your-team.md");
 /// The app server's answer to a paused Vision's call that would start or send something.
 pub const AGENT_CLI_VISION_PAUSED: &str =
     include_str!("../builtins/prompts/agent-cli-vision-paused.md");

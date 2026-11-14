@@ -64,6 +64,7 @@ fn setup() -> Setup {
         channel_id: channel.id,
         project_root: project,
         decides: Vec::new(),
+        chief: false,
     };
     Setup {
         _dir: dir,

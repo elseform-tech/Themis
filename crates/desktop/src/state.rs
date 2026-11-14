@@ -63,7 +63,7 @@ pub use terminal::TerminalSession;
 pub(crate) use visions::{id_label, BudgetOver};
 pub use visions::{
     is_admin, vision_decisions, Channel, ChannelEntry, ChannelLine, ChannelPage, Hold, NoticeKind,
-    OwnedKind, Owner, Proposal, SetUp, Vision, WakeReason, ADMIN_VISION_ID,
+    OwnedKind, Owner, Proposal, SetUp, TeamEntry, Vision, WakeReason, ADMIN_VISION_ID,
 };
 /// Project path resolution, exposed for the `fuzz/` targets; not a stable API.
 #[cfg(feature = "fuzzing")]

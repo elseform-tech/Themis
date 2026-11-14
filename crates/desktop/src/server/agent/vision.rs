@@ -19,6 +19,7 @@ use crate::state::{Hold, OwnedKind};
 use crate::types::{QueuedMessage, ThreadChangeKind, VisionsChange};
 
 mod admin;
+mod chief;
 
 /// Most characters of the reason a Vision gives with its answer.
 const MAX_REASON_CHARS: usize = 200;
@@ -69,6 +70,9 @@ pub(super) fn refusal(
     if crate::state::is_admin(&scope.vision_id) {
         return admin::refusal(scope, method, args);
     }
+    if let Some(decided) = chief::refusal(scope, method, args, owned) {
+        return Some(decided);
+    }
     match method {
         "create_thread" => return Some((!in_channel_project(scope, args)).then(other_project)),
         "list_channel_threads" => {
@@ -112,6 +116,8 @@ pub(super) fn refusal(
 /// driving methods, and the admin's writes for the admin.
 pub(super) fn handles(scope: &VisionScope, method: &str) -> bool {
     VISION_DRIVE.contains(&method)
+        || chief::CHIEF_CALLS.contains(&method)
+        || chief::WORKER_CALLS.contains(&method)
         || (crate::state::is_admin(&scope.vision_id) && admin::ADMIN_WRITES.contains(&method))
 }
 
@@ -177,6 +183,11 @@ pub(super) fn state_refusal(
     method: &str,
     args: &Value,
 ) -> Option<Refusal> {
+    if crate::state::is_admin(&scope.vision_id) {
+        // The admin's grant has no team calls; its checks stay as they were.
+    } else if let Some(refusal) = chief::state_refusal(state, scope, method, args) {
+        return Some(refusal);
+    }
     if method == "answer_question" && asks_permission(state, args) {
         return Some(Refusal {
             reason: Reason::PermissionQuestion,
@@ -254,6 +265,9 @@ pub(super) async fn dispatch(
 ) -> Result<Value, String> {
     if admin::ADMIN_WRITES.contains(&method) {
         return admin::dispatch(state, sink, scope, method, &args).await;
+    }
+    if chief::CHIEF_CALLS.contains(&method) || chief::WORKER_CALLS.contains(&method) {
+        return chief::dispatch(state, sink, scope, method, &args).await;
     }
     let result = match method {
         // The chat's provider and model are the Vision's, never the call's.

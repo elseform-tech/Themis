@@ -100,26 +100,44 @@ impl Fixture {
             .id
     }
 
-    /// A Vision named `name` and a channel in the project with it as the only member.
+    /// A Vision named `name` working in a new channel of the project, led by a chief of its
+    /// own (a worker drives work chats; a chief drives none).
     pub fn vision_and_channel(&self, name: &str, channel: &str) -> (String, String) {
         self.vision_and_channel_in(name, channel, "custom")
     }
 
     /// The same, with the channel's approval mode `mode`.
-    /// The Vision runs its chats on the scripted provider's `test-model`.
+    /// The Visions run their chats on the scripted provider's `test-model`.
     pub fn vision_and_channel_in(&self, name: &str, channel: &str, mode: &str) -> (String, String) {
+        let chief = self.new_vision(&format!("{name} Lead"));
+        let vision_id = self.new_vision(name);
+        let saved = self.call_ok(
+            "save_channel",
+            json!({"channel": {"name": channel, "project_root": self.project,
+                "approval_mode": mode, "members": [chief, vision_id], "chief": chief},
+                "revision": null}),
+        );
+        (vision_id, saved["id"].as_str().unwrap().to_owned())
+    }
+
+    /// A Vision named `name` leading a new channel of the project alone.
+    pub fn chief_and_channel(&self, name: &str, channel: &str) -> (String, String) {
+        let vision_id = self.new_vision(name);
+        let saved = self.call_ok(
+            "save_channel",
+            json!({"channel": {"name": channel, "project_root": self.project,
+                "approval_mode": "custom", "members": [vision_id]}, "revision": null}),
+        );
+        (vision_id, saved["id"].as_str().unwrap().to_owned())
+    }
+
+    fn new_vision(&self, name: &str) -> String {
         let vision = self.call_ok(
             "save_vision",
             json!({"vision": {"name": name, "shape": "cloud", "color": "teal",
                 "model": "test-model"}, "revision": null}),
         );
-        let vision_id = vision["id"].as_str().unwrap().to_owned();
-        let saved = self.call_ok(
-            "save_channel",
-            json!({"channel": {"name": channel, "project_root": self.project,
-                "approval_mode": mode, "members": [vision_id]}, "revision": null}),
-        );
-        (vision_id, saved["id"].as_str().unwrap().to_owned())
+        vision["id"].as_str().unwrap().to_owned()
     }
 
     /// Visions switched off in the person's runtime.jsonc (kept with what it holds): no real

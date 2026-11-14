@@ -39,6 +39,10 @@ pub enum WakeReason {
     /// The budget check (not the person) stopped the chat: `reached` (today's budget ran out)
     /// or `unknown` (spend could not be checked). It waits for a wake the budget allows.
     BudgetStopped(String, &'static str),
+    /// Its chief wrote to it (a task, a redirect): the seq in its team log.
+    Tasked(u64),
+    /// One of its workers wrote to it (a report, a pushback): the worker and the seq in its log.
+    WorkerNote(String, u64),
 }
 
 impl WakeReason {
@@ -53,13 +57,15 @@ impl WakeReason {
             WakeReason::HandedBack(_) => "handed_back",
             WakeReason::ApprovalWaiting(..) => "approval_waiting",
             WakeReason::BudgetStopped(..) => "budget_stopped",
+            WakeReason::Tasked(_) => "tasked",
+            WakeReason::WorkerNote(..) => "worker_note",
         }
     }
 
     /// The owned chat it is about, if any.
     fn thread(&self) -> Option<&str> {
         match self {
-            WakeReason::Mentioned => None,
+            WakeReason::Mentioned | WakeReason::Tasked(_) | WakeReason::WorkerNote(..) => None,
             WakeReason::ChatFinished(thread)
             | WakeReason::ChatFailed(thread)
             | WakeReason::ChatStopped(thread)
@@ -80,6 +86,8 @@ impl WakeReason {
             WakeReason::BudgetStopped(thread, cause) => {
                 format!("{} {thread} {cause}", self.label())
             }
+            WakeReason::Tasked(seq) => format!("{} {seq}", self.label()),
+            WakeReason::WorkerNote(worker, seq) => format!("{} {worker} {seq}", self.label()),
             other => format!("{} {}", other.label(), other.thread().unwrap_or_default()),
         }
     }

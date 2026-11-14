@@ -281,6 +281,7 @@ impl AppState {
         snapshot.skill_catalog.clear();
         let decides = vision_decisions(&channel, &config.visions);
         let scope = VisionScope {
+            chief: channel.is_chief(&spec.vision_id),
             vision_id: spec.vision_id,
             channel_id: spec.channel_id,
             project_root: channel.project_root,
@@ -301,6 +302,7 @@ impl AppState {
         let config = self.runtime_configuration(Some(&channel.project_root), None)?;
         let decides = vision_decisions(&channel, &config.config.visions);
         Ok(VisionScope {
+            chief: channel.is_chief(&vision.id),
             vision_id: vision.id.clone(),
             channel_id: channel.id,
             decides,
@@ -721,6 +723,7 @@ mod tests {
                 channel_id: "c1".into(),
                 project_root: dir.path().to_path_buf(),
                 decides: Vec::new(),
+                chief: false,
             },
             port: 47123,
         };
@@ -753,6 +756,7 @@ mod tests {
                 channel_id: "c1".into(),
                 project_root: dir.path().to_path_buf(),
                 decides: Vec::new(),
+                chief: false,
             },
             port: 47123,
         };

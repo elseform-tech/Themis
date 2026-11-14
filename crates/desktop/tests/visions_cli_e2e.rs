@@ -217,8 +217,8 @@ async fn deleting_a_channel_stops_and_releases_its_chats() {
             .as_array()
             .unwrap()
             .len(),
-        2,
-        "Wren and the admin"
+        3,
+        "Wren, its channel's lead and the admin"
     );
     let log = fx
         .data

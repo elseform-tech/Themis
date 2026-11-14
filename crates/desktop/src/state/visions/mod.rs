@@ -38,6 +38,9 @@ mod marks_tests;
 mod souls_tests;
 #[cfg(test)]
 mod store_tests;
+mod team_log;
+#[cfg(test)]
+mod team_log_tests;
 #[cfg(test)]
 mod wire_tests;
 
@@ -53,6 +56,7 @@ use super::AppState;
 pub use admin::{is_admin, Proposal, SetUp, ADMIN_VISION_ID};
 pub(crate) use budget::Over as BudgetOver;
 pub use channel_log::{ChannelLine, ChannelPage};
+pub use team_log::TeamEntry;
 
 pub use runs::vision_decisions;
 pub(super) use runs::{boxed_run, confine, run_scope, run_tools, vision_approvals, VisionRunSpec};
