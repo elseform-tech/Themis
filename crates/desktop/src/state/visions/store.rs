@@ -477,13 +477,19 @@ impl VisionsCache {
         let channels = self.channels(dir)?;
         let current = if spec.id.is_empty() {
             spec.id = new_id();
+            spec.paused_workers.clear();
             None
         } else {
             let previous = channels
                 .get(&spec.id)
                 .ok_or_else(|| refused("Unknown channel"))?;
+            // Only the chief's team calls pause a worker in its channel (`team_pause`).
+            spec.paused_workers.clone_from(&previous.paused_workers);
             Some(previous.revision.as_str())
         };
+        let members = spec.members.clone();
+        spec.paused_workers
+            .retain(|worker| members.contains(worker));
         let stale = "Channel changed since it was opened; reload before saving";
         check_revision(CHANNELS_FILE, current, expected, stale)?;
         let taken = channels.values().any(|other| {
@@ -495,12 +501,41 @@ impl VisionsCache {
             return Err(refused("This project already has a channel with that name"));
         }
         spec.revision = next_revision(current);
+        self.put_channel(dir, spec)
+    }
+
+    /// Writes `spec` (its revision already set) in place of the channel with its id.
+    fn put_channel(&mut self, dir: &Path, spec: Channel) -> Result<Channel, StoreError> {
+        let channels = self.channels(dir)?;
         let mut all = by_key(channels.iter().filter(|(id, _)| **id != spec.id));
         all.push(&spec);
         write_store(dir, CHANNELS_FILE, &all)?;
         channels.insert(spec.id.clone(), spec.clone());
         self.restamp(dir, CHANNELS_FILE);
         Ok(spec)
+    }
+
+    /// Pauses (or resumes) `worker_id` in `channel_id` only: the chief's team pause, kept apart
+    /// from the person's pause of the Vision. Returns the saved channel.
+    pub(super) fn team_pause(
+        &mut self,
+        dir: &Path,
+        channel_id: &str,
+        worker_id: &str,
+        paused: bool,
+    ) -> Result<Channel, StoreError> {
+        self.ensure_unchanged(dir, CHANNELS_FILE)?;
+        let channels = self.channels(dir)?;
+        let mut spec = channels
+            .get(channel_id)
+            .cloned()
+            .ok_or_else(|| StoreError::refused(CHANNELS_FILE, "Unknown channel"))?;
+        spec.paused_workers.retain(|worker| worker != worker_id);
+        if paused {
+            spec.paused_workers.push(worker_id.to_owned());
+        }
+        spec.revision = next_revision(Some(&spec.revision));
+        self.put_channel(dir, spec)
     }
 
     pub(super) fn set_owner(&mut self, dir: &Path, owner: Owner) -> Result<(), StoreError> {

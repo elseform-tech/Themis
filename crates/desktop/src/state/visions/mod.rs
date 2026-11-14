@@ -143,6 +143,9 @@ pub struct Channel {
     /// The team's daily budget in US dollars; Settings › Visions' total caps it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub daily_budget_usd: Option<f64>,
+    /// Workers its chief paused in this channel (the person's pause of a Vision is its own).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub paused_workers: Vec<String>,
     /// Set by the store on every save.
     #[serde(default)]
     pub revision: String,

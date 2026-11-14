@@ -25,8 +25,10 @@ fn scope(vision: &str, chief: bool) -> VisionScope {
     }
 }
 
+/// Juno's run is in her own Vision chat, `juno-chat`.
 fn chief() -> Grant {
     Grant {
+        thread_id: "juno-chat".into(),
         vision: Some(scope("juno", true)),
         ..grant()
     }
@@ -57,6 +59,10 @@ fn owners() -> HashMap<String, Owner> {
         owner("far-work", "tess", "c2", OwnedKind::Work),
         owner("chat-a", "rook", "c1", OwnedKind::VisionChat),
         owner("juno-chat", "juno", "c1", OwnedKind::VisionChat),
+        // A work chat Juno started in c1 before she led it.
+        owner("juno-old-work", "juno", "c1", OwnedKind::Work),
+        // Rook's work chat in c2, where Rook also works.
+        owner("rook-c2-work", "rook", "c2", OwnedKind::Work),
     ]
     .into_iter()
     .map(|owner| (owner.thread_id.clone(), owner))
@@ -150,6 +156,40 @@ fn a_worker_reports_and_pushes_back_only_to_its_chief() {
 }
 
 #[test]
+fn a_chief_drives_not_even_the_chats_it_owned_before_it_led() {
+    for method in [
+        "send_message",
+        "enqueue_message",
+        "steer_queued_message",
+        "stop_thread",
+        "answer_question",
+        "pass_question",
+    ] {
+        assert!(
+            check(&chief(), method, &on("juno-old-work")).is_some(),
+            "{method}"
+        );
+    }
+}
+
+#[test]
+fn a_vision_drives_only_the_chats_of_its_runs_channel() {
+    // Rook's run is for c1: its c2 work chat is not this run's to drive.
+    for method in [
+        "send_message",
+        "stop_thread",
+        "answer_question",
+        "pass_question",
+    ] {
+        assert!(
+            check(&worker(), method, &on("rook-c2-work")).is_some(),
+            "{method}"
+        );
+    }
+    assert!(check(&worker(), "send_message", &on("rook-work")).is_none());
+}
+
+#[test]
 fn a_worker_cannot_post_in_the_channel_or_task_others() {
     for method in CHIEF_CALLS
         .iter()
@@ -205,7 +245,8 @@ proptest::proptest! {
         ],
         is_chief in proptest::bool::ANY,
         thread in proptest::option::of(proptest::sample::select(
-            &["rook-work", "far-work", "chat-a", "juno-chat", "plain"][..])),
+            &["rook-work", "far-work", "chat-a", "juno-chat", "juno-old-work", "rook-c2-work", "plain"][..])),
+        channel in proptest::option::of(proptest::sample::select(&["c1", "c2"][..])),
         worker_id in proptest::option::of(proptest::sample::select(&["rook", "tess", "juno"][..])),
     ) {
         let grant = if is_chief { chief() } else { worker() };
@@ -213,6 +254,7 @@ proptest::proptest! {
                               "decision": "wording", "reason": "ok"});
         if let Some(thread) = thread { args["threadId"] = json!(thread); }
         if let Some(worker) = worker_id { args["workerId"] = json!(worker); }
+        if let Some(channel) = channel { args["channelId"] = json!(channel); }
         if check(&grant, &method, &args).is_none() {
             let own = if is_chief { "juno" } else { "rook" };
             // Team calls act on team logs by `workerId`, never on a chat named in the call.
@@ -221,13 +263,29 @@ proptest::proptest! {
             if let (Some(thread), false) = (thread, team_call) {
                 let theirs = owners().get(thread).cloned();
                 let inside = match &theirs {
-                    // Its run's own chat is chat-a for both test grants.
-                    _ if thread == "chat-a" => true,
-                    Some(owner) => owner.channel_id == "c1"
-                        && (owner.vision_id == own || (is_chief && owner.kind == OwnedKind::Work)),
+                    // Its run's own chat.
+                    _ if thread == grant.thread_id => true,
+                    // A chief touches only its workers' work chats in c1; a worker only its own c1
+                    // chats.
+                    // (It may still read a work chat it started before it led: its history.)
+                    Some(owner) if is_chief => owner.channel_id == "c1"
+                        && owner.kind == OwnedKind::Work
+                        && (owner.vision_id != own
+                            || crate::server::agent::OWN_CHAT.contains(&method.as_str())),
+                    Some(owner) => owner.channel_id == "c1" && owner.vision_id == own,
                     None => false,
                 };
                 proptest::prop_assert!(inside, "{} on {}", method, thread);
+                if is_chief && theirs.as_ref().is_some_and(|o| o.kind == OwnedKind::Work) {
+                    let allowed = ["answer_question", "pass_question", "list_questions"];
+                    proptest::prop_assert!(
+                        crate::server::agent::OWN_CHAT.contains(&method.as_str())
+                            || allowed.contains(&method.as_str()),
+                        "{} on a worker's chat", method);
+                }
+            }
+            if channel == Some("c2") && (CHIEF_CALLS.contains(&method.as_str()) || method == "get_team_log") {
+                proptest::prop_assert!(false, "{} naming another channel passed", method);
             }
             if is_chief {
                 let drives = ["send_message", "enqueue_message", "steer_queued_message",

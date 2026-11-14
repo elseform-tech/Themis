@@ -304,6 +304,7 @@ fn check_new_channel(
         autonomy: None,
         custom: None,
         daily_budget_usd: None,
+        paused_workers: Vec::new(),
         revision: String::new(),
     };
     validate_channel(&mut channel)?;
@@ -551,6 +552,7 @@ impl AppState {
                     autonomy: None,
                     custom: None,
                     daily_budget_usd: None,
+                    paused_workers: Vec::new(),
                     revision: String::new(),
                 },
                 None,
@@ -815,6 +817,7 @@ impl AppState {
                 autonomy: None,
                 custom: None,
                 daily_budget_usd: None,
+                paused_workers: Vec::new(),
                 revision: String::new(),
             };
             let saved = self.channel_save(spec, None)?;

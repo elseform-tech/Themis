@@ -239,6 +239,7 @@ fn listed_visions_channels_and_owners_match_the_apps_fixture() {
                 ("wording".into(), false),
             ])),
             daily_budget_usd: Some(0.5),
+            paused_workers: Vec::new(),
             revision: "r2".into(),
         },
         needs: 1,

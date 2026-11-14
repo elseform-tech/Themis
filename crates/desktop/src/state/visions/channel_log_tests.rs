@@ -22,6 +22,7 @@ fn state_with_channel(dir: &Path) -> (AppState, String) {
                 autonomy: None,
                 custom: None,
                 daily_budget_usd: None,
+                paused_workers: Vec::new(),
                 revision: String::new(),
             },
             None,

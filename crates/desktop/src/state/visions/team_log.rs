@@ -169,12 +169,48 @@ impl AppState {
             .filter(|member| !channel.is_chief(member))
             .filter_map(|member| self.vision_get(member))
             .map(|vision| TeamMember {
+                paused: vision.paused || channel.paused_workers.contains(&vision.id),
                 id: vision.id,
                 name: vision.name,
                 role: vision.role,
-                paused: vision.paused,
             })
             .collect()
+    }
+
+    /// The chief pauses (or resumes) a worker in its channel only; pausing stops the worker's
+    /// running chats there. The person's own pause of the Vision is left as it is.
+    pub(crate) fn visions_team_pause(
+        &self,
+        channel_id: &str,
+        worker_id: &str,
+        paused: bool,
+    ) -> Result<(), String> {
+        let saved =
+            self.visions_cache()
+                .team_pause(&self.inner.visions_dir, channel_id, worker_id, paused);
+        saved.map_err(|error| self.visions_failed(error))?;
+        if paused {
+            self.visions_stop_owned(|owner| {
+                owner.channel_id == channel_id
+                    && owner.vision_id == worker_id
+                    && owner.hold != super::Hold::TakenOver
+            });
+        }
+        Ok(())
+    }
+
+    /// Whether `vision_id` is paused in `channel_id`: by the person, or by its chief there.
+    pub(crate) fn paused_in(&self, channel_id: &str, vision_id: &str) -> bool {
+        let person = self
+            .vision_get(vision_id)
+            .is_none_or(|vision| vision.paused);
+        person
+            || self.channel_get(channel_id).is_some_and(|channel| {
+                channel
+                    .paused_workers
+                    .iter()
+                    .any(|worker| worker == vision_id)
+            })
     }
 
     /// Whether `vision_id` leads `channel_id` now.

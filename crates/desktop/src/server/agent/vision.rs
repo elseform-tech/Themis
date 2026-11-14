@@ -89,7 +89,12 @@ pub(super) fn refusal(
         .get("threadId")
         .and_then(Value::as_str)
         .and_then(owned)
-        .filter(|owner| owner.vision_id == scope.vision_id && owner.kind == OwnedKind::Work);
+        // Its own work chat in the channel its run is for (it may work in others too).
+        .filter(|owner| {
+            owner.vision_id == scope.vision_id
+                && owner.channel_id == scope.channel_id
+                && owner.kind == OwnedKind::Work
+        });
     let Some(owner) = owner else {
         // Not one of its work chats: a driving call is refused; a read goes by the ordinary
         // rules, which allow the Vision's own chat only.
@@ -185,7 +190,9 @@ pub(super) fn state_refusal(
 ) -> Option<Refusal> {
     if crate::state::is_admin(&scope.vision_id) {
         // The admin's grant has no team calls; its checks stay as they were.
-    } else if let Some(refusal) = chief::state_refusal(state, scope, method, args) {
+    } else if let Some(refusal) = chief::role_changed(state, scope, method, args)
+        .or_else(|| chief::state_refusal(state, scope, method, args))
+    {
         return Some(refusal);
     }
     if method == "answer_question" && asks_permission(state, args) {
@@ -197,9 +204,7 @@ pub(super) fn state_refusal(
     if !STARTS.contains(&method) {
         return None;
     }
-    let paused = state
-        .vision_get(&scope.vision_id)
-        .is_none_or(|vision| vision.paused);
+    let paused = state.paused_in(&scope.channel_id, &scope.vision_id);
     if paused {
         return Some(Refusal {
             reason: Reason::Paused,

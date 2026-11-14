@@ -36,6 +36,7 @@ fn channel(name: &str, root: &Path, members: Vec<String>) -> Channel {
         autonomy: None,
         custom: None,
         daily_budget_usd: None,
+        paused_workers: Vec::new(),
         revision: String::new(),
     }
 }

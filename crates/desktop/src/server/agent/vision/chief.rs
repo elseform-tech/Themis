@@ -175,13 +175,42 @@ pub(super) fn state_refusal(
             return Some(not_yours());
         }
     }
-    let gives_work = matches!(method, "assign_task" | "redirect_worker");
+    let gives_work = matches!(
+        method,
+        "assign_task" | "redirect_worker" | "pause_worker" | "resume_worker"
+    );
     let paused = state
         .vision_get(&scope.vision_id)
         .is_none_or(|vision| vision.paused);
     (gives_work && paused).then(|| Refusal {
         reason: Reason::Paused,
         message: themis_core::prompts::AGENT_CLI_VISION_PAUSED.to_owned(),
+    })
+}
+
+/// A run's role is captured when it starts: once the channel's chief changed, the run may no
+/// longer drive, manage or read the team's work chats as before (a demoted chief, or a worker
+/// that now leads). Its own chat's reads and status stay.
+pub(super) fn role_changed(
+    state: &AppState,
+    scope: &VisionScope,
+    method: &str,
+    args: &Value,
+) -> Option<Refusal> {
+    let team_call = VISION_DRIVE.contains(&method)
+        || CHIEF_CALLS.contains(&method)
+        || WORKER_CALLS.contains(&method);
+    let work_read = OWN_CHAT.contains(&method)
+        && args
+            .get("threadId")
+            .and_then(Value::as_str)
+            .and_then(|thread| state.owner_of(thread))
+            .is_some_and(|owner| owner.kind == OwnedKind::Work);
+    let changed =
+        (team_call || work_read) && state.leads(&scope.channel_id, &scope.vision_id) != scope.chief;
+    changed.then(|| Refusal {
+        reason: Reason::NotYourTeam,
+        message: themis_core::prompts::AGENT_CLI_NOT_YOUR_TEAM.to_owned(),
     })
 }
 
@@ -259,11 +288,11 @@ async fn to_worker(
             text: text_arg(args, "text")?,
         },
         "pause_worker" => {
-            state.visions_pause(&worker, true)?;
+            state.visions_team_pause(channel, &worker, true)?;
             TeamEntry::Paused
         }
         _ => {
-            state.visions_pause(&worker, false)?;
+            state.visions_team_pause(channel, &worker, false)?;
             TeamEntry::Resumed
         }
     };

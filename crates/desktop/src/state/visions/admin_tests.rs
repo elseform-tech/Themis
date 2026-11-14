@@ -34,6 +34,7 @@ fn channel(id: &str, name: &str, members: &[&str]) -> Channel {
         autonomy: None,
         custom: None,
         daily_budget_usd: None,
+        paused_workers: Vec::new(),
         revision: "r".into(),
     }
 }

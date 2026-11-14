@@ -64,6 +64,8 @@ export interface ChannelInfo {
   custom?: Record<string, boolean>;
   /** The team's daily budget in dollars; Settings › Visions' total caps it. */
   daily_budget_usd?: number;
+  /** Workers its chief paused here; only the chief's team calls change it. */
+  paused_workers?: string[];
   revision: string;
   /** In the channel list: what waits on the person in this channel's own chats (approvals and
    *  open questions passed on or asking a permission), counted by the server. */

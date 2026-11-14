@@ -143,3 +143,87 @@ async fn a_chief_who_no_longer_leads_tasks_nobody() {
     assert!(!refused.status.success());
     fx.shut_down().await;
 }
+
+/// `release` with `chief` set to `vision`, saved over its current revision.
+fn make_chief(fx: &Fixture, channel: &str, vision: &str) {
+    let listed = fx.call_ok("list_channels", json!({"projectRoot": fx.project}));
+    let mut release = listed
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|c| c["id"] == channel)
+        .unwrap()
+        .clone();
+    let revision = release["revision"].clone();
+    release["chief"] = json!(vision);
+    fx.call_ok(
+        "save_channel",
+        json!({"channel": release, "revision": revision}),
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_demoted_chief_no_longer_reads_its_workers_chats() {
+    let _turn = ONE_SERVER.lock().await;
+    let fx = fixture().await;
+    let (channel, juno, rook) = release_team(&fx);
+    let (_, chief) = fx.vision_run(&juno, &channel).await;
+    let work = fx.thread().await;
+    fx.own(&work, &rook, &channel, OwnedKind::Work);
+    assert!(fx
+        .agent_call(&chief, "get_thread", json!({"threadId": work}))
+        .status
+        .success());
+    make_chief(&fx, &channel, &rook);
+    let refused = fx.agent_call(&chief, "get_thread", json!({"threadId": work}));
+    assert!(!refused.status.success(), "{}", text(&refused));
+    fx.shut_down().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_promoted_worker_no_longer_drives_its_chats() {
+    let _turn = ONE_SERVER.lock().await;
+    let fx = fixture().await;
+    let provider = quick_provider().await;
+    fx.use_provider(&provider).await;
+    let (channel, _juno, rook) = release_team(&fx);
+    let (_, worker) = fx.vision_run(&rook, &channel).await;
+    let work = fx.vision_starts_chat(&worker);
+    make_chief(&fx, &channel, &rook);
+    let refused = fx.agent_call(&worker, "stop_thread", json!({"threadId": work}));
+    assert!(!refused.status.success(), "{}", text(&refused));
+    fx.shut_down().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_team_pause_stays_in_its_channel_and_never_undoes_the_persons() {
+    let _turn = ONE_SERVER.lock().await;
+    let fx = fixture().await;
+    let (channel, juno, rook) = release_team(&fx);
+    let (_, chief) = fx.vision_run(&juno, &channel).await;
+    fx.agent_call_ok(&chief, "pause_worker", json!({"workerId": rook}));
+    let team = fx.agent_call_ok(&chief, "list_team", json!({}));
+    assert_eq!(team[0]["paused"], true, "{team}");
+    // Rook is not paused anywhere else.
+    let rook_now = fx.call_ok("list_visions", json!({}));
+    let rook_now = rook_now
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|v| v["id"] == rook.as_str())
+        .unwrap();
+    assert_eq!(rook_now["paused"], false, "{rook_now}");
+    fx.agent_call_ok(&chief, "resume_worker", json!({"workerId": rook}));
+    // The person's own pause is theirs: the chief's resume does not lift it.
+    fx.call_ok("pause_vision", json!({"visionId": rook, "paused": true}));
+    fx.agent_call_ok(&chief, "resume_worker", json!({"workerId": rook}));
+    let rook_now = fx.call_ok("list_visions", json!({}));
+    let rook_now = rook_now
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|v| v["id"] == rook.as_str())
+        .unwrap();
+    assert_eq!(rook_now["paused"], true, "{rook_now}");
+    fx.shut_down().await;
+}

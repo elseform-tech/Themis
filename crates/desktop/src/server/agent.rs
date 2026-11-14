@@ -49,7 +49,7 @@ const ALLOWED: &[&str] = &[
 ];
 
 /// Methods only for the agent's own chat: they need its `threadId`.
-const OWN_CHAT: &[&str] = &[
+pub(crate) const OWN_CHAT: &[&str] = &[
     "get_thread",
     "get_thread_history_page",
     "get_thread_tasks",

@@ -153,6 +153,7 @@ fn team(autonomy: Autonomy, custom: Option<BTreeMap<String, bool>>) -> crate::st
         autonomy: Some(autonomy),
         custom,
         daily_budget_usd: None,
+        paused_workers: Vec::new(),
         revision: String::new(),
     }
 }

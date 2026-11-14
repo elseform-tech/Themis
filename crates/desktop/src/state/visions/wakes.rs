@@ -391,7 +391,7 @@ impl AppState {
             .vision_get(vision_id)
             .filter(|_| channel.members.iter().any(|member| member == vision_id))
             .ok_or("gone")?;
-        if vision.paused {
+        if vision.paused || channel.paused_workers.contains(&vision.id) {
             return Err("paused");
         }
         let config = self
@@ -771,6 +771,7 @@ mod tests {
                     autonomy: None,
                     custom: None,
                     daily_budget_usd: None,
+                    paused_workers: Vec::new(),
                     revision: String::new(),
                 },
                 None,
