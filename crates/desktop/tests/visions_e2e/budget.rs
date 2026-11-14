@@ -99,10 +99,12 @@ async fn the_budget_stops_a_visions_chats_and_refuses_its_sends() {
         true
     );
     assert!(fx.state.visions_spent_today(Some(&vision)) >= 1.0);
+    // The channel is told once, under its chief (the budget is the team's).
+    let chief = fx.state.channel_get(&channel).unwrap().chief;
     assert_eq!(
         budget_notices(&fx, &channel),
         vec![
-            json!({"type": "notice", "kind": "budget_reached", "vision_id": vision,
+            json!({"type": "notice", "kind": "budget_reached", "vision_id": chief,
             "unpriced_requests": 0})
         ]
     );

@@ -419,7 +419,7 @@ impl AppState {
                 }
             }
         }
-        if let Some(over) = self.visions_budget_gate(vision_id) {
+        if let Some(over) = self.visions_budget_gate(vision_id, channel_id) {
             self.visions_cache()
                 .wakes
                 .wait(vision_id, channel_id, reason);

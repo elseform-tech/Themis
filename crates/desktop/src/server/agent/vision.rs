@@ -214,7 +214,7 @@ pub(super) fn state_refusal(
     if !SPENDS.contains(&method) {
         return None;
     }
-    let over = state.visions_budget_gate(&scope.vision_id)?;
+    let over = state.visions_budget_gate(&scope.vision_id, &scope.channel_id)?;
     let reason = match over {
         crate::state::BudgetOver::Unknown(_) => Reason::BudgetUnknown,
         _ => Reason::OverBudget,

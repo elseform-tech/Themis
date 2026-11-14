@@ -8,7 +8,7 @@ use themis_core::context_metrics::UsageKind;
 use themis_core::providers::{GoModel, ModelPrice};
 
 use super::super::wakes::Admit;
-use super::super::{Channel, OwnedKind, WakeReason};
+use super::super::{Channel, OwnedKind, Vision, WakeReason};
 use super::*;
 use crate::sink::{ChannelSink, EventSink};
 use crate::types::{GoalStatus, ThreadEvent};
@@ -279,8 +279,8 @@ async fn reaching_the_cap_stops_runs_and_posts_once() {
     assert!(work.load(Ordering::SeqCst), "its work chat is stopped");
     assert!(!mine.load(Ordering::SeqCst), "the person's chat runs on");
     assert!(
-        !theirs.load(Ordering::SeqCst),
-        "another Vision's chat runs on"
+        theirs.load(Ordering::SeqCst),
+        "the cap is the team's: a teammate's chat in the channel stops too"
     );
     assert_eq!(
         s.state.owner_of("wren-work").unwrap().hold,
@@ -302,6 +302,39 @@ async fn reaching_the_cap_stops_runs_and_posts_once() {
     );
     restarted.visions_after_run(&sink(), "wren-work", &finished());
     assert_eq!(budget_notices(&s).len(), 1, "once a day across a restart");
+}
+
+/// The channel's budget counts every agent's spend in it (Wren $0.70 and Ada $1 in #work):
+/// neither alone reaches $1.50, but the team does, so every chat there stops, every wake there
+/// waits, and the channel is told once, under its chief. Ada's work elsewhere goes on.
+#[tokio::test]
+async fn the_channel_budget_stops_every_wake_with_one_notice() {
+    let s = setup().await;
+    spent_today(&s);
+    let wren_work = running(&s.state, "wren-work");
+    let ada_work = running(&s.state, "ada-work");
+    let elsewhere = other_project(&s);
+    write_runtime(&s, r#"{"visions": {"daily_budget_usd": 5}}"#);
+    set_cap(&s, &s.wren, Some(1.5));
+    s.state.visions_after_run(&sink(), "wren-chat", &finished());
+    assert!(wren_work.load(Ordering::SeqCst), "the chief's chat stops");
+    assert!(ada_work.load(Ordering::SeqCst), "the worker's chat stops");
+    let admit = |vision: &str, channel: &str| {
+        s.state
+            .visions_wake_admit(channel, vision, Some(WakeReason::Tasked(1)))
+    };
+    assert_eq!(admit(&s.ada, &s.channel), Err("over_budget"));
+    assert_eq!(admit(&s.wren, &s.channel), Err("over_budget"));
+    let notices = budget_notices(&s);
+    assert_eq!(notices.len(), 1, "{notices:?}");
+    assert_eq!(
+        notices[0]["vision_id"],
+        Value::String(s.wren.clone()),
+        "under the chief"
+    );
+    // Ada's channel elsewhere has spent nothing: it may wake there.
+    let there = admit(&s.ada, &elsewhere);
+    assert!(there.is_ok(), "{there:?}");
 }
 
 /// Over budget a Vision wakes for nothing, and what woke it waits; raising its profile's cap
@@ -416,8 +449,8 @@ fn notices_of(s: &Setup, kind: &str) -> Vec<Value> {
         .collect()
 }
 
-fn unknown(state: &AppState, vision: &str) -> Option<&'static str> {
-    match state.visions_judge(vision).over {
+fn unknown(state: &AppState, vision: &str, channel: &str) -> Option<&'static str> {
+    match state.visions_judge(vision, channel).over {
         Some(Over::Unknown(why)) => Some(why.label()),
         _ => None,
     }
@@ -431,24 +464,36 @@ async fn the_budget_fails_closed_on_every_read_error() {
     let s = setup().await;
     unreachable_go(&s.state).await;
     s.state.set_model_catalog_for_test(Vec::new()).await;
-    assert_eq!(unknown(&s.state, &s.wren), Some("prices_pending"));
+    assert_eq!(
+        unknown(&s.state, &s.wren, &s.channel),
+        Some("prices_pending")
+    );
     wait_for_notice(&s, "budget_unknown").await;
-    assert_eq!(unknown(&s.state, &s.wren), Some("catalog_not_loaded"));
+    assert_eq!(
+        unknown(&s.state, &s.wren, &s.channel),
+        Some("catalog_not_loaded")
+    );
     assert!(s.state.visions_over_budget(&s.wren));
     assert!(s.state.visions_spent_today(Some(&s.wren)).is_infinite());
-    assert!(s.state.visions_budget_gate(&s.wren).is_some());
+    assert!(s.state.visions_budget_gate(&s.wren, &s.channel).is_some());
     let told = wait_for_notice(&s, "budget_unknown").await;
     assert_eq!(told["reason"], "catalog_not_loaded");
     assert!(notices_of(&s, "budget_reached").is_empty());
     s.state.set_model_catalog_for_test(priced()).await;
-    assert_eq!(s.state.visions_judge(&s.wren).over, None);
+    assert_eq!(s.state.visions_judge(&s.wren, &s.channel).over, None);
 
     write_runtime(&s, "{ not json");
-    assert_eq!(unknown(&s.state, &s.wren), Some("config_unreadable"));
+    assert_eq!(
+        unknown(&s.state, &s.wren, &s.channel),
+        Some("config_unreadable")
+    );
     write_runtime(&s, "{}");
 
     s.state.inner.usage.break_reads_for_test();
-    assert_eq!(unknown(&s.state, &s.wren), Some("usage_unreadable"));
+    assert_eq!(
+        unknown(&s.state, &s.wren, &s.channel),
+        Some("usage_unreadable")
+    );
 
     let damaged = setup().await;
     std::fs::create_dir_all(&damaged.state.inner.visions_dir).unwrap();
@@ -456,7 +501,7 @@ async fn the_budget_fails_closed_on_every_read_error() {
     std::fs::write(owners, "{ damaged").unwrap();
     damaged.state.visions_cache().owners = None;
     assert_eq!(
-        unknown(&damaged.state, &damaged.wren),
+        unknown(&damaged.state, &damaged.wren, &damaged.channel),
         Some("owners_unreadable")
     );
 }
@@ -468,7 +513,7 @@ async fn requests_without_a_price_are_told_once_before_the_cap() {
     let s = setup().await;
     own(&s, "wren-work", &s.wren, OwnedKind::Work, Hold::None);
     record(&s.state, vec![row("wren-work", FREE, 5_000_000, now_ms())]);
-    assert_eq!(s.state.visions_budget_gate(&s.wren), None);
+    assert_eq!(s.state.visions_budget_gate(&s.wren, &s.channel), None);
     assert!(
         notices_of(&s, "unpriced").is_empty(),
         "a free model is priced"
@@ -477,9 +522,9 @@ async fn requests_without_a_price_are_told_once_before_the_cap() {
         &s.state,
         vec![row("wren-work", "listed-only", 10, now_ms())],
     );
-    assert_eq!(s.state.visions_budget_gate(&s.wren), None);
+    assert_eq!(s.state.visions_budget_gate(&s.wren, &s.channel), None);
     record(&s.state, vec![row("wren-work", "not-listed", 10, now_ms())]);
-    assert_eq!(s.state.visions_budget_gate(&s.wren), None);
+    assert_eq!(s.state.visions_budget_gate(&s.wren, &s.channel), None);
     let told = notices_of(&s, "unpriced");
     assert_eq!(told.len(), 1);
     assert_eq!(told[0]["unpriced_requests"], 1);
@@ -522,8 +567,8 @@ async fn a_request_past_the_cap_stops_the_running_chats_at_once() {
         tokio::time::sleep(Duration::from_millis(10)).await;
     }
     assert!(
-        !theirs.load(Ordering::SeqCst),
-        "Wren's own cap stops only Wren's"
+        theirs.load(Ordering::SeqCst),
+        "the channel's cap stops its whole team"
     );
     assert_eq!(s.state.owner_of("wren-work").unwrap().hold, Hold::None);
 
@@ -559,7 +604,7 @@ async fn a_notice_that_cannot_be_saved_is_posted_once() {
     std::fs::create_dir_all(s.state.inner.visions_dir.join("budget_notices.json")).unwrap();
     set_cap(&s, &s.wren, Some(0.0));
     for _ in 0..3 {
-        assert!(s.state.visions_budget_gate(&s.wren).is_some());
+        assert!(s.state.visions_budget_gate(&s.wren, &s.channel).is_some());
     }
     assert_eq!(budget_notices(&s).len(), 1);
 }
@@ -580,7 +625,7 @@ async fn a_projects_lower_cap_is_the_one_both_checks_use() {
     )
     .unwrap();
     assert!(s.state.visions_over_budget(&s.ada));
-    assert!(s.state.visions_budget_gate(&s.ada).is_some());
+    assert!(s.state.visions_budget_gate(&s.ada, &s.channel).is_some());
 }
 
 /// A Go key whose catalog cannot load (offline here): the Vision starts nothing and its channel
@@ -644,9 +689,9 @@ async fn without_a_go_key_configured_prices_count_and_visions_run() {
     write_runtime(&s, ACME);
     set_cap(&s, &s.wren, Some(0.5));
     own(&s, "wren-work", &s.wren, OwnedKind::Work, Hold::None);
-    let _ = s.state.visions_judge(&s.wren);
+    let _ = s.state.visions_judge(&s.wren, &s.channel);
     wait_no_key(&s.state).await;
-    assert_eq!(s.state.visions_judge(&s.wren).over, None);
+    assert_eq!(s.state.visions_judge(&s.wren, &s.channel).over, None);
     assert!(matches!(
         s.state
             .visions_wake_admit(&s.channel, &s.wren, Some(WakeReason::Mentioned)),
@@ -660,11 +705,11 @@ async fn without_a_go_key_configured_prices_count_and_visions_run() {
     record(&s.state, vec![priced, qualified]);
     assert!(near(s.state.visions_spent_today(Some(&s.wren)), 0.6));
     assert!(matches!(
-        s.state.visions_budget_gate(&s.wren),
-        Some(Over::Vision { unpriced: 0 })
+        s.state.visions_budget_gate(&s.wren, &s.channel),
+        Some(Over::Channel { unpriced: 0 })
     ));
     record(&s.state, vec![row("wren-work", PAID, 10, now_ms())]);
-    s.state.visions_budget_gate(&s.wren);
+    s.state.visions_budget_gate(&s.wren, &s.channel);
     assert_eq!(notices_of(&s, "unpriced")[0]["unpriced_requests"], 1);
     assert!(notices_of(&s, "budget_unknown").is_empty());
 }
@@ -676,7 +721,7 @@ async fn without_a_go_key_or_prices_visions_run_and_unpriced_requests_are_told()
     let s = setup().await;
     s.state.set_model_catalog_for_test(Vec::new()).await;
     own(&s, "wren-work", &s.wren, OwnedKind::Work, Hold::None);
-    let _ = s.state.visions_judge(&s.wren);
+    let _ = s.state.visions_judge(&s.wren, &s.channel);
     wait_no_key(&s.state).await;
     record(&s.state, vec![row("wren-work", PAID, 9_000_000, now_ms())]);
     assert!(matches!(
@@ -763,7 +808,7 @@ fn other_project(s: &Setup) -> String {
 #[tokio::test]
 async fn a_projects_lower_cap_covers_only_its_own_visions() {
     let s = setup().await;
-    other_project(&s);
+    let elsewhere = other_project(&s);
     // Ada leaves #work: she is only in the other project.
     let hq = s.state.channel_get(&s.channel).unwrap();
     let revision = hq.revision.clone();
@@ -777,6 +822,16 @@ async fn a_projects_lower_cap_covers_only_its_own_visions() {
         )
         .unwrap();
     spent_today(&s);
+    // Ada's work chat is her channel's there.
+    s.state
+        .owner_set(Owner {
+            thread_id: "ada-work".into(),
+            vision_id: s.ada.clone(),
+            channel_id: elsewhere.clone(),
+            kind: OwnedKind::Work,
+            hold: Hold::None,
+        })
+        .unwrap();
     write_runtime(&s, r#"{"visions": {"daily_budget_usd": 5}}"#);
     let themis = s.dir.path().join("project/.themis");
     std::fs::create_dir_all(&themis).unwrap();
@@ -792,12 +847,13 @@ async fn a_projects_lower_cap_covers_only_its_own_visions() {
     assert!(!s.state.visions_over_budget(&s.ada), "1.00 of 5");
     let work = running(&s.state, "wren-work");
     let theirs = running(&s.state, "ada-work");
-    s.state.visions_budget_enforce(&s.wren);
+    s.state.visions_budget_enforce(&s.wren, &s.channel);
     assert!(work.load(Ordering::SeqCst));
     assert!(!theirs.load(Ordering::SeqCst), "Ada is not over");
 }
 
-/// A notice one channel could not record is tried again in that channel only.
+/// A notice goes to the channel whose budget it is; one that channel could not record is tried
+/// again there, and another channel's is its own.
 #[tokio::test]
 async fn a_notice_is_retried_only_where_it_failed() {
     let s = setup().await;
@@ -805,11 +861,13 @@ async fn a_notice_is_retried_only_where_it_failed() {
     let logs = s.state.inner.visions_dir.join("channels");
     std::fs::create_dir_all(logs.join(format!("{second}.jsonl"))).unwrap();
     set_cap(&s, &s.ada, Some(0.0));
-    s.state.visions_budget_gate(&s.ada);
-    assert_eq!(budget_notices(&s).len(), 1);
+    s.state.visions_budget_gate(&s.ada, &second);
+    s.state.visions_budget_gate(&s.ada, &s.channel);
+    assert_eq!(budget_notices(&s).len(), 1, "its own channel's notice");
     std::fs::remove_dir(logs.join(format!("{second}.jsonl"))).unwrap();
     s.state.visions_cache().budget.retry_after.clear();
-    s.state.visions_budget_gate(&s.ada);
+    s.state.visions_budget_gate(&s.ada, &second);
+    s.state.visions_budget_gate(&s.ada, &s.channel);
     assert_eq!(
         budget_notices(&s).len(),
         1,
@@ -970,13 +1028,13 @@ async fn a_budget_flip_announces_the_vision() {
     assert!(announced.taken(false).is_empty(), "nothing flipped");
 
     set_cap(&s, &s.wren, Some(0.5));
-    let _ = s.state.visions_budget_gate(&s.wren);
+    let _ = s.state.visions_budget_gate(&s.wren, &s.channel);
     assert_eq!(
         announced.taken(false),
         vec![flipped(&s.wren)],
         "the cap reached"
     );
-    let _ = s.state.visions_budget_gate(&s.wren);
+    let _ = s.state.visions_budget_gate(&s.wren, &s.channel);
     assert!(announced.taken(false).is_empty(), "still over: once");
 
     set_cap(&s, &s.wren, None);

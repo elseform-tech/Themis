@@ -47,6 +47,8 @@ pub(crate) struct Tally {
     pub vision: Spend,
     pub all: Spend,
     pub by_vision: HashMap<String, Spend>,
+    /// Every agent's chats in each channel together: a team's spend.
+    pub by_channel: HashMap<String, Spend>,
 }
 
 /// Why today's spend is not known; the budget then counts as reached.
@@ -138,6 +140,11 @@ impl Ledger {
             tally
                 .by_vision
                 .entry(owner.vision_id.clone())
+                .or_default()
+                .join(*spend);
+            tally
+                .by_channel
+                .entry(owner.channel_id.clone())
                 .or_default()
                 .join(*spend);
             if vision_id == Some(owner.vision_id.as_str()) {
