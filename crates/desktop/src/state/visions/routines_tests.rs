@@ -281,6 +281,20 @@ fn quiet_hours_hold_routines_but_not_the_persons_messages() {
                 .iter()
                 .any(|(v, r, _)| v == &t.juno && r == "mentioned")
     );
+    // The person wrote: the work that follows in this channel goes on tonight, not tomorrow.
+    let tasked = t
+        .state
+        .visions_wake(&sink(), &t.channel, &t.rook, WakeReason::Tasked(2));
+    assert_ne!(tasked, "quiet");
+    // Once quiet hours end and start again, the channel is quiet again until the person writes.
+    t.state.visions_routines_tick(&sink(), at(17, 6, 0));
+    t.state.visions_routines_tick(&sink(), at(17, 7, 0));
+    t.state.visions_routines_tick(&sink(), at(17, 23, 0));
+    t.state.visions_set_clock_for_test(Some(at(17, 23, 1)));
+    let held = t
+        .state
+        .visions_wake(&sink(), &t.channel, &t.rook, WakeReason::Tasked(3));
+    assert_eq!(held, "quiet");
 }
 
 #[test]
@@ -374,4 +388,35 @@ fn a_deleted_channels_routines_are_dropped() {
     t.state.visions_routines_tick(&sink(), at(16, 9, 0));
     let stored = std::fs::read_to_string(t.state.inner.visions_dir.join("routines.json")).unwrap();
     assert!(!stored.contains("Summarise"), "{stored}");
+}
+
+/// A routine fires as if the person had written it: it starts even when the team used up its
+/// wakes, and the channel may wake `visions.max_wakes` times again after it.
+#[test]
+fn a_routine_fires_even_when_the_team_used_its_wakes() {
+    let t = team(Autonomy::Most);
+    t.state.set_scheduler_sink(sink());
+    runtime(&t, r#"{"visions": {"max_wakes": 1}}"#);
+    t.state
+        .visions_save_routine(
+            &t.channel,
+            &t.juno,
+            routine(&t, &[0, 1, 2, 3, 4, 5, 6], "09:00", "Summarise"),
+            at(16, 8, 0),
+        )
+        .unwrap();
+    // The team's one wake goes to Rook's task.
+    let tasked = t
+        .state
+        .visions_wake(&sink(), &t.channel, &t.rook, WakeReason::Tasked(1));
+    assert_eq!(tasked, "started");
+    t.state.visions_routines_tick(&sink(), at(16, 9, 0));
+    let fired: Vec<_> = wakes(&t.state)
+        .into_iter()
+        .filter(|(_, reason, _)| reason == "routine")
+        .collect();
+    assert_eq!(
+        fired,
+        vec![(t.juno.clone(), "routine".to_owned(), "started".to_owned())]
+    );
 }

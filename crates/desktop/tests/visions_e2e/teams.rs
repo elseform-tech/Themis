@@ -204,6 +204,29 @@ async fn a_team_pause_stays_in_its_channel_and_never_undoes_the_persons() {
     fx.agent_call_ok(&chief, "pause_worker", json!({"workerId": rook}));
     let team = fx.agent_call_ok(&chief, "list_team", json!({}));
     assert_eq!(team[0]["paused"], true, "{team}");
+    // Work for a paused worker is refused, not left waiting where nothing would wake it.
+    let tasked = fx.agent_call(
+        &chief,
+        "assign_task",
+        json!({"workerId": rook, "task": "Fix the parser"}),
+    );
+    assert!(!tasked.status.success());
+    assert!(
+        String::from_utf8_lossy(&tasked.stderr).contains("paused"),
+        "{}",
+        String::from_utf8_lossy(&tasked.stderr)
+    );
+    let log = fx.call_ok(
+        "get_team_log",
+        json!({"channelId": channel, "workerId": rook}),
+    );
+    let kinds: Vec<_> = log["entries"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|line| line["entry"]["kind"].clone())
+        .collect();
+    assert_eq!(kinds, vec![json!("paused")], "{log}");
     // Rook is not paused anywhere else.
     let rook_now = fx.call_ok("list_visions", json!({}));
     let rook_now = rook_now

@@ -125,3 +125,20 @@ fn a_team_cannot_ask_for_custom_rows() {
     let error = check(&proposal(team(json!({"autonomy": "custom"}))), &context()).unwrap_err();
     assert!(error.contains("Custom"), "{error}");
 }
+
+/// A team or a hire is the whole proposal: the card shows only it, so nothing else may ride along
+/// unseen on the person's yes.
+#[test]
+fn a_team_or_hire_comes_alone() {
+    let mut with_vision = team(json!({}));
+    with_vision["visions"] = json!([{"name": "Mira", "role": "Tests"}]);
+    let mut with_hire = team(json!({}));
+    with_hire["hire"] = json!({"channel": "docs", "worker": {"name": "Ivo", "role": "Docs"}});
+    let hire_with_change = json!({"summary": "A tester.",
+        "hire": {"channel": "docs", "worker": {"name": "Ivo", "role": "Tests"}},
+        "changes": [{"channel": "docs", "topic": "Docs"}]});
+    for mixed in [with_vision, with_hire, hire_with_change] {
+        let error = check(&proposal(mixed), &context()).unwrap_err();
+        assert!(error.contains("on its own"), "{error}");
+    }
+}

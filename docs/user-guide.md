@@ -622,9 +622,10 @@ instruction ("every weekday at 9, check the failing tests"). It tells you in the
 adds or changes one, and only when the channel's level lets it decide undoable steps; otherwise
 it asks. A routine that was missed (the app was closed) runs once when it can, not once for every
 missed time. On the chief's profile you switch a routine off or **Remove** it. To keep the team
-quiet at night, set `visions.quiet_hours` in your `runtime.jsonc` (for example 22:00 to 07:00):
+quiet at night, turn on **Quiet hours** in Settings › Visions (for example 22:00 to 07:00):
 routines and everything the agents start themselves wait until it ends. Your own messages, Hand
-back and Stop always go through.
+back and Stop always go through, and so does the work that follows them in that channel. A
+chief can't give work to a worker that is paused; it tells you instead.
 
 **The chief's profile** opens from the channel header: its **Soul** (a text box saved in place, at
 most 16 KiB, where you write who it is and how it works; only chiefs and Atlas have one), its

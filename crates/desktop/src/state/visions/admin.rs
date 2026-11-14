@@ -220,22 +220,35 @@ fn model_fits(models: &[String], model: &str) -> Result<(), String> {
     Err(format!("No usable model is named {:?}", model.trim()))
 }
 
-/// Checks a proposal against what exists now, field by field.
-pub(super) fn check(proposal: &Proposal, context: &Context) -> Result<(), String> {
-    let summary = proposal.summary.trim();
-    if summary.is_empty() || summary.chars().count() > MAX_SUMMARY_CHARS {
-        return Err("A proposal needs a summary of at most 600 characters".to_owned());
-    }
+/// What a proposal holds: 1 to 16 channels, Visions and changes each, or a team or a hire on its
+/// own (its card shows only that, so nothing else may ride on the person's yes unseen).
+fn check_shape(proposal: &Proposal) -> Result<(), String> {
     let counts = [
         proposal.channels.len(),
         proposal.visions.len(),
         proposal.changes.len(),
     ];
     let teams = proposal.team.is_some() || proposal.hire.is_some();
-    let empty = counts.iter().all(|count| *count == 0) && !teams;
+    let others = counts.iter().any(|count| *count > 0);
+    if (teams && others) || (proposal.team.is_some() && proposal.hire.is_some()) {
+        return Err(
+            "A team or a hire is proposed on its own; propose other changes separately".to_owned(),
+        );
+    }
+    let empty = !others && !teams;
     if empty || counts.iter().any(|count| *count > MAX_ITEMS) {
         return Err("A proposal holds 1 to 16 channels, Visions and changes, each".to_owned());
     }
+    Ok(())
+}
+
+/// Checks a proposal against what exists now, field by field.
+pub(super) fn check(proposal: &Proposal, context: &Context) -> Result<(), String> {
+    let summary = proposal.summary.trim();
+    if summary.is_empty() || summary.chars().count() > MAX_SUMMARY_CHARS {
+        return Err("A proposal needs a summary of at most 600 characters".to_owned());
+    }
+    check_shape(proposal)?;
     let mut names = HashSet::new();
     for vision in &proposal.visions {
         check_new_vision(vision, context, &mut names)?;

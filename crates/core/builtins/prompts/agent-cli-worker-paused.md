@@ -1,0 +1,1 @@
+Themis refused this call: that worker is paused in this channel, so it would not start this work. If you paused it, resume it with resume_worker first; if the person paused it, tell them in your channel message. Nothing was sent.

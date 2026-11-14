@@ -15,8 +15,8 @@ import { CloseIcon, DeleteButton, PanelBlock, PanelButton, PlusIcon, SidePanel }
 
 const MODES: Array<[ApprovalModeName, string]> = [["custom", "Custom"], ["auto", "Auto"], ["yolo", "YOLO"]];
 
-/** The channel's daily budget: empty goes back to Settings › Visions' budget; the server refuses
- *  one above it. */
+/** The channel's daily budget: empty goes back to Settings › Visions' budget, whose total still
+ *  caps what all channels spend. */
 function BudgetBlock({ channel, save, onError }: { channel: ChannelInfo; save: (change: Partial<ChannelInfo>) => void; onError: (message: string) => void }) {
   const [budget, setBudget] = useState<string | null>(null);
   const saveBudget = () => {

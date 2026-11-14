@@ -346,6 +346,19 @@ fn by_key<'a, T: 'a>(records: impl Iterator<Item = (&'a String, &'a T)>) -> Vec<
     records.into_iter().map(|(_, record)| record).collect()
 }
 
+/// Takes `vision_id` out of `channel`; a deleted chief hands the channel to its next member,
+/// who is no longer paused there.
+fn leave_channel(channel: &mut Channel, vision_id: &str) {
+    channel.members.retain(|member| member != vision_id);
+    channel.paused_workers.retain(|worker| worker != vision_id);
+    if channel.chief == vision_id {
+        channel.chief = channel.members.first().cloned().unwrap_or_default();
+        let chief = channel.chief.clone();
+        channel.paused_workers.retain(|worker| *worker != chief);
+    }
+    channel.revision = next_revision(Some(&channel.revision));
+}
+
 impl VisionsCache {
     /// Fails, and drops the loaded copy so the next call reads the file again, when `file`
     /// changed on disk since it was read or last written here.
@@ -487,9 +500,10 @@ impl VisionsCache {
             spec.paused_workers.clone_from(&previous.paused_workers);
             Some(previous.revision.as_str())
         };
-        let members = spec.members.clone();
+        // Only workers are paused: a member that now leads the channel is not.
+        let (members, chief) = (spec.members.clone(), spec.chief.clone());
         spec.paused_workers
-            .retain(|worker| members.contains(worker));
+            .retain(|worker| members.contains(worker) && *worker != chief);
         let stale = "Channel changed since it was opened; reload before saving";
         check_revision(CHANNELS_FILE, current, expected, stale)?;
         let taken = channels.values().any(|other| {
@@ -594,13 +608,7 @@ impl VisionsCache {
             let mut updated = channels.clone();
             for channel in updated.values_mut() {
                 if channel.members.iter().any(|member| member == vision_id) {
-                    channel.members.retain(|member| member != vision_id);
-                    channel.paused_workers.retain(|worker| worker != vision_id);
-                    // A deleted chief hands the channel to its next member.
-                    if channel.chief == vision_id {
-                        channel.chief = channel.members.first().cloned().unwrap_or_default();
-                    }
-                    channel.revision = next_revision(Some(&channel.revision));
+                    leave_channel(channel, vision_id);
                 }
             }
             write_store(dir, CHANNELS_FILE, &by_key(updated.iter()))?;

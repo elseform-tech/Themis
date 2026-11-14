@@ -180,6 +180,14 @@ pub(super) fn state_refusal(
         if !state.works_in(&scope.channel_id, worker) {
             return Some(not_yours());
         }
+        // Work for a paused worker would wait with nothing to wake it: refused, said why.
+        let gives = matches!(method, "assign_task" | "redirect_worker");
+        if gives && state.paused_in(&scope.channel_id, worker) {
+            return Some(Refusal {
+                reason: Reason::Paused,
+                message: themis_core::prompts::AGENT_CLI_WORKER_PAUSED.to_owned(),
+            });
+        }
     }
     // Declining a request changes nothing, so a paused chief may still do it.
     let accepts = method == "answer_request" && args.get("accept") == Some(&Value::Bool(true));

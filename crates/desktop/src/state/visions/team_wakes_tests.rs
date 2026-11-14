@@ -116,6 +116,31 @@ fn a_deleted_chief_hands_the_channel_on() {
     assert_eq!(started(&s.state), vec![s.ada.clone()]);
 }
 
+/// A worker its chief paused is not paused once it leads the channel, whether the chief was
+/// deleted or the person made it chief in the channel's details.
+#[test]
+fn a_paused_worker_that_becomes_chief_is_not_paused() {
+    let s = setup(true);
+    s.state.visions_team_pause(&s.channel, &s.ada, true).unwrap();
+    s.state.visions_delete(&sink(), &s.wren).unwrap();
+    let channel = s.state.channel_get(&s.channel).unwrap();
+    assert_eq!(channel.chief, s.ada);
+    assert!(channel.paused_workers.is_empty(), "{:?}", channel.paused_workers);
+    s.state.visions_post(&sink(), &s.channel, "hello").unwrap();
+    assert_eq!(started(&s.state), vec![s.ada.clone()]);
+
+    let s = setup(true);
+    s.state.visions_team_pause(&s.channel, &s.ada, true).unwrap();
+    let channel = s.state.channel_get(&s.channel).unwrap();
+    let revision = channel.revision.clone();
+    let made_chief = Channel {
+        chief: s.ada.clone(),
+        ..channel
+    };
+    let saved = s.state.channel_save(made_chief, Some(&revision)).unwrap();
+    assert!(saved.paused_workers.is_empty(), "{:?}", saved.paused_workers);
+}
+
 /// While the chief is paused, a worker's approval still wakes someone: the worker itself.
 #[test]
 fn a_paused_chief_does_not_swallow_an_approval() {

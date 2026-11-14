@@ -463,13 +463,23 @@ impl AppState {
     }
 
     /// Whether quiet hours hold this wake now: they hold what agents start, and a drain of what
-    /// waited (no reason), never the person's own doing (a post, a hand back, a stop).
-    fn visions_held_by_quiet(&self, reason: Option<&WakeReason>) -> bool {
+    /// waited (no reason), never the person's own doing (a post, a hand back, a stop) nor the
+    /// work that follows it in that channel until quiet hours end. Routines always wait.
+    fn visions_held_by_quiet(&self, channel_id: &str, reason: Option<&WakeReason>) -> bool {
+        if !self.visions_quiet_at(self.visions_now()) {
+            return false;
+        }
         let persons = matches!(
             reason,
             Some(WakeReason::Mentioned | WakeReason::HandedBack(_) | WakeReason::ChatStopped(_))
         );
-        !persons && self.visions_quiet_at(self.visions_now())
+        let mut cache = self.visions_cache();
+        if persons {
+            cache.awake_in_quiet.insert(channel_id.to_owned());
+            return false;
+        }
+        let routine = matches!(reason, Some(WakeReason::Routine(..)));
+        routine || !cache.awake_in_quiet.contains(channel_id)
     }
 
     /// Whether the Vision may wake now, checked and counted under one lock; `Err` names why
@@ -497,7 +507,7 @@ impl AppState {
         if !config.enabled {
             return Err("disabled");
         }
-        if self.visions_held_by_quiet(reason.as_ref()) {
+        if self.visions_held_by_quiet(channel_id, reason.as_ref()) {
             self.visions_cache()
                 .wakes
                 .wait(vision_id, channel_id, reason);

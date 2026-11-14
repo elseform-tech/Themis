@@ -510,6 +510,9 @@ pub const AGENT_CLI_ROUTINE_ABOVE_LEVEL: &str =
 /// The app server's answer to a paused Vision's call that would start or send something.
 pub const AGENT_CLI_VISION_PAUSED: &str =
     include_str!("../builtins/prompts/agent-cli-vision-paused.md");
+/// Refusal for a chief that gives work to a worker paused in its channel.
+pub const AGENT_CLI_WORKER_PAUSED: &str =
+    include_str!("../builtins/prompts/agent-cli-worker-paused.md");
 /// The app server's answer to a driving call of a Vision whose spend today cannot be checked.
 pub const AGENT_CLI_VISION_BUDGET_UNKNOWN: &str =
     include_str!("../builtins/prompts/agent-cli-vision-budget-unknown.md");

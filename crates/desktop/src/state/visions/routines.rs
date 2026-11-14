@@ -264,6 +264,7 @@ impl AppState {
             return;
         }
         if was_quiet {
+            self.visions_cache().awake_in_quiet.clear();
             self.visions_wake_waiting();
         }
         let now_ms = now.timestamp_millis();
@@ -302,6 +303,8 @@ impl AppState {
             else {
                 continue;
             };
+            // As if the person had written it: the channel may wake `max_wakes` times again.
+            self.visions_reset_wakes(&routine.channel_id);
             let reason = WakeReason::Routine(routine.id.clone(), routine.instruction.clone());
             self.visions_wake(sink, &routine.channel_id, &chief, reason);
         }

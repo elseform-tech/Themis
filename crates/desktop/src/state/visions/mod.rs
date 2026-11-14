@@ -396,6 +396,9 @@ pub(crate) struct VisionsCache {
     clock: Option<chrono::DateTime<chrono::Local>>,
     /// Whether the last Visions tick was in quiet hours.
     was_quiet: bool,
+    /// Channels the person wrote in (or handed back, or stopped) during these quiet hours: the
+    /// work that follows there goes on; cleared when quiet hours end.
+    awake_in_quiet: std::collections::HashSet<String>,
     /// Why the move to teams could not run (file, event), for the log; it is tried again.
     conversion_failed: Option<(&'static str, &'static str)>,
 }

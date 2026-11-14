@@ -287,10 +287,37 @@ fn a_vision_grant_never_approves_or_changes_modes() {
         );
     }
     let channel = json!({"threadId": "work", "channelId": "c1", "visionId": "v1"});
+    // The person's Visions methods are refused, except those sharing a name with a team call
+    // (a chief's or a worker's, decided by the team grant).
+    let team_call = |method: &str| {
+        super::chief::CHIEF_CALLS.contains(&method) || super::chief::WORKER_CALLS.contains(&method)
+    };
     for method in crate::server::visions_commands::METHODS {
-        if *method != "list_channel_threads" {
+        if *method != "list_channel_threads" && !team_call(method) {
             assert_eq!(
                 reason(check(&grant, method, &channel, &owners)),
+                Some(Reason::MethodNotAllowed),
+                "{method}"
+            );
+        }
+    }
+    // Answering a request for the person, switching routines and reading spend are the
+    // person's alone, for a chief as for a worker.
+    let chief = Grant {
+        vision: Some(VisionScope {
+            chief: true,
+            ..scope()
+        }),
+        ..vision_grant()
+    };
+    for grant in [&grant, &chief] {
+        for method in [
+            "answer_channel_request",
+            "set_routine_enabled",
+            "get_channel_spend",
+        ] {
+            assert_eq!(
+                reason(check(grant, method, &channel, &owners)),
                 Some(Reason::MethodNotAllowed),
                 "{method}"
             );
