@@ -209,6 +209,8 @@ fn a_worker_cannot_post_in_the_channel_or_task_others() {
 
 /// Every method a team call might name, plus noise.
 const KNOWN: &[&str] = &[
+    "request_channel",
+    "answer_request",
     "assign_task",
     "redirect_worker",
     "pause_worker",
@@ -284,8 +286,19 @@ proptest::proptest! {
                         "{} on a worker's chat", method);
                 }
             }
-            if channel == Some("c2") && (CHIEF_CALLS.contains(&method.as_str()) || method == "get_team_log") {
+            // A request names the other channel by design (the server checks its project).
+            let names_by_design = method == "request_channel";
+            if channel == Some("c2")
+                && !names_by_design
+                && (CHIEF_CALLS.contains(&method.as_str()) || method == "get_team_log")
+            {
                 proptest::prop_assert!(false, "{} naming another channel passed", method);
+            }
+            if !is_chief {
+                proptest::prop_assert!(
+                    !["request_channel", "answer_request"].contains(&method.as_str()),
+                    "a worker's {}", method
+                );
             }
             if is_chief {
                 let drives = ["send_message", "enqueue_message", "steer_queued_message",

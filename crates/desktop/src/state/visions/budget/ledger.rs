@@ -90,7 +90,7 @@ pub(crate) struct Ledger {
     /// The day and keys of the notices posted on it; read from the store on first use.
     pub(super) notified: Option<(String, HashSet<String>)>,
     /// Notices whose post failed, and when they may be tried again.
-    pub(super) retry_after: HashMap<String, Instant>,
+    pub(in crate::state::visions) retry_after: HashMap<String, Instant>,
     /// Visions with a check waiting to run after a request.
     pub(super) scheduled: HashSet<String>,
     /// When loading the price catalog was last started.

@@ -10,6 +10,7 @@
 //! under the Visions lock; answered ones go after [`KEEP_ANSWERED_DAYS`]. Diagnostics carry
 //! ids and outcomes, never the ask or the note.
 
+use std::collections::HashSet;
 use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
@@ -18,12 +19,14 @@ use themis_core::visions::Decision;
 
 use super::admin::ADMINISTRATION;
 use super::store::{read_store, write_store};
-use super::{AppState, ChannelEntry, NoticeKind, WakeReason};
+use super::{AppState, ChannelEntry, WakeReason};
 use crate::sink::EventSink;
 
 const REQUESTS_FILE: &str = "requests.json";
 /// Answered requests are kept this long, then dropped.
 const KEEP_ANSWERED_DAYS: i64 = 7;
+/// Open requests are kept this long (or until their channel goes), then dropped.
+const KEEP_OPEN_DAYS: i64 = 30;
 /// Most characters of an ask or a note.
 const MAX_TEXT_CHARS: usize = 2000;
 const DAY_MS: i64 = 24 * 60 * 60 * 1000;
@@ -68,20 +71,36 @@ fn text(value: &str, what: &str) -> Result<String, String> {
 }
 
 impl AppState {
+    fn channel_ids(&self) -> HashSet<String> {
+        self.channels_all()
+            .into_iter()
+            .map(|channel| channel.id)
+            .collect()
+    }
+
     fn requests_load(&self) -> Result<Vec<Request>, String> {
         read_store(&self.inner.visions_dir, REQUESTS_FILE)
             .map_err(|error| self.visions_failed(error))
     }
 
-    fn requests_save(&self, requests: &[Request]) -> Result<(), String> {
-        let keep_after = now_ms() - KEEP_ANSWERED_DAYS * DAY_MS;
+    /// Saves what may still matter: open requests to a channel that still exists (for at most
+    /// [`KEEP_OPEN_DAYS`]) and answered ones for [`KEEP_ANSWERED_DAYS`].
+    /// `channels` are the channel ids now, read before the Visions lock is taken (reading them
+    /// takes it).
+    fn requests_save(
+        &self,
+        requests: &[Request],
+        channels: &HashSet<String>,
+    ) -> Result<(), String> {
+        let now = now_ms();
         let kept: Vec<&Request> = requests
             .iter()
-            .filter(|request| {
-                request
-                    .answered
-                    .as_ref()
-                    .is_none_or(|a| a.at_ms >= keep_after)
+            .filter(|request| match &request.answered {
+                Some(answered) => answered.at_ms >= now - KEEP_ANSWERED_DAYS * DAY_MS,
+                None => {
+                    channels.contains(&request.to_channel)
+                        && request.at_ms >= now - KEEP_OPEN_DAYS * DAY_MS
+                }
             })
             .collect();
         write_store(&self.inner.visions_dir, REQUESTS_FILE, &kept)
@@ -115,6 +134,7 @@ impl AppState {
         let id = uuid::Uuid::new_v4().to_string();
         {
             // Counted and recorded under one lock, so two calls cannot both pass the cap.
+            let channels = self.channel_ids();
             let _guard = self.visions_cache();
             let mut requests = self.requests_load()?;
             let today = midnight_ms();
@@ -124,7 +144,7 @@ impl AppState {
                 .count();
             if sent >= cap as usize {
                 drop(_guard);
-                self.visions_request_cap(&from.id, &from.chief);
+                self.visions_request_cap(&from.id);
                 return Err(themis_core::prompts::fill(
                     themis_core::prompts::AGENT_CLI_REQUEST_CAP,
                     &[("cap", &cap.to_string())],
@@ -137,9 +157,11 @@ impl AppState {
                 at_ms: now_ms(),
                 answered: None,
             });
-            self.requests_save(&requests)?;
+            self.requests_save(&requests, &channels)?;
         }
-        self.channel_post(
+        // Recorded: the posts are best effort, so a channel that cannot record a line still gets
+        // its wake (the failure is logged by the store).
+        let _ = self.channel_post(
             &from.id,
             from_chief,
             ChannelEntry::RequestSent {
@@ -148,8 +170,8 @@ impl AppState {
                 channel_id: to.id.clone(),
                 ask: ask.clone(),
             },
-        )?;
-        self.channel_post(
+        );
+        let _ = self.channel_post(
             &to.id,
             &to.chief,
             ChannelEntry::RequestReceived {
@@ -158,7 +180,7 @@ impl AppState {
                 channel_id: from.id.clone(),
                 ask,
             },
-        )?;
+        );
         self.visions_note(
             "request_sent",
             json!({"request_id": id, "from_channel": from.id, "to_channel": to.id}),
@@ -169,20 +191,10 @@ impl AppState {
     }
 
     /// The sending channel reached today's cap: told once a day.
-    fn visions_request_cap(&self, channel_id: &str, chief: &str) {
-        let key = format!("request_cap:{channel_id}");
-        if !self.visions_notice_claim_today(&key) {
-            return;
+    fn visions_request_cap(&self, channel_id: &str) {
+        if self.visions_notice_request_cap(channel_id) {
+            self.visions_note("request_cap", json!({"channel_id": channel_id}));
         }
-        let entry = ChannelEntry::Notice {
-            kind: NoticeKind::RequestCap,
-            vision_id: (!chief.is_empty()).then(|| chief.to_owned()),
-            thread_id: None,
-            unpriced_requests: None,
-            reason: None,
-        };
-        let _ = self.channel_post(channel_id, chief, entry);
-        self.visions_note("request_cap", json!({"channel_id": channel_id}));
     }
 
     /// The receiving chief's answer: declining is always its own; accepting takes on new work
@@ -222,11 +234,8 @@ impl AppState {
             .find(|request| request.id == request_id)
             .map(|request| request.to_channel)
             .ok_or("This request is no longer open")?;
-        let chief = self
-            .channel_get(&to)
-            .map(|channel| channel.chief)
-            .unwrap_or_default();
-        self.answer_request(sink, &to, &chief, request_id, accept, "")
+        // The answer is the person's own: no Vision gave it.
+        self.answer_request(sink, &to, "", request_id, accept, "")
     }
 
     /// Records the answer once, shows it in both channels and wakes the asking chief.
@@ -244,6 +253,7 @@ impl AppState {
             return Err(format!("The note is at most {MAX_TEXT_CHARS} characters"));
         }
         let request = {
+            let channels = self.channel_ids();
             let _guard = self.visions_cache();
             let mut requests = self.requests_load()?;
             let request = requests
@@ -256,7 +266,7 @@ impl AppState {
                 at_ms: now_ms(),
             });
             let request = request.clone();
-            self.requests_save(&requests)?;
+            self.requests_save(&requests, &channels)?;
             request
         };
         for (here, there) in [
@@ -270,15 +280,21 @@ impl AppState {
                 accepted: accept,
                 note: note.to_owned(),
             };
-            self.channel_post(here, by, entry)?;
+            let _ = self.channel_post(here, by, entry);
         }
         self.visions_note(
             "request_answered",
             json!({"request_id": request.id, "accepted": accept, "by_person": by.is_empty()}),
         );
+        let answered = || WakeReason::RequestAnswered(request.id.clone());
         if let Some(asker) = self.channel_get(&request.from_channel).map(|c| c.chief) {
-            let answered = WakeReason::RequestAnswered(request.id.clone());
-            self.visions_wake(sink, &request.from_channel, &asker, answered);
+            self.visions_wake(sink, &request.from_channel, &asker, answered());
+        }
+        // The person took the work on for their channel: its chief wakes to do it.
+        if by.is_empty() && accept {
+            if let Some(chief) = self.channel_get(&request.to_channel).map(|c| c.chief) {
+                self.visions_wake(sink, &request.to_channel, &chief, answered());
+            }
         }
         Ok(())
     }

@@ -77,6 +77,18 @@ impl AppState {
         }
     }
 
+    /// The channel sent today's last allowed request between channels: once a day, under its
+    /// chief, retried like any notice when the channel could not record it.
+    pub(in crate::state::visions) fn visions_notice_request_cap(&self, channel_id: &str) -> bool {
+        let notice = Notice {
+            kind: NoticeKind::RequestCap,
+            key: "request_cap".to_owned(),
+            unpriced: None,
+            reason: None,
+        };
+        self.visions_notice_once(channel_id, &notice)
+    }
+
     /// Today's first requests without a price, once a day.
     pub(super) fn visions_notice_unpriced(&self, channel_id: &str, unpriced: u64) {
         let notice = Notice {
@@ -162,14 +174,6 @@ impl AppState {
 
     /// Takes `key` for today when no notice of it was given or is being given, and no failed
     /// post waits to be tried again.
-    pub(in crate::state::visions) fn visions_notice_claim_today(&self, key: &str) -> bool {
-        let claimed = self.visions_notice_claim(key);
-        if claimed {
-            self.visions_notices_save(key, NoticeKind::RequestCap);
-        }
-        claimed
-    }
-
     fn visions_notice_claim(&self, key: &str) -> bool {
         let day = today();
         let dir = self.inner.visions_dir.clone();

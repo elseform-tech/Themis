@@ -293,4 +293,98 @@ fn the_receiving_channel_pays_for_a_request() {
         wake.3, "over_budget",
         "the wake is the receiving channel's to pay"
     );
+    assert!(
+        !c.state.visions_over_budget(juno),
+        "the asking channel is not charged"
+    );
+}
+
+/// The person accepts what their chief could not: the answer is theirs (no Vision), and the
+/// receiving chief wakes to do the work.
+#[test]
+fn the_persons_accept_wakes_the_receiving_chief() {
+    let c = company();
+    let (release, juno) = &c.release;
+    let (api, tess) = &c.api;
+    let id = c
+        .state
+        .visions_request(&sink(), release, juno, api, "Ship it")
+        .unwrap();
+    c.state
+        .visions_person_answers_request(&sink(), &id, true)
+        .unwrap();
+    let all = lines(&c.state, api);
+    let answered = of_type(&all, "request_answered");
+    assert_eq!(answered[0]["vision_id"], "", "the person's answer");
+    let woke = wakes(&c.state);
+    assert!(
+        woke.iter()
+            .any(|(vision, channel, reason, _)| vision == tess
+                && channel == api
+                && reason == "request_answered"),
+        "{woke:?}"
+    );
+}
+
+/// Requests nobody can answer any more (their channel is gone) are dropped from the store.
+#[test]
+fn requests_to_a_gone_channel_are_dropped() {
+    let c = company();
+    let (release, juno) = &c.release;
+    let (api, _) = &c.api;
+    let id = c
+        .state
+        .visions_request(&sink(), release, juno, api, "Ship it")
+        .unwrap();
+    c.state.visions_delete_channel(&sink(), api).unwrap();
+    let other = c._dir.path().join("project").canonicalize().unwrap();
+    let (docs, _) = lead(&c.state, &other, "docs", "Ada");
+    c.state
+        .visions_request(&sink(), release, juno, &docs, "Write it up")
+        .unwrap();
+    let stored = std::fs::read_to_string(c.state.inner.visions_dir.join("requests.json")).unwrap();
+    assert!(!stored.contains(&id), "{stored}");
+}
+
+/// A cap notice the channel could not record is posted on a later refused call.
+#[test]
+fn a_cap_notice_that_failed_is_tried_again() {
+    let c = company();
+    let (release, juno) = &c.release;
+    let (api, _) = &c.api;
+    let runtime = c
+        .state
+        .inner
+        .settings
+        .path()
+        .with_file_name("runtime.jsonc");
+    std::fs::write(&runtime, r#"{"visions": {"requests_per_day": 1}}"#).unwrap();
+    c.state
+        .visions_request(&sink(), release, juno, api, "one")
+        .unwrap();
+    let log = c
+        .state
+        .inner
+        .visions_dir
+        .join("channels")
+        .join(format!("{release}.jsonl"));
+    let kept = std::fs::read(&log).unwrap();
+    std::fs::remove_file(&log).unwrap();
+    std::fs::create_dir_all(&log).unwrap();
+    assert!(c
+        .state
+        .visions_request(&sink(), release, juno, api, "two")
+        .is_err());
+    std::fs::remove_dir(&log).unwrap();
+    std::fs::write(&log, kept).unwrap();
+    c.state.visions_cache().budget.retry_after.clear();
+    assert!(c
+        .state
+        .visions_request(&sink(), release, juno, api, "three")
+        .is_err());
+    let notices = lines(&c.state, release)
+        .into_iter()
+        .filter(|line| line["type"] == "notice" && line["kind"] == "request_cap")
+        .count();
+    assert_eq!(notices, 1);
 }

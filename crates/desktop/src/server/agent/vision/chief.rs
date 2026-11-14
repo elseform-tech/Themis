@@ -178,15 +178,17 @@ pub(super) fn state_refusal(
             return Some(not_yours());
         }
     }
-    let gives_work = matches!(
-        method,
-        "assign_task"
-            | "redirect_worker"
-            | "pause_worker"
-            | "resume_worker"
-            | "request_channel"
-            | "answer_request"
-    );
+    // Declining a request changes nothing, so a paused chief may still do it.
+    let accepts = method == "answer_request" && args.get("accept") == Some(&Value::Bool(true));
+    let gives_work = accepts
+        || matches!(
+            method,
+            "assign_task"
+                | "redirect_worker"
+                | "pause_worker"
+                | "resume_worker"
+                | "request_channel"
+        );
     let paused = state
         .vision_get(&scope.vision_id)
         .is_none_or(|vision| vision.paused);

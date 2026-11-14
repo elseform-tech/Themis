@@ -54,3 +54,35 @@ async fn a_request_goes_out_and_its_answer_comes_back() {
         .success());
     fx.shut_down().await;
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_paused_chief_may_still_decline_but_not_accept() {
+    let _turn = ONE_SERVER.lock().await;
+    let fx = fixture().await;
+    let (juno, release) = fx.chief_and_channel("Juno", "release");
+    let (tess, api) = fx.chief_and_channel("Tess", "api");
+    let (_, asker) = fx.vision_run(&juno, &release).await;
+    let (_, helper) = fx.vision_run(&tess, &api).await;
+    let ask = |what: &str| {
+        let asked = fx.agent_call_ok(
+            &asker,
+            "request_channel",
+            json!({"channelId": api, "ask": what}),
+        );
+        asked["requestId"].as_str().unwrap().to_owned()
+    };
+    let (first, second) = (ask("one"), ask("two"));
+    fx.call_ok("pause_vision", json!({"visionId": tess, "paused": true}));
+    let accepted = fx.agent_call(
+        &helper,
+        "answer_request",
+        json!({"requestId": first, "accept": true}),
+    );
+    assert!(!accepted.status.success());
+    fx.agent_call_ok(
+        &helper,
+        "answer_request",
+        json!({"requestId": second, "accept": false}),
+    );
+    fx.shut_down().await;
+}
