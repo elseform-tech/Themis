@@ -215,3 +215,6 @@
 .themis-team-card-facts { display: flex; gap: 16px; color: var(--themis-text-2); font-size: 12px; }
 .themis-team-card-facts b { color: var(--themis-text); font-weight: 500; }
 .themis-team-card-done { display: inline-flex; margin-left: auto; align-items: center; gap: 5px; color: var(--themis-success); font-size: 12px; font-weight: 600; }
+
+/* A request this channel received waits for the person: its two answers sit on the line. */
+.themis-team-note-actions { display: inline-flex; gap: 6px; margin-left: 4px; }

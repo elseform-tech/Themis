@@ -1,9 +1,9 @@
 // One line of a channel's log: the person's message, a Vision's message, a chat it started, a
 // question it answered or passed on, or a notice. Avatars never move.
-import { Fragment, type ReactNode } from "react";
-import { type ChannelEntry as Entry, type ChannelLine, type VisionInfo } from "../../lib/visions";
+import { Fragment, useState, type ReactNode } from "react";
+import { answerChannelRequest, type ChannelEntry as Entry, type ChannelLine, type VisionInfo } from "../../lib/visions";
 import { ResponseBody } from "../../components/ResponseBody";
-import { useApp } from "../../state/store";
+import { describeError, toast, useApp } from "../../state/store";
 import { ChatChip, ChatLink, channelChat } from "./ChatLink";
 import { CharacterAvatar } from "./CharacterAvatar";
 import { lookOf } from "./cast";
@@ -80,11 +80,29 @@ const CLOCK = <svg className="themis-team-note-icon" width="14" height="14" view
 
 /** A request between channels or a new routine, as one quiet line (board TeamChannel). The other
  *  channel's pill opens it. A line missing what it shows is skipped. */
+/** "Take it on" and "Decline" on a request this channel received, while nobody answered it. */
+function RequestAnswer({ requestId }: { requestId: string }) {
+  const { state, dispatch } = useApp();
+  const [busy, setBusy] = useState(false);
+  const answered = Object.values(state.visions.lines).some(lines => lines.some(line => line.entry.type === "request_answered" && line.entry.request_id === requestId));
+  if (answered) return null;
+  const answer = (accept: boolean) => {
+    setBusy(true);
+    answerChannelRequest(requestId, accept)
+      .catch(reason => toast(dispatch, `Could not answer the request: ${describeError(reason)}`, "danger"))
+      .finally(() => setBusy(false));
+  };
+  return <span className="themis-team-note-actions">
+    <button type="button" className="themis-mention" disabled={busy} onClick={() => answer(true)}>Take it on</button>
+    <button type="button" className="themis-mention" disabled={busy} onClick={() => answer(false)}>Decline</button>
+  </span>;
+}
+
 /** A request line's words around the other channel's pill. */
 function requestWords(entry: Exclude<TeamNoteEntry, { type: "routine_set" }>, pill: ReactNode): ReactNode {
   switch (entry.type) {
     case "request_sent": return <><span>Asked</span>{pill}<span>to {entry.ask}.</span></>;
-    case "request_received": return <>{pill}<span>asked us to {entry.ask}.</span></>;
+    case "request_received": return <>{pill}<span>asked us to {entry.ask}.</span><RequestAnswer requestId={entry.request_id} /></>;
     case "worker_asked": return <>{pill}<span>asks for a worker: {entry.role}. {entry.why}</span></>;
     case "request_answered": return <><span>Request with</span>{pill}<span>{entry.accepted ? "taken on" : "declined"}{entry.note ? `: ${entry.note}` : "."}</span></>;
   }
