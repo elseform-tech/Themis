@@ -20,7 +20,45 @@ pub struct VisionsConfig {
     /// Most times a Vision wakes on one thing before it hands back to the person (1-20). A
     /// project or run layer may only lower it.
     pub max_wakes: u32,
+    /// Most requests a channel's chief may send other channels in a day (1-100). A project or
+    /// run layer may only lower it.
+    pub requests_per_day: u32,
+    /// Most routines one chief may keep (1-50). A project or run layer may only lower it.
+    pub routines_per_chief: u32,
+    /// Shortest time between two runs of one routine, in minutes (60-1440). A project or run
+    /// layer may only raise it.
+    pub routine_min_minutes: u32,
+    /// Local hours when routines and other agent-started wakes wait (the person's messages
+    /// always go through); `null` for none. User file only.
+    pub quiet_hours: Option<QuietHours>,
 }
+
+/// `visions.quiet_hours`: from `start` to `end`, each `HH:MM` local time (may cross midnight).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct QuietHours {
+    pub start: String,
+    pub end: String,
+}
+
+impl QuietHours {
+    /// Minutes after midnight of `HH:MM`, or `None` when it is not a time of day.
+    pub fn minutes(time: &str) -> Option<u32> {
+        let (hours, minutes) = time.split_once(':')?;
+        if hours.len() != 2 || minutes.len() != 2 {
+            return None;
+        }
+        let (hours, minutes): (u32, u32) = (hours.parse().ok()?, minutes.parse().ok()?);
+        (hours < 24 && minutes < 60).then_some(hours * 60 + minutes)
+    }
+}
+
+/// Highest `visions.requests_per_day`.
+pub const MAX_VISION_REQUESTS: u32 = 100;
+/// Highest `visions.routines_per_chief`.
+pub const MAX_VISION_ROUTINES: u32 = 50;
+/// Shortest and longest `visions.routine_min_minutes`.
+pub const ROUTINE_MINUTES: std::ops::RangeInclusive<u32> = 60..=1440;
 
 /// Highest `visions.daily_budget_usd`.
 pub const MAX_VISIONS_BUDGET_USD: f64 = 100.0;
@@ -37,6 +75,10 @@ impl Default for VisionsConfig {
             custom: BTreeMap::new(),
             daily_budget_usd: 1.0,
             max_wakes: 6,
+            requests_per_day: 10,
+            routines_per_chief: 10,
+            routine_min_minutes: 60,
+            quiet_hours: None,
         }
     }
 }
@@ -82,6 +124,7 @@ fn check_visions_restriction(current: &VisionsConfig, layer: &Value, origin: &st
             "the {origin} configuration may only lower visions.daily_budget_usd"
         );
     }
+    check_limits_restriction(current, layer, origin)?;
     if let Some(value) = layer.pointer("/visions/max_wakes") {
         ensure!(
             value
@@ -90,6 +133,34 @@ fn check_visions_restriction(current: &VisionsConfig, layer: &Value, origin: &st
             "the {origin} configuration may only lower visions.max_wakes"
         );
     }
+    Ok(())
+}
+
+/// Requests and routines: a project or run layer may only lower the counts, raise the shortest
+/// interval, and never set quiet hours (they are the person's).
+fn check_limits_restriction(current: &VisionsConfig, layer: &Value, origin: &str) -> Result<()> {
+    let lowered = |field: &str, now: u32| {
+        layer
+            .pointer(&format!("/visions/{field}"))
+            .is_none_or(|value| value.as_u64().is_some_and(|new| new <= u64::from(now)))
+    };
+    ensure!(
+        lowered("requests_per_day", current.requests_per_day)
+            && lowered("routines_per_chief", current.routines_per_chief),
+        "the {origin} configuration may only lower visions.requests_per_day and visions.routines_per_chief"
+    );
+    ensure!(
+        layer
+            .pointer("/visions/routine_min_minutes")
+            .is_none_or(|value| value
+                .as_u64()
+                .is_some_and(|new| new >= u64::from(current.routine_min_minutes))),
+        "the {origin} configuration may only raise visions.routine_min_minutes"
+    );
+    ensure!(
+        layer.pointer("/visions/quiet_hours").is_none(),
+        "visions.quiet_hours is set in your own runtime.jsonc only"
+    );
     Ok(())
 }
 
@@ -111,6 +182,25 @@ fn validate_visions(config: &RuntimeConfig) -> Result<()> {
         (1..=MAX_VISION_WAKES).contains(&visions.max_wakes),
         "visions.max_wakes must be 1..{MAX_VISION_WAKES}"
     );
+    ensure!(
+        (1..=MAX_VISION_REQUESTS).contains(&visions.requests_per_day),
+        "visions.requests_per_day must be 1..{MAX_VISION_REQUESTS}"
+    );
+    ensure!(
+        (1..=MAX_VISION_ROUTINES).contains(&visions.routines_per_chief),
+        "visions.routines_per_chief must be 1..{MAX_VISION_ROUTINES}"
+    );
+    ensure!(
+        ROUTINE_MINUTES.contains(&visions.routine_min_minutes),
+        "visions.routine_min_minutes must be 60..1440"
+    );
+    if let Some(quiet) = &visions.quiet_hours {
+        ensure!(
+            QuietHours::minutes(&quiet.start).is_some()
+                && QuietHours::minutes(&quiet.end).is_some(),
+            "visions.quiet_hours start and end are HH:MM times of day"
+        );
+    }
     Ok(())
 }
 

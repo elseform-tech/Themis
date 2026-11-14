@@ -7,7 +7,7 @@ type AppState = ReturnType<typeof useApp>["state"];
 
 /** `# hq`: the project's channel named hq, or an empty one until it exists. */
 function emptyHq(root: string): ChannelInfo {
-  return { id: "", name: "hq", topic: "", project_root: root, approval_mode: "custom", members: [], revision: "" };
+  return { id: "", name: "hq", topic: "", project_root: root, approval_mode: "custom", members: [], chief: "", revision: "" };
 }
 
 export interface ProjectChannels {

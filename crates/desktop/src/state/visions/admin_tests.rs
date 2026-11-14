@@ -10,11 +10,11 @@ const ROOT: &str = if cfg!(windows) {
     "/work/app"
 };
 
-fn vision(id: &str, name: &str, budget: Option<f64>) -> Vision {
+fn vision(id: &str, name: &str, _budget: Option<f64>) -> Vision {
     Vision {
         id: id.into(),
-        daily_budget_usd: budget,
         name: name.into(),
+        accessory: "none".into(),
         ..admin_profile()
     }
 }
@@ -27,6 +27,13 @@ fn channel(id: &str, name: &str, members: &[&str]) -> Channel {
         project_root: PathBuf::from(ROOT),
         approval_mode: ApprovalMode::Custom,
         members: members.iter().map(|member| (*member).to_owned()).collect(),
+        chief: members
+            .first()
+            .map(|member| (*member).to_owned())
+            .unwrap_or_default(),
+        autonomy: None,
+        custom: None,
+        daily_budget_usd: None,
         revision: "r".into(),
     }
 }
@@ -35,7 +42,7 @@ fn context() -> Context {
     Context {
         visions: vec![admin_profile(), vision("w", "Wren", Some(0.5))],
         channels: vec![
-            channel("h", HQ, &[ADMIN_VISION_ID]),
+            channel("h", ADMINISTRATION, &[ADMIN_VISION_ID]),
             channel("d", "docs", &["w"]),
         ],
         config: VisionsConfig::default(),
@@ -55,7 +62,7 @@ fn a_proposal_is_checked_field_by_field() {
     let fine = serde_json::json!({"summary": "Releases", "visions": [{"name": "Rook"}],
         "channels": [{"name": "releases", "members": ["rook", "Wren"]}],
         "changes": [{"channel": "docs", "add_members": ["Rook"], "topic": "Docs"},
-            {"vision": "wren", "role": "Writes", "autonomy": "ask", "daily_budget_usd": 0.5}]});
+            {"vision": "wren", "role": "Writes"}]});
     assert_eq!(ok(fine), Ok(()));
     let refused = [
         (
@@ -69,7 +76,7 @@ fn a_proposal_is_checked_field_by_field() {
         ),
         (
             serde_json::json!({"summary": "x", "visions": [{"name": "Rook", "autonomy": "most"}]}),
-            "autonomy",
+            "belong to its channel",
         ),
         (
             serde_json::json!({"summary": "x", "visions": [{"name": "Rook", "shape": "square"}]}),
@@ -84,8 +91,8 @@ fn a_proposal_is_checked_field_by_field() {
             "budget",
         ),
         (
-            serde_json::json!({"summary": "x", "channels": [{"name": "hq"}]}),
-            "# hq",
+            serde_json::json!({"summary": "x", "channels": [{"name": "administration"}]}),
+            "# administration",
         ),
         (
             serde_json::json!({"summary": "x", "channels": [{"name": "Big Room"}]}),
@@ -93,23 +100,23 @@ fn a_proposal_is_checked_field_by_field() {
         ),
         (
             serde_json::json!({"summary": "x", "channels": [{"name": "ops", "members": ["Atlas"]}]}),
-            "only in # hq",
+            "only in # administration",
         ),
         (
             serde_json::json!({"summary": "x", "channels": [{"name": "ops", "members": ["Nobody"]}]}),
             "No Vision",
         ),
         (
-            serde_json::json!({"summary": "x", "changes": [{"channel": "hq", "topic": "Mine"}]}),
-            "# hq is built in",
+            serde_json::json!({"summary": "x", "changes": [{"channel": "administration", "topic": "Mine"}]}),
+            "# administration is built in",
         ),
         (
             serde_json::json!({"summary": "x", "changes": [{"channel": "docs", "add_members": ["Atlas"]}]}),
-            "only in # hq",
+            "only in # administration",
         ),
         (
-            serde_json::json!({"summary": "x", "changes": [{"channel": "docs", "name": "hq"}]}),
-            "# hq",
+            serde_json::json!({"summary": "x", "changes": [{"channel": "docs", "name": "administration"}]}),
+            "# administration",
         ),
         (
             serde_json::json!({"summary": "x", "changes": [{"vision": "Atlas", "role": "Boss"}]}),
@@ -143,83 +150,18 @@ fn a_proposal_is_checked_field_by_field() {
     assert!(delete.unwrap_err().to_string().contains("delete"));
 }
 
-/// A change may only lower a Vision's own level: one already at Ask First cannot go back to
-/// Small calls, even though Settings › Visions allows Small.
+/// Autonomy and budget are the channel's now: a proposal cannot set them on a Vision.
 #[test]
-fn a_change_never_raises_a_visions_own_autonomy() {
-    let change = |own: Option<Autonomy>, level: &str| {
-        let mut context = context();
-        context.visions[1].autonomy = own;
-        let json =
-            serde_json::json!({"summary": "x", "changes": [{"vision": "Wren", "autonomy": level}]});
-        check(&proposal(json), &context)
-    };
-    let ask = Some(Autonomy::Ask);
-    assert!(change(ask, "small").unwrap_err().contains("autonomy"));
-    assert!(
-        change(ask, "ask").unwrap_err().contains("changes nothing"),
-        "the same level lowers nothing"
-    );
-    // A Vision on the resolved level may go lower.
-    assert_eq!(change(None, "ask"), Ok(()));
-    assert!(change(None, "small").unwrap_err().contains("autonomy"));
-}
-
-/// A new Vision's model is a usable model of the loaded catalog; none is fine (the app's
-/// default), and with no catalog loaded a named model cannot be checked, so it is refused.
-#[test]
-fn a_new_visions_model_is_in_the_catalog() {
-    let with = |model: &str, models: Vec<String>| {
-        let json =
-            serde_json::json!({"summary": "x", "visions": [{"name": "Rook", "model": model}]});
-        check(
-            &proposal(json),
-            &Context {
-                models,
-                ..context()
-            },
-        )
-    };
-    assert_eq!(with("test-model", vec!["test-model".into()]), Ok(()));
-    assert!(with("no-such-model", vec!["test-model".into()])
-        .unwrap_err()
-        .contains("model"));
-    assert!(with("test-model", Vec::new())
-        .unwrap_err()
-        .contains("model"));
-    let none = serde_json::json!({"summary": "x", "visions": [{"name": "Rook"}]});
-    assert_eq!(
-        check(
-            &proposal(none),
-            &Context {
-                models: Vec::new(),
-                ..context()
-            }
-        ),
-        Ok(())
-    );
-}
-
-/// At Custom, a proposal's level may decide only what the custom rows already allow.
-#[test]
-fn a_proposals_autonomy_never_passes_the_resolved_level() {
-    let custom = VisionsConfig {
-        autonomy: Autonomy::Custom,
-        custom: [("tests".to_owned(), true)].into(),
-        ..VisionsConfig::default()
-    };
-    assert!(autonomy_fits(&custom, Autonomy::Ask).is_ok());
-    assert!(autonomy_fits(&custom, Autonomy::Custom).is_ok());
-    assert!(
-        autonomy_fits(&custom, Autonomy::Small).is_err(),
-        "small adds wording"
-    );
-    let most = VisionsConfig {
-        autonomy: Autonomy::Most,
-        ..VisionsConfig::default()
-    };
-    assert!(autonomy_fits(&most, Autonomy::Most).is_ok());
-    assert!(autonomy_fits(&most, Autonomy::NearlyAll).is_err());
+fn a_proposal_cannot_set_autonomy_or_budget_on_a_vision() {
+    for json in [
+        serde_json::json!({"summary": "x", "changes": [{"vision": "Wren", "autonomy": "ask"}]}),
+        serde_json::json!({"summary": "x", "changes": [{"vision": "Wren", "daily_budget_usd": 0.2}]}),
+        serde_json::json!({"summary": "x", "visions": [{"name": "Rook", "autonomy": "ask"}]}),
+        serde_json::json!({"summary": "x", "visions": [{"name": "Rook", "daily_budget_usd": 0.2}]}),
+    ] {
+        let error = check(&proposal(json.clone()), &context()).unwrap_err();
+        assert!(error.contains("belong to its channel"), "{json}: {error}");
+    }
 }
 
 #[test]
@@ -237,13 +179,13 @@ fn new_visions_get_a_look_in_turn_and_keep_their_own() {
     );
 }
 
-/// The admin's run has its own head: the propose and apply calls with this `# hq`'s ids, the
+/// The admin's run has its own head: the propose and apply calls with this `# administration`'s ids, the
 /// plain voice, and asking before setting anything up.
 #[test]
 fn the_admin_runs_on_its_own_head() {
     let head = run_head(
         &admin_profile(),
-        &channel("h1", HQ, &[ADMIN_VISION_ID]),
+        &channel("h1", ADMINISTRATION, &[ADMIN_VISION_ID]),
         &VisionsConfig::default(),
     );
     println!("{head}");
@@ -270,17 +212,17 @@ fn the_admin_runs_on_its_own_head() {
     assert!(other.starts_with("You are Wren, a Vision"));
 }
 
-/// An app with a project's `# hq` (and the admin), and that channel's id.
+/// An app with a project's `# administration` (and the admin), and that channel's id.
 fn with_hq() -> (tempfile::TempDir, AppState, String) {
     let dir = tempfile::tempdir().unwrap();
     let state = AppState::new_for_test(dir.path().join("settings.json"));
     let root = dir.path().canonicalize().unwrap();
-    state.visions_ensure_hq(&root).unwrap();
+    state.visions_ensure_administration(&root).unwrap();
     let hq = state.channel_list(&root).remove(0).id;
     (dir, state, hq)
 }
 
-/// Looking a proposal up reads `# hq` back from its end only so far ([`SCAN_BYTES`]),
+/// Looking a proposal up reads `# administration` back from its end only so far ([`SCAN_BYTES`]),
 /// however long the log: the work stays flat as the log doubles, and an older proposal is
 /// unknown (proposed again).
 #[test]
@@ -311,7 +253,7 @@ fn finding_a_proposal_reads_a_bounded_tail() {
     );
 }
 
-/// Only the admin's newest proposal in `# hq` can be set up: the person turned A down, the
+/// Only the admin's newest proposal in `# administration` can be set up: the person turned A down, the
 /// admin posted B, and the person's "yes" is to B, so applying A is refused and B applies.
 #[test]
 fn only_the_newest_proposal_can_be_set_up() {
@@ -341,15 +283,15 @@ fn only_the_newest_proposal_can_be_set_up() {
     assert_eq!(items[0].name, "Wren");
 }
 
-/// Listing makes the admin once and each project's `# hq` once, and gives an `# hq` saved with
+/// Listing makes the admin once and each project's `# administration` once, and gives an `# administration` saved with
 /// other members back to the admin alone.
 #[test]
 fn hq_is_made_once_per_project_with_the_admin_alone() {
     let dir = tempfile::tempdir().unwrap();
     let state = AppState::new_for_test(dir.path().join("settings.json"));
     let root = dir.path().canonicalize().unwrap();
-    state.visions_ensure_hq(&root).unwrap();
-    state.visions_ensure_hq(&root).unwrap();
+    state.visions_ensure_administration(&root).unwrap();
+    state.visions_ensure_administration(&root).unwrap();
     let listed = state.channel_list(&root);
     assert_eq!(listed.len(), 1);
     assert_eq!(listed[0].members, [ADMIN_VISION_ID]);
@@ -362,13 +304,13 @@ fn hq_is_made_once_per_project_with_the_admin_alone() {
         }]
     );
     let wren = state.vision_save(vision("", "Wren", None), None).unwrap();
-    // An `# hq` written by hand with another member.
+    // An `# administration` written by hand with another member.
     let mut cache = state.visions_cache();
     let channels = cache.channels(&state.inner.visions_dir).unwrap();
     let hq = channels.values_mut().next().unwrap();
     hq.members = vec![wren.id.clone()];
     drop(cache);
-    state.visions_ensure_hq(&root).unwrap();
+    state.visions_ensure_administration(&root).unwrap();
     assert_eq!(state.channel_list(&root)[0].members, [ADMIN_VISION_ID]);
 }
 

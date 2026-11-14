@@ -33,7 +33,7 @@ function owned(id: string, channelId: string, visionId = "v1", extra: Partial<Th
 }
 
 function channel(id: string, root = "/repo"): ChannelInfo {
-  return { id, name: id, topic: "", project_root: root, approval_mode: "custom", members: ["v1"], revision: "c1" };
+  return { id, name: id, topic: "", project_root: root, approval_mode: "custom", members: ["v1"], chief: "v1", revision: "c1" };
 }
 
 function line(seq: number, entry: ChannelEntry = { type: "person", text: `line ${seq}` }): ChannelLine {
@@ -212,7 +212,7 @@ describe("reloadVisions", () => {
     // As the server does: listing a project's channels makes Atlas and # hq.
     let made = false;
     const atlas = { ...VISION, id: "admin", name: "Atlas" };
-    const api = { ...bridge(), listChannels: vi.fn(async (root: string) => { made = true; return [{ ...channel("h1", root), name: "hq", members: ["admin"] }]; }), listVisions: vi.fn(async () => made ? [atlas] : []) };
+    const api = { ...bridge(), listChannels: vi.fn(async (root: string) => { made = true; return [{ ...channel("h1", root), name: "hq", members: ["admin"], chief: "admin" }]; }), listVisions: vi.fn(async () => made ? [atlas] : []) };
     const dispatch = vi.fn();
     await reloadVisions(api, {}, withChannel([], []), dispatch, ["/repo"]);
     expect(dispatch).toHaveBeenCalledWith({ type: "visions/loaded", visions: [atlas] });
@@ -221,7 +221,7 @@ describe("reloadVisions", () => {
   it("a Vision alone re-lists only the projects it has channels in", async () => {
     const api = bridge();
     let state = withChannel([], []);
-    state = reducer(state, { type: "visions/loaded", projectRoot: "/other", channels: [{ ...channel("c9", "/other"), members: ["v2"] }] });
+    state = reducer(state, { type: "visions/loaded", projectRoot: "/other", channels: [{ ...channel("c9", "/other"), members: ["v2"], chief: "v2" }] });
     await reloadVisions(api, { vision_id: "v1" }, state, vi.fn());
     expect(api.listChannels).toHaveBeenCalledTimes(1);
     expect(api.listChannels).toHaveBeenCalledWith("/repo");
@@ -329,11 +329,11 @@ describe("wire fixture", () => {
 
   it("holds each shape with exactly the fields the app's types name", () => {
     const keys = (value: object) => Object.keys(value).sort();
-    const visionKeys: Array<keyof VisionInfo> = ["id", "name", "role", "shape", "color", "model", "autonomy", "custom", "daily_budget_usd", "soul", "paused", "revision", "over_budget", "vision_chats", "needs", "sorry"];
+    const visionKeys: Array<keyof VisionInfo> = ["id", "name", "role", "shape", "color", "model", "accessory", "soul", "paused", "revision", "over_budget", "vision_chats", "needs", "sorry"];
     expect(keys(fixture.vision)).toEqual([...visionKeys].sort());
     const chatKeys: Array<keyof VisionInfo["vision_chats"][number]> = ["thread_id", "channel_id", "running"];
     expect(keys(fixture.vision.vision_chats[0]!)).toEqual([...chatKeys].sort());
-    const channelKeys: Array<keyof ChannelInfo> = ["id", "name", "topic", "project_root", "approval_mode", "members", "revision", "needs"];
+    const channelKeys: Array<keyof ChannelInfo> = ["id", "name", "topic", "project_root", "approval_mode", "members", "chief", "autonomy", "custom", "daily_budget_usd", "revision", "needs"];
     expect(keys(fixture.channel)).toEqual([...channelKeys].sort());
     const ownerKeys: Array<keyof OwnedChat["owner"]> = ["thread_id", "vision_id", "channel_id", "kind", "hold"];
     expect(keys(fixture.owner)).toEqual([...ownerKeys].sort());

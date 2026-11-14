@@ -46,9 +46,12 @@ export function ChannelDetails({ channel }: { channel: ChannelInfo }) {
   const listed = () => state.visions.channels[root] ?? [];
   async function save(change: Partial<ChannelInfo>) {
     setError("");
-    const { id, name, topic: current, project_root, approval_mode, members, revision } = channel;
+    const { id, name, topic: current, project_root, approval_mode, members, chief, autonomy, custom, daily_budget_usd, revision } = channel;
+    const next = { id, name, topic: current, project_root, approval_mode, members, chief, autonomy, custom, daily_budget_usd, ...change };
+    // The chief leaves with its membership: the first member left leads.
+    if (!next.members.includes(next.chief)) next.chief = next.members[0] ?? "";
     try {
-      const saved = await saveChannel({ id, name, topic: current, project_root, approval_mode, members, ...change }, revision);
+      const saved = await saveChannel(next, revision);
       dispatch({ type: "visions/loaded", projectRoot: root, channels: listed().map(each => each.id === saved.id ? { ...each, ...saved } : each) });
     } catch (reason) { setError(describeError(reason)); }
   }

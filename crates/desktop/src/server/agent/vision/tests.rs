@@ -6,7 +6,7 @@ use themis_core::visions::{Autonomy, Decision};
 
 use super::*;
 use crate::server::agent::tests::{grant, REFUSED};
-use crate::state::{vision_decisions, Vision};
+use crate::state::vision_decisions;
 
 fn project() -> PathBuf {
     std::env::temp_dir().canonicalize().unwrap()
@@ -140,19 +140,18 @@ fn answer(decision: &str) -> Value {
         "reason": "the usual choice"})
 }
 
-fn profile(autonomy: Autonomy, custom: Option<BTreeMap<String, bool>>) -> Vision {
-    Vision {
-        id: "v1".into(),
-        name: "Wren".into(),
-        role: String::new(),
-        shape: "cloud".into(),
-        color: "teal".into(),
-        model: None,
+fn team(autonomy: Autonomy, custom: Option<BTreeMap<String, bool>>) -> crate::state::Channel {
+    crate::state::Channel {
+        id: "c1".into(),
+        name: "work".into(),
+        topic: String::new(),
+        project_root: std::path::PathBuf::from("/work/app"),
+        approval_mode: themis_core::configuration::ApprovalMode::Custom,
+        members: vec!["v1".into()],
+        chief: "v1".into(),
         autonomy: Some(autonomy),
         custom,
         daily_budget_usd: None,
-        soul: String::new(),
-        paused: false,
         revision: String::new(),
     }
 }
@@ -193,7 +192,7 @@ fn a_vision_answers_only_within_its_autonomy() {
         custom: rows.clone(),
         ..VisionsConfig::default()
     };
-    let decides = vision_decisions(&profile(Autonomy::Custom, Some(rows)), &config);
+    let decides = vision_decisions(&team(Autonomy::Custom, Some(rows)), &config);
     let custom = Grant {
         vision: Some(VisionScope { decides, ..scope() }),
         ..grant()

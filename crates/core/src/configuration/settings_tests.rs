@@ -875,6 +875,48 @@ fn visions_defaults_and_validation() {
 }
 
 #[test]
+fn requests_per_day_and_routine_limits_are_validated_and_only_lowered_by_a_project() {
+    let defaults = RuntimeConfig::default().visions;
+    assert_eq!(defaults.requests_per_day, 10);
+    assert_eq!(defaults.routines_per_chief, 10);
+    assert_eq!(defaults.routine_min_minutes, 60);
+    assert!(defaults.quiet_hours.is_none());
+    let user = r#"{"visions":{"requests_per_day":20,"routines_per_chief":5,"routine_min_minutes":120,"quiet_hours":{"start":"22:00","end":"07:30"}}}"#;
+    let resolved = resolve(Some(user), None, None).unwrap();
+    assert_eq!(resolved.config.visions.requests_per_day, 20);
+    assert_eq!(
+        resolved.config.visions.quiet_hours.as_ref().unwrap().start,
+        "22:00"
+    );
+    for bad in [
+        r#"{"visions":{"requests_per_day":0}}"#,
+        r#"{"visions":{"requests_per_day":101}}"#,
+        r#"{"visions":{"routines_per_chief":51}}"#,
+        r#"{"visions":{"routine_min_minutes":30}}"#,
+        r#"{"visions":{"routine_min_minutes":1441}}"#,
+        r#"{"visions":{"quiet_hours":{"start":"25:00","end":"07:00"}}}"#,
+        r#"{"visions":{"quiet_hours":{"start":"22:00"}}}"#,
+    ] {
+        assert!(resolve(Some(bad), None, None).is_err(), "{bad}");
+    }
+    for raise in [
+        r#"{"visions":{"requests_per_day":21}}"#,
+        r#"{"visions":{"routines_per_chief":6}}"#,
+        r#"{"visions":{"routine_min_minutes":60}}"#,
+        r#"{"visions":{"quiet_hours":null}}"#,
+    ] {
+        assert!(resolve(Some(user), Some(raise), None).is_err(), "{raise}");
+    }
+    for lower in [
+        r#"{"visions":{"requests_per_day":3}}"#,
+        r#"{"visions":{"routines_per_chief":2}}"#,
+        r#"{"visions":{"routine_min_minutes":240}}"#,
+    ] {
+        assert!(resolve(Some(user), Some(lower), None).is_ok(), "{lower}");
+    }
+}
+
+#[test]
 fn unknown_custom_rows_are_rejected() {
     let error = resolve(
         Some(r#"{"visions":{"custom":{"wording":true,"fly":true}}}"#),

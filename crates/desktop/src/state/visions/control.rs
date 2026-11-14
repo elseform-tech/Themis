@@ -55,11 +55,11 @@ impl AppState {
     }
 
     /// The channels of the project at `project_root`, which is resolved like `list_threads`
-    /// resolves it; its built-in `# hq` (and the admin) is made first when not there. A store
+    /// resolves it; its built-in `# administration` (and the admin) is made first when not there. A store
     /// that cannot be read leaves that out (it is logged) and lists what it can.
     pub fn visions_project_channels(&self, project_root: &str) -> Result<Vec<Channel>, String> {
         let root = canonical_project_dir(project_root)?;
-        let _ = self.visions_ensure_hq(&root);
+        let _ = self.visions_ensure_administration(&root);
         Ok(self.channel_list(&root))
     }
 
@@ -333,8 +333,8 @@ impl AppState {
     ) -> Result<(), String> {
         match self.channel_get(channel_id) {
             None => return Err("Unknown channel".to_owned()),
-            Some(channel) if channel.name == super::admin::HQ => {
-                return Err(super::admin::HQ_STAYS.to_owned());
+            Some(channel) if channel.name == super::admin::ADMINISTRATION => {
+                return Err(super::admin::ADMINISTRATION_STAYS.to_owned());
             }
             Some(_) => {}
         }

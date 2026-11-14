@@ -33,9 +33,6 @@ export interface VisionProfile {
   /** What it wears (an id from `cast.ts`); the server supplies it, absent means none. */
   accessory?: string;
   model?: string;
-  autonomy?: Autonomy;
-  custom?: Record<string, boolean>;
-  daily_budget_usd?: number;
   soul: string;
   paused: boolean;
   revision: string;
@@ -60,6 +57,13 @@ export interface ChannelInfo {
   project_root: string;
   approval_mode: ApprovalModeName;
   members: string[];
+  /** The member the person talks to; the others are its workers. */
+  chief: string;
+  /** The team's autonomy and rows; Settings › Visions' when absent. */
+  autonomy?: Autonomy;
+  custom?: Record<string, boolean>;
+  /** The team's daily budget in dollars; Settings › Visions' total caps it. */
+  daily_budget_usd?: number;
   revision: string;
   /** In the channel list: what waits on the person in this channel's own chats (approvals and
    *  open questions passed on or asking a permission), counted by the server. */
@@ -90,7 +94,8 @@ export type NoticeKind =
   | "handed_back"
   | "sandbox_unavailable"
   | "budget_unknown"
-  | "unpriced";
+  | "unpriced"
+  | "teams_arrived";
 
 /** What the admin would set up (Rust `Proposal`): new channels and Visions by name, and changes
  *  to existing ones (a change names one `vision` or one `channel`). */
@@ -166,7 +171,7 @@ export interface VisionsChange {
 
 /** A profile to save: a new one has an empty `id`. */
 export type VisionDraft = Omit<VisionProfile, "id" | "revision" | "soul" | "paused" | "role"> & Partial<Pick<VisionProfile, "id" | "role" | "soul" | "paused">>;
-export type ChannelDraft = Omit<ChannelInfo, "id" | "revision" | "topic"> & Partial<Pick<ChannelInfo, "id" | "topic">>;
+export type ChannelDraft = Omit<ChannelInfo, "id" | "revision" | "topic" | "chief"> & Partial<Pick<ChannelInfo, "id" | "topic" | "chief">>;
 
 export function listVisions(): Promise<VisionInfo[]> { return invoke("list_visions"); }
 export function saveVision(vision: VisionDraft, revision: string | null): Promise<VisionProfile> { return invoke("save_vision", { vision, revision }); }
@@ -207,4 +212,5 @@ export const APPROVAL_MODES: Record<ApprovalModeName, true> = { custom: true, au
 export const NOTICE_KINDS: Record<NoticeKind, true> = {
   stopped: true, paused: true, resumed: true, budget_reached: true, chat_failed: true,
   handed_back: true, sandbox_unavailable: true, budget_unknown: true, unpriced: true,
+  teams_arrived: true,
 };

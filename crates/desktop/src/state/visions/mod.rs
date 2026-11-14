@@ -14,6 +14,7 @@ mod admin;
 mod budget;
 mod channel_log;
 mod control;
+mod convert;
 mod drive;
 mod envelope;
 mod listing;
@@ -25,6 +26,8 @@ mod wakes;
 
 #[cfg(test)]
 mod channel_log_tests;
+#[cfg(test)]
+mod convert_tests;
 #[cfg(test)]
 mod drive_tests;
 #[cfg(test)]
@@ -93,15 +96,9 @@ pub struct Vision {
     /// The model its runs use; the configured default when absent.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
-    /// Overrides `visions.autonomy` for this Vision.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub autonomy: Option<Autonomy>,
-    /// Overrides `visions.custom` rows for this Vision.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub custom: Option<BTreeMap<String, bool>>,
-    /// Overrides the daily budget for this Vision, in US dollars.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub daily_budget_usd: Option<f64>,
+    /// What it carries, one of [`ACCESSORIES`] (`none` when it carries nothing).
+    #[serde(default = "no_accessory")]
+    pub accessory: String,
     /// Who it is and how it works, at most [`SOUL_MAX_BYTES`].
     #[serde(default)]
     pub soul: String,
@@ -125,12 +122,58 @@ pub struct Channel {
     pub project_root: PathBuf,
     /// Set by the person and copied onto every chat a Vision starts here.
     pub approval_mode: ApprovalMode,
-    /// Vision ids.
+    /// Vision ids: the chief and its workers.
     #[serde(default)]
     pub members: Vec<String>,
+    /// The member the person talks to; the others are its workers (see [`workers`]).
+    #[serde(default)]
+    pub chief: String,
+    /// The team's autonomy; Settings › Visions' when absent, and never above it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub autonomy: Option<Autonomy>,
+    /// With `autonomy: custom`, the team's rows (as `visions.custom`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub custom: Option<BTreeMap<String, bool>>,
+    /// The team's daily budget in US dollars; Settings › Visions' total caps it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub daily_budget_usd: Option<f64>,
     /// Set by the store on every save.
     #[serde(default)]
     pub revision: String,
+}
+
+/// What a Vision may carry (the cast's accessories, drawn by the web app).
+pub const ACCESSORIES: &[&str] = &[
+    "clipboard",
+    "crown",
+    "hard_hat",
+    "glasses",
+    "goggles",
+    "headphones",
+    "magnifier",
+    "none",
+];
+
+fn no_accessory() -> String {
+    "none".to_owned()
+}
+
+impl Channel {
+    /// Whether `vision_id` is this channel's chief.
+    pub fn is_chief(&self, vision_id: &str) -> bool {
+        !self.chief.is_empty() && self.chief == vision_id
+    }
+}
+
+/// A channel's workers: its members other than the chief, in order.
+#[allow(dead_code)] // The chief's and workers' grants use it from plan Task 3 on.
+pub fn workers(channel: &Channel) -> Vec<String> {
+    channel
+        .members
+        .iter()
+        .filter(|member| **member != channel.chief)
+        .cloned()
+        .collect()
 }
 
 /// What a chat owned by a Vision is for.
@@ -180,6 +223,9 @@ pub enum NoticeKind {
     BudgetUnknown,
     /// Some of today's requests had no price (`unpriced_requests`); they count as $0.
     Unpriced,
+    /// The store moved from one-Vision channels to teams (each channel's first member became
+    /// its chief); posted once in each `# administration`.
+    TeamsArrived,
 }
 
 /// One entry in a channel's log.
@@ -233,8 +279,8 @@ pub enum ChannelEntry {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         reason: Option<String>,
     },
-    /// The admin's proposal in `# hq`: what it would set up, which it sets up only after the
-    /// person writes in `# hq` after it (see `admin`).
+    /// The admin's proposal in `# administration`: what it would set up, which it sets up only after the
+    /// person writes in `# administration` after it (see `admin`).
     Proposal {
         vision_id: String,
         proposal_id: String,
@@ -282,6 +328,10 @@ pub(crate) struct VisionsCache {
     /// Each owned chat's kind and Vision as last read from `owners.json`, which plain chat's
     /// listing keeps using while the file cannot be read (see `marks`).
     last_owned: Option<HashMap<String, (OwnedKind, String)>>,
+    /// The one-time move to teams was checked in this process (see `convert`).
+    conversion_checked: bool,
+    /// `# administration` channels still to be told the store moved to teams.
+    conversion_pending: Option<Vec<String>>,
 }
 
 impl AppState {

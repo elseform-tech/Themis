@@ -230,7 +230,7 @@ impl AppState {
         None
     }
 
-    /// `vision`'s caps: its own (its profile's, never above your own `runtime.jsonc`'s
+    /// `vision`'s caps: its own (its channel's, never above your own `runtime.jsonc`'s
     /// `visions.daily_budget_usd`), that one for all Visions together, and each lower cap a
     /// project of its channels sets, for the Visions with a channel in that project.
     fn visions_caps(&self, vision: &Vision) -> Result<Caps, Unknown> {
@@ -260,7 +260,13 @@ impl AppState {
                 projects.push((cap, members));
             }
         }
-        let own = vision.daily_budget_usd.map_or(user, |cap| cap.min(user));
+        // A Vision's own cap is its team's: the lowest budget among its channels, never above
+        // your own (per-channel accounting of every agent's spend: plan Task 4).
+        let own = channels
+            .iter()
+            .filter(|channel| channel.members.contains(&vision.id))
+            .filter_map(|channel| channel.daily_budget_usd)
+            .fold(user, f64::min);
         Ok(Caps {
             own,
             user,

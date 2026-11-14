@@ -9,7 +9,7 @@
 //! the server's way, never as the person's message (`state/visions/drive.rs`). It answers a
 //! question only on a decision its run's autonomy leaves to it (`decision`, with its
 //! `reason`), and passes the rest on to the person in its channel (`pass_question`). The admin
-//! Vision in `# hq` drives no chat; its grant proposes and sets up channels and Visions instead
+//! Vision in `# administration` drives no chat; its grant proposes and sets up channels and Visions instead
 //! (`admin`).
 
 use themis_core::visions::Decision;

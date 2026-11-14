@@ -17,9 +17,7 @@ fn vision(name: &str) -> Vision {
         shape: "cloud".into(),
         color: "blue".into(),
         model: None,
-        autonomy: None,
-        custom: None,
-        daily_budget_usd: None,
+        accessory: "none".into(),
         soul: String::new(),
         paused: false,
         revision: String::new(),
@@ -34,6 +32,10 @@ fn channel(name: &str, root: &Path, members: Vec<String>) -> Channel {
         project_root: root.to_path_buf(),
         approval_mode: ApprovalMode::Custom,
         members,
+        chief: String::new(),
+        autonomy: None,
+        custom: None,
+        daily_budget_usd: None,
         revision: String::new(),
     }
 }
@@ -94,15 +96,17 @@ fn vision_fields_are_validated() {
     fits.soul = "x".repeat(SOUL_MAX_BYTES);
     assert!(state.vision_save(fits, None).is_ok());
     assert!(state.vision_save(vision("  "), None).is_err());
-    let mut spends = vision("Wren");
+    // The team's rows and budget are checked on its channel.
+    let root = project(dir.path(), "docs");
+    let mut spends = channel("docs", &root, Vec::new());
     spends.custom = Some([("spend".to_string(), true)].into());
-    assert!(state.vision_save(spends, None).is_err());
-    let mut unknown_row = vision("Wren");
+    assert!(state.channel_save(spends, None).is_err());
+    let mut unknown_row = channel("docs", &root, Vec::new());
     unknown_row.custom = Some([("everything".to_string(), true)].into());
-    assert!(state.vision_save(unknown_row, None).is_err());
-    let mut negative = vision("Wren");
+    assert!(state.channel_save(unknown_row, None).is_err());
+    let mut negative = channel("docs", &root, Vec::new());
     negative.daily_budget_usd = Some(-1.0);
-    assert!(state.vision_save(negative, None).is_err());
+    assert!(state.channel_save(negative, None).is_err());
     let mut unknown_id = vision("Wren");
     unknown_id.id = "not-saved-yet".into();
     assert!(state.vision_save(unknown_id, None).is_err());

@@ -5,26 +5,15 @@
 import { useEffect, useState } from "react";
 import { listGoModels, listModelProviders } from "../../lib/tauri";
 import type { GoModel, ModelProvider } from "../../lib/types";
-import { ADMIN_VISION_ID, deleteVision, getVisionsSettings, pauseVision, saveVision, type Autonomy, type VisionInfo, type VisionProfile as Profile, type VisionsSettings } from "../../lib/visions";
+import { ADMIN_VISION_ID, deleteVision, pauseVision, saveVision, type VisionInfo, type VisionProfile as Profile } from "../../lib/visions";
 import { describeError, useApp } from "../../state/store";
 import { visionMoods } from "../../state/visions";
 import { ModelOptions } from "../ModelsSettings";
-import { AUTONOMY_STOPS, LEVELS, rankOf } from "./autonomy";
 import { CharacterAvatar } from "./CharacterAvatar";
 import { lookOf } from "./cast";
 import { DeleteButton, EditIcon, PanelBlock, PanelButton, PauseIcon, PlayIcon, SidePanel } from "./SidePanel";
 
 type Save = (change: Partial<Profile>) => Promise<void>;
-
-/** The most a Vision's own daily budget may be, as for all Visions together. */
-const MAX_BUDGET = 100;
-
-/** The levels a profile may choose: those below Settings' own (any preset under Custom, whose
- *  rows still bound it). */
-function lowerLevels(settings: Autonomy): Autonomy[] {
-  const rank = rankOf(settings);
-  return AUTONOMY_STOPS.filter(level => level !== "custom" && (rank === null || (rankOf(level) ?? 0) < rank));
-}
 
 /** The models the app offers, with their providers' names. */
 function useModels() {
@@ -49,40 +38,6 @@ function ModelRow({ vision, save }: { vision: VisionInfo; save: Save }) {
       {!known && <option value={model}>{model} (unavailable)</option>}
       <ModelOptions models={models} providerName={providerName} />
     </select>
-  </label>;
-}
-
-/** Settings' level, or a lower one; a level saved before Settings went lower still shows. */
-function AutonomyRow({ vision, settings, save }: { vision: VisionInfo; settings: VisionsSettings; save: Save }) {
-  const lower = lowerLevels(settings.autonomy);
-  const kept = vision.autonomy && !lower.includes(vision.autonomy) ? [vision.autonomy] : [];
-  return <label className="themis-visions-kv">Autonomy
-    <select aria-label="Autonomy" value={vision.autonomy ?? ""} onChange={event => void save({ autonomy: (event.target.value || undefined) as Autonomy | undefined })}>
-      <option value="">Same as Settings ({LEVELS[settings.autonomy]})</option>
-      {[...kept, ...lower].map(level => <option key={level} value={level}>{LEVELS[level]}</option>)}
-    </select>
-  </label>;
-}
-
-/** The Vision's own daily cap in dollars, $0 to $100 (0 stops it); empty is none (the cap for
- *  all Visions still holds). */
-function BudgetRow({ vision, save, onError }: { vision: VisionInfo; save: Save; onError: (message: string) => void }) {
-  const [budget, setBudget] = useState<string | null>(null);
-  const saveBudget = () => {
-    if (budget === null) return;
-    setBudget(null);
-    const dollars = budget.trim() === "" ? undefined : Number(budget);
-    if (dollars !== undefined && (!Number.isFinite(dollars) || dollars < 0 || dollars > MAX_BUDGET)) {
-      onError("Enter an amount from $0 to $100");
-      return;
-    }
-    if (dollars !== vision.daily_budget_usd) void save({ daily_budget_usd: dollars });
-  };
-  return <label className="themis-visions-kv">Daily budget
-    <span className="themis-visions-dollars">$
-      <input type="number" min={0} max={MAX_BUDGET} step={0.5} aria-label="Daily budget" placeholder="Not set" value={budget ?? (vision.daily_budget_usd ?? "").toString()}
-        onChange={event => setBudget(event.target.value)} onBlur={saveBudget} onKeyDown={event => { if (event.key === "Enter") event.currentTarget.blur(); }} />
-    </span>
   </label>;
 }
 
@@ -123,13 +78,6 @@ function ProfileActions({ vision, onPause, onDelete }: { vision: VisionInfo; onP
   </>;
 }
 
-/** Settings › Visions as last read, read again when runtime.jsonc changes. */
-function useVisionsSettings(changes: number): VisionsSettings | null {
-  const [settings, setSettings] = useState<VisionsSettings | null>(null);
-  useEffect(() => { void getVisionsSettings().then(view => setSettings(view.settings)).catch(() => setSettings(null)); }, [changes]);
-  return settings;
-}
-
 /** The Vision's cloud in its mood, its name and its role. */
 function ProfileTitle({ vision }: { vision: VisionInfo }) {
   const { state } = useApp();
@@ -141,13 +89,12 @@ function ProfileTitle({ vision }: { vision: VisionInfo }) {
 
 /** The saved profile inside a listed Vision. */
 function profileOf(vision: VisionInfo): Profile {
-  const { id, name, role, shape, color, model, autonomy, custom, daily_budget_usd, soul, paused, revision } = vision;
-  return { id, name, role, shape, color, model, autonomy, custom, daily_budget_usd, soul, paused, revision };
+  const { id, name, role, shape, color, model, soul, paused, revision } = vision;
+  return { id, name, role, shape, color, model, soul, paused, revision };
 }
 
 export function VisionProfile({ visionId }: { visionId: string }) {
   const { state, dispatch } = useApp();
-  const settings = useVisionsSettings(state.settingsChanges.runtime);
   const [error, setError] = useState("");
   const vision = state.visions.list.find(each => each.id === visionId);
   if (!vision) return null;
@@ -172,8 +119,6 @@ export function VisionProfile({ visionId }: { visionId: string }) {
       actions={<ProfileActions vision={vision} onPause={pause} onDelete={admin ? null : remove} />}>
       <PanelBlock>
         <ModelRow vision={vision} save={guarded} />
-        {!admin && settings && <AutonomyRow vision={vision} settings={settings} save={guarded} />}
-        <BudgetRow vision={vision} save={guarded} onError={setError} />
       </PanelBlock>
       {!admin && <><SoulBlock soul={vision.soul} save={save} /><ChannelsBlock visionId={vision.id} /></>}
     </SidePanel>

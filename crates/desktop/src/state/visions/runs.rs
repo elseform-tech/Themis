@@ -142,18 +142,18 @@ pub(in crate::state) fn boxed_run<'a, T: 'a>(
     }
 }
 
-/// The decisions `vision` makes itself under `config`: its profile's autonomy and rows may only
-/// lower the configured ones (`profile_decides`). The run's head shows them and its grant
-/// answers questions only on them, both from this one list.
-pub fn vision_decisions(vision: &Vision, config: &VisionsConfig) -> Vec<Decision> {
+/// The decisions a Vision of `channel` makes itself under `config`: the team's autonomy and
+/// rows may only lower the configured ones (`profile_decides`). The run's head shows them and
+/// its grant answers questions only on them, both from this one list.
+pub fn vision_decisions(channel: &Channel, config: &VisionsConfig) -> Vec<Decision> {
     Decision::ALL
         .into_iter()
         .filter(|decision| {
             profile_decides(
                 config.autonomy,
                 &config.custom,
-                vision.autonomy,
-                vision.custom.as_ref(),
+                channel.autonomy,
+                channel.custom.as_ref(),
                 *decision,
             )
         })
@@ -163,7 +163,7 @@ pub fn vision_decisions(vision: &Vision, config: &VisionsConfig) -> Vec<Decision
 /// The Vision's system head for a run in `channel`, with one table row per decision as
 /// [`vision_decisions`] decides it.
 pub(super) fn vision_head(vision: &Vision, channel: &Channel, config: &VisionsConfig) -> String {
-    let decides = vision_decisions(vision, config);
+    let decides = vision_decisions(channel, config);
     let table = Decision::ALL
         .into_iter()
         .map(|decision| {
@@ -263,7 +263,7 @@ impl AppState {
             self.visions_envelope_check(&snapshot.work_root, &snapshot.runtime_configuration)?;
         snapshot.approval_mode = ApprovalMode::Custom;
         let config = &mut snapshot.runtime_configuration;
-        // The admin in `# hq` has its own head; its grant knows it by its id.
+        // The admin in `# administration` has its own head; its grant knows it by its id.
         let head = super::admin::run_head(&vision, &channel, &config.visions);
         config.subagents.enabled = false;
         config.browser.enabled = false;
@@ -271,11 +271,12 @@ impl AppState {
         snapshot.plugins.clear();
         snapshot.skills.clear();
         snapshot.skill_catalog.clear();
+        let decides = vision_decisions(&channel, &config.visions);
         let scope = VisionScope {
             vision_id: spec.vision_id,
             channel_id: spec.channel_id,
             project_root: channel.project_root,
-            decides: vision_decisions(&vision, &config.visions),
+            decides,
         };
         Ok(Some(VisionRun { head, scope, port }))
     }
@@ -290,10 +291,11 @@ impl AppState {
             .channel_get(channel_id)
             .ok_or_else(|| "Unknown channel".to_owned())?;
         let config = self.runtime_configuration(Some(&channel.project_root), None)?;
+        let decides = vision_decisions(&channel, &config.config.visions);
         Ok(VisionScope {
             vision_id: vision.id.clone(),
             channel_id: channel.id,
-            decides: vision_decisions(&vision, &config.config.visions),
+            decides,
             project_root: channel.project_root,
         })
     }
@@ -589,9 +591,7 @@ mod tests {
             shape: "cloud".into(),
             color: "teal".into(),
             model: None,
-            autonomy: None,
-            custom: None,
-            daily_budget_usd: None,
+            accessory: "none".into(),
             soul: "Careful and brief.".into(),
             paused: false,
             revision: String::new(),
@@ -601,11 +601,15 @@ mod tests {
     fn hq() -> Channel {
         Channel {
             id: "c1".into(),
-            name: "hq".into(),
+            name: "administration".into(),
             topic: String::new(),
             project_root: PathBuf::from("/work/app"),
             approval_mode: ApprovalMode::Custom,
             members: vec!["v1".into()],
+            chief: "v1".into(),
+            autonomy: None,
+            custom: None,
+            daily_budget_usd: None,
             revision: String::new(),
         }
     }
@@ -620,7 +624,7 @@ mod tests {
         assert!(head.starts_with("You are Wren, a Vision"));
         assert!(head.contains("Your role: Keeps the docs right"));
         assert!(head.contains("Careful and brief."));
-        assert!(head.contains("#hq of the project at /work/app"));
+        assert!(head.contains("#administration of the project at /work/app"));
         assert!(head.contains(r#"'{"projectRoot": "/work/app", "provider": "go"}'"#));
         assert!(head.contains(r#"list_channel_threads '{"channelId": "c1"}'"#));
         assert!(head.contains("Never repeat a chat's own summary as proof"));
@@ -657,31 +661,31 @@ mod tests {
             let who = if mine { "you decide" } else { "ask the person" };
             assert_eq!(*row, format!("- `{}`: {who}", decision.id()));
         }
-        // A profile may only lower the resolved level: `nearly_all` over the default `small`
+        // A team may only lower the resolved level: `nearly_all` over the default `small`
         // still decides only wording and tests, and its `ask` lowers it to nothing.
-        let raised = Vision {
+        let raised = Channel {
             autonomy: Some(Autonomy::NearlyAll),
-            ..wren()
+            ..hq()
         };
-        let head = vision_head(&raised, &hq(), &VisionsConfig::default());
+        let head = vision_head(&wren(), &raised, &VisionsConfig::default());
         assert!(head.contains("- `wording`: you decide"));
         assert!(head.contains("- `delete`: ask the person"));
-        let lowered = Vision {
+        let lowered = Channel {
             autonomy: Some(Autonomy::Ask),
-            ..wren()
+            ..hq()
         };
-        let head = vision_head(&lowered, &hq(), &VisionsConfig::default());
+        let head = vision_head(&wren(), &lowered, &VisionsConfig::default());
         assert!(head.contains("- `wording`: ask the person"));
         // Custom rows can only take away; `spend` stays the person's.
-        let custom = Vision {
+        let custom = Channel {
             custom: Some(BTreeMap::from([
                 ("tests".into(), false),
                 ("delete".into(), true),
                 ("spend".into(), true),
             ])),
-            ..wren()
+            ..hq()
         };
-        let head = vision_head(&custom, &hq(), &VisionsConfig::default());
+        let head = vision_head(&wren(), &custom, &VisionsConfig::default());
         assert!(head.contains("- `wording`: you decide"));
         assert!(head.contains("- `tests`: ask the person"));
         assert!(head.contains("- `delete`: ask the person"));

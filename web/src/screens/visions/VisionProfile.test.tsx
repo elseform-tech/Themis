@@ -34,8 +34,8 @@ const vision = (id: string, name: string, extra: Partial<VisionInfo> = {}): Visi
   id, name, role: "Builder", shape: "flat", color: "teal", soul: "Careful and brief.", paused: false, revision: "r1",
   over_budget: false, vision_chats: [], needs: 0, sorry: false, ...extra,
 });
-const release: ChannelInfo = { id: "c1", name: "release", topic: "Ship 0.9", project_root: "/p", approval_mode: "custom", members: ["rook"], revision: "c1r" };
-const hq: ChannelInfo = { id: "h1", name: "hq", topic: "", project_root: "/p", approval_mode: "custom", members: ["admin"], revision: "h1r" };
+const release: ChannelInfo = { id: "c1", name: "release", topic: "Ship 0.9", project_root: "/p", approval_mode: "custom", members: ["rook"], chief: "rook", revision: "c1r" };
+const hq: ChannelInfo = { id: "h1", name: "hq", topic: "", project_root: "/p", approval_mode: "custom", members: ["admin"], chief: "admin", revision: "h1r" };
 
 function state(): AppState {
   return {
@@ -74,26 +74,14 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe("A Vision's profile", () => {
-  it("profile_override_shows_the_inherited_level", async () => {
-    await show(() => <VisionProfile visionId="rook" />);
-    const autonomy = screen.getByRole("combobox", { name: "Autonomy" });
-    expect(autonomy).toHaveDisplayValue("Same as Settings (Most decisions)");
-    // A profile may only lower the level: nothing above Settings is offered.
-    const offered = within(autonomy).getAllByRole("option").map(option => option.textContent);
-    expect(offered).toEqual(["Same as Settings (Most decisions)", "Always ask", "Routine decisions"]);
-    await act(async () => { fireEvent.change(autonomy, { target: { value: "ask" } }); });
-    expect(visions.saveVision).toHaveBeenCalledWith(expect.objectContaining({ id: "rook", autonomy: "ask", soul: "Careful and brief." }), "r1");
-  });
-
-  it("saves the model, the budget and the soul, each against the profile's revision", async () => {
+  it("saves the model and the soul, each against the profile's revision, and offers no autonomy or budget of its own", async () => {
     await show(() => <VisionProfile visionId="rook" />);
     expect(screen.getByRole("combobox", { name: "Model" })).toHaveDisplayValue("Default model");
     await act(async () => { fireEvent.change(screen.getByRole("combobox", { name: "Model" }), { target: { value: "glm-5" } }); });
     expect(visions.saveVision).toHaveBeenLastCalledWith(expect.objectContaining({ model: "glm-5" }), "r1");
-    const budget = screen.getByRole("spinbutton", { name: "Daily budget" });
-    fireEvent.change(budget, { target: { value: "0.5" } });
-    await act(async () => { fireEvent.blur(budget); });
-    expect(visions.saveVision).toHaveBeenLastCalledWith(expect.objectContaining({ daily_budget_usd: 0.5 }), "r2");
+    // Autonomy and budget are the team's (its channel's), not a Vision's.
+    expect(screen.queryByRole("combobox", { name: "Autonomy" })).toBeNull();
+    expect(screen.queryByRole("spinbutton", { name: "Daily budget" })).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Edit soul" }));
     fireEvent.change(screen.getByRole("textbox", { name: "Soul" }), { target: { value: "Bold." } });
     await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Save" })); });
@@ -110,19 +98,13 @@ describe("A Vision's profile", () => {
     expect(screen.getByRole("button", { name: "Delete Rook" })).toBeInTheDocument();
   });
 
-  it("shows an empty soul as its heading and edit button only, and keeps the budget plain", async () => {
+  it("shows an empty soul as its heading and edit button only", async () => {
     const initial = state();
     initial.visions.list = initial.visions.list.map(each => each.id === "rook" ? { ...each, soul: "" } : each);
     await show(() => <VisionProfile visionId="rook" />, initial);
     expect(screen.getByRole("button", { name: "Edit soul" })).toBeInTheDocument();
     expect(document.querySelector(".themis-visions-soul")).toBeNull();
     expect(screen.queryByText(/in your words/)).toBeNull();
-    const budget = screen.getByRole("spinbutton", { name: "Daily budget" });
-    expect(budget).toHaveAttribute("max", "100");
-    fireEvent.change(budget, { target: { value: "-1" } });
-    await act(async () => { fireEvent.blur(budget); });
-    expect(screen.getByRole("alert")).toHaveTextContent(/^Enter an amount from \$0 to \$100$/);
-    expect(visions.saveVision).not.toHaveBeenCalled();
   });
 
   it("shows Atlas only what applies to it: no Delete, autonomy, soul or channels", async () => {
@@ -148,9 +130,9 @@ describe("Channel details", () => {
     const add = screen.getByRole("combobox", { name: "Add a member" });
     expect(within(add).getAllByRole("option").map(option => option.textContent)).toEqual(["Add a member", "Wren"]);
     await act(async () => { fireEvent.change(add, { target: { value: "wren" } }); });
-    expect(visions.saveChannel).toHaveBeenLastCalledWith(expect.objectContaining({ members: ["rook", "wren"] }), "c2");
+    expect(visions.saveChannel).toHaveBeenLastCalledWith(expect.objectContaining({ members: ["rook", "wren"], chief: "rook" }), "c2");
     await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Remove Rook" })); });
-    expect(visions.saveChannel).toHaveBeenLastCalledWith(expect.objectContaining({ members: ["wren"] }), "c2");
+    expect(visions.saveChannel).toHaveBeenLastCalledWith(expect.objectContaining({ members: ["wren"], chief: "wren" }), "c2");
     expect(screen.getByRole("button", { name: "Delete # release" })).toBeInTheDocument();
   });
 

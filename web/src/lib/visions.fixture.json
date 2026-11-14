@@ -6,12 +6,7 @@
     "shape": "cloud",
     "color": "teal",
     "model": "go/test-model",
-    "autonomy": "custom",
-    "custom": {
-      "tests": true,
-      "wording": false
-    },
-    "daily_budget_usd": 0.5,
+    "accessory": "glasses",
     "soul": "Careful.",
     "paused": false,
     "revision": "r1",
@@ -35,6 +30,13 @@
     "members": [
       "v1"
     ],
+    "chief": "v1",
+    "autonomy": "custom",
+    "custom": {
+      "tests": true,
+      "wording": false
+    },
+    "daily_budget_usd": 0.5,
     "revision": "r2",
     "needs": 1
   },
@@ -68,7 +70,8 @@
     "handed_back",
     "sandbox_unavailable",
     "budget_unknown",
-    "unpriced"
+    "unpriced",
+    "teams_arrived"
   ],
   "lines": [
     {

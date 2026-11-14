@@ -166,6 +166,7 @@ fn every_notice_kind() -> Vec<NoticeKind> {
         NoticeKind::SandboxUnavailable,
         NoticeKind::BudgetUnknown,
         NoticeKind::Unpriced,
+        NoticeKind::TeamsArrived,
     ];
     for (at, kind) in kinds.iter().enumerate() {
         let place = match kind {
@@ -178,6 +179,7 @@ fn every_notice_kind() -> Vec<NoticeKind> {
             NoticeKind::SandboxUnavailable => 6,
             NoticeKind::BudgetUnknown => 7,
             NoticeKind::Unpriced => 8,
+            NoticeKind::TeamsArrived => 9,
         };
         assert_eq!(place, at);
     }
@@ -205,12 +207,7 @@ fn listed_visions_channels_and_owners_match_the_apps_fixture() {
             shape: "cloud".into(),
             color: "teal".into(),
             model: Some("go/test-model".into()),
-            autonomy: Some(Autonomy::Custom),
-            custom: Some(BTreeMap::from([
-                ("tests".into(), true),
-                ("wording".into(), false),
-            ])),
-            daily_budget_usd: Some(0.5),
+            accessory: "glasses".into(),
             soul: "Careful.".into(),
             paused: false,
             revision: "r1".into(),
@@ -233,6 +230,13 @@ fn listed_visions_channels_and_owners_match_the_apps_fixture() {
             project_root: "/repo".into(),
             approval_mode: ApprovalMode::Auto,
             members: vec!["v1".into()],
+            chief: "v1".into(),
+            autonomy: Some(Autonomy::Custom),
+            custom: Some(BTreeMap::from([
+                ("tests".into(), true),
+                ("wording".into(), false),
+            ])),
+            daily_budget_usd: Some(0.5),
             revision: "r2".into(),
         },
         needs: 1,

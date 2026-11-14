@@ -205,7 +205,10 @@ async fn deleting_a_channel_stops_and_releases_its_chats() {
         .iter()
         .all(|t| t["vision"].is_null()));
     let left = fx.call_ok("list_channels", json!({"projectRoot": fx.project}));
-    assert_eq!(left[0]["name"], "hq", "only the built-in # hq is left");
+    assert_eq!(
+        left[0]["name"], "administration",
+        "only the built-in # administration is left"
+    );
     assert_eq!(left.as_array().unwrap().len(), 1);
     // Nothing deleted: the chats, the Vision and the channel's log stay.
     assert!(fx.state.get_thread(&running).await.is_ok());

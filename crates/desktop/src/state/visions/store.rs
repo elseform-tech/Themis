@@ -9,7 +9,9 @@ use serde::de::DeserializeOwned;
 use serde::Serialize;
 use themis_core::visions::Decision;
 
-use super::admin::{admin_profile, ADMIN_STAYS, ADMIN_VISION_ID, HQ, HQ_STAYS};
+use super::admin::{
+    admin_profile, ADMINISTRATION, ADMINISTRATION_STAYS, ADMIN_STAYS, ADMIN_VISION_ID,
+};
 use super::{
     Channel, Owner, Vision, VisionsCache, CHANNELS_FILE, CHANNEL_LOGS_DIR, OWNERS_FILE,
     SOUL_MAX_BYTES, VISIONS_FILE,
@@ -258,12 +260,11 @@ pub(super) fn validate_vision(spec: &mut Vision) -> Result<(), &'static str> {
         Some(model) if model.chars().count() <= MAX_MODEL_CHARS => Some(model.to_owned()),
         Some(_) => return Err("A Vision's model name is at most 200 characters"),
     };
-    validate_custom(spec.custom.as_ref())?;
-    if spec
-        .daily_budget_usd
-        .is_some_and(|budget| !budget.is_finite() || budget < 0.0)
-    {
-        return Err("A daily budget is a positive number of dollars");
+    if spec.accessory.trim().is_empty() {
+        spec.accessory = "none".to_owned();
+    }
+    if !super::ACCESSORIES.contains(&spec.accessory.as_str()) {
+        return Err("A Vision carries one of the cast's accessories");
     }
     if spec.soul.len() > SOUL_MAX_BYTES {
         return Err("A Vision's soul is at most 4 KiB");
@@ -300,9 +301,24 @@ pub(super) fn validate_channel(spec: &mut Channel) -> Result<(), &'static str> {
         return Err("A channel has at most 32 members");
     }
     let admin = members.iter().any(|member| member == ADMIN_VISION_ID);
-    let hq = spec.name == HQ;
-    if hq != admin || (hq && members.len() != 1) {
-        return Err("# hq is built in: Atlas is its only member, and works in no other channel");
+    let administration = spec.name == ADMINISTRATION;
+    if administration != admin || (administration && members.len() != 1) {
+        return Err(
+            "# administration is built in: Atlas is its only member, and works in no other channel",
+        );
+    }
+    if spec.chief.is_empty() {
+        spec.chief = members.first().cloned().unwrap_or_default();
+    }
+    if !members.is_empty() && !members.contains(&spec.chief) {
+        return Err("A channel's chief of staff is one of its members");
+    }
+    validate_custom(spec.custom.as_ref())?;
+    if spec
+        .daily_budget_usd
+        .is_some_and(|budget| !budget.is_finite() || budget < 0.0)
+    {
+        return Err("A daily budget is a positive number of dollars");
     }
     spec.members = members;
     Ok(())
@@ -360,6 +376,7 @@ impl VisionsCache {
         dir: &Path,
     ) -> Result<&mut BTreeMap<String, Vision>, StoreError> {
         if self.visions.is_none() {
+            self.ensure_converted(dir)?;
             let stamp = stamp_of(dir, VISIONS_FILE);
             let list: Vec<Vision> = read_store(dir, VISIONS_FILE)?;
             self.stamps.insert(VISIONS_FILE, stamp);
@@ -373,6 +390,7 @@ impl VisionsCache {
         dir: &Path,
     ) -> Result<&mut BTreeMap<String, Channel>, StoreError> {
         if self.channels.is_none() {
+            self.ensure_converted(dir)?;
             let stamp = stamp_of(dir, CHANNELS_FILE);
             let list: Vec<Channel> = read_store(dir, CHANNELS_FILE)?;
             self.stamps.insert(CHANNELS_FILE, stamp);
@@ -550,8 +568,8 @@ impl VisionsCache {
         let channels = self.channels(dir)?;
         match channels.get(channel_id) {
             None => return Err(StoreError::refused(CHANNELS_FILE, "Unknown channel")),
-            Some(channel) if channel.name == HQ => {
-                return Err(StoreError::refused(CHANNELS_FILE, HQ_STAYS));
+            Some(channel) if channel.name == ADMINISTRATION => {
+                return Err(StoreError::refused(CHANNELS_FILE, ADMINISTRATION_STAYS));
             }
             Some(_) => {}
         }

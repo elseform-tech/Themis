@@ -1,4 +1,4 @@
-//! The admin Vision's grant: it proposes setups in its `# hq` and sets one up after the person
+//! The admin Vision's grant: it proposes setups in its `# administration` and sets one up after the person
 //! replied (`state/visions/admin.rs` checks the rest), and reads the Visions and its project's
 //! channels. It drives no chat and manages no integration; everything else goes by the
 //! ordinary rules of a run's credential (its own chat's reads, status).
@@ -25,7 +25,7 @@ pub(super) fn refusal(scope: &VisionScope, method: &str, args: &Value) -> Option
     }
 }
 
-/// Runs one of [`ADMIN_WRITES`] for the admin's `# hq`, then announces it: a proposal with the
+/// Runs one of [`ADMIN_WRITES`] for the admin's `# administration`, then announces it: a proposal with the
 /// channel and the admin, a setup with no ids, since it may have made channels and Visions
 /// anywhere in the list.
 pub(super) async fn dispatch(

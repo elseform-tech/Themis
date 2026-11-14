@@ -33,9 +33,7 @@ fn profile(name: &str) -> Vision {
         shape: "cloud".into(),
         color: "teal".into(),
         model: None,
-        autonomy: None,
-        custom: None,
-        daily_budget_usd: None,
+        accessory: "none".into(),
         soul: String::new(),
         paused: false,
         revision: String::new(),
@@ -90,6 +88,10 @@ async fn setup() -> Setup {
                 project_root: project.canonicalize().unwrap(),
                 approval_mode: ApprovalMode::Custom,
                 members: vec![wren.clone(), ada.clone()],
+                chief: String::new(),
+                autonomy: None,
+                custom: None,
+                daily_budget_usd: None,
                 revision: String::new(),
             },
             None,
@@ -182,18 +184,22 @@ fn write_runtime(s: &Setup, text: &str) {
     std::fs::write(path, text).unwrap();
 }
 
+/// Sets the budget of every channel `vision` is in (a team's budget is the channel's).
 fn set_cap(s: &Setup, vision: &str, cap: Option<f64>) {
-    let current = s.state.vision_get(vision).unwrap();
-    let revision = current.revision.clone();
-    s.state
-        .vision_save(
-            Vision {
-                daily_budget_usd: cap,
-                ..current
-            },
-            Some(&revision),
-        )
-        .unwrap();
+    for channel in s.state.channels_all() {
+        if channel.members.iter().any(|member| member == vision) {
+            let revision = channel.revision.clone();
+            s.state
+                .channel_save(
+                    Channel {
+                        daily_budget_usd: cap,
+                        ..channel
+                    },
+                    Some(&revision),
+                )
+                .unwrap();
+        }
+    }
 }
 
 /// The `budget_reached` notices in the channel.
@@ -247,7 +253,8 @@ async fn spend_counts_only_owned_chats_since_midnight() {
     assert!(!s.state.visions_over_budget(&s.wren));
     set_cap(&s, &s.wren, Some(0.5));
     assert!(s.state.visions_over_budget(&s.wren));
-    assert!(!s.state.visions_over_budget(&s.ada));
+    // Ada is in Wren's channel: a team shares its channel's budget.
+    assert!(s.state.visions_over_budget(&s.ada));
 }
 
 /// At a run's end over budget, the Vision's running chats are stopped, except one the person
@@ -737,6 +744,10 @@ fn other_project(s: &Setup) -> String {
                 project_root: project.canonicalize().unwrap(),
                 approval_mode: ApprovalMode::Custom,
                 members: vec![s.ada.clone()],
+                chief: String::new(),
+                autonomy: None,
+                custom: None,
+                daily_budget_usd: None,
                 revision: String::new(),
             },
             None,
