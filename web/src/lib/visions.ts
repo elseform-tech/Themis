@@ -33,7 +33,6 @@ export interface VisionProfile {
   /** What it wears (an id from `cast.ts`); the server supplies it, absent means none. */
   accessory?: string;
   model?: string;
-  soul: string;
   paused: boolean;
   revision: string;
 }
@@ -170,7 +169,7 @@ export interface VisionsChange {
 }
 
 /** A profile to save: a new one has an empty `id`. */
-export type VisionDraft = Omit<VisionProfile, "id" | "revision" | "soul" | "paused" | "role"> & Partial<Pick<VisionProfile, "id" | "role" | "soul" | "paused">>;
+export type VisionDraft = Omit<VisionProfile, "id" | "revision" | "paused" | "role"> & Partial<Pick<VisionProfile, "id" | "role" | "paused">>;
 export type ChannelDraft = Omit<ChannelInfo, "id" | "revision" | "topic" | "chief"> & Partial<Pick<ChannelInfo, "id" | "topic" | "chief">>;
 
 export function listVisions(): Promise<VisionInfo[]> { return invoke("list_visions"); }
@@ -178,6 +177,13 @@ export function saveVision(vision: VisionDraft, revision: string | null): Promis
 export function pauseVision(visionId: string, paused: boolean): Promise<VisionProfile> { return invoke("pause_vision", { visionId, paused }); }
 export function deleteVision(visionId: string): Promise<void> { return invoke("delete_vision", { visionId }); }
 export function listChannels(projectRoot: string): Promise<ChannelInfo[]> { return invoke("list_channels", { projectRoot }); }
+/** A chief's or Atlas's `soul.md`: its text, the revision to save against, and why it could not
+ *  be read, if so. */
+export interface SoulView { text: string; revision: string; problem?: string }
+export function getSoul(visionId: string): Promise<SoulView> { return invoke("get_soul", { visionId }); }
+export function saveSoul(visionId: string, text: string, revision: string): Promise<SoulView> { return invoke("save_soul", { visionId, text, revision }); }
+/** Opens `soul.md` in the editor Settings chose. */
+export function openSoul(visionId: string): Promise<void> { return invoke("open_soul", { visionId }); }
 export function saveChannel(channel: ChannelDraft, revision: string | null): Promise<ChannelInfo> { return invoke("save_channel", { channel, revision }); }
 export function deleteChannel(channelId: string): Promise<void> { return invoke("delete_channel", { channelId }); }
 export function getChannelPage(channelId: string, beforeSeq: number | null = null, maxBytes: number | null = null): Promise<ChannelPage> { return invoke("get_channel_page", { channelId, beforeSeq, maxBytes }); }

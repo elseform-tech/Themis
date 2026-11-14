@@ -18,7 +18,6 @@ async fn chats(size: usize) -> (tempfile::TempDir, AppState, String, Vec<String>
         color: "teal".into(),
         model: None,
         accessory: "none".into(),
-        soul: String::new(),
         paused: false,
         revision: String::new(),
     };

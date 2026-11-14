@@ -162,7 +162,12 @@ pub fn vision_decisions(channel: &Channel, config: &VisionsConfig) -> Vec<Decisi
 
 /// The Vision's system head for a run in `channel`, with one table row per decision as
 /// [`vision_decisions`] decides it.
-pub(super) fn vision_head(vision: &Vision, channel: &Channel, config: &VisionsConfig) -> String {
+pub(super) fn vision_head(
+    vision: &Vision,
+    channel: &Channel,
+    config: &VisionsConfig,
+    soul: &str,
+) -> String {
     let decides = vision_decisions(channel, config);
     let table = Decision::ALL
         .into_iter()
@@ -193,7 +198,7 @@ pub(super) fn vision_head(vision: &Vision, channel: &Channel, config: &VisionsCo
         &[
             ("name", &vision.name),
             ("role", &or_dash(&vision.role)),
-            ("soul", &or_dash(&vision.soul)),
+            ("soul", &or_dash(soul)),
             ("channel", &channel.name),
             ("channel_id", &channel.id),
             ("project", project),
@@ -264,7 +269,8 @@ impl AppState {
         snapshot.approval_mode = ApprovalMode::Custom;
         let config = &mut snapshot.runtime_configuration;
         // The admin in `# administration` has its own head; its grant knows it by its id.
-        let head = super::admin::run_head(&vision, &channel, &config.visions);
+        let soul = self.soul_for_run(&vision.id);
+        let head = super::admin::run_head(&vision, &channel, &config.visions, &soul);
         config.subagents.enabled = false;
         config.browser.enabled = false;
         config.memory.enabled = false;
@@ -592,7 +598,6 @@ mod tests {
             color: "teal".into(),
             model: None,
             accessory: "none".into(),
-            soul: "Careful and brief.".into(),
             paused: false,
             revision: String::new(),
         }
@@ -619,7 +624,12 @@ mod tests {
     /// table row per decision as the level decides it.
     #[test]
     fn vision_system_head_contains_the_autonomy_table() {
-        let head = vision_head(&wren(), &hq(), &VisionsConfig::default());
+        let head = vision_head(
+            &wren(),
+            &hq(),
+            &VisionsConfig::default(),
+            "Careful and brief.",
+        );
         println!("{head}");
         assert!(head.starts_with("You are Wren, a Vision"));
         assert!(head.contains("Your role: Keeps the docs right"));
@@ -667,14 +677,14 @@ mod tests {
             autonomy: Some(Autonomy::NearlyAll),
             ..hq()
         };
-        let head = vision_head(&wren(), &raised, &VisionsConfig::default());
+        let head = vision_head(&wren(), &raised, &VisionsConfig::default(), "");
         assert!(head.contains("- `wording`: you decide"));
         assert!(head.contains("- `delete`: ask the person"));
         let lowered = Channel {
             autonomy: Some(Autonomy::Ask),
             ..hq()
         };
-        let head = vision_head(&wren(), &lowered, &VisionsConfig::default());
+        let head = vision_head(&wren(), &lowered, &VisionsConfig::default(), "");
         assert!(head.contains("- `wording`: ask the person"));
         // Custom rows can only take away; `spend` stays the person's.
         let custom = Channel {
@@ -685,7 +695,7 @@ mod tests {
             ])),
             ..hq()
         };
-        let head = vision_head(&wren(), &custom, &VisionsConfig::default());
+        let head = vision_head(&wren(), &custom, &VisionsConfig::default(), "");
         assert!(head.contains("- `wording`: you decide"));
         assert!(head.contains("- `tests`: ask the person"));
         assert!(head.contains("- `delete`: ask the person"));

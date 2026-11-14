@@ -20,7 +20,7 @@ import {
 } from "./visions";
 
 const VISION: VisionInfo = {
-  id: "v1", name: "Wren", role: "", shape: "cloud", color: "teal", soul: "", paused: false,
+  id: "v1", name: "Wren", role: "", shape: "cloud", color: "teal", paused: false,
   revision: "r1", over_budget: false, vision_chats: [], needs: 0, sorry: false,
 };
 
@@ -329,7 +329,7 @@ describe("wire fixture", () => {
 
   it("holds each shape with exactly the fields the app's types name", () => {
     const keys = (value: object) => Object.keys(value).sort();
-    const visionKeys: Array<keyof VisionInfo> = ["id", "name", "role", "shape", "color", "model", "accessory", "soul", "paused", "revision", "over_budget", "vision_chats", "needs", "sorry"];
+    const visionKeys: Array<keyof VisionInfo> = ["id", "name", "role", "shape", "color", "model", "accessory", "paused", "revision", "over_budget", "vision_chats", "needs", "sorry"];
     expect(keys(fixture.vision)).toEqual([...visionKeys].sort());
     const chatKeys: Array<keyof VisionInfo["vision_chats"][number]> = ["thread_id", "channel_id", "running"];
     expect(keys(fixture.vision.vision_chats[0]!)).toEqual([...chatKeys].sort());

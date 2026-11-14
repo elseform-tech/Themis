@@ -23,7 +23,7 @@ fn phase1_store(visions_dir: &Path, root: &Path) {
          "autonomy": "most", "custom": {"delete": true}, "daily_budget_usd": 0.5,
          "soul": "Calm.", "revision": "1"},
         {"id": "rook", "name": "Rook", "role": "Builds", "shape": "cloud", "color": "teal",
-         "revision": "1"}
+         "soul": "Loud.", "revision": "1"}
     ]);
     let channels = json!([
         {"id": "hq1", "name": "hq", "topic": "", "project_root": root, "approval_mode": "custom",
@@ -79,6 +79,10 @@ fn phase1_store_converts_first_member_to_chief_and_drops_vision_overrides() {
         assert!(wren.get(gone).is_none(), "{gone} is dropped");
     }
     assert!(!visions_dir.join("heartbeats").exists());
+    // Wren leads # docs, so its soul moved to soul.md; Rook works for it and has none.
+    assert_eq!(state.get_soul("wren").unwrap().text, "Calm.");
+    assert!(wren.get("soul").is_none());
+    assert!(!visions_dir.join("souls/rook.md").exists());
     assert!(
         std::fs::read_to_string(visions_dir.join("channels/docs1.jsonl"))
             .unwrap()
@@ -135,7 +139,6 @@ fn vision(name: &str) -> Vision {
         color: "blue".into(),
         accessory: "none".into(),
         model: None,
-        soul: String::new(),
         paused: false,
         revision: String::new(),
     }

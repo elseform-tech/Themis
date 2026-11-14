@@ -61,7 +61,6 @@ pub(super) fn admin_profile() -> Vision {
         color: "indigo".to_owned(),
         model: None,
         accessory: "crown".to_owned(),
-        soul: String::new(),
         paused: false,
         revision: String::new(),
     }
@@ -411,7 +410,6 @@ fn new_profile(new: &NewVision) -> Vision {
         color: new.color.clone(),
         model: new.model.clone(),
         accessory: "none".to_owned(),
-        soul: String::new(),
         paused: false,
         revision: String::new(),
     }
@@ -470,9 +468,14 @@ fn fill_looks(proposal: &mut Proposal, existing: usize) {
 }
 
 /// The admin run's system head; any other Vision's is [`super::runs::vision_head`].
-pub(super) fn run_head(vision: &Vision, channel: &Channel, config: &VisionsConfig) -> String {
+pub(super) fn run_head(
+    vision: &Vision,
+    channel: &Channel,
+    config: &VisionsConfig,
+    soul: &str,
+) -> String {
     if !is_admin(&vision.id) {
-        return super::runs::vision_head(vision, channel, config);
+        return super::runs::vision_head(vision, channel, config, soul);
     }
     let project =
         serde_json::to_string(&channel.project_root.to_string_lossy()).unwrap_or_default();

@@ -31,7 +31,7 @@ vi.mock("../../lib/visions", async importOriginal => ({
 const base = { provider: "go" as const, model: "m", running: false, worktree_path: null, branch: null, base_branch: null, recovered: false, skill_ids: [] };
 const plain: ThreadInfo = { ...base, id: "plain", title: "Plain chat", last_activity_seq: 1 };
 const vision = (id: string, name: string, extra: Partial<VisionInfo> = {}): VisionInfo => ({
-  id, name, role: "", shape: "flat", color: "teal", soul: "", paused: false, revision: "r",
+  id, name, role: "", shape: "flat", color: "teal", paused: false, revision: "r",
   over_budget: false, vision_chats: [], needs: 0, sorry: false, ...extra,
 });
 const owned = (id: string, title: string, visionId: string, running: boolean): OwnedChat => ({
@@ -289,7 +289,7 @@ describe("Visions view", () => {
   });
 
   it("new vision saves its name, cloud and role", async () => {
-    vi.mocked(visionsBridge.saveVision).mockImplementation(async draft => ({ ...draft, id: "v3", role: draft.role ?? "", soul: "", paused: false, revision: "r" }));
+    vi.mocked(visionsBridge.saveVision).mockImplementation(async draft => ({ ...draft, id: "v3", role: draft.role ?? "", paused: false, revision: "r" }));
     mount({ mainView: "visions" });
     fireEvent.click(screen.getByRole("button", { name: "New Vision" }));
     const sheet = screen.getByRole("dialog", { name: "New Vision" });
@@ -304,7 +304,7 @@ describe("Visions view", () => {
   });
 
   it("new vision saves the accessory the person chose", async () => {
-    vi.mocked(visionsBridge.saveVision).mockImplementation(async draft => ({ ...draft, id: "v4", role: draft.role ?? "", soul: "", paused: false, revision: "r" }));
+    vi.mocked(visionsBridge.saveVision).mockImplementation(async draft => ({ ...draft, id: "v4", role: draft.role ?? "", paused: false, revision: "r" }));
     mount({ mainView: "visions" });
     fireEvent.click(screen.getByRole("button", { name: "New Vision" }));
     const sheet = screen.getByRole("dialog", { name: "New Vision" });

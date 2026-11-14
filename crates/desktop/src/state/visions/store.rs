@@ -14,7 +14,7 @@ use super::admin::{
 };
 use super::{
     Channel, Owner, Vision, VisionsCache, CHANNELS_FILE, CHANNEL_LOGS_DIR, OWNERS_FILE,
-    SOUL_MAX_BYTES, VISIONS_FILE,
+    VISIONS_FILE,
 };
 use crate::state::chat_grants::safe_chat_id;
 
@@ -265,9 +265,6 @@ pub(super) fn validate_vision(spec: &mut Vision) -> Result<(), &'static str> {
     }
     if !super::ACCESSORIES.contains(&spec.accessory.as_str()) {
         return Err("A Vision carries one of the cast's accessories");
-    }
-    if spec.soul.len() > SOUL_MAX_BYTES {
-        return Err("A Vision's soul is at most 4 KiB");
     }
     Ok(())
 }

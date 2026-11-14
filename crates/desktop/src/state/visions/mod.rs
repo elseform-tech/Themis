@@ -21,6 +21,7 @@ mod listing;
 mod marks;
 mod owned_index;
 mod runs;
+mod souls;
 mod store;
 mod wakes;
 
@@ -34,6 +35,8 @@ mod drive_tests;
 mod listing_tests;
 #[cfg(test)]
 mod marks_tests;
+#[cfg(test)]
+mod souls_tests;
 #[cfg(test)]
 mod store_tests;
 #[cfg(test)]
@@ -54,6 +57,8 @@ pub use channel_log::{ChannelLine, ChannelPage};
 
 pub use runs::vision_decisions;
 pub(super) use runs::{boxed_run, confine, run_scope, run_tools, vision_approvals, VisionRunSpec};
+#[allow(unused_imports)] // The server answers with it (`get_soul`).
+pub use souls::SoulView;
 use store::StoreError;
 pub use wakes::WakeReason;
 
@@ -79,8 +84,6 @@ const CHANNELS_FILE: &str = "channels.json";
 const OWNERS_FILE: &str = "owners.json";
 /// Channel logs, `channels/<channel id>.jsonl`, under [`VISIONS_DIR`].
 const CHANNEL_LOGS_DIR: &str = "channels";
-/// A Vision's soul (who it is and how it works) is at most this many bytes.
-pub(crate) const SOUL_MAX_BYTES: usize = 4 * 1024;
 
 /// A Vision's profile.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -99,9 +102,6 @@ pub struct Vision {
     /// What it carries, one of [`ACCESSORIES`] (`none` when it carries nothing).
     #[serde(default = "no_accessory")]
     pub accessory: String,
-    /// Who it is and how it works, at most [`SOUL_MAX_BYTES`].
-    #[serde(default)]
-    pub soul: String,
     #[serde(default)]
     pub paused: bool,
     /// Set by the store on every save.

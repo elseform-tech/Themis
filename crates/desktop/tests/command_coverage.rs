@@ -106,7 +106,7 @@ fn visions_methods_are_the_ones_their_arms_answer() {
         .split(',')
         .filter_map(|item| item.trim().strip_prefix('"')?.strip_suffix('"'))
         .collect();
-    assert_eq!(methods.len(), 13);
+    assert_eq!(methods.len(), 16);
     assert_eq!(arm_names(source), methods);
 }
 

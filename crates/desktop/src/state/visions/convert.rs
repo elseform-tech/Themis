@@ -45,9 +45,14 @@ pub(super) fn convert(dir: &Path) -> Result<Vec<String>, StoreError> {
     if changed {
         write_store(dir, CHANNELS_FILE, &channels)?;
     }
+    let chiefs: Vec<String> = channels
+        .iter()
+        .filter_map(|channel| channel["chief"].as_str().map(str::to_owned))
+        .collect();
     let mut visions: Vec<Value> = read_store(dir, VISIONS_FILE)?;
     let mut dropped = false;
     for vision in &mut visions {
+        dropped |= move_soul(dir, vision, &chiefs)?;
         if let Some(fields) = vision.as_object_mut() {
             for field in DROPPED_VISION_FIELDS {
                 dropped |= fields.remove(*field).is_some();
@@ -63,6 +68,25 @@ pub(super) fn convert(dir: &Path) -> Result<Vec<String>, StoreError> {
             .map_err(|error| StoreError::write_failed(MARKER_FILE, &error))?;
     }
     Ok(administrations)
+}
+
+/// A chief's or Atlas's soul text moves to its `soul.md` (kept when one is already there); a
+/// worker's is dropped. Returns whether the record changed.
+fn move_soul(dir: &Path, vision: &mut Value, chiefs: &[String]) -> Result<bool, StoreError> {
+    let Some(fields) = vision.as_object_mut() else {
+        return Ok(false);
+    };
+    let Some(soul) = fields.remove("soul") else {
+        return Ok(false);
+    };
+    let id = fields.get("id").and_then(Value::as_str).unwrap_or_default();
+    let text = soul.as_str().unwrap_or_default();
+    let keeps = id == ADMIN_VISION_ID || chiefs.iter().any(|chief| chief == id);
+    if keeps && !text.trim().is_empty() && matches!(super::souls::read_soul(dir, id), Ok(None)) {
+        super::souls::write_soul(dir, id, text, "")
+            .map_err(|message| StoreError::refused(VISIONS_FILE, &message))?;
+    }
+    Ok(true)
 }
 
 /// One channel in the teams shape: `# administration` renamed with the admin as chief, else a chief chosen
