@@ -14,6 +14,8 @@ const circle = (cx: number, cy: number, r: number) => `M${cx - r} ${cy}a${r} ${r
 
 export interface Shape {
   label: string;
+  /** The cloud's bumps as circles [cx, cy, r] (the 3D scene builds spheres from them). */
+  bumps: Array<[number, number, number]>;
   /** Body path: the flat base plus the bumps. */
   body: string;
   /** Eye centres and height for the shaded face. */
@@ -25,15 +27,17 @@ export interface Shape {
 }
 
 /** The shapes, by the id saved in a profile. `broad` is Atlas's. */
-export const SHAPES: Record<string, Shape> = {
-  tall: { label: "Tall cloud", body: BASE + circle(15, 23, 8) + circle(25, 16, 11) + circle(35, 23, 7), eyes: { l: 17.5, r: 27, y: 29 }, hx: 20, hy: 10.5, flatEyes: ["M14 30h.01M25 30h.01", 5] },
-  broad: { label: "Broad cloud", body: BASE + circle(16, 22, 9) + circle(24, 17, 10.5) + circle(33, 22, 8.5), eyes: { l: 18.5, r: 29.5, y: 29.5 }, hx: 20, hy: 12, flatEyes: ["M18 30h.01M30 30h.01", 5] },
-  flat: { label: "Flat cloud", body: BASE + circle(14, 22, 8) + circle(24, 20, 9) + circle(34, 22, 8), eyes: { l: 18, r: 30, y: 30.5 }, hx: 20, hy: 17.5, flatEyes: ["M15 31h6M27 31h6", 3.4] },
-  "two-bump": { label: "Two-bump cloud", body: BASE + circle(18, 18, 10) + circle(31, 21, 9), eyes: { l: 17, r: 31, y: 30 }, hx: 16, hy: 11, flatEyes: ["M17 30h.01M31 30h.01", 3.4] },
-  leaning: { label: "Leaning cloud", body: BASE + circle(14, 24, 7) + circle(22, 17, 9) + circle(32, 20, 8.5), eyes: { l: 19, r: 30, y: 30.5 }, hx: 20, hy: 12.5, flatEyes: ["M19 31h.01M30 31h.01", 4.6] },
-  wide: { label: "Wide cloud", body: BASE + circle(13, 24, 7.5) + circle(24, 19, 10) + circle(36, 24, 7.5), eyes: { l: 18.5, r: 29.5, y: 30.5 }, hx: 20, hy: 13.5, flatEyes: ["M16 31h5M27 31h5", 3] },
-  fluffy: { label: "Fluffy cloud", body: BASE + circle(12, 24, 6.5) + circle(19, 18, 7.5) + circle(28, 16, 8) + circle(36, 21, 7), eyes: { l: 16, r: 25.5, y: 30.5 }, hx: 24, hy: 10.5, flatEyes: ["M16 31h.01M25.5 31h.01", 4.4] },
+const RAW_SHAPES: Record<string, Omit<Shape, "body">> = {
+  tall: { label: "Tall cloud", bumps: [[15, 23, 8], [25, 16, 11], [35, 23, 7]], eyes: { l: 17.5, r: 27, y: 29 }, hx: 20, hy: 10.5, flatEyes: ["M14 30h.01M25 30h.01", 5] },
+  broad: { label: "Broad cloud", bumps: [[16, 22, 9], [24, 17, 10.5], [33, 22, 8.5]], eyes: { l: 18.5, r: 29.5, y: 29.5 }, hx: 20, hy: 12, flatEyes: ["M18 30h.01M30 30h.01", 5] },
+  flat: { label: "Flat cloud", bumps: [[14, 22, 8], [24, 20, 9], [34, 22, 8]], eyes: { l: 18, r: 30, y: 30.5 }, hx: 20, hy: 17.5, flatEyes: ["M15 31h6M27 31h6", 3.4] },
+  "two-bump": { label: "Two-bump cloud", bumps: [[18, 18, 10], [31, 21, 9]], eyes: { l: 17, r: 31, y: 30 }, hx: 16, hy: 11, flatEyes: ["M17 30h.01M31 30h.01", 3.4] },
+  leaning: { label: "Leaning cloud", bumps: [[14, 24, 7], [22, 17, 9], [32, 20, 8.5]], eyes: { l: 19, r: 30, y: 30.5 }, hx: 20, hy: 12.5, flatEyes: ["M19 31h.01M30 31h.01", 4.6] },
+  wide: { label: "Wide cloud", bumps: [[13, 24, 7.5], [24, 19, 10], [36, 24, 7.5]], eyes: { l: 18.5, r: 29.5, y: 30.5 }, hx: 20, hy: 13.5, flatEyes: ["M16 31h5M27 31h5", 3] },
+  fluffy: { label: "Fluffy cloud", bumps: [[12, 24, 6.5], [19, 18, 7.5], [28, 16, 8], [36, 21, 7]], eyes: { l: 16, r: 25.5, y: 30.5 }, hx: 24, hy: 10.5, flatEyes: ["M16 31h.01M25.5 31h.01", 4.4] },
 };
+
+export const SHAPES: Record<string, Shape> = Object.fromEntries(Object.entries(RAW_SHAPES).map(([id, shape]) => [id, { ...shape, body: BASE + shape.bumps.map(([cx, cy, r]) => circle(cx, cy, r)).join("") }]));
 
 export interface Color {
   label: string;

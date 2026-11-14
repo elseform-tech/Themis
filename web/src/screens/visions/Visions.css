@@ -179,3 +179,7 @@
 .themis-visions-picks > div { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 6px; }
 .themis-visions-pick { display: flex; align-items: center; gap: 6px; padding: 4px 10px 4px 6px; border: 0; border-radius: var(--themis-radius-pill); background: transparent; box-shadow: inset 0 0 0 1px var(--themis-border); color: var(--themis-text-2); font: inherit; cursor: pointer; opacity: .6; }
 .themis-visions-pick[aria-pressed="true"] { background: var(--themis-pill); color: var(--themis-text); opacity: 1; }
+
+/* The 3D chief: a soft glow behind the body (ChiefMoods); the canvas is transparent. */
+.themis-chief-scene { position: relative; flex: none; background: radial-gradient(closest-side, color-mix(in srgb, var(--themis-accent) 18%, transparent), transparent); }
+.themis-chief-scene .themis-still, .themis-chief-canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
