@@ -62,8 +62,8 @@ export interface ChannelInfo {
   /** The team's autonomy and rows; Settings › Visions' when absent. */
   autonomy?: Autonomy;
   custom?: Record<string, boolean>;
-  /** The team's daily budget in dollars; Settings › Visions' total caps it. */
-  daily_budget_usd?: number;
+  /** The team's daily budget in dollars (none: Settings › Visions'); Settings' total caps it. */
+  daily_budget_usd?: number | null;
   /** Workers its chief paused here; only the chief's team calls change it. */
   paused_workers?: string[];
   revision: string;

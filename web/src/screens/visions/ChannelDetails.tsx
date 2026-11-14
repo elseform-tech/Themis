@@ -1,5 +1,5 @@
 // A channel's details (canvas VisionChannel): its topic, the approval mode its Visions' chats run
-// in (the person's to set; a Vision never changes it), its members (Visions only) and Delete. A
+// in (the person's to set; a Vision never changes it), its daily budget (empty: Settings'), its members (Visions only) and Delete. A
 // member opens the chief's profile, or a worker's thread with the chief; each can be removed from
 // the channel or deleted. The Members block's + makes a new Vision by hand (the sidebar has no
 // Visions list). `# administration` is built in: Atlas is its only member, and neither can be deleted.
@@ -83,6 +83,15 @@ export function ChannelDetails({ channel }: { channel: ChannelInfo }) {
     dispatch({ type: "visions/loaded", projectRoot: root, channels: listed().filter(each => each.id !== channel.id) });
     dispatch({ type: "visions/open", channelId: null });
   }
+  const [budget, setBudget] = useState<string | null>(null);
+  // Empty goes back to Settings › Visions' budget; the server refuses one above it.
+  const saveBudget = () => {
+    if (budget === null) return;
+    setBudget(null);
+    const dollars = budget.trim() === "" ? null : Number(budget);
+    if (dollars !== null && (!Number.isFinite(dollars) || dollars < 0)) { setError("Enter an amount in dollars, or leave it empty"); return; }
+    if (dollars !== (channel.daily_budget_usd ?? null)) void save({ daily_budget_usd: dollars });
+  };
   const saveTopic = () => {
     if (topic === null) return;
     setTopic(null);
@@ -101,6 +110,10 @@ export function ChannelDetails({ channel }: { channel: ChannelInfo }) {
           {MODES.map(([mode, label]) => <option key={mode} value={mode}>{label}</option>)}
         </select>
       </PanelBlock>}
+      <PanelBlock title="Daily budget">
+        <input type="number" className="themis-visions-field" aria-label="Daily budget" min={0} step={0.5} value={budget ?? String(channel.daily_budget_usd ?? "")}
+          onChange={event => setBudget(event.target.value)} onBlur={saveBudget} onKeyDown={event => { if (event.key === "Enter") event.currentTarget.blur(); }} />
+      </PanelBlock>
       <Members channel={channel} save={change => void save(change)} />
     </SidePanel>
   );

@@ -157,6 +157,20 @@ describe("Channel details", () => {
     expect(screen.getByRole("button", { name: "Delete # release" })).toBeInTheDocument();
   });
 
+  it("saves the channel's daily budget; empty goes back to Settings' budget", async () => {
+    await show(() => <OpenChannelDetails />, opened("c1"));
+    const budget = screen.getByRole("spinbutton", { name: "Daily budget" });
+    fireEvent.change(budget, { target: { value: "1.5" } });
+    await act(async () => { fireEvent.blur(budget); });
+    expect(visions.saveChannel).toHaveBeenLastCalledWith(expect.objectContaining({ id: "c1", daily_budget_usd: 1.5 }), "c1r");
+    fireEvent.change(budget, { target: { value: "" } });
+    await act(async () => { fireEvent.blur(budget); });
+    expect(visions.saveChannel).toHaveBeenLastCalledWith(expect.objectContaining({ daily_budget_usd: null }), "c2");
+    fireEvent.change(budget, { target: { value: "-3" } });
+    await act(async () => { fireEvent.blur(budget); });
+    expect(screen.getByRole("alert")).toHaveTextContent("Enter an amount");
+  });
+
   it("deletes a member Vision after asking, and refreshes the list; Atlas cannot be deleted", async () => {
     const initial = opened("c1");
     initial.visions.channels = { "/p": [hq, { ...release, members: ["rook", "wren"] }] };
