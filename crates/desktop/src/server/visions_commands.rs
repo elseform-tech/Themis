@@ -53,18 +53,9 @@ fn team_method(
     args: &Value,
 ) -> Result<(Value, Option<VisionsChange>), String> {
     match method {
-        "list_routines" => {
-            let channel_id: String = arg(args, "channelId")?;
-            Ok((to_value(state.visions_routines(&channel_id))?, None))
-        }
-        "set_routine_enabled" => {
-            let routine_id: String = arg(args, "routineId")?;
-            state.visions_set_routine_enabled(&routine_id, arg(args, "enabled")?)?;
-            Ok((Value::Null, change(None, None)))
-        }
-        "delete_routine" => {
-            state.visions_delete_routine(&arg::<String>(args, "routineId")?)?;
-            Ok((Value::Null, change(None, None)))
+        "get_team_log" | "get_channel_spend" => team_read(state, method, args),
+        "list_routines" | "set_routine_enabled" | "delete_routine" => {
+            routine_method(state, method, args)
         }
         _ => {
             let request_id: String = arg(args, "requestId")?;
@@ -72,6 +63,42 @@ fn team_method(
             Ok((Value::Null, change(None, None)))
         }
     }
+}
+
+/// The person's reads of a team: a worker's thread with its chief, the channel's spend today.
+fn team_read(
+    state: &AppState,
+    method: &str,
+    args: &Value,
+) -> Result<(Value, Option<VisionsChange>), String> {
+    let channel_id: String = arg(args, "channelId")?;
+    if method == "get_channel_spend" {
+        let spent = state.visions_channel_spent_today(&channel_id);
+        return Ok((json!({"spent_usd": spent}), None));
+    }
+    let worker: String = arg(args, "workerId")?;
+    let before: Option<u64> = arg(args, "beforeSeq")?;
+    let page = state.team_page(&channel_id, &worker, before, 64 * 1024)?;
+    Ok((to_value(page)?, None))
+}
+
+/// The person's view of a channel's routines: listed, switched on or off, removed.
+fn routine_method(
+    state: &AppState,
+    method: &str,
+    args: &Value,
+) -> Result<(Value, Option<VisionsChange>), String> {
+    if method == "list_routines" {
+        let channel_id: String = arg(args, "channelId")?;
+        return Ok((to_value(state.visions_routines(&channel_id))?, None));
+    }
+    let routine_id: String = arg(args, "routineId")?;
+    if method == "set_routine_enabled" {
+        state.visions_set_routine_enabled(&routine_id, arg(args, "enabled")?)?;
+    } else {
+        state.visions_delete_routine(&routine_id)?;
+    }
+    Ok((Value::Null, change(None, None)))
 }
 
 /// Runs one of [`METHODS`], then announces what it wrote.
@@ -233,21 +260,12 @@ async fn chat_method(
             let threads = state.visions_channel_threads(&channel_id).await?;
             Ok((to_value(threads)?, None))
         }
-        "list_routines" | "set_routine_enabled" | "delete_routine" | "answer_channel_request" => {
-            team_method(state, sink, method, args)
-        }
-        "get_team_log" => {
-            let channel_id: String = arg(args, "channelId")?;
-            let worker: String = arg(args, "workerId")?;
-            let before: Option<u64> = arg(args, "beforeSeq")?;
-            let page = state.team_page(&channel_id, &worker, before, 64 * 1024)?;
-            Ok((to_value(page)?, None))
-        }
-        "get_channel_spend" => {
-            let channel_id: String = arg(args, "channelId")?;
-            let spent = state.visions_channel_spent_today(&channel_id);
-            Ok((json!({"spent_usd": spent}), None))
-        }
+        "list_routines"
+        | "set_routine_enabled"
+        | "delete_routine"
+        | "answer_channel_request"
+        | "get_team_log"
+        | "get_channel_spend" => team_method(state, sink, method, args),
         "hand_back_thread" => {
             let owner = state.visions_hand_back(sink, &arg::<String>(args, "threadId")?)?;
             let changed = change(
