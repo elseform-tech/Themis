@@ -5,10 +5,11 @@ import { handBackThread } from "../../lib/visions";
 import { describeError, toast, useApp } from "../../state/store";
 import { ownedChat } from "../../state/visions";
 import { chatRunning } from "./ChatLink";
-import { CloudIcon } from "./CloudIcon";
+import { CharacterAvatar } from "./CharacterAvatar";
+import { lookOf } from "./cast";
 
 type AppState = ReturnType<typeof useApp>["state"];
-type Look = Pick<ThreadVision, "name" | "shape" | "color">;
+type Look = Pick<ThreadVision, "name" | "shape" | "color"> & { id?: string; accessory?: string };
 
 /** How a Vision looks now: its listed profile, else what the chat was marked with. */
 export function visionLook(state: AppState, id: string, marked?: Look): Look | undefined {
@@ -29,7 +30,7 @@ export function HandBackButton({ threadId, vision }: { threadId: string; vision:
   }
   return (
     <button type="button" className="themis-visions-quiet-button themis-hand-back" onClick={() => void handBack()}>
-      <CloudIcon shape={vision.shape} color={vision.color} mood="calm" size={16} />Hand back to {vision.name}
+      <CharacterAvatar look={lookOf(vision)} size={16} />Hand back to {vision.name}
     </button>
   );
 }

@@ -5,7 +5,8 @@ import { useState } from "react";
 import { ADMIN_VISION_ID, deleteChannel, saveChannel, type ApprovalModeName, type ChannelInfo } from "../../lib/visions";
 import { describeError, useApp } from "../../state/store";
 import { visionMoods } from "../../state/visions";
-import { CloudIcon } from "./CloudIcon";
+import { CharacterAvatar } from "./CharacterAvatar";
+import { lookOf } from "./cast";
 import { CloseIcon, DeleteButton, PanelBlock, PanelButton, SidePanel } from "./SidePanel";
 
 const MODES: Array<[ApprovalModeName, string]> = [["custom", "Custom"], ["auto", "Auto"], ["yolo", "YOLO"]];
@@ -22,7 +23,7 @@ function Members({ channel, save }: { channel: ChannelInfo; save: (change: Parti
     <ul className="themis-visions-members">
       {members.map(vision => <li key={vision.id}>
         <button type="button" className="themis-visions-member" aria-label={vision.name} onClick={() => dispatch({ type: "visions/panel", panel: { kind: "vision", visionId: vision.id } })}>
-          <CloudIcon shape={vision.shape} color={vision.color} mood={moods[vision.id] ?? "calm"} size={20} crown={vision.id === ADMIN_VISION_ID} />
+          <CharacterAvatar look={lookOf(vision)} mood={moods[vision.id] ?? "calm"} size={20} />
           <span className="themis-visions-member-name">{vision.name}</span>
           {vision.role && <small>{vision.role}</small>}
         </button>

@@ -4,7 +4,8 @@ import { useState, type FormEvent } from "react";
 import { Button, Dialog, Input } from "../../components";
 import { ADMIN_VISION_ID, saveChannel } from "../../lib/visions";
 import { describeError, useApp } from "../../state/store";
-import { CloudIcon } from "./CloudIcon";
+import { CharacterAvatar } from "./CharacterAvatar";
+import { lookOf } from "./cast";
 import { NewVisionSheet } from "./NewVisionSheet";
 
 export type Sheet = "channel" | "vision" | null;
@@ -53,7 +54,7 @@ export function NewChannelSheet({ onClose }: { onClose: () => void }) {
           <legend className="themis-input-label">Members</legend>
           <div>{choices.map(vision => (
             <button key={vision.id} type="button" className="themis-visions-pick" aria-pressed={members.includes(vision.id)} onClick={() => toggle(vision.id)}>
-              <CloudIcon shape={vision.shape} color={vision.color} mood="calm" size={22} /><span>{vision.name}</span>
+              <CharacterAvatar look={lookOf(vision)} size={22} /><span>{vision.name}</span>
             </button>
           ))}</div>
         </fieldset>}

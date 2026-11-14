@@ -3,7 +3,8 @@
 // setup whose proposal is not loaded shows on its own.
 import type { ChannelEntry, Proposal, ProposalChange, SetUpItem } from "../../lib/visions";
 import { LEVELS } from "./autonomy";
-import { CloudIcon } from "./CloudIcon";
+import { CharacterAvatar } from "./CharacterAvatar";
+import { lookOf } from "./cast";
 
 type Proposed = Extract<ChannelEntry, { type: "proposal" }>;
 type Applied = Extract<ChannelEntry, { type: "proposal_applied" }>;
@@ -49,7 +50,7 @@ function Items({ proposal }: { proposal: Proposal }) {
       ))}
       {proposal.visions.map(vision => (
         <li key={`v:${vision.name}`}>
-          <b><CloudIcon shape={vision.shape} color={vision.color} mood="calm" size={16} />New Vision {vision.name}</b>
+          <b><CharacterAvatar look={lookOf(vision)} size={16} />New Vision {vision.name}</b>
           <span>{newVisionWords(vision)}</span>
         </li>
       ))}

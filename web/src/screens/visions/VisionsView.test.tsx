@@ -144,8 +144,8 @@ describe("Visions view", () => {
     const bar = screen.getByRole("complementary", { name: "Visions navigation" });
     expect(within(bar).queryByText("Atlas")).toBeNull();
     const room = screen.getByRole("region", { name: "# hq" });
-    expect(within(room).getByRole("img", { name: "Here: Atlas" }).querySelector(".themis-cloud-crown")).toBeTruthy();
-    expect(within(room).getByText("Atlas").closest("li")!.querySelector(".themis-cloud-crown")).toBeTruthy();
+    expect(within(room).getByRole("img", { name: "Here: Atlas" }).querySelector("[data-accessory='crown']")).toBeTruthy();
+    expect(within(room).getByText("Atlas").closest("li")!.querySelector("[data-accessory='crown']")).toBeTruthy();
     expect(within(room).getByRole("group", { name: "Proposal" })).toHaveTextContent("A channel for releases.");
     expect(within(room).getByLabelText("Message #hq")).not.toBeDisabled();
   });
@@ -298,7 +298,7 @@ describe("Visions view", () => {
     fireEvent.click(within(sheet).getByRole("button", { name: "Rose" }));
     fireEvent.change(within(sheet).getByLabelText("Role"), { target: { value: "Scribe" } });
     fireEvent.click(within(sheet).getByRole("button", { name: "Create" }));
-    await waitFor(() => expect(visionsBridge.saveVision).toHaveBeenCalledWith({ name: "Echo", role: "Scribe", shape: "wide", color: "rose" }, null));
+    await waitFor(() => expect(visionsBridge.saveVision).toHaveBeenCalledWith({ name: "Echo", role: "Scribe", shape: "wide", color: "rose", accessory: "none" }, null));
     const bar = screen.getByRole("complementary", { name: "Visions navigation" });
     expect(await within(bar).findByText("Echo")).toBeTruthy();
   });

@@ -10,7 +10,8 @@ import { describeError, useApp } from "../../state/store";
 import { visionMoods } from "../../state/visions";
 import { ModelOptions } from "../ModelsSettings";
 import { AUTONOMY_STOPS, LEVELS, rankOf } from "./autonomy";
-import { CloudIcon } from "./CloudIcon";
+import { CharacterAvatar } from "./CharacterAvatar";
+import { lookOf } from "./cast";
 import { DeleteButton, EditIcon, PanelBlock, PanelButton, PauseIcon, PlayIcon, SidePanel } from "./SidePanel";
 
 type Save = (change: Partial<Profile>) => Promise<void>;
@@ -133,7 +134,7 @@ function useVisionsSettings(changes: number): VisionsSettings | null {
 function ProfileTitle({ vision }: { vision: VisionInfo }) {
   const { state } = useApp();
   return <>
-    <CloudIcon shape={vision.shape} color={vision.color} mood={visionMoods(state)[vision.id] ?? "calm"} size={40} live crown={vision.id === ADMIN_VISION_ID} />
+    <CharacterAvatar look={lookOf(vision)} mood={visionMoods(state)[vision.id] ?? "calm"} size={40} live />
     <div className="themis-visions-panel-title"><div>{vision.name}</div>{vision.role && <div className="themis-visions-meta">{vision.role}</div>}</div>
   </>;
 }

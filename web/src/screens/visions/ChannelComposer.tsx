@@ -7,7 +7,8 @@ import { Button } from "../../components";
 import type { ChannelInfo, VisionInfo } from "../../lib/visions";
 import { postChannelMessage } from "../../lib/visions";
 import { describeError, toast, useApp } from "../../state/store";
-import { CloudIcon } from "./CloudIcon";
+import { CharacterAvatar } from "./CharacterAvatar";
+import { lookOf } from "./cast";
 import "../ThreadView.css";
 
 /** The `@name` being typed at the end of the draft, if any. */
@@ -65,7 +66,7 @@ export function ChannelComposer({ channel, members, draft, setDraft, onPosted }:
       {matches.length > 0 && <div id={listId} className="themis-mention-list" role="listbox" aria-label="Mention">
         {matches.map((vision, index) => (
           <button key={vision.id} id={optionId(index)} type="button" role="option" aria-selected={index === active} tabIndex={-1} onMouseDown={event => event.preventDefault()} onClick={() => mention(vision.name)}>
-            <CloudIcon shape={vision.shape} color={vision.color} mood="calm" />{vision.name}
+            <CharacterAvatar look={lookOf(vision)} />{vision.name}
           </button>
         ))}
       </div>}

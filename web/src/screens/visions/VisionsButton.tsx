@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { Badge, Tooltip } from "../../components";
 import { useApp } from "../../state/store";
 import { needsCount, railMood, visionMoods, type Mood } from "../../state/visions";
-import { RailCloud } from "./CloudIcon";
+import { RailCloud } from "./RailCloud";
 
 /** What the rail cloud says aloud. */
 export function railLabel(mood: Mood, needs: number): string {

@@ -30,6 +30,8 @@ export interface VisionProfile {
   role: string;
   shape: string;
   color: string;
+  /** What it wears (an id from `cast.ts`); the server supplies it, absent means none. */
+  accessory?: string;
   model?: string;
   autonomy?: Autonomy;
   custom?: Record<string, boolean>;

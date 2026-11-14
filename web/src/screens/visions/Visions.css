@@ -1,16 +1,9 @@
 /* Visions: the cast's clouds, the rail cloud, the channels bar and the channel (canvas boards Visions,
    VisionsEntry, VisionsNew, VisionsQuestions, VisionsThread). Colours are app tokens; a Vision's own
-   colour is its `--themis-cast-*` token. */
+   colour is in cast.ts. */
 
 /* The cast. Clouds move only when live, and never with reduced motion. */
 .themis-cloud { flex: none; overflow: visible; transform-box: fill-box; transform-origin: 50% 85%; }
-.themis-cloud--blue { color: var(--themis-cast-blue); }
-.themis-cloud--teal { color: var(--themis-cast-teal); }
-.themis-cloud--violet { color: var(--themis-cast-violet); }
-.themis-cloud--amber { color: var(--themis-cast-amber); }
-.themis-cloud--rose { color: var(--themis-cast-rose); }
-.themis-cloud--indigo { color: var(--themis-cast-indigo); }
-.themis-cloud-crown { fill: var(--themis-cast-amber); stroke: var(--themis-cast-ink); stroke-width: 1.4; stroke-linejoin: round; }
 .themis-cloud-eyes { fill: none; stroke: var(--themis-cast-ink); stroke-linecap: round; transform-box: fill-box; transform-origin: center; }
 .themis-cloud--sleep { opacity: .55; }
 .themis-cloud.is-live.themis-cloud--calm { animation: themis-cloud-breathe 4.5s ease-in-out infinite; }
@@ -21,6 +14,19 @@
 .themis-cloud.is-live.themis-cloud--work .themis-cloud-eyes { animation: themis-cloud-pulse 1.3s ease-in-out infinite; }
 .themis-cloud.is-live.themis-cloud--needs { animation: themis-cloud-nudge 6s infinite; }
 .themis-cloud.is-live.themis-cloud--sleep { animation: themis-cloud-breathe 7s ease-in-out infinite; }
+
+/* The still header picture (ChiefMoods): its motion classes by expression; reduced motion stills it. */
+.themis-still { overflow: visible; flex: none; }
+.vc { overflow: visible; transform-box: fill-box; transform-origin: 50% 85%; }
+.vc .e { transform-box: fill-box; transform-origin: center; }
+.vc-calm { animation: themis-cloud-breathe 4.5s ease-in-out infinite; }
+.vc-calm .e { animation: themis-cloud-blink 5s infinite; }
+.vc-work { animation: themis-cloud-bob 1.3s ease-in-out infinite; }
+.vc-needs { animation: themis-still-hop 3s infinite; }
+.vc-worry { animation: themis-still-shiver 2.6s ease-in-out infinite; }
+.vc-sleep { animation: themis-cloud-breathe 7s ease-in-out infinite; }
+@keyframes themis-still-hop { 0%, 70%, 100% { transform: none; } 78% { transform: translateY(-3px); } 86% { transform: none; } 92% { transform: translateY(-1px); } }
+@keyframes themis-still-shiver { 0%, 100% { transform: none; } 20% { transform: translateX(-.4px); } 40% { transform: translateX(.4px); } 60% { transform: none; } }
 
 /* The rail cloud: an outline in the rail's colour; it hops once when something new needs you. */
 .themis-rail-cloud { overflow: visible; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linejoin: round; }
@@ -41,7 +47,7 @@
 @keyframes themis-cloud-nudge { 0%, 84%, 100% { transform: none; } 88% { transform: translateY(-4px); } 92% { transform: none; } 95% { transform: translateY(-1.5px); } }
 @keyframes themis-cloud-hop { 0%, 100% { transform: none; } 35% { transform: translateY(-3px); } 60% { transform: translateY(0); } 75% { transform: translateY(-1px); } }
 @media (prefers-reduced-motion: reduce) {
-  .themis-cloud, .themis-cloud *, .themis-rail-cloud, .themis-rail-cloud * { animation: none !important; }
+  .themis-cloud, .themis-cloud *, .themis-rail-cloud, .themis-rail-cloud *, .vc, .vc * { animation: none !important; }
 }
 
 /* The channels bar. */

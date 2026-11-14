@@ -66,7 +66,7 @@ beforeEach(() => {
 function cloudOf(element: Element) {
   const cloud = element.querySelector("svg.themis-cloud");
   expect(cloud).not.toBeNull();
-  return { amber: cloud!.classList.contains("themis-cloud--amber"), live: cloud!.classList.contains("is-live") };
+  return { amber: cloud!.querySelector("path")?.getAttribute("fill") === "#F59E0B", live: cloud!.classList.contains("is-live") };
 }
 
 describe("Vision chats in plain chat", () => {

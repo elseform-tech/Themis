@@ -5,7 +5,8 @@ import { useState } from "react";
 import { ADMIN_VISION_ID } from "../../lib/visions";
 import { useApp } from "../../state/store";
 import { channelNeeds, MOOD_LABEL, visionMoods } from "../../state/visions";
-import { CloudIcon } from "./CloudIcon";
+import { CharacterAvatar } from "./CharacterAvatar";
+import { lookOf } from "./cast";
 import { projectChannels } from "./channels";
 import { VisionsSheets, type Sheet } from "./NewChannelSheet";
 
@@ -52,7 +53,7 @@ export function ChannelsBar() {
             const shown = profile === vision.id;
             return <li key={vision.id}><button type="button" className={`themis-sidebar-row themis-vision-row ${shown ? "themis-sidebar-row--active" : ""}`} aria-label={MOOD_LABEL[mood] ? `${vision.name}, ${MOOD_LABEL[mood]}` : vision.name} aria-pressed={shown}
               onClick={() => dispatch({ type: "visions/panel", panel: shown ? null : { kind: "vision", visionId: vision.id } })}>
-              <CloudIcon shape={vision.shape} color={vision.color} mood={mood} live />
+              <CharacterAvatar look={lookOf(vision)} mood={mood} live />
               <span className="themis-sidebar-name">{vision.name}</span>
               {MOOD_LABEL[mood] && <span className={`themis-thread-tag themis-mood-tag--${mood}`} aria-hidden="true">{MOOD_LABEL[mood]}</span>}
             </button></li>;

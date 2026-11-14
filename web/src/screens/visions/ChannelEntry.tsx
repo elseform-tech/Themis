@@ -1,11 +1,12 @@
 // One line of a channel's log: the person's message, a Vision's message, a chat it started, a
 // question it answered or passed on, or a notice. Avatars never move.
 import { Fragment, type ReactNode } from "react";
-import { ADMIN_VISION_ID, type ChannelEntry as Entry, type ChannelLine, type VisionInfo } from "../../lib/visions";
+import { type ChannelEntry as Entry, type ChannelLine, type VisionInfo } from "../../lib/visions";
 import { ResponseBody } from "../../components/ResponseBody";
 import { useApp } from "../../state/store";
 import { ChatChip, ChatLink, channelChat } from "./ChatLink";
-import { CloudIcon } from "./CloudIcon";
+import { CharacterAvatar } from "./CharacterAvatar";
+import { lookOf } from "./cast";
 import { ProposalCard } from "./ProposalCard";
 import { AnsweredCard, PassedOnCard } from "./QuestionCards";
 
@@ -72,7 +73,7 @@ function Notice({ line, channelId }: { line: ChannelLine; channelId: string }) {
 
 function Avatar({ vision }: { vision: VisionInfo | undefined }) {
   if (!vision) return <span className="themis-channel-avatar themis-channel-person" aria-hidden="true">?</span>;
-  return <span className="themis-channel-avatar"><CloudIcon shape={vision.shape} color={vision.color} mood="calm" size={30} crown={vision.id === ADMIN_VISION_ID} /></span>;
+  return <span className="themis-channel-avatar"><CharacterAvatar look={lookOf(vision)} size={30} /></span>;
 }
 
 /** The loaded line of the proposal or setup `proposalId` of type `type`, if any. */
