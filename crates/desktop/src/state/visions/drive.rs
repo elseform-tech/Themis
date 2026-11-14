@@ -255,22 +255,52 @@ impl AppState {
             .into_iter()
             .find(|question| question.id == question_id)
             .ok_or_else(|| "That question is no longer open in this chat".to_owned())?;
-        self.channel_append(
-            &vision.channel_id,
-            ChannelEntry::PassedOn {
-                vision_id: vision.vision_id.clone(),
-                thread_id: thread_id.to_owned(),
-                question_id: question.id.clone(),
-                decision: decision.id().to_owned(),
-                question: question.question.clone(),
-            },
-        )?;
-        self.mark_passed_on(thread_id, &question.id);
+        let owner = self
+            .owner_of(thread_id)
+            .ok_or_else(|| "Unknown chat".to_owned())?;
+        self.pass_on(&owner, &question, decision.id())?;
         self.visions_note(
             "vision_passed_question",
             json!({"thread_id": thread_id, "vision_id": vision.vision_id, "question_id": question.id, "decision": decision.id()}),
         );
         Ok(question)
+    }
+
+    /// Puts an open question of a team's chat in its channel for the person, under the chief,
+    /// once (a question already passed on is not posted again).
+    fn pass_on(&self, owner: &Owner, question: &Question, decision: &str) -> Result<(), String> {
+        if question.passed_on {
+            return Ok(());
+        }
+        self.channel_append(
+            &owner.channel_id,
+            ChannelEntry::PassedOn {
+                vision_id: self.chief_of(owner),
+                thread_id: owner.thread_id.clone(),
+                question_id: question.id.clone(),
+                decision: decision.to_owned(),
+                question: question.question.clone(),
+            },
+        )?;
+        self.mark_passed_on(&owner.thread_id, &question.id);
+        Ok(())
+    }
+
+    /// A question of a worker's chat that no run will take (paused, over budget, at the
+    /// team's limit, Visions off): passed on to the person under the chief, with no decision
+    /// named. Logged either way.
+    pub(super) fn visions_pass_on_stranded(&self, owner: &Owner, question_id: &str) {
+        let question = self
+            .open_questions(&owner.thread_id)
+            .into_iter()
+            .find(|question| question.id == question_id);
+        let posted = question
+            .as_ref()
+            .is_some_and(|question| self.pass_on(owner, question, "").is_ok());
+        self.visions_note(
+            "question_stranded",
+            json!({"thread_id": owner.thread_id, "question_id": question_id, "posted": posted}),
+        );
     }
 
     /// A Vision stops the run of a chat it owns. Unlike the person's Stop, this holds nothing

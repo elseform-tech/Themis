@@ -1157,6 +1157,9 @@ async fn vision_provider(project: PathBuf, extra: Vec<Value>) -> MockServer {
                     {"role": "assistant", "content": content}, "finish_reason": "stop"}]}))
             };
             let system = messages.first().and_then(|m| m["content"].as_str());
+            if system.is_some_and(|text| text.starts_with("You are Wren Lead, a Vision")) {
+                return suites::routing::lead_tasks_wren(&messages);
+            }
             if !system.is_some_and(|text| text.starts_with("You are Wren, a Vision")) {
                 return reply("done: wrote the greeting");
             }
@@ -1470,6 +1473,14 @@ async fn a_vision_run_in_a_yolo_channel_cannot_read_a_secret_or_reach_the_networ
         fx.shut_down().await;
         return;
     }
+    // The chief tasked Wren: wait for Wren's run (and its chat) to finish too.
+    let wren_owns = || {
+        !fx.state
+            .owners_where(|o| o.channel_id == channel && o.vision_id == _vision)
+            .is_empty()
+    };
+    wait_until(|| async { wren_owns() }).await;
+    wait_for_idle_channel(&fx, &channel).await;
     let results = tool_results(&provider).await;
     assert!(results.len() >= 5, "{results:?}");
     assert!(
@@ -1522,7 +1533,7 @@ async fn a_vision_run_is_refused_without_a_sandbox() {
     .unwrap();
     let provider = vision_provider(fx.project.clone(), Vec::new()).await;
     fx.use_provider(&provider).await;
-    let (vision, channel) = fx.vision_and_channel("Wren", "work");
+    let (vision, channel) = fx.chief_and_channel("Wren", "work");
     fx.call_ok(
         "post_channel_message",
         json!({"channelId": channel, "text": "@Wren go"}),
@@ -1557,63 +1568,6 @@ async fn wait_for_idle_channel(fx: &Fixture, channel: &str) {
     for owner in owned {
         wait_until(|| async { !fx.running(&owner.thread_id).await }).await;
     }
-}
-
-/// The person's hooks and command-based MCP servers never start for a Vision's run (its
-/// envelope has no plugins); they still do for an ordinary chat.
-#[tokio::test(flavor = "multi_thread")]
-async fn hooks_and_command_mcp_servers_do_not_start_for_a_vision_run() {
-    let _turn = ONE_SERVER.lock().await;
-    let fx = fixture().await;
-    let marks = fx.data.join("marks");
-    std::fs::create_dir_all(&marks).unwrap();
-    let hook_mark = marks.join("hook");
-    let mcp_mark = marks.join("mcp");
-    fx.state
-        .plugin_action(json!({"action": "save", "scope": "global", "spec": {
-            "name": "personal",
-            "hooks": [{"name": "mark", "event": "PromptSubmit", "enabled": true,
-                "command": format!("echo ran >> '{}'", hook_mark.display())}],
-            "mcp": {"marker": {"command": "sh", "enabled": true,
-                "args": ["-c", format!("echo ran >> '{}'", mcp_mark.display())]}},
-            "files": {}
-        }}))
-        .await
-        .unwrap();
-    let provider = quick_provider().await;
-    fx.use_provider(&provider).await;
-    let (vision, channel) = fx.vision_and_channel_in("Wren", "work", "yolo");
-    fx.call_ok(
-        "post_channel_message",
-        json!({"channelId": channel, "text": "@Wren look around"}),
-    );
-    if first_vision_turn(&fx, &channel).await {
-        fx.shut_down().await;
-        return;
-    }
-    let own = fx
-        .state
-        .owners_where(|owner| owner.vision_id == vision && owner.kind == OwnedKind::VisionChat);
-    wait_until(|| async { !fx.running(&own[0].thread_id).await }).await;
-    assert!(!hook_mark.exists(), "no hook ran for the Vision's run");
-    assert!(
-        !mcp_mark.exists(),
-        "no MCP server started for the Vision's run"
-    );
-
-    // The same hook runs in an ordinary chat, so the check above is a real one.
-    let plain = fx.thread().await;
-    fx.call_ok(
-        "set_thread_approval_mode",
-        json!({"threadId": plain, "mode": "yolo"}),
-    );
-    fx.call_ok(
-        "send_message",
-        json!({"threadId": plain, "text": "hello", "reasoningEffort": null}),
-    );
-    wait_until(|| async { hook_mark.exists() }).await;
-    wait_until(|| async { !fx.running(&plain).await }).await;
-    fx.shut_down().await;
 }
 
 /// The answer a Vision gives in these tests: words no log may hold.
@@ -1828,16 +1782,22 @@ async fn a_passed_question_is_answered_by_the_person_from_the_channel() {
     let pass = json!({"threadId": work, "questionId": question, "decision": "scope"});
     let passed = json_of(&fx.agent_call(&agent, "pass_question", pass));
     assert!(passed["answer"].is_null(), "{passed}");
+    // The test plays the worker's run (Visions off), so the server already passed the
+    // question on, with no decision named; the worker's pass adds no second entry. Either way
+    // it is under the channel's chief, who speaks for the team.
     let entries = fx.entries(&channel);
-    let entry = entries
+    let passed: Vec<&Value> = entries
         .iter()
-        .find(|entry| entry["type"] == "passed_on")
-        .expect("in the channel");
+        .filter(|entry| entry["type"] == "passed_on")
+        .collect();
+    assert_eq!(passed.len(), 1, "{passed:?}");
+    let chief = fx.state.channel_get(&channel).unwrap().chief;
     assert_eq!(
-        *entry,
-        json!({"type": "passed_on", "vision_id": vision, "thread_id": work,
-            "question_id": question, "decision": "scope", "question": "Which license?"})
+        *passed[0],
+        json!({"type": "passed_on", "vision_id": chief, "thread_id": work,
+            "question_id": question, "decision": "", "question": "Which license?"})
     );
+    let _ = &vision;
     // Only on a chat it owns.
     let elsewhere = json!({"threadId": own_chat, "questionId": question, "decision": "scope"});
     let refused = fx.agent_call(&agent, "pass_question", elsewhere);

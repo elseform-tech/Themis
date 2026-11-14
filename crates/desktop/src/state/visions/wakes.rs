@@ -19,6 +19,16 @@ use crate::sink::EventSink;
 use crate::state::AppState;
 use crate::types::{GoalStatus, ThreadEvent};
 
+/// Wake outcomes after which no run will take a question: it goes to the person instead.
+const STRANDS: &[&str] = &[
+    "paused",
+    "disabled",
+    "limit",
+    "over_budget",
+    "budget_unknown",
+    "gone",
+];
+
 /// Most reasons one Vision keeps waiting; the oldest go first beyond it.
 const MAX_QUEUED: usize = 64;
 
@@ -98,8 +108,6 @@ impl WakeReason {
 struct WakeSlot {
     /// A run of its Vision chat is starting or running.
     running: bool,
-    /// Runs in a row since the person last wrote in the channel.
-    count: u32,
     /// Reasons waiting for its next run, oldest first.
     queued: Vec<WakeReason>,
     /// A run was refused as busy before it started: try again when a run ends.
@@ -126,6 +134,9 @@ const MAX_APPROVALS_SEEN: usize = 256;
 #[derive(Debug, Default)]
 pub(crate) struct WakeSlots {
     slots: HashMap<(String, String), WakeSlot>,
+    /// Runs started in each channel since the person last wrote there, every member's
+    /// together, and whether the channel was told it reached `visions.max_wakes`.
+    channels: HashMap<String, (u32, bool)>,
     /// Approvals and permission questions a Vision was already woken for, newest last.
     approvals_seen: std::collections::VecDeque<String>,
 }
@@ -146,10 +157,12 @@ impl WakeSlots {
         if slot.queued.is_empty() {
             return Admit::Idle;
         }
-        if slot.count >= limit {
+        let count = self.channels.entry(channel_id.to_owned()).or_default();
+        if count.0 >= limit {
             return Admit::Limit;
         }
-        slot.count += 1;
+        count.0 += 1;
+        let slot = self.queue_reason(vision_id, channel_id, None);
         slot.running = true;
         slot.retry = false;
         Admit::Start(std::mem::take(&mut slot.queued))
@@ -243,13 +256,16 @@ impl WakeSlots {
         true
     }
 
-    /// The person wrote in the channel: its Visions may wake again.
+    /// The person wrote in the channel: its team may wake again.
     pub(super) fn person_wrote(&mut self, channel_id: &str) {
-        for ((_, channel), slot) in &mut self.slots {
-            if channel == channel_id {
-                slot.count = 0;
-            }
-        }
+        self.channels.remove(channel_id);
+    }
+
+    /// Whether the channel is yet to be told it reached its limit (it is then remembered as
+    /// told, until the person writes).
+    pub(super) fn first_limit_notice(&mut self, channel_id: &str) -> bool {
+        let count = self.channels.entry(channel_id.to_owned()).or_default();
+        !std::mem::replace(&mut count.1, true)
     }
 
     fn slot(&mut self, vision_id: &str, channel_id: &str) -> Option<&mut WakeSlot> {
@@ -292,16 +308,50 @@ impl AppState {
 
     /// The same with the app's own sink, for callers that hold none (the person's Stop, a
     /// question asked). Without a server nothing can run, and it is logged so.
-    pub(crate) fn visions_wake_later(&self, channel_id: &str, vision_id: &str, reason: WakeReason) {
+    pub(crate) fn visions_wake_later(
+        &self,
+        channel_id: &str,
+        vision_id: &str,
+        reason: WakeReason,
+    ) -> &'static str {
         match self.scheduler_sink() {
-            Some(sink) => {
-                self.visions_wake(&sink, channel_id, vision_id, reason);
+            Some(sink) => self.visions_wake(&sink, channel_id, vision_id, reason),
+            None => {
+                self.visions_note(
+                    "wake",
+                    json!({"vision_id": vision_id, "channel_id": channel_id, "reason": reason.label(), "outcome": "no_sink"}),
+                );
+                "no_sink"
             }
-            None => self.visions_note(
-                "wake",
-                json!({"vision_id": vision_id, "channel_id": channel_id, "reason": reason.label(), "outcome": "no_sink"}),
-            ),
         }
+    }
+
+    /// The chief of the channel a chat belongs to, else (no chief) its owner.
+    pub(super) fn chief_of(&self, owner: &Owner) -> String {
+        self.channel_get(&owner.channel_id)
+            .map(|channel| channel.chief)
+            .filter(|chief| !chief.is_empty())
+            .unwrap_or_else(|| owner.vision_id.clone())
+    }
+
+    /// The channel's team reached `visions.max_wakes`: posted once, under its chief, until the
+    /// person writes.
+    fn visions_team_paused(&self, channel_id: &str) {
+        if !self.visions_cache().wakes.first_limit_notice(channel_id) {
+            return;
+        }
+        let chief = self
+            .channel_get(channel_id)
+            .map(|channel| channel.chief)
+            .unwrap_or_default();
+        let entry = ChannelEntry::Notice {
+            kind: NoticeKind::TeamPaused,
+            vision_id: (!chief.is_empty()).then(|| chief.clone()),
+            thread_id: None,
+            unpriced_requests: None,
+            reason: None,
+        };
+        let _ = self.channel_post(channel_id, &chief, entry);
     }
 
     /// Admits the wake and starts the run when one may start; returns the outcome's name.
@@ -318,7 +368,10 @@ impl AppState {
                 "started"
             }
             Ok(Admit::Queued) => "queued",
-            Ok(Admit::Limit) => "limit",
+            Ok(Admit::Limit) => {
+                self.visions_team_paused(channel_id);
+                "limit"
+            }
             Ok(Admit::Idle) => "idle",
             Err(refused) => refused,
         }
@@ -351,9 +404,15 @@ impl AppState {
         }
         if let Some(reason) = &reason {
             if let Some(thread) = reason.thread() {
+                // Its own chat, or (for the chief) one of its workers' there.
                 let owner = self
                     .owner_of(thread)
-                    .filter(|owner| owner.vision_id == vision_id && owner.channel_id == channel_id)
+                    .filter(|owner| {
+                        owner.channel_id == channel_id
+                            && (owner.vision_id == vision_id
+                                || (channel.is_chief(vision_id)
+                                    && channel.members.contains(&owner.vision_id)))
+                    })
                     .ok_or("not_owned")?;
                 if let Some(why) = held_back(&owner, reason) {
                     return Err(why);
@@ -492,17 +551,21 @@ impl AppState {
                 if self.visions_cache().wakes.first_approval_notice(id) {
                     self.visions_wake_later(
                         &owner.channel_id,
-                        &owner.vision_id,
+                        &self.chief_of(&owner),
                         WakeReason::ApprovalWaiting(thread_id.to_owned(), id.clone()),
                     );
                 }
                 continue;
             }
-            self.visions_wake_later(
+            let outcome = self.visions_wake_later(
                 &owner.channel_id,
                 &owner.vision_id,
                 WakeReason::QuestionAsked(thread_id.to_owned(), id.clone()),
             );
+            // No run may take it: the person gets it in the channel, from the chief.
+            if STRANDS.contains(&outcome) {
+                self.visions_pass_on_stranded(&owner, id);
+            }
         }
     }
 
@@ -528,7 +591,9 @@ impl AppState {
             return;
         }
         let reason = WakeReason::ApprovalWaiting(thread_id.to_owned(), approval_id.to_owned());
-        self.visions_wake(sink, &owner.channel_id, &owner.vision_id, reason);
+        // The chief speaks for the team.
+        let tells = self.chief_of(&owner);
+        self.visions_wake(sink, &owner.channel_id, &tells, reason);
     }
 
     /// What a run's approval hook calls for each box it shows (see `visions_approval_waiting`).
@@ -805,30 +870,100 @@ mod tests {
         assert_eq!(admit(finished("elsewhere")), Err("not_owned"));
     }
 
-    /// `@Name` wakes only that Vision; no mention wakes the only member, and nobody in a
-    /// channel of several.
+    /// The person's post wakes the channel's chief only, whoever it mentions: workers take
+    /// their work from the chief.
     #[test]
-    fn a_mention_wakes_only_that_vision() {
+    fn a_person_post_wakes_only_the_chief() {
         let s = setup(true);
         s.state
             .visions_post(&sink(), &s.channel, "@ada can you check the docs?")
             .unwrap();
-        assert_eq!(started(&s.state), vec![s.ada.clone()]);
         s.state
             .visions_post(&sink(), &s.channel, "anyone there?")
             .unwrap();
-        assert_eq!(
-            started(&s.state),
-            vec![s.ada.clone()],
-            "nobody is mentioned"
-        );
+        let woken = started(&s.state);
+        assert!(!woken.is_empty());
+        assert!(woken.iter().all(|vision| *vision == s.wren), "{woken:?}");
+    }
 
-        let alone = setup(false);
-        alone
+    /// Wren leads, Ada works: a chief and its worker share one wake count, stop together at
+    /// `visions.max_wakes`, and the channel is told once; the person's post starts it again.
+    #[test]
+    fn a_team_bouncing_work_stops_at_the_channel_cap_with_one_notice() {
+        let s = setup(true);
+        let runtime = s
             .state
-            .visions_post(&sink(), &alone.channel, "anyone there?")
+            .inner
+            .settings
+            .path()
+            .with_file_name("runtime.jsonc");
+        std::fs::write(&runtime, r#"{"visions": {"max_wakes": 2}}"#).unwrap();
+        let wake = |vision: &str, reason| s.state.visions_wake(&sink(), &s.channel, vision, reason);
+        assert_eq!(wake(&s.wren, WakeReason::Mentioned), "started");
+        assert_eq!(wake(&s.ada, WakeReason::Tasked(1)), "started");
+        assert_eq!(
+            wake(&s.wren, WakeReason::WorkerNote(s.ada.clone(), 2)),
+            "limit"
+        );
+        assert_eq!(wake(&s.ada, WakeReason::Tasked(3)), "limit");
+        let paused_notices = |state: &AppState| {
+            state
+                .channel_page(&s.channel, None, 1 << 20)
+                .unwrap()
+                .entries
+                .iter()
+                .filter(|line| {
+                    matches!(
+                        line.entry,
+                        ChannelEntry::Notice {
+                            kind: NoticeKind::TeamPaused,
+                            ..
+                        }
+                    )
+                })
+                .count()
+        };
+        assert_eq!(paused_notices(&s.state), 1);
+        // The person's post resets the count: the chief wakes again.
+        s.state
+            .visions_post(&sink(), &s.channel, "carry on")
             .unwrap();
-        assert_eq!(started(&alone.state), vec![alone.wren.clone()]);
+        assert_eq!(started(&s.state).last(), Some(&s.wren));
+        assert_eq!(paused_notices(&s.state), 1);
+    }
+
+    /// A work chat's event wakes the worker that owns it, not the chief.
+    #[test]
+    fn a_work_chat_event_wakes_its_worker() {
+        let s = setup(true);
+        own(&s.state, "ada-work", &s.ada, &s.channel, Hold::None);
+        let done = ThreadEvent::Finished {
+            model: None,
+            result: "ok".into(),
+        };
+        s.state.visions_after_run(&sink(), "ada-work", &done);
+        assert_eq!(started(&s.state), vec![s.ada.clone()]);
+    }
+
+    /// An approval in a worker's chat goes to the chief, who speaks for the team.
+    #[test]
+    fn a_workers_approval_shows_in_the_channel_under_the_chief() {
+        let s = setup(true);
+        own(&s.state, "ada-work", &s.ada, &s.channel, Hold::None);
+        s.state
+            .visions_approval_waiting(&sink(), "ada-work", "ap-1");
+        assert_eq!(started(&s.state), vec![s.wren.clone()]);
+    }
+
+    /// The person hands a worker's chat back: the worker picks it up and the chief is told.
+    #[tokio::test]
+    async fn hand_back_wakes_the_owning_worker_and_tells_the_chief() {
+        let s = setup(true);
+        own(&s.state, "ada-work", &s.ada, &s.channel, Hold::TakenOver);
+        s.state.visions_hand_back(&sink(), "ada-work").unwrap();
+        let woken = started(&s.state);
+        assert!(woken.contains(&s.ada), "{woken:?}");
+        assert!(woken.contains(&s.wren), "{woken:?}");
     }
 
     /// A wake refused as busy is tried again when a run ends, each try counted, so the tries

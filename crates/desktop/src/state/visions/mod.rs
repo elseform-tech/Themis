@@ -232,6 +232,9 @@ pub enum NoticeKind {
     /// The store moved from one-Vision channels to teams (each channel's first member became
     /// its chief); posted once in each `# administration`.
     TeamsArrived,
+    /// The team woke `visions.max_wakes` times since the person last wrote: nothing more starts
+    /// in the channel until they do. Posted once per stop.
+    TeamPaused,
 }
 
 /// One entry in a channel's log.

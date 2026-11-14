@@ -167,6 +167,7 @@ fn every_notice_kind() -> Vec<NoticeKind> {
         NoticeKind::BudgetUnknown,
         NoticeKind::Unpriced,
         NoticeKind::TeamsArrived,
+        NoticeKind::TeamPaused,
     ];
     for (at, kind) in kinds.iter().enumerate() {
         let place = match kind {
@@ -180,6 +181,7 @@ fn every_notice_kind() -> Vec<NoticeKind> {
             NoticeKind::BudgetUnknown => 7,
             NoticeKind::Unpriced => 8,
             NoticeKind::TeamsArrived => 9,
+            NoticeKind::TeamPaused => 10,
         };
         assert_eq!(place, at);
     }

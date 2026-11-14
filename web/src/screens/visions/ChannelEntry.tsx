@@ -47,6 +47,7 @@ export function noticeText(entry: Extract<Entry, { type: "notice" }>, vision: st
     case "budget_unknown": return say(`${vision} stopped: today's spend is unknown`);
     case "unpriced": return say(`${entry.unpriced_requests ?? "Some"} of today's requests had no price`);
     case "teams_arrived": return say("Each channel now has a chief of staff: its first Vision. The others work for the chief");
+    case "team_paused": return say(`${vision}'s team paused after many turns in a row. Write here to carry on`);
   }
 }
 

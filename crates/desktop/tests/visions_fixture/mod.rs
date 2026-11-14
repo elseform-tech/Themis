@@ -122,11 +122,16 @@ impl Fixture {
 
     /// A Vision named `name` leading a new channel of the project alone.
     pub fn chief_and_channel(&self, name: &str, channel: &str) -> (String, String) {
+        self.chief_and_channel_in(name, channel, "custom")
+    }
+
+    /// The same, with the channel's approval mode `mode`.
+    pub fn chief_and_channel_in(&self, name: &str, channel: &str, mode: &str) -> (String, String) {
         let vision_id = self.new_vision(name);
         let saved = self.call_ok(
             "save_channel",
             json!({"channel": {"name": channel, "project_root": self.project,
-                "approval_mode": "custom", "members": [vision_id]}, "revision": null}),
+                "approval_mode": mode, "members": [vision_id]}, "revision": null}),
         );
         (vision_id, saved["id"].as_str().unwrap().to_owned())
     }

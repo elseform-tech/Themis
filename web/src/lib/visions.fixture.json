@@ -71,7 +71,8 @@
     "sandbox_unavailable",
     "budget_unknown",
     "unpriced",
-    "teams_arrived"
+    "teams_arrived",
+    "team_paused"
   ],
   "lines": [
     {

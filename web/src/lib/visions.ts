@@ -95,7 +95,8 @@ export type NoticeKind =
   | "sandbox_unavailable"
   | "budget_unknown"
   | "unpriced"
-  | "teams_arrived";
+  | "teams_arrived"
+  | "team_paused";
 
 /** What the admin would set up (Rust `Proposal`): new channels and Visions by name, and changes
  *  to existing ones (a change names one `vision` or one `channel`). */
@@ -215,5 +216,5 @@ export const APPROVAL_MODES: Record<ApprovalModeName, true> = { custom: true, au
 export const NOTICE_KINDS: Record<NoticeKind, true> = {
   stopped: true, paused: true, resumed: true, budget_reached: true, chat_failed: true,
   handed_back: true, sandbox_unavailable: true, budget_unknown: true, unpriced: true,
-  teams_arrived: true,
+  teams_arrived: true, team_paused: true,
 };
