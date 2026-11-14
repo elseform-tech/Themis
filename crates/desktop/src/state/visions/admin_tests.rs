@@ -3,6 +3,13 @@ use std::path::PathBuf;
 use super::*;
 use crate::state::visions::channel_log::take_bytes_read;
 
+/// An absolute project folder on every OS (Windows needs a drive).
+const ROOT: &str = if cfg!(windows) {
+    r"C:\work\app"
+} else {
+    "/work/app"
+};
+
 fn vision(id: &str, name: &str, budget: Option<f64>) -> Vision {
     Vision {
         id: id.into(),
@@ -17,7 +24,7 @@ fn channel(id: &str, name: &str, members: &[&str]) -> Channel {
         id: id.into(),
         name: name.into(),
         topic: String::new(),
-        project_root: PathBuf::from("/work/app"),
+        project_root: PathBuf::from(ROOT),
         approval_mode: ApprovalMode::Custom,
         members: members.iter().map(|member| (*member).to_owned()).collect(),
         revision: "r".into(),
@@ -243,7 +250,11 @@ fn the_admin_runs_on_its_own_head() {
     assert!(head.starts_with("You are Atlas"));
     assert!(head.contains(r#"propose_visions_setup '{"channelId": "h1""#));
     assert!(head.contains(r#"apply_proposal '{"proposalId": "ID"}'"#));
-    assert!(head.contains(r#"list_channels '{"projectRoot": "/work/app"}'"#));
+    let listed = format!(
+        "list_channels '{{\"projectRoot\": {}}}'",
+        serde_json::to_string(ROOT).unwrap()
+    );
+    assert!(head.contains(&listed), "{listed}");
     assert!(head.contains("one proposal per message"));
     assert!(head.contains("clear yes"));
     assert!(head.contains("only when the person asks for one"));
