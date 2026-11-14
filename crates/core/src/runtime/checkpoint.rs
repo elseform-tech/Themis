@@ -327,9 +327,27 @@ pub(super) async fn summary_attempt(
 }
 
 /// Whether a provider error is worth retrying: the library's transient errors, plus HTTP 499,
-/// which OpenCode Go returns when its upstream endpoint is briefly unavailable.
+/// which OpenCode Go returns when its upstream endpoint is briefly unavailable, and an upstream
+/// failure that a gateway reports as HTTP 400 (see `upstream_server_error`).
 pub(super) fn transient(error: &autoagents::llm::error::LLMError) -> bool {
-    error.is_retryable() || error.http_status_code() == Some(499)
+    error.is_retryable() || error.http_status_code() == Some(499) || upstream_server_error(error)
+}
+
+/// OpenCode Go reports a failure of the model behind it as HTTP 400 with an error whose type
+/// or code is `server_error` ("Upstream response was not valid JSON"): the request itself was
+/// fine. Any other 400, or a body that is not that JSON, is the request's fault.
+fn upstream_server_error(error: &autoagents::llm::error::LLMError) -> bool {
+    if error.http_status_code() != Some(400) {
+        return false;
+    }
+    let Some(body) = error
+        .response_body()
+        .and_then(|body| serde_json::from_str::<serde_json::Value>(body).ok())
+    else {
+        return false;
+    };
+    let field = |name: &str| body["error"][name].as_str() == Some("server_error");
+    field("type") || field("code")
 }
 
 pub(super) fn summary_retry_reason(

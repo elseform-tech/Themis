@@ -1,0 +1,1 @@
+Themis refused this call: this Vision is paused, so it starts and sends nothing until the person resumes it. Nothing was sent or started.

@@ -525,6 +525,7 @@ fn agent_token(fx: &Fixture, thread: &str, network_blocked: bool) -> String {
         project_root: Some(fx.project.clone()),
         network_blocked,
         reads: Vec::new(),
+        vision: None,
     };
     themis_core::agent_cli::issue(thread, "run-under-test", &scope)
         .unwrap()

@@ -12,13 +12,16 @@ import {
   Palette,
   ReviewQueue,
   SettingsScreen,
-  Sidebar,
   Skills,
   ThreadView,
 } from "./screens";
 import { SidebarIcon } from "./screens/Sidebar";
 import { isTauri } from "@tauri-apps/api/core";
 import { ResourceMeter } from "./screens/ResourceMeter";
+import { ThreadHeadExtra } from "./screens/ThreadHeader";
+import { PlainVisionBar } from "./screens/visions/HandBack";
+import { SidebarWithVisions } from "./screens/visions/SidebarWithVisions";
+import { VisionsView } from "./screens/visions/VisionsView";
 import "./screens/shell.css";
 import { rememberedPalette, rememberPalette, useApplyAppearance, useAutoSky } from "./theme/appearance";
 import { StartupScreen, startupProgress, useStartupReveal } from "./screens/StartupScreen";
@@ -85,19 +88,20 @@ function Shell() {
         <header className="themis-nav" data-tauri-drag-region>
           <div className="themis-nav-context">
             <Button id="sidebar-toggle" variant="ghost" size="small" aria-label={collapsed ? "Show sidebar" : "Collapse sidebar"} aria-controls="themis-sidebar" aria-expanded={!collapsed} onClick={toggleSidebar}><SidebarIcon name="panel" /></Button>
-            <span>{state.mainView === "thread" ? (state.projects.find(p => p.root === state.activeProjectRoot)?.name ?? "Workspace") : ({ skills: "Integrations", automations: "Automations", settings: "Settings", queue: "Review queue" }[state.mainView])}</span>
+            <span>{state.mainView === "thread" ? (state.projects.find(p => p.root === state.activeProjectRoot)?.name ?? "Workspace") : ({ skills: "Integrations", automations: "Automations", settings: "Settings", queue: "Review queue", visions: "Visions" }[state.mainView])}</span>
           </div>
           {isTauri() && <ResourceMeter />}
         </header>
         <div className="themis-shell-body">
-          <Sidebar collapsed={collapsed} />
+          <SidebarWithVisions collapsed={collapsed} />
           <main className="themis-main">
         <div className="themis-view">
-          {state.mainView === "thread" && <ThreadView />}
+          {state.mainView === "thread" && <ThreadHeadExtra.Provider value={<PlainVisionBar />}><ThreadView /></ThreadHeadExtra.Provider>}
           {state.mainView === "skills" && <Skills />}
           {state.mainView === "automations" && <Automations />}
           {state.mainView === "settings" && <SettingsScreen />}
           {state.mainView === "queue" && <ReviewQueue />}
+          <VisionsView />
         </div>
       </main>
       </div>

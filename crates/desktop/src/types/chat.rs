@@ -43,6 +43,16 @@ pub struct Question {
     pub asked_at: i64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub answer: Option<String>,
+    /// The Vision that answered it, by id; absent when the person did (or nobody yet).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub answered_by: Option<String>,
+    /// A permission question (Auto mode's block box, whose "Allow once" lets an action run):
+    /// only the person may answer it. Absent (false) in files from before it was kept.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub permission: bool,
+    /// A Vision passed it on to the person: open, it waits on them, not on the Vision.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub passed_on: bool,
 }
 
 /// A message waiting in a chat's queue for the current run to end.
@@ -60,6 +70,31 @@ pub struct QueuedMessage {
     /// Why the server held it (it could not be sent); cleared by an edit.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub note: Option<String>,
+    /// The Vision that queued it; absent for the person's. Sent, it is not the person's
+    /// message (hooks may not wake the chat again for it).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub vision_id: Option<String>,
+}
+
+impl QueuedMessage {
+    /// A new waiting message (not held), the person's unless `vision_id` names a Vision.
+    #[must_use]
+    pub fn new(
+        text: String,
+        attachments: Vec<String>,
+        reasoning_effort: Option<String>,
+        vision_id: Option<String>,
+    ) -> Self {
+        Self {
+            id: uuid::Uuid::new_v4().to_string(),
+            text,
+            attachments,
+            reasoning_effort,
+            held: false,
+            note: None,
+            vision_id,
+        }
+    }
 }
 
 /// Where a chat's goal stands.

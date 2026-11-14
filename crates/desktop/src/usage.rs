@@ -17,7 +17,7 @@ use std::sync::mpsc::{sync_channel, Receiver, SyncSender, TrySendError};
 use std::sync::{Arc, Mutex};
 
 use chrono::{DateTime, Datelike, Duration, NaiveDate, TimeZone, Utc};
-use rusqlite::{params, Connection};
+use rusqlite::{params, Connection, OptionalExtension};
 use serde::Serialize;
 use serde_json::json;
 use themis_core::context_metrics::{UsageKind, UsageRecord};
@@ -97,6 +97,8 @@ pub struct UsageStore {
     connection: Option<Arc<Mutex<Connection>>>,
     sender: Mutex<Option<SyncSender<UsageRow>>>,
     dropped: Arc<AtomicU64>,
+    /// Rows queued and not yet written.
+    pending: Arc<AtomicU64>,
     diagnostics: Arc<DiagnosticLog>,
 }
 
@@ -117,13 +119,15 @@ impl UsageStore {
             }
         };
         let dropped = Arc::new(AtomicU64::new(0));
+        let pending = Arc::new(AtomicU64::new(0));
         let sender = connection.as_ref().and_then(|connection| {
             let (sender, receiver) = sync_channel(QUEUE_BOUND);
             let connection = Arc::clone(connection);
             let log = Arc::clone(&diagnostics);
+            let written = Arc::clone(&pending);
             std::thread::Builder::new()
                 .name("themis-usage".into())
-                .spawn(move || write_rows(receiver, connection, log))
+                .spawn(move || write_rows(receiver, connection, log, written))
                 .ok()
                 .map(|_| sender)
         });
@@ -131,6 +135,7 @@ impl UsageStore {
             connection,
             sender: Mutex::new(sender),
             dropped,
+            pending,
             diagnostics,
         }
     }
@@ -145,7 +150,9 @@ impl UsageStore {
         let Some(sender) = sender.as_ref() else {
             return;
         };
+        self.pending.fetch_add(1, Ordering::SeqCst);
         if let Err(TrySendError::Full(_) | TrySendError::Disconnected(_)) = sender.try_send(row) {
+            self.pending.fetch_sub(1, Ordering::SeqCst);
             let dropped = self.dropped.fetch_add(1, Ordering::Relaxed) + 1;
             if dropped == 1 || dropped.is_multiple_of(100) {
                 let _ = self.diagnostics.append(
@@ -155,6 +162,33 @@ impl UsageStore {
                     json!({"dropped_total": dropped}),
                 );
             }
+        }
+    }
+
+    /// Rows queued and not yet written (a read right after a request completes may miss them).
+    pub fn pending(&self) -> u64 {
+        self.pending.load(Ordering::SeqCst)
+    }
+
+    /// Rows after row id `after_id` and at or after `since_ms`, each with its id, in id order.
+    pub fn rows_after(&self, after_id: i64, since_ms: i64) -> Result<Vec<(i64, UsageRow)>, String> {
+        let Some(connection) = &self.connection else {
+            return Err("usage store unavailable".to_owned());
+        };
+        let connection = connection.lock().unwrap_or_else(|e| e.into_inner());
+        read_after(&connection, after_id, since_ms)
+            .map(|(rows, _)| rows)
+            .map_err(|e| format!("read usage: {e}"))
+    }
+
+    /// Makes every later read fail, for tests of what happens then.
+    #[cfg(test)]
+    pub fn break_reads_for_test(&self) {
+        if let Some(connection) = &self.connection {
+            let connection = connection.lock().unwrap_or_else(|e| e.into_inner());
+            connection
+                .execute_batch("DROP TABLE usage_requests")
+                .unwrap();
         }
     }
 
@@ -255,6 +289,7 @@ fn write_rows(
     receiver: Receiver<UsageRow>,
     connection: Arc<Mutex<Connection>>,
     log: Arc<DiagnosticLog>,
+    pending: Arc<AtomicU64>,
 ) {
     let report = |stage: &str, error: &rusqlite::Error| {
         let _ = log.append(
@@ -280,6 +315,7 @@ fn write_rows(
         if inserted > 0 && inserted.is_multiple_of(ROLLUP_EVERY) {
             rollup_now(&connection);
         }
+        pending.fetch_sub(1, Ordering::SeqCst);
     }
 }
 
@@ -314,24 +350,84 @@ fn select_rows(
     bound_ms: i64,
 ) -> rusqlite::Result<Vec<UsageRow>> {
     let mut statement = connection.prepare(&format!(
-        "SELECT at_ms,provider,model,kind,thread_id,run_id,input_tokens,cached_input_tokens,output_tokens,reasoning_tokens FROM usage_requests WHERE {condition}"
+        "SELECT {ROW_COLUMNS} FROM usage_requests WHERE {condition}"
     ))?;
-    let count = |value: Option<i64>| value.map(|value| value.max(0) as u64);
-    let rows = statement.query_map([bound_ms], |row| {
-        Ok(UsageRow {
-            at_ms: row.get(0)?,
-            provider: row.get(1)?,
-            model: row.get(2)?,
-            kind: kind_from(&row.get::<_, String>(3)?),
-            thread_id: row.get(4)?,
-            run_id: row.get(5)?,
-            input_tokens: count(row.get(6)?),
-            cached_input_tokens: count(row.get(7)?),
-            output_tokens: count(row.get(8)?),
-            reasoning_tokens: count(row.get(9)?),
-        })
-    })?;
+    let rows = statement.query_map([bound_ms], |row| row_at(row, 0))?;
     rows.collect()
+}
+
+/// Rows after `after_id` and at or after `since_ms`, in id order, and the SQLite VM steps the
+/// reads took. With `after_id` 0 (a day's first read) the start is found once on the `at_ms`
+/// index ([`day_start`]); otherwise the rows are read by id after `after_id`. Either way the
+/// work follows the rows returned, not the history or the day.
+fn read_after(
+    connection: &Connection,
+    after_id: i64,
+    since_ms: i64,
+) -> rusqlite::Result<(Vec<(i64, UsageRow)>, i32)> {
+    // Only the first read of a day looks for where it starts; later ones go on by id.
+    let (start, mut steps) = if after_id > 0 {
+        (Some(after_id + 1), 0)
+    } else {
+        day_start(connection, since_ms)?
+    };
+    let Some(start) = start else {
+        return Ok((Vec::new(), steps));
+    };
+    let mut statement = connection.prepare_cached(&format!(
+        "SELECT id,{ROW_COLUMNS} FROM usage_requests WHERE id>=?1 AND at_ms>=?2 ORDER BY id"
+    ))?;
+    let rows = statement
+        .query_map([start.max(after_id + 1), since_ms], |row| {
+            Ok((row.get(0)?, row_at(row, 1)?))
+        })?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    steps += statement.get_status(rusqlite::StatementStatus::VmStep);
+    statement.reset_status(rusqlite::StatementStatus::VmStep);
+    Ok((rows, steps))
+}
+
+/// Where to start reading the day's rows, and the VM steps finding it took: the row with the
+/// earliest `at_ms` from `since_ms`, one seek on the `at_ms` index (forced: left to itself
+/// SQLite walks ids from the oldest), less [`QUEUE_BOUND`] ids. Rows are recorded in id order
+/// with their own clock times, so a row can carry a later time than one after it, but never
+/// across more rows than the writer's queue holds; the rows read before the day started are
+/// left out by `at_ms`.
+fn day_start(connection: &Connection, since_ms: i64) -> rusqlite::Result<(Option<i64>, i32)> {
+    let mut first = connection.prepare_cached(
+        "SELECT id FROM usage_requests INDEXED BY usage_requests_at WHERE at_ms>=?1 ORDER BY at_ms LIMIT 1",
+    )?;
+    let start: Option<i64> = first.query_row([since_ms], |row| row.get(0)).optional()?;
+    let steps = first.get_status(rusqlite::StatementStatus::VmStep);
+    first.reset_status(rusqlite::StatementStatus::VmStep);
+    let margin = QUEUE_BOUND as i64;
+    Ok((start.map(|id| (id - margin).max(1)), steps))
+}
+
+/// The VM steps finding the day's start takes (for the scale test).
+#[cfg(test)]
+fn seek_steps(connection: &Connection, since_ms: i64) -> rusqlite::Result<i32> {
+    day_start(connection, since_ms).map(|(_, steps)| steps)
+}
+
+/// The columns [`row_at`] reads, in order.
+const ROW_COLUMNS: &str = "at_ms,provider,model,kind,thread_id,run_id,input_tokens,cached_input_tokens,output_tokens,reasoning_tokens";
+
+/// A [`UsageRow`] from [`ROW_COLUMNS`] starting at column `at`.
+fn row_at(row: &rusqlite::Row<'_>, at: usize) -> rusqlite::Result<UsageRow> {
+    let count = |value: Option<i64>| value.map(|value| value.max(0) as u64);
+    Ok(UsageRow {
+        at_ms: row.get(at)?,
+        provider: row.get(at + 1)?,
+        model: row.get(at + 2)?,
+        kind: kind_from(&row.get::<_, String>(at + 3)?),
+        thread_id: row.get(at + 4)?,
+        run_id: row.get(at + 5)?,
+        input_tokens: count(row.get(at + 6)?),
+        cached_input_tokens: count(row.get(at + 7)?),
+        output_tokens: count(row.get(at + 8)?),
+        reasoning_tokens: count(row.get(at + 9)?),
+    })
 }
 
 /// Moves raw rows older than [`RAW_RETENTION_DAYS`] into daily totals (local days in
@@ -901,6 +997,7 @@ mod tests {
             connection: Some(Arc::new(Mutex::new(connection))),
             sender: Mutex::new(None),
             dropped: Arc::default(),
+            pending: Arc::default(),
             diagnostics: Arc::new(DiagnosticLog::new(directory.path().join("logs"))),
         };
         let chat = store.chat_totals("chat").unwrap();
@@ -945,5 +1042,86 @@ mod tests {
         assert_eq!(rows[0].thread_id.as_ref().unwrap().len(), MAX_ID_CHARS);
         assert_eq!(rows[0].kind, UsageKind::Summary);
         assert_eq!(rows[0].output_tokens, Some(3));
+    }
+
+    /// Scale: reading the day's rows (`after_id` 0, as after a restart or at midnight) takes the
+    /// same SQLite work however many older rows the store keeps: the first row is found on the
+    /// `at_ms` index and the rest read by id from there.
+    #[test]
+    fn reading_todays_rows_does_not_walk_the_history() {
+        let mut steps = Vec::new();
+        // Both past the margin of rows read before the day's start (`QUEUE_BOUND`).
+        for older in [2_000i64, 20_000] {
+            let directory = tempfile::tempdir().unwrap();
+            let connection = open_connection(&directory.path().join("usage.sqlite3")).unwrap();
+            connection.execute_batch("BEGIN").unwrap();
+            let at = |at_ms: i64| UsageRow {
+                at_ms,
+                ..row(Utc::now(), "m", Some("chat"), 1, 1)
+            };
+            for n in 0..older {
+                insert(&connection, &at(1_000 + n)).unwrap();
+            }
+            for n in 0..10 {
+                insert(&connection, &at(10_000_000 + n)).unwrap();
+            }
+            connection.execute_batch("COMMIT").unwrap();
+            let (rows, used) = read_after(&connection, 0, 10_000_000).unwrap();
+            assert_eq!(rows.len(), 10);
+            let (again, _) = read_after(&connection, rows[9].0, 10_000_000).unwrap();
+            assert!(again.is_empty());
+            steps.push(used);
+        }
+        assert_eq!(steps[0], steps[1], "VM steps flat in history: {steps:?}");
+        let directory = tempfile::tempdir().unwrap();
+        let connection = open_connection(&directory.path().join("usage.sqlite3")).unwrap();
+        let plan: String = connection
+            .query_row(
+                "EXPLAIN QUERY PLAN SELECT id FROM usage_requests INDEXED BY usage_requests_at WHERE at_ms>=1 ORDER BY at_ms LIMIT 1",
+                [],
+                |row| row.get(3),
+            )
+            .unwrap();
+        assert!(plan.contains("usage_requests_at"), "{plan}");
+    }
+
+    /// Scale: a repeated read (nothing new since `after_id`) costs the same SQLite work with
+    /// 1,000 or 50,000 rows today, and so does finding where the day starts on a first read;
+    /// only decoding the day's rows on that first read grows with them.
+    #[test]
+    fn a_repeated_read_does_not_walk_todays_rows() {
+        let mut repeated = Vec::new();
+        let mut first = Vec::new();
+        for today in [1_000i64, 50_000] {
+            let directory = tempfile::tempdir().unwrap();
+            let connection = open_connection(&directory.path().join("usage.sqlite3")).unwrap();
+            connection.execute_batch("BEGIN").unwrap();
+            let at = |at_ms: i64| UsageRow {
+                at_ms,
+                ..row(Utc::now(), "m", Some("chat"), 1, 1)
+            };
+            for n in 0..100 {
+                insert(&connection, &at(1_000 + n)).unwrap();
+            }
+            for n in 0..today {
+                insert(&connection, &at(10_000_000 + n)).unwrap();
+            }
+            connection.execute_batch("COMMIT").unwrap();
+            let (rows, _) = read_after(&connection, 0, 10_000_000).unwrap();
+            assert_eq!(rows.len() as i64, today);
+            first.push(seek_steps(&connection, 10_000_000).unwrap());
+            let last = rows.last().unwrap().0;
+            let (again, steps) = read_after(&connection, last, 10_000_000).unwrap();
+            assert!(again.is_empty());
+            repeated.push(steps);
+        }
+        assert_eq!(
+            repeated[0], repeated[1],
+            "repeated read flat in today's rows: {repeated:?}"
+        );
+        assert_eq!(
+            first[0], first[1],
+            "finding the day's start flat: {first:?}"
+        );
     }
 }

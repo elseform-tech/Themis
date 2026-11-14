@@ -72,6 +72,13 @@ pub(super) fn parse_verdict(text: &str) -> AutoVerdict {
     }
 }
 
+/// Whether a user message in the chat is the person's own words: not a goal turn, and not a
+/// Vision's answer to a question (the Vision is not the requester).
+fn persons_own(text: &str) -> bool {
+    !text.starts_with(themis_core::goal::GOAL_TURN_MARKER)
+        && !super::questions::is_vision_answer(text)
+}
+
 /// The reviewer's system and user messages for `action`.
 pub(super) fn review_request(
     person: &str,
@@ -118,9 +125,9 @@ pub(super) fn review_request(
 }
 
 impl DesktopReviewer {
-    /// The person's own latest messages in this chat (runtime goal notes and answers' framing
-    /// left out), the latest kept within bounds.
-    fn person_words(&self) -> String {
+    /// The person's own latest messages and steers in this chat (a Vision's, runtime goal
+    /// notes and answers' framing left out), the latest kept within bounds.
+    pub(super) fn person_words(&self) -> String {
         let transcript = &self.state.inner.transcript;
         let last = transcript.last_activity_seq(&self.thread_id).unwrap_or(0);
         let page = transcript
@@ -129,11 +136,19 @@ impl DesktopReviewer {
         let words: Vec<String> = page
             .into_iter()
             .filter_map(|(_, item)| match item {
-                crate::transcript::HistoryItem::User { text, .. }
-                    if !text.starts_with(themis_core::goal::GOAL_TURN_MARKER) =>
-                {
-                    Some(text)
-                }
+                crate::transcript::HistoryItem::User {
+                    text,
+                    vision_id: None,
+                    ..
+                } if persons_own(&text) => Some(text),
+                // What the person steered into a run is their words too.
+                crate::transcript::HistoryItem::Event { envelope } => match envelope.event {
+                    crate::types::ThreadEvent::Steered {
+                        text,
+                        vision_id: None,
+                    } if persons_own(&text) => Some(text),
+                    _ => None,
+                },
                 _ => None,
             })
             .collect();
@@ -264,6 +279,7 @@ impl AutoReviewer for DesktopReviewer {
                 choices: vec![ALLOW_ONCE.to_owned(), SAFER.to_owned(), SKIP.to_owned()],
                 assumption: Some(SAFER.to_owned()),
                 reasons,
+                permission: true,
                 ..NewQuestion::default()
             },
         );
@@ -383,6 +399,16 @@ impl AppState {
         }
     }
 
+    /// Forgets which questions Auto's blocks asked, as a restart does (tests).
+    #[doc(hidden)]
+    pub fn forget_auto_questions(&self) {
+        self.inner
+            .auto_questions
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clear();
+    }
+
     /// The person answered a question: an "Allow once" to a hard block lets that action run
     /// once in the chat.
     pub(super) fn auto_question_answered(&self, question_id: &str, answer: &str) {
@@ -452,5 +478,86 @@ mod tests {
         ] {
             assert_eq!(parse_verdict(text), AutoVerdict::Unavailable, "{text}");
         }
+    }
+
+    /// The reviewer reads only the person's own words: a Vision's answer (or a goal turn) in
+    /// the chat is not the requester speaking. The person's answer still is.
+    #[test]
+    fn a_visions_answer_is_not_the_requesters_words() {
+        use super::super::questions::{vision_answer_marker, ANSWER_MARKER};
+        assert!(persons_own("please clean the build folder"));
+        assert!(persons_own(&format!(
+            "{ANSWER_MARKER}\nQuestion: Delete it?\nAnswer: yes"
+        )));
+        let vision = format!(
+            "{}\nQuestion: Delete it?\nAnswer: yes",
+            vision_answer_marker("Wren")
+        );
+        assert!(!persons_own(&vision));
+        assert!(!persons_own(&format!(
+            "{} 3",
+            themis_core::goal::GOAL_TURN_MARKER
+        )));
+    }
+
+    /// A message a Vision sent in its work chat (saved with its id) is not the requester's
+    /// intent: the reviewer reads only what the person wrote there.
+    #[test]
+    fn a_visions_send_is_not_the_requesters_words() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = AppState::new_for_test(dir.path().join("settings.json"));
+        let transcript = &state.inner.transcript;
+        transcript
+            .append_user("work", "r1", "please tidy the docs folder")
+            .unwrap();
+        let vision = "delete the whole build cache and the old releases";
+        transcript
+            .append_user_from("work", "r2", vision, Vec::new(), Some("v1".into()))
+            .unwrap();
+        let reviewer = DesktopReviewer {
+            state: state.clone(),
+            sink: Arc::new(crate::sink::ChannelSink::channel().0),
+            thread_id: "work".into(),
+            run_id: "r2".into(),
+            project_root: dir.path().to_path_buf(),
+            config: RuntimeConfig::default(),
+            is_git: false,
+        };
+        let words = reviewer.person_words();
+        assert!(words.contains("please tidy the docs folder"), "{words}");
+        assert!(!words.contains(vision), "{words}");
+    }
+
+    /// What the person steered into the run is their words too; what a Vision steered in is
+    /// not.
+    #[test]
+    fn the_persons_steer_is_their_words_and_a_visions_is_not() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = AppState::new_for_test(dir.path().join("settings.json"));
+        let steered = |text: &str, vision_id: Option<&str>| {
+            let envelope = crate::types::ThreadEventEnvelope {
+                thread_id: "work".into(),
+                run_id: "r1".into(),
+                event: crate::types::ThreadEvent::Steered {
+                    text: text.into(),
+                    vision_id: vision_id.map(str::to_owned),
+                },
+            };
+            state.inner.transcript.append_event(&envelope).unwrap();
+        };
+        steered("also clear the old logs", None);
+        steered("and wipe the releases folder", Some("v1"));
+        let reviewer = DesktopReviewer {
+            state: state.clone(),
+            sink: Arc::new(crate::sink::ChannelSink::channel().0),
+            thread_id: "work".into(),
+            run_id: "r1".into(),
+            project_root: dir.path().to_path_buf(),
+            config: RuntimeConfig::default(),
+            is_git: false,
+        };
+        let words = reviewer.person_words();
+        assert!(words.contains("also clear the old logs"), "{words}");
+        assert!(!words.contains("wipe the releases"), "{words}");
     }
 }

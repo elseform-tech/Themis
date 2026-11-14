@@ -18,6 +18,7 @@ use std::path::{Path, PathBuf};
 
 const CREATE_RULESET_VERSION: libc::c_uint = 1;
 const RULE_PATH_BENEATH: libc::c_int = 1;
+const RULE_NET_PORT: libc::c_int = 2;
 
 const EXECUTE: u64 = 1 << 0;
 const WRITE_FILE: u64 = 1 << 1;
@@ -40,6 +41,12 @@ const SPLIT_BUDGET: usize = 50_000;
 struct RulesetAttr {
     handled_access_fs: u64,
     handled_access_net: u64,
+}
+
+#[repr(C, packed)]
+struct NetPortAttr {
+    allowed_access: u64,
+    port: u64,
 }
 
 #[repr(C, packed)]
@@ -154,6 +161,9 @@ impl Ruleset {
             let _ = ruleset.allow(Path::new(device), (WRITE_FILE | READ_FILE | IOCTL_DEV) & fs);
         }
         let _ = ruleset.allow(Path::new("/dev/pts"), (write | READ) & fs);
+        if let Some(port) = plan.local_port().filter(|_| net != 0) {
+            ruleset.allow_connect(port)?;
+        }
         Ok(ruleset)
     }
 
@@ -193,6 +203,31 @@ impl Ruleset {
             return Err(format!(
                 "cannot add a Landlock rule for {}: {}",
                 path.display(),
+                std::io::Error::last_os_error()
+            ));
+        }
+        Ok(())
+    }
+
+    /// Lets commands connect to TCP `port` (Landlock ABI 4 rules name a port, not a host).
+    fn allow_connect(&self, port: u16) -> Result<(), String> {
+        let attr = NetPortAttr {
+            allowed_access: NET_CONNECT_TCP,
+            port: u64::from(port),
+        };
+        // SAFETY: `attr` is a valid, packed rule that outlives the call.
+        let result = unsafe {
+            libc::syscall(
+                libc::SYS_landlock_add_rule,
+                self.fd.as_raw_fd(),
+                RULE_NET_PORT,
+                &attr as *const NetPortAttr,
+                0 as libc::c_uint,
+            )
+        };
+        if result < 0 {
+            return Err(format!(
+                "cannot add a Landlock rule for port {port}: {}",
                 std::io::Error::last_os_error()
             ));
         }

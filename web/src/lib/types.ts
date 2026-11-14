@@ -59,6 +59,16 @@ export interface ThreadInfo {
   /** True when the thread was marked running at shutdown and reconciled on boot. */
   recovered: boolean;
   skill_ids: string[];
+  /** The Vision running this chat (a work chat it started); null for the person's own. */
+  vision?: ThreadVision | null;
+}
+
+/** The Vision running a chat, as plain chat marks it (Rust `ThreadVision`). */
+export interface ThreadVision {
+  id: string;
+  name: string;
+  shape: string;
+  color: string;
 }
 
 export interface MergeResult {
@@ -336,21 +346,21 @@ export type ThreadEvent =
   | { kind: 'finished'; result: string; model?: string }
   | { kind: 'failed'; error: string }
   | { kind: 'background_tasks_changed' }
-  /** A queued message the user steered into this run reached the model. */
-  | { kind: 'steered'; text: string }
-  /** The user steered this message in: on screen now, before the run reads it. */
-  | { kind: 'steer_shown'; text: string }
+  /** A queued message steered into this run reached the model (`vision_id`: a Vision's). */
+  | { kind: 'steered'; text: string; vision_id?: string }
+  /** A message steered in: on screen now, before the run reads it (`vision_id`: a Vision's). */
+  | { kind: 'steer_shown'; text: string; vision_id?: string }
   /** The run ended without reading it: back in the queue, so it leaves the chat. */
   | { kind: 'steer_returned'; text: string }
   /** The server started this run with a queued message or a goal turn (live only). */
-  | { kind: 'user_message'; text: string; attachments?: string[] }
+  | { kind: 'user_message'; text: string; attachments?: string[]; vision_id?: string }
   | { kind: 'queue_changed'; queue: QueuedMessage[] }
   | { kind: 'goal_changed'; goal: Goal | null }
   /** The main agent's to-do list changed. */
   | { kind: 'goal_note'; outcome: GoalNoteKind; reason: string }
   /** The agent asked the user a question, or updated one still open (same id). */
   | { kind: 'question_asked'; question: Question }
-  | { kind: 'question_answered'; id: string; answer: string }
+  | { kind: 'question_answered'; id: string; answer: string; vision_id?: string }
   /** The agent started a read-only subagent for one part of its task. */
   | { kind: 'subagent_started'; id: string; name: string; brief: string; model: string; confined: boolean; write_paths?: string[]; connections?: string[]; web?: boolean; shell_scopes?: string[]; /** The subagent that started it; none when the main agent did. */ started_by?: string; /** RFC 3339. */ at?: string }
   /** The main agent wrote to a subagent; `resumed` when that picked an ended one up again. */
@@ -475,10 +485,26 @@ export interface Question {
   topic?: string;
   asked_at: number;
   answer?: string;
+  /** The Vision that answered it, by id; absent when the person did. */
+  answered_by?: string;
+  /** A permission question (Auto mode's block box): only the person may answer it. */
+  permission?: boolean;
+  /** The subagent that asked, by id. */
+  subagent?: string;
+  /** A Vision passed it on to the person: open, it waits on them. */
+  passed_on?: boolean;
 }
 
 /** Starts the message that delivers an answer to the agent. */
 export const ANSWER_MARKER = "[Answer to your question — from the user]";
+
+/** Starts a Vision's answer message, followed by its name and "]". */
+export const VISION_ANSWER_PREFIX = "[Answer to your question — from the Vision ";
+
+/** Whether a message delivers answers to the agent's questions, the person's or a Vision's. */
+export function isAnswerText(text: string): boolean {
+  return text.startsWith(ANSWER_MARKER) || text.startsWith(VISION_ANSWER_PREFIX);
+}
 
 /** A message waiting for the chat's current run to end. */
 export interface QueuedMessage {
@@ -490,6 +516,8 @@ export interface QueuedMessage {
   held: boolean;
   /** Why the server held it (it could not be sent); an edit clears it. */
   note?: string;
+  /** The Vision that queued it; absent for the person's. */
+  vision_id?: string;
 }
 
 export type GoalStatus = 'running' | 'paused' | 'waiting' | 'blocked' | 'quota' | 'reached';
@@ -645,6 +673,8 @@ export interface PersistedMessage {
   media?: AttachedMedia[];
   /** A message the user steered into a running run. */
   steered?: boolean;
+  /** The Vision that wrote this user message (sent, queued or steered); absent for the person. */
+  visionId?: string;
   /** Steered and on screen, but the run has not read it yet. */
   steerUnread?: boolean;
   /** A runtime message that started goal turn N; shown as a divider, not a bubble. */
@@ -671,7 +701,7 @@ export interface PersistedMessage {
 }
 
 export type HistoryItem =
-  | { kind: "user"; run_id: string; text: string; attachments?: string[] }
+  | { kind: "user"; run_id: string; text: string; attachments?: string[]; vision_id?: string }
   | { kind: "event"; envelope: ThreadEventEnvelope }
   | { kind: "legacy"; message: PersistedMessage };
 
@@ -893,6 +923,8 @@ export interface ThreadChange {
 }
 
 export const SETTINGS_CHANGED_NAME = 'settings-changed';
+/** Visions, channels, a channel's log or owned chats changed (`VisionsChange` in lib/visions). */
+export const VISIONS_CHANGED_NAME = 'visions-changed';
 
 /** Settings were written through the shared server (this window, the CLI or another client):
  *  `app` is settings.json, `runtime` a runtime.jsonc, `secrets` which keys are stored. */

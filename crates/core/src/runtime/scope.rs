@@ -137,9 +137,42 @@ pub(super) fn first_request_section(older: &[ChatMessage]) -> Option<String> {
     ))
 }
 
-/// Messages the user steers into a running run, oldest first. The caller
-/// pushes; the run takes them before its next model request.
-pub type SteerInbox = Arc<Mutex<std::collections::VecDeque<String>>>;
+/// A message steered into a running run, and who wrote it.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct Steer {
+    /// The text, as written.
+    pub text: String,
+    /// `None` for the person (and what the app adds for them); otherwise the agent acting for
+    /// them that wrote it (a Vision's id), whose words are not the person's.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub author: Option<String>,
+    /// Whether the person put it into the run, their act even when the words are an agent's
+    /// (they steered in what a Vision queued): the app treats it as the person's new message
+    /// for the approvals the run waits on. Not part of the event's wire form.
+    #[serde(skip)]
+    pub person_acted: bool,
+}
+
+impl From<String> for Steer {
+    /// The person's message, put in by them.
+    fn from(text: String) -> Self {
+        Self {
+            text,
+            author: None,
+            person_acted: true,
+        }
+    }
+}
+
+impl From<&str> for Steer {
+    fn from(text: &str) -> Self {
+        Self::from(text.to_owned())
+    }
+}
+
+/// Messages steered into a running run, oldest first. The caller pushes; the run takes them
+/// before its next model request.
+pub type SteerInbox = Arc<Mutex<std::collections::VecDeque<Steer>>>;
 
 /// Runs `future` with a steer inbox; without one, steering is unavailable.
 pub async fn with_steer_inbox<F: std::future::Future>(inbox: SteerInbox, future: F) -> F::Output {
@@ -164,7 +197,7 @@ pub(super) fn take_end_request() -> Option<String> {
 }
 
 /// Takes every steered message waiting for this run.
-pub(super) fn take_steers() -> Vec<String> {
+pub(super) fn take_steers() -> Vec<Steer> {
     STEER_INBOX
         .try_with(|inbox| {
             inbox

@@ -34,6 +34,7 @@ keep watching), **fixed** (the measure has stayed clean across recent runs of ea
 | 2026-11-09 integrations eval | Saves a team skill into its own store instead of the project's `.agents/skills`. | `evals/integrations` · `project-skill` scenario | main 2/3 → #355 3/3 | improving |
 | 2026-11-09 live check | A hook guard looking for a word misses it in a shell call's `args` list. | `evals/integrations` · `add-hook` scenario | guide fix in #355; see its A/B comment | watching |
 | 2026-11-09 live check | Leaves temporary files in the project (for example `scratchpad/glob-greet.json`). | `evals/integrations` · `stray_files` | 3 in 21 runs on main, 2 on #369 (iceman, 2026-11-10) | open |
+| expected (Visions phase 1 design) | A Vision relays a false done: it tells the person in the channel the work is finished while the hidden checks fail (passing on its work chat's false claim, or making its own). | `evals/visions` · `false_done` (with `person_messages` against goal mode on the same tasks and model) | not run yet | open |
 | ongoing | Says the work is done when the check is not met. | `evals/integrations` · `false_claim`; `evals/verify` · false claims | 0 in the 2026-11-09 A/B | watching |
 | ongoing | Redoes or rereads work after a checkpoint. | `evals/soak` · `redone_items`, `rereads_after_checkpoint` | soak trend | watching |
 | ongoing | Finishes without checking its last change, or without reproducing a bug first. | `evals/verify` · verification habits | verify trend | watching |

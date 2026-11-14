@@ -1,0 +1,9 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 6a27e6265128002dfef0238d3d00c07ed846c0ba97349979349c151cf8386041 # shrinks to method = "list_questions", thread = Some("t4"), channel = None, in_project = None, table = [(0, false, 0), (0, false, 0), (0, false, 0), (0, false, 0), (2, true, 0)]
+cc ba7f96f3630f437ed2f8cbdd94325fa38d19c4ff61a888f26587a8ebeeca1362 # shrinks to method = "stop_thread", thread = Some("t0"), channel = None, in_project = None, table = [(1, 0, 2), (0, 0, 0), (0, 0, 0), (0, 0, 0), (0, 0, 0)]
+cc 67f86b5f083c64d6ad78b66ffd78aa25645a2492811fd5971b384f0b3b8323e2 # shrinks to method = "plugin_action", thread = None, channel = None, in_project = None, table = [(0, 0, 0), (0, 0, 0), (0, 0, 0), (0, 0, 0), (0, 0, 0)]

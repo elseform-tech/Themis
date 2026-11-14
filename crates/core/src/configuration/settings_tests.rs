@@ -844,3 +844,143 @@ fn legacy_section_max_tokens_still_loads_but_is_not_written() {
     assert!(written["compaction"].get("section_max_tokens").is_none());
     assert_eq!(CompactionConfig::default().section_max_tokens, 4096);
 }
+
+#[test]
+fn visions_defaults_and_validation() {
+    let defaults = RuntimeConfig::default().visions;
+    assert!(defaults.enabled);
+    assert_eq!(defaults.autonomy, crate::visions::Autonomy::Small);
+    assert!(defaults.custom.is_empty());
+    assert_eq!(defaults.daily_budget_usd, 1.0);
+    assert_eq!(defaults.max_wakes, 6);
+    let user = resolve(
+        Some(r#"{"visions":{"autonomy":"custom","custom":{"delete":true},"daily_budget_usd":5,"max_wakes":10}}"#),
+        None,
+        None,
+    )
+    .unwrap();
+    assert_eq!(user.provenance["visions.autonomy"], "user");
+    assert!(user.config.visions.custom["delete"]);
+    for bad in [
+        r#"{"visions":{"autonomy":"all"}}"#,
+        r#"{"visions":{"custom":{"nonsense":true}}}"#,
+        r#"{"visions":{"daily_budget_usd":0.05}}"#,
+        r#"{"visions":{"daily_budget_usd":101}}"#,
+        r#"{"visions":{"max_wakes":0}}"#,
+        r#"{"visions":{"max_wakes":21}}"#,
+        r#"{"visions":{"extra":1}}"#,
+    ] {
+        assert!(resolve(Some(bad), None, None).is_err(), "{bad}");
+    }
+}
+
+#[test]
+fn unknown_custom_rows_are_rejected() {
+    let error = resolve(
+        Some(r#"{"visions":{"custom":{"wording":true,"fly":true}}}"#),
+        None,
+        None,
+    )
+    .unwrap_err();
+    assert!(format!("{error:#}").contains("fly"));
+}
+
+#[test]
+fn a_project_cannot_raise_autonomy_or_budget() {
+    let user = r#"{"visions":{"autonomy":"small","daily_budget_usd":2,"max_wakes":8}}"#;
+    for raise in [
+        r#"{"visions":{"autonomy":"most"}}"#,
+        r#"{"visions":{"autonomy":"custom"}}"#,
+        r#"{"visions":{"daily_budget_usd":3}}"#,
+        r#"{"visions":{"max_wakes":9}}"#,
+        r#"{"visions":{"custom":{"delete":true}}}"#,
+        r#"{"visions":{"enabled":true}}"#,
+    ] {
+        assert!(resolve(Some(user), Some(raise), None).is_err(), "{raise}");
+        assert!(resolve(Some(user), None, Some(raise)).is_err(), "{raise}");
+    }
+    let lowered = resolve(
+        Some(user),
+        Some(r#"{"visions":{"autonomy":"ask","daily_budget_usd":1,"max_wakes":2,"custom":{"delete":false},"enabled":false}}"#),
+        None,
+    )
+    .unwrap();
+    assert_eq!(
+        lowered.config.visions.autonomy,
+        crate::visions::Autonomy::Ask
+    );
+    assert_eq!(lowered.config.visions.max_wakes, 2);
+    assert_eq!(lowered.provenance["visions.autonomy"], "project");
+    // Equal is not a raise.
+    assert!(resolve(
+        Some(user),
+        Some(r#"{"visions":{"autonomy":"small"}}"#),
+        None
+    )
+    .is_ok());
+}
+
+fn custom_user(rows: &str) -> String {
+    format!(r#"{{"visions":{{"autonomy":"custom","custom":{rows}}}}}"#)
+}
+
+#[test]
+fn a_project_may_lower_custom_to_ask() {
+    let user = custom_user(r#"{"delete":true}"#);
+    let lowered = resolve(Some(&user), Some(r#"{"visions":{"autonomy":"ask"}}"#), None).unwrap();
+    assert_eq!(
+        lowered.config.visions.autonomy,
+        crate::visions::Autonomy::Ask
+    );
+}
+
+#[test]
+fn a_project_may_set_a_preset_within_the_users_custom_rows() {
+    let user = custom_user(r#"{"wording":true,"tests":true,"scope":true}"#);
+    let project = resolve(
+        Some(&user),
+        Some(r#"{"visions":{"autonomy":"small"}}"#),
+        None,
+    )
+    .unwrap();
+    assert_eq!(
+        project.config.visions.autonomy,
+        crate::visions::Autonomy::Small
+    );
+}
+
+#[test]
+fn a_project_may_not_set_a_preset_beyond_the_users_custom_rows() {
+    let user = custom_user(r#"{"wording":true}"#);
+    for preset in ["small", "most", "nearly_all"] {
+        let project = format!(r#"{{"visions":{{"autonomy":"{preset}"}}}}"#);
+        assert!(
+            resolve(Some(&user), Some(&project), None).is_err(),
+            "{preset}"
+        );
+    }
+}
+
+#[test]
+fn a_project_may_not_switch_to_custom() {
+    for user in [
+        r#"{"visions":{"autonomy":"most"}}"#,
+        r#"{"visions":{"autonomy":"ask"}}"#,
+    ] {
+        let project = r#"{"visions":{"autonomy":"custom"}}"#;
+        assert!(resolve(Some(user), Some(project), None).is_err(), "{user}");
+    }
+    let user = custom_user(r#"{"delete":true}"#);
+    assert!(resolve(
+        Some(&user),
+        Some(r#"{"visions":{"autonomy":"custom","custom":{"delete":true}}}"#),
+        None
+    )
+    .is_err());
+    assert!(resolve(
+        Some(&user),
+        Some(r#"{"visions":{"autonomy":"custom","custom":{"delete":false}}}"#),
+        None
+    )
+    .is_ok());
+}

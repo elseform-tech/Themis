@@ -1,0 +1,1 @@
+Themis refused this call: this Vision has reached today's budget, so it starts and sends nothing until the person raises the budget or the day ends. Nothing was sent or started. Tell the person in your channel message what is left to do.

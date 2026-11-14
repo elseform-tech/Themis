@@ -1,0 +1,1 @@
+Themis refused this step: a Vision's run never asks the person for approval, so anything that would need it is not run. Only plain `themis` calls (the program itself with its arguments, no `sh -c`) and reads inside the project run. Give work like this to a chat you start, or tell the person in your channel message.

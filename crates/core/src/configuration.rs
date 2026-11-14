@@ -22,6 +22,7 @@ mod jsonc;
 mod resolve;
 mod schema;
 mod sections;
+mod visions;
 mod web_browser;
 pub use approval::*;
 pub use approval_hook::*;
@@ -30,6 +31,7 @@ pub use jsonc::*;
 pub use resolve::*;
 pub use schema::*;
 pub use sections::*;
+pub use visions::*;
 pub use web_browser::*;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -53,6 +55,8 @@ pub struct RuntimeConfig {
     pub hooks: HooksConfig,
     /// Memory across chats; see [`MemoryConfig`].
     pub memory: MemoryConfig,
+    /// Visions, agents that drive chats; see [`VisionsConfig`].
+    pub visions: VisionsConfig,
     /// `web_search` backend; see [`WebConfig`].
     pub web: WebConfig,
     /// The built-in browser; see [`BrowserConfig`].
@@ -87,6 +91,7 @@ impl Default for RuntimeConfig {
             subagents: SubagentsConfig::default(),
             hooks: HooksConfig::default(),
             memory: MemoryConfig::default(),
+            visions: VisionsConfig::default(),
             web: WebConfig::default(),
             browser: BrowserConfig::default(),
             providers: Vec::new(),

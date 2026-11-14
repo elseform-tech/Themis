@@ -18,6 +18,7 @@ Files are grouped by prefix:
 | `runtime-` | Runtime notes and nudges sent during a run |
 | `tool-` | Notes added to tool results |
 | `desktop-` | Text the desktop app adds (run workspace, MCP status, attachments, watches) |
+| `visions-` | A Vision's run: its system head (who it is, its channel, how it speaks to the person: everyday words with no ids, commands, paths or tool names, the `themis` calls that drive chats, which it never repeats to the person, the autonomy table), the read-only note, the wake message listing what woke it, the note a refused step carries back, and what its commands say when no sandbox can hold the run; `visions-admin.md` is the admin Vision's head in `# hq` in place of `visions-system.md` (the plain voice, the `themis` calls that propose and set up channels and Visions, one proposal per message, set up only on a clear yes and ask again when unclear; `agent-cli-admin-no-reply.md` is the server's answer when it tries to set one up before the person replied) |
 | `eval-` | Evaluation harness probes |
 
 `crates/core/src/prompts.rs` exposes each file as a constant

@@ -86,3 +86,71 @@ pub(super) fn mcp_remote_name(wire: &str) -> Option<&str> {
         .strip_prefix('_')
         .filter(|remote| !remote.is_empty())
 }
+
+/// Why an MCP connection of a run failed to start, as a fixed category: transport errors may
+/// contain remote URLs, arguments or server responses, so only actionable categories show.
+pub(super) fn mcp_failure_reason(error: &anyhow::Error) -> &'static str {
+    let text = error.to_string();
+    let missing = format!("{error:#}").contains("MCP program not found")
+        || text.starts_with("MCP process could not start: ");
+    match text.as_str() {
+        _ if missing => "server process could not start: its program was not found",
+        "Could not start MCP server" | "MCP process could not start. Check the saved command." => {
+            "server process could not start"
+        }
+        "Required MCP environment variable is unset"
+        | "MCP authentication variable is unset"
+        | "Required MCP environment variable is unavailable." => {
+            "required authentication or environment variable is unavailable"
+        }
+        "MCP startup denied" => "startup approval was denied",
+        "MCP startup needs your approval" => {
+            "it has not been enabled by you since its definition last changed"
+        }
+        "Unsupported MCP protocol version" => "server protocol is unsupported",
+        _ => "connection or tool discovery failed",
+    }
+}
+
+impl AppState {
+    /// A run's web settings: fetch_url always; web_search through the person's SearXNG, or the
+    /// one built into Themis when it is ready in time.
+    pub(super) async fn run_web_config(
+        &self,
+        run_configuration: &themis_core::configuration::RuntimeConfig,
+    ) -> themis_core::configuration::WebConfig {
+        let mut web = run_configuration.web.clone();
+        if web.search_url.is_none()
+            && self.inner.built_in_search
+            && crate::state::searxng::runtime_dir().is_some()
+        {
+            let app_dir = self.app_data_dir();
+            match crate::state::searxng::for_run(
+                crate::state::searxng::RUN_WAIT,
+                crate::state::searxng::url(&app_dir),
+            )
+            .await
+            {
+                crate::state::searxng::ForRun::Ready(url) => web.search_url = Some(url),
+                crate::state::searxng::ForRun::Unavailable(error) => {
+                    let _ = self.inner.diagnostics.append(
+                        "web",
+                        "built_in_search_unavailable",
+                        "warn",
+                        json!({"reason": error}),
+                    );
+                }
+                // Its start goes on in the background; the next run gets the server.
+                crate::state::searxng::ForRun::Starting => {
+                    let _ = self.inner.diagnostics.append(
+                        "web",
+                        "built_in_search_starting",
+                        "info",
+                        json!({"waited_ms": crate::state::searxng::RUN_WAIT.as_millis() as u64}),
+                    );
+                }
+            }
+        }
+        web
+    }
+}

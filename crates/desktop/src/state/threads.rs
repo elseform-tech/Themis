@@ -10,6 +10,25 @@ pub(super) fn send_must_wait(error: &str) -> bool {
     error.contains(BUSY) || error.contains(CONCURRENCY_LIMIT)
 }
 
+/// What a message carries beside its text: the reasoning effort, attachments, and the Vision
+/// that sent it (`None` when the person did, or the server for itself).
+#[derive(Debug, Default)]
+pub(super) struct SendOptions {
+    pub(super) reasoning_effort: Option<String>,
+    pub(super) attachments: Vec<String>,
+    pub(super) vision_id: Option<String>,
+}
+
+impl SendOptions {
+    /// Only a reasoning effort: no attachments, and not a Vision's.
+    pub(super) fn with_effort(reasoning_effort: Option<String>) -> Self {
+        Self {
+            reasoning_effort,
+            ..Self::default()
+        }
+    }
+}
+
 /// The context cap a run applies before clamping to the model's window: the
 /// resolved configuration's `context_token_budget` when a file sets it, else
 /// the app setting (`0` is Auto).
@@ -122,6 +141,10 @@ impl AppState {
             .get(thread_id)
             .ok_or_else(|| format!("unknown thread '{thread_id}'"))
             .and_then(|record| self.info_of(record))
+            .map(|info| ThreadInfo {
+                vision: self.visions_mark_of(thread_id),
+                ..info
+            })
     }
 
     pub async fn get_thread_history(&self, thread_id: &str) -> Result<Vec<HistoryItem>, String> {
@@ -175,15 +198,24 @@ impl AppState {
         Ok(info)
     }
 
-    /// Lists the threads on `project_root` (empty when the project has none).
+    /// Lists the threads on `project_root` (empty when the project has none), each work chat a
+    /// Vision started marked with its Vision; a Vision's own chats stay hidden. Who runs which
+    /// chat is read once per listing.
     pub async fn list_threads(&self, project_root: String) -> Result<Vec<ThreadInfo>, String> {
         let root = canonical_project_dir(&project_root)?;
+        let marks = self.visions_marks();
         let threads = self.inner.threads.read().await;
         let mut infos: Vec<ThreadInfo> = threads
             .values()
-            .filter(|record| record.project_root == root)
-            .map(|record| self.info_of(record))
-            .collect::<Result<_, _>>()?;
+            .filter(|record| record.project_root == root && !marks.hidden(&record.id))
+            .map(|record| {
+                let info = self.info_of(record)?;
+                Ok(ThreadInfo {
+                    vision: marks.of(&record.id),
+                    ..info
+                })
+            })
+            .collect::<Result<_, String>>()?;
         infos.sort_by(|left, right| left.id.cmp(&right.id));
         Ok(infos)
     }
@@ -212,7 +244,7 @@ impl AppState {
         text: String,
         run_id: String,
     ) -> Result<RunHandle, String> {
-        self.send_message_with_options(sink, thread_id, text, run_id, None, Vec::new())
+        self.send_message_with_options(sink, thread_id, text, run_id, SendOptions::default())
             .await
     }
 
@@ -236,15 +268,26 @@ impl AppState {
         effort: Option<String>,
         attachments: Vec<String>,
     ) -> Result<RunHandle, String> {
-        self.send_message_with_options(
-            sink,
-            thread_id,
-            text,
-            uuid::Uuid::new_v4().to_string(),
-            effort,
-            attachments,
-        )
-        .await
+        if super::questions::forges_answer(&text) {
+            return Err(super::questions::FORGED_ANSWER.to_owned());
+        }
+        let handle = self
+            .send_message_with_options(
+                sink,
+                thread_id.clone(),
+                text,
+                uuid::Uuid::new_v4().to_string(),
+                SendOptions {
+                    reasoning_effort: effort,
+                    attachments,
+                    vision_id: None,
+                },
+            )
+            .await?;
+        // Accepted from the person (the server's, goals' and automations' sends take other
+        // paths): a Vision's work chat is now theirs.
+        self.visions_person_took_over(&thread_id);
+        Ok(handle)
     }
 
     pub(super) async fn send_message_with_options(
@@ -253,26 +296,19 @@ impl AppState {
         thread_id: String,
         text: String,
         run_id: String,
-        reasoning_effort: Option<String>,
-        attachments: Vec<String>,
+        options: SendOptions,
     ) -> Result<RunHandle, String> {
         if themis_core::goal::parse_goal_command(&text).is_some_and(|goal| goal.is_empty()) {
             return Err("Add the goal after /goal, for example: /goal speed up p95".to_owned());
         }
-        let automation_run = self
-            .inner
-            .automation_runs
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .contains_key(&run_id);
+        let SendOptions {
+            reasoning_effort,
+            attachments,
+            vision_id,
+        } = options;
+        let (automation_run, from_server) = self.send_started_by(&run_id);
         // Sent by no one but the person: goal turns, automations and hook wakes count against
         // the turns hooks may start.
-        let from_server = self
-            .inner
-            .server_sends
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .contains_key(&run_id);
         let person = !from_server && !automation_run;
         let answered = self.person_message_arrived(sink.as_ref(), &thread_id, &text, person);
         let settings = self.inner.settings.get().await;
@@ -526,10 +562,8 @@ impl AppState {
                 skill_catalog,
                 short_reply: themis_core::runtime::is_short_reply(&text, !attachments.is_empty()),
                 automation_run,
-                person_text: (!automation_run
-                    && themis_core::goal::turn_number(&text).is_none()
-                    && !text.starts_with(themis_core::plugins::hooks::HOOK_WAKE_MARKER))
-                .then(|| text.clone()),
+                person_text: person_words(&text, automation_run, vision_id.as_deref()),
+                vision: self.visions_run_spec(&thread_id),
             }
         };
         // `/goal` sets the goal, a reply resumes a goal waiting for the user;
@@ -544,27 +578,20 @@ impl AppState {
                 }
             };
         let shown_attachments = attachments.clone();
-        if let Err(error) = self.inner.transcript.append_user_with_attachments(
+        if let Err(error) = self.inner.transcript.append_user_from(
             &thread_id,
             &run_id,
             &display_text,
             attachments,
+            vision_id.clone(),
         ) {
             self.finish_run(&thread_id).await;
             return Err(error);
         }
-        if let Some(state) = self
-            .inner
-            .server_sends
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .get_mut(&run_id)
-        {
-            *state = super::queue::ServerSend::Saved;
-        }
+        self.server_send_reached(&run_id, super::queue::ServerSend::Saved);
         // Every open window shows the message now, saved and before any of
-        // its run's events: one the server sends itself (queue, goal turn) or
-        // another client's (the CLI, a second window). The window that sent it
+        // its run's events: one the server sends itself (queue, goal turn, a Vision's,
+        // with its id) or another client's (the CLI, a second window). The window that sent it
         // already shows it and adopts this event instead of adding a copy.
         sink.emit_thread_event(&ThreadEventEnvelope {
             thread_id: thread_id.clone(),
@@ -572,6 +599,7 @@ impl AppState {
             event: ThreadEvent::UserMessage {
                 text: text.clone(),
                 attachments: shown_attachments,
+                vision_id,
             },
         });
         let resolved_text = format!("{resolved_text}{goal_context}");
@@ -617,19 +645,41 @@ impl AppState {
             // A run that failed to start ended like any run: the queue moves on
             // and a goal continues (or retries). Callers see the marker and
             // leave that to this step.
-            if let Some(state) = self
-                .inner
-                .server_sends
-                .lock()
-                .unwrap_or_else(|e| e.into_inner())
-                .get_mut(&run_id)
-            {
-                *state = super::queue::ServerSend::SpawnFailed;
-            }
+            self.server_send_reached(&run_id, super::queue::ServerSend::SpawnFailed);
             self.spawn_after_run(sink, thread_id, run_id, failed.event);
             return Err(error);
         }
         Ok(RunHandle { run_id })
+    }
+
+    /// Whether run `run_id` is an automation's, and whether the server sends it itself.
+    fn send_started_by(&self, run_id: &str) -> (bool, bool) {
+        let automation = self
+            .inner
+            .automation_runs
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .contains_key(run_id);
+        let server = self
+            .inner
+            .server_sends
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .contains_key(run_id);
+        (automation, server)
+    }
+
+    /// Records how far the server's own send `run_id` got (nothing for any other send).
+    fn server_send_reached(&self, run_id: &str, reached: super::queue::ServerSend) {
+        if let Some(state) = self
+            .inner
+            .server_sends
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get_mut(run_id)
+        {
+            *state = reached;
+        }
     }
 
     /// Renames a thread without changing its files or worktree.
@@ -655,15 +705,24 @@ impl AppState {
         Ok(info)
     }
 
-    /// Requests a stop at the next safe boundary; existing actions finish first.
+    /// The person's Stop: requests a stop at the next safe boundary (existing actions finish
+    /// first), and holds a Vision's work chat back from its Vision.
     pub async fn stop_thread(&self, thread_id: String) -> Result<(), String> {
+        self.stop_run(&thread_id)?;
+        self.visions_person_stopped(&thread_id);
+        Ok(())
+    }
+
+    /// Requests a stop of the chat's run at the next safe boundary and denies its waiting
+    /// approvals.
+    pub(crate) fn stop_run(&self, thread_id: &str) -> Result<(), String> {
         let flags = self
             .inner
             .stop_flags
             .lock()
             .unwrap_or_else(|e| e.into_inner());
         let flag = flags
-            .get(&thread_id)
+            .get(thread_id)
             .ok_or_else(|| "This thread has no active run".to_owned())?;
         flag.store(true, Ordering::SeqCst);
         let mut pending = self.inner.pending.lock().unwrap_or_else(|e| e.into_inner());
@@ -704,6 +763,7 @@ impl AppState {
         self.forget_subagents(std::slice::from_ref(&thread_id));
         self.end_deleted_chat_session(&thread_id);
         self.forget_browsers(std::slice::from_ref(&thread_id)).await;
+        self.visions_chat_discarded(&thread_id);
         self.forget_background_tasks(&[thread_id]).await;
         self.persist_registry().await;
         Ok(())
@@ -764,6 +824,17 @@ impl AppState {
         self.persist_registry().await;
         Ok(info)
     }
+}
+
+/// The person's own words that start a run: `None` for an automation's message, a Vision's
+/// (`vision_id`), a goal turn or a hook's wake (the memory pass reads only what the person
+/// said).
+fn person_words(text: &str, automation_run: bool, vision_id: Option<&str>) -> Option<String> {
+    (!automation_run
+        && vision_id.is_none()
+        && themis_core::goal::turn_number(text).is_none()
+        && !text.starts_with(themis_core::plugins::hooks::HOOK_WAKE_MARKER))
+    .then(|| text.to_owned())
 }
 
 /// The default model `wanted`, unless the loaded catalog shows it gone or unusable (Go

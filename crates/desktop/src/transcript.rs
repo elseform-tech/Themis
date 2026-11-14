@@ -43,6 +43,10 @@ pub enum HistoryItem {
         text: String,
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         attachments: Vec<String>,
+        /// The Vision that sent it (directly or from the queue); absent for the person's own
+        /// message, and in transcripts saved before Visions.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        vision_id: Option<String>,
     },
     Event {
         envelope: ThreadEventEnvelope,
@@ -320,12 +324,25 @@ impl TranscriptStore {
         text: &str,
         attachments: Vec<String>,
     ) -> Result<(), String> {
+        self.append_user_from(thread_id, run_id, text, attachments, None)
+    }
+
+    /// Saves a user message, as the Vision `vision_id`'s when it sent it.
+    pub fn append_user_from(
+        &self,
+        thread_id: &str,
+        run_id: &str,
+        text: &str,
+        attachments: Vec<String>,
+        vision_id: Option<String>,
+    ) -> Result<(), String> {
         self.append(
             thread_id,
             &HistoryItem::User {
                 run_id: run_id.to_owned(),
                 text: text.to_owned(),
                 attachments,
+                vision_id,
             },
         )
     }

@@ -123,6 +123,8 @@ fn parse(args: &Value) -> Result<NewQuestion, String> {
         assumption: recommended,
         topic: text("topic"),
         subagent: None,
+        // The agent's own questions never ask for a permission.
+        permission: false,
     })
 }
 

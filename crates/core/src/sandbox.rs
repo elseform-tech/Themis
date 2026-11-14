@@ -365,6 +365,10 @@ pub struct SandboxPlan {
     secrets: Vec<PathBuf>,
     /// A subagent's read-only copy: in-process file tools may write only `writable`.
     read_only: bool,
+    /// With the network blocked, the one TCP port on this machine still reachable.
+    local_port: Option<u16>,
+    /// What a plan made to fail closed (`fail_closed`) says instead of the backend advice.
+    refused_with: Option<String>,
     #[cfg(target_os = "linux")]
     landlock: OnceLock<Result<Arc<landlock::Ruleset>, String>>,
 }

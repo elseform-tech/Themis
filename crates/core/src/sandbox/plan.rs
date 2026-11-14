@@ -99,6 +99,8 @@ impl SandboxPlan {
             has_app_data: inputs.app_data.is_some(),
             secrets,
             read_only: false,
+            local_port: None,
+            refused_with: None,
             #[cfg(target_os = "linux")]
             landlock: OnceLock::new(),
         }
@@ -127,6 +129,8 @@ impl SandboxPlan {
             has_app_data: self.has_app_data,
             secrets: self.secrets.clone(),
             read_only: true,
+            local_port: None,
+            refused_with: None,
             #[cfg(target_os = "linux")]
             landlock: OnceLock::new(),
         }
@@ -143,6 +147,61 @@ impl SandboxPlan {
             push_unique(&mut plan.writable, resolve_existing(path));
         }
         plan
+    }
+
+    /// A Vision run's fixed envelope, whatever its channel's mode: read-only like a subagent
+    /// with no write paths, no network except TCP to `port` on this machine (the app server its
+    /// `themis` calls reach), no Keychain, secrets walled. `Err` says why it cannot be built:
+    /// YOLO's open plan is never a base, and commands must really be confined, by a backend
+    /// that can open that one port (Seatbelt, or Landlock ABI 4; bubblewrap's private network
+    /// has no way back to the app, so Landlock stands in for it when the kernel has it).
+    pub fn vision_envelope(&self, root: &Path, port: u16) -> Result<Self, String> {
+        if self.open {
+            return Err("a Vision's run is never built from YOLO's open plan".to_owned());
+        }
+        let mut plan = self.confined_to(root, &[]);
+        plan.network = NetworkPolicy::Block;
+        plan.allow_keychain = false;
+        plan.local_port = Some(port);
+        match &plan.enforcement {
+            Enforcement::Active(Backend::Seatbelt) => {}
+            Enforcement::Active(Backend::Landlock) if plan.landlock_abi >= 4 => {}
+            Enforcement::Active(Backend::Landlock | Backend::Bubblewrap) => {
+                let landlock = availability(Backend::Landlock);
+                if !landlock.available || landlock.abi < 4 {
+                    return Err("this system's sandbox cannot block the network while letting a Vision reach Themis (it needs Landlock ABI 4, Linux 6.7)".to_owned());
+                }
+                plan.enforcement = Enforcement::Active(Backend::Landlock);
+                plan.landlock_abi = landlock.abi;
+            }
+            _ => {
+                return Err(plan
+                    .refusal()
+                    .unwrap_or_else(|| "the sandbox is off or unavailable here".to_owned()))
+            }
+        }
+        plan.network_enforced = true;
+        Ok(plan)
+    }
+
+    /// The same plan refusing every command, saying `reason` (a Vision run whose envelope could
+    /// not be built after all).
+    pub fn fail_closed(&self, reason: String) -> Self {
+        let mut plan = self.read_only();
+        let backend = match plan.enforcement {
+            Enforcement::Active(backend) | Enforcement::FailClosed(backend, _) => backend,
+            _ if cfg!(target_os = "macos") => Backend::Seatbelt,
+            _ => Backend::Landlock,
+        };
+        plan.enforcement = Enforcement::FailClosed(backend, reason.clone());
+        plan.refused_with = Some(reason);
+        plan
+    }
+
+    /// The one TCP port on this machine a blocked network still reaches (a Vision run's app
+    /// server).
+    pub fn local_port(&self) -> Option<u16> {
+        self.local_port
     }
 
     /// A plan that never sandboxes (the sandbox is off).
@@ -181,6 +240,9 @@ impl SandboxPlan {
 
     /// The error every command gets when the configured backend is unusable.
     pub fn refusal(&self) -> Option<String> {
+        if let Some(reason) = &self.refused_with {
+            return Some(reason.clone());
+        }
         match &self.enforcement {
             Enforcement::FailClosed(backend, detail) => Some(format!(
                 "the sandbox backend \"{}\" set in runtime.jsonc cannot be used on this machine ({detail}), so commands do not run. Install or enable {}, or set sandbox.backend to \"auto\" in your user runtime.jsonc",

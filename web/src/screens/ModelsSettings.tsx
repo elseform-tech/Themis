@@ -111,7 +111,6 @@ export function ModelsSettings({ save, saving }: { save: (patch: Partial<Setting
   const choices = [...new Set([secret, "OPENCODE_KEY", ...names])].sort();
   const current = models.some(model => model.id === state.settings.default_model);
   const placeholder = !usable ? "Fix the connection first" : loadingModels ? "Loading models…" : models.length === 0 ? "No models available" : current ? "Choose a model" : `Unavailable: ${state.settings.default_model}`;
-  const groups = groupByProvider(models);
   const providerName = (id: string | null) => id === null ? "OpenCode Go" : providers.find(provider => provider.id === id)?.name ?? id;
 
   return <>
@@ -165,16 +164,23 @@ export function ModelsSettings({ save, saving }: { save: (patch: Partial<Setting
       <label className="themis-settings-control">New chats use<span className="themis-settings-model-picker">
         <select aria-label="Model" value={current ? state.settings.default_model : ""} disabled={saving || loadingModels || !usable || models.length === 0} onChange={event => void save({ default_model: event.target.value })}>
           <option value="" disabled>{placeholder}</option>
-          {groups.length === 1 && groups[0].provider === null
-            ? groups[0].models.map(model => <ModelOption key={model.id} model={model} />)
-            : groups.map(group => <optgroup key={group.provider ?? "go"} label={providerName(group.provider)}>
-              {group.models.map(model => <ModelOption key={model.id} model={model} />)}
-            </optgroup>)}
+          <ModelOptions models={models} providerName={providerName} />
         </select>
       </span></label>
     </SettingsGroup>
     <MemoryModels models={models} />
   </>;
+}
+
+/** The model picker's options: grouped by provider (with `providerName`'s names) unless every
+ *  model is OpenCode Go's. Settings › Models and a Vision's profile share it. */
+export function ModelOptions({ models, providerName }: { models: GoModel[]; providerName: (id: string | null) => string }) {
+  const groups = groupByProvider(models);
+  return groups.length === 1 && groups[0].provider === null
+    ? <>{groups[0].models.map(model => <ModelOption key={model.id} model={model} />)}</>
+    : <>{groups.map(group => <optgroup key={group.provider ?? "go"} label={providerName(group.provider)}>
+      {group.models.map(model => <ModelOption key={model.id} model={model} />)}
+    </optgroup>)}</>;
 }
 
 /** A model in its provider's group, named as that provider names it. */

@@ -40,22 +40,28 @@ import { getBrowserSettings,
   onSettingsChanged,
   onThreadChanged,
   onThreadEvent,
+  onVisionsChanged,
   openProject,
 } from "../lib/tauri";
+import { getChannelPage, listChannels, listChannelThreads, listQuestions, listVisions } from "../lib/visions";
+import { followVisions, visionsHoldsActive, type VisionsBridge } from "./visions";
 import { failureMessage as describeError } from "../lib/errors";
 import { reviewToast } from "../screens/reviewFlow";
 import { readSession, writeSession } from "./session";
 import { loadPhase4Lists, openProjectOfNewChat, restoreRecentProjects, STARTUP_STEPS } from "./boot";
 import { settingsSync } from "./settingsSync";
 import {
+  appReducer,
   initialState,
   newId,
-  reducer,
   type AppAction,
   type AppState,
 } from "./reducer";
 
 export * from "./reducer";
+
+const visionsBridge: VisionsBridge = { listVisions, listChannels, getChannelPage: (channelId, before) => getChannelPage(channelId, before ?? null), listChannelThreads, listQuestions };
+type VisionsFollower = ReturnType<typeof followVisions>;
 
 interface AppContextValue {
   state: AppState;
@@ -63,6 +69,8 @@ interface AppContextValue {
   dispatch: Dispatch<import("./reducer").AppAction>;
   armManualRun: (threadId: string) => void;
   cancelManualRun: (threadId: string) => void;
+  /** Reads the page before a channel's window, for scrolling back; whether it added lines. */
+  loadOlderLines: (channelId: string) => Promise<boolean>;
 }
 
 const AppContext = createContext<AppContextValue | null>(null);
@@ -93,6 +101,22 @@ export function toast(
   dispatch({ type: "toast/push", toast: { id: newId("toast"), message, tone } });
 }
 
+/** The plain chat to restore at the next launch; never the Vision's chat open in Visions. */
+export function selectionToSave(state: AppState): { root: string; threadId: string } | null {
+  const { activeProjectRoot: root, activeThreadId: threadId } = state;
+  return root && threadId && !visionsHoldsActive(state) ? { root, threadId } : null;
+}
+
+/** Saves the plain chat to restore once the session was restored. */
+function useSaveSelection(state: AppState, restored: { current: boolean }) {
+  const selection = selectionToSave(state);
+  const root = selection?.root;
+  const threadId = selection?.threadId;
+  useEffect(() => {
+    if (restored.current && root && threadId) writeSession("selection", { root, threadId });
+  }, [restored, root, threadId]);
+}
+
 export function useActiveProject(): ProjectInfo | null {
   const { state } = useApp();
   return (
@@ -105,11 +129,11 @@ export function useActiveThread(): ThreadInfo | null {
   if (state.activeProjectRoot === null || state.activeThreadId === null) {
     return null;
   }
-  return (
-    (state.threadsByProject[state.activeProjectRoot] ?? []).find(
-      (t) => t.id === state.activeThreadId,
-    ) ?? null
-  );
+  const id = state.activeThreadId;
+  // A Vision's chat is not in the plain list: it is opened from its channel.
+  return (state.threadsByProject[state.activeProjectRoot] ?? []).find(t => t.id === id)
+    ?? Object.values(state.visions.chats).flat().find(t => t.id === id)
+    ?? null;
 }
 
 export function useThreadRunning(threadId: string | null): boolean {
@@ -123,7 +147,7 @@ export { describeError };
 /** Chats and settings changed through the shared server (the `themis` CLI, another client)
  *  follow into this window without a reload; settings written while the connection was down
  *  are read again when it comes back. */
-async function listenOutsideChanges(dispatch: Dispatch<AppAction>, isCancelled: () => boolean, isOpen: (root: string) => boolean, refreshSecrets: () => void): Promise<() => void> {
+async function listenOutsideChanges(dispatch: Dispatch<AppAction>, isCancelled: () => boolean, isOpen: (root: string) => boolean, refreshSecrets: () => void, visions: VisionsFollower): Promise<() => void> {
   const opening = new Set<string>();
   const offThreads = await onThreadChanged((change) => {
     if (isCancelled()) return;
@@ -136,18 +160,34 @@ async function listenOutsideChanges(dispatch: Dispatch<AppAction>, isCancelled: 
   });
   const follow = settingsSync({ getSettings, getBrowserSettings, refreshSecrets }, dispatch, isCancelled);
   const offSettings = await onSettingsChanged(follow);
-  const offResync = await onBackendResync(() => { follow({ scope: "app" }); follow({ scope: "runtime" }); });
-  return () => { offThreads(); offSettings(); offResync(); };
+  const offResync = await onBackendResync(() => { follow({ scope: "app" }); follow({ scope: "runtime" }); void visions.changed({}); });
+  // Visions follow `visions-changed`, reading again only what it names.
+  const offVisions = await onVisionsChanged(change => { if (!isCancelled()) void visions.changed(change); });
+  return () => { offThreads(); offSettings(); offResync(); offVisions(); };
+}
+
+/** The latest state for callbacks, and the Visions follower that reads it: the open projects'
+ *  channels are read when a project opens (and everything with the first). */
+function useLiveState(state: AppState, dispatch: Dispatch<AppAction>) {
+  const current = useRef(state);
+  current.current = state;
+  const alive = useRef(true);
+  const [visions] = useState(() => followVisions(visionsBridge, () => current.current, dispatch, () => !alive.current));
+  useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
+  const projectRoots = state.projects.map(project => project.root).join("\n");
+  useEffect(() => {
+    if (projectRoots) void visions.changed({}, projectRoots.split("\n"));
+  }, [projectRoots, visions]);
+  return { current, visions };
 }
 
 export function AppProvider({ children }: { children: ReactNode }) {
-  const [state, dispatch] = useReducer(reducer, initialState);
+  const [state, dispatch] = useReducer(appReducer, initialState);
   const [startup, setStartup] = useState<string | null>(STARTUP_STEPS[0]);
   const legacyMessages = useRef(readSession<Record<string, PersistedMessage[]>>("messages", {}));
   const restoredSession = useRef(false);
   const savedSelection = useRef(readSession<{ root: string; threadId: string } | null>("selection", null));
-  const currentState = useRef(state);
-  currentState.current = state;
+  const { current: currentState, visions } = useLiveState(state, dispatch);
 
   /** The activity position each chat's history was loaded at, shared by the loader on opening
    *  and the recovery loop, so a chat is reloaded only when it changed since. */
@@ -171,7 +211,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       })
       .catch((error: unknown) => { if (live) toast(dispatch, `Could not load this chat: ${describeError(error)}`, "warning"); });
     return () => { live = false; };
-  }, [openedThread, openedLoaded]);
+  }, [openedThread, openedLoaded, currentState]);
   const recoverState = useRef<() => void>(() => {});
   const refreshSecretStatus = useRef<() => void>(() => {});
   useEffect(() => { if (startup === null) recoverState.current(); }, [startup]);
@@ -183,9 +223,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     if (settings.current.completion_sound) prepareCompletionSound();
   };
   const cancelManualRun = (threadId: string) => { manualRuns.current.delete(threadId); };
-  useEffect(() => {
-    if (restoredSession.current && state.activeProjectRoot && state.activeThreadId) writeSession("selection", { root: state.activeProjectRoot, threadId: state.activeThreadId });
-  }, [state.activeProjectRoot, state.activeThreadId]);
+  useSaveSelection(state, restoredSession);
 
   // A clicked goal notification opens its chat (the app already came forward).
   useEffect(() => {
@@ -200,7 +238,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       .then(unlisten => { if (cancelled) unlisten(); else off = unlisten; })
       .catch(() => {});
     return () => { cancelled = true; off?.(); };
-  }, []);
+  }, [currentState]);
 
   // Subscribe to backend events once on mount.
   useEffect(() => {
@@ -302,12 +340,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
         const offApproval = await onApprovalRequest((request) => {
           if (cancelled) return;
           eventVersion++;
-          dispatch({ type: "approval/enqueued", request });
+          dispatch({ type: "approval/enqueued", request }); void visions.approvalChanged(request.thread_id);
         });
         const offExpired = await onApprovalExpired((expired) => {
           if (cancelled) return;
           eventVersion++;
-          dispatch({ type: "approval/expired", approvalId: expired.approval_id, steered: expired.steered });
+          dispatch({ type: "approval/expired", approvalId: expired.approval_id, steered: expired.steered }); void visions.approvalChanged(expired.thread_id);
         });
         const offReview = await onReviewItemAdded((item) => {
           if (cancelled) return;
@@ -323,7 +361,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
           }).catch(() => {});
         });
         const offRecovery = await onBackendResync(() => { clearTimeout(retry); refreshSecretStatus.current(); window.dispatchEvent(new Event("themis-mcp-reconnect")); void recover(); });
-        const offThreadChanged = await listenOutsideChanges(dispatch, () => cancelled, root => currentState.current.threadsByProject[root] !== undefined, () => refreshSecretStatus.current());
+        const offThreadChanged = await listenOutsideChanges(dispatch, () => cancelled, root => currentState.current.threadsByProject[root] !== undefined, () => refreshSecretStatus.current(), visions);
         if (cancelled) {
           offRecovery();
           offThread();
@@ -352,7 +390,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       clearTimeout(retry);
       for (const off of unlistens) off();
     };
-  }, []);
+  }, [visions, currentState]);
 
   // Restore recent projects and refresh credential presence after external changes.
   useEffect(() => {
@@ -475,6 +513,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
     return () => { cancelled = true; clearTimeout(timer); window.removeEventListener("themis-plugins-changed", changed); window.removeEventListener("themis-mcp-reconnect", reconnect); };
   }, [state.activeProjectRoot, startup]);
 
-  const value = useMemo(() => ({ state, startup, dispatch, armManualRun, cancelManualRun }), [state, startup]);
+  const value = useMemo(() => ({ state, startup, dispatch, armManualRun, cancelManualRun, loadOlderLines: visions.loadOlder }), [state, startup, visions]);
   return <AppContext.Provider value={value}>{children}</AppContext.Provider>;
 }

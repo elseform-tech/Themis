@@ -1,0 +1,1 @@
+Themis refused this: it starts with an answer marker, which only Themis puts on answers to questions. Answer a chat's question with `answer_question`, and send ordinary words without the marker.

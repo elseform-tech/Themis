@@ -256,6 +256,11 @@ project content, so a cloned repository's guidance reaches the agent, but it nev
 | `memory.models` | 3 to 8 distinct model ids (`<provider>/<id>` for a model from `providers`), default `["muse-spark-1.3-contributor", "claude-haiku-5-5", "deepseek-v4.1-flash"]`: the models that run memory jobs, tried in order. A job moves to the next model on a provider error, a time-out (`compaction.request_timeout_seconds`), a rate limit (HTTP 429), an answer it can't read, or the daily cap. Settings › Models › Memory models edits the list in place (reorder, add, remove; never fewer than three). The defaults are cheap OpenCode Go models on three different wire protocols (Responses, Messages, Chat Completions), each with structured-output support in the models.dev catalog. Your own `runtime.jsonc` only: a project or run layer that sets it is refused. |
 | `memory.daily_budget_usd` | Number 0–100, default `0.5`: estimated dollars (models.dev list prices, as in Settings › Usage) all memory models may spend in a day together, counted from memory usage recorded since local midnight. A model the catalog lists as free is never held back; a model without a price counts as paid at $0. When every model is held back, the job waits until tomorrow without using up its tries. File only; your own `runtime.jsonc` only. |
 | `memory.consolidate_every_hours` | Integer 1–720, default `24`: at most one idle consolidation (merge duplicate memories, drop clearly stale ones) this often, recorded in app data `memory/consolidated.json`. File only; your own `runtime.jsonc` only. |
+| `visions.enabled` | Boolean, default `true`: allow Visions (agents that drive ordinary chats) to wake and work. Your own `runtime.jsonc`; a project or run layer may only set it to `false`. |
+| `visions.autonomy` | `ask`, `small`, `most`, `nearly_all` or `custom`, default `small`: how much a Vision decides without asking you (Settings › Visions names them Always ask, Routine decisions, Most decisions, Nearly all decisions and Custom). `small` hands it wording and tests, `most` adds undoable steps and retries, `nearly_all` adds scope, deletes and dependencies; external actions and spending are always yours, at every level. Your own `runtime.jsonc`; a project or run layer may only lower it (and may not choose `custom`). |
+| `visions.custom` | Object, default `{}`: with `autonomy: "custom"`, `true` lets the Vision decide that row (`wording`, `tests`, `undoable`, `retry`, `scope`, `delete`, `dependency`). Unknown rows, including `external` and `spend`, are refused. A project or run layer may only set rows to `false`. |
+| `visions.daily_budget_usd` | Number 0.1–100, default `1.0`: estimated dollars all Visions together may spend in a day (models.dev list prices, as in Settings › Usage), counted from usage recorded since local midnight for the chats Visions own; a request without a price counts as $0 and is counted apart. A Vision profile's `daily_budget_usd` sets that Vision's own cap and may only lower this one. The server enforces both, see [a Vision's budget](#the-themis-cli-in-the-agents-shell). Your own `runtime.jsonc`; a project or run layer may only lower it. |
+| `visions.max_wakes` | Integer 1–20, default `6`: most runs a Vision starts in a row before you write in its channel again (see "A Vision's runs and wakes" under [the `themis` CLI in the agent's shell](#the-themis-cli-in-the-agents-shell)). Your own `runtime.jsonc`; a project or run layer may only lower it. |
 | `subagents.enabled` | Boolean, default `true`: offer the subagent tools (`spawn_subagents`, `wait_subagents`, `message_subagent`, `stop_subagent`) to the agent. A project or run layer may only set it to `false`. |
 | `subagents.max_parallel` | Integer 1–6, default `3`: subagents running at once per chat; more wait their turn. A project or run layer may only lower it. |
 | `subagents.max_turns` | Integer 1–1000, default `40`: model requests per subagent; reaching it ends the subagent with its partial result. A project or run layer may only lower it. |
@@ -294,7 +299,7 @@ user configuration directory. Built-in prompts are in
 
 Each context checkpoint is one summary request. When all eligible new records fit, they are supplied whole. Otherwise long fields are cut to an equal head/tail excerpt ceiling with UTF-8 byte coordinates, and when even empty fields cannot fit the oldest new records are left out; the request carries a coverage notice saying so, and cut checkpoints require saved originals. Omitted detail stays in the saved originals, which the `recall` tool searches; the checkpoint is a map (goals, decisions with reasons, unresolved and parked work, next action, pointers), not a full transcript. The result must pass the ordered, nonempty state-section checks before it is installed; this validates structure, not factual correctness. Attached documents still use the staged pipeline: when a complete document cannot fit, its originals are split into ordered, UTF-8-safe source fragments, summarized sequentially and consolidated once, completed stages persist under the evidence directory's `summary-jobs/` and are reused internally for matching source, prompt, model and output policy, and a configured stage-count or packet-size overflow fails before incomplete state is installed. (Benchmark audit 2026-10-15: on the 24k compaction suite the single request kept summary-only retention within noise of the former staged context path at half the requests and about 43% less checkpoint latency; see `docs/verification/simplify-compaction-2026-10-15.md`.)
 
-Each failed summary request or document stage automatically retries up to twice for transient transport/provider errors, request timeout, incomplete/truncated output, empty text or a malformed required checkpoint. Healthy stages use one call. Every attempt must pass structural validation. Permanent provider errors, storage failures and impossible budget/stage plans fail immediately. Output limits are base, twice base, twice base; preparation reserves the maximum before dispatch. Retry-After remains a floor with exponential backoff and jitter for every retry. Summary HTTP 429 responses use `rate_limit_backoff_seconds` (default ten then twenty seconds); other transient summary errors use one then two seconds. Transient errors are timeouts, HTTP 408, 429 and 5xx, and HTTP 499, which OpenCode Go returns when its upstream endpoint is briefly unavailable; ordinary answers retry the same errors. This also covers upstream-unavailable errors returned with status 429; it does not identify their underlying cause or guarantee provider recovery. The absolute job/stage deadlines include requests and waits: three attempts are a maximum, and the final attempt may have less time. Completed stages and tools are never replayed as part of a request retry. The default overall job deadline is fifteen minutes (900 seconds), configurable up to thirty minutes (1800), while each request remains limited to five minutes (300). Each uncached attachment receives its own job deadline, capped by the separate `document_batch_timeout_seconds` deadline (default one hour). A document deadline spans all of its stages and retries; it is never reset per stage. Explicit existing timeout and retry overrides are preserved. No new summarization calls are made after success. Execution-only changes to job/request/batch timeouts, retry count or rate-limit wait do not invalidate completed stages or capsules. Cache identity still binds the resolved prompt, source, routed model, effective input/output budgets and pipeline. Exact pre-split cache identities can be migrated without provider calls when the current settings reconstruct the old key and no custom resolved prompt is active; the runtime does not scan for or guess unknown historical settings. Migration validates original identities and bounded cached stages before publishing a new immutable key.
+Each failed summary request or document stage automatically retries up to twice for transient transport/provider errors, request timeout, incomplete/truncated output, empty text or a malformed required checkpoint. Healthy stages use one call. Every attempt must pass structural validation. Permanent provider errors, storage failures and impossible budget/stage plans fail immediately. Output limits are base, twice base, twice base; preparation reserves the maximum before dispatch. Retry-After remains a floor with exponential backoff and jitter for every retry. Summary HTTP 429 responses use `rate_limit_backoff_seconds` (default ten then twenty seconds); other transient summary errors use one then two seconds. Transient errors are timeouts, HTTP 408, 429 and 5xx, HTTP 499, which OpenCode Go returns when its upstream endpoint is briefly unavailable, and an HTTP 400 whose error type or code is `server_error`, which OpenCode Go returns when the model behind it fails ("Upstream response was not valid JSON"); ordinary answers retry the same errors. Any other 400 is the request's fault and is not retried. This also covers upstream-unavailable errors returned with status 429; it does not identify their underlying cause or guarantee provider recovery. The absolute job/stage deadlines include requests and waits: three attempts are a maximum, and the final attempt may have less time. Completed stages and tools are never replayed as part of a request retry. The default overall job deadline is fifteen minutes (900 seconds), configurable up to thirty minutes (1800), while each request remains limited to five minutes (300). Each uncached attachment receives its own job deadline, capped by the separate `document_batch_timeout_seconds` deadline (default one hour). A document deadline spans all of its stages and retries; it is never reset per stage. Explicit existing timeout and retry overrides are preserved. No new summarization calls are made after success. Execution-only changes to job/request/batch timeouts, retry count or rate-limit wait do not invalidate completed stages or capsules. Cache identity still binds the resolved prompt, source, routed model, effective input/output budgets and pipeline. Exact pre-split cache identities can be migrated without provider calls when the current settings reconstruct the old key and no custom resolved prompt is active; the runtime does not scan for or guess unknown historical settings. Migration validates original identities and bounded cached stages before publishing a new immutable key.
 
 `summary_max_tokens` caps the initial allowance, not every attempt. Each permitted retry currently uses up to twice that effective initial allowance, including retries after HTTP 429; increasing output does not itself resolve rate limiting. Provider output limits and the reserved input/output capacity can clamp these allowances further. The checkpoint allowance also depends on the usable message budget, system/current-request/recent-message space and continuation reserves. Increasing the ceiling alone may therefore leave small-budget requests unchanged. A larger effective initial allowance can avoid output-truncation retries, but requires room for both the maximum retry output and continued ordinary work. It cannot restore evidence excluded from summary input. Validated bounded original-derived archive excerpts now enter both summary paths independently of optional read caches; see [context limits and recovery](context-and-attachments.md).
 
@@ -457,7 +462,9 @@ always blocked with the question box, and only the person's **Allow once** for t
 lets them run. On a project that isn't a Git
 repository Auto stays read-only, as Custom does, without asking the model. Saving a new MCP
 connection command from a run is never switched on, in any mode (switch it on in Integrations).
-Subagents are reviewed the same way. Prompts: `auto-review-system.md`, `auto-review-user.md`.
+Subagents are reviewed the same way. The reviewer reads the person's latest messages and the
+messages they steered into a run (never a Vision's, a goal turn's or an answer's framing).
+Prompts: `auto-review-system.md`, `auto-review-user.md`.
 `logs/` gets `approval` / `auto_reviewed` (tool, risk, verdict, time) and `approval` /
 `auto_review` lines, never the command or the person's words. `auto_try_review` is a read-only
 dry run of one review for evals (`evals/auto_review`).
@@ -634,14 +641,27 @@ or steered into a run) while questions are open answers them: each closes with t
 its answer, the boxes go away, and the agent's copy of the message ends with which questions it
 answered (diagnostics: `questions`/`answered_in_chat`, a count). Answers from the question box
 itself and messages from goals, automations and hooks close nothing. The transcript records `question_asked` and `question_answered`
-events so the chat shows them. A non-blocking question needs a `recommended` answer and the run goes on (a question with
+events so the chat shows them; a Vision's answer carries its `vision_id` on the event and as
+`answered_by` on the question (absent for the person's). A non-blocking question needs a `recommended` answer and the run goes on (a question with
 a recommendation is never blocking, whatever the model asks for);
 a blocking one ends the run after that tool batch with a fixed sentence (it stays on the composer
 for the approval timeout, then moves into its turn; nothing starts until it is answered), and in goal mode the
 goal waits until that question is answered (answers to other questions run but leave it
 waiting). `answer_question` (`threadId`, `questionId`, `answer`) delivers the answer like a
 steer when a run is going (unread, it returns to the front of the queue), otherwise first in
-the queue as the next message, joining an answer already waiting there. With `answers`
+the queue as the next message, joining an answer of the same author (the person, or that
+Vision) already waiting there. The person's answer message starts with the fixed marker
+`[Answer to your question — from the user]`; a Vision's starts with
+`[Answer to your question — from the Vision <name>]` and a line saying it is not the person's
+own words (`question-answer-by-vision.md`). Every reader of the marker takes both as answers.
+The Auto reviewer does not read a Vision's answer as the requester's words, and it does not
+count as the person speaking to a goal, whether it was queued as a message or steered into a
+running turn. Only answers the server builds carry a marker: a `send_message`,
+`enqueue_message` or queued-message edit whose text starts with either marker (after spaces)
+is refused, for the person ("This message starts with the marker only Themis writes on answers
+to questions; …") and for a Vision (`answer_marker`, `agent-cli-vision-answer-marker.md`); an
+edit may change a queued answer's words but not its marker line. Saved transcripts and queues
+read as before. With `answers`
 (`[{"questionId","answer"}]`) in place of `questionId` and `answer` it answers several at once,
 all or none, and delivers them as one message listing each question and its answer (the question
 box sends a set's pages this way); `list_questions`
@@ -878,8 +898,211 @@ Calls without a run credential (your own CLI, the desktop app) are unchanged.
 Each refusal is logged as `server`/`agent_call_refused` with the method name
 (`(other)` for anything that is not a plain method name), the `plugin_action`
 action, a `reason` (`method_not_allowed`, `action_not_allowed`, `runs_code`,
-`other_project`, `network_blocked`, `tool_unavailable`, or `switch_on` from the store), and the
-chat and run ids, never the credential, paths or arguments.
+`other_project`, `network_blocked`, `tool_unavailable`, `held_by_person`, `paused`,
+`permission_question`, `above_autonomy`, `answer_marker`, `over_budget`, `budget_unknown`, or
+`switch_on` from the store), and the chat and run ids (for a Vision's call also its
+`vision_id` and the `target_thread_id` it named), never the credential, paths or arguments.
+
+**A Vision's grant.** A Vision's run credential carries the Vision, the channel the run
+works for and that channel's project (canonical), bound when it is issued like the rest.
+Beyond everything above it may drive the chats its Vision owns, decided on the request's
+`threadId` and the chat's owner record (Visions store `owners.json`), never on command text:
+
+| A Vision's call | Allowed when |
+| --- | --- |
+| `create_thread {projectRoot}` | `projectRoot` is the channel's project (else `other_project`, `agent-cli-vision-other-project.md`). The call's `provider` and `model` are ignored: the chat runs on the Vision profile's `model`, or the app's default model when it names none. The new chat gets the channel's approval mode (set by the server, never through `set_thread_approval_mode`), the Vision's owner record (`work`) and a `chat_started` entry in the channel; one that cannot be recorded is discarded. |
+| `send_message`, `enqueue_message`, `steer_queued_message`, `answer_question` | the `threadId` is a work chat this Vision owns and the person holds nothing there (else `held_by_person`, `agent-cli-held-by-person.md`: "The person stopped or took over this chat; wait for them to hand it back."). `send_message` checks the hold and the pause again right before the message goes. `steer_queued_message` only for a message this Vision queued (`agent-cli-vision-steers-its-own.md`). `answer_question` never for a permission question: an Auto block's question or a step waiting on the person's approval, such as a destructive step's Run it once / Skip it box (`permission_question`, `agent-cli-permission-question.md`: "Permission questions are the person's; leave it for them."); and a Vision's answer never lets an Auto-blocked action run, whatever it says. An Auto block's question carries `permission: true`, saved with it in the chat's `questions/<chat>.json` (absent, false, in older files), so this holds after a restart too; the server refuses a non-person answer to it under the same lock that writes answers. |
+| `answer_question {…, decision, reason}` | as above, and also: `decision` names the kind of decision (an autonomy row id: `wording`, `tests`, `undoable`, `retry`, `scope`, `delete`, `dependency`, `external`, `spend`; else `agent-cli-vision-decision.md`) and `reason` says why in 1 to 200 characters (else `agent-cli-vision-reason.md`). It is refused, the question left open, when the run's autonomy leaves that decision to the person (`above_autonomy`, `agent-cli-above-autonomy.md`: "Your autonomy level leaves this to the person; pass it on in the channel."); `external` and `spend` always are, Custom included. The decisions are captured when the Vision's run starts, from the profile over the resolved `visions.autonomy`/`visions.custom` (the same list the head's table shows), so a change applies from its next run. Each answer goes in the channel as an `answered` entry `{vision_id, thread_id, question_id, decision, question, answer, reason}` and is logged as `visions`/`vision_answered` (ids, the decision and a count). When the channel cannot record one, the answer still stands (it was delivered): the reply is `{answered, warning}` (`agent-cli-vision-unrecorded.md`) and `visions`/`vision_answer_unrecorded` logs the ids. |
+| `pass_question {threadId, questionId, decision}` | the `threadId` is a work chat this Vision owns (a hold does not stop it), the question is open there, and `decision` is a row id as above. The question stays open; the channel gets a `passed_on` entry `{vision_id, thread_id, question_id, decision, question}` for the person, who answers it from the channel through the ordinary `answer_question` with their own credential (their answer, not the Vision's). Logged as `visions`/`vision_passed_question` with ids and the decision. A Vision-only method: no other caller has it. |
+| `stop_thread` | the `threadId` is a work chat this Vision owns that the person did not take over (its run is then the person's) |
+| `list_questions` and the own-chat reads (`get_thread`, `get_thread_history_page`, …) | the `threadId` is a work chat this Vision owns, or its own Vision chat |
+| `list_channel_threads {channelId}` | `channelId` is the run's channel |
+
+A paused or deleted Vision's `create_thread`, sends, queueing, steering, answers and passed-on
+questions are refused (`paused`, `agent-cli-vision-paused.md`), and so are its `create_thread`,
+`send_message`, `enqueue_message`, `steer_queued_message` and `answer_question` once it reached
+today's budget or while its spend cannot be checked (see [a Vision's budget](#the-themis-cli-in-the-agents-shell);
+`pass_question` still goes, since it only tells the person). A Vision's writes are never the person's:
+its sends go the server's way (like a queued message or a goal turn), and a message it queues
+carries its `vision_id`, so none of them takes the chat over, answers the chat's open
+questions or lets hooks wake the chat again. Sent or sent from the queue, it is saved with its
+`vision_id` (the `user` item of `get_thread_history`), and is not the person's words: no
+memory pass reads it, the Auto reviewer leaves it out of what the person asked, and it joins a
+running goal as no "Also asked" line nor counts as the person asking to pause one (a reply
+from it still resumes a goal waiting on an answer); its steer carries its `vision_id` too (on the
+`steer_shown` and `steered` events), so it is no person's words for the memory pass, the Auto
+reviewer or the goal either, and it answers no question, joins no goal and denies no approval
+(the approvals the run waits on, or asks for while the steer is unread,
+stay the person's to answer); a steer the run never read goes back to the queue still the
+Vision's. A Vision's answer to a question is its own the same way: delivered (to the run, or
+queued) as the Vision's, so it never counts as the person's message, and it never lets an
+Auto-blocked action run. A message a Vision queued stays its words even when the person steers it in: it
+is shown and saved with the Vision's `vision_id`, answers no open question, joins no goal, is
+no person's words for the memory pass or the Auto reviewer, and goes back to the queue as the
+Vision's when the run ends unread; the person's act of steering it still denies the approvals
+the run waits on or asks for while it is unread. A Vision's queued messages wait, unsent, while the person holds the chat or the
+Vision is paused, and go once the person hands the chat back; when the chat stops being the
+Vision's (the Vision or its channel is deleted) they are dropped, the person's own queued
+messages staying (`visions`/`queued_dropped` logs the counts). Its `stop_thread` stops the run
+without holding the chat. The two hold rules are stricter than the sends alone: a Vision may
+not answer a held chat's questions, and may not stop a chat the person took over. A chat another Vision owns, a plain
+chat, a `threadId` naming none, `approve_action`, `set_thread_approval_mode`, settings,
+secrets, `plugin_action` (no Vision manages integrations, not even reads), the Visions methods other than `list_channel_threads`, and everything else refused
+above stay refused. The shell's approval step treats every driving method as `execute`, never
+a read. Writes are logged as `visions`/`chat_started`, `vision_sent` and
+`vision_stopped_chat` with ids only.
+
+**The admin Vision in `# hq`.** Each install has one built-in admin Vision, Atlas (id
+`admin`), saved the first time a project's channels are listed, which also makes that project's
+`# hq` channel (Custom mode) with Atlas as its only member; making either broadcasts
+`visions-changed` with no ids, so an app that read the Visions first reads them again (the app
+also lists channels before Visions). Atlas and `# hq` cannot be deleted
+(`delete_vision`/`delete_channel` are refused: "built in"), `# hq` takes no other member and
+Atlas joins no other channel (`save_channel` is refused: "only member"), and an `# hq` found with
+other members is given back to Atlas alone on the next listing. Its runs use
+`visions-admin.md` in place of `visions-system.md` and have the same tools and envelope as any
+Vision run. Its grant drives no chat (`create_thread`, the sends, `stop_thread`, the question
+methods and `list_channel_threads` are refused, and so is `plugin_action`); it may read
+`list_visions` and `list_channels` for its own project, its own chat as any run may, and has two
+methods of its own:
+
+| The admin's call | Allowed when |
+| --- | --- |
+| `propose_visions_setup {channelId, proposal}` | `channelId` is its `# hq`. `proposal` is `{summary, channels?, visions?, changes?}`: `summary` 1 to 600 characters in its own words; `channels` `[{name, topic?, members?}]` (members are Vision names, new ones included); `visions` `[{name, role?, shape?, color?, model?, autonomy?, daily_budget_usd?}]` (a look the server picks in turn when none is named); `changes` `[{vision, name?, role?, paused?, autonomy?, daily_budget_usd?}` or `{channel, name?, topic?, add_members?, remove_members?}]`; 1 to 16 of each list in all. Any other field (a `delete` included) is refused. Checked against the Visions and `# hq`'s project as they are now: names resolve and do not clash, a new channel starts in Custom (a proposal cannot set a mode), autonomy never decides more than the project's resolved `visions.autonomy`/`visions.custom`, and a change to a Vision's autonomy only lowers it (it must decide fewer things than the Vision's own level, or the resolved one when it has none), a new Vision's `model` is one the app can run: a usable OpenCode Go model (the catalog is loaded first when it is not yet) or a model of a provider your `runtime.jsonc` defines, by its `<provider>/<model>` id only, since a bare id would run as an OpenCode Go model (with neither available a named model is refused; leaving it out uses the app's default model), a budget is never above the Vision's own cap (or `visions.daily_budget_usd` for one without), and Atlas and `# hq` are not changed. It posts a `proposal` entry `{vision_id, proposal_id, proposal}` in `# hq` (looks filled in) and answers `{proposalId, seq}`. |
+| `apply_proposal {proposalId}` | the proposal is the admin's, in its `# hq`, within the last 512 KiB of the log (an older one is proposed again), never set up before (else "already set up"), the admin's newest proposal in that `# hq` (a reply after a newer one is to that one; else `agent-cli-admin-superseded.md`), the person posted in `# hq` after it (else `agent-cli-admin-no-reply.md`), and it still passes every check above. Whether the person's reply means yes is the model's judgement. It makes the new Visions, then the channels (in `# hq`'s project, Custom mode), then the changes (a pause or resume through `pause_vision`'s path), one at a time under one lock, posts a `proposal_applied` entry `{vision_id, proposal_id, items: [{kind, id, name, action}]}` (`kind` `vision`/`channel`, `action` `created`/`changed`) and answers `{items}`. A step that fails part way leaves what was made, records it in that entry (so it is never set up twice) and answers the error. |
+
+Other callers have neither method: a Vision's credential is refused them like any method off its
+list, and the person's `themis` does not know them. Logged as `visions`/`proposal_posted` (ids,
+seq and counts), `proposal_refused` (ids, `stage` and `reason`: `invalid`, `unknown`, `applied`,
+`superseded` or `no_reply`) and `proposal_applied` (ids, counts created and changed, `outcome` `applied` or
+`partial`), and `admin_created`, `hq_created` and `hq_members_reset` with ids only; never the
+summary, names or the person's words.
+
+**A Vision's runs and wakes.** A Vision never polls. It wakes, meaning a turn starts in its
+hidden Vision chat for the channel (created on its first wake, titled `{name} · #{channel}`,
+on the Vision's model, kept out of the plain chat list; its work chats show there, marked with its cloud), when: the person writes in the channel
+and mentions it as `@Name` (with no mention, the only member of a one-Vision channel wakes, and
+nobody in a channel of several); a work chat it owns finishes or fails a turn and nothing else
+follows (no queued message, no running goal); one of those chats asks a question; an approval
+box or a permission question (an Auto block, a destructive step's box) opens in one of them
+(once per approval, as `approval_waiting`: the Vision tells the person in the channel and can
+never answer it); the person hands a chat back; or the person stops one of its chats (once, so
+it is told not to restart it). A chat the person took over wakes it for nothing until it is
+handed back, and a chat the person stopped only for that one stop.
+
+The run's system message opens with the Vision's head (`visions-system.md`: its name, role and
+soul, the channel, the exact `themis call` shapes that drive chats, the rules on reporting only
+what it read itself and never restarting a stopped chat, and one row per autonomy decision
+saying "you decide" or "ask the person") and the read-only note; the wake message
+(`visions-wake-turn.md`) lists what woke it and the channel's newest entries (8 KiB). The
+autonomy rows come from `visions.autonomy`/`visions.custom`; a profile's own level and rows
+may only lower them, by the project layer's rules (a level above the resolved one adds
+nothing; a custom row may only take a decision away). The run has, on every OS, only
+`read_file`, `list_dir` and `search_file` (to read, list and search the project) and `shell`
+(which runs only `themis`, below); no plugins, skills, subagents, browser, web or memory; and
+its credential carries the Vision grant above.
+
+Whatever the channel's approval mode, a Vision's own run has one fixed envelope (the chats it
+starts keep the channel's mode), with no YOLO bypass. No program runs in it but the bundled
+`themis`, run directly (`shell` with command `themis` and its arguments, no `sh -c` or other
+wrapper, so no operators, chaining, subshells, redirects or substitution), which runs without
+asking since the server's Vision grant is the gate. Of the person's approval rules only the
+deny rules apply (a deny rule still refuses `themis`); their allow rules and chat grants do not,
+so any other command (even a read-only one like `ls`, even one an allow rule names), a
+sensitive file or leaving the sandbox is refused at once, never put in a box, with
+`visions-step-refused.md` as the tool result. It reads, lists and searches the project with
+its read tools instead (`read_file`, `list_dir`, `search_file`; on Unix other runs list and
+search through the shell, so a Vision run gets these two added). The person's hooks and command-based
+MCP servers do not start for a Vision run (it has no plugins). Its commands run in a sandbox
+plan built from the non-YOLO plan: the project read-only (temporary folders stay writable, as
+for subagents), secret folders walled, no Keychain, and the network blocked except TCP to the
+app server's port. On macOS, Seatbelt allows only `localhost:<port>`. On Linux, Landlock ABI 4
+stands in for bubblewrap (whose private network cannot reach the app) and its rule allows TCP
+connections to that port number on any host, since Landlock names ports, not hosts; it does not
+restrict UDP or Unix sockets. With nothing but `themis` able to run, neither gap can be reached.
+Where no backend can hold the envelope (the sandbox off or unavailable, Windows, Linux without
+Landlock ABI 4), the run is refused before it starts and the channel shows a
+`sandbox_unavailable` notice; if that changes between the check and the run, every command is
+refused with `visions-sandbox-refused.md`. It never runs unconfined.
+
+Its final reply is posted in the channel as the Vision's message (at most 4000 characters); a
+failed turn posts a `chat_failed` notice instead, as does a failed turn of one of its work
+chats. Wakes are bounded: one Vision run at a time per Vision chat, with what arrives meanwhile
+queued (once each, newest 64 kept) and passed together into its next wake when the run ends,
+finished or failed (a stopped one, by the person or a pause, starts nothing); at most
+`visions.max_wakes` runs in a row until the person writes in the channel again. What arrives
+after the limit is kept, never dropped, and goes with the Vision's next run once the person has
+written: the next mention of it, or (when nobody was mentioned) its next event. A run refused
+before it started still counts against `visions.max_wakes`, and its reasons wait: when it was
+busy (the chat busy or the run limit reached, or its start not recorded) it is tried again when
+any run ends, still within that bound; any other refusal (no chat, a bad configuration) waits
+for the Vision's next wake. Nothing wakes while the Vision
+is paused or `visions.enabled` is `false` (those reasons are dropped). Each decision is logged
+as `visions`/`wake` with `vision_id`, `channel_id`, `reason` (`mentioned`, `chat_finished`,
+`chat_failed`, `chat_stopped`, `question_asked`, `approval_waiting`, `handed_back`, `budget_stopped`, `queued`
+for the next run of what waited, or `retry`) and `outcome` (`started`, `queued`, `limit`,
+`idle`, `paused`, `disabled`, `held`, `taken_over`, `not_owned`, `gone`, `configuration`,
+`over_budget`, `budget_unknown`, `no_sink`); runs as `vision_chat_created`, `run_started`, `run_refused` (with a
+fixed reason, `sandbox_unavailable` among them) and `reply_posted`, ids and counts only.
+
+**A Vision's budget.** A Vision's spend today is what usage recorded since local midnight for
+the chats it owns (`owners.json`): its hidden Vision chats and its work chats, priced at the
+prices known: the configured providers' (`providers[].models[].price` in your `runtime.jsonc`)
+and the OpenCode Go catalog's list prices. A model none of them prices counts as $0 and is
+counted apart; a free model (priced at $0) is priced. A chat the person took over still counts:
+usage rows do not say who started a run. Three kinds of cap apply. Your own `runtime.jsonc`'s
+`visions.daily_budget_usd` holds all Visions together. A project whose `.themis/config.jsonc`
+sets it lower holds, together, only the Visions with a channel in that project. And a Vision
+profile's `daily_budget_usd` holds that Vision alone, never above your own file's cap. The
+server's checks and `visions_over_budget` judge the same way. When spend cannot be known it
+counts as reached, never as $0: the usage store unavailable or unreadable, `owners.json`
+unreadable, the configuration unreadable, the Vision gone, or (with an OpenCode Go key) the
+catalog not loaded yet. Without an OpenCode Go key there is no catalog to wait for: the
+configured providers' prices are all there is, and everything else is unpriced. The app loads
+the catalog at start when there are Visions, and again (at most once a minute) while a check
+finds none; with a key but no catalog, Visions start nothing until it loads. Until the first try
+has found out whether there is a key (a cold start), a wake waits (`prices_pending`) and is
+tried again as soon as the prices are known.
+
+The cap is checked after every request recorded for a chat a Vision owns (on a task of its own,
+once the usage writer stored the row; a chat no Vision owns costs a read lock and a set lookup,
+from an index of owned chats kept beside the Visions store and tried again at most once a minute
+while `owners.json` cannot be read), at the end of each such run, and before anything a Vision
+would start. A check reads only the usage rows recorded since the last one, by row id (only
+the day's first read, after a restart or at midnight, seeks the day's first row on the `at_ms`
+index, starting up to 1,024 rows before it since rows can be recorded slightly out of time
+order), and keeps a running sum per chat. Over budget, a Vision wakes
+for nothing (`over_budget`, `budget_unknown` when spend is not known, or `prices_pending`; what woke it waits,
+newest 64 kept, for its first wake the budget allows); its spending calls are refused as above
+(`over_budget`, `agent-cli-vision-over-budget.md`, or `budget_unknown`,
+`agent-cli-vision-budget-unknown.md`); its queued messages wait unsent; a goal in a chat it
+drives pauses instead of starting its next turn (the goal bar says why; the person resumes it);
+and its running chats are stopped at once, as are those of every other Vision over the same
+shared cap (no Vision that is not over): only chats that run for a Vision (not one the person
+took over), the ordinary way, holding nothing back (no `stopped_by_person`, no `stopped`
+notice). A stop takes effect at the run's next safe boundary, so a Vision overshoots by about
+the request in flight in each running chat. Each work chat the budget stopped waits as a
+`budget_stopped ID CAUSE` wake reason (`reached`, or `unknown` when spend could not be checked),
+so the Vision's next wake the budget allows says the budget check, not the person, stopped it.
+Hook-report wakes and automations in a Vision's chats are not gated; hook wakes are held after
+the stop's failed turn.
+
+Each of its channels gets each of three notices at most once a local day: `budget_reached`
+(`{vision_id, unpriced_requests}`: requests behind the reached cap that had no price),
+`budget_unknown` (`{vision_id, reason}`: `usage_unavailable`, `usage_unreadable`,
+`owners_unreadable`, `catalog_not_loaded` (posted when loading the catalog fails),
+`config_unreadable`, `vision_gone`), and `unpriced`
+(`{vision_id, unpriced_requests}`, as soon as one of its requests today has no price). A notice
+counts as given in a channel once that channel recorded it; the day's notices are then saved in
+the Visions folder's `budget_notices.json`, so a restart does not post them again. A channel
+that could not record one is tried again after a minute, and only that channel; a notice
+that was posted but could not be saved is not posted again before a restart. Raising either cap (Settings › Visions, `update_visions_settings`, or the
+profile) lets its next wake run. Deleting a Vision or channel forgets its owners, so their spend
+leaves the overall total for the day. Logged as `visions`/`budget_reached`, `budget_unknown`
+(`vision_id`, `reason`), `budget_unpriced`, `budget_stopped` (`vision_id`, how many chats and
+Visions, the cause), `budget_catalog` (whether loading failed and how, or `no_key`),
+`owned_index_unreadable`, `budget_notice_failed`
+and `budget_notices_unsaved`, metadata only.
 
 **Threat model.** The guard relies on the agent never holding your credential.
 It is in `server.json` (owner-only, `0600`), which the sandbox stops every
@@ -1365,4 +1588,15 @@ the `memory` block, its `revision` and `waiting` (`null`, or `{jobs, reasons, ne
 
 ## Shared-server event stream additions
 
-Besides thread, approval and review events, the server broadcasts `thread-changed` (`{kind: created|updated|removed, project_root, thread_id, thread?}`) after a successful `create_thread`, `rename_thread`, `set_thread_approval_mode`, `set_thread_effort`, `set_thread_skills` or `discard_thread`, so an open desktop window follows changes made by `themis call` or another client. It carries metadata only. Likewise `settings-changed` (`{scope: app|runtime|secrets}`, nothing else) follows every successful settings write: `app` after `update_settings`, `rename_project` or `delete_project` (the app's `settings.json`: new-chat approval mode, approval timeout, default model and the rest), `runtime` after `save_runtime_configuration`, `ensure_runtime_config`, `update_browser_settings`, `update_web_settings`, `update_subagent_settings` or `update_memory_settings`, and `secrets` after `set_key`, `remove_key`, `set_secret` or `clear_secret` (never a key name or value). A window reads that scope's settings again; refused writes and reads announce nothing. A runtime.jsonc edited by hand in an editor is not watched: Settings shows it the next time a section loads (Settings › Browser also on window focus) or after the next announced write. The `approval-request` event carries `grant_scope` (`{argv, covers_further_args}`, shell only): the raw command prefix an "allow in this chat" grant covers, matching the stored grant key. It also carries `grantable` (`false` for destructive actions, which only offer Allow once and Deny) and the `approve_action` decision is `once`, `chat` (formerly `always`, still accepted) or `deny`. When a dialog times out the server emits `approval-expired` (`{thread_id, approval_id}`) after denying it, so clients remove the stale dialog. Streamed assistant text is persisted before a run's terminal event, including Stopped and failed runs.
+Besides thread, approval and review events, the server broadcasts `thread-changed` (`{kind: created|updated|removed, project_root, thread_id, thread?}`) after a successful `create_thread`, `rename_thread`, `set_thread_approval_mode`, `set_thread_effort`, `set_thread_skills` or `discard_thread`, so an open desktop window follows changes made by `themis call` or another client. It carries metadata only. Likewise `settings-changed` (`{scope: app|runtime|secrets}`, nothing else) follows every successful settings write: `app` after `update_settings`, `rename_project` or `delete_project` (the app's `settings.json`: new-chat approval mode, approval timeout, default model and the rest), `runtime` after `save_runtime_configuration`, `ensure_runtime_config`, `update_browser_settings`, `update_web_settings`, `update_subagent_settings`, `update_memory_settings` or `update_visions_settings`, and `secrets` after `set_key`, `remove_key`, `set_secret` or `clear_secret` (never a key name or value). A window reads that scope's settings again; refused writes and reads announce nothing. A runtime.jsonc edited by hand in an editor is not watched: Settings shows it the next time a section loads (Settings › Browser also on window focus) or after the next announced write. The `approval-request` event carries `grant_scope` (`{argv, covers_further_args}`, shell only): the raw command prefix an "allow in this chat" grant covers, matching the stored grant key. It also carries `grantable` (`false` for destructive actions, which only offer Allow once and Deny) and the `approve_action` decision is `once`, `chat` (formerly `always`, still accepted) or `deny`. When a dialog times out the server emits `approval-expired` (`{thread_id, approval_id}`) after denying it, so clients remove the stale dialog. Streamed assistant text is persisted before a run's terminal event, including Stopped and failed runs.
+
+### Visions methods
+
+The person's Visions methods (none is open to an agent's run credential, except `list_channel_threads` for a Vision's own channel, see [a Vision's grant](#the-themis-cli-in-the-agents-shell); arguments are camelCase, results are the store's snake_case records):
+
+- `list_visions`, `save_vision {vision, revision}` (an empty `id` and `revision: null` creates one; otherwise `revision` must be the one it was opened at), `pause_vision {visionId, paused}` (pausing stops the runs of the chats it owns, except those the person took over, and posts a `paused`/`resumed` notice in its channels), `delete_vision {visionId}` (stops its chats, except those the person took over, makes them ordinary chats (announced as `thread-changed` `updated` with `vision: null`) and takes it out of its channels; logs stay).
+- `list_channels {projectRoot}` (makes the project's `# hq` and the admin Vision first when they are not there, see [the admin Vision](#the-themis-cli-in-the-agents-shell); each channel with `needs`: what waits on the person in that channel's own chats, counted like a Vision's `needs`), `save_channel {channel, revision}` (project folders resolve like `list_threads` resolves them), `delete_channel {channelId}` (stops the channel's chats, except those the person took over, and makes them ordinary chats, announced like `delete_vision`'s; its log stays on disk).
+- `get_channel_page {channelId, beforeSeq?, maxBytes?}` (`{entries: [{seq, at_ms, entry}], next_before}`, oldest first, 64 KiB by default and at most 1 MiB), `post_channel_message {channelId, text}` (`{seq, woken}`: `woken` lists the Visions whose run will answer, started or queued behind one going, so the channel shows them thinking at once; empty when none woke (not mentioned, paused, Visions off, over budget, at the wake limit); clears a person's Stop on that channel's chats but not a take over, and wakes the Visions it mentions as `@Name`, or the only member when it mentions none), `list_channel_threads {channelId}` (the work chats Visions started there: each `ThreadInfo` with an `owner` record `{thread_id, vision_id, channel_id, kind, hold}`), `hand_back_thread {threadId}` (refused when nothing is held; clears the hold, posts a `handed_back` notice and wakes the Vision; the owner back).
+- `get_visions_settings` and `update_visions_settings {changes, revision}` write only `enabled`, `autonomy`, `custom`, `daily_budget_usd` and `max_wakes` of the user file's `visions` block, in place, refusing a stale revision like Settings › Subagents. Both answer `{settings, revision, can_run}`: `can_run` is false when no sandbox on this computer can build a Vision's envelope with your `sandbox` settings (Windows, Linux without Landlock ABI 4, the sandbox off), so every wake would be refused; Settings › Visions then shows one status line.
+
+`list_threads` and `get_thread` give every chat a `vision` field: `{id, name, shape, color}` for a work chat a Vision started (the plain chat list marks it with that Vision's cloud), null for the person's own. A Vision's own hidden chats stay out of `list_threads`. A listing reads who runs which chat once (one lock of the Visions store), not once per chat. While `owners.json` cannot be read, the listing keeps the owners it last read (logged as `visions`/`marks_kept` with the count only); with none read since the app started, it hides and marks nothing. A work chat a Vision starts is announced as `thread-changed` `created` with its `vision`; a Vision's own chat is never announced. In plain chat a marked row's name reads "<title>, run by <Name>". The person's `stop_thread` on one holds it (`stopped_by_person`, with one `stopped` notice in the channel), a message the person sends or queues in one, from the channel or from plain chat, takes it over (`taken_over`, once the send is accepted), and `discard_thread` forgets its owner. Every successful Visions write, those three calls (and `enqueue_message`) and the person's `answer_question` and `approve_action` on an owned chat, and every entry the server writes in a channel by itself (a Vision chat's reply and the `chat_failed`, `sandbox_unavailable`, `unpriced`, `budget_reached` and `budget_unknown` notices) broadcast `visions-changed` (`{channel_id?, vision_id?}`, ids only; neither means read everything again). A Vision's budget state flipping (the cap reached on a check, prices becoming known or failing to load, a raise or the day's start, seen by a re-check every minute that is started once and skipped while there are no Visions or `visions.enabled` is false), what waits on the person in a chat it drives changing (a question passed on, a permission question asked, either answered) and its `sorry` changing (announced once the run's outcome is recorded) each broadcast `visions-changed` with its `vision_id` only; the app then reads `list_visions` again, and channels only when a change names one. Pause and resume notices are announced per channel; `delete_vision` broadcasts with no ids, since its chats leave every channel's list. `list_visions` gives each Vision `over_budget` (the same judgement that refuses its spending; true while spend cannot be checked), `vision_chats` (`{thread_id, channel_id, running}` for its own hidden chats), `needs` (approvals waiting in the chats it drives plus their open questions that it passed on (`passed_on`) or that ask for a permission (an Auto block or a destructive step's box, which only the person may answer), each counted once; a chat the person took over is not counted; the question writers keep each chat's count, so a listing reads a chat's questions only once after a restart) and `sorry` (its latest run, in a work chat or its own chat, failed and none has succeeded since; the person's Stop is no failure; kept in memory, so a restart clears it). These are what the app's Visions moods read; the app keeps a window of each channel's newest 200 lines (more only when the person reads back).

@@ -54,10 +54,17 @@ mod subagents;
 mod terminal;
 mod threads;
 mod usage;
+mod visions;
 mod workspace;
 pub use browser::update_payload as browser_update_payload;
 pub(crate) use hook_sessions::IDLE_CHECK_EVERY as HOOK_IDLE_CHECK_EVERY;
+pub(crate) use questions::forges_answer;
 pub use terminal::TerminalSession;
+pub(crate) use visions::{id_label, BudgetOver};
+pub use visions::{
+    is_admin, vision_decisions, Channel, ChannelEntry, ChannelLine, ChannelPage, Hold, NoticeKind,
+    OwnedKind, Owner, Proposal, SetUp, Vision, WakeReason, ADMIN_VISION_ID,
+};
 /// Project path resolution, exposed for the `fuzz/` targets; not a stable API.
 #[cfg(feature = "fuzzing")]
 #[doc(hidden)]
@@ -72,6 +79,7 @@ use chrono::{DateTime, SecondsFormat, Utc};
 use serde::{Deserialize, Serialize};
 use themis_core::providers::GO_DEFAULT_MODEL;
 use themis_core::runtime::{ConversationTurn, RunEvent, RunPolicy};
+use themis_core::tools::background::{storage_dir as background_dir, BackgroundRegistry};
 
 use crate::approvals::PendingMap;
 use crate::diff::{git_head, git_status_names, is_git_repo};
@@ -174,6 +182,8 @@ struct RunSnapshot {
     /// The person's own words that started this run; `None` for a goal turn, a hook's wake or
     /// an automation (the memory pass reads only what the person said).
     person_text: Option<String>,
+    /// Set for a run of a Vision chat: whose and for which channel.
+    vision: Option<visions::VisionRunSpec>,
 }
 
 /// One automation run in flight: the completion registry entry that lets the
@@ -238,6 +248,16 @@ struct SteerEntry {
     inbox: themis_core::runtime::SteerInbox,
     sink: Arc<dyn EventSink>,
     run_id: String,
+}
+
+impl SteerEntry {
+    /// Puts `steer` in the inbox.
+    fn push(&self, steer: themis_core::runtime::Steer) {
+        self.inbox
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .push_back(steer);
+    }
 }
 
 struct AppStateInner {
@@ -305,7 +325,7 @@ struct AppStateInner {
     /// the scheduler skips ticks until one is set).
     scheduler_sink: std::sync::Mutex<Option<Arc<dyn EventSink>>>,
     /// Background shell tasks of every chat (`background/` in the app data dir).
-    background: Arc<themis_core::tools::background::BackgroundRegistry>,
+    background: Arc<BackgroundRegistry>,
     /// Built-in browsers (`browser/` in the app data dir: profiles, a downloaded Chromium).
     browsers: Arc<themis_core::browser::BrowserHub>,
     /// The server's own CPU and memory use (see `resources`).
@@ -329,6 +349,10 @@ struct AppStateInner {
     /// Per-chat questions to the user (`questions/<chat id>.json`), loaded on first use.
     questions: std::sync::Mutex<HashMap<String, Vec<crate::types::Question>>>,
     questions_dir: PathBuf,
+    /// The Visions store (`visions/` in the app data dir), loaded on first use.
+    /// The Visions store's cache, and the index of owned chats kept apart from its lock.
+    visions: visions::VisionsShared,
+    visions_dir: PathBuf,
     /// Each chat's subagents, live and recently ended.
     subagents: subagents::SubagentMap,
     /// The person's shells in the Workspace terminal.
@@ -608,9 +632,7 @@ impl AppState {
                 watch_inflight: std::sync::Mutex::new(HashSet::new()),
                 automation_runs: std::sync::Mutex::new(HashMap::new()),
                 scheduler_sink: std::sync::Mutex::new(None),
-                background: themis_core::tools::background::BackgroundRegistry::open(Some(
-                    themis_core::tools::background::storage_dir(&app_dir),
-                )),
+                background: BackgroundRegistry::open(Some(background_dir(&app_dir))),
                 browsers: themis_core::browser::BrowserHub::new(
                     themis_core::browser::BrowserConfig {
                         root: app_dir.join("browser"),
@@ -628,6 +650,8 @@ impl AppState {
                 memory_job_lock: tokio::sync::Mutex::new(()),
                 questions: std::sync::Mutex::new(HashMap::new()),
                 questions_dir: app_dir.join(questions::QUESTIONS_DIR),
+                visions: visions::VisionsShared::default(),
+                visions_dir: app_dir.join(visions::VISIONS_DIR),
                 subagents: std::sync::Mutex::new(HashMap::new()),
                 terminals: Arc::default(),
                 question_lock: std::sync::Mutex::new(()),
@@ -775,6 +799,13 @@ impl AppState {
         offers_effort(&self.inner.go_catalog.read().await, model, effort)
     }
 
+    /// Sets the model catalog (and so its prices), for tests: it otherwise comes from the
+    /// provider and models.dev.
+    #[doc(hidden)]
+    pub async fn set_model_catalog_for_test(&self, models: Vec<themis_core::providers::GoModel>) {
+        *self.inner.go_catalog.write().await = models;
+    }
+
     async fn ensure_go_catalog(&self) -> Result<(), String> {
         let unloaded = self.inner.go_catalog.read().await.is_empty();
         if unloaded {
@@ -869,6 +900,7 @@ fn thread_info(record: &ThreadRecord, transcript: &TranscriptStore) -> Result<Th
         base_branch: None,
         recovered: record.recovered,
         skill_ids: record.skill_ids.clone(),
+        vision: None,
     })
 }
 
@@ -888,7 +920,7 @@ fn offers_effort(catalog: &[themis_core::providers::GoModel], model: &str, effor
         .any(|entry| entry.id == model && entry.effort_levels.iter().any(|level| level == effort))
 }
 
-fn canonical_project_dir(path: &str) -> Result<PathBuf, String> {
+pub(crate) fn canonical_project_dir(path: &str) -> Result<PathBuf, String> {
     if path.trim().is_empty() {
         return Err("project path must not be empty".to_owned());
     }

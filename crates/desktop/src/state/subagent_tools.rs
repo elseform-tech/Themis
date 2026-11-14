@@ -463,7 +463,7 @@ impl SubagentTool {
             .inbox
             .lock()
             .unwrap_or_else(|e| e.into_inner())
-            .push_back(message.clone());
+            .push_back(message.clone().into());
         self.kit.show_message(&agent, &message, false);
         Ok(json!({"sent": true}))
     }

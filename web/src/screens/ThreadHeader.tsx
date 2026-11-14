@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
 import type { BrowserRecording, GoModel, ThreadInfo } from "../lib/types";
 import { modelLabel } from "../lib/models";
 // Official OpenCode theme assets: https://github.com/anomalyco/opencode/tree/dev/packages/console/app/src/asset
@@ -24,6 +24,9 @@ interface ThreadHeaderProps {
   onOpenBrowser?: () => void;
 }
 
+/** Shown after the model pill: plain chat's bar for a Vision's chat (none elsewhere). */
+export const ThreadHeadExtra = createContext<ReactNode>(null);
+
 /** Shown on every Workspace tab and with Workspace closed, so a recording never runs unnoticed. */
 function RecordingPill({ recording, onOpen }: { recording: BrowserRecording & { at: number }; onOpen: () => void }) {
   const [now, setNow] = useState(Date.now());
@@ -42,6 +45,7 @@ function RecordingPill({ recording, onOpen }: { recording: BrowserRecording & { 
 
 /** The canvas header: the model and effort pill on the left, Workspace (icon and changed-file count) on the right. */
 export function ThreadHeader({ thread, models, effortLevels, effort, busy, running = false, switching, onProviderChange, onEffortChange, changedFiles, reviewOpen, onToggleReview, recording, onOpenBrowser }: ThreadHeaderProps) {
+  const extra = useContext(ThreadHeadExtra);
   const choices = ["", ...effortLevels];
   const effortIndex = Math.max(0, choices.indexOf(effort));
   return (
@@ -75,6 +79,7 @@ export function ThreadHeader({ thread, models, effortLevels, effort, busy, runni
           </div>
         </div>
       </details>
+      {extra}
       <span className="themis-thread-head-spacer" />
       {recording && onOpenBrowser && <RecordingPill recording={recording} onOpen={onOpenBrowser} />}
       <WorkspaceToggle changedFiles={changedFiles} open={reviewOpen} onToggle={onToggleReview} />

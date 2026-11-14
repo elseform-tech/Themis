@@ -443,8 +443,11 @@ async fn steered_messages_reach_the_next_model_request() {
                     // The user steers while the first request is in flight.
                     if !server_pushed.swap(true, Ordering::SeqCst) {
                         let mut queue = server_inbox.lock().unwrap();
-                        for text in steers {
-                            queue.push_back((*text).into());
+                        // The second is an agent's acting for the person (a Vision's).
+                        for (index, text) in steers.iter().enumerate() {
+                            let author = (index == 1).then(|| "v1".to_owned());
+                            let person_acted = author.is_none();
+                            queue.push_back(Steer { text: (*text).into(), author, person_acted });
                         }
                     }
                     let reply = if steered {
@@ -548,11 +551,14 @@ async fn steered_messages_reach_the_next_model_request() {
         let seen: Vec<_> = events
             .iter()
             .filter_map(|event| match event {
-                RunEvent::Steered { text } => Some(text.as_str()),
+                RunEvent::Steered(steer) => Some((steer.text.as_str(), steer.author.as_deref())),
                 _ => None,
             })
             .collect();
-        assert_eq!(seen, ["Use tabs.", "And keep it short."]);
+        assert_eq!(
+            seen,
+            [("Use tabs.", None), ("And keep it short.", Some("v1"))]
+        );
         if !first_calls_tool {
             // The early answer stays in the conversation the model sees.
             assert!(messages.iter().any(

@@ -99,15 +99,20 @@ pub enum ThreadEvent {
     /// A background task of this chat started, finished or was stopped.
     /// Sent outside any run (`run_id` is empty); clients refresh the task feed.
     BackgroundTasksChanged,
-    /// A message the user steered into this run reached the model.
+    /// A message steered into this run reached the model; `vision_id` when a Vision wrote it
+    /// (not the person's words).
     Steered {
         text: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        vision_id: Option<String>,
     },
     /// The user steered this message in: it shows in the chat now, ahead of
     /// [`Self::Steered`] or [`Self::SteerReturned`]. Display only: the model's
     /// history follows `Steered`.
     SteerShown {
         text: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        vision_id: Option<String>,
     },
     /// The run ended without reading a steered message: it is back in the queue,
     /// to go out as the next message, so it leaves the chat until then.
@@ -120,6 +125,9 @@ pub enum ThreadEvent {
         text: String,
         #[serde(default)]
         attachments: Vec<String>,
+        /// The Vision that sent it; absent for the person's own message.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        vision_id: Option<String>,
     },
     /// The chat's queue changed. Live only; `run_id` is empty.
     QueueChanged {
@@ -139,10 +147,12 @@ pub enum ThreadEvent {
     QuestionAsked {
         question: Question,
     },
-    /// The user answered a question.
+    /// The user answered a question, or a Vision did (`vision_id`, absent for the person's).
     QuestionAnswered {
         id: String,
         answer: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        vision_id: Option<String>,
     },
     /// The agent started a subagent for one part of the task.
     SubagentStarted {
@@ -236,7 +246,10 @@ impl From<RunEvent> for ThreadEvent {
                 model: None,
             },
             RunEvent::Failed { error } => Self::Failed { error },
-            RunEvent::Steered { text } => Self::Steered { text },
+            RunEvent::Steered(steer) => Self::Steered {
+                text: steer.text,
+                vision_id: steer.author,
+            },
         }
     }
 }
@@ -294,7 +307,7 @@ pub enum SettingsScope {
     /// The app's `settings.json`: defaults for new chats, approvals, limits, appearance.
     App,
     /// The user (or a project) `runtime.jsonc`, including the Settings sections that write
-    /// its `browser`, `web`, `subagents` and `memory` blocks.
+    /// its `browser`, `web`, `subagents`, `memory` and `visions` blocks.
     Runtime,
     /// Stored keys: which ones exist, never their values.
     Secrets,
@@ -311,7 +324,8 @@ impl SettingsScope {
             | "update_browser_settings"
             | "update_web_settings"
             | "update_subagent_settings"
-            | "update_memory_settings" => Some(Self::Runtime),
+            | "update_memory_settings"
+            | "update_visions_settings" => Some(Self::Runtime),
             "set_key" | "remove_key" | "set_secret" | "clear_secret" => Some(Self::Secrets),
             _ => None,
         }
@@ -323,4 +337,18 @@ impl SettingsScope {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SettingsChange {
     pub scope: SettingsScope,
+}
+
+/// Tauri event name carrying [`VisionsChange`] payloads.
+pub const VISIONS_CHANGED_NAME: &str = "visions-changed";
+
+/// `visions-changed` payload (`VisionsChange` in types.ts): Visions, channels, a channel's log
+/// or which chats Visions own changed. Ids only; a window reads what it shows again. Both
+/// absent means read everything again.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct VisionsChange {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub channel_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub vision_id: Option<String>,
 }

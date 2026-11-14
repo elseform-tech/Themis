@@ -142,6 +142,27 @@
     "thinking": "auto",
   },
 
+  // ─── VISIONS (also in Settings › Visions) ─────────────────────────────────────────────
+  "visions": {
+    // Let Visions (agents that drive ordinary chats) wake and work. A project file may only
+    // set false.
+    "enabled": true,
+    // How much a Vision decides without asking you: "ask" (nothing), "small" (wording, tests),
+    // "most" (also undoable steps, retries), "nearly_all" (also scope, deletes, dependencies)
+    // or "custom" (the rows below). External actions and spending are always yours. A project
+    // file may only lower it.
+    "autonomy": "small",
+    // With "custom": true lets the Vision decide it. Rows: wording, tests, undoable, retry,
+    // scope, delete, dependency. A project file may only set rows to false.
+    "custom": {},
+    // Estimated dollars all Visions together may spend in a day (0.1-100). A project file may
+    // only lower it.
+    "daily_budget_usd": 1.0,
+    // Most wakes on one thing before a Vision hands back to you (1-20). A project file may
+    // only lower it.
+    "max_wakes": 6,
+  },
+
   // ─── SKILLS AND INSTRUCTIONS ──────────────────────────────────────────────────────────
   // Where a project's skills are found (relative to the project, at most 32). Your own
   // skills in ~/.agents/skills, ~/.codex/skills and ~/.claude/skills are always found.

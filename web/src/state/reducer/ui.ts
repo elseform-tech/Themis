@@ -1,4 +1,5 @@
 import type { AppAction, AppState } from "../reducer";
+import { leaveOwnedChat, reduceVisionsActions } from "../visions";
 
 export function reduceUiActions(
   state: AppState,
@@ -14,7 +15,7 @@ export function reduceUiActions(
       };
     case "ui/view":
       return {
-        ...state,
+        ...(action.view === "thread" ? leaveOwnedChat(state) : state),
         mainView: action.view,
         settingsFocus: action.settings ?? null,
         diffPanelOpen: action.view === "thread" && state.diffPanelOpen,
@@ -41,6 +42,6 @@ export function reduceUiActions(
     case "ui/project-dialog":
       return { ...state, projectDialogOpen: action.open };
     default:
-      return null;
+      return reduceVisionsActions(state, action);
   }
 }

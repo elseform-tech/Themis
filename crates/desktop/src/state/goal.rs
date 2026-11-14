@@ -492,17 +492,7 @@ impl AppState {
             let full = page.len() == HISTORY_PAGE_ITEMS;
             for (seq, item) in page {
                 through = seq;
-                let spoke = match item {
-                    crate::transcript::HistoryItem::User { text, .. } => {
-                        !text.starts_with(themis_core::goal::GOAL_TURN_MARKER)
-                            && !text.starts_with("/goal")
-                    }
-                    crate::transcript::HistoryItem::Event { envelope } => {
-                        matches!(envelope.event, ThreadEvent::Steered { .. })
-                    }
-                    crate::transcript::HistoryItem::Legacy { .. } => false,
-                };
-                if spoke {
+                if person_spoke(&item) {
                     return true;
                 }
             }
@@ -632,7 +622,7 @@ impl AppState {
                 // An answer to another question leaves the goal waiting on
                 // the blocking one; any other reply resumes it.
                 Some(GoalStatus::Waiting)
-                    if !(text.starts_with(super::questions::ANSWER_MARKER)
+                    if !(super::questions::is_answer(text)
                         && self
                             .open_questions(thread_id)
                             .iter()
@@ -684,7 +674,7 @@ impl AppState {
                 goal.status,
                 GoalStatus::Running | GoalStatus::Waiting | GoalStatus::Quota
             )
-        }) && !text.starts_with(super::questions::ANSWER_MARKER)
+        }) && !super::questions::is_answer(text)
             && core_goal::turn_number(text).is_none()
     }
 
@@ -755,9 +745,86 @@ impl AppState {
     }
 }
 
+/// Whether a chat history item is the person speaking: a message or a steer, but not a goal
+/// turn, a goal command, a Vision's message or steer, or a Vision's answer (queued, it is a
+/// message; given while a run was going, it is a steer).
+fn person_spoke(item: &crate::transcript::HistoryItem) -> bool {
+    match item {
+        crate::transcript::HistoryItem::User {
+            text, vision_id, ..
+        } => {
+            vision_id.is_none()
+                && !text.starts_with(themis_core::goal::GOAL_TURN_MARKER)
+                && !text.starts_with("/goal")
+                && !super::questions::is_vision_answer(text)
+        }
+        crate::transcript::HistoryItem::Event { envelope } => match &envelope.event {
+            ThreadEvent::Steered { text, vision_id } => {
+                vision_id.is_none() && !super::questions::is_vision_answer(text)
+            }
+            _ => false,
+        },
+        crate::transcript::HistoryItem::Legacy { .. } => false,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A Vision's answer is not the person speaking, whether it came as a message (queued) or
+    /// was steered into a running turn; the person's answer and words are.
+    #[test]
+    fn a_visions_answer_never_counts_as_the_person_speaking() {
+        use crate::transcript::HistoryItem;
+        let vision = format!(
+            "{}\nQuestion: Tabs?\nAnswer: Tabs",
+            super::super::questions::vision_answer_marker("Wren")
+        );
+        let person = format!(
+            "{}\nQuestion: Tabs?\nAnswer: Tabs",
+            super::super::questions::ANSWER_MARKER
+        );
+        let user = |text: &str| HistoryItem::User {
+            run_id: "r".into(),
+            text: text.to_owned(),
+            attachments: Vec::new(),
+            vision_id: None,
+        };
+        let steered = |text: &str| HistoryItem::Event {
+            envelope: ThreadEventEnvelope {
+                thread_id: "t".into(),
+                run_id: "r".into(),
+                event: ThreadEvent::Steered {
+                    text: text.to_owned(),
+                    vision_id: None,
+                },
+            },
+        };
+        for item in [user(&vision), steered(&vision), user("/goal pause")] {
+            assert!(!person_spoke(&item));
+        }
+        for item in [
+            user(&person),
+            steered(&person),
+            user("stop"),
+            steered("stop"),
+        ] {
+            assert!(person_spoke(&item));
+        }
+        // A message a Vision steered in (it queued it) is its words, however plain.
+        let by_vision = HistoryItem::Event {
+            envelope: ThreadEventEnvelope {
+                thread_id: "t".into(),
+                run_id: "r".into(),
+                event: ThreadEvent::Steered {
+                    text: "stop".into(),
+                    vision_id: Some("v1".into()),
+                },
+            },
+        };
+        assert!(!person_spoke(&by_vision));
+    }
 
     #[test]
     fn small_window_note_groups_the_token_count() {

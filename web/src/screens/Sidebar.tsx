@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Button, Dialog, Input } from "../components";
 import { createProject, deleteProject, getSettings, renameProject, renameThread } from "../lib/tauri";
 import { describeError, toast, useApp } from "../state/store";
@@ -21,7 +21,16 @@ const SIDEBAR_MAX = 560;
 const SIDEBAR_DEFAULT = 288;
 
 // Settings takes over the whole sidebar with its section list; the toggle folds it the same way.
-export function Sidebar({ collapsed }: { collapsed: boolean }) {
+/** Another mode's list in place of the chats (Visions' channels): the project switcher stays, the
+ *  new-chat pencil goes, and choosing a project calls `onProject`. */
+export interface SidebarPanel { label: string; content: ReactNode; onProject: (root: string) => void }
+
+/** What goes before a chat's title (a Vision's cloud, hidden from assistive tech) and what its
+ *  row's name adds after the title (", run by Rook"). */
+export interface RowMark { mark: ReactNode; said: string }
+
+// `railExtra` goes in the rail after Chats; `panel` replaces the chat list; `rowMark` marks a row.
+export function Sidebar({ collapsed, railExtra, panel, rowMark }: { collapsed: boolean; railExtra?: ReactNode; panel?: SidebarPanel; rowMark?: (thread: ThreadInfo) => RowMark | null }) {
   const { state, dispatch } = useApp();
   const settingsOpen = state.mainView === "settings";
   const [width, setWidth] = useState(() => Math.max(SIDEBAR_MIN, Math.min(SIDEBAR_MAX, Number(readSession("sidebarWidth", SIDEBAR_DEFAULT)) || SIDEBAR_DEFAULT)));
@@ -102,20 +111,11 @@ export function Sidebar({ collapsed }: { collapsed: boolean }) {
   function threadRow(thread: ThreadInfo) {
     const active = thread.id === state.activeThreadId && state.mainView === "thread";
     const locked = state.running[thread.id] ?? thread.running;
-    const status = statusOf(thread);
+    const status = statusOf(thread), marked = rowMarkOf(rowMark, thread);
     const unseen = finished.has(thread.id) && !isLive(status);
-    return <li key={thread.id} className="themis-sidebar-thread"><button type="button" className={`themis-sidebar-row themis-thread-row ${active ? "themis-sidebar-row--active" : ""} ${unseen ? "is-unseen" : ""}`} title={thread.title} aria-label={thread.title} aria-current={active ? "true" : undefined} onClick={() => activeRoot && dispatch({ type: "thread/selected", projectRoot: activeRoot, threadId: thread.id })}><ThreadStatus status={status} /><MovingText>{thread.title}</MovingText>{TAG[status] && <span className="themis-thread-tag">{TAG[status]}</span>}</button><details className="themis-thread-row-actions"><summary aria-label={`Options for ${thread.title}`} title="Thread options"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="12" cy="5" r="1.7" /><circle cx="12" cy="12" r="1.7" /><circle cx="12" cy="19" r="1.7" /></svg></summary><div className="themis-row-menu"><button type="button" aria-label={`Edit ${thread.title}`} disabled={locked} onClick={event => { event.currentTarget.closest("details")?.removeAttribute("open"); setEditError(""); setEditing({ ...thread, projectRoot: activeRoot! }); }}>Rename</button><button type="button" className="is-danger" aria-label={`Remove ${thread.title}`} disabled={locked} onClick={event => { event.currentTarget.closest("details")?.removeAttribute("open"); setRemoving({ ...thread, projectRoot: activeRoot! }); }}>Remove</button></div></details></li>;
+    return <li key={thread.id} className="themis-sidebar-thread"><button type="button" className={`themis-sidebar-row themis-thread-row ${active ? "themis-sidebar-row--active" : ""} ${unseen ? "is-unseen" : ""}`} title={thread.title} aria-label={`${thread.title}${marked.said}`} aria-current={active ? "true" : undefined} onClick={() => activeRoot && dispatch({ type: "thread/selected", projectRoot: activeRoot, threadId: thread.id })}><ThreadStatus status={status} />{marked.mark}<MovingText>{thread.title}</MovingText>{TAG[status] && <span className="themis-thread-tag">{TAG[status]}</span>}</button><details className="themis-thread-row-actions"><summary aria-label={`Options for ${thread.title}`} title="Thread options"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="12" cy="5" r="1.7" /><circle cx="12" cy="12" r="1.7" /><circle cx="12" cy="19" r="1.7" /></svg></summary><div className="themis-row-menu"><button type="button" aria-label={`Edit ${thread.title}`} disabled={locked} onClick={event => { event.currentTarget.closest("details")?.removeAttribute("open"); setEditError(""); setEditing({ ...thread, projectRoot: activeRoot! }); }}>Rename</button><button type="button" className="is-danger" aria-label={`Remove ${thread.title}`} disabled={locked} onClick={event => { event.currentTarget.closest("details")?.removeAttribute("open"); setRemoving({ ...thread, projectRoot: activeRoot! }); }}>Remove</button></div></details></li>;
   }
-  return <>
-    <div ref={slot} className={`themis-sidebar-slot ${collapsed ? "is-collapsed" : ""} ${resizing ? "is-resizing" : ""}`} style={{ "--themis-sidebar-width": `${width}px` } as import("react").CSSProperties}>
-      {settingsOpen ? <SettingsNav id="themis-sidebar" /> : <>
-      <Rail onHelp={() => setHelp(true)} />
-      <aside id="themis-sidebar" className={`themis-sidebar ${collapsed ? "" : "is-visible"}`} inert={collapsed} aria-hidden={collapsed} aria-label="Workspace navigation">
-        <div className="themis-sidebar-top">
-          <ProjectSwitcher onSelect={root => { setShowAll(false); dispatch({ type: "project/selected", root }); }} onRename={project => { setError(""); setRenaming(project); }} onDelete={project => { setError(""); setDeleting(project); }} />
-          <NewChatButton disabled={!state.activeProjectRoot} onClick={() => void newThread()} />
-        </div>
-        <div className="themis-sidebar-projects">
+  const view = panelView(panel, dispatch, <NewChatButton disabled={!state.activeProjectRoot} onClick={() => void newThread()} />, <div className="themis-sidebar-projects">
           {activeProject && <>
             {waiting.length > 0 && <section className="themis-thread-group" aria-label="Waiting for you">
               <h2 className="themis-sidebar-section">Waiting for you<span aria-hidden="true">{waiting.length}</span></h2>
@@ -131,7 +131,16 @@ export function Sidebar({ collapsed }: { collapsed: boolean }) {
             </section>}
             {rest.length > shown.length && <button type="button" className="themis-show-more" onClick={() => setShowAll(true)}>Show {rest.length - shown.length} more</button>}
           </>}
-        </div>
+        </div>);
+  return <>
+    <div ref={slot} className={`themis-sidebar-slot ${collapsed ? "is-collapsed" : ""} ${resizing ? "is-resizing" : ""}`} style={{ "--themis-sidebar-width": `${width}px` } as import("react").CSSProperties}>
+      {settingsOpen ? <SettingsNav id="themis-sidebar" /> : <>
+      <Rail onHelp={() => setHelp(true)} extra={railExtra} />
+      <aside id="themis-sidebar" className={`themis-sidebar ${collapsed ? "" : "is-visible"}`} inert={collapsed} aria-hidden={collapsed} aria-label={view.label}>
+        <div className="themis-sidebar-top">
+          <ProjectSwitcher onSelect={root => { setShowAll(false); view.onProject(root); }} onRename={project => { setError(""); setRenaming(project); }} onDelete={project => { setError(""); setDeleting(project); }} />
+          {view.newChat}
+        </div>{view.content}
       </aside>
       </>}
       {!collapsed && <div className="themis-sidebar-resize" role="separator" aria-label="Resize sidebar" aria-controls="themis-sidebar" aria-orientation="vertical" aria-valuemin={SIDEBAR_MIN} aria-valuemax={SIDEBAR_MAX} aria-valuenow={width} tabIndex={0}
@@ -189,7 +198,18 @@ export function Sidebar({ collapsed }: { collapsed: boolean }) {
   </>;
 }
 
-/** The project menu at the top of the sidebar. */
+/** What the sidebar shows with another mode's panel in place of the chat list, or the chat list's own parts. */
+function panelView(panel: SidebarPanel | undefined, dispatch: ReturnType<typeof useApp>["dispatch"], newChat: ReactNode, chatList: ReactNode) {
+  if (!panel) return { label: "Workspace navigation", onProject: (root: string) => dispatch({ type: "project/selected", root }), newChat, content: chatList };
+  return { label: panel.label, onProject: panel.onProject, newChat: null, content: panel.content };
+}
+
+/** A row's mark, or none when the row has no mark or no marker is given. */
+function rowMarkOf(rowMark: ((thread: ThreadInfo) => RowMark | null) | undefined, thread: ThreadInfo): RowMark {
+  return rowMark?.(thread) ?? { mark: null, said: "" };
+}
+
+/** The project menu at the top of the sidebar, shared by the chat list and Visions' channels. */
 function ProjectSwitcher({ onSelect, onRename, onDelete }: { onSelect: (root: string) => void; onRename: (project: { root: string; name: string }) => void; onDelete: (project: { root: string; name: string }) => void }) {
   const { state, dispatch } = useApp();
   const activeRoot = state.activeProjectRoot;

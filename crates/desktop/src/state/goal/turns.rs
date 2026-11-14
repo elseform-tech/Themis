@@ -85,6 +85,15 @@ impl AppState {
         if self.require_thread(&thread_id).await.unwrap_or(true) {
             return; // That run's end continues the goal.
         }
+        // A chat its Vision drives spends from that Vision's budget: past it, the goal pauses.
+        if let Some(over) = self.visions_budget_holds(&thread_id) {
+            self.update_goal(sink.as_ref(), &thread_id, |goal| {
+                if goal.status == GoalStatus::Running {
+                    set_status(goal, GoalStatus::Paused, Some(over.goal_reason().into()));
+                }
+            });
+            return;
+        }
         let turn_seq = self
             .inner
             .transcript
@@ -113,8 +122,7 @@ impl AppState {
                 &thread_id,
                 text,
                 &run_id,
-                None,
-                Vec::new(),
+                Default::default(),
             )
             .await;
         if let Err(error) = sent {

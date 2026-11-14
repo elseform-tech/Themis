@@ -11,6 +11,15 @@ use themis_desktop::{server::Server, state::AppState, types::ProviderKind};
 use wiremock::matchers::method;
 use wiremock::{Mock, MockServer, Request, ResponseTemplate};
 
+/// Runs `test` on the app's own runtime, as in `main`: runs are spawned on Tauri's runtime, and a
+/// run driving the browser needs its larger worker stack in debug builds (it used nearly all of
+/// the 2 MiB default).
+fn on_app_runtime(test: impl std::future::Future<Output = ()>) {
+    static INSTALL: std::sync::Once = std::sync::Once::new();
+    INSTALL.call_once(themis_desktop::install_runtime);
+    themis_desktop::runtime().unwrap().block_on(test);
+}
+
 fn call(data: &Path, command: &str, args: Value) -> Value {
     let output = std::process::Command::new(env!("CARGO_BIN_EXE_themis"))
         .arg("--data-dir")
@@ -90,8 +99,12 @@ fn browser_actions(body: &Value) -> Vec<String> {
         .unwrap_or_default()
 }
 
-#[tokio::test(flavor = "multi_thread")]
-async fn cli_browser_permissions_block_in_every_mode_and_always_allow_is_saved() {
+#[test]
+fn cli_browser_permissions_block_in_every_mode_and_always_allow_is_saved() {
+    on_app_runtime(cli_browser_permissions_block_in_every_mode_and_always_allow_is_saved_run());
+}
+
+async fn cli_browser_permissions_block_in_every_mode_and_always_allow_is_saved_run() {
     if themis_core::browser::launch::find_browser(None, None).is_none() {
         eprintln!("skipping: no Chromium browser installed");
         return;
@@ -267,8 +280,12 @@ async fn cli_browser_permissions_block_in_every_mode_and_always_allow_is_saved()
     task.abort();
 }
 
-#[tokio::test(flavor = "multi_thread")]
-async fn cli_debugging_tools_run_on_a_local_app_and_a_project_can_turn_them_off() {
+#[test]
+fn cli_debugging_tools_run_on_a_local_app_and_a_project_can_turn_them_off() {
+    on_app_runtime(cli_debugging_tools_run_on_a_local_app_and_a_project_can_turn_them_off_run());
+}
+
+async fn cli_debugging_tools_run_on_a_local_app_and_a_project_can_turn_them_off_run() {
     if themis_core::browser::launch::find_browser(None, None).is_none() {
         eprintln!("skipping: no Chromium browser installed");
         return;
@@ -396,8 +413,12 @@ async fn cli_debugging_tools_run_on_a_local_app_and_a_project_can_turn_them_off(
     task.abort();
 }
 
-#[tokio::test(flavor = "multi_thread")]
-async fn cli_reads_and_saves_browser_settings_and_manages_browsing_data() {
+#[test]
+fn cli_reads_and_saves_browser_settings_and_manages_browsing_data() {
+    on_app_runtime(cli_reads_and_saves_browser_settings_and_manages_browsing_data_run());
+}
+
+async fn cli_reads_and_saves_browser_settings_and_manages_browsing_data_run() {
     let data = tempfile::tempdir().unwrap();
     std::fs::write(
         data.path().join("runtime.jsonc"),
@@ -565,8 +586,12 @@ async fn cli_reads_and_saves_browser_settings_and_manages_browsing_data() {
     task.abort();
 }
 
-#[tokio::test(flavor = "multi_thread")]
-async fn cli_sets_and_checks_the_search_server() {
+#[test]
+fn cli_sets_and_checks_the_search_server() {
+    on_app_runtime(cli_sets_and_checks_the_search_server_run());
+}
+
+async fn cli_sets_and_checks_the_search_server_run() {
     let data = tempfile::tempdir().unwrap();
     std::fs::write(
         data.path().join("runtime.jsonc"),
@@ -636,8 +661,12 @@ async fn cli_sets_and_checks_the_search_server() {
     task.abort();
 }
 
-#[tokio::test(flavor = "multi_thread")]
-async fn cli_edits_mcp_servers_in_a_copy_applied_on_save() {
+#[test]
+fn cli_edits_mcp_servers_in_a_copy_applied_on_save() {
+    on_app_runtime(cli_edits_mcp_servers_in_a_copy_applied_on_save_run());
+}
+
+async fn cli_edits_mcp_servers_in_a_copy_applied_on_save_run() {
     let data = tempfile::tempdir().unwrap();
     let state = AppState::new_for_test(data.path().join("settings.json"));
     let server = Server::bind(state.clone(), data.path()).await.unwrap();
@@ -811,8 +840,12 @@ async fn cli_edits_mcp_servers_in_a_copy_applied_on_save() {
 
 /// The SearXNG built into Themis answers searches when no server of your own is set. Needs
 /// the runtime from `node scripts/bundle-searxng.mjs`; skipped where it was not built.
-#[tokio::test(flavor = "multi_thread")]
-async fn cli_the_built_in_search_server_answers() {
+#[test]
+fn cli_the_built_in_search_server_answers() {
+    on_app_runtime(cli_the_built_in_search_server_answers_run());
+}
+
+async fn cli_the_built_in_search_server_answers_run() {
     let runtime = Path::new(env!("CARGO_MANIFEST_DIR")).join("searxng-runtime");
     if !runtime.join("VERSION").exists() {
         eprintln!("skipping: run node scripts/bundle-searxng.mjs to build the search runtime");
@@ -847,8 +880,12 @@ async fn cli_the_built_in_search_server_answers() {
     themis_desktop::state::searxng_stop_for_test();
 }
 
-#[tokio::test(flavor = "multi_thread")]
-async fn cli_a_remote_mcp_server_that_asks_for_sign_in_says_so() {
+#[test]
+fn cli_a_remote_mcp_server_that_asks_for_sign_in_says_so() {
+    on_app_runtime(cli_a_remote_mcp_server_that_asks_for_sign_in_says_so_run());
+}
+
+async fn cli_a_remote_mcp_server_that_asks_for_sign_in_says_so_run() {
     let mcp = MockServer::builder().start().await;
     Mock::given(method("POST"))
         .respond_with(ResponseTemplate::new(401).insert_header("WWW-Authenticate", "Bearer"))

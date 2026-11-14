@@ -6,8 +6,28 @@ use std::sync::Arc;
 
 use themis_core::context_metrics::{UsageRecord, UsageRecorder};
 
+use themis_core::providers::{GoModel, ModelPrice};
+
 use super::AppState;
 use crate::usage::{summarize, window_starts, Totals, UsageRow, UsageSummary};
+
+/// List prices by (provider, model), as usage rows name them.
+pub(super) type Prices = HashMap<(String, String), ModelPrice>;
+
+/// The catalog's prices, keyed as usage rows name their models (a model without a provider is
+/// OpenCode Go's).
+pub(super) fn catalog_prices(models: &[GoModel]) -> Prices {
+    models
+        .iter()
+        .filter_map(|model| {
+            let provider = model
+                .provider
+                .clone()
+                .unwrap_or_else(|| themis_core::providers::GO_PROVIDER_ID.to_owned());
+            Some(((provider, model.id.clone()), model.price.clone()?))
+        })
+        .collect()
+}
 
 impl AppState {
     /// Records every completed request of one run (or goal check) for `thread_id`.
@@ -22,6 +42,8 @@ impl AppState {
                 Some(&thread_id),
                 Some(&run_id),
             ));
+            // A Vision's chat: its daily budget is checked after every request.
+            state.visions_budget_after_request(&thread_id);
         })
     }
 
@@ -31,26 +53,7 @@ impl AppState {
         // Prices come from the model catalog; load it once if no run has yet.
         let _ =
             tokio::time::timeout(std::time::Duration::from_secs(3), self.ensure_go_catalog()).await;
-        let prices: HashMap<(String, String), themis_core::providers::ModelPrice> = self
-            .inner
-            .go_catalog
-            .read()
-            .await
-            .iter()
-            .filter_map(|model| {
-                model.price.clone().map(|price| {
-                    (
-                        (
-                            model.provider.clone().unwrap_or_else(|| {
-                                themis_core::providers::GO_PROVIDER_ID.to_owned()
-                            }),
-                            model.id.clone(),
-                        ),
-                        price,
-                    )
-                })
-            })
-            .collect();
+        let prices = catalog_prices(&self.inner.go_catalog.read().await);
         let titles: HashMap<String, String> = self
             .inner
             .threads

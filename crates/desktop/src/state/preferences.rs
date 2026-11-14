@@ -107,6 +107,11 @@ impl AppState {
         })
     }
 
+    /// Whether an OpenCode Go key is saved (or in the environment).
+    pub(super) async fn go_key_present(&self) -> Result<bool, String> {
+        Ok(self.read_secret(ProviderKind::Go.as_str()).await?.is_some())
+    }
+
     async fn read_secret(&self, provider: &'static str) -> Result<Option<String>, String> {
         known_provider(provider)?;
         let name = self.go_secret_name().await;

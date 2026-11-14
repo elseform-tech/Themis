@@ -37,6 +37,21 @@ impl AppState {
                     state.bank_running_goals(bank_sink.as_ref());
                 }
             });
+            // A Vision's budget can flip with nothing else happening (the day's start, a cap
+            // raised in a file): judged again every minute, a flip is announced. Started once;
+            // like the goal bank above it ends with the runtime (there is no shutdown signal).
+            let state = self.clone();
+            runtime.spawn(async move {
+                if !state.visions_recheck_loop_once() {
+                    return;
+                }
+                loop {
+                    tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+                    let state = state.clone();
+                    let _ =
+                        tokio::task::spawn_blocking(move || state.visions_budget_recheck()).await;
+                }
+            });
         }
         *self
             .inner

@@ -1422,6 +1422,93 @@ async fn dropped_or_failed_streams_are_retried_before_anything_is_shown() {
     }
 }
 
+/// Found by a live check: OpenCode Go reports an upstream model failure as HTTP 400 with an
+/// error of type `server_error` ("Upstream response was not valid JSON"). The request was
+/// fine and the next attempt usually works, so it is retried; an ordinary 400 is not.
+#[tokio::test]
+async fn an_upstream_server_error_reported_as_400_is_retried() {
+    use wiremock::{matchers::method, Mock, MockServer, ResponseTemplate};
+    let upstream = serde_json::json!({"error":{"type":"server_error","code":"server_error",
+        "message":"Upstream request failed: [server_error] Upstream response was not valid JSON"}});
+    let invalid = serde_json::json!({"error":{"type":"invalid_request_error",
+        "message":"messages: field required"}});
+    for (first, retried) in [(upstream, true), (invalid, false)] {
+        let server = MockServer::builder().start().await;
+        let calls = Arc::new(AtomicUsize::new(0));
+        let observed = calls.clone();
+        Mock::given(method("POST"))
+            .respond_with(move |_: &wiremock::Request| {
+                if observed.fetch_add(1, Ordering::SeqCst) == 0 {
+                    ResponseTemplate::new(400).set_body_json(first.clone())
+                } else {
+                    let done = serde_json::json!({"choices":[{"delta":{"content":"Recovered"},"finish_reason":"stop"}]});
+                    ResponseTemplate::new(200)
+                        .set_body_raw(format!("data: {done}\n\ndata: [DONE]\n\n"), "text/event-stream")
+                }
+            })
+            .mount(&server)
+            .await;
+        let llm = crate::providers::resolve(
+            &crate::providers::ProviderConfig::new(crate::providers::ProviderKind::Go, "test-key")
+                .with_model("test-model")
+                .with_base_url(server.uri()),
+        )
+        .await
+        .unwrap();
+        let (tx, _rx) = tokio::sync::mpsc::channel(16);
+        let result = request_answer(&llm, &[], &[], &tx, &AtomicBool::new(false)).await;
+        if retried {
+            assert_eq!(result.unwrap().0.as_deref(), Some("Recovered"));
+            assert_eq!(calls.load(Ordering::SeqCst), 2);
+        } else {
+            assert!(result.is_err());
+            assert_eq!(calls.load(Ordering::SeqCst), 1);
+        }
+    }
+}
+
+/// The upstream check reads untrusted provider JSON: any body, valid or not, decides
+/// without panicking, and only a 400 whose error type or code is `server_error` counts.
+#[test]
+fn upstream_server_error_check_reads_any_body_safely() {
+    use autoagents::llm::error::LLMError;
+    let error = |status_code: u16, body: &str| LLMError::HttpStatusError {
+        status_code,
+        message: "failed".into(),
+        response_body: body.into(),
+        retry_after: None,
+        provider_code: None,
+    };
+    for body in [
+        "",
+        "not json",
+        "{",
+        "[]",
+        "null",
+        "{\"error\":7}",
+        "{\"error\":{\"type\":[1]}}",
+        "\u{0}\u{ffff}",
+    ] {
+        assert!(!transient(&error(400, body)), "{body:?}");
+    }
+    assert!(transient(&error(
+        400,
+        r#"{"error":{"type":"server_error"}}"#
+    )));
+    assert!(transient(&error(
+        400,
+        r#"{"error":{"code":"server_error","type":"x"}}"#
+    )));
+    assert!(!transient(&error(
+        401,
+        r#"{"error":{"type":"server_error"}}"#
+    )));
+    assert!(!transient(&error(
+        400,
+        r#"{"error":{"type":"invalid_request_error"}}"#
+    )));
+}
+
 #[tokio::test]
 async fn unpublished_truncation_retries_without_publishing_discarded_calls() {
     use wiremock::{matchers::method, Mock, MockServer, ResponseTemplate};

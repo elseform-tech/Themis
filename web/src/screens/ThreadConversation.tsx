@@ -6,7 +6,7 @@ import { PromptText } from "../components/PromptInput";
 import { usePromptSkills } from "../lib/usePromptSkills";
 import { describeError, toast, useActiveProject, useApp } from "../state/store";
 import { browserOpenUrl } from "../lib/browser";
-import { ANSWER_MARKER, type AttachedMedia, type ChangedFile, type Question } from "../lib/types";
+import { isAnswerText, type AttachedMedia, type ChangedFile, type Question } from "../lib/types";
 import { hiddenFilesLabel, visibleFiles } from "../lib/hiddenFiles";
 import { QuestionNote, useNowAt } from "./QuestionBox";
 import { openFor, placeQuestion, questionOnComposer, usePlacements } from "../state/composerSlot";
@@ -381,7 +381,7 @@ function Message({ message, threadId, activeRunId, durationMs, skills, plugins, 
   if (message.checkpoint) return <CheckpointDivider checkpoint={message.checkpoint} />;
   // An answer to the agent's question shows as "question → answer" rows where it was given
   // (the question_answered events), never as a bubble; older chats' answer messages too.
-  if (message.role === "user" && message.text.startsWith(ANSWER_MARKER)) return null;
+  if (message.role === "user" && isAnswerText(message.text)) return null;
   // A goal turn starts with a runtime message: a divider, not a bubble from the user.
   if (message.goalStatus) return <div className="themis-thread-msg themis-thread-msg--assistant themis-thread-msg--completed"><ResponseBody text={message.text} /></div>;
   if (message.goalCheck) return <div className="themis-thread-msg themis-thread-msg--user"><span className="themis-goal-check-label">Goal check</span><p className="themis-thread-text">{message.text}</p></div>;
@@ -436,12 +436,22 @@ function Message({ message, threadId, activeRunId, durationMs, skills, plugins, 
         </>
       ) : (
         <>
+          <VisionAuthor visionId={message.visionId} />
           <p className="themis-thread-text"><PromptText value={text} skills={skills} plugins={plugins} /></p>
         </>
       )}
     </div>
     </>
   );
+}
+
+/** Whose words a Vision's message in the chat are: the Vision's name ("Vision" once it is
+ *  gone); nothing on the person's own messages. */
+function VisionAuthor({ visionId }: { visionId: string | undefined }) {
+  const { state } = useApp();
+  if (!visionId) return null;
+  const name = state.visions.list.find(vision => vision.id === visionId)?.name ?? "Vision";
+  return <span className="themis-goal-check-label">{name}</span>;
 }
 
 /** A tool row's status word; a step whose box nobody answered says so rather than Failed. */

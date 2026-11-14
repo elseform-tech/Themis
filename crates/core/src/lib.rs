@@ -27,6 +27,7 @@ pub mod skills;
 pub mod social;
 pub mod tools;
 pub mod vision;
+pub mod visions;
 
 /// Returns the `themis-core` crate version.
 pub fn version() -> &'static str {

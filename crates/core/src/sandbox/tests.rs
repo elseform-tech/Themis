@@ -1334,3 +1334,73 @@ fn the_server_discovery_file_is_hidden_in_every_plan() {
         assert!(hidden, "{args:?}");
     }
 }
+
+/// A Vision run's envelope: read-only project, no network but the app server's port on this
+/// machine, no Keychain, secrets walled; never from YOLO's open plan, and refused where nothing
+/// confines commands (or where the backend cannot open one local port).
+#[test]
+fn a_vision_envelope_reaches_only_the_app_server() {
+    let fx = fixture();
+    let configured = config(r#"{"network": "allow", "allow_keychain": true}"#);
+    let plan = plan_with(
+        Enforcement::Active(Backend::Seatbelt),
+        &configured,
+        &fx.root,
+        &fx.app_data,
+        &fx.home,
+    );
+    let envelope = plan.vision_envelope(&fx.root, 47123).expect("confinable");
+    assert_eq!(envelope.network(), NetworkPolicy::Block);
+    assert!(!envelope.allow_keychain() && !envelope.open());
+    assert!(!envelope.writable().contains(&fx.root));
+    assert!(envelope.secrets().iter().any(|path| path.ends_with(".ssh")));
+    let (profile, _) = seatbelt::profile(&envelope);
+    assert!(profile.contains("(deny network-outbound (remote ip))"));
+    assert!(profile.contains("(allow network-outbound (remote ip \"localhost:47123\"))"));
+    // Any other plan opens no port.
+    let (ordinary, _) = seatbelt::profile(&plan.confined_to(&fx.root, &[]));
+    assert!(!ordinary.contains("localhost:"));
+
+    let open = SandboxPlan::with_enforcement(
+        PlanInputs {
+            config: &configured,
+            project_root: &fx.root,
+            app_data: Some(&fx.app_data),
+            home: Some(&fx.home),
+            open: Some(YoloSandbox::default()),
+        },
+        Enforcement::Active(Backend::Seatbelt),
+        "test".into(),
+    );
+    assert!(
+        open.vision_envelope(&fx.root, 47123).is_err(),
+        "never from YOLO's plan"
+    );
+    for enforcement in [Enforcement::Disabled, Enforcement::Unavailable] {
+        let plan = plan_with(enforcement, &configured, &fx.root, &fx.app_data, &fx.home);
+        assert!(plan.vision_envelope(&fx.root, 47123).is_err());
+    }
+}
+
+/// A plan that fails closed for a Vision run says the reason it was given, not the advice for
+/// a configured backend.
+#[test]
+fn a_fail_closed_plan_refuses_with_the_reason_it_was_given() {
+    let fx = fixture();
+    let plan = plan_with(
+        Enforcement::Disabled,
+        &config("{}"),
+        &fx.root,
+        &fx.app_data,
+        &fx.home,
+    );
+    let closed = plan.fail_closed("no sandbox here can hold this".into());
+    assert_eq!(
+        closed.refusal().as_deref(),
+        Some("no sandbox here can hold this")
+    );
+    let refused = closed.prepare("ls", &[], None).err().expect("refused");
+    assert!(refused
+        .to_string()
+        .contains("no sandbox here can hold this"));
+}

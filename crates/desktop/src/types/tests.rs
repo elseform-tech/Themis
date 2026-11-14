@@ -342,6 +342,7 @@ fn thread_info_and_merge_result_match_ts() {
         base_branch: Some("main".to_owned()),
         recovered: true,
         skill_ids: vec!["skill-1".to_owned()],
+        vision: None,
     };
     assert_eq!(
         to_value(&info),
@@ -358,7 +359,21 @@ fn thread_info_and_merge_result_match_ts() {
             "base_branch": "main",
             "recovered": true,
             "skill_ids": ["skill-1"],
+            "vision": null,
         })
+    );
+    let marked = ThreadInfo {
+        vision: Some(ThreadVision {
+            id: "v".to_owned(),
+            name: "Rook".to_owned(),
+            shape: "tall".to_owned(),
+            color: "amber".to_owned(),
+        }),
+        ..info.clone()
+    };
+    assert_eq!(
+        to_value(&marked)["vision"],
+        json!({"id": "v", "name": "Rook", "shape": "tall", "color": "amber"})
     );
     // Absent worktrees serialize as `null`, exactly like the TS `string | null`.
     let plain = ThreadInfo {

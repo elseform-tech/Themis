@@ -7,11 +7,13 @@ fn server_exposes_all_frontend_backend_commands() {
     let frontend = concat!(
         include_str!("../../../web/src/lib/tauri.ts"),
         include_str!("../../../web/src/lib/browser.ts"),
-        include_str!("../../../web/src/lib/terminal.ts")
+        include_str!("../../../web/src/lib/terminal.ts"),
+        include_str!("../../../web/src/lib/visions.ts")
     );
     let server = concat!(
         include_str!("../src/server.rs"),
-        include_str!("../src/server/commands.rs")
+        include_str!("../src/server/commands.rs"),
+        include_str!("../src/server/visions_commands.rs")
     );
     let native = concat!(
         include_str!("../src/lib.rs"),
@@ -52,8 +54,6 @@ fn server_exposes_all_frontend_backend_commands() {
             "create_goal",
             // The desktop watches the mcp.json copy and applies saves itself; the CLI applies.
             "apply_mcp_config",
-            // The desktop rebuilds questions from the chat's history; the CLI lists them.
-            "list_questions",
             // Subagent state for the CLI; the desktop builds its card from chat events.
             "list_subagents",
             // The desktop's terminal lives until the project or the app goes; the CLI asks and closes.
@@ -65,19 +65,54 @@ fn server_exposes_all_frontend_backend_commands() {
             "search_memory",
         ])
         .collect();
-    let handled: BTreeSet<_> = server
-        .lines()
-        .filter_map(|line| {
-            let line = line.trim();
-            line.strip_prefix('"')?
-                .split('"')
-                .next()
-                .filter(|_| line.contains("=>"))
-        })
-        .collect();
+    let handled = arm_names(server);
     assert_eq!(
         called, handled,
         "server and desktop command contracts drifted"
     );
     assert!(server.contains("state.record_error(&request.method, error.clone())"));
+}
+
+/// Every `"name"` a match arm names before `=>`, one or several joined by `|`, also when the
+/// arm runs over several lines.
+fn arm_names(source: &str) -> BTreeSet<&str> {
+    let mut names = BTreeSet::new();
+    for (at, _) in source.match_indices("=>") {
+        let mut before = source[..at].trim_end();
+        while let Some(rest) = before.strip_suffix('"') {
+            let Some(open) = rest.rfind('"') else { break };
+            names.insert(&rest[open + 1..]);
+            before = rest[..open].trim_end();
+            match before.strip_suffix('|') {
+                Some(rest) => before = rest.trim_end(),
+                None => break,
+            }
+        }
+    }
+    names
+}
+
+/// The Visions methods the server routes (`visions_commands::METHODS`) are exactly those its
+/// match arms answer, so a name in one but not the other cannot pass unnoticed.
+#[test]
+fn visions_methods_are_the_ones_their_arms_answer() {
+    let source = include_str!("../src/server/visions_commands.rs");
+    let list = source
+        .split("const METHODS: &[&str] = &[")
+        .nth(1)
+        .and_then(|tail| tail.split("];").next())
+        .expect("METHODS");
+    let methods: BTreeSet<&str> = list
+        .split(',')
+        .filter_map(|item| item.trim().strip_prefix('"')?.strip_suffix('"'))
+        .collect();
+    assert_eq!(methods.len(), 13);
+    assert_eq!(arm_names(source), methods);
+}
+
+#[test]
+fn arm_names_read_arms_over_several_lines() {
+    let source =
+        "match m {\n    \"a\" | \"b\" => 1,\n    \"c\"\n    | \"d\" => 2,\n    x if y => 3,\n}";
+    assert_eq!(arm_names(source), BTreeSet::from(["a", "b", "c", "d"]));
 }

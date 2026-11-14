@@ -58,8 +58,17 @@ fn ref_after(snapshot: &str, name: &str) -> Option<String> {
     reference.starts_with('e').then(|| reference.to_owned())
 }
 
-#[tokio::test(flavor = "multi_thread")]
-async fn cli_run_drives_the_browser_and_the_workspace_commands_see_it() {
+/// On the app's own runtime, as in `main`: runs are spawned on Tauri's runtime, and a run driving
+/// the browser needs its larger worker stack in debug builds (it used most of the 2 MiB default).
+#[test]
+fn cli_run_drives_the_browser_and_the_workspace_commands_see_it() {
+    themis_desktop::install_runtime();
+    themis_desktop::runtime()
+        .unwrap()
+        .block_on(run_drives_the_browser_and_the_workspace_commands_see_it());
+}
+
+async fn run_drives_the_browser_and_the_workspace_commands_see_it() {
     if themis_core::browser::launch::find_browser(None, None).is_none() {
         eprintln!("skipping: no Chromium browser installed");
         return;

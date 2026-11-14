@@ -1,5 +1,6 @@
 //! The shared command dispatcher: one method name and its arguments in, one JSON value out.
 
+use super::visions_commands;
 use super::*;
 
 /// Runs one command, then tells every subscribed window about thread
@@ -20,17 +21,24 @@ pub async fn dispatch(
         ("discard_thread", Some(id)) => state.thread_project_root(id).await,
         _ => None,
     };
+    let owned = visions_commands::owned_chat(state, method, thread_id.as_deref());
     let result = match method {
         // A chat's read-only lookups, the work of the tools of the same names.
         "recall" => state.chat_read(method, args).await,
         "search_memory" => state.chat_read(method, args).await,
         // A file as a branch has it, for Workspace › Changes' unchanged lines (read-only, bounded).
         "read_branch_file" => read_branch_file(state, &args).await,
+        _ if visions_commands::METHODS.contains(&method) => {
+            visions_commands::dispatch(state, &sink, method, &args).await
+        }
         _ => dispatch_command(state, Arc::clone(&sink), method, args).await,
     };
     if let Ok(value) = &result {
         if let Some(scope) = SettingsScope::written_by(method) {
             sink.emit_settings_changed(&SettingsChange { scope });
+        }
+        if let Some(owned) = &owned {
+            sink.emit_visions_changed(owned);
         }
         announce_thread_change(state, sink.as_ref(), method, value, thread_id, removed_root).await;
     }
@@ -67,7 +75,22 @@ async fn announce_thread_change(
         }
         _ => return,
     };
-    let Some(id) = id else { return };
+    if let Some(id) = id {
+        announce_thread(state, sink, kind, id).await;
+    }
+}
+
+/// Tells every subscribed window that the chat `id` was created or changed, with its info now;
+/// never a Vision's own chat, which plain chat does not list.
+pub(super) async fn announce_thread(
+    state: &AppState,
+    sink: &dyn EventSink,
+    kind: ThreadChangeKind,
+    id: String,
+) {
+    if state.visions_hides(&id) {
+        return;
+    }
     let (Some(project_root), Ok(thread)) = (
         state.thread_project_root(&id).await,
         state.get_thread(&id).await,
@@ -703,6 +726,17 @@ async fn answer_question(
     sink: Arc<dyn EventSink>,
     args: &Value,
 ) -> Result<Value, String> {
+    let (thread_id, answers, many) = answer_args(args)?;
+    let answered = state.answer_questions(sink, thread_id, answers).await?;
+    answered_value(answered, many)
+}
+
+/// `answer_question`'s arguments: the chat, `(questionId, answer)` pairs (`answers`, or one
+/// `questionId` and `answer`), and whether they came as a list.
+pub(super) type AnswerArgs = (String, Vec<(String, String)>, bool);
+
+/// Reads [`AnswerArgs`] from a call's arguments.
+pub(super) fn answer_args(args: &Value) -> Result<AnswerArgs, String> {
     #[derive(serde::Deserialize)]
     #[serde(rename_all = "camelCase")]
     struct Answer {
@@ -710,29 +744,31 @@ async fn answer_question(
         answer: String,
     }
     let thread_id = arg(args, "threadId")?;
-    let answered = match arg::<Option<Vec<Answer>>>(args, "answers")? {
-        Some(answers) => serde_json::to_value(
-            state
-                .answer_questions(
-                    sink,
-                    thread_id,
-                    answers
-                        .into_iter()
-                        .map(|answer| (answer.question_id, answer.answer))
-                        .collect(),
-                )
-                .await?,
-        ),
-        None => serde_json::to_value(
-            state
-                .answer_question(
-                    sink,
-                    thread_id,
-                    arg(args, "questionId")?,
-                    arg(args, "answer")?,
-                )
-                .await?,
-        ),
+    Ok(match arg::<Option<Vec<Answer>>>(args, "answers")? {
+        Some(answers) => {
+            let pairs = answers
+                .into_iter()
+                .map(|answer| (answer.question_id, answer.answer))
+                .collect();
+            (thread_id, pairs, true)
+        }
+        None => {
+            let pair = (arg(args, "questionId")?, arg(args, "answer")?);
+            (thread_id, vec![pair], false)
+        }
+    })
+}
+
+/// The answered questions as `answer_question` returns them: the list, or the one.
+pub(super) fn answered_value(
+    mut answered: Vec<crate::types::Question>,
+    many: bool,
+) -> Result<Value, String> {
+    let value = if many {
+        serde_json::to_value(answered)
+    } else {
+        let one = answered.pop().ok_or_else(|| "Write an answer".to_owned())?;
+        serde_json::to_value(one)
     };
-    answered.map_err(|err| err.to_string())
+    value.map_err(|err| err.to_string())
 }

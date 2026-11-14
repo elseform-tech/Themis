@@ -50,6 +50,18 @@ pub struct ThreadInfo {
     /// Skill ids attached to this thread (applied to every run).
     #[serde(default)]
     pub skill_ids: Vec<String>,
+    /// The Vision running this chat (a work chat it started); null for the person's own.
+    #[serde(default)]
+    pub vision: Option<ThreadVision>,
+}
+
+/// The Vision running a chat, as plain chat marks it (`ThreadVision` in types.ts).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ThreadVision {
+    pub id: String,
+    pub name: String,
+    pub shape: String,
+    pub color: String,
 }
 
 /// Result of `merge_thread` (`MergeResult` in types.ts).

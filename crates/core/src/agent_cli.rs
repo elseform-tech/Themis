@@ -108,6 +108,24 @@ pub struct RunScope {
     /// the method of the same name only for these, so `themis recall` and `themis memory` give
     /// a run exactly what its tools give; a subagent's run has none.
     pub reads: Vec<String>,
+    /// Set for a Vision's run: the credential may also drive the chats that Vision owns (see
+    /// [`VisionScope`]); `None` for every other run.
+    pub vision: Option<VisionScope>,
+}
+
+/// What a Vision's run credential is bound to beyond its own chat: the Vision, the channel the
+/// run works for, and that channel's project, the only one it may start chats in. The server
+/// checks every call on another chat against its owner record, never against command text.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct VisionScope {
+    pub vision_id: String,
+    pub channel_id: String,
+    /// The channel's project root (canonical).
+    pub project_root: PathBuf,
+    /// The decisions its autonomy leaves to it (the profile over the resolved
+    /// `visions.autonomy`, see [`crate::visions::profile_decides`]), captured when its run
+    /// starts: it may answer a chat's question itself only on one of these.
+    pub decides: Vec<crate::visions::Decision>,
 }
 
 /// Read-only built-in tools the agent's `themis` mirrors, by the app-server method of the same
@@ -124,6 +142,7 @@ impl RunScope {
             network_blocked: sandbox
                 .is_some_and(|plan| plan.network() == crate::sandbox::NetworkPolicy::Block),
             reads: Vec::new(),
+            vision: None,
         }
     }
 
@@ -158,6 +177,10 @@ pub trait Issuer: Send + Sync {
     fn issue(&self, thread_id: &str, run_id: &str, scope: &RunScope) -> Option<Access>;
     /// Ends every credential the chat's runs hold.
     fn revoke_thread(&self, thread_id: &str);
+    /// The local port the app server listens on, which run credentials reach.
+    fn port(&self) -> Option<u16> {
+        None
+    }
 }
 
 /// The issuer of this process. One app server per process installs it.
@@ -202,6 +225,11 @@ pub fn current() -> Option<Access> {
         .ok()?;
     let scope = RUN_SCOPE.try_with(Clone::clone).ok()?;
     issue(&thread_id, &run_id, &scope)
+}
+
+/// The port of the app server running in this process, if one does.
+pub fn port() -> Option<u16> {
+    installed()?.port()
 }
 
 /// Ends the credentials of a chat's runs (its run finished).
@@ -288,6 +316,7 @@ mod tests {
             project_root: Some(PathBuf::from("/projects/a")),
             network_blocked: true,
             reads: vec!["recall".into()],
+            vision: None,
         };
         let bound = crate::diagnostics::ACTIVE.scope(
             context(),

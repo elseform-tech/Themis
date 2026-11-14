@@ -168,6 +168,11 @@ const ALL: &[(&str, &str, &[&str])] = &[
         "question-answer",
         &["question", "options", "assumption", "answer"],
     ),
+    (
+        QUESTION_ANSWER_BY_VISION,
+        "question-answer-by-vision",
+        &["name"],
+    ),
     (COMPACTION_CHECKPOINT, "compaction-checkpoint", &[]),
     (
         SUMMARY_CHECKPOINT_REQUEST,
@@ -321,6 +326,46 @@ const ALL: &[(&str, &str, &[&str])] = &[
         "agent-cli-read-unavailable",
         &["method"],
     ),
+    (AGENT_CLI_HELD_BY_PERSON, "agent-cli-held-by-person", &[]),
+    (AGENT_CLI_VISION_PAUSED, "agent-cli-vision-paused", &[]),
+    (
+        AGENT_CLI_VISION_OVER_BUDGET,
+        "agent-cli-vision-over-budget",
+        &[],
+    ),
+    (
+        AGENT_CLI_VISION_BUDGET_UNKNOWN,
+        "agent-cli-vision-budget-unknown",
+        &[],
+    ),
+    (
+        AGENT_CLI_PERMISSION_QUESTION,
+        "agent-cli-permission-question",
+        &[],
+    ),
+    (AGENT_CLI_ABOVE_AUTONOMY, "agent-cli-above-autonomy", &[]),
+    (AGENT_CLI_VISION_DECISION, "agent-cli-vision-decision", &[]),
+    (AGENT_CLI_VISION_REASON, "agent-cli-vision-reason", &[]),
+    (
+        AGENT_CLI_VISION_ANSWER_MARKER,
+        "agent-cli-vision-answer-marker",
+        &[],
+    ),
+    (
+        AGENT_CLI_VISION_UNRECORDED,
+        "agent-cli-vision-unrecorded",
+        &[],
+    ),
+    (
+        AGENT_CLI_VISION_STEERS_ITS_OWN,
+        "agent-cli-vision-steers-its-own",
+        &[],
+    ),
+    (
+        AGENT_CLI_VISION_OTHER_PROJECT,
+        "agent-cli-vision-other-project",
+        &[],
+    ),
     (AGENT_SWITCH_ON_REFUSED, "agent-switch-on-refused", &[]),
     (TOOL_SANDBOX_NOTE, "tool-sandbox-note", &[]),
     (
@@ -446,6 +491,38 @@ const ALL: &[(&str, &str, &[&str])] = &[
     ),
     (SKILL_COMMAND_NOTE, "skill-command-note", &[]),
     (SKILL_OUTPUT_STYLE_NOTE, "skill-output-style-note", &[]),
+    (
+        VISIONS_SYSTEM,
+        "visions-system",
+        &[
+            "name",
+            "role",
+            "soul",
+            "channel",
+            "channel_id",
+            "project",
+            "autonomy_table",
+        ],
+    ),
+    (VISIONS_READ_ONLY_NOTE, "visions-read-only-note", &[]),
+    (VISIONS_STEP_REFUSED, "visions-step-refused", &[]),
+    (VISIONS_SANDBOX_REFUSED, "visions-sandbox-refused", &[]),
+    (
+        VISIONS_ADMIN,
+        "visions-admin",
+        &["name", "project", "channel_id"],
+    ),
+    (AGENT_CLI_ADMIN_NO_REPLY, "agent-cli-admin-no-reply", &[]),
+    (
+        AGENT_CLI_ADMIN_SUPERSEDED,
+        "agent-cli-admin-superseded",
+        &[],
+    ),
+    (
+        VISIONS_WAKE_TURN,
+        "visions-wake-turn",
+        &["reasons", "recent"],
+    ),
     (EVAL_ANSWER_PROBE, "eval-answer-probe", &["question"]),
     (
         EVAL_RECALL_TASK,

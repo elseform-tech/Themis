@@ -60,7 +60,7 @@ pub fn resolve(
                 let hooks: HooksConfig = serde_json::from_value(value["hooks"].clone())
                     .context("invalid hooks configuration")?;
                 check_hooks_restriction(&hooks, &layer, origin)?;
-                check_memory_restriction(&layer, origin)?;
+                check_memory_and_visions_restriction(&value, &layer, origin)?;
                 providers::check_provider_restriction(&layer, origin)?;
                 let current: BrowserConfig = serde_json::from_value(value["browser"].clone())
                     .context("invalid browser configuration")?;
@@ -269,7 +269,7 @@ pub fn validate(config: &RuntimeConfig) -> Result<()> {
         config.compaction.retry_limit <= 2,
         "compaction.retry_limit must be 0..2"
     );
-    validate_memory(config)?;
+    validate_memory_and_visions(config)?;
     for (field, model) in [
         ("compaction.summary_model", &compaction.summary_model),
         ("subagents.model", &config.subagents.model),

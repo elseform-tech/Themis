@@ -20,23 +20,34 @@ mod finish;
 mod setup;
 
 pub(super) use audit::AuditedApprovals;
-use setup::mcp_remote_name;
 pub(super) use setup::permission_mode;
+use setup::{mcp_failure_reason, mcp_remote_name};
 
 /// Channel capacity for the run-event pump (runs emit a handful of events).
 const EVENT_CHANNEL_CAPACITY: usize = 1024;
 
 impl AppState {
+    /// Whether a steer read in `thread_id`'s run goes to the turn's memory pass as the
+    /// person's words: theirs (a Vision's is not), and not already taken by a goal event.
+    pub(super) fn steer_for_memory(
+        &self,
+        thread_id: &str,
+        steer: &themis_core::runtime::Steer,
+    ) -> bool {
+        steer.author.is_none() && !self.goal_takes_words(thread_id, &steer.text)
+    }
+
     /// Resolves the provider, builds tools, and spawns the run task.
     pub(super) async fn spawn_run(
         &self,
         sink: &Arc<dyn EventSink>,
         thread_id: &str,
         run_id: &str,
-        snapshot: RunSnapshot,
+        mut snapshot: RunSnapshot,
         task: String,
         policy: RunPolicy,
     ) -> Result<(), String> {
+        let vision = self.visions_run_setup(&mut snapshot)?;
         // Idle memory work waits for the app to be quiet again.
         self.note_memory_activity();
         // What already differs from HEAD before this run, so the end of the run
@@ -160,7 +171,8 @@ impl AppState {
             .with_read_approval(true)
             .with_unattended(snapshot.automation_run)
             .with_audit(diagnostic_context.clone())
-            .with_steer_waiting(self.steer_waiting_check(thread_id)),
+            .with_steer_waiting(self.steer_waiting_check(thread_id))
+            .with_asked(self.visions_approval_notifier(sink, thread_id)),
         );
         // "Allow in this chat" grants persist for the chat: loaded now, extended
         // by this run's answers, and inherited by later runs (including the
@@ -201,7 +213,12 @@ impl AppState {
             reviewer,
         );
         let approvals: Arc<dyn ApprovalHook> = Arc::new(AuditedApprovals {
-            inner: approvals,
+            inner: super::visions::vision_approvals(
+                vision.as_ref(),
+                approvals,
+                &run_configuration.approval,
+                &snapshot.work_root,
+            ),
             context: diagnostic_context.clone(),
         });
         // Materialize skill scripts into the run workroot BEFORE building
@@ -260,6 +277,7 @@ impl AppState {
             &run_configuration.sandbox,
             yolo.then_some(snapshot.yolo_sandbox),
         );
+        let sandbox = super::visions::confine(vision.as_ref(), sandbox, &snapshot.work_root);
         let _ = self.inner.diagnostics.append_with_level(
             "sandbox",
             "run_plan",
@@ -282,7 +300,8 @@ impl AppState {
                 ),
                 cancel: Some(Arc::clone(&stopped)),
                 sandbox: Some(Arc::clone(&sandbox)),
-                no_escalation: false,
+                // A Vision's run never asks to leave its sandbox.
+                no_escalation: vision.is_some(),
             },
         )
         .map_err(|err| format!("failed to build tools: {err:#}"))?;
@@ -364,31 +383,7 @@ impl AppState {
                         }
                     }
                     Err(error) => {
-                        // Transport errors may contain remote URLs, arguments or server
-                        // responses. Only expose fixed, actionable failure categories.
-                        let text = error.to_string();
-                        let missing = format!("{error:#}").contains("MCP program not found")
-                            || text.starts_with("MCP process could not start: ");
-                        let reason = match text.as_str() {
-                            _ if missing => {
-                                "server process could not start: its program was not found"
-                            }
-                            "Could not start MCP server"
-                            | "MCP process could not start. Check the saved command." => {
-                                "server process could not start"
-                            }
-                            "Required MCP environment variable is unset"
-                            | "MCP authentication variable is unset"
-                            | "Required MCP environment variable is unavailable." => {
-                                "required authentication or environment variable is unavailable"
-                            }
-                            "MCP startup denied" => "startup approval was denied",
-                            "MCP startup needs your approval" => {
-                                "it has not been enabled by you since its definition last changed"
-                            }
-                            "Unsupported MCP protocol version" => "server protocol is unsupported",
-                            _ => "connection or tool discovery failed",
-                        };
+                        let reason = mcp_failure_reason(&error);
                         let warning = themis_core::prompts::fill(
                             themis_core::prompts::DESKTOP_MCP_UNAVAILABLE,
                             &[
@@ -524,35 +519,7 @@ impl AppState {
             Some(remember),
         );
         // fetch_url always; web_search through your SearXNG, or the one built into Themis.
-        let mut web = run_configuration.web.clone();
-        if web.search_url.is_none()
-            && self.inner.built_in_search
-            && super::searxng::runtime_dir().is_some()
-        {
-            let app_dir = self.app_data_dir();
-            match super::searxng::for_run(super::searxng::RUN_WAIT, super::searxng::url(&app_dir))
-                .await
-            {
-                super::searxng::ForRun::Ready(url) => web.search_url = Some(url),
-                super::searxng::ForRun::Unavailable(error) => {
-                    let _ = self.inner.diagnostics.append(
-                        "web",
-                        "built_in_search_unavailable",
-                        "warn",
-                        json!({"reason": error}),
-                    );
-                }
-                // Its start goes on in the background; the next run gets the server.
-                super::searxng::ForRun::Starting => {
-                    let _ = self.inner.diagnostics.append(
-                        "web",
-                        "built_in_search_starting",
-                        "info",
-                        json!({"waited_ms": super::searxng::RUN_WAIT.as_millis() as u64}),
-                    );
-                }
-            }
-        }
+        let web = self.run_web_config(&run_configuration).await;
         tools.extend(themis_core::skills::skill_tool(&snapshot.skill_catalog));
         tools.extend(themis_core::tools::web::web_tools(
             approvals.clone(),
@@ -749,9 +716,9 @@ impl AppState {
                     if matches!(event, RunEvent::AssistantText(_)) {
                         continue;
                     }
-                    if let RunEvent::Steered { text } = &event {
-                        if !pump_state.goal_takes_words(&pump_thread, text) {
-                            memory_turn.person.push(text.clone());
+                    if let RunEvent::Steered(steer) = &event {
+                        if pump_state.steer_for_memory(&pump_thread, steer) {
+                            memory_turn.person.push(steer.text.clone());
                         }
                     }
                     // The memory pass, once the turn is over (finished, incomplete or failed:
@@ -911,7 +878,7 @@ impl AppState {
                                 &run_configuration.clone(),
                                 themis_core::runtime::with_configuration(
                                     run_configuration.compaction,
-                                    themis_core::plugins::hooks::with_hooks(
+                                    Box::pin(themis_core::plugins::hooks::with_hooks(
                                         hook_runtime,
                                         &hook_task,
                                         events_tx,
@@ -937,12 +904,12 @@ impl AppState {
                                                         return Err(error);
                                                     }
                                                 }
-                                                let tools = if yolo { tools } else { themis_core::skills::filter_tools(tools, &skills) };
+                                                let tools = super::visions::run_tools(vision.as_ref(), if yolo { tools } else { themis_core::skills::filter_tools(tools, &skills) }, &snapshot.work_root, &approvals, &sandbox);
                                                 // Its `themis recall`/`themis memory` reach only the read tools it has.
-                                                let run_scope = super::chat_reads::run_scope(&snapshot.work_root, &sandbox, &tools, memory_denied);
+                                                let run_scope = super::visions::run_scope(super::chat_reads::run_scope(&snapshot.work_root, &sandbox, &tools, memory_denied), vision.as_ref());
                                                 // Boxed: the run's future is large, and the
                                                 // steer scope must not copy it on the stack.
-                                                themis_core::agent_cli::with_run_scope(run_scope, themis_core::runtime::with_memory_block(memory_block, themis_core::runtime::with_checkpoint_note(checkpoint_note, themis_core::runtime::with_first_request(first_request, themis_core::runtime::with_end_request(end_request, themis_core::runtime::with_steer_inbox(steer_inbox, themis_core::runtime::with_run_notes(run_notes, Box::pin(run_task_with_evidence(
+                                                themis_core::agent_cli::with_run_scope(run_scope, themis_core::runtime::with_memory_block(memory_block, themis_core::runtime::with_checkpoint_note(checkpoint_note, themis_core::runtime::with_first_request(first_request, themis_core::runtime::with_end_request(end_request, themis_core::runtime::with_steer_inbox(steer_inbox, themis_core::runtime::with_run_notes(run_notes, super::visions::boxed_run(vision, Box::pin(run_task_with_evidence(
                                                 llm,
                                                 tools,
                                                 themis_core::skills::compose_task(&task, &skills),
@@ -953,10 +920,10 @@ impl AppState {
                                                 stopped,
                                                 skill_catalog,
                                                 Some(evidence_directory),
-                                            ))))))))).await
+                                            )))))))))).await
                                             }))
                                         },
-                                    ),
+                                    )),
                                 ),
                             ),
                         )),

@@ -255,6 +255,34 @@ pub fn boxed_tools_for_run(
     Ok(tools)
 }
 
+/// The dedicated listing and searching tools (`list_dir`, `search_file`) for `root`, gated as
+/// reads with the plan's file guard, for runs whose shell may not list or search (a Vision's,
+/// which runs only `themis`). Other runs on Unix list and search through the shell.
+pub fn listing_tools(
+    root: &Path,
+    approvals: Arc<dyn ApprovalHook>,
+    sandbox: Option<&SandboxPlan>,
+) -> anyhow::Result<Vec<Box<dyn ToolT>>> {
+    let canonical = root
+        .canonicalize()
+        .map_err(|e| anyhow::anyhow!("project root '{}' is not accessible: {e}", root.display()))?;
+    let root_string = canonical.to_string_lossy().into_owned();
+    let guard = sandbox
+        .and_then(|plan| plan.file_guard(false))
+        .map(Arc::new);
+    let gate = |tool: Box<dyn ToolT>| -> Box<dyn ToolT> {
+        Box::new(
+            GatedTool::new(tool, Arc::clone(&approvals), RiskLevel::Read)
+                .with_base_dir(canonical.clone())
+                .with_guard(guard.clone()),
+        )
+    };
+    Ok(vec![
+        gate(Box::new(ListDir::new_with_root_dir(root_string.clone()))),
+        gate(Box::new(SearchFile::new_with_root_dir(root_string))),
+    ])
+}
+
 /// Build the full toolset as shared (`Arc`) handles.
 ///
 /// Convert to boxes with the SDK's `shared_tools_to_boxes` when an API wants

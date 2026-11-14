@@ -1,13 +1,15 @@
 // @vitest-environment jsdom
 import { cleanup, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { ANSWER_MARKER, type Question } from "../lib/types";
+import { ANSWER_MARKER, VISION_ANSWER_PREFIX, type Question } from "../lib/types";
+import type { VisionInfo } from "../lib/visions";
 import { initialState, reducer } from "../state/reducer";
 import { ThreadConversation } from "./ThreadConversation";
 
+let visionList: VisionInfo[] = [];
 vi.mock("../state/store", async importOriginal => ({
   ...await importOriginal<typeof import("../state/store")>(),
-  useApp: () => ({ dispatch: vi.fn(), state: { ...initialState, historyLoaded: { t1: true }, settings: { approval_timeout_seconds: 600 } } }),
+  useApp: () => ({ dispatch: vi.fn(), state: { ...initialState, historyLoaded: { t1: true }, settings: { approval_timeout_seconds: 600 }, visions: { ...initialState.visions, list: visionList } } }),
   useActiveProject: () => null,
 }));
 vi.mock("../lib/usePromptSkills", () => ({ usePromptSkills: () => ({ skills: [], plugins: [] }) }));
@@ -43,8 +45,46 @@ describe("answered questions in the chat", () => {
     expect(text).not.toContain(ANSWER_MARKER);
   });
 
+  it("hide a Vision's answer message the same way", () => {
+    const { container } = conversation([
+      event({ kind: "question_asked", question: asked("q1", "Tabs or spaces?") }),
+      event({ kind: "question_answered", id: "q1", answer: "Tabs", vision_id: "v1" }, ""),
+      { kind: "user", run_id: "r2", text: `${VISION_ANSWER_PREFIX}Wren]\nWren is a Vision.\nQuestion: Tabs or spaces?\nAnswer: Tabs` },
+    ]);
+    expect(container.querySelector(".themis-thread-msg--user")).toBeNull();
+    expect(container.textContent ?? "").not.toContain(VISION_ANSWER_PREFIX);
+  });
+
   it("keep an unanswered question as its open line where it was asked once its wait is over", () => {
     conversation([event({ kind: "question_asked", question: { ...asked("q1", "Tabs or spaces?"), asked_at: Date.now() - 60 * 60 * 1000 } })]);
     expect(screen.getByRole("button", { name: /Open question · Tabs or spaces\?/ })).toBeInTheDocument();
+  });
+});
+
+describe("a Vision's messages in the chat", () => {
+  const wren: VisionInfo = { id: "v1", name: "Wren", role: "", shape: "cloud", color: "teal", soul: "", paused: false, revision: "r",
+    over_budget: false, vision_chats: [], needs: 0, sorry: false };
+
+  it("carry the Vision's name, sent, queued or steered; the person's own look as before", () => {
+    visionList = [wren];
+    const { container } = conversation([
+      { kind: "user", run_id: "r1", text: "Please add a changelog." },
+      { kind: "user", run_id: "r2", text: "Start on the release notes.", vision_id: "v1" },
+      event({ kind: "steer_shown", text: "Use pnpm.", vision_id: "v1" }, "r2"),
+      event({ kind: "steered", text: "Use pnpm.", vision_id: "v1" }, "r2"),
+      event({ kind: "steer_shown", text: "And keep it short." }, "r2"),
+    ]);
+    const bubbles = [...container.querySelectorAll(".themis-thread-msg--user")];
+    expect(bubbles.map(bubble => bubble.textContent)).toEqual([
+      "Please add a changelog.", "WrenStart on the release notes.", "WrenUse pnpm.", "And keep it short.",
+    ]);
+    expect(bubbles[0]!.innerHTML).toBe(bubbles[3]!.innerHTML.replace("And keep it short.", "Please add a changelog."));
+    visionList = [];
+  });
+
+  it("carry the name when one arrives live, too", () => {
+    let state = reducer(initialState, { type: "thread/history-loaded", threadId: "t1", history: [] });
+    state = reducer(state, { type: "thread/event", envelope: { thread_id: "t1", run_id: "r3", event: { kind: "user_message", text: "Go on.", attachments: [], vision_id: "v1" } as never } } as never);
+    expect(state.messages.t1?.[0]?.visionId).toBe("v1");
   });
 });

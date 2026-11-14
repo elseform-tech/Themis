@@ -16,7 +16,7 @@ use crate::state::AppState;
 use crate::transcript::history_pages::{HistoryCursor, HistoryPage, MAX_PAGE_BYTES};
 use crate::types::{
     ApprovalRequest, ReviewItem, SettingsChange, SettingsScope, ThreadChange, ThreadChangeKind,
-    ThreadEventEnvelope, SETTINGS_CHANGED_NAME,
+    ThreadEventEnvelope, VisionsChange, SETTINGS_CHANGED_NAME, VISIONS_CHANGED_NAME,
 };
 
 pub(crate) const MAX_FRAME: usize = 8 * 1024 * 1024;
@@ -29,6 +29,7 @@ mod agent;
 mod agent_path;
 mod client;
 mod commands;
+mod visions_commands;
 
 pub(crate) use client::in_agent_shell;
 pub use client::Client;
@@ -101,6 +102,12 @@ impl EventSink for BroadcastSink {
             .tx
             .send(json!({"name": SETTINGS_CHANGED_NAME, "payload": change}));
     }
+
+    fn emit_visions_changed(&self, change: &VisionsChange) {
+        let _ = self
+            .tx
+            .send(json!({"name": VISIONS_CHANGED_NAME, "payload": change}));
+    }
 }
 
 pub struct Server {
@@ -135,6 +142,8 @@ impl Server {
         let (shutdown, _) = broadcast::channel(1);
         let sink: Arc<dyn EventSink> = Arc::new(BroadcastSink { tx: tx.clone() });
         state.set_scheduler_sink(Arc::clone(&sink));
+        // Visions' budgets need prices: a cold start loads them rather than waiting for a run.
+        state.visions_prices_at_start();
         Ok(Self {
             listener,
             state,

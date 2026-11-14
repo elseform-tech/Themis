@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { Badge, EmptyState, Switch } from "../components";
 import type { Settings, UpdateStatus } from "../lib/types";
 import { checkForUpdates, notificationPermission, updateSettings } from "../lib/tauri";
@@ -9,6 +9,7 @@ import { PermissionsSettings } from "./PermissionsView";
 import { BrowserSettingsSection } from "./BrowserSettings";
 import { WebSettingsSection } from "./WebSettings";
 import { SubagentSettingsSection } from "./SubagentSettings";
+import { VisionsSettingsSection } from "./VisionsSettings";
 import { MemorySettingsSection } from "./MemorySettings";
 import { SecretsSettings } from "./SecretsSettings";
 import { ModelsSettings } from "./ModelsSettings";
@@ -114,7 +115,16 @@ function NotificationSettings({ form, save }: { form: Settings; save: (patch: Pa
 
 const SAVED_NOTE_MS = 3000;
 /** Sections whose settings change what agents do; the rest apply at once. */
-const RUN_SECTIONS = new Set(["Models", "Memory", "Permissions", "Browser", "Web", "Subagents", "Advanced"]);
+const RUN_SECTIONS = new Set(["Models", "Memory", "Permissions", "Browser", "Web", "Subagents", "Visions", "Advanced"]);
+
+/** Sections that edit one `runtime.jsonc` block in place, each saying when it saved. */
+const BLOCK_SECTIONS: Record<string, (props: { onSaved: () => void }) => ReactNode> = {
+  Memory: props => <MemorySettingsSection {...props} />,
+  Browser: props => <BrowserSettingsSection {...props} />,
+  Web: props => <WebSettingsSection {...props} />,
+  Subagents: props => <SubagentSettingsSection {...props} />,
+  Visions: props => <VisionsSettingsSection {...props} />,
+};
 
 export function SettingsScreen() {
   const { state, dispatch } = useApp();
@@ -214,10 +224,7 @@ export function SettingsScreen() {
       {section === "Usage" && <UsageSettingsSection />}
       {section === "Permissions" && <PermissionsSettings editor={state.settings.config_editor ?? ""} onEditor={editor => void save({ config_editor: editor })} prefs={{ default_approval_mode: state.settings.default_approval_mode, approval_timeout_seconds: state.settings.approval_timeout_seconds }} onPrefs={patch => void save(patch)} />}
       {section === "Secrets" && <SecretsSettings focusKey={state.settingsFocus?.key} />}
-      {section === "Memory" && <MemorySettingsSection onSaved={flashSaved} />}
-      {section === "Browser" && <BrowserSettingsSection onSaved={flashSaved} />}
-      {section === "Web" && <WebSettingsSection onSaved={flashSaved} />}
-      {section === "Subagents" && <SubagentSettingsSection onSaved={flashSaved} />}
+      {BLOCK_SECTIONS[section]?.({ onSaved: flashSaved })}
       {section === "Advanced" && <SettingsGroup title="Run limits" action={<SettingsIconButton label="Reset limits" onClick={() => void save({ max_total_turns: 200, context_token_cap: 0, concurrency_limit: 3 })}><ResetIcon /></SettingsIconButton>}>
         {number("max_total_turns", "Steps per reply", 1, 2000)}
         {contextTokens}
